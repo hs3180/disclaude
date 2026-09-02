@@ -9,17 +9,19 @@ import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import * as yaml from 'js-yaml';
 import { createLogger } from '../utils/logger.js';
-import type { DisclaudeConfig, LoadedConfig, ConfigFileInfo, ConfigValidationError } from './types.js';
+import type {
+  DisclaudeConfig,
+  LoadedConfig,
+  ConfigFileInfo,
+  ConfigValidationError,
+} from './types.js';
 
 const logger = createLogger('ConfigLoader');
 
 /**
  * Config file names to search for, in priority order.
  */
-const CONFIG_FILE_NAMES = [
-  'disclaude.config.yaml',
-  'disclaude.config.yml',
-] as const;
+const CONFIG_FILE_NAMES = ['disclaude.config.yaml', 'disclaude.config.yml'] as const;
 
 /**
  * Set by executable bootstraps before importing @disclaude/core. This avoids
@@ -190,12 +192,12 @@ export function validateConfig(config: DisclaudeConfig): boolean {
           hasGlmApiKey: Boolean(config.glm?.apiKey),
           hasGlmModel: Boolean(config.glm?.model),
         },
-        'agentBackend: codex uses the ChatGPT OAuth session; agent.provider and glm settings are ignored',
+        'agentBackend: codex uses the ChatGPT OAuth session; agent.provider and glm settings are ignored'
       );
     }
     if (config.agent.model && !isCodexModel(config.agent.model)) {
       logger.error(
-        `agent.model must be a Codex/ChatGPT model (expected gpt-5.x, got "${config.agent.model}")`,
+        `agent.model must be a Codex/ChatGPT model (expected gpt-5.x, got "${config.agent.model}")`
       );
       return false;
     }
@@ -208,7 +210,7 @@ export function validateConfig(config: DisclaudeConfig): boolean {
     if (!allowed.includes(config.agent.agentBackend)) {
       logger.error(
         `agent.agentBackend must be one of: ${allowed.join(', ')} (got "${config.agent.agentBackend}"). ` +
-          'It selects the agent runtime (claude-code vs pi.dev vs Codex CLI), separate from the model-layer provider.',
+          'It selects the agent runtime (claude-code vs pi.dev vs Codex CLI), separate from the model-layer provider.'
       );
       return false;
     }
@@ -221,16 +223,19 @@ export function validateConfig(config: DisclaudeConfig): boolean {
     if (!allowedSandbox.includes(config.agent.codexSandbox)) {
       logger.error(
         `agent.codexSandbox must be one of: ${allowedSandbox.join(', ')} (got "${config.agent.codexSandbox}"). ` +
-          'It is the codex exec sandbox level, only meaningful with agentBackend: codex.',
+          'It is the codex exec sandbox level, only meaningful with agentBackend: codex.'
       );
       return false;
     }
   }
 
-  if (config.agent?.codexNetworkAccess !== undefined && typeof config.agent.codexNetworkAccess !== 'boolean') {
+  if (
+    config.agent?.codexNetworkAccess !== undefined &&
+    typeof config.agent.codexNetworkAccess !== 'boolean'
+  ) {
     logger.error(
       `agent.codexNetworkAccess must be a boolean (got ${String(config.agent.codexNetworkAccess)}). ` +
-        'It controls outbound network access for Codex workspace-write runs.',
+        'It controls outbound network access for Codex workspace-write runs.'
     );
     return false;
   }
@@ -238,7 +243,7 @@ export function validateConfig(config: DisclaudeConfig): boolean {
   // Issue #4634 (S7 of #4627): validate agent.codex governance caps —
   // non-positive values are rejected at load time (fail closed).
   if (config.agent?.codex !== undefined) {
-    const { maxActiveSessions, maxConcurrentRuns } = config.agent.codex;
+    const { maxActiveSessions, maxConcurrentRuns, execTimeoutMs } = config.agent.codex;
     for (const [name, value] of [
       ['maxActiveSessions', maxActiveSessions],
       ['maxConcurrentRuns', maxConcurrentRuns],
@@ -246,10 +251,17 @@ export function validateConfig(config: DisclaudeConfig): boolean {
       if (value !== undefined && (!Number.isFinite(value) || value <= 0)) {
         logger.error(
           `agent.codex.${name} must be a positive number (got ${value}). ` +
-            'It bounds concurrent codex sessions/runs per process.',
+            'It bounds concurrent codex sessions/runs per process.'
         );
         return false;
       }
+    }
+    if (execTimeoutMs !== undefined && (!Number.isFinite(execTimeoutMs) || execTimeoutMs < 0)) {
+      logger.error(
+        `agent.codex.execTimeoutMs must be a non-negative number (got ${execTimeoutMs}). ` +
+          'Use 0 to disable the Codex runner wall-clock timeout.'
+      );
+      return false;
     }
   }
 

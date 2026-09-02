@@ -23,12 +23,17 @@ const providerRegistry = new Map<ProviderType, ProviderFactory>([
   ['pi', () => new PiAgentProvider()],
   // Issue #4629 (S1 of #4627); sandbox override #4631 (S4); governance
   // caps wired in #4634 (S7).
-  ['codex', () => new CodexAgentProvider({
-    sandboxOverride: Config.CODEX_SANDBOX,
-    networkAccess: Config.CODEX_NETWORK_ACCESS,
-    maxActiveSessions: Config.CODEX_MAX_ACTIVE_SESSIONS,
-    maxConcurrentRuns: Config.CODEX_MAX_CONCURRENT_RUNS,
-  })],
+  [
+    'codex',
+    () =>
+      new CodexAgentProvider({
+        sandboxOverride: Config.CODEX_SANDBOX,
+        networkAccess: Config.CODEX_NETWORK_ACCESS,
+        maxActiveSessions: Config.CODEX_MAX_ACTIVE_SESSIONS,
+        maxConcurrentRuns: Config.CODEX_MAX_CONCURRENT_RUNS,
+        execTimeoutMs: Config.CODEX_EXEC_TIMEOUT_MS,
+      }),
+  ],
 ]);
 
 /**
@@ -65,7 +70,9 @@ export function getProvider(type?: ProviderType): IAgentSDKProvider {
   // 获取工厂函数
   const factory = providerRegistry.get(providerType);
   if (!factory) {
-    throw new Error(`Unknown provider type: ${providerType}. Available: ${[...providerRegistry.keys()].join(', ')}`);
+    throw new Error(
+      `Unknown provider type: ${providerType}. Available: ${[...providerRegistry.keys()].join(', ')}`
+    );
   }
 
   // 创建并缓存实例
@@ -104,7 +111,9 @@ export function registerProviderClass(type: ProviderType, constructor: ProviderC
  */
 export function setDefaultProvider(type: ProviderType): void {
   if (!providerRegistry.has(type)) {
-    throw new Error(`Unknown provider type: ${type}. Available: ${[...providerRegistry.keys()].join(', ')}`);
+    throw new Error(
+      `Unknown provider type: ${type}. Available: ${[...providerRegistry.keys()].join(', ')}`
+    );
   }
   defaultProviderType = type;
 }

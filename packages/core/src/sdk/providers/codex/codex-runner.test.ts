@@ -8,7 +8,8 @@
  * - non-JSON stdout lines tolerated (schema resilience)
  * - stderr forwarded chunk-wise + captured in the rolling tail
  * - non-zero exit surfaced via exitCode + stderrTail
- * - per-run timeout: SIGTERM kills a sleeping script, timedOut=true
+ * - explicit per-run timeout: SIGTERM kills a sleeping script, timedOut=true
+ * - default per-run timeout is disabled so a slow but live process is not killed
  * - abort(): kill in-flight run, aborted=true
  * - spawn failure (missing binary): spawnError with ENOENT
  */
@@ -141,6 +142,13 @@ describe('CodexExecRunner (Issue #4630)', () => {
     expect(result.exitCode).toBe(143); // the trap's graceful exit
     expect(existsSync(fixture.markerPath)).toBe(true);
   }, 15_000);
+
+  it('does not apply a wall-clock timeout by default', async () => {
+    const { promise } = runWith('sleep 1 >/dev/null 2>&1 &\nwait $!');
+    const result = await promise;
+    expect(result.exitCode).toBe(0);
+    expect(result.timedOut).toBe(false);
+  }, 10_000);
 
   it('escalates to SIGKILL when the child SURVIVES SIGTERM', async () => {
     // S2 review: the old `trap '' TERM` variant was a false positive —
