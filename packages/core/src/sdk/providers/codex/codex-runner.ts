@@ -30,8 +30,8 @@ const logger = createLogger('CodexExecRunner');
 const STDERR_TAIL_BYTES = 8 * 1024;
 /** Grace between SIGTERM and SIGKILL on timeout/abort. */
 const KILL_GRACE_MS = 5_000;
-/** Default per-run timeout (env-tunable, constructor-overridable). */
-export const DEFAULT_TIMEOUT_MS = 600_000;
+/** Default per-run timeout. Zero disables the runner wall-clock timeout. */
+export const DEFAULT_TIMEOUT_MS = 0;
 /**
  * Prompt argv guard (S2 review): argv single-argument limits are ~128KB
  * (Linux MAX_ARG_STRLEN) / ~256KB (macOS); beyond that spawn fails with a
@@ -76,7 +76,7 @@ export interface CodexExecRunOptions {
   networkAccess?: boolean;
   /** Environment for the child (merged over the provider env). */
   env?: Record<string, string | undefined>;
-  /** Per-call timeout override (ms). */
+  /** Per-call timeout override (ms); zero disables the runner wall-clock timeout. */
   timeoutMs?: number;
   /** stderr chunk callback (Issue #2920 seam, forwarded from AgentQueryOptions). */
   stderr?: (data: string) => void;
@@ -130,13 +130,13 @@ export class CodexExecRunner {
    */
   run(
     options: CodexExecRunOptions,
-    onEvent: (event: CodexThreadEvent) => void,
+    onEvent: (event: CodexThreadEvent) => void
   ): { promise: Promise<CodexExecRunResult>; handle: CodexExecRunHandle } {
     if (options.prompt.length > MAX_PROMPT_CHARS) {
       // Fail with a clear message instead of a cryptic spawn E2BIG.
       const tooLong = new Error(
         `prompt too long for argv: ${options.prompt.length} chars ` +
-        `(max ${MAX_PROMPT_CHARS}) — reduce the message/context size`,
+          `(max ${MAX_PROMPT_CHARS}) — reduce the message/context size`
       );
       return {
         promise: Promise.resolve({
@@ -164,7 +164,12 @@ export class CodexExecRunner {
           '--skip-git-repo-check',
           ...(options.model ? ['-m', options.model] : []),
           ...(options.sandboxMode ? ['-c', `sandbox_mode=${options.sandboxMode}`] : []),
-          ...((options.networkAccess ?? this.defaultNetworkAccess) !== undefined ? ['-c', `${networkAccessConfigKey(options.sandboxMode)}=${options.networkAccess ?? this.defaultNetworkAccess}`] : []),
+          ...((options.networkAccess ?? this.defaultNetworkAccess) !== undefined
+            ? [
+                '-c',
+                `${networkAccessConfigKey(options.sandboxMode)}=${options.networkAccess ?? this.defaultNetworkAccess}`,
+              ]
+            : []),
           options.resumeSessionId,
           '--',
           options.prompt,
@@ -175,7 +180,12 @@ export class CodexExecRunner {
           '--skip-git-repo-check',
           ...(options.model ? ['-m', options.model] : []),
           ...(options.sandboxMode ? ['-s', options.sandboxMode] : []),
-          ...((options.networkAccess ?? this.defaultNetworkAccess) !== undefined ? ['-c', `${networkAccessConfigKey(options.sandboxMode)}=${options.networkAccess ?? this.defaultNetworkAccess}`] : []),
+          ...((options.networkAccess ?? this.defaultNetworkAccess) !== undefined
+            ? [
+                '-c',
+                `${networkAccessConfigKey(options.sandboxMode)}=${options.networkAccess ?? this.defaultNetworkAccess}`,
+              ]
+            : []),
           '--',
           options.prompt,
         ];
@@ -263,7 +273,10 @@ export class CodexExecRunner {
             onEvent(JSON.parse(trimmed) as CodexThreadEvent);
           } catch {
             // Non-JSON line (banner, stray output): tolerate, never fatal.
-            logger.debug({ line: trimmed.slice(0, 200) }, 'codex exec: non-JSON stdout line skipped');
+            logger.debug(
+              { line: trimmed.slice(0, 200) },
+              'codex exec: non-JSON stdout line skipped'
+            );
           }
         });
       }

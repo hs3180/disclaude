@@ -60,6 +60,7 @@ agent:
   # codex:
   #   maxActiveSessions: 3    # Default: 3
   #   maxConcurrentRuns: 2    # Default: 2
+  #   execTimeoutMs: 0        # Default: 0; 0 disables the per-run wall-clock cap
 
   # Model to use for AI operations (fallback default)
   # Default: claude-3-5-sonnet-20241022 (Anthropic) or glm-4.7 (GLM)

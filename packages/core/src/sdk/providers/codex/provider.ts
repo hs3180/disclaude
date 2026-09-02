@@ -61,14 +61,10 @@ import type {
 } from '../../types.js';
 import {
   CodexExecRunner,
-  DEFAULT_TIMEOUT_MS,
   type CodexExecRunHandle,
   type CodexExecRunResult,
 } from './codex-runner.js';
-import {
-  resolveCodexSandboxPolicy,
-  type CodexSandboxLevel,
-} from './sandbox-policy.js';
+import { resolveCodexSandboxPolicy, type CodexSandboxLevel } from './sandbox-policy.js';
 import { CodexSessionGovernor } from './session-governor.js';
 import {
   adaptCodexEvent,
@@ -167,7 +163,7 @@ function codexModelForChatGpt(model: string | undefined): string | undefined {
 export interface CodexAgentProviderOptions {
   /** Environment used for resolution + child spawn. Default: process.env. */
   env?: Record<string, string | undefined>;
-  /** Per-run codex exec timeout (default 600s). */
+  /** Per-run codex exec timeout; zero/undefined disables the wall-clock cap. */
   execTimeoutMs?: number;
   /**
    * Explicit sandbox override from `agent.codexSandbox` (Issue #4631, S4).
@@ -258,12 +254,12 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     const problems: string[] = [];
     if (!this.findCodexBinary()) {
       problems.push(
-        'codex CLI binary not found on PATH — install it first: `npm install -g @openai/codex` (https://developers.openai.com/codex/cli)',
+        'codex CLI binary not found on PATH — install it first: `npm install -g @openai/codex` (https://developers.openai.com/codex/cli)'
       );
     }
     if (!this.hasAuth()) {
       problems.push(
-        'Codex auth missing (OAuth not completed) — run `codex login` (Sign in with ChatGPT); set CODEX_HOME if it is installed elsewhere',
+        'Codex auth missing (OAuth not completed) — run `codex login` (Sign in with ChatGPT); set CODEX_HOME if it is installed elsewhere'
       );
     }
 
@@ -297,10 +293,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
   }
 
   /** Runtime cap change (admin/test surface, Issue #4634). */
-  setGovernanceLimits(limits: {
-    maxActiveSessions?: number;
-    maxConcurrentRuns?: number;
-  }): void {
+  setGovernanceLimits(limits: { maxActiveSessions?: number; maxConcurrentRuns?: number }): void {
     this.governor.setLimits(limits);
   }
 
@@ -324,7 +317,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     if (hadRegistration || hadStash) {
       logger.info(
         { sessionKey, hadRegistration, hadStash },
-        'codex session forgotten on reset — governor registration + evicted-thread stash cleared (Issue #4644)',
+        'codex session forgotten on reset — governor registration + evicted-thread stash cleared (Issue #4644)'
       );
     }
   }
@@ -333,10 +326,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
   // Query — Issue #4630 (S2): codex exec subprocess bridge
   // --------------------------------------------------------------------------
 
-  queryStream(
-    input: AsyncGenerator<UserInput>,
-    options: AgentQueryOptions,
-  ): StreamQueryResult {
+  queryStream(input: AsyncGenerator<UserInput>, options: AgentQueryOptions): StreamQueryResult {
     if (this.disposed) {
       throw new Error('Provider has been disposed');
     }
@@ -359,7 +349,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         sandbox: sandboxDecision.sandbox,
         reasons: sandboxDecision.reasons,
       },
-      'codex sandbox policy resolved (Issue #4631): permission gate → codex exec sandbox',
+      'codex sandbox policy resolved (Issue #4631): permission gate → codex exec sandbox'
     );
 
     const runner = new CodexExecRunner({
@@ -371,7 +361,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     if (options.model && codexModel === undefined) {
       logger.warn(
         { configuredModel: options.model },
-        'ignoring legacy gpt-5.1-codex model for ChatGPT-backed Codex; using the CLI default',
+        'ignoring legacy gpt-5.1-codex model for ChatGPT-backed Codex; using the CLI default'
       );
     }
     // Captured at queryStream call time — the constructor-injected env the
@@ -387,15 +377,17 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     // truth for project-local skills. Include the packaged index as well; the
     // merge keeps the common case (cwd == builtinRoot) free of duplicates.
     const thisBuiltinContext = options.cwd
-      ? formatCodexBuiltinContext(mergeBuiltinResources(
-        discoverBuiltinResources(resolve(options.cwd)),
-        // Claude Code projects conventionally keep local resources under
-        // `.claude/skills` and `.claude/agents`; treat that directory as a
-        // second workspace root while retaining the existing root-level
-        // `skills/` and `agents/` layout.
-        discoverBuiltinResources(join(resolve(options.cwd), '.claude')),
-        discoverBuiltinResources(this.builtinRoot),
-      ))
+      ? formatCodexBuiltinContext(
+          mergeBuiltinResources(
+            discoverBuiltinResources(resolve(options.cwd)),
+            // Claude Code projects conventionally keep local resources under
+            // `.claude/skills` and `.claude/agents`; treat that directory as a
+            // second workspace root while retaining the existing root-level
+            // `skills/` and `agents/` layout.
+            discoverBuiltinResources(join(resolve(options.cwd), '.claude')),
+            discoverBuiltinResources(this.builtinRoot)
+          )
+        )
       : '';
     // Instance-level quota sink (S5, #4632): the bridge closures below are
     // `this: void`, so they aggregate through this captured reference.
@@ -407,9 +399,10 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     // Same capture for the S7 governor + stash (this: void closures below).
     const governorSink = this.governor;
     const stashSink = this.threadStash;
-    const timeoutLabel = this.execTimeoutMs
-      ? `${this.execTimeoutMs}ms`
-      : `${DEFAULT_TIMEOUT_MS}ms (default)`;
+    const timeoutLabel =
+      this.execTimeoutMs && this.execTimeoutMs > 0
+        ? `${this.execTimeoutMs}ms`
+        : 'disabled (default)';
 
     // Abort plumbing (mirrors pi: early-cancel latch + late onAbort wake).
     let currentRun: CodexExecRunHandle | null = null;
@@ -441,8 +434,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     // cap — only their LRU identity is unknown. The eviction hook runs in
     // the VICTIM's closure: stash its conversation anchor (consumed by this
     // chat's next queryStream) and abort via the same path as user cancel.
-    const sessionKey =
-      options.sessionKey ?? `anon-${++this.anonSessionCounter}`;
+    const sessionKey = options.sessionKey ?? `anon-${++this.anonSessionCounter}`;
     // Anonymous streams (no options.sessionKey — one-shot runOnce queries)
     // never resume, so stashing their anchor would leak the map forever.
     const stashable = options.sessionKey !== undefined;
@@ -458,7 +450,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         }
         logger.warn(
           { sessionKey, stashed: Boolean(resumeThreadId && stashable) },
-          'codex session evicted (session cap reached) — thread anchor stashed; the chat resumes its conversation on the next message (Issue #4634)',
+          'codex session evicted (session cap reached) — thread anchor stashed; the chat resumes its conversation on the next message (Issue #4634)'
         );
         requestAbort();
       },
@@ -466,531 +458,523 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     if (registration.evictedKey) {
       logger.info(
         { evictedKey: registration.evictedKey, sessionKey },
-        'codex session cap reached — evicted the idlest session (LRU, #4634)',
+        'codex session cap reached — evicted the idlest session (LRU, #4634)'
       );
     }
 
-    const adaptIterator =
-      async function* (this: void): AsyncGenerator<AgentMessage> {
-        // ── Event bridge state (pi #4386 part 3 pattern) ──────────────────
-        const queue: AgentMessage[] = [];
-        // Codex normally emits one completed event per item, but retries or
-        // reconnects can replay a completed item. Do not send duplicate
-        // assistant/tool content to the channel.
-        const deliveredEventKeys = new Set<string>();
-        const notify: (() => void)[] = [];
-        let inputDone = false;
-        let runActive = false;
-        let aborted = false;
-        const wakeAll = (): void => {
-          for (const wake of notify.splice(0)) {
-            wake();
-          }
-        };
+    const adaptIterator = async function* (this: void): AsyncGenerator<AgentMessage> {
+      // ── Event bridge state (pi #4386 part 3 pattern) ──────────────────
+      const queue: AgentMessage[] = [];
+      // Codex normally emits one completed event per item, but retries or
+      // reconnects can replay a completed item. Do not send duplicate
+      // assistant/tool content to the channel.
+      const deliveredEventKeys = new Set<string>();
+      const notify: (() => void)[] = [];
+      let inputDone = false;
+      let runActive = false;
+      let aborted = false;
+      const wakeAll = (): void => {
+        for (const wake of notify.splice(0)) {
+          wake();
+        }
+      };
 
-        // ── Stall watchdog (#4630, reusing the #4550/#3706 seam) ──────────
-        // Armed for the whole run, re-armed on EVERY stdout event (any JSONL
-        // line is progress), exempt while a tool item is open (started
-        // without completed — a long build/test legitimately stays silent).
-        // Env knob DISCLAUDE_STALL_TIMEOUT_MS matches the Claude/pi bridges.
-        const STALL_TIMEOUT_MS = (() => {
-          const parsed = Number.parseInt(
-            process.env.DISCLAUDE_STALL_TIMEOUT_MS ?? '',
-            10,
-          );
-          return Number.isFinite(parsed) && parsed > 0 ? parsed : 180_000;
-        })();
-        const STALL_FORCE_CLOSE_GRACE_MS = (() => {
-          const parsed = Number.parseInt(
-            process.env.DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS ?? '',
-            10,
-          );
-          return Number.isFinite(parsed) && parsed > 0 ? parsed : 5_000;
-        })();
-        let stalled = false;
-        let stallWatchdog: ReturnType<typeof setTimeout> | null = null;
-        let stallForceCloseTimer: ReturnType<typeof setTimeout> | null = null;
-        let openToolItems = 0;
-        let sawTurnTerminator = false;
-        let sawTurnFailed = false;
-        // S3 (#4628): completed-turn marker (vs. sawTurnTerminator, which
-        // turn.failed also sets) + raw failure text for the detectors. The
-        // adapter downgrades transient "Reconnecting..." errors to status,
-        // so signature detection must read the RAW event text, not adapted
-        // messages.
-        let sawTurnCompleted = false;
-        let runFailureText = '';        const armTimer = (
-          fn: () => void,
-          ms: number,
-        ): ReturnType<typeof setTimeout> => {
-          const t = setTimeout(fn, ms);
-          t.unref?.();
-          return t;
-        };
-        const clearStallTimers = (): void => {
-          if (stallWatchdog) {
-            clearTimeout(stallWatchdog);
-            stallWatchdog = null;
-          }
-          if (stallForceCloseTimer) {
-            clearTimeout(stallForceCloseTimer);
-            stallForceCloseTimer = null;
-          }
-        };
-        const fireStallWatchdog = (): void => {
+      // ── Stall watchdog (#4630, reusing the #4550/#3706 seam) ──────────
+      // Armed for the whole run, re-armed on EVERY stdout event (any JSONL
+      // line is progress), exempt while a tool item is open (started
+      // without completed — a long build/test legitimately stays silent).
+      // Env knob DISCLAUDE_STALL_TIMEOUT_MS matches the Claude/pi bridges.
+      const STALL_TIMEOUT_MS = (() => {
+        const parsed = Number.parseInt(process.env.DISCLAUDE_STALL_TIMEOUT_MS ?? '', 10);
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : 180_000;
+      })();
+      const STALL_FORCE_CLOSE_GRACE_MS = (() => {
+        const parsed = Number.parseInt(process.env.DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS ?? '', 10);
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : 5_000;
+      })();
+      let stalled = false;
+      let stallWatchdog: ReturnType<typeof setTimeout> | null = null;
+      let stallForceCloseTimer: ReturnType<typeof setTimeout> | null = null;
+      let openToolItems = 0;
+      let sawTurnTerminator = false;
+      let sawTurnFailed = false;
+      // S3 (#4628): completed-turn marker (vs. sawTurnTerminator, which
+      // turn.failed also sets) + raw failure text for the detectors. The
+      // adapter downgrades transient "Reconnecting..." errors to status,
+      // so signature detection must read the RAW event text, not adapted
+      // messages.
+      let sawTurnCompleted = false;
+      let runFailureText = '';
+      const armTimer = (fn: () => void, ms: number): ReturnType<typeof setTimeout> => {
+        const t = setTimeout(fn, ms);
+        t.unref?.();
+        return t;
+      };
+      const clearStallTimers = (): void => {
+        if (stallWatchdog) {
+          clearTimeout(stallWatchdog);
           stallWatchdog = null;
-          if (!runActive || stalled) {
-            return;
-          }
-          if (openToolItems > 0) {
-            // Silence belongs to the running tool, not the stream — re-arm.
-            stallWatchdog = armTimer(fireStallWatchdog, STALL_TIMEOUT_MS);
-            return;
-          }
-          stalled = true;
-          logger.error(
-            { stallTimeoutMs: STALL_TIMEOUT_MS },
-            `codex stall: no exec events for ${STALL_TIMEOUT_MS}ms during an active run; ` +
-              'killing the codex process (Issue #4630, cf. #3706)',
-          );
-          currentRun?.abort();
-          stallForceCloseTimer = armTimer(() => {
-            stallForceCloseTimer = null;
-            onAbort?.();
-          }, STALL_FORCE_CLOSE_GRACE_MS);
-        };
-        const touchStallWatchdog = (): void => {
-          if (!runActive || stalled) {
-            return;
-          }
-          clearStallTimers();
+        }
+        if (stallForceCloseTimer) {
+          clearTimeout(stallForceCloseTimer);
+          stallForceCloseTimer = null;
+        }
+      };
+      const fireStallWatchdog = (): void => {
+        stallWatchdog = null;
+        if (!runActive || stalled) {
+          return;
+        }
+        if (openToolItems > 0) {
+          // Silence belongs to the running tool, not the stream — re-arm.
           stallWatchdog = armTimer(fireStallWatchdog, STALL_TIMEOUT_MS);
-        };
+          return;
+        }
+        stalled = true;
+        logger.error(
+          { stallTimeoutMs: STALL_TIMEOUT_MS },
+          `codex stall: no exec events for ${STALL_TIMEOUT_MS}ms during an active run; ` +
+            'killing the codex process (Issue #4630, cf. #3706)'
+        );
+        currentRun?.abort();
+        stallForceCloseTimer = armTimer(() => {
+          stallForceCloseTimer = null;
+          onAbort?.();
+        }, STALL_FORCE_CLOSE_GRACE_MS);
+      };
+      const touchStallWatchdog = (): void => {
+        if (!runActive || stalled) {
+          return;
+        }
+        clearStallTimers();
+        stallWatchdog = armTimer(fireStallWatchdog, STALL_TIMEOUT_MS);
+      };
 
-        /** Push a bridge-synthesized message (post-run failure mapping). */
-        const pushSynthetic = (message: AgentMessage): void => {
-          if (stalled) {
+      /** Push a bridge-synthesized message (post-run failure mapping). */
+      const pushSynthetic = (message: AgentMessage): void => {
+        if (stalled) {
+          return;
+        }
+        queue.push(message);
+        wakeAll();
+      };
+
+      const enqueue = (event: CodexThreadEvent): void => {
+        if (event.type === 'turn.started') {
+          // Item IDs are scoped to a Codex turn; a resumed turn may reuse
+          // the same fixture/runtime ID, so dedupe only within one turn.
+          deliveredEventKeys.clear();
+        }
+        if (event.type === 'thread.started') {
+          latestSessionId = event.thread_id;
+        }
+        // Open-tool tracking for the watchdog exemption (cf. pi #4568 dir 2).
+        if (event.type === 'item.started') {
+          const t = event.item?.type;
+          if (t === 'command_execution' || t === 'mcp_tool_call') {
+            openToolItems++;
+          }
+        } else if (event.type === 'item.completed') {
+          const t = event.item?.type;
+          if (t === 'command_execution' || t === 'mcp_tool_call') {
+            openToolItems = Math.max(0, openToolItems - 1);
+          }
+        } else if (event.type === 'turn.completed' || event.type === 'turn.failed') {
+          sawTurnTerminator = true;
+          if (event.type === 'turn.completed') {
+            sawTurnCompleted = true;
+            if (event.usage) {
+              // ── Quota observability (S5, #4632) ───────────────────────
+              // Accumulate + log AT the event (no cross-closure state):
+              // one structured info line per completed turn with per-turn
+              // and process-wide cumulative fields (full-content logging
+              // guideline). No USD — a subscription has no per-call price.
+              const { usage } = event;
+              quotaSink.turnsCompleted += 1;
+              quotaSink.inputTokens += usage.input_tokens ?? 0;
+              quotaSink.cachedInputTokens += usage.cached_input_tokens ?? 0;
+              quotaSink.outputTokens += usage.output_tokens ?? 0;
+              quotaSink.reasoningOutputTokens += usage.reasoning_output_tokens ?? 0;
+              logger.info(
+                {
+                  threadId: latestSessionId,
+                  resumed: resumeThreadId !== undefined,
+                  inputTokens: usage.input_tokens,
+                  cachedInputTokens: usage.cached_input_tokens,
+                  outputTokens: usage.output_tokens,
+                  reasoningOutputTokens: usage.reasoning_output_tokens,
+                  cumulative: { ...quotaSink },
+                },
+                'codex quota usage (turn.completed)'
+              );
+              if (
+                event.usage.input_tokens !== undefined &&
+                event.usage.input_tokens >= resumeBudgetSink.maxResumeInputTokens
+              ) {
+                resumeBudgetSink.resumeFreshNextTurn = true;
+                logger.warn(
+                  {
+                    inputTokens: event.usage.input_tokens,
+                    maxResumeInputTokens: resumeBudgetSink.maxResumeInputTokens,
+                    threadId: latestSessionId,
+                  },
+                  'codex resume input budget reached — next turn will start a fresh session'
+                );
+              }
+            }
+          } else {
+            // turn.failed is a terminator for bookkeeping, but the TURN
+            // still needs a synthetic result (see runInput) — the adapter
+            // emits only an error for it, and ChatAgent resolves a turn
+            // exclusively on type==='result' (cf. #4378 error_max_* pitfall).
+            sawTurnFailed = true;
+          }
+        } else if (event.type === 'error') {
+          runFailureText += `\n${event.message}`;
+        }
+        if (event.type === 'turn.failed') {
+          runFailureText += `\n${event.error?.message ?? ''}`;
+        }
+        touchStallWatchdog();
+        const presentation = classifyCodexEvent(event);
+        logger.debug({ eventType: event.type, presentation }, 'codex JSONL event classified');
+        const adapted = adaptCodexEvent(event);
+        if (adapted) {
+          const messageId = adapted.metadata?.messageId;
+          const eventKey = messageId ? `${adapted.type}:${messageId}` : undefined;
+          if (eventKey && deliveredEventKeys.has(eventKey)) {
+            logger.debug({ eventKey }, 'skipping duplicate Codex event');
+            wakeAll();
             return;
           }
-          queue.push(message);
-          wakeAll();
-        };
+          if (eventKey) {
+            deliveredEventKeys.add(eventKey);
+          }
+          queue.push(adapted);
+        }
+        wakeAll();
+      };
+      onAbort = (): void => {
+        aborted = true;
+        wakeAll();
+      };
 
-        const enqueue = (event: CodexThreadEvent): void => {
-          if (event.type === 'turn.started') {
-            // Item IDs are scoped to a Codex turn; a resumed turn may reuse
-            // the same fixture/runtime ID, so dedupe only within one turn.
-            deliveredEventKeys.clear();
+      // ── Turn runner: one user input → one codex exec run ──────────────
+      // First turn runs `codex exec … -- <prompt>`; every follow-up runs
+      // `codex exec resume <thread_id> … -- <prompt>` (S3, #4628).
+      // S7 (#4634): each run holds a global lease — at most
+      // maxConcurrentRuns codex exec children process-wide; excess turns
+      // queue FIFO across chats with a backpressure notice.
+      const runInput = async (prompt: string): Promise<void> => {
+        // Item IDs are scoped to one exec invocation. Clear before every
+        // run because older Codex versions (and test doubles) may omit
+        // `turn.started` on resumed executions.
+        deliveredEventKeys.clear();
+        const resumeTarget = resumeBudgetSink.resumeFreshNextTurn ? undefined : resumeThreadId;
+        if (resumeThreadId !== undefined && resumeTarget === undefined) {
+          resumeBudgetSink.resumeFreshNextTurn = false;
+          logger.info(
+            {
+              previousThreadId: resumeThreadId,
+              maxResumeInputTokens: resumeBudgetSink.maxResumeInputTokens,
+            },
+            'starting fresh codex session after resume input budget was reached'
+          );
+        }
+        governorSink.touchSession(sessionKey);
+        // Backpressure UX (#4634): announce the wait BEFORE it happens —
+        // never silence. (Also announce when merely joining the queue.)
+        const pre = governorSink.getStats();
+        if (pre.runningRuns >= pre.maxConcurrentRuns || pre.queuedRuns > 0) {
+          pushSynthetic({
+            type: 'status',
+            content:
+              `⏳ Codex 并发已满（${pre.runningRuns}/${pre.maxConcurrentRuns} 运行中）` +
+              `——排队等候，前面还有 ${pre.queuedRuns} 个任务…`,
+            role: 'assistant',
+          });
+        }
+        const lease = await governorSink.acquireRun();
+        if (aborted || terminated) {
+          // Cancelled/finished while queued — don't spawn a zombie run.
+          lease.release();
+          return;
+        }
+        runActive = true;
+        sawTurnTerminator = false;
+        sawTurnFailed = false;
+        sawTurnCompleted = false;
+        runFailureText = '';
+        touchStallWatchdog();
+        const { promise, handle } = runner.run(
+          {
+            prompt: thisBuiltinContext
+              ? `${thisBuiltinContext}\n\nUser request:\n${prompt}`
+              : prompt,
+            resumeSessionId: resumeTarget,
+            sandboxMode: sandboxDecision.sandbox,
+            cwd: options.cwd,
+            model: codexModel,
+            env: { ...providerEnv, ...options.env },
+            stderr: options.stderr,
+          },
+          enqueue
+        );
+        currentRun = handle;
+        if (cancelRequested) {
+          // cancel()/close() arrived before this run started (early latch).
+          handle.abort();
+        }
+        try {
+          const result: CodexExecRunResult = await promise;
+          if (stalled || result.aborted) {
+            // Stall terminator is synthesized by the consumer loop; a user
+            // abort ends the stream without a turn terminator (pi parity).
+            return;
           }
-          if (event.type === 'thread.started') {
-            latestSessionId = event.thread_id;
-          }
-          // Open-tool tracking for the watchdog exemption (cf. pi #4568 dir 2).
-          if (event.type === 'item.started') {
-            const t = event.item?.type;
-            if (t === 'command_execution' || t === 'mcp_tool_call') {
-              openToolItems++;
-            }
-          } else if (event.type === 'item.completed') {
-            const t = event.item?.type;
-            if (t === 'command_execution' || t === 'mcp_tool_call') {
-              openToolItems = Math.max(0, openToolItems - 1);
-            }
-          } else if (
-            event.type === 'turn.completed' ||
-            event.type === 'turn.failed'
-          ) {
-            sawTurnTerminator = true;
-            if (event.type === 'turn.completed') {
-              sawTurnCompleted = true;
-              if (event.usage) {
-                // ── Quota observability (S5, #4632) ───────────────────────
-                // Accumulate + log AT the event (no cross-closure state):
-                // one structured info line per completed turn with per-turn
-                // and process-wide cumulative fields (full-content logging
-                // guideline). No USD — a subscription has no per-call price.
-                const {usage} = event;
-                quotaSink.turnsCompleted += 1;
-                quotaSink.inputTokens += usage.input_tokens ?? 0;
-                quotaSink.cachedInputTokens += usage.cached_input_tokens ?? 0;
-                quotaSink.outputTokens += usage.output_tokens ?? 0;
-                quotaSink.reasoningOutputTokens +=
-                  usage.reasoning_output_tokens ?? 0;
-                logger.info(
-                  {
-                    threadId: latestSessionId,
-                    resumed: resumeThreadId !== undefined,
-                    inputTokens: usage.input_tokens,
-                    cachedInputTokens: usage.cached_input_tokens,
-                    outputTokens: usage.output_tokens,
-                    reasoningOutputTokens: usage.reasoning_output_tokens,
-                    cumulative: { ...quotaSink },
-                  },
-                  'codex quota usage (turn.completed)',
-                );
-                if (event.usage.input_tokens !== undefined &&
-                    event.usage.input_tokens >= resumeBudgetSink.maxResumeInputTokens) {
-                  resumeBudgetSink.resumeFreshNextTurn = true;
-                  logger.warn(
-                    {
-                      inputTokens: event.usage.input_tokens,
-                      maxResumeInputTokens: resumeBudgetSink.maxResumeInputTokens,
-                      threadId: latestSessionId,
-                    },
-                    'codex resume input budget reached — next turn will start a fresh session',
-                  );
-                }
-              }
-            } else {
-              // turn.failed is a terminator for bookkeeping, but the TURN
-              // still needs a synthetic result (see runInput) — the adapter
-              // emits only an error for it, and ChatAgent resolves a turn
-              // exclusively on type==='result' (cf. #4378 error_max_* pitfall).
-              sawTurnFailed = true;
-            }
-          } else if (event.type === 'error') {
-            runFailureText += `\n${event.message}`;
-          }
-          if (event.type === 'turn.failed') {
-            runFailureText += `\n${event.error?.message ?? ''}`;
-          }
-          touchStallWatchdog();
-          const presentation = classifyCodexEvent(event);
-          logger.debug({ eventType: event.type, presentation }, 'codex JSONL event classified');
-          const adapted = adaptCodexEvent(event);
-          if (adapted) {
-            const messageId = adapted.metadata?.messageId;
-            const eventKey = messageId ? `${adapted.type}:${messageId}` : undefined;
-            if (eventKey && deliveredEventKeys.has(eventKey)) {
-              logger.debug({ eventKey }, 'skipping duplicate Codex event');
-              wakeAll();
-              return;
-            }
-            if (eventKey) {deliveredEventKeys.add(eventKey);}
-            queue.push(adapted);
-          }
-          wakeAll();
-        };
-        onAbort = (): void => {
-          aborted = true;
-          wakeAll();
-        };
-
-        // ── Turn runner: one user input → one codex exec run ──────────────
-        // First turn runs `codex exec … -- <prompt>`; every follow-up runs
-        // `codex exec resume <thread_id> … -- <prompt>` (S3, #4628).
-        // S7 (#4634): each run holds a global lease — at most
-        // maxConcurrentRuns codex exec children process-wide; excess turns
-        // queue FIFO across chats with a backpressure notice.
-        const runInput = async (prompt: string): Promise<void> => {
-          // Item IDs are scoped to one exec invocation. Clear before every
-          // run because older Codex versions (and test doubles) may omit
-          // `turn.started` on resumed executions.
-          deliveredEventKeys.clear();
-          const resumeTarget = resumeBudgetSink.resumeFreshNextTurn ? undefined : resumeThreadId;
-          if (resumeThreadId !== undefined && resumeTarget === undefined) {
-            resumeBudgetSink.resumeFreshNextTurn = false;
-            logger.info(
-              { previousThreadId: resumeThreadId, maxResumeInputTokens: resumeBudgetSink.maxResumeInputTokens },
-              'starting fresh codex session after resume input budget was reached',
-            );
-          }
-          governorSink.touchSession(sessionKey);
-          // Backpressure UX (#4634): announce the wait BEFORE it happens —
-          // never silence. (Also announce when merely joining the queue.)
-          const pre = governorSink.getStats();
-          if (pre.runningRuns >= pre.maxConcurrentRuns || pre.queuedRuns > 0) {
+          // Failure-signature detection (#4628/#4632, review hardened):
+          // - gated on runFailed — a SUCCESSFUL turn (exit 0 + terminator)
+          //   must never be followed by a spurious 401/limit notice just
+          //   because stderr carries unrelated text (e.g. an MCP server's
+          //   own 401 noise, or retry-and-recover 429 lines codex leaves
+          //   on stderr);
+          // - per-surface: a conjunction must hit WITHIN the raw-events
+          //   text OR within stderr, not across the splice of the two.
+          const runFailed =
+            Boolean(result.spawnError) ||
+            result.timedOut ||
+            result.exitCode !== 0 ||
+            !sawTurnTerminator;
+          const authFailed =
+            runFailed &&
+            (isCodexAuthFailure(runFailureText) || isCodexAuthFailure(result.stderrTail));
+          const usageLimited =
+            runFailed &&
+            (isCodexUsageLimit(runFailureText) || isCodexUsageLimit(result.stderrTail));
+          const resumeTargetGone =
+            runFailed &&
+            resumeTarget !== undefined &&
+            (isCodexResumeTargetMissing(runFailureText) ||
+              isCodexResumeTargetMissing(result.stderrTail));
+          if (authFailed) {
+            // Most actionable diagnosis wins: exit-code noise around a 401
+            // would bury the one thing the user can actually do.
             pushSynthetic({
-              type: 'status',
+              type: 'error',
+              content: REAUTH_NOTICE,
+              role: 'assistant',
+            });
+          } else if (usageLimited) {
+            // Friendly degrade (#4632): quote codex's own reset hint when
+            // present. Anchored to `try again (at|in)` — a bare "try
+            // again later" from unrelated stderr must not displace the
+            // real timestamp, and `[^.\n]+` after (at|in) tolerates
+            // decimals ("in 2.5 hours"). The failed turn latches nothing,
+            // so the conversation anchor survives into the next window —
+            // recovery needs no restart, only a resend after the reset.
+            const resetHint =
+              /try again (?:at|in) [^.\n]+/i.exec(runFailureText)?.[0] ??
+              /try again (?:at|in) [^.\n]+/i.exec(result.stderrTail)?.[0];
+            pushSynthetic({
+              type: 'error',
+              content: resetHint
+                ? `${USAGE_LIMIT_NOTICE}\n上游提示: ${resetHint}`
+                : USAGE_LIMIT_NOTICE,
+              role: 'assistant',
+            });
+          } else if (result.spawnError) {
+            pushSynthetic({
+              type: 'error',
               content:
-                `⏳ Codex 并发已满（${pre.runningRuns}/${pre.maxConcurrentRuns} 运行中）` +
-                `——排队等候，前面还有 ${pre.queuedRuns} 个任务…`,
+                `codex exec failed to spawn (${result.spawnError.message}). ` +
+                'Is the codex CLI installed and on PATH?',
+              role: 'assistant',
+            });
+          } else if (result.timedOut) {
+            pushSynthetic({
+              type: 'error',
+              content:
+                `codex exec timed out after ${timeoutLabel} and was killed — ` +
+                'try a smaller task or raise the timeout.',
+              role: 'assistant',
+            });
+          } else if (resumeTargetGone) {
+            // Self-heal (#4628): the rollout vanished on codex's side —
+            // drop the dead id so the NEXT turn starts fresh instead of
+            // bricking this chat until /reset.
+            resumeThreadId = undefined;
+            logger.warn(
+              { threadId: resumeTarget },
+              'codex resume target missing (no rollout found); cleared — next turn starts a fresh session (Issue #4628)'
+            );
+            pushSynthetic({
+              type: 'error',
+              content: RESUME_TARGET_GONE_NOTICE,
+              role: 'assistant',
+            });
+          } else if (result.exitCode !== 0) {
+            pushSynthetic({
+              type: 'error',
+              content: `codex exec exited with code ${result.exitCode}${
+                result.stderrTail ? `: ${result.stderrTail.trim().slice(-500)}` : ''
+              }`,
+              role: 'assistant',
+            });
+          } else if (!sawTurnTerminator) {
+            pushSynthetic({
+              type: 'error',
+              content:
+                'codex exec exited 0 without completing a turn (no turn.completed event) — ' +
+                'possibly a CLI version mismatch; see exec-adapter.ts notes.',
               role: 'assistant',
             });
           }
-          const lease = await governorSink.acquireRun();
-          if (aborted || terminated) {
-            // Cancelled/finished while queued — don't spawn a zombie run.
-            lease.release();
-            return;
+          // Latch the resume anchor ONLY off a completed turn: thread.started
+          // fires even on a 401-failed run (verified 0.132.0), so a failed
+          // first turn must not become the conversation anchor; an already-
+          // latched conversation survives transient failures (retry after a
+          // timeout resumes where it left off). turn.completed may carry a
+          // NEW thread_id if codex forks the thread on resume — latching
+          // latestSessionId handles both shapes.
+          if (sawTurnCompleted && latestSessionId) {
+            resumeThreadId = latestSessionId;
           }
-          runActive = true;
-          sawTurnTerminator = false;
-          sawTurnFailed = false;
-          sawTurnCompleted = false;
-          runFailureText = '';
-          touchStallWatchdog();
-          const { promise, handle } = runner.run(
+          logger.debug(
             {
-              prompt: thisBuiltinContext
-                ? `${thisBuiltinContext}\n\nUser request:\n${prompt}`
-                : prompt,
-              resumeSessionId: resumeTarget,
-              sandboxMode: sandboxDecision.sandbox,
-              cwd: options.cwd,
-              model: codexModel,
-              env: { ...providerEnv, ...options.env },
-              stderr: options.stderr,
+              resumed: resumeTarget !== undefined,
+              threadId: resumeThreadId,
+              authFailed,
+              resumeTargetGone,
+              exitCode: result.exitCode,
             },
-            enqueue,
+            'codex turn boundary (exec run finished)'
           );
-          currentRun = handle;
-          if (cancelRequested) {
-            // cancel()/close() arrived before this run started (early latch).
-            handle.abort();
-          }
-          try {
-            const result: CodexExecRunResult = await promise;
-            if (stalled || result.aborted) {
-              // Stall terminator is synthesized by the consumer loop; a user
-              // abort ends the stream without a turn terminator (pi parity).
-              return;
-            }
-            // Failure-signature detection (#4628/#4632, review hardened):
-            // - gated on runFailed — a SUCCESSFUL turn (exit 0 + terminator)
-            //   must never be followed by a spurious 401/limit notice just
-            //   because stderr carries unrelated text (e.g. an MCP server's
-            //   own 401 noise, or retry-and-recover 429 lines codex leaves
-            //   on stderr);
-            // - per-surface: a conjunction must hit WITHIN the raw-events
-            //   text OR within stderr, not across the splice of the two.
-            const runFailed =
-              Boolean(result.spawnError) ||
-              result.timedOut ||
-              result.exitCode !== 0 ||
-              !sawTurnTerminator;
-            const authFailed =
-              runFailed &&
-              (isCodexAuthFailure(runFailureText) || isCodexAuthFailure(result.stderrTail));
-            const usageLimited =
-              runFailed &&
-              (isCodexUsageLimit(runFailureText) || isCodexUsageLimit(result.stderrTail));
-            const resumeTargetGone =
-              runFailed &&
-              resumeTarget !== undefined &&
-              (isCodexResumeTargetMissing(runFailureText) ||
-                isCodexResumeTargetMissing(result.stderrTail));
-            if (authFailed) {
-              // Most actionable diagnosis wins: exit-code noise around a 401
-              // would bury the one thing the user can actually do.
-              pushSynthetic({
-                type: 'error',
-                content: REAUTH_NOTICE,
-                role: 'assistant',
-              });
-            } else if (usageLimited) {
-              // Friendly degrade (#4632): quote codex's own reset hint when
-              // present. Anchored to `try again (at|in)` — a bare "try
-              // again later" from unrelated stderr must not displace the
-              // real timestamp, and `[^.\n]+` after (at|in) tolerates
-              // decimals ("in 2.5 hours"). The failed turn latches nothing,
-              // so the conversation anchor survives into the next window —
-              // recovery needs no restart, only a resend after the reset.
-              const resetHint =
-                /try again (?:at|in) [^.\n]+/i.exec(runFailureText)?.[0] ??
-                /try again (?:at|in) [^.\n]+/i.exec(result.stderrTail)?.[0];
-              pushSynthetic({
-                type: 'error',
-                content: resetHint
-                  ? `${USAGE_LIMIT_NOTICE}\n上游提示: ${resetHint}`
-                  : USAGE_LIMIT_NOTICE,
-                role: 'assistant',
-              });
-            } else if (result.spawnError) {
-              pushSynthetic({
-                type: 'error',
-                content:
-                  `codex exec failed to spawn (${result.spawnError.message}). ` +
-                  'Is the codex CLI installed and on PATH?',
-                role: 'assistant',
-              });
-            } else if (result.timedOut) {
-              pushSynthetic({
-                type: 'error',
-                content:
-                  `codex exec timed out after ${timeoutLabel} and was killed — ` +
-                  'try a smaller task or raise the timeout.',
-                role: 'assistant',
-              });
-            } else if (resumeTargetGone) {
-              // Self-heal (#4628): the rollout vanished on codex's side —
-              // drop the dead id so the NEXT turn starts fresh instead of
-              // bricking this chat until /reset.
-              resumeThreadId = undefined;
-              logger.warn(
-                { threadId: resumeTarget },
-                'codex resume target missing (no rollout found); cleared — next turn starts a fresh session (Issue #4628)',
-              );
-              pushSynthetic({
-                type: 'error',
-                content: RESUME_TARGET_GONE_NOTICE,
-                role: 'assistant',
-              });
-            } else if (result.exitCode !== 0) {
-              pushSynthetic({
-                type: 'error',
-                content:
-                  `codex exec exited with code ${result.exitCode}${
-                  result.stderrTail
-                    ? `: ${result.stderrTail.trim().slice(-500)}`
-                    : ''}`,
-                role: 'assistant',
-              });
-            } else if (!sawTurnTerminator) {
-              pushSynthetic({
-                type: 'error',
-                content:
-                  'codex exec exited 0 without completing a turn (no turn.completed event) — ' +
-                  'possibly a CLI version mismatch; see exec-adapter.ts notes.',
-                role: 'assistant',
-              });
-            }
-            // Latch the resume anchor ONLY off a completed turn: thread.started
-            // fires even on a 401-failed run (verified 0.132.0), so a failed
-            // first turn must not become the conversation anchor; an already-
-            // latched conversation survives transient failures (retry after a
-            // timeout resumes where it left off). turn.completed may carry a
-            // NEW thread_id if codex forks the thread on resume — latching
-            // latestSessionId handles both shapes.
-            if (sawTurnCompleted && latestSessionId) {
-              resumeThreadId = latestSessionId;
-            }
-            logger.debug(
-              {
-                resumed: resumeTarget !== undefined,
-                threadId: resumeThreadId,
-                authFailed,
-                resumeTargetGone,
-                exitCode: result.exitCode,
-              },
-              'codex turn boundary (exec run finished)',
-            );
-            // A failed run still ends the TURN so ChatAgent's turn accounting
-            // completes (synthetic result mirrors turn.completed) — and the
-            // result carries terminatedReason:'turn_failed' so ChatAgent
-            // records FAILURE (like 'stall'), never a masked success; this
-            // also covers turn.failed, whose adapter output is error-only
-            // and would otherwise leave the turn unresolved forever (#4378
-            // error_max_* pitfall, flagged in the S2 review).
-            if (!sawTurnTerminator || sawTurnFailed) {
-              pushSynthetic({
-                type: 'result',
-                content: '',
-                role: 'assistant',
-                ...(runFailed || sawTurnFailed
-                  ? { metadata: { terminatedReason: 'turn_failed' } }
-                  : {}),
-              });
-            }
-          } finally {
-            // Release the run lease FIRST so the longest-queued run starts
-            // before this turn's post-processing finishes; touch AFTER so a
-            // session finishing a long run is never LRU-evicted as "idlest"
-            // based on its stale start timestamp (S7 review).
-            lease.release();
-            governorSink.touchSession(sessionKey);
-            currentRun = null;
-            runActive = false;
-            openToolItems = 0;
-            clearStallTimers();
-            wakeAll();
-          }
-        };
-
-        // Early-cancel window (S2 review): handle.cancel()/close() called
-        // between queryStream() returning and the first next() sees onAbort
-        // === null — without this check the consumer would park forever
-        // (pi parity: its bridge returns immediately for the same window).
-        if (cancelRequested) {
-          aborted = true;
-          return;
-        }
-
-        // ── Input pump: user inputs arrive over the session lifetime ──────
-        // Between turns it parks in inputIterator.next(); the input
-        // generator ending (chat-agent closes its channel on /reset etc.) is
-        // what winds the bridge down.
-        let terminated = false;
-        const inputIterator = input[Symbol.asyncIterator]();
-        void (async () => {
-          try {
-            while (true) {
-              const { value, done } = await inputIterator.next();
-              if (done || terminated) {
-                return;
-              }
-              await runInput(userInputText(value));
-            }
-          } finally {
-            inputDone = true;
-            wakeAll();
-          }
-        })().catch(() => {
-          // Producer error in the input generator — end the session the same
-          // way; never surface an unhandled rejection from the detached pump.
-        });
-
-        try {
-          while (true) {
-            if (stalled && (aborted || !runActive)) {
-              break;
-            }
-            if (queue.length === 0) {
-              if (aborted || (inputDone && !runActive)) {
-                break;
-              }
-              await new Promise<void>((resolve) => notify.push(resolve));
-              continue;
-            }
-            const message = queue.shift() as AgentMessage;
-            // Post-stall events from the dying process must not reach the
-            // consumer ahead of the stall terminator (pi part-5 review).
-            if (stalled) {
-              continue;
-            }
-            yield message;
-          }
-          if (stalled) {
-            yield {
+          // A failed run still ends the TURN so ChatAgent's turn accounting
+          // completes (synthetic result mirrors turn.completed) — and the
+          // result carries terminatedReason:'turn_failed' so ChatAgent
+          // records FAILURE (like 'stall'), never a masked success; this
+          // also covers turn.failed, whose adapter output is error-only
+          // and would otherwise leave the turn unresolved forever (#4378
+          // error_max_* pitfall, flagged in the S2 review).
+          if (!sawTurnTerminator || sawTurnFailed) {
+            pushSynthetic({
               type: 'result',
-              content: STALL_TERMINATE_NOTICE,
-              role: 'system',
-              metadata: { terminatedReason: 'stall' },
-            };
-            return;
-          }
-          if (wasEvicted) {
-            // Governance teardown, not an error: a clean terminator with
-            // terminatedReason 'evicted' tells ChatAgent to finish WITHOUT
-            // auto-restarting — the victim re-registers on its next message
-            // (and resumes the stashed thread). Without this, the restart
-            // loop re-registered the SAME sessionKey while still at cap and
-            // cascaded evictions into the circuit breaker (S7 review high).
-            yield {
-              type: 'result',
-              content: EVICTED_NOTICE,
-              role: 'system',
-              metadata: { terminatedReason: 'evicted' },
-            };
-            return;
+              content: '',
+              role: 'assistant',
+              ...(runFailed || sawTurnFailed
+                ? { metadata: { terminatedReason: 'turn_failed' } }
+                : {}),
+            });
           }
         } finally {
-          // Teardown: kill any in-flight run; later inputs become no-ops.
-          // Normal teardown unregisters the session WITHOUT stashing its
-          // anchor — /reset means reset (stash happens only on eviction).
-          terminated = true;
-          currentRun?.abort();
+          // Release the run lease FIRST so the longest-queued run starts
+          // before this turn's post-processing finishes; touch AFTER so a
+          // session finishing a long run is never LRU-evicted as "idlest"
+          // based on its stale start timestamp (S7 review).
+          lease.release();
+          governorSink.touchSession(sessionKey);
+          currentRun = null;
+          runActive = false;
+          openToolItems = 0;
           clearStallTimers();
-          registration.unregister();
-          if (!wasEvicted && stashable) {
-            // Normal teardown (user /reset, idle GC, stream end): drop any
-            // stash residue for this key so a later stream for the same
-            // chat never resumes a conversation the user reset away
-            // (S7 review — the eviction-window /reset hole).
-            stashSink.delete(sessionKey);
-          }
+          wakeAll();
         }
       };
+
+      // Early-cancel window (S2 review): handle.cancel()/close() called
+      // between queryStream() returning and the first next() sees onAbort
+      // === null — without this check the consumer would park forever
+      // (pi parity: its bridge returns immediately for the same window).
+      if (cancelRequested) {
+        aborted = true;
+        return;
+      }
+
+      // ── Input pump: user inputs arrive over the session lifetime ──────
+      // Between turns it parks in inputIterator.next(); the input
+      // generator ending (chat-agent closes its channel on /reset etc.) is
+      // what winds the bridge down.
+      let terminated = false;
+      const inputIterator = input[Symbol.asyncIterator]();
+      void (async () => {
+        try {
+          while (true) {
+            const { value, done } = await inputIterator.next();
+            if (done || terminated) {
+              return;
+            }
+            await runInput(userInputText(value));
+          }
+        } finally {
+          inputDone = true;
+          wakeAll();
+        }
+      })().catch(() => {
+        // Producer error in the input generator — end the session the same
+        // way; never surface an unhandled rejection from the detached pump.
+      });
+
+      try {
+        while (true) {
+          if (stalled && (aborted || !runActive)) {
+            break;
+          }
+          if (queue.length === 0) {
+            if (aborted || (inputDone && !runActive)) {
+              break;
+            }
+            await new Promise<void>((resolve) => notify.push(resolve));
+            continue;
+          }
+          const message = queue.shift() as AgentMessage;
+          // Post-stall events from the dying process must not reach the
+          // consumer ahead of the stall terminator (pi part-5 review).
+          if (stalled) {
+            continue;
+          }
+          yield message;
+        }
+        if (stalled) {
+          yield {
+            type: 'result',
+            content: STALL_TERMINATE_NOTICE,
+            role: 'system',
+            metadata: { terminatedReason: 'stall' },
+          };
+          return;
+        }
+        if (wasEvicted) {
+          // Governance teardown, not an error: a clean terminator with
+          // terminatedReason 'evicted' tells ChatAgent to finish WITHOUT
+          // auto-restarting — the victim re-registers on its next message
+          // (and resumes the stashed thread). Without this, the restart
+          // loop re-registered the SAME sessionKey while still at cap and
+          // cascaded evictions into the circuit breaker (S7 review high).
+          yield {
+            type: 'result',
+            content: EVICTED_NOTICE,
+            role: 'system',
+            metadata: { terminatedReason: 'evicted' },
+          };
+          return;
+        }
+      } finally {
+        // Teardown: kill any in-flight run; later inputs become no-ops.
+        // Normal teardown unregisters the session WITHOUT stashing its
+        // anchor — /reset means reset (stash happens only on eviction).
+        terminated = true;
+        currentRun?.abort();
+        clearStallTimers();
+        registration.unregister();
+        if (!wasEvicted && stashable) {
+          // Normal teardown (user /reset, idle GC, stream end): drop any
+          // stash residue for this key so a later stream for the same
+          // chat never resumes a conversation the user reset away
+          // (S7 review — the eviction-window /reset hole).
+          stashSink.delete(sessionKey);
+        }
+      }
+    };
 
     return {
       handle: {
@@ -1012,13 +996,13 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     // Tools/MCP mapping is an open question on #4627 (codex has its own MCP
     // config surface) — deliberately not stubbed half-way.
     throw new Error(
-      'CodexAgentProvider: tools/MCP mapping is not supported yet — tracked as an open question on #4627.',
+      'CodexAgentProvider: tools/MCP mapping is not supported yet — tracked as an open question on #4627.'
     );
   }
 
   createMcpServer(_config: McpServerConfig): unknown {
     throw new Error(
-      'CodexAgentProvider: tools/MCP mapping is not supported yet — tracked as an open question on #4627.',
+      'CodexAgentProvider: tools/MCP mapping is not supported yet — tracked as an open question on #4627.'
     );
   }
 

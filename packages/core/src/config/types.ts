@@ -46,6 +46,8 @@ export interface CodexAgentGovernanceConfig {
   maxActiveSessions?: number;
   /** Max simultaneously-executing codex exec children. Default 2. */
   maxConcurrentRuns?: number;
+  /** Optional per-run wall-clock timeout in milliseconds; 0 disables it. */
+  execTimeoutMs?: number;
 }
 
 export interface AgentConfig {
@@ -200,11 +202,11 @@ export interface GlmConfig {
  * Controls how the bot responds to messages.
  */
 export type RuliuReplyMode =
-  | 'ignore'           // Discard messages
-  | 'record'           // Only record, no reply
-  | 'mention-only'     // Reply only when @mentioned
+  | 'ignore' // Discard messages
+  | 'record' // Only record, no reply
+  | 'mention-only' // Reply only when @mentioned
   | 'mention-and-watch' // @ + watch list + follow-up window (default)
-  | 'proactive';       // Proactive participation
+  | 'proactive'; // Proactive participation
 
 /**
  * Ruliu (如流) platform configuration section.
@@ -316,13 +318,7 @@ export type TriggerMode = 'mention' | 'always' | 'auto';
  * Filter reason types for message filtering.
  * @see Issue #597
  */
-export type FilterReason =
-  | 'duplicate'
-  | 'bot'
-  | 'old'
-  | 'unsupported'
-  | 'empty'
-  | 'trigger_mode';
+export type FilterReason = 'duplicate' | 'bot' | 'old' | 'unsupported' | 'empty' | 'trigger_mode';
 
 /**
  * Debug configuration for filtered message forwarding.
