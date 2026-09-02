@@ -63,6 +63,33 @@ describe('CodexSessionGovernor session cap (Issue #4634)', () => {
     expect(notice.evictedKey).toBe('old');
   });
 
+  it('never evicts a session with a running or queued turn', () => {
+    const clock = makeClock();
+    const g = new CodexSessionGovernor({ maxActiveSessions: 2, now: clock.now });
+    const evicted: string[] = [];
+    g.registerSession('busy', { evict: () => evicted.push('busy') });
+    clock.advance(10);
+    g.registerSession('idle', { evict: () => evicted.push('idle') });
+    g.setSessionBusy('busy', true);
+
+    const notice = g.registerSession('new', { evict: NOOP });
+    expect(notice.evictedKey).toBe('idle');
+    expect(evicted).toEqual(['idle']);
+    expect(g.getStats().activeSessions).toBe(2);
+  });
+
+  it('temporarily exceeds the cap when every existing session is busy', () => {
+    const g = new CodexSessionGovernor({ maxActiveSessions: 2 });
+    g.registerSession('a', { evict: NOOP });
+    g.registerSession('b', { evict: NOOP });
+    g.setSessionBusy('a', true);
+    g.setSessionBusy('b', true);
+
+    const notice = g.registerSession('c', { evict: NOOP });
+    expect(notice.evictedKey).toBeUndefined();
+    expect(g.getStats().activeSessions).toBe(3);
+  });
+
   it('re-registration of a known key replaces in place (no eviction)', () => {
     const g = new CodexSessionGovernor({ maxActiveSessions: 2 });
     g.registerSession('a', { evict: NOOP });

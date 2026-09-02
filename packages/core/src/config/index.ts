@@ -60,9 +60,10 @@ export function applyGlobalEnv(): void {
   // config loaded at module import time. This ensures applyGlobalEnv()
   // reads from the correct config file when --config is used.
   const preloaded = getPreloadedConfig();
-  const env = (preloaded && validateConfig(preloaded))
-    ? (getConfigFromFile(preloaded).env || {})
-    : Config.getGlobalEnv();
+  const env =
+    preloaded && validateConfig(preloaded)
+      ? getConfigFromFile(preloaded).env || {}
+      : Config.getGlobalEnv();
 
   let applied = 0;
   let skipped = 0;
@@ -79,12 +80,12 @@ export function applyGlobalEnv(): void {
   if (applied > 0) {
     logger.info(
       { applied, skipped, keys: Object.keys(env) },
-      'Applied global env vars to process.env',
+      'Applied global env vars to process.env'
     );
   } else if (skipped > 0) {
     logger.debug(
       { skipped, keys: Object.keys(env) },
-      'Skipped global env vars (already set in process.env)',
+      'Skipped global env vars (already set in process.env)'
     );
   }
 }
@@ -116,7 +117,10 @@ export class Config {
     : path.resolve(Config.CONFIG_DIR, Config.RAW_WORKSPACE_DIR);
   // Private: use getWorkspaceDir() for all access. This ensures callers
   // consistently go through the env-var override path (DISCLAUDE_WORKSPACE_DIR).
-  private static readonly WORKSPACE_DIR = Config.resolveWorkspaceDir(Config.RAW_WORKSPACE_DIR, Config.RESOLVED_VIA_CONFIG);
+  private static readonly WORKSPACE_DIR = Config.resolveWorkspaceDir(
+    Config.RAW_WORKSPACE_DIR,
+    Config.RESOLVED_VIA_CONFIG
+  );
 
   /**
    * Determine the correct workspace directory.
@@ -159,8 +163,8 @@ export class Config {
             cwdRelativeDir,
             configSource: Config.CONFIG_SOURCE,
           },
-          'workspace.dir resolved inside git repo; falling back to cwd-relative path. '
-          + 'Consider setting DISCLAUDE_WORKSPACE_DIR env var or using an absolute path.',
+          'workspace.dir resolved inside git repo; falling back to cwd-relative path. ' +
+            'Consider setting DISCLAUDE_WORKSPACE_DIR env var or using an absolute path.'
         );
         return cwdRelativeDir;
       }
@@ -184,8 +188,8 @@ export class Config {
     if (raw !== undefined && typeof raw !== 'boolean') {
       logger.warn(
         { streamingCard: raw },
-        'feishu.streamingCard must be a boolean — the \'p2p\' scope was removed in #4510 part 2 '
-          + '(p2p-first narrowing is built-in). Treating this value as false.'
+        "feishu.streamingCard must be a boolean — the 'p2p' scope was removed in #4510 part 2 " +
+          '(p2p-first narrowing is built-in). Treating this value as false.'
       );
       return false;
     }
@@ -193,44 +197,46 @@ export class Config {
   })();
 
   // GLM configuration (from config file)
-          // No fallback defaults - model must be explicitly configured
+  // No fallback defaults - model must be explicitly configured
   static readonly GLM_API_KEY = fileConfigOnly.glm?.apiKey || '';
-          static readonly GLM_MODEL = fileConfigOnly.glm?.model || '';
-          static readonly GLM_API_BASE_URL = fileConfigOnly.glm?.apiBaseUrl || 'https://open.bigmodel.cn/api/anthropic';
+  static readonly GLM_MODEL = fileConfigOnly.glm?.model || '';
+  static readonly GLM_API_BASE_URL =
+    fileConfigOnly.glm?.apiBaseUrl || 'https://open.bigmodel.cn/api/anthropic';
 
-          // Anthropic Claude configuration (from env for fallback)
-          static readonly ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
-          static readonly CLAUDE_MODEL = fileConfigOnly.agent?.model || '';
+  // Anthropic Claude configuration (from env for fallback)
+  static readonly ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
+  static readonly CLAUDE_MODEL = fileConfigOnly.agent?.model || '';
 
-          // Agent SDK backend — which agent runtime boots (Issue #4388).
-          // Orthogonal to the model-layer provider (GLM vs Anthropic LLM API).
-          // undefined ⇒ 'claude' default. Consumed by PrimaryNode.start().
-          static readonly AGENT_BACKEND = fileConfigOnly.agent?.agentBackend;
+  // Agent SDK backend — which agent runtime boots (Issue #4388).
+  // Orthogonal to the model-layer provider (GLM vs Anthropic LLM API).
+  // undefined ⇒ 'claude' default. Consumed by PrimaryNode.start().
+  static readonly AGENT_BACKEND = fileConfigOnly.agent?.agentBackend;
 
-          // Codex exec sandbox override (Issue #4631, S4 of #4627). Only
-          // meaningful with AGENT_BACKEND === 'codex'; consumed by the
-          // provider factory. undefined ⇒ derived from permissionMode.
-          static readonly CODEX_SANDBOX = fileConfigOnly.agent?.codexSandbox;
-          static readonly CODEX_NETWORK_ACCESS = fileConfigOnly.agent?.codexNetworkAccess;
+  // Codex exec sandbox override (Issue #4631, S4 of #4627). Only
+  // meaningful with AGENT_BACKEND === 'codex'; consumed by the
+  // provider factory. undefined ⇒ derived from permissionMode.
+  static readonly CODEX_SANDBOX = fileConfigOnly.agent?.codexSandbox;
+  static readonly CODEX_NETWORK_ACCESS = fileConfigOnly.agent?.codexNetworkAccess;
 
-          // Codex concurrency governance caps (Issue #4634, S7 of #4627).
-          static readonly CODEX_MAX_ACTIVE_SESSIONS = fileConfigOnly.agent?.codex?.maxActiveSessions;
-          static readonly CODEX_MAX_CONCURRENT_RUNS = fileConfigOnly.agent?.codex?.maxConcurrentRuns;
+  // Codex concurrency governance caps (Issue #4634, S7 of #4627).
+  static readonly CODEX_MAX_ACTIVE_SESSIONS = fileConfigOnly.agent?.codex?.maxActiveSessions;
+  static readonly CODEX_MAX_CONCURRENT_RUNS = fileConfigOnly.agent?.codex?.maxConcurrentRuns;
+  static readonly CODEX_EXEC_TIMEOUT_MS = fileConfigOnly.agent?.codex?.execTimeoutMs;
 
-          // Tier model configuration (Issue #3059)
-          private static readonly CLAUDE_HIGH_MODEL = fileConfigOnly.agent?.highModel || '';
-          private static readonly CLAUDE_LOW_MODEL = fileConfigOnly.agent?.lowModel || '';
-          private static readonly CLAUDE_MULTIMODAL_MODEL = fileConfigOnly.agent?.multimodalModel || '';
-          private static readonly GLM_HIGH_MODEL = fileConfigOnly.glm?.highModel || '';
-          private static readonly GLM_LOW_MODEL = fileConfigOnly.glm?.lowModel || '';
-          private static readonly GLM_MULTIMODAL_MODEL = fileConfigOnly.glm?.multimodalModel || '';
+  // Tier model configuration (Issue #3059)
+  private static readonly CLAUDE_HIGH_MODEL = fileConfigOnly.agent?.highModel || '';
+  private static readonly CLAUDE_LOW_MODEL = fileConfigOnly.agent?.lowModel || '';
+  private static readonly CLAUDE_MULTIMODAL_MODEL = fileConfigOnly.agent?.multimodalModel || '';
+  private static readonly GLM_HIGH_MODEL = fileConfigOnly.glm?.highModel || '';
+  private static readonly GLM_LOW_MODEL = fileConfigOnly.glm?.lowModel || '';
+  private static readonly GLM_MULTIMODAL_MODEL = fileConfigOnly.glm?.multimodalModel || '';
 
-          // Logging configuration
-          static readonly LOG_LEVEL = fileConfigOnly.logging?.level || 'info';
-          static readonly LOG_FILE = fileConfigOnly.logging?.file;
-          static readonly LOG_PRETTY = fileConfigOnly.logging?.pretty ?? true;
-          static readonly LOG_ROTATE = fileConfigOnly.logging?.rotate ?? false;
-          static readonly SDK_DEBUG = fileConfigOnly.logging?.sdkDebug ?? true;
+  // Logging configuration
+  static readonly LOG_LEVEL = fileConfigOnly.logging?.level || 'info';
+  static readonly LOG_FILE = fileConfigOnly.logging?.file;
+  static readonly LOG_PRETTY = fileConfigOnly.logging?.pretty ?? true;
+  static readonly LOG_ROTATE = fileConfigOnly.logging?.rotate ?? false;
+  static readonly SDK_DEBUG = fileConfigOnly.logging?.sdkDebug ?? true;
 
   /**
    * Get a built-in resource directory from package installation.
@@ -310,12 +316,18 @@ export class Config {
     // Allow override via environment variable for test isolation
     if (process.env.DISCLAUDE_WORKSPACE_DIR && process.env.DISCLAUDE_WORKSPACE_DIR.trim() !== '') {
       const overrideDir = path.resolve(process.env.DISCLAUDE_WORKSPACE_DIR);
-      logger.debug({ workspaceDir: overrideDir, source: 'environment-variable' }, 'Using workspace directory');
+      logger.debug(
+        { workspaceDir: overrideDir, source: 'environment-variable' },
+        'Using workspace directory'
+      );
       return overrideDir;
     }
 
     const workspaceDir = this.WORKSPACE_DIR;
-    logger.debug({ workspaceDir, source: this.CONFIG_LOADED ? 'config-file' : 'default' }, 'Using workspace directory');
+    logger.debug(
+      { workspaceDir, source: this.CONFIG_LOADED ? 'config-file' : 'default' },
+      'Using workspace directory'
+    );
     return workspaceDir;
   }
 
@@ -368,7 +380,7 @@ export class Config {
         });
       }
       if (errors.length > 0) {
-        const messages = errors.map(e => `  ❌ ${e.field}: ${e.message}`).join('\n');
+        const messages = errors.map((e) => `  ❌ ${e.field}: ${e.message}`).join('\n');
         logger.error({ errors }, 'Configuration validation failed');
         throw new Error(`Configuration validation failed:\n\n${messages}`);
       }
@@ -398,7 +410,8 @@ export class Config {
       if (!this.ANTHROPIC_API_KEY) {
         errors.push({
           field: 'ANTHROPIC_API_KEY',
-          message: 'ANTHROPIC_API_KEY environment variable is required when agent.provider is "anthropic"',
+          message:
+            'ANTHROPIC_API_KEY environment variable is required when agent.provider is "anthropic"',
         });
       }
       if (!this.CLAUDE_MODEL) {
@@ -427,22 +440,22 @@ export class Config {
       // No provider configured at all
       errors.push({
         field: 'apiKey',
-        message: 'No API key configured. Set glm.apiKey in disclaude.config.yaml or ANTHROPIC_API_KEY environment variable',
+        message:
+          'No API key configured. Set glm.apiKey in disclaude.config.yaml or ANTHROPIC_API_KEY environment variable',
       });
     }
 
     if (errors.length > 0) {
-      const messages = errors.map(e => `  ❌ ${e.field}: ${e.message}`).join('\n');
+      const messages = errors.map((e) => `  ❌ ${e.field}: ${e.message}`).join('\n');
       logger.error({ errors }, 'Configuration validation failed');
       throw new Error(
         `Configuration validation failed:\n\n${messages}\n\n` +
-        'Please update your disclaude.config.yaml file:\n' +
-        '  glm:\n' +
-        '    apiKey: "your-key"\n' +
-        '    model: "glm-5"'
+          'Please update your disclaude.config.yaml file:\n' +
+          '  glm:\n' +
+          '    apiKey: "your-key"\n' +
+          '    model: "glm-5"'
       );
     }
-
   }
 
   /**
@@ -484,9 +497,9 @@ export class Config {
       if (this.isAgentTeamsEnabled()) {
         logger.warn(
           { provider: 'GLM', model: this.GLM_MODEL, enableAgentTeams: true },
-          'GLM + Agent Teams enabled: GLM models may not emit tool_use blocks for '
-          + 'in-process team workers. If workers are stuck in idle loops, try '
-          + 'disabling Agent Teams or using Anthropic models for workers.'
+          'GLM + Agent Teams enabled: GLM models may not emit tool_use blocks for ' +
+            'in-process team workers. If workers are stuck in idle loops, try ' +
+            'disabling Agent Teams or using Anthropic models for workers.'
         );
       }
 
@@ -499,7 +512,10 @@ export class Config {
     }
 
     // Fallback to Anthropic
-    logger.debug({ provider: 'Anthropic', model: this.CLAUDE_MODEL }, 'Using Anthropic API configuration');
+    logger.debug(
+      { provider: 'Anthropic', model: this.CLAUDE_MODEL },
+      'Using Anthropic API configuration'
+    );
     return {
       apiKey: this.ANTHROPIC_API_KEY,
       model: this.CLAUDE_MODEL,
@@ -530,7 +546,10 @@ export class Config {
         return tierModel;
       }
       // Fallback to GLM default model
-      logger.debug({ provider: 'GLM', tier, fallback: this.GLM_MODEL }, 'Tier model not set, using GLM default');
+      logger.debug(
+        { provider: 'GLM', tier, fallback: this.GLM_MODEL },
+        'Tier model not set, using GLM default'
+      );
       return this.GLM_MODEL || undefined;
     }
 
@@ -546,7 +565,10 @@ export class Config {
       return tierModel;
     }
     // Fallback to Anthropic default model
-    logger.debug({ provider: 'Anthropic', tier, fallback: this.CLAUDE_MODEL }, 'Tier model not set, using Anthropic default');
+    logger.debug(
+      { provider: 'Anthropic', tier, fallback: this.CLAUDE_MODEL },
+      'Tier model not set, using Anthropic default'
+    );
     return this.CLAUDE_MODEL || undefined;
   }
 
@@ -661,7 +683,7 @@ export class Config {
    *
    * @returns Session timeout configuration with defaults, or null if disabled
    */
-  static getSessionTimeoutConfig(): SessionTimeoutConfig & { enabled: boolean } | null {
+  static getSessionTimeoutConfig(): (SessionTimeoutConfig & { enabled: boolean }) | null {
     const timeoutConfig = fileConfigOnly.sessionRestore?.sessionTimeout;
     if (!timeoutConfig || timeoutConfig.enabled === false) {
       return null;
@@ -685,7 +707,6 @@ export class Config {
   static getSdkTimeoutMs(): number {
     return fileConfigOnly.agent?.sdkTimeoutMs ?? 300_000;
   }
-
 }
 
 // ============================================================================
@@ -717,7 +738,7 @@ export class Config {
  * @see Issue #1839
  */
 export function createDefaultRuntimeContext(
-  overrides?: Partial<AgentRuntimeContext>,
+  overrides?: Partial<AgentRuntimeContext>
 ): AgentRuntimeContext {
   const ctx: AgentRuntimeContext = {
     getWorkspaceDir: () => Config.getWorkspaceDir(),

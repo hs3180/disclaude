@@ -37,6 +37,8 @@ interface ActiveSession {
   regId: number;
   /** Monotonic-ish activity clock (caller supplies Date.now() touches). */
   lastActivityAt: number;
+  /** A running or queued turn is never an LRU eviction candidate. */
+  busy: boolean;
   /** Abort the victim's stream (eviction) — idempotent. */
   evict: () => void;
 }
@@ -106,13 +108,21 @@ export class CodexSessionGovernor {
       // at runtime below the current session count (setLimits does not
       // proactively evict; the cap re-engages here).
       while (this.sessions.size >= this.maxActiveSessions) {
-        evictedKey = this.evictIdlest() ?? evictedKey;
+        const victim = this.evictIdlest();
+        if (victim === undefined) {
+          // All sessions are busy. Keep active work alive and temporarily
+          // exceed the soft session cap; a later registration can evict an
+          // idle session once one exists.
+          break;
+        }
+        evictedKey = victim;
       }
     }
     const regId = this.nextRegId++;
     this.sessions.set(sessionKey, {
       regId,
       lastActivityAt: this.now(),
+      busy: false,
       evict: hooks.evict,
     });
     return {
@@ -130,6 +140,15 @@ export class CodexSessionGovernor {
   touchSession(sessionKey: string): void {
     const session = this.sessions.get(sessionKey);
     if (session) {
+      session.lastActivityAt = this.now();
+    }
+  }
+
+  /** Protect a session while its current turn is running or queued. */
+  setSessionBusy(sessionKey: string, busy: boolean): void {
+    const session = this.sessions.get(sessionKey);
+    if (session) {
+      session.busy = busy;
       session.lastActivityAt = this.now();
     }
   }
@@ -155,6 +174,9 @@ export class CodexSessionGovernor {
     let idlestKey: string | undefined;
     let idlestAt = Infinity;
     for (const [key, session] of this.sessions) {
+      if (session.busy) {
+        continue;
+      }
       // `<` (not `<=`) keeps the OLDEST registration on ties: a session that
       // has been idle equally long but longer-registered goes first.
       if (session.lastActivityAt < idlestAt) {

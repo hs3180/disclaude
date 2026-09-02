@@ -5,6 +5,7 @@
 # Configuration file with secrets
 disclaude.config.yaml
 disclaude.config.test.yaml
+disclaude.config.yaml.bak*
 
 # Docker source mirror configuration (user-specific)
 docker-source.env
