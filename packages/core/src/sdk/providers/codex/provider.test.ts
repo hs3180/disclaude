@@ -214,6 +214,30 @@ describe('CodexAgentProvider (Issues #4629 + #4630)', () => {
   // --------------------------------------------------------------------------
 
   describe('queryStream (exec bridge, Issue #4630)', () => {
+    it('injects project-local builtin resource discovery into the Codex prompt', async () => {
+      const workspace = mkdtempSync(join(tmpdir(), 'codex-project-workspace-'));
+      try {
+        mkdirSync(join(workspace, 'skills', 'demo'), { recursive: true });
+        writeFileSync(
+          join(workspace, 'skills', 'demo', 'SKILL.md'),
+          '---\ndescription: Demo project skill\n---\nUse the demo workflow.',
+        );
+        fixtures = makeFixtures({
+          withBinary: true,
+          withAuth: true,
+          body: `printf '%s' "$*" > "$CODEX_HOME/prompt"\n${HAPPY_BODY}`,
+        });
+        await drainStream(makeProvider(fixtures), ['hi'], { cwd: workspace });
+        const prompt = readFileSync(join(fixtures.codexHome, 'prompt'), 'utf8');
+        expect(prompt).toContain('demo');
+        expect(prompt).toContain('Demo project skill');
+        expect(prompt).toContain(join(workspace, 'skills', 'demo', 'SKILL.md'));
+        expect(prompt).toContain('User request:\nhi');
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    }, 15_000);
+
     it('bridges a happy-path run: text + result, thread_id → sessionId', async () => {
       fixtures = makeFixtures({ withBinary: true, withAuth: true, body: HAPPY_BODY });
       const { messages, sessionId } = await drainStream(makeProvider(fixtures), ['hi']);

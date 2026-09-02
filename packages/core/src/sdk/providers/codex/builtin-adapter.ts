@@ -10,6 +10,21 @@ export interface BuiltinResource {
   description?: string;
 }
 
+/** Combine resource indexes while preserving discovery order and removing duplicates. */
+export function mergeBuiltinResources(...groups: BuiltinResource[][]): BuiltinResource[] {
+  const seen = new Set<string>();
+  const merged: BuiltinResource[] = [];
+  for (const group of groups) {
+    for (const resource of group) {
+      const key = `${resource.kind}:${resource.name}:${resource.path}`;
+      if (seen.has(key)) {continue;}
+      seen.add(key);
+      merged.push(resource);
+    }
+  }
+  return merged;
+}
+
 function descriptionFromMarkdown(path: string): string | undefined {
   try {
     const source = readFileSync(path, 'utf8');
