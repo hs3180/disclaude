@@ -134,6 +134,21 @@ function withLogsRedirected<T>(fn: () => Promise<T>): Promise<T> {
   return fn().finally(() => { process.stdout.write = originalWrite; });
 }
 function restHint(baseUrl: string): string { return `PrimaryNode REST ${baseUrl} unreachable — start the main service (disclaude-primary start --api-port <port>) or pass --base-url / DISCLAIMED_REST_IPC_BASE_URL`.replace('DISCLAUDED', 'DISCLAUDE'); }
+async function restIsReachable(baseUrl: string): Promise<boolean> {
+  try {
+    const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/ping`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(5000),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+async function failureHint(baseUrl: string, error: string): Promise<string | undefined> {
+  if (/IPC|ECONNREFUSED|ENOTFOUND|fetch failed/i.test(error)) {return restHint(baseUrl);}
+  return await restIsReachable(baseUrl) ? undefined : restHint(baseUrl);
+}
 
 async function execute(command: string, args: Args, chatId: string, baseUrl: string): Promise<number> {
   // Parse all user-provided structured input before loading the runtime package.
@@ -193,10 +208,14 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
     } else {
       result = await withLogsRedirected(() => mod.send_interactive({ question: question as string, options: parsedOptions as InteractiveOption[], title: arg(args, 'title'), context: arg(args, 'context'), actionPrompts: parsedActionPrompts, chatId, parentMessageId }));
     }
-  } catch (error) { emitFail(command, `${command} failed: ${errorMessage(error)}`, /IPC|ECONNREFUSED|ENOTFOUND|fetch failed/i.test(errorMessage(error)) ? restHint(baseUrl) : undefined); return 1; }
+  } catch (error) {
+    const errorText = `${command} failed: ${errorMessage(error)}`;
+    emitFail(command, errorText, await failureHint(baseUrl, errorText));
+    return 1;
+  }
   if (result.success) { emitOk({ command, chatId, result: result.message || 'sent', durationMs: 0 }); return 0; }
   const resultError = result.error || result.message || `${command} returned without success`;
-  emitFail(command, resultError, /IPC|ECONNREFUSED|ENOTFOUND|fetch failed/i.test(resultError) ? restHint(baseUrl) : undefined);
+  emitFail(command, resultError, await failureHint(baseUrl, resultError));
   return 1;
 }
 

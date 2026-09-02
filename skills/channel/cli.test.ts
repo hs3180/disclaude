@@ -713,6 +713,26 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
       expect(String(obj.error)).not.toMatch(/ENOTFOUND|at /);
     }, 30000);
 
+    it('send_text with missing credentials and a down REST face -> actionable hint', async () => {
+      const port = await reserveEphemeralPort();
+      const baseUrl = `http://127.0.0.1:${port}`;
+      const r = await runCli(
+        ['send_text', '--chat', 'oc_test0123456789012345678901234567890', '--text', 'hi', '--base-url', baseUrl],
+        {
+          NODE_ENV: 'test',
+          HOME: '/nonexistent-home-4532',
+          DISCLAUDE_CONFIG_PATH: '/nonexistent-config-4532.yaml',
+          FEISHU_APP_ID: '',
+          FEISHU_APP_SECRET: '',
+        }
+      );
+      expect(r.code).toBe(1);
+      const obj = parseSingleJson(r.stdout);
+      expect(String(obj.error)).toContain('Feishu credentials not configured');
+      expect(String(obj.hint)).toContain(baseUrl);
+      expect(String(obj.hint)).toMatch(/start the main service|--api-port/);
+    }, 30000);
+
     it('send_text honors DISCLAUDE_REST_IPC_BASE_URL when --base-url is absent (#4532 scope 2)', async () => {
       const port = await reserveEphemeralPort();
       const baseUrl = `http://127.0.0.1:${port}`;
