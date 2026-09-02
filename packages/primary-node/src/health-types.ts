@@ -1,6 +1,6 @@
 /** Health data for Disclaude's own process and channel delivery paths. */
 
-export type ProbeErrorType = 'delivery_error';
+export type DeliveryErrorType = 'delivery_error' | 'http_4xx';
 
 export interface DeliveryHealth {
   status: 'healthy' | 'degraded' | 'unknown';
@@ -10,5 +10,5 @@ export interface DeliveryHealth {
   lastAttemptAt?: string;
   lastSuccessAt?: string;
   lastFailureAt?: string;
-  lastErrorType?: ProbeErrorType;
+  lastErrorType?: DeliveryErrorType;
 }

@@ -644,6 +644,7 @@ export class HttpApiServer {
       delivery,
     };
     this.sendJson(res, status === 'healthy' ? 200 : 503, response);
+    return Promise.resolve();
   }
 
   /**
