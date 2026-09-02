@@ -45,10 +45,7 @@ export type {
 } from '@disclaude/core';
 
 // Re-export constants and utilities from @disclaude/core
-export {
-  DEFAULT_CHANNEL_CAPABILITIES,
-  createLogger,
-} from '@disclaude/core';
+export { DEFAULT_CHANNEL_CAPABILITIES, createLogger } from '@disclaude/core';
 
 // Channel base class
 export { BaseChannel } from '@disclaude/core';
@@ -121,10 +118,7 @@ export {
 } from './platforms/index.js';
 
 // Routers (Issue #1040)
-export {
-  CardActionRouter,
-  type CardActionRouterConfig,
-} from './routers/card-action-router.js';
+export { CardActionRouter, type CardActionRouterConfig } from './routers/card-action-router.js';
 
 // Services (Issue #1040)
 export {
@@ -135,10 +129,7 @@ export {
 } from './services/index.js';
 
 // PrimaryNode main class (Issue #1040)
-export {
-  PrimaryNode,
-  type PrimaryNodeOptions,
-} from './primary-node.js';
+export { PrimaryNode, type PrimaryNodeOptions } from './primary-node.js';
 
 // Agent pool (Issue #1040)
 export { PrimaryAgentPool, type PrimaryAgentPoolOptions } from './primary-agent-pool.js';
@@ -165,7 +156,10 @@ export {
 } from './interactive-context.js';
 
 // Feishu message handling (Issue #1626: integration test exports)
-export { MessageHandler as FeishuMessageHandler, type MessageCallbacks } from './channels/feishu/message-handler.js';
+export {
+  MessageHandler as FeishuMessageHandler,
+  type MessageCallbacks,
+} from './channels/feishu/message-handler.js';
 export { TriggerModeManager, type TriggerModeRecord } from './channels/feishu/passive-mode.js';
 export { MentionDetector, type BotInfo } from './channels/feishu/mention-detector.js';
 
@@ -180,13 +174,7 @@ export {
   type PushResponse,
   type DetailedHealthResponse,
 } from './http-api-server.js';
-export {
-  probeNetworkEndpoint,
-  type HealthProbeResult,
-  type ProbeErrorType,
-  type ProbeStatus,
-  type DeliveryHealth,
-} from './health-probes.js';
+export { type DeliveryHealth } from './health-types.js';
 
 // Messaging module (Issue #513, Issue #515)
 export * from './messaging/index.js';

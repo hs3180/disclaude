@@ -58,7 +58,7 @@ import {
   STREAMING_REPLY_ELEMENT_ID,
 } from '../platforms/feishu/card-builders/streaming-card-builder.js';
 import { configuredFeishuMessageBytes, truncateFeishuMessage } from './feishu-message-chunker.js';
-import type { DeliveryHealth } from '../health-probes.js';
+import type { DeliveryHealth } from '../health-types.js';
 
 const logger = createLogger('FeishuChannel');
 

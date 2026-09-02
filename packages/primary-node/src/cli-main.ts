@@ -182,11 +182,13 @@ export async function main(): Promise<void> {
   // Set LOCKFILE_PATH to empty string to disable (e.g., Docker where
   // restart policy handles singleton enforcement and stale lockfiles
   // can block startup after container restart due to PID reuse).
-  const lockfilePath = process.env.LOCKFILE_PATH
-    ?? path.resolve(process.env.LOG_DIR ?? path.join(homedir(), 'Library/Logs/disclaude'), 'disclaude.pid');
-  const processLock = lockfilePath.trim()
-    ? new ProcessLock({ lockfilePath, logger })
-    : null;
+  const lockfilePath =
+    process.env.LOCKFILE_PATH ??
+    path.resolve(
+      process.env.LOG_DIR ?? path.join(homedir(), 'Library/Logs/disclaude'),
+      'disclaude.pid'
+    );
+  const processLock = lockfilePath.trim() ? new ProcessLock({ lockfilePath, logger }) : null;
   if (processLock && !processLock.acquire()) {
     console.error('Error: Another instance is already running. Exiting.');
     process.exit(1);
@@ -255,10 +257,7 @@ export async function main(): Promise<void> {
     }
   }
 
-  logger.info(
-    { channels: channelEntries.map((e) => e.type) },
-    'Starting Primary Node'
-  );
+  logger.info({ channels: channelEntries.map((e) => e.type) }, 'Starting Primary Node');
 
   // Create PrimaryNode
   const primaryNode = new PrimaryNode({
@@ -275,16 +274,17 @@ export async function main(): Promise<void> {
     logger.info(
       {
         agentBackend: Config.AGENT_BACKEND ?? 'claude',
-        provider: Config.AGENT_BACKEND === 'codex'
-          ? 'codex'
-          : agentConfig.apiBaseUrl ? 'glm' : 'anthropic',
+        provider:
+          Config.AGENT_BACKEND === 'codex' ? 'codex' : agentConfig.apiBaseUrl ? 'glm' : 'anthropic',
         model: agentConfig.model,
       },
       'Agent configuration loaded'
     );
   } catch (error) {
     logger.error({ err: error }, 'Failed to get agent configuration');
-    console.error('Error: No API key configured. Please set up disclaude.config.yaml with glm or anthropic settings.');
+    console.error(
+      'Error: No API key configured. Please set up disclaude.config.yaml with glm or anthropic settings.'
+    );
     processLock?.release();
     process.exit(1);
   }
@@ -303,7 +303,9 @@ export async function main(): Promise<void> {
   const workspaceCheck = validateWorkspaceDir(workspaceDir);
   if (!workspaceCheck.ok) {
     console.error(`✘ Workspace directory ${workspaceCheck.reason}`);
-    console.error('  The service does not auto-create the workspace dir. Create it (or fix the config/mount) and restart.');
+    console.error(
+      '  The service does not auto-create the workspace dir. Create it (or fix the config/mount) and restart.'
+    );
     processLock?.release();
     process.exit(1);
   }
@@ -354,18 +356,22 @@ export async function main(): Promise<void> {
       // Issue #4587 (part 3): thread-scoped reset/stop for commands typed
       // inside a topic-group thread — the pool's part-2 slots, previously
       // reachable only from the message path.
-      resetThread: (chatId, skipContext, threadRootId) => agentPool.reset(chatId, skipContext, threadRootId),
+      resetThread: (chatId, skipContext, threadRootId) =>
+        agentPool.reset(chatId, skipContext, threadRootId),
       stopThread: (chatId, threadRootId) => agentPool.stop(chatId, threadRootId),
     },
     node: {
       nodeId: primaryNode.getNodeId(),
       getDebugGroup: () => primaryNode.getDebugGroupService().getDebugGroup(),
-      setDebugGroup: (chatId: string, name?: string) => primaryNode.getDebugGroupService().setDebugGroup(chatId, name),
+      setDebugGroup: (chatId: string, name?: string) =>
+        primaryNode.getDebugGroupService().setDebugGroup(chatId, name),
       clearDebugGroup: () => primaryNode.getDebugGroupService().clearDebugGroup(),
     },
     projectManager,
     // Issue #3807: /restart command calls this to trigger graceful shutdown
-    get shutdown() { return shutdownFn; },
+    get shutdown() {
+      return shutdownFn;
+    },
     logger,
   };
 
@@ -433,7 +439,9 @@ export async function main(): Promise<void> {
   // Issue #3857 Phase 2: HTTP API server reference for shutdown
   let httpApiServer: HttpApiServer | undefined;
   const shutdown = async (): Promise<void> => {
-    if (isShuttingDown) {return;}
+    if (isShuttingDown) {
+      return;
+    }
     isShuttingDown = true;
     logger.info('Shutting down Primary Node...');
 
@@ -523,18 +531,19 @@ export async function main(): Promise<void> {
         port: options.apiPort,
         host: apiHost,
         apiToken: options.apiToken,
-        // Issue #4718: dependency probes are opt-in. They must not be folded
-        // into /api/ping, because an external outage does not mean this
-        // process or its local HTTP API is down.
-        dagsterHealthUrl: process.env.DAGSTER_HEALTH_URL,
-        externalApiHealthUrl: process.env.EXTERNAL_API_HEALTH_URL,
-        feishuApiHealthUrl: process.env.FEISHU_API_HEALTH_URL,
-        healthProbeTimeoutMs: Number.parseInt(process.env.HEALTH_PROBE_TIMEOUT_MS ?? '', 10) || undefined,
       });
       httpApiServer.setNodeId(primaryNode.getNodeId());
-      const feishuChannel = channelManager.get('feishu') as { getDeliveryHealth?: () => import('./health-probes.js').DeliveryHealth } | undefined;
+      const feishuChannel = channelManager.get('feishu') as
+        | { getDeliveryHealth?: () => import('./health-types.js').DeliveryHealth }
+        | undefined;
       httpApiServer.setDeliveryHealthProvider(
-        () => feishuChannel?.getDeliveryHealth?.() ?? { status: 'unknown', attempts: 0, successes: 0, failures: 0 },
+        () =>
+          feishuChannel?.getDeliveryHealth?.() ?? {
+            status: 'unknown',
+            attempts: 0,
+            successes: 0,
+            failures: 0,
+          }
       );
 
       // Issue #3857 Phase 2: Wire push handler to InputMessageRouter
@@ -555,26 +564,26 @@ export async function main(): Promise<void> {
 
       // Issue #4279: wire REST /api/upload-file to the channel's uploadFile
       // capability (REST parity with the IPC method).
-      httpApiServer.setUploadFileHandler(
-        (chatId, filePath, threadId) => primaryNode.uploadFile(chatId, filePath, threadId),
+      httpApiServer.setUploadFileHandler((chatId, filePath, threadId) =>
+        primaryNode.uploadFile(chatId, filePath, threadId)
       );
 
       // Issue #4279: wire REST /api/send-message to the channel's sendMessage
       // capability (REST parity with the IPC method).
-      httpApiServer.setSendMessageHandler(
-        (chatId, text, threadId, mentions) => primaryNode.sendMessage(chatId, text, threadId, mentions),
+      httpApiServer.setSendMessageHandler((chatId, text, threadId, mentions) =>
+        primaryNode.sendMessage(chatId, text, threadId, mentions)
       );
 
       // Issue #4279: wire REST /api/send-card to the channel's sendCard
       // capability (REST parity with the IPC method).
-      httpApiServer.setSendCardHandler(
-        (chatId, card, threadId, description) => primaryNode.sendCard(chatId, card, threadId, description),
+      httpApiServer.setSendCardHandler((chatId, card, threadId, description) =>
+        primaryNode.sendCard(chatId, card, threadId, description)
       );
 
       // Issue #4279: wire REST /api/send-interactive to the channel's
       // sendInteractive capability (builds+sends card, registers action prompts).
-      httpApiServer.setSendInteractiveHandler(
-        (chatId, params) => primaryNode.sendInteractive(chatId, params),
+      httpApiServer.setSendInteractiveHandler((chatId, params) =>
+        primaryNode.sendInteractive(chatId, params)
       );
 
       // Issue #4279: wire REST GET /api/temp-chats to the channel's
@@ -588,8 +597,8 @@ export async function main(): Promise<void> {
       // Issue #4281: wire REST /api/mark-chat-responded to the channel's
       // markChatResponded capability (temp-chat lifecycle; REST parity with
       // the IPC method).
-      httpApiServer.setMarkChatRespondedHandler(
-        (chatId, response) => primaryNode.markChatResponded(chatId, response),
+      httpApiServer.setMarkChatRespondedHandler((chatId, response) =>
+        primaryNode.markChatResponded(chatId, response)
       );
 
       await httpApiServer.start();
@@ -613,7 +622,10 @@ export async function main(): Promise<void> {
     }
   } catch (error) {
     logger.error({ err: error }, 'Failed to start Primary Node');
-    console.error('Failed to start Primary Node:', error instanceof Error ? error.message : String(error));
+    console.error(
+      'Failed to start Primary Node:',
+      error instanceof Error ? error.message : String(error)
+    );
     processLock?.release();
     process.exit(1);
   }
@@ -744,11 +756,13 @@ export function resolveChannelConfigs(
   const entries: ResolvedChannelConfig[] = [];
 
   // REST channel: configured under channels.rest
-  const restChannelConfig = rawConfig.channels?.rest as {
-    port?: number;
-    host?: string;
-    fileStorageDir?: string;
-  } | undefined;
+  const restChannelConfig = rawConfig.channels?.rest as
+    | {
+        port?: number;
+        host?: string;
+        fileStorageDir?: string;
+      }
+    | undefined;
   if (restChannelConfig?.port && restChannelConfig?.host && restChannelConfig?.fileStorageDir) {
     entries.push({
       type: 'rest',
@@ -768,7 +782,11 @@ export function resolveChannelConfigs(
       type: 'feishu',
       // Issue #4400 / #4208: plumb streamingCard through to FeishuChannelConfig
       // so getCapabilities().supportsStreaming reflects feishu.streamingCard.
-      config: { appId: feishuAppId, appSecret: feishuAppSecret, streamingCard: config.FEISHU_STREAMING_CARD },
+      config: {
+        appId: feishuAppId,
+        appSecret: feishuAppSecret,
+        streamingCard: config.FEISHU_STREAMING_CARD,
+      },
     });
   }
 
