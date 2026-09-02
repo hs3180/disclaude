@@ -12,13 +12,12 @@
  * - Edge cases: done signal, unsupported type, client not initialized
  */
 
- 
-
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import { FeishuChannel, extractFeishuApiError } from './feishu-channel.js';
+import { FEISHU_RETRY_MESSAGE_BYTES } from './feishu-message-chunker.js';
 
 // ─── Mock Logger ────────────────────────────────────────────────────────────
 
@@ -62,7 +61,9 @@ function createMockClient() {
     const stream = opts?.data?.image;
     if (stream && typeof stream.on === 'function') {
       // Drain the stream so it closes the underlying file descriptor
-      for await (const _chunk of stream) { /* intentionally empty */ }
+      for await (const _chunk of stream) {
+        /* intentionally empty */
+      }
     }
     return { image_key: 'img_key_001' };
   });
@@ -70,7 +71,9 @@ function createMockClient() {
   const fileCreateMock = vi.fn().mockImplementation(async (opts: any) => {
     const stream = opts?.data?.file;
     if (stream && typeof stream.on === 'function') {
-      for await (const _chunk of stream) { /* intentionally empty */ }
+      for await (const _chunk of stream) {
+        /* intentionally empty */
+      }
     }
     return { file_key: 'file_key_001' };
   });
@@ -129,7 +132,10 @@ vi.mock('./feishu/index.js', () => ({
     initialize: vi.fn(),
     clearClient: vi.fn(),
   })),
-  messageLogger: { init: vi.fn().mockResolvedValue(undefined), logOutgoingMessage: mockLogOutgoingMessage },
+  messageLogger: {
+    init: vi.fn().mockResolvedValue(undefined),
+    logOutgoingMessage: mockLogOutgoingMessage,
+  },
   WsConnectionManager: vi.fn().mockImplementation(() => ({
     state: 'connected',
     start: vi.fn().mockResolvedValue(undefined),
@@ -208,6 +214,58 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
       });
       expect(mocks.createMock).not.toHaveBeenCalled();
       expect(result).toBe('reply_msg_001');
+    });
+
+    it('retries Feishu 230025 with a fixed platform-safe byte limit', async () => {
+      const { client, mocks } = createMockClient();
+      mocks.createMock
+        .mockRejectedValueOnce({
+          response: { status: 400, data: { code: 230025, msg: 'message too long' } },
+        })
+        .mockResolvedValueOnce({ data: { message_id: 'retry_msg_001' } });
+      const channel = createTestChannel(client);
+
+      const result = await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'text',
+        text: '测试🙂'.repeat(300_000),
+      });
+
+      expect(mocks.createMock).toHaveBeenCalledTimes(2);
+      const firstText = JSON.parse(mocks.createMock.mock.calls[0][0].data.content).text;
+      const retryText = JSON.parse(mocks.createMock.mock.calls[1][0].data.content).text;
+      expect(Buffer.byteLength(firstText, 'utf8')).toBeLessThanOrEqual(30_000);
+      expect(Buffer.byteLength(retryText, 'utf8')).toBeLessThanOrEqual(FEISHU_RETRY_MESSAGE_BYTES);
+      expect(Buffer.byteLength(retryText, 'utf8')).toBeLessThan(
+        Buffer.byteLength(firstText, 'utf8')
+      );
+      expect(result).toBe('retry_msg_001');
+    });
+
+    it('sends a short fallback when Feishu rejects the compact retry too', async () => {
+      const { client, mocks } = createMockClient();
+      const tooLong = {
+        response: { status: 400, data: { code: 230025, msg: 'message too long' } },
+      };
+      mocks.createMock
+        .mockReset()
+        .mockRejectedValueOnce(tooLong)
+        .mockRejectedValueOnce(tooLong)
+        .mockResolvedValueOnce({
+          data: { message_id: 'fallback_msg_001' },
+        });
+      const channel = createTestChannel(client);
+
+      const result = await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'text',
+        text: '测试🙂'.repeat(300_000),
+      });
+
+      expect(mocks.createMock).toHaveBeenCalledTimes(3);
+      const fallbackText = JSON.parse(mocks.createMock.mock.calls[2][0].data.content).text;
+      expect(fallbackText).toContain('回复内容过长');
+      expect(result).toBe('fallback_msg_001');
     });
   });
 
@@ -411,7 +469,7 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
         channel.sendMessage({
           chatId: 'chat_123',
           type: 'unknown_type',
-        } as any),
+        } as any)
       ).rejects.toThrow('Unsupported message type');
     });
 
@@ -425,7 +483,7 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
           chatId: 'chat_123',
           type: 'text',
           text: 'test',
-        }),
+        })
       ).rejects.toThrow('Client not initialized');
     });
 
@@ -500,7 +558,11 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
 
     afterAll(() => {
       for (const f of tempFiles) {
-        try { fs.unlinkSync(f); } catch { /* ignore */ }
+        try {
+          fs.unlinkSync(f);
+        } catch {
+          /* ignore */
+        }
       }
     });
 
@@ -509,11 +571,14 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
       const channel = createTestChannel(client);
 
       const testImagePath = path.join(os.tmpdir(), `test_image_${Date.now()}.png`);
-      fs.writeFileSync(testImagePath, Buffer.from(
-        '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489' +
-        '0000000a49444154789c62000100000500010d0a2db40000000049454e44ae426082',
-        'hex',
-      ));
+      fs.writeFileSync(
+        testImagePath,
+        Buffer.from(
+          '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489' +
+            '0000000a49444154789c62000100000500010d0a2db40000000049454e44ae426082',
+          'hex'
+        )
+      );
       tempFiles.push(testImagePath);
 
       const result = await channel.sendMessage({
@@ -556,11 +621,14 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
       const channel = createTestChannel(client);
 
       const testImagePath = path.join(os.tmpdir(), `test_image_fb_${Date.now()}.png`);
-      fs.writeFileSync(testImagePath, Buffer.from(
-        '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489' +
-        '0000000a49444154789c62000100000500010d0a2db40000000049454e44ae426082',
-        'hex',
-      ));
+      fs.writeFileSync(
+        testImagePath,
+        Buffer.from(
+          '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489' +
+            '0000000a49444154789c62000100000500010d0a2db40000000049454e44ae426082',
+          'hex'
+        )
+      );
       tempFiles.push(testImagePath);
 
       const result = await channel.sendMessage({
@@ -582,7 +650,11 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
 
     afterAll(() => {
       for (const f of tempFiles) {
-        try { fs.unlinkSync(f); } catch { /* ignore */ }
+        try {
+          fs.unlinkSync(f);
+        } catch {
+          /* ignore */
+        }
       }
     });
 
@@ -650,7 +722,12 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
         text: 'Hello',
       });
 
-      expect(mockLogOutgoingMessage).toHaveBeenCalledWith('new_msg_001', 'chat_123', 'Hello', 'text');
+      expect(mockLogOutgoingMessage).toHaveBeenCalledWith(
+        'new_msg_001',
+        'chat_123',
+        'Hello',
+        'text'
+      );
     });
 
     it('should log outgoing post messages with mentions', async () => {
@@ -664,7 +741,12 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
         mentions: [{ openId: 'ou_user123', name: 'Alice' }],
       });
 
-      expect(mockLogOutgoingMessage).toHaveBeenCalledWith('new_msg_001', 'chat_123', 'Hello @Alice', 'post');
+      expect(mockLogOutgoingMessage).toHaveBeenCalledWith(
+        'new_msg_001',
+        'chat_123',
+        'Hello @Alice',
+        'post'
+      );
     });
 
     it('should log outgoing card messages', async () => {
@@ -678,7 +760,12 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
         description: 'Test card',
       });
 
-      expect(mockLogOutgoingMessage).toHaveBeenCalledWith('new_msg_001', 'chat_123', 'Test card', 'interactive');
+      expect(mockLogOutgoingMessage).toHaveBeenCalledWith(
+        'new_msg_001',
+        'chat_123',
+        'Test card',
+        'interactive'
+      );
     });
 
     it('should not log when message_id is undefined', async () => {
@@ -717,9 +804,7 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
         type: 'card',
         card: {
           header: { title: { content: 'Status Update' } },
-          elements: [
-            { tag: 'markdown', content: 'Task completed successfully' },
-          ],
+          elements: [{ tag: 'markdown', content: 'Task completed successfully' }],
         },
       });
 
@@ -727,7 +812,7 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
         'new_msg_001',
         'chat_123',
         expect.stringContaining('Status Update'),
-        'interactive',
+        'interactive'
       );
     });
 
@@ -747,7 +832,7 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
         'new_msg_001',
         'chat_123',
         expect.stringMatching(/^A{197}\.\.\.$/),
-        'interactive',
+        'interactive'
       );
     });
   });
@@ -783,7 +868,7 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
       // The warn log must carry the API-level detail, not just the axios message.
       const warnCalls = mockLogger.warn.mock.calls;
       const fallbackCall = warnCalls.find(
-        (c) => c[1] === 'Thread reply failed, falling back to message.create',
+        (c) => c[1] === 'Thread reply failed, falling back to message.create'
       );
       expect(fallbackCall).toBeDefined();
       const [payload] = fallbackCall!;
