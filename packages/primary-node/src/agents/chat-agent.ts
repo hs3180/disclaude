@@ -1480,6 +1480,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             parsed.type === 'tool_use' ||
             parsed.type === 'tool_result' ||
             parsed.type === 'tool_progress';
+          // Codex emits shell commands and their complete stdout/stderr as
+          // tool_use/tool_result messages. Those payloads are internal agent
+          // traces, not user-facing progress: exposing them leaks commands,
+          // paths, environment details, and potentially secrets. Keep the
+          // existing debug-group forwarding above, but suppress the raw trace
+          // in ordinary Codex chats. Final assistant text and synthesized
+          // errors still pass through normally.
+          const isCodexToolTrace = this.sdkProvider.name === 'codex' && isIntermediateMessage;
 
           // Issue #3809: Forward intermediate process messages to debug group.
           // This surfaces tool_use/tool_result/tool_progress events that are
@@ -1499,10 +1507,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             }
           }
 
-          if (isTopicThread && isIntermediateMessage) {
+          if ((isTopicThread || isCodexToolTrace) && isIntermediateMessage) {
             this.logger.debug(
-              { chatId, messageCount, type: parsed.type },
-              'Filtered intermediate message in topic thread'
+              { chatId, messageCount, type: parsed.type, provider: this.sdkProvider.name },
+              isCodexToolTrace
+                ? 'Filtered Codex tool trace from user chat'
+                : 'Filtered intermediate message in topic thread'
             );
           } else {
             const threadRoot = resolveReplyThreadRoot();
