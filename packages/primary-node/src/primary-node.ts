@@ -378,8 +378,7 @@ export class PrimaryNode extends EventEmitter {
 
     // Issue #4280 (part 5): no IPC server is started anymore — PrimaryNode
     // serves REST-only via the HttpApiServer wired in cli.ts (--api-port).
-    // MCP tools and push-cli connect as REST clients (see mcp-server
-    // tools/ipc-utils.ts getRestIpcClient and push-cli.ts createRestClient).
+    // Channel CLI tools and push-cli connect as REST clients.
 
     // Initialize Scheduler (Issue #1377)
     // Issue #3361: Wrap in try-catch to prevent scheduler failure from

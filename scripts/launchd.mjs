@@ -55,7 +55,7 @@ const CLI_ENTRY = resolve(PROJECT_ROOT, 'packages/primary-node/dist/cli.js');
 // Issue #4576: since #4280 Phase 3 the MCP tools' only transport is the
 // PrimaryNode REST API (GET /api/ping on the HTTP API server). A launchd
 // deployment started with bare `start` has no --api-port, so nothing listens
-// on 19200 and every channel-mcp send tool reports「IPC 服务不可用」. The
+// on 19200 and every channel send tool reports「IPC 服务不可用」. The
 // plist therefore enables the HTTP API server by default. The server binds
 // localhost only (HttpApiServerConfig.host default) and GET routes are
 // token-exempt, so this matches the security posture of interactive runs.
@@ -189,7 +189,7 @@ export function buildProgramArguments(nodePath, caffeinatePath = getCaffeinatePa
 
 /**
  * Review of #4578: when the port override differs from 19200, the MCP tools'
- * REST probe (ipc-utils.ts in core and mcp-server) would still default to
+ * REST probe (ipc-utils.ts in core and channel-cli) would still default to
  * http://localhost:19200 unless DISCLAUDE_REST_IPC_BASE_URL is set. The plist
  * must propagate the override into the service's EnvironmentVariables so
  * both sides agree.

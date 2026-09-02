@@ -1,12 +1,11 @@
-# channel Skill — CLI replacement for `channel-mcp` (#4459)
+# channel Skill — Channel CLI
 
 > **Transport switch ([#4532](https://github.com/hs3180/disclaude/issues/4532)
 > part 1, owner ruling 2026-08-18):** the CLI now reaches the PrimaryNode over
 > the **REST API** (HttpApiServer `/api/send-message`, `/api/send-card`,
 > `/api/upload-file`, `/api/send-interactive`, `/api/push`) — it no longer opens
 > a Unix socket, and there is **no IPC fallback** on the CLI path. The CLI sets
-> `DISCLAUDE_REST_IPC_ENABLED=true` internally before the first
-> `@disclaude/mcp-server` import, so every send path — including `send_card`'s
+> `DISCLAUDE_REST_IPC_ENABLED=true` internally before executing a send path, so every send path — including `send_card`'s
 > local-image upload (`resolveCardImages` → `getIpcClient()`) — selects
 > `RestIpcClient`. Base URL: `--base-url` > `DISCLAUDE_REST_IPC_BASE_URL` >
 > `http://localhost:19200`. Bearer token: `DISCLAUDE_REST_IPC_API_TOKEN` (unset
@@ -25,9 +24,9 @@
 > `send_interactive` (part 7) — **all 5 channel tools** migrated as CLI
 > subcommands. **Part 11** (REST re-land of rejected
 > [#4521](https://github.com/hs3180/disclaude/pull/4521)) closed the last code
-> parity delta: the chatId _format_ pre-check every MCP entry handler runs
+> parity delta: the chatId _format_ pre-check the former MCP entry handler ran
 > (#1641) now runs in every subcommand too, before any module import. All reuse
-> the first-party implementations from `@disclaude/mcp-server`; `send_card`
+> the first-party implementations from `packages/channel-cli`; `send_card`
 > additionally replicates the MCP entry handler's card preprocessing
 > (GFM-table conversion, local-image auto-upload) for feature parity. **Live
 > end-to-end parity** against the inline MCP tool is **deferred** (requires a
@@ -101,7 +100,7 @@ echo '{"elements":[{"tag":"markdown","content":"hi"}]}' \
 
 **Runtime (host deps, not bundled):** reuses `send_text` / `send_file` /
 `send_card` (and the card preprocessing helpers) / `push_to_agent` /
-`send_interactive` from `@disclaude/mcp-server`, which talk to the PrimaryNode
+`send_interactive` from `packages/channel-cli`, which talk to the PrimaryNode
 over its REST API (#4532 — no Unix socket) and need Feishu credentials. Run
 inside a disclaude workspace where the packages are built (`npm run build`), and
 start the PrimaryNode with `--api-port`. No browser or extra binaries required.
@@ -120,9 +119,8 @@ start the PrimaryNode with `--api-port`. No browser or extra binaries required.
 `--chat` in **every** command is resolved with this precedence: explicit
 `--chat` > `FEISHU_CLI_CHAT_ID` > `feishu.cliChatId` in `disclaude.config.yaml`.
 The resolved value is presence- **and format**-checked up front
-(`oc_`/`ou_` ≥ 35 chars, `cli-` ≥ 5 — the same rules as the MCP entry
-handlers, #1641); an ill-formed id fails before the `@disclaude/mcp-server`
-import (part 11).
+(`oc_`/`ou_` ≥ 35 chars, `cli-` ≥ 5 — matching the former MCP entry-handler
+rules, #1641); an ill-formed id fails before the send operation (part 11).
 
 **Text input** — `--text "<string>"` for short content; `--text-file <path>` (or
 `--text-file -` to read stdin explicitly) for larger bodies; or pipe on stdin
@@ -164,7 +162,7 @@ Every command prints **exactly one JSON object** to stdout and nothing else
 {"ok":false,"command":"send_card","error":"Invalid card structure: ..."}
 {"ok":false,"command":"push_to_agent","error":"Missing message content","hint":"pass --message <string>, --message-file <path>, or pipe content on stdin"}
 {"ok":false,"command":"send_text","error":"IPC service unavailable. Please ensure Primary Node is running.","hint":"PrimaryNode REST http://localhost:19200 unreachable — start the main service (disclaude-primary start --api-port <port>) or pass --base-url / DISCLAUDE_REST_IPC_BASE_URL"}
-{"ok":false,"command":"send_text","error":"Failed to load @disclaude/mcp-server: ...","hint":"run inside a disclaude workspace with packages built (npm run build); ..."}
+{"ok":false,"command":"send_text","error":"Failed to load channel implementation: ...","hint":"run inside a disclaude workspace with packages built (npm run build); ..."}
 ```
 
 Failure modes covered: missing/invalid args, unreadable `--text-file` /
@@ -172,7 +170,7 @@ Failure modes covered: missing/invalid args, unreadable `--text-file` /
 `--options` / `--action-prompts` JSON, non-object card, invalid card structure,
 invalid chatId format (**every** subcommand, part 11 — same check as the MCP
 entry handlers, run pre-import), invalid option structure (empty `text`/`value`, bad
-`type`), `@disclaude/mcp-server` not built/resolvable, REST face unreachable
+`type`), channel implementation not built/resolvable, REST face unreachable
 (PrimaryNode not started / port not open — reported with an actionable hint),
 and REST send failure (the underlying first-party tools map these to `SendMessageResult` /
 `SendInteractiveResult` / `{ success:false, error, message }` results).
@@ -191,7 +189,7 @@ create/lazily-resume the target chat's agent.)
 
 | Dependency                                                                                                                   | Source                                                          | How to satisfy                                                                                                                          |
 | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `@disclaude/mcp-server` (exports `send_text`, `send_file`, `send_card`, `push_to_agent`, `send_interactive`, + card helpers) | workspace package                                               | build the monorepo (`npm run build`)                                                                                                    |
+| `packages/channel-cli` (channel operations and card helpers) | workspace package                                               | build the monorepo (`npm run build`)                                                                                                    |
 | disclaude PrimaryNode (**REST API**, #4532)                                                                                  | runtime                                                         | start it with `--api-port` (e.g. `19200`); the CLI POSTs to `/api/*` — no Unix socket involved                                          |
 | REST base URL                                                                                                                | `--base-url` flag > `DISCLAUDE_REST_IPC_BASE_URL` env > default | default `http://localhost:19200`; the env var reaches one-shot CLI processes via the agent runtime env (`.runtime-env`, Issue #1361)    |
 | REST bearer token                                                                                                            | `DISCLAUDE_REST_IPC_API_TOKEN` env                              | required only when the PrimaryNode was started with `--api-token` (pass the same secret)                                                |
@@ -210,7 +208,7 @@ of the current endpoint contract (inherited from IPC, where same-host was
 implicit), not of the transport switch; relaxing it (multipart / base64 upload)
 is deferred with the endpoint work, not the CLI.
 
-If `@disclaude/mcp-server` cannot be imported, the CLI emits a failure JSON with
+If the channel implementation cannot be loaded, the CLI emits a failure JSON with
 a build hint rather than crashing (analogous to #4464's missing-`playwright`
 hint). If the PrimaryNode REST face is unavailable (service not started / port
 not open), `send_text` / `send_file` / `send_card` / `push_to_agent` /
@@ -238,7 +236,7 @@ recording explicitly: the first-party `send_interactive_message` is a **pure
 forwarding client** — it passes the raw `question`/`options`/`title`/`context`/
 `actionPrompts` to the PrimaryNode via the `sendInteractive` IPC, and the
 **PrimaryNode** builds the card, sends it, and registers the button-click action
-prompts (`packages/mcp-server/src/tools/interactive-message.ts`, #1571/#1572).
+prompts (`packages/channel-cli/src/tools/interactive-message.ts`, #1571/#1572).
 Button handling therefore lives on the PrimaryNode side and is **not** part of
 this one-shot CLI — the CLI never starts an IPC server or owns a button handler,
 exactly like `send_text`. Parameters map 1:1 via `--chat`/`--question`/
@@ -246,7 +244,7 @@ exactly like `send_text`. Parameters map 1:1 via `--chat`/`--question`/
 
 **Open item deferred to a later part / owner input (not resolved here):** the MCP
 `channel-mcp` surface is gated per-chat on `supportedMcpTools`
-(`packages/primary-node/src/agents/mcp-setup.ts:45-52`). A CLI is invoked at the
+(`packages/primary-node/src/channels/channel-descriptors.ts`). A CLI is invoked at the
 agent's discretion, so moving to a CLI loses that per-chat capability filter
 unless it is re-imposed elsewhere. The `send_text` / `send_file` / `send_card` /
 `push_to_agent` migrations do **not** re-impose it; the inventory flags this as open question 2
@@ -254,7 +252,7 @@ unless it is re-imposed elsewhere. The `send_text` / `send_file` / `send_card` /
 left to a later part of #4459 once the full surface is migrated.
 
 **`push_to_agent` (part 6) parity** — its MCP entry handler
-(`packages/mcp-server/src/channel-mcp.ts`) is the bare first-party
+the former channel-mcp entry handler was the bare first-party
 `push_to_agent` function preceded only by a `getChatIdValidationError(chatId)`
 format check. Parts 3–6 initially **deferred** the chatId _format_ check to a
 presence-only validation (an ill-formed id was still rejected, but by the
@@ -262,7 +260,7 @@ transport layer rather than up front) — the deferred-parity item `send_text`
 carried. **Part 11 closed that delta**: every subcommand now runs the same
 format pre-check as the handlers before any import (`parseChatId` in
 `cli.mjs`). No card/table/image transforms apply to `push_to_agent`, so unlike
-`send_card` it needs no extra helper exports from `@disclaude/mcp-server`.
+`send_card` it needs no extra helper exports.
 
 **#4521 chatId pre-check ruling (#4532 acceptance, explicit — migration is not
 silent):** PR #4521 (chatId-format pre-checks on all 5 subcommands) was
@@ -272,7 +270,7 @@ REST CLI is explicitly decided"_ — is now settled by **part 11**: **kept, and
 extended to all 5 subcommands**. Every subcommand runs the format pre-check
 **pre-import** via a twin of the exported pattern table (`parseChatId` in
 `cli.mjs`; byte-identical rules to `getChatIdValidationError`), so an
-ill-formed id fails cheaply before the `@disclaude/mcp-server` load. This
+ill-formed id fails cheaply before the channel implementation is loaded. This
 matters _more_ on REST than it did on IPC: the REST handlers validate `chatId`
 as a non-empty string only (`/api/send-message` et al.), so without the twin an
 ill-formed id would surface as a confusing Feishu 4xx deep behind the server.
@@ -283,10 +281,10 @@ the authoritative one wins.
 **`send_card` parity (part 5) — preprocessing is replicated, not dropped.** The
 first-party `send_card` fn does **not** itself apply GFM-table conversion
 (#2340) or local-image auto-upload (#2951) — those transforms live in the
-`channel-mcp` entry handler (`packages/mcp-server/src/channel-mcp.ts`). A naïve
+former `channel-mcp` entry handler. A naïve
 "call `send_card` directly" CLI would silently drop both features. Instead
 `cmdSendCard` runs the **same pipeline** as the handler, using helpers now
-exported from `@disclaude/mcp-server` (`transformCardTables`,
+implemented in `packages/channel-cli` (`transformCardTables`,
 `resolveCardImages`, `detectMarkdownTableWarnings`, `isValidFeishuCard`,
 `getCardValidationError`, `getChatIdValidationError`):
 

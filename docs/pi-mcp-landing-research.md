@@ -187,7 +187,7 @@ dependency is required** (and the existing packages of that name target the olde
 ### B-Q2.3 The execute-wrapping sub-problem
 
 `@modelcontextprotocol/sdk@1.29.0` is **already in disclaude's dependency tree** (used by
-`@disclaude/mcp-server`):
+the former local MCP package):
 
 ```
 $ grep -A1 '"node_modules/@modelcontextprotocol/sdk"' package-lock.json
@@ -286,7 +286,7 @@ mcpServers['channel-mcp'] = createChannelMcpServer();   // inline transport
 ```
 
 Tools surfaced (from the `contextTools` allow-list at `mcp-setup.ts:47` and the tool modules in
-`packages/mcp-server/src/tools/`): `send_text`, `send_card`, `send_interactive`, `send_file`,
+the former channel implementation directory): `send_text`, `send_card`, `send_interactive`, `send_file`,
 and `push_to_agent` (the loop tools were removed with the loop system, #4430).
 These are **inline MCP** — the server object lives
 in-process; the Claude adapter passes it straight through via `adaptInlineMcpServer`

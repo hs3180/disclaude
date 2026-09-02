@@ -46,12 +46,12 @@ Disclaude is a multi-platform AI agent bot bridging messaging platforms (Feishu/
 |---------|---------|
 | `packages/core` | Config, agents (base/message-builder), IPC (REST), channels abstraction, scheduling, SDK provider layer |
 | `packages/primary-node` | Primary Node runtime: Feishu channel + bot, ChatAgent pool, REST API (`--api-port`), `push-cli` |
-| `packages/mcp-server` | In-process channel MCP tools (stdio), talks to Primary Node over REST |
+| `packages/channel-cli` | Channel messaging tools and CLI, talks to Primary Node over REST |
 | `packages/voice-orchestrator` | Voice intent snapshot store (MVP foundation) |
 
 ### Entry Points
 
-- **`bin/disclaude.js`** - Unified CLI router: `disclaude start` → `packages/primary-node/src/cli.ts`, `disclaude mcp` → `packages/mcp-server/src/cli.ts`
+- **`bin/disclaude.js`** - Unified CLI router: `disclaude start` → `packages/primary-node/src/cli.ts`, `disclaude channel` → `packages/channel-cli/src/cli.ts`
 - **`packages/primary-node/src/cli.ts`** - Primary Node entry; only subcommand is `start` (+ `--config` / `--api-port` / `--api-token`)
 - **`packages/primary-node/src/push-cli.ts`** - `disclaude-push` external push CLI (REST-only, POST /api/push)
 
@@ -150,9 +150,9 @@ Feishu/Lark WebSocket implementation (split into focused modules):
 
 Conversation history is managed by `packages/primary-node/src/agents/history-manager.ts` (Issue #4125): it attaches persisted (session-restore) history context and chat log file paths to each message, so a restarted process restores prior context for ongoing chats.
 
-#### `packages/mcp-server/` - Channel Tool Implementations / Standalone MCP Export
+#### `packages/channel-cli/` - Channel Tool Implementations
 
-First-party channel tool implementations (`send_text`, `send_file`, `send_card`, `send_interactive`, `push_to_agent`) plus a standalone MCP export for external consumers. ChatAgent no longer loads the MCP server (#4652); agents invoke the same implementations through `skills/channel/cli.mjs`. The tools communicate with the Primary Node **over REST** (`RestIpcClient`, Issue #4168 Phase 3 — the Unix-socket IPC transport was removed).
+First-party channel tool implementations (`send_text`, `send_file`, `send_card`, `send_interactive`, `push_to_agent`) are owned by the channel CLI. Agents invoke them through `skills/channel/cli.mjs`. The tools communicate with the Primary Node **over REST** (`RestIpcClient`).
 
 The external-MCP-server loader (config `tools.mcpServers`) was **removed** (#4459 Scope 4). External tools migrate to CLI Skills — see `docs/skill-format-spec.md`, `skills/channel/`, and `skills/browser-use/`.
 
@@ -192,12 +192,11 @@ Chat agents default to `bypassPermissions` (`packages/primary-node/src/agents/fa
 
 ### Build Output
 
-- **Builder**: `tsc -b` (root `package.json` build script; follows project references core → mcp-server → primary-node). `tsup` is a leftover devDependency and is NOT used.
+- **Builder**: `tsc -b` (root `package.json` build script; follows project references core → channel-cli/primary-node). `tsup` is a leftover devDependency and is NOT used.
 - **Output**: per-package `dist/` (e.g. `packages/primary-node/dist/cli.js`)
 - **Binaries** (root `package.json` `bin`):
   - `disclaude` → `bin/disclaude.js` (subcommand router)
   - `disclaude-primary` → `packages/primary-node/dist/cli.js`
-  - `disclaude-mcp` → `packages/mcp-server/dist/cli.js`
   - `disclaude-push` → `packages/primary-node/dist/push-cli.js`
 
 ### Testing
@@ -460,7 +459,7 @@ tail -f /tmp/disclaude-stdout.log     # Live tail (Ctrl+C to exit)
 ### Tool Not Working
 
 1. Check if the tool is in the `buildDisallowedTools()` list (`packages/primary-node/src/agents/disallowed-tools.ts`)
-2. Channel tools live in the in-process MCP server (`packages/mcp-server/src/tools/`) and need the Primary Node REST API reachable; browser automation is the `browser-use` skill (`skills/browser-use/`)
+2. Channel tools live in `packages/channel-cli/src/tools/` and need the Primary Node REST API reachable; browser automation is the `browser-use` skill (`skills/browser-use/`)
 3. Check SDK version compatibility
 
 ## Error Handling Patterns
