@@ -23,7 +23,15 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
@@ -77,20 +85,23 @@ async function main(): Promise<void> {
     const cliVersion = (codexOnPath.stdout.match(/codex-cli [\d.]+/) ?? ['?'])[0];
 
     // ── Config: preload BEFORE importing Config (statics evaluate at import) ──
-    writeFileSync(configFile, [
-      'workspace:',
-      `  dir: ${workspaceDir}`,
-      'agent:',
-      '  agentBackend: codex',
-      '  codexSandbox: workspace-write',
-      '  codex:',
-      '    maxActiveSessions: 2',
-      '    maxConcurrentRuns: 1',
-      'logging:',
-      '  level: info',
-      '  pretty: true',
-      '',
-    ].join('\n'));
+    writeFileSync(
+      configFile,
+      [
+        'workspace:',
+        `  dir: ${workspaceDir}`,
+        'agent:',
+        '  agentBackend: codex',
+        '  codexSandbox: workspace-write',
+        '  codex:',
+        '    maxActiveSessions: 2',
+        '    maxConcurrentRuns: 1',
+        'logging:',
+        '  level: info',
+        '  pretty: true',
+        '',
+      ].join('\n')
+    );
     const loader = await import(join(REPO_ROOT, 'packages/core/src/config/loader.js'));
     loader.setLoadedConfig(loader.loadConfigFile(configFile));
     const { Config } = await import(join(REPO_ROOT, 'packages/core/src/config/index.js'));
@@ -105,28 +116,37 @@ async function main(): Promise<void> {
       Config.CODEX_SANDBOX === 'workspace-write' &&
       Config.CODEX_MAX_ACTIVE_SESSIONS === 2 &&
       Config.CODEX_MAX_CONCURRENT_RUNS === 1;
-    record('config chain', configOk,
-      `backend=${Config.AGENT_BACKEND} sandbox=${Config.CODEX_SANDBOX} caps=${Config.CODEX_MAX_ACTIVE_SESSIONS}/${Config.CODEX_MAX_CONCURRENT_RUNS}`);
+    record(
+      'config chain',
+      configOk,
+      `backend=${Config.AGENT_BACKEND} sandbox=${Config.CODEX_SANDBOX} caps=${Config.CODEX_MAX_ACTIVE_SESSIONS}/${Config.CODEX_MAX_CONCURRENT_RUNS}`
+    );
 
     factory.setDefaultProvider('codex');
     const provider = factory.getProvider('codex') as CodexAgentProvider;
 
     // ── Phase 2: environment self-check (S1 fail-fast) ────────────────────
     const validateOk = provider.validateConfig();
-    record('validateConfig (binary + login)', validateOk,
-      validateOk ? `provider ${provider.name}@${provider.version} ready (${cliVersion})`
-        : String(provider.getInfo().unavailableReason));
+    record(
+      'validateConfig (binary + login)',
+      validateOk,
+      validateOk
+        ? `provider ${provider.name}@${provider.version} ready (${cliVersion})`
+        : String(provider.getInfo().unavailableReason)
+    );
     if (!validateOk) return summary();
 
     /** Run N turns over one stream; returns texts, errors, any-activity flag. */
     const runTurns = async (
       p: CodexAgentProvider,
       prompts: string[],
-      opts: { sandboxOverride?: 'read-only'; permissionMode?: 'default' } = {},
+      opts: { sandboxOverride?: 'read-only'; permissionMode?: 'default' } = {}
     ): Promise<{ texts: string[]; errors: string[]; sawActivity: boolean; sessionId?: string }> => {
       const queue = [...prompts];
       let release: () => void = () => {};
-      const parked = new Promise<void>((r) => { release = r; });
+      const parked = new Promise<void>((r) => {
+        release = r;
+      });
       async function* input() {
         while (queue.length > 0) {
           yield { role: 'user', content: queue.shift() as string };
@@ -184,24 +204,37 @@ async function main(): Promise<void> {
       'What is my secret code word? Reply with just the code word.',
     ]);
     const memoryOk = memory.texts.length === 2 && memory.texts[1].includes(code);
-    record('multi-turn resume memory (S3)', memoryOk,
+    record(
+      'multi-turn resume memory (S3)',
+      memoryOk,
       memoryOk
         ? `thread=${memory.sessionId}`
-        : `texts=${JSON.stringify(memory.texts)} errors=${JSON.stringify(memory.errors)} thread=${memory.sessionId ?? '?'}`);
+        : `texts=${JSON.stringify(memory.texts)} errors=${JSON.stringify(memory.errors)} thread=${memory.sessionId ?? '?'}`
+    );
 
     // ── Phase 4: sandbox write allowed (S4, workspace-write via config) ──
     const writeFile = join(workspaceDir, 'e2e-probe.txt');
     // permissionMode 'default' would infer read-only — the write only
     // succeeds because the CONFIG's codexSandbox override reaches the
     // provider through the factory (pins the yaml→Config→factory chain).
-    const writeRun = await runTurns(provider, [
-      'Create a file named e2e-probe.txt containing exactly: hello-e2e. Then reply: done',
-    ], { permissionMode: 'default' } as never);
-    const writeOk = writeRun.sawActivity &&
-      existsSync(writeFile) && readFileSync(writeFile, 'utf8').trim() === 'hello-e2e';
-    record('sandbox workspace-write (S4)', writeOk,
-      writeOk ? 'file created with exact content'
-        : `sawActivity=${writeRun.sawActivity} file=${existsSync(writeFile)} errors=${JSON.stringify(writeRun.errors)}`);
+    const writeRun = await runTurns(
+      provider,
+      ['Create a file named e2e-probe.txt containing exactly: hello-e2e. Then reply: done'],
+      { permissionMode: 'default' } as never
+    );
+    const writeOk =
+      writeRun.sawActivity &&
+      existsSync(writeFile) &&
+      readFileSync(writeFile, 'utf8').trim() === 'hello-e2e';
+    record(
+      'sandbox workspace-write (S4)',
+      writeOk,
+      writeOk
+        ? 'file created with exact content'
+        : `workspace-write sandbox did not make the probe file available; ` +
+            `sawActivity=${writeRun.sawActivity} file=${existsSync(writeFile)} ` +
+            `errors=${JSON.stringify(writeRun.errors)} (environment may reject this workspace)`
+    );
 
     // ── Phase 5: sandbox read-only blocks writes (S4 fail-closed axis) ───
     // Same resolver path as the config value (sandboxOverride IS the
@@ -219,9 +252,13 @@ async function main(): Promise<void> {
     // in-band tool failure — the model still replies); error-only activity
     // (401, limit degrade, flag rejection on schema drift) must NOT pass.
     const roOk = roRun.sawActivity && roRun.texts.length >= 1 && !existsSync(roFile);
-    record('sandbox read-only blocks write (S4)', roOk,
-      roOk ? 'run executed; write rejected by the OS sandbox'
-        : `sawActivity=${roRun.sawActivity} fileExists=${existsSync(roFile)} errors=${JSON.stringify(roRun.errors)}`);
+    record(
+      'sandbox read-only blocks write (S4)',
+      roOk,
+      roOk
+        ? 'run executed; write rejected by the OS sandbox'
+        : `sawActivity=${roRun.sawActivity} fileExists=${existsSync(roFile)} errors=${JSON.stringify(roRun.errors)}`
+    );
 
     // ── Phase 6: telemetry (S5 quota + S7 governance from config) ────────
     const quota = provider.getQuotaStats();
@@ -230,13 +267,16 @@ async function main(): Promise<void> {
     // complete a write turn without emitting a usage marker, so assert the
     // two completed memory turns and the shape of the counters instead of
     // cascading a missing marker into a false E2E failure.
-    const quotaOk = quota.turnsCompleted >= 2 &&
-      [quota.inputTokens, quota.cachedInputTokens, quota.outputTokens, quota.reasoningOutputTokens]
-        .every((value) => Number.isFinite(value) && value >= 0);
+    const quotaOk =
+      quota.turnsCompleted >= 2 &&
+      [
+        quota.inputTokens,
+        quota.cachedInputTokens,
+        quota.outputTokens,
+        quota.reasoningOutputTokens,
+      ].every((value) => Number.isFinite(value) && value >= 0);
     const govOk =
-      gov.maxConcurrentRuns === 1 &&
-      gov.maxActiveSessions === 2 &&
-      gov.activeSessions === 0; // all streams closed cleanly — no slot leak
+      gov.maxConcurrentRuns === 1 && gov.maxActiveSessions === 2 && gov.activeSessions === 0; // all streams closed cleanly — no slot leak
     record('quota telemetry (S5)', quotaOk, JSON.stringify(quota));
     record('governance caps from config (S7)', govOk, JSON.stringify(gov));
   } finally {
@@ -254,7 +294,9 @@ async function main(): Promise<void> {
 function summary(): void {
   const failed = results.filter((r) => !r.pass);
   const environmentalFailure = failed.some(({ detail }) =>
-    /Operation not permitted|permission|auth(?:entication)?|not found on PATH|unavailable|network|app-server/i.test(detail),
+    /Operation not permitted|permission|auth(?:entication)?|not found on PATH|unavailable|network|app-server|workspace-write sandbox did not make the probe file available|environment may reject this workspace/i.test(
+      detail
+    )
   );
   console.log('\n──────── codex e2e summary ────────');
   for (const r of results) {
