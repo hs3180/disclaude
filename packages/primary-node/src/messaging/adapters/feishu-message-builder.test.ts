@@ -13,7 +13,7 @@
  
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { MessageBuilder, DEFAULT_CHANNEL_CAPABILITIES, type MessageData, type ChannelCapabilities } from '@disclaude/core';
+import { Config, MessageBuilder, DEFAULT_CHANNEL_CAPABILITIES, type MessageData, type ChannelCapabilities } from '@disclaude/core';
 import { createFeishuMessageBuilderOptions } from './feishu-message-builder.js';
 
 /** Helper to create capabilities with specific supportedMcpTools */
@@ -25,6 +25,7 @@ const withTools = (tools: string[]): ChannelCapabilities => ({
 
 describe('MessageBuilder with Feishu sections', () => {
   let messageBuilder: MessageBuilder;
+  const channelCli = `${Config.getBuiltinsDir()}/skills/channel/cli.mjs`;
 
   beforeEach(() => {
     messageBuilder = new MessageBuilder(createFeishuMessageBuilderOptions());
@@ -196,7 +197,7 @@ describe('MessageBuilder with Feishu sections', () => {
         messageId: 'msg-123',
       }, 'chat-123', withTools(['send_text']));
 
-      expect(result).toContain('node skills/channel/cli.mjs send_text');
+      expect(result).toContain(`node ${channelCli} send_text`);
       expect(result).toContain('chat-123');
     });
 
@@ -206,7 +207,7 @@ describe('MessageBuilder with Feishu sections', () => {
         messageId: 'msg-123',
       }, 'chat-123', withTools(['send_text', 'send_card']));
 
-      expect(result).toContain('node skills/channel/cli.mjs send_card');
+      expect(result).toContain(`node ${channelCli} send_card`);
     });
 
     it('should include send_interactive when available', () => {
@@ -215,7 +216,7 @@ describe('MessageBuilder with Feishu sections', () => {
         messageId: 'msg-123',
       }, 'chat-123', withTools(['send_text', 'send_interactive']));
 
-      expect(result).toContain('node skills/channel/cli.mjs send_interactive');
+      expect(result).toContain(`node ${channelCli} send_interactive`);
     });
 
     it('should explain automatic final delivery and CLI use for extra messages', () => {
@@ -234,7 +235,7 @@ describe('MessageBuilder with Feishu sections', () => {
         messageId: 'msg-123',
       }, 'chat-123', withTools(['send_text', 'send_file']));
 
-      expect(result).toContain('node skills/channel/cli.mjs send_file');
+      expect(result).toContain(`node ${channelCli} send_file`);
     });
 
     it('should not include send_file when not in supportedMcpTools', () => {
