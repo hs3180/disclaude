@@ -45,7 +45,7 @@
 
 import { accessSync, constants, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
 
 import { createLogger } from '../../../utils/logger.js';
 import { Config } from '../../../config/index.js';
@@ -79,7 +79,11 @@ import {
   userInputText,
   type CodexThreadEvent,
 } from './exec-adapter.js';
-import { discoverBuiltinResources, formatCodexBuiltinContext } from './builtin-adapter.js';
+import {
+  discoverBuiltinResources,
+  formatCodexBuiltinContext,
+  mergeBuiltinResources,
+} from './builtin-adapter.js';
 
 const logger = createLogger('CodexAgentProvider');
 
@@ -198,7 +202,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
   private readonly sandboxOverride: CodexSandboxLevel | undefined;
   private readonly networkAccess: boolean;
   private readonly maxResumeInputTokens: number;
-  private readonly builtinContext: string;
+  private readonly builtinRoot: string;
   /** Cumulative quota counters (S5, #4632) — see CodexQuotaStats. */
   private readonly quota: CodexQuotaStats = {
     turnsCompleted: 0,
@@ -230,9 +234,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     this.sandboxOverride = options.sandboxOverride;
     this.networkAccess = options.networkAccess ?? true;
     this.maxResumeInputTokens = options.maxResumeInputTokens ?? DEFAULT_MAX_RESUME_INPUT_TOKENS;
-    this.builtinContext = formatCodexBuiltinContext(
-      discoverBuiltinResources(options.builtinsDir ?? Config.getBuiltinsDir()),
-    );
+    this.builtinRoot = options.builtinsDir ?? Config.getBuiltinsDir();
     this.governor = new CodexSessionGovernor({
       maxActiveSessions: options.maxActiveSessions,
       maxConcurrentRuns: options.maxConcurrentRuns,
@@ -381,7 +383,20 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     // Test/one-shot callers without a workspace do not have a safe base from
     // which Codex can read the referenced files; normal agent calls always
     // provide cwd through BaseAgent.
-    const thisBuiltinContext = options.cwd ? this.builtinContext : '';
+    // The provider is cached across chats, so the request cwd is the source of
+    // truth for project-local skills. Include the packaged index as well; the
+    // merge keeps the common case (cwd == builtinRoot) free of duplicates.
+    const thisBuiltinContext = options.cwd
+      ? formatCodexBuiltinContext(mergeBuiltinResources(
+        discoverBuiltinResources(resolve(options.cwd)),
+        // Claude Code projects conventionally keep local resources under
+        // `.claude/skills` and `.claude/agents`; treat that directory as a
+        // second workspace root while retaining the existing root-level
+        // `skills/` and `agents/` layout.
+        discoverBuiltinResources(join(resolve(options.cwd), '.claude')),
+        discoverBuiltinResources(this.builtinRoot),
+      ))
+      : '';
     // Instance-level quota sink (S5, #4632): the bridge closures below are
     // `this: void`, so they aggregate through this captured reference.
     const quotaSink = this.quota;

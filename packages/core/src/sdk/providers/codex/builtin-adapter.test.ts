@@ -2,9 +2,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { discoverBuiltinResources, formatCodexBuiltinContext } from './builtin-adapter.js';
+import { discoverBuiltinResources, formatCodexBuiltinContext, mergeBuiltinResources } from './builtin-adapter.js';
 
-describe('Codex builtin adapter (Issue #4695)', () => {
+describe('Codex builtin adapter (Issue #4699)', () => {
   let root = '';
   afterEach(() => { if (root) {rmSync(root, { recursive: true, force: true });} });
 
@@ -24,5 +24,12 @@ describe('Codex builtin adapter (Issue #4695)', () => {
     root = mkdtempSync(join(tmpdir(), 'codex-builtins-empty-'));
     expect(discoverBuiltinResources(root)).toEqual([]);
     expect(formatCodexBuiltinContext([])).toBe('');
+  });
+
+  it('merges project and packaged resources without duplicate entries', () => {
+    const resource: ReturnType<typeof discoverBuiltinResources>[number] = {
+      kind: 'skill', name: 'demo', path: '/workspace/skills/demo/SKILL.md',
+    };
+    expect(mergeBuiltinResources([resource], [resource])).toEqual([resource]);
   });
 });
