@@ -1,0 +1,13 @@
+{
+  "name": "@disclaude/channel-cli",
+  "version": "0.1.0",
+  "description": "Disclaude channel messaging CLI",
+  "type": "module",
+  "main": "./dist/cli.js",
+  "types": "./dist/cli.d.ts",
+  "bin": { "disclaude-channel": "./dist/cli.js" },
+  "exports": { ".": { "import": "./dist/cli.js", "types": "./dist/cli.d.ts", "default": "./dist/cli.js" } },
+  "scripts": { "build": "tsc -b", "type-check": "tsc --noEmit" },
+  "dependencies": { "@disclaude/mcp-server": "*", "js-yaml": "^4.1.0" },
+  "devDependencies": { "@types/node": "^22.10.5", "@types/js-yaml": "^4.0.9", "typescript": "^5.9.3" }
+}
