@@ -972,6 +972,26 @@ describe('MessageHandler', () => {
       expect(msg.metadata).toBeDefined();
       expect(msg.metadata.cardAction).toBeDefined();
       expect(msg.metadata.cardAction.value).toBe('action_value');
+      expect(msg.metadata.cardMessageId).toBe('card_msg_001');
+      expect(msg.metadata.threadRootId).toBe('card_msg_001');
+      expect(msg.messageId).toMatch(/^card_action_card_msg_001_/);
+      expect(msg.messageId).not.toBe('card_msg_001');
+    });
+
+    it('should give repeated clicks distinct agent message ids while reusing the event id when supplied', async () => {
+      const { handler } = createHandler();
+      await handler.handleCardAction(cardActionEvent({ event_id: 'evt_001' }));
+      const first = firstCallArg(mockState.emitMessage);
+
+      vi.clearAllMocks();
+      await handler.handleCardAction(cardActionEvent({ event_id: 'evt_002' }));
+      const second = firstCallArg(mockState.emitMessage);
+
+      expect(first.messageId).toBe('card_action_card_msg_001_evt_001');
+      expect(second.messageId).toBe('card_action_card_msg_001_evt_002');
+      expect(first.messageId).not.toBe(second.messageId);
+      expect(first.metadata.threadRootId).toBe('card_msg_001');
+      expect(second.metadata.threadRootId).toBe('card_msg_001');
     });
 
     it('should log card click under the original message id (not a synthetic id)', async () => {
