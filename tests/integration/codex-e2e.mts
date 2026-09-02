@@ -14,7 +14,7 @@
  * docs/codex-backend.md §7) or before trusting the codex backend in
  * production:
  *
- *   npx tsx scripts/codex-e2e.mts
+ *   npx tsx tests/integration/codex-e2e.mts
  *
  * Exit code 0 = all phases passed; 1 = at least one failed. Everything is
  * self-contained: temp workspace/config are created under the OS tmpdir and
@@ -36,9 +36,9 @@ import { homedir, tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 
-import type { AgentMessage } from '../packages/core/src/sdk/types.js';
+import type { AgentMessage } from '../../packages/core/src/sdk/types.js';
 
-const REPO_ROOT = join(fileURLToPath(new URL('..', import.meta.url)));
+const REPO_ROOT = join(fileURLToPath(new URL('../..', import.meta.url)));
 const PHASE_TIMEOUT_MS = 240_000; // one codex turn can take ~1-2 min
 
 /** Phase results collected for the final summary table. */

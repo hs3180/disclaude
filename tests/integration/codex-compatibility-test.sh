@@ -31,7 +31,7 @@ done
 
 if [ "$DRY_RUN" = true ]; then
     echo "Registered tests:"
-    echo "  [ai] Codex CLI compatibility (scripts/codex-e2e.mts)"
+    echo "  [ai] Codex CLI compatibility (tests/integration/codex-e2e.mts)"
     echo "Total: 1 test(s)"
     exit 0
 fi
@@ -46,7 +46,7 @@ if [ "$VERBOSE" = true ]; then
 fi
 
 set +e
-npx tsx "$PROJECT_ROOT/scripts/codex-e2e.mts"
+npx tsx "$SCRIPT_DIR/codex-e2e.mts"
 status=$?
 set -e
 
