@@ -12,6 +12,7 @@ import * as path from 'path';
 import { promisify } from 'util';
 import { setTimeout as sleep } from 'timers/promises';
 import { execFile } from 'child_process';
+import crypto from 'node:crypto';
 import type * as lark from '@larksuiteoapi/node-sdk';
 import {
   Config,
@@ -1399,6 +1400,9 @@ export class MessageHandler {
 
     // Parse actual Feishu event structure
     const rawData = data as Record<string, unknown>;
+    // Feishu reuses the card message id for every button click. Prefer its
+    // event id for a stable unique agent input id, with a UUID fallback.
+    const eventId = typeof rawData.event_id === 'string' ? rawData.event_id : undefined;
     const context = rawData.context as { open_message_id?: string; open_chat_id?: string } | undefined;
     const operator = rawData.operator as { open_id?: string; user_id?: string; union_id?: string } | undefined;
     const actionData = rawData.action as { value?: string; tag?: string; type?: string; text?: string } | undefined;
@@ -1555,13 +1559,16 @@ export class MessageHandler {
     // card actions go through the same pipeline as text messages via
     // createDefaultMessageHandler → ChatAgent.processMessage.
     let emitFailed = false;
+    const cardActionMessageId = `card_action_${message_id}_${eventId ?? crypto.randomUUID()}`;
     try {
       logger.debug(
-        { messageId: message_id, chatId: chat_id, actionValue: action.value, routed: false },
+        { messageId: cardActionMessageId, cardMessageId: message_id, chatId: chat_id, actionValue: action.value, routed: false },
         'Emitting card action as local message to agent'
       );
       await this.callbacks.emitMessage({
-        messageId: message_id,  // Use original Feishu message ID (not synthetic) to prevent threadRoot pollution (fixes #2285)
+        // The card id is not unique per click. Keep it in metadata for
+        // prompt/history lookup, but use a unique id for agent turn state.
+        messageId: cardActionMessageId,
         chatId: chat_id,
         userId: user?.sender_id?.open_id,
         content: messageContent,
@@ -1570,10 +1577,12 @@ export class MessageHandler {
         metadata: {
           cardAction: action,
           cardMessageId: message_id,
+          // Preserve the actual Feishu card as the reply thread anchor.
+          threadRootId: message_id,
         },
       });
       logger.debug(
-        { messageId: message_id, chatId: chat_id },
+        { messageId: cardActionMessageId, cardMessageId: message_id, chatId: chat_id },
         'Card action message emitted successfully'
       );
     } catch (error) {
