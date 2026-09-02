@@ -2,8 +2,9 @@
 #
 # Integration E2E: Codex compatibility checks
 #
-# Exit code 2 from codex-e2e.mts means the host cannot provide a supported
-# Codex environment and is reported as SKIP by run-all-tests.sh.
+# This suite deliberately talks to the Primary Node that the integration
+# runner already started.  Do not instantiate a provider or create a second
+# config/workspace here: doing so tests a different process than production.
 #
 
 set -e
@@ -13,6 +14,10 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 VERBOSE=false
 DRY_RUN=false
+source "$SCRIPT_DIR/common.sh"
+parse_common_args "$@"
+register_cleanup
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --verbose) VERBOSE=true; shift ;;
@@ -31,8 +36,8 @@ done
 
 if [ "$DRY_RUN" = true ]; then
     echo "Registered tests:"
-    echo "  [ai] Codex CLI compatibility (tests/integration/codex-e2e.mts)"
-    echo "Total: 1 test(s)"
+    echo "  [ai] Codex CLI compatibility (Primary Node REST path)"
+    echo "Total: 3 tests"
     exit 0
 fi
 
@@ -41,24 +46,71 @@ echo "=========================================="
 echo "  Codex CLI Compatibility E2E"
 echo "=========================================="
 
-if [ "$VERBOSE" = true ]; then
-    echo "[INFO] Running real Codex compatibility checks"
+if ! is_server_running; then
+    log_info "Primary Node is not running; starting the complete integration environment"
+    start_server || exit 1
 fi
 
-set +e
-npx tsx "$SCRIPT_DIR/codex-e2e.mts"
-status=$?
-set -e
+failures=0
 
-if [ "$status" -eq 0 ]; then
-    echo "[PASS] Codex compatibility E2E"
-    exit 0
-fi
-if [ "$status" -eq 2 ]; then
-    echo "[SKIP] Codex compatibility E2E: host environment is unavailable"
-    echo "[SKIP] Check codex login, CLI installation, app-server permissions, and network access."
-    exit 0
-fi
+test_resume_memory() {
+    local chat_id="codex-resume-$$"
+    local code="MANGO-$RANDOM"
+    assert_sync_chat_ok "Remember this code word: $code. Reply only with noted." "$chat_id" || return 1
+    assert_sync_chat_ok "What was my code word? Reply with only the code word." "$chat_id" || return 1
+    if echo "$RESPONSE_TEXT" | grep -qF "$code"; then
+        log_pass "Codex resume memory preserved through Primary Node"
+    else
+        log_fail "Codex resume memory lost: expected $code, got '$RESPONSE_TEXT'"
+        return 1
+    fi
+}
 
-echo "[FAIL] Codex compatibility E2E (exit code $status)"
-exit "$status"
+test_workspace_write() {
+    local chat_id="codex-write-$$"
+    local file="${DISCLAUDE_WORKSPACE_DIR}/codex-e2e-probe-$$.txt"
+    local relative="$(basename "$file")"
+    rm -f "$file"
+    assert_sync_chat_ok \
+        "Use your shell tool now. Run exactly: printf 'hello-e2e\\n' > $relative. Do not just describe it; execute it and then reply done." \
+        "$chat_id" || return 1
+    if [ -f "$file" ] && [ "$(cat "$file")" = "hello-e2e" ]; then
+        log_pass "Codex workspace-write created the exact probe file"
+        rm -f "$file"
+        return 0
+    fi
+    if [ -f "$file" ]; then
+        log_fail "Codex workspace-write created an unexpected probe file"
+    else
+        log_fail "Codex did not produce a workspace mutation; response='$RESPONSE_TEXT'"
+    fi
+    rm -f "$file"
+    return 1
+}
+
+test_pool_cleanup() {
+    local result body active busy
+    result=$(make_request "GET" "/api/health")
+    parse_response "$result"
+    assert_status "200" "Primary Node health after Codex turns" || return 1
+    body="$RESPONSE_BODY"
+    active=$(echo "$body" | jq -r '.agentPool.active // empty')
+    busy=$(echo "$body" | jq -r '.agentPool.busy // empty')
+    if [ -n "$active" ] && [ "$busy" = "0" ]; then
+        log_pass "Primary AgentPool is healthy after Codex turns (active=$active busy=$busy)"
+    else
+        log_fail "Primary AgentPool did not expose a clean post-turn state: $body"
+        return 1
+    fi
+}
+
+for test in test_resume_memory test_workspace_write test_pool_cleanup; do
+    if ! "$test"; then failures=$((failures + 1)); fi
+done
+
+if [ "$failures" -eq 0 ]; then
+    echo "[PASS] Codex compatibility E2E through complete Primary Node environment"
+else
+    echo "[FAIL] Codex compatibility E2E: $failures test(s) failed"
+fi
+exit "$failures"
