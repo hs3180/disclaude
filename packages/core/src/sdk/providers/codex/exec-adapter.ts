@@ -98,6 +98,56 @@ export type CodexThreadEvent =
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   | { type: string; [extra: string]: any };
 
+/** Presentation bucket used by the Codex-to-chat boundary. */
+export type CodexEventPresentation =
+  | 'user-visible'
+  | 'internal'
+  | 'telemetry-only'
+  | 'ignored';
+
+/**
+ * Classify a JSONL event before it is adapted for a channel.
+ *
+ * Keeping this decision separate from the payload adapter prevents a future
+ * Codex event from accidentally becoming chat text merely because it happens
+ * to contain a `text` field. In particular, reasoning/context construction
+ * and lifecycle events remain available to logs without leaking to users.
+ */
+export function classifyCodexEvent(event: CodexThreadEvent): CodexEventPresentation {
+  switch (event.type) {
+    case 'thread.started':
+    case 'turn.started':
+      return 'telemetry-only';
+    case 'turn.completed':
+      return 'user-visible';
+    case 'turn.failed':
+    case 'error':
+      return 'user-visible';
+    case 'item.started':
+    case 'item.completed': {
+      const itemType = event.item?.type;
+      if (itemType === 'reasoning' || itemType === 'todo_list') {
+        return 'internal';
+      }
+      if (
+        itemType === 'agent_message' ||
+        itemType === 'command_execution' ||
+        itemType === 'mcp_tool_call' ||
+        itemType === 'file_change' ||
+        itemType === 'web_search' ||
+        itemType === 'error'
+      ) {
+        return 'user-visible';
+      }
+      return 'ignored';
+    }
+    case 'item.updated':
+      return 'telemetry-only';
+    default:
+      return 'ignored';
+  }
+}
+
 /**
  * Is this event an item.* event carrying the given item type?
  * Narrows the catch-all without asserting exhaustiveness.
@@ -185,6 +235,13 @@ function mcpResultText(
  *   subscription has no per-call USD price).
  */
 export function adaptCodexEvent(event: CodexThreadEvent): AgentMessage | null {
+  // The classifier is deliberately consulted here as the final safety net;
+  // callers may use it independently for telemetry, but no internal/unknown
+  // event can become user-facing through this adapter.
+  const presentation = classifyCodexEvent(event);
+  if (presentation === 'internal' || presentation === 'ignored' || presentation === 'telemetry-only') {
+    return null;
+  }
   switch (event.type) {
     // ── agent output ────────────────────────────────────────────────────────
     case 'item.completed': {

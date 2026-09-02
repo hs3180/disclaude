@@ -16,11 +16,27 @@ import { describe, expect, it } from 'vitest';
 
 import {
   adaptCodexEvent,
+  classifyCodexEvent,
   isCodexAuthFailure,
   isCodexResumeTargetMissing,
   isCodexUsageLimit,
   userInputText,
 } from './exec-adapter.js';
+
+describe('classifyCodexEvent (Issue #4694)', () => {
+  it('separates visible output from internal and telemetry events', () => {
+    expect(classifyCodexEvent({
+      type: 'item.completed',
+      item: { id: 'a', type: 'agent_message', text: 'answer' },
+    })).toBe('user-visible');
+    expect(classifyCodexEvent({
+      type: 'item.completed',
+      item: { id: 'r', type: 'reasoning', text: 'private reasoning' },
+    })).toBe('internal');
+    expect(classifyCodexEvent({ type: 'item.updated', item: { id: 'x', type: 'todo_list' } })).toBe('telemetry-only');
+    expect(classifyCodexEvent({ type: 'future.event', payload: { text: 'do not leak' } } as any)).toBe('ignored');
+  });
+});
 
 describe('adaptCodexEvent (Issue #4630)', () => {
   // ── captured wire shapes (0.132.0) ────────────────────────────────────
