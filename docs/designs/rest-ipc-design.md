@@ -48,6 +48,7 @@ MCP Server (mcp-server) / push-cli
 | Method | Path | IPC method | PR |
 |--------|------|------------|-----|
 | GET | `/api/ping` | ping | #4341 |
+| GET | `/api/health/detailed` | process and opt-in dependency diagnostics | #4718 |
 | POST | `/api/send-message` | sendMessage | #4343 |
 | POST | `/api/send-card` | sendCard | #4344 |
 | POST | `/api/send-interactive` | sendInteractive | #4345 |
@@ -63,6 +64,26 @@ MCP Server (mcp-server) / push-cli
 - **filePath vs multipart** (uploads): Used filePath because the REST face is localhost-bound (co-located). Exact IPC parity, no multipart overhead. Documented in #4346/#4347.
 - **single-process semantics** (listTempChats): Current architecture is single-process, so cross-process aggregation is a future concern. Documented in #4348.
 - **Auth**: POST routes require Bearer token (`apiToken`). GET routes are token-exempt (like `/api/status`).
+
+### Detailed health diagnostics (Issue #4718)
+
+`GET /api/health/detailed` keeps the local process signal separate from
+dependency reachability. It always reports the Primary Node process and can
+optionally probe these URLs when configured at startup:
+
+| Environment variable | Probe |
+| --- | --- |
+| `DAGSTER_HEALTH_URL` | Dagster or another internal service |
+| `EXTERNAL_API_HEALTH_URL` | External API / internet egress |
+| `FEISHU_API_HEALTH_URL` | Feishu API / DNS path |
+
+Use `HEALTH_PROBE_TIMEOUT_MS` to override the default 5-second timeout. Each
+probe reports its target, resolved addresses, phase (`dns`, `tcp`, or `http`),
+HTTP status, duration, and a typed error such as `dns_resolution`,
+`connection_refused`, `connection_timeout`, `http_4xx`, or `http_5xx`.
+Unconfigured probes are `skipped`; dependency failures return HTTP 503 from
+the detailed endpoint but do not make `/api/ping` fail. This lets monitoring
+distinguish task/process health from external result-delivery health.
 
 ### 3.3 Response envelope
 

@@ -176,6 +176,46 @@ describe('HttpApiServer', () => {
     });
   });
 
+  describe('GET /api/health/detailed (Issue #4718)', () => {
+    it('keeps optional dependency probes skipped while reporting the process healthy', async () => {
+      const { statusCode, body } = await dispatch(server, { method: 'GET', url: '/api/health/detailed' });
+      const data = JSON.parse(body) as {
+        status: string;
+        process: { status: string; pid: number };
+        probes: Record<string, { status: string }>;
+      };
+
+      expect(statusCode).toBe(200);
+      expect(data.status).toBe('healthy');
+      expect(data.process.status).toBe('healthy');
+      expect(data.process.pid).toBe(process.pid);
+      expect(data.probes.dagster.status).toBe('skipped');
+      expect(data.probes.externalApi.status).toBe('skipped');
+      expect(data.probes.feishuApi.status).toBe('skipped');
+    });
+
+    it('returns a non-200 diagnostic when a configured dependency is unhealthy', async () => {
+      const unhealthyServer = new HttpApiServer({
+        port: 0,
+        host: '127.0.0.1',
+        dagsterHealthUrl: 'http://127.0.0.1:1/health',
+        healthProbeTimeoutMs: 100,
+      });
+      try {
+        const { statusCode, body } = await dispatch(unhealthyServer, {
+          method: 'GET',
+          url: '/api/health/detailed',
+        });
+        const data = JSON.parse(body) as { status: string; probes: { dagster: { phase?: string } } };
+        expect(statusCode).toBe(503);
+        expect(data.status).toBe('unhealthy');
+        expect(data.probes.dagster.phase).toBe('tcp');
+      } finally {
+        (unhealthyServer as unknown as { stopSseHeartbeat: () => void }).stopSseHeartbeat();
+      }
+    });
+  });
+
   describe('POST /api/upload-file (Issue #4279)', () => {
     const validBody = JSON.stringify({ chatId: 'oc_test', filePath: '/tmp/report.pdf', threadId: 'om_root' });
 

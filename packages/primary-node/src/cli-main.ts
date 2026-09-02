@@ -519,8 +519,23 @@ export async function main(): Promise<void> {
         processLock?.release();
         process.exit(1);
       }
-      httpApiServer = new HttpApiServer({ port: options.apiPort, host: apiHost, apiToken: options.apiToken });
+      httpApiServer = new HttpApiServer({
+        port: options.apiPort,
+        host: apiHost,
+        apiToken: options.apiToken,
+        // Issue #4718: dependency probes are opt-in. They must not be folded
+        // into /api/ping, because an external outage does not mean this
+        // process or its local HTTP API is down.
+        dagsterHealthUrl: process.env.DAGSTER_HEALTH_URL,
+        externalApiHealthUrl: process.env.EXTERNAL_API_HEALTH_URL,
+        feishuApiHealthUrl: process.env.FEISHU_API_HEALTH_URL,
+        healthProbeTimeoutMs: Number.parseInt(process.env.HEALTH_PROBE_TIMEOUT_MS ?? '', 10) || undefined,
+      });
       httpApiServer.setNodeId(primaryNode.getNodeId());
+      const feishuChannel = channelManager.get('feishu') as { getDeliveryHealth?: () => import('./health-probes.js').DeliveryHealth } | undefined;
+      httpApiServer.setDeliveryHealthProvider(
+        () => feishuChannel?.getDeliveryHealth?.() ?? { status: 'unknown', attempts: 0, successes: 0, failures: 0 },
+      );
 
       // Issue #3857 Phase 2: Wire push handler to InputMessageRouter
       const router = primaryNode.getInputMessageRouter();

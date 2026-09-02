@@ -8,6 +8,7 @@
  *
  * Endpoints:
  * - `GET /api/status` — Basic health/status check
+ * - `GET /api/health/detailed` — Process and opt-in dependency diagnostics
  * - `GET /api/ping` — Liveness probe (`{ pong: true }`); REST parity with IPC `ping` (#4279)
  * - `GET /api/temp-chats` — List tracked temporary chats (REST parity with IPC listTempChats; #4279)
  * - `POST /api/push` — Push message to agent (equivalent to push_to_agent)
@@ -29,6 +30,7 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
 import { timingSafeEqual } from 'node:crypto';
 import { createLogger, type TopicGroupMessageEvent, type FeishuCard } from '@disclaude/core';
 import { PRIMARY_NODE_VERSION } from './version.js';
+import { probeNetworkEndpoint, type DeliveryHealth, type HealthProbeResult } from './health-probes.js';
 
 const logger = createLogger('HttpApiServer');
 
@@ -42,6 +44,23 @@ export interface HttpApiServerConfig {
   host?: string;
   /** API token for Bearer authentication on write routes */
   apiToken?: string;
+  /** Optional operator-configured dependency targets for /api/health/detailed. */
+  dagsterHealthUrl?: string;
+  externalApiHealthUrl?: string;
+  feishuApiHealthUrl?: string;
+  healthProbeTimeoutMs?: number;
+}
+
+export interface DetailedHealthResponse {
+  status: 'healthy' | 'degraded' | 'unhealthy';
+  timestamp: string;
+  process: { status: 'healthy'; pid: number; uptime: number };
+  delivery: DeliveryHealth;
+  probes: {
+    dagster: HealthProbeResult;
+    externalApi: HealthProbeResult;
+    feishuApi: HealthProbeResult;
+  };
 }
 
 /**
@@ -248,6 +267,7 @@ export class HttpApiServer {
   private listTempChatsHandler?: ListTempChatsHandler;
   private uploadImageHandler?: UploadImageHandler;
   private markChatRespondedHandler?: MarkChatRespondedHandler;
+  private deliveryHealthProvider?: () => DeliveryHealth;
   /** Connected SSE clients for topic notifications (Issue #4031) */
   private readonly sseClients = new Set<ServerResponse>();
   /** Heartbeat interval timer for SSE keepalive */
@@ -263,6 +283,11 @@ export class HttpApiServer {
    */
   setNodeId(nodeId: string): void {
     this.nodeId = nodeId;
+  }
+
+  /** Supply channel delivery counters without making health checks send a message. */
+  setDeliveryHealthProvider(provider: () => DeliveryHealth): void {
+    this.deliveryHealthProvider = provider;
   }
 
   /**
@@ -497,6 +522,7 @@ export class HttpApiServer {
    */
   private setupRoutes(): void {
     this.addRoute('GET', '/api/status', this.handleStatus.bind(this));
+    this.addRoute('GET', '/api/health/detailed', this.handleDetailedHealth.bind(this));
     // Issue #4279: REST parity with IPC uploadFile.
     this.addRoute('POST', '/api/upload-file', this.handleUploadFile.bind(this));
     // Issue #4168 (Phase 1, #4279): REST parity with the IPC `ping` method —
@@ -603,6 +629,40 @@ export class HttpApiServer {
   ): Promise<void> {
     this.sendJson(res, 200, { pong: true });
     return Promise.resolve();
+  }
+
+  /**
+   * GET /api/health/detailed — independent process/dependency diagnostics.
+   *
+   * Dependency targets are opt-in so a default installation remains a fast,
+   * local-only health check. A dependency failure never changes /api/ping.
+   */
+  private async handleDetailedHealth(
+    _req: IncomingMessage,
+    res: ServerResponse,
+    _params: Record<string, string>,
+  ): Promise<void> {
+    const timeoutMs = this.config.healthProbeTimeoutMs;
+    const [dagster, externalApi, feishuApi] = await Promise.all([
+      probeNetworkEndpoint({ name: 'dagster', url: this.config.dagsterHealthUrl, timeoutMs }),
+      probeNetworkEndpoint({ name: 'external-api', url: this.config.externalApiHealthUrl, timeoutMs }),
+      probeNetworkEndpoint({ name: 'feishu-api', url: this.config.feishuApiHealthUrl, timeoutMs }),
+    ]);
+    const probes = { dagster, externalApi, feishuApi };
+    const statuses = Object.values(probes).map((probe) => probe.status);
+    const status = statuses.includes('unhealthy')
+      ? 'unhealthy'
+      : statuses.includes('degraded')
+        ? 'degraded'
+        : 'healthy';
+    const response: DetailedHealthResponse = {
+      status,
+      timestamp: new Date().toISOString(),
+      process: { status: 'healthy', pid: process.pid, uptime: process.uptime() },
+      delivery: this.deliveryHealthProvider?.() ?? { status: 'unknown', attempts: 0, successes: 0, failures: 0 },
+      probes,
+    };
+    this.sendJson(res, status === 'healthy' ? 200 : 503, response);
   }
 
   /**
