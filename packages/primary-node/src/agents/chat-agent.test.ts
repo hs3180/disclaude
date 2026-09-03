@@ -3219,6 +3219,51 @@ describe('ChatAgent (primary-node)', () => {
       expect(rm.recordSuccess).not.toHaveBeenCalled();
     });
 
+    it('Issue #4747: failed Codex turns have a visible terminal outcome', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_turn_failed',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      async function* failedTurnIterator() {
+        yield {
+          parsed: { type: 'result', content: '', terminatedReason: 'turn_failed' },
+          raw: {},
+        };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: failedTurnIterator(),
+      });
+
+      void agent.processMessage({
+        chatId: 'oc_turn_failed',
+        payload: 'run it',
+        messageId: 'msg_failed',
+      });
+
+      await vi.waitFor(() => {
+        expect(
+          localCallbacks.sendMessage.mock.calls.some(
+            (call: any[]) => typeof call[1] === 'string' && call[1].includes('Codex 执行失败')
+          )
+        ).toBe(true);
+      }, { timeout: 1000, interval: 20 });
+
+      const sentText = localCallbacks.sendMessage.mock.calls.map((call: any[]) => call[1]);
+      expect(sentText).not.toContain('✅ Complete');
+      expect((agent as any).restartManager.recordFailure).toHaveBeenCalledWith(
+        'oc_turn_failed',
+        'turn_failed'
+      );
+      expect((agent as any).restartManager.recordSuccess).not.toHaveBeenCalled();
+    });
+
     it('Issue #4260 (test 1): a system→result-only stream is marked failed, not silent success', async () => {
       // #4194's exact reported scenario is a stream that emits a `system` SDK
       // message (the GLM / Agent Teams flood, rendered by the adapter as an
