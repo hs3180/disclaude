@@ -26,6 +26,9 @@ export * from './ipc/index.js';
 // Config
 export * from './config/index.js';
 
+// Unified filter / delivery observability (Issue #4749)
+export * from './observability/lifecycle-events.js';
+
 // Agent SDK abstraction layer (Issue #1040)
 // Export SDK functions and classes
 export {

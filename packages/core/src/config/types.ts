@@ -318,7 +318,15 @@ export type TriggerMode = 'mention' | 'always' | 'auto';
  * Filter reason types for message filtering.
  * @see Issue #597
  */
-export type FilterReason = 'duplicate' | 'bot' | 'old' | 'unsupported' | 'empty' | 'trigger_mode';
+export type FilterReason =
+  | 'missing_fields'
+  | 'parse_failure'
+  | 'duplicate'
+  | 'bot'
+  | 'old'
+  | 'unsupported'
+  | 'empty'
+  | 'trigger_mode';
 
 /**
  * Debug configuration for filtered message forwarding.

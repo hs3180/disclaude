@@ -32,6 +32,7 @@ import {
   type ControlCommand,
   type ControlResponse,
   type TopicGroupMessageEvent,
+  type FilterReason,
 } from '@disclaude/core';
 import { InteractionManager } from '../../platforms/feishu/interaction-manager.js';
 import { extractFullCardContent } from '../../platforms/feishu/card-builders/card-text-extractor.js';
@@ -48,6 +49,10 @@ import {
 } from './content-parser.js';
 
 const logger = createLogger('MessageHandler');
+
+function sanitizeLifecycleReason(reason: unknown): string {
+  return String(reason).replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').slice(0, 240);
+}
 
 /**
  * Map Feishu message type to resource download API `type` parameter.
@@ -68,7 +73,7 @@ function mapResourceType(messageType: string): 'image' | 'file' {
 export interface MessageCallbacks {
   emitMessage: (message: IncomingMessage) => Promise<void>;
   emitControl: (control: ControlCommand) => Promise<ControlResponse>;
-  sendMessage: (message: { chatId: string; type: string; text?: string; card?: Record<string, unknown>; description?: string; threadId?: string; filePath?: string }) => Promise<void>;
+  sendMessage: (message: { chatId: string; type: string; text?: string; card?: Record<string, unknown>; description?: string; threadId?: string; filePath?: string }) => Promise<string | void>;
   /**
    * Route card action to the local agent if applicable.
    * Issue #1629: Includes resolvedPrompt from InteractiveContextStore
@@ -452,14 +457,18 @@ export class MessageHandler {
    * Forward a filtered message (simplified - just logs for now).
    */
   private forwardFilteredMessage(
-    reason: string,
+    reason: FilterReason,
     messageId: string,
     chatId: string,
     _content: string,
     userId?: string,
     metadata?: Record<string, unknown>
   ): void {
-    logger.debug({ reason, messageId, chatId, userId, metadata }, 'Message filtered');
+    logger.info({
+      event: 'filter_result', reason, sanitizedReason: sanitizeLifecycleReason(reason),
+      traceId: messageId, runId: messageId, sourceMessageId: messageId, chatId,
+      target: chatId, userId, metadata,
+    }, 'filter_result');
   }
 
   /**
@@ -946,6 +955,7 @@ export class MessageHandler {
     const threadId = message_id;
 
     if (!message_id || !chat_id || !content || !message_type) {
+      logger.info({ event: 'filter_result', reason: 'missing_fields', sanitizedReason: 'missing required message fields', traceId: message_id || 'unknown', runId: message_id || 'unknown', sourceMessageId: message_id, chatId: chat_id || 'unknown', target: chat_id }, 'filter_result');
       logger.warn('Missing required message fields');
       return;
     }
@@ -1186,11 +1196,12 @@ export class MessageHandler {
         // Issue #3657: Parse interactive card messages
         text = extractFullCardContent(parsed);
       }
-    } catch {
+      } catch (parseError) {
       // Issue #4083: Handle non-JSON interactive card content (<card> format)
       if (message_type === 'interactive' && content) {
         text = extractFullCardContent(content);
       } else {
+        logger.info({ event: 'filter_result', reason: 'parse_failure', sanitizedReason: sanitizeLifecycleReason(parseError), traceId: message_id, runId: message_id, sourceMessageId: message_id, chatId: chat_id, target: chat_id }, 'filter_result');
         logger.error('Failed to parse content');
         return;
       }
@@ -1333,7 +1344,9 @@ export class MessageHandler {
       {
         hasControlHandler: this.controlHandler,
         emitControl: (command) => this.callbacks.emitControl(command),
-        sendMessage: (reply) => this.callbacks.sendMessage(reply),
+        sendMessage: async (reply) => {
+          await this.callbacks.sendMessage(reply);
+        },
       },
     );
     if (commandHandled) {
