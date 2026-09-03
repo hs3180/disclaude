@@ -61,9 +61,14 @@ import { getDebugGroupService } from '../services/debug-group-service.js';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 import { buildDisallowedTools } from './disallowed-tools.js';
 import { HistoryManager } from './history-manager.js';
+import crypto from 'node:crypto';
 
 // Type alias for backward compatibility within this module
 type UserInput = AgentUserInput;
+
+function sanitizeLifecycleReason(reason: unknown): string {
+  return String(reason).replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').slice(0, 240);
+}
 
 // Re-export types for backward compatibility
 export type { ChatAgentCallbacks, ChatAgentConfig, MessageData } from './types.js';
@@ -209,6 +214,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   // Both fields are session-scoped: reset on every startAgentLoop().
   private consecutiveSendFailures = 0;
   private sendCircuitOpen = false;
+  private activeLifecycleContext?: { traceId: string; runId: string; sourceMessageId: string };
 
   // Issue #4391 (#4194 follow-up ②): empty-turn session-reset + bounded replay.
   // The policy locks eligibility (real-user messages only — synthetic sched-*/push_*
@@ -825,6 +831,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       },
       'processMessage called'
     );
+    this.activeLifecycleContext = {
+      traceId: `${chatId}:${messageId}`,
+      runId: crypto.randomUUID(),
+      sourceMessageId: messageId,
+    };
+    this.logger.info({ event: 'agent_turn', state: 'started', chatId, ...this.activeLifecycleContext, userVisible: false }, 'agent_turn');
 
     // Issue #3641: Store chat type for topic group detection
     if (chatType) {
@@ -1243,17 +1255,44 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     chatId: string,
     content: string,
     threadRoot?: string
-  ): Promise<void> {
+  ): Promise<string | undefined> {
+    const context = this.activeLifecycleContext ?? {
+      traceId: `${chatId}:unknown`,
+      runId: crypto.randomUUID(),
+      sourceMessageId: 'unknown',
+    };
+    const attempt = this.consecutiveSendFailures + 1;
+    const recordDeliveryEvent = (event: 'delivery_attempt' | 'delivery_final', fields: Record<string, unknown>): void => {
+      // Keep event publication off the hot path: legacy callers and tests rely
+      // on delivery failures being isolated without extra scheduling points.
+      setImmediate(() => this.logger.info({
+        event, chatId, target: chatId, attempt, userVisible: false, ...context, ...fields,
+      }, event));
+    };
+    recordDeliveryEvent('delivery_attempt', {
+      state: 'started',
+      fallback: threadRoot ? 'thread_reply' : 'direct',
+      circuitState: this.sendCircuitOpen ? 'open' : 'closed',
+    });
     if (this.sendCircuitOpen) {
       this.logger.debug(
         { chatId, contentLength: content.length },
         'Send skipped: delivery circuit open for this session (Issue #4626)'
       );
-      return;
+      recordDeliveryEvent('delivery_final', { state: 'delivery_failed', circuitState: 'open' });
+      return undefined;
     }
     try {
-      await this.callbacks.sendMessage(chatId, content, threadRoot);
+      const sentMessageId = await this.callbacks.sendMessage(chatId, content, threadRoot);
+      const messageId = typeof sentMessageId === 'string' ? sentMessageId : undefined;
       this.consecutiveSendFailures = 0;
+      recordDeliveryEvent('delivery_final', {
+        state: 'final',
+        messageId,
+        circuitState: 'closed',
+        userVisible: true,
+      });
+      return messageId;
     } catch (err) {
       this.consecutiveSendFailures++;
       const httpStatus = extractSendHttpStatus(err);
@@ -1264,6 +1303,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         !isOversizedFeishuMessageError(err);
       if (isPermanentTargetError || this.consecutiveSendFailures >= MAX_CONSECUTIVE_SEND_FAILURES) {
         this.sendCircuitOpen = true;
+        // Publish after the current delivery microtask so consumers cannot
+        // observe the circuit marker before the result event has settled.
         this.logger.error(
           {
             chatId,
@@ -1289,6 +1330,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           'sendMessage failed in agent loop — isolated, session continues (Issue #4626)'
         );
       }
+      recordDeliveryEvent('delivery_final', {
+        state: 'delivery_failed',
+        errorCategory: isPermanentTargetError ? 'target' : 'transport',
+        errorCode: sanitizeLifecycleReason(err),
+        fallback: 'none',
+        circuitState: this.sendCircuitOpen ? 'open' : 'closed',
+      });
+      return undefined;
     }
   }
 
@@ -1424,8 +1473,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             startStreaming: this.callbacks.startStreaming,
             streamText: this.callbacks.streamText,
             finalizeStreaming: this.callbacks.finalizeStreaming,
-            sendMessage: (cid, content, threadRoot) =>
-              this.callbacks.sendMessage(cid, content, threadRoot),
+            sendMessage: async (cid, content, threadRoot) => {
+              await this.callbacks.sendMessage(cid, content, threadRoot);
+            },
             logger: this.logger,
           })
         : null;
@@ -2029,6 +2079,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             // replay succeeded and when an ordinary turn just produced output).
             this.emptyTurnRetryPolicy.reset(chatId);
           }
+
+          this.logger.debug({
+            event: 'agent_turn', state: 'completed', chatId, userVisible: userVisibleOutputCount > 0 && !this.sendCircuitOpen,
+            circuitState: this.sendCircuitOpen ? 'open' : 'closed', ...this.activeLifecycleContext,
+          }, 'agent_turn');
 
           // Issue #3985: Mark as not processing after receiving result.
           // The agent is now idle between turns — blocking tasks can execute.

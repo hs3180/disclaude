@@ -317,6 +317,8 @@ export type TriggerMode = 'mention' | 'always' | 'auto';
  * @see Issue #597
  */
 export type FilterReason =
+  | 'missing_fields'
+  | 'parse_failure'
   | 'duplicate'
   | 'bot'
   | 'old'

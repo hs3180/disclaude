@@ -116,7 +116,7 @@ export function createChannelCallbacksFactory(
 ): (chatId: string) => ChatAgentCallbacks {
   return (_chatId: string): ChatAgentCallbacks => ({
     sendMessage: async (chatId: string, text: string, parentMessageId?: string) => {
-      await channel.sendMessage({
+      return await channel.sendMessage({
         chatId,
         type: 'text',
         text,
