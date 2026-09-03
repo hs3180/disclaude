@@ -1243,17 +1243,18 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     chatId: string,
     content: string,
     threadRoot?: string
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (this.sendCircuitOpen) {
       this.logger.debug(
         { chatId, contentLength: content.length },
         'Send skipped: delivery circuit open for this session (Issue #4626)'
       );
-      return;
+      return false;
     }
     try {
       await this.callbacks.sendMessage(chatId, content, threadRoot);
       this.consecutiveSendFailures = 0;
+      return true;
     } catch (err) {
       this.consecutiveSendFailures++;
       const httpStatus = extractSendHttpStatus(err);
@@ -1289,6 +1290,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           'sendMessage failed in agent loop — isolated, session continues (Issue #4626)'
         );
       }
+      return false;
     }
   }
 
@@ -1480,7 +1482,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         // Issue #3641: In topic group threads, filter intermediate messages
         // (tool_use, tool_result, tool_progress) to reduce noise.
         // Issue #3809: Forward intermediate messages to debug group.
-        if (parsed.content) {
+        if (parsed.content && parsed.terminatedReason !== 'turn_failed') {
           const isTopicThread = this.chatType === 'topic';
           const isIntermediateMessage =
             parsed.type === 'tool_use' ||
@@ -1558,6 +1560,17 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
         // Check for completion
         if (parsed.type === 'result') {
+          // Codex can emit an empty synthetic result after a failed process.
+          // Handle this before the normal success/empty-turn accounting so it
+          // always has a user-visible terminal outcome.
+          if (parsed.terminatedReason === 'turn_failed') {
+            this.restartManager.recordFailure(chatId, 'turn_failed');
+            await this.deliverUserVisible(
+              chatId,
+              '❌ 本轮 Codex 执行失败，未生成可交付结果。请稍后重试；若持续失败，请检查 Codex CLI、凭据和超时配置。',
+              resolveReplyThreadRoot()
+            );
+          }
           // Issue #3706 (GLM stall): provider watchdog terminated the stream.
           // The generic content-send block above already delivered the notice
           // (parsed.content carries STALL_TERMINATE_NOTICE). Here we only do
@@ -1643,14 +1656,6 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
               this.clearTaskCompletion();
             }
             continue;
-          }
-
-          if (parsed.terminatedReason === 'turn_failed') {
-            // Issue #4630 review (S2): the provider's synthetic result after
-            // a failed run (spawn error / timeout / non-zero exit /
-            // turn.failed) — record FAILURE so chronic codex outages trip
-            // the restart circuit breaker instead of counting as successes.
-            this.restartManager.recordFailure(chatId, 'turn_failed');
           }
 
           // Issue #3003: Log timing summary on completion
@@ -1757,33 +1762,16 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                 'Turn was marked successful but the user saw no reply; consider session reset.'
             );
 
-            // Issue #4258 (part 1): send a diagnostic notice so the user knows
-            // the turn produced nothing, rather than appearing to be ignored.
-            // Fire-and-forget: the sendMessage promise is intentionally NOT
-            // awaited so neither a rejection nor a promise that never settles
-            // can block the turn-completion path (recordSuccess / onDone
-            // below). The surrounding try/catch only guards the synchronous
-            // setup (getThreadRoot) for the same reason.
-            try {
-              const emptyTurnThreadRoot = resolveReplyThreadRoot();
-              void this.callbacks
-                .sendMessage(
-                  chatId,
-                  '⚠️ 本轮未产生任何可见输出，会话可能已失效。请重新发送消息触发重试；若持续无响应，请尝试重置会话。',
-                  emptyTurnThreadRoot
-                )
-                .catch((notifyErr) => {
-                  this.logger.warn(
-                    { err: notifyErr, chatId },
-                    'Failed to send empty-turn diagnostic notice (Issue #4258)'
-                  );
-                });
-            } catch (notifyErr) {
-              this.logger.warn(
-                { err: notifyErr, chatId },
-                'Failed to send empty-turn diagnostic notice (Issue #4258)'
-              );
-            }
+            // Issue #4747: this is the terminal user-visible outcome for an
+            // empty turn. Await the same isolated delivery wrapper used by
+            // normal output so a rejected notification is recorded and
+            // cannot be mistaken for successful delivery.
+            const emptyTurnThreadRoot = resolveReplyThreadRoot();
+            await this.deliverUserVisible(
+              chatId,
+              '⚠️ 本轮未产生任何可见输出，会话可能已失效。请重新发送消息触发重试；若持续无响应，请尝试重置会话。',
+              emptyTurnThreadRoot
+            );
           }
 
           // Issue #4391 (#4194 follow-up ②): schedule the deferred reset+replay
@@ -1966,14 +1954,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
               if (requestId) {
                 noticeLines.push(`upstream request_id: ${requestId}`);
               }
-              void this.callbacks
-                .sendMessage(chatId, noticeLines.join('\n'), upstreamThreadRoot)
-                .catch((notifyErr) => {
-                  this.logger.warn(
-                    { err: notifyErr, chatId },
-                    'Failed to send upstream-API-error notice (Issue #4322)'
-                  );
-                });
+              await this.deliverUserVisible(chatId, noticeLines.join('\n'), upstreamThreadRoot);
             } catch (notifyErr) {
               this.logger.warn(
                 { err: notifyErr, chatId },
@@ -2019,9 +2000,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             // trip the restart circuit. Same bounded, non-restarting contract as
             // empty-turn / stall above. Turn-level retry is #4314's follow-up.
             this.restartManager.recordFailure(chatId, 'upstream-api-error');
-          } else if (isEmptyTurn) {
+          } else if (isEmptyTurn && parsed.terminatedReason !== 'turn_failed') {
             this.restartManager.recordFailure(chatId, 'empty-turn');
-          } else {
+          } else if (parsed.terminatedReason !== 'turn_failed') {
             // Record success to reset restart state
             this.restartManager.recordSuccess(chatId);
             // Issue #4391: a non-empty turn means the session is healthy —
