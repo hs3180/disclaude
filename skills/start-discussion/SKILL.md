@@ -149,9 +149,9 @@ Report to the **source chat** that the discussion has been initiated:
 
 ## Feedback Origin — This Group Is Not a Feedback Channel
 
-> Issue #4017. When this group is the **execution chat** of a longer-running delegated task (e.g. an `agentic-research` run driven by scheduled runs), it carries progress updates and delivery only. User feedback — corrections, intent changes, scope or source-preference adjustments — originates in the **initial conversation** with the user, not here.
+> Issue #4017. When this group is the **execution chat** of a longer-running delegated task driven by scheduled runs, it carries progress updates and delivery only. User feedback — corrections, intent changes, scope or source-preference adjustments — originates in the **initial conversation** with the user, not here.
 
-If the task maintains a shared state file (e.g. `RESEARCH.md`), feedback flows only through that file's dedicated `## User Feedback` section (append-only, timestamped, one point per entry) — see `agentic-research/SKILL.md` for the full protocol. If it does not, tell the user in the initialization prompt to give feedback in the source chat rather than in this group.
+If the task maintains a shared state file (e.g. `RESEARCH.md`), feedback flows only through that file's dedicated `## User Feedback` section (append-only, timestamped, one point per entry). If it does not, tell the user in the initialization prompt to give feedback in the source chat rather than in this group.
 
 Concretely, when composing the initialization prompt (Step 3):
 
@@ -165,4 +165,3 @@ Concretely, when composing the initialization prompt (Step 3):
 | `pr-scanner` | Separate system for PR review groups (purpose: `pr-review`) |
 | `daily-chat-review` | May trigger `start-discussion` when repetitive issues detected |
 | `daily-soul-question` | May trigger `start-discussion` for deep reflection topics |
-| `agentic-research` | May use `start-discussion` to create the research execution group; feedback then flows via `RESEARCH.md` (see Feedback Origin above) |
