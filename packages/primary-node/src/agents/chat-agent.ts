@@ -1520,7 +1520,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                 ? 'Filtered Codex tool trace from user chat'
                 : 'Filtered intermediate message in topic thread'
             );
-          } else {
+          } else if (parsed.terminatedReason !== 'evicted') {
             const threadRoot = resolveReplyThreadRoot();
             // Capture as a local so the marker check stays type-safe after the
             // awaited sendMessage (which defeats parsed.content narrowing).

@@ -1118,7 +1118,7 @@ echo done > "$CODEX_HOME/turn-$n.done"
       metadata?: { terminatedReason?: string };
     }>).at(-1);
     expect(evictedMsg?.metadata?.terminatedReason).toBe('evicted');
-    expect(evictedMsg?.content).toMatch(/让位/);
+    expect(evictedMsg?.content).toBe('');
     releaseA();
 
     // chat-a's NEXT stream must resume the stashed thread (eviction ≠ reset).
