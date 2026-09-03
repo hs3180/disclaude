@@ -120,9 +120,6 @@ const RESUME_TARGET_GONE_NOTICE =
  * does NOT auto-restart (the evicted chat re-registers lazily on its next
  * message and resumes the stashed thread).
  */
-const EVICTED_NOTICE =
-  '♻️ Codex 会话因并发上限暂时让位（LRU 驱逐）——无需任何操作：下一条消息发出时会自动恢复原对话上下文。';
-
 const USAGE_LIMIT_NOTICE =
   '📊 Codex 用量已达上限（ChatGPT 订阅的 5 小时/周滚动窗口限额）。无需重启——窗口重置后直接重发消息即可自动恢复，当前对话上下文会保留。';
 
@@ -950,9 +947,13 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           // (and resumes the stashed thread). Without this, the restart
           // loop re-registered the SAME sessionKey while still at cap and
           // cascaded evictions into the circuit breaker (S7 review high).
+          // The termination marker is intentionally content-free: LRU
+          // eviction is an internal lifecycle event, not user-facing
+          // progress. ChatAgent still receives the marker and can resolve
+          // the turn without restarting it.
           yield {
             type: 'result',
-            content: EVICTED_NOTICE,
+            content: '',
             role: 'system',
             metadata: { terminatedReason: 'evicted' },
           };
