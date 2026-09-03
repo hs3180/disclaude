@@ -950,22 +950,18 @@ export class MessageHandler {
       return;
     }
 
-    // Issue #4401: Feishu message events carry chat_type as 'p2p' | 'group'
-    // only — a topic group still arrives as chat_type 'group', so the raw
-    // value would leave every downstream `chat_type === 'topic'` predicate dead
-    // and bypass thread isolation (#3989/#4304). Resolve the *effective* chat
-    // type from the chat resource's chat_mode (cached per chat_id) so the
-    // existing topic contract actually fires. Falls back to the event value on
-    // any error so message processing never blocks on the lookup.
-    const chat_type = await this.resolveTopicChatType(chat_id, rawChatType);
-
     // Pre-compute whether a bot sender @mentions our bot (bot-to-bot, #1742).
     const botMentionsUs = sender?.sender_type === 'app' && this.mentionDetector.isBotMentioned(mentions);
 
-    // Dedup / bot / age filters (Issue #4126: logic extracted to message-filters.ts)
+    // Claim before topic lookup or other asynchronous work to close the
+    // check-then-mark race during concurrent Feishu redelivery (Issue #4750).
     const filterVerdict = evaluateMessageFilters(
       { messageId: message_id, createTime: create_time, senderType: sender?.sender_type, botMentionsUs },
-      { isProcessed: (id) => messageLogger.isMessageProcessed(id), maxMessageAge: this.MAX_MESSAGE_AGE },
+      {
+        isProcessed: (id) => messageLogger.isMessageProcessed(id),
+        claim: (id) => messageLogger.claimMessage(id),
+        maxMessageAge: this.MAX_MESSAGE_AGE,
+      },
     );
     if (!filterVerdict.passed) {
       const { reason } = filterVerdict;
@@ -981,6 +977,11 @@ export class MessageHandler {
       }
       return;
     }
+
+    try {
+      // Issue #4401: Resolve the effective topic chat type after dedup. Falls
+      // back to the event value on lookup errors so processing never blocks.
+      const chat_type = await this.resolveTopicChatType(chat_id, rawChatType);
 
     // Bot-to-bot @mention messages that passed the filter are allowed through (#1742).
     if (sender?.sender_type === 'app') {
@@ -1388,6 +1389,10 @@ export class MessageHandler {
       metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
       attachments: quotedAttachments,
     });
+    } catch (error) {
+      messageLogger.releaseMessage(message_id);
+      throw error;
+    }
   }
 
   /**

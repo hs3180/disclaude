@@ -289,6 +289,20 @@ export class MessageLogger {
     return this.processedMessageIds.has(messageId);
   }
 
+  /** Atomically claim an inbound message id before asynchronous processing. */
+  claimMessage(messageId: string): boolean {
+    if (this.processedMessageIds.has(messageId)) {
+      return false;
+    }
+    this.rememberProcessedId(messageId);
+    return true;
+  }
+
+  /** Release a claimed inbound id so a retryable failure can be redelivered. */
+  releaseMessage(messageId: string): void {
+    this.processedMessageIds.delete(messageId);
+  }
+
   /**
    * Get chat history as formatted string.
    *
