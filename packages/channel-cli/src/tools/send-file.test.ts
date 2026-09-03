@@ -77,6 +77,16 @@ describe('send_file', () => {
       expect(result.success).toBe(false);
       expect(result.message).toContain('Platform is not configured');
     });
+
+    it('should defer credential validation to PrimaryNode for CLI calls', async () => {
+      vi.mocked(getFeishuCredentials).mockReturnValue({ appId: undefined, appSecret: undefined });
+      mockIpcClient.uploadFile.mockResolvedValue({
+        success: true, fileKey: 'key', fileType: 'txt', fileName: 'file.txt', fileSize: 1024,
+      });
+      const result = await send_file({ filePath: '/test/file.txt', chatId: 'oc_test', skipCredentialValidation: true });
+      expect(result.success).toBe(true);
+      expect(getFeishuCredentials).not.toHaveBeenCalled();
+    });
   });
 
   describe('file path resolution', () => {

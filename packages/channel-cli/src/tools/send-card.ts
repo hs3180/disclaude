@@ -45,8 +45,10 @@ export async function send_card(params: {
   card: Record<string, unknown>;
   chatId: string;
   parentMessageId?: string;
+  /** Internal: credentials are owned by the PrimaryNode when called by CLI. */
+  skipCredentialValidation?: boolean;
 }): Promise<SendMessageResult> {
-  const { card, chatId, parentMessageId } = params;
+  const { card, chatId, parentMessageId, skipCredentialValidation } = params;
 
   logger.info({
     chatId,
@@ -73,9 +75,9 @@ export async function send_card(params: {
 
     // Card preprocessing is performed by the channel CLI before this transport function.
 
-    const { appId, appSecret } = getFeishuCredentials();
+    const credentials = skipCredentialValidation ? undefined : getFeishuCredentials();
 
-    if (!appId || !appSecret) {
+    if (credentials && (!credentials.appId || !credentials.appSecret)) {
       const errorMsg = 'Feishu credentials not configured. Please set FEISHU_APP_ID and FEISHU_APP_SECRET in disclaude.config.yaml';
       logger.error({ chatId }, errorMsg);
       return { success: false, error: errorMsg, message: `❌ ${errorMsg}` };

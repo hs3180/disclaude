@@ -196,13 +196,13 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
   let result: ToolResult;
   try {
     if (command === 'send_text') {
-      result = await withLogsRedirected(() => mod.send_text({ text: text as string, chatId, parentMessageId, mentions: parsedMentions }));
+      result = await withLogsRedirected(() => mod.send_text({ text: text as string, chatId, parentMessageId, mentions: parsedMentions, skipCredentialValidation: true }));
     } else if (command === 'send_file') {
-      result = await withLogsRedirected(() => mod.send_file({ filePath: filePath as string, chatId, parentMessageId }));
+      result = await withLogsRedirected(() => mod.send_file({ filePath: filePath as string, chatId, parentMessageId, skipCredentialValidation: true }));
     } else if (command === 'send_card') {
       const transformed = mod.transformCardTables(card as Record<string, unknown>);
       const resolved = await mod.resolveCardImages(transformed);
-      result = await withLogsRedirected(() => mod.send_card({ card: resolved.card, chatId, parentMessageId }));
+      result = await withLogsRedirected(() => mod.send_card({ card: resolved.card, chatId, parentMessageId, skipCredentialValidation: true }));
     } else if (command === 'push_to_agent') {
       result = await withLogsRedirected(() => mod.push_to_agent({ chatId, message: message as string }));
     } else {

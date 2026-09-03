@@ -53,15 +53,17 @@ export async function send_file(params: {
    * progress. Absent on the Claude backend; guarded with typeof.
    */
   onProgress?: ToolProgressCallback;
+  /** Internal: credentials are owned by the PrimaryNode when called by CLI. */
+  skipCredentialValidation?: boolean;
 }): Promise<SendFileResult> {
-  const { filePath, chatId, parentMessageId, onProgress } = params;
+  const { filePath, chatId, parentMessageId, onProgress, skipCredentialValidation } = params;
 
   try {
     if (!chatId) { throw new Error('chatId is required'); }
 
-    const { appId, appSecret } = getFeishuCredentials();
+    const credentials = skipCredentialValidation ? undefined : getFeishuCredentials();
 
-    if (!appId || !appSecret) {
+    if (credentials && (!credentials.appId || !credentials.appSecret)) {
       logger.warn({ filePath, chatId }, 'File send skipped (platform not configured)');
       return {
         success: false,

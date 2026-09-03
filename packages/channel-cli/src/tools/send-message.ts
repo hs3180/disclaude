@@ -47,8 +47,10 @@ export async function send_text(params: {
   chatId: string;
   parentMessageId?: string;
   mentions?: Array<{ openId: string; name?: string }>;
+  /** Internal: credentials are owned by the PrimaryNode when called by CLI. */
+  skipCredentialValidation?: boolean;
 }): Promise<SendMessageResult> {
-  const { text, chatId, parentMessageId, mentions } = params;
+  const { text, chatId, parentMessageId, mentions, skipCredentialValidation } = params;
 
   logger.info({
     chatId,
@@ -64,9 +66,9 @@ export async function send_text(params: {
       throw new Error('chatId is required');
     }
 
-    const { appId, appSecret } = getFeishuCredentials();
+    const credentials = skipCredentialValidation ? undefined : getFeishuCredentials();
 
-    if (!appId || !appSecret) {
+    if (credentials && (!credentials.appId || !credentials.appSecret)) {
       const errorMsg = 'Feishu credentials not configured. Please set FEISHU_APP_ID and FEISHU_APP_SECRET in disclaude.config.yaml';
       logger.error({ chatId }, errorMsg);
       return { success: false, error: errorMsg, message: `❌ ${errorMsg}` };

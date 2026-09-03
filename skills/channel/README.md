@@ -30,7 +30,7 @@
 > additionally replicates the MCP entry handler's card preprocessing
 > (GFM-table conversion, local-image auto-upload) for feature parity. **Live
 > end-to-end parity** against the inline MCP tool is **deferred** (requires a
-> running PrimaryNode + Feishu credentials) — these parts verify the command
+> running PrimaryNode) — these parts verify the command
 > surface, validation, and graceful-degradation paths, mirroring how
 > [#4464](https://github.com/hs3180/disclaude/pull/4464) part 1 deferred live
 > browser parity. This README does **not** auto-close the parent issue.
@@ -101,7 +101,8 @@ echo '{"elements":[{"tag":"markdown","content":"hi"}]}' \
 **Runtime (host deps, not bundled):** reuses `send_text` / `send_file` /
 `send_card` (and the card preprocessing helpers) / `push_to_agent` /
 `send_interactive` from `packages/channel-cli`, which talk to the PrimaryNode
-over its REST API (#4532 — no Unix socket) and need Feishu credentials. Run
+over its REST API (#4532 — no Unix socket). The PrimaryNode owns Feishu
+credentials; the one-shot CLI does not require them locally. Run
 inside a disclaude workspace where the packages are built (`npm run build`), and
 start the PrimaryNode with `--api-port`. No browser or extra binaries required.
 
@@ -193,7 +194,7 @@ create/lazily-resume the target chat's agent.)
 | disclaude PrimaryNode (**REST API**, #4532)                                                                                  | runtime                                                         | start it with `--api-port` (e.g. `19200`); the CLI POSTs to `/api/*` — no Unix socket involved                                          |
 | REST base URL                                                                                                                | `--base-url` flag > `DISCLAUDE_REST_IPC_BASE_URL` env > default | default `http://localhost:19200`; the env var reaches one-shot CLI processes via the agent runtime env (`.runtime-env`, Issue #1361)    |
 | REST bearer token                                                                                                            | `DISCLAUDE_REST_IPC_API_TOKEN` env                              | required only when the PrimaryNode was started with `--api-token` (pass the same secret)                                                |
-| Feishu credentials                                                                                                           | `disclaude.config.yaml` / env                                   | `FEISHU_APP_ID` / `FEISHU_APP_SECRET` (validated inside `send_text` / `send_file` / `send_card` / `push_to_agent` / `send_interactive`) |
+| Feishu credentials                                                                                                           | PrimaryNode runtime                                             | Owned and validated by the running PrimaryNode; the one-shot channel CLI does not require `FEISHU_APP_ID` / `FEISHU_APP_SECRET` locally |
 
 **Same-host constraint of the file-carrying routes (#4532 review note):** the
 REST file contract is path-based, not content-based — `send_file` and
@@ -297,5 +298,5 @@ implemented in `packages/channel-cli` (`transformCardTables`,
 | Parameters               | `card`, `chatId`, `parentMessageId`                              | identical, via `--chat`/`--card`/`--card-file`/`--parent` | card gains `--card-file`/stdin for large bodies |
 
 **Out of scope for these parts:** live end-to-end delivery verification (needs
-PrimaryNode + creds); the S2 external-MCP-loader removal (#4459 scope 4, gated
+PrimaryNode with configured credentials); the S2 external-MCP-loader removal (#4459 scope 4, gated
 on the Playwright migration #4460).
