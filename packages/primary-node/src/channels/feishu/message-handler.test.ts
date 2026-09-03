@@ -307,7 +307,9 @@ describe('MessageHandler', () => {
     it('should dispatch only once for concurrent deliveries of the same message', async () => {
       const claimed = new Set<string>();
       mockState.claimMessage.mockImplementation((id: string) => {
-        if (claimed.has(id)) return false;
+        if (claimed.has(id)) {
+          return false;
+        }
         claimed.add(id);
         return true;
       });
