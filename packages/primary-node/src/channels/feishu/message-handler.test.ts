@@ -21,6 +21,8 @@ const mockState = vi.hoisted(() => ({
   routeCardAction: vi.fn<() => Promise<{ routed: boolean; expired?: boolean }>>().mockResolvedValue({ routed: false }),
   resolveActionPrompt: vi.fn().mockReturnValue(undefined),
   isMessageProcessed: false,
+  claimMessage: vi.fn<(id: string) => boolean>(() => false),
+  releaseMessage: vi.fn(),
   logIncomingMessage: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
   logCardInteraction: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
   getChatHistory: vi.fn<() => Promise<string | undefined>>().mockResolvedValue(undefined),
@@ -99,6 +101,8 @@ vi.mock('fs/promises', async (importOriginal) => {
 vi.mock('../../utils/message-logger.js', () => ({
   messageLogger: {
     isMessageProcessed: () => mockState.isMessageProcessed,
+    claimMessage: mockState.claimMessage,
+    releaseMessage: mockState.releaseMessage,
     logIncomingMessage: mockState.logIncomingMessage,
     logCardInteraction: mockState.logCardInteraction,
     getChatHistory: mockState.getChatHistory,
@@ -218,6 +222,7 @@ describe('MessageHandler', () => {
     mockState.isRunning = true;
     mockState.hasControlHandler = false;
     mockState.isMessageProcessed = false;
+    mockState.claimMessage.mockImplementation(() => !mockState.isMessageProcessed);
     mockState.isBotMentioned = false;
     mockState.topicNotifyEnabled = false;
   });
@@ -297,6 +302,23 @@ describe('MessageHandler', () => {
       const { handler } = createHandler();
       await handler.handleMessageReceive(textEvent('dup'));
       expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+
+    it('should dispatch only once for concurrent deliveries of the same message', async () => {
+      const claimed = new Set<string>();
+      mockState.claimMessage.mockImplementation((id: string) => {
+        if (claimed.has(id)) return false;
+        claimed.add(id);
+        return true;
+      });
+      const { handler } = createHandler();
+
+      await Promise.all([
+        handler.handleMessageReceive(textEvent('concurrent')),
+        handler.handleMessageReceive(textEvent('concurrent')),
+      ]);
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
     });
 
     it('should skip messages older than MAX_MESSAGE_AGE', async () => {

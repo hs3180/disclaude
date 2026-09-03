@@ -17,6 +17,8 @@ export type MessageFilterReason = 'duplicate' | 'bot' | 'old';
 export interface MessageFilterDeps {
   /** Returns true if the message id has already been processed (dedup). */
   isProcessed(messageId: string): boolean;
+  /** Atomically claims the message id when supplied. */
+  claim?: (messageId: string) => boolean;
   /** Max age (ms) before a message is considered stale and dropped. */
   maxMessageAge: number;
   /**
@@ -55,15 +57,16 @@ export interface FilterVerdict {
  * Evaluate dedup → bot → age filters in order.
  *
  * Returns the first rejection, or `{ passed: true }` if all filters pass.
- * Pure: performs no I/O and mutates nothing; the only external read is the
- * wall-clock, accessed via the injectable `deps.now` (defaults to `Date.now`).
+ * Performs no I/O; the only external operations are the injected dedup claim
+ * and wall-clock reader (which defaults to `Date.now`).
  */
 export function evaluateMessageFilters(
   input: MessageFilterInput,
   deps: MessageFilterDeps,
 ): FilterVerdict {
   // 1. Deduplication
-  if (deps.isProcessed(input.messageId)) {
+  const claimed = deps.claim ? deps.claim(input.messageId) : !deps.isProcessed(input.messageId);
+  if (!claimed) {
     return { passed: false, reason: 'duplicate' };
   }
 

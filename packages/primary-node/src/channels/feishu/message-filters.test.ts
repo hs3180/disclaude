@@ -33,6 +33,14 @@ describe('evaluateMessageFilters', () => {
     expect(verdict.reason).toBe('duplicate');
   });
 
+  it('uses the atomic claim result when provided', () => {
+    const verdict = evaluateMessageFilters(
+      { messageId: 'dup', senderType: 'user', botMentionsUs: false },
+      { ...deps(), claim: () => false },
+    );
+    expect(verdict).toEqual({ passed: false, reason: 'duplicate' });
+  });
+
   it('filters a bot message that does not mention our bot', () => {
     const verdict = evaluateMessageFilters(
       { messageId: 'm2', createTime: Date.now(), senderType: 'app', botMentionsUs: false },

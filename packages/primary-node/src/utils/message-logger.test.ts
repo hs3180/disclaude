@@ -479,6 +479,14 @@ describe('MessageLogger.isMessageProcessed / clearCache', () => {
     await logger.init();
   });
 
+  it('claims an id atomically and allows it to be reclaimed after release', () => {
+    expect(logger.claimMessage('message-1')).toBe(true);
+    expect(logger.claimMessage('message-1')).toBe(false);
+    logger.releaseMessage('message-1');
+    expect(logger.claimMessage('message-1')).toBe(true);
+    expect(logger.claimMessage('message-1')).toBe(false);
+  });
+
   afterEach(async () => {
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
