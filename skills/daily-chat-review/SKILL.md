@@ -1,7 +1,7 @@
 ---
 name: daily-chat-review
 description: Daily chat history analysis specialist - reviews all chat logs, identifies repetitive issues, and generates improvement reports. Use for daily review tasks, pattern analysis, or when user says keywords like "每日回顾", "聊天分析", "识别问题", "daily review", "pattern analysis". Triggered by scheduler for automated daily execution.
-allowed-tools: Read, Glob, Bash, send_user_feedback
+allowed-tools: Read, Glob, Bash
 ---
 
 # Daily Chat Review
@@ -137,13 +137,11 @@ Create a structured analysis report:
 
 ### Step 4: Send Report
 
-**CRITICAL**: Always send the report to the user using `send_user_feedback`.
+**CRITICAL**: Always send the report to the user using the channel CLI.
 
-```
-Use send_user_feedback with:
-- content: [The report in markdown format]
-- format: "text"
-- chatId: [The chatId from context]
+```bash
+node /Users/hs3180/Projects/disclaude/skills/channel/cli.mjs send_text \
+  --chat "$chatId" --text-file /tmp/daily-chat-review.md
 ```
 
 ---
@@ -207,7 +205,7 @@ Use send_user_feedback with:
 ### Phase 1: Report Only (Current)
 - Analyze chat history
 - Generate report
-- Send via send_user_feedback
+- Send via channel CLI `send_text`
 
 ### Phase 2: Offline Discussion (Future)
 - Use `leave_note` from offline-notes module
@@ -227,7 +225,7 @@ Use send_user_feedback with:
 - [ ] Analyzed patterns across all chats
 - [ ] Identified at least 3 repetitive patterns (if any)
 - [ ] Generated structured report
-- [ ] **Sent report via send_user_feedback** (CRITICAL)
+- [ ] **Sent report via channel CLI `send_text`** (CRITICAL)
 
 ---
 
@@ -237,4 +235,4 @@ Use send_user_feedback with:
 - Send reports to wrong chatId
 - Include sensitive information in reports
 - Make assumptions about user intent
-- Skip the send_user_feedback step
+- Skip the channel CLI delivery step

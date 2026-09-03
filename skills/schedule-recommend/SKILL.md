@@ -144,7 +144,7 @@ For each detected pattern, provide:
 - 中优先级 issues (feature/enhancement)
 - 低优先级 issues (docs/chore)
 
-使用 send_user_feedback 发送报告。
+使用 channel CLI 的 `send_text` 发送报告。
 """
 
 [✅ 创建定时任务] [🔄 调整时间] [❌ 忽略]

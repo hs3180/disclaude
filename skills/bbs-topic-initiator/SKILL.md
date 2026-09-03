@@ -92,13 +92,11 @@ Create an engaging topic with these characteristics:
 
 ### Step 4: Send to Target Group
 
-Use the `send_user_feedback` MCP tool to send the topic:
+Use the channel CLI to send the topic:
 
-```
-send_user_feedback({
-  chatId: "{target_chat_id}",
-  message: "{generated_topic}"
-})
+```bash
+node /Users/hs3180/Projects/disclaude/skills/channel/cli.mjs send_text \
+  --chat "{target_chat_id}" --text "{generated_topic}"
 ```
 
 **Note**: Use the chatId from context or a configured target group.
@@ -239,7 +237,7 @@ cooldown:
 - [ ] Chose appropriate topic type
 - [ ] Generated open-ended, engaging topic
 - [ ] Topic is inclusive and relevant
-- [ ] Ready to send using `send_user_feedback`
+- [ ] Ready to send using channel CLI `send_text`
 
 ---
 
