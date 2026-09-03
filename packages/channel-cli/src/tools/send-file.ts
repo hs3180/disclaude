@@ -8,9 +8,8 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { createLogger, uploadFile, type ToolProgressCallback } from '@disclaude/core';
+import { Config, createLogger, uploadFile, type ToolProgressCallback } from '@disclaude/core';
 import { isIpcAvailable, getRestIpcClient, buildIpcFallbackHint } from './ipc-utils.js';
-import { getFeishuCredentials, getWorkspaceDir } from './credentials.js';
 import type { SendFileResult } from './types.js';
 
 const logger = createLogger('SendFile');
@@ -53,26 +52,13 @@ export async function send_file(params: {
    * progress. Absent on the Claude backend; guarded with typeof.
    */
   onProgress?: ToolProgressCallback;
-  /** Internal: credentials are owned by the PrimaryNode when called by CLI. */
-  skipCredentialValidation?: boolean;
 }): Promise<SendFileResult> {
-  const { filePath, chatId, parentMessageId, onProgress, skipCredentialValidation } = params;
+  const { filePath, chatId, parentMessageId, onProgress } = params;
 
   try {
     if (!chatId) { throw new Error('chatId is required'); }
 
-    const credentials = skipCredentialValidation ? undefined : getFeishuCredentials();
-
-    if (credentials && (!credentials.appId || !credentials.appSecret)) {
-      logger.warn({ filePath, chatId }, 'File send skipped (platform not configured)');
-      return {
-        success: false,
-        error: 'Platform credentials not configured',
-        message: '⚠️ File cannot be sent: Platform is not configured.',
-      };
-    }
-
-    const workspaceDir = getWorkspaceDir();
+    const workspaceDir = Config.getWorkspaceDir();
     const resolvedPath = path.isAbsolute(filePath) ? filePath : path.join(workspaceDir, filePath);
 
     logger.debug({ filePath, resolvedPath, chatId, hasParent: !!parentMessageId }, 'send_file called');

@@ -26,10 +26,6 @@ vi.mock('@disclaude/core', () => ({
   sendMessage: (...args: unknown[]) => mockSendMessage(...args.slice(1)),
 }));
 
-vi.mock('./credentials.js', () => ({
-  getFeishuCredentials: vi.fn(),
-}));
-
 vi.mock('./ipc-utils.js', () => ({
   // Issue #4280 (Phase 3, part 3): tools construct the REST client via this
   // factory — mock it to return the shared mockIpcClient.
@@ -52,7 +48,6 @@ vi.mock('./callback-manager.js', () => ({
 }));
 
 import { send_text } from './send-message.js';
-import { getFeishuCredentials } from './credentials.js';
 import { isIpcAvailable } from './ipc-utils.js';
 import { invokeMessageSentCallback } from './callback-manager.js';
 
@@ -60,7 +55,6 @@ describe('send_text', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetRestIpcClient.mockReturnValue(mockIpcClient);
-    vi.mocked(getFeishuCredentials).mockReturnValue({ appId: 'test-app-id', appSecret: 'test-secret' });
     vi.mocked(isIpcAvailable).mockResolvedValue(true);
   });
 
@@ -75,37 +69,6 @@ describe('send_text', () => {
       const result = await send_text({ text: 'hello', chatId: '' });
       expect(result.success).toBe(false);
       expect(result.error).toBe('chatId is required');
-    });
-  });
-
-  describe('credential validation', () => {
-    it('should return error when appId is missing', async () => {
-      vi.mocked(getFeishuCredentials).mockReturnValue({ appId: undefined, appSecret: 'secret' });
-      const result = await send_text({ text: 'hello', chatId: 'oc_test' });
-      expect(result.success).toBe(false);
-      expect(result.message).toContain('credentials not configured');
-    });
-
-    it('should return error when appSecret is missing', async () => {
-      vi.mocked(getFeishuCredentials).mockReturnValue({ appId: 'app-id', appSecret: undefined });
-      const result = await send_text({ text: 'hello', chatId: 'oc_test' });
-      expect(result.success).toBe(false);
-      expect(result.message).toContain('credentials not configured');
-    });
-
-    it('should return error when both credentials are missing', async () => {
-      vi.mocked(getFeishuCredentials).mockReturnValue({ appId: undefined, appSecret: undefined });
-      const result = await send_text({ text: 'hello', chatId: 'oc_test' });
-      expect(result.success).toBe(false);
-      expect(result.message).toContain('credentials not configured');
-    });
-
-    it('should defer credential validation to PrimaryNode for CLI calls', async () => {
-      vi.mocked(getFeishuCredentials).mockReturnValue({ appId: undefined, appSecret: undefined });
-      mockIpcClient.sendMessage.mockResolvedValue({ success: true, messageId: 'msg_123' });
-      const result = await send_text({ text: 'hello', chatId: 'oc_test', skipCredentialValidation: true });
-      expect(result.success).toBe(true);
-      expect(getFeishuCredentials).not.toHaveBeenCalled();
     });
   });
 

@@ -10,7 +10,6 @@
 import { createLogger, sendCard, type FeishuCard, type IpcMethodResult } from '@disclaude/core';
 import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
 import { isIpcAvailable, getIpcErrorMessage, getRestIpcClient, buildIpcFallbackHint } from './ipc-utils.js';
-import { getFeishuCredentials } from './credentials.js';
 import { invokeMessageSentCallback } from './callback-manager.js';
 import type { SendMessageResult } from './types.js';
 
@@ -45,10 +44,8 @@ export async function send_card(params: {
   card: Record<string, unknown>;
   chatId: string;
   parentMessageId?: string;
-  /** Internal: credentials are owned by the PrimaryNode when called by CLI. */
-  skipCredentialValidation?: boolean;
 }): Promise<SendMessageResult> {
-  const { card, chatId, parentMessageId, skipCredentialValidation } = params;
+  const { card, chatId, parentMessageId } = params;
 
   logger.info({
     chatId,
@@ -74,14 +71,6 @@ export async function send_card(params: {
     }
 
     // Card preprocessing is performed by the channel CLI before this transport function.
-
-    const credentials = skipCredentialValidation ? undefined : getFeishuCredentials();
-
-    if (credentials && (!credentials.appId || !credentials.appSecret)) {
-      const errorMsg = 'Feishu credentials not configured. Please set FEISHU_APP_ID and FEISHU_APP_SECRET in disclaude.config.yaml';
-      logger.error({ chatId }, errorMsg);
-      return { success: false, error: errorMsg, message: `❌ ${errorMsg}` };
-    }
 
     // Check IPC availability (Issue #1355: async connection probe)
     if (!(await isIpcAvailable())) {
@@ -118,6 +107,3 @@ export async function send_card(params: {
     return { success: false, error: errorMessage, message: `❌ Failed to send card: ${errorMessage}` };
   }
 }
-
-// Re-export helper for backward compatibility
-export { getFeishuCredentials } from './credentials.js';

@@ -19,6 +19,7 @@ const { mockIpcClient, mockUploadFile, mockGetRestIpcClient } = vi.hoisted(() =>
 });
 
 vi.mock('@disclaude/core', () => ({
+  Config: { getWorkspaceDir: vi.fn(() => '/workspace') },
   createLogger: () => ({
     info: vi.fn(),
     warn: vi.fn(),
@@ -26,11 +27,6 @@ vi.mock('@disclaude/core', () => ({
     debug: vi.fn(),
   }),
   uploadFile: (...args: unknown[]) => mockUploadFile(...args.slice(1)),
-}));
-
-vi.mock('./credentials.js', () => ({
-  getFeishuCredentials: vi.fn(),
-  getWorkspaceDir: vi.fn(() => '/workspace'),
 }));
 
 vi.mock('./ipc-utils.js', () => ({
@@ -49,15 +45,12 @@ vi.mock('fs/promises', () => ({
 }));
 
 import { send_file } from './send-file.js';
-import { getFeishuCredentials, getWorkspaceDir } from './credentials.js';
 import { isIpcAvailable } from './ipc-utils.js';
 
 describe('send_file', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetRestIpcClient.mockReturnValue(mockIpcClient);
-    vi.mocked(getFeishuCredentials).mockReturnValue({ appId: 'test-app-id', appSecret: 'test-secret' });
-    vi.mocked(getWorkspaceDir).mockReturnValue('/workspace');
     vi.mocked(isIpcAvailable).mockResolvedValue(true);
     vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true, size: 1024 * 1024 } as any);
   });
@@ -67,25 +60,6 @@ describe('send_file', () => {
       const result = await send_file({ filePath: '/test/file.txt', chatId: '' });
       expect(result.success).toBe(false);
       expect(result.error).toBe('chatId is required');
-    });
-  });
-
-  describe('credential validation', () => {
-    it('should return error when appId is missing', async () => {
-      vi.mocked(getFeishuCredentials).mockReturnValue({ appId: undefined, appSecret: 'secret' });
-      const result = await send_file({ filePath: '/test/file.txt', chatId: 'oc_test' });
-      expect(result.success).toBe(false);
-      expect(result.message).toContain('Platform is not configured');
-    });
-
-    it('should defer credential validation to PrimaryNode for CLI calls', async () => {
-      vi.mocked(getFeishuCredentials).mockReturnValue({ appId: undefined, appSecret: undefined });
-      mockIpcClient.uploadFile.mockResolvedValue({
-        success: true, fileKey: 'key', fileType: 'txt', fileName: 'file.txt', fileSize: 1024,
-      });
-      const result = await send_file({ filePath: '/test/file.txt', chatId: 'oc_test', skipCredentialValidation: true });
-      expect(result.success).toBe(true);
-      expect(getFeishuCredentials).not.toHaveBeenCalled();
     });
   });
 
@@ -287,22 +261,6 @@ describe('send_file', () => {
       const result = await send_file({ filePath: '/test/image.png', chatId: 'oc_test', parentMessageId: 'root_msg_789' });
       expect(result.success).toBe(true);
       expect(result.fileName).toBe('image.png');
-    });
-  });
-
-  describe('credential validation edge cases', () => {
-    it('should return error when appSecret is missing but appId is present', async () => {
-      vi.mocked(getFeishuCredentials).mockReturnValue({ appId: 'test-app-id', appSecret: undefined });
-      const result = await send_file({ filePath: '/test/file.txt', chatId: 'oc_test' });
-      expect(result.success).toBe(false);
-      expect(result.message).toContain('Platform is not configured');
-    });
-
-    it('should return error when both appId and appSecret are missing', async () => {
-      vi.mocked(getFeishuCredentials).mockReturnValue({ appId: undefined, appSecret: undefined });
-      const result = await send_file({ filePath: '/test/file.txt', chatId: 'oc_test' });
-      expect(result.success).toBe(false);
-      expect(result.message).toContain('Platform is not configured');
     });
   });
 

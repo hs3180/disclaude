@@ -8,8 +8,7 @@
 > `DISCLAUDE_REST_IPC_ENABLED=true` internally before executing a send path, so every send path — including `send_card`'s
 > local-image upload (`resolveCardImages` → `getIpcClient()`) — selects
 > `RestIpcClient`. Base URL: `--base-url` > `DISCLAUDE_REST_IPC_BASE_URL` >
-> `http://localhost:19200`. Bearer token: `DISCLAUDE_REST_IPC_API_TOKEN` (unset
-> is fine when the PrimaryNode runs without `--api-token`). When the REST face
+> `http://localhost:19200`. When the REST face
 > is unreachable, the CLI emits an actionable "start the main service" hint
 > instead of a raw `fetch` ECONNREFUSED (#4532 scope 3). The #4521 chatId
 > pre-check substance was re-landed on the REST CLI by part 11 (see §Parity).
@@ -101,8 +100,7 @@ echo '{"elements":[{"tag":"markdown","content":"hi"}]}' \
 **Runtime (host deps, not bundled):** reuses `send_text` / `send_file` /
 `send_card` (and the card preprocessing helpers) / `push_to_agent` /
 `send_interactive` from `packages/channel-cli`, which talk to the PrimaryNode
-over its REST API (#4532 — no Unix socket). The PrimaryNode owns Feishu
-credentials; the one-shot CLI does not require them locally. Run
+over its REST API (#4532 — no Unix socket). Run
 inside a disclaude workspace where the packages are built (`npm run build`), and
 start the PrimaryNode with `--api-port`. No browser or extra binaries required.
 
@@ -193,8 +191,6 @@ create/lazily-resume the target chat's agent.)
 | `packages/channel-cli` (channel operations and card helpers) | workspace package                                               | build the monorepo (`npm run build`)                                                                                                    |
 | disclaude PrimaryNode (**REST API**, #4532)                                                                                  | runtime                                                         | start it with `--api-port` (e.g. `19200`); the CLI POSTs to `/api/*` — no Unix socket involved                                          |
 | REST base URL                                                                                                                | `--base-url` flag > `DISCLAUDE_REST_IPC_BASE_URL` env > default | default `http://localhost:19200`; the env var reaches one-shot CLI processes via the agent runtime env (`.runtime-env`, Issue #1361)    |
-| REST bearer token                                                                                                            | `DISCLAUDE_REST_IPC_API_TOKEN` env                              | required only when the PrimaryNode was started with `--api-token` (pass the same secret)                                                |
-| Feishu credentials                                                                                                           | PrimaryNode runtime                                             | Owned and validated by the running PrimaryNode; the one-shot channel CLI does not require `FEISHU_APP_ID` / `FEISHU_APP_SECRET` locally |
 
 **Same-host constraint of the file-carrying routes (#4532 review note):** the
 REST file contract is path-based, not content-based — `send_file` and
@@ -298,5 +294,5 @@ implemented in `packages/channel-cli` (`transformCardTables`,
 | Parameters               | `card`, `chatId`, `parentMessageId`                              | identical, via `--chat`/`--card`/`--card-file`/`--parent` | card gains `--card-file`/stdin for large bodies |
 
 **Out of scope for these parts:** live end-to-end delivery verification (needs
-PrimaryNode with configured credentials); the S2 external-MCP-loader removal (#4459 scope 4, gated
+a running PrimaryNode); the S2 external-MCP-loader removal (#4459 scope 4, gated
 on the Playwright migration #4460).

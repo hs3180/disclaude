@@ -35,17 +35,13 @@ function resolveRestBaseUrl(): string {
  *
  * - `DISCLAUDE_REST_IPC_BASE_URL` — PrimaryNode HTTP API server URL
  *   (default `http://localhost:19200`)
- * - `DISCLAUDE_REST_IPC_API_TOKEN` — bearer token for POST endpoints
- *   (must match the PrimaryNode `--api-token`)
- *
  * Issue #4280 (Phase 3, part 3): every MCP tool that previously reached for
  * the dual-path `getIpcClient()` facade (default Unix socket) constructs the
  * `RestIpcClient` directly here. No transport toggle remains.
  */
 export function getRestIpcClient(): RestIpcClient {
   const baseUrl = resolveRestBaseUrl();
-  const apiToken = process.env.DISCLAUDE_REST_IPC_API_TOKEN;
-  return new RestIpcClient({ baseUrl, apiToken });
+  return new RestIpcClient({ baseUrl });
 }
 
 /**

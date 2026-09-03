@@ -124,7 +124,6 @@ function parseActionPrompts(raw: string | undefined): ActionPromptMap | undefine
 }
 function setupRest(args: Args): string {
   const baseUrl = arg(args, 'base-url') || process.env.DISCLAUDE_REST_IPC_BASE_URL || DEFAULT_REST_BASE_URL;
-  process.env.DISCLAUDE_REST_IPC_ENABLED = 'true';
   process.env.DISCLAUDE_REST_IPC_BASE_URL = baseUrl;
   return baseUrl;
 }
@@ -196,13 +195,13 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
   let result: ToolResult;
   try {
     if (command === 'send_text') {
-      result = await withLogsRedirected(() => mod.send_text({ text: text as string, chatId, parentMessageId, mentions: parsedMentions, skipCredentialValidation: true }));
+      result = await withLogsRedirected(() => mod.send_text({ text: text as string, chatId, parentMessageId, mentions: parsedMentions }));
     } else if (command === 'send_file') {
-      result = await withLogsRedirected(() => mod.send_file({ filePath: filePath as string, chatId, parentMessageId, skipCredentialValidation: true }));
+      result = await withLogsRedirected(() => mod.send_file({ filePath: filePath as string, chatId, parentMessageId }));
     } else if (command === 'send_card') {
       const transformed = mod.transformCardTables(card as Record<string, unknown>);
       const resolved = await mod.resolveCardImages(transformed);
-      result = await withLogsRedirected(() => mod.send_card({ card: resolved.card, chatId, parentMessageId, skipCredentialValidation: true }));
+      result = await withLogsRedirected(() => mod.send_card({ card: resolved.card, chatId, parentMessageId }));
     } else if (command === 'push_to_agent') {
       result = await withLogsRedirected(() => mod.push_to_agent({ chatId, message: message as string }));
     } else {

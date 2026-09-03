@@ -10,8 +10,6 @@ export type {
 } from './tools/types.js';
 
 export {
-  getFeishuCredentials,
-  getWorkspaceDir,
   getIpcErrorMessage,
   buildIpcFallbackHint,
   isIpcAvailable,
