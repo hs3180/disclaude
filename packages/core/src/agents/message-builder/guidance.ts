@@ -283,8 +283,10 @@ When you need to present structured data (status, metrics, analysis results, etc
  *
  * Phase 1 of the task ETA system: task record format and guidance.
  * Records are stored as unstructured Markdown in monthly files
- * `.claude/task-records/YYYY-MM.md` (Issue #4261: rolling by month to prevent
- * unbounded single-file growth that degrades agent performance).
+ * `task-records/YYYY-MM.md` relative to the current workspace (Issue #4261:
+ * rolling by month to prevent unbounded single-file growth). Existing
+ * `.claude/task-records/` and `.claude/task-records.md` files are legacy
+ * read-only sources and must not be overwritten.
  *
  * @returns Formatted task record guidance section
  */
@@ -315,17 +317,17 @@ Record a task entry when you have completed a meaningful unit of work, such as:
 
 ### Storage Location
 
-Append entries to the current month's file: \`.claude/task-records/YYYY-MM.md\`
-(e.g., \`.claude/task-records/${cur}.md\`) in the current working
-directory. Create the file if it does not exist (and create the \`task-records/\`
+Append entries to the current month's file: \`task-records/YYYY-MM.md\`
+(e.g., \`task-records/${cur}.md\`) in the current workspace directory.
+Create the file if it does not exist (and create the \`task-records/\`
 directory if needed); when creating it for the first time, write a single
 top-level \`# Task Records\` heading on the first line so every monthly file has
 a consistent title (the example below shows this). Monthly files keep the active
 file small — **do not** write to a single ever-growing \`task-records.md\`.
 
-Legacy: a pre-existing \`.claude/task-records.md\` (from before rolling) holds
-older history; leave it in place as an archive and write new records only to the
-monthly files.
+Legacy: pre-existing \`.claude/task-records/YYYY-MM.md\` files and the
+single-file \`.claude/task-records.md\` archive are read-only compatibility
+sources; leave them in place and write new records only to the monthly files.
 
 ### Record Format
 
