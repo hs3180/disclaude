@@ -204,6 +204,9 @@ export class CodexExecRunner {
     let killTimer: ReturnType<typeof setTimeout> | null = null;
 
     const stderrTail = createRollingTail(STDERR_TAIL_BYTES);
+    const startedAt = Date.now();
+    let stdoutLineCount = 0;
+    let stderrByteCount = 0;
 
     /** SIGTERM now, SIGKILL after the grace if the child ignores it. */
     const killWithEscalation = (target: NonNullable<typeof child>): void => {
@@ -246,7 +249,20 @@ export class CodexExecRunner {
           stdio: ['ignore', 'pipe', 'pipe'],
           env: options.env,
         });
+        logger.info(
+          {
+            pid: child.pid,
+            binary: this.binary,
+            cwd: options.cwd,
+            resumed: Boolean(options.resumeSessionId),
+          },
+          'codex exec process spawned'
+        );
       } catch (error) {
+        logger.error(
+          { err: error, binary: this.binary, cwd: options.cwd, durationMs: Date.now() - startedAt },
+          'codex exec process failed to spawn'
+        );
         resolve({
           exitCode: null,
           timedOut: false,
@@ -269,13 +285,14 @@ export class CodexExecRunner {
           if (!trimmed) {
             return;
           }
+          stdoutLineCount += 1;
           try {
             onEvent(JSON.parse(trimmed) as CodexThreadEvent);
           } catch {
             // Non-JSON line (banner, stray output): tolerate, never fatal.
             logger.debug(
-              { line: trimmed.slice(0, 200) },
-              'codex exec: non-JSON stdout line skipped'
+              { pid: currentChild.pid, line: trimmed.slice(0, 500), lineLength: trimmed.length },
+              'codex exec stdout line'
             );
           }
         });
@@ -284,8 +301,13 @@ export class CodexExecRunner {
       // ── stderr: forward + rolling tail ─────────────────────────────────
       currentChild.stderr?.on('data', (chunk: Buffer) => {
         const text = chunk.toString();
+        stderrByteCount += Buffer.byteLength(text);
         stderrTail.append(text);
         options.stderr?.(text);
+        logger.debug(
+          { pid: currentChild.pid, chunk: text.slice(0, 1000), chunkLength: text.length },
+          'codex exec stderr chunk'
+        );
       });
 
       // ── spawn failure (ENOENT etc.) ────────────────────────────────────
@@ -295,6 +317,17 @@ export class CodexExecRunner {
         }
         settled = true;
         clearKillTimer();
+        logger.error(
+          {
+            err: error,
+            pid: currentChild.pid,
+            durationMs: Date.now() - startedAt,
+            stdoutLineCount,
+            stderrByteCount,
+            stderrTail: stderrTail.text(),
+          },
+          'codex exec process error'
+        );
         resolve({
           exitCode: null,
           timedOut: false,
@@ -311,6 +344,21 @@ export class CodexExecRunner {
         }
         settled = true;
         clearKillTimer();
+        const fields = {
+          pid: currentChild.pid,
+          exitCode: code,
+          timedOut,
+          aborted,
+          durationMs: Date.now() - startedAt,
+          stdoutLineCount,
+          stderrByteCount,
+          stderrTail: stderrTail.text() || undefined,
+        };
+        if (code !== 0 || timedOut || aborted) {
+          logger.warn(fields, 'codex exec process closed with non-success state');
+        } else {
+          logger.info(fields, 'codex exec process closed');
+        }
         resolve({
           exitCode: code,
           timedOut,
