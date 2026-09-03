@@ -11,6 +11,8 @@
  * @module card-builders/interactive-message-builder
  */
 
+import { normalizeMarkdownLineBreaks } from './content-builder.js';
+
 /**
  * Interactive message option configuration.
  */
@@ -174,11 +176,11 @@ export function buildInteractiveCard(params: InteractiveMessageParams): Interact
 
   // Optional context section
   if (context) {
-    elements.push({ tag: 'markdown', content: context });
+    elements.push({ tag: 'markdown', content: normalizeMarkdownLineBreaks(context) });
   }
 
   // Main question
-  elements.push({ tag: 'markdown', content: question });
+  elements.push({ tag: 'markdown', content: normalizeMarkdownLineBreaks(question) });
 
   // Divider
   elements.push({ tag: 'hr' });
@@ -242,9 +244,7 @@ export function buildActionPrompts(
     if (customPrompts && customPrompts[opt.value]) {
       prompts[opt.value] = customPrompts[opt.value];
     } else {
-      prompts[opt.value] = promptTemplate
-        .replace('{text}', opt.text)
-        .replace('{value}', opt.value);
+      prompts[opt.value] = promptTemplate.replace('{text}', opt.text).replace('{value}', opt.value);
     }
   }
 

@@ -11,11 +11,17 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as lark from '@larksuiteoapi/node-sdk';
-import { createLogger, type UniversalMessage, type SendResult, type MessageContent, type FileContent, type CardContent, type CardSection, type CardAction } from '@disclaude/core';
-import type {
-  IChannelAdapter,
-  ChannelCapabilities,
-} from '../channel-adapter.js';
+import {
+  createLogger,
+  type UniversalMessage,
+  type SendResult,
+  type MessageContent,
+  type FileContent,
+  type CardContent,
+  type CardSection,
+  type CardAction,
+} from '@disclaude/core';
+import type { IChannelAdapter, ChannelCapabilities } from '../channel-adapter.js';
 import { VIDEO_EXTENSIONS, extractVideoCover } from '../../utils/video-cover-extractor.js';
 import {
   IMAGE_EXTENSIONS,
@@ -25,6 +31,7 @@ import {
   uploadImage,
   uploadFile,
 } from '../../utils/feishu-upload.js';
+import { normalizeMarkdownLineBreaks } from '../../platforms/feishu/card-builders/content-builder.js';
 
 const logger = createLogger('FeishuAdapter');
 
@@ -105,7 +112,9 @@ export class FeishuAdapter implements IChannelAdapter {
     }
 
     if (!this.client) {
-      throw new Error('FeishuAdapter requires a client provider or client to be set. Use setClientProvider() or setClient().');
+      throw new Error(
+        'FeishuAdapter requires a client provider or client to be set. Use setClientProvider() or setClient().'
+      );
     }
     return this.client;
   }
@@ -155,7 +164,7 @@ export class FeishuAdapter implements IChannelAdapter {
         // convert() is synchronous and cannot perform file uploads.
         throw new Error(
           'File content cannot be converted synchronously. ' +
-          'Use send() directly for file messages, which handles upload via Feishu API.',
+            'Use send() directly for file messages, which handles upload via Feishu API.'
         );
 
       case 'done':
@@ -281,11 +290,12 @@ export class FeishuAdapter implements IChannelAdapter {
             content: action.label,
           },
           value: { action: action.value },
-          type: {
-            primary: 'primary',
-            secondary: 'default',
-            danger: 'danger',
-          }[action.style || 'primary'] || 'primary',
+          type:
+            {
+              primary: 'primary',
+              secondary: 'default',
+              danger: 'danger',
+            }[action.style || 'primary'] || 'primary',
         };
 
       case 'select': {
@@ -296,16 +306,17 @@ export class FeishuAdapter implements IChannelAdapter {
             tag: 'plain_text',
             content: label,
           },
-          options: options?.map((opt) => {
-            const { label: optLabel, value } = opt;
-            return {
-              text: {
-                tag: 'plain_text',
-                content: optLabel,
-              },
-              value,
-            };
-          }) || [],
+          options:
+            options?.map((opt) => {
+              const { label: optLabel, value } = opt;
+              return {
+                text: {
+                  tag: 'plain_text',
+                  content: optLabel,
+                },
+                value,
+              };
+            }) || [],
         };
       }
 
@@ -348,7 +359,7 @@ export class FeishuAdapter implements IChannelAdapter {
       elements: [
         {
           tag: 'markdown',
-          content: text,
+          content: normalizeMarkdownLineBreaks(text),
         },
       ],
     };
@@ -391,7 +402,10 @@ export class FeishuAdapter implements IChannelAdapter {
           },
         });
         const messageId = replyResp.data?.message_id;
-        logger.debug({ chatId: message.chatId, messageId, threadId: message.threadId }, 'Message sent as thread reply to Feishu');
+        logger.debug(
+          { chatId: message.chatId, messageId, threadId: message.threadId },
+          'Message sent as thread reply to Feishu'
+        );
         return { success: true, messageId };
       } else {
         const response = await client.im.message.create({
@@ -434,7 +448,10 @@ export class FeishuAdapter implements IChannelAdapter {
    * @param message - Universal message with file content
    * @returns Send result with messageId
    */
-  private async sendFileMessage(client: lark.Client, message: UniversalMessage): Promise<SendResult> {
+  private async sendFileMessage(
+    client: lark.Client,
+    message: UniversalMessage
+  ): Promise<SendResult> {
     const fileContent = message.content as FileContent;
     const filePath = fileContent.path;
     if (!filePath) {
@@ -461,12 +478,18 @@ export class FeishuAdapter implements IChannelAdapter {
     if (isImage) {
       // Upload image
       if (fileSize > MAX_IMAGE_SIZE) {
-        return { success: false, error: `Image file too large: ${fileSize} bytes (max ${MAX_IMAGE_SIZE / 1024 / 1024}MB)` };
+        return {
+          success: false,
+          error: `Image file too large: ${fileSize} bytes (max ${MAX_IMAGE_SIZE / 1024 / 1024}MB)`,
+        };
       }
 
       const imageKey = await uploadImage(client, filePath);
       if (!imageKey) {
-        return { success: false, error: `Failed to upload image: ${fileName} (no image_key returned)` };
+        return {
+          success: false,
+          error: `Failed to upload image: ${fileName} (no image_key returned)`,
+        };
       }
 
       msgType = 'image';
@@ -475,12 +498,18 @@ export class FeishuAdapter implements IChannelAdapter {
       // Upload video — use msg_type:'media' with auto-generated cover image
       // Issue #2265: Proper video support via Feishu media message type.
       if (fileSize > MAX_FILE_SIZE) {
-        return { success: false, error: `Video file too large: ${fileSize} bytes (max ${MAX_FILE_SIZE / 1024 / 1024}MB)` };
+        return {
+          success: false,
+          error: `Video file too large: ${fileSize} bytes (max ${MAX_FILE_SIZE / 1024 / 1024}MB)`,
+        };
       }
 
       const fileKey = await uploadFile(client, filePath, fileName, 'mp4');
       if (!fileKey) {
-        return { success: false, error: `Failed to upload video: ${fileName} (no file_key returned)` };
+        return {
+          success: false,
+          error: `Failed to upload video: ${fileName} (no file_key returned)`,
+        };
       }
 
       // Extract first frame as cover image
@@ -490,12 +519,19 @@ export class FeishuAdapter implements IChannelAdapter {
       if (coverResult.success && coverResult.coverPath) {
         imageKey = await uploadImage(client, coverResult.coverPath);
         // Clean up temp cover file
-        try { fs.unlinkSync(coverResult.coverPath); } catch { /* ignore */ }
+        try {
+          fs.unlinkSync(coverResult.coverPath);
+        } catch {
+          /* ignore */
+        }
       }
 
       if (!imageKey) {
         // Fallback: send as generic file if cover extraction/upload fails
-        logger.warn({ chatId: message.chatId, fileName, coverError: coverResult.error }, 'Cover image unavailable, sending video as file attachment');
+        logger.warn(
+          { chatId: message.chatId, fileName, coverError: coverResult.error },
+          'Cover image unavailable, sending video as file attachment'
+        );
         msgType = 'file';
         content = JSON.stringify({ file_key: fileKey });
       } else {
@@ -506,13 +542,19 @@ export class FeishuAdapter implements IChannelAdapter {
     } else {
       // Upload file
       if (fileSize > MAX_FILE_SIZE) {
-        return { success: false, error: `File too large: ${fileSize} bytes (max ${MAX_FILE_SIZE / 1024 / 1024}MB)` };
+        return {
+          success: false,
+          error: `File too large: ${fileSize} bytes (max ${MAX_FILE_SIZE / 1024 / 1024}MB)`,
+        };
       }
 
       const fileType = EXT_TO_FEISHU_FILE_TYPE[ext] || 'stream';
       const fileKey = await uploadFile(client, filePath, fileName, fileType);
       if (!fileKey) {
-        return { success: false, error: `Failed to upload file: ${fileName} (no file_key returned)` };
+        return {
+          success: false,
+          error: `Failed to upload file: ${fileName} (no file_key returned)`,
+        };
       }
 
       msgType = 'file';
@@ -527,7 +569,10 @@ export class FeishuAdapter implements IChannelAdapter {
         data: { msg_type: msgType, content },
       });
       messageId = replyResp.data?.message_id;
-      logger.info({ chatId: message.chatId, messageId, threadId: message.threadId, fileName, isImage }, 'File sent as thread reply');
+      logger.info(
+        { chatId: message.chatId, messageId, threadId: message.threadId, fileName, isImage },
+        'File sent as thread reply'
+      );
     } else {
       const createResp = await client.im.message.create({
         params: { receive_id_type: 'chat_id' },

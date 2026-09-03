@@ -7,6 +7,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildTextContent,
+  normalizeMarkdownLineBreaks,
+  normalizeCardMarkdown,
   buildPostContent,
   buildSimplePostContent,
   type PostElement,
@@ -47,11 +49,36 @@ describe('buildTextContent', () => {
   });
 });
 
+describe('Markdown line-break normalization', () => {
+  it('restores a single escaped newline', () => {
+    expect(normalizeMarkdownLineBreaks('**标题**\\n\\n- 项目')).toBe('**标题**\n\n- 项目');
+  });
+
+  it('preserves doubled backslashes', () => {
+    expect(normalizeMarkdownLineBreaks('```text\\\\n```')).toBe('```text\\\\n```');
+  });
+
+  it('changes Markdown elements but not plain-text fields', () => {
+    const card = {
+      header: { title: { tag: 'plain_text', content: 'title\\ntext' } },
+      elements: [
+        { tag: 'markdown', content: 'line 1\\nline 2' },
+        { tag: 'div', text: { tag: 'plain_text', content: 'literal\\ntext' } },
+      ],
+    };
+    expect(normalizeCardMarkdown(card)).toEqual({
+      header: { title: { tag: 'plain_text', content: 'title\\ntext' } },
+      elements: [
+        { tag: 'markdown', content: 'line 1\nline 2' },
+        { tag: 'div', text: { tag: 'plain_text', content: 'literal\\ntext' } },
+      ],
+    });
+  });
+});
+
 describe('buildPostContent', () => {
   it('should build post content without title', () => {
-    const elements: PostElement[][] = [
-      [{ tag: 'text', text: 'Hello ' }],
-    ];
+    const elements: PostElement[][] = [[{ tag: 'text', text: 'Hello ' }]];
     const result = buildPostContent(elements);
     const parsed = JSON.parse(result);
 
@@ -64,9 +91,7 @@ describe('buildPostContent', () => {
   });
 
   it('should build post content with title', () => {
-    const elements: PostElement[][] = [
-      [{ tag: 'text', text: 'World' }],
-    ];
+    const elements: PostElement[][] = [[{ tag: 'text', text: 'World' }]];
     const result = buildPostContent(elements, 'Title');
     const parsed = JSON.parse(result);
 
@@ -80,7 +105,10 @@ describe('buildPostContent', () => {
 
   it('should handle multiple rows with multiple elements', () => {
     const elements: PostElement[][] = [
-      [{ tag: 'text', text: 'Hello ' }, { tag: 'text', text: 'World' }],
+      [
+        { tag: 'text', text: 'Hello ' },
+        { tag: 'text', text: 'World' },
+      ],
       [{ tag: 'text', text: 'Second line' }],
     ];
     const result = buildPostContent(elements, 'Multi-row');
@@ -93,9 +121,7 @@ describe('buildPostContent', () => {
   });
 
   it('should handle @ element', () => {
-    const elements: PostElement[][] = [
-      [{ tag: 'at', user_id: 'ou_123', text: '@user' }],
-    ];
+    const elements: PostElement[][] = [[{ tag: 'at', user_id: 'ou_123', text: '@user' }]];
     const result = buildPostContent(elements);
     const parsed = JSON.parse(result);
 
@@ -121,9 +147,7 @@ describe('buildPostContent', () => {
   });
 
   it('should handle image element', () => {
-    const elements: PostElement[][] = [
-      [{ tag: 'img', image_key: 'img_xxx' }],
-    ];
+    const elements: PostElement[][] = [[{ tag: 'img', image_key: 'img_xxx' }]];
     const result = buildPostContent(elements);
     const parsed = JSON.parse(result);
 
@@ -143,9 +167,7 @@ describe('buildPostContent', () => {
   });
 
   it('should produce valid JSON', () => {
-    const elements: PostElement[][] = [
-      [{ tag: 'text', text: 'test' }],
-    ];
+    const elements: PostElement[][] = [[{ tag: 'text', text: 'test' }]];
     const result = buildPostContent(elements, 'Title');
     expect(() => JSON.parse(result)).not.toThrow();
   });

@@ -52,6 +52,7 @@ import {
   uploadFile,
 } from '../utils/feishu-upload.js';
 import { extractCardTextContent } from '../platforms/feishu/card-builders/card-text-extractor.js';
+import { normalizeCardMarkdown } from '../platforms/feishu/card-builders/content-builder.js';
 // Issue #4400 (#4208 P2-c): Card Kit streaming wiring.
 import {
   FeishuCardKitClient,
@@ -488,9 +489,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       this.deliveryHealth.status = 'degraded';
       this.deliveryHealth.lastAttemptAt = new Date().toISOString();
       this.deliveryHealth.lastFailureAt = this.deliveryHealth.lastAttemptAt;
-      this.deliveryHealth.lastErrorType = Number(extractFeishuApiError(error).apiCode) === 230025
-        ? 'http_4xx'
-        : 'delivery_error';
+      this.deliveryHealth.lastErrorType =
+        Number(extractFeishuApiError(error).apiCode) === 230025 ? 'http_4xx' : 'delivery_error';
       throw error;
     }
   }
@@ -669,7 +669,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       case 'card': {
         const messageId = await sendFeishuMessage(
           'interactive',
-          JSON.stringify(message.card || {})
+          JSON.stringify(normalizeCardMarkdown(message.card || {}))
         );
         logger.debug(
           { chatId: message.chatId, messageId, threadReply: useThreadReply },
