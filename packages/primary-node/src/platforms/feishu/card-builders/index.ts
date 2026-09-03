@@ -17,6 +17,8 @@ export {
 
 export {
   buildTextContent,
+  normalizeMarkdownLineBreaks,
+  normalizeCardMarkdown,
   buildPostContent,
   buildSimplePostContent,
   type PostElement,
@@ -65,4 +67,3 @@ export {
   type InteractiveCard,
   type ActionPromptMap,
 } from './interactive-message-builder.js';
-

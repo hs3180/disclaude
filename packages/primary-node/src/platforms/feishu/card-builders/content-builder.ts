@@ -69,6 +69,33 @@ export function buildTextContent(text: string): string {
   return JSON.stringify({ text });
 }
 
+/** Restore a single escaped newline layer at the Markdown semantic boundary. */
+export function normalizeMarkdownLineBreaks(text: string): string {
+  return text
+    .replace(/(?<!\\)\\r\\n/g, '\n')
+    .replace(/(?<!\\)\\n/g, '\n')
+    .replace(/(?<!\\)\\r/g, '\r');
+}
+
+/** Normalize Markdown elements recursively without changing plain-text fields. */
+export function normalizeCardMarkdown<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeCardMarkdown(item)) as T;
+  }
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+
+  const record = value as Record<string, unknown>;
+  const normalized = Object.fromEntries(
+    Object.entries(record).map(([key, item]) => [key, normalizeCardMarkdown(item)])
+  ) as Record<string, unknown>;
+  if (record.tag === 'markdown' && typeof record.content === 'string') {
+    normalized.content = normalizeMarkdownLineBreaks(record.content);
+  }
+  return normalized as T;
+}
+
 /**
  * Build post (rich text) message content.
  * Post messages support rich formatting with multiple element types.

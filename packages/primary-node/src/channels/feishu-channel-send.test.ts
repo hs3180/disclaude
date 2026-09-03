@@ -375,6 +375,31 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
   });
 
   describe('card messages (interactive)', () => {
+    it('restores escaped line breaks in Markdown elements before sending', async () => {
+      const { client, mocks } = createMockClient();
+      const channel = createTestChannel(client);
+
+      await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'card',
+        card: {
+          config: { wide_screen_mode: true },
+          elements: [{ tag: 'markdown', content: '**标题**\\n\\n- 项目' }],
+        },
+      });
+
+      expect(mocks.createMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            content: JSON.stringify({
+              config: { wide_screen_mode: true },
+              elements: [{ tag: 'markdown', content: '**标题**\n\n- 项目' }],
+            }),
+          }),
+        })
+      );
+    });
+
     it('should use message.create for cards without threadId', async () => {
       const { client, mocks } = createMockClient();
       const channel = createTestChannel(client);
