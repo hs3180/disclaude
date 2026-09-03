@@ -713,7 +713,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
       expect(String(obj.error)).not.toMatch(/ENOTFOUND|at /);
     }, 30000);
 
-    it('send_text with missing credentials and a down REST face -> actionable hint', async () => {
+    it('send_text with missing local credentials and a down REST face -> actionable hint', async () => {
       const port = await reserveEphemeralPort();
       const baseUrl = `http://127.0.0.1:${port}`;
       const r = await runCli(
@@ -728,7 +728,11 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
       );
       expect(r.code).toBe(1);
       const obj = parseSingleJson(r.stdout);
-      expect(String(obj.error)).toContain('Feishu credentials not configured');
+      // The CLI deliberately skips local credential validation: PrimaryNode
+      // owns the runtime credentials. A down REST face must therefore surface
+      // the transport failure, not the obsolete local-credentials error.
+      expect(String(obj.error)).toMatch(/IPC|REST|服务不可用|unavailable/i);
+      expect(String(obj.error)).not.toContain('Feishu credentials not configured');
       expect(String(obj.hint)).toContain(baseUrl);
       expect(String(obj.hint)).toMatch(/start the main service|--api-port/);
     }, 30000);
