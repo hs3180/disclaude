@@ -94,13 +94,11 @@ Create a thought-provoking question that:
 
 ### Step 4: Send to Topic Group
 
-Use the `send_user_feedback` MCP tool to send the question:
+Use the channel CLI to send the question:
 
-```
-send_user_feedback({
-  chatId: "{target_chat_id}",
-  message: "{generated_question}"
-})
+```bash
+node /Users/hs3180/Projects/disclaude/skills/channel/cli.mjs send_text \
+  --chat "{target_chat_id}" --text "{generated_question}"
 ```
 
 **Note**: The target chat ID should be configured in the schedule file or use the current chat.
@@ -180,7 +178,7 @@ chatId: "{your_topic_group_chat_id}"
 1. 读取 workspace/chat/ 目录下的聊天记录
 2. 重点关注最近的决策、讨论和问题
 3. 生成一个开放式的、引人思考的问题
-4. 使用 send_user_feedback 发送到当前 chatId
+4. 使用 channel CLI `send_text` 发送到当前 chatId
 ```
 
 ---
@@ -191,7 +189,7 @@ chatId: "{your_topic_group_chat_id}"
 - [ ] Identified interesting decisions or issues
 - [ ] Generated open-ended, thought-provoking question
 - [ ] Question is based on actual work context
-- [ ] Ready to send using `send_user_feedback`
+- [ ] Ready to send using channel CLI `send_text`
 
 ---
 

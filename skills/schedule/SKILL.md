@@ -27,7 +27,7 @@ Manage schedules with full CRUD operations.
 
 ## Core Principle
 
-**ALWAYS send feedback to user via `send_user_feedback` after EVERY operation.**
+**ALWAYS send feedback to the user via the channel CLI `send_text` after EVERY operation.**
 
 This is mandatory. Users must receive confirmation of operation results.
 
@@ -409,7 +409,7 @@ createdAt: 2026-03-06T00:00:00.000Z
 
 ### 步骤 4: 发送到话题群
 
-使用 `send_user_feedback` 工具发送灵魂拷问到第一个话题群。
+使用 channel CLI 的 `send_text` 命令发送灵魂拷问到第一个话题群。
 
 参数设置:
 - content: 灵魂拷问内容
@@ -421,7 +421,7 @@ createdAt: 2026-03-06T00:00:00.000Z
 1. **不要创建新的定时任务** - 这是定时任务执行环境的规则
 2. **不要修改现有的定时任务**
 3. **只执行上述步骤,完成后结束**
-4. **使用 send_user_feedback 发送消息时,确保 chatId 是话题群的 ID**
+4. **使用 channel CLI 发送消息时，确保 `--chat` 是话题群的 ID**
 
 ## 验收标准
 

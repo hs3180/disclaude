@@ -1,7 +1,7 @@
 ---
 name: next-step
 description: Analyze completed task and recommend follow-up actions
-allowed-tools: [send_user_feedback]
+allowed-tools: [Bash]
 ---
 
 # Next Step Recommender
@@ -74,7 +74,18 @@ Based on task type, suggest relevant follow-ups:
 
 ## Output Format
 
-Send an interactive card using `send_user_feedback`:
+Send an interactive card using the channel CLI. Pass the three button values through
+`--options` and map them to agent prompts with `--action-prompts`:
+
+```bash
+node /Users/hs3180/Projects/disclaude/skills/channel/cli.mjs send_interactive \
+  --chat "$chatId" --question "接下来您可以：" \
+  --options '[{"text":"📋 提交 GitHub Issue","value":"create_github_issue"},{"text":"📝 总结文档","value":"create_summary"},{"text":"🔄 继续优化","value":"continue_improve"}]' \
+  --action-prompts '{"create_github_issue":"[用户操作] 用户选择了提交 GitHub Issue","create_summary":"[用户操作] 用户选择了总结文档","continue_improve":"[用户操作] 用户选择了继续优化"}' \
+  --title "✅ 任务完成"
+```
+
+The equivalent card payload is:
 
 ```json
 {
@@ -129,7 +140,7 @@ The Chat ID is ALWAYS provided in the prompt. Look for:
 **Chat ID for Feishu tools**: `oc_xxx`
 ```
 
-Use this exact value for `send_user_feedback`.
+Use this exact value as the channel CLI `--chat` argument.
 
 ## DO NOT
 
