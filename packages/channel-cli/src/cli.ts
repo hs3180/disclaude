@@ -124,7 +124,6 @@ function parseActionPrompts(raw: string | undefined): ActionPromptMap | undefine
 }
 function setupRest(args: Args): string {
   const baseUrl = arg(args, 'base-url') || process.env.DISCLAUDE_REST_IPC_BASE_URL || DEFAULT_REST_BASE_URL;
-  process.env.DISCLAUDE_REST_IPC_ENABLED = 'true';
   process.env.DISCLAUDE_REST_IPC_BASE_URL = baseUrl;
   return baseUrl;
 }

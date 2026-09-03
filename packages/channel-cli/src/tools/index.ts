@@ -11,7 +11,6 @@ export type {
 
 // Shared utilities
 export { isIpcAvailable, getIpcErrorMessage, buildIpcFallbackHint } from './ipc-utils.js';
-export { getFeishuCredentials, getWorkspaceDir } from './credentials.js';
 export {
   setMessageSentCallback,
   getMessageSentCallback,

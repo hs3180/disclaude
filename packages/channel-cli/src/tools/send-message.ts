@@ -9,7 +9,6 @@
 
 import { createLogger, sendMessage, type IpcMethodResult } from '@disclaude/core';
 import { isIpcAvailable, getIpcErrorMessage, getRestIpcClient, buildIpcFallbackHint } from './ipc-utils.js';
-import { getFeishuCredentials } from './credentials.js';
 import { invokeMessageSentCallback, setMessageSentCallback, getMessageSentCallback } from './callback-manager.js';
 import type { SendMessageResult } from './types.js';
 
@@ -64,14 +63,6 @@ export async function send_text(params: {
       throw new Error('chatId is required');
     }
 
-    const { appId, appSecret } = getFeishuCredentials();
-
-    if (!appId || !appSecret) {
-      const errorMsg = 'Feishu credentials not configured. Please set FEISHU_APP_ID and FEISHU_APP_SECRET in disclaude.config.yaml';
-      logger.error({ chatId }, errorMsg);
-      return { success: false, error: errorMsg, message: `❌ ${errorMsg}` };
-    }
-
     // Check IPC availability (Issue #1355: async connection probe)
     if (!(await isIpcAvailable())) {
       const errorMsg = 'IPC service unavailable. Please ensure Primary Node is running.';
@@ -107,6 +98,3 @@ export async function send_text(params: {
     return { success: false, error: errorMessage, message: `❌ Failed to send text: ${errorMessage}` };
   }
 }
-
-// Re-export helper for other tools (backward compatibility)
-export { getFeishuCredentials, getWorkspaceDir } from './credentials.js';

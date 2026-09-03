@@ -26,13 +26,13 @@ const { mockLogger, mockCreateLogger } = vi.hoisted(() => {
 // Hoisted RestIpcClient class mock — vi.doMock factories can close over it.
 const { MockRestIpcClient } = vi.hoisted(() => {
   class MockRestIpcClientImpl {
-    constructor(public opts: { baseUrl?: string; apiToken?: string }) {}
+    constructor(public opts: { baseUrl?: string }) {}
   }
   return { MockRestIpcClient: MockRestIpcClientImpl };
 });
 // The factory's declared return type is the real RestIpcClient; assertions
 // inspect the mock's captured constructor opts via this structural type.
-type MockRestIpcClient = { opts: { baseUrl?: string; apiToken?: string } };
+type MockRestIpcClient = { opts: { baseUrl?: string } };
 
 async function loadModule() {
   // vi.clearAllMocks() (run by sibling describes' afterEach) wipes the
@@ -275,21 +275,16 @@ describe('isIpcAvailable (REST-only)', () => {
 describe('getRestIpcClient (REST-only construction)', () => {
   let getRestIpcClient: typeof import('./ipc-utils.js').getRestIpcClient;
   let savedBaseUrl: string | undefined;
-  let savedApiToken: string | undefined;
 
   beforeEach(async () => {
     savedBaseUrl = process.env.DISCLAUDE_REST_IPC_BASE_URL;
-    savedApiToken = process.env.DISCLAUDE_REST_IPC_API_TOKEN;
     delete process.env.DISCLAUDE_REST_IPC_BASE_URL;
-    delete process.env.DISCLAUDE_REST_IPC_API_TOKEN;
     ({ getRestIpcClient } = await loadModule());
   });
 
   afterEach(async () => {
     if (savedBaseUrl === undefined) { delete process.env.DISCLAUDE_REST_IPC_BASE_URL; }
     else { process.env.DISCLAUDE_REST_IPC_BASE_URL = savedBaseUrl; }
-    if (savedApiToken === undefined) { delete process.env.DISCLAUDE_REST_IPC_API_TOKEN; }
-    else { process.env.DISCLAUDE_REST_IPC_API_TOKEN = savedApiToken; }
     vi.restoreAllMocks();
     await vi.resetModules();
   });
@@ -300,12 +295,10 @@ describe('getRestIpcClient (REST-only construction)', () => {
     expect(client.opts.baseUrl).toBe('http://localhost:19200');
   });
 
-  it('should wire DISCLAUDE_REST_IPC_BASE_URL / _API_TOKEN into the client', () => {
+  it('should wire the REST base URL into the client without local auth state', () => {
     process.env.DISCLAUDE_REST_IPC_BASE_URL = 'http://10.0.0.5:9300';
-    process.env.DISCLAUDE_REST_IPC_API_TOKEN = 'secret-token';
     const client = getRestIpcClient() as unknown as MockRestIpcClient;
     expect(client.opts.baseUrl).toBe('http://10.0.0.5:9300');
-    expect(client.opts.apiToken).toBe('secret-token');
   });
 
   it('should strip a trailing slash from the base URL', () => {

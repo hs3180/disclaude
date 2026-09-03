@@ -30,10 +30,6 @@ vi.mock('../utils/card-validator.js', () => ({
   getCardValidationError: vi.fn((_card: unknown) => 'Invalid card structure'),
 }));
 
-vi.mock('./credentials.js', () => ({
-  getFeishuCredentials: vi.fn(),
-}));
-
 vi.mock('./ipc-utils.js', () => ({
   // Issue #4280 (Phase 3, part 3): REST client factory — returns the shared mock.
   getRestIpcClient: () => mockGetRestIpcClient(),
@@ -53,7 +49,6 @@ vi.mock('./callback-manager.js', () => ({
 }));
 
 import { send_card } from './send-card.js';
-import { getFeishuCredentials } from './credentials.js';
 import { isIpcAvailable } from './ipc-utils.js';
 import { isValidFeishuCard } from '../utils/card-validator.js';
 import { invokeMessageSentCallback } from './callback-manager.js';
@@ -68,7 +63,6 @@ describe('send_card', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetRestIpcClient.mockReturnValue(mockIpcClient);
-    vi.mocked(getFeishuCredentials).mockReturnValue({ appId: 'test-app-id', appSecret: 'test-secret' });
     vi.mocked(isIpcAvailable).mockResolvedValue(true);
     vi.mocked(isValidFeishuCard).mockReturnValue(true);
   });
@@ -93,15 +87,6 @@ describe('send_card', () => {
       const result = await send_card({ card: { foo: 'bar' }, chatId: 'oc_test' });
       expect(result.success).toBe(false);
       expect(result.message).toContain('Card validation failed');
-    });
-  });
-
-  describe('credential validation', () => {
-    it('should return error when appId is missing', async () => {
-      vi.mocked(getFeishuCredentials).mockReturnValue({ appId: undefined, appSecret: 'secret' });
-      const result = await send_card({ card: validCard, chatId: 'oc_test' });
-      expect(result.success).toBe(false);
-      expect(result.message).toContain('credentials not configured');
     });
   });
 

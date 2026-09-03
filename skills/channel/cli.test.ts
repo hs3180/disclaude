@@ -2,7 +2,7 @@
 //
 // Issue #4459 part 3 (PR #4467). This is a NO-IPC stub smoke test: it spawns
 // the real CLI as a child process and locks the output contract the agent
-// depends on — WITHOUT a running PrimaryNode, Feishu credentials, or network.
+// depends on — WITHOUT a running PrimaryNode or network.
 //
 // Scope notes (why this is safe to add):
 //  - `npm run lint` only targets the packages source dirs, so this file is NOT
@@ -528,11 +528,9 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
 
   describe('send_file pino->stderr redirect (cli.mjs withStdoutToStderr)', () => {
     // Valid args pass validation and reach the real import + send_file call.
-    // Without a PrimaryNode / credentials the call fails, but not before a pino
-    // write: with no creds send_file logs `logger.warn(..., 'File send skipped
-    // (platform not configured)')`; with creds it logs
-    // `logger.debug(..., 'send_file called')` then fails on fs.stat/IPC. Either
-    // way a pino line must land on stderr, never stdout.
+    // Without a PrimaryNode the call fails, but not before a pino write:
+    // `logger.debug(..., 'send_file called')` then fails on fs.stat/IPC. The
+    // log line must land on stderr, never stdout.
     it('keeps the pino send_file log line off stdout (routed to stderr)', async () => {
       const r = await runCli(
         [
@@ -713,7 +711,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
       expect(String(obj.error)).not.toMatch(/ENOTFOUND|at /);
     }, 30000);
 
-    it('send_text with missing credentials and a down REST face -> actionable hint', async () => {
+    it('send_text with a down REST face -> actionable hint', async () => {
       const port = await reserveEphemeralPort();
       const baseUrl = `http://127.0.0.1:${port}`;
       const r = await runCli(
@@ -722,13 +720,12 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
           NODE_ENV: 'test',
           HOME: '/nonexistent-home-4532',
           DISCLAUDE_CONFIG_PATH: '/nonexistent-config-4532.yaml',
-          FEISHU_APP_ID: '',
-          FEISHU_APP_SECRET: '',
         }
       );
       expect(r.code).toBe(1);
       const obj = parseSingleJson(r.stdout);
-      expect(String(obj.error)).toContain('Feishu credentials not configured');
+      // A down REST face must surface the transport failure.
+      expect(String(obj.error)).toMatch(/IPC|REST|服务不可用|unavailable/i);
       expect(String(obj.hint)).toContain(baseUrl);
       expect(String(obj.hint)).toMatch(/start the main service|--api-port/);
     }, 30000);
