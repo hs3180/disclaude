@@ -49,7 +49,7 @@ an in-process RPC.
 ## 2. CLI invocation contract
 
 This is the core contract a `cli.mjs` must honor. It generalizes the concrete pattern already
-implemented by the channel reference skill (`bin/disclaude.js channel`) so every migrating tool looks
+implemented by the channel reference skill (`disclaude channel`) so every migrating tool looks
 the same to the agent.
 
 ### 2.1 Command line
@@ -177,7 +177,7 @@ surface maps to which target is a per-tool decision (scope 3), sketched here onl
 
 | Surface | Transport | Lives in | Migration target (scope 3 decides) |
 |---|---|---|---|
-| **S1** `channel-mcp` — disclaude's own messaging tools (`send_text`/`send_card`/`send_interactive`/`send_file`/`push_to_agent`; the loop tools were removed with the loop system, #4430) | inline / in-process | `packages/channel-cli/src/` | **Migrated and removed (#4652/#4726).** All five operations surface through [`bin/disclaude.js channel`](../skills/channel/README.md); no in-process MCP package remains. |
+| **S1** `channel-mcp` — disclaude's own messaging tools (`send_text`/`send_card`/`send_interactive`/`send_file`/`push_to_agent`; the loop tools were removed with the loop system, #4430) | inline / in-process | `packages/channel-cli/src/` | **Migrated and removed (#4652/#4726).** All five operations surface through [`disclaude channel`](../skills/channel/README.md); no in-process MCP package remains. |
 | **S2** External stdio MCP servers (Playwright + user-configured) | stdio subprocess | ~~config `tools.mcpServers`; loader `mcp-setup.ts`~~ (**removed**, `#4459` Scope 4) | **CLI Skills / Skills.** Primary target — Playwright consumers are retired in favor of the [`browser-use` skill](../skills/browser-use/SKILL.md) ([#4460](https://github.com/hs3180/disclaude/issues/4460)); user stdio servers wrap as Skills per this spec. |
 | **S3** disclaude standalone stdio MCP server | stdio | — | **Removed (#4726).** External consumers should use the Channel CLI Skill or another supported integration. |
 
