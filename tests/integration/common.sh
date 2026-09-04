@@ -726,6 +726,13 @@ extract_json_bool() {
     echo "$RESPONSE_BODY" | grep -o "\"$field\":[^,}]*" | cut -d':' -f2 | tr -d ' '
 }
 
+# Issue #4692: does the given text indicate the outer execution environment's
+# sandbox rejected an operation (vs a Disclaude/Codex regression)? Returns 0
+# if a sandbox/permission marker is present.
+has_sandbox_marker() {
+    echo "$1" | grep -qiE "sandbox_apply|Operation not permitted|Operation not allowed|EACCES|Permission denied"
+}
+
 # =============================================================================
 # Assertion Functions
 # =============================================================================

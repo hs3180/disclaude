@@ -79,6 +79,21 @@ test_workspace_write() {
         rm -f "$file"
         return 0
     fi
+    # Issue #4692: distinguish an outer-environment sandbox rejection from a
+    # genuine Disclaude/Codex regression. On restricted hosts the Codex child
+    # runs (sawActivity=true) but the OS sandbox refuses to materialize the
+    # probe file (EACCES / Operation not permitted / sandbox_apply). That is a
+    # test-environment limitation, not a code path failure — the workspace-write
+    # sandbox policy parameter plumbing is covered by dedicated unit tests. When
+    # the missing file coincides with a sandbox/permission marker, mark it as an
+    # environmental SKIP instead of a hard FAIL (which would otherwise red the
+    # whole suite and retried it pointlessly).
+    if [ ! -f "$file" ] && has_sandbox_marker "$RESPONSE_TEXT ${SERVER_LOG:+$(tail -100 "$SERVER_LOG" 2>/dev/null)}"; then
+        log_skip "Codex workspace-write could not create the probe file due to the outer environment sandbox (marker found) — environmental, not a Disclaude regression (#4692)"
+        log_debug "Response: $RESPONSE_TEXT"
+        rm -f "$file"
+        return 0
+    fi
     if [ -f "$file" ]; then
         log_fail "Codex workspace-write created an unexpected probe file"
     else
