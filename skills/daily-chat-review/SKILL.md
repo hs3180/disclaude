@@ -140,7 +140,7 @@ Create a structured analysis report:
 **CRITICAL**: Always send the report to the user using the channel CLI.
 
 ```bash
-node /Users/hs3180/Projects/disclaude/skills/channel/cli.mjs send_text \
+node /Users/hs3180/Projects/disclaude/bin/disclaude.js channel send_text \
   --chat "$chatId" --text-file /tmp/daily-chat-review.md
 ```
 

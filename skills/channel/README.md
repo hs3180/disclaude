@@ -44,57 +44,57 @@ exposes the 5 first-party channel tools (`send_text`, `send_card`,
 `Bash` instead of the runtime dispatching an in-process MCP tool — see
 [`docs/skill-format-spec.md`](../../docs/skill-format-spec.md) for the contract.
 
-This is a **CLI Skill** (a `cli.mjs` the agent shells out to), distinct from the
-existing `SKILL.md` agent-skills. The two coexist; an agent-skill may shell out
-to this CLI as one of its tools.
+This is a **CLI Skill** (the agent shells out to `node bin/disclaude.js channel ...`),
+distinct from the existing `SKILL.md` agent-skills. The two coexist; an
+agent-skill may shell out to this CLI as one of its tools.
 
 ## Quick start
 
 ```bash
 # Send a plain text message
-node skills/channel/cli.mjs send_text --chat oc_xxx --text "Hello, world!"
+node bin/disclaude.js channel send_text --chat oc_xxx --text "Hello, world!"
 
 # Pipe a longer body on stdin
-echo "status: all green" | node skills/channel/cli.mjs send_text --chat oc_xxx
+echo "status: all green" | node bin/disclaude.js channel send_text --chat oc_xxx
 
 # Read text from a file + reply in a thread
-node skills/channel/cli.mjs send_text --chat oc_xxx --text-file ./msg.md --parent om_root
+node bin/disclaude.js channel send_text --chat oc_xxx --text-file ./msg.md --parent om_root
 
 # @-mention a user
-node skills/channel/cli.mjs send_text --chat oc_xxx --text "pls review" \
+node bin/disclaude.js channel send_text --chat oc_xxx --text "pls review" \
   --mentions '[{"openId":"ou_yyy","name":"owner"}]'
 
 # Send an interactive card with buttons (PrimaryNode builds the card; button
 # clicks are routed back to the agent as prompts)
-node skills/channel/cli.mjs send_interactive --chat oc_xxx \
+node bin/disclaude.js channel send_interactive --chat oc_xxx \
   --question "Which option do you prefer?" \
   --options '[{"text":"Approve","value":"approve","type":"primary"},
               {"text":"Reject","value":"reject","type":"danger"}]' \
   --title "Code Review"
 
 # Pipe a longer question on stdin + custom action prompts
-echo "Deploy to prod?" | node skills/channel/cli.mjs send_interactive --chat oc_xxx \
+echo "Deploy to prod?" | node bin/disclaude.js channel send_interactive --chat oc_xxx \
   --options '[{"text":"yes","value":"yes"},{"text":"no","value":"no"}]' \
   --action-prompts '{"yes":"[user] approved deploy","no":"[user] rejected deploy"}'
 
 # Send a file (relative paths resolve against the workspace dir)
-node skills/channel/cli.mjs send_file --chat oc_xxx --file ./report.pdf
+node bin/disclaude.js channel send_file --chat oc_xxx --file ./report.pdf
 
 # Send a file as a thread reply
-node skills/channel/cli.mjs send_file --chat oc_xxx --file ./log.txt --parent om_root
+node bin/disclaude.js channel send_file --chat oc_xxx --file ./log.txt --parent om_root
 
 # Push an instruction to the agent handling a chat (agent is created lazily)
-node skills/channel/cli.mjs push_to_agent --chat oc_xxx --message "Summarize unread messages"
+node bin/disclaude.js channel push_to_agent --chat oc_xxx --message "Summarize unread messages"
 
 # Pipe a longer instruction on stdin
-echo "Reply to the open question in this thread." | node skills/channel/cli.mjs push_to_agent --chat oc_xxx
+echo "Reply to the open question in this thread." | node bin/disclaude.js channel push_to_agent --chat oc_xxx
 
 # Send a display-only card from a JSON file (GFM tables / local images auto-handled)
-node skills/channel/cli.mjs send_card --chat oc_xxx --card-file ./card.json
+node bin/disclaude.js channel send_card --chat oc_xxx --card-file ./card.json
 
 # ...or pipe the card JSON on stdin
 echo '{"elements":[{"tag":"markdown","content":"hi"}]}' \
-  | node skills/channel/cli.mjs send_card --chat oc_xxx
+  | node bin/disclaude.js channel send_card --chat oc_xxx
 ```
 
 **Runtime (host deps, not bundled):** reuses `send_text` / `send_file` /
@@ -224,7 +224,7 @@ Recorded explicitly per #4459 acceptance ("迁移/下线不静默"):
 | `send_text` parameters     | `text`, `chatId`, `parentMessageId`, `mentions`                   | identical, via `--chat`/`--text`/`--text-file`/`--parent`/`--mentions`                                                                                      | text gains `--text-file`/stdin for large bodies            |
 | `send_file` parameters     | `filePath`, `chatId`, `parentMessageId`                           | identical, via `--file`/`--chat`/`--parent` (relative `--file` resolves against the workspace dir, as in the MCP tool)                                      | none                                                       |
 | `push_to_agent` parameters | `chatId`, `message`                                               | identical, via `--chat`/`--message`/`--message-file`                                                                                                        | message gains `--message-file`/stdin for long instructions |
-| chatId format pre-check    | `getChatIdValidationError(chatId)` in every entry handler (#1641) | identical check in every subcommand (part 11) — all five pre-import via the twin in `cli.mjs`; `send_card` re-runs the exported helper post-import (part 5) | none                                                       |
+| chatId format pre-check    | `getChatIdValidationError(chatId)` in every entry handler (#1641) | identical check in every subcommand (part 11) — all five pre-import via the twin in the channel CLI; `send_card` re-runs the exported helper post-import (part 5) | none                                                       |
 | Capability gating          | MCP layer gates on `supportedMcpTools` per chat                   | **not** gated here — the agent invokes the CLI at its own discretion                                                                                        | see open item below                                        |
 | Logging                    | pino → stdout (in-process, acceptable)                            | pino → **stderr** for the call's duration (stdout reserved for the result JSON)                                                                             | none functionally                                          |
 
@@ -255,8 +255,8 @@ format check. Parts 3–6 initially **deferred** the chatId _format_ check to a
 presence-only validation (an ill-formed id was still rejected, but by the
 transport layer rather than up front) — the deferred-parity item `send_text`
 carried. **Part 11 closed that delta**: every subcommand now runs the same
-format pre-check as the handlers before any import (`parseChatId` in
-`cli.mjs`). No card/table/image transforms apply to `push_to_agent`, so unlike
+format pre-check as the handlers before any import (`parseChatId` in the
+channel CLI). No card/table/image transforms apply to `push_to_agent`, so unlike
 `send_card` it needs no extra helper exports.
 
 **#4521 chatId pre-check ruling (#4532 acceptance, explicit — migration is not
@@ -265,8 +265,8 @@ direction-rejected because it was built on the IPC foundation; its substance is
 transport-independent. #4532's acceptance item — _"the pre-check's fate on the
 REST CLI is explicitly decided"_ — is now settled by **part 11**: **kept, and
 extended to all 5 subcommands**. Every subcommand runs the format pre-check
-**pre-import** via a twin of the exported pattern table (`parseChatId` in
-`cli.mjs`; byte-identical rules to `getChatIdValidationError`), so an
+**pre-import** via a twin of the exported pattern table (`parseChatId` in the
+channel CLI; byte-identical rules to `getChatIdValidationError`), so an
 ill-formed id fails cheaply before the channel implementation is loaded. This
 matters _more_ on REST than it did on IPC: the REST handlers validate `chatId`
 as a non-empty string only (`/api/send-message` et al.), so without the twin an
