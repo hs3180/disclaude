@@ -29,6 +29,9 @@ register_cleanup
 # Test Functions
 # =============================================================================
 
+# Issue #4690: assert the agent replied with exactly one expected number.
+# See assert_exact_number() in common.sh.
+
 # Test: Number context - Set favorite number, then recall and calculate
 test_number_context() {
     log_info "Test: Number context - Set favorite number and recall..."
@@ -41,28 +44,17 @@ test_number_context() {
 
     sleep 1
 
-    # Turn 2: Ask agent to recall the number
+    # Turn 2: Ask agent to recall the number (reply with only the number)
     log_debug "Turn 2: Asking agent to recall my favorite number"
-    assert_sync_chat_ok "我的幸运数字是多少？" "$chat_id" || return 1
-
-    # Probabilistic check - use log_warn instead of return 1
-    if echo "$RESPONSE_TEXT" | grep -q "42"; then
-        log_pass "Agent correctly recalled the favorite number (42)"
-    else
-        log_warn "Agent did not recall 42 exactly (probabilistic AI behavior)"
-    fi
+    assert_sync_chat_ok "我的幸运数字是多少？只回复这个数字本身，不要加其他内容。" "$chat_id" || return 1
+    assert_exact_number "42" "Recall favorite number" || return 1
 
     sleep 1
 
-    # Turn 3: Ask agent to calculate using the remembered number
+    # Turn 3: Ask agent to calculate using the remembered number (reply with only the result)
     log_debug "Turn 3: Asking agent to calculate using the number"
-    assert_sync_chat_ok "用我的幸运数字乘以 2 等于多少？" "$chat_id" || return 1
-
-    if echo "$RESPONSE_TEXT" | grep -q "84"; then
-        log_pass "Agent correctly calculated 42 * 2 = 84"
-    else
-        log_warn "Agent did not calculate 84 (probabilistic AI behavior)"
-    fi
+    assert_sync_chat_ok "用我的幸运数字乘以 2 等于多少？只回复结果数字，不要加其他内容。" "$chat_id" || return 1
+    assert_exact_number "84" "Calculate favorite number * 2" || return 1
 }
 
 # Test: Name context - Introduce name and hobby, then ask separately
