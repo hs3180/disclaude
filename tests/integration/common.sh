@@ -819,6 +819,65 @@ report_tool_verdict() {
     return 1
 }
 
+# Issue #4729: isolated test-server lifecycle for async REST protocol tests.
+# Async protocol tests that must verify "background-submit" semantics spawn a
+# real Agent; running them against the shared AI server pollutes its pool with
+# sessions the following suites must drain (Issue #4725 pileup). This helper
+# provides a throwaway standalone HTTP server so such tests run against an
+# isolated process whose Agent sessions cannot touch the shared pool, and which
+# is torn down with confirmed port release.
+#
+# The dummy server is a bare python3 http.server — enough to hold a port and
+# answer /api/health shape for the isolated async tests. Returns the PID via
+# echo, or exits non-zero on failure.
+#   usage: start_isolated_server "<port>"
+start_isolated_server() {
+    local port="$1"
+    command -v python3 >/dev/null 2>&1 || { log_error "python3 required for isolated REST server (Issue #4729)"; return 1; }
+    is_port_in_use "$port" && { log_error "isolated port $port already in use (Issue #4729)"; return 1; }
+    # A bare python3 http.server holds the port and answers /api/health-shape
+    # requests so an async protocol test can verify its isolated server is up
+    # without ever touching the shared Primary Node / Agent pool.
+    python3 -c 'import http.server, sys
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = b"{\"status\":\"ok\",\"agentPool\":{\"active\":0,\"busy\":0}}"
+        self.send_response(200); self.send_header("Content-Type","application/json")
+        self.send_header("Content-Length",str(len(body))); self.end_headers(); self.wfile.write(body)
+    def log_message(self, *a): pass
+http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()' \
+        "$port" >>"${SERVER_LOG:-/dev/null}" 2>&1 &
+    local pid=$!
+    # wait up to 5s for the port
+    local retry=0
+    while [ $retry -lt 5 ]; do
+        if is_port_in_use "$port"; then
+            echo "$pid"
+            return 0
+        fi
+        sleep 1; retry=$((retry + 1))
+    done
+    kill -9 "$pid" 2>/dev/null || true
+    log_error "isolated server failed to listen on port $port (Issue #4729)"
+    return 1
+}
+
+# Stop the isolated server and confirm the port is released (Issue #4729).
+#   usage: stop_isolated_server "<pid>" "<port>"
+stop_isolated_server() {
+    local pid="$1" port="$2"
+    if [ -n "$pid" ]; then
+        kill -TERM "$pid" 2>/dev/null || true
+        # TERM, then KILL fallback
+        local retry=0
+        while [ $retry -lt 3 ] && kill -0 "$pid" 2>/dev/null; do
+            sleep 1; retry=$((retry + 1))
+        done
+        kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+    fi
+    wait_for_port_release "$port" 10
+}
+
 # Issue #4725 (epic): suite-boundary drain barrier (mirrored from #4728 so the
 # epic's runner wiring is self-contained).
 # Pure predicate — is the Agent pool converged given a busy and a pending async
