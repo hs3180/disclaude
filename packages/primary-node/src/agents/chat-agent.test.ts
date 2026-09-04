@@ -687,7 +687,7 @@ describe('ChatAgent (primary-node)', () => {
     /** Build an agent whose SDK iterator yields the given parsed messages. */
     function makeAgent(
       parsedMessages: Array<Record<string, unknown>>,
-      sendMessageImpl: () => Promise<void>
+      sendMessageImpl: () => Promise<string | void>
     ) {
       const localCallbacks = createMockCallbacks();
       (localCallbacks.sendMessage as ReturnType<typeof vi.fn>).mockImplementation(sendMessageImpl);
@@ -749,6 +749,38 @@ describe('ChatAgent (primary-node)', () => {
         String(c[c.length - 1])
       );
       expect(errorLogs.some((m: string) => m.includes('Iterator error'))).toBe(false);
+    });
+
+    it('records a successful delivery only after the channel returns its message ID', async () => {
+      const { agent } = makeAgent(
+        [{ type: 'text', content: 'delivered text' }, { type: 'result', content: '✅ Complete (test)', subtype: 'success' }],
+        () => Promise.resolve('om_sent_123')
+      );
+
+      void agent.processMessage({ chatId: 'oc_sendfail', payload: 'hello', messageId: 'msg_1' });
+
+      await vi.waitFor(() => {
+        const events = (agent as any).logger.info.mock.calls.map((call: any[]) => call[0]);
+        expect(events).toContainEqual(expect.objectContaining({
+          event: 'delivery_final', state: 'final', messageId: 'om_sent_123', user_visible: true,
+        }));
+      }, { timeout: 1000, interval: 20 });
+    });
+
+    it('records an isolated delivery failure as not user-visible', async () => {
+      const { agent } = makeAgent(
+        [{ type: 'text', content: 'cannot deliver' }, { type: 'result', content: '✅ Complete (test)', subtype: 'success' }],
+        () => Promise.reject(feishu400())
+      );
+
+      void agent.processMessage({ chatId: 'oc_sendfail', payload: 'hello', messageId: 'msg_1' });
+
+      await vi.waitFor(() => {
+        const events = (agent as any).logger.info.mock.calls.map((call: any[]) => call[0]);
+        expect(events).toContainEqual(expect.objectContaining({
+          event: 'delivery_final', state: 'delivery_failed', errorCategory: 'target', user_visible: false,
+        }));
+      }, { timeout: 1000, interval: 20 });
     });
 
     it('a transient (statusless) failure is counted but does not open the circuit; success resets the counter', async () => {

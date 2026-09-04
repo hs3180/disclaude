@@ -467,7 +467,7 @@ export class MessageHandler {
     logger.info({
       event: 'filter_result', reason, sanitizedReason: sanitizeLifecycleReason(reason),
       traceId: messageId, runId: messageId, sourceMessageId: messageId, chatId,
-      target: chatId, userId, metadata,
+      target: chatId, userId, metadata, user_visible: false,
     }, 'filter_result');
   }
 
@@ -955,7 +955,7 @@ export class MessageHandler {
     const threadId = message_id;
 
     if (!message_id || !chat_id || !content || !message_type) {
-      logger.info({ event: 'filter_result', reason: 'missing_fields', sanitizedReason: 'missing required message fields', traceId: message_id || 'unknown', runId: message_id || 'unknown', sourceMessageId: message_id, chatId: chat_id || 'unknown', target: chat_id }, 'filter_result');
+      logger.info({ event: 'filter_result', reason: 'missing_fields', sanitizedReason: 'missing required message fields', traceId: message_id || 'unknown', runId: message_id || 'unknown', sourceMessageId: message_id, chatId: chat_id || 'unknown', target: chat_id, user_visible: false }, 'filter_result');
       logger.warn('Missing required message fields');
       return;
     }
@@ -1201,7 +1201,7 @@ export class MessageHandler {
       if (message_type === 'interactive' && content) {
         text = extractFullCardContent(content);
       } else {
-        logger.info({ event: 'filter_result', reason: 'parse_failure', sanitizedReason: sanitizeLifecycleReason(parseError), traceId: message_id, runId: message_id, sourceMessageId: message_id, chatId: chat_id, target: chat_id }, 'filter_result');
+        logger.info({ event: 'filter_result', reason: 'parse_failure', sanitizedReason: sanitizeLifecycleReason(parseError), traceId: message_id, runId: message_id, sourceMessageId: message_id, chatId: chat_id, target: chat_id, user_visible: false }, 'filter_result');
         logger.error('Failed to parse content');
         return;
       }

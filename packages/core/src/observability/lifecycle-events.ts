@@ -22,7 +22,8 @@ export interface LifecycleEvent extends LifecycleContext {
   fallback?: string;
   circuitState?: 'closed' | 'open';
   state?: DeliveryLedgerState;
-  userVisible?: boolean;
+  /** True only after a successful outbound channel send. */
+  user_visible?: boolean;
   messageId?: string;
   errorCategory?: string;
   errorCode?: string;
