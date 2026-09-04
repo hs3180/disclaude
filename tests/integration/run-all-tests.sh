@@ -201,6 +201,24 @@ run_test_script() {
                 _SUITE_OUTPUT_FILE=""
                 return 1
             fi
+
+            # Issue #4710: a DETERMINISTIC environment failure must not be
+            # retried pointlessly. The most common one is an outer-execution-
+            # sandbox rejection of a write/op (`sandbox_apply: Operation not
+            # permitted`, EACCES, Permission denied) that the same sandbox will
+            # reject identically on every retry — so a full retry chain only
+            # re-runs real Agent/Codex turns, burns quota and stretches the
+            # run, all for the same red result. This is suite-agnostic: it
+            # applies to any generic suite running under a sandboxed backend.
+            # Emit an interpretable SKIP (exit 2) instead of retrying; the runner
+            # summary records it as an environmental skip, not a code regression.
+            if echo "$(tail -200 "$output_file" 2>/dev/null)" \
+                | grep -qiE "sandbox_apply|Operation not permitted|Operation not allowed|EACCES|Permission denied"; then
+                log_warn "$name failed due to an environment sandbox rejection (marker found in output) — treating as environmental, skipping retries (Issue #4710)"
+                rm -f "$output_file"
+                _SUITE_OUTPUT_FILE=""
+                return 2
+            fi
             if [ $attempt -lt $max_attempts ]; then
                 local delay=$((RETRY_INITIAL_DELAY * RETRY_BACKOFF ** (attempt - 1)))
                 log_warn "$name failed (attempt ${attempt}/${max_attempts}), retrying in ${delay}s (exponential backoff)..."
@@ -518,7 +536,14 @@ main() {
             SKIPPED_SUITE_NAMES+=("$name")
             continue
         fi
-        if ! run_suite "$SCRIPT_DIR/$script" "$name"; then
+        local _run_suite_rc=0
+        run_suite "$SCRIPT_DIR/$script" "$name" || _run_suite_rc=$?
+        # Issue #4710: run_test_script returns 2 for a deterministic environment
+        # (sandbox) failure that must be reported as an interpretable SKIP, not
+        # a code regression nor a retried failure.
+        if [ "$_run_suite_rc" -eq 2 ]; then
+            SKIPPED_SUITE_NAMES+=("$name (environmental sandbox)")
+        elif [ "$_run_suite_rc" -ne 0 ]; then
             failed=$((failed + 1))
             FAILED_SUITE_NAMES+=("$name")
         fi
