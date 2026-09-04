@@ -75,6 +75,11 @@ COPY .claude-plugin .claude-plugin
 # Issue #4224: builtin agents (mac-screen-control) — peer of skills/,
 # shipped so the local plugin discovers them in place from /app/agents
 COPY agents ./agents
+# Issue #4459: unified CLI router. Root package.json declares bin.disclaude ->
+# ./bin/disclaude.js, but bin/ was never copied into the image, so `disclaude
+# channel` (the migration target replacing skills/channel/cli.mjs) resolved to
+# nothing. Copy it before the production prune so the root bin link survives.
+COPY bin ./bin
 
 # Prune devDependencies for production
 # Note: cache cleanup reduces builder layer size (no impact on final multi-stage image)
@@ -195,6 +200,13 @@ COPY --from=builder --chown=disclaude:disclaude /app/skills ./skills
 COPY --from=builder --chown=disclaude:disclaude /app/.claude-plugin .claude-plugin
 # Issue #4224: builtin agents (builtins root = /app, peer of skills/ and .claude-plugin/)
 COPY --from=builder --chown=disclaude:disclaude /app/agents ./agents
+# Issue #4459: unified CLI router (`disclaude channel ...`), the replacement for
+# the removed skills/channel/cli.mjs shim. Agent prompts and SKILL.md docs call
+# the bare `disclaude` command, so expose it on PATH via /usr/local/bin. The
+# source file is mode 0644 in git, hence the explicit chmod.
+COPY --from=builder --chown=disclaude:disclaude /app/bin ./bin
+RUN chmod +x /app/bin/disclaude.js && \
+    ln -sf /app/bin/disclaude.js /usr/local/bin/disclaude
 
 # Copy entrypoint script (Issue #3987: auto-configure lark-cli auth)
 COPY --chown=disclaude:disclaude docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
