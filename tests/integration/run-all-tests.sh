@@ -109,9 +109,8 @@ show_test_plan_body() {
     echo "  6. Multimodal Tests (5 tests)"
     echo "     - Health check, single image, multi-image, mixed message, screenshot"
     echo ""
-    echo "  7. Codex Compatibility E2E"
-    echo "     - Real CLI configuration, session resume, sandbox, telemetry"
-    echo ""
+    echo "  (Codex coverage: set agentBackend: codex in the config; the generic"
+    echo "   suites above then run against the Codex backend. Issue #4737)"
     echo "Configuration:"
     echo "  - REST Port: $REST_PORT"
     echo "  - Timeout: ${_USER_TIMEOUT:-per-suite defaults (30-120s)}"
@@ -420,6 +419,18 @@ run_suite() {
     # Issue #3378: Check server health between suites for listener leak monitoring
     check_server_health_detailed
 
+    # Issue #4725 (epic): before entering a suite, enforce a PRE-suite drain so a
+    # leftover async Agent/task from the previous suite cannot pile up into this
+    # one. The inter-suite delay is only a rate-limit measure, never a lifecycle
+    # sync. With #4727 (sync REST), #4728 (post-suite drain) and this pre-suite
+    # drain, an async Agent that isn't done blocks the next suite instead of
+    # silently accumulating (active-session growth / Codex LRU eviction).
+    if [ "$_SUITE_COUNT" -gt 1 ] && ! wait_for_agent_pool_drain "pre-suite: $name"; then
+        log_error "Pre-suite drain failed before $name — the previous suite left agents/tasks running (Issue #4725)"
+        restart_server_if_unhealthy
+        return 1
+    fi
+
     local suite_result=0
     run_test_script "$script" "$name" || suite_result=$?
 
@@ -501,12 +512,17 @@ main() {
     local script name
     for spec in \
         "rest-channel-test.sh|REST Channel Tests|fast" \
+        "test-pool-idle.sh|Agent Pool Idle Extraction|fast" \
         "use-case-1-basic-reply.sh|Use Case 1 - Basic Reply|ai" \
         "use-case-2-task-execution.sh|Use Case 2 - Task Execution|ai" \
         "use-case-3-multi-turn.sh|Use Case 3 - Multi-turn Conversation|ai" \
         "channel-cli-test.sh|Channel CLI Tools Tests|ai" \
-        "multimodal-test.sh|Multimodal Tests|ai" \
-        "codex-compatibility-test.sh|Codex Compatibility E2E|ai"; do
+        "multimodal-test.sh|Multimodal Tests|ai"; do
+        # Issue #4737: the separate Codex Compatibility E2E suite was removed.
+        # The generic suites above run under whatever backend the test
+        # environment is configured with (set `agentBackend: codex` in the
+        # config), which covers real Codex behavior without a redundant,
+        # always-on Codex-specific suite.
         script="${spec%%|*}"
         spec_remainder="${spec#*|}"
         name="${spec_remainder%%|*}"

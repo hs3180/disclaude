@@ -607,9 +607,20 @@ check_curl() {
 }
 
 # Check if project is built
+# Issue #4689: the monorepo builds with `tsc -b` (CLAUDE.md), which emits to
+# each workspace package's own dist/, not a root dist/. The integration runner
+# previously probed "$PROJECT_ROOT/dist" — a dir that only an empty `mkdir`
+# bypass could create — so a clean `npm run build` still "failed" the check.
+# Check the actual primary-node launch entrypoint and the core build output.
 check_build() {
-    if [ ! -d "$PROJECT_ROOT/dist" ]; then
-        log_error "Project not built. Run 'npm run build' first."
+    local cli_js="$PROJECT_ROOT/packages/primary-node/dist/cli.js"
+    local core_dist="$PROJECT_ROOT/packages/core/dist"
+    if [ ! -f "$cli_js" ]; then
+        log_error "Project not built. Run 'npm run build' first (missing $cli_js)."
+        return 1
+    fi
+    if [ ! -d "$core_dist" ]; then
+        log_error "Project not built. Run 'npm run build' first (missing $core_dist)."
         return 1
     fi
     return 0
@@ -726,6 +737,35 @@ extract_json_bool() {
     echo "$RESPONSE_BODY" | grep -o "\"$field\":[^,}]*" | cut -d':' -f2 | tr -d ' '
 }
 
+# Issue #4690: assert the agent replied with exactly one expected number.
+# Recalling a remembered number and applying arithmetic to it are DETERMINISTIC
+# operations when the session/resume context is intact — a drift (e.g. the
+# agent forgets 42 and computes 7×2=14) is a session/resume context regression,
+# not benign model randomness. The old multi-turn test downgraded such a drift
+# to log_warn and the suite still "passed", hiding the regression. Ask the model
+# for a bare numeric reply and assert the exact value; mismatch FAILs.
+#   usage: assert_exact_number "expected" "label"   (reads $RESPONSE_TEXT)
+assert_exact_number() {
+    local expected="$1" label="$2" got
+    got=$(echo "$RESPONSE_TEXT" | grep -oE '[0-9]+' | head -1)
+    if [ -n "$got" ] && [ "$got" = "$expected" ]; then
+        log_pass "$label: $expected"
+        return 0
+    fi
+    log_fail "$label: expected $expected, got '$RESPONSE_TEXT' (session/resume context lost — Issue #4690)"
+    return 1
+}
+
+# Extract the busy-count from an /api/health body (the agentPool.busy field that
+# reports how many live agents are currently processing a turn).
+# Usage: busy=$(pool_busy "$health_body")
+# Echoes an empty string when no `busy` field is present (e.g. no pool wired).
+# Issue #4727/#4725: shared by the REST suite's wait-for-idle drain AND the
+# pool-idle regression test so both pin the SAME extraction logic.
+pool_busy() {
+    echo "$1" | grep -o '"busy":[0-9]*' | head -1 | grep -o '[0-9]*' || true
+}
+
 # =============================================================================
 # Issue #4691 Channel tool-execution verdict
 # =============================================================================
@@ -779,24 +819,78 @@ report_tool_verdict() {
     return 1
 }
 
-# Issue #4728: pure predicate — is the Agent pool converged given a busy and a
-# pending async-task count? Empty/missing counts count as zero. Returns 0 if
-# drained, 1 otherwise. Kept pure so a regression test can feed canned counts.
-#   usage: pool_is_drained "<busy>" "<pending>"
+# Issue #4729: isolated test-server lifecycle for async REST protocol tests.
+# Async protocol tests that must verify "background-submit" semantics spawn a
+# real Agent; running them against the shared AI server pollutes its pool with
+# sessions the following suites must drain (Issue #4725 pileup). This helper
+# provides a throwaway standalone HTTP server so such tests run against an
+# isolated process whose Agent sessions cannot touch the shared pool, and which
+# is torn down with confirmed port release.
+#
+# The dummy server is a bare python3 http.server — enough to hold a port and
+# answer /api/health shape for the isolated async tests. Returns the PID via
+# echo, or exits non-zero on failure.
+#   usage: start_isolated_server "<port>"
+start_isolated_server() {
+    local port="$1"
+    command -v python3 >/dev/null 2>&1 || { log_error "python3 required for isolated REST server (Issue #4729)"; return 1; }
+    is_port_in_use "$port" && { log_error "isolated port $port already in use (Issue #4729)"; return 1; }
+    # A bare python3 http.server holds the port and answers /api/health-shape
+    # requests so an async protocol test can verify its isolated server is up
+    # without ever touching the shared Primary Node / Agent pool.
+    python3 -c 'import http.server, sys
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = b"{\"status\":\"ok\",\"agentPool\":{\"active\":0,\"busy\":0}}"
+        self.send_response(200); self.send_header("Content-Type","application/json")
+        self.send_header("Content-Length",str(len(body))); self.end_headers(); self.wfile.write(body)
+    def log_message(self, *a): pass
+http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()' \
+        "$port" >>"${SERVER_LOG:-/dev/null}" 2>&1 &
+    local pid=$!
+    # wait up to 5s for the port
+    local retry=0
+    while [ $retry -lt 5 ]; do
+        if is_port_in_use "$port"; then
+            echo "$pid"
+            return 0
+        fi
+        sleep 1; retry=$((retry + 1))
+    done
+    kill -9 "$pid" 2>/dev/null || true
+    log_error "isolated server failed to listen on port $port (Issue #4729)"
+    return 1
+}
+
+# Stop the isolated server and confirm the port is released (Issue #4729).
+#   usage: stop_isolated_server "<pid>" "<port>"
+stop_isolated_server() {
+    local pid="$1" port="$2"
+    if [ -n "$pid" ]; then
+        kill -TERM "$pid" 2>/dev/null || true
+        # TERM, then KILL fallback
+        local retry=0
+        while [ $retry -lt 3 ] && kill -0 "$pid" 2>/dev/null; do
+            sleep 1; retry=$((retry + 1))
+        done
+        kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+    fi
+    wait_for_port_release "$port" 10
+}
+
+# Issue #4725 (epic): suite-boundary drain barrier (mirrored from #4728 so the
+# epic's runner wiring is self-contained).
+# Pure predicate — is the Agent pool converged given a busy and a pending async
+# task count? Empty/missing counts count as zero. Returns 0 if drained.
 pool_is_drained() {
     local busy="$1" pending="$2"
     { [ -z "$busy" ] || [ "$busy" = "0" ]; } \
         && { [ -z "$pending" ] || [ "$pending" = "0" ]; }
 }
 
-# Issue #4728: suite-boundary drain barrier. Wait for the Agent pool to
-# converge (busy=0 AND pending async tasks = 0) before the runner starts the
-# next suite. The runner previously used only a fixed inter-suite sleep, which
-# cannot cover slow requests and silently ignores leftover agents (Issue #4725
-# pileup). A hard timeout terminates the wait and FAILs, reporting the leftover
-# active/busy/pending counts so the operator can identify the straggler.
-# Returns 0 on convergence, 1 on timeout (drain failure).
-#   usage: wait_for_agent_pool_drain ["label"]
+# Wait for the Agent pool to converge (busy=0 AND pending=0) with a hard
+# DRAIN_TIMEOUT; on expiry FAILs and reports the leftover counts. Returns 0 on
+# convergence, 1 on timeout.
 wait_for_agent_pool_drain() {
     local label="${1:-suite boundary}"
     local timeout="${DRAIN_TIMEOUT:-60}"
@@ -817,7 +911,7 @@ wait_for_agent_pool_drain() {
         sleep 1
         retry=$((retry + 1))
     done
-    log_fail "Agent pool failed to drain after ${timeout}s ($label): active=${active:-?} busy=${busy:-?} pending=${pending:-?} — leftover agents/tasks may still be running (Issue #4728)"
+    log_fail "Agent pool failed to drain after ${timeout}s ($label): active=${active:-?} busy=${busy:-?} pending=${pending:-?} (Issue #4725)"
     return 1
 }
 
