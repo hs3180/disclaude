@@ -420,6 +420,18 @@ run_suite() {
     # Issue #3378: Check server health between suites for listener leak monitoring
     check_server_health_detailed
 
+    # Issue #4725 (epic): before entering a suite, enforce a PRE-suite drain so a
+    # leftover async Agent/task from the previous suite cannot pile up into this
+    # one. The inter-suite delay is only a rate-limit measure, never a lifecycle
+    # sync. With #4727 (sync REST), #4728 (post-suite drain) and this pre-suite
+    # drain, an async Agent that isn't done blocks the next suite instead of
+    # silently accumulating (active-session growth / Codex LRU eviction).
+    if [ "$_SUITE_COUNT" -gt 1 ] && ! wait_for_agent_pool_drain "pre-suite: $name"; then
+        log_error "Pre-suite drain failed before $name — the previous suite left agents/tasks running (Issue #4725)"
+        restart_server_if_unhealthy
+        return 1
+    fi
+
     local suite_result=0
     run_test_script "$script" "$name" || suite_result=$?
 

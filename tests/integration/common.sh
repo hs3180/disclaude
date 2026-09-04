@@ -779,6 +779,43 @@ report_tool_verdict() {
     return 1
 }
 
+# Issue #4725 (epic): suite-boundary drain barrier (mirrored from #4728 so the
+# epic's runner wiring is self-contained).
+# Pure predicate — is the Agent pool converged given a busy and a pending async
+# task count? Empty/missing counts count as zero. Returns 0 if drained.
+pool_is_drained() {
+    local busy="$1" pending="$2"
+    { [ -z "$busy" ] || [ "$busy" = "0" ]; } \
+        && { [ -z "$pending" ] || [ "$pending" = "0" ]; }
+}
+
+# Wait for the Agent pool to converge (busy=0 AND pending=0) with a hard
+# DRAIN_TIMEOUT; on expiry FAILs and reports the leftover counts. Returns 0 on
+# convergence, 1 on timeout.
+wait_for_agent_pool_drain() {
+    local label="${1:-suite boundary}"
+    local timeout="${DRAIN_TIMEOUT:-60}"
+    local retry=0 active="" busy="" pending=""
+    while [ "$retry" -lt "$timeout" ]; do
+        local result
+        result=$(make_request "GET" "/api/health" 2>/dev/null) || true
+        parse_response "$result"
+        if [ "$RESPONSE_STATUS" = "200" ]; then
+            active=$(echo "$RESPONSE_BODY" | grep -o '"active":[0-9]*' | head -1 | grep -o '[0-9]*')
+            busy=$(echo "$RESPONSE_BODY" | grep -o '"busy":[0-9]*' | head -1 | grep -o '[0-9]*')
+            pending=$(echo "$RESPONSE_BODY" | grep -o '"pending":[0-9]*' | head -1 | grep -o '[0-9]*')
+            if pool_is_drained "$busy" "$pending"; then
+                log_debug "Agent pool drained ($label): active=${active:-0} busy=${busy:-0} pending=${pending:-0}"
+                return 0
+            fi
+        fi
+        sleep 1
+        retry=$((retry + 1))
+    done
+    log_fail "Agent pool failed to drain after ${timeout}s ($label): active=${active:-?} busy=${busy:-?} pending=${pending:-?} (Issue #4725)"
+    return 1
+}
+
 # =============================================================================
 # Assertion Functions
 # =============================================================================
