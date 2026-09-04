@@ -43,6 +43,9 @@ Thumbs.db
 # Claude Code
 .claude/
 
+# Codex local state
+.codex/
+
 # Disclaude project state (Issue #3335)
 .disclaude/
 
