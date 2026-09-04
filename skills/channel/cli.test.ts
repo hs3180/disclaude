@@ -1,4 +1,5 @@
-// Smoke test for the channel Skill CLI (skills/channel/cli.mjs).
+// Smoke test for the channel Skill CLI, driven through the unified
+// `bin/disclaude.js channel` route (was the removed skills/channel/cli.mjs shim).
 //
 // Issue #4459 part 3 (PR #4467). This is a NO-IPC stub smoke test: it spawns
 // the real CLI as a child process and locks the output contract the agent
@@ -51,7 +52,11 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const CLI = join(here, 'cli.mjs');
+// Retargeted from the removed `skills/channel/cli.mjs` shim to the unified
+// `bin/disclaude.js channel` route, which forwards to the same
+// channel-cli/dist/cli.js target.
+const CLI = join(here, '../../bin/disclaude.js');
+const CHANNEL_ARG = 'channel';
 
 interface RunResult {
   code: number;
@@ -60,7 +65,7 @@ interface RunResult {
 }
 
 /**
- * Spawn `node skills/channel/cli.mjs <args>` and collect {code, stdout, stderr}.
+ * Spawn `node bin/disclaude.js channel <args>` and collect {code, stdout, stderr}.
  * stdin is a pipe closed immediately so any readStdinSync-on-pipe path returns
  * '' (EOF) instead of blocking. `extraEnv` merges into the child env (used to
  * force deterministic pino behavior for the redirect test).
@@ -71,7 +76,7 @@ function runCli(
   timeoutMs = 20000
 ): Promise<RunResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [CLI, ...args], {
+    const child = spawn(process.execPath, [CLI, CHANNEL_ARG, ...args], {
       env: { ...process.env, ...extraEnv },
       stdio: ['pipe', 'pipe', 'pipe'],
     });

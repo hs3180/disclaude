@@ -58,7 +58,7 @@ To notify the user in your FINAL response, use:
  */
 function buildFeishuToolsSection(ctx: MessageBuilderContext): string {
   const { chatId, msg, capabilities } = ctx;
-  const channelCli = `${Config.getBuiltinsDir()}/skills/channel/cli.mjs`;
+  const channelCli = `${Config.getBuiltinsDir()}/bin/disclaude.js channel`;
   const parts: string[] = [];
   parts.push(`For the current channel feature list and command options, run \`node ${channelCli} help\`.`);
   const supportedTools = capabilities?.supportedMcpTools;

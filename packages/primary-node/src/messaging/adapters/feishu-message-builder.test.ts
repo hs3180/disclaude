@@ -25,7 +25,7 @@ const withTools = (tools: string[]): ChannelCapabilities => ({
 
 describe('MessageBuilder with Feishu sections', () => {
   let messageBuilder: MessageBuilder;
-  const channelCli = `${Config.getBuiltinsDir()}/skills/channel/cli.mjs`;
+  const channelCli = `${Config.getBuiltinsDir()}/bin/disclaude.js channel`;
 
   beforeEach(() => {
     messageBuilder = new MessageBuilder(createFeishuMessageBuilderOptions());
