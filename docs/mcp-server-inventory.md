@@ -52,7 +52,7 @@ primary "channel" tool surface (send messages / cards / files into the bound cha
   `send_text` (`:260`), `send_card` (`:318`), `send_interactive` (`:482`), `send_file` (`:591`),
   `push_to_agent` (`:635`). **5 tools.**
 - **Runtime wiring**: retired in #4652. ChatAgent no longer constructs or injects `channel-mcp`; capability-aware
-  messaging guidance points agents to the one-shot [`skills/channel/cli.mjs`](../skills/channel/README.md) instead.
+  messaging guidance points agents to the one-shot [`disclaude channel`](../skills/channel/README.md) instead.
 - **Transport**: inline — the SDK's `createSdkMcpServer` returns a `{ type: 'sdk', name, instance }` wrapper
   (documented at [`packages/core/src/sdk/providers/claude/options-adapter.ts:97`](../packages/core/src/sdk/providers/claude/options-adapter.ts));
   `instance` is an MCP SDK `McpServer` exposing `close()`.
@@ -233,7 +233,7 @@ Mapping the inventory to `#4459`'s four scopes:
 |---|---|---|
 | **1. Inventory** ✅ (this doc) | all | `docs/mcp-server-inventory.md` (new) |
 | **2. Skill format spec** | n/a (defines the target) | new `docs/...` spec (deferred — independent of this inventory) |
-| **3. Migrate non-Playwright MCP tools → Skill** | **S1** (channel-mcp, 5 tools) | ✅ done — ChatAgent no longer creates/injects `channel-mcp` (#4652); all five operations use `skills/channel/cli.mjs`; the first-party implementations + REST backing and standalone MCP export stay |
+| **3. Migrate non-Playwright MCP tools → Skill** | **S1** (channel-mcp, 5 tools) | ✅ done — ChatAgent no longer creates/injects `channel-mcp` (#4652); all five operations use `disclaude channel`; the first-party implementations + REST backing and standalone MCP export stay |
 | **4. Remove external MCP-server loader** | **S2** (stdio loader) | ✅ done — deleted `mcp-setup.ts`, `getMcpServersConfig()`, `McpServerConfig`/`ToolsConfig.mcpServers` config types, and yaml/CLAUDE.md example blocks; user-stdio capability loss recorded above |
 
 **Not owned by #4459** (called out so nothing is silently dropped):
@@ -245,7 +245,7 @@ Mapping the inventory to `#4459`'s four scopes:
 
 ### Decisions landed from the original open questions
 
-1. **Skill transport for S1's send-side tools**: `skills/channel/cli.mjs` is one-shot and reaches PrimaryNode over REST.
+1. **Skill transport for S1's send-side tools**: `disclaude channel` is one-shot and reaches PrimaryNode over REST.
 2. **Capability gating**: `supportedMcpTools` remains the per-chat filter for the CLI command guidance injected by
    the Feishu message builder; it no longer controls MCP construction.
 3. **S3 product decision**: **resolved by #4726** — `disclaude-mcp` (standalone server) is removed.

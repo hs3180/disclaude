@@ -152,7 +152,7 @@ Conversation history is managed by `packages/primary-node/src/agents/history-man
 
 #### `packages/channel-cli/` - Channel Tool Implementations
 
-First-party channel tool implementations (`send_text`, `send_file`, `send_card`, `send_interactive`, `push_to_agent`) are owned by the channel CLI. Agents invoke them through `skills/channel/cli.mjs`. The tools communicate with the Primary Node **over REST** (`RestIpcClient`).
+First-party channel tool implementations (`send_text`, `send_file`, `send_card`, `send_interactive`, `push_to_agent`) are owned by the channel CLI. Agents invoke them through the `disclaude channel` command. The tools communicate with the Primary Node **over REST** (`RestIpcClient`).
 
 The external-MCP-server loader (config `tools.mcpServers`) was **removed** (#4459 Scope 4). External tools migrate to CLI Skills — see `docs/skill-format-spec.md`, `skills/channel/`, and `skills/browser-use/`.
 
