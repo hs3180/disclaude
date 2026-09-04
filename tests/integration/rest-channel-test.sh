@@ -31,6 +31,43 @@ register_cleanup
 # Test Functions
 # =============================================================================
 
+# Issue #4727: the sync POST /api/chat/sync endpoint returns only after the
+# Agent turn completes, so a smoke test that verifies agent behavior leaves no
+# idle background Agent in the shared process. The old async POST /api/chat
+# returned as soon as the request was RECEIVED, spawning an Agent turn that
+# could still be running when the next suite started (Issue #4725 pileup).
+_test_sync_chat_ok() {
+    local message="$1" chat_id="$2"
+    assert_sync_chat_ok "$message" "$chat_id" || return 1
+    log_pass "Agent turn completed (sync) for chat $chat_id"
+}
+
+# Issue #4727/#4725: poll /api/health until the Agent pool reports no busy
+# turn. HTTP 200 on /api/chat only means "request received", NOT that the
+# Agent finished — this helper makes that distinction observable and bounds it
+# with a hard timeout.
+wait_for_agent_pool_idle() {
+    local timeout="${1:-30}" label="${2:-agent pool drain}" retry=0 busy=""
+    while [ $retry -lt "$timeout" ]; do
+        local result
+        result=$(make_request "GET" "/api/health" 2>/dev/null) || true
+        parse_response "$result"
+        if [ "$RESPONSE_STATUS" = "200" ]; then
+            # Shared extraction (common.sh::pool_busy) — keep in sync with
+            # test-pool-idle.sh so the regression test pins the same logic.
+            busy=$(pool_busy "$RESPONSE_BODY")
+            if [ -z "$busy" ] || [ "$busy" = "0" ]; then
+                log_pass "Agent pool idle (busy=0) — $label"
+                return 0
+            fi
+        fi
+        sleep 1
+        retry=$((retry + 1))
+    done
+    log_fail "Agent pool not idle after ${timeout}s ($label): busy='${busy:-unparseable}' (Issue #4727)"
+    return 1
+}
+
 test_health_check() {
     log_info "Testing: GET /api/health"
 
@@ -43,16 +80,29 @@ test_health_check() {
 }
 
 test_chat_valid_request() {
-    log_info "Testing: POST /api/chat with valid message"
+    log_info "Testing: POST /api/chat/sync with valid message (Agent turn completes)"
+
+    local chat_id="rest-sync-valid-$$"
+    _test_sync_chat_ok "回复 OK 两个字即可" "$chat_id" || return 1
+}
+
+# Async POST /api/chat protocol test: a receipt (HTTP 200 + messageId) is NOT
+# proof the Agent turn finished. This keeps coverage of the async path's field
+# contract while explicitly proving the distinction (and draining the pool),
+# so the REST suite never leaves an idle Agent for the next suite.
+test_chat_async_receipt() {
+    log_info "Testing: POST /api/chat returns receipt (HTTP 200) but Agent turn completes later"
 
     local result
-    result=$(make_request "POST" "/api/chat" '{"message":"test message"}')
+    result=$(make_request "POST" "/api/chat" '{"message":"async protocol probe","chatId":"rest-async-probe-$$"}')
     parse_response "$result"
 
-    assert_status "200" "Chat valid request" || return 1
-    assert_body_contains '"success":true' "Chat success field" || return 1
-    assert_body_contains '"messageId"' "Chat messageId field" || return 1
-    assert_body_contains '"chatId"' "Chat chatId field" || return 1
+    assert_status "200" "Async chat receipt status" || return 1
+    assert_body_contains '"success":true' "Async success field" || return 1
+    assert_body_contains '"messageId"' "Async messageId field" || return 1
+    # Issue #4727 regression: 200 ≠ completion — the pool must drain before
+    # the suite is allowed to continue.
+    wait_for_agent_pool_idle "${REST_DRAIN_TIMEOUT:-30}" "after async chat receipt" || return 1
 }
 
 test_chat_missing_message() {
@@ -87,14 +137,11 @@ test_chat_invalid_json() {
 }
 
 test_chat_custom_chatid() {
-    log_info "Testing: POST /api/chat with custom chatId"
+    log_info "Testing: POST /api/chat/sync with custom chatId preserved"
 
-    local result
-    result=$(make_request "POST" "/api/chat" '{"message":"test","chatId":"custom-test-id-123"}')
-    parse_response "$result"
-
-    assert_status "200" "Chat custom chatId" || return 1
-    assert_body_contains '"chatId":"custom-test-id-123"' "Custom chatId preserved" || return 1
+    local chat_id="custom-test-id-123-$$"
+    _test_sync_chat_ok "回复 OK 两个字即可" "$chat_id" || return 1
+    assert_body_contains "\"chatId\":\"$chat_id\"" "Custom chatId preserved" || return 1
 }
 
 test_unknown_route() {
@@ -141,7 +188,8 @@ test_empty_body() {
 # =============================================================================
 
 declare_test "Health check" test_health_check "fast" "Verify /api/health endpoint"
-declare_test "Chat valid request" test_chat_valid_request "fast" "Test message submission"
+declare_test "Chat valid request" test_chat_valid_request "fast" "Agent behavior via /api/chat/sync"
+declare_test "Chat async receipt" test_chat_async_receipt "fast" "Async 200 != completion (receipt + drain)"
 declare_test "Chat missing message" test_chat_missing_message "fast" "Error handling (400)"
 declare_test "Chat invalid JSON" test_chat_invalid_json "fast" "Error handling (400)"
 declare_test "Custom chatId" test_chat_custom_chatid "fast" "Verify chatId preservation"

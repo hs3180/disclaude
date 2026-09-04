@@ -34,7 +34,6 @@
     "test:integration:multimodal": "./tests/integration/multimodal-test.sh",
     "test:integration:fast": "./tests/integration/run-all-tests.sh --tag fast",
     "test:integration:ai": "./tests/integration/run-all-tests.sh --tag ai",
-    "test:e2e:codex": "./tests/integration/codex-compatibility-test.sh",
     "test:rfc3329": "./tests/e2e/rfc3329-test.sh",
     "launchd:generate": "node scripts/launchd.mjs generate",
     "launchd:install": "node scripts/launchd.mjs install",
