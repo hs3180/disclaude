@@ -28,7 +28,7 @@ export interface ChatAgentCallbacks {
    * @param text - Message content
    * @param parentMessageId - Optional parent message ID for thread replies
    */
-  sendMessage: (chatId: string, text: string, parentMessageId?: string) => Promise<void>;
+  sendMessage: (chatId: string, text: string, parentMessageId?: string) => Promise<string | void>;
 
   /**
    * Send an interactive card to the user.

@@ -304,7 +304,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         threadId?: string;
         filePath?: string;
       }) => {
-        await this.sendMessage(message as OutgoingMessage);
+        return await this.sendMessage(message as OutgoingMessage);
       },
       routeCardAction: config.routeCardAction,
       resolveActionPrompt: config.resolveActionPrompt,
