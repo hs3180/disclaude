@@ -726,6 +726,25 @@ extract_json_bool() {
     echo "$RESPONSE_BODY" | grep -o "\"$field\":[^,}]*" | cut -d':' -f2 | tr -d ' '
 }
 
+# Issue #4690: assert the agent replied with exactly one expected number.
+# Recalling a remembered number and applying arithmetic to it are DETERMINISTIC
+# operations when the session/resume context is intact — a drift (e.g. the
+# agent forgets 42 and computes 7×2=14) is a session/resume context regression,
+# not benign model randomness. The old multi-turn test downgraded such a drift
+# to log_warn and the suite still "passed", hiding the regression. Ask the model
+# for a bare numeric reply and assert the exact value; mismatch FAILs.
+#   usage: assert_exact_number "expected" "label"   (reads $RESPONSE_TEXT)
+assert_exact_number() {
+    local expected="$1" label="$2" got
+    got=$(echo "$RESPONSE_TEXT" | grep -oE '[0-9]+' | head -1)
+    if [ -n "$got" ] && [ "$got" = "$expected" ]; then
+        log_pass "$label: $expected"
+        return 0
+    fi
+    log_fail "$label: expected $expected, got '$RESPONSE_TEXT' (session/resume context lost — Issue #4690)"
+    return 1
+}
+
 # =============================================================================
 # Assertion Functions
 # =============================================================================
