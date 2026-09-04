@@ -2,11 +2,14 @@
 #
 # Regression test for Issue #4727 / #4725.
 #
-# Pins the agentPool aggregation a run-all/rest suite relies on to know when a
-# background Agent turn has converged. The REST async receipt (HTTP 200) must
-# NOT be treated as completion — the pool's busy count is the source of truth,
-# and a non-zero busy value means the suite must keep draining. This test pins
-# the busy-count extraction & comparison used by wait-for-idle logic.
+# Pins the agentPool busy-count extraction that a run-all/rest suite relies on
+# to know when a background Agent turn has converged. The REST async receipt
+# (HTTP 200) must NOT be treated as completion — the pool's busy count is the
+# source of truth, and a non-zero busy value means the suite must keep draining.
+#
+# The extraction under test is the shared `pool_busy()` in common.sh — the SAME
+# function used by rest-channel-test.sh::wait_for_agent_pool_idle — so a change
+# to the real drain logic is caught here, not silently diverged.
 #
 # Usage:
 #   ./tests/integration/test-pool-idle.sh [--verbose]
@@ -17,11 +20,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
 
 _fail_count=0
-
-# Extract the busy count from a /api/health body (mirror of the inline logic).
-pool_busy() {
-    echo "$1" | grep -o '"busy":[0-9]*' | head -1 | grep -o '[0-9]*'
-}
 
 # usage: check "health_body" "expect_busy" "label"
 check() {

@@ -53,7 +53,9 @@ wait_for_agent_pool_idle() {
         result=$(make_request "GET" "/api/health" 2>/dev/null) || true
         parse_response "$result"
         if [ "$RESPONSE_STATUS" = "200" ]; then
-            busy=$(echo "$RESPONSE_BODY" | grep -o '"busy":[0-9]*' | head -1 | grep -o '[0-9]*')
+            # Shared extraction (common.sh::pool_busy) — keep in sync with
+            # test-pool-idle.sh so the regression test pins the same logic.
+            busy=$(pool_busy "$RESPONSE_BODY")
             if [ -z "$busy" ] || [ "$busy" = "0" ]; then
                 log_pass "Agent pool idle (busy=0) — $label"
                 return 0
