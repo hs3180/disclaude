@@ -501,6 +501,7 @@ main() {
     local script name
     for spec in \
         "rest-channel-test.sh|REST Channel Tests|fast" \
+        "test-pool-idle.sh|Agent Pool Idle Extraction|fast" \
         "use-case-1-basic-reply.sh|Use Case 1 - Basic Reply|ai" \
         "use-case-2-task-execution.sh|Use Case 2 - Task Execution|ai" \
         "use-case-3-multi-turn.sh|Use Case 3 - Multi-turn Conversation|ai" \

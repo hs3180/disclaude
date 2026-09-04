@@ -726,6 +726,16 @@ extract_json_bool() {
     echo "$RESPONSE_BODY" | grep -o "\"$field\":[^,}]*" | cut -d':' -f2 | tr -d ' '
 }
 
+# Extract the busy-count from an /api/health body (the agentPool.busy field that
+# reports how many live agents are currently processing a turn).
+# Usage: busy=$(pool_busy "$health_body")
+# Echoes an empty string when no `busy` field is present (e.g. no pool wired).
+# Issue #4727/#4725: shared by the REST suite's wait-for-idle drain AND the
+# pool-idle regression test so both pin the SAME extraction logic.
+pool_busy() {
+    echo "$1" | grep -o '"busy":[0-9]*' | head -1 | grep -o '[0-9]*' || true
+}
+
 # =============================================================================
 # Issue #4691 Channel tool-execution verdict
 # =============================================================================
