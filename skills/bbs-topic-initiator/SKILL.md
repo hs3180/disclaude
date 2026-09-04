@@ -95,7 +95,7 @@ Create an engaging topic with these characteristics:
 Use the channel CLI to send the topic:
 
 ```bash
-node /Users/hs3180/Projects/disclaude/bin/disclaude.js channel send_text \
+disclaude channel send_text \
   --chat "{target_chat_id}" --text "{generated_topic}"
 ```
 

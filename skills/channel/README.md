@@ -44,7 +44,7 @@ exposes the 5 first-party channel tools (`send_text`, `send_card`,
 `Bash` instead of the runtime dispatching an in-process MCP tool — see
 [`docs/skill-format-spec.md`](../../docs/skill-format-spec.md) for the contract.
 
-This is a **CLI Skill** (the agent shells out to `node bin/disclaude.js channel ...`),
+This is a **CLI Skill** (the agent shells out to `disclaude channel ...`),
 distinct from the existing `SKILL.md` agent-skills. The two coexist; an
 agent-skill may shell out to this CLI as one of its tools.
 
@@ -52,49 +52,49 @@ agent-skill may shell out to this CLI as one of its tools.
 
 ```bash
 # Send a plain text message
-node bin/disclaude.js channel send_text --chat oc_xxx --text "Hello, world!"
+disclaude channel send_text --chat oc_xxx --text "Hello, world!"
 
 # Pipe a longer body on stdin
-echo "status: all green" | node bin/disclaude.js channel send_text --chat oc_xxx
+echo "status: all green" | disclaude channel send_text --chat oc_xxx
 
 # Read text from a file + reply in a thread
-node bin/disclaude.js channel send_text --chat oc_xxx --text-file ./msg.md --parent om_root
+disclaude channel send_text --chat oc_xxx --text-file ./msg.md --parent om_root
 
 # @-mention a user
-node bin/disclaude.js channel send_text --chat oc_xxx --text "pls review" \
+disclaude channel send_text --chat oc_xxx --text "pls review" \
   --mentions '[{"openId":"ou_yyy","name":"owner"}]'
 
 # Send an interactive card with buttons (PrimaryNode builds the card; button
 # clicks are routed back to the agent as prompts)
-node bin/disclaude.js channel send_interactive --chat oc_xxx \
+disclaude channel send_interactive --chat oc_xxx \
   --question "Which option do you prefer?" \
   --options '[{"text":"Approve","value":"approve","type":"primary"},
               {"text":"Reject","value":"reject","type":"danger"}]' \
   --title "Code Review"
 
 # Pipe a longer question on stdin + custom action prompts
-echo "Deploy to prod?" | node bin/disclaude.js channel send_interactive --chat oc_xxx \
+echo "Deploy to prod?" | disclaude channel send_interactive --chat oc_xxx \
   --options '[{"text":"yes","value":"yes"},{"text":"no","value":"no"}]' \
   --action-prompts '{"yes":"[user] approved deploy","no":"[user] rejected deploy"}'
 
 # Send a file (relative paths resolve against the workspace dir)
-node bin/disclaude.js channel send_file --chat oc_xxx --file ./report.pdf
+disclaude channel send_file --chat oc_xxx --file ./report.pdf
 
 # Send a file as a thread reply
-node bin/disclaude.js channel send_file --chat oc_xxx --file ./log.txt --parent om_root
+disclaude channel send_file --chat oc_xxx --file ./log.txt --parent om_root
 
 # Push an instruction to the agent handling a chat (agent is created lazily)
-node bin/disclaude.js channel push_to_agent --chat oc_xxx --message "Summarize unread messages"
+disclaude channel push_to_agent --chat oc_xxx --message "Summarize unread messages"
 
 # Pipe a longer instruction on stdin
-echo "Reply to the open question in this thread." | node bin/disclaude.js channel push_to_agent --chat oc_xxx
+echo "Reply to the open question in this thread." | disclaude channel push_to_agent --chat oc_xxx
 
 # Send a display-only card from a JSON file (GFM tables / local images auto-handled)
-node bin/disclaude.js channel send_card --chat oc_xxx --card-file ./card.json
+disclaude channel send_card --chat oc_xxx --card-file ./card.json
 
 # ...or pipe the card JSON on stdin
 echo '{"elements":[{"tag":"markdown","content":"hi"}]}' \
-  | node bin/disclaude.js channel send_card --chat oc_xxx
+  | disclaude channel send_card --chat oc_xxx
 ```
 
 **Runtime (host deps, not bundled):** reuses `send_text` / `send_file` /

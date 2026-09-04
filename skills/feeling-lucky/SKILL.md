@@ -144,7 +144,7 @@ Write a message as if you are a **real disclaude user** who just thought of some
 Use the channel CLI to send the generated message to the target chat:
 
 ```
-node bin/disclaude.js channel send_text --chat "{chatId}" --text "{generated message}"
+disclaude channel send_text --chat "{chatId}" --text "{generated message}"
 ```
 
 ### Step 4: Observe (Internal Only)

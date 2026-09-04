@@ -83,7 +83,7 @@ Write a question in a **real user's voice**, as if they just saw this news and w
 Use the channel CLI to send the question to the target chat:
 
 ```
-node bin/disclaude.js channel send_text --chat "{chatId}" --text "{generated question}"
+disclaude channel send_text --chat "{chatId}" --text "{generated question}"
 ```
 
 ### Step 5: Observe and Evaluate (Internal)
