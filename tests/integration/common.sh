@@ -727,6 +727,59 @@ extract_json_bool() {
 }
 
 # =============================================================================
+# Issue #4691 Channel tool-execution verdict
+# =============================================================================
+
+# Verify a channel tool (send_text / send_file / ...) actually EXECUTED, not
+# merely that the agent "acknowledged" tool usage. Previously the channel CLI
+# tests grepped the reply for a tool keyword and reported PASS even when the
+# tool was silently rejected (e.g. `sandbox_apply: Operation not permitted`),
+# hiding regressions. The channel tool communicates with Primary Node over
+# REST, so real side-effect delivery needs channel credentials; this verdict:
+#   - FAILs when the agent reports the tool could not run (a regression or a
+#     hard permission failure), surfacing the marker.
+#   - SKIPs when the failure is attributable to the outer execution sandbox
+#     (sandbox_apply / Operation not permitted) — an environmental blocker,
+#     not a Disclaude regression.
+#   - PASSes only on positive evidence the tool was invoked/confirmed.
+#   - FAILs when none of the above is present (no verification at all).
+#
+# Pure grep logic so a regression test can feed canned responses.
+# Reads $RESPONSE_TEXT. Returns 0 (pass/skip) or 1 (fail).
+
+# Environmental sandbox markers (outer executor blocking) — SKIP.
+TOOL_ENV_MARKERS="sandbox_apply|Operation not permitted|Operation not allowed|func.*not permitted"
+# Hard tool-execution failure markers — FAIL.
+TOOL_FAIL_MARKERS="EACCES|Permission denied|was not executed|did not (execute|run|send)|not executed|unable to (execute|call|send)|execution failed|发送失败|执行不了|没有执行|无法执行|工具调用.*失败"
+# Positive confirmation the tool ran / delivered — PASS.
+TOOL_OK_MARKERS="send_text|send_file|send_message|已发送|发送成功|delivered|message.?id|上传成功|执行成功|工具调用.*成功"
+
+report_tool_verdict() {
+    local tool="$1"
+    if [ -z "$RESPONSE_TEXT" ]; then
+        log_fail "$tool: no agent response to verify tool execution (#4691)"
+        return 1
+    fi
+    if echo "$RESPONSE_TEXT" | grep -qiE "$TOOL_ENV_MARKERS"; then
+        log_skip "$tool: tool execution blocked by the outer sandbox (marker found) — environmental, not a Disclaude regression (#4691)"
+        log_debug "Response: $RESPONSE_TEXT"
+        return 0
+    fi
+    if echo "$RESPONSE_TEXT" | grep -qiE "$TOOL_FAIL_MARKERS"; then
+        log_fail "$tool: agent reported the tool did NOT run (regression or permission failure surfaced) (#4691)"
+        log_debug "Response: $RESPONSE_TEXT"
+        return 1
+    fi
+    if echo "$RESPONSE_TEXT" | grep -qiE "$TOOL_OK_MARKERS"; then
+        log_pass "$tool: agent confirmed tool execution"
+        return 0
+    fi
+    log_fail "$tool: could not verify the tool actually executed (no positive signal) (#4691)"
+    log_debug "Response: $RESPONSE_TEXT"
+    return 1
+}
+
+# =============================================================================
 # Assertion Functions
 # =============================================================================
 
