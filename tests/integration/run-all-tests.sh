@@ -431,6 +431,17 @@ run_suite() {
         return 1
     fi
 
+    # Issue #4730: lifecycle observability — capture the Agent pool state before
+    # and after each suite so a run can be reconstructed per-suite without
+    # cross-greping log files (the #4725 diagnosis had to splice active 5→11
+    # across files by hand). The start snapshot is taken after the pre-suite
+    # drain, i.e. when this suite is actually about to run.
+    local suite_start_ms suite_end_ms duration
+    local start_stats end_stats
+    suite_start_ms=$(date +%s)
+    start_stats=$(pool_stats_snapshot)
+    log_info "Lifecycle[boot] [$name]: start=($start_stats)"
+
     local suite_result=0
     run_test_script "$script" "$name" || suite_result=$?
 
@@ -439,10 +450,29 @@ run_suite() {
     # cascading failures in subsequent test suites.
     restart_server_if_unhealthy
 
+    suite_end_ms=$(date +%s)
+    duration=$((suite_end_ms - suite_start_ms))
+    end_stats=$(pool_stats_snapshot)
+    log_info "Lifecycle[$name]: duration=${duration}s result=${suite_result} start=($start_stats) end=($end_stats)"
+
     # TODO: After merge with #3448's baseline tracking, reset _EXIT_LISTENER_BASELINE
     # here when server was restarted, so growth report remains accurate.
 
     return $suite_result
+}
+
+# Issue #4730: snapshot the Agent pool lifecycle counters from /api/health for
+# the per-suite lifecycle log line. Returns read_pool_stats of the health body,
+# or a "no-health" placeholder when the endpoint is unreachable.
+pool_stats_snapshot() {
+    local result body
+    result=$(make_request "GET" "/api/health" 2>/dev/null) || true
+    parse_response "$result"
+    if [ "$RESPONSE_STATUS" = "200" ]; then
+        read_pool_stats "$RESPONSE_BODY"
+    else
+        printf 'no-health(status=%s)' "${RESPONSE_STATUS:-?}"
+    fi
 }
 
 # =============================================================================

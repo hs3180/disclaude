@@ -819,6 +819,22 @@ report_tool_verdict() {
     return 1
 }
 
+# Issue #4730: extract AgentPool lifecycle counters from a /api/health body.
+# Returns a compact "active:.. busy:.. pending:.. evictions:.." summary (missing
+# fields default to 0). Pure, so a regression test can feed canned bodies.
+#   usage: read_pool_stats "<health_body>"
+read_pool_stats() {
+    local body="$1"
+    [ -n "$body" ] || { printf 'active:0 busy:0 pending:0 evictions:0'; return 0; }
+    local active busy pending evictions
+    active=$(echo "$body" | grep -o '"active":[0-9]*' | head -1 | grep -o '[0-9]*')
+    busy=$(echo "$body" | grep -o '"busy":[0-9]*' | head -1 | grep -o '[0-9]*')
+    pending=$(echo "$body" | grep -o '"pending":[0-9]*' | head -1 | grep -o '[0-9]*')
+    evictions=$(echo "$body" | grep -oE '"(evict[a-z]*|evictionCount)":[0-9]*' | head -1 | grep -o '[0-9]*')
+    printf 'active:%s busy:%s pending:%s evictions:%s' \
+        "${active:-0}" "${busy:-0}" "${pending:-0}" "${evictions:-0}"
+}
+
 # Issue #4729: isolated test-server lifecycle for async REST protocol tests.
 # Async protocol tests that must verify "background-submit" semantics spawn a
 # real Agent; running them against the shared AI server pollutes its pool with
