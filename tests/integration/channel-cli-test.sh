@@ -30,6 +30,7 @@ register_cleanup
 # =============================================================================
 
 TEST_FILE_PATH="workspace/channel-cli-test-file.txt"
+# Issue #4691 tool-execution verdict: see report_tool_verdict() in common.sh.
 
 create_test_file() {
     local workspace_dir="$PROJECT_ROOT/workspace"
@@ -55,13 +56,9 @@ test_send_text_tool() {
     log_info "Test: send_text tool invocation..."
 
     local chat_id="test-channel-send-text-$$"
-    assert_sync_chat_ok "请使用 channel CLI Skill 执行 send_text，发送消息 'Hello from channel CLI test'。只需调用一次，不要诊断、排查或重试。" "$chat_id" || return 1
+    assert_sync_chat_ok "请使用 channel CLI Skill 执行 send_text，发送消息 'Hello from channel CLI test'。只需调用一次，不要诊断、排查或重试。请在回复中如实报告工具是否执行成功。" "$chat_id" || return 1
 
-    if echo "$RESPONSE_TEXT" | grep -iqE "send_text|消息|工具|tool|发送"; then
-        log_pass "Agent acknowledged tool usage"
-    else
-        log_pass "Agent responded (tool handling verified)"
-    fi
+    report_tool_verdict "send_text"
 }
 
 test_send_file_tool() {
@@ -70,18 +67,14 @@ test_send_file_tool() {
     create_test_file
 
     local chat_id="test-channel-send-file-$$"
-    assert_sync_chat_ok "请使用 channel CLI Skill 执行 send_file 发送文件 $TEST_FILE_PATH。只需调用一次，不要诊断、排查或重试。" "$chat_id" || {
+    assert_sync_chat_ok "请使用 channel CLI Skill 执行 send_file 发送文件 $TEST_FILE_PATH。只需调用一次，不要诊断、排查或重试。请在回复中如实报告工具是否执行成功。" "$chat_id" || {
         cleanup_test_file
         return 1
     }
 
     cleanup_test_file
 
-    if echo "$RESPONSE_TEXT" | grep -iqE "send_file|文件|工具|tool|上传|file"; then
-        log_pass "Agent acknowledged file tool usage"
-    else
-        log_pass "Agent responded (tool handling verified)"
-    fi
+    report_tool_verdict "send_file"
 }
 
 test_tool_result_format() {
