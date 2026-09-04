@@ -428,6 +428,17 @@ run_suite() {
     # cascading failures in subsequent test suites.
     restart_server_if_unhealthy
 
+    # Issue #4728: suite-boundary drain barrier. Wait for the Agent pool to
+    # converge (busy=0, pending=0) before the next suite. The fixed inter-suite
+    # sleep alone cannot cover a slow request or a leftover agent; a drain that
+    # times out is reported as a drain failure for THIS suite so the summary can
+    # name it (Issue #4730). Only enforced when the suite itself did not already
+    # fail with a hard code-regression result.
+    if [ "$suite_result" -eq 0 ] && ! wait_for_agent_pool_drain "$name"; then
+        log_error "Drain barrier failed after suite: $name — leftover agents/tasks were still running (Issue #4728)"
+        suite_result=1
+    fi
+
     # TODO: After merge with #3448's baseline tracking, reset _EXIT_LISTENER_BASELINE
     # here when server was restarted, so growth report remains accurate.
 
