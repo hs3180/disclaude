@@ -216,7 +216,9 @@ describe('buildTaskRecordGuidance', () => {
   it('should specify storage location', () => {
     const result = buildTaskRecordGuidance();
     // Issue #4261: rolling monthly files, not a single ever-growing file.
-    expect(result).toContain('.claude/task-records/YYYY-MM.md');
+    expect(result).toContain('task-records/YYYY-MM.md');
+    expect(result).toContain('legacy');
+    expect(result).toContain('.claude/task-records');
   });
 
   it('should instruct rolling monthly storage (Issue #4261)', () => {
