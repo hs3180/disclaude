@@ -455,6 +455,18 @@ run_suite() {
     end_stats=$(pool_stats_snapshot)
     log_info "Lifecycle[$name]: duration=${duration}s result=${suite_result} start=($start_stats) end=($end_stats)"
 
+    # Issue #4728: suite-boundary drain barrier. Wait for the Agent pool to
+    # converge (busy=0, pending=0) before the next suite. The fixed inter-suite
+    # sleep alone cannot cover a slow request or a leftover agent; a drain that
+    # times out is reported as a drain failure for THIS suite so the summary can
+    # name it (Issue #4730). Only enforced when the suite itself did not already
+    # fail with a hard code-regression result. Runs AFTER the lifecycle end
+    # snapshot so the captured end-state reflects the real post-suite pool load.
+    if [ "$suite_result" -eq 0 ] && ! wait_for_agent_pool_drain "$name"; then
+        log_error "Drain barrier failed after suite: $name — leftover agents/tasks were still running (Issue #4728)"
+        suite_result=1
+    fi
+
     # TODO: After merge with #3448's baseline tracking, reset _EXIT_LISTENER_BASELINE
     # here when server was restarted, so growth report remains accurate.
 
