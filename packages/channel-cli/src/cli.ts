@@ -231,6 +231,9 @@ export async function run(argv: string[]): Promise<number> {
   return execute(command, args, chat, setupRest(args));
 }
 
-if (process.argv[1]?.endsWith('/cli.js')) {
+// Issue #4794: the global bin symlink (/usr/local/bin/disclaude-channel) does not
+// end with "/cli.js", so match it explicitly — otherwise `disclaude-channel` would
+// be a silently no-op command (exit 0, zero output) when invoked via the symlink.
+if (process.argv[1]?.endsWith('/cli.js') || process.argv[1]?.includes('disclaude-channel')) {
   run(process.argv.slice(2)).then((code) => { process.exitCode = code; }).catch((error) => { process.stderr.write(`channel CLI crashed: ${errorMessage(error)}\n`); emitFail('channel', `CLI crashed: ${errorMessage(error)}`); process.exitCode = 1; });
 }
