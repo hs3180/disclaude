@@ -55,6 +55,9 @@ RUN apt-get install -y --no-install-recommends python3 make g++ && \
 # tsconfig.json is required by `tsc -b` (root project references) in the build step below.
 COPY package.json package-lock.json tsconfig.json ./
 COPY packages ./packages
+# Issue #4794: top-level bin/ holds the `disclaude` CLI router (bin/disclaude.js);
+# it must ship so `npm install -g /app` can symlink the global command.
+COPY bin ./bin
 
 # Install dependencies using bun
 # Bun reads package-lock.json and generates bun.lock on the fly (single source of truth).
@@ -195,10 +198,26 @@ COPY --from=builder --chown=disclaude:disclaude /app/skills ./skills
 COPY --from=builder --chown=disclaude:disclaude /app/.claude-plugin .claude-plugin
 # Issue #4224: builtin agents (builtins root = /app, peer of skills/ and .claude-plugin/)
 COPY --from=builder --chown=disclaude:disclaude /app/agents ./agents
+# Issue #4794: ship the top-level `disclaude` CLI router alongside the workspace.
+# npm install -g symlinks /usr/local/bin/{disclaude,disclaude-primary,disclaude-channel}
+# into the global PATH (lenSymlink, ~zero image size), so agents in the container can
+# call `disclaude ...` without full paths.
+COPY --from=builder --chown=disclaude:disclaude /app/bin ./bin
 
 # Copy entrypoint script (Issue #3987: auto-configure lark-cli auth)
 COPY --chown=disclaude:disclaude docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Issue #4794: symlink the disclaude CLI into global PATH so agents call
+# `disclaude` without full paths. `npm install -g /app` creates symlinks
+# (/usr/local/bin/disclaude{,-primary,-channel}) with ~zero image size delta.
+# Must run as root (writes /usr/local/lib) BEFORE `USER disclaude` below.
+# The `scripts.prepare` delete is required: npm runs `prepare` (husky) for local-directory
+# installs even with --ignore-scripts, and husky was pruned by `--production`, so it would
+# fail with exit 127. Registry env is re-asserted for the global install.
+RUN npm config set registry ${NPM_REGISTRY} && \
+    npm pkg delete scripts.prepare && \
+    npm install -g /app
 
 # Entrypoint auto-configures lark-cli auth into the disclaude user's $HOME (/app),
 # then execs tini + the app. It runs AS the disclaude user (see USER below) — there
