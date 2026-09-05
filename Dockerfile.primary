@@ -199,7 +199,7 @@ COPY --from=builder --chown=disclaude:disclaude /app/.claude-plugin .claude-plug
 # Issue #4224: builtin agents (builtins root = /app, peer of skills/ and .claude-plugin/)
 COPY --from=builder --chown=disclaude:disclaude /app/agents ./agents
 # Issue #4794: ship the top-level `disclaude` CLI router alongside the workspace.
-# npm install -g symlinks /usr/local/bin/{disclaude,disclaude-primary,disclaude-channel}
+# npm install -g symlinks /usr/local/bin/{disclaude,disclaude-primary}
 # into the global PATH (lenSymlink, ~zero image size), so agents in the container can
 # call `disclaude ...` without full paths.
 COPY --from=builder --chown=disclaude:disclaude /app/bin ./bin
@@ -210,7 +210,7 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Issue #4794: symlink the disclaude CLI into global PATH so agents call
 # `disclaude` without full paths. `npm install -g /app` creates symlinks
-# (/usr/local/bin/disclaude{,-primary,-channel}) with ~zero image size delta.
+# (/usr/local/bin/disclaude{,-primary}) with ~zero image size delta.
 # Must run as root (writes /usr/local/lib) BEFORE `USER disclaude` below.
 # The `scripts.prepare` delete is required: npm runs `prepare` (husky) for local-directory
 # installs even with --ignore-scripts, and husky was pruned by `--production`, so it would
