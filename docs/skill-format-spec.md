@@ -191,22 +191,27 @@ surface maps to which target is a per-tool decision (scope 3), sketched here onl
 
 ## 6. Reference implementation
 
-`skills/channel/` is the canonical CLI Skill:
+`skills/channel/` is the canonical CLI Skill. Its executable does **not** live under
+`skills/channel/` — the Skill is the README plus a packaged binary (`disclaude channel`,
+built from `packages/channel-cli`). A Skill whose CLI is already distributable should
+ship it that way rather than adding an in-repo `cli.mjs`:
 
-- `cli.mjs` — subcommands (`send_text` / `send_interactive` / `send_file`), long inputs accepted as
-  `--<opt> '<JSON>'` / `--<opt> @FILE` / stdin, so multi-KB payloads never go inline.
+- `disclaude channel` — subcommands (`send_text` / `send_interactive` / `send_file` / `push`),
+  long inputs accepted as `--<opt> '<JSON>'` / `--<opt> @FILE` / stdin, so multi-KB payloads
+  never go inline.
 - emits exactly one JSON object: `{"ok":true,"command":…,"result":…,"durationMs":…}` /
   `{"ok":false,"command":…,"error":…,"hint":…}`.
 - reuses the first-party implementations from `packages/channel-cli` over REST — same impl as the
   MCP tool it replaces, different transport (see its Parity / migration notes table).
 - `README.md` — Quick start, Commands table, Output contract, Artifacts, Runtime, Parity /
-  migration notes, Status (per-part PR links; live parity deferred where noted).
+  migration notes, Status (per-part PR links; live parity deferred where noted). For a Skill
+  backed by a packaged binary this README *is* the in-repo half of the Skill.
 
 For browser automation the corresponding surface is the **`browser-use` skill**
 ([`skills/browser-use/SKILL.md`](../skills/browser-use/SKILL.md)) — an agent-skill whose tool is an
 *external* piped-Python CLI rather than an in-repo `cli.mjs`. It follows the same output philosophy
 (stdout is the result channel, one JSON blob per invocation, binary artifacts on disk) and is the
-S2/Playwright replacement; it just isn't the in-repo `cli.mjs` reference.
+S2/Playwright replacement.
 
 New Skills should copy the `channel` structure and diverge only where their domain demands it.
 
