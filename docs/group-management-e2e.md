@@ -81,6 +81,8 @@ status, errorCode, cleanupStatus
 
 ## 建议的落地入口
 
+> ⚠️ 本套件目前**仅为设计稿，尚未落地**：`tests/e2e/group-management/` 目录不存在（`tests/e2e/` 现仅含 `rfc3329/`）。下面的命令引用的配置路径是**提议中的实现目标**，当前不可运行——待 Issue #4756 实现后再执行，避免照抄出现 "config not found"。
+
 建议新增 `tests/e2e/group-management/`，包含：
 
 - `contract.test.ts`：mock channel、agent 和资源 tracker，覆盖 happy path、超时重试、重复投递、权限失败和清理失败。

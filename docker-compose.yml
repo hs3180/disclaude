@@ -63,7 +63,6 @@ services:
     environment:
       - NODE_ENV=production
       - TZ=Asia/Shanghai
-      - DISCLAUDE_MODE=primary
       - HOST=0.0.0.0
       - DISCLAUDE_WORKSPACE_DIR=/data/workspace
       # #4608: pin the REST IPC client to IPv4 loopback, matching the

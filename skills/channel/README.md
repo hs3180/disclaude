@@ -4,11 +4,11 @@
 > part 1, owner ruling 2026-08-18):** the CLI now reaches the PrimaryNode over
 > the **REST API** (HttpApiServer `/api/send-message`, `/api/send-card`,
 > `/api/upload-file`, `/api/send-interactive`, `/api/push`) — it no longer opens
-> a Unix socket, and there is **no IPC fallback** on the CLI path. The CLI sets
-> `DISCLAUDE_REST_IPC_ENABLED=true` internally before executing a send path, so every send path — including `send_card`'s
-> local-image upload (`resolveCardImages` → `getIpcClient()`) — selects
-> `RestIpcClient`. Base URL: `--base-url` > `DISCLAUDE_REST_IPC_BASE_URL` >
-> `http://localhost:19200`. When the REST face
+> a Unix socket, and there is **no IPC fallback** on the CLI path. REST is the
+> only transport (unconditional — `DISCLAUDE_REST_IPC_ENABLED` is ignored).
+> Base URL: `--base-url` > `DISCLAUDE_REST_IPC_BASE_URL` >
+> `http://localhost:19200`. When the primary runs with `--api-token`, pass
+> `--api-token` / `DISCLAUDE_REST_IPC_API_TOKEN` so writes authenticate (#4801). When the REST face
 > is unreachable, the CLI emits an actionable "start the main service" hint
 > instead of a raw `fetch` ECONNREFUSED (#4532 scope 3). The #4521 chatId
 > pre-check substance was re-landed on the REST CLI by part 11 (see §Parity).
@@ -224,7 +224,7 @@ Recorded explicitly per #4459 acceptance ("迁移/下线不静默"):
 | Aspect                     | MCP tool (S1)                                                     | This CLI Skill                                                                                                                                              | Delta                                                      |
 | -------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
 | Transport                  | in-process MCP tool dispatch                                      | one-shot process, shells out via `Bash`                                                                                                                     | different transport, same first-party impl                 |
-| IPC reach-back             | in-process `getIpcClient()` (Unix socket by default)              | `getIpcClient()` with `DISCLAUDE_REST_IPC_ENABLED=true` forced → `RestIpcClient` → HttpApiServer `/api/*` (#4532)                                           | REST only — no Unix socket, no IPC fallback                |
+| IPC reach-back             | in-process `getIpcClient()` (Unix socket by default)              | `RestIpcClient` → HttpApiServer `/api/*` (unconditional, no toggle) (#4532)                                                                                | REST only — no Unix socket, no IPC fallback                |
 | `send_text` parameters     | `text`, `chatId`, `parentMessageId`, `mentions`                   | identical, via `--chat`/`--text`/`--text-file`/`--parent`/`--mentions`                                                                                      | text gains `--text-file`/stdin for large bodies            |
 | `send_file` parameters     | `filePath`, `chatId`, `parentMessageId`                           | identical, via `--file`/`--chat`/`--parent` (relative `--file` resolves against the workspace dir, as in the MCP tool)                                      | none                                                       |
 | `push` parameters | `chatId`, `message`                                               | identical, via `--chat`/`--message`/`--message-file`                                                                                                        | message gains `--message-file`/stdin for long instructions |
