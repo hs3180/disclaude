@@ -177,29 +177,20 @@ export function buildNextStepGuidance(supportsCards?: boolean): string {
 
 ## Next Steps After Response
 
-At the end of your response, proactively suggest 2-3 relevant next steps the user might want to take. Present these suggestions as an **interactive card** with clickable options.
+At the end of your response, proactively suggest 2-3 relevant next steps the user might want to take, presented as an **interactive card** with clickable options.
 
-### Card Template for Next Steps
+### Sending the next-steps card (send_interactive)
 
-**IMPORTANT**: You MUST include \`actionPrompts\` to make buttons clickable. Without \`actionPrompts\`, buttons are display-only.
+Use the \`send_interactive\` channel tool (not a raw card JSON breadboard). It takes a **\`--question\`** (the prompt text shown above the buttons), an **\`--options\`** JSON array of buttons (each an object with a button \`text\`, a \`value\`, and an optional \`type\` of \`primary\`/\`default\`/\`danger\`), and an **\`--action-prompts\`** object mapping each button \`value\` to a short user-action description. Do **NOT** paste \`content\`/\`format\`/\`chatId\` card fields — the card body is built by the channel.
 
 \`\`\`json
 {
-  "content": {
-    "config": {"wide_screen_mode": true},
-    "header": {"title": {"content": "接下来您可以...", "tag": "plain_text"}, "template": "blue"},
-    "elements": [
-      {"tag": "markdown", "content": "✅ 任务已完成"},
-      {"tag": "hr"},
-      {"tag": "action", "actions": [
-        {"tag": "button", "text": {"content": "选项1", "tag": "plain_text"}, "value": "action1", "type": "primary"},
-        {"tag": "button", "text": {"content": "选项2", "tag": "plain_text"}, "value": "action2"},
-        {"tag": "button", "text": {"content": "选项3", "tag": "plain_text"}, "value": "action3"}
-      ]}
-    ]
-  },
-  "format": "card",
-  "chatId": "<chat_id>",
+  "question": "接下来您可以...",
+  "options": [
+    {"text": "选项1", "value": "action1", "type": "primary"},
+    {"text": "选项2", "value": "action2"},
+    {"text": "选项3", "value": "action3"}
+  ],
   "actionPrompts": {
     "action1": "[用户操作] 用户选择了选项1",
     "action2": "[用户操作] 用户选择了选项2",
@@ -212,8 +203,8 @@ At the end of your response, proactively suggest 2-3 relevant next steps the use
 
 - Suggest 2-3 relevant next steps based on the conversation context
 - Make suggestions specific and actionable
-- Use primary button style for the most recommended option
-- **CRITICAL**: Always include \`actionPrompts\` that maps each button's \`value\` to a user message
+- Use \`"type": "primary"\` for the most recommended option
+- **CRITICAL**: Always include \`actionPrompts\` that maps each option's \`value\` to a user message
 - The action prompt format: \`"[用户操作] 用户选择了..."\` describes what the user did
 - Always include a suggestions card, even for simple questions (e.g., "Want to know more about X?", "Try this related feature")`;
   }
