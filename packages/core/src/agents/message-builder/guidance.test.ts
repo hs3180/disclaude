@@ -16,6 +16,10 @@ import {
   buildTaskRecordGuidance,
   buildLocationAwarenessGuidance,
 } from './guidance.js';
+import {
+  CHANNEL_CLI_HELP,
+  buildChannelCliHelpGuidance,
+} from './channel-cli-help.js';
 
 describe('buildChatHistorySection', () => {
   it('should return empty string when no context is provided', () => {
@@ -292,5 +296,41 @@ describe('buildTaskRecordGuidance', () => {
   it('should mention creating file if not exists', () => {
     const result = buildTaskRecordGuidance();
     expect(result).toContain('Create the file if it does not exist');
+  });
+});
+
+// Issue #4705: canonical channel CLI help exposed to the agent prompt, kept in
+// sync with the CLI's own `help` output (single source of truth).
+describe('buildChannelCliHelpGuidance', () => {
+  it('CHANNEL_CLI_HELP includes every command (the source of truth)', () => {
+    expect(CHANNEL_CLI_HELP).toContain('send_text');
+    expect(CHANNEL_CLI_HELP).toContain('send_file');
+    expect(CHANNEL_CLI_HELP).toContain('send_card');
+    expect(CHANNEL_CLI_HELP).toContain('send_interactive');
+    expect(CHANNEL_CLI_HELP).toContain('push_to_agent');
+  });
+
+  it('should include the canonical command vocabulary', () => {
+    const result = buildChannelCliHelpGuidance();
+    expect(result).toContain('Channel CLI');
+    expect(result).toContain('send_text');
+    expect(result).toContain('send_file');
+    expect(result).toContain('send_card');
+    expect(result).toContain('send_interactive');
+    expect(result).toContain('push_to_agent');
+  });
+
+  it('should render the default invoke prefix (disclaude channel)', () => {
+    const result = buildChannelCliHelpGuidance();
+    expect(result).toContain('`disclaude channel help`');
+  });
+
+  it('should honor a custom invoke prefix', () => {
+    const result = buildChannelCliHelpGuidance('node /opt/cli.mjs');
+    expect(result).toContain('`node /opt/cli.mjs help`');
+  });
+
+  it('should return empty string when disabled', () => {
+    expect(buildChannelCliHelpGuidance('disclaude channel', { enabled: false })).toBe('');
   });
 });

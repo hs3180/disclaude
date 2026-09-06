@@ -10,7 +10,7 @@
  * @module messaging/adapters/feishu-message-builder
  */
 
-import { Config, type MessageBuilderContext, type MessageBuilderOptions } from '@disclaude/core';
+import { Config, buildChannelCliHelpGuidance, type MessageBuilderContext, type MessageBuilderOptions } from '@disclaude/core';
 
 /**
  * Build Feishu platform header.
@@ -112,6 +112,11 @@ ${messagingTools.join('\n')}
     parts.push(`
 - Note: Thread replies are NOT supported on this channel.`);
   }
+
+  // Issue #4705: append the canonical CLI help (shared with the CLI's own
+  // `help` output) so the agent never has to invent flags or guess a
+  // subcommand — the full vocabulary/constraints are in the prompt already.
+  parts.push(buildChannelCliHelpGuidance());
 
   return parts.join('\n');
 }
