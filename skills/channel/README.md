@@ -7,8 +7,11 @@
 > a Unix socket, and there is **no IPC fallback** on the CLI path. REST is the
 > only transport (unconditional — `DISCLAUDE_REST_IPC_ENABLED` is ignored).
 > Base URL: `--base-url` > `DISCLAUDE_REST_IPC_BASE_URL` >
-> `http://localhost:19200`. When the primary runs with `--api-token`, pass
-> `--api-token` / `DISCLAUDE_REST_IPC_API_TOKEN` so writes authenticate (#4801). When the REST face
+> `http://localhost:19200`. **The CLI does not authenticate yet:** it attaches
+> no bearer header, so a primary started with `--api-token` 401s every channel
+> write while `GET /api/ping` (token-exempt) keeps the availability probe green
+> — [#4804](https://github.com/hs3180/disclaude/pull/4804) adds the `--api-token`
+> flag and `DISCLAUDE_REST_IPC_API_TOKEN` wiring (#4801). When the REST face
 > is unreachable, the CLI emits an actionable "start the main service" hint
 > instead of a raw `fetch` ECONNREFUSED (#4532 scope 3). The #4521 chatId
 > pre-check substance was re-landed on the REST CLI by part 11 (see §Parity).
