@@ -3,7 +3,9 @@
 import { existsSync, readFileSync } from 'node:fs';
 import type { ActionPromptMap, InteractiveOption } from './tools/types.js';
 
-const DEFAULT_REST_BASE_URL = 'http://localhost:19200';
+import { REST_IPC_DEFAULT_BASE_URL } from '@disclaude/core';
+
+const DEFAULT_REST_BASE_URL = REST_IPC_DEFAULT_BASE_URL;
 const CHAT_ID_PATTERNS = [
   { prefix: 'oc_', label: 'Feishu group chat', minLength: 35 },
   { prefix: 'ou_', label: 'Feishu user (p2p chat)', minLength: 35 },
@@ -28,6 +30,7 @@ Common options:
   --chat <id>      Target chat ID (oc_..., ou_..., or cli-...).
   --parent <id>   Optional parent message ID.
   --base-url <url> PrimaryNode REST URL (default: http://localhost:19200).
+  --api-token <t>  Bearer token when the primary runs with --api-token.
 
 Output: one JSON result object on stdout; diagnostics are written to stderr.`;
 
@@ -125,6 +128,14 @@ function parseActionPrompts(raw: string | undefined): ActionPromptMap | undefine
 function setupRest(args: Args): string {
   const baseUrl = arg(args, 'base-url') || process.env.DISCLAUDE_REST_IPC_BASE_URL || DEFAULT_REST_BASE_URL;
   process.env.DISCLAUDE_REST_IPC_BASE_URL = baseUrl;
+  // Issue #4801: mirror the PrimaryNode --api-token into the env the REST
+  // client reads, so authenticated writes attach the bearer header. Without
+  // this, a token-enabled primary 401s every channel POST while the probe
+  // still reports "available".
+  const apiToken = arg(args, 'api-token');
+  if (apiToken !== undefined) {
+    process.env.DISCLAUDE_REST_IPC_API_TOKEN = apiToken;
+  }
   return baseUrl;
 }
 function withLogsRedirected<T>(fn: () => Promise<T>): Promise<T> {
@@ -132,7 +143,7 @@ function withLogsRedirected<T>(fn: () => Promise<T>): Promise<T> {
   process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, callback?: (error?: Error | null) => void) => process.stderr.write(chunk, encoding, callback)) as typeof process.stdout.write;
   return fn().finally(() => { process.stdout.write = originalWrite; });
 }
-function restHint(baseUrl: string): string { return `PrimaryNode REST ${baseUrl} unreachable — start the main service (disclaude-primary start --api-port <port>) or pass --base-url / DISCLAIMED_REST_IPC_BASE_URL`.replace('DISCLAUDED', 'DISCLAUDE'); }
+function restHint(baseUrl: string): string { return `PrimaryNode REST ${baseUrl} unreachable — start the main service (disclaude-primary start --api-port <port>) or pass --base-url / DISCLAUDE_REST_IPC_BASE_URL`; }
 async function restIsReachable(baseUrl: string): Promise<boolean> {
   try {
     const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/ping`, {

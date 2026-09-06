@@ -28,6 +28,7 @@ const { mockPushToAgent, mockDisconnect, MockRestIpcClient } = vi.hoisted(() => 
 
 vi.mock('@disclaude/core', () => ({
   RestIpcClient: MockRestIpcClient,
+  REST_IPC_DEFAULT_BASE_URL: 'http://localhost:19200',
   // Issue #4129: pushToAgent is a standalone function re-exported from
   // ipc-client-facade. The production code imports it directly, so the mock
   // must provide it too.

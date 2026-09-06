@@ -19,7 +19,7 @@
  * @module primary-node/push-cli
  */
 
-import { RestIpcClient, pushToAgent } from '@disclaude/core';
+import { REST_IPC_DEFAULT_BASE_URL, RestIpcClient, pushToAgent } from '@disclaude/core';
 
 interface PushCliOptions {
   chatId: string;
@@ -139,7 +139,7 @@ export async function main(): Promise<void> {
   // never via the central dual-path facade (which still builds a Unix-socket
   // client by default), and no env var selects the transport.
   // Base URL / token come from the documented REST env vars.
-  const baseUrl = process.env.DISCLAUDE_REST_IPC_BASE_URL || 'http://localhost:19200';
+  const baseUrl = process.env.DISCLAUDE_REST_IPC_BASE_URL || REST_IPC_DEFAULT_BASE_URL;
   const apiToken = process.env.DISCLAUDE_REST_IPC_API_TOKEN;
   const client = new RestIpcClient({ baseUrl, apiToken });
 

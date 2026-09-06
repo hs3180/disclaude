@@ -31,7 +31,11 @@ export {
 } from './channel-api-handlers.js';
 
 // REST IPC client (Issue #4279 Phase 2 — channel-method surface via HTTP)
-export { RestIpcClient, type RestIpcClientOptions } from './rest-ipc-client.js';
+export {
+  RestIpcClient,
+  REST_IPC_DEFAULT_BASE_URL,
+  type RestIpcClientOptions,
+} from './rest-ipc-client.js';
 
 // Client facade (protocol convenience methods)
 export {

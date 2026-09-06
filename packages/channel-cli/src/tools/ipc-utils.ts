@@ -13,7 +13,7 @@
  * @module channel-cli/tools/ipc-utils
  */
 
-import { createLogger, RestIpcClient } from '@disclaude/core';
+import { createLogger, REST_IPC_DEFAULT_BASE_URL, RestIpcClient } from '@disclaude/core';
 
 const logger = createLogger('IpcUtils');
 
@@ -27,7 +27,23 @@ const logger = createLogger('IpcUtils');
  * direct constructions elsewhere.)
  */
 function resolveRestBaseUrl(): string {
-  return (process.env.DISCLAUDE_REST_IPC_BASE_URL || 'http://localhost:19200').replace(/\/$/, '');
+  return (process.env.DISCLAUDE_REST_IPC_BASE_URL || REST_IPC_DEFAULT_BASE_URL).replace(/\/$/, '');
+}
+
+/**
+ * Resolve the REST API token from the standard env wiring.
+ *
+ * `DISCLAUDE_REST_IPC_API_TOKEN` — mirrors the PrimaryNode `--api-token`.
+ * When the primary service runs with `--api-token`, every non-GET REST route
+ * requires `Authorization: Bearer <token>` (http-api-server.ts). Issue #4801:
+ * channel-cli previously never attached the header, so enabling the token made
+ * all channel writes 401 while `GET /api/ping` (token-exempt) kept the
+ * availability probe green. The token is read here and attached by
+ * `getRestIpcClient` so send paths authenticate.
+ */
+function resolveRestApiToken(): string | undefined {
+  const token = process.env.DISCLAUDE_REST_IPC_API_TOKEN;
+  return token && token.trim() ? token : undefined;
 }
 
 /**
@@ -35,13 +51,15 @@ function resolveRestBaseUrl(): string {
  *
  * - `DISCLAUDE_REST_IPC_BASE_URL` — PrimaryNode HTTP API server URL
  *   (default `http://localhost:19200`)
+ * - `DISCLAUDE_REST_IPC_API_TOKEN` — optional bearer token, forwarded to
+ *   `RestIpcClient` so authenticated writes succeed (Issue #4801).
  * Issue #4280 (Phase 3, part 3): every MCP tool that previously reached for
  * the dual-path `getIpcClient()` facade (default Unix socket) constructs the
  * `RestIpcClient` directly here. No transport toggle remains.
  */
 export function getRestIpcClient(): RestIpcClient {
   const baseUrl = resolveRestBaseUrl();
-  return new RestIpcClient({ baseUrl });
+  return new RestIpcClient({ baseUrl, apiToken: resolveRestApiToken() });
 }
 
 /**
@@ -60,9 +78,19 @@ export function getRestIpcClient(): RestIpcClient {
  */
 export async function isIpcAvailable(): Promise<boolean> {
   const baseUrl = resolveRestBaseUrl();
+  const apiToken = resolveRestApiToken();
   try {
+    // Issue #4810/#4801: the probe and the real sends must share the token
+    // wiring, else a token-enabled primary reports "available" via the
+    // token-exempt GET /api/ping probe while POSTs 401. When a token is
+    // configured, attach it here too so the probe reflects authenticated state.
+    const headers: Record<string, string> = {};
+    if (apiToken) {
+      headers.authorization = `Bearer ${apiToken}`;
+    }
     const res = await fetch(`${baseUrl}/api/ping`, {
       method: 'GET',
+      headers,
       signal: AbortSignal.timeout(2000),
     });
     if (!res.ok) {
@@ -126,7 +154,7 @@ export function getIpcErrorMessage(
 ): string {
   switch (errorType) {
     case 'ipc_unavailable':
-      return '❌ PrimaryNode REST 服务不可用。请检查主服务是否以 --api-port 启动，以及 DISCLAUDE_REST_IPC_BASE_URL 是否指向正确地址。';
+      return '❌ PrimaryNode REST 服务不可用。请检查主服务是否以 --api-port 启动，DISCLAUDE_REST_IPC_BASE_URL 是否指向正确地址，且（若主服务启用了 --api-token）DISCLAUDE_REST_IPC_API_TOKEN 是否一致。';
     case 'ipc_timeout':
       return '❌ PrimaryNode 请求超时。服务可能过载，请稍后重试。';
     case 'ipc_request_failed':
