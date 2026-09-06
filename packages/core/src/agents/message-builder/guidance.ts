@@ -181,7 +181,7 @@ At the end of your response, proactively suggest 2-3 relevant next steps the use
 
 ### Sending the next-steps card (send_interactive)
 
-Use the \`send_interactive\` channel tool (not a raw card JSON breadboard). It takes a **\`--question\`** (the prompt text shown above the buttons), an **\`--options\`** JSON array of buttons (each an object with a button \`text\`, a \`value\`, and an optional \`type\` of \`primary\`/\`default\`/\`danger\`), and an **\`--action-prompts\`** object mapping each button \`value\` to a short user-action description. Do **NOT** paste \`content\`/\`format\`/\`chatId\` card fields — the card body is built by the channel.
+Use the \`send_interactive\` channel tool (not a raw card JSON breadboard). It takes **\`--chat\`** (the target chat ID — required unless \`FEISHU_CLI_CHAT_ID\` or the config \`cliChatId\` supplies it), a **\`--question\`** (the prompt text shown above the buttons), an **\`--options\`** JSON array of buttons (each an object with a button \`text\`, a \`value\`, and an optional \`type\` of \`primary\`/\`default\`/\`danger\`), and an **\`--action-prompts\`** object mapping each button \`value\` to a short user-action description. Do **NOT** paste raw card fields such as \`content\`/\`format\`/\`elements\` — the card body is built by the channel.
 
 \`\`\`json
 {
