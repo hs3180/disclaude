@@ -14,13 +14,12 @@ export const HELP = `channel Skill / Disclaude channel CLI
 
 Usage:
   disclaude channel <command> [options]
-  disclaude-channel <command> [options]
 
 Commands:
   send_text        Send plain text (--text, --text-file, or stdin).
   send_file        Send a file (--file).
   send_card        Send a display-only card (--card, --card-file, or stdin).
-  push_to_agent    Push an instruction to a chat agent.
+  push             Push an instruction to a chat agent.
   send_interactive Send an interactive card with clickable buttons.
   help             Show this help message.
 
@@ -221,19 +220,24 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
 export async function run(argv: string[]): Promise<number> {
   await Promise.resolve();
   emitted = false;
-  const [command] = argv;
-  if (!command || command === 'help' || command === '--help' || command === '-h') { process.stdout.write(`${HELP}\n`); return 0; }
+  const [invokedAs] = argv;
+  if (!invokedAs || invokedAs === 'help' || invokedAs === '--help' || invokedAs === '-h') { process.stdout.write(`${HELP}\n`); return 0; }
+  // `push` is the agent-facing spelling; `push_to_agent` stays as the canonical
+  // command name so the stdout JSON contract (`command` field) is unchanged.
+  const command = invokedAs === 'push' ? 'push_to_agent' : invokedAs;
   const args = parseArgs(argv.slice(1));
   const commands = ['send_text', 'send_file', 'send_card', 'push_to_agent', 'send_interactive'];
-  if (!commands.includes(command)) { process.stderr.write(`Unknown command: ${command}\n`); process.stdout.write(`${HELP}\n`); return 1; }
+  if (!commands.includes(command)) { process.stderr.write(`Unknown command: ${invokedAs}\n`); process.stdout.write(`${HELP}\n`); return 1; }
   const chat = validateChat(command, args);
   if (!chat) {return 1;}
   return execute(command, args, chat, setupRest(args));
 }
 
-// Issue #4794: the global bin symlink (/usr/local/bin/disclaude-channel) does not
-// end with "/cli.js", so match it explicitly — otherwise `disclaude-channel` would
-// be a silently no-op command (exit 0, zero output) when invoked via the symlink.
-if (process.argv[1]?.endsWith('/cli.js') || process.argv[1]?.includes('disclaude-channel')) {
+// Only auto-run when executed as a script (the `disclaude channel` router spawns
+// this dist file directly, so argv[1] always ends with "/cli.js"). Issue #4794's
+// `includes('disclaude-channel')` clause is gone with the bin it guarded: a
+// substring match would also fire when a *test* imports this module from a repo
+// checkout whose path happens to contain "disclaude".
+if (process.argv[1]?.endsWith('/cli.js')) {
   run(process.argv.slice(2)).then((code) => { process.exitCode = code; }).catch((error) => { process.stderr.write(`channel CLI crashed: ${errorMessage(error)}\n`); emitFail('channel', `CLI crashed: ${errorMessage(error)}`); process.exitCode = 1; });
 }

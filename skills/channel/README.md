@@ -18,7 +18,7 @@
 > **Status (parts 3–7 + 11 of [#4459](https://github.com/hs3180/disclaude/issues/4459)):**
 > `send_text` (part 3, [#4467](https://github.com/hs3180/disclaude/pull/4467)),
 > `send_file` (part 4, [#4494](https://github.com/hs3180/disclaude/pull/4494)),
-> `send_card` (part 5), `push_to_agent` (part 6,
+> `send_card` (part 5), `push` (part 6,
 > [#4501](https://github.com/hs3180/disclaude/pull/4501)), and
 > `send_interactive` (part 7) — **all 5 channel tools** migrated as CLI
 > subcommands. **Part 11** (REST re-land of rejected
@@ -40,7 +40,7 @@ A **CLI Skill** under disclaude's "reduce MCP" direction
 `channel-mcp` MCP server (surface **S1** in
 [`docs/mcp-server-inventory.md`](../../docs/mcp-server-inventory.md)), which
 exposes the 5 first-party channel tools (`send_text`, `send_card`,
-`send_interactive`, `send_file`, `push_to_agent`). The agent drives this CLI via
+`send_interactive`, `send_file`, `push`). The agent drives this CLI via
 `Bash` instead of the runtime dispatching an in-process MCP tool — see
 [`docs/skill-format-spec.md`](../../docs/skill-format-spec.md) for the contract.
 
@@ -84,10 +84,10 @@ disclaude channel send_file --chat oc_xxx --file ./report.pdf
 disclaude channel send_file --chat oc_xxx --file ./log.txt --parent om_root
 
 # Push an instruction to the agent handling a chat (agent is created lazily)
-disclaude channel push_to_agent --chat oc_xxx --message "Summarize unread messages"
+disclaude channel push --chat oc_xxx --message "Summarize unread messages"
 
 # Pipe a longer instruction on stdin
-echo "Reply to the open question in this thread." | disclaude channel push_to_agent --chat oc_xxx
+echo "Reply to the open question in this thread." | disclaude channel push --chat oc_xxx
 
 # Send a display-only card from a JSON file (GFM tables / local images auto-handled)
 disclaude channel send_card --chat oc_xxx --card-file ./card.json
@@ -98,7 +98,7 @@ echo '{"elements":[{"tag":"markdown","content":"hi"}]}' \
 ```
 
 **Runtime (host deps, not bundled):** reuses `send_text` / `send_file` /
-`send_card` (and the card preprocessing helpers) / `push_to_agent` /
+`send_card` (and the card preprocessing helpers) / `push` /
 `send_interactive` from `packages/channel-cli`, which talk to the PrimaryNode
 over its REST API (#4532 — no Unix socket). Run
 inside a disclaude workspace where the packages are built (`npm run build`), and
@@ -112,7 +112,7 @@ start the PrimaryNode with `--api-port`. No browser or extra binaries required.
 | `send_card`        | —               | `--chat <id>` _(optional with default)_, `--card <json>`, `--card-file <path>`, `--parent <id>`                                                                                          | ✅ part 5 |
 | `send_interactive` | —               | `--chat <id>` _(optional with default)_, `--question <string>` _(req)_, `--options <json>` _(req)_, `--title <string>`, `--context <string>`, `--action-prompts <json>`, `--parent <id>` | ✅ part 7 |
 | `send_file`        | —               | `--chat <id>` _(optional with default)_, `--file <path>` _(req)_, `--parent <id>`                                                                                                        | ✅ part 4 |
-| `push_to_agent`    | —               | `--chat <id>` _(optional with default)_, `--message <string>`, `--message-file <path>`                                                                                                   | ✅ part 6 |
+| `push`    | —               | `--chat <id>` _(optional with default)_, `--message <string>`, `--message-file <path>`                                                                                                   | ✅ part 6 |
 | `help`             | —               | —                                                                                                                                                                                        | ✅        |
 
 `--chat` in **every** command is resolved with this precedence: explicit
@@ -123,7 +123,7 @@ rules, #1641); an ill-formed id fails before the send operation (part 11).
 
 **Text input** — `--text "<string>"` for short content; `--text-file <path>` (or
 `--text-file -` to read stdin explicitly) for larger bodies; or pipe on stdin
-when no `--text`/`--text-file` is given and stdin is not a TTY. `push_to_agent`
+when no `--text`/`--text-file` is given and stdin is not a TTY. `push`
 follows the same rule for its instruction body (`--message` / `--message-file` /
 piped stdin). This follows the Skill format spec §2.1 rule: never require the
 agent to embed multi-KB text inline. `send_interactive` follows the same rule for its `--question`
@@ -142,6 +142,10 @@ never require the agent to embed a multi-KB card inline.
 Every command prints **exactly one JSON object** to stdout and nothing else
 (spec §2.2). Diagnostics and logs go to stderr. Exit code is `0` on success,
 `1` on failure.
+
+The `command` field reports the **canonical** command, which is not always what
+you typed: `push` is the agent-facing spelling of `push_to_agent`, so it echoes
+`"command":"push_to_agent"`. Parse on the canonical name.
 
 ```jsonc
 // success — exit 0
@@ -176,11 +180,11 @@ and REST send failure (the underlying first-party tools map these to `SendMessag
 
 ## Artifacts
 
-None. `send_text`, `push_to_agent`, and `send_interactive` are side-effect-free
+None. `send_text`, `push`, and `send_interactive` are side-effect-free
 on the local filesystem — they reach the PrimaryNode over its REST API and
 return. `send_file` **reads** the local file at `--file` (uploaded over REST)
 and writes
-nothing. No files are written by any command. (`push_to_agent` does have an
+nothing. No files are written by any command. (`push` does have an
 intended _remote_ side effect — it pushes an instruction that may
 create/lazily-resume the target chat's agent.)
 
@@ -199,7 +203,7 @@ REST file contract is path-based, not content-based — `send_file` and
 from **its own filesystem** (exact IPC parity; see the server-side "local
 filePath" contract in `http-api-server.ts`). Pointing `--base-url` at a
 PrimaryNode on another host therefore works for `send_text` /
-`send_interactive` / `push_to_agent` but makes `send_file` fail server-side
+`send_interactive` / `push` but makes `send_file` fail server-side
 (ENOENT) and degrades card local images to placeholders. This is a limitation
 of the current endpoint contract (inherited from IPC, where same-host was
 implicit), not of the transport switch; relaxing it (multipart / base64 upload)
@@ -208,7 +212,7 @@ is deferred with the endpoint work, not the CLI.
 If the channel implementation cannot be loaded, the CLI emits a failure JSON with
 a build hint rather than crashing (analogous to #4464's missing-`playwright`
 hint). If the PrimaryNode REST face is unavailable (service not started / port
-not open), `send_text` / `send_file` / `send_card` / `push_to_agent` /
+not open), `send_text` / `send_file` / `send_card` / `push` /
 `send_interactive` surface that, and the CLI relays it as a failure JSON with
 the actionable hint `PrimaryNode REST <url> unreachable — start the main service
 …` (#4532 scope 3) instead of a bare `fetch` ECONNREFUSED.
@@ -223,7 +227,7 @@ Recorded explicitly per #4459 acceptance ("迁移/下线不静默"):
 | IPC reach-back             | in-process `getIpcClient()` (Unix socket by default)              | `getIpcClient()` with `DISCLAUDE_REST_IPC_ENABLED=true` forced → `RestIpcClient` → HttpApiServer `/api/*` (#4532)                                           | REST only — no Unix socket, no IPC fallback                |
 | `send_text` parameters     | `text`, `chatId`, `parentMessageId`, `mentions`                   | identical, via `--chat`/`--text`/`--text-file`/`--parent`/`--mentions`                                                                                      | text gains `--text-file`/stdin for large bodies            |
 | `send_file` parameters     | `filePath`, `chatId`, `parentMessageId`                           | identical, via `--file`/`--chat`/`--parent` (relative `--file` resolves against the workspace dir, as in the MCP tool)                                      | none                                                       |
-| `push_to_agent` parameters | `chatId`, `message`                                               | identical, via `--chat`/`--message`/`--message-file`                                                                                                        | message gains `--message-file`/stdin for long instructions |
+| `push` parameters | `chatId`, `message`                                               | identical, via `--chat`/`--message`/`--message-file`                                                                                                        | message gains `--message-file`/stdin for long instructions |
 | chatId format pre-check    | `getChatIdValidationError(chatId)` in every entry handler (#1641) | identical check in every subcommand (part 11) — all five pre-import via the twin in the channel CLI; `send_card` re-runs the exported helper post-import (part 5) | none                                                       |
 | Capability gating          | MCP layer gates on `supportedMcpTools` per chat                   | **not** gated here — the agent invokes the CLI at its own discretion                                                                                        | see open item below                                        |
 | Logging                    | pino → stdout (in-process, acceptable)                            | pino → **stderr** for the call's duration (stdout reserved for the result JSON)                                                                             | none functionally                                          |
@@ -244,19 +248,19 @@ exactly like `send_text`. Parameters map 1:1 via `--chat`/`--question`/
 (`packages/primary-node/src/channels/channel-descriptors.ts`). A CLI is invoked at the
 agent's discretion, so moving to a CLI loses that per-chat capability filter
 unless it is re-imposed elsewhere. The `send_text` / `send_file` / `send_card` /
-`push_to_agent` migrations do **not** re-impose it; the inventory flags this as open question 2
+`push` migrations do **not** re-impose it; the inventory flags this as open question 2
 (`docs/mcp-server-inventory.md`). Resolving it consistently across all 5 tools is
 left to a later part of #4459 once the full surface is migrated.
 
-**`push_to_agent` (part 6) parity** — its MCP entry handler
+**`push` (part 6) parity** — its MCP entry handler
 the former channel-mcp entry handler was the bare first-party
-`push_to_agent` function preceded only by a `getChatIdValidationError(chatId)`
+`push` function preceded only by a `getChatIdValidationError(chatId)`
 format check. Parts 3–6 initially **deferred** the chatId _format_ check to a
 presence-only validation (an ill-formed id was still rejected, but by the
 transport layer rather than up front) — the deferred-parity item `send_text`
 carried. **Part 11 closed that delta**: every subcommand now runs the same
 format pre-check as the handlers before any import (`parseChatId` in the
-channel CLI). No card/table/image transforms apply to `push_to_agent`, so unlike
+channel CLI). No card/table/image transforms apply to `push`, so unlike
 `send_card` it needs no extra helper exports.
 
 **#4521 chatId pre-check ruling (#4532 acceptance, explicit — migration is not

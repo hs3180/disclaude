@@ -34,7 +34,7 @@ npm run launchd:uninstall # Remove plist and stop service
 # === CLI usage (Issue #4601: --prompt / feishu subcommands were removed) ===
 npx tsx packages/primary-node/src/cli.ts start               # Start the Primary Node (Feishu bot + REST API)
 npx tsx packages/primary-node/src/cli.ts start --api-port 9200 --api-token <token>
-# `disclaude start` / `disclaude mcp` route through bin/disclaude.js; disclaude-push is packages/primary-node/src/push-cli.ts
+# `disclaude start` / `disclaude channel` route through bin/disclaude.js
 # There is NO single-prompt CLI mode anymore — run tests (vitest) or the REST /api/push route instead.
 ```
 
@@ -45,7 +45,7 @@ Disclaude is a multi-platform AI agent bot bridging messaging platforms (Feishu/
 | Package | Purpose |
 |---------|---------|
 | `packages/core` | Config, agents (base/message-builder), IPC (REST), channels abstraction, scheduling, SDK provider layer |
-| `packages/primary-node` | Primary Node runtime: Feishu channel + bot, ChatAgent pool, REST API (`--api-port`), `push-cli` |
+| `packages/primary-node` | Primary Node runtime: Feishu channel + bot, ChatAgent pool, REST API (`--api-port`) |
 | `packages/channel-cli` | Channel messaging tools and CLI, talks to Primary Node over REST |
 | `packages/voice-orchestrator` | Voice intent snapshot store (MVP foundation) |
 
@@ -53,7 +53,6 @@ Disclaude is a multi-platform AI agent bot bridging messaging platforms (Feishu/
 
 - **`bin/disclaude.js`** - Unified CLI router: `disclaude start` → `packages/primary-node/src/cli.ts`, `disclaude channel` → `packages/channel-cli/src/cli.ts`
 - **`packages/primary-node/src/cli.ts`** - Primary Node entry; only subcommand is `start` (+ `--config` / `--api-port` / `--api-token`)
-- **`packages/primary-node/src/push-cli.ts`** - `disclaude-push` external push CLI (REST-only, POST /api/push)
 
 ### Core Architecture
 
@@ -152,7 +151,7 @@ Conversation history is managed by `packages/primary-node/src/agents/history-man
 
 #### `packages/channel-cli/` - Channel Tool Implementations
 
-First-party channel tool implementations (`send_text`, `send_file`, `send_card`, `send_interactive`, `push_to_agent`) are owned by the channel CLI. Agents invoke them through the `disclaude channel` command. The tools communicate with the Primary Node **over REST** (`RestIpcClient`).
+First-party channel tool implementations (`send_text`, `send_file`, `send_card`, `send_interactive`, `push`) are owned by the channel CLI. Agents invoke them through the `disclaude channel` command. The tools communicate with the Primary Node **over REST** (`RestIpcClient`).
 
 The external-MCP-server loader (config `tools.mcpServers`) was **removed** (#4459 Scope 4). External tools migrate to CLI Skills — see `docs/skill-format-spec.md`, `skills/channel/`, and `skills/browser-use/`.
 
@@ -197,7 +196,6 @@ Chat agents default to `bypassPermissions` (`packages/primary-node/src/agents/fa
 - **Binaries** (root `package.json` `bin`):
   - `disclaude` → `bin/disclaude.js` (subcommand router)
   - `disclaude-primary` → `packages/primary-node/dist/cli.js`
-  - `disclaude-push` → `packages/primary-node/dist/push-cli.js`
 
 ### Testing
 
@@ -334,7 +332,7 @@ curl -X POST http://localhost:9200/api/push -H 'Authorization: Bearer <token>' \
 #    Docker: docker compose up -d --build
 ```
 
-There is **no single-prompt CLI mode** anymore (`--prompt` / `feishu` subcommands were removed; `runOnce()` exists on ChatAgent but no CLI flag exposes it). Use vitest for code-level verification and the REST `/api/push` route (or `disclaude-push`) for end-to-end agent turns against a running service.
+There is **no single-prompt CLI mode** anymore (`--prompt` / `feishu` subcommands were removed; `runOnce()` exists on ChatAgent but no CLI flag exposes it). Use vitest for code-level verification and the REST `/api/push` route (or `disclaude channel push`) for end-to-end agent turns against a running service.
 
 ## Working Directory
 
