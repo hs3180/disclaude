@@ -80,10 +80,15 @@ export async function isIpcAvailable(): Promise<boolean> {
   const baseUrl = resolveRestBaseUrl();
   const apiToken = resolveRestApiToken();
   try {
-    // Issue #4810/#4801: the probe and the real sends must share the token
-    // wiring, else a token-enabled primary reports "available" via the
-    // token-exempt GET /api/ping probe while POSTs 401. When a token is
-    // configured, attach it here too so the probe reflects authenticated state.
+    // Issue #4801: attach the same token the real sends use, so the probe
+    // never diverges from them on the wiring it exercises.
+    //
+    // Caveat — this does NOT fix the false-liveness case on its own:
+    // `http-api-server.ts` exempts every GET from auth (`req.method !== 'GET'
+    // && this.config.apiToken`), so `GET /api/ping` answers 200 even with a
+    // wrong token, while POSTs 401. Detecting a misconfigured token needs a
+    // non-GET probe (or a server-side change); until then this header is
+    // forward-compatible only.
     const headers: Record<string, string> = {};
     if (apiToken) {
       headers.authorization = `Bearer ${apiToken}`;
