@@ -498,7 +498,13 @@ export function buildChromiumArguments() {
     '--disable-sync',
     'about:blank',
   ];
-  if (resolveChromiumHeadless()) args.push('--headless=new');
+  if (resolveChromiumHeadless()) {
+    args.push('--headless=new');
+  } else {
+    // Match the manual `--start-maximized` invocation (Issue #4807) so the
+    // headed service window + visible profile behave identically.
+    args.push('--start-maximized');
+  }
   return args;
 }
 
