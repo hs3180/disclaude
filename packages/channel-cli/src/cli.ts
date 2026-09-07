@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 /** Typed, distributable entry point for the channel CLI. */
 import { existsSync, readFileSync } from 'node:fs';
+import { CHANNEL_CLI_HELP, REST_IPC_DEFAULT_BASE_URL } from '@disclaude/core';
 import type { ActionPromptMap, InteractiveOption } from './tools/types.js';
-
-import { REST_IPC_DEFAULT_BASE_URL } from '@disclaude/core';
 
 const DEFAULT_REST_BASE_URL = REST_IPC_DEFAULT_BASE_URL;
 const CHAT_ID_PATTERNS = [
@@ -25,29 +24,10 @@ const COMMAND_FLAGS: Record<string, string[]> = {
   send_interactive: ['question', 'question-file', 'options', 'action-prompts', 'title', 'context'],
 };
 
-export const HELP = `channel Skill / Disclaude channel CLI
-
-Usage:
-  disclaude channel <command> [options]
-
-Commands:
-  send_text        Send plain text (--text, --text-file, or stdin).
-  send_file        Send a file (--file).
-  send_card        Send a display-only card (--card, --card-file, or stdin).
-  push             Push an instruction to a chat agent.
-  send_interactive Send an interactive card with clickable buttons.
-  help             Show this help message.
-
-Common options:
-  --chat <id>      Target chat ID (oc_..., ou_..., or cli-...).
-  --parent <id>   Optional parent message ID.
-  --base-url <url> PrimaryNode REST URL (default: http://localhost:19200).
-  --api-token <t>  Bearer token when the primary runs with --api-token.
-
-Unknown options are rejected and named; each command accepts only its own
-flags plus the common ones above.
-
-Output: one JSON result object on stdout; diagnostics are written to stderr.`;
+// Issue #4705: single source of truth shared with the message builder's
+// in-prompt channel CLI guidance (CHANNEL_CLI_HELP in @disclaude/core), so the
+// CLI's `help` output and the agent prompt can't drift apart.
+export const HELP = CHANNEL_CLI_HELP;
 
 type Args = { _: string[]; [key: string]: string | string[] | undefined };
 type ToolResult = { success?: boolean; error?: string; message?: string };
