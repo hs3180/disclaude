@@ -5,7 +5,6 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "bin": { "disclaude-channel": "./dist/cli.js" },
   "exports": { ".": { "import": "./dist/index.js", "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
   "scripts": { "build": "tsc -b", "type-check": "tsc --noEmit" },
   "dependencies": { "@disclaude/core": "*", "js-yaml": "^4.1.0" },
