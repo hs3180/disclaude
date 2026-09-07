@@ -226,11 +226,14 @@ async function buildFileDestination(
       size,
       limit: { count: keepCount }, // keep N-1 rotated files in addition to the current one
       mkdir: true,
-      // pino-roll never writes the bare `file` path — it appends `.<n>` to it,
-      // producing disclaude-combined.log.1, .2, ... The stable consumers of
-      // this log (filebeat.yml, scripts/launchd.mjs `tail`) watch the bare
-      // path, so without a symlink turning rotation on silently orphans them.
-      // `symlink: true` keeps <logDir>/current.log pointed at the live file.
+      // pino-roll never writes the bare `file` path. It splits the trailing
+      // extension off and inserts the sequence number before it, producing
+      // disclaude-combined.1.log, .2.log, ... (verified against pino-roll
+      // 4.0.0 — note the number goes *before* `.log`, not after). The stable
+      // consumers of this log (filebeat.yml, scripts/launchd.mjs `tail`) watch
+      // a fixed path, so without a symlink turning rotation on silently
+      // orphans them. `symlink: true` keeps <logDir>/current.log pointed at
+      // the live file.
       symlink: true
     };
     if (frequency) {
@@ -238,7 +241,24 @@ async function buildFileDestination(
     }
     // pino-roll's default export is an async builder resolving to a rotating
     // SonicBoom. initLogger() awaits it, so the long-running service stays safe.
-    const dest = await pinoRoll(rollOpts);
+    //
+    // pino-roll builds the symlink with a *relative* target, so symlinkSync()
+    // throws ENOENT if the log directory does not exist yet. mkdirSync() above
+    // normally rules that out, but a racing rmdir or a log volume remounted
+    // empty would take the whole file destination down with it. The symlink is
+    // a convenience for fixed-path consumers, not a prerequisite for logging —
+    // degrade to an unlinked rotation rather than falling all the way back to
+    // stdout.
+    let dest: unknown;
+    try {
+      dest = await pinoRoll(rollOpts);
+    } catch (symlinkError) {
+      console.warn(
+        'Log rotation symlink failed, retrying without it (filebeat still globs the numbered files):',
+        symlinkError
+      );
+      dest = await pinoRoll({ ...rollOpts, symlink: false });
+    }
     return dest as NodeJS.WritableStream;
   }
 

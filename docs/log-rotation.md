@@ -34,13 +34,14 @@ out of the box. E.g. `LOG_ROTATE_SIZE=50m LOG_ROTATE_LIMIT=3` keeps at most
 > old files are removed eagerly by the size `limit` — the file set never grows.
 
 > **Filenames change when rotation is on.** pino-roll never writes the bare
-> `disclaude-combined.log`; it writes numbered files
-> `disclaude-combined.log.1`, `.2`, … and keeps a `current.log` symlink in the
-> same directory pointing at the live file. Anything that watches a fixed path
-> must follow `current.log` or glob `disclaude-combined.log.*` — the shipped
-> `filebeat.yml` globs both. `scripts/launchd.mjs logs` tails the bare path, so
-> leave rotation off for launchd installs (the macOS path uses newsyslog,
-> Option B).
+> `disclaude-combined.log`. It splits the trailing extension off and inserts
+> the sequence number *before* it, so the files on disk are
+> `disclaude-combined.1.log`, `disclaude-combined.2.log`, … — **not**
+> `disclaude-combined.log.1`. A `current.log` symlink in the same directory
+> points at the live file. Anything watching a fixed path must follow
+> `current.log` or glob `disclaude-combined.*.log`; the shipped `filebeat.yml`
+> covers both, and `scripts/launchd.mjs logs` falls back to `current.log` when
+> the bare path is absent.
 
 Manual smoke check:
 
@@ -48,7 +49,7 @@ Manual smoke check:
 npm run build
 LOG_TO_FILE=true LOG_DIR=/tmp/lrot LOG_ROTATE=true LOG_ROTATE_SIZE=1m \
   npx tsx packages/primary-node/src/cli.ts start --api-port 19200   # watch /tmp/lrot
-ls -la /tmp/lrot   # expect disclaude-combined.log.1/.2 plus a current.log symlink
+ls -la /tmp/lrot   # expect disclaude-combined.1.log/.2.log plus a current.log symlink
 ```
 
 ---
