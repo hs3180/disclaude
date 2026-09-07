@@ -323,6 +323,14 @@ describe('buildChannelCliHelpGuidance', () => {
     expect(CHANNEL_CLI_HELP).toContain(REST_IPC_DEFAULT_BASE_URL);
   });
 
+  // PR #4803 added this paragraph to the CLI's own help. Nothing asserted it, so
+  // aliasing `HELP = CHANNEL_CLI_HELP` would have silently dropped it while CI
+  // stayed green: the `rejectUnknownFlags` behaviour survives, its documentation
+  // does not. Guard the text so the next same-shaped drift fails loudly.
+  it('CHANNEL_CLI_HELP documents that unknown flags are rejected', () => {
+    expect(CHANNEL_CLI_HELP).toContain('Unknown options are rejected and named');
+  });
+
   it('should include the canonical command vocabulary', () => {
     const result = buildChannelCliHelpGuidance();
     expect(result).toContain('Channel CLI');

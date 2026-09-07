@@ -38,6 +38,9 @@ Common options:
   --base-url <url> PrimaryNode REST URL (default: ${REST_IPC_DEFAULT_BASE_URL}).
   --api-token <t>  Bearer token when the primary runs with --api-token.
 
+Unknown options are rejected and named; each command accepts only its own
+flags plus the common ones above.
+
 Output: one JSON result object on stdout; diagnostics are written to stderr.`;
 
 /** The full send_* command vocabulary, used when a caller does not narrow it. */

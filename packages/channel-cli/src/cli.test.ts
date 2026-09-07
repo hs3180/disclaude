@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { HELP, run } from './cli.js';
 
@@ -68,5 +69,84 @@ describe('@disclaude/channel-cli', () => {
     }
     // Not normalised to push_to_agent — the user typed `pushx`.
     expect(errs.join('')).toContain('Unknown command: pushx');
+  });
+
+  // Issue #4788, second root cause: unknown flags used to be stored and to eat
+  // the following argv entry, so the run failed later on the argument that got
+  // swallowed rather than on the flag that was wrong.
+  describe('unknown flag rejection', () => {
+    const CHAT = 'oc_0123456789012345678901234567890123';
+
+    it('names the bad flag instead of failing on the argument it swallowed', async () => {
+      const { code, writes } = await capture([
+        'send_interactive', '--chat', CHAT,
+        '--payload', '{"content":{}}',
+        '--question', 'q',
+        '--options', '[{"text":"a","value":"a"}]',
+      ]);
+      expect(code).toBe(1);
+      expect(writes).toHaveLength(1);
+      const result = JSON.parse(writes[0]);
+      expect(result).toMatchObject({ ok: false, command: 'send_interactive', error: 'Unknown option: --payload' });
+      // The old behaviour: --payload consumed its value and the run continued to
+      // die on the input it no longer had.
+      expect(result.error).not.toContain('Missing question content');
+      expect(result.hint).toContain('--question');
+    });
+
+    it('rejects a flag that belongs to a different command', async () => {
+      // --text is real, just not for send_file; a per-command whitelist catches
+      // this where a global flag list would not.
+      const { writes } = await capture(['send_file', '--chat', CHAT, '--file', './a.txt', '--text', 'hi']);
+      expect(JSON.parse(writes[0])).toMatchObject({ ok: false, command: 'send_file', error: 'Unknown option: --text' });
+    });
+
+    it('lists every unknown flag, pluralised', async () => {
+      const { writes } = await capture(['send_text', '--chat', CHAT, '--text', 'hi', '--foo', '1', '--bar', '2']);
+      expect(JSON.parse(writes[0]).error).toBe('Unknown options: --foo, --bar');
+    });
+
+    it('reports a misspelled --chat as the unknown flag, not as a missing one', async () => {
+      const { writes } = await capture(['send_text', '--caht', CHAT, '--text', 'hi']);
+      const result = JSON.parse(writes[0]);
+      expect(result.error).toBe('Unknown option: --caht');
+      expect(result.error).not.toContain('Missing required option');
+    });
+
+    it('accepts every flag the command actually reads', async () => {
+      // Nothing here is rejected, so the run gets past parsing and fails on the
+      // unreachable REST endpoint instead — proving the whitelist is not too tight.
+      const { writes } = await capture([
+        'send_interactive', '--chat', CHAT, '--parent', 'om_x', '--base-url', 'http://127.0.0.1:1',
+        '--api-token', 't', '--question', 'q', '--options', '[{"text":"a","value":"a"}]',
+        '--action-prompts', '{"a":"p"}', '--title', 'T', '--context', 'C',
+      ]);
+      expect(JSON.parse(writes[0]).error).not.toContain('Unknown option');
+    });
+
+    it('keeps --help working alongside a command', async () => {
+      const { writes } = await capture(['send_text', '--chat', CHAT, '--text', 'hi', '--help']);
+      expect(JSON.parse(writes[0]).error ?? '').not.toContain('Unknown option');
+    });
+
+    it('whitelists every flag the README documents', async () => {
+      // Guards the direction that actually breaks users: a flag the docs promise
+      // but the whitelist omits is now a hard rejection, not a silent no-op. The
+      // README table is the published contract, so read it rather than restate it.
+      const readme = await readFile(new URL('../../../skills/channel/README.md', import.meta.url), 'utf8');
+      const row = readme.split('\n').find((line) => line.startsWith('| `send_interactive`'));
+      expect(row).toBeDefined();
+      const documented = [...(row as string).matchAll(/`--([a-z][a-z0-9-]*)/g)].map((m) => m[1]);
+      expect(documented.length).toBeGreaterThan(0);
+      // Serial, not Promise.all: run() shares a module-level `emitted` flag and
+      // swaps the global process.stdout.write, so concurrent runs interleave
+      // their output into one capture and starve the others.
+      const rejected: string[] = [];
+      for (const flag of documented) {
+        const { writes } = await capture(['send_interactive', '--chat', CHAT, `--${flag}`, 'x']);
+        if (String(JSON.parse(writes[0]).error).startsWith('Unknown option')) {rejected.push(`--${flag}`);}
+      }
+      expect(rejected).toEqual([]);
+    });
   });
 });

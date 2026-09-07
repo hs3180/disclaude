@@ -10,6 +10,19 @@ const CHAT_ID_PATTERNS = [
   { prefix: 'ou_', label: 'Feishu user (p2p chat)', minLength: 35 },
   { prefix: 'cli-', label: 'CLI session', minLength: 5 },
 ];
+// Issue #4788 (second root cause): parseArgs used to store every `--foo` it saw
+// and silently consume the next argv entry as its value. A misspelled or invented
+// flag therefore ate a real argument and surfaced as a confusing downstream error
+// (`--payload '{...}'` swallowed the payload, then failed with "Missing question
+// content"). These lists let the CLI name the bad flag instead.
+const COMMON_FLAGS = ['chat', 'parent', 'base-url', 'api-token'];
+const COMMAND_FLAGS: Record<string, string[]> = {
+  send_text: ['text', 'text-file', 'mentions'],
+  send_file: ['file'],
+  send_card: ['card', 'card-file'],
+  push_to_agent: ['message', 'message-file'],
+  send_interactive: ['question', 'question-file', 'options', 'action-prompts', 'title', 'context'],
+};
 
 // Issue #4705: single source of truth shared with the message builder's
 // in-prompt channel CLI guidance (CHANNEL_CLI_HELP in @disclaude/core), so the
@@ -42,6 +55,20 @@ function parseArgs(argv: string[]): Args {
   return args;
 }
 function arg(args: Args, key: string): string | undefined { return typeof args[key] === 'string' ? args[key] as string : undefined; }
+/**
+ * Reject flags the command does not read, so a typo fails at the flag instead of
+ * at the argument it silently swallowed (issue #4788, step 1 of the repro chain).
+ * Returns true when the caller should stop; the failure is already emitted.
+ */
+function rejectUnknownFlags(command: string, args: Args): boolean {
+  const allowed = new Set([...COMMON_FLAGS, ...(COMMAND_FLAGS[command] ?? [])]);
+  const unknown = Object.keys(args).filter((key) => key !== '_' && key !== 'help' && !allowed.has(key));
+  if (unknown.length === 0) {return false;}
+  const listed = unknown.map((key) => `--${key}`).join(', ');
+  const valid = [...allowed].sort().map((key) => `--${key}`).join(', ');
+  emitFail(command, `Unknown option${unknown.length > 1 ? 's' : ''}: ${listed}`, `${command} accepts: ${valid}`);
+  return true;
+}
 function readStdin(): string | undefined {
   if (process.stdin.isTTY) {return undefined;}
   try { return readFileSync(0, 'utf8'); } catch { return undefined; }
@@ -220,8 +247,13 @@ export async function run(argv: string[]): Promise<number> {
   // command name so the stdout JSON contract (`command` field) is unchanged.
   const command = invokedAs === 'push' ? 'push_to_agent' : invokedAs;
   const args = parseArgs(argv.slice(1));
-  const commands = ['send_text', 'send_file', 'send_card', 'push_to_agent', 'send_interactive'];
+  // Derived from COMMAND_FLAGS so a new command cannot be routable yet have no
+  // flag whitelist (which would reject every one of its own options).
+  const commands = Object.keys(COMMAND_FLAGS);
   if (!commands.includes(command)) { process.stderr.write(`Unknown command: ${invokedAs}\n`); process.stdout.write(`${HELP}\n`); return 1; }
+  // Before chat validation: a mistyped `--chat` shows up as an unknown flag, and
+  // naming it beats the generic "Missing required option --chat" it would cause.
+  if (rejectUnknownFlags(command, args)) {return 1;}
   const chat = validateChat(command, args);
   if (!chat) {return 1;}
   return execute(command, args, chat, setupRest(args));
