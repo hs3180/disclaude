@@ -124,6 +124,21 @@ The resolved value is presence- **and format**-checked up front
 (`oc_`/`ou_` ≥ 35 chars, `cli-` ≥ 5 — matching the former MCP entry-handler
 rules, #1641); an ill-formed id fails before the send operation (part 11).
 
+**Unknown options are rejected** (#4788). Each command accepts only the flags in
+its row above plus the common `--base-url` / `--api-token`; anything else fails
+immediately and names the offending flag:
+
+```console
+$ disclaude channel send_interactive --chat oc_xxx --payload '{"content":{}}'
+{"ok":false,"command":"send_interactive","error":"Unknown option: --payload","hint":"send_interactive accepts: --action-prompts, --api-token, ..."}
+```
+
+Previously an unrecognised flag was stored and its following argv entry consumed
+as the value, so `--payload '{...}'` swallowed the payload and the run died later
+with `Missing question content` — pointing at the wrong thing. A misspelled
+`--chat` now reports `Unknown option: --caht` rather than
+`Missing required option --chat`.
+
 **Text input** — `--text "<string>"` for short content; `--text-file <path>` (or
 `--text-file -` to read stdin explicitly) for larger bodies; or pipe on stdin
 when no `--text`/`--text-file` is given and stdin is not a TTY. `push`
