@@ -8,14 +8,19 @@
  * - Child loggers with context binding
  * - Sensitive data redaction
  *
- * Issue #3416: Application-level log rotation (pino-roll) removed.
- * Use system-level tools (logrotate / newsyslog) for rotation.
+ * Issue #3416: Application-level log rotation was removed in favor of system
+ * tools. Restored opt-in in #4777 because Docker containers have no system
+ * logrotate and the single file grew unbounded (49GB): LOG_ROTATE /
+ * `logging.rotate` turns on pino-roll size/count rotation. LOG_TO_FILE=tee or
+ * LOG_MIRROR_STDOUT=true mirrors the file log to stdout for `docker logs`
+ * collection (#4786).
  *
  * @module utils/logger
  */
 
 import pino, { Logger, Level, LoggerOptions } from 'pino';
 import { PassThrough } from 'node:stream';
+import pinoRoll from 'pino-roll';
 
 // Re-export Logger type for consumers
 export type { Logger } from 'pino';
@@ -39,6 +44,10 @@ export interface LoggerConfig {
   fileLogging?: boolean;
   /** Log directory (default: './logs') */
   logDir?: string;
+  /** Rotate the file log by size/count via pino-roll (#4777). Default: off. */
+  rotate?: boolean;
+  /** Mirror file logs to stdout for docker logs / container log collection (#4786). Default: off. */
+  mirror?: boolean;
   /** Fields to redact from logs */
   redact?: string[];
   /** Additional metadata to include in all logs */
@@ -73,9 +82,20 @@ let rootLogger: Logger | null = null;
  * pipes to the current destination.
  */
 let logPassthrough: PassThrough | null = null;
+// The writables `logPassThrough` currently pipes to. All child loggers write
+// into the same PassThrough, so initLogger() can switch the whole tree onto a
+// rotating/mirrored destination after the fact by detaching these and piping
+// fresh targets (see initLogger() / #4777 + #4786).
+let passthroughTargets: NodeJS.WritableStream[] = [];
 // pino.destination() returns SonicBoom (a NodeJS.WritableStream)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let currentLogDest: any = null;
+// Track the underlying file stream so closeLogger()/resetLogger() can flush
+// and release the file handle regardless of which path created it. This is
+// set by BOTH initLogger() (long-running service) and the sync passthrough
+// path (createLogger/getRootLogger). Without it, a pino-roll destination
+// created in initLogger() would never be destroyed on shutdown.
+let activeFileDest: NodeJS.WritableStream | null = null;
 // Recursion guard for error handlers that may try to log during flush
 let flushInProgress = false;
 
@@ -92,11 +112,21 @@ export function resetLogger(): void {
     logPassthrough.destroy();
     logPassthrough = null;
   }
+  passthroughTargets = [];
   // Destroy the underlying file stream to release file handles.
   if (currentLogDest && typeof currentLogDest.destroy === 'function') {
     currentLogDest.destroy();
   }
   currentLogDest = null;
+  // Destroy the file destination created by initLogger() (possibly a pino-roll
+  // rotating SonicBoom) so the handle is released on shutdown.
+  if (activeFileDest) {
+    const fd = activeFileDest as unknown as { destroy: () => void };
+    if (typeof fd.destroy === 'function') {
+      fd.destroy();
+    }
+  }
+  activeFileDest = null;
   rootLogger = null;
 }
 
@@ -108,6 +138,111 @@ function isDevelopment(): boolean {
 }
 
 /**
+ * True when file logging is active, i.e. LOG_TO_FILE is 'true' or 'tee'.
+ *
+ * 'tee' (Issue #4786) additionally mirrors the file log to stdout/stderr so
+ * `docker logs` / the Docker json-file driver can collect diagnostics even
+ * while the app persists logs to a file.
+ */
+function isFileLogMode(): boolean {
+  const v = process.env.LOG_TO_FILE;
+  return v === 'true' || v === 'tee';
+}
+
+/**
+ * Resolve the stdout mirror flag.
+ *
+ * Precedence: LOG_TO_FILE=tee > LOG_MIRROR_STDOUT env > config value > false.
+ * The mirror keeps `docker logs` working when LOG_TO_FILE=true (Issue #4786).
+ */
+function resolveMirror(configMirror?: boolean): boolean {
+  if (process.env.LOG_TO_FILE === 'tee') {
+    return true;
+  }
+  const env = process.env.LOG_MIRROR_STDOUT;
+  if (env !== undefined) {
+    return env === 'true' || env === '1';
+  }
+  return configMirror ?? false;
+}
+
+/**
+ * Resolve the rotation flag (Issue #4777).
+ *
+ * Precedence: LOG_ROTATE env (so a Docker `.env` can force rotation on even
+ * when the mounted disclaude.config.yaml still says `logging.rotate: false`)
+ * > config `logging.rotate` value > false.
+ */
+function resolveRotate(configRotate?: boolean): boolean {
+  const env = process.env.LOG_ROTATE;
+  if (env !== undefined) {
+    return env === 'true' || env === '1';
+  }
+  return configRotate ?? false;
+}
+
+/**
+ * Build the file log destination.
+ *
+ * When rotation is enabled (LOG_ROTATE / logging.rotate), delegates to
+ * pino-roll's rotating SonicBoom so the file is rolled by size (default 50m)
+ * and old files removed (default keep 3 total). Otherwise falls back to a
+ * synchronous `pino.destination()` (the pre-#3416 reliable path for short-lived
+ * processes).
+ *
+ * Issue #4777: previously this path wrote a single ever-growing
+ * disculaude-combined.log (observed 49GB in Docker) with no cleanup — the
+ * `logging.rotate` config field was never consumed.
+ */
+async function buildFileDestination(
+  logDir: string,
+  rotate: boolean
+): Promise<NodeJS.WritableStream> {
+  try {
+    const logsPath = path.resolve(process.cwd(), logDir);
+    if (!fs.existsSync(logsPath)) {
+      fs.mkdirSync(logsPath, { recursive: true });
+    }
+    const logFile = path.join(logsPath, 'disclaude-combined.log');
+
+  if (rotate) {
+    const size = process.env.LOG_ROTATE_SIZE ?? '50m';
+    const keepTotal = parseInt(process.env.LOG_ROTATE_LIMIT ?? '3', 10);
+    const keepCount = Number.isFinite(keepTotal) && keepTotal > 1 ? keepTotal - 1 : 2;
+    const frequency = process.env.LOG_ROTATE_FREQUENCY;
+    const rollOpts: {
+      file: string;
+      size: string | number;
+      limit: { count: number };
+      frequency?: string | number;
+      mkdir: boolean;
+    } = {
+      file: logFile,
+      size,
+      limit: { count: keepCount }, // keep N-1 rotated files in addition to the current one
+      mkdir: true
+    };
+    if (frequency) {
+      rollOpts.frequency = frequency;
+    }
+    // pino-roll's default export is an async builder resolving to a rotating
+    // SonicBoom. initLogger() awaits it, so the long-running service stays safe.
+    const dest = await pinoRoll(rollOpts);
+    return dest as NodeJS.WritableStream;
+  }
+
+  // sync:true — see setupSyncFilePassthrough() for why async open is unsafe
+  // for short-lived processes ("sonic boom is not ready yet" on exit).
+  return pino.destination({ dest: logFile, sync: true, mkdir: true }) as unknown as NodeJS.WritableStream;
+  } catch (error) {
+    // Matches the pre-existing setupFileLogging() fallback: never crash the
+    // process because the file destination failed — fall back to stdout.
+    console.warn('Failed to setup file logging, falling back to stdout:', error);
+    return process.stdout;
+  }
+}
+
+/**
  * Create a PassThrough stream that pipes to a sync file destination.
  * Used by createLogger() and getRootLogger() for synchronous file logging.
  *
@@ -115,7 +250,7 @@ function isDevelopment(): boolean {
  *          or null if stdout should be used instead.
  */
 function setupSyncFilePassthrough(): { passthrough: PassThrough; dest: NodeJS.WritableStream | ReturnType<typeof pino.destination> } | null {
-  if (process.env.LOG_TO_FILE !== 'true' || process.env.NODE_ENV === 'test') {
+  if (!isFileLogMode() || process.env.NODE_ENV === 'test') {
     return null;
   }
 
@@ -140,8 +275,19 @@ function setupSyncFilePassthrough(): { passthrough: PassThrough; dest: NodeJS.Wr
     console.warn('Log passthrough stream error:', err.message);
   });
 
-  passthrough.pipe(dest as unknown as NodeJS.WritableStream);
-  return { passthrough, dest: dest as unknown as NodeJS.WritableStream };
+  const fileDry = dest as unknown as NodeJS.WritableStream;
+  passthrough.pipe(fileDry);
+  passthroughTargets.push(fileDry);
+  // Mirror (Issue #4786): LOG_TO_FILE=tee or LOG_MIRROR_STDOUT=true duplicates
+  // the file records to stdout so docker logs / the json-file driver can still
+  // capture them without dropping the file copy. Piping the same PassThrough to
+  // process.stdout sends each datum to both writables.
+  if (resolveMirror(false)) {
+    passthrough.pipe(process.stdout);
+    passthroughTargets.push(process.stdout);
+  }
+  activeFileDest = fileDry;
+  return { passthrough, dest: fileDry };
 }
 
 /**
@@ -220,37 +366,6 @@ function getProductionConfig(): LoggerOptions {
 }
 
 /**
- * Setup file logging using pino.destination().
- *
- * Issue #3416: Application-level rotation (pino-roll) removed.
- * The application writes to a single fixed log file. Use system-level
- * tools (logrotate on Linux, newsyslog on macOS) for rotation,
- * compression, and cleanup.
- */
-function setupFileLogging(
-  logDir: string
-): NodeJS.WritableStream {
-  try {
-    // Create logs directory if it doesn't exist
-    const logsPath = path.resolve(process.cwd(), logDir);
-
-    if (!fs.existsSync(logsPath)) {
-      fs.mkdirSync(logsPath, { recursive: true });
-    }
-
-    const logFile = path.join(logsPath, 'disclaude-combined.log');
-    // sync:true — see setupSyncFilePassthrough() for why async open is unsafe
-    // for short-lived processes ("sonic boom is not ready yet" on exit).
-    const dest = pino.destination({ dest: logFile, sync: true, mkdir: true });
-
-    return dest as unknown as NodeJS.WritableStream;
-  } catch (error) {
-    console.warn('Failed to setup file logging, falling back to stdout:', error);
-    return process.stdout;
-  }
-}
-
-/**
  * Create a redaction serializer for sensitive fields
  */
 function createRedactionSerializer(fields: string[] = SENSITIVE_FIELDS) {
@@ -285,7 +400,7 @@ function createRedactionSerializer(fields: string[] = SENSITIVE_FIELDS) {
  * logger.info('Application started');
  * ```
  */
-export function initLogger(config: LoggerConfig = {}): Logger {
+export async function initLogger(config: LoggerConfig = {}): Promise<Logger> {
   const isDev = isDevelopment();
   const logDir = config.logDir ?? process.env.LOG_DIR ?? './logs';
 
@@ -321,22 +436,72 @@ export function initLogger(config: LoggerConfig = {}): Logger {
   // Determine if file logging should be enabled
   const shouldFileLog = (config.fileLogging ?? !isDev) && process.env.NODE_ENV !== 'test';
 
-  if (rootLogger) {
-    // Root logger already exists — update level if changed
-    if (config.level) {
-      rootLogger.level = config.level;
-    }
-    return rootLogger;
+  // Issue #4777: honor `logging.rotate` (and LOG_ROTATE) for real — the flag
+  // previously existed in config but was never consumed here. Issue #4786:
+  // optionally mirror to stdout so docker logs still captures the app log.
+  const rotate = resolveRotate(config.rotate);
+  const mirror = resolveMirror(config.mirror);
+
+  // Reuse the shared PassThrough proxy so already-created child loggers keep
+  // working. Module-scope createLogger('...') calls (e.g. cli-main, channels)
+  // run BEFORE main() calls initLogger(), creating rootLogger over a synchron
+  // non-rotating passthrough. Because every child writes through this one
+  // stream, re-pointing its pipe switches the whole tree onto the final
+  // (rotating/mirrored) destination. Without this, initLogger() would
+  // early-return on the existing rootLogger and rotation would never engage —
+  // exactly the #4777 49GB unbounded-growth bug.
+  let passthrough: PassThrough | null = logPassthrough;
+
+  if (!passthrough) {
+    // First init: create the proxy destination for pino. Every child logger
+    // writes through this single stream.
+    passthrough = new PassThrough();
+    passthrough.on('error', (err: Error) => {
+      console.warn('Log passthrough stream error:', err.message);
+    });
+    logPassthrough = passthrough;
   }
 
-  // Setup file logging for production or if explicitly requested.
-  // setupFileLogging() handles its own errors and falls back to stdout.
-  const primaryStream: NodeJS.WritableStream = shouldFileLog
-    ? setupFileLogging(logDir)
-    : process.stdout;
+  // Detach whatever the passthrough is currently piped to (e.g. the short-lived
+  // sync file dest or an earlier stdout pipe), then attach the final targets.
+  for (const target of passthroughTargets) {
+    passthrough.unpipe(target);
+  }
+  passthroughTargets = [];
+  // Release the module-scope sync file destination that created rootLogger
+  // before initLogger() ran — it is superseded by the rotating destination.
+  // (SonicBoom flushes on exit; this just frees the fd sooner.)
+  if (currentLogDest && currentLogDest !== activeFileDest && typeof currentLogDest.destroy === 'function') {
+    try {
+      currentLogDest.destroy();
+    } catch {
+      // already destroyed
+    }
+  }
+  currentLogDest = null;
 
-  // Create root logger with stream
-  rootLogger = pino(options, primaryStream);
+  if (shouldFileLog) {
+    // Build the file destination. buildFileDestination() handles its own errors
+    // and falls back to stdout. Applies pino-roll rotation when rotate is set.
+    const fileDest = await buildFileDestination(logDir, rotate);
+    activeFileDest = fileDest;
+    passthrough.pipe(fileDest);
+    passthroughTargets.push(fileDest);
+    if (mirror) {
+      // Issue #4786: also hand a copy to stdout for docker logs collection.
+      passthrough.pipe(process.stdout);
+      passthroughTargets.push(process.stdout);
+    }
+  } else {
+    passthrough.pipe(process.stdout);
+    passthroughTargets.push(process.stdout);
+  }
+
+  if (!rootLogger) {
+    rootLogger = pino(options, passthrough);
+  } else if (config.level) {
+    rootLogger.level = config.level;
+  }
 
   return rootLogger;
 }
@@ -477,23 +642,34 @@ export function flushLogger(): Promise<void> {
       }
     }
 
-    // Flush the underlying file stream (SonicBoom) if it has a flush method
-    if (currentLogDest && typeof currentLogDest.flush === 'function' && !currentLogDest.destroyed) {
-      pending.push(
-        new Promise<void>((res) => {
-          currentLogDest.flush((err?: Error | null) => {
-            if (err) {
-              // Use rootLogger when safe, fallback to console.warn during flush
-              if (rootLogger && !flushInProgress) {
-                rootLogger.error({ err }, 'Logger flush error');
-              } else {
-                console.warn('Logger flush error:', err.message);
+    // Collect the underlying file destinations to flush. activeFileDest covers
+    // BOTH the initLogger()-created destination (incl. a pino-roll SonicBoom)
+    // and the sync passthrough path; currentLogDest is its sync-passthrough
+    // alias, so dedupe when they're the same stream.
+    const dests = new Set(
+      [activeFileDest, currentLogDest].filter(Boolean) as NodeJS.WritableStream[]
+    );
+    for (const dest of dests) {
+      const target = dest as unknown as { flush: (cb: (err?: Error | null) => void) => void; destroyed?: boolean };
+      if (typeof target.flush === 'function' && !target.destroyed) {
+        pending.push(
+          new Promise<void>((res) => {
+            // Invoke as a method on `target` (never a detached reference) so
+            // SonicBoom's internal `this` stays bound to the stream.
+            target.flush((err?: Error | null) => {
+              if (err) {
+                // Use rootLogger when safe, fallback to console.warn during flush
+                if (rootLogger && !flushInProgress) {
+                  rootLogger.error({ err }, 'Logger flush error');
+                } else {
+                  console.warn('Logger flush error:', err.message);
+                }
               }
-            }
-            res();
-          });
-        })
-      );
+              res();
+            });
+          })
+        );
+      }
     }
 
     if (pending.length > 0) {

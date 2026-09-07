@@ -169,10 +169,14 @@ export async function main(): Promise<void> {
 
   // Initialize logger with file logging support.
   // When LOG_TO_FILE=true (set by launchd), writes to a single log file.
-  // Issue #3416: Rotation delegated to system-level tools (logrotate / newsyslog).
+  // Issue #4777: `logging.rotate` now takes effect here — when enabled the file
+  // is rolled by size/count via pino-roll (no more unbounded 49GB growth in
+  // Docker, which has no system logrotate). Issue #4786: the stdout mirror
+  // (LOG_TO_FILE=tee / LOG_MIRROR_STDOUT=true) is resolved from env here too.
   const loggingConfig = Config.getLoggingConfig();
   await initLogger({
     level: loggingConfig.level as import('@disclaude/core').LogLevel,
+    rotate: loggingConfig.rotate,
   });
 
   // Issue #3417: Acquire process lock to prevent multiple concurrent instances.

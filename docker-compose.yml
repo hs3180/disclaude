@@ -84,6 +84,21 @@ services:
       # Enable file logging (set LOG_TO_FILE=true in .env when using Filebeat)
       - LOG_TO_FILE=${LOG_TO_FILE:-false}
       - LOG_DIR=/data/logs
+      # Issue #4777: rotate the file log by size/count within the app (pino-roll)
+      # so /data/logs/disclaude-combined.log cannot grow unbounded (was 49GB).
+      # Docker containers have NO system logrotate, so delegating to the host
+      # (docs/log-rotation.md) never ran. Apply size-based rotation + keep a
+      # bounded number of rolled files. Override via .env:
+      #   LOG_ROTATE, LOG_ROTATE_SIZE (default 50m),
+      #   LOG_ROTATE_LIMIT (total files kept, default 3), LOG_ROTATE_FREQUENCY.
+      - LOG_ROTATE=${LOG_ROTATE:-true}
+      - LOG_ROTATE_SIZE=${LOG_ROTATE_SIZE:-50m}
+      - LOG_ROTATE_LIMIT=${LOG_ROTATE_LIMIT:-3}
+      # Issue #4786: mirror the file log to stdout so `docker logs` and the
+      # json-file driver below (max-size 10m / max-file 3) can collect the app
+      # log even with LOG_TO_FILE=true — otherwise docker logs only shows
+      # entrypoint text. The file copy is unaffected (still fully persisted).
+      - LOG_MIRROR_STDOUT=${LOG_MIRROR_STDOUT:-true}
       # Issue #4114: Cap compile parallelism for agent-spawned builds.
       # Override to increase/decrease based on available memory.
       - MAKEFLAGS=${MAKEFLAGS:--j2}
