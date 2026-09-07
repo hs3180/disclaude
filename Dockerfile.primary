@@ -228,7 +228,6 @@ ENTRYPOINT ["docker-entrypoint.sh"]
 
 # Set environment variables
 ENV NODE_ENV=production
-ENV DISCLAUDE_MODE=primary
 ENV CODEX_HOME=/data/codex
 
 # Issue #4114: Cap agent-spawned compile parallelism to prevent OOM from massive cc1plus forks.
