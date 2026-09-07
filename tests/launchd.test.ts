@@ -28,16 +28,39 @@
 //    command (no launchctl, no writes to ~/Library/LaunchAgents).
 
 import { describe, it, expect, afterEach } from 'vitest';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 // Pure helpers exported from launchd.mjs; .mjs has no type declarations and
 // scripts/ is not type-checked.
 // @ts-expect-error — .mjs module without type declarations
-import { buildProgramArguments, resolveApiPort, resolveRestIpcBaseUrl, xmlEscape } from '../scripts/launchd.mjs';
+import {
+  buildChromiumArguments,
+  buildProgramArguments,
+  resolveChromiumAddress,
+  resolveChromiumBinary,
+  resolveChromiumHeadless,
+  resolveChromiumPort,
+  resolveChromiumProfileDir,
+  resolveApiPort,
+  resolveRestIpcBaseUrl,
+  xmlEscape,
+} from '../scripts/launchd.mjs';
 
 const NODE = '/usr/local/bin/node';
 const CAFFEINATE = '/usr/bin/caffeinate';
 
 const savedEnv: Record<string, string | undefined> = {};
-const ENV_KEYS = ['DISCLAUDE_LAUNCHD_API_PORT', 'DISCLAUDE_LAUNCHD_API_TOKEN', 'DISCLAUDE_REST_IPC_BASE_URL'] as const;
+const ENV_KEYS = [
+  'DISCLAUDE_LAUNCHD_API_PORT',
+  'DISCLAUDE_LAUNCHD_API_TOKEN',
+  'DISCLAUDE_REST_IPC_BASE_URL',
+  'CHROMIUM_CDP_PORT',
+  'CHROMIUM_CDP_ADDRESS',
+  'CHROMIUM_CDP_PROFILE_DIR',
+  'CHROMIUM_CDP_HEADED',
+  'CHROMIUM_CDP_BINARY',
+] as const;
 
 afterEach(() => {
   for (const key of ENV_KEYS) {
@@ -153,5 +176,94 @@ describe('xmlEscape (plist safety, #4578 review nit 2)', () => {
     // The exact hazard: --api-token is the first free-text value interpolated
     // into the plist XML; without escaping this yields an unparseable plist.
     expect(xmlEscape('tok&en<x>')).toBe('tok&amp;en&lt;x&gt;');
+  });
+});
+
+describe('chromium-cdp service config (Issue #4807)', () => {
+  it('resolveChromiumPort defaults to 9222', () => {
+    snapshotEnv();
+    expect(resolveChromiumPort()).toBe(9222);
+  });
+
+  it('resolveChromiumPort honours a valid CHROMIUM_CDP_PORT', () => {
+    snapshotEnv();
+    process.env.CHROMIUM_CDP_PORT = '9333';
+    expect(resolveChromiumPort()).toBe(9333);
+  });
+
+  it('resolveChromiumPort rejects out-of-range values (falls back)', () => {
+    snapshotEnv();
+    for (const bad of ['0', '65536', 'abc']) {
+      process.env.CHROMIUM_CDP_PORT = bad;
+      expect(resolveChromiumPort()).toBe(9222);
+    }
+  });
+
+  it('resolveChromiumAddress defaults to IPv4 127.0.0.1 (drift fix)', () => {
+    snapshotEnv();
+    expect(resolveChromiumAddress()).toBe('127.0.0.1');
+  });
+
+  it('resolveChromiumAddress honours CHROMIUM_CDP_ADDRESS', () => {
+    snapshotEnv();
+    process.env.CHROMIUM_CDP_ADDRESS = '0.0.0.0';
+    expect(resolveChromiumAddress()).toBe('0.0.0.0');
+  });
+
+  it('resolveChromiumProfileDir defaults to a persistent path', () => {
+    snapshotEnv();
+    expect(resolveChromiumProfileDir()).toContain(
+      'Library/Application Support/disclaude/chromium-cdp'
+    );
+    expect(resolveChromiumProfileDir()).not.toContain('/tmp');
+  });
+
+  it('resolveChromiumProfileDir honours CHROMIUM_CDP_PROFILE_DIR (.env source)', () => {
+    snapshotEnv();
+    process.env.CHROMIUM_CDP_PROFILE_DIR = '/custom/profile';
+    expect(resolveChromiumProfileDir()).toBe('/custom/profile');
+  });
+
+  it('resolveChromiumHeadless defaults to headless (true)', () => {
+    snapshotEnv();
+    expect(resolveChromiumHeadless()).toBe(true);
+  });
+
+  it('resolveChromiumHeadless is false when CHROMIUM_CDP_HEADED=1', () => {
+    snapshotEnv();
+    process.env.CHROMIUM_CDP_HEADED = '1';
+    expect(resolveChromiumHeadless()).toBe(false);
+  });
+
+  it('resolveChromiumBinary returns CHROMIUM_CDP_BINARY when it exists', () => {
+    snapshotEnv();
+    const dir = mkdtempSync(join(tmpdir(), 'launchd-chromium-'));
+    const bin = join(dir, 'chrome');
+    writeFileSync(bin, '#!/bin/sh\n');
+    process.env.CHROMIUM_CDP_BINARY = bin;
+    expect(resolveChromiumBinary()).toBe(bin);
+  });
+
+  it('buildChromiumArguments uses persistent profile + stable IPv4 endpoint', () => {
+    snapshotEnv();
+    const args = buildChromiumArguments();
+    expect(args).toContain('--remote-debugging-port=9222');
+    expect(args).toContain('--remote-debugging-address=127.0.0.1');
+    expect(
+      args.some((a) => a.startsWith('--user-data-dir=') && a.includes('disclaude/chromium-cdp'))
+    ).toBe(true);
+    expect(args).toContain('--headless=new');
+  });
+
+  it('buildChromiumArguments honours port/profile overrides and headed mode', () => {
+    snapshotEnv();
+    process.env.CHROMIUM_CDP_PORT = '9444';
+    process.env.CHROMIUM_CDP_PROFILE_DIR = '/x/profile';
+    process.env.CHROMIUM_CDP_HEADED = '1';
+    const args = buildChromiumArguments();
+    expect(args).toContain('--remote-debugging-port=9444');
+    expect(args).toContain('--user-data-dir=/x/profile');
+    // headed mode must NOT pass --headless=new
+    expect(args).not.toContain('--headless=new');
   });
 });

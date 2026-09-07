@@ -5,6 +5,7 @@
  * Routes subcommands to the appropriate package CLI:
  *   disclaude start [options]  → @disclaude/primary-node
  *   disclaude channel <command> → @disclaude/channel-cli
+ *   disclaude chromium-cdp <cmd> → scripts/launchd.mjs chromium-cdp (Issue #4807)
  *
  * Issue #3928 (part 1): Provides a single `disclaude` command so users can
  * run `npx disclaude start` or `npx disclaude channel ...` without knowing internal
@@ -45,6 +46,7 @@ function showHelp() {
       'Commands:',
       '  start [options]    Start the Primary Node server',
       '  channel <command>  Send channel messages through the PrimaryNode',
+      '  chromium-cdp <cmd> Manage the persistent Chromium CDP launchd service (Issue #4807)',
       '',
       'Global Options:',
       '  --version, -v      Show version number',
@@ -62,8 +64,12 @@ function showHelp() {
 }
 
 const ROUTES = {
-  start: resolve(ROOT, 'packages/primary-node/dist/cli.js'),
-  channel: resolve(ROOT, 'packages/channel-cli/dist/cli.js'),
+  start: { file: resolve(ROOT, 'packages/primary-node/dist/cli.js') },
+  channel: { file: resolve(ROOT, 'packages/channel-cli/dist/cli.js') },
+  // Issue #4807: routes to scripts/launchd.mjs chromium-cdp <cmd>. The launchd
+  // script reads the service selector from argv[2], so we must PRESERVE it in
+  // the forwarded args (launchd.mjs "chromium-cdp" <cmd>), not drop it.
+  'chromium-cdp': { file: resolve(ROOT, 'scripts/launchd.mjs'), keepCommand: true },
 };
 
 if (!command || command === '--help' || command === '-h') {
@@ -76,12 +82,13 @@ if (command === '--version' || command === '-v') {
   process.exit(0);
 }
 
-const target = ROUTES[command];
-if (!target) {
+const route = ROUTES[command];
+if (!route) {
   console.error(`Unknown command: ${command}`);
   console.error("Run 'disclaude --help' for available commands.");
   process.exit(1);
 }
+const target = route.file;
 
 if (!existsSync(target)) {
   console.error(`Error: Target not found at ${target}`);
@@ -89,7 +96,10 @@ if (!existsSync(target)) {
   process.exit(1);
 }
 
-const child = spawn(process.execPath, [target, ...args.slice(1)], {
+// Forward user args. keepCommand routes (chromium-cdp) preserve the command in
+// the forwarded argv because the target parses the service selector there.
+const forwardArgs = route.keepCommand ? [command, ...args.slice(1)] : args.slice(1);
+const child = spawn(process.execPath, [target, ...forwardArgs], {
   stdio: 'inherit',
   env: process.env,
 });
