@@ -42,6 +42,14 @@
     "launchd:restart": "node scripts/launchd.mjs restart",
     "launchd:logs": "node scripts/launchd.mjs logs",
     "launchd:status": "node scripts/launchd.mjs status",
+    "launchd:chromium:generate": "node scripts/launchd.mjs chromium-cdp generate",
+    "launchd:chromium:install": "node scripts/launchd.mjs chromium-cdp install",
+    "launchd:chromium:uninstall": "node scripts/launchd.mjs chromium-cdp uninstall",
+    "launchd:chromium:start": "node scripts/launchd.mjs chromium-cdp start",
+    "launchd:chromium:stop": "node scripts/launchd.mjs chromium-cdp stop",
+    "launchd:chromium:restart": "node scripts/launchd.mjs chromium-cdp restart",
+    "launchd:chromium:logs": "node scripts/launchd.mjs chromium-cdp logs",
+    "launchd:chromium:status": "node scripts/launchd.mjs chromium-cdp status",
     "prepare": "husky"
   },
   "devDependencies": {

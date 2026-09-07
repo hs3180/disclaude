@@ -1,34 +1,33 @@
 #!/usr/bin/env node
 /** Typed, distributable entry point for the channel CLI. */
 import { existsSync, readFileSync } from 'node:fs';
+import { CHANNEL_CLI_HELP, REST_IPC_DEFAULT_BASE_URL } from '@disclaude/core';
 import type { ActionPromptMap, InteractiveOption } from './tools/types.js';
 
-const DEFAULT_REST_BASE_URL = 'http://localhost:19200';
+const DEFAULT_REST_BASE_URL = REST_IPC_DEFAULT_BASE_URL;
 const CHAT_ID_PATTERNS = [
   { prefix: 'oc_', label: 'Feishu group chat', minLength: 35 },
   { prefix: 'ou_', label: 'Feishu user (p2p chat)', minLength: 35 },
   { prefix: 'cli-', label: 'CLI session', minLength: 5 },
 ];
+// Issue #4788 (second root cause): parseArgs used to store every `--foo` it saw
+// and silently consume the next argv entry as its value. A misspelled or invented
+// flag therefore ate a real argument and surfaced as a confusing downstream error
+// (`--payload '{...}'` swallowed the payload, then failed with "Missing question
+// content"). These lists let the CLI name the bad flag instead.
+const COMMON_FLAGS = ['chat', 'parent', 'base-url', 'api-token'];
+const COMMAND_FLAGS: Record<string, string[]> = {
+  send_text: ['text', 'text-file', 'mentions'],
+  send_file: ['file'],
+  send_card: ['card', 'card-file'],
+  push_to_agent: ['message', 'message-file'],
+  send_interactive: ['question', 'question-file', 'options', 'action-prompts', 'title', 'context'],
+};
 
-export const HELP = `channel Skill / Disclaude channel CLI
-
-Usage:
-  disclaude channel <command> [options]
-
-Commands:
-  send_text        Send plain text (--text, --text-file, or stdin).
-  send_file        Send a file (--file).
-  send_card        Send a display-only card (--card, --card-file, or stdin).
-  push             Push an instruction to a chat agent.
-  send_interactive Send an interactive card with clickable buttons.
-  help             Show this help message.
-
-Common options:
-  --chat <id>      Target chat ID (oc_..., ou_..., or cli-...).
-  --parent <id>   Optional parent message ID.
-  --base-url <url> PrimaryNode REST URL (default: http://localhost:19200).
-
-Output: one JSON result object on stdout; diagnostics are written to stderr.`;
+// Issue #4705: single source of truth shared with the message builder's
+// in-prompt channel CLI guidance (CHANNEL_CLI_HELP in @disclaude/core), so the
+// CLI's `help` output and the agent prompt can't drift apart.
+export const HELP = CHANNEL_CLI_HELP;
 
 type Args = { _: string[]; [key: string]: string | string[] | undefined };
 type ToolResult = { success?: boolean; error?: string; message?: string };
@@ -56,6 +55,20 @@ function parseArgs(argv: string[]): Args {
   return args;
 }
 function arg(args: Args, key: string): string | undefined { return typeof args[key] === 'string' ? args[key] as string : undefined; }
+/**
+ * Reject flags the command does not read, so a typo fails at the flag instead of
+ * at the argument it silently swallowed (issue #4788, step 1 of the repro chain).
+ * Returns true when the caller should stop; the failure is already emitted.
+ */
+function rejectUnknownFlags(command: string, args: Args): boolean {
+  const allowed = new Set([...COMMON_FLAGS, ...(COMMAND_FLAGS[command] ?? [])]);
+  const unknown = Object.keys(args).filter((key) => key !== '_' && key !== 'help' && !allowed.has(key));
+  if (unknown.length === 0) {return false;}
+  const listed = unknown.map((key) => `--${key}`).join(', ');
+  const valid = [...allowed].sort().map((key) => `--${key}`).join(', ');
+  emitFail(command, `Unknown option${unknown.length > 1 ? 's' : ''}: ${listed}`, `${command} accepts: ${valid}`);
+  return true;
+}
 function readStdin(): string | undefined {
   if (process.stdin.isTTY) {return undefined;}
   try { return readFileSync(0, 'utf8'); } catch { return undefined; }
@@ -124,6 +137,14 @@ function parseActionPrompts(raw: string | undefined): ActionPromptMap | undefine
 function setupRest(args: Args): string {
   const baseUrl = arg(args, 'base-url') || process.env.DISCLAUDE_REST_IPC_BASE_URL || DEFAULT_REST_BASE_URL;
   process.env.DISCLAUDE_REST_IPC_BASE_URL = baseUrl;
+  // Issue #4801: mirror the PrimaryNode --api-token into the env the REST
+  // client reads, so authenticated writes attach the bearer header. Without
+  // this, a token-enabled primary 401s every channel POST while the probe
+  // still reports "available".
+  const apiToken = arg(args, 'api-token');
+  if (apiToken !== undefined) {
+    process.env.DISCLAUDE_REST_IPC_API_TOKEN = apiToken;
+  }
   return baseUrl;
 }
 function withLogsRedirected<T>(fn: () => Promise<T>): Promise<T> {
@@ -131,7 +152,7 @@ function withLogsRedirected<T>(fn: () => Promise<T>): Promise<T> {
   process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, callback?: (error?: Error | null) => void) => process.stderr.write(chunk, encoding, callback)) as typeof process.stdout.write;
   return fn().finally(() => { process.stdout.write = originalWrite; });
 }
-function restHint(baseUrl: string): string { return `PrimaryNode REST ${baseUrl} unreachable — start the main service (disclaude-primary start --api-port <port>) or pass --base-url / DISCLAIMED_REST_IPC_BASE_URL`.replace('DISCLAUDED', 'DISCLAUDE'); }
+function restHint(baseUrl: string): string { return `PrimaryNode REST ${baseUrl} unreachable — start the main service (disclaude-primary start --api-port <port>) or pass --base-url / DISCLAUDE_REST_IPC_BASE_URL`; }
 async function restIsReachable(baseUrl: string): Promise<boolean> {
   try {
     const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/ping`, {
@@ -226,8 +247,13 @@ export async function run(argv: string[]): Promise<number> {
   // command name so the stdout JSON contract (`command` field) is unchanged.
   const command = invokedAs === 'push' ? 'push_to_agent' : invokedAs;
   const args = parseArgs(argv.slice(1));
-  const commands = ['send_text', 'send_file', 'send_card', 'push_to_agent', 'send_interactive'];
+  // Derived from COMMAND_FLAGS so a new command cannot be routable yet have no
+  // flag whitelist (which would reject every one of its own options).
+  const commands = Object.keys(COMMAND_FLAGS);
   if (!commands.includes(command)) { process.stderr.write(`Unknown command: ${invokedAs}\n`); process.stdout.write(`${HELP}\n`); return 1; }
+  // Before chat validation: a mistyped `--chat` shows up as an unknown flag, and
+  // naming it beats the generic "Missing required option --chat" it would cause.
+  if (rejectUnknownFlags(command, args)) {return 1;}
   const chat = validateChat(command, args);
   if (!chat) {return 1;}
   return execute(command, args, chat, setupRest(args));

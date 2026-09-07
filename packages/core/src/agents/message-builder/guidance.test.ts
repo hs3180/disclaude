@@ -16,6 +16,11 @@ import {
   buildTaskRecordGuidance,
   buildLocationAwarenessGuidance,
 } from './guidance.js';
+import {
+  CHANNEL_CLI_HELP,
+  buildChannelCliHelpGuidance,
+} from './channel-cli-help.js';
+import { REST_IPC_DEFAULT_BASE_URL } from '../../ipc/rest-ipc-client.js';
 
 describe('buildChatHistorySection', () => {
   it('should return empty string when no context is provided', () => {
@@ -292,5 +297,77 @@ describe('buildTaskRecordGuidance', () => {
   it('should mention creating file if not exists', () => {
     const result = buildTaskRecordGuidance();
     expect(result).toContain('Create the file if it does not exist');
+  });
+});
+
+// Issue #4705: canonical channel CLI help exposed to the agent prompt, kept in
+// sync with the CLI's own `help` output (single source of truth).
+describe('buildChannelCliHelpGuidance', () => {
+  it('CHANNEL_CLI_HELP includes every command (the source of truth)', () => {
+    expect(CHANNEL_CLI_HELP).toContain('send_text');
+    expect(CHANNEL_CLI_HELP).toContain('send_file');
+    expect(CHANNEL_CLI_HELP).toContain('send_card');
+    expect(CHANNEL_CLI_HELP).toContain('send_interactive');
+    // `push` is the agent-facing spelling; `push_to_agent` is the internal
+    // canonical name and must not leak into user-facing help.
+    expect(CHANNEL_CLI_HELP).toMatch(/^\s*push\s+Push an instruction/m);
+    expect(CHANNEL_CLI_HELP).not.toContain('push_to_agent');
+  });
+
+  it('CHANNEL_CLI_HELP does not advertise the removed disclaude-channel bin', () => {
+    expect(CHANNEL_CLI_HELP).not.toContain('disclaude-channel');
+    expect(CHANNEL_CLI_HELP).toContain('disclaude channel <command> [options]');
+  });
+
+  it('CHANNEL_CLI_HELP sources its default base URL from the shared constant', () => {
+    expect(CHANNEL_CLI_HELP).toContain(REST_IPC_DEFAULT_BASE_URL);
+  });
+
+  // PR #4803 added this paragraph to the CLI's own help. Nothing asserted it, so
+  // aliasing `HELP = CHANNEL_CLI_HELP` would have silently dropped it while CI
+  // stayed green: the `rejectUnknownFlags` behaviour survives, its documentation
+  // does not. Guard the text so the next same-shaped drift fails loudly.
+  it('CHANNEL_CLI_HELP documents that unknown flags are rejected', () => {
+    expect(CHANNEL_CLI_HELP).toContain('Unknown options are rejected and named');
+  });
+
+  it('should include the canonical command vocabulary', () => {
+    const result = buildChannelCliHelpGuidance();
+    expect(result).toContain('Channel CLI');
+    expect(result).toContain('send_text');
+    expect(result).toContain('send_file');
+    expect(result).toContain('send_card');
+    expect(result).toContain('send_interactive');
+    expect(result).toContain('`push`');
+    expect(result).not.toContain('push_to_agent');
+  });
+
+  it('should render the default invoke prefix (disclaude channel)', () => {
+    const result = buildChannelCliHelpGuidance();
+    expect(result).toContain('`disclaude channel help`');
+  });
+
+  it('should honor a custom invoke prefix', () => {
+    const result = buildChannelCliHelpGuidance('node /opt/cli.mjs');
+    expect(result).toContain('`node /opt/cli.mjs help`');
+  });
+
+  it('narrows the advertised commands to the channel capabilities', () => {
+    const result = buildChannelCliHelpGuidance('disclaude channel', {
+      sendCommands: ['send_text'],
+    });
+    expect(result).toContain('`send_text`');
+    // Must not re-advertise what the caller's capability notes just denied.
+    expect(result).not.toContain('`send_file`');
+    expect(result).not.toContain('`send_card`');
+    expect(result).not.toContain('`send_interactive`');
+    // The --file hint is dropped along with send_file.
+    expect(result).not.toContain('needs `--file <path>`');
+    // `push` is agent-to-agent, never gated by channel send capabilities.
+    expect(result).toContain('`push`');
+  });
+
+  it('should return empty string when disabled', () => {
+    expect(buildChannelCliHelpGuidance('disclaude channel', { enabled: false })).toBe('');
   });
 });

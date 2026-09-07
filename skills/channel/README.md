@@ -4,11 +4,14 @@
 > part 1, owner ruling 2026-08-18):** the CLI now reaches the PrimaryNode over
 > the **REST API** (HttpApiServer `/api/send-message`, `/api/send-card`,
 > `/api/upload-file`, `/api/send-interactive`, `/api/push`) — it no longer opens
-> a Unix socket, and there is **no IPC fallback** on the CLI path. The CLI sets
-> `DISCLAUDE_REST_IPC_ENABLED=true` internally before executing a send path, so every send path — including `send_card`'s
-> local-image upload (`resolveCardImages` → `getIpcClient()`) — selects
-> `RestIpcClient`. Base URL: `--base-url` > `DISCLAUDE_REST_IPC_BASE_URL` >
-> `http://localhost:19200`. When the REST face
+> a Unix socket, and there is **no IPC fallback** on the CLI path. REST is the
+> only transport (unconditional — `DISCLAUDE_REST_IPC_ENABLED` is ignored).
+> Base URL: `--base-url` > `DISCLAUDE_REST_IPC_BASE_URL` >
+> `http://localhost:19200`. **The CLI does not authenticate yet:** it attaches
+> no bearer header, so a primary started with `--api-token` 401s every channel
+> write while `GET /api/ping` (token-exempt) keeps the availability probe green
+> — [#4804](https://github.com/hs3180/disclaude/pull/4804) adds the `--api-token`
+> flag and `DISCLAUDE_REST_IPC_API_TOKEN` wiring (#4801). When the REST face
 > is unreachable, the CLI emits an actionable "start the main service" hint
 > instead of a raw `fetch` ECONNREFUSED (#4532 scope 3). The #4521 chatId
 > pre-check substance was re-landed on the REST CLI by part 11 (see §Parity).
@@ -121,6 +124,21 @@ The resolved value is presence- **and format**-checked up front
 (`oc_`/`ou_` ≥ 35 chars, `cli-` ≥ 5 — matching the former MCP entry-handler
 rules, #1641); an ill-formed id fails before the send operation (part 11).
 
+**Unknown options are rejected** (#4788). Each command accepts only the flags in
+its row above plus the common `--base-url` / `--api-token`; anything else fails
+immediately and names the offending flag:
+
+```console
+$ disclaude channel send_interactive --chat oc_xxx --payload '{"content":{}}'
+{"ok":false,"command":"send_interactive","error":"Unknown option: --payload","hint":"send_interactive accepts: --action-prompts, --api-token, ..."}
+```
+
+Previously an unrecognised flag was stored and its following argv entry consumed
+as the value, so `--payload '{...}'` swallowed the payload and the run died later
+with `Missing question content` — pointing at the wrong thing. A misspelled
+`--chat` now reports `Unknown option: --caht` rather than
+`Missing required option --chat`.
+
 **Text input** — `--text "<string>"` for short content; `--text-file <path>` (or
 `--text-file -` to read stdin explicitly) for larger bodies; or pipe on stdin
 when no `--text`/`--text-file` is given and stdin is not a TTY. `push`
@@ -224,7 +242,7 @@ Recorded explicitly per #4459 acceptance ("迁移/下线不静默"):
 | Aspect                     | MCP tool (S1)                                                     | This CLI Skill                                                                                                                                              | Delta                                                      |
 | -------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
 | Transport                  | in-process MCP tool dispatch                                      | one-shot process, shells out via `Bash`                                                                                                                     | different transport, same first-party impl                 |
-| IPC reach-back             | in-process `getIpcClient()` (Unix socket by default)              | `getIpcClient()` with `DISCLAUDE_REST_IPC_ENABLED=true` forced → `RestIpcClient` → HttpApiServer `/api/*` (#4532)                                           | REST only — no Unix socket, no IPC fallback                |
+| IPC reach-back             | in-process `getIpcClient()` (Unix socket by default)              | `RestIpcClient` → HttpApiServer `/api/*` (unconditional, no toggle) (#4532)                                                                                | REST only — no Unix socket, no IPC fallback                |
 | `send_text` parameters     | `text`, `chatId`, `parentMessageId`, `mentions`                   | identical, via `--chat`/`--text`/`--text-file`/`--parent`/`--mentions`                                                                                      | text gains `--text-file`/stdin for large bodies            |
 | `send_file` parameters     | `filePath`, `chatId`, `parentMessageId`                           | identical, via `--file`/`--chat`/`--parent` (relative `--file` resolves against the workspace dir, as in the MCP tool)                                      | none                                                       |
 | `push` parameters | `chatId`, `message`                                               | identical, via `--chat`/`--message`/`--message-file`                                                                                                        | message gains `--message-file`/stdin for long instructions |

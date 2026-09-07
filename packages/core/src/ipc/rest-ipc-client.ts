@@ -27,6 +27,16 @@ import {
 
 const logger = createLogger('RestIpcClient');
 
+/**
+ * Default PrimaryNode REST API base URL.
+ *
+ * Issue #4801 (P7): the single source of truth for the default base URL, so
+ * REST IPC consumers can't silently drift on the port (changing it here updates
+ * every consumer). Currently that is channel-cli; the PrimaryNode server has no
+ * default `--api-port`, so it is unaffected.
+ */
+export const REST_IPC_DEFAULT_BASE_URL = 'http://localhost:19200';
+
 /** Default request timeout (30s), matching the IPC client default. */
 const DEFAULT_TIMEOUT_MS = 30_000;
 

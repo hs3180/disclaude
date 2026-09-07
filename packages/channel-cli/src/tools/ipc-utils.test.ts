@@ -26,13 +26,13 @@ const { mockLogger, mockCreateLogger } = vi.hoisted(() => {
 // Hoisted RestIpcClient class mock — vi.doMock factories can close over it.
 const { MockRestIpcClient } = vi.hoisted(() => {
   class MockRestIpcClientImpl {
-    constructor(public opts: { baseUrl?: string }) {}
+    constructor(public opts: { baseUrl?: string; apiToken?: string }) {}
   }
   return { MockRestIpcClient: MockRestIpcClientImpl };
 });
 // The factory's declared return type is the real RestIpcClient; assertions
 // inspect the mock's captured constructor opts via this structural type.
-type MockRestIpcClient = { opts: { baseUrl?: string } };
+type MockRestIpcClient = { opts: { baseUrl?: string; apiToken?: string } };
 
 async function loadModule() {
   // vi.clearAllMocks() (run by sibling describes' afterEach) wipes the
@@ -41,6 +41,7 @@ async function loadModule() {
   vi.doMock('@disclaude/core', () => ({
     createLogger: (...args: unknown[]) => mockCreateLogger(...args),
     RestIpcClient: MockRestIpcClient,
+    REST_IPC_DEFAULT_BASE_URL: 'http://localhost:19200',
   }));
   vi.resetModules();
   return await import('./ipc-utils.js');
@@ -285,6 +286,7 @@ describe('getRestIpcClient (REST-only construction)', () => {
   afterEach(async () => {
     if (savedBaseUrl === undefined) { delete process.env.DISCLAUDE_REST_IPC_BASE_URL; }
     else { process.env.DISCLAUDE_REST_IPC_BASE_URL = savedBaseUrl; }
+    delete process.env.DISCLAUDE_REST_IPC_API_TOKEN;
     vi.restoreAllMocks();
     await vi.resetModules();
   });
@@ -314,5 +316,20 @@ describe('getRestIpcClient (REST-only construction)', () => {
     const off = getRestIpcClient() as unknown as MockRestIpcClient;
     expect(on.opts.baseUrl).toBe('http://localhost:19200');
     expect(off.opts.baseUrl).toBe('http://localhost:19200');
+  });
+
+  // Issue #4801 (P0): when the primary runs with --api-token, the client must
+  // attach the bearer token so channel writes don't 401 while the (token-exempt)
+  // GET /api/ping probe reports "available".
+  it('should forward DISCLAUDE_REST_IPC_API_TOKEN as the API token', () => {
+    process.env.DISCLAUDE_REST_IPC_API_TOKEN = 'tok-123';
+    const client = getRestIpcClient() as unknown as MockRestIpcClient;
+    expect(client.opts.apiToken).toBe('tok-123');
+  });
+
+  it('should leave apiToken undefined when the env token is absent', () => {
+    delete process.env.DISCLAUDE_REST_IPC_API_TOKEN;
+    const client = getRestIpcClient() as unknown as MockRestIpcClient;
+    expect(client.opts.apiToken).toBeUndefined();
   });
 });

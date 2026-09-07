@@ -173,6 +173,8 @@ export {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  CHANNEL_CLI_HELP,
+  buildChannelCliHelpGuidance,
   type MessageData,
   type MessageBuilderContext,
   type MessageBuilderOptions,
