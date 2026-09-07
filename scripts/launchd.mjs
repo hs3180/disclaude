@@ -51,11 +51,13 @@ const APP_LOG = resolve(LOG_DIR, 'disclaude-combined.log');
 // creates the bare APP_LOG path — it writes disclaude-combined.<n>.log and
 // keeps a `current.log` symlink pointed at the live one. Prefer that symlink
 // when the bare path is absent so `logs`/`status` keep working under rotation.
-const ROTATED_LOG = resolve(LOG_DIR, 'current.log');
-function resolveAppLog() {
-  if (existsSync(APP_LOG)) return APP_LOG;
-  if (existsSync(ROTATED_LOG)) return ROTATED_LOG;
-  return APP_LOG;
+// `dir` is a seam for tests — production callers use the LOG_DIR default.
+export function resolveAppLog(dir = LOG_DIR) {
+  const bare = resolve(dir, 'disclaude-combined.log');
+  const rotated = resolve(dir, 'current.log');
+  if (existsSync(bare)) return bare;
+  if (existsSync(rotated)) return rotated;
+  return bare;
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));

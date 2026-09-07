@@ -28,10 +28,13 @@
 //    command (no launchctl, no writes to ~/Library/LaunchAgents).
 
 import { describe, it, expect, afterEach } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync, symlinkSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 // Pure helpers exported from launchd.mjs; .mjs has no type declarations and
 // scripts/ is not type-checked.
 // @ts-expect-error — .mjs module without type declarations
-import { buildProgramArguments, resolveApiPort, resolveRestIpcBaseUrl, xmlEscape } from '../scripts/launchd.mjs';
+import { buildProgramArguments, resolveApiPort, resolveRestIpcBaseUrl, xmlEscape, resolveAppLog } from '../scripts/launchd.mjs';
 
 const NODE = '/usr/local/bin/node';
 const CAFFEINATE = '/usr/bin/caffeinate';
@@ -153,5 +156,57 @@ describe('xmlEscape (plist safety, #4578 review nit 2)', () => {
     // The exact hazard: --api-token is the first free-text value interpolated
     // into the plist XML; without escaping this yields an unparseable plist.
     expect(xmlEscape('tok&en<x>')).toBe('tok&amp;en&lt;x&gt;');
+  });
+});
+
+describe('resolveAppLog (log path under rotation, #4777 / #4814)', () => {
+  // `logs` and `status` tail a fixed path. With LOG_ROTATE=true pino-roll
+  // never writes the bare disclaude-combined.log — it writes numbered files
+  // and points a `current.log` symlink at the live one. Without the fallback
+  // both commands tail a nonexistent file and print nothing, which reads as
+  // "the service logged nothing" rather than "you are looking at the wrong
+  // path". filebeat.yml is the other consumer of this contract; see the
+  // rotation tests in packages/core/src/utils/logger.test.ts.
+  const dirs: string[] = [];
+
+  afterEach(() => {
+    for (const d of dirs.splice(0)) {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  function tmpLogDir(): string {
+    const d = mkdtempSync(join(tmpdir(), 'launchd-applog-'));
+    dirs.push(d);
+    return d;
+  }
+
+  it('prefers the bare path when it exists (non-rotating mode)', () => {
+    const dir = tmpLogDir();
+    writeFileSync(join(dir, 'disclaude-combined.log'), 'bare\n');
+    expect(resolveAppLog(dir)).toBe(join(dir, 'disclaude-combined.log'));
+  });
+
+  it('falls back to current.log when only rotated files exist', () => {
+    const dir = tmpLogDir();
+    writeFileSync(join(dir, 'disclaude-combined.1.log'), 'rotated\n');
+    symlinkSync('disclaude-combined.1.log', join(dir, 'current.log'));
+
+    // Without the fallback this returned the bare path, which is absent.
+    expect(resolveAppLog(dir)).toBe(join(dir, 'current.log'));
+    expect(readFileSync(resolveAppLog(dir), 'utf8')).toBe('rotated\n');
+  });
+
+  it('prefers the bare path over current.log when both exist', () => {
+    const dir = tmpLogDir();
+    writeFileSync(join(dir, 'disclaude-combined.log'), 'bare\n');
+    writeFileSync(join(dir, 'disclaude-combined.1.log'), 'rotated\n');
+    symlinkSync('disclaude-combined.1.log', join(dir, 'current.log'));
+    expect(resolveAppLog(dir)).toBe(join(dir, 'disclaude-combined.log'));
+  });
+
+  it('returns the bare path when neither exists, so tail reports that name', () => {
+    const dir = tmpLogDir();
+    expect(resolveAppLog(dir)).toBe(join(dir, 'disclaude-combined.log'));
   });
 });

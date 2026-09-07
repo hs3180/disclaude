@@ -17,6 +17,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
+import path from 'path';
 import {
   initLogger,
   createLogger,
@@ -475,6 +476,137 @@ describe('logger', () => {
         process.env.LOG_DIR = prevLogDir;
         process.env.NODE_ENV = prevNodeEnv;
       }
+    });
+  });
+
+  describe('rotation on-disk layout (#4777 / #4814)', () => {
+    // These tests exercise the REAL pino-roll destination — no vi.mock on
+    // pino-roll or sonic-boom, no fs mocks. They exist because the rotated
+    // filename shape is a cross-file contract: filebeat.yml and
+    // scripts/launchd.mjs both watch fixed paths, and an earlier revision of
+    // this PR shipped a filebeat glob (`disclaude-combined.log.*`) that
+    // matched nothing — rotation silently stopped log collection with every
+    // CI check green.
+    //
+    // The `NODE_ENV === 'test'` short-circuit in initLogger() is why the
+    // rotation path was previously uncovered; setting NODE_ENV='production'
+    // for the duration of the test lifts it (same technique as the existing
+    // file-destination tests above).
+
+    const ROTATE_ENV = ['LOG_ROTATE_SIZE', 'LOG_ROTATE_LIMIT', 'LOG_ROTATE_FREQUENCY'] as const;
+
+    /** Roll past `size` so at least one numbered file exists on disk. */
+    async function writeUntilRolled(logger: ReturnType<typeof getRootLogger>): Promise<void> {
+      for (let i = 0; i < 400; i++) {
+        logger.info({ pad: 'x'.repeat(80) }, `rotation probe ${i}`);
+      }
+      await flushLogger();
+      // pino-roll's roll + symlink update are async; give the fs a tick.
+      await new Promise((r) => setTimeout(r, 400));
+    }
+
+    async function withRotation(
+      dir: string,
+      body: (logger: ReturnType<typeof getRootLogger>) => Promise<void>
+    ): Promise<void> {
+      const saved: Record<string, string | undefined> = { NODE_ENV: process.env.NODE_ENV };
+      for (const k of ROTATE_ENV) {
+        saved[k] = process.env[k];
+      }
+      process.env.NODE_ENV = 'production';
+      process.env.LOG_ROTATE_SIZE = '1k'; // roll quickly instead of at 50m
+      try {
+        resetLogger();
+        const logger = await initLogger({ fileLogging: true, logDir: dir, rotate: true });
+        await body(logger);
+      } finally {
+        resetLogger();
+        for (const [k, v] of Object.entries(saved)) {
+          if (v === undefined) {
+            delete process.env[k];
+          } else {
+            process.env[k] = v;
+          }
+        }
+      }
+    }
+
+    it('writes disclaude-combined.<n>.log — the shape filebeat.yml globs (B1)', async () => {
+      const dir = fs.mkdtempSync('/tmp/test-rotate-glob-');
+
+      await withRotation(dir, async (logger) => {
+        await writeUntilRolled(logger);
+
+        // pino-roll splits the trailing extension off and inserts the sequence
+        // number BEFORE it. The bare path is never written, so any consumer
+        // watching only `disclaude-combined.log` goes blind under rotation.
+        expect(fs.existsSync(path.join(dir, 'disclaude-combined.log'))).toBe(false);
+
+        const shipped = fs
+          .globSync(path.join(dir, 'disclaude-combined.*.log'))
+          .map((p) => path.basename(p));
+        expect(shipped.length).toBeGreaterThan(0);
+        for (const name of shipped) {
+          expect(name).toMatch(/^disclaude-combined\.\d+\.log$/);
+        }
+
+        // The pattern the earlier revision shipped. Asserting it stays empty
+        // is the point: this is the assertion that would have caught B1.
+        expect(fs.globSync(path.join(dir, 'disclaude-combined.log.*'))).toEqual([]);
+      });
+    });
+
+    it('keeps a current.log symlink so fixed-path consumers still resolve (B3)', async () => {
+      const dir = fs.mkdtempSync('/tmp/test-rotate-symlink-');
+
+      await withRotation(dir, async (logger) => {
+        await writeUntilRolled(logger);
+
+        // scripts/launchd.mjs `logs`/`status` fall back to this path when the
+        // bare one is absent — see resolveAppLog() and tests/launchd.test.ts.
+        const link = path.join(dir, 'current.log');
+        expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
+
+        // The target must be a numbered rotation file that actually exists.
+        // Deliberately NOT asserting on its contents: pino-roll repoints the
+        // link at the newly-rolled file, which is empty for the instant
+        // before the next write lands. Asserting content here passes or
+        // fails on timing, not on the contract.
+        const target = fs.readlinkSync(link);
+        expect(path.basename(target)).toMatch(/^disclaude-combined\.\d+\.log$/);
+        expect(fs.statSync(link).isFile()).toBe(true);
+        expect(fs.existsSync(path.resolve(dir, target))).toBe(true);
+      });
+    });
+
+    it('degrades to an unlinked rotation when the symlink cannot be created (B2)', async () => {
+      const dir = fs.mkdtempSync('/tmp/test-rotate-symlink-fail-');
+      // Occupy `current.log` with a directory. pino-roll's checkSymlinkSync
+      // lstats it, sees a non-symlink, and symlinkSync then throws EEXIST.
+      // In production the same throw arrives as ENOENT via a race between
+      // sonic-boom's async mkdir and pino-roll's sync symlink; either way the
+      // retry-without-symlink branch is the thing under test, and this is the
+      // deterministic way to reach it.
+      fs.mkdirSync(path.join(dir, 'current.log'));
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      await withRotation(dir, async (logger) => {
+        await writeUntilRolled(logger);
+
+        // The retry must not have fallen all the way back to stdout: rotated
+        // files exist and filebeat's glob still matches them.
+        const shipped = fs
+          .globSync(path.join(dir, 'disclaude-combined.*.log'))
+          .map((p) => path.basename(p));
+        expect(shipped.length).toBeGreaterThan(0);
+        expect(fs.readFileSync(path.join(dir, shipped[0]), 'utf8')).toContain('rotation probe');
+
+        // And the failure was reported rather than swallowed.
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringContaining('Log rotation symlink failed'),
+          expect.anything()
+        );
+      });
     });
   });
 
