@@ -120,7 +120,10 @@ export function resetLogger(): void {
   currentLogDest = null;
   // Destroy the file destination created by initLogger() (possibly a pino-roll
   // rotating SonicBoom) so the handle is released on shutdown.
-  if (activeFileDest) {
+  // Never destroy process.stdout: buildFileDestination() falls back to it when
+  // the file destination cannot be created, and tearing down the process's own
+  // stdout would silence every later write (including console.*).
+  if (activeFileDest && activeFileDest !== process.stdout) {
     const fd = activeFileDest as unknown as { destroy: () => void };
     if (typeof fd.destroy === 'function') {
       fd.destroy();
@@ -216,11 +219,19 @@ async function buildFileDestination(
       limit: { count: number };
       frequency?: string | number;
       mkdir: boolean;
+      symlink: boolean;
+      extension?: string;
     } = {
       file: logFile,
       size,
       limit: { count: keepCount }, // keep N-1 rotated files in addition to the current one
-      mkdir: true
+      mkdir: true,
+      // pino-roll never writes the bare `file` path — it appends `.<n>` to it,
+      // producing disclaude-combined.log.1, .2, ... The stable consumers of
+      // this log (filebeat.yml, scripts/launchd.mjs `tail`) watch the bare
+      // path, so without a symlink turning rotation on silently orphans them.
+      // `symlink: true` keeps <logDir>/current.log pointed at the live file.
+      symlink: true
     };
     if (frequency) {
       rollOpts.frequency = frequency;
@@ -390,13 +401,16 @@ function createRedactionSerializer(fields: string[] = SENSITIVE_FIELDS) {
  * environment-specific configuration.
  *
  * @param config - Optional logger configuration
- * @returns The root logger instance
+ * @returns Promise resolving to the root logger instance. Async since #4777:
+ *          the rotating (pino-roll) destination is built asynchronously, so
+ *          every call site MUST await it — logging before it resolves is
+ *          dropped or hits "sonic boom is not ready yet".
  *
  * @example
  * ```typescript
  * import { initLogger } from '@disclaude/core';
  *
- * const logger = initLogger();
+ * const logger = await initLogger();
  * logger.info('Application started');
  * ```
  */

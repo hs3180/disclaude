@@ -18,7 +18,12 @@ filebeat.inputs:
   - type: log
     enabled: true
     paths:
+      # Non-rotating mode (LOG_ROTATE=false) writes this exact path.
       - /data/logs/disclaude-combined.log
+      # Issue #4777: with LOG_ROTATE=true, pino-roll writes numbered files
+      # (disclaude-combined.log.1, .2, ...) and never the bare path above.
+      # Glob them so rotation does not silently stop log collection.
+      - /data/logs/disclaude-combined.log.*
     # Pino outputs structured JSON — parse it natively
     json.keys_under_root: true
     json.add_error_key: true

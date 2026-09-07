@@ -33,13 +33,22 @@ out of the box. E.g. `LOG_ROTATE_SIZE=50m LOG_ROTATE_LIMIT=3` keeps at most
 > Note: with `LOG_ROTATE_FREQUENCY` unset, rotation is purely size-based and
 > old files are removed eagerly by the size `limit` — the file set never grows.
 
+> **Filenames change when rotation is on.** pino-roll never writes the bare
+> `disclaude-combined.log`; it writes numbered files
+> `disclaude-combined.log.1`, `.2`, … and keeps a `current.log` symlink in the
+> same directory pointing at the live file. Anything that watches a fixed path
+> must follow `current.log` or glob `disclaude-combined.log.*` — the shipped
+> `filebeat.yml` globs both. `scripts/launchd.mjs logs` tails the bare path, so
+> leave rotation off for launchd installs (the macOS path uses newsyslog,
+> Option B).
+
 Manual smoke check:
 
 ```bash
 npm run build
 LOG_TO_FILE=true LOG_DIR=/tmp/lrot LOG_ROTATE=true LOG_ROTATE_SIZE=1m \
   npx tsx packages/primary-node/src/cli.ts start --api-port 19200   # watch /tmp/lrot
-ls -la /tmp/lrot        # expect disclaude-combined.log plus rolled .1/.2 as it grows
+ls -la /tmp/lrot   # expect disclaude-combined.log.1/.2 plus a current.log symlink
 ```
 
 ---

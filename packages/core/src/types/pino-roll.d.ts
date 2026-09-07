@@ -26,6 +26,11 @@ declare module 'pino-roll' {
     /** Rotate on a schedule: 'daily' | 'hourly' | milliseconds. */
     frequency?: string | number;
     extension?: string;
+    /**
+     * Maintain a `current.log` symlink (in the same dir) pointing at the live
+     * file. Required for us: pino-roll always writes `<file>.<n>`, never the
+     * bare `file` path, so watchers of a fixed path need this symlink.
+     */
     symlink?: boolean;
     /** Oldest-file cleanup policy. */
     limit?: PinoRollLimit;
