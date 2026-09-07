@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /** Typed, distributable entry point for the channel CLI. */
 import { existsSync, readFileSync } from 'node:fs';
-import { CHANNEL_CLI_HELP } from '@disclaude/core';
+import { CHANNEL_CLI_HELP, REST_IPC_DEFAULT_BASE_URL } from '@disclaude/core';
 import type { ActionPromptMap, InteractiveOption } from './tools/types.js';
 
-const DEFAULT_REST_BASE_URL = 'http://localhost:19200';
+const DEFAULT_REST_BASE_URL = REST_IPC_DEFAULT_BASE_URL;
 const CHAT_ID_PATTERNS = [
   { prefix: 'oc_', label: 'Feishu group chat', minLength: 35 },
   { prefix: 'ou_', label: 'Feishu user (p2p chat)', minLength: 35 },
@@ -110,6 +110,14 @@ function parseActionPrompts(raw: string | undefined): ActionPromptMap | undefine
 function setupRest(args: Args): string {
   const baseUrl = arg(args, 'base-url') || process.env.DISCLAUDE_REST_IPC_BASE_URL || DEFAULT_REST_BASE_URL;
   process.env.DISCLAUDE_REST_IPC_BASE_URL = baseUrl;
+  // Issue #4801: mirror the PrimaryNode --api-token into the env the REST
+  // client reads, so authenticated writes attach the bearer header. Without
+  // this, a token-enabled primary 401s every channel POST while the probe
+  // still reports "available".
+  const apiToken = arg(args, 'api-token');
+  if (apiToken !== undefined) {
+    process.env.DISCLAUDE_REST_IPC_API_TOKEN = apiToken;
+  }
   return baseUrl;
 }
 function withLogsRedirected<T>(fn: () => Promise<T>): Promise<T> {
@@ -117,7 +125,7 @@ function withLogsRedirected<T>(fn: () => Promise<T>): Promise<T> {
   process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, callback?: (error?: Error | null) => void) => process.stderr.write(chunk, encoding, callback)) as typeof process.stdout.write;
   return fn().finally(() => { process.stdout.write = originalWrite; });
 }
-function restHint(baseUrl: string): string { return `PrimaryNode REST ${baseUrl} unreachable — start the main service (disclaude-primary start --api-port <port>) or pass --base-url / DISCLAIMED_REST_IPC_BASE_URL`.replace('DISCLAUDED', 'DISCLAUDE'); }
+function restHint(baseUrl: string): string { return `PrimaryNode REST ${baseUrl} unreachable — start the main service (disclaude-primary start --api-port <port>) or pass --base-url / DISCLAUDE_REST_IPC_BASE_URL`; }
 async function restIsReachable(baseUrl: string): Promise<boolean> {
   try {
     const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/ping`, {
@@ -206,16 +214,24 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
 export async function run(argv: string[]): Promise<number> {
   await Promise.resolve();
   emitted = false;
-  const [command] = argv;
-  if (!command || command === 'help' || command === '--help' || command === '-h') { process.stdout.write(`${HELP}\n`); return 0; }
+  const [invokedAs] = argv;
+  if (!invokedAs || invokedAs === 'help' || invokedAs === '--help' || invokedAs === '-h') { process.stdout.write(`${HELP}\n`); return 0; }
+  // `push` is the agent-facing spelling; `push_to_agent` stays as the canonical
+  // command name so the stdout JSON contract (`command` field) is unchanged.
+  const command = invokedAs === 'push' ? 'push_to_agent' : invokedAs;
   const args = parseArgs(argv.slice(1));
   const commands = ['send_text', 'send_file', 'send_card', 'push_to_agent', 'send_interactive'];
-  if (!commands.includes(command)) { process.stderr.write(`Unknown command: ${command}\n`); process.stdout.write(`${HELP}\n`); return 1; }
+  if (!commands.includes(command)) { process.stderr.write(`Unknown command: ${invokedAs}\n`); process.stdout.write(`${HELP}\n`); return 1; }
   const chat = validateChat(command, args);
   if (!chat) {return 1;}
   return execute(command, args, chat, setupRest(args));
 }
 
+// Only auto-run when executed as a script (the `disclaude channel` router spawns
+// this dist file directly, so argv[1] always ends with "/cli.js"). Issue #4794's
+// `includes('disclaude-channel')` clause is gone with the bin it guarded: a
+// substring match would also fire when a *test* imports this module from a repo
+// checkout whose path happens to contain "disclaude".
 if (process.argv[1]?.endsWith('/cli.js')) {
   run(process.argv.slice(2)).then((code) => { process.exitCode = code; }).catch((error) => { process.stderr.write(`channel CLI crashed: ${errorMessage(error)}\n`); emitFail('channel', `CLI crashed: ${errorMessage(error)}`); process.exitCode = 1; });
 }

@@ -20,6 +20,7 @@ import {
   CHANNEL_CLI_HELP,
   buildChannelCliHelpGuidance,
 } from './channel-cli-help.js';
+import { REST_IPC_DEFAULT_BASE_URL } from '../../ipc/rest-ipc-client.js';
 
 describe('buildChatHistorySection', () => {
   it('should return empty string when no context is provided', () => {
@@ -307,7 +308,19 @@ describe('buildChannelCliHelpGuidance', () => {
     expect(CHANNEL_CLI_HELP).toContain('send_file');
     expect(CHANNEL_CLI_HELP).toContain('send_card');
     expect(CHANNEL_CLI_HELP).toContain('send_interactive');
-    expect(CHANNEL_CLI_HELP).toContain('push_to_agent');
+    // `push` is the agent-facing spelling; `push_to_agent` is the internal
+    // canonical name and must not leak into user-facing help.
+    expect(CHANNEL_CLI_HELP).toMatch(/^\s*push\s+Push an instruction/m);
+    expect(CHANNEL_CLI_HELP).not.toContain('push_to_agent');
+  });
+
+  it('CHANNEL_CLI_HELP does not advertise the removed disclaude-channel bin', () => {
+    expect(CHANNEL_CLI_HELP).not.toContain('disclaude-channel');
+    expect(CHANNEL_CLI_HELP).toContain('disclaude channel <command> [options]');
+  });
+
+  it('CHANNEL_CLI_HELP sources its default base URL from the shared constant', () => {
+    expect(CHANNEL_CLI_HELP).toContain(REST_IPC_DEFAULT_BASE_URL);
   });
 
   it('should include the canonical command vocabulary', () => {
@@ -317,7 +330,8 @@ describe('buildChannelCliHelpGuidance', () => {
     expect(result).toContain('send_file');
     expect(result).toContain('send_card');
     expect(result).toContain('send_interactive');
-    expect(result).toContain('push_to_agent');
+    expect(result).toContain('`push`');
+    expect(result).not.toContain('push_to_agent');
   });
 
   it('should render the default invoke prefix (disclaude channel)', () => {
@@ -328,6 +342,21 @@ describe('buildChannelCliHelpGuidance', () => {
   it('should honor a custom invoke prefix', () => {
     const result = buildChannelCliHelpGuidance('node /opt/cli.mjs');
     expect(result).toContain('`node /opt/cli.mjs help`');
+  });
+
+  it('narrows the advertised commands to the channel capabilities', () => {
+    const result = buildChannelCliHelpGuidance('disclaude channel', {
+      sendCommands: ['send_text'],
+    });
+    expect(result).toContain('`send_text`');
+    // Must not re-advertise what the caller's capability notes just denied.
+    expect(result).not.toContain('`send_file`');
+    expect(result).not.toContain('`send_card`');
+    expect(result).not.toContain('`send_interactive`');
+    // The --file hint is dropped along with send_file.
+    expect(result).not.toContain('needs `--file <path>`');
+    // `push` is agent-to-agent, never gated by channel send capabilities.
+    expect(result).toContain('`push`');
   });
 
   it('should return empty string when disabled', () => {

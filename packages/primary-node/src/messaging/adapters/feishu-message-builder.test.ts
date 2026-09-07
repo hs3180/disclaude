@@ -13,7 +13,7 @@
  
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { Config, MessageBuilder, DEFAULT_CHANNEL_CAPABILITIES, type MessageData, type ChannelCapabilities } from '@disclaude/core';
+import { MessageBuilder, DEFAULT_CHANNEL_CAPABILITIES, type MessageData, type ChannelCapabilities } from '@disclaude/core';
 import { createFeishuMessageBuilderOptions } from './feishu-message-builder.js';
 
 /** Helper to create capabilities with specific supportedMcpTools */
@@ -25,7 +25,7 @@ const withTools = (tools: string[]): ChannelCapabilities => ({
 
 describe('MessageBuilder with Feishu sections', () => {
   let messageBuilder: MessageBuilder;
-  const channelCli = `${Config.getBuiltinsDir()}/skills/channel/cli.mjs`;
+  const channelCli = 'disclaude channel';
 
   beforeEach(() => {
     messageBuilder = new MessageBuilder(createFeishuMessageBuilderOptions());
@@ -197,7 +197,7 @@ describe('MessageBuilder with Feishu sections', () => {
         messageId: 'msg-123',
       }, 'chat-123', withTools(['send_text']));
 
-      expect(result).toContain(`node ${channelCli} send_text`);
+      expect(result).toContain(`${channelCli} send_text`);
       expect(result).toContain('chat-123');
     });
 
@@ -207,7 +207,7 @@ describe('MessageBuilder with Feishu sections', () => {
         messageId: 'msg-123',
       }, 'chat-123', withTools(['send_text', 'send_card']));
 
-      expect(result).toContain(`node ${channelCli} send_card`);
+      expect(result).toContain(`${channelCli} send_card`);
     });
 
     it('should include send_interactive when available', () => {
@@ -216,7 +216,7 @@ describe('MessageBuilder with Feishu sections', () => {
         messageId: 'msg-123',
       }, 'chat-123', withTools(['send_text', 'send_interactive']));
 
-      expect(result).toContain(`node ${channelCli} send_interactive`);
+      expect(result).toContain(`${channelCli} send_interactive`);
     });
 
     it('should explain automatic final delivery and CLI use for extra messages', () => {
@@ -235,7 +235,7 @@ describe('MessageBuilder with Feishu sections', () => {
         messageId: 'msg-123',
       }, 'chat-123', withTools(['send_text', 'send_file']));
 
-      expect(result).toContain(`node ${channelCli} send_file`);
+      expect(result).toContain(`${channelCli} send_file`);
     });
 
     it('should not include send_file when not in supportedMcpTools', () => {
@@ -309,5 +309,32 @@ describe('MessageBuilder with Feishu sections', () => {
 
       expect(result).not.toContain('@ Mention the User');
     });
+  });
+});
+
+// Issue #4705: the appended canonical CLI help must respect the same
+// capability gate as the tool list above it, or the prompt contradicts itself.
+describe('channel CLI guidance capability gating', () => {
+  const build = (capabilities: unknown): string =>
+    (createFeishuMessageBuilderOptions().buildToolsSection as (c: unknown) => string)({
+      chatId: 'oc_00000000000000000000000000000000000',
+      msg: { messageId: 'm1' },
+      capabilities,
+    });
+
+  it('does not advertise send_file when the channel says it is unsupported', () => {
+    const out = build({ supportsFile: false, supportedMcpTools: ['send_text'] });
+    expect(out).toContain('send_file is NOT supported');
+    expect(out).not.toMatch(/Supported commands:.*send_file/);
+    expect(out).toMatch(/Supported commands:.*send_text/);
+  });
+
+  it('advertises the full vocabulary when every tool is supported', () => {
+    const out = build({
+      supportsFile: true,
+      supportedMcpTools: ['send_text', 'send_card', 'send_interactive', 'send_file'],
+    });
+    expect(out).toMatch(/Supported commands:.*send_file/);
+    expect(out).not.toContain('send_file is NOT supported');
   });
 });

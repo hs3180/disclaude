@@ -12,32 +12,36 @@
  * @module agents/message-builder/channel-cli-help
  */
 
+import { REST_IPC_DEFAULT_BASE_URL } from '../../ipc/rest-ipc-client.js';
+
 /**
  * The canonical channel CLI usage/help text. Mirrors the CLI invocation that
  * owns the implementation (`packages/channel-cli/src/cli.ts`). Consumers render
- * `disclaude channel <command>` (preferred) or `disclaude-channel <command>`.
+ * `disclaude channel <command>`.
  */
 export const CHANNEL_CLI_HELP = `channel Skill / Disclaude channel CLI
 
 Usage:
   disclaude channel <command> [options]
-  disclaude-channel <command> [options]
 
 Commands:
   send_text        Send plain text (--text, --text-file, or stdin).
   send_file        Send a file (--file).
   send_card        Send a display-only card (--card, --card-file, or stdin).
-  push_to_agent    Push an instruction to a chat agent.
+  push             Push an instruction to a chat agent.
   send_interactive Send an interactive card with clickable buttons.
   help             Show this help message.
 
 Common options:
   --chat <id>      Target chat ID (oc_..., ou_..., or cli-...).
   --parent <id>   Optional parent message ID.
-  --base-url <url> PrimaryNode REST URL (default: http://localhost:19200).
+  --base-url <url> PrimaryNode REST URL (default: ${REST_IPC_DEFAULT_BASE_URL}).
   --api-token <t>  Bearer token when the primary runs with --api-token.
 
 Output: one JSON result object on stdout; diagnostics are written to stderr.`;
+
+/** The full send_* command vocabulary, used when a caller does not narrow it. */
+const ALL_SEND_COMMANDS = ['send_text', 'send_file', 'send_card', 'send_interactive'];
 
 /**
  * Build the in-prompt channel CLI guidance section.
@@ -50,15 +54,25 @@ Output: one JSON result object on stdout; diagnostics are written to stderr.`;
  *   use (defaults to `disclaude channel`). Callers may pass nothing for the
  *   generic form.
  * @param options - Optional overrides; `enabled=false` suppresses the section.
+ *   `sendCommands` narrows the advertised send_* vocabulary to what the channel
+ *   actually supports, so this block can't contradict the capability notes the
+ *   caller already emitted (e.g. "send_file is NOT supported on this channel").
  * @returns The formatted guidance section for the agent prompt.
  */
 export function buildChannelCliHelpGuidance(
   invoke: string = 'disclaude channel',
-  options: { enabled?: boolean } = {},
+  options: { enabled?: boolean; sendCommands?: string[] } = {},
 ): string {
   if (options.enabled === false) {
     return '';
   }
+  const sendCommands = options.sendCommands ?? ALL_SEND_COMMANDS;
+  // `push` targets another agent rather than this channel's transport, so it is
+  // never gated by the channel's send capabilities.
+  const commandList = [...sendCommands, 'push'].map((c) => `\`${c}\``).join(', ');
+  const fileHint = sendCommands.includes('send_file')
+    ? '; \`send_file\` needs \`--file <path>\`'
+    : '';
   return `
 ---
 
@@ -68,11 +82,11 @@ Send outbound channel messages with the channel CLI.
 
 - Run the built-in help to see every command and flag:
   \`${invoke} help\`
-- Supported commands: \`send_text\`, \`send_file\`, \`send_card\`, \`send_interactive\`, \`push_to_agent\`.
-- Text/content inputs accept a value, a file (\`--{x}-file <path>\`), or stdin; \`send_file\` needs \`--file <path>\`.
+- Supported commands: ${commandList}.
+- Text/content inputs accept a value, a file (\`--{x}-file <path>\`), or stdin${fileHint}.
 - Pass \`--chat <id>\` (feishu group \`oc_...\`, p2p \`ou_...\`, or \`cli-...\` session).
 - Pass \`--parent <id>\` to keep a topic/thread reply in-thread.
-- The CLI talks to the PrimaryNode REST API: \`--base-url\` / \`DISCLAUDE_REST_IPC_BASE_URL\` (default ${'http://localhost:19200'}), and \`--api-token\` / \`DISCLAUDE_REST_IPC_API_TOKEN\` when the primary runs with \`--api-token\`.
+- The CLI talks to the PrimaryNode REST API: \`--base-url\` / \`DISCLAUDE_REST_IPC_BASE_URL\` (default ${REST_IPC_DEFAULT_BASE_URL}), and \`--api-token\` / \`DISCLAUDE_REST_IPC_API_TOKEN\` when the primary runs with \`--api-token\`.
 - One JSON result on stdout; diagnostics on stderr.
 
 ---`;
