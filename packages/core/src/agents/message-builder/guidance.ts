@@ -181,23 +181,26 @@ At the end of your response, proactively suggest 2-3 relevant next steps the use
 
 ### Sending the next-steps card (send_interactive)
 
-Use the \`send_interactive\` channel tool (not a raw card JSON breadboard). It takes **\`--chat\`** (the target chat ID — required unless \`FEISHU_CLI_CHAT_ID\` or the config \`cliChatId\` supplies it), a **\`--question\`** (the prompt text shown above the buttons), an **\`--options\`** JSON array of buttons (each an object with a button \`text\`, a \`value\`, and an optional \`type\` of \`primary\`/\`default\`/\`danger\`), and an **\`--action-prompts\`** object mapping each button \`value\` to a short user-action description. Do **NOT** paste raw card fields such as \`content\`/\`format\`/\`elements\` — the card body is built by the channel.
+Invoke the \`send_interactive\` channel command shown in the Tools section — it is a **command line**, not a JSON payload. Passing a card JSON blob on stdin does not work: it is consumed as the \`--question\` text and rendered verbatim into the card.
 
-\`\`\`json
-{
-  "question": "接下来您可以...",
-  "options": [
-    {"text": "选项1", "value": "action1", "type": "primary"},
-    {"text": "选项2", "value": "action2"},
-    {"text": "选项3", "value": "action3"}
-  ],
-  "actionPrompts": {
-    "action1": "[用户操作] 用户选择了选项1",
-    "action2": "[用户操作] 用户选择了选项2",
-    "action3": "[用户操作] 用户选择了选项3"
-  }
-}
+\`\`\`bash
+<channel-cli> send_interactive --chat <chat-id> \\
+  --title "接下来您可以..." \\
+  --question "选择下一步操作：" \\
+  --options '[{"text":"选项1","value":"action1","type":"primary"},{"text":"选项2","value":"action2"},{"text":"选项3","value":"action3"}]' \\
+  --action-prompts '{"action1":"[用户操作] 用户选择了选项1","action2":"[用户操作] 用户选择了选项2","action3":"[用户操作] 用户选择了选项3"}'
 \`\`\`
+
+Flags:
+
+- \`--chat\` — target chat ID. Required unless \`FEISHU_CLI_CHAT_ID\` or the config \`cliChatId\` supplies it.
+- \`--question\` — the prompt text shown above the buttons (or \`--question-file <path>\`, or piped on stdin).
+- \`--options\` — JSON array of buttons; each an object with a button \`text\`, a \`value\`, and an optional \`type\` of \`primary\`/\`default\`/\`danger\`.
+- \`--action-prompts\` — JSON object mapping each button \`value\` to a short user-action description.
+- \`--title\` — card header text (optional; defaults to a generic header). Use \`"接下来您可以..."\` here.
+- \`--context\` — optional one-line subtitle under the header.
+
+Do **NOT** paste raw card fields such as \`content\`/\`format\`/\`elements\` — the card body is built by the channel.
 
 ### Guidelines
 
