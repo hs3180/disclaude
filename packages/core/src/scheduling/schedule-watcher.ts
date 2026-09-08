@@ -257,8 +257,9 @@ export class ScheduleFileScanner {
       if (task.modelTier) {
         const validTiers = ['high', 'low', 'multimodal'];
         if (!validTiers.includes(task.modelTier)) {
-          logger.warn({ taskId: task.id, name: task.name, modelTier: task.modelTier }, 'Invalid modelTier value, ignoring');
-          task.modelTier = undefined;
+          throw new Error(
+            `Invalid modelTier: "${task.modelTier}". Must be one of: ${validTiers.join(', ')}`
+          );
         } else if (task.model) {
           logger.info({ taskId: task.id, name: task.name, model: task.model }, 'Schedule task has both model and modelTier; explicit model takes priority');
         } else {
