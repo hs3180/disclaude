@@ -297,6 +297,23 @@ describe('CodexExecRunner (Issue #4630)', () => {
       'argv:exec resume --json --skip-git-repo-check -c sandbox_mode=workspace-write t-abc -- b',
     );
   });
+
+  it('adds the no-approval flag when full-access mode is enabled', async () => {
+    fixture.cleanup();
+    fixture = makeScriptedBinary('echo "argv:$*" >&2\nexit 0');
+    const runner = new CodexExecRunner({ binary: fixture.binaryPath });
+    const fresh = await runner.run({ prompt: 'a', fullAccess: true }, () => {}).promise;
+    expect(fresh.stderrTail).toContain(
+      'argv:exec --json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox -- a',
+    );
+    const resumed = await runner.run(
+      { prompt: 'b', resumeSessionId: 't-abc', fullAccess: true },
+      () => {},
+    ).promise;
+    expect(resumed.stderrTail).toContain(
+      'argv:exec resume --json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox t-abc -- b',
+    );
+  });
 });
 
 

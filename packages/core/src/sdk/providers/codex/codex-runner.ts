@@ -72,6 +72,8 @@ export interface CodexExecRunOptions {
    * accepted there and enforces identically; verified on codex-cli 0.151.0).
    */
   sandboxMode?: CodexSandboxLevel;
+  /** Full-access mode also disables Codex approval prompts for unattended runs. */
+  fullAccess?: boolean;
   /** Explicit Codex workspace network policy. */
   networkAccess?: boolean;
   /** Environment for the child (merged over the provider env). */
@@ -162,6 +164,7 @@ export class CodexExecRunner {
           'resume',
           '--json',
           '--skip-git-repo-check',
+          ...(options.fullAccess ? ['--dangerously-bypass-approvals-and-sandbox'] : []),
           ...(options.model ? ['-m', options.model] : []),
           ...(options.sandboxMode ? ['-c', `sandbox_mode=${options.sandboxMode}`] : []),
           ...((options.networkAccess ?? this.defaultNetworkAccess) !== undefined
@@ -178,6 +181,7 @@ export class CodexExecRunner {
           'exec',
           '--json',
           '--skip-git-repo-check',
+          ...(options.fullAccess ? ['--dangerously-bypass-approvals-and-sandbox'] : []),
           ...(options.model ? ['-m', options.model] : []),
           ...(options.sandboxMode ? ['-s', options.sandboxMode] : []),
           ...((options.networkAccess ?? this.defaultNetworkAccess) !== undefined

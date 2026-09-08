@@ -361,8 +361,14 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     );
     if (this.fullAccess) {
       logger.warn(
-        { permissionMode: 'full-access', sandbox: sandboxDecision.sandbox },
-        'Codex full-access mode is enabled by explicit agent.fullAccess=true; commands and workspace mutations are unrestricted'
+        {
+          permissionMode:
+            sandboxDecision.sandbox === 'danger-full-access' ? 'full-access' : 'sandboxed',
+          sandbox: sandboxDecision.sandbox,
+        },
+        sandboxDecision.sandbox === 'danger-full-access'
+          ? 'Codex full-access mode is enabled by explicit agent.fullAccess=true; commands and workspace mutations are unrestricted'
+          : 'Codex full-access was requested but the sandbox policy remains enforced'
       );
     }
 
@@ -476,6 +482,10 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       );
     }
 
+    // Keep the automatic no-approval flag aligned with the effective policy:
+    // a mutation denylist can intentionally cap a requested full-access mode
+    // back to read-only, in which case Codex must retain its safety gate.
+    const fullAccess = this.fullAccess && sandboxDecision.sandbox === 'danger-full-access';
     const adaptIterator = async function* (this: void): AsyncGenerator<AgentMessage> {
       // ── Event bridge state (pi #4386 part 3 pattern) ──────────────────
       const queue: AgentMessage[] = [];
@@ -739,6 +749,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               : prompt,
             resumeSessionId: resumeTarget,
             sandboxMode: sandboxDecision.sandbox,
+            fullAccess,
             cwd: options.cwd,
             model: codexModel,
             env: { ...providerEnv, ...options.env },
