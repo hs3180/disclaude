@@ -55,8 +55,27 @@ export interface PostContent {
 }
 
 /**
+ * Restore a single escaped newline layer at the Markdown semantic boundary.
+ *
+ * Idempotent: a doubled backslash (`\\n`, the user's literal escape) is left
+ * untouched by the negative lookbehind, and an already-restored real newline
+ * no longer matches. Callers may therefore normalize defensively without
+ * worrying about how many times the text has already passed through here.
+ */
+export function normalizeMarkdownLineBreaks(text: string): string {
+  return text
+    .replace(/(?<!\\)\\r\\n/g, '\n')
+    .replace(/(?<!\\)\\n/g, '\n')
+    .replace(/(?<!\\)\\r/g, '\r');
+}
+
+/**
  * Build text message content.
  * Text messages are simple plain text.
+ *
+ * This is the single exit for `msg_type: 'text'` content — every escaped
+ * newline is restored here (Issue #4817), so callers must not hand-roll
+ * `JSON.stringify({ text })` or the fix will be bypassed.
  *
  * @param text - Plain text content
  * @returns JSON string suitable for Feishu API content field
@@ -66,15 +85,7 @@ export interface PostContent {
  * // Returns: '{"text":"Hello, world!"}'
  */
 export function buildTextContent(text: string): string {
-  return JSON.stringify({ text });
-}
-
-/** Restore a single escaped newline layer at the Markdown semantic boundary. */
-export function normalizeMarkdownLineBreaks(text: string): string {
-  return text
-    .replace(/(?<!\\)\\r\\n/g, '\n')
-    .replace(/(?<!\\)\\n/g, '\n')
-    .replace(/(?<!\\)\\r/g, '\r');
+  return JSON.stringify({ text: normalizeMarkdownLineBreaks(text) });
 }
 
 /** Normalize Markdown elements recursively without changing plain-text fields. */
@@ -119,7 +130,16 @@ export function normalizeCardMarkdown<T>(value: T): T {
 export function buildPostContent(elements: PostElement[][], title?: string): string {
   const postContent: PostContent = {
     zh_cn: {
-      content: elements,
+      // Issue #4817: post rows carry the same Markdown-ish text as msg_type
+      // 'text', so `tag: 'text'` segments get the same newline treatment.
+      // Other tags (`a` labels, `at` fallback names, image keys) are left alone.
+      content: elements.map((row) =>
+        row.map((element) =>
+          element.tag === 'text'
+            ? { ...element, text: normalizeMarkdownLineBreaks(element.text) }
+            : element
+        )
+      ),
     },
   };
 
