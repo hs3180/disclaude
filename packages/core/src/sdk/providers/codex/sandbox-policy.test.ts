@@ -1,7 +1,7 @@
 /**
  * Tests for the codex sandbox policy resolver — Issue #4631 (S4 of #4627).
  *
- * Locks the full mapping table (permissionMode / explicit override /
+ * Locks the full mapping table (full-access switch / explicit override /
  * denylist cap / web-search fail-closed) as a pure-function contract,
  * including the deny paths verified live against codex-cli 0.132.0:
  * - read-only blocks file mutation (enforcement probe, see module header)
@@ -13,14 +13,9 @@ import { describe, expect, it } from 'vitest';
 import { resolveCodexSandboxPolicy } from './sandbox-policy.js';
 
 describe('resolveCodexSandboxPolicy (Issue #4631)', () => {
-  // ── base level: permissionMode inference ─────────────────────────────
+  // ── base level: explicit Codex policy ─────────────────────────────────
 
-  it("maps permissionMode 'bypassPermissions' → workspace-write", () => {
-    const d = resolveCodexSandboxPolicy({ permissionMode: 'bypassPermissions' });
-    expect(d.sandbox).toBe('workspace-write');
-  });
-
-  it('maps absent permissionMode → workspace-write (ChatAgent bypass default)', () => {
+  it('maps the normal Codex policy → workspace-write', () => {
     const d = resolveCodexSandboxPolicy({});
     expect(d.sandbox).toBe('workspace-write');
   });
@@ -55,7 +50,7 @@ describe('resolveCodexSandboxPolicy (Issue #4631)', () => {
   it('caps at read-only when the denylist blocks mutation tools (claude names)', () => {
     for (const name of ['Bash', 'Write', 'Edit', 'NotebookEdit']) {
       const d = resolveCodexSandboxPolicy(
-        { permissionMode: 'bypassPermissions', disallowedTools: [name] },
+        { disallowedTools: [name] },
       );
       expect(d.sandbox, name).toBe('read-only');
     }
@@ -71,7 +66,7 @@ describe('resolveCodexSandboxPolicy (Issue #4631)', () => {
   it('the denylist cap outranks an explicit danger-full-access override', () => {
     // Security policy (denylist) beats preference (explicit config).
     const d = resolveCodexSandboxPolicy(
-      { permissionMode: 'bypassPermissions', disallowedTools: ['Bash'] },
+      { disallowedTools: ['Bash'] },
       'danger-full-access',
     );
     expect(d.sandbox).toBe('read-only');
@@ -89,7 +84,6 @@ describe('resolveCodexSandboxPolicy (Issue #4631)', () => {
     // #4181): every entry names claude-only tools, so the codex backend
     // must run unrestricted-by-default, not fail.
     const d = resolveCodexSandboxPolicy({
-      permissionMode: 'bypassPermissions',
       disallowedTools: [
         'EnterPlanMode',
         'AskUserQuestion',
@@ -126,7 +120,7 @@ describe('resolveCodexSandboxPolicy (Issue #4631)', () => {
       { permissionMode: 'default', disallowedTools: ['Bash'] },
     );
     expect(d.reasons.length).toBe(2);
-    expect(d.reasons[0]).toMatch(/permissionMode/);
+    expect(d.reasons[0]).toMatch(/fail closed/);
     expect(d.reasons[1]).toMatch(/disallowedTools/);
   });
 

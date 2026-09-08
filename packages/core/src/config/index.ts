@@ -214,7 +214,7 @@ export class Config {
 
   // Codex exec sandbox override (Issue #4631, S4 of #4627). Only
   // meaningful with AGENT_BACKEND === 'codex'; consumed by the
-  // provider factory. undefined ⇒ derived from permissionMode.
+  // provider factory. undefined ⇒ normal workspace-write policy.
   static readonly CODEX_SANDBOX = fileConfigOnly.agent?.codexSandbox;
   static readonly CODEX_FULL_ACCESS = fileConfigOnly.agent?.codexFullAccess;
   static readonly CODEX_NETWORK_ACCESS = fileConfigOnly.agent?.codexNetworkAccess;

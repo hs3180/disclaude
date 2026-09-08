@@ -13,7 +13,7 @@
  *
  * | disclaude input                              | codex sandbox          |
  * |----------------------------------------------|------------------------|
- * | permissionMode 'bypassPermissions'/unset     | workspace-write        |
+ * | normal bot policy / unset                   | workspace-write        |
  * | permissionMode 'default' (ask)               | read-only (fail closed)|
  * | agent.codexSandbox explicit override         | that level             |
  * | disallowedTools contains a mutation tool     | capped at read-only    |
@@ -101,7 +101,8 @@ export function resolveCodexSandboxPolicy(
 ): CodexSandboxDecision {
   const reasons: string[] = [];
 
-  // 1) Base level: explicit config wins; else infer from permissionMode.
+  // 1) Base level: the explicit full-access opt-in wins, followed by the
+  //    advanced sandbox override. Otherwise preserve the normal bot policy;
   //    'default' means "ask the user" — headless exec has no asker, and the
   //    safe degradation is read-only, NOT a silently wider sandbox.
   // Allowlist the inference (S4 review): this resolver IS the security
@@ -132,7 +133,7 @@ export function resolveCodexSandboxPolicy(
         ? `agent.codexSandbox=${configSandbox} (explicit override)`
         : options.permissionMode === 'default'
           ? "permissionMode 'default' (ask) has no headless approver → read-only (fail closed)"
-          : "permissionMode '${options.permissionMode ?? 'bypassPermissions (default)'}' → workspace-write"
+          : 'normal Codex policy → workspace-write'
   );
 
   // 2) Denylist cap: mutation-blocking entries cap the sandbox at read-only
