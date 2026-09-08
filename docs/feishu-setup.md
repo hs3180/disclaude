@@ -174,8 +174,9 @@ feishu:
 # 构建并启动
 npm run build && npm start
 
-# 或使用 PM2（生产环境推荐）
-npm run pm2:start
+# 或使用后台服务（Docker 或 macOS launchd）
+docker compose up -d
+# macOS：npm run launchd:start
 ```
 
 ### 7.4 验证配置

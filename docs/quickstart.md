@@ -67,8 +67,9 @@ glm:
 # 开发模式（自动重载）
 npm run dev
 
-# 生产模式（PM2 守护进程）
-npm run pm2:start
+# 生产模式（Docker 或 macOS launchd）
+docker compose up -d
+# macOS：npm run launchd:start
 ```
 
 ## 第 5 步：验证
@@ -93,7 +94,7 @@ npm run pm2:start
 
 **❌ 权限不足** → 确认权限已审批生效，重新发布应用版本
 
-**❌ 连接失败** → 检查 App ID / App Secret 是否正确，查看日志 `npm run pm2:logs`
+**❌ 连接失败** → 检查 App ID / App Secret 是否正确，查看 Docker 日志 `docker compose logs -f primary`；macOS launchd 用户查看 `npm run launchd:logs`
 
 ---
 

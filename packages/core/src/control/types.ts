@@ -65,7 +65,7 @@ export interface ControlHandlerContext {
   /**
    * Restart the entire service process (Issue #3807).
    * Called by /restart command to trigger graceful shutdown so the
-   * process manager (launchd/PM2) can restart the service.
+   * launchd or Docker can restart the service.
    */
   shutdown?: () => Promise<void>;
 

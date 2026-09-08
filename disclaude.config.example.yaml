@@ -314,7 +314,7 @@ env:
 #   1. Copy this file to disclaude.config.yaml
 #   2. Replace placeholder values with your actual configuration
 #   3. Run: npm run build
-#   4. Run: npm run pm2:restart
+#   4. Run: npm run launchd:restart (macOS) or docker compose up -d (Docker)
 #
 # Bash Environment Initialization:
 #   For conda environment activation and other shell-specific setup,

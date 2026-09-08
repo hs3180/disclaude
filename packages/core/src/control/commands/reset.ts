@@ -34,7 +34,7 @@ export const handleReset: CommandHandler = (
  *
  * Unlike /reset which only resets a single chat's agent session,
  * /restart triggers a graceful shutdown of the entire service process.
- * The process manager (launchd/PM2) will then automatically restart it.
+ * The service supervisor (launchd or Docker) will then restart it.
  */
 export const handleRestart: CommandHandler = (
   _command: ControlCommand,
