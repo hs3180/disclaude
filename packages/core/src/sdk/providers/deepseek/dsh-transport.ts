@@ -48,6 +48,8 @@ interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   timer?: ReturnType<typeof setTimeout>;
+  onAbort?: () => void;
+  signal?: AbortSignal;
 }
 
 export class DshStdioTransport {
@@ -89,7 +91,7 @@ export class DshStdioTransport {
     });
   }
 
-  request(method: string, params?: unknown): Promise<unknown> {
+  request(method: string, params?: unknown, signal?: AbortSignal): Promise<unknown> {
     this.start();
     const stdin = this.child?.stdin;
     if (!stdin || stdin.destroyed) {
@@ -105,9 +107,24 @@ export class DshStdioTransport {
     };
     return new Promise((resolve, reject) => {
       const pending: PendingRequest = { resolve, reject };
+      const rejectCancelled = () => {
+        this.pending.delete(id);
+        this.clearPending(pending);
+        reject(new Error(`dsh request cancelled: ${method}`));
+      };
+      if (signal?.aborted) {
+        rejectCancelled();
+        return;
+      }
+      if (signal) {
+        pending.onAbort = rejectCancelled;
+        pending.signal = signal;
+        signal.addEventListener('abort', rejectCancelled, { once: true });
+      }
       if (this.options.requestTimeoutMs && this.options.requestTimeoutMs > 0) {
         pending.timer = setTimeout(() => {
           this.pending.delete(id);
+          this.clearPending(pending);
           reject(
             new Error(`dsh request timed out: ${method} (${this.options.requestTimeoutMs}ms)`)
           );
@@ -117,9 +134,7 @@ export class DshStdioTransport {
       this.pending.set(id, pending);
       if (!stdin.write(`${JSON.stringify(request)}\n`)) {
         this.pending.delete(id);
-        if (pending.timer) {
-          clearTimeout(pending.timer);
-        }
+        this.clearPending(pending);
         reject(new Error('dsh transport failed to write request'));
       }
     });
@@ -153,9 +168,7 @@ export class DshStdioTransport {
         return;
       }
       this.pending.delete(message.id);
-      if (pending.timer) {
-        clearTimeout(pending.timer);
-      }
+      this.clearPending(pending);
       if ('error' in message && message.error) {
         pending.reject(new Error(`dsh RPC error ${message.error.code}: ${message.error.message}`));
       } else {
@@ -173,11 +186,24 @@ export class DshStdioTransport {
 
   private fail(error: Error): void {
     for (const pending of this.pending.values()) {
-      if (pending.timer) {
-        clearTimeout(pending.timer);
-      }
+      this.clearPending(pending);
       pending.reject(error);
     }
     this.pending.clear();
+  }
+
+  private clearPending(pending: PendingRequest): void {
+    if (pending.timer) {
+      clearTimeout(pending.timer);
+      pending.timer = undefined;
+    }
+    // AbortSignal listeners are one-shot, but removing the callback here also
+    // covers successful responses, timeouts, write failures, and transport
+    // shutdown before the signal fires.
+    if (pending.signal && pending.onAbort) {
+      pending.signal.removeEventListener('abort', pending.onAbort);
+    }
+    pending.onAbort = undefined;
+    pending.signal = undefined;
   }
 }

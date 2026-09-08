@@ -61,4 +61,19 @@ describe('DshStdioTransport', () => {
       await rm(fixture.dir, { recursive: true, force: true });
     }
   });
+
+  it('cancels one request without closing the reusable transport', async () => {
+    const fixture = await fakeDsh();
+    const transport = new DshStdioTransport({ binary: fixture.binary });
+    const controller = new AbortController();
+    try {
+      const cancelled = transport.request('slow', undefined, controller.signal);
+      controller.abort();
+      await expect(cancelled).rejects.toThrow('dsh request cancelled: slow');
+      await expect(transport.request('after-cancel')).resolves.toBe('after-cancel');
+    } finally {
+      transport.close();
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
+  });
 });
