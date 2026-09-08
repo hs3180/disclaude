@@ -41,17 +41,18 @@ agent:
   #   + one-time interactive `codex login`.
   # agentBackend: "codex"
 
-  # Codex exec sandbox level (only with agentBackend: codex, Issue #4631).
+  # Codex exec sandbox level (for the active agent backend, Issue #4631).
   # Options: read-only, workspace-write, danger-full-access
-  # Unset → derived from permissionMode (bypassPermissions → workspace-write;
-  # default/ask → read-only, fail closed). danger-full-access is reachable
-  # ONLY through this explicit override; disallowedTools mutation entries
-  # still cap at read-only regardless.
+  # The clear full-access switch for Codex. Keep it unset/false for the
+  # normal workspace-write sandbox; disallowedTools mutation entries still
+  # cap the effective sandbox at read-only.
   # codexSandbox: "workspace-write"
+  # Explicit opt-in for unrestricted commands and workspace mutations.
+  # fullAccess: true
   # Codex workspace network access (default: true for disclaude network-backed workflows).
   # codexNetworkAccess: true
 
-  # Codex backend concurrency governance (only with agentBackend: codex,
+  # Codex backend concurrency governance (for the active agent backend,
   # Issue #4634). Per-process caps: at most N alive codex sessions and N
   # simultaneously-executing codex exec children; excess turns queue FIFO
   # with a backpressure notice. At the session cap the idlest session is
@@ -76,7 +77,7 @@ agent:
   # Permission mode for SDK tools
   # Options: default (ask user), bypassPermissions (auto-approve)
   # Default: default for CLI, bypassPermissions for bot
-  permissionMode: "bypassPermissions"
+  # permissionMode: "default"
 
   # Maximum number of concurrent long-running tasks
   # Default: 1

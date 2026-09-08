@@ -29,9 +29,10 @@
  *
  * S4 (#4631): permission gate → sandbox mapping. codex exec is headless
  * (no approval axis), so the disclaude permission policy maps onto the one
- * available axis — sandbox_mode — via sandbox-policy.ts: bypassPermissions
- * → workspace-write, 'default' (ask) → read-only (fail closed), explicit
- * `agent.codexSandbox` override honored, mutation denylist entries cap at
+ * available axis — sandbox_mode — via sandbox-policy.ts: the normal Codex
+ * policy → workspace-write, 'default' (ask) → read-only (fail closed), the
+ * explicit `agent.fullAccess` switch → danger-full-access, and the
+ * `agent.codexSandbox` override is honored. Mutation denylist entries cap at
  * read-only, and policies codex cannot honor (WebSearch deny) throw with a
  * clear error instead of silently violating policy.
  *
@@ -168,6 +169,8 @@ export interface CodexAgentProviderOptions {
    * outranks it (security policy > convenience preference).
    */
   sandboxOverride?: CodexSandboxLevel;
+  /** Explicit opt-in alias for the danger-full-access sandbox. */
+  fullAccess?: boolean;
   /** Explicit Codex workspace network policy. Defaults to enabled. */
   networkAccess?: boolean;
   /** Maximum input-token size permitted for a resumed Codex turn. */
@@ -193,6 +196,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
   private readonly env: Record<string, string | undefined>;
   private readonly execTimeoutMs: number | undefined;
   private readonly sandboxOverride: CodexSandboxLevel | undefined;
+  private readonly fullAccess: boolean;
   private readonly networkAccess: boolean;
   private readonly maxResumeInputTokens: number;
   private readonly builtinRoot: string;
@@ -225,6 +229,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     this.env = options.env ?? process.env;
     this.execTimeoutMs = options.execTimeoutMs;
     this.sandboxOverride = options.sandboxOverride;
+    this.fullAccess = options.fullAccess ?? false;
     this.networkAccess = options.networkAccess ?? true;
     this.maxResumeInputTokens = options.maxResumeInputTokens ?? DEFAULT_MAX_RESUME_INPUT_TOKENS;
     this.builtinRoot = options.builtinsDir ?? Config.getBuiltinsDir();
@@ -340,14 +345,26 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     // an actionable message when the policy cannot be honored headlessly
     // (e.g. a WebSearch denylist entry) — same fail-fast contract as the
     // binary check above.
-    const sandboxDecision = resolveCodexSandboxPolicy(options, this.sandboxOverride);
+    const sandboxDecision = resolveCodexSandboxPolicy(
+      options,
+      this.sandboxOverride,
+      this.fullAccess
+    );
     logger.info(
       {
         sandbox: sandboxDecision.sandbox,
+        permissionMode:
+          sandboxDecision.sandbox === 'danger-full-access' ? 'full-access' : 'sandboxed',
         reasons: sandboxDecision.reasons,
       },
       'codex sandbox policy resolved (Issue #4631): permission gate → codex exec sandbox'
     );
+    if (this.fullAccess) {
+      logger.warn(
+        { permissionMode: 'full-access', sandbox: sandboxDecision.sandbox },
+        'Codex full-access mode is enabled by explicit agent.fullAccess=true; commands and workspace mutations are unrestricted'
+      );
+    }
 
     const runner = new CodexExecRunner({
       binary,
@@ -634,10 +651,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           // a bare `eventType: "error"` in Kibana — the upstream cause (e.g.
           // "stream disconnected before completion: tls handshake eof") was
           // only recoverable by re-running codex by hand. Log the message.
-          logger.warn(
-            { threadId: latestSessionId, content: event.message },
-            'codex error event'
-          );
+          logger.warn({ threadId: latestSessionId, content: event.message }, 'codex error event');
         }
         if (event.type === 'turn.failed') {
           const turnFailure = event.error?.message ?? '';

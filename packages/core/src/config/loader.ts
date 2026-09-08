@@ -230,6 +230,28 @@ export function validateConfig(config: DisclaudeConfig): boolean {
   }
 
   if (
+    config.agent?.fullAccess !== undefined &&
+    typeof config.agent.fullAccess !== 'boolean'
+  ) {
+    logger.error(
+      `agent.fullAccess must be a boolean (got ${String(config.agent.fullAccess)}). ` +
+        'Set it to true only when the unrestricted Codex sandbox is explicitly intended.'
+    );
+    return false;
+  }
+  if (
+    config.agent?.fullAccess === true &&
+    config.agent.codexSandbox !== undefined &&
+    config.agent.codexSandbox !== 'danger-full-access'
+  ) {
+    logger.error(
+      'agent.fullAccess: true conflicts with agent.codexSandbox: ' +
+        `"${config.agent.codexSandbox}". Remove codexSandbox or set it to "danger-full-access".`
+    );
+    return false;
+  }
+
+  if (
     config.agent?.codexNetworkAccess !== undefined &&
     typeof config.agent.codexNetworkAccess !== 'boolean'
   ) {

@@ -566,7 +566,7 @@ JSONL
       fixtures = makeFixtures({ withBinary: true, withAuth: true, body: ARGV_BODY });
     };
 
-    it("derives workspace-write from permissionMode 'bypassPermissions'/unset (bot default)", async () => {
+    it('uses the normal workspace-write policy when full access is not enabled', async () => {
       sandboxedFixtures();
       await drainStream(makeProvider(fixtures), ['hi']);
       expect(argvOf(fixtures)).toContain('-s workspace-write');
@@ -581,7 +581,6 @@ JSONL
     it('caps at read-only when the denylist blocks mutation tools', async () => {
       sandboxedFixtures();
       await drainStream(makeProvider(fixtures), ['hi'], {
-        permissionMode: 'bypassPermissions',
         disallowedTools: ['Bash'],
       });
       expect(argvOf(fixtures)).toContain('-s read-only');
@@ -592,7 +591,6 @@ JSONL
       // claude-only tool, so none of it may degrade the codex backend.
       sandboxedFixtures();
       await drainStream(makeProvider(fixtures), ['hi'], {
-        permissionMode: 'bypassPermissions',
         disallowedTools: [
           'EnterPlanMode',
           'AskUserQuestion',
@@ -603,6 +601,19 @@ JSONL
         ],
       });
       expect(argvOf(fixtures)).toContain('-s workspace-write');
+    }, 15_000);
+
+    it('uses danger-full-access when the explicit full-access switch is enabled', async () => {
+      sandboxedFixtures();
+      const provider = new CodexAgentProvider({
+        env: {
+          PATH: `${fixtures.binDir}:${process.env.PATH ?? ''}`,
+          CODEX_HOME: fixtures.codexHome,
+        },
+        fullAccess: true,
+      });
+      await drainStream(provider, ['hi']);
+      expect(argvOf(fixtures)).toContain('-s danger-full-access');
     }, 15_000);
 
     it('throws (fail closed, actionable) for a WebSearch denylist entry', () => {

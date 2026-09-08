@@ -13,7 +13,7 @@
  *
  * | disclaude input                              | codex sandbox          |
  * |----------------------------------------------|------------------------|
- * | permissionMode 'bypassPermissions'/unset     | workspace-write        |
+ * | normal bot policy / unset                   | workspace-write        |
  * | permissionMode 'default' (ask)               | read-only (fail closed)|
  * | agent.codexSandbox explicit override         | that level             |
  * | disallowedTools contains a mutation tool     | capped at read-only    |
@@ -97,34 +97,43 @@ export interface CodexSandboxDecision {
 export function resolveCodexSandboxPolicy(
   options: Pick<AgentQueryOptions, 'permissionMode' | 'disallowedTools'>,
   configSandbox?: CodexSandboxLevel,
+  fullAccess = false
 ): CodexSandboxDecision {
   const reasons: string[] = [];
 
-  // 1) Base level: explicit config wins; else infer from permissionMode.
+  // 1) Base level: the explicit full-access opt-in wins, followed by the
+  //    advanced sandbox override. Otherwise preserve the normal bot policy;
   //    'default' means "ask the user" — headless exec has no asker, and the
   //    safe degradation is read-only, NOT a silently wider sandbox.
   // Allowlist the inference (S4 review): this resolver IS the security
   // boundary, and `!== 'default' ? wider` would silently widen the sandbox
   // for any out-of-enum value a future caller passes — fail closed instead.
   let sandbox: CodexSandboxLevel;
-  if (configSandbox) {
+  if (fullAccess) {
+    sandbox = 'danger-full-access';
+  } else if (configSandbox) {
     sandbox = configSandbox;
   } else if (options.permissionMode === 'default') {
     sandbox = 'read-only';
-  } else if (options.permissionMode === 'bypassPermissions' || options.permissionMode === undefined) {
+  } else if (
+    options.permissionMode === 'bypassPermissions' ||
+    options.permissionMode === undefined
+  ) {
     sandbox = 'workspace-write';
   } else {
     throw new Error(
       `CodexAgentProvider: unknown permissionMode "${String(options.permissionMode)}" — ` +
-      'refusing to infer a sandbox level (fail closed, #4631).',
+        'refusing to infer a sandbox level (fail closed, #4631).'
     );
   }
   reasons.push(
-    configSandbox
-      ? `agent.codexSandbox=${configSandbox} (explicit override)`
-      : options.permissionMode === 'default'
-        ? "permissionMode 'default' (ask) has no headless approver → read-only (fail closed)"
-        : "permissionMode '${options.permissionMode ?? 'bypassPermissions (default)'}' → workspace-write",
+    fullAccess
+      ? 'agent.fullAccess=true (explicit full-access opt-in)'
+      : configSandbox
+        ? `agent.codexSandbox=${configSandbox} (explicit override)`
+        : options.permissionMode === 'default'
+          ? "permissionMode 'default' (ask) has no headless approver → read-only (fail closed)"
+          : 'normal Codex policy → workspace-write'
   );
 
   // 2) Denylist cap: mutation-blocking entries cap the sandbox at read-only
@@ -136,13 +145,13 @@ export function resolveCodexSandboxPolicy(
   // those entries silently skip both the mutation cap and the WebSearch
   // throw, the exact policy hole this module promises never to leave.
   const denylist = (options.disallowedTools ?? []).map((name) =>
-    name.split('(')[0].trim().toLowerCase(),
+    name.split('(')[0].trim().toLowerCase()
   );
   const mutationHits = denylist.filter((name) => MUTATION_TOOL_NAMES.has(name));
   if (mutationHits.length > 0) {
     sandbox = 'read-only';
     reasons.push(
-      `disallowedTools has mutation tools (${[...new Set(mutationHits)].join(', ')}) → capped at read-only`,
+      `disallowedTools has mutation tools (${[...new Set(mutationHits)].join(', ')}) → capped at read-only`
     );
   }
 
@@ -155,7 +164,7 @@ export function resolveCodexSandboxPolicy(
         `(${[...new Set(webSearchHits)].join(', ')}), but the codex CLI cannot disable its ` +
         'built-in web search in exec mode (verified codex-cli 0.132.0 — no effective flag). ' +
         'Refusing to run with a permission policy that cannot be honored (fail closed, #4631). ' +
-        'Remove the web-search entries or use another agentBackend for this policy.',
+        'Remove the web-search entries or use another agentBackend for this policy.'
     );
   }
 
