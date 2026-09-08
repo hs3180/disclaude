@@ -215,6 +215,33 @@ describe('StreamingReplyDriver — finish semantics', () => {
     expect(cb.finalizeStreaming).toHaveBeenCalledTimes(1);
   });
 
+  it('coalesces concurrent finish calls into one terminal delivery', async () => {
+    let releaseFinalize: () => void = () => {};
+    let finalized = false;
+    const cb = makeCallbacks({
+      finalizeStreaming: vi.fn(() => new Promise<void>((resolve) => {
+        releaseFinalize = () => {
+          finalized = true;
+          resolve();
+        };
+      })),
+    });
+    const driver = makeDriver(cb);
+
+    await driver.pushText('hello');
+    const firstFinish = driver.finish();
+    const secondFinish = driver.finish();
+
+    await vi.waitFor(() => {
+      expect(cb.finalizeStreaming).toHaveBeenCalledTimes(1);
+    });
+    expect(finalized).toBe(false);
+
+    releaseFinalize();
+    await Promise.all([firstFinish, secondFinish]);
+    expect(cb.finalizeStreaming).toHaveBeenCalledTimes(1);
+  });
+
   it('does not re-call startStreaming on every pushText (once per turn)', async () => {
     const cb = makeCallbacks();
     const driver = makeDriver(cb);
