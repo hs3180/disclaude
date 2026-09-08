@@ -29,6 +29,7 @@ import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js'
 // Re-export sub-modules
 export * from './types.js';
 export * from './loader.js';
+export * from './agent-presets.js';
 
 export { loadRuntimeEnv, setRuntimeEnv, deleteRuntimeEnv } from './runtime-env.js';
 
