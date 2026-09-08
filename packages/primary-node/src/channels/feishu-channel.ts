@@ -52,7 +52,11 @@ import {
   uploadFile,
 } from '../utils/feishu-upload.js';
 import { extractCardTextContent } from '../platforms/feishu/card-builders/card-text-extractor.js';
-import { normalizeCardMarkdown } from '../platforms/feishu/card-builders/content-builder.js';
+import {
+  buildTextContent,
+  normalizeCardMarkdown,
+  normalizeMarkdownLineBreaks,
+} from '../platforms/feishu/card-builders/content-builder.js';
 // Issue #4400 (#4208 P2-c): Card Kit streaming wiring.
 import {
   FeishuCardKitClient,
@@ -612,11 +616,14 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           logOutgoing(messageId, message.text || '', 'post');
           return messageId;
         }
-        const text = message.text || '';
+        // Issue #4817: restore escaped newlines *before* measuring bytes, so the
+        // truncation budget reflects what is actually sent and a head/tail cut
+        // can never land in the middle of an `\n` escape sequence.
+        const text = normalizeMarkdownLineBreaks(message.text || '');
         let textToSend = truncateFeishuMessage(text, configuredFeishuMessageBytes());
         let messageId: string | undefined;
         try {
-          messageId = await sendFeishuMessage('text', JSON.stringify({ text: textToSend }));
+          messageId = await sendFeishuMessage('text', buildTextContent(textToSend));
         } catch (err) {
           const apiError = extractFeishuApiError(err);
           if (Number(apiError.apiCode) !== 230025) {
@@ -633,7 +640,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
             'Feishu 230025; retrying with a more compact head-tail truncation (Issue #4693)'
           );
           try {
-            messageId = await sendFeishuMessage('text', JSON.stringify({ text: textToSend }));
+            messageId = await sendFeishuMessage('text', buildTextContent(textToSend));
           } catch (retryErr) {
             const retryApiError = extractFeishuApiError(retryErr);
             if (Number(retryApiError.apiCode) !== 230025) {
@@ -650,7 +657,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
               },
               'Feishu rejected the compact retry as oversized; sending a short fallback'
             );
-            messageId = await sendFeishuMessage('text', JSON.stringify({ text: textToSend }));
+            messageId = await sendFeishuMessage('text', buildTextContent(textToSend));
           }
         }
         logger.debug(
@@ -872,7 +879,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       inlineElements.push({ tag: 'at', user_id: mention.openId });
     }
     if (text) {
-      inlineElements.push({ tag: 'text', text: ` ${text}` });
+      // Issue #4817: any @mention reply is routed here instead of msg_type
+      // 'text', so it needs the same escaped-newline semantics.
+      inlineElements.push({ tag: 'text', text: ` ${normalizeMarkdownLineBreaks(text)}` });
     }
     return {
       zh_cn: {
@@ -1194,7 +1203,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         data: {
           receive_id: chatId,
           msg_type: 'text',
-          content: JSON.stringify({ text }),
+          content: buildTextContent(text),
         },
       });
       const msgId = resp.data?.message_id;

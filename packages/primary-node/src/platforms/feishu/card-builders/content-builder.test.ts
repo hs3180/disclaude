@@ -47,6 +47,24 @@ describe('buildTextContent', () => {
     const parsed = JSON.parse(result);
     expect(parsed.text).toBe('line1\nline2\nline3');
   });
+
+  // Issue #4817: buildTextContent is the single exit for msg_type 'text',
+  // so the escaped-newline restoration must happen here, not at each caller.
+  it('restores escaped newlines so Markdown paragraphs survive (Issue #4817)', () => {
+    const parsed = JSON.parse(buildTextContent('结论：可行\\n\\n- K3：2.8T\\n- B300：288GB'));
+    expect(parsed.text).toBe('结论：可行\n\n- K3：2.8T\n- B300：288GB');
+    expect(parsed.text).not.toContain('\\n');
+  });
+
+  it('keeps a user-authored doubled backslash literal (Issue #4817)', () => {
+    const parsed = JSON.parse(buildTextContent('regex 用 \\\\n 匹配换行'));
+    expect(parsed.text).toBe('regex 用 \\\\n 匹配换行');
+  });
+
+  it('is idempotent — normalizing twice changes nothing (Issue #4817)', () => {
+    const once = JSON.parse(buildTextContent('a\\nb')).text;
+    expect(JSON.parse(buildTextContent(once)).text).toBe(once);
+  });
 });
 
 describe('Markdown line-break normalization', () => {
@@ -176,6 +194,28 @@ describe('buildPostContent', () => {
     const result = buildPostContent([]);
     const parsed = JSON.parse(result);
     expect(parsed.zh_cn.content).toEqual([]);
+  });
+
+  // Issue #4817: post rows carry the same text as msg_type 'text'.
+  it('restores escaped newlines in text segments (Issue #4817)', () => {
+    const elements: PostElement[][] = [[{ tag: 'text', text: '第一段\\n\\n第二段' }]];
+    const parsed = JSON.parse(buildPostContent(elements));
+    expect(parsed.zh_cn.content[0][0].text).toBe('第一段\n\n第二段');
+  });
+
+  it('leaves non-text segments untouched (Issue #4817)', () => {
+    const elements: PostElement[][] = [
+      [
+        { tag: 'at', user_id: 'ou_1', text: 'name\\nwith escape' },
+        { tag: 'a', text: 'label\\nkept', href: 'https://example.com/a\\nb' },
+        { tag: 'img', image_key: 'img_v3_\\nkey' },
+      ],
+    ];
+    const parsed = JSON.parse(buildPostContent(elements));
+    expect(parsed.zh_cn.content[0][0].text).toBe('name\\nwith escape');
+    expect(parsed.zh_cn.content[0][1].text).toBe('label\\nkept');
+    expect(parsed.zh_cn.content[0][1].href).toBe('https://example.com/a\\nb');
+    expect(parsed.zh_cn.content[0][2].image_key).toBe('img_v3_\\nkey');
   });
 });
 

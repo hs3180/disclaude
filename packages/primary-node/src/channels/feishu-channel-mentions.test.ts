@@ -158,6 +158,41 @@ describe('FeishuChannel doSendMessage — mentions support (Issue #1742)', () =>
       expect(result).toBe('new_msg_001');
     });
 
+    // Issue #4817: an @mention reply is routed to msg_type 'post' instead of
+    // 'text', and that branch was the one the reported sample actually hit.
+    it('restores escaped newlines in the post text segment (Issue #4817)', async () => {
+      const { client, mocks } = createMockClient();
+      const channel = createTestChannel(client);
+
+      await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'text',
+        text: '结论：可行\\n\\n- K3：2.8T\\n- B300：288GB',
+        mentions: [{ openId: 'ou_user_001' }],
+      });
+
+      const content = JSON.parse(mocks.createMock.mock.calls[0][0].data.content);
+      const [[, segment]] = content.zh_cn.content;
+      expect(segment.tag).toBe('text');
+      expect(segment.text).toBe(' 结论：可行\n\n- K3：2.8T\n- B300：288GB');
+      expect(segment.text).not.toContain('\\n');
+    });
+
+    it('keeps a doubled backslash literal in the post path (Issue #4817)', async () => {
+      const { client, mocks } = createMockClient();
+      const channel = createTestChannel(client);
+
+      await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'text',
+        text: 'regex 用 \\\\n 匹配换行',
+        mentions: [{ openId: 'ou_user_001' }],
+      });
+
+      const content = JSON.parse(mocks.createMock.mock.calls[0][0].data.content);
+      expect(content.zh_cn.content[0][1].text).toBe(' regex 用 \\\\n 匹配换行');
+    });
+
     it('should send as post with mentions and empty text', async () => {
       const { client, mocks } = createMockClient();
       const channel = createTestChannel(client);

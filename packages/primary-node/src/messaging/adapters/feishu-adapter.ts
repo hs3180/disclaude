@@ -31,7 +31,10 @@ import {
   uploadImage,
   uploadFile,
 } from '../../utils/feishu-upload.js';
-import { normalizeMarkdownLineBreaks } from '../../platforms/feishu/card-builders/content-builder.js';
+import {
+  buildTextContent,
+  normalizeMarkdownLineBreaks,
+} from '../../platforms/feishu/card-builders/content-builder.js';
 
 const logger = createLogger('FeishuAdapter');
 
@@ -144,7 +147,7 @@ export class FeishuAdapter implements IChannelAdapter {
       case 'text':
         return {
           msg_type: 'text',
-          content: JSON.stringify({ text: content.text }),
+          content: buildTextContent(content.text),
         };
 
       case 'markdown':
@@ -170,11 +173,11 @@ export class FeishuAdapter implements IChannelAdapter {
       case 'done':
         return {
           msg_type: 'text',
-          content: JSON.stringify({
-            text: content.success
+          content: buildTextContent(
+            content.success
               ? `✅ ${content.message || 'Task completed'}`
-              : `❌ ${content.error || 'Task failed'}`,
-          }),
+              : `❌ ${content.error || 'Task failed'}`
+          ),
         };
 
       default:

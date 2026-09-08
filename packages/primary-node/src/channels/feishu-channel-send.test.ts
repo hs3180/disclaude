@@ -267,6 +267,78 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
       expect(fallbackText).toContain('回复内容过长');
       expect(result).toBe('fallback_msg_001');
     });
+
+    // Issue #4817: literal \n leaked to msg_type 'text'; #4762 only covered
+    // card markdown elements. All three send sites (first attempt + 230025
+    // retry + short fallback) must share the same newline semantics.
+    it('restores escaped newlines on the first attempt (Issue #4817)', async () => {
+      const { client, mocks } = createMockClient();
+      const channel = createTestChannel(client);
+
+      await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'text',
+        text: '结论：可行\\n\\n- K3：2.8T\\n- B300：288GB',
+      });
+
+      const sent = JSON.parse(mocks.createMock.mock.calls[0][0].data.content).text;
+      expect(sent).toBe('结论：可行\n\n- K3：2.8T\n- B300：288GB');
+      expect(sent).not.toContain('\\n');
+    });
+
+    it('restores escaped newlines on the 230025 retry too (Issue #4817)', async () => {
+      const { client, mocks } = createMockClient();
+      mocks.createMock
+        .mockRejectedValueOnce({
+          response: { status: 400, data: { code: 230025, msg: 'message too long' } },
+        })
+        .mockResolvedValueOnce({ data: { message_id: 'retry_msg_002' } });
+      const channel = createTestChannel(client);
+
+      // Long enough to require truncation, with escapes surviving in the head.
+      const result = await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'text',
+        text: `标题\\n\\n${'内容'.repeat(200_000)}`,
+      });
+
+      expect(result).toBe('retry_msg_002');
+      const retryText = JSON.parse(mocks.createMock.mock.calls[1][0].data.content).text;
+      expect(retryText.startsWith('标题\n\n')).toBe(true);
+      expect(retryText).not.toContain('\\n');
+    });
+
+    it('keeps a user-authored doubled backslash literal (Issue #4817)', async () => {
+      const { client, mocks } = createMockClient();
+      const channel = createTestChannel(client);
+
+      await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'text',
+        text: 'regex 用 \\\\n 匹配换行',
+      });
+
+      const sent = JSON.parse(mocks.createMock.mock.calls[0][0].data.content).text;
+      expect(sent).toBe('regex 用 \\\\n 匹配换行');
+    });
+
+    it('measures the truncation budget after normalization (Issue #4817)', async () => {
+      const { client, mocks } = createMockClient();
+      const channel = createTestChannel(client);
+
+      // 20_000 escape sequences = 40_000 raw bytes (over the 30_000 limit) but
+      // only 20_000 once restored. Measuring before normalization would truncate
+      // a message that actually fits — and could cut mid-escape, leaving a
+      // dangling backslash.
+      const text = '\\n'.repeat(20_000);
+      expect(Buffer.byteLength(text, 'utf8')).toBeGreaterThan(30_000);
+
+      await channel.sendMessage({ chatId: 'chat_123', type: 'text', text });
+
+      const sent = JSON.parse(mocks.createMock.mock.calls[0][0].data.content).text;
+      expect(sent).toBe('\n'.repeat(20_000));
+      expect(sent).not.toContain('中间内容已截断');
+    });
   });
 
   describe('text messages with mentions (post type)', () => {

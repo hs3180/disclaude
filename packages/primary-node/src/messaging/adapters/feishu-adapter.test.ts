@@ -457,6 +457,28 @@ describe('FeishuAdapter — Issue #1619', () => {
       expect(result.msg_type).toBe('text');
       expect(JSON.parse(result.content)).toEqual({ text: 'Hello World' });
     });
+
+    // Issue #4817: the adapter builds text content on its own; it must go
+    // through buildTextContent so it shares the newline semantics.
+    it('restores escaped newlines (Issue #4817)', () => {
+      const adapter = new FeishuAdapter();
+      const result = adapter.convert({
+        chatId: 'oc_123',
+        content: { type: 'text', text: '第一段\\n\\n第二段' },
+      }) as { msg_type: string; content: string };
+
+      expect(JSON.parse(result.content).text).toBe('第一段\n\n第二段');
+    });
+
+    it('keeps a doubled backslash literal (Issue #4817)', () => {
+      const adapter = new FeishuAdapter();
+      const result = adapter.convert({
+        chatId: 'oc_123',
+        content: { type: 'text', text: 'regex 用 \\\\n 匹配换行' },
+      }) as { msg_type: string; content: string };
+
+      expect(JSON.parse(result.content).text).toBe('regex 用 \\\\n 匹配换行');
+    });
   });
 
   describe('convert() — markdown content', () => {
