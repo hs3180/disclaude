@@ -28,7 +28,9 @@ export function validateAgentPresets(agents: unknown): AgentPresetValidation {
   const errors: string[] = [];
   const defaults: string[] = [];
   for (const [name, raw] of entries) {
-    if (!name.trim()) errors.push('agents preset names must not be empty');
+    if (!name.trim()) {
+      errors.push('agents preset names must not be empty');
+    }
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
       errors.push(`agents.${name} must be a mapping`);
       continue;
@@ -43,17 +45,18 @@ export function validateAgentPresets(agents: unknown): AgentPresetValidation {
     if (preset.default !== undefined && typeof preset.default !== 'boolean') {
       errors.push(`agents.${name}.default must be a boolean`);
     }
-    if (name === 'default' || preset.default === true) defaults.push(name);
+    if (name === 'default' || preset.default === true) {
+      defaults.push(name);
+    }
   }
 
   if (defaults.length !== 1) {
-    errors.push(
-      `agents must declare exactly one default preset (found ${defaults.length})`,
-    );
+    errors.push(`agents must declare exactly one default preset (found ${defaults.length})`);
   }
-  if (errors.length > 0) return { ok: false, errors };
+  if (errors.length > 0) {
+    return { ok: false, errors };
+  }
 
-  const name = defaults[0];
+  const [name] = defaults;
   return { ok: true, name, preset: (agents as AgentPresets)[name] };
 }
-
