@@ -628,9 +628,24 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           }
         } else if (event.type === 'error') {
           runFailureText += `\n${event.message}`;
+          // Full-content logging (CLAUDE.md): the classification line below
+          // records only the event TYPE, so the actual failure reason reached
+          // the chat but never the logs. A codex-wide outage then looks like
+          // a bare `eventType: "error"` in Kibana — the upstream cause (e.g.
+          // "stream disconnected before completion: tls handshake eof") was
+          // only recoverable by re-running codex by hand. Log the message.
+          logger.warn(
+            { threadId: latestSessionId, content: event.message },
+            'codex error event'
+          );
         }
         if (event.type === 'turn.failed') {
-          runFailureText += `\n${event.error?.message ?? ''}`;
+          const turnFailure = event.error?.message ?? '';
+          runFailureText += `\n${turnFailure}`;
+          logger.warn(
+            { threadId: latestSessionId, content: turnFailure },
+            'codex turn.failed event'
+          );
         }
         touchStallWatchdog();
         const presentation = classifyCodexEvent(event);
