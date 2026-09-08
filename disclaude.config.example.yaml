@@ -48,6 +48,8 @@ agent:
   # ONLY through this explicit override; disallowedTools mutation entries
   # still cap at read-only regardless.
   # codexSandbox: "workspace-write"
+  # Explicit opt-in for unrestricted Codex commands and workspace mutations.
+  # codexFullAccess: true
   # Codex workspace network access (default: true for disclaude network-backed workflows).
   # codexNetworkAccess: true
 

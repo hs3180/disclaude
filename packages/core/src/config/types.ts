@@ -74,6 +74,8 @@ export interface AgentConfig {
    * `danger-full-access` is reachable ONLY through this override.
    */
   codexSandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+  /** Explicit opt-in to Codex's unrestricted sandbox. Only for codex backend. */
+  codexFullAccess?: boolean;
   /** Whether Codex workspace-write may make outbound network requests. */
   codexNetworkAccess?: boolean;
   /**

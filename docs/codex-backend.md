@@ -33,6 +33,8 @@ agent:
   #   default（ask）→ read-only（无头模式没有审批人，保守降级）
   # danger-full-access 只能通过此配置显式开启。
   # codexSandbox: "workspace-write"
+  # 或使用更直观的显式全开模式（与非 danger-full-access 的 codexSandbox 冲突）：
+  # codexFullAccess: true
 
   # 并发治理（S7，#4634）——每进程上限，默认 3 / 2：
   # codex:
@@ -43,7 +45,7 @@ agent:
 
 完整示例见 `disclaude.config.example.yaml`（搜索 `agentBackend`）。
 
-加载时校验：`agentBackend` 非 `claude`/`pi`/`codex`、或 `codexSandbox` 非三个合法值时，`validateConfig()` 失败并给出可操作的错误信息（`packages/core/src/config/loader.ts`）。
+加载时校验：`agentBackend` 非 `claude`/`pi`/`codex`、`codexSandbox` 非三个合法值、或 `codexFullAccess` 类型错误/与其他沙箱级别冲突时，`validateConfig()` 失败并给出可操作的错误信息（`packages/core/src/config/loader.ts`）。启用 `codexFullAccess: true` 会在每个任务启动时记录醒目的 `permissionMode: full-access` 警告；默认未设置时行为不变。
 
 ## 2. 前置条件（重要）
 

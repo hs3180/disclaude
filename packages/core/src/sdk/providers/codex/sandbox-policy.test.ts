@@ -44,6 +44,12 @@ describe('resolveCodexSandboxPolicy (Issue #4631)', () => {
     expect(d.reasons.join(' ')).toMatch(/explicit override/);
   });
 
+  it('maps explicit full-access opt-in to danger-full-access', () => {
+    const d = resolveCodexSandboxPolicy({ permissionMode: 'default' }, undefined, true);
+    expect(d.sandbox).toBe('danger-full-access');
+    expect(d.reasons.join(' ')).toMatch(/codexFullAccess=true/);
+  });
+
   // ── denylist cap (fail closed) ───────────────────────────────────────
 
   it('caps at read-only when the denylist blocks mutation tools (claude names)', () => {

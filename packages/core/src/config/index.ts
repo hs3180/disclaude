@@ -216,6 +216,7 @@ export class Config {
   // meaningful with AGENT_BACKEND === 'codex'; consumed by the
   // provider factory. undefined ⇒ derived from permissionMode.
   static readonly CODEX_SANDBOX = fileConfigOnly.agent?.codexSandbox;
+  static readonly CODEX_FULL_ACCESS = fileConfigOnly.agent?.codexFullAccess;
   static readonly CODEX_NETWORK_ACCESS = fileConfigOnly.agent?.codexNetworkAccess;
 
   // Codex concurrency governance caps (Issue #4634, S7 of #4627).
