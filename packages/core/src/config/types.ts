@@ -120,6 +120,26 @@ export interface AgentConfig {
 }
 
 /**
+ * A named agent backend/model combination.
+ *
+ * Presets deliberately contain routing data only. Credentials remain in the
+ * existing provider-specific configuration so selecting a preset cannot
+ * accidentally turn a model choice into a secret-management mechanism.
+ */
+export interface AgentPreset {
+  agentBackend: NonNullable<AgentConfig['agentBackend']>;
+  model: string;
+  provider?: AgentConfig['provider'];
+  apiBaseUrl?: string;
+  permissionMode?: AgentConfig['permissionMode'];
+  /** Optional explicit marker; the reserved `default` name is also accepted. */
+  default?: boolean;
+}
+
+/** Named backend/model presets declared under the top-level `agents:` key. */
+export type AgentPresets = Record<string, AgentPreset>;
+
+/**
  * Feishu/Lark platform configuration section.
  */
 export interface FeishuConfig {
@@ -428,6 +448,8 @@ export interface DisclaudeConfig {
   workspace?: WorkspaceConfig;
   /** Agent/AI model settings */
   agent?: AgentConfig;
+  /** Named backend/model presets; legacy `agent:` remains supported. */
+  agents?: AgentPresets;
   /** Feishu platform settings */
   feishu?: FeishuConfig;
   /** Ruliu (如流) platform settings */
