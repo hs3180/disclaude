@@ -128,7 +128,7 @@ export function resolveCodexSandboxPolicy(
   }
   reasons.push(
     fullAccess
-      ? 'agent.codexFullAccess=true (explicit full-access opt-in)'
+      ? 'agent.fullAccess=true (explicit full-access opt-in)'
       : configSandbox
         ? `agent.codexSandbox=${configSandbox} (explicit override)`
         : options.permissionMode === 'default'
