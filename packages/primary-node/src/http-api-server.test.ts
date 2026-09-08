@@ -1070,6 +1070,12 @@ describe('HttpApiServer', () => {
       expect(lifecycleServer.isRunning).toBe(true);
     });
 
+    it('should expose the OS-assigned port after starting with port 0', () => {
+      const address = lifecycleServer.getAddress();
+      expect(address?.host).toBe('127.0.0.1');
+      expect(address?.port).toBeGreaterThan(0);
+    });
+
     it('should handle start when already running', async () => {
       // Already started in beforeEach — calling start again should be a no-op.
       await lifecycleServer.start();

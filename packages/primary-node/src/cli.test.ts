@@ -124,6 +124,12 @@ describe('parseArgs', () => {
     expect(result.apiPort).toBe(19200);
   });
 
+  it('should allow port 0 for OS-assigned API ports', () => {
+    const result = parseArgs(['start', '--api-port', '0']);
+    expect(result.command).toBe('start');
+    expect(result.apiPort).toBe(0);
+  });
+
   it('should leave apiPort undefined when not specified', () => {
     const result = parseArgs(['start']);
     expect(result.apiPort).toBeUndefined();
