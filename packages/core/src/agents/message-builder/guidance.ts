@@ -277,10 +277,13 @@ When you need to present structured data (status, metrics, analysis results, etc
  *
  * Phase 1 of the task ETA system: task record format and guidance.
  * Records are stored as unstructured Markdown in monthly files
- * `task-records/YYYY-MM.md` relative to the current workspace (Issue #4261:
- * rolling by month to prevent unbounded single-file growth). Existing
- * `.claude/task-records/` and `.claude/task-records.md` files are legacy
- * read-only sources and must not be overwritten.
+ * `task-records/YYYY-MM.md` **under the workspace root** resolved from the
+ * `DISCLAUDE_WORKSPACE_DIR` env var (Issue #4261: rolling by month to prevent
+ * unbounded single-file growth). The root is stable for the whole session and
+ * is NOT the agent's transient cwd — anchoring on cwd made project-bound
+ * chats (cwd = a nested project repo) drop records into that project's own
+ * tree. Existing `.claude/task-records/` and `.claude/task-records.md` files
+ * are legacy read-only sources and must not be overwritten.
  *
  * @returns Formatted task record guidance section
  */
@@ -311,17 +314,24 @@ Record a task entry when you have completed a meaningful unit of work, such as:
 
 ### Storage Location
 
-Append entries to the current month's file: \`task-records/YYYY-MM.md\`
-(e.g., \`task-records/${cur}.md\`) in the current workspace directory.
-Create the file if it does not exist (and create the \`task-records/\`
-directory if needed); when creating it for the first time, write a single
-top-level \`# Task Records\` heading on the first line so every monthly file has
-a consistent title (the example below shows this). Monthly files keep the active
-file small — **do not** write to a single ever-growing \`task-records.md\`.
+Append entries to the current month's file **under the workspace root — never
+under your transient current working directory**: \`$DISCLAUDE_WORKSPACE_DIR/task-records/YYYY-MM.md\`
+(e.g., \`$DISCLAUDE_WORKSPACE_DIR/task-records/${cur}.md\`). Resolve the
+workspace root from the \`DISCLAUDE_WORKSPACE_DIR\` environment variable, which
+is stable for the whole session. If your shell cwd differs from it (project-bound
+chat, or after \`cd\` into a nested repository), still write records under
+\`$DISCLAUDE_WORKSPACE_DIR/task-records/\` — never inside a project's own tree.
+Create the file if it does not exist (and create the \`task-records/\` directory
+under the workspace root if needed); when creating it for the first time, write
+a single top-level \`# Task Records\` heading on the first line so every monthly
+file has a consistent title (the example below shows this). Monthly files keep
+the active file small — **do not** write to a single ever-growing
+\`task-records.md\`.
 
 Legacy: pre-existing \`.claude/task-records/YYYY-MM.md\` files and the
 single-file \`.claude/task-records.md\` archive are read-only compatibility
-sources; leave them in place and write new records only to the monthly files.
+sources; leave them in place and write new records only to the monthly files
+under the workspace root.
 
 ### Record Format
 
@@ -365,7 +375,7 @@ Append each task as a new \`##\` section with today's date and task description:
 - **Include estimation basis**: Reference similar past tasks or specific complexity factors
 - **Keep reviews concise**: One or two sentences about what was learned
 - **Do NOT skip recording**: Consistent records are essential for improving future estimates
-- **Read existing records before estimating**: Read a **bounded recent window** — the current and previous month's files (e.g., \`task-records/${cur}.md\` and \`task-records/${prev}.md\`) — for similar past tasks to improve your estimate. Do NOT load the entire history; if you need older context you may tail-read **only the last ~50 lines** of the legacy \`task-records.md\` (it can hold thousands of lines), but never load it fully`;
+- **Read existing records before estimating**: Read a **bounded recent window** — the current and previous month's files under the workspace root (e.g., \`$DISCLAUDE_WORKSPACE_DIR/task-records/${cur}.md\` and \`$DISCLAUDE_WORKSPACE_DIR/task-records/${prev}.md\`) — for similar past tasks to improve your estimate. Do NOT load the entire history; if you need older context you may tail-read **only the last ~50 lines** of the legacy \`task-records.md\` (it can hold thousands of lines), but never load it fully`;
 }
 
 /**
