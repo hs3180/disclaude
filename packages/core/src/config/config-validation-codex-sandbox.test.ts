@@ -45,14 +45,14 @@ describe('validateConfig — agent.codexSandbox (Issue #4631)', () => {
   });
 
   it('accepts the explicit full-access opt-in', () => {
-    expect(validateConfig({ agent: { codexFullAccess: true } } as DisclaudeConfig)).toBe(true);
-    expect(validateConfig({ agent: { codexFullAccess: false } } as DisclaudeConfig)).toBe(true);
+    expect(validateConfig({ agent: { fullAccess: true } } as DisclaudeConfig)).toBe(true);
+    expect(validateConfig({ agent: { fullAccess: false } } as DisclaudeConfig)).toBe(true);
   });
 
   it('rejects invalid or ambiguous full-access configuration', () => {
-    expect(validateConfig({ agent: { codexFullAccess: 'yes' } } as unknown as DisclaudeConfig)).toBe(false);
+    expect(validateConfig({ agent: { fullAccess: 'yes' } } as unknown as DisclaudeConfig)).toBe(false);
     expect(
-      validateConfig({ agent: { codexFullAccess: true, codexSandbox: 'workspace-write' } } as DisclaudeConfig),
+      validateConfig({ agent: { fullAccess: true, codexSandbox: 'workspace-write' } } as DisclaudeConfig),
     ).toBe(false);
   });
 });

@@ -29,7 +29,7 @@ agent:
   agentBackend: "codex"     # agent 运行时（claude | pi | codex），默认 claude
 
   # 推荐：用一个清晰的布尔开关控制是否启用全权限：
-  # codexFullAccess: true       # → danger-full-access
+  # fullAccess: true       # → danger-full-access
   # 不设或设为 false → workspace-write；显式的 default 请求仍会保守降级为 read-only。
   # 高级用法：显式指定沙箱级别，用于收紧权限。
   # codexSandbox: "workspace-write"
@@ -43,7 +43,7 @@ agent:
 
 完整示例见 `disclaude.config.example.yaml`（搜索 `agentBackend`）。
 
-加载时校验：`agentBackend` 非 `claude`/`pi`/`codex`、`codexSandbox` 非三个合法值、或 `codexFullAccess` 类型错误/与其他沙箱级别冲突时，`validateConfig()` 失败并给出可操作的错误信息（`packages/core/src/config/loader.ts`）。启用 `codexFullAccess: true` 会在每个任务启动时记录醒目的 full-access 警告；默认未设置时行为不变。
+加载时校验：`agentBackend` 非 `claude`/`pi`/`codex`、`codexSandbox` 非三个合法值、或 `fullAccess` 类型错误/与其他沙箱级别冲突时，`validateConfig()` 失败并给出可操作的错误信息（`packages/core/src/config/loader.ts`）。启用 `fullAccess: true` 会在每个任务启动时记录醒目的 full-access 警告；默认未设置时行为不变。
 
 ## 2. 前置条件（重要）
 
@@ -111,7 +111,7 @@ codex `exec` 是无头模式，**没有逐调用的审批钩子**（0.132.0 实�
 
 | disclaude 策略 | codex 沙箱 |
 |---|---|
-| `agent.codexFullAccess: true` | `danger-full-access` |
+| `agent.fullAccess: true` | `danger-full-access` |
 | 未设置/false（普通 Codex 策略） | `workspace-write` |
 | `permissionMode: default`（ask） | `read-only`（无审批人，保守降级） |
 | 显式 `agent.codexSandbox` | 该级别（高级收紧/兼容覆盖） |

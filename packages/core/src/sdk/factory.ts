@@ -28,7 +28,7 @@ const providerRegistry = new Map<ProviderType, ProviderFactory>([
     () =>
       new CodexAgentProvider({
         sandboxOverride: Config.CODEX_SANDBOX,
-        fullAccess: Config.CODEX_FULL_ACCESS,
+        fullAccess: Config.FULL_ACCESS,
         networkAccess: Config.CODEX_NETWORK_ACCESS,
         maxActiveSessions: Config.CODEX_MAX_ACTIVE_SESSIONS,
         maxConcurrentRuns: Config.CODEX_MAX_CONCURRENT_RUNS,

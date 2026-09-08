@@ -42,7 +42,7 @@ describe('resolveCodexSandboxPolicy (Issue #4631)', () => {
   it('maps explicit full-access opt-in to danger-full-access', () => {
     const d = resolveCodexSandboxPolicy({ permissionMode: 'default' }, undefined, true);
     expect(d.sandbox).toBe('danger-full-access');
-    expect(d.reasons.join(' ')).toMatch(/codexFullAccess=true/);
+    expect(d.reasons.join(' ')).toMatch(/fullAccess=true/);
   });
 
   // ── denylist cap (fail closed) ───────────────────────────────────────

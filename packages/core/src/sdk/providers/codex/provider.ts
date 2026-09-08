@@ -31,7 +31,7 @@
  * (no approval axis), so the disclaude permission policy maps onto the one
  * available axis — sandbox_mode — via sandbox-policy.ts: the normal Codex
  * policy → workspace-write, 'default' (ask) → read-only (fail closed), the
- * explicit `agent.codexFullAccess` switch → danger-full-access, and the
+ * explicit `agent.fullAccess` switch → danger-full-access, and the
  * `agent.codexSandbox` override is honored. Mutation denylist entries cap at
  * read-only, and policies codex cannot honor (WebSearch deny) throw with a
  * clear error instead of silently violating policy.
@@ -362,7 +362,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     if (this.fullAccess) {
       logger.warn(
         { permissionMode: 'full-access', sandbox: sandboxDecision.sandbox },
-        'Codex full-access mode is enabled by explicit agent.codexFullAccess=true; commands and workspace mutations are unrestricted'
+        'Codex full-access mode is enabled by explicit agent.fullAccess=true; commands and workspace mutations are unrestricted'
       );
     }
 
