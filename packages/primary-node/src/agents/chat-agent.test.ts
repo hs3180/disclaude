@@ -456,6 +456,29 @@ describe('ChatAgent (primary-node)', () => {
 
       expect(cwdProvider).not.toHaveBeenCalled();
     });
+
+    it('passes the resolved project cwd to the SDK options', () => {
+      const agent = new ChatAgent({
+        chatId: 'oc_test_chat',
+        callbacks,
+        apiKey: 'test-key',
+        model: 'test-model',
+        provider: 'anthropic',
+        apiBaseUrl: 'https://api.example.com',
+        cwdResolver: () => ({
+          effectiveCwd: '/bound/project/dir',
+          boundWorkingDir: '/bound/project/dir',
+          reason: 'bound',
+        }),
+      });
+
+      (agent as any).startAgentLoop();
+
+      const createSdkOptions = (agent as any).createSdkOptions as ReturnType<typeof vi.fn>;
+      expect(createSdkOptions).toHaveBeenCalledWith(
+        expect.objectContaining({ cwd: '/bound/project/dir' }),
+      );
+    });
   });
 
   describe('shutdown', () => {
