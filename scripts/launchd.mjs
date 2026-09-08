@@ -56,6 +56,18 @@ const LOG_DIR = resolve(homedir(), 'Library/Logs/disclaude');
 const STDERR_LOG = resolve(LOG_DIR, 'launchd-stderr.log');
 const STDOUT_LOG = resolve(LOG_DIR, 'launchd-stdout.log');
 const APP_LOG = resolve(LOG_DIR, 'disclaude-combined.log');
+// Issue #4777: with LOG_ROTATE=true the app logs via pino-roll, which never
+// creates the bare APP_LOG path — it writes disclaude-combined.<n>.log and
+// keeps a `current.log` symlink pointed at the live one. Prefer that symlink
+// when the bare path is absent so `logs`/`status` keep working under rotation.
+// `dir` is a seam for tests — production callers use the LOG_DIR default.
+export function resolveAppLog(dir = LOG_DIR) {
+  const bare = resolve(dir, 'disclaude-combined.log');
+  const rotated = resolve(dir, 'current.log');
+  if (existsSync(bare)) return bare;
+  if (existsSync(rotated)) return rotated;
+  return bare;
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '..');
@@ -791,7 +803,7 @@ function cmdLogs() {
   const n = lines ? lines.split('=')[1] : '100';
   console.log(`=== app log (last ${n} lines) ===`);
   try {
-    run(`tail -n ${n} ${APP_LOG}`, { silent: true });
+    run(`tail -n ${n} ${resolveAppLog()}`, { silent: true });
   } catch {}
   console.log(`\n=== stdout (last ${n} lines) ===`);
   try {
@@ -808,7 +820,7 @@ function cmdStatus() {
   if (result) {
     console.log(result.trim());
     console.log(`\nPlist: ${PLIST_PATH}`);
-    console.log(`App log: ${APP_LOG} (use newsyslog for rotation)`);
+    console.log(`App log: ${resolveAppLog()} (use newsyslog for rotation)`);
     console.log(`Stdout: ${STDOUT_LOG} (launchd fallback log)`);
     console.log(`Stderr: ${STDERR_LOG} (launchd crash log)`);
   } else {
