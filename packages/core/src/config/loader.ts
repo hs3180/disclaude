@@ -15,6 +15,7 @@ import type {
   ConfigFileInfo,
   ConfigValidationError,
 } from './types.js';
+import { validateAgentPresets } from './agent-presets.js';
 
 const logger = createLogger('ConfigLoader');
 
@@ -178,6 +179,16 @@ export function validateConfig(config: DisclaudeConfig): boolean {
   if (config.agent?.model && typeof config.agent.model !== 'string') {
     logger.error('agent.model must be a string');
     return false;
+  }
+
+  // S01: validate named backend/model presets without changing the legacy
+  // single-agent fallback path. Runtime selection is layered on afterwards.
+  if (config.agents !== undefined) {
+    const result = validateAgentPresets(config.agents);
+    if (!result.ok) {
+      logger.error({ errors: result.errors }, 'Invalid named agent presets');
+      return false;
+    }
   }
 
   // Codex authenticates and selects models through the ChatGPT subscription,
