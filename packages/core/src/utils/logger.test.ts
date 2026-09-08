@@ -495,6 +495,19 @@ describe('logger', () => {
 
     const ROTATE_ENV = ['LOG_ROTATE_SIZE', 'LOG_ROTATE_LIMIT', 'LOG_ROTATE_FREQUENCY'] as const;
 
+    /**
+     * Match one filebeat-style pattern against a bare filename.
+     *
+     * Deliberately NOT fs.globSync: that is Node 22+, and CI pins Node 20
+     * (.github/workflows/ci.yml), where it throws "globSync is not a function"
+     * — green locally, red in CI. The patterns here are a single `*` inside
+     * one path segment, so a direct match is enough.
+     */
+    function matchesGlob(pattern: string, fileName: string): boolean {
+      const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*');
+      return new RegExp(`^${escaped}$`).test(fileName);
+    }
+
     /** Roll past `size` so at least one numbered file exists on disk. */
     async function writeUntilRolled(logger: ReturnType<typeof getRootLogger>): Promise<void> {
       for (let i = 0; i < 400; i++) {
@@ -543,8 +556,8 @@ describe('logger', () => {
         expect(fs.existsSync(path.join(dir, 'disclaude-combined.log'))).toBe(false);
 
         const shipped = fs
-          .globSync(path.join(dir, 'disclaude-combined.*.log'))
-          .map((p) => path.basename(p));
+          .readdirSync(dir)
+          .filter((f) => matchesGlob('disclaude-combined.*.log', f));
         expect(shipped.length).toBeGreaterThan(0);
         for (const name of shipped) {
           expect(name).toMatch(/^disclaude-combined\.\d+\.log$/);
@@ -552,7 +565,9 @@ describe('logger', () => {
 
         // The pattern the earlier revision shipped. Asserting it stays empty
         // is the point: this is the assertion that would have caught B1.
-        expect(fs.globSync(path.join(dir, 'disclaude-combined.log.*'))).toEqual([]);
+        expect(
+          fs.readdirSync(dir).filter((f) => matchesGlob('disclaude-combined.log.*', f))
+        ).toEqual([]);
       });
     });
 
@@ -596,8 +611,8 @@ describe('logger', () => {
         // The retry must not have fallen all the way back to stdout: rotated
         // files exist and filebeat's glob still matches them.
         const shipped = fs
-          .globSync(path.join(dir, 'disclaude-combined.*.log'))
-          .map((p) => path.basename(p));
+          .readdirSync(dir)
+          .filter((f) => matchesGlob('disclaude-combined.*.log', f));
         expect(shipped.length).toBeGreaterThan(0);
         expect(fs.readFileSync(path.join(dir, shipped[0]), 'utf8')).toContain('rotation probe');
 

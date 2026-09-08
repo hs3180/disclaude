@@ -23,7 +23,7 @@
 //  - vitest `include` covers tests/**/*.test.ts.
 
 import { describe, it, expect, afterAll } from 'vitest';
-import { readFileSync, mkdtempSync, rmSync, globSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { join, basename, dirname, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -32,6 +32,27 @@ import pinoRoll from 'pino-roll';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const CONTAINER_LOG_DIR = '/data/logs';
+
+/**
+ * Match a filebeat path pattern against a filename.
+ *
+ * Deliberately NOT fs.globSync: that is Node 22+, and CI pins Node 20 (see
+ * .github/workflows/ci.yml), so it throws "globSync is not a function" there
+ * while passing on a newer local runtime. minimatch/glob are only transitive
+ * deps, not declared by this repo, so relying on them would be equally
+ * fragile. filebeat's own pattern syntax here is a single `*` within one path
+ * segment, which is small enough to match directly.
+ */
+function matchesPattern(pattern: string, fileName: string): boolean {
+  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*');
+  return new RegExp(`^${escaped}$`).test(fileName);
+}
+
+/** Filenames in `dir` matching a filebeat path (declared against /data/logs). */
+function matchInDir(pattern: string, dir: string): string[] {
+  const tail = pattern.slice(CONTAINER_LOG_DIR.length + 1);
+  return readdirSync(dir).filter((f) => matchesPattern(tail, f));
+}
 
 interface FilebeatConfig {
   'filebeat.inputs': Array<{ paths?: string[] }>;
@@ -60,12 +81,7 @@ async function rotatedFileNames(dir: string): Promise<string[]> {
     dest.write(JSON.stringify({ i, pad: 'x'.repeat(80) }) + '\n');
   }
   await new Promise((r) => setTimeout(r, 400));
-  return globSync(join(dir, '*')).map((p) => basename(p));
-}
-
-/** Apply a filebeat path (declared against /data/logs) to a local temp dir. */
-function localize(pattern: string, dir: string): string {
-  return join(dir, pattern.slice(CONTAINER_LOG_DIR.length + 1));
+  return readdirSync(dir);
 }
 
 const dirs: string[] = [];
@@ -98,7 +114,7 @@ describe('filebeat.yml log paths (#4777 / #4814)', () => {
 
     const matched = new Set<string>();
     for (const p of filebeatLogPaths()) {
-      for (const hit of globSync(localize(p, dir))) matched.add(basename(hit));
+      for (const hit of matchInDir(p, dir)) matched.add(hit);
     }
 
     // Every rotated log must be picked up by at least one declared path.
@@ -116,7 +132,7 @@ describe('filebeat.yml log paths (#4777 / #4814)', () => {
     // nothing. Pin the premise so the assertion below cannot pass vacuously.
     expect(produced.some((f) => /^disclaude-combined\.log\.\d+$/.test(f))).toBe(false);
 
-    const wrong = globSync(join(dir, 'disclaude-combined.log.*'));
+    const wrong = matchInDir(`${CONTAINER_LOG_DIR}/disclaude-combined.log.*`, dir);
     expect(wrong).toEqual([]);
 
     // And the shipped config must not be the pattern that matches nothing.
