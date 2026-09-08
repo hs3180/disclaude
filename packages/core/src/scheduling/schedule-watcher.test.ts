@@ -739,6 +739,14 @@ describe('ScheduleFileScanner', () => {
       const task = await scanner.parseFile(`${MOCK_DIR}/typo-tz/SCHEDULE.md`);
       expect(task).toBeNull();
     });
+
+    it('should reject an invalid modelTier instead of silently using the default model', async () => {
+      mockReadFile.mockResolvedValue(makeScheduleContent({ modelTier: 'economy' }));
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/invalid-tier/SCHEDULE.md`);
+
+      expect(task).toBeNull();
+    });
   });
 });
 
