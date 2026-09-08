@@ -31,7 +31,7 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
     const provider = new DeepSeekHarnessProvider({ apiKey: 'test-key' });
 
     expect(() => provider.queryStream((async function* () {})() as never, {} as never)).toThrow(
-      /stdio transport is not enabled yet/,
+      /stdio transport is not enabled yet/
     );
   });
 

@@ -51,7 +51,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
 
   queryStream(_input: AsyncGenerator<UserInput>, _options: AgentQueryOptions): StreamQueryResult {
     throw new Error(
-      'DeepSeekHarnessProvider: dsh stdio transport is not enabled yet; implementation is tracked in #4742.',
+      'DeepSeekHarnessProvider: dsh stdio transport is not enabled yet; implementation is tracked in #4742.'
     );
   }
 
