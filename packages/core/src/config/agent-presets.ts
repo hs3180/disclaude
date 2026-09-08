@@ -2,16 +2,15 @@
 
 import type { AgentPreset, AgentPresets } from './types.js';
 
-const VALID_BACKENDS = new Set<AgentPreset['agentBackend']>([
-  'claude',
-  'pi',
-  'codex',
-  'deepseek',
-]);
+const VALID_BACKENDS = new Set<AgentPreset['agentBackend']>(['claude', 'pi', 'codex', 'deepseek']);
 
 export type AgentPresetValidation =
   | { ok: true; name: string; preset: AgentPreset }
   | { ok: false; errors: string[] };
+
+export type AgentPresetResolution =
+  | { ok: true; name: string; preset: AgentPreset }
+  | { ok: false; error: string };
 
 /**
  * Validate the public `agents:` map and resolve its one default preset.
@@ -64,4 +63,37 @@ export function validateAgentPresets(agents: unknown): AgentPresetValidation {
 
   const [name] = defaults;
   return { ok: true, name, preset: (agents as AgentPresets)[name] };
+}
+
+/**
+ * Resolve a requested preset name, or the validated default when omitted.
+ *
+ * This deliberately does not revalidate the map: callers that accept user
+ * configuration should run validateAgentPresets first, while runtime command
+ * handlers can use this helper without duplicating selection semantics.
+ */
+export function resolveAgentPreset(
+  agents: AgentPresets,
+  requestedName?: string
+): AgentPresetResolution {
+  const name = requestedName?.trim();
+  if (name) {
+    const preset = agents[name];
+    return preset
+      ? { ok: true, name, preset }
+      : { ok: false, error: `Unknown agent preset: ${name}` };
+  }
+
+  const defaults = Object.entries(agents).filter(
+    ([presetName, preset]) => presetName === 'default' || preset.default === true
+  );
+  if (defaults.length !== 1) {
+    return {
+      ok: false,
+      error: `Unable to resolve default agent preset (found ${defaults.length})`,
+    };
+  }
+
+  const [[defaultName, preset]] = defaults;
+  return { ok: true, name: defaultName, preset };
 }
