@@ -76,6 +76,7 @@ export class StreamingReplyDriver {
   private streamId: string | null = null;
   private buffer = '';
   private throttle: StreamingThrottle | null = null;
+  private finishPromise: Promise<void> | null = null;
   private readonly options: StreamingReplyDriverOptions;
   private readonly logger: StreamingReplyLogger;
 
@@ -123,6 +124,23 @@ export class StreamingReplyDriver {
    * Idempotent — safe to call on every exit path. Never throws.
    */
   async finish(threadRoot?: string): Promise<void> {
+    if (this.finishPromise) {
+      await this.finishPromise;
+      return;
+    }
+
+    const finishPromise = this.finishStreaming(threadRoot);
+    this.finishPromise = finishPromise;
+    try {
+      await finishPromise;
+    } finally {
+      if (this.finishPromise === finishPromise) {
+        this.finishPromise = null;
+      }
+    }
+  }
+
+  private async finishStreaming(threadRoot?: string): Promise<void> {
     if (this.state === 'streaming' && this.streamId) {
       const id = this.streamId;
       // Stop the throttle's trailing timer FIRST so its pending emission
