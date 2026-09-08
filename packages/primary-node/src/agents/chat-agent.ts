@@ -297,6 +297,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    */
   private pendingTurnAnchors: (string | undefined)[] = [];
 
+  // Issue #4808: keep turn identity alongside the reply anchor so completion
+  // settlement can target the message whose turn actually ended.
+  private pendingTurnMessageIds: string[] = [];
+
   // Issue #3124: One-shot mode & task completion
   // When onceMode is true, processIterator closes the channel after the first
   // `result` message and resolves the completion promise, enabling blocking
@@ -474,15 +478,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    *
    * Why a registry and not the pre-#4649 single slot: one processIterator
    * serves many interleaved turns, and the slot was written at PUSH time — a
-   * message queued behind a running turn overwrote it, so (a) the previous
-   * turn's await was rejected as "superseded" even though that turn was alive
-   * and would finish on its own, and (b) the previous turn's result then
-   * resolved the NEW message's promise — a fake "completed" while the queued
-   * message's turn had not even started, its later death left nothing to
-   * reject (the 38-day incident shape, preserved for queued messages). One
-   * entry per message + FIFO settlement (resolveTurn settles the oldest
-   * unsettled entry, because turns end in push order) gives every awaiter its
-   * OWN turn's real outcome.
+   * message queued behind a running turn overwrote it. Completion settlement
+   * therefore carries the current turn's messageId and targets that entry
+   * directly, so every awaiter gets its OWN turn's real outcome.
    */
   private createTurnCompletion(messageId: string): TurnCompletionEntry {
     // Same-messageId re-push (the empty-turn replay re-invokes processMessage
@@ -524,19 +522,19 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   }
 
   /**
-   * Settle the oldest unsettled turn completion (Issue #4063; FIFO semantics
-   * from #4649 review ③). Call at each turn end (result / stall /
-   * empty-stream / evicted terminations) — turns end in push order, so the
-   * front entry belongs to the turn that just ended. Settled entries stay
-   * registered for late awaiters until evicted by the bound.
+   * Settle the completion for the turn that ended (Issue #4808). Call at each
+   * turn end (result / stall / empty-stream / evicted terminations). Settled
+   * entries stay registered for late awaiters until evicted by the bound.
    */
-  private resolveTurn(): void {
-    for (const entry of this.turnCompletions.values()) {
-      if (!entry.settled) {
-        entry.settled = true;
-        entry.settle();
-        return;
-      }
+  private resolveTurn(messageId: string | undefined): void {
+    if (!messageId) {
+      this.logger.warn('Cannot settle turn completion without a messageId');
+      return;
+    }
+    const entry = this.turnCompletions.get(messageId);
+    if (entry && !entry.settled) {
+      entry.settled = true;
+      entry.settle();
     }
   }
 
@@ -892,10 +890,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     this.pendingTurnAnchors.push(
       threadRootId ?? this.conversationOrchestrator.getThreadRoot(chatId)
     );
+    this.pendingTurnMessageIds.push(messageId);
     // Bounded: a dead/parked session with no iterator draining would otherwise
     // grow this unboundedly (anchors for messages the session never answers).
     if (this.pendingTurnAnchors.length > 50) {
       this.pendingTurnAnchors.splice(0, this.pendingTurnAnchors.length - 50);
+    }
+    if (this.pendingTurnMessageIds.length > 50) {
+      this.pendingTurnMessageIds.splice(0, this.pendingTurnMessageIds.length - 50);
     }
 
     // Issue #1863: Wait for first message history to load before building content.
@@ -1171,6 +1173,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // because processMessage enqueues AFTER startAgentLoop() returns (see the
     // enqueue site), so a live anchor is never eaten here.
     this.pendingTurnAnchors = [];
+    this.pendingTurnMessageIds = [];
 
     // Issue #4649 (review ③): fresh session — the OLD session's queued
     // messages will never get a turn (their channel is closed above), so
@@ -1463,10 +1466,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // (next queued message) picks up its own anchor.
     let turnAnchorConsumed = false;
     let currentTurnAnchor: string | undefined;
+    let currentTurnMessageId: string | undefined;
     const consumeTurnAnchor = (): string | undefined => {
       if (!turnAnchorConsumed) {
         turnAnchorConsumed = true;
         currentTurnAnchor = this.pendingTurnAnchors.shift();
+        currentTurnMessageId = this.pendingTurnMessageIds.shift();
       }
       return currentTurnAnchor;
     };
@@ -1684,7 +1689,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             );
             this.restartManager.recordFailure(chatId, 'stall');
             this.isProcessingMessage = false;
-            this.resolveTurn();
+            this.resolveTurn(currentTurnMessageId);
             if (this.callbacks.onDone) {
               const threadRoot = resolveReplyThreadRoot();
               await this.callbacks.onDone(chatId, threadRoot);
@@ -1718,7 +1723,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             );
             this.restartManager.recordFailure(chatId, 'empty-stream');
             this.isProcessingMessage = false;
-            this.resolveTurn();
+            this.resolveTurn(currentTurnMessageId);
             if (this.callbacks.onDone) {
               const threadRoot = resolveReplyThreadRoot();
               await this.callbacks.onDone(chatId, threadRoot);
@@ -1744,7 +1749,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
               'Codex session evicted (concurrency cap) — ending stream without auto-restart (Issue #4634)'
             );
             this.isProcessingMessage = false;
-            this.resolveTurn();
+            this.resolveTurn(currentTurnMessageId);
             if (this.callbacks.onDone) {
               const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
               await this.callbacks.onDone(chatId, threadRoot);
@@ -2202,7 +2207,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           this.isProcessingMessage = false;
 
           // Issue #4063: Resolve per-turn completion promise (works in persistent mode)
-          this.resolveTurn();
+          this.resolveTurn(currentTurnMessageId);
 
           if (this.callbacks.onDone) {
             const threadRoot = resolveReplyThreadRoot();
@@ -2216,6 +2221,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // for the tail paths below (onDone above already ran; error paths
           // after a result are not expected but read the frozen value).
           turnAnchorConsumed = false;
+          currentTurnMessageId = undefined;
 
           // Issue #3124: In once-mode, close channel after result to end the iterator.
           // This enables blocking one-shot execution via processMessage + taskComplete.
@@ -2626,6 +2632,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // must not reply into a pre-reset thread; queued messages are gone with
     // the session.
     this.pendingTurnAnchors = [];
+    this.pendingTurnMessageIds = [];
 
     // Issue #4063: Clear per-turn completion state
     this.rejectTurn(new Error('Agent reset'));

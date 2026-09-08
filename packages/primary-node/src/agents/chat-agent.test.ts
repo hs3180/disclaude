@@ -3773,6 +3773,17 @@ describe('ChatAgent (primary-node)', () => {
       return { agent, localCallbacks };
     }
 
+    it('settles the completion named by the ended turn, not the oldest pending entry', async () => {
+      const { agent } = makeAgent();
+      (agent as any).createTurnCompletion('msg_1');
+      (agent as any).createTurnCompletion('msg_2');
+
+      (agent as any).resolveTurn('msg_2');
+
+      expect(await settlementOf(agent.turnCompleteFor('msg_1')!)).toBe('pending');
+      await agent.turnCompleteFor('msg_2')!;
+    });
+
     it('a queued message is NOT resolved by the previous turn\'s result — each message gets its own turn outcome', async () => {
       const { agent } = makeAgent();
 
