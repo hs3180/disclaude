@@ -2,7 +2,16 @@
  * SDK Providers 模块导出
  */
 
-export { ClaudeSDKProvider, StderrCapture, getErrorStderr, isStartupFailure, snapshotProcessListeners, cleanupNewProcessListeners, SDK_PROCESS_EVENTS, forceCleanupLeakedListeners } from './claude/index.js';
+export {
+  ClaudeSDKProvider,
+  StderrCapture,
+  getErrorStderr,
+  isStartupFailure,
+  snapshotProcessListeners,
+  cleanupNewProcessListeners,
+  SDK_PROCESS_EVENTS,
+  forceCleanupLeakedListeners,
+} from './claude/index.js';
 export type { ProcessListenerSnapshot, ProcessEventListener } from './claude/index.js';
 
 // Issue #4385: pi.dev provider skeleton (stubbed loop; real lifecycle)
@@ -15,3 +24,5 @@ export type { CodexAgentProviderOptions } from './codex/index.js';
 // Issue #4741: DeepSeek harness backend registration and configuration probe.
 export { DeepSeekHarnessProvider } from './deepseek/provider.js';
 export type { DeepSeekHarnessProviderOptions } from './deepseek/provider.js';
+export { DshSessionPool } from './deepseek/dsh-session-pool.js';
+export type { DshSessionPoolOptions, DshTransportFactory } from './deepseek/dsh-session-pool.js';
