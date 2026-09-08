@@ -673,6 +673,179 @@ describe('ChatAgent (primary-node)', () => {
     });
   });
 
+  describe('Mid-stream interruption auto-continue (2026-09-08)', () => {
+    // Proxy(litellm custom_callbacks)在 mid-stream 中断恢复时补的正文自带
+    // [proxy:midstream-interrupted] 标记 + 提示文本;recovery 补的是独立 text 块。
+    const MARKER_TAIL =
+      ' [proxy:midstream-interrupted] [Upstream response was interrupted mid-stream ' +
+      '(timeout/connection error). The output above may be incomplete. Please retry the ' +
+      'previous request.]';
+
+    /** Agent whose (reused) SDK iterator yields the given parsed messages. */
+    function makeMidstreamAgent(
+      parsedMessages: Array<Record<string, unknown>>,
+      chatId = 'oc_midstream'
+    ) {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId,
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+      // One generator instance, reused for every session start (a finished async
+      // generator stays finished, so a second startAgentLoop drains nothing).
+      async function* scripted() {
+        for (const parsed of parsedMessages) {
+          yield { parsed, raw: {} };
+        }
+      }
+      const iterator = scripted();
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator,
+      });
+      (agent as any).isAgentTeamsEnabled = () => false;
+      return { agent, localCallbacks };
+    }
+
+    const deliveredContents = (localCallbacks: ReturnType<typeof createMockCallbacks>) =>
+      (localCallbacks.sendMessage as ReturnType<typeof vi.fn>).mock.calls
+        .map((c: any[]) => (typeof c[1] === 'string' ? c[1] : ''))
+        .filter((s: string) => s.length > 0);
+
+    it('detects the marker: delivers only the real head, suppresses ✅ Complete, records failure, and auto-continues once', async () => {
+      process.env.DISCLAUDE_MIDSTREAM_RETRY_DELAY_MS = '5';
+      try {
+        const { agent, localCallbacks } = makeMidstreamAgent([
+          { type: 'text', content: `Writing the script now.${MARKER_TAIL}` },
+          { type: 'result', content: '✅ Complete | Cost: $9.6322' },
+        ]);
+        const pm = vi.spyOn(agent as any, 'processMessage');
+        void agent.processMessage({ chatId: 'oc_midstream', payload: 'hello', messageId: 'msg_1' });
+
+        await vi.waitFor(() => {
+          const rm = (agent as any).restartManager;
+          expect(rm.recordFailure).toHaveBeenCalledWith('oc_midstream', 'midstream-interrupt');
+        }, { timeout: 1000, interval: 20 });
+
+        const sent = deliveredContents(localCallbacks);
+        // Real partial head delivered; the machine marker/hint text and the fake
+        // ✅ Complete summary are NOT surfaced to the user.
+        expect(sent.some((s: string) => s.includes('Writing the script now.'))).toBe(true);
+        expect(sent.some((s: string) => s.includes('proxy:midstream-interrupted'))).toBe(false);
+        expect(sent.some((s: string) => s.includes('✅ Complete'))).toBe(false);
+        // No ❌ on the auto-continue path.
+        expect(sent.some((s: string) => s.includes('本轮被上游中断'))).toBe(false);
+
+        // One auto-continue nudge scheduled.
+        await vi.waitFor(() => {
+          expect(
+            pm.mock.calls.some((c: any[]) =>
+              typeof c[0]?.messageId === 'string' && c[0].messageId.startsWith('auto-midstream-')
+            )
+          ).toBe(true);
+        }, { timeout: 1000, interval: 20 });
+      } finally {
+        delete process.env.DISCLAUDE_MIDSTREAM_RETRY_DELAY_MS;
+      }
+    });
+
+    it('does not auto-continue a second time in the same health gap — reports ❌ instead', async () => {
+      const { agent, localCallbacks } = makeMidstreamAgent([
+        { type: 'text', content: `partial${MARKER_TAIL}` },
+        { type: 'result', content: '✅ Complete | Cost: $1.0000' },
+      ]);
+      // First interruption already consumed the budget (armed=false).
+      (agent as any).midstreamAutoRetryAvailable = false;
+      const pm = vi.spyOn(agent as any, 'processMessage');
+      void agent.processMessage({ chatId: 'oc_midstream', payload: 'hello', messageId: 'msg_1' });
+
+      await vi.waitFor(() => {
+        expect(
+          deliveredContents(localCallbacks).some((s: string) => s.includes('本轮被上游中断'))
+        ).toBe(true);
+      }, { timeout: 1000, interval: 20 });
+
+      const rm = (agent as any).restartManager;
+      expect(rm.recordFailure).toHaveBeenCalledWith('oc_midstream', 'midstream-interrupt');
+      expect(rm.recordSuccess).not.toHaveBeenCalled();
+      // No auto-continue scheduled.
+      await new Promise((r) => setTimeout(r, 30));
+      expect(
+        pm.mock.calls.some((c: any[]) =>
+          typeof c[0]?.messageId === 'string' && c[0].messageId.startsWith('auto-midstream-')
+        )
+      ).toBe(false);
+    });
+
+    it('re-arms the auto-continue budget after a genuine successful turn', async () => {
+      const { agent } = makeMidstreamAgent([
+        { type: 'text', content: 'real answer' },
+        { type: 'result', content: '✅ Complete | Cost: $0.0100' },
+      ]);
+      (agent as any).midstreamAutoRetryAvailable = false;
+      void agent.processMessage({ chatId: 'oc_midstream', payload: 'hello', messageId: 'msg_1' });
+
+      await vi.waitFor(() => {
+        expect((agent as any).restartManager.recordSuccess).toHaveBeenCalled();
+      }, { timeout: 1000, interval: 20 });
+      expect((agent as any).midstreamAutoRetryAvailable).toBe(true);
+    });
+
+    it('does not auto-continue in once-mode (scheduled task) — reports ❌', async () => {
+      const { agent, localCallbacks } = makeMidstreamAgent([
+        { type: 'text', content: `partial${MARKER_TAIL}` },
+        { type: 'result', content: '✅ Complete | Cost: $1.0000' },
+      ]);
+      (agent as any).onceMode = true;
+      const pm = vi.spyOn(agent as any, 'processMessage');
+      void agent.processMessage({ chatId: 'oc_midstream', payload: 'hello', messageId: 'msg_1' });
+
+      await vi.waitFor(() => {
+        expect(
+          deliveredContents(localCallbacks).some((s: string) => s.includes('本轮被上游中断'))
+        ).toBe(true);
+      }, { timeout: 1000, interval: 20 });
+      await new Promise((r) => setTimeout(r, 30));
+      expect(
+        pm.mock.calls.some((c: any[]) =>
+          typeof c[0]?.messageId === 'string' && c[0].messageId.startsWith('auto-midstream-')
+        )
+      ).toBe(false);
+    });
+
+    it('drops the scheduled auto-continue when the agent is disposed before it fires', async () => {
+      process.env.DISCLAUDE_MIDSTREAM_RETRY_DELAY_MS = '50';
+      try {
+        const { agent } = makeMidstreamAgent([
+          { type: 'text', content: `partial${MARKER_TAIL}` },
+          { type: 'result', content: '✅ Complete | Cost: $1.0000' },
+        ]);
+        const pm = vi.spyOn(agent as any, 'processMessage');
+        void agent.processMessage({ chatId: 'oc_midstream', payload: 'hello', messageId: 'msg_1' });
+
+        // Wait until the interruption is being handled (auto-continue scheduled),
+        // then dispose before the 50ms timer fires.
+        await vi.waitFor(() => {
+          expect((agent as any).restartManager.recordFailure).toHaveBeenCalled();
+        }, { timeout: 1000, interval: 20 });
+        (agent as any).disposed = true;
+
+        // Give the timer a chance to fire — it must be dropped by the guard.
+        await new Promise((r) => setTimeout(r, 80));
+        expect(
+          pm.mock.calls.some((c: any[]) =>
+            typeof c[0]?.messageId === 'string' && c[0].messageId.startsWith('auto-midstream-')
+          )
+        ).toBe(false);
+      } finally {
+        delete process.env.DISCLAUDE_MIDSTREAM_RETRY_DELAY_MS;
+      }
+    });
+  });
+
   describe('Issue #4626: sendMessage failure isolated from the agent loop', () => {
     /** Axios-style Feishu 400 (invalid receive_id) — the incident's error shape. */
     function feishu400(): Error {

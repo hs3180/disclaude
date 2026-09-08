@@ -127,6 +127,21 @@ interface TurnCompletionEntry {
  */
 const MAX_TURN_COMPLETIONS = 50;
 
+// 2026-09-08: mid-stream 中断自动续跑(诊断见 ./docs 之外 —— ES 双侧证据:agent「同一
+// tool use 后中断」= 续写调用在 200 已锁后静默,proxy 只能补「看似成功」的收尾)。
+// MIDSTREAM_MARKER —— proxy(litellm custom_callbacks._MIDSTREAM_INTERRUPT_MARKER)在
+// mid-stream 恢复补发的正文里带的标记;两端必须逐字节一致。下游收到它 = 本 turn 实际被
+// 上游截断,而非一次正常完成的 turn(stop_reason 不可靠:SDK 在 tool_use→stall 双 turn
+// 聚合后不回传 proxy 补发的 end_turn)。标记原样成为 assistant 正文到达本层。
+const MIDSTREAM_MARKER = '[proxy:midstream-interrupted]';
+// 续跑 nudge 的投递延迟:须大于该 deployment 的冷却 TTL(proxy 对 IdleWatchdog 死亡冷却
+// deployment 180s 且 enable_pre_call_checks 会让冷却期内新请求直接失败),否则 nudge 撞在
+// 冷却路上立刻报错。默认 200s ≈ cooldown 180s + margin。env 可调(运行时读取,测试可控)。
+function midstreamRetryDelayMs(): number {
+  const v = Number.parseInt(process.env.DISCLAUDE_MIDSTREAM_RETRY_DELAY_MS ?? '', 10);
+  return Number.isFinite(v) && v >= 0 ? v : 200_000;
+}
+
 /**
  * ChatAgent - Platform-agnostic direct chat abstraction with Streaming Input.
  *
@@ -236,6 +251,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   // and is dropped if a newer message arrived in between — the replay must
   // never clobber or reorder behind the user's newer input.
   private messageSeq = 0;
+
+  // 2026-09-08: mid-stream 上游中断的同会话自动续跑预算。语义 = 「每个健康间隙一次」:
+  // recordSuccess 重新武装(置 true);本次续跑消耗后置 false → 同一健康间隙内再次中断
+  // 只发 ❌ 不再续(防 ark 持续故障时空转)。once-mode(计划任务)turn 后 channel 即关,
+  // 无人在看且续跑 nudge 会撞「消息未送达」噪音 → 这类一律发 ❌,由调度方决定重投。
+  private midstreamAutoRetryAvailable = true;
 
   // Issue #2926: AbortController for immediate stop/reset of running Agent loop
   private abortController: AbortController | null = null;
@@ -1428,6 +1449,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Issue #4194: count substantive user-visible output sent this turn
     // (excludes the ✅ Complete result marker) so empty turns are detectable.
     let userVisibleOutputCount = 0;
+    // 2026-09-08: 本轮是否收到 proxy 的 mid-stream 中断标记(带 MIDSTREAM_MARKER 的
+    // assistant 正文)。turn 收尾 accounting 用;与其它 per-turn 计数一起清零。
+    let sawMidstreamInterrupt = false;
 
     // Issue #4587 (part 1, review fix): per-turn reply anchor, consumed from
     // the pendingTurnAnchors FIFO. The original part-1 shape read the live
@@ -1587,14 +1611,39 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             // (type === 'text' is exclusively assistant reply text — status /
             // thinking messages are type 'status', tool events are tool_use/….)
             const isAssistantReplyText = parsed.type === 'text';
-            if (streamDriver && isAssistantReplyText) {
-              await streamDriver.pushText(visibleContent, threadRoot);
-            } else {
-              // Issue #4626: route through the isolation wrapper — a channel
-              // failure here must degrade delivery, never kill the loop. (The
-              // streaming driver above already swallows its own fallback
-              // failures; this path had no such protection.)
-              await this.deliverUserVisible(chatId, visibleContent, threadRoot);
+            // 2026-09-08: proxy mid-stream 中断恢复正文自带 MIDSTREAM_MARKER。识别后:
+            // (a) 只把 marker 之前的真实正文投给用户 —— marker+英文提示是跨层识别用的
+            //     机器标记,不下发;
+            // (b) 置 sawMidstreamInterrupt,供 turn 收尾决策(自动续跑 / ❌);
+            // (c) 本 turn 的「✅ Complete」假成功摘要在同层整条吞掉 —— turn 并未完成。
+            // marker 是 proxy 补发的独立 text 块,随 assistant 正文原样到达、不横跨两条
+            // 消息,故单条 content.includes 判定稳定。
+            let toDeliver = visibleContent;
+            if (visibleContent.includes(MIDSTREAM_MARKER)) {
+              sawMidstreamInterrupt = true;
+              const markerIdx = visibleContent.indexOf(MIDSTREAM_MARKER);
+              toDeliver = visibleContent.slice(0, markerIdx).trim();
+            }
+            const suppressFakeComplete =
+              visibleContent.startsWith('✅ Complete') && sawMidstreamInterrupt;
+            if (suppressFakeComplete) {
+              toDeliver = '';
+              this.logger.info(
+                { chatId, messageCount },
+                'Mid-stream interruption: suppressing fake ✅ Complete summary ' +
+                  '(turn did not complete; auto-continue or ❌ follows)'
+              );
+            }
+            if (toDeliver) {
+              if (streamDriver && isAssistantReplyText) {
+                await streamDriver.pushText(toDeliver, threadRoot);
+              } else {
+                // Issue #4626: route through the isolation wrapper — a channel
+                // failure here must degrade delivery, never kill the loop. (The
+                // streaming driver above already swallows its own fallback
+                // failures; this path had no such protection.)
+                await this.deliverUserVisible(chatId, toDeliver, threadRoot);
+              }
             }
             // Issue #4194: the ✅ Complete result marker is sent as the result
             // message itself — exclude it so empty turns (no real reply) are
@@ -1603,7 +1652,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             // content.startsWith('✅ Complete') as the internal completion
             // marker) rather than by parsed.type, so error-result content
             // (which IS user-visible) is still counted.
-            if (!visibleContent.startsWith('✅ Complete')) {
+            if (toDeliver && !visibleContent.startsWith('✅ Complete')) {
               userVisibleOutputCount++;
             }
           }
@@ -1781,9 +1830,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // transient upstream trouble, not a corrupted session, and already
           // has its own ❌ notice + failure accounting.
           const turnMessage = this.lastTurnMessage;
+          // 2026-09-08: mid-stream 中断 turn(带 MIDSTREAM_MARKER)不归 empty-turn 管 ——
+          // 若它同时「零可见输出」会被误当成空会话 self-heal(会话健康,是上游截断),且会与
+          // 下面 mid-stream 的续跑/❌ 双触发。这里排开,交给下方专门分支。
           const willRetryEmptyTurn =
             isEmptyTurn &&
             !upstreamApiError &&
+            !sawMidstreamInterrupt &&
             !!turnMessage &&
             this.emptyTurnRetryPolicy.canRetry(chatId, turnMessage.messageId, true);
           if (willRetryEmptyTurn) {
@@ -1799,7 +1852,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // Issue #4391: also suppressed when the turn is being retried — the
           // reset+replay below IS the "try again"; telling the user to resend
           // would be wrong (and noisy) while recovery is already in flight.
-          if (isEmptyTurn && !upstreamApiError && !willRetryEmptyTurn) {
+          if (isEmptyTurn && !upstreamApiError && !sawMidstreamInterrupt && !willRetryEmptyTurn) {
             this.logger.warn(
               {
                 chatId,
@@ -2014,6 +2067,74 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             }
           }
 
+          // 2026-09-08: proxy mid-stream 中断(mid-stream 静默后 proxy 补的恢复正文带
+          // MIDSTREAM_MARKER)。200 已锁,proxy 只能补「看似成功」的收尾 —— 这里把它识别回
+          // 真实失败:会话健康 → 静默自动续跑一次(deployment 冷却过后再投,见
+          // MIDSTREAM_RETRY_DELAY_MS);不可续(预算耗尽 / once-mode 计划任务 / 会话已关)
+          // → 发 ❌。绝不落 recordSuccess,杜绝「假 ✅ Complete」。stopReason 不判(marker 才
+          // 权威)。与 #4322 upstreamApiError 互斥(那边已发 ❌ + 记 upstream-api-error)。
+          const midstreamInterrupted = sawMidstreamInterrupt && !upstreamApiError;
+          if (midstreamInterrupted) {
+            const willAutoContinue =
+              this.midstreamAutoRetryAvailable &&
+              !this.onceMode &&
+              this.isSessionActive &&
+              !this.disposed;
+            if (willAutoContinue) {
+              this.midstreamAutoRetryAvailable = false;
+              const autoRetryDelayMs = midstreamRetryDelayMs();
+              this.logger.warn(
+                { chatId, messageCount, stopReason: parsed.metadata?.stopReason },
+                'Mid-stream interruption: auto-continuing this session once after ' +
+                  `${autoRetryDelayMs}ms (bounded; deployment cooldown respected)`
+              );
+              const autoReplaySeq = this.messageSeq;
+              const autoThreadRootId = this.lastTurnMessage?.threadRootId;
+              setTimeout(() => {
+                // 与 #4391 同款 seq+disposed 守卫:期间来了更新的用户消息或已 dispose 则
+                // 丢弃 —— 自动续跑绝不能插到用户新输入后面或复活已关会话。
+                if (this.disposed || this.messageSeq !== autoReplaySeq) {
+                  this.logger.info(
+                    { chatId, autoReplaySeq, currentSeq: this.messageSeq },
+                    'Mid-stream auto-continue dropped (agent disposed or a newer message arrived)'
+                  );
+                  return;
+                }
+                const nudge: UserMessageParams = {
+                  chatId,
+                  messageId: `auto-midstream-${Date.now()}`,
+                  payload: '（上一轮上游响应中断，输出不完整。）请继续完成刚才的任务。',
+                  threadRootId: autoThreadRootId,
+                };
+                void this.processMessage(nudge).catch((err) => {
+                  this.logger.error(
+                    { err, chatId },
+                    'Mid-stream auto-continue processMessage failed'
+                  );
+                });
+              }, autoRetryDelayMs);
+            } else {
+              this.logger.warn(
+                { chatId, messageCount, onceMode: this.onceMode },
+                'Mid-stream interruption but cannot auto-continue ' +
+                  '(retry budget exhausted / once-mode / session closed): reporting ❌'
+              );
+              try {
+                const midstreamThreadRoot = resolveReplyThreadRoot();
+                await this.deliverUserVisible(
+                  chatId,
+                  '❌ 本轮被上游中断（响应中途停滞），输出不完整，任务可能未完成。请重新发送消息重试。',
+                  midstreamThreadRoot
+                );
+              } catch (notifyErr) {
+                this.logger.warn(
+                  { err: notifyErr, chatId },
+                  'Failed to send mid-stream-interruption notice'
+                );
+              }
+            }
+          }
+
           // Issue #4194: reset per-turn detection counters now that this turn's
           // checks are done, so the empty-turn warn above can fire on turn 2+.
           // processIterator runs once per persistent session (startAgentLoop is
@@ -2029,6 +2150,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           toolCallCount = 0;
           lastToolCallMs = undefined;
           userVisibleOutputCount = 0;
+          sawMidstreamInterrupt = false;
 
           // Issue #4258 (part 2 / ③): an empty turn is a failure symptom, not
           // a success. recordSuccess would reset the restart failure counter,
@@ -2051,6 +2173,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             // trip the restart circuit. Same bounded, non-restarting contract as
             // empty-turn / stall above. Turn-level retry is #4314's follow-up.
             this.restartManager.recordFailure(chatId, 'upstream-api-error');
+          } else if (midstreamInterrupted && parsed.terminatedReason !== 'turn_failed') {
+            // 2026-09-08: mid-stream 中断 turn(无论自动续跑与否)一律计入失败 —— 续跑成功
+            // 会由下一 turn 的 recordSuccess 重置电路计数;中断本身不重置。与 #4322 同款
+            // bounded、non-restarting 契约。
+            this.restartManager.recordFailure(chatId, 'midstream-interrupt');
           } else if (isEmptyTurn && parsed.terminatedReason !== 'turn_failed') {
             this.restartManager.recordFailure(chatId, 'empty-turn');
           } else if (parsed.terminatedReason !== 'turn_failed') {
@@ -2060,6 +2187,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             // re-arm the empty-turn retry for this chat (both when the retried
             // replay succeeded and when an ordinary turn just produced output).
             this.emptyTurnRetryPolicy.reset(chatId);
+            // 2026-09-08: 真成功 = 健康间隙复位 → 重新武装 mid-stream 自动续跑预算
+            // (语义「每个健康间隙续一次」)。
+            this.midstreamAutoRetryAvailable = true;
           }
 
           this.logger.info({
