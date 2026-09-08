@@ -479,6 +479,36 @@ describe('ChatAgent (primary-node)', () => {
         expect.objectContaining({ cwd: '/bound/project/dir' }),
       );
     });
+
+    it('re-resolves the SDK cwd after switching projects', () => {
+      const resolvedCwds = ['/project-a', '/project-b'];
+      let resolutionIndex = 0;
+      const agent = new ChatAgent({
+        chatId: 'oc_test_chat',
+        callbacks,
+        apiKey: 'test-key',
+        model: 'test-model',
+        provider: 'anthropic',
+        apiBaseUrl: 'https://api.example.com',
+        cwdResolver: () => {
+          const workingDir = resolvedCwds[Math.min(resolutionIndex, resolvedCwds.length - 1)];
+          resolutionIndex += 1;
+          return {
+            effectiveCwd: workingDir,
+            boundWorkingDir: workingDir,
+            reason: 'bound' as const,
+          };
+        },
+      });
+
+      // A restart/new turn must observe the current project binding rather
+      // than retaining the cwd from the previous project.
+      (agent as any).startAgentLoop();
+      (agent as any).startAgentLoop();
+
+      const createSdkOptions = (agent as any).createSdkOptions as ReturnType<typeof vi.fn>;
+      expect(createSdkOptions.mock.calls.map(([options]) => options.cwd)).toEqual(resolvedCwds);
+    });
   });
 
   describe('shutdown', () => {
