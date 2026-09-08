@@ -614,6 +614,7 @@ JSONL
       });
       await drainStream(provider, ['hi']);
       expect(argvOf(fixtures)).toContain('-s danger-full-access');
+      expect(argvOf(fixtures)).toContain('--dangerously-bypass-approvals-and-sandbox');
     }, 15_000);
 
     it('throws (fail closed, actionable) for a WebSearch denylist entry', () => {
@@ -654,6 +655,7 @@ JSONL
       });
       await drainStream(provider, ['hi'], { disallowedTools: ['Write'] });
       expect(argvOf(fixtures)).toContain('-s read-only');
+      expect(argvOf(fixtures)).not.toContain('--dangerously-bypass-approvals-and-sandbox');
     }, 15_000);
   });
 
