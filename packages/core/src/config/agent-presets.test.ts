@@ -42,7 +42,7 @@ describe('validateAgentPresets', () => {
     if (!result.ok) {
       expect(result.errors).toEqual(
         expect.arrayContaining([
-          'agents.default.agentBackend must be one of: claude, pi, codex',
+          'agents.default.agentBackend must be one of: claude, pi, codex, deepseek',
           'agents.default.model must be a non-empty string',
         ])
       );
