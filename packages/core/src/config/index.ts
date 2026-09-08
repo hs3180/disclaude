@@ -204,6 +204,11 @@ export class Config {
   static readonly GLM_API_BASE_URL =
     fileConfigOnly.glm?.apiBaseUrl || 'https://open.bigmodel.cn/api/anthropic';
 
+  // DeepSeek harness configuration (Issue #4741).
+  static readonly DEEPSEEK_API_KEY =
+    fileConfigOnly.deepseek?.apiKey || process.env.DEEPSEEK_API_KEY || '';
+  static readonly DSH_HOME = fileConfigOnly.deepseek?.dshHome || process.env.DSH_HOME || '';
+
   // Anthropic Claude configuration (from env for fallback)
   static readonly ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
   static readonly CLAUDE_MODEL = fileConfigOnly.agent?.model || '';

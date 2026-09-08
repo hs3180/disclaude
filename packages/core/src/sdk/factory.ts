@@ -7,7 +7,12 @@
 
 import type { IAgentSDKProvider, ProviderFactory, ProviderConstructor } from './interface.js';
 import type { ProviderInfo } from './types.js';
-import { ClaudeSDKProvider, PiAgentProvider, CodexAgentProvider } from './providers/index.js';
+import {
+  ClaudeSDKProvider,
+  PiAgentProvider,
+  CodexAgentProvider,
+  DeepSeekHarnessProvider,
+} from './providers/index.js';
 import { Config } from '../config/index.js';
 
 /**
@@ -35,6 +40,10 @@ const providerRegistry = new Map<ProviderType, ProviderFactory>([
         execTimeoutMs: Config.CODEX_EXEC_TIMEOUT_MS,
       }),
   ],
+  ['deepseek', () => new DeepSeekHarnessProvider({
+    apiKey: Config.DEEPSEEK_API_KEY,
+    dshHome: Config.DSH_HOME,
+  })],
 ]);
 
 /**

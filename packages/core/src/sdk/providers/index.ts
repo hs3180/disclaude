@@ -11,3 +11,7 @@ export { PiAgentProvider } from './pi/index.js';
 // Issue #4629: Codex CLI provider skeleton (stubbed loop; real lifecycle)
 export { CodexAgentProvider } from './codex/index.js';
 export type { CodexAgentProviderOptions } from './codex/index.js';
+
+// Issue #4741: DeepSeek harness backend registration and configuration probe.
+export { DeepSeekHarnessProvider } from './deepseek/provider.js';
+export type { DeepSeekHarnessProviderOptions } from './deepseek/provider.js';
