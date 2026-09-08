@@ -226,6 +226,19 @@ describe('buildTaskRecordGuidance', () => {
     expect(result).toContain('.claude/task-records');
   });
 
+  it('should anchor records to the workspace root, not the transient cwd (#4765 project-bound regression)', () => {
+    const result = buildTaskRecordGuidance();
+    // Project-bound chats have cwd = a nested project repo (e.g. workspace/
+    // powerhour); anchoring to cwd dropped records into that project's own
+    // tree. They must resolve against DISCLAUDE_WORKSPACE_DIR instead.
+    expect(result).toContain('DISCLAUDE_WORKSPACE_DIR');
+    expect(result).toMatch(/\$DISCLAUDE_WORKSPACE_DIR\/task-records\/YYYY-MM\.md/);
+    expect(result).toContain('never inside a project');
+    // No bare `task-records/YYYY-MM.md` path (backtick right before task-records)
+    // that would let an agent fall back to writing next to its cwd.
+    expect(result).not.toMatch(/`task-records\/YYYY-MM\.md`/);
+  });
+
   it('should instruct rolling monthly storage (Issue #4261)', () => {
     const result = buildTaskRecordGuidance();
     // The concrete example month must track the live current month, not a
