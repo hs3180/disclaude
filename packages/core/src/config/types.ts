@@ -63,7 +63,7 @@ export interface AgentConfig {
    * mode, powering agents with the ChatGPT subscription quota instead of an
    * API key. Currently a registered skeleton — queryStream lands in #4630.
    */
-  agentBackend?: 'claude' | 'pi' | 'codex';
+  agentBackend?: 'claude' | 'pi' | 'codex' | 'deepseek';
   /**
    * Codex exec sandbox level override (Issue #4631, S4 of #4627).
    * Only meaningful when `agentBackend: 'codex'`. Unset → the normal
@@ -215,6 +215,14 @@ export interface GlmConfig {
   lowModel?: string;
   /** Multimodal model for dialogue (Issue #3059) */
   multimodalModel?: string;
+}
+
+/** DeepSeek harness configuration (developer preview; Issue #4741). */
+export interface DeepSeekConfig {
+  /** API key consumed by dsh (overrides DEEPSEEK_API_KEY). */
+  apiKey?: string;
+  /** Optional isolated dsh home directory (overrides DSH_HOME). */
+  dshHome?: string;
 }
 
 /**
@@ -456,6 +464,8 @@ export interface DisclaudeConfig {
   ruliu?: RuliuConfig;
   /** GLM API settings */
   glm?: GlmConfig;
+  /** DeepSeek harness settings */
+  deepseek?: DeepSeekConfig;
   /** Logging settings */
   logging?: LoggingConfig;
   /** Tool configuration */

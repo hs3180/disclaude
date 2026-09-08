@@ -2,7 +2,12 @@
 
 import type { AgentPreset, AgentPresets } from './types.js';
 
-const VALID_BACKENDS = new Set<AgentPreset['agentBackend']>(['claude', 'pi', 'codex']);
+const VALID_BACKENDS = new Set<AgentPreset['agentBackend']>([
+  'claude',
+  'pi',
+  'codex',
+  'deepseek',
+]);
 
 export type AgentPresetValidation =
   | { ok: true; name: string; preset: AgentPreset }
@@ -37,7 +42,7 @@ export function validateAgentPresets(agents: unknown): AgentPresetValidation {
     }
     const preset = raw as Partial<AgentPreset>;
     if (!VALID_BACKENDS.has(preset.agentBackend as AgentPreset['agentBackend'])) {
-      errors.push(`agents.${name}.agentBackend must be one of: claude, pi, codex`);
+      errors.push(`agents.${name}.agentBackend must be one of: claude, pi, codex, deepseek`);
     }
     if (typeof preset.model !== 'string' || !preset.model.trim()) {
       errors.push(`agents.${name}.model must be a non-empty string`);
