@@ -77,7 +77,9 @@ export function parseArgs(args: string[]): CliOptions {
       const value = args[++i];
       if (value) {
         const port = parseInt(value, 10);
-        if (!isNaN(port) && port >= 1 && port <= 65535) {
+        // Port 0 delegates allocation to the OS, which is required when two
+        // managed instances must start without coordinating fixed ports.
+        if (!isNaN(port) && port >= 0 && port <= 65535) {
           options.apiPort = port;
         }
       }
@@ -109,7 +111,7 @@ Commands:
 
 Options:
   --config, -c PATH       Path to configuration file
-  --api-port PORT         Enable HTTP API server on the given port (Issue #3857)
+  --api-port PORT         Enable HTTP API server (0 = OS-assigned port)
   --api-token TOKEN       Bearer token for authenticating write routes (Issue #3857)
   --help                  Show this help message
 
@@ -517,7 +519,7 @@ export async function main(): Promise<void> {
     }
 
     // Issue #3857 Phase 2: Start HTTP API server if --api-port is specified
-    if (options.apiPort) {
+    if (options.apiPort !== undefined) {
       // #4608: bind explicitly to IPv4 loopback, NOT 'localhost'. A 'localhost'
       // bind can resolve ::1-first and end up IPv6-only, while undici fetch
       // (the REST IPC client) tries 127.0.0.1 first — the exact family split
@@ -606,7 +608,13 @@ export async function main(): Promise<void> {
       );
 
       await httpApiServer.start();
-      console.log(`HTTP API server started on http://localhost:${options.apiPort}`);
+      const address = httpApiServer.getAddress();
+      const actualPort = address?.port ?? options.apiPort;
+      const baseUrl = `http://127.0.0.1:${actualPort}`;
+      // Keep in-process managed clients on the address actually bound by the
+      // server. A configured port of 0 is not a usable client address.
+      process.env.DISCLAUDE_REST_IPC_BASE_URL = baseUrl;
+      console.log(`HTTP API server started on ${baseUrl}`);
 
       // Issue #4031: Subscribe InternalEventBus to HttpApiServer SSE broadcast.
       // When a topic group message arrives in Feishu, the event bus carries the

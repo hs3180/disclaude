@@ -281,6 +281,21 @@ export class HttpApiServer {
   }
 
   /**
+   * Return the address actually assigned by Node after the server starts.
+   *
+   * A configured port of 0 asks the OS for a free port; callers must use this
+   * value instead of the requested port when handing the REST endpoint to a
+   * managed client.
+   */
+  getAddress(): { host: string; port: number } | undefined {
+    const address = this.server?.address();
+    if (!address || typeof address === 'string') {
+      return undefined;
+    }
+    return { host: address.address, port: address.port };
+  }
+
+  /**
    * Set the push handler for POST /api/push.
    *
    * The handler receives a chatId and message string, and routes them
