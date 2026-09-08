@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 0.5.0 Release Targets (Planned)
+
+Theme: **多后端 Agent 的统一使用与可控自动化**. These are planned acceptance targets, not completed changes or a released version. The [release plan](docs/releases/0.5.0.md) defines scope, issue mapping, and release gates.
+
+- Backend/model presets and in-chat selection; DeepSeek harness integration and existing-backend acceptance.
+- Running-agent interruption, queueing and steering; streaming-card completion and visible final delivery.
+- Script scheduling without idle LLM calls; bounded session/history state and correct concurrent turn settlement.
+- Supporting harness simplification, SDK upgrade, CLI distribution, dynamic internal ports, and deployment diagnostics.
+- Research workflow based on Feishu documents/comments is P1 and does not block 0.5.0.
+
 ### Completed Milestones
 
 - **Architecture Refactoring** - Per-process code separation completed (#1037)

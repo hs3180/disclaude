@@ -4,12 +4,15 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js Version](https://img.shields.io/node/v/disclaude.svg)](https://nodejs.org)
 
-A multi-platform AI agent bot that bridges messaging platforms (Feishu/Lark, Ruliu/如流) with the Claude Agent SDK. Written in TypeScript, it enables chat-driven development, code editing, file operations, and browser automation through conversational interfaces.
+A multi-platform AI agent bot connecting Feishu/Lark and REST channels to Claude, Codex, and pi agent runtimes. Written in TypeScript, it supports chat-driven development, file operations, browser automation, and scheduled work.
+
+**Next release: 0.5.0 — 多后端 Agent 的统一使用与可控自动化。** The release focuses on backend/model selection, interaction with running agents, and low-cost reliable scheduling. These are release targets, not a claim that every capability is available today. See the [release goals and acceptance criteria](docs/releases/0.5.0.md).
 
 ## 📚 Documentation
 
 | Guide | Description |
 |-------|-------------|
+| [0.5.0 发布目标](docs/releases/0.5.0.md) | 发布范围、关联 Issues、优先级和验收门槛 |
 | [5 分钟接入飞书](docs/quickstart.md) | 极简快速上手指南 |
 | [飞书应用配置指南](docs/feishu-setup.md) | 完整的飞书机器人配置教程（创建应用、权限、事件订阅等） |
 | [GitHub App 配置指南](docs/github-app-guide.md) | GitHub App 认证配置教程 |
@@ -21,15 +24,15 @@ A multi-platform AI agent bot that bridges messaging platforms (Feishu/Lark, Rul
 - **Streaming responses** - Real-time output with smart throttling for messaging platforms
 - **Persistent conversations** - Per-user session management (in-memory)
 - **Slash commands** - `/reset`, `/status`, `/help` for quick actions
-- **Multi-model support** - Anthropic Claude or GLM (Zhipu AI)
+- **Multiple agent backends** - Claude, Codex, and pi; runtime selection is currently configuration-based. In-chat selection and DeepSeek harness support are 0.5.0 targets.
 - **Browser automation** - browser-use Skill (CLI + shared CDP endpoint; the Playwright MCP server is retired)
 - **Custom skills** - Extensible workflow system (`.claude/skills/`)
 - **Message deduplication** - Prevents duplicate responses in WebSocket mode
-- **PM2 production ready** - Background service with log management
+- **Background service** - Docker and macOS launchd deployment with log management
 
 ## Version
 
-**v0.3.2** - Multi-platform Agent Bot
+The repository package version is **0.4.0**. **0.5.0 is planned and has not been released**; see the [release plan](docs/releases/0.5.0.md) and [GitHub milestone](https://github.com/hs3180/disclaude/milestone/9).
 
 ### Implementation Status
 
@@ -556,22 +559,19 @@ npm run pm2:stop && npm run pm2:start
 
 ## Roadmap
 
-### Core Milestones (In Progress)
+### 0.5.0 — 多后端 Agent 的统一使用与可控自动化
 
-| Milestone | Status | Description |
-|-----------|--------|-------------|
-| **One-hour tasks** | 🔜 In Progress | Autonomous completion of tasks within ~1 hour |
-| **One-day tasks** | 🔜 Planned | Multi-step tasks with multiple commits within ~1 day |
-| **One-week tasks** | 🔜 Planned | Long-running tasks with delayed human feedback |
-| **Decouple from Claude Agent SDK** | 🔜 Planned | Build standalone agent without SDK dependency |
+Release scope is based on the open-issue review of 2026-09-08, grouped by user impact and dependencies. The [release plan](docs/releases/0.5.0.md) is the source of truth for scope and acceptance.
 
-### Current Status
+| Priority | Release goal | Key issues |
+|----------|--------------|------------|
+| P0 | Named backend/model presets, in-chat selection, and DeepSeek harness integration | [#4772](https://github.com/hs3180/disclaude/issues/4772), [#4724](https://github.com/hs3180/disclaude/issues/4724), [#4740](https://github.com/hs3180/disclaude/issues/4740) |
+| P0 | Interrupt, queue, and steer running agents; finish streaming-card delivery | [#4825](https://github.com/hs3180/disclaude/issues/4825), [#4208](https://github.com/hs3180/disclaude/issues/4208) |
+| P0 | Script-based polling without an LLM turn, bounded context, and correct concurrent task settlement | [#4798](https://github.com/hs3180/disclaude/issues/4798), [#4812](https://github.com/hs3180/disclaude/issues/4812), [#4808](https://github.com/hs3180/disclaude/issues/4808) |
+| Supporting | Simplify harness/CLI contracts, upgrade the SDK, and support dynamic internal ports | [#4813](https://github.com/hs3180/disclaude/issues/4813), [#4708](https://github.com/hs3180/disclaude/issues/4708), [#4824](https://github.com/hs3180/disclaude/issues/4824) |
+| P1, non-blocking | Feishu document/comment-based research workflow and isolated research chats | [#4753](https://github.com/hs3180/disclaude/issues/4753), [#4754](https://github.com/hs3180/disclaude/issues/4754) |
 
-- ✅ Feishu/Lark integration (WebSocket bot)
-- ✅ Browser automation via browser-use Skill (Playwright MCP retired)
-- ✅ Custom skills system
-- ✅ Session management (in-memory)
-- 🔜 Working toward autonomous task completion milestones
+One-day/week unattended execution, a full Notebook UI, and additional chat platforms are outside the 0.5.0 commitment. Existing partial implementations require acceptance evidence; an open parent issue does not mean its completed subtasks should be rebuilt.
 
 ## License
 
