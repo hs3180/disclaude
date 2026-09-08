@@ -16,7 +16,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.177",
+    "@anthropic-ai/claude-agent-sdk": "0.3.263",
     "@anthropic-ai/sdk": "^0.93.0",
     "cron": "^3.1.6",
     "js-yaml": "^4.1.0",
