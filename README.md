@@ -325,49 +325,6 @@ Located in `.claude/skills/<name>/SKILL.md`:
 
 Create your own by adding a `SKILL.md` file in a new directory under `.claude/skills/`.
 
-## Running as a Background Service (PM2)
-
-### Important: Manual Restart Policy
-
-**PM2 will NOT restart automatically after code changes.** You must explicitly run `npm run pm2:restart` when ready to deploy.
-
-This prevents:
-- Accidental deployment of untested code
-- Disruption of active user sessions
-- Surprising users with mid-conversation restarts
-
-### Commands
-
-```bash
-npm run pm2:start    # Build and start service
-npm run pm2:restart  # Restart (manual, after code changes)
-npm run pm2:reload   # Zero-downtime reload
-npm run pm2:stop     # Stop service
-npm run pm2:logs     # View logs
-npm run pm2:status   # Check status
-npm run pm2:monit    # Live monitoring
-npm run pm2:delete   # Remove from PM2
-```
-
-### Log Management
-
-```bash
-npm run pm2:logs            # Real-time logs (all)
-pm2 logs disclaude-feishu   # Specific app logs
-pm2 flush                   # Clear all logs
-cat ./logs/pm2-out.log      # Standard output
-cat ./logs/pm2-error.log    # Errors only
-```
-
-### Configuration
-
-Edit `ecosystem.config.cjs`:
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `max_memory_restart` | `500M` | Restart if memory exceeded |
-| `instances` | `1` | Number of processes |
-
 ## Usage
 
 ### CLI Commands
@@ -449,7 +406,7 @@ disclaude start --mode comm
 vim src/agent/client.ts
 
 # 3. Build and restart
-npm run build && npm run pm2:restart
+npm run build && npm run launchd:restart
 
 # 4. Test with REST API (instant feedback)
 curl -X POST http://localhost:3000/api/chat \
@@ -457,7 +414,7 @@ curl -X POST http://localhost:3000/api/chat \
   -d '{"chatId": "test", "prompt": "Test the new feature"}'
 
 # 5. Deploy when ready
-npm run pm2:restart
+npm run launchd:restart
 ```
 
 ### Mode Comparison
@@ -488,8 +445,7 @@ disclaude/
 │   └── utils/                # Utilities (output adapter, SDK helpers)
 ├── .claude/skills/           # Custom skills
 ├── workspace/                # Agent working directory
-├── logs/                     # PM2 logs
-├── ecosystem.config.cjs      # PM2 configuration
+├── logs/                     # Service logs
 ├── disclaude.config.example.yaml  # Configuration template
 ├── CLAUDE.md                 # AI assistant guidance
 └── README.md                 # This file
@@ -543,19 +499,6 @@ This architecture enables:
 | `browser-use: command not found` | Rebuild the image (`docker compose up -d --build`) — the CLI is baked into `Dockerfile.primary` (#4599). On non-Docker installs, see `skills/browser-use/README.md` → Runtime |
 | CDP attach fails | Start the endpoint (`docker compose --profile chromium up -d`) — `BU_CDP_URL` defaults to it in `docker-compose.yml` — see `docs/cdp-endpoint.md` |
 | Browser errors | Check the CDP endpoint is reachable: `curl http://disclaude-chromium:9222/json/version` |
-
-### PM2 issues
-
-```bash
-# Check if service is running
-npm run pm2:status
-
-# View error logs
-npm run pm2:logs --err
-
-# Restart cleanly
-npm run pm2:stop && npm run pm2:start
-```
 
 ## Roadmap
 
