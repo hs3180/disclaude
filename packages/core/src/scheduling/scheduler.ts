@@ -161,9 +161,9 @@ export interface SchedulerCallbacks {
   resetAgent?: (chatId: string, skipContext?: boolean) => void;
   /**
    * Report whether the agent for a chat is currently processing a message
-   * (busy). Issue #4199: when wired, a `blocking: true` task whose target chat
-   * is busy is skipped this tick instead of being dispatched into an in-flight
-   * conversation. Optional; when absent, behavior is unchanged.
+   * (busy). When wired, a task whose target chat is busy is skipped this tick
+   * instead of being dispatched into an in-flight conversation. Optional; when
+   * absent, behavior is unchanged.
    */
   isChatBusy?: (chatId: string) => boolean;
 }
@@ -540,13 +540,13 @@ ${task.prompt}`;
       return;
     }
 
-    // Issue #4199: A blocking task should not be dispatched into a chat whose
-    // agent is currently processing a message — that would interrupt / interleave
-    // with the user's in-flight conversation. `isChatBusy` reflects the real
+    // A scheduled task should not be dispatched into a chat whose agent is
+    // currently processing a message — that would interrupt / interleave with
+    // the in-flight conversation. `isChatBusy` reflects the real
     // `isProcessingMessage` signal (non-sticky since #3985), so this gate skips
-    // at most one tick and won't reintroduce the indefinite-skipping that #4102
-    // removed. When no `isChatBusy` callback is wired, behavior is unchanged.
-    if (task.blocking && task.chatId && this.callbacks.isChatBusy?.(task.chatId)) {
+    // only this tick and lets the next cron tick retry after the chat is idle.
+    // When no `isChatBusy` callback is wired, behavior is unchanged.
+    if (task.chatId && this.callbacks.isChatBusy?.(task.chatId)) {
       logger.info(
         { taskId: task.id, name: task.name, chatId: task.chatId },
         'Task skipped - chat is busy (agent is processing a message)'

@@ -1460,16 +1460,24 @@ describe('Scheduler', () => {
       }, { timeout: 2000 });
     });
 
-    it('should execute a non-blocking task even when its chat is busy', async () => {
+    it('should skip a non-blocking task when its chat is busy', async () => {
       mockRouterAsMock.route.mockResolvedValueOnce(undefined);
+      let busy = true;
       const busyScheduler = new Scheduler({
         scheduleManager: mockScheduleManager,
-        callbacks: { ...mockCallbacks, isChatBusy: () => true },
+        callbacks: { ...mockCallbacks, isChatBusy: () => busy },
         inputMessageRouter: mockRouter,
         jobFactory: testJobFactory,
       });
       busyScheduler.addTask(createTask({ id: 'nonblocking-busy', blocking: false, chatId: 'oc_busy' }));
 
+      void busyScheduler.getActiveJobs()[0].job.fireOnTick();
+      await flushPending();
+      expect(mockRouterAsMock.route).not.toHaveBeenCalled();
+
+      // The skipped tick does not consume the task; the next tick can run once
+      // the target chat is idle.
+      busy = false;
       void busyScheduler.getActiveJobs()[0].job.fireOnTick();
       await vi.waitFor(() => {
         expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
