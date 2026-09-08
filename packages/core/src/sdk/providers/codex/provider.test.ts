@@ -19,7 +19,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { CodexAgentProvider, type CodexQuotaStats } from './provider.js';
 import type { AgentQueryOptions, UserInput } from '../../types.js';
@@ -822,6 +822,45 @@ exit 1
       .find((m) => m.type === 'result');
     expect(types[types.length - 1]).toBe('result'); // turn resolved
     expect(last?.metadata?.terminatedReason).toBe('turn_failed'); // recorded as FAILURE
+  }, 15_000);
+
+  it('logs the message text of error / turn.failed events, not just the event type', async () => {
+    // Diagnosability regression guard: the classification line records only
+    // `eventType`, so an upstream outage (TLS reset, 5xx, quota) reached the
+    // chat while the logs showed a bare `eventType: "error"` — a real
+    // chatgpt.com TLS block was undiagnosable from the log backend and had to
+    // be reproduced by hand. Full-content logging is mandated by CLAUDE.md;
+    // without this assertion the field is trivially dropped in a refactor.
+    fixtures = makeFixtures({
+      withBinary: true,
+      withAuth: true,
+      body: `cat <<'JSONL'
+{"type":"thread.started","thread_id":"t-log"}
+{"type":"turn.started"}
+{"type":"error","message":"stream disconnected before completion: tls handshake eof"}
+{"type":"turn.failed","error":{"message":"retry limit exceeded"}}
+JSONL
+exit 1
+`,
+    });
+    const written: string[] = [];
+    // Capture pino's sink. In test env the logger skips the pino-pretty
+    // worker transport and writes JSON synchronously to process.stdout, so
+    // the spy sees every line before it is restored in the finally block.
+    const spy = vi
+      .spyOn(process.stdout, 'write')
+      .mockImplementation((chunk: unknown): boolean => {
+        written.push(String(chunk));
+        return true;
+      });
+    try {
+      await drainStream(makeProvider(fixtures), ['hi']);
+    } finally {
+      spy.mockRestore();
+    }
+    const logged = written.join('');
+    expect(logged).toContain('stream disconnected before completion: tls handshake eof');
+    expect(logged).toContain('retry limit exceeded');
   }, 15_000);
 
   it('tags synthetic results after failed runs with turn_failed (never masked success)', async () => {
