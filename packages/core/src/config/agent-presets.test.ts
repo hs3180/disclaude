@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { validateAgentPresets } from './agent-presets.js';
+import { resolveAgentPreset, validateAgentPresets } from './agent-presets.js';
 
 describe('validateAgentPresets', () => {
   it('accepts the reserved default name and returns its effective preset', () => {
@@ -47,5 +47,44 @@ describe('validateAgentPresets', () => {
         ])
       );
     }
+  });
+});
+
+describe('resolveAgentPreset', () => {
+  const agents = {
+    default: { agentBackend: 'pi' as const, model: 'pi-default' },
+    codex: { agentBackend: 'codex' as const, model: 'gpt-5' },
+  };
+
+  it('resolves the reserved default when no name is requested', () => {
+    expect(resolveAgentPreset(agents)).toEqual({
+      name: 'default',
+      preset: agents.default,
+      ok: true,
+    });
+  });
+
+  it('resolves a named preset and trims user input', () => {
+    expect(resolveAgentPreset(agents, ' codex ')).toEqual({
+      name: 'codex',
+      preset: agents.codex,
+      ok: true,
+    });
+  });
+
+  it('returns an actionable error for an unknown preset', () => {
+    expect(resolveAgentPreset(agents, 'missing')).toEqual({
+      ok: false,
+      error: 'Unknown agent preset: missing',
+    });
+  });
+
+  it('rejects an ambiguous default map instead of choosing silently', () => {
+    expect(
+      resolveAgentPreset({
+        default: agents.default,
+        fallback: { ...agents.codex, default: true },
+      })
+    ).toEqual({ ok: false, error: 'Unable to resolve default agent preset (found 2)' });
   });
 });
