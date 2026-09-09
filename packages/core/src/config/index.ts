@@ -229,6 +229,7 @@ export class Config {
   static readonly CODEX_MAX_ACTIVE_SESSIONS = fileConfigOnly.agent?.codex?.maxActiveSessions;
   static readonly CODEX_MAX_CONCURRENT_RUNS = fileConfigOnly.agent?.codex?.maxConcurrentRuns;
   static readonly CODEX_EXEC_TIMEOUT_MS = fileConfigOnly.agent?.codex?.execTimeoutMs;
+  static readonly CODEX_TRANSPORT = fileConfigOnly.agent?.codex?.transport ?? 'exec';
 
   // Tier model configuration (Issue #3059)
   private static readonly CLAUDE_HIGH_MODEL = fileConfigOnly.agent?.highModel || fileConfigOnly.anthropic?.highModel || '';

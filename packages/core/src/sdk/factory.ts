@@ -38,6 +38,7 @@ const providerRegistry = new Map<ProviderType, ProviderFactory>([
         maxActiveSessions: Config.CODEX_MAX_ACTIVE_SESSIONS,
         maxConcurrentRuns: Config.CODEX_MAX_CONCURRENT_RUNS,
         execTimeoutMs: Config.CODEX_EXEC_TIMEOUT_MS,
+        transport: Config.CODEX_TRANSPORT,
       }),
   ],
   ['deepseek', () => new DeepSeekHarnessProvider({

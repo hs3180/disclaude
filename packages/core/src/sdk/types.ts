@@ -366,6 +366,10 @@ export interface QueryHandle {
   cancel(): void;
   /** 会话 ID */
   readonly sessionId?: string;
+  /** Live same-turn steering, when the selected transport supports it. */
+  steer?(input: string): Promise<{ turnId: string }>;
+  /** Await acknowledgement that the active turn was interrupted. */
+  interrupt?(): Promise<void>;
 }
 
 /** 流式查询结果 */
