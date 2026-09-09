@@ -45,6 +45,7 @@ import {
   resolveApiPort,
   resolveAppLog,
   resolveRestIpcBaseUrl,
+  resolvePrimaryLaunchdConfig,
   xmlEscape,
 } from '../scripts/launchd.mjs';
 
@@ -56,6 +57,10 @@ const ENV_KEYS = [
   'DISCLAUDE_LAUNCHD_API_PORT',
   'DISCLAUDE_LAUNCHD_API_TOKEN',
   'DISCLAUDE_REST_IPC_BASE_URL',
+  'DISCLAUDE_LAUNCHD_ISOLATED',
+  'DISCLAUDE_LAUNCHD_LABEL',
+  'DISCLAUDE_LAUNCHD_STATE_DIR',
+  'DISCLAUDE_LAUNCHD_CONFIG_PATH',
   'CHROMIUM_CDP_PORT',
   'CHROMIUM_CDP_ADDRESS',
   'CHROMIUM_CDP_PROFILE_DIR',
@@ -111,6 +116,89 @@ describe('resolveApiPort (#4576)', () => {
   });
 });
 
+describe('isolated primary service paths (S08-A4)', () => {
+  it('preserves production paths by default', () => {
+    expect(resolvePrimaryLaunchdConfig({}, '/Users/tester')).toEqual({
+      label: 'com.disclaude.primary',
+      launchAgentsDir: '/Users/tester/Library/LaunchAgents',
+      logDir: '/Users/tester/Library/Logs/disclaude',
+    });
+  });
+
+  it('rejects path or label overrides without the isolation guard', () => {
+    expect(() =>
+      resolvePrimaryLaunchdConfig({ DISCLAUDE_LAUNCHD_LABEL: 'com.disclaude.test.unsafe' })
+    ).toThrow('DISCLAUDE_LAUNCHD_ISOLATED=1');
+    expect(() =>
+      resolvePrimaryLaunchdConfig({ ['DIS' + 'CLAUDE_LAUNCHD_CONFIG_PATH']: '/tmp/unsafe.yaml' })
+    ).toThrow('DISCLAUDE_LAUNCHD_ISOLATED=1');
+  });
+
+  it('fails closed when the isolated selector survives but its environment does not', () => {
+    expect(() => resolvePrimaryLaunchdConfig({}, '/Users/tester', true)).toThrow(
+      'isolation environment flag'
+    );
+  });
+
+  it('fails closed when isolation intent is malformed or omits the selector', () => {
+    expect(() =>
+      resolvePrimaryLaunchdConfig({ ['DIS' + 'CLAUDE_LAUNCHD_ISOLATED']: '1' }, '/Users/tester')
+    ).toThrow('ISOLATED');
+    expect(() =>
+      resolvePrimaryLaunchdConfig(
+        {
+          ['DIS' + 'CLAUDE_LAUNCHD_ISOLATED']:
+            '1 DIS' + 'CLAUDE_LAUNCHD_LABEL=com.disclaude.test.accident',
+        },
+        '/Users/tester'
+      )
+    ).toThrow('ISOLATED');
+  });
+
+  it('requires a test-only label and absolute state directory', () => {
+    expect(() =>
+      resolvePrimaryLaunchdConfig(
+        {
+          DISCLAUDE_LAUNCHD_ISOLATED: '1',
+          DISCLAUDE_LAUNCHD_LABEL: 'com.disclaude.primary',
+          DISCLAUDE_LAUNCHD_STATE_DIR: '/tmp/state',
+        },
+        '/Users/tester',
+        true
+      )
+    ).toThrow('com.disclaude.test.');
+    expect(() =>
+      resolvePrimaryLaunchdConfig(
+        {
+          DISCLAUDE_LAUNCHD_ISOLATED: '1',
+          DISCLAUDE_LAUNCHD_LABEL: 'com.disclaude.test.safe',
+          DISCLAUDE_LAUNCHD_STATE_DIR: 'relative',
+        },
+        '/Users/tester',
+        true
+      )
+    ).toThrow('must be absolute');
+  });
+
+  it('derives every mutable path below the isolated state directory', () => {
+    expect(
+      resolvePrimaryLaunchdConfig(
+        {
+          DISCLAUDE_LAUNCHD_ISOLATED: '1',
+          DISCLAUDE_LAUNCHD_LABEL: 'com.disclaude.test.s08-123',
+          DISCLAUDE_LAUNCHD_STATE_DIR: '/tmp/disclaude-s08-123',
+        },
+        '/Users/tester',
+        true
+      )
+    ).toEqual({
+      label: 'com.disclaude.test.s08-123',
+      launchAgentsDir: '/tmp/disclaude-s08-123/LaunchAgents',
+      logDir: '/tmp/disclaude-s08-123/logs',
+    });
+  });
+});
+
 describe('buildProgramArguments REST API wiring (#4576)', () => {
   it('appends --api-port 0 by default for isolated managed instances', () => {
     snapshotEnv();
@@ -141,6 +229,15 @@ describe('buildProgramArguments REST API wiring (#4576)', () => {
     const args = buildProgramArguments(NODE, null);
     // args = [node, cli, 'start', '--api-port', '19200', '--api-token', token]
     expect(args.slice(-4)).toEqual(['--api-port', '0', '--api-token', 'secret-token']);
+  });
+
+  it('passes an explicit isolated config path to the primary', () => {
+    snapshotEnv();
+    process.env.DISCLAUDE_LAUNCHD_CONFIG_PATH = '/tmp/s08/config.yaml';
+    expect(buildProgramArguments(NODE, null).slice(-2)).toEqual([
+      '--config',
+      '/tmp/s08/config.yaml',
+    ]);
   });
 });
 
