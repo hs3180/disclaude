@@ -296,7 +296,7 @@ export class PrimaryAgentPool {
     let candidate: ChatAgent | undefined;
     if (callbacks && previous) {
       try {
-        candidate = this.createAgent(chatId, callbacks, resolved.preset, true);
+        candidate = this.createAgent(chatId, callbacks, resolved.preset, true, sessionKey);
       } catch (error) {
         return {
           ok: false,
@@ -310,7 +310,7 @@ export class PrimaryAgentPool {
       // session. Forget the selected backend only after construction succeeds,
       // so a failed switch leaves the currently active session untouched.
       try {
-        getProvider(resolved.preset.agentBackend).forgetSession?.(chatId);
+        getProvider(resolved.preset.agentBackend).forgetSession?.(sessionKey);
       } catch (error) {
         candidate.dispose();
         return {
@@ -342,13 +342,15 @@ export class PrimaryAgentPool {
     chatId: string,
     callbacks: ChatAgentCallbacks,
     preset?: AgentPreset,
-    skipHistory = false
+    skipHistory = false,
+    sdkSessionKey = chatId
   ): ChatAgent {
     return AgentFactory.createChatAgent('pilot', chatId, callbacks, {
       messageBuilderOptions: this.options.messageBuilderOptions,
       cwdProvider: this.options.cwdProvider,
       cwdResolver: this.options.cwdResolver,
       skipHistory,
+      ...(sdkSessionKey !== chatId ? { sdkSessionKey } : {}),
       ...(preset ? {
         agentBackend: preset.agentBackend,
         model: preset.model,
@@ -440,7 +442,8 @@ export class PrimaryAgentPool {
         chatId,
         callbacks,
         selected?.ok ? selected.preset : undefined,
-        skipHistory
+        skipHistory,
+        sessionKey
       );
       this.agents.set(sessionKey, agent);
       // Issue #3696: clear skip-history flag after agent creation
@@ -515,7 +518,14 @@ export class PrimaryAgentPool {
     // been idle-evicted from this pool while its codex stash lived on). Keyed
     // by the PLAIN chatId, matching what ChatAgent passes as the SDK
     // sessionKey (S7 wiring) — not this pool's composite thread key.
-    this.forgetProviderSession(chatId);
+    const selected = this.presets
+      ? resolveAgentPreset(this.presets, this.selectedPresetBySession.get(sessionKey))
+      : undefined;
+    if (selected?.ok) {
+      getProvider(selected.preset.agentBackend).forgetSession?.(sessionKey);
+    } else {
+      this.forgetProviderSession(sessionKey);
+    }
     const agent = this.agents.get(sessionKey);
     if (agent) {
       this.agents.delete(sessionKey);
