@@ -325,6 +325,18 @@ Located in `.claude/skills/<name>/SKILL.md`:
 
 Create your own by adding a `SKILL.md` file in a new directory under `.claude/skills/`.
 
+Deployment-specific operational skills are opt-in rather than bundled with every
+agent. For example, install the log-diagnostics skill only on an authorized host:
+
+```bash
+mkdir -p .claude/skills/diagnose-logs
+cp examples/skills/diagnose-logs/SKILL.md .claude/skills/diagnose-logs/SKILL.md
+```
+
+The diagnostics skill is disabled for automatic model invocation and must be
+invoked explicitly. Review its credential and data-minimization requirements
+before granting access to local or Elasticsearch logs.
+
 ## Usage
 
 ### CLI Commands

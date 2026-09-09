@@ -135,7 +135,11 @@ Vitest runs single-fork (OOM-safe), coverage via v8 with **70% thresholds** (lin
 ## Conventions
 
 - **Docs live in JSDoc/comments, not standalone files** — don't add README/FEATURE docs unless asked; update this file only for architecture-level decisions. Code examples belong in the source's JSDoc.
-- **Skills** — repo skills are `skills/<name>/SKILL.md` (capabilities; e.g. `channel`, `browser-use`, `schedule`, `diagnose-logs`). See `docs/skill-format-spec.md`.
+- **Skills** — portable builtin capabilities live at `skills/<name>/SKILL.md`
+  (for example, `channel`, `browser-use`, and `schedule`). Deployment-specific
+  opt-in examples live at `examples/skills/<name>/SKILL.md`; `diagnose-logs` is
+  intentionally kept there because it requires privileged access to local or
+  Elasticsearch logs. See `docs/skill-format-spec.md`.
 - **PRs** — keep under ~3 files / ~200 added lines (mechanical changes exempt); split large PRs (`Part 1/N of #N`); prefer `Related: #N` and use `Closes`/`Fixes` only when fully resolved; answer each review comment individually.
 - **Logging** — Pino JSON; log agent outputs in full with a `content` field (searchable retrospection), not just lengths.
 
