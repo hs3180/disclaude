@@ -150,6 +150,18 @@ export class DshStdioTransport {
     this.fail(new Error('dsh transport closed'));
   }
 
+  /** Ask the SDK runtime to dispose its agents before closing stdio. */
+  async shutdown(): Promise<void> {
+    if (this.closed) {
+      return;
+    }
+    try {
+      await this.request('shutdown', {});
+    } finally {
+      this.close();
+    }
+  }
+
   private handleLine(line: string): void {
     if (!line.trim()) {
       return;
