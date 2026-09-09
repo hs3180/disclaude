@@ -127,6 +127,20 @@ describe('PrimaryAgentPool', () => {
       );
     });
 
+    it('switches one topic thread with its composite native session key', () => {
+      const pool = new PrimaryAgentPool({ agentPresets: presets, validatePresetBackend: () => ({ available: true }) });
+      const callbacks = createMockCallbacks();
+      const oldA = pool.getOrCreateChatAgent('chat-topic', callbacks, 'thread-a');
+      const oldB = pool.getOrCreateChatAgent('chat-topic', callbacks, 'thread-b');
+      expect(pool.switchAgentPreset('chat-topic', 'fast', 'thread-a')).toMatchObject({ ok: true });
+      expect(oldA.dispose).toHaveBeenCalledOnce();
+      expect(oldB.dispose).not.toHaveBeenCalled();
+      expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith(
+        'pilot', 'chat-topic', callbacks,
+        expect.objectContaining({ model: 'claude-haiku', sdkSessionKey: 'chat-topic::thread-a' })
+      );
+    });
+
     it('rejects a busy switch and preserves the old agent and selection', () => {
       const pool = new PrimaryAgentPool({ agentPresets: presets, validatePresetBackend: () => ({ available: true }) });
       const old = pool.getOrCreateChatAgent('chat-busy', createMockCallbacks());
@@ -445,7 +459,7 @@ describe('PrimaryAgentPool', () => {
       expect(forgotten).toEqual(['chat-gone']);
     });
 
-    it('forgets with the plain chatId on a THREAD reset too — matching the SDK sessionKey wiring (#4644)', () => {
+    it('forgets only the composite native session on a thread reset', () => {
       const forgotten: string[] = [];
       const pool = new PrimaryAgentPool({
         forgetProviderSession: (chatId) => forgotten.push(chatId),
@@ -457,7 +471,7 @@ describe('PrimaryAgentPool', () => {
 
       // Pool slot key is chat-t::om_root, but the codex stash is keyed by the
       // plain chatId the stream registered with — the forget must use that.
-      expect(forgotten).toEqual(['chat-t']);
+      expect(forgotten).toEqual(['chat-t::om_root']);
     });
   });
 
@@ -1037,6 +1051,12 @@ describe('PrimaryAgentPool', () => {
 
       expect(agentA).not.toBe(agentB);
       expect(AgentFactory.createChatAgent).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(AgentFactory.createChatAgent).mock.calls[0]?.[3]).toEqual(
+        expect.objectContaining({ sdkSessionKey: 'oc_topic::om_threadA' })
+      );
+      expect(vi.mocked(AgentFactory.createChatAgent).mock.calls[1]?.[3]).toEqual(
+        expect.objectContaining({ sdkSessionKey: 'oc_topic::om_threadB' })
+      );
     });
 
     it('returns the same agent for subsequent messages in the same thread', () => {
@@ -1063,7 +1083,7 @@ describe('PrimaryAgentPool', () => {
         'pilot',
         'oc_topic',
         callbacks,
-        { messageBuilderOptions: undefined, cwdProvider: undefined, cwdResolver: undefined, skipHistory: false },
+        { messageBuilderOptions: undefined, cwdProvider: undefined, cwdResolver: undefined, skipHistory: false, sdkSessionKey: 'oc_topic::om_threadA' },
       );
       // And it is still retrievable only via the thread key...
       expect(pool.get('oc_topic', 'om_threadA')).toBeDefined();

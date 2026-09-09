@@ -89,6 +89,8 @@ export function toChatAgentCallbacks(callbacks: SchedulerCallbacks): ChatAgentCa
 export interface AgentCreateOptions {
   /** Agent SDK runtime override (normally supplied by a named preset). */
   agentBackend?: AgentPreset['agentBackend'];
+  /** Native provider identity; defaults to the delivery chat ID. */
+  sdkSessionKey?: string;
   /** Override API key */
   apiKey?: string;
   /** Override model */
@@ -243,6 +245,7 @@ export class AgentFactory {
         cwdProvider: options.cwdProvider,
         cwdResolver: options.cwdResolver,
         skipHistory: options.skipHistory,
+        sdkSessionKey: options.sdkSessionKey,
       };
 
       return new ChatAgent(config);
