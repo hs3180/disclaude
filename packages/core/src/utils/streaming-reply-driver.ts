@@ -200,12 +200,23 @@ export class StreamingReplyDriver {
           // makes the returned promise always resolve, so finish()'s drain()
           // never throws. finish() re-delivers the complete text regardless.
           (text) =>
-            this.options.streamText(id, text).catch((err) => {
-              this.logger.debug(
-                { err, chatId: this.options.chatId },
-                'mid-stream streamText PATCH failed (will be re-delivered on finish)',
-              );
-            }),
+            this.options.streamText(id, text).then(
+              () => this.throttle?.noteSuccess(),
+              (err: unknown) => {
+                if (
+                  typeof err === 'object' &&
+                  err !== null &&
+                  'status' in err &&
+                  (err as { status?: unknown }).status === 429
+                ) {
+                  this.throttle?.note429();
+                }
+                this.logger.debug(
+                  { err, chatId: this.options.chatId },
+                  'mid-stream streamText PATCH failed (will be re-delivered on finish)',
+                );
+              },
+            ),
           { minIntervalMs: this.options.minIntervalMs },
         );
     } else {

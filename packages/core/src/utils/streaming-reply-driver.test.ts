@@ -151,6 +151,20 @@ describe('StreamingReplyDriver — streaming path', () => {
     expect(cb.finalizeStreaming).toHaveBeenCalledWith('card-1');
   });
 
+  it('feeds a Card Kit 429 into the per-stream throttle backoff', async () => {
+    const rateLimited = Object.assign(new Error('rate limited'), { status: 429 });
+    const cb = makeCallbacks({
+      streamText: vi.fn(() => Promise.reject(rateLimited)),
+    });
+    const driver = makeDriver(cb, { minIntervalMs: 200 });
+
+    await driver.pushText('a');
+    await vi.waitFor(() => {
+      expect((driver as any).throttle.effectiveIntervalMs).toBe(400);
+    });
+    await driver.finish();
+  });
+
   it('finish() drains in-flight PATCHes before the final flush (no overtake race)', async () => {
     // Regression for the #4438 review's Low finding: a slow earlier
     // fire-and-forget PATCH must settle before the direct final flush, so it
