@@ -417,6 +417,27 @@ describe('PrimaryAgentPool', () => {
     });
   });
 
+  describe('steer capability', () => {
+    it('reports no active turn separately from unsupported runtime steer', () => {
+      const pool = new PrimaryAgentPool();
+      expect(pool.steer('chat', 'change')).toEqual({
+        ok: false,
+        error: 'No active turn to steer. Send the message normally to start or queue a turn.',
+      });
+
+      const agent = pool.getOrCreateChatAgent('chat', createMockCallbacks());
+      const mutable = mockAgents.get('chat');
+      if (!mutable) { throw new Error('expected mock agent'); }
+      mutable.isBusy = true;
+      expect(pool.steer('chat', 'change')).toMatchObject({ ok: false });
+      expect(pool.steer('chat', 'change')).toHaveProperty(
+        'error',
+        expect.stringContaining('instruction was not queued or applied')
+      );
+      expect(agent.stop).not.toHaveBeenCalled();
+    });
+  });
+
   // ==========================================================================
   // disposeAll()
   // ==========================================================================
