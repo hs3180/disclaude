@@ -1,6 +1,6 @@
 # 0.5.0 并行交付记录
 
-截至 2026-09-09 19:20（Asia/Shanghai）。实现基线 `987e4b91`；计划 #4852 已由外部操作合并到 `1682b79d`，其余以下实现 PR 仍待审，未发布。详细步骤见 [PARALLEL-PLAN.md](PARALLEL-PLAN.md)。
+截至 2026-09-09 19:30（Asia/Shanghai）。实现基线 `987e4b91`；计划 #4852 已由外部操作合并到 `1682b79d`。以下记录各主题的交付与验证，不代替 GitHub 实时合并状态；未发布。详细步骤见 [PARALLEL-PLAN.md](PARALLEL-PLAN.md)。
 
 | 范围 | 独立 PR | 已交付 / 仍需工作 |
 |---|---|---|
@@ -8,6 +8,8 @@
 | S01 | [#4857](https://github.com/hs3180/disclaude/pull/4857) | 默认及按会话预设真实接线；真实跨后端验收待做 |
 | S02 | [#4856](https://github.com/hs3180/disclaude/pull/4856) | dsh 协议与原生工具事件；真实 prompt 被 MISSING_CREDENTIAL 阻塞，外部工具注册协议不存在 |
 | S03 | [#4863](https://github.com/hs3180/disclaude/pull/4863) | stop/queue 和明确的 steer 能力限制；真实 app-server steer 尚未交付 |
+| S03 恢复 | [#4871](https://github.com/hs3180/disclaude/pull/4871) | 修复 thread.started 已到达但 run close 未结束时回收漏存原生 thread ID 的竞态 |
+| S03 传输 | [#4873](https://github.com/hs3180/disclaude/pull/4873) | 实验性 app-server stdio transport；默认不启用，provider/turn/steer 接线仍进行中 |
 | S04 | [#4866](https://github.com/hs3180/disclaude/pull/4866) | 终态投递失败可观测、finalize 失败触发降级；真实渠道回执待验 |
 | S05 | [#4858](https://github.com/hs3180/disclaude/pull/4858) | 动态地址、独立 CLI；已做隔离双实例/重启及仓库外 pack 安装执行 |
 | S05/S06 启动 | [#4870](https://github.com/hs3180/disclaude/pull/4870) | 等 REST 实际地址就绪后再启 cron；stacked on #4858 |
@@ -15,6 +17,7 @@
 | S06 账本 | [#4855](https://github.com/hs3180/disclaude/pull/4855) | 有界活跃轮次与无损归档；72 轮字节守恒回归 |
 | S06 调度 | [#4867](https://github.com/hs3180/disclaude/pull/4867) | 每 tick 独立原生会话；不重置用户；模型覆盖与旧配置迁移 |
 | S06 脚本 | [#4851](https://github.com/hs3180/disclaude/pull/4851) | 既有 PR，非本批重复实现；组合审阅中 |
+| S06 进程 | [#4874](https://github.com/hs3180/disclaude/pull/4874) | ScriptRunner 取消、进程组、有界输出；stacked on #4851；退出边界审查中 |
 | S07 提示 | [#4861](https://github.com/hs3180/disclaude/pull/4861) | 稳定前缀与动态输入分离；未声称实测缓存收益 |
 | S07 SDK | [#4864](https://github.com/hs3180/disclaude/pull/4864) | 自报版本与安装的 SDK 一致 |
 | S07 审计 | [#4868](https://github.com/hs3180/disclaude/pull/4868) | 逐项记录 SDK workaround 来源、保留理由与后续验证条件 |
@@ -32,6 +35,8 @@
 - 本地独立 integration worktree 正在组合检查；不推送或合并 main。S01/S03 命令注册、类型、CLI 接线需保留两方新增项；S01/S06 pool import 需取并集。#4851 与新调度逻辑仍需行为级协调，不可只消除文本冲突。
 - 所有外部验收仍须绑定最终候选 SHA；单 PR 的绿色 CI 不能替代组合候选证据。
 - 第一轮组合构建、类型、lint 通过；4508 测试通过、1 项 Codex eviction/resume 间歇失败，已交 agent 查根因，不标记组合测试通过。#4867、#4865、#4868 的远端四项 CI 已通过。
+- 修复 #4871 后的组合 SHA `b56d972f37d9df78fd39fb17a5813fe931f8e1cc`：207 文件 / 4520 测试全部通过；coverage 再运行同样 4520 项通过，statements/lines 90.4%、branches 89.41%、functions 93.4%。后续增加的脚本/传输补丁尚不属于该 SHA 的全量证据，已分别通过组合定向 182 项 / 6 项。
+- #4869/#4870 等 stacked PR 目标是 feature branch，当前 CI 仅匹配 main/master，所以没有远端 checks，不是成功。修复 workflow 的本地提交 `e2d301d8`（`ci/050-check-stacked-prs`）已做 YAML/触发器结构校验，但 GitHub App 缺 `workflows` 权限，push 被拒绝，**未创建 PR**。未绕过权限；需有权限的维护者提交，或前置合并后改 target 并等待 CI。
 
 ## 操作事故与剩余阻塞
 
