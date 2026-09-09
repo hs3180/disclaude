@@ -211,7 +211,12 @@ function appendDiagnostic(current: Buffer, chunk: Buffer): { value: Buffer; trun
 }
 
 /** Real POSIX runner used by production and process-lifecycle tests. */
-export const defaultScriptRunner: ScriptRunner = (script, options) => new Promise((resolve, reject) => {
+export const defaultScriptRunner: ScriptRunner = (script, options) => {
+  // A pre-cancelled schedule must not spawn: even a short-lived shell could
+  // perform a side effect before an abort listener gets its first turn.
+  if (options.signal.aborted) { return Promise.reject(new ScriptCancelledError()); }
+
+  return new Promise((resolve, reject) => {
   const child = spawn('/bin/sh', ['-c', script], {
     detached: process.platform !== 'win32',
     env: options.env,
@@ -221,9 +226,9 @@ export const defaultScriptRunner: ScriptRunner = (script, options) => new Promis
   let stderr: Buffer = Buffer.alloc(0);
   let stdoutTruncated = false;
   let stderrTruncated = false;
-  let timedOut = false;
   let settled = false;
-  let forceKill: ReturnType<typeof setTimeout> | undefined;
+  let termination: 'cancelled' | 'timeout' | undefined;
+  let terminationTimer: ReturnType<typeof setTimeout> | undefined;
 
   const terminate = (signal: NodeJS.Signals): void => {
     if (!child.pid) { return; }
@@ -239,20 +244,69 @@ export const defaultScriptRunner: ScriptRunner = (script, options) => new Promis
     }
   };
 
-  const timeout = setTimeout(() => {
-    timedOut = true;
-    terminate('SIGTERM');
-    forceKill = setTimeout(() => terminate('SIGKILL'), SCRIPT_KILL_GRACE_MS);
-    forceKill.unref();
-  }, options.timeoutMs);
-  timeout.unref();
-  const onAbort = (): void => {
-    terminate('SIGTERM');
-    forceKill = setTimeout(() => terminate('SIGKILL'), SCRIPT_KILL_GRACE_MS);
-    forceKill.unref();
+  const result = (): ScriptExecutionResult => ({
+    stdout: stdout.toString('utf8'),
+    stderr: stderr.toString('utf8'),
+    stdoutTruncated,
+    stderrTruncated,
+  });
+  const groupIsAlive = (): boolean => {
+    if (!child.pid) { return false; }
+    if (process.platform === 'win32') {
+      return child.exitCode === null && child.signalCode === null;
+    }
+    try {
+      process.kill(-child.pid, 0);
+      return true;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code !== 'ESRCH';
+    }
   };
+  const cleanup = (): void => {
+    clearTimeout(timeout);
+    if (terminationTimer) { clearTimeout(terminationTimer); }
+    options.signal.removeEventListener('abort', onAbort);
+  };
+  const settleTermination = (): void => {
+    if (settled || !termination) { return; }
+    settled = true;
+    cleanup();
+    const error = termination === 'cancelled'
+      ? new ScriptCancelledError()
+      : new ScriptTimeoutError(options.timeoutMs);
+    reject(Object.assign(error, result()));
+  };
+  const awaitKilledGroup = (deadline: number): void => {
+    if (!groupIsAlive() || Date.now() >= deadline) {
+      if (groupIsAlive()) {
+        logger.error({ pid: child.pid }, 'Scheduled script process group remained after SIGKILL');
+      }
+      settleTermination();
+      return;
+    }
+    terminationTimer = setTimeout(() => awaitKilledGroup(deadline), 10);
+  };
+  const beginTermination = (kind: 'cancelled' | 'timeout'): void => {
+    if (termination || settled) { return; }
+    termination = kind;
+    clearTimeout(timeout);
+    terminate('SIGTERM');
+    if (!groupIsAlive()) {
+      settleTermination();
+      return;
+    }
+    // This timer intentionally remains referenced: cancellation completion
+    // means cleanup finished, not merely that the shell's close event fired.
+    terminationTimer = setTimeout(() => {
+      terminate('SIGKILL');
+      awaitKilledGroup(Date.now() + 250);
+    }, SCRIPT_KILL_GRACE_MS);
+  };
+
+  const timeout = setTimeout(() => beginTermination('timeout'), options.timeoutMs);
+  timeout.unref();
+  const onAbort = (): void => beginTermination('cancelled');
   options.signal.addEventListener('abort', onAbort, { once: true });
-  if (options.signal.aborted) { onAbort(); }
 
   child.stdout.on('data', (chunk: Buffer) => {
     const next = appendDiagnostic(stdout, chunk);
@@ -267,34 +321,26 @@ export const defaultScriptRunner: ScriptRunner = (script, options) => new Promis
   child.once('error', (error) => {
     if (settled) { return; }
     settled = true;
-    clearTimeout(timeout);
-    if (forceKill && !timedOut && !options.signal.aborted) { clearTimeout(forceKill); }
-    options.signal.removeEventListener('abort', onAbort);
+    cleanup();
     reject(error);
   });
   child.once('close', (code, signal) => {
     if (settled) { return; }
+    if (termination) {
+      if (!groupIsAlive()) { settleTermination(); }
+      return;
+    }
     settled = true;
-    clearTimeout(timeout);
-    if (forceKill && !timedOut && !options.signal.aborted) { clearTimeout(forceKill); }
-    options.signal.removeEventListener('abort', onAbort);
-    const result = {
-      stdout: stdout.toString('utf8'),
-      stderr: stderr.toString('utf8'),
-      stdoutTruncated,
-      stderrTruncated,
-    };
-    if (options.signal.aborted) {
-      reject(Object.assign(new ScriptCancelledError(), result));
-    } else if (timedOut) {
-      reject(Object.assign(new ScriptTimeoutError(options.timeoutMs), result));
-    } else if (code !== 0) {
-      reject(Object.assign(new Error(`Scheduled script exited with code ${code ?? 'unknown'}${signal ? ` (${signal})` : ''}`), result));
+    cleanup();
+    const diagnostics = result();
+    if (code !== 0) {
+      reject(Object.assign(new Error(`Scheduled script exited with code ${code ?? 'unknown'}${signal ? ` (${signal})` : ''}`), diagnostics));
     } else {
-      resolve(result);
+      resolve(diagnostics);
     }
   });
-});
+  });
+};
 
 /**
  * Scheduler options.

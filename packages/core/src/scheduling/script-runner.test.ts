@@ -45,6 +45,21 @@ describe('defaultScriptRunner real process lifecycle', () => {
     await expect(run('sleep 30', { timeoutMs: 30 })).rejects.toBeInstanceOf(ScriptTimeoutError);
   });
 
+  it('does not spawn a pre-cancelled script', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'disclaude-script-preabort-'));
+    const marker = join(dir, 'must-not-exist');
+    const controller = new AbortController();
+    controller.abort();
+    try {
+      await expect(run(`touch '${marker}'`, { signal: controller.signal })).rejects.toBeInstanceOf(
+        ScriptCancelledError,
+      );
+      await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it.skipIf(process.platform === 'win32')('cancellation terminates the shell process group and child', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'disclaude-script-runner-'));
     const pidFile = join(dir, 'child.pid');
@@ -64,4 +79,37 @@ describe('defaultScriptRunner real process lifecycle', () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'waits for SIGKILL escalation when a child ignores TERM and closes stdio',
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'disclaude-script-stubborn-'));
+      const pidFile = join(dir, 'child.pid');
+      const controller = new AbortController();
+      const childProgram = [
+        "const fs=require('fs')",
+        "process.on('SIGTERM',()=>{})",
+        `fs.writeFileSync('${pidFile}',String(process.pid))`,
+        'process.stdout.destroy()',
+        'process.stderr.destroy()',
+        'setInterval(()=>{},1000)',
+      ].join(';');
+      try {
+        const completion = run(`node -e "${childProgram}" & wait`, { signal: controller.signal });
+        let childPid = 0;
+        await expect.poll(async () => {
+          childPid = Number.parseInt(await readFile(pidFile, 'utf8').catch(() => '0'), 10);
+          return childPid;
+        }).toBeGreaterThan(0);
+
+        const cancelledAt = Date.now();
+        controller.abort();
+        await expect(completion).rejects.toBeInstanceOf(ScriptCancelledError);
+        expect(Date.now() - cancelledAt).toBeGreaterThanOrEqual(900);
+        expect(() => process.kill(childPid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }));
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
 });
