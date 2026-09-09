@@ -101,4 +101,37 @@ printf '{"id":%s,"result":"ok"}\\n' "$id"
     const transport = new CodexAppServerTransport({ binary });
     await expect(transport.request('thread/read', {})).resolves.toBe('ok');
   });
+
+  it('still kills a stubborn child after stdin EPIPE closes the protocol', async () => {
+    const ready = vi.fn();
+    const transport = new CodexAppServerTransport({
+      binary: fixture(`
+exec 0<&-
+printf '{"method":"fixture/ready"}\\n'
+trap '' TERM
+while :; do sleep 1; done
+`),
+      onNotification: ready,
+      killGraceMs: 25,
+    });
+    await vi.waitFor(() => expect(ready).toHaveBeenCalled());
+    await expect(transport.request('thread/start', {})).rejects.toThrow();
+    await expect(transport.close()).resolves.toMatchObject({ signal: 'SIGKILL' });
+  });
+
+  it('contains a throwing notification consumer and closes the child', async () => {
+    const transport = new CodexAppServerTransport({
+      binary: fixture(`
+read request
+printf '{"method":"thread/started","params":{}}\\n'
+while :; do sleep 1; done
+`),
+      onNotification: () => {
+        throw new Error('consumer failed');
+      },
+      killGraceMs: 25,
+    });
+    await expect(transport.request('thread/read', {})).rejects.toThrow('consumer failed');
+    await expect(transport.close()).resolves.toMatchObject({ signal: 'SIGTERM' });
+  });
 });
