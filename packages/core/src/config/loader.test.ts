@@ -495,6 +495,25 @@ describe('validateRequiredConfig', () => {
     expect(result.errors).toHaveLength(0);
   });
 
+  it('requires an explicit endpoint when agent.provider selects GLM', () => {
+    delete process.env.ANTHROPIC_API_KEY;
+    const result = validateRequiredConfig({
+      agent: { provider: 'glm' },
+      glm: { apiKey: 'glm-key', model: 'glm-4' },
+    } as any);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(expect.objectContaining({ field: 'glm.apiBaseUrl' }));
+  });
+
+  it('accepts an explicit Anthropic-compatible GLM proxy endpoint', () => {
+    delete process.env.ANTHROPIC_API_KEY;
+    const result = validateRequiredConfig({
+      agent: { provider: 'glm' },
+      glm: { apiKey: 'glm-key', model: 'glm-4', apiBaseUrl: 'https://proxy.example' },
+    } as any);
+    expect(result.valid).toBe(true);
+  });
+
   it('should return error when ANTHROPIC_API_KEY is set but agent.model is not', () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
     const result = validateRequiredConfig({});

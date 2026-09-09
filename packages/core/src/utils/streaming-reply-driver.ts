@@ -75,8 +75,9 @@ export class StreamingReplyDriver {
   private state: DriverState = 'idle';
   private streamId: string | null = null;
   private buffer = '';
+  private deliveryFailed = false;
   private throttle: StreamingThrottle | null = null;
-  private finishPromise: Promise<void> | null = null;
+  private finishPromise: Promise<boolean> | null = null;
   private readonly options: StreamingReplyDriverOptions;
   private readonly logger: StreamingReplyLogger;
 
@@ -115,24 +116,22 @@ export class StreamingReplyDriver {
     }
 
     // degraded (start declined or threw): deliver via sendMessage.
-    await this.safeSend(content, threadRoot);
-    return true;
+    return this.safeSend(content, threadRoot);
   }
 
   /**
    * Finalize the turn. Flushes the complete text to the card then freezes it.
    * Idempotent — safe to call on every exit path. Never throws.
    */
-  async finish(threadRoot?: string): Promise<void> {
+  async finish(threadRoot?: string): Promise<boolean> {
     if (this.finishPromise) {
-      await this.finishPromise;
-      return;
+      return this.finishPromise;
     }
 
     const finishPromise = this.finishStreaming(threadRoot);
     this.finishPromise = finishPromise;
     try {
-      await finishPromise;
+      return await finishPromise;
     } finally {
       if (this.finishPromise === finishPromise) {
         this.finishPromise = null;
@@ -140,7 +139,7 @@ export class StreamingReplyDriver {
     }
   }
 
-  private async finishStreaming(threadRoot?: string): Promise<void> {
+  private async finishStreaming(threadRoot?: string): Promise<boolean> {
     if (this.state === 'streaming' && this.streamId) {
       const id = this.streamId;
       // Stop the throttle's trailing timer FIRST so its pending emission
@@ -169,7 +168,9 @@ export class StreamingReplyDriver {
         }
       }
     }
+    const delivered = !this.deliveryFailed;
     this.reset();
+    return delivered;
   }
 
   /** Attempt to start streaming; on decline/throw, transition to degraded. */
@@ -199,12 +200,23 @@ export class StreamingReplyDriver {
           // makes the returned promise always resolve, so finish()'s drain()
           // never throws. finish() re-delivers the complete text regardless.
           (text) =>
-            this.options.streamText(id, text).catch((err) => {
-              this.logger.debug(
-                { err, chatId: this.options.chatId },
-                'mid-stream streamText PATCH failed (will be re-delivered on finish)',
-              );
-            }),
+            this.options.streamText(id, text).then(
+              () => this.throttle?.noteSuccess(),
+              (err: unknown) => {
+                if (
+                  typeof err === 'object' &&
+                  err !== null &&
+                  'status' in err &&
+                  (err as { status?: unknown }).status === 429
+                ) {
+                  this.throttle?.note429();
+                }
+                this.logger.debug(
+                  { err, chatId: this.options.chatId },
+                  'mid-stream streamText PATCH failed (will be re-delivered on finish)',
+                );
+              },
+            ),
           { minIntervalMs: this.options.minIntervalMs },
         );
     } else {
@@ -213,14 +225,17 @@ export class StreamingReplyDriver {
   }
 
   /** sendMessage with swallow-on-failure so a flaky channel never masks the turn error. */
-  private async safeSend(content: string, threadRoot?: string): Promise<void> {
+  private async safeSend(content: string, threadRoot?: string): Promise<boolean> {
     try {
       await this.options.sendMessage(this.options.chatId, content, threadRoot);
+      return true;
     } catch (err) {
+      this.deliveryFailed = true;
       this.logger.warn(
         { err, chatId: this.options.chatId },
         'sendMessage fallback also failed — reply may be lost',
       );
+      return false;
     }
   }
 
@@ -229,5 +244,6 @@ export class StreamingReplyDriver {
     this.streamId = null;
     this.throttle = null;
     this.buffer = '';
+    this.deliveryFailed = false;
   }
 }

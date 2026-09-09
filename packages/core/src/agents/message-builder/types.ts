@@ -55,6 +55,20 @@ export interface MessageBuilderContext {
   isSkillCommand: boolean;
 }
 
+/** Context intentionally excluding per-message values for cache-stable callbacks. */
+export interface MessageBuilderStableContext {
+  capabilities?: ChannelCapabilities;
+}
+
+/** Stable-to-dynamic prompt segment produced before string rendering. */
+export interface MessageBuilderSection {
+  kind: 'channel-header' | 'tools' | 'guidance' | 'metadata' | 'persisted-history' |
+    'chat-history' | 'thread-context' | 'channel-context' | 'user-message' |
+    'attachments' | 'skill-context';
+  stability: 'stable' | 'dynamic';
+  content: string;
+}
+
 /**
  * Options for configuring MessageBuilder with channel-specific extensions.
  *
@@ -79,6 +93,9 @@ export interface MessageBuilderOptions {
    * Example: "You are responding in a Feishu chat."
    */
   buildHeader?: (ctx: MessageBuilderContext) => string;
+
+  /** Build tool/channel instructions that depend only on channel capabilities. */
+  buildStableToolsSection?: (ctx: MessageBuilderStableContext) => string;
 
   /**
    * Build channel-specific content after history sections.

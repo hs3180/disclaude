@@ -112,8 +112,12 @@ function parseScheduleFrontmatter(content: string): {
         break;
       case 'enabled':
       case 'blocking':
-      case 'clearContext':
         frontmatter[key] = value === 'true';
+        break;
+      case 'clearContext':
+      case 'freshSession':
+      case 'skipHistory':
+        frontmatter[key] = value === 'true' ? true : value === 'false' ? false : value;
         break;
       case 'cooldownPeriod':
       case 'timeoutMs':
@@ -234,6 +238,18 @@ export class ScheduleFileScanner {
         logger.warn({ filePath }, 'Schedule file must define exactly one of prompt body or command frontmatter');
         return null;
       }
+      for (const key of ['freshSession', 'skipHistory', 'clearContext']) {
+        if (frontmatter[key] !== undefined && typeof frontmatter[key] !== 'boolean') {
+          throw new Error(`${key} must be a boolean`);
+        }
+      }
+      const freshSession = (frontmatter['freshSession'] as boolean | undefined)
+        ?? (frontmatter['clearContext'] === false ? false : true);
+      const skipHistory = (frontmatter['skipHistory'] as boolean | undefined)
+        ?? frontmatter['clearContext'] === true;
+      if ((!freshSession && skipHistory) || (frontmatter['clearContext'] === true && (!freshSession || !skipHistory))) {
+        throw new Error('skipHistory/clearContext:true require freshSession:true; conflicting context options');
+      }
 
       const task: ScheduleFileTask = {
         id: generateTaskId(filePath),
@@ -244,7 +260,9 @@ export class ScheduleFileScanner {
         command,
         enabled: (frontmatter['enabled'] as boolean) ?? true,
         blocking: (frontmatter['blocking'] as boolean) ?? true,
-        clearContext: (frontmatter['clearContext'] as boolean) ?? false,
+        clearContext: frontmatter['clearContext'] as boolean | undefined,
+        freshSession,
+        skipHistory,
         cooldownPeriod: frontmatter['cooldownPeriod'] as number | undefined,
         timeoutMs: frontmatter['timeoutMs'] as number | undefined,
         createdBy: frontmatter['createdBy'] as string | undefined,
@@ -327,6 +345,7 @@ export class ScheduleFileScanner {
     if (task.command) {
       frontmatter.push(`command: "${task.command.replaceAll('"', '\\"')}"`);
     }
+
     frontmatter.push('---', '');
     const content = frontmatter.join('\n') + (task.prompt ?? '');
 

@@ -18,7 +18,7 @@ export const handleStop: CommandHandler = (
   if (stopped) {
     return {
       success: true,
-      message: '⏹️ **已停止当前响应**\n\n会话保持活跃，您可以继续发送消息。',
+      message: '⏹️ **已发送停止信号**\n\n正在终止当前执行；会话保持活跃，退出后可继续发送消息。',
     };
   } else {
     return {

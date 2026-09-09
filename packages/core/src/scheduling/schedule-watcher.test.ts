@@ -234,7 +234,7 @@ describe('ScheduleFileScanner', () => {
       expect(task!.clearContext).toBe(true);
     });
 
-    it('should default clearContext to false when unspecified (Issue #4206)', async () => {
+    it('defaults to a fresh session with a history snapshot when context is unspecified (#4812)', async () => {
       const content = [
         '---',
         'name: "Default Task"',
@@ -249,7 +249,25 @@ describe('ScheduleFileScanner', () => {
 
       const task = await scanner.parseFile(`${MOCK_DIR}/default-task/SCHEDULE.md`);
       expect(task).not.toBeNull();
-      expect(task!.clearContext).toBe(false);
+      expect(task!.clearContext).toBeUndefined();
+      expect(task!.freshSession).toBe(true);
+      expect(task!.skipHistory).toBe(false);
+    });
+
+    it.each([
+      ['clearContext: false', false, false],
+      ['clearContext: true', true, true],
+      ['freshSession: true\nskipHistory: true', true, true],
+      ['clearContext: false\nfreshSession: true', true, false],
+    ])('parses context migration: %s', async (fields, freshSession, skipHistory) => {
+      mockReadFile.mockResolvedValue(`---\nname: Task\ncron: "0 * * * *"\nchatId: oc_test\n${fields}\n---\nrun`);
+      const task = await scanner.parseFile(`${MOCK_DIR}/context/SCHEDULE.md`);
+      expect(task).toMatchObject({ freshSession, skipHistory });
+    });
+
+    it.each(['freshSession: "false"', 'freshSession: false\nskipHistory: true', 'clearContext: true\nskipHistory: false'])('rejects ambiguous context configuration: %s', async (fields) => {
+      mockReadFile.mockResolvedValue(`---\nname: Task\ncron: "0 * * * *"\nchatId: oc_test\n${fields}\n---\nrun`);
+      expect(await scanner.parseFile(`${MOCK_DIR}/context/SCHEDULE.md`)).toBeNull();
     });
 
     it('should parse model field when specified (Issue #1338)', async () => {
