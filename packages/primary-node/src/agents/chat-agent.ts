@@ -196,6 +196,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   // back-to-back turns (the observation-based busySince marker survived
   // turn boundaries whenever every sweep tick landed mid-turn).
   private turnStartedAtMsPrivate = 0;
+  /** Message identity of the turn currently consumed by the persistent iterator. */
+  private activeTurnMessageId?: string;
 
   // Issue #3706 (GLM stall): set when the provider's no-content-progress watchdog
   // terminated the stream. Checked at the iterator-end/restart decision point to
@@ -840,6 +842,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       return;
     }
 
+    // S03: a message arriving during a live turn is ordinary queued input,
+    // never an implicit stop/steer. Acknowledge that boundary before pushing
+    // it into the existing serial channel; notification failure must not drop
+    // the user's queued message.
+    const queuedBehindActiveTurn = this.isBusy;
+
     this.logger.info(
       {
         chatId,
@@ -880,6 +888,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     if (!this.isSessionActive) {
       this.logger.info({ chatId }, 'No active session, starting agent loop');
       this.startAgentLoop();
+      if (!this.isSessionActive) {
+        this.logger.error(
+          { chatId, messageId },
+          'Message rejected because the bound project directory is unavailable'
+        );
+        return;
+      }
     }
 
     // Issue #4587 (part 1, review fix): enqueue this turn's reply anchor —
@@ -909,21 +924,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       await this.historyManager.loadFirstMessageHistory();
     }
 
-    // Issue #1230: Attach chat history on first message for new sessions
-    // Use pre-loaded firstMessageHistoryContext if no context was provided (passive mode).
-    // consumeFirstMessageContext() returns the value and clears it so it attaches to
-    // exactly one message (consume-once).
-    let effectiveChatHistoryContext = chatHistoryContext;
-    if (!effectiveChatHistoryContext) {
-      const preloaded = this.historyManager.consumeFirstMessageContext();
-      if (preloaded) {
-        effectiveChatHistoryContext = preloaded;
-        this.logger.info(
-          { chatId, messageId, historyLength: effectiveChatHistoryContext.length },
-          'Using pre-loaded chat history for first message'
-        );
-      }
-    }
+    // One bounded snapshot per instance/recovery session (#4795). Explicit
+    // receive-time history wins on the first message and consumes the stash too;
+    // subsequent turns retain only cheap log-path hints, not repeated snapshots.
+    const effectiveChatHistoryContext = this.historyManager.consumeFirstMessageContext(chatHistoryContext);
 
     // Get capabilities for message building
     const capabilities = this.callbacks.getCapabilities?.(chatId);
@@ -937,7 +941,6 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         senderOpenId,
         attachments,
         chatHistoryContext: effectiveChatHistoryContext,
-        persistedHistoryContext: this.historyManager.persistedHistoryContext,
         chatLogFilePaths: this.historyManager.chatLogFilePaths,
         chatType: this.chatType,
         threadContext,
@@ -988,6 +991,18 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             );
           });
         return;
+      }
+      if (queuedBehindActiveTurn) {
+        void this.callbacks.sendMessage(
+          chatId,
+          '⏳ 当前回合仍在执行；这条消息已排队，将在当前回合结束后处理。使用 `/stop` 可停止当前回合；`/steer` 会报告后端的即时纠偏能力。',
+          threadRootId
+        ).catch((error) => {
+          this.logger.warn(
+            { err: error, chatId, messageId },
+            'Failed to send queued-message notice'
+          );
+        });
       }
     } else {
       this.logger.error({ chatId, messageId }, 'No channel found after session creation');
@@ -1079,11 +1094,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Build SDK options using BaseAgent's createSdkOptions
     // Issue #1916: Resolve cwd from CwdProvider if available (project-scoped context)
     // Issue #4448 (direction #1): when the structured resolver reports the
-    // bound directory as missing, the agent silently falls back to the workspace
-    // below (`cwd: undefined` → BaseAgent uses workspaceDir) while `/project info`
-    // still shows the stale target. Push a user-visible warning to the chat so
-    // the mismatch is no longer silent — the plain cwdProvider can't distinguish
-    // this from "unbound" (both yield undefined).
+    // bound directory as missing, fail closed. Passing cwd: undefined would make
+    // BaseAgent silently use the shared workspace and could write into the wrong
+    // project. The plain cwdProvider cannot distinguish this from "unbound".
     // Nit: the resolver subsumes cwdProvider (same resolveCwd() underneath,
     // effectiveCwd is the plain provider's return value) — call it once and use
     // the result for both the cwd and the warning check, instead of running
@@ -1104,15 +1117,17 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             [
               `⚠️ **项目绑定目录不存在**: \`${resolution.boundWorkingDir}\``,
               '',
-              '本次会话将**回退到工作空间根目录**运行（而非绑定的项目目录）。',
+              '本次消息已停止，**不会回退到工作空间根目录运行**。',
               '可能原因：容器重启时 volume 尚未就绪 / 目录被移动或卸载 / 路径大小写或规范化差异。',
               '可用 `/project reset` 回到默认，或 `/project use <dir>` 重新绑定。',
             ].join('\n')
           )
           .catch((err) => {
-            this.logger.error({ err, chatId }, 'Failed to send bound-missing cwd fallback warning');
+            this.logger.error({ err, chatId }, 'Failed to send bound-missing cwd rejection');
           });
       }
+      this.isSessionActive = false;
+      return;
     } else if (this.warnedMissingWorkingDir !== undefined) {
       // Binding recovered (bound or unbound now) — allow a future
       // bound-missing for a different (or re-vanished) target to warn again.
@@ -1474,6 +1489,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         turnAnchorConsumed = true;
         currentTurnAnchor = this.pendingTurnAnchors.shift();
         currentTurnMessageId = this.pendingTurnMessageIds.shift();
+        this.activeTurnMessageId = currentTurnMessageId;
       }
       return currentTurnAnchor;
     };
@@ -2001,12 +2017,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                     'Re-injected chat history into empty-turn replay context ' +
                       '(stale receive-time snapshot param dropped) (Issue #4391)'
                   );
-                  // Issue #4391 (part 3 review nit): the fresh stash supersedes
-                  // the session-start persisted snapshot (same getChatHistory
-                  // source, fetched later). Drop the snapshot CONTENT so the
-                  // replay's message renders one history section instead of two;
-                  // the log-paths hint survives inside history-manager.
-                  this.historyManager.dropPersistedHistoryContent();
+                  // The single snapshot is consumed by the replay. Log paths
+                  // survive independently; no second persisted stash is sent.
                 }
                 // Session-only teardown: close query+channel, keep this agent
                 // (history, restartManager accounting, thread roots) intact.
@@ -2224,6 +2236,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // after a result are not expected but read the frozen value).
           turnAnchorConsumed = false;
           currentTurnMessageId = undefined;
+          this.activeTurnMessageId = undefined;
 
           // Issue #3124: In once-mode, close channel after result to end the iterator.
           // This enables blocking one-shot execution via processMessage + taskComplete.
@@ -2354,7 +2367,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // driver's finish() is idempotent and only acts in the streaming state.
       if (streamDriver) {
         const finishThreadRoot = resolveReplyThreadRoot();
-        await streamDriver.finish(finishThreadRoot);
+        const terminalDelivered = await streamDriver.finish(finishThreadRoot);
+        if (!terminalDelivered) {
+          this.logger.error(
+            { chatId, turnMessageId: currentTurnMessageId, ...this.activeLifecycleContext },
+            'Streaming terminal delivery failed after fallback'
+          );
+        }
       }
     }
 
@@ -2723,6 +2742,42 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // and restart via startAgentLoop(), which creates a fresh query and channel.
 
     return true;
+  }
+
+  /** Apply an instruction to the currently executing native turn after backend acknowledgement. */
+  async steer(prompt: string): Promise<{ ok: true; turnId: string } | { ok: false; error: string }> {
+    type SteerCapableQueryHandle = QueryHandle & {
+      steer(text: string): Promise<{ turnId: string }>;
+    };
+    const handle = this.queryHandle;
+    const turnMessageId = this.activeTurnMessageId;
+    if (!handle || !this.isBusy || !turnMessageId) {
+      return { ok: false, error: 'No active turn to steer. The instruction was not queued.' };
+    }
+    if (typeof (handle as Partial<SteerCapableQueryHandle>).steer !== 'function') {
+      return {
+        ok: false,
+        error: 'Immediate steer is unsupported by this backend. The instruction was not queued.',
+      };
+    }
+    const generation = this.sessionGeneration;
+    try {
+      const acknowledgement = await (handle as SteerCapableQueryHandle).steer(prompt);
+      if (
+        this.queryHandle !== handle ||
+        this.sessionGeneration !== generation ||
+        this.activeTurnMessageId !== turnMessageId ||
+        !this.isBusy
+      ) {
+        return { ok: false, error: 'The active turn changed before steer was acknowledged.' };
+      }
+      return { ok: true, turnId: acknowledgement.turnId };
+    } catch (error) {
+      return {
+        ok: false,
+        error: `Steer was rejected by the active backend: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
   }
 
   /**

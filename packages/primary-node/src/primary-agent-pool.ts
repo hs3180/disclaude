@@ -426,6 +426,26 @@ export class PrimaryAgentPool {
     return false;
   }
 
+  async steer(chatId: string, prompt: string, threadRootId?: string): Promise<
+    { ok: true; message: string } | { ok: false; error: string }
+  > {
+    const agent = this.agents.get(this.sessionKeyOf(chatId, threadRootId));
+    if (!agent?.isBusy) {
+      return { ok: false, error: 'No active turn to steer. Send the message normally to start or queue a turn.' };
+    }
+    try {
+      const result = await agent.steer(prompt);
+      return result.ok
+        ? { ok: true, message: `Steer acknowledged for active turn ${result.turnId}.` }
+        : result;
+    } catch (error) {
+      return {
+        ok: false,
+        error: `Steer failed before acknowledgement: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+
   /**
    * Dispose all agents and clear the pool.
    */

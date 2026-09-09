@@ -18,6 +18,7 @@ export const handleHelp: CommandHandler = (
       '| `/help` | 显示帮助信息 | `/help` |',
       '| `/reset` | 重置当前会话 | `/reset [--no-context]` |',
       '| `/stop` | 停止当前响应 | `/stop` |',
+      '| `/steer` | 运行中即时纠偏（按后端能力） | `/steer <instruction>` |',
       '| `/status` | 查看服务状态 | `/status` |',
       '| `/restart` | 重启整个服务进程 | `/restart` |',
       '| `/trigger` | 切换触发模式 | `/trigger [mention\\|always\\|auto]` |',

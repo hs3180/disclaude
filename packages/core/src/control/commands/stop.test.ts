@@ -40,7 +40,7 @@ describe('handleStop', () => {
     }
 
     expect(result.success).toBe(true);
-    expect(result.message).toContain('已停止当前响应');
+    expect(result.message).toContain('已发送停止信号');
     expect(context.agentPool.stop).toHaveBeenCalledWith('test-chat-id');
   });
 
@@ -104,7 +104,7 @@ describe('handleStop', () => {
     }
 
     expect(result.success).toBe(true);
-    expect(result.message).toContain('已停止当前响应');
+    expect(result.message).toContain('已发送停止信号');
     expect(stopThread).toHaveBeenCalledWith('test-chat-id', 'om_root');
     // The chat-scoped agent must NOT be stopped
     expect(context.agentPool.stop).not.toHaveBeenCalled();

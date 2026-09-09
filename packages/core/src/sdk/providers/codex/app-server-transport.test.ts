@@ -1,0 +1,137 @@
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { CodexAppServerTransport } from './app-server-transport.js';
+
+const dirs: string[] = [];
+
+function fixture(body: string): string {
+  const dir = mkdtempSync(join(tmpdir(), 'codex-app-server-'));
+  dirs.push(dir);
+  const binary = join(dir, 'codex');
+  writeFileSync(binary, `#!/bin/sh\n${body}`);
+  chmodSync(binary, 0o755);
+  return binary;
+}
+
+afterEach(() => {
+  for (const dir of dirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+describe('CodexAppServerTransport', () => {
+  it('initializes, correlates responses, and forwards notifications', async () => {
+    const binary = fixture(`
+read initialize
+id=$(printf '%s' "$initialize" | sed -n 's/.*"id":\\([0-9]*\\).*/\\1/p')
+printf '{"jsonrpc":"2.0","id":%s,"result":{"serverInfo":{"name":"fixture"}}}\\n' "$id"
+read initialized
+printf '{"jsonrpc":"2.0","method":"thread/started","params":{"thread":{"id":"t-1"}}}\\n'
+read request
+id=$(printf '%s' "$request" | sed -n 's/.*"id":\\([0-9]*\\).*/\\1/p')
+printf '{"jsonrpc":"2.0","id":%s,"result":{"turnId":"turn-1"}}\\n' "$id"
+`);
+    const onNotification = vi.fn();
+    const transport = new CodexAppServerTransport({ binary, onNotification });
+    try {
+      await expect(transport.initialize()).resolves.toMatchObject({ serverInfo: { name: 'fixture' } });
+      await expect(transport.request('turn/start', { threadId: 't-1', input: [] }))
+        .resolves.toEqual({ turnId: 'turn-1' });
+      await vi.waitFor(() => expect(onNotification).toHaveBeenCalledWith(
+        'thread/started', { thread: { id: 't-1' } }
+      ));
+    } finally {
+      await transport.close();
+    }
+  });
+
+  it('rejects pending requests when the process exits', async () => {
+    const transport = new CodexAppServerTransport({ binary: fixture('read line\nexit 7') });
+    await expect(transport.request('thread/start', {})).rejects.toThrow(/exited.*code=7/);
+  });
+
+  it('fails closed for server approval/tool requests', async () => {
+    const binary = fixture(`
+read request
+printf '{"jsonrpc":"2.0","id":99,"method":"item/commandExecution/requestApproval","params":{}}\\n'
+read response
+printf '%s' "$response" > "$(dirname "$0")/response"
+`);
+    const transport = new CodexAppServerTransport({ binary });
+    await expect(transport.request('will-remain-pending')).rejects.toThrow(/code=0/);
+    expect(JSON.parse(readFileSync(join(dirname(binary), 'response'), 'utf8'))).toMatchObject({
+      id: 99,
+      error: { code: -32601 },
+    });
+  });
+
+  it('times out a silent request and clears it without killing the transport', async () => {
+    const transport = new CodexAppServerTransport({
+      binary: fixture('read line\nwhile :; do sleep 1; done'),
+      requestTimeoutMs: 25,
+    });
+    await expect(transport.request('thread/start', {})).rejects.toThrow(/timed out: thread\/start/);
+    await transport.close();
+  });
+
+  it('drains bounded stderr and escalates a stubborn child to SIGKILL', async () => {
+    const transport = new CodexAppServerTransport({
+      binary: fixture(`
+trap '' TERM
+printf '%09000d' 0 >&2
+while :; do sleep 1; done
+`),
+      killGraceMs: 25,
+    });
+    await vi.waitFor(() => expect(transport.getStderrTail().length).toBe(8192));
+    const exit = await transport.close();
+    expect(exit.signal).toBe('SIGKILL');
+    expect(exit.stderrTail).toHaveLength(8192);
+  });
+
+  it('ignores valid non-object JSON without crashing request correlation', async () => {
+    const binary = fixture(`
+read request
+printf 'null\\n[]\\n'
+id=$(printf '%s' "$request" | sed -n 's/.*"id":\\([0-9]*\\).*/\\1/p')
+printf '{"id":%s,"result":"ok"}\\n' "$id"
+`);
+    const transport = new CodexAppServerTransport({ binary });
+    await expect(transport.request('thread/read', {})).resolves.toBe('ok');
+  });
+
+  it('still kills a stubborn child after stdin EPIPE closes the protocol', async () => {
+    const ready = vi.fn();
+    const transport = new CodexAppServerTransport({
+      binary: fixture(`
+exec 0<&-
+printf '{"method":"fixture/ready"}\\n'
+trap '' TERM
+while :; do sleep 1; done
+`),
+      onNotification: ready,
+      killGraceMs: 25,
+    });
+    await vi.waitFor(() => expect(ready).toHaveBeenCalled());
+    await expect(transport.request('thread/start', {})).rejects.toThrow();
+    await expect(transport.close()).resolves.toMatchObject({ signal: 'SIGKILL' });
+  });
+
+  it('contains a throwing notification consumer and closes the child', async () => {
+    const transport = new CodexAppServerTransport({
+      binary: fixture(`
+read request
+printf '{"method":"thread/started","params":{}}\\n'
+while :; do sleep 1; done
+`),
+      onNotification: () => {
+        throw new Error('consumer failed');
+      },
+      killGraceMs: 25,
+    });
+    await expect(transport.request('thread/read', {})).rejects.toThrow('consumer failed');
+    await expect(transport.close()).resolves.toMatchObject({ signal: 'SIGTERM' });
+  });
+});
