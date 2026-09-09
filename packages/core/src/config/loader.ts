@@ -277,6 +277,16 @@ export function validateConfig(config: DisclaudeConfig): boolean {
   // non-positive values are rejected at load time (fail closed).
   if (config.agent?.codex !== undefined) {
     const { maxActiveSessions, maxConcurrentRuns, execTimeoutMs } = config.agent.codex;
+    if (
+      config.agent.codex.transport !== undefined &&
+      config.agent.codex.transport !== 'exec' &&
+      config.agent.codex.transport !== 'app-server'
+    ) {
+      logger.error(
+        `agent.codex.transport must be "exec" or "app-server" (got ${String(config.agent.codex.transport)})`
+      );
+      return false;
+    }
     for (const [name, value] of [
       ['maxActiveSessions', maxActiveSessions],
       ['maxConcurrentRuns', maxConcurrentRuns],

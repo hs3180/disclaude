@@ -15,6 +15,7 @@ export interface CodexAppServerTransportOptions {
   binary?: string;
   env?: NodeJS.ProcessEnv;
   onNotification?: (method: string, params: unknown) => void;
+  onExit?: (exit: CodexAppServerExit) => void;
   requestTimeoutMs?: number;
   killGraceMs?: number;
 }
@@ -44,6 +45,7 @@ export class CodexAppServerTransport {
   private nextId = 1;
   private acceptingRequests = true;
   private shutdownStarted = false;
+  private exitReported = false;
 
   constructor(private readonly options: CodexAppServerTransportOptions = {}) {
     this.child = spawn(options.binary ?? 'codex', ['app-server', '--stdio'], {
@@ -61,11 +63,11 @@ export class CodexAppServerTransport {
     this.child.stdin.on('error', (error) => this.failAll(error));
     this.child.once('error', (error) => {
       this.failAll(error);
-      this.resolveExit({ code: null, signal: null, stderrTail: this.stderrTail });
+      this.reportExit({ code: null, signal: null, stderrTail: this.stderrTail });
     });
     this.child.once('close', (code, signal) => {
       this.failAll(new Error(`codex app-server exited (code=${String(code)}, signal=${String(signal)})`));
-      this.resolveExit({ code, signal, stderrTail: this.stderrTail });
+      this.reportExit({ code, signal, stderrTail: this.stderrTail });
     });
   }
 
@@ -179,5 +181,16 @@ export class CodexAppServerTransport {
       waiter.reject(error);
     }
     this.pending.clear();
+  }
+
+  private reportExit(exit: CodexAppServerExit): void {
+    if (this.exitReported) {return;}
+    this.exitReported = true;
+    this.resolveExit(exit);
+    try {
+      this.options.onExit?.(exit);
+    } catch {
+      // Exit observers are diagnostic/lifecycle hooks; never escape an event handler.
+    }
   }
 }
