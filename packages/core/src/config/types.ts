@@ -42,6 +42,8 @@ export type ModelTier = 'high' | 'low' | 'multimodal';
  * ChatGPT subscription or fork unbounded codex exec children.
  */
 export interface CodexAgentGovernanceConfig {
+  /** Codex process protocol. `exec` remains the compatibility default. */
+  transport?: 'exec' | 'app-server';
   /** Max concurrently-alive codex sessions (queryStreams) per process. Default 3. */
   maxActiveSessions?: number;
   /** Max simultaneously-executing codex exec children. Default 2. */

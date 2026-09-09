@@ -67,6 +67,7 @@ import {
 } from './codex-runner.js';
 import { resolveCodexSandboxPolicy, type CodexSandboxLevel } from './sandbox-policy.js';
 import { CodexSessionGovernor } from './session-governor.js';
+import { CodexAppServerLifecycle } from './app-server-lifecycle.js';
 import {
   adaptCodexEvent,
   classifyCodexEvent,
@@ -159,6 +160,8 @@ function codexModelForChatGpt(model: string | undefined): string | undefined {
  * inject a fake env pointing at temp fixtures instead of mocking fs/spawn.
  */
 export interface CodexAgentProviderOptions {
+  /** Explicit opt-in; `exec` remains the default compatibility transport. */
+  transport?: 'exec' | 'app-server';
   /** Environment used for resolution + child spawn. Default: process.env. */
   env?: Record<string, string | undefined>;
   /** Per-run codex exec timeout; zero/undefined disables the wall-clock cap. */
@@ -200,6 +203,9 @@ export class CodexAgentProvider implements IAgentSDKProvider {
   private readonly networkAccess: boolean;
   private readonly maxResumeInputTokens: number;
   private readonly builtinRoot: string;
+  private readonly transportMode: 'exec' | 'app-server';
+  private readonly appServerRoutes = new Map<string, (method: string, params: unknown) => void>();
+  private appServerLifecycle?: CodexAppServerLifecycle;
   /** Cumulative quota counters (S5, #4632) — see CodexQuotaStats. */
   private readonly quota: CodexQuotaStats = {
     turnsCompleted: 0,
@@ -233,6 +239,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     this.networkAccess = options.networkAccess ?? true;
     this.maxResumeInputTokens = options.maxResumeInputTokens ?? DEFAULT_MAX_RESUME_INPUT_TOKENS;
     this.builtinRoot = options.builtinsDir ?? Config.getBuiltinsDir();
+    this.transportMode = options.transport ?? 'exec';
     this.governor = new CodexSessionGovernor({
       maxActiveSessions: options.maxActiveSessions,
       maxConcurrentRuns: options.maxConcurrentRuns,
@@ -314,6 +321,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
    * Idempotent; unknown keys are a no-op.
    */
   forgetSession(sessionKey: string): void {
+    this.appServerLifecycle?.forgetSession(sessionKey);
     const hadRegistration = this.governor.forgetSession(sessionKey);
     const hadStash = this.threadStash.delete(sessionKey);
     if (hadRegistration || hadStash) {
@@ -370,6 +378,11 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           ? 'Codex full-access mode is enabled by explicit agent.fullAccess=true; commands and workspace mutations are unrestricted'
           : 'Codex full-access was requested but the sandbox policy remains enforced'
       );
+    }
+
+    if (this.transportMode === 'app-server') {
+      this.ensureAppServerLifecycle(binary);
+      return this.queryAppServer(input, options, sandboxDecision.sandbox);
     }
 
     const runner = new CodexExecRunner({
@@ -1033,6 +1046,213 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     };
   }
 
+  private queryAppServer(
+    input: AsyncGenerator<UserInput>,
+    options: AgentQueryOptions,
+    sandbox: CodexSandboxLevel,
+  ): StreamQueryResult {
+    const lifecycle = this.appServerLifecycle as CodexAppServerLifecycle;
+    const sessionKey = options.sessionKey ?? `anon-app-${++this.anonSessionCounter}`;
+    const queue: AgentMessage[] = [];
+    const wakeups: Array<() => void> = [];
+    let threadId: string | undefined;
+    let done = false;
+    let stopped = false;
+    let stopInput!: () => void;
+    const stopSignal = new Promise<void>((resolveStop) => { stopInput = resolveStop; });
+    let activeTurnId: string | undefined;
+    let turnDone: ((error?: Error) => void) | undefined;
+    let stallTimer: ReturnType<typeof setTimeout> | undefined;
+    const stallTimeoutMs = (() => {
+      const parsed = Number.parseInt(this.env.DISCLAUDE_STALL_TIMEOUT_MS ?? '', 10);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : 180_000;
+    })();
+    const armStall = (): void => {
+      if (stallTimer) {clearTimeout(stallTimer);}
+      stallTimer = setTimeout(() => {
+        void lifecycle.interrupt(sessionKey).catch(() => {});
+        turnDone?.(new Error(`codex app-server stalled for ${stallTimeoutMs}ms`));
+      }, stallTimeoutMs);
+      stallTimer.unref?.();
+    };
+    const earlyEvents: Array<{ method: string; params: unknown }> = [];
+    const deliveredItems = new Set<string>();
+    const registration = this.governor.registerSession(sessionKey, {
+      evict: () => {
+        stopped = true;
+        stopInput();
+        void lifecycle.interrupt(sessionKey).catch(() => {});
+        turnDone?.(new Error('codex app-server session evicted'));
+      },
+    });
+    const wake = (): void => {
+      for (const resolveWake of wakeups.splice(0)) {
+        resolveWake();
+      }
+    };
+    const push = (message: AgentMessage): void => {
+      queue.push(message);
+      wake();
+    };
+    const onNotification = (method: string, params: unknown): void => {
+      if (method === 'transport/exited') {
+        turnDone?.((params as { error?: Error }).error ?? new Error('codex app-server exited'));
+        turnDone = undefined;
+        return;
+      }
+      const event = params as {
+        turnId?: string;
+        item?: { id?: string; type?: string; text?: string; command?: string; aggregatedOutput?: string };
+        turn?: { id?: string; status?: string; error?: { message?: string } };
+      };
+      const eventTurnId = event.turnId ?? event.turn?.id;
+      if (!activeTurnId) {
+        earlyEvents.push({ method, params });
+        return;
+      }
+      if (eventTurnId !== activeTurnId) {return;}
+      armStall();
+      if (method === 'item/completed' && event.item?.id) {
+        const key = `${activeTurnId}:${event.item.id}`;
+        if (deliveredItems.has(key)) {return;}
+        deliveredItems.add(key);
+      }
+      if (method === 'item/completed' && event.item?.type === 'agentMessage' && event.item.text) {
+        push({
+          type: 'text',
+          content: event.item.text,
+          role: 'assistant',
+          metadata: { messageId: event.item.id },
+        });
+      } else if (method === 'item/completed' && event.item?.type === 'commandExecution') {
+        push({
+          type: 'tool_result',
+          content: event.item.aggregatedOutput ?? event.item.command ?? '',
+          role: 'assistant',
+          metadata: { messageId: event.item.id },
+        });
+      } else if (method === 'turn/completed') {
+        const status = event.turn?.status;
+        const failed = status === 'failed';
+        const interrupted = status === 'interrupted' || status === 'cancelled';
+        push({
+          type: 'result',
+          content: failed ? `❌ Codex turn failed: ${event.turn?.error?.message ?? 'unknown error'}` : interrupted ? '⏹️ Codex turn interrupted' : '✅ Complete',
+          role: 'assistant',
+          ...(failed ? { metadata: { terminatedReason: 'turn_failed' as const } } : {}),
+        });
+        turnDone?.();
+        if (stallTimer) {clearTimeout(stallTimer);}
+        turnDone = undefined;
+        activeTurnId = undefined;
+      }
+    };
+
+    void (async () => {
+      try {
+        threadId = await lifecycle.ensureThread(sessionKey, {
+          cwd: options.cwd,
+          model: codexModelForChatGpt(options.model),
+          sandbox,
+        });
+        this.appServerRoutes.set(threadId, onNotification);
+        const inputIterator = input[Symbol.asyncIterator]();
+        while (!stopped) {
+          const next = await Promise.race([
+            inputIterator.next(),
+            stopSignal.then(() => ({ done: true, value: undefined } as IteratorResult<UserInput>)),
+          ]);
+          if (next.done || stopped) {break;}
+          const lease = await this.governor.acquireRun();
+          try {
+            this.governor.touchSession(sessionKey);
+            activeTurnId = await lifecycle.startTurn(sessionKey, userInputText(next.value), {
+              sandbox,
+              networkAccess: this.networkAccess,
+              cwd: options.cwd,
+            });
+            if (stopped) {break;}
+            const completed = new Promise<void>((resolveTurn, rejectTurn) => {
+              turnDone = (error) => error ? rejectTurn(error) : resolveTurn();
+            });
+            armStall();
+            for (const event of earlyEvents.splice(0)) {onNotification(event.method, event.params);}
+            await completed;
+            this.governor.touchSession(sessionKey);
+          } finally {
+            lease.release();
+          }
+        }
+      } catch (error) {
+        push({
+          type: 'error',
+          content: error instanceof Error ? error.message : String(error),
+          role: 'system',
+        });
+      } finally {
+        if (stallTimer) {clearTimeout(stallTimer);}
+        registration.unregister();
+        if (threadId) {
+          this.appServerRoutes.delete(threadId);
+        }
+        done = true;
+        wake();
+      }
+    })();
+
+    const iterator = (async function* (): AsyncGenerator<AgentMessage> {
+      while (!done || queue.length > 0) {
+        if (queue.length === 0) {
+          await new Promise<void>((resolveWake) => wakeups.push(resolveWake));
+          continue;
+        }
+        yield queue.shift() as AgentMessage;
+      }
+    })();
+
+    return {
+      handle: {
+        close: () => {
+          stopped = true;
+          stopInput();
+          void input.return?.(undefined);
+          void lifecycle.interrupt(sessionKey).catch(() => {});
+          turnDone?.(new Error('codex app-server stream closed'));
+        },
+        cancel: () => {
+          stopped = true;
+          stopInput();
+          void input.return?.(undefined);
+          void lifecycle.interrupt(sessionKey).catch(() => {});
+          turnDone?.(new Error('codex app-server stream cancelled'));
+        },
+        interrupt: () => lifecycle.interrupt(sessionKey),
+        steer: async (text) => ({ turnId: await lifecycle.steer(sessionKey, text) }),
+        get sessionId(): string | undefined {
+          return lifecycle.snapshot(sessionKey)?.threadId;
+        },
+      },
+      iterator,
+    };
+  }
+
+  private ensureAppServerLifecycle(binary: string): void {
+    if (this.appServerLifecycle) {return;}
+    this.appServerLifecycle = new CodexAppServerLifecycle({
+      binary,
+      env: this.env,
+      requestTimeoutMs: this.execTimeoutMs && this.execTimeoutMs > 0 ? this.execTimeoutMs : undefined,
+      onNotification: (method, params) => {
+        const threadId = (params as { threadId?: string } | null)?.threadId;
+        if (threadId) {this.appServerRoutes.get(threadId)?.(method, params);}
+      },
+      onExit: (exit) => {
+        const error = new Error(`codex app-server exited (code=${String(exit.code)}, signal=${String(exit.signal)})`);
+        for (const route of this.appServerRoutes.values()) {route('transport/exited', { error });}
+      },
+    });
+  }
+
   createInlineTool(_definition: InlineToolDefinition): unknown {
     // Tools/MCP mapping is an open question on #4627 (codex has its own MCP
     // config surface) — deliberately not stubbed half-way.
@@ -1064,6 +1284,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
 
   dispose(): void {
     this.disposed = true;
+    void this.appServerLifecycle?.close();
   }
 
   // --------------------------------------------------------------------------

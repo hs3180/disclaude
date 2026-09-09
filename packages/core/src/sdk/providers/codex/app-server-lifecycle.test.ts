@@ -41,7 +41,7 @@ echo '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"t
 
       const dir = dirname(binary);
       expect(JSON.parse(readFileSync(join(dir, 'thread'), 'utf8')).params)
-        .toMatchObject({ cwd: '/tmp/project', approvalPolicy: 'never' });
+        .toMatchObject({ cwd: '/tmp/project', approvalPolicy: 'never', sandbox: 'read-only' });
       expect(JSON.parse(readFileSync(join(dir, 'steer'), 'utf8')).params)
         .toEqual({ threadId: 'thread-1', expectedTurnId: 'turn-1', input: [{ type: 'text', text: 'correction' }] });
       expect(JSON.parse(readFileSync(join(dir, 'interrupt'), 'utf8')).params)
@@ -64,6 +64,45 @@ exit 7
     await expect(lifecycle.startTurn('chat-1', 'possibly committed')).rejects.toThrow(/exited/);
     expect(lifecycle.snapshot('chat-1')?.state).toBe('uncertain');
     await expect(lifecycle.startTurn('chat-1', 'must not replay')).rejects.toThrow(/unknown commit/);
+  });
+
+  it('reconciles turn/completed that arrives before the turn/start response', async () => {
+    const binary = fixture(`
+read initialize; echo '{"id":1,"result":{}}'
+read initialized
+read thread; echo '{"id":2,"result":{"thread":{"id":"thread-1"}}}'
+read start
+echo '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-early"}}}'
+echo '{"id":3,"result":{"turn":{"id":"turn-early"}}}'
+while :; do sleep 1; done
+`);
+    const lifecycle = new CodexAppServerLifecycle({ binary });
+    try {
+      await lifecycle.ensureThread('chat-1');
+      await lifecycle.startTurn('chat-1', 'fast');
+      expect(lifecycle.snapshot('chat-1')).toMatchObject({ state: 'idle' });
+      expect(lifecycle.snapshot('chat-1')?.activeTurnId).toBeUndefined();
+    } finally {
+      await lifecycle.close();
+    }
+  });
+
+  it('single-flights concurrent initialize and thread creation', async () => {
+    const binary = fixture(`
+read initialize; echo '{"id":1,"result":{}}'
+read initialized
+read thread; echo '{"id":2,"result":{"thread":{"id":"thread-one"}}}'
+while :; do sleep 1; done
+`);
+    const lifecycle = new CodexAppServerLifecycle({ binary });
+    try {
+      await expect(Promise.all([
+        lifecycle.ensureThread('chat-1'),
+        lifecycle.ensureThread('chat-1'),
+      ])).resolves.toEqual(['thread-one', 'thread-one']);
+    } finally {
+      await lifecycle.close();
+    }
   });
 
   it('rejects steer and interrupt without a confirmed active turn', async () => {

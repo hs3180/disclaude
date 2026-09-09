@@ -26,7 +26,10 @@ interface TurnResponse {
 export class CodexAppServerLifecycle {
   private readonly transport: CodexAppServerTransport;
   private readonly sessions = new Map<string, CodexAppServerSessionSnapshot>();
+  private readonly threadFlights = new Map<string, Promise<string>>();
+  private readonly completedTurns = new Set<string>();
   private initialized = false;
+  private initializeFlight?: Promise<void>;
 
   constructor(options: CodexAppServerTransportOptions = {}) {
     this.transport = new CodexAppServerTransport({
@@ -39,31 +42,65 @@ export class CodexAppServerLifecycle {
   }
 
   async initialize(): Promise<void> {
-    if (!this.initialized) {
-      await this.transport.initialize();
-      this.initialized = true;
+    if (this.initialized) {
+      return;
     }
+    this.initializeFlight ??= this.transport.initialize().then(() => {
+      this.initialized = true;
+    });
+    await this.initializeFlight;
   }
 
   async ensureThread(
     sessionKey: string,
-    options: { threadId?: string; cwd?: string; model?: string } = {},
+    options: {
+      threadId?: string;
+      cwd?: string;
+      model?: string;
+      sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+    } = {},
   ): Promise<string> {
     await this.initialize();
     const current = this.sessions.get(sessionKey);
     if (current?.threadId) {
       return current.threadId;
     }
+    const existingFlight = this.threadFlights.get(sessionKey);
+    if (existingFlight) {
+      return existingFlight;
+    }
+    const flight = this.createThread(sessionKey, options);
+    this.threadFlights.set(sessionKey, flight);
+    try {
+      return await flight;
+    } finally {
+      this.threadFlights.delete(sessionKey);
+    }
+  }
+
+  private async createThread(
+    sessionKey: string,
+    options: {
+      threadId?: string;
+      cwd?: string;
+      model?: string;
+      sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+    },
+  ): Promise<string> {
+    const sandbox = options.sandbox ?? 'read-only';
     const response = options.threadId
       ? await this.transport.request('thread/resume', {
           threadId: options.threadId,
           ...(options.cwd ? { cwd: options.cwd } : {}),
           ...(options.model ? { model: options.model } : {}),
+          sandbox,
+          approvalPolicy: 'never',
         })
       : await this.transport.request('thread/start', {
           ...(options.cwd ? { cwd: options.cwd } : {}),
           ...(options.model ? { model: options.model } : {}),
           approvalPolicy: 'never',
+          sandbox,
         });
     const threadId = (response as ThreadResponse).thread?.id;
     if (!threadId) {
@@ -73,7 +110,15 @@ export class CodexAppServerLifecycle {
     return threadId;
   }
 
-  async startTurn(sessionKey: string, input: string): Promise<string> {
+  async startTurn(
+    sessionKey: string,
+    input: string,
+    options: {
+      sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+      networkAccess?: boolean;
+      cwd?: string;
+    } = {},
+  ): Promise<string> {
     const session = this.requireSession(sessionKey);
     if (session.state === 'uncertain') {
       throw new Error('previous app-server turn has unknown commit state; refusing automatic replay');
@@ -87,13 +132,30 @@ export class CodexAppServerLifecycle {
         threadId: session.threadId,
         input: [{ type: 'text', text: input }],
         approvalPolicy: 'never',
+        sandboxPolicy: options.sandbox === 'danger-full-access'
+          ? { type: 'dangerFullAccess' }
+          : options.sandbox === 'workspace-write'
+            ? {
+                type: 'workspaceWrite',
+                networkAccess: options.networkAccess ?? false,
+                writableRoots: options.cwd ? [options.cwd] : [],
+                excludeSlashTmp: true,
+                excludeTmpdirEnvVar: true,
+              }
+            : { type: 'readOnly', networkAccess: options.networkAccess ?? false },
       })) as TurnResponse;
       const turnId = response.turn?.id ?? response.turnId;
       if (!turnId) {
         throw new Error('codex app-server turn response omitted turn id');
       }
       session.activeTurnId = turnId;
-      session.state = 'active';
+      const completionKey = `${session.threadId}:${turnId}`;
+      if (this.completedTurns.delete(completionKey)) {
+        session.activeTurnId = undefined;
+        session.state = 'idle';
+      } else {
+        session.state = 'active';
+      }
       return turnId;
     } catch (error) {
       // The request may have reached Codex before the transport failed.
@@ -125,6 +187,11 @@ export class CodexAppServerLifecycle {
     return session ? { ...session } : undefined;
   }
 
+  forgetSession(sessionKey: string): void {
+    this.sessions.delete(sessionKey);
+    this.threadFlights.delete(sessionKey);
+  }
+
   close(): Promise<CodexAppServerExit> {
     return this.transport.close();
   }
@@ -134,8 +201,14 @@ export class CodexAppServerLifecycle {
       return;
     }
     const event = params as { threadId?: string; turn?: { id?: string } };
+    const { threadId } = event;
+    const turnId = event.turn?.id;
+    if (threadId && turnId) {
+      this.completedTurns.add(`${threadId}:${turnId}`);
+    }
     for (const session of this.sessions.values()) {
-      if (session.threadId === event.threadId && session.activeTurnId === event.turn?.id) {
+      if (session.threadId === threadId && session.activeTurnId === turnId) {
+        this.completedTurns.delete(`${threadId}:${turnId}`);
         session.activeTurnId = undefined;
         session.state = 'idle';
       }
