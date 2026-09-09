@@ -19,6 +19,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { StreamingReplyDriver } from '@disclaude/core';
 import { FeishuChannel } from './feishu-channel.js';
 import { STREAMING_REPLY_ELEMENT_ID } from '../platforms/feishu/card-builders/streaming-card-builder.js';
 
@@ -258,6 +259,35 @@ describe('FeishuChannel.streamText / finalizeStreaming — Issue #4400', () => {
     await channel.finalizeStreaming(id);
     await channel.finalizeStreaming(id); // already cleaned up
     expect(mockCardKit.finalizeStreaming).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces finalize failure to the driver and still drops the handle', async () => {
+    const { channel, id } = await startedChannel();
+    mockCardKit.finalizeStreaming.mockRejectedValueOnce(new Error('cardkit finalize failed'));
+
+    await expect(channel.finalizeStreaming(id)).rejects.toThrow('cardkit finalize failed');
+    await expect(channel.finalizeStreaming(id)).resolves.toBeUndefined();
+    expect(mockCardKit.finalizeStreaming).toHaveBeenCalledTimes(1);
+  });
+
+  it('drives the full reply through fallback when the real channel finalize fails', async () => {
+    const { client } = createMockLarkClient();
+    const channel = createTestChannel({ streamingCard: true, client });
+    const fallback = vi.fn(() => Promise.resolve());
+    const driver = new StreamingReplyDriver({
+      chatId: 'oc_chat1',
+      startStreaming: channel.startStreaming.bind(channel),
+      streamText: channel.streamText.bind(channel),
+      finalizeStreaming: channel.finalizeStreaming.bind(channel),
+      sendMessage: fallback,
+    });
+    mockCardKit.finalizeStreaming.mockRejectedValueOnce(new Error('cardkit finalize failed'));
+
+    await driver.pushText('complete answer');
+    await expect(driver.finish('om_root')).resolves.toBe(true);
+
+    expect(fallback).toHaveBeenCalledOnce();
+    expect(fallback).toHaveBeenCalledWith('oc_chat1', 'complete answer', 'om_root');
   });
 
   it('streamText after finalize is a no-op (handle dropped)', async () => {
