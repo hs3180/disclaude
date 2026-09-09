@@ -5,9 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-09-09
+
+### Highlights
+
+This release delivers the merged 0.5.0 implementation set for named agent
+presets, backend configuration, turn settlement, streaming finalization,
+dynamic internal ports, scheduler behavior, SDK maintenance, project
+isolation, and release evidence.
+
+### Added
+
+- Named backend/model presets with validation and legacy `agent:` compatibility.
+- DeepSeek harness configuration and isolated dsh stdio JSON-RPC transport.
+- OS-assigned internal API ports with actual-address propagation.
+
+### Changed
+
+- Turn completion is settled by message identity to avoid cross-turn results.
+- Streaming finalization is idempotent and busy scheduled chats retry later.
+- Invalid schedule model tiers fail with actionable validation errors.
+- Project cwd refresh and retired PM2 deployment instructions are corrected.
+
+### Verification notes
+
+- All 0.5.0 implementation PRs are merged and displayed GitHub checks are green.
+- The root package remains private; this is a GitHub Release, not an npm package publication.
+- Real DeepSeek credentials/tool delivery and Docker install/upgrade/rollback were not available in the release environment and remain follow-up verification items.
+
 ## [Unreleased]
 
-### 0.5.0 Release Targets (Planned)
+### 0.5.0 Release Targets (Historical)
 
 Theme: **多后端 Agent 的统一使用与可控自动化**. These are planned acceptance targets, not completed changes or a released version. The [release plan](docs/releases/0.5.0.md) defines scope, issue mapping, and release gates.
 

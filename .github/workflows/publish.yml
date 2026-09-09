@@ -1,11 +1,16 @@
-name: Publish to npm
+name: Publish package to npm (manual)
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
+    inputs:
+      confirm_publish:
+        description: Type publish to explicitly publish an npm package
+        required: true
+        type: string
 
 jobs:
   publish:
+    if: ${{ inputs.confirm_publish == 'publish' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
