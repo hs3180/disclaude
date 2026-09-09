@@ -95,6 +95,10 @@ function parseScheduleFrontmatter(content: string): {
     const value = line.slice(colonIndex + 1).trim();
 
     switch (key) {
+      case 'modelTier':
+        throw new Error('Schedule modelTier has been removed; use an explicit model instead');
+      case 'script':
+        throw new Error('Schedule script has been renamed to command; update the frontmatter');
       case 'name':
       case 'cron':
       case 'chatId':
@@ -103,8 +107,7 @@ function parseScheduleFrontmatter(content: string): {
       case 'lastExecutedAt':
       case 'model':
       case 'timezone':
-      case 'modelTier':
-      case 'script':
+      case 'command':
         frontmatter[key] = stripQuotes(value);
         break;
       case 'enabled':
@@ -226,9 +229,9 @@ export class ScheduleFileScanner {
       }
 
       const prompt = content.slice(contentStart).trim();
-      const script = frontmatter['script'] as string | undefined;
-      if ((!prompt && !script) || (prompt && script)) {
-        logger.warn({ filePath }, 'Schedule file must define exactly one of prompt body or script frontmatter');
+      const command = frontmatter['command'] as string | undefined;
+      if ((!prompt && !command) || (prompt && command)) {
+        logger.warn({ filePath }, 'Schedule file must define exactly one of prompt body or command frontmatter');
         return null;
       }
 
@@ -238,7 +241,7 @@ export class ScheduleFileScanner {
         cron: frontmatter['cron'] as string,
         chatId: frontmatter['chatId'] as string,
         prompt: prompt || undefined,
-        script,
+        command,
         enabled: (frontmatter['enabled'] as boolean) ?? true,
         blocking: (frontmatter['blocking'] as boolean) ?? true,
         clearContext: (frontmatter['clearContext'] as boolean) ?? false,
@@ -249,7 +252,6 @@ export class ScheduleFileScanner {
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
         timezone: frontmatter['timezone'] as string | undefined,
         model: frontmatter['model'] as string | undefined,
-        modelTier: frontmatter['modelTier'] as 'high' | 'low' | 'multimodal' | undefined,
         sourceFile: filePath,
         fileMtime: stats.mtime,
       };
@@ -259,20 +261,6 @@ export class ScheduleFileScanner {
         logger.warn({ taskId: task.id, name: task.name }, 'Schedule task has empty model value, will be ignored');
       } else if (task.model) {
         logger.info({ taskId: task.id, name: task.name, model: task.model }, 'Schedule task will use model override');
-      }
-
-      // Issue #3059: Log model tier usage
-      if (task.modelTier) {
-        const validTiers = ['high', 'low', 'multimodal'];
-        if (!validTiers.includes(task.modelTier)) {
-          throw new Error(
-            `Invalid modelTier: "${task.modelTier}". Must be one of: ${validTiers.join(', ')}`
-          );
-        } else if (task.model) {
-          logger.info({ taskId: task.id, name: task.name, model: task.model }, 'Schedule task has both model and modelTier; explicit model takes priority');
-        } else {
-          logger.info({ taskId: task.id, name: task.name, modelTier: task.modelTier }, 'Schedule task will use model tier');
-        }
       }
 
       // Issue #3860: Validate timezone against IANA database
@@ -336,11 +324,8 @@ export class ScheduleFileScanner {
     if (task.model) {
       frontmatter.push(`model: "${task.model}"`);
     }
-    if (task.modelTier) {
-      frontmatter.push(`modelTier: "${task.modelTier}"`);
-    }
-    if (task.script) {
-      frontmatter.push(`script: "${task.script.replaceAll('"', '\\"')}"`);
+    if (task.command) {
+      frontmatter.push(`command: "${task.command.replaceAll('"', '\\"')}"`);
     }
     frontmatter.push('---', '');
     const content = frontmatter.join('\n') + (task.prompt ?? '');

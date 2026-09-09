@@ -3,19 +3,38 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  defaultScriptRunner,
-  ScriptCancelledError,
-  ScriptTimeoutError,
+  defaultCommandRunner,
+  CommandCancelledError,
+  CommandTimeoutError,
 } from './scheduler.js';
 
-const run = (script: string, options: { timeoutMs?: number; signal?: AbortSignal } = {}) =>
-  defaultScriptRunner(script, {
+const run = (command: string, options: { timeoutMs?: number; signal?: AbortSignal } = {}) =>
+  defaultCommandRunner(command, {
     timeoutMs: options.timeoutMs ?? 2000,
     env: { ...process.env },
     signal: options.signal ?? new AbortController().signal,
   });
 
-describe('defaultScriptRunner real process lifecycle', () => {
+describe('defaultCommandRunner real process lifecycle', () => {
+  it('passes literal environment values to a real child without shell expansion', async () => {
+    const literal = "空格 'quotes' \"double\" $HOME $(exit 9) ; & =\nnext";
+    const result = await defaultCommandRunner('printf \'%s\' "$DISCLAUDE_TEST_LITERAL"', {
+      timeoutMs: 2000,
+      env: { DISCLAUDE_TEST_UNUSED: undefined, DISCLAUDE_TEST_EMPTY: '', DISCLAUDE_TEST_LITERAL: literal },
+      signal: new AbortController().signal,
+    });
+    expect(result.stdout).toBe(literal);
+  });
+
+  it('preserves empty values and does not stringify missing environment variables', async () => {
+    const result = await defaultCommandRunner('printf "%s|%s" "${DISCLAUDE_TEST_EMPTY+x}" "${DISCLAUDE_TEST_MISSING+x}"' , {
+      timeoutMs: 2000,
+      env: { DISCLAUDE_TEST_EMPTY: '', DISCLAUDE_TEST_MISSING: undefined },
+      signal: new AbortController().signal,
+    });
+    expect(result.stdout).toBe('x|');
+  });
+
   it('captures stdout and stderr from a successful process', async () => {
     await expect(run('printf out; printf err >&2')).resolves.toEqual({
       stdout: 'out',
@@ -42,17 +61,17 @@ describe('defaultScriptRunner real process lifecycle', () => {
   });
 
   it('times out a real process', async () => {
-    await expect(run('sleep 30', { timeoutMs: 30 })).rejects.toBeInstanceOf(ScriptTimeoutError);
+    await expect(run('sleep 30', { timeoutMs: 30 })).rejects.toBeInstanceOf(CommandTimeoutError);
   });
 
-  it('does not spawn a pre-cancelled script', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'disclaude-script-preabort-'));
+  it('does not spawn a pre-cancelled command', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'disclaude-command-preabort-'));
     const marker = join(dir, 'must-not-exist');
     const controller = new AbortController();
     controller.abort();
     try {
       await expect(run(`touch '${marker}'`, { signal: controller.signal })).rejects.toBeInstanceOf(
-        ScriptCancelledError,
+        CommandCancelledError,
       );
       await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
@@ -61,7 +80,7 @@ describe('defaultScriptRunner real process lifecycle', () => {
   });
 
   it.skipIf(process.platform === 'win32')('cancellation terminates the shell process group and child', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'disclaude-script-runner-'));
+    const dir = await mkdtemp(join(tmpdir(), 'disclaude-command-runner-'));
     const pidFile = join(dir, 'child.pid');
     const controller = new AbortController();
     try {
@@ -73,7 +92,7 @@ describe('defaultScriptRunner real process lifecycle', () => {
       }).toBeGreaterThan(0);
 
       controller.abort();
-      await expect(completion).rejects.toBeInstanceOf(ScriptCancelledError);
+      await expect(completion).rejects.toBeInstanceOf(CommandCancelledError);
       expect(() => process.kill(childPid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }));
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -83,7 +102,7 @@ describe('defaultScriptRunner real process lifecycle', () => {
   it.skipIf(process.platform === 'win32')(
     'waits for SIGKILL escalation when a child ignores TERM and closes stdio',
     async () => {
-      const dir = await mkdtemp(join(tmpdir(), 'disclaude-script-stubborn-'));
+      const dir = await mkdtemp(join(tmpdir(), 'disclaude-command-stubborn-'));
       const pidFile = join(dir, 'child.pid');
       const controller = new AbortController();
       const childProgram = [
@@ -104,7 +123,7 @@ describe('defaultScriptRunner real process lifecycle', () => {
 
         const cancelledAt = Date.now();
         controller.abort();
-        await expect(completion).rejects.toBeInstanceOf(ScriptCancelledError);
+        await expect(completion).rejects.toBeInstanceOf(CommandCancelledError);
         expect(Date.now() - cancelledAt).toBeGreaterThanOrEqual(900);
         expect(() => process.kill(childPid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }));
       } finally {

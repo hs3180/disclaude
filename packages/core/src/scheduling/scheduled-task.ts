@@ -7,8 +7,6 @@
  * @module @disclaude/core/scheduling
  */
 
-import type { ModelTier } from '../config/types.js';
-
 /**
  * Default timezone for scheduled tasks when not explicitly specified.
  *
@@ -34,10 +32,10 @@ export interface ScheduledTask {
    * Issue #3860: Configurable timezone for scheduled tasks.
    */
   timezone?: string;
-  /** Prompt to execute when task triggers (mutually exclusive with script). */
+  /** Prompt to execute when task triggers (mutually exclusive with command). */
   prompt?: string;
   /** Shell command to execute directly when task triggers (mutually exclusive with prompt). */
-  script?: string;
+  command?: string;
   /** Chat ID where task was created (scope) */
   chatId: string;
   /** User ID who created the task */
@@ -87,14 +85,4 @@ export interface ScheduledTask {
    * Issue #1338: Smart model selection per task scenario.
    */
   model?: string;
-  /**
-   * Model tier for this task (high/low/multimodal).
-   * Resolved to a model name via Config.getModelForTier().
-   * Ignored when `model` is explicitly set (explicit model takes highest priority).
-   *
-   * Defined in schedule markdown frontmatter (e.g., `modelTier: "low"`).
-   *
-   * Issue #3059: Three-level model configuration.
-   */
-  modelTier?: ModelTier;
 }
