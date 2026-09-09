@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -42,8 +42,8 @@ read initialize; echo '{"id":1,"result":{}}'
 read initialized
 read thread; echo '{"id":2,"result":{"thread":{"id":"thread-1"}}}'
 read start; echo '{"id":3,"result":{"turn":{"id":"turn-1"}}}'
-echo '{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","item":{"id":"item-1","type":"agentMessage","text":"hello"}}}'
 read steer; echo '{"id":4,"result":{"turnId":"turn-1"}}'
+echo '{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","item":{"id":"item-1","type":"agentMessage","text":"hello"}}}'
 echo '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed"}}}'
 `);
     let releaseInput: () => void = () => {};
@@ -61,7 +61,9 @@ echo '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"t
     const collecting = (async () => {
       for await (const message of result.iterator) {messages.push(message);}
     })();
-    await vi.waitFor(() => expect(messages.some((message) => message.content === 'hello')).toBe(true));
+    await vi.waitFor(() => expect(messages).toContainEqual(expect.objectContaining({
+      type: 'status', metadata: expect.objectContaining({ messageId: 'turn-1' }),
+    })));
     await expect(result.handle.steer?.('correction')).resolves.toEqual({ turnId: 'turn-1' });
     await vi.waitFor(() => expect(messages.some((message) => message.type === 'result')).toBe(true));
     releaseInput();
@@ -96,9 +98,8 @@ exit 7
     for await (const message of result.iterator) {
       messages.push(message);
     }
-    expect(messages).toHaveLength(1);
-    expect(messages[0]).toMatchObject({ type: 'error' });
-    expect(messages[0]?.content).toContain('exited (code=7');
+    const error = messages.find((message) => message.type === 'error');
+    expect(error?.content).toContain('exited (code=7');
     provider.dispose();
   });
 
@@ -121,6 +122,34 @@ echo '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"t
       type: 'result', content: '⏹️ Codex turn interrupted',
     }));
     expect(messages.some((message) => message.content === '✅ Complete')).toBe(false);
+    provider.dispose();
+  });
+
+  it('interrupts a turn when cancellation races its start acknowledgement', async () => {
+    const { provider, dir } = providerFixture(`
+read initialize; echo '{"id":1,"result":{}}'
+read initialized
+read thread; echo '{"id":2,"result":{"thread":{"id":"thread-1"}}}'
+read start
+marker_dir=${'${CODEX_HOME%/*}'}
+echo started > "$marker_dir/start-seen"
+sleep 0.1
+echo '{"id":3,"result":{"turn":{"id":"turn-1"}}}'
+read interrupt
+echo "$interrupt" > "$marker_dir/interrupt-seen"
+echo '{"id":4,"result":{}}'
+`);
+    const result = provider.queryStream((async function* () {
+      yield { role: 'user', content: 'first' } as UserInput;
+    })(), { sessionKey: 'chat-race', settingSources: [] } as AgentQueryOptions);
+    const draining = (async () => {
+      for await (const _message of result.iterator) { /* drain */ }
+    })();
+    await vi.waitFor(() => expect(() => readFileSync(join(dir, 'start-seen'), 'utf8')).not.toThrow());
+    result.handle.cancel();
+    await draining;
+    await vi.waitFor(() => expect(() => readFileSync(join(dir, 'interrupt-seen'), 'utf8')).not.toThrow());
+    expect(readFileSync(join(dir, 'interrupt-seen'), 'utf8')).toContain('turn/interrupt');
     provider.dispose();
   });
 });

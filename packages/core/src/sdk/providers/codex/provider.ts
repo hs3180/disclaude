@@ -1127,7 +1127,14 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         if (deliveredItems.has(key)) {return;}
         deliveredItems.add(key);
       }
-      if (method === 'item/completed' && event.item?.type === 'agentMessage' && event.item.text) {
+      if (method === 'item/started' && event.item?.type === 'commandExecution') {
+        push({
+          type: 'tool_use',
+          content: event.item.command ?? '',
+          role: 'assistant',
+          metadata: { messageId: event.item.id, toolName: 'commandExecution' },
+        });
+      } else if (method === 'item/completed' && event.item?.type === 'agentMessage' && event.item.text) {
         push({
           type: 'text',
           content: event.item.text,
@@ -1173,15 +1180,30 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             stopSignal.then(() => ({ done: true, value: undefined } as IteratorResult<UserInput>)),
           ]);
           if (next.done || stopped) {break;}
-          const lease = await this.governor.acquireRun();
+          const acquisition = this.governor.acquireRun();
+          const lease = await Promise.race([acquisition, stopSignal.then(() => undefined)]);
+          if (!lease) {
+            void acquisition.then((lateLease) => lateLease.release());
+            break;
+          }
           try {
+            if (stopped) {break;}
             this.governor.touchSession(sessionKey);
             activeTurnId = await lifecycle.startTurn(sessionKey, userInputText(next.value), {
               sandbox,
               networkAccess: this.networkAccess,
               cwd: options.cwd,
             });
-            if (stopped) {break;}
+            push({
+              type: 'status',
+              content: 'Codex turn started',
+              role: 'system',
+              metadata: { messageId: activeTurnId, sessionId: threadId },
+            });
+            if (stopped) {
+              await lifecycle.interrupt(sessionKey).catch(() => {});
+              break;
+            }
             const completed = new Promise<void>((resolveTurn, rejectTurn) => {
               turnDone = (error) => error ? rejectTurn(error) : resolveTurn();
             });
@@ -1220,24 +1242,26 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       }
     })();
 
+    const stopHandle = (reason: string): void => {
+      if (stopped) {return;}
+      stopped = true;
+      stopInput();
+      void input.return?.(undefined);
+      void lifecycle.interrupt(sessionKey).catch(() => {});
+      turnDone?.(new Error(reason));
+    };
+
     return {
       handle: {
-        close: () => {
-          stopped = true;
-          stopInput();
-          void input.return?.(undefined);
-          void lifecycle.interrupt(sessionKey).catch(() => {});
-          turnDone?.(new Error('codex app-server stream closed'));
+        close: () => stopHandle('codex app-server stream closed'),
+        cancel: () => stopHandle('codex app-server stream cancelled'),
+        interrupt: () => stopped
+          ? Promise.reject(new Error('codex app-server stream is closed'))
+          : lifecycle.interrupt(sessionKey),
+        steer: async (text) => {
+          if (stopped) {throw new Error('codex app-server stream is closed');}
+          return { turnId: await lifecycle.steer(sessionKey, text) };
         },
-        cancel: () => {
-          stopped = true;
-          stopInput();
-          void input.return?.(undefined);
-          void lifecycle.interrupt(sessionKey).catch(() => {});
-          turnDone?.(new Error('codex app-server stream cancelled'));
-        },
-        interrupt: () => lifecycle.interrupt(sessionKey),
-        steer: async (text) => ({ turnId: await lifecycle.steer(sessionKey, text) }),
         get sessionId(): string | undefined {
           return lifecycle.snapshot(sessionKey)?.threadId;
         },
