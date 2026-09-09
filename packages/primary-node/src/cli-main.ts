@@ -372,6 +372,7 @@ export async function main(): Promise<void> {
       resetThread: (chatId, skipContext, threadRootId) =>
         agentPool.reset(chatId, skipContext, threadRootId),
       stopThread: (chatId, threadRootId) => agentPool.stop(chatId, threadRootId),
+      steer: (chatId, prompt, threadRootId) => agentPool.steer(chatId, prompt, threadRootId),
     },
     node: {
       nodeId: primaryNode.getNodeId(),

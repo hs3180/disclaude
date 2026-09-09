@@ -28,7 +28,7 @@
 
 import type { FileRef } from '../../types/file.js';
 import type { ChannelCapabilities } from '../../types/channel.js';
-import type { MessageData, MessageBuilderContext, MessageBuilderOptions } from './types.js';
+import type { MessageData, MessageBuilderContext, MessageBuilderOptions, MessageBuilderSection } from './types.js';
 import {
   buildChatHistorySection,
   buildPersistedHistorySection,
@@ -77,11 +77,21 @@ export class MessageBuilder {
     const isSkillCommand = msg.text.trimStart().startsWith('/');
     const ctx: MessageBuilderContext = { msg, chatId, capabilities, isSkillCommand };
 
-    if (isSkillCommand) {
-      return this.buildSkillCommandContent(ctx);
-    }
+    return this.renderSections(this.buildSectionsForContext(ctx));
+  }
 
-    return this.buildRegularContent(ctx);
+  /** Build an inspectable stable-to-dynamic representation of one prompt. */
+  buildSections(msg: MessageData, chatId: string, capabilities?: ChannelCapabilities): MessageBuilderSection[] {
+    const isSkillCommand = msg.text.trimStart().startsWith('/');
+    return this.buildSectionsForContext({ msg, chatId, capabilities, isSkillCommand });
+  }
+
+  renderSections(sections: readonly MessageBuilderSection[]): string {
+    return sections.map(section => section.content).join('\n');
+  }
+
+  private buildSectionsForContext(ctx: MessageBuilderContext): MessageBuilderSection[] {
+    return ctx.isSkillCommand ? this.buildSkillCommandSections(ctx) : this.buildRegularSections(ctx);
   }
 
   /**
@@ -89,7 +99,7 @@ export class MessageBuilder {
    *
    * Skill commands get minimal context - just metadata and attachments.
    */
-  private buildSkillCommandContent(ctx: MessageBuilderContext): string {
+  private buildSkillCommandSections(ctx: MessageBuilderContext): MessageBuilderSection[] {
     const { msg, chatId } = ctx;
 
     const metadataParts: string[] = [
@@ -100,10 +110,19 @@ export class MessageBuilder {
       metadataParts.push(`**Sender Open ID:** ${msg.senderOpenId}`);
     }
 
-    const contextInfo = metadataParts.join('\n') + this.buildBasicAttachmentsInfo(msg.attachments);
     const skillExtra = this.options.buildSkillCommandExtra?.(ctx);
-
-    return `${msg.text}\n\n---\n${contextInfo}${skillExtra ?? ''}`;
+    const sections: MessageBuilderSection[] = [
+      { kind: 'user-message', stability: 'dynamic', content: msg.text },
+      { kind: 'metadata', stability: 'dynamic', content: `\n---\n${metadataParts.join('\n')}` },
+    ];
+    const attachments = this.buildBasicAttachmentsInfo(msg.attachments);
+    if (attachments) {
+      sections.push({ kind: 'attachments', stability: 'dynamic', content: attachments });
+    }
+    if (skillExtra) {
+      sections.push({ kind: 'skill-context', stability: 'dynamic', content: skillExtra });
+    }
+    return sections;
   }
 
   /**
@@ -112,7 +131,7 @@ export class MessageBuilder {
    * Regular messages get the full context including history,
    * channel-specific sections, and guidance.
    */
-  private buildRegularContent(ctx: MessageBuilderContext): string {
+  private buildRegularSections(ctx: MessageBuilderContext): MessageBuilderSection[] {
     const { msg, chatId, capabilities } = ctx;
 
     // Issue #3641: Detect topic thread to skip next-step guidance
@@ -145,6 +164,7 @@ export class MessageBuilder {
 
     // Channel-specific tools section
     const toolsSection = this.options.buildToolsSection?.(ctx);
+    const stableToolsSection = this.options.buildStableToolsSection?.({ capabilities });
 
     // Core guidance sections (framework-agnostic)
     // Issue #3641: Skip next-step guidance in topic threads to reduce noise
@@ -154,46 +174,52 @@ export class MessageBuilder {
     const locationAwarenessGuidance = buildLocationAwarenessGuidance();
 
     // Compose all sections
-    const sections: string[] = [];
+    const sections: MessageBuilderSection[] = [];
 
     if (header) {
-      sections.push(header);
+      sections.push({ kind: 'channel-header', stability: 'stable', content: header });
     }
 
-    sections.push(metadataParts.join('\n'));
+    if (stableToolsSection) {
+      sections.push({ kind: 'tools', stability: 'stable', content: `\n---\n\n## Tools\n${stableToolsSection}` });
+    }
+    for (const guidance of [nextStepGuidance, outputFormatGuidance, taskRecordGuidance, locationAwarenessGuidance]) {
+      if (guidance) {
+        sections.push({ kind: 'guidance', stability: 'stable', content: guidance });
+      }
+    }
+
+    sections.push({ kind: 'metadata', stability: 'dynamic', content: metadataParts.join('\n') });
+    if (toolsSection) {
+      sections.push({ kind: 'tools', stability: 'dynamic', content: `\n---\n\n## Tools\n${toolsSection}` });
+    }
 
     if (persistedHistorySection) {
-      sections.push(persistedHistorySection);
+      sections.push({ kind: 'persisted-history', stability: 'dynamic', content: persistedHistorySection });
     }
     if (chatHistorySection) {
-      sections.push(chatHistorySection);
+      sections.push({ kind: 'chat-history', stability: 'dynamic', content: chatHistorySection });
     }
     if (threadContextSection) {
-      sections.push(threadContextSection);
+      sections.push({ kind: 'thread-context', stability: 'dynamic', content: threadContextSection });
     }
     if (threadSelfServiceGuidance) {
-      sections.push(threadSelfServiceGuidance);
+      sections.push({ kind: 'channel-context', stability: 'dynamic', content: threadSelfServiceGuidance });
     }
     if (postHistory) {
-      sections.push(postHistory);
+      sections.push({ kind: 'channel-context', stability: 'dynamic', content: postHistory });
     }
-
-    if (toolsSection) {
-      sections.push(`\n---\n\n## Tools\n${toolsSection}`);
-    }
-
-    sections.push(nextStepGuidance);
-    sections.push(outputFormatGuidance);
-    sections.push(taskRecordGuidance);
-    sections.push(locationAwarenessGuidance);
-
-    const preamble = sections.join('\n');
 
     // User message + attachments
     const attachmentsInfo = this.buildBasicAttachmentsInfo(msg.attachments);
     const attachmentExtra = this.options.buildAttachmentExtra?.(ctx);
 
-    return `${preamble}\n\n--- User Message ---\n${msg.text}${attachmentsInfo}${attachmentExtra ?? ''}`;
+    sections.push({ kind: 'user-message', stability: 'dynamic', content: `\n--- User Message ---\n${msg.text}` });
+    const attachments = `${attachmentsInfo}${attachmentExtra ?? ''}`;
+    if (attachments) {
+      sections.push({ kind: 'attachments', stability: 'dynamic', content: attachments });
+    }
+    return sections;
   }
 
   /**

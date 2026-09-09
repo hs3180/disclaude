@@ -44,22 +44,20 @@ npm run build
 cp disclaude.config.example.yaml disclaude.config.yaml
 ```
 
-编辑 `disclaude.config.yaml`，只需填两行：
+编辑 `disclaude.config.yaml`，填入飞书凭证和模型提供方配置：
 
 ```yaml
 feishu:
   appId: "cli_xxxxxxxxxxxxxxxx"      # 你的 App ID
   appSecret: "xxxxxxxxxxxxxxxxxxxx"  # 你的 App Secret
 
-glm:
-  apiKey: "your_glm_api_key_here"   # 智谱 AI Key（推荐）
-  # 或者用 Anthropic：
-  # agent:
-  #   provider: "anthropic"
-  #   model: "claude-sonnet-4-20250514"
+anthropic:
+  apiKey: "your_api_key_here"
+  model: "your_model_name"
+  apiBaseUrl: "https://your-anthropic-compatible-proxy.example" # 兼容服务提供的 endpoint；直连 Anthropic 可省略
 ```
 
-> 💡 如果同时配置了 `glm.apiKey` 和 `ANTHROPIC_API_KEY`，GLM 优先。
+`anthropic` 表示 Anthropic Messages API 协议，模型可以来自任意兼容服务。旧 `glm` 块可以整体改名为 `anthropic`；如设置了 `agent.provider: glm`，一并改为 `anthropic`。配置文件里的 `anthropic.apiKey` 优先于 `ANTHROPIC_API_KEY`，`agent.model` 可覆盖服务块内的默认模型。
 
 ## 第 4 步：启动
 

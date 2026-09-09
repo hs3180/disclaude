@@ -1,26 +1,14 @@
 /**
- * Structural dsh event → disclaude AgentMessage adapter (Issue #4743).
- *
- * The dsh wire schema is not yet verified against a real harness installation.
- * Keep this mirror deliberately small and tolerant: known event shapes map to
- * the shared message contract, while unknown notifications are ignored rather
- * than surfaced as user-visible text. The transport/provider wiring remains a
- * separate follow-up.
+ * dsh 0.1.2 SDK `session.event` → disclaude AgentMessage adapter.
  */
 import type { AgentMessage, AgentMessageMetadata, AgentMessageType } from '../../types.js';
 
-export interface DeepSeekUsage {
-  input_tokens?: number;
-  output_tokens?: number;
+export interface DeepSeekSessionEvent {
+  type: string;
+  seq?: number;
+  time?: number;
+  data?: Record<string, unknown>;
 }
-
-export type DeepSeekHarnessEvent =
-  | { type: 'text_delta'; delta: string }
-  | { type: 'tool_call'; id: string; name: string; input?: unknown }
-  | { type: 'tool_result'; id: string; name?: string; result?: unknown; is_error?: boolean }
-  | { type: 'completed'; usage?: DeepSeekUsage }
-  | { type: 'error'; message: string; retryable?: boolean }
-  | { type: string; [key: string]: unknown };
 
 function stringifyPayload(value: unknown): string {
   if (typeof value === 'string') {
@@ -45,42 +33,88 @@ function makeMessage(
 }
 
 /** Map one verified-or-fixture dsh event to the shared AgentMessage shape. */
-export function adaptDeepSeekEvent(event: DeepSeekHarnessEvent): AgentMessage | null {
+export function adaptDeepSeekEvent(event: DeepSeekSessionEvent): AgentMessage[] {
+  const data = event.data ?? {};
   switch (event.type) {
-    case 'text_delta': {
-      const known = event as { delta: string };
-      return makeMessage('text', known.delta, {});
+    case 'assistant/chunk': {
+      const chunk = data.chunk as Record<string, unknown> | undefined;
+      if (
+        (chunk?.type === 'text-delta' || chunk?.type === 'reasoning-delta') &&
+        typeof chunk.text === 'string'
+      ) {
+        return [makeMessage('text', chunk.text, {})];
+      }
+      return [];
     }
-    case 'tool_call': {
-      const known = event as { id: string; name: string; input?: unknown };
-      return makeMessage('tool_use', known.name, {
-        toolName: known.name,
-        toolInput: known.input,
-        messageId: known.id,
+    case 'assistant/message': {
+      const message = data.message as Record<string, unknown> | undefined;
+      const blocks = Array.isArray(message?.content) ? message.content : [];
+      return blocks.flatMap((block) => {
+        if (!block || typeof block !== 'object') {
+          return [];
+        }
+        const value = block as Record<string, unknown>;
+        if (value.type !== 'text' && value.type !== 'reasoning') {
+          return [];
+        }
+        if (typeof value.text !== 'string' || value.text.length === 0) {
+          return [];
+        }
+        return [makeMessage('text', value.text, { messageId: String(message?.id ?? '') })];
       });
     }
-    case 'tool_result': {
-      const known = event as { id: string; name?: string; result?: unknown; is_error?: boolean };
-      return makeMessage(
-        'tool_result',
-        known.is_error
-          ? `Error: ${stringifyPayload(known.result)}`
-          : stringifyPayload(known.result),
-        { toolName: known.name, toolOutput: known.result, messageId: known.id }
-      );
+    case 'tool/call': {
+      const rawArguments = typeof data.arguments === 'string' ? data.arguments : '';
+      let input: unknown = rawArguments;
+      try {
+        input = JSON.parse(rawArguments);
+      } catch {
+        /* retain malformed provider text */
+      }
+      return [
+        makeMessage('tool_use', String(data.name ?? ''), {
+          toolName: String(data.name ?? ''),
+          toolInput: input,
+          messageId: String(data.callId ?? ''),
+        }),
+      ];
     }
-    case 'completed': {
-      const known = event as { usage?: DeepSeekUsage };
-      return makeMessage('result', '', {
-        inputTokens: known.usage?.input_tokens,
-        outputTokens: known.usage?.output_tokens,
-      });
+    case 'tool/result': {
+      const message = data.message as Record<string, unknown> | undefined;
+      const block = Array.isArray(message?.content)
+        ? (message.content[0] as Record<string, unknown>)
+        : undefined;
+      const content = Array.isArray(block?.content) ? block.content : [];
+      const output = content
+        .map((item) =>
+          item && typeof item === 'object' && 'text' in item
+            ? String((item as { text: unknown }).text)
+            : stringifyPayload(item)
+        )
+        .join('');
+      return [
+        makeMessage('tool_result', block?.isError === true ? `Error: ${output}` : output, {
+          toolOutput: output,
+          messageId: String(block?.toolCallId ?? ''),
+        }),
+      ];
     }
-    case 'error': {
-      const known = event as { message: string; retryable?: boolean };
-      return makeMessage(known.retryable ? 'status' : 'error', known.message, {});
+    case 'turn/end': {
+      const reason = data.reason as Record<string, unknown> | undefined;
+      if (reason?.kind === 'completed') {
+        return [makeMessage('result', '', { stopReason: 'completed' })];
+      }
+      const detail =
+        reason?.kind === 'error'
+          ? stringifyPayload(reason.error)
+          : String(reason?.kind ?? 'unknown');
+      return [
+        makeMessage('error', `DeepSeek Harness turn ended: ${detail}`, {
+          stopReason: String(reason?.kind ?? 'unknown'),
+        }),
+      ];
     }
     default:
-      return null;
+      return [];
   }
 }

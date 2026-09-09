@@ -594,6 +594,30 @@ describe('logger', () => {
       });
     });
 
+    it('persists the final entry before closeLogger resolves', async () => {
+      const dir = fs.mkdtempSync('/tmp/test-rotate-close-');
+
+      await withRotation(dir, async (logger) => {
+        for (let i = 0; i < 500; i++) {
+          logger.info({ pad: 'x'.repeat(100) }, `close barrier probe ${i}`);
+        }
+        logger.info({ marker: 'FINAL_BEFORE_CLOSE' }, 'final close barrier probe');
+
+        await closeLogger();
+
+        const files = fs
+          .readdirSync(dir)
+          .filter((name) => /^disclaude-combined\.\d+\.log$/.test(name));
+        expect(files.length).toBeGreaterThan(0);
+        expect(files.length).toBeLessThanOrEqual(3);
+        expect(
+          files.some((name) =>
+            fs.readFileSync(path.join(dir, name), 'utf8').includes('FINAL_BEFORE_CLOSE')
+          )
+        ).toBe(true);
+      });
+    });
+
     it('degrades to an unlinked rotation when the symlink cannot be created (B2)', async () => {
       const dir = fs.mkdtempSync('/tmp/test-rotate-symlink-fail-');
       // Occupy `current.log` with a directory. pino-roll's checkSymlinkSync

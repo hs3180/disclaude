@@ -11,6 +11,8 @@ export type {
   MessageData,
   MessageBuilderContext,
   MessageBuilderOptions,
+  MessageBuilderSection,
+  MessageBuilderStableContext,
 } from './types.js';
 
 // Core class

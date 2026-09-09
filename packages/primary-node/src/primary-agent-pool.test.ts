@@ -46,7 +46,7 @@ vi.mock('@disclaude/core', async (importOriginal) => {
 // Track mock agent instances for assertions
 // Issue #4620: mock now carries turnStartedAtMs (0 = not set; tests that
 // exercise the observation-based fallback leave it 0/undefined).
-const mockAgents: Map<string, { dispose: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; updateCallbacks: ReturnType<typeof vi.fn>; taskComplete?: Promise<void>; isBusy: boolean; turnStartedAtMs?: number }> = new Map();
+const mockAgents: Map<string, { dispose: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; steer: ReturnType<typeof vi.fn>; updateCallbacks: ReturnType<typeof vi.fn>; taskComplete?: Promise<void>; isBusy: boolean; turnStartedAtMs?: number }> = new Map();
 
 // Mock AgentFactory
 vi.mock('./agents/factory.js', () => ({
@@ -54,7 +54,9 @@ vi.mock('./agents/factory.js', () => ({
     createChatAgent: vi.fn((_name: string, chatId: string, _callbacks: unknown, _options?: unknown) => {
       const agent = {
         dispose: vi.fn(),
+        reset: vi.fn(),
         stop: vi.fn().mockReturnValue(true),
+        steer: vi.fn().mockResolvedValue({ ok: false, error: 'unsupported' }),
         updateCallbacks: vi.fn().mockReturnValue(true),
         taskComplete: undefined as Promise<void> | undefined,
         isBusy: false,
@@ -80,6 +82,35 @@ const createMockCallbacks = () => ({
 });
 
 describe('PrimaryAgentPool', () => {
+  it('isolates repeated scheduled ticks and preserves the user agent and delivery chat (#4812)', () => {
+    const pool = new PrimaryAgentPool();
+    const callbacks = createMockCallbacks();
+    const user = pool.getOrCreateChatAgent('chat-1', callbacks);
+    const a = pool.getOrCreateChatAgent('chat-1', callbacks, undefined, { id: 'execution:tick-a', releaseAfterTurn: true, skipHistory: false, model: 'task-model' });
+    const b = pool.getOrCreateChatAgent('chat-1', callbacks, undefined, { id: 'execution:tick-b', releaseAfterTurn: true, skipHistory: true });
+    expect(a).not.toBe(b);
+    expect(a).not.toBe(user);
+    expect(pool.get('chat-1')).toBe(user);
+    expect(AgentFactory.createChatAgent).toHaveBeenCalledWith('pilot', 'chat-1', callbacks, expect.objectContaining({ sdkSessionKey: 'chat-1::execution:tick-a', skipHistory: false, model: 'task-model' }));
+    expect(AgentFactory.createChatAgent).toHaveBeenCalledWith('pilot', 'chat-1', callbacks, expect.objectContaining({ sdkSessionKey: 'chat-1::execution:tick-b', skipHistory: true }));
+    expect(() => pool.getOrCreateChatAgent('chat-1', callbacks, undefined, { id: 'execution:tick-a', releaseAfterTurn: true, skipHistory: false })).toThrow('already owns');
+    pool.releaseChatAgent('chat-1', 'execution:tick-b', b);
+    expect(b.reset).toHaveBeenCalledOnce();
+    expect(b.dispose).toHaveBeenCalledOnce();
+    expect(user.dispose).not.toHaveBeenCalled();
+    expect(a.dispose).not.toHaveBeenCalled();
+    pool.releaseChatAgent('chat-1', 'execution:tick-a', a);
+    pool.releaseChatAgent('chat-1', 'execution:tick-a', a);
+    expect(a.dispose).toHaveBeenCalledOnce();
+    expect(pool.get('chat-1')).toBe(user);
+    pool.disposeAll();
+  });
+
+  it('rejects an empty temporary scope before creating an agent', () => {
+    const pool = new PrimaryAgentPool();
+    expect(() => pool.getOrCreateChatAgent('chat-1', createMockCallbacks(), undefined, { id: '' })).toThrow('nonempty');
+    pool.disposeAll();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     mockAgents.clear();
@@ -102,7 +133,7 @@ describe('PrimaryAgentPool', () => {
         'pilot',
         'chat-1',
         callbacks,
-        { messageBuilderOptions: undefined, cwdProvider: undefined, cwdResolver: undefined, skipHistory: false },
+        { messageBuilderOptions: undefined, cwdProvider: undefined, cwdResolver: undefined, skipHistory: false, sdkSessionKey: 'chat-1' },
       );
     });
 
@@ -139,7 +170,7 @@ describe('PrimaryAgentPool', () => {
         'pilot',
         'chat-opts',
         callbacks,
-        { messageBuilderOptions, cwdProvider: undefined, cwdResolver: undefined, skipHistory: false },
+        { messageBuilderOptions, cwdProvider: undefined, cwdResolver: undefined, skipHistory: false, sdkSessionKey: 'chat-opts' },
       );
     });
 
@@ -154,7 +185,7 @@ describe('PrimaryAgentPool', () => {
         'pilot',
         'chat-cwd',
         callbacks,
-        { messageBuilderOptions: undefined, cwdProvider, cwdResolver: undefined, skipHistory: false },
+        { messageBuilderOptions: undefined, cwdProvider, cwdResolver: undefined, skipHistory: false, sdkSessionKey: 'chat-cwd' },
       );
     });
 
@@ -170,7 +201,7 @@ describe('PrimaryAgentPool', () => {
         'pilot',
         'chat-both',
         callbacks,
-        { messageBuilderOptions, cwdProvider, cwdResolver: undefined, skipHistory: false },
+        { messageBuilderOptions, cwdProvider, cwdResolver: undefined, skipHistory: false, sdkSessionKey: 'chat-both' },
       );
     });
 
@@ -193,7 +224,7 @@ describe('PrimaryAgentPool', () => {
         'pilot',
         'chat-resolver',
         callbacks,
-        { messageBuilderOptions: undefined, cwdProvider, cwdResolver, skipHistory: false },
+        { messageBuilderOptions: undefined, cwdProvider, cwdResolver, skipHistory: false, sdkSessionKey: 'chat-resolver' },
       );
     });
 
@@ -308,7 +339,7 @@ describe('PrimaryAgentPool', () => {
         'pilot',
         'chat-skip',
         callbacks,
-        { messageBuilderOptions: undefined, cwdProvider: undefined, skipHistory: true },
+        { messageBuilderOptions: undefined, cwdProvider: undefined, skipHistory: true, sdkSessionKey: 'chat-skip' },
       );
     });
 
@@ -328,7 +359,7 @@ describe('PrimaryAgentPool', () => {
         'pilot',
         'chat-stale',
         callbacks,
-        { messageBuilderOptions: undefined, cwdProvider: undefined, cwdResolver: undefined, skipHistory: false },
+        { messageBuilderOptions: undefined, cwdProvider: undefined, cwdResolver: undefined, skipHistory: false, sdkSessionKey: 'chat-stale' },
       );
     });
 
@@ -360,7 +391,7 @@ describe('PrimaryAgentPool', () => {
       expect(forgotten).toEqual(['chat-gone']);
     });
 
-    it('forgets with the plain chatId on a THREAD reset too — matching the SDK sessionKey wiring (#4644)', () => {
+    it('forgets the same scoped SDK key on a thread reset', () => {
       const forgotten: string[] = [];
       const pool = new PrimaryAgentPool({
         forgetProviderSession: (chatId) => forgotten.push(chatId),
@@ -372,7 +403,7 @@ describe('PrimaryAgentPool', () => {
 
       // Pool slot key is chat-t::om_root, but the codex stash is keyed by the
       // plain chatId the stream registered with — the forget must use that.
-      expect(forgotten).toEqual(['chat-t']);
+      expect(forgotten).toEqual(['chat-t::om_root']);
     });
   });
 
@@ -414,6 +445,46 @@ describe('PrimaryAgentPool', () => {
       const result = pool.stop('nonexistent');
 
       expect(result).toBe(false);
+    });
+  });
+
+  describe('steer capability', () => {
+    it('reports no active turn separately from unsupported runtime steer', async () => {
+      const pool = new PrimaryAgentPool();
+      await expect(pool.steer('chat', 'change')).resolves.toEqual({
+        ok: false,
+        error: 'No active turn to steer. Send the message normally to start or queue a turn.',
+      });
+
+      const agent = pool.getOrCreateChatAgent('chat', createMockCallbacks());
+      const mutable = mockAgents.get('chat');
+      if (!mutable) { throw new Error('expected mock agent'); }
+      mutable.isBusy = true;
+      mutable.steer.mockResolvedValue({ ok: false, error: 'Immediate steer unsupported; instruction was not queued.' });
+      await expect(pool.steer('chat', 'change')).resolves.toEqual({
+        ok: false,
+        error: 'Immediate steer unsupported; instruction was not queued.',
+      });
+      expect(agent.stop).not.toHaveBeenCalled();
+    });
+
+    it('waits for agent acknowledgement and forwards the active turn id', async () => {
+      const pool = new PrimaryAgentPool();
+      pool.getOrCreateChatAgent('chat', createMockCallbacks());
+      const agent = mockAgents.get('chat')!;
+      agent.isBusy = true;
+      let acknowledge!: (value: { ok: true; turnId: string }) => void;
+      agent.steer.mockReturnValue(new Promise((resolve) => { acknowledge = resolve; }));
+      const result = pool.steer('chat', 'change');
+      let settled = false;
+      void result.then(() => { settled = true; });
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      acknowledge({ ok: true, turnId: 'turn-2' });
+      await expect(result).resolves.toEqual({
+        ok: true,
+        message: 'Steer acknowledged for active turn turn-2.',
+      });
     });
   });
 
@@ -978,7 +1049,7 @@ describe('PrimaryAgentPool', () => {
         'pilot',
         'oc_topic',
         callbacks,
-        { messageBuilderOptions: undefined, cwdProvider: undefined, cwdResolver: undefined, skipHistory: false },
+        { messageBuilderOptions: undefined, cwdProvider: undefined, cwdResolver: undefined, skipHistory: false, sdkSessionKey: 'oc_topic::om_threadA' },
       );
       // And it is still retrievable only via the thread key...
       expect(pool.get('oc_topic', 'om_threadA')).toBeDefined();

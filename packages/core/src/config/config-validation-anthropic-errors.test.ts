@@ -40,7 +40,7 @@ import { Config } from './index.js';
 
 describe('Config.validateRequiredConfig — provider=anthropic without model', () => {
   it('should throw when provider=anthropic but no agent.model', () => {
-    expect(() => Config.getAgentConfig()).toThrow('agent.model is required when using Anthropic provider');
+    expect(() => Config.getAgentConfig()).toThrow('anthropic.model or agent.model is required');
   });
 
   it('should include ANTHROPIC_API_KEY reference in error', () => {
