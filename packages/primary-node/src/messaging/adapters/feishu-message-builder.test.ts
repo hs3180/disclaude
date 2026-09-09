@@ -315,12 +315,16 @@ describe('MessageBuilder with Feishu sections', () => {
 // Issue #4705: the appended canonical CLI help must respect the same
 // capability gate as the tool list above it, or the prompt contradicts itself.
 describe('channel CLI guidance capability gating', () => {
-  const build = (capabilities: unknown): string =>
-    (createFeishuMessageBuilderOptions().buildToolsSection as (c: unknown) => string)({
+  const build = (capabilities: unknown): string => {
+    const options = createFeishuMessageBuilderOptions();
+    const stable = (options.buildStableToolsSection as (c: unknown) => string)({ capabilities });
+    const dynamic = (options.buildToolsSection as (c: unknown) => string)({
       chatId: 'oc_00000000000000000000000000000000000',
       msg: { messageId: 'm1' },
       capabilities,
     });
+    return `${stable}\n${dynamic}`;
+  };
 
   it('does not advertise send_file when the channel says it is unsupported', () => {
     const out = build({ supportsFile: false, supportedMcpTools: ['send_text'] });

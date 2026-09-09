@@ -214,6 +214,8 @@ describe('CodexExecRunner (Issue #4630)', () => {
     const result = await run.promise;
     expect(result.aborted).toBe(true);
     expect(result.timedOut).toBe(false);
+    expect(result.abortExitLatencyMs).toBeGreaterThanOrEqual(0);
+    expect(result.abortExitLatencyMs).toBeLessThan(5_000);
     expect(existsSync(fixture.markerPath)).toBe(true);
   }, 15_000);
 

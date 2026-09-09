@@ -196,6 +196,8 @@ export interface ChatAgentConfig extends BaseAgentConfig {
    * across subsequent startAgentLoop() calls.
    */
   skipHistory?: boolean;
+  /** Native provider identity independent of the real delivery/history chat ID. */
+  sdkSessionKey?: string;
 
 }
 

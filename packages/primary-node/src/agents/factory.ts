@@ -122,6 +122,8 @@ export interface AgentCreateOptions {
    * Used by /reset --no-context to create a truly fresh agent.
    */
   skipHistory?: boolean;
+  /** Isolated provider session key; delivery and project lookup still use chatId. */
+  sdkSessionKey?: string;
 }
 
 /**
@@ -239,6 +241,7 @@ export class AgentFactory {
         cwdProvider: options.cwdProvider,
         cwdResolver: options.cwdResolver,
         skipHistory: options.skipHistory,
+        sdkSessionKey: options.sdkSessionKey,
       };
 
       return new ChatAgent(config);
@@ -299,6 +302,7 @@ export class AgentFactory {
       cwdProvider: options.cwdProvider,
       cwdResolver: options.cwdResolver,
       skipHistory: options.skipHistory,
+      sdkSessionKey: options.sdkSessionKey,
     };
 
     return new ChatAgent(config);

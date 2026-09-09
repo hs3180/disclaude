@@ -41,6 +41,10 @@ export function normalizeCommandData<T extends ControlCommandType>(
       const skipContext = argsList.includes('--no-context');
       return skipContext ? { skipContext: true } : undefined;
     }
+    case 'steer': {
+      const args = Array.isArray(rawData.args) ? rawData.args as string[] : [];
+      return { prompt: args.join(' ').trim() || undefined };
+    }
     default:
       return undefined;
   }

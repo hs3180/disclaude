@@ -7,8 +7,6 @@
  * @module @disclaude/core/scheduling
  */
 
-import type { ModelTier } from '../config/types.js';
-
 /**
  * Default timezone for scheduled tasks when not explicitly specified.
  *
@@ -45,16 +43,16 @@ export interface ScheduledTask {
   /** Whether to block concurrent executions (skip if previous still running) */
   blocking?: boolean;
   /**
-   * Whether to clear the chat's agent context (start a fresh session) before
-   * executing this task. When true, the scheduler resets the persistent agent
-   * for `chatId` (skipping history reload) right before sending the start
-   * notification, so the task runs with a clean context.
-   *
-   * Opt-in (default false): most recurring tasks want to keep prior context;
-   * this is for tasks that must start fresh each run (e.g. to avoid unbounded
-   * context growth on high-frequency schedules). Issue #4206.
+   * Legacy alias: true means freshSession:true + skipHistory:true; explicit
+   * false opts into live-chat reuse unless freshSession is specified. Omitted
+   * means an isolated fresh session with a bounded history snapshot (#4812).
+   * No form resets the user's existing live agent in the scheduler.
    */
   clearContext?: boolean;
+  /** Default true: use an isolated per-execution agent, preserving the user's live session. */
+  freshSession?: boolean;
+  /** Default false: keep the bounded history snapshot; true suppresses it. Requires freshSession. */
+  skipHistory?: boolean;
   /**
    * Timeout in milliseconds for how long the scheduler waits for the task's
    * agent TURN to finish (Issue #4648 widened the #3894 timeout from routing
@@ -85,14 +83,4 @@ export interface ScheduledTask {
    * Issue #1338: Smart model selection per task scenario.
    */
   model?: string;
-  /**
-   * Model tier for this task (high/low/multimodal).
-   * Resolved to a model name via Config.getModelForTier().
-   * Ignored when `model` is explicitly set (explicit model takes highest priority).
-   *
-   * Defined in schedule markdown frontmatter (e.g., `modelTier: "low"`).
-   *
-   * Issue #3059: Three-level model configuration.
-   */
-  modelTier?: ModelTier;
 }

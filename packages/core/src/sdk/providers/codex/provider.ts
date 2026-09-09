@@ -465,11 +465,21 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     const registration = this.governor.registerSession(sessionKey, {
       evict: () => {
         wasEvicted = true;
-        if (resumeThreadId && stashable) {
-          this.threadStash.set(sessionKey, resumeThreadId);
+        // Eviction can land after thread.started/output has been consumed but
+        // before the child close path promotes latestSessionId to the normal
+        // completed-turn resume anchor. Preserve the already-observed thread
+        // for this explicit lifecycle interruption; otherwise the next stream
+        // incorrectly starts fresh depending on readline/process-close timing.
+        const evictionThreadId = resumeThreadId ?? latestSessionId;
+        if (evictionThreadId && stashable) {
+          this.threadStash.set(sessionKey, evictionThreadId);
         }
         logger.warn(
-          { sessionKey, stashed: Boolean(resumeThreadId && stashable) },
+          {
+            sessionKey,
+            stashed: Boolean(evictionThreadId && stashable),
+            usedObservedThread: !resumeThreadId && Boolean(latestSessionId),
+          },
           'codex session evicted (session cap reached) — thread anchor stashed; the chat resumes its conversation on the next message (Issue #4634)'
         );
         requestAbort();
@@ -765,6 +775,10 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         try {
           const result: CodexExecRunResult = await promise;
           if (stalled || result.aborted) {
+            logger.info(
+              { sessionKey, abortExitLatencyMs: result.abortExitLatencyMs },
+              'codex run aborted; late events and retry paths suppressed'
+            );
             // Stall terminator is synthesized by the consumer loop; a user
             // abort ends the stream without a turn terminator (pi parity).
             return;

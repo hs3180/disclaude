@@ -1,10 +1,9 @@
 /**
  * HistoryManager - Manages chat history loading for ChatAgent.
  *
- * Owns the loading lifecycle and cached state for two distinct concerns that
- * were previously inlined in ChatAgent:
- *  - Persisted (session-restore) history + chat log file paths (Issue #955, #3996)
- *  - First-message chat history context (Issue #1230)
+ * Loads one session-restore snapshot for the first message only (#4795).
+ * Legacy persisted/first-message accessors share the same fetch. Log paths are
+ * cached separately and remain available after the snapshot is consumed.
  *
  * The manager is bound to a single chatId (mirroring ChatAgent's chatId binding)
  * and caches loaded history for the lifetime of the agent instance. State can be
@@ -52,7 +51,7 @@ export class HistoryManager {
   firstMessageHistoryLoaded = false;
 
   // --- Loaded context (read-only from the outside; see getters) ---
-  /** Truncated persisted history attached to every message (session restore). */
+  /** Loaded snapshot; cleared when the instance's first message consumes it. */
   private _persistedHistoryContext?: string;
   /** Absolute paths to chat log files for access beyond the context window. */
   private _chatLogFilePaths?: string[];
@@ -64,28 +63,14 @@ export class HistoryManager {
   private firstMessageHistoryLoadPromise?: Promise<void>;
   /** Issue #3696 (--no-context): history loading explicitly disabled for this agent. */
   private skipHistory = false;
+  private contextConsumed = false;
+  private generation = 0;
 
   constructor(private readonly config: HistoryManagerConfig) {}
 
-  /** Truncated persisted history attached to every message (session restore). */
+  /** Legacy read-only view of the snapshot before first-message consumption. */
   get persistedHistoryContext(): string | undefined {
     return this._persistedHistoryContext;
-  }
-
-  /**
-   * Drop the persisted-history CONTENT while keeping the chat log file paths.
-   *
-   * Issue #4391 (part 3 review nit): after a successful re-injection, the
-   * replay's message would otherwise render TWO history sections — the
-   * session-start `persistedHistoryContext` snapshot and the fresh
-   * re-injection stash. Both come from the same `getChatHistory` source and
-   * the re-injection fetch happens strictly later, so the fresh stash is a
-   * superset of the snapshot: keeping both only doubles the token cost. The
-   * log-paths hint from the persisted section is independent of the snapshot
-   * content and must survive (it is not re-fetched anywhere else).
-   */
-  dropPersistedHistoryContent(): void {
-    this._persistedHistoryContext = undefined;
   }
 
   /** Absolute paths to chat log files for access beyond the context window. */
@@ -99,14 +84,29 @@ export class HistoryManager {
   }
 
   /**
-   * Return the first-message history context and clear it, so it is attached to
-   * exactly one message (consume-once, Issue #1230). Subsequent calls return
-   * undefined.
+   * Select one bounded snapshot and clear both legacy views. Explicit input
+   * wins on the first message only; later messages cannot reattach a snapshot.
+   * Cheap log-file hints remain available independently.
    */
-  consumeFirstMessageContext(): string | undefined {
-    const ctx = this._firstMessageHistoryContext;
+  consumeFirstMessageContext(explicitContext?: string): string | undefined {
+    if (this.skipHistory || this.contextConsumed) {
+      return undefined;
+    }
+    this.contextConsumed = true;
+    const ctx = explicitContext ?? this._firstMessageHistoryContext ?? this._persistedHistoryContext;
     this._firstMessageHistoryContext = undefined;
-    return ctx;
+    this._persistedHistoryContext = undefined;
+    if (!ctx) {
+      return undefined;
+    }
+    // getChatHistory owns recency selection (newest day first). Bound the
+    // selected snapshot's rendered length, including any truncation notice;
+    // never take its tail, which would select older days (#4171).
+    const configured = Config.getSessionRestoreConfig().maxContextLength;
+    const budget = Number.isFinite(configured) ? Math.max(0, Math.floor(configured)) : 4000;
+    const bounded = ctx.slice(0, budget);
+    this.config.logger.info({ chatId: this.config.chatId, historyLength: bounded.length, budget }, 'Consumed first-message history snapshot');
+    return bounded || undefined;
   }
 
   /**
@@ -114,6 +114,10 @@ export class HistoryManager {
    * agent is created with --no-context (Issue #3696).
    */
   markSkipped(): void {
+    this.generation++;
+    this._persistedHistoryContext = undefined;
+    this._firstMessageHistoryContext = undefined;
+    this._chatLogFilePaths = undefined;
     this.historyLoaded = true;
     this.firstMessageHistoryLoaded = true;
     this.skipHistory = true;
@@ -136,8 +140,8 @@ export class HistoryManager {
    * Distinct from `loadFirstMessageHistory()`: that method is a load-once cache
    * fill (no-op once `firstMessageHistoryLoaded`); by the time an empty turn
    * fires, the original turn already consumed that context. This method always
-   * re-fetches. Truncation stays owned by `getChatHistory` (Issue #1863), so no
-   * re-truncation here.
+   * re-fetches. Recency selection stays owned by `getChatHistory` (Issue #1863);
+   * consumeFirstMessageContext bounds the rendered snapshot before injection.
    *
    * Failure is non-fatal: the replay proceeds without context (v1 behavior) —
    * history re-injection is a best-effort enrichment, never a recovery blocker.
@@ -147,6 +151,7 @@ export class HistoryManager {
    */
   async reloadFirstMessageHistory(): Promise<boolean> {
     const { chatId, logger, callbacks } = this.config;
+    const { generation } = this;
     try {
       if (this.skipHistory) {
         // --no-context (Issue #3696): the agent was created with history
@@ -163,11 +168,16 @@ export class HistoryManager {
         return false;
       }
       const history = await callbacks.getChatHistory(chatId);
+      if (generation !== this.generation || this.skipHistory) {
+        return false;
+      }
       if (!history || !history.trim()) {
         logger.debug({ chatId }, 'No chat history to re-inject before empty-turn replay');
         return false;
       }
       this._firstMessageHistoryContext = history;
+      this._persistedHistoryContext = undefined;
+      this.contextConsumed = false;
       // Keep the loaded flag true so loadFirstMessageHistory() stays a no-op —
       // the stash below is consumed by the replay's processMessage, not by an
       // unrelated first-message load.
@@ -206,11 +216,14 @@ export class HistoryManager {
     }
 
     // Start loading history
-    this.historyLoadPromise = this.doLoadPersistedHistory();
+    const pending = this.doLoadPersistedHistory();
+    this.historyLoadPromise = pending;
     try {
-      await this.historyLoadPromise;
+      await pending;
     } finally {
-      this.historyLoadPromise = undefined;
+      if (this.historyLoadPromise === pending) {
+        this.historyLoadPromise = undefined;
+      }
     }
   }
 
@@ -223,6 +236,7 @@ export class HistoryManager {
    */
   private async doLoadPersistedHistory(): Promise<void> {
     const { chatId, logger, callbacks } = this.config;
+    const { generation } = this;
     // Check if callback is available
     if (!callbacks.getChatHistory) {
       logger.debug(
@@ -243,16 +257,17 @@ export class HistoryManager {
 
       // Use callback instead of direct messageLogger access
       const history = await callbacks.getChatHistory(chatId);
+      if (generation !== this.generation || this.skipHistory) {
+        return;
+      }
 
       if (history && history.trim()) {
-        // Truncation (and the maxContextLength budget) is handled inside
-        // getChatHistory(); do NOT re-truncate here — a second slice(-maxLength)
-        // would be a latent footgun that reintroduces the #4171 inverted-
-        // direction bug if getChatHistory ever stops pre-truncating.
-        this._persistedHistoryContext = history;
+        // Cache the recency-selected source verbatim. The single consumption
+        // boundary limits rendered length without selecting older-day tails.
+        this._persistedHistoryContext = this.contextConsumed ? undefined : history;
 
         logger.info(
-          { chatId, historyLength: this._persistedHistoryContext.length },
+          { chatId, historyLength: history.length },
           'Persisted chat history loaded successfully'
         );
       } else {
@@ -262,7 +277,11 @@ export class HistoryManager {
       // Issue #3996: Load chat log file paths so the agent knows where to find
       // full conversation history beyond the context window
       if (callbacks.getChatLogFilePaths) {
-        this._chatLogFilePaths = await callbacks.getChatLogFilePaths(chatId);
+        const paths = await callbacks.getChatLogFilePaths(chatId);
+        if (generation !== this.generation || this.skipHistory) {
+          return;
+        }
+        this._chatLogFilePaths = paths;
         if (this._chatLogFilePaths.length > 0) {
           logger.info(
             { chatId, pathCount: this._chatLogFilePaths.length },
@@ -273,6 +292,9 @@ export class HistoryManager {
 
       this.historyLoaded = true;
     } catch (error) {
+      if (generation !== this.generation || this.skipHistory) {
+        return;
+      }
       logger.error({ err: error, chatId }, 'Failed to load persisted chat history');
       // Mark as loaded even on error to prevent retry loops
       this.historyLoaded = true;
@@ -309,11 +331,14 @@ export class HistoryManager {
     }
 
     // Start loading history
-    this.firstMessageHistoryLoadPromise = this.doLoadFirstMessageHistory();
+    const pending = this.doLoadFirstMessageHistory();
+    this.firstMessageHistoryLoadPromise = pending;
     try {
-      await this.firstMessageHistoryLoadPromise;
+      await pending;
     } finally {
-      this.firstMessageHistoryLoadPromise = undefined;
+      if (this.firstMessageHistoryLoadPromise === pending) {
+        this.firstMessageHistoryLoadPromise = undefined;
+      }
     }
   }
 
@@ -321,31 +346,13 @@ export class HistoryManager {
    * Internal method to perform the actual first message history loading.
    */
   private async doLoadFirstMessageHistory(): Promise<void> {
-    const { chatId, logger, callbacks } = this.config;
-    try {
-      logger.info({ chatId }, 'Loading chat history for first message context');
-
-      const history = await callbacks.getChatHistory?.(chatId);
-      if (history && history.trim()) {
-        this._firstMessageHistoryContext = history;
-        logger.info(
-          { chatId, historyLength: this._firstMessageHistoryContext.length },
-          'Chat history for first message loaded successfully'
-        );
-      } else {
-        logger.debug({ chatId }, 'No chat history found for first message');
-      }
-
-      this.firstMessageHistoryLoaded = true;
-    } catch (error) {
-      logger.error({ err: error, chatId }, 'Failed to load chat history for first message');
-      // Mark as loaded even on error to prevent retry loops
-      this.firstMessageHistoryLoaded = true;
-      // Issue #1357: Notify user about history load failure
-      callbacks
-        .sendMessage(chatId, '⚠️ 加载聊天记录失败，第一条消息可能缺少上下文。')
-        .catch(() => {});
+    const { generation } = this;
+    await this.loadPersistedHistory();
+    if (generation !== this.generation || this.skipHistory) {
+      return;
     }
+    this._firstMessageHistoryContext = this.contextConsumed ? undefined : this._persistedHistoryContext;
+    this.firstMessageHistoryLoaded = true;
   }
 
   /**
@@ -354,12 +361,17 @@ export class HistoryManager {
    * Called during /reset to drop the cached context (Issue #955, #1230).
    */
   reset(): void {
+    this.generation++;
+    this.contextConsumed = false;
+    this._chatLogFilePaths = undefined;
+    this.historyLoadPromise = undefined;
+    this.firstMessageHistoryLoadPromise = undefined;
     // Clear persisted history context (Issue #955)
     this._persistedHistoryContext = undefined;
-    this.historyLoaded = false;
+    this.historyLoaded = this.skipHistory;
 
     // Clear first message history context (Issue #1230)
     this._firstMessageHistoryContext = undefined;
-    this.firstMessageHistoryLoaded = false;
+    this.firstMessageHistoryLoaded = this.skipHistory;
   }
 }

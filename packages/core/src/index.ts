@@ -178,6 +178,8 @@ export {
   type MessageData,
   type MessageBuilderContext,
   type MessageBuilderOptions,
+  type MessageBuilderSection,
+  type MessageBuilderStableContext,
 } from './agents/message-builder/index.js';
 
 // Conversation module (Issue #1041)
