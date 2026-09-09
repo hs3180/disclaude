@@ -89,6 +89,91 @@ describe('PrimaryAgentPool', () => {
   // getOrCreateChatAgent()
   // ==========================================================================
 
+  describe('named runtime presets', () => {
+    const presets = {
+      default: { agentBackend: 'claude' as const, model: 'claude-sonnet' },
+      fast: { agentBackend: 'claude' as const, model: 'claude-haiku' },
+    };
+
+    it('passes the default preset through the real pool-to-factory creation path', () => {
+      const pool = new PrimaryAgentPool({ agentPresets: presets, validatePresetBackend: () => ({ available: true }) });
+      const callbacks = createMockCallbacks();
+      pool.getOrCreateChatAgent('chat-default', callbacks);
+
+      expect(AgentFactory.createChatAgent).toHaveBeenCalledWith(
+        'pilot', 'chat-default', callbacks,
+        expect.objectContaining({ agentBackend: 'claude', model: 'claude-sonnet' })
+      );
+      expect(pool.getActiveAgentPreset('chat-default')).toEqual({
+        name: 'default', agentBackend: 'claude', model: 'claude-sonnet',
+      });
+    });
+
+    it('isolates selections by chat and atomically replaces only the selected chat', () => {
+      const pool = new PrimaryAgentPool({ agentPresets: presets, validatePresetBackend: () => ({ available: true }) });
+      const callbacksA = createMockCallbacks();
+      const callbacksB = createMockCallbacks();
+      const oldA = pool.getOrCreateChatAgent('chat-a', callbacksA);
+      const oldB = pool.getOrCreateChatAgent('chat-b', callbacksB);
+
+      expect(pool.switchAgentPreset('chat-a', 'fast')).toMatchObject({ ok: true });
+      expect(oldA.dispose).toHaveBeenCalledOnce();
+      expect(oldB.dispose).not.toHaveBeenCalled();
+      expect(pool.getActiveAgentPreset('chat-a')?.name).toBe('fast');
+      expect(pool.getActiveAgentPreset('chat-b')?.name).toBe('default');
+      expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith(
+        'pilot', 'chat-a', callbacksA,
+        expect.objectContaining({ model: 'claude-haiku', skipHistory: true })
+      );
+    });
+
+    it('rejects a busy switch and preserves the old agent and selection', () => {
+      const pool = new PrimaryAgentPool({ agentPresets: presets, validatePresetBackend: () => ({ available: true }) });
+      const old = pool.getOrCreateChatAgent('chat-busy', createMockCallbacks());
+      const mutableOld = mockAgents.get('chat-busy');
+      if (!mutableOld) { throw new Error('expected mock agent'); }
+      mutableOld.isBusy = true;
+
+      expect(pool.switchAgentPreset('chat-busy', 'fast')).toEqual({
+        ok: false,
+        error: 'The current chat is busy; wait for the response or use /stop before switching presets',
+      });
+      expect(old.dispose).not.toHaveBeenCalled();
+      expect(pool.get('chat-busy')).toBe(old);
+      expect(pool.getActiveAgentPreset('chat-busy')?.name).toBe('default');
+    });
+
+    it('rejects an unavailable backend before replacing the old agent', () => {
+      const pool = new PrimaryAgentPool({
+        agentPresets: presets,
+        validatePresetBackend: () => ({ available: false, unavailableReason: 'login required' }),
+      });
+      const old = pool.getOrCreateChatAgent('chat-unavailable', createMockCallbacks());
+      expect(pool.switchAgentPreset('chat-unavailable', 'fast')).toEqual({
+        ok: false,
+        error: 'Agent preset "fast" is unavailable: login required',
+      });
+      expect(pool.get('chat-unavailable')).toBe(old);
+      expect(old.dispose).not.toHaveBeenCalled();
+    });
+
+    it('preserves the old agent when candidate construction fails', () => {
+      const pool = new PrimaryAgentPool({ agentPresets: presets, validatePresetBackend: () => ({ available: true }) });
+      const old = pool.getOrCreateChatAgent('chat-fail', createMockCallbacks());
+      vi.mocked(AgentFactory.createChatAgent).mockImplementationOnce(() => {
+        throw new Error('candidate rejected');
+      });
+
+      expect(pool.switchAgentPreset('chat-fail', 'fast')).toEqual({
+        ok: false,
+        error: 'Could not activate agent preset "fast": candidate rejected',
+      });
+      expect(old.dispose).not.toHaveBeenCalled();
+      expect(pool.get('chat-fail')).toBe(old);
+      expect(pool.getActiveAgentPreset('chat-fail')?.name).toBe('default');
+    });
+  });
+
   describe('getOrCreateChatAgent()', () => {
     it('should create a new agent for a new chatId', () => {
       const pool = new PrimaryAgentPool();

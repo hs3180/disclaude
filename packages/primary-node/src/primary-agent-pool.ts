@@ -11,7 +11,7 @@
  * @see Issue #1040 - Separate Primary Node code to @disclaude/primary-node
  */
 
-import { type MessageBuilderOptions, type CwdProvider, type CwdResolution, buildSessionKey, chatIdOfSessionKey, createLogger, getProvider } from '@disclaude/core';
+import { type MessageBuilderOptions, type CwdProvider, type CwdResolution, type AgentPreset, type AgentPresets, buildSessionKey, chatIdOfSessionKey, createLogger, getProvider, Config, resolveAgentPreset } from '@disclaude/core';
 import { AgentFactory } from './agents/factory.js';
 import type { ChatAgentCallbacks } from './agents/types.js';
 import type { ChatAgent } from './agents/chat-agent.js';
@@ -23,6 +23,11 @@ import type { ChatAgent } from './agents/chat-agent.js';
  * at pool creation time.
  */
 export interface PrimaryAgentPoolOptions {
+  /** Named runtime presets. Defaults to Config.getAgentPresets(). */
+  agentPresets?: AgentPresets;
+  /** Backend availability probe; injectable for deterministic tests. */
+  validatePresetBackend?: (backend: AgentPreset['agentBackend']) =>
+    { available: boolean; unavailableReason?: string };
   /**
    * Channel-specific MessageBuilderOptions.
    *
@@ -150,6 +155,16 @@ export interface AgentPoolStats {
   totalEvictions: number;
 }
 
+export interface ActiveAgentPreset {
+  name: string;
+  agentBackend: AgentPreset['agentBackend'];
+  model: string;
+}
+
+export type AgentPresetSwitchResult =
+  | { ok: true; active: ActiveAgentPreset; sessionBoundary: 'new-session' }
+  | { ok: false; error: string };
+
 /**
  * PrimaryAgentPool - Manages ChatAgent instances for Primary Node.
  *
@@ -168,6 +183,9 @@ export interface AgentPoolStats {
 export class PrimaryAgentPool {
   /** Keyed by buildSessionKey(chatId, threadRootId) — see class doc (Issue #4587 part 2). */
   private readonly agents = new Map<string, ChatAgent>();
+  private readonly callbacksBySession = new Map<string, ChatAgentCallbacks>();
+  private readonly selectedPresetBySession = new Map<string, string>();
+  private readonly presets?: AgentPresets;
   private readonly options: PrimaryAgentPoolOptions;
   /**
    * Issue #3696: session keys that should skip history loading on next agent
@@ -223,6 +241,122 @@ export class PrimaryAgentPool {
       ((chatId: string): void => {
         getProvider().forgetSession?.(chatId);
       });
+    this.presets = options.agentPresets ?? Config.getAgentPresets();
+  }
+
+  listAgentPresets(): ActiveAgentPreset[] {
+    return Object.entries(this.presets ?? {}).map(([name, preset]) => ({
+      name,
+      agentBackend: preset.agentBackend,
+      model: preset.model,
+    }));
+  }
+
+  getActiveAgentPreset(chatId: string, threadRootId?: string): ActiveAgentPreset | undefined {
+    if (!this.presets) { return undefined; }
+    const sessionKey = this.sessionKeyOf(chatId, threadRootId);
+    const resolved = resolveAgentPreset(this.presets, this.selectedPresetBySession.get(sessionKey));
+    return resolved.ok
+      ? { name: resolved.name, agentBackend: resolved.preset.agentBackend, model: resolved.preset.model }
+      : undefined;
+  }
+
+  /**
+   * Select a preset for one chat/thread. Existing agents are replaced only
+   * after the candidate backend and ChatAgent construct successfully.
+   */
+  switchAgentPreset(
+    chatId: string,
+    presetName: string,
+    threadRootId?: string
+  ): AgentPresetSwitchResult {
+    if (!this.presets) {
+      return { ok: false, error: 'No named agent presets are configured (add an agents: map)' };
+    }
+    const resolved = resolveAgentPreset(this.presets, presetName);
+    if (!resolved.ok) { return resolved; }
+
+    const sessionKey = this.sessionKeyOf(chatId, threadRootId);
+    const previous = this.agents.get(sessionKey);
+    if (previous?.isBusy) {
+      return { ok: false, error: 'The current chat is busy; wait for the response or use /stop before switching presets' };
+    }
+
+    const info = this.options.validatePresetBackend
+      ? this.options.validatePresetBackend(resolved.preset.agentBackend)
+      : getProvider(resolved.preset.agentBackend).getInfo();
+    if (!info.available) {
+      return {
+        ok: false,
+        error: `Agent preset "${resolved.name}" is unavailable: ${info.unavailableReason ?? 'backend unavailable'}`,
+      };
+    }
+
+    const callbacks = this.callbacksBySession.get(sessionKey);
+    let candidate: ChatAgent | undefined;
+    if (callbacks && previous) {
+      try {
+        candidate = this.createAgent(chatId, callbacks, resolved.preset, true);
+      } catch (error) {
+        return {
+          ok: false,
+          error: `Could not activate agent preset "${resolved.name}": ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+    }
+
+    if (candidate) {
+      // Construction is side-effect free with respect to the native SDK
+      // session. Forget the selected backend only after construction succeeds,
+      // so a failed switch leaves the currently active session untouched.
+      try {
+        getProvider(resolved.preset.agentBackend).forgetSession?.(chatId);
+      } catch (error) {
+        candidate.dispose();
+        return {
+          ok: false,
+          error: `Could not start a fresh session for preset "${resolved.name}": ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+      this.agents.set(sessionKey, candidate);
+      previous?.dispose();
+    } else {
+      // A command can select a preset before this chat has created an agent.
+      // Consume this marker on first use so persisted textual history is not
+      // mistaken for cross-backend native-session migration.
+      this.skipHistoryChatIds.add(sessionKey);
+    }
+    this.selectedPresetBySession.set(sessionKey, resolved.name);
+    return {
+      ok: true,
+      active: {
+        name: resolved.name,
+        agentBackend: resolved.preset.agentBackend,
+        model: resolved.preset.model,
+      },
+      sessionBoundary: 'new-session',
+    };
+  }
+
+  private createAgent(
+    chatId: string,
+    callbacks: ChatAgentCallbacks,
+    preset?: AgentPreset,
+    skipHistory = false
+  ): ChatAgent {
+    return AgentFactory.createChatAgent('pilot', chatId, callbacks, {
+      messageBuilderOptions: this.options.messageBuilderOptions,
+      cwdProvider: this.options.cwdProvider,
+      cwdResolver: this.options.cwdResolver,
+      skipHistory,
+      ...(preset ? {
+        agentBackend: preset.agentBackend,
+        model: preset.model,
+        provider: preset.provider,
+        apiBaseUrl: preset.apiBaseUrl,
+        permissionMode: preset.permissionMode,
+      } : {}),
+    });
   }
 
   /**
@@ -295,15 +429,19 @@ export class PrimaryAgentPool {
     threadRootId?: string
   ): ChatAgent {
     const sessionKey = this.sessionKeyOf(chatId, threadRootId);
+    this.callbacksBySession.set(sessionKey, callbacks);
     let agent = this.agents.get(sessionKey);
     if (!agent) {
       const skipHistory = this.skipHistoryChatIds.has(sessionKey);
-      agent = AgentFactory.createChatAgent('pilot', chatId, callbacks, {
-        messageBuilderOptions: this.options.messageBuilderOptions,
-        cwdProvider: this.options.cwdProvider,
-        cwdResolver: this.options.cwdResolver,
-        skipHistory,
-      });
+      const selected = this.presets
+        ? resolveAgentPreset(this.presets, this.selectedPresetBySession.get(sessionKey))
+        : undefined;
+      agent = this.createAgent(
+        chatId,
+        callbacks,
+        selected?.ok ? selected.preset : undefined,
+        skipHistory
+      );
       this.agents.set(sessionKey, agent);
       // Issue #3696: clear skip-history flag after agent creation
       this.skipHistoryChatIds.delete(sessionKey);
@@ -425,6 +563,8 @@ export class PrimaryAgentPool {
     this.busySince.clear();
     // Issue #4620: clear the stop-guard set as well.
     this.busyTurnStoppedFor.clear();
+    this.callbacksBySession.clear();
+    this.selectedPresetBySession.clear();
   }
 
   /**

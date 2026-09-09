@@ -41,6 +41,14 @@ export function normalizeCommandData<T extends ControlCommandType>(
       const skipContext = argsList.includes('--no-context');
       return skipContext ? { skipContext: true } : undefined;
     }
+    case 'agent': {
+      const args = Array.isArray(rawData.args) ? rawData.args as string[] : [];
+      const subcommand = (args[0] ?? 'current').toLowerCase();
+      return {
+        subcommand,
+        ...(args[1] ? { preset: args[1] } : {}),
+      };
+    }
     default:
       return undefined;
   }

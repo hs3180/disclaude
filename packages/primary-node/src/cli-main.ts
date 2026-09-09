@@ -322,6 +322,7 @@ export async function main(): Promise<void> {
   logger.info({ workspaceDir }, 'ProjectManager initialized');
 
   const agentPool = new PrimaryAgentPool({
+    agentPresets: Config.getAgentPresets(),
     messageBuilderOptions: createFeishuMessageBuilderOptions(),
     cwdProvider: projectManager.createCwdProvider(),
     // Issue #4448 (direction #1): structured resolver alongside the plain
@@ -365,6 +366,11 @@ export async function main(): Promise<void> {
       resetThread: (chatId, skipContext, threadRootId) =>
         agentPool.reset(chatId, skipContext, threadRootId),
       stopThread: (chatId, threadRootId) => agentPool.stop(chatId, threadRootId),
+      listAgentPresets: () => agentPool.listAgentPresets(),
+      getActiveAgentPreset: (chatId, threadRootId) =>
+        agentPool.getActiveAgentPreset(chatId, threadRootId),
+      switchAgentPreset: (chatId, presetName, threadRootId) =>
+        agentPool.switchAgentPreset(chatId, presetName, threadRootId),
     },
     node: {
       nodeId: primaryNode.getNodeId(),

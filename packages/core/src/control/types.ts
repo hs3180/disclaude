@@ -41,6 +41,12 @@ export interface ControlHandlerContext {
      * as `resetThread`.
      */
     stopThread?(chatId: string, threadRootId: string): boolean;
+    listAgentPresets?(): Array<{ name: string; agentBackend: string; model: string }>;
+    getActiveAgentPreset?(chatId: string, threadRootId?: string):
+      { name: string; agentBackend: string; model: string } | undefined;
+    switchAgentPreset?(chatId: string, presetName: string, threadRootId?: string):
+      | { ok: true; active: { name: string; agentBackend: string; model: string }; sessionBoundary: 'new-session' }
+      | { ok: false; error: string };
   };
 
   /** 节点相关能力 */

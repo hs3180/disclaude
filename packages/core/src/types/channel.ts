@@ -125,7 +125,8 @@ export type ControlCommandType =
   // Trigger mode control (Issue #511, renamed #2193)
   | 'trigger'
   // Project management commands (Issue #3335)
-  | 'project';
+  | 'project'
+  | 'agent';
 
 /**
  * Typed data schema for each command type (Issue #3529).
@@ -140,6 +141,8 @@ export interface CommandDataMap {
   project: { subcommand: string; workingDir?: string };
   /** /reset — reset agent, optionally skip history loading (Issue #3696) */
   reset: { skipContext?: boolean };
+  /** /agent — inspect or select a named runtime preset */
+  agent: { subcommand: string; preset?: string };
 }
 
 /**
