@@ -169,40 +169,40 @@ export interface SchedulerCallbacks {
   isChatBusy?: (chatId: string) => boolean;
 }
 
-/** Result returned by a directly executed schedule script. */
-export interface ScriptExecutionResult {
+/** Result returned by a directly executed schedule command. */
+export interface CommandExecutionResult {
   stdout: string;
   stderr: string;
   stdoutTruncated: boolean;
   stderrTruncated: boolean;
 }
 
-/** Injectable script runner; the default runner is used in production. */
-export type ScriptRunner = (script: string, options: {
+/** Injectable command runner; the default runner is used in production. */
+export type CommandRunner = (command: string, options: {
   timeoutMs: number;
   env: NodeJS.ProcessEnv;
   signal: AbortSignal;
-}) => Promise<ScriptExecutionResult>;
+}) => Promise<CommandExecutionResult>;
 
-const SCRIPT_DIAGNOSTIC_LIMIT_BYTES = 64 * 1024;
-const SCRIPT_KILL_GRACE_MS = 1000;
+const COMMAND_DIAGNOSTIC_LIMIT_BYTES = 64 * 1024;
+const COMMAND_KILL_GRACE_MS = 1000;
 
-export class ScriptCancelledError extends Error {
+export class CommandCancelledError extends Error {
   constructor() {
-    super('Scheduled script cancelled');
-    this.name = 'ScriptCancelledError';
+    super('Scheduled command cancelled');
+    this.name = 'CommandCancelledError';
   }
 }
 
-export class ScriptTimeoutError extends Error {
+export class CommandTimeoutError extends Error {
   constructor(readonly timeoutMs: number) {
-    super(`Scheduled script timed out after ${formatTimeout(timeoutMs)}`);
-    this.name = 'ScriptTimeoutError';
+    super(`Scheduled command timed out after ${formatTimeout(timeoutMs)}`);
+    this.name = 'CommandTimeoutError';
   }
 }
 
 function appendDiagnostic(current: Buffer, chunk: Buffer): { value: Buffer; truncated: boolean } {
-  const remaining = SCRIPT_DIAGNOSTIC_LIMIT_BYTES - current.length;
+  const remaining = COMMAND_DIAGNOSTIC_LIMIT_BYTES - current.length;
   if (remaining <= 0) { return { value: current, truncated: true }; }
   return {
     value: Buffer.concat([current, chunk.subarray(0, remaining)]),
@@ -211,13 +211,13 @@ function appendDiagnostic(current: Buffer, chunk: Buffer): { value: Buffer; trun
 }
 
 /** Real POSIX runner used by production and process-lifecycle tests. */
-export const defaultScriptRunner: ScriptRunner = (script, options) => {
+export const defaultCommandRunner: CommandRunner = (command, options) => {
   // A pre-cancelled schedule must not spawn: even a short-lived shell could
   // perform a side effect before an abort listener gets its first turn.
-  if (options.signal.aborted) { return Promise.reject(new ScriptCancelledError()); }
+  if (options.signal.aborted) { return Promise.reject(new CommandCancelledError()); }
 
   return new Promise((resolve, reject) => {
-  const child = spawn('/bin/sh', ['-c', script], {
+  const child = spawn('/bin/sh', ['-c', command], {
     detached: process.platform !== 'win32',
     env: options.env,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -239,12 +239,12 @@ export const defaultScriptRunner: ScriptRunner = (script, options) => {
       else { process.kill(-child.pid, signal); }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
-        logger.warn({ err: error, pid: child.pid }, 'Failed to terminate scheduled script process group');
+        logger.warn({ err: error, pid: child.pid }, 'Failed to terminate scheduled command process group');
       }
     }
   };
 
-  const result = (): ScriptExecutionResult => ({
+  const result = (): CommandExecutionResult => ({
     stdout: stdout.toString('utf8'),
     stderr: stderr.toString('utf8'),
     stdoutTruncated,
@@ -272,14 +272,14 @@ export const defaultScriptRunner: ScriptRunner = (script, options) => {
     settled = true;
     cleanup();
     const error = termination === 'cancelled'
-      ? new ScriptCancelledError()
-      : new ScriptTimeoutError(options.timeoutMs);
+      ? new CommandCancelledError()
+      : new CommandTimeoutError(options.timeoutMs);
     reject(Object.assign(error, result()));
   };
   const awaitKilledGroup = (deadline: number): void => {
     if (!groupIsAlive() || Date.now() >= deadline) {
       if (groupIsAlive()) {
-        logger.error({ pid: child.pid }, 'Scheduled script process group remained after SIGKILL');
+        logger.error({ pid: child.pid }, 'Scheduled command process group remained after SIGKILL');
       }
       settleTermination();
       return;
@@ -300,7 +300,7 @@ export const defaultScriptRunner: ScriptRunner = (script, options) => {
     terminationTimer = setTimeout(() => {
       terminate('SIGKILL');
       awaitKilledGroup(Date.now() + 250);
-    }, SCRIPT_KILL_GRACE_MS);
+    }, COMMAND_KILL_GRACE_MS);
   };
 
   const timeout = setTimeout(() => beginTermination('timeout'), options.timeoutMs);
@@ -334,7 +334,7 @@ export const defaultScriptRunner: ScriptRunner = (script, options) => {
     cleanup();
     const diagnostics = result();
     if (code !== 0) {
-      reject(Object.assign(new Error(`Scheduled script exited with code ${code ?? 'unknown'}${signal ? ` (${signal})` : ''}`), diagnostics));
+      reject(Object.assign(new Error(`Scheduled command exited with code ${code ?? 'unknown'}${signal ? ` (${signal})` : ''}`), diagnostics));
     } else {
       resolve(diagnostics);
     }
@@ -374,8 +374,8 @@ export interface SchedulerOptions {
    * scheduling real OS timers. Production leaves this unset.
    */
   jobFactory?: SchedulerJobFactory;
-  /** Direct runner for script schedules; defaults to /bin/sh -c. */
-  scriptRunner?: ScriptRunner;
+  /** Direct runner for command schedules; defaults to /bin/sh -c. */
+  commandRunner?: CommandRunner;
 }
 
 /**
@@ -405,8 +405,8 @@ export class Scheduler {
   private inputMessageRouter?: InputMessageRouter;
   /** Issue #4218 (fix A): injectable job factory; undefined → real CronJob. */
   private jobFactory?: SchedulerJobFactory;
-  private scriptRunner: ScriptRunner;
-  private activeScriptControllers = new Map<string, AbortController>();
+  private commandRunner: CommandRunner;
+  private activeCommandControllers = new Map<string, AbortController>();
   private activeJobs: Map<string, ActiveJob> = new Map();
   private running = false;
   /** Tracks tasks currently being executed (for blocking mechanism) */
@@ -450,7 +450,7 @@ export class Scheduler {
     this.inputMessageRouter = options.inputMessageRouter;
     this.jobFactory = options.jobFactory;
     this.failureStore = options.failureStore;
-    this.scriptRunner = options.scriptRunner ?? defaultScriptRunner;
+    this.commandRunner = options.commandRunner ?? defaultCommandRunner;
     logger.info('Scheduler created');
   }
 
@@ -506,9 +506,9 @@ export class Scheduler {
 
     this.activeJobs.clear();
 
-    // Script schedules own subprocesses, unlike agent turns. Cancel them
+    // Command schedules own subprocesses, unlike agent turns. Cancel them
     // before waiting for drain so shutdown cannot abandon process groups.
-    for (const controller of this.activeScriptControllers.values()) {
+    for (const controller of this.activeCommandControllers.values()) {
       controller.abort();
     }
 
@@ -792,18 +792,18 @@ ${task.prompt ?? ''}`;
     const taskStartedAt = Date.now();
 
     try {
-      if ((!task.prompt && !task.script) || (task.prompt && task.script)) {
-        throw new Error('Schedule task must define exactly one of prompt or script');
+      if ((!task.prompt && !task.command) || (task.prompt && task.command)) {
+        throw new Error('Schedule task must define exactly one of prompt or command');
       }
 
-      if (task.script) {
-        await this.callbacks.sendMessage(task.chatId, `⏰ 定时任务「${task.name}」开始执行脚本...`);
-        logger.debug({ taskId: task.id, chatId: task.chatId }, 'Executing scheduled task script');
+      if (task.command) {
+        await this.callbacks.sendMessage(task.chatId, `⏰ 定时任务「${task.name}」开始执行命令...`);
+        logger.debug({ taskId: task.id, chatId: task.chatId }, 'Executing scheduled task command');
         const controller = new AbortController();
-        this.activeScriptControllers.set(task.id, controller);
-        let result: ScriptExecutionResult;
+        this.activeCommandControllers.set(task.id, controller);
+        let result: CommandExecutionResult;
         try {
-          result = await this.scriptRunner(task.script, {
+          result = await this.commandRunner(task.command, {
             timeoutMs: task.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS,
             env: {
             ...process.env,
@@ -814,7 +814,7 @@ ${task.prompt ?? ''}`;
             signal: controller.signal,
           });
         } finally {
-          this.activeScriptControllers.delete(task.id);
+          this.activeCommandControllers.delete(task.id);
         }
         await this.clearFailureStreak(task.id);
         logger.info({
@@ -826,7 +826,7 @@ ${task.prompt ?? ''}`;
           stderr: result.stderr,
           stdoutTruncated: result.stdoutTruncated,
           stderrTruncated: result.stderrTruncated,
-        }, 'Scheduled script completed');
+        }, 'Scheduled command completed');
         return;
       }
 
@@ -886,7 +886,6 @@ ${task.prompt ?? ''}`;
           chatId: task.chatId,
           trigger: 'scheduled',
           taskName: task.name,
-          modelTier: task.modelTier,
           data: {
             taskId: task.id,
             createdBy: task.createdBy,
@@ -981,8 +980,8 @@ ${task.prompt ?? ''}`;
         return;
       }
 
-      if (error instanceof ScriptCancelledError) {
-        logger.info(outcomeContext, 'Scheduled script cancelled during scheduler shutdown (neutral)');
+      if (error instanceof CommandCancelledError) {
+        logger.info(outcomeContext, 'Scheduled command cancelled during scheduler shutdown (neutral)');
         return;
       }
 
