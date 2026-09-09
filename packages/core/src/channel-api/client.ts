@@ -1,42 +1,23 @@
-/**
- * RestIpcClient — HTTP client for the REST IPC face (Issue #4279 Phase 2).
- *
- * A standalone client that calls the REST endpoints exposed by HttpApiServer
- * (primary-node), providing REST parity with the IPC channel methods. This is
- * Phase 2 part 1: the channel-method surface (ping/sendMessage/sendCard/
- * uploadFile/uploadImage/sendInteractive/listTempChats/markChatResponded).
- *
- * The full IpcClientLike drop-in (adding pushToAgent → /api/push) is a
- * follow-up — the mcp-server currently calls that via the Unix-socket IPC
- * client. (The former loop methods → /api/loop/* were removed with the loop
- * system, #4430.)
- *
- * Routing is table-driven and response shaping is a generic strip-`ok` envelope
- * (REST responses are `{ ok: true, ...IpcResponsePayload }`; IPC payloads are
- * just the inner fields).
- *
- * Decision-3-independent: `apiToken` is a constructor param; the *source*
- * (env/file/injection) is decided by the wiring step, not here.
- */
+/** HTTP client for PrimaryNode channel endpoints. Requires an explicit base URL and uses an optional bearer token for authenticated requests. */
 
 import { createLogger } from '../utils/logger.js';
-import type { IpcRequestType, IpcRequestPayloads, IpcResponsePayloads } from './protocol.js';
+import type { ChannelApiRequestType, ChannelApiRequestPayloads, ChannelApiResponsePayloads } from './protocol.js';
 import {
-  type IpcClientLike,
-} from './ipc-client-facade.js';
+  type ChannelApiClientLike,
+} from './client-methods.js';
 
-const logger = createLogger('RestIpcClient');
+const logger = createLogger('ChannelApiClient');
 
 /**
  * Validate the explicit PrimaryNode REST address shared by all clients.
  * Credentials are deliberately rejected in URLs so diagnostics and debug logs
  * cannot disclose them; bearer authentication uses the separate token option.
  */
-export function normalizeRestIpcBaseUrl(value: string): string {
+export function normalizeChannelApiBaseUrl(value: string): string {
   const raw = value.trim();
   if (!raw) {
     throw new Error(
-      'PrimaryNode REST address is required; pass --base-url or set DISCLAIMAUDE_REST_IPC_BASE_URL',
+      'PrimaryNode REST address is required; pass --base-url or set DISCLAUDE_API_BASE_URL',
     );
   }
   let url: URL;
@@ -54,12 +35,12 @@ export function normalizeRestIpcBaseUrl(value: string): string {
   return url.origin;
 }
 
-/** Default request timeout (30s), matching the IPC client default. */
+/** Default request timeout (30s), matching the REST API client default. */
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 /**
  * Default response shape: strip the `ok` REST envelope (REST responses are
- * `{ ok: true, ...IpcResponsePayload }`; IPC payloads are just the inner fields).
+ * `{ ok: true, ...ChannelApiResponsePayload }`; REST API payloads are just the inner fields).
  */
 const stripOk = (body: Record<string, unknown>): Record<string, unknown> => {
   const { ok: _ok, ...rest } = body;
@@ -90,9 +71,9 @@ const defaultSuccess = (json: Record<string, unknown>, res: Response): boolean =
   res.ok && json.ok === true;
 
 /**
- * Route table: IPC method → REST endpoint. Covers the 9 IPC methods:
+ * Route table: REST API method → REST endpoint. Covers the 9 REST API methods:
  * - 8 channel methods + ping → #4279 Phase 1 endpoints (strip-ok shaping).
- * - pushToAgent → /api/push (REST {ok,message} → IPC {success}).
+ * - pushToAgent → /api/push (REST {ok,message} → REST API {success}).
  */
 const ROUTES: Readonly<Record<string, Route>> = {
   // Channel methods (Issue #4279 Phase 1 endpoints). 8/9 routes are on `main`:
@@ -108,32 +89,32 @@ const ROUTES: Readonly<Record<string, Route>> = {
   sendInteractive: { method: 'POST', path: '/api/send-interactive' },
   listTempChats: { method: 'GET', path: '/api/temp-chats' },
   markChatResponded: { method: 'POST', path: '/api/mark-chat-responded' },
-  // pushToAgent → /api/push (REST returns {ok, message}; IPC expects {success})
+  // pushToAgent → /api/push (REST returns {ok, message}; REST API expects {success})
   pushToAgent: { method: 'POST', path: '/api/push', shape: (b) => ({ success: b.ok === true }) },
 };
 
-export interface RestIpcClientOptions {
+export interface ChannelApiClientOptions {
   /** Explicit base URL of the HttpApiServer (e.g. http://127.0.0.1:43123). */
   baseUrl: string;
   /** Optional bearer token for POST endpoints (GET routes are token-exempt). */
   apiToken?: string;
 }
 
-export class RestIpcClient implements IpcClientLike {
+export class ChannelApiClient implements ChannelApiClientLike {
   private readonly baseUrl: string;
   private readonly apiToken?: string;
 
-  constructor(opts: RestIpcClientOptions) {
-    this.baseUrl = normalizeRestIpcBaseUrl(opts.baseUrl);
+  constructor(opts: ChannelApiClientOptions) {
+    this.baseUrl = normalizeChannelApiBaseUrl(opts.baseUrl);
     this.apiToken = opts.apiToken;
   }
 
   /**
-   * Send a channel-method request via REST. Returns the IPC response payload
+   * Send a channel-method request via REST. Returns the REST API response payload
    * (the REST `{ ok, ...payload }` body with the `ok` envelope stripped).
    *
    * @param type - One of the CHANNEL_ROUTES keys (ping/sendMessage/...).
-   * @param payload - The IPC request payload (sent as the JSON body for POST).
+   * @param payload - The REST API request payload (sent as the JSON body for POST).
    * @param options - Optional timeoutMs.
    * @returns The response payload (e.g. `{ success: true, messageId: '...' }`).
    */
@@ -144,7 +125,7 @@ export class RestIpcClient implements IpcClientLike {
   ): Promise<Record<string, unknown>> {
     const route = ROUTES[type];
     if (!route) {
-      throw new Error(`RestIpcClient: unsupported method '${type}'`);
+      throw new Error(`ChannelApiClient: unsupported method '${type}'`);
     }
 
     const path = route.pathBuilder ? route.pathBuilder(payload ?? {}) : (route.path ?? '');
@@ -165,21 +146,21 @@ export class RestIpcClient implements IpcClientLike {
       init.signal = AbortSignal.timeout(timeoutMs);
     }
 
-    logger.debug({ type, url, method: route.method }, 'RestIpcClient request');
+    logger.debug({ type, url, method: route.method }, 'ChannelApiClient request');
 
     let res: Response;
     try {
       res = await fetch(url, init);
     } catch (err) {
-      // Map REST transport failures onto the IPC error-prefix contract so the
-      // shared `classifyError` (ipc-client-facade) tags them correctly:
-      //   timeout        → IPC_TIMEOUT        (→ "请求超时，稍后重试")
-      //   conn refused…  → IPC_NOT_AVAILABLE  (→ "Primary Node 未运行")
+      // Map REST transport failures onto the REST API error-prefix contract so the
+      // shared `classifyError` (client-methods) tags them correctly:
+      //   timeout        → CHANNEL_API_TIMEOUT        (→ "请求超时，稍后重试")
+      //   conn refused…  → CHANNEL_API_NOT_AVAILABLE  (→ "Primary Node 未运行")
       // The method name is preserved in the message for debuggability.
       const msg = err instanceof Error ? err.message : String(err);
       const isTimeout = err instanceof Error &&
         (err.name === 'TimeoutError' || err.name === 'AbortError');
-      const code = isTimeout ? 'IPC_TIMEOUT' : 'IPC_NOT_AVAILABLE';
+      const code = isTimeout ? 'CHANNEL_API_TIMEOUT' : 'CHANNEL_API_NOT_AVAILABLE';
       throw new Error(`${code}: REST ${type} (${msg})`);
     }
 
@@ -187,47 +168,32 @@ export class RestIpcClient implements IpcClientLike {
     try {
       json = (await res.json()) as Record<string, unknown>;
     } catch {
-      throw new Error(`IPC_REQUEST_FAILED: REST ${type} (invalid JSON response, status ${res.status})`);
+      throw new Error(`CHANNEL_API_REQUEST_FAILED: REST ${type} (invalid JSON response, status ${res.status})`);
     }
 
     if (!(route.success ?? defaultSuccess)(json, res)) {
       const msg = (json.message as string | undefined) ?? `${type} failed (HTTP ${res.status})`;
-      throw new Error(`IPC_REQUEST_FAILED: REST ${type} (${msg})`);
+      throw new Error(`CHANNEL_API_REQUEST_FAILED: REST ${type} (${msg})`);
     }
 
     // Apply per-route response shaping (default: strip the `ok` envelope).
     return (route.shape ?? stripOk)(json);
   }
 
-  /**
-   * IpcClientLike-compatible request method — delegates to requestChannel with
-   * proper generic typing. This makes RestIpcClient a true drop-in for
-   * UnixSocketIpcClient (the mcp-server's getIpcClient can return either).
-   */
-  async request<T extends IpcRequestType>(
+  /** Send a typed request to a channel endpoint. */
+  async request<T extends ChannelApiRequestType>(
     type: T,
-    payload: IpcRequestPayloads[T],
+    payload: ChannelApiRequestPayloads[T],
     options?: { timeoutMs?: number },
-  ): Promise<IpcResponsePayloads[T]> {
+  ): Promise<ChannelApiResponsePayloads[T]> {
     return await this.requestChannel(
       type,
       payload as Record<string, unknown>,
       options,
-    ) as IpcResponsePayloads[T];
+    ) as ChannelApiResponsePayloads[T];
   }
 
-  /**
-   * Health probe: GET /api/ping. Returns true if the server responds with
-   * `{ pong: true }`. This is the REST equivalent of the IPC `isAvailable()`
-   * socket probe (#4279 Phase 2).
-   *
-   * Note: this is `async` (HTTP is inherently async), unlike
-   * `UnixSocketIpcClient.isAvailable()` which is synchronous (it only stats
-   * the socket file). `IpcClientLike` does not declare `isAvailable`, and the
-   * mcp-server availability probe (`tools/ipc-utils.ts#isIpcAvailable`) still
-   * targets the Unix socket directly — so wiring this REST probe in is a
-   * separate Phase-2 follow-up, not a signature mismatch callers hit today.
-   */
+  /** Probe HTTP liveness with GET /api/ping; this does not verify POST authorization. */
   async isAvailable(): Promise<boolean> {
     try {
       const res = await fetch(`${this.baseUrl}/api/ping`, {
@@ -238,19 +204,9 @@ export class RestIpcClient implements IpcClientLike {
       const json = (await res.json()) as { pong?: boolean };
       return json.pong === true;
     } catch (err) {
-      logger.debug({ err }, 'RestIpcClient health probe failed');
+      logger.debug({ err }, 'ChannelApiClient health probe failed');
       return false;
     }
   }
 
-  /** No persistent resources to close (stateless HTTP). */
-  close(): void {
-    // No-op — HTTP is stateless, unlike the Unix-socket IPC client.
-  }
-
-  /** Alias for close(), matching UnixSocketIpcClient.disconnect() signature. */
-  disconnect(): Promise<void> {
-    this.close();
-    return Promise.resolve();
-  }
 }

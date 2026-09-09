@@ -372,7 +372,7 @@ describe('WiredChannelDescriptors', () => {
     });
   });
 
-  describe('WECHAT_WIRED_DESCRIPTOR.setup — IPC handlers (Issue #3814)', () => {
+  describe('WECHAT_WIRED_DESCRIPTOR.setup — REST API handlers (Issue #3814)', () => {
     let registeredType: string | undefined;
     let registeredHandlers: ChannelApiHandlers | undefined;
     const mockRoute = vi.fn();

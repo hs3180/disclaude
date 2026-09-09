@@ -9,15 +9,15 @@
  * Endpoints:
  * - `GET /api/status` — Basic health/status check
  * - `GET /api/health/detailed` — Process and opt-in dependency diagnostics
- * - `GET /api/ping` — Liveness probe (`{ pong: true }`); REST parity with IPC `ping` (#4279)
- * - `GET /api/temp-chats` — List tracked temporary chats (REST parity with IPC listTempChats; #4279)
+ * - `GET /api/ping` — Liveness probe (`{ pong: true }`); REST parity with REST API `ping` (#4279)
+ * - `GET /api/temp-chats` — List tracked temporary chats (REST parity with REST API listTempChats; #4279)
  * - `POST /api/push` — Push message to agent (equivalent to push_to_agent)
- * - `POST /api/upload-file` — Upload a local file to a chat by filePath (REST parity with IPC uploadFile; #4279)
- * - `POST /api/send-message` — Send a text message to a chat (REST parity with IPC sendMessage; #4279)
- * - `POST /api/send-card` — Send a Feishu card to a chat (REST parity with IPC sendCard; #4279)
- * - `POST /api/send-interactive` — Send an interactive card (buttons) to a chat (REST parity with IPC sendInteractive; #4279)
- * - `POST /api/upload-image` — Upload a local image by filePath, returns image_key for card embedding (REST parity with IPC uploadImage; #4279)
- * - `POST /api/mark-chat-responded` — Mark a temp chat as responded (REST parity with IPC markChatResponded; #4281)
+ * - `POST /api/upload-file` — Upload a local file to a chat by filePath (REST parity with REST API uploadFile; #4279)
+ * - `POST /api/send-message` — Send a text message to a chat (REST parity with REST API sendMessage; #4279)
+ * - `POST /api/send-card` — Send a Feishu card to a chat (REST parity with REST API sendCard; #4279)
+ * - `POST /api/send-interactive` — Send an interactive card (buttons) to a chat (REST parity with REST API sendInteractive; #4279)
+ * - `POST /api/upload-image` — Upload a local image by filePath, returns image_key for card embedding (REST parity with REST API uploadImage; #4279)
+ * - `POST /api/mark-chat-responded` — Mark a temp chat as responded (REST parity with REST API markChatResponded; #4281)
  *
  * Authentication:
  * - When `apiToken` is configured, non-GET routes require `Authorization: Bearer <token>`
@@ -85,7 +85,7 @@ export interface PushResponse {
 export type PushHandler = (chatId: string, message: string) => Promise<void>;
 
 /**
- * Response payload for uploadFile (mirrors IPC IpcResponsePayloads).
+ * Response payload for uploadFile (mirrors REST API ChannelApiResponsePayloads).
  */
 export type UploadFileResponse = {
   success: boolean;
@@ -97,11 +97,11 @@ export type UploadFileResponse = {
 
 /**
  * Handler for uploadFile requests. Delegates to the channel's uploadFile
- * capability — REST parity with the IPC method (Issue #4279).
+ * capability — REST parity with the REST API method (Issue #4279).
  *
  * Uses a local `filePath` (not multipart) because the REST face is localhost-
  * bound: the MCP server and Primary Node are co-located, so the file is already
- * readable on the host — exact IPC parity without multipart overhead.
+ * readable on the host — exact REST API parity without multipart overhead.
  */
 export type UploadFileHandler = (
   chatId: string,
@@ -110,13 +110,13 @@ export type UploadFileHandler = (
 ) => Promise<UploadFileResponse>;
 
 /**
- * Response payload for sendMessage (mirrors IPC IpcResponsePayloads).
+ * Response payload for sendMessage (mirrors REST API ChannelApiResponsePayloads).
  */
 export type SendMessageResponse = { success: boolean; messageId?: string };
 
 /**
  * Handler for sendMessage requests. Delegates to the channel's sendMessage
- * capability — REST parity with the IPC method (Issue #4279).
+ * capability — REST parity with the REST API method (Issue #4279).
  */
 export type SendMessageHandler = (
   chatId: string,
@@ -127,7 +127,7 @@ export type SendMessageHandler = (
 
 /**
  * Handler for sendCard requests. Delegates to the channel's sendCard
- * capability — REST parity with the IPC method (Issue #4279).
+ * capability — REST parity with the REST API method (Issue #4279).
  */
 export type SendCardHandler = (
   chatId: string,
@@ -137,7 +137,7 @@ export type SendCardHandler = (
 ) => Promise<{ success: boolean; messageId?: string }>;
 
 /**
- * Params for sendInteractive (mirrors the IPC sendInteractive payload).
+ * Params for sendInteractive (mirrors the REST API sendInteractive payload).
  */
 export type SendInteractiveParams = {
   question: string;
@@ -151,7 +151,7 @@ export type SendInteractiveParams = {
 /**
  * Handler for sendInteractive requests. Delegates to the channel's
  * sendInteractive capability (which builds+sends the card and registers
- * action prompts) — REST parity with the IPC method (Issue #4279).
+ * action prompts) — REST parity with the REST API method (Issue #4279).
  */
 export type SendInteractiveHandler = (
   chatId: string,
@@ -171,26 +171,26 @@ export type TempChat = {
 
 /**
  * Handler for listTempChats. Delegates to the channel's listTempChats
- * capability — REST parity with the IPC method (Issue #4279).
+ * capability — REST parity with the REST API method (Issue #4279).
  * Channel-agnostic. Single-process semantics (local store query); cross-process
  * aggregation is a future concern (Phase-0 decision 2).
  */
 export type ListTempChatsHandler = () => Promise<{ success: boolean; chats: TempChat[] }>;
 
 /**
- * Response payload for uploadImage (mirrors IPC IpcResponsePayloads).
+ * Response payload for uploadImage (mirrors REST API ChannelApiResponsePayloads).
  */
 export type UploadImageResponse = { success: boolean; imageKey?: string };
 
 /**
  * Handler for uploadImage requests. Delegates to the channel's uploadImage
- * capability — REST parity with the IPC method (Issue #4279). Channel-agnostic
+ * capability — REST parity with the REST API method (Issue #4279). Channel-agnostic
  * (no chatId). Uses a local filePath (see UploadFileHandler rationale).
  */
 export type UploadImageHandler = (filePath: string) => Promise<UploadImageResponse>;
 
 /**
- * Params for markChatResponded (mirrors the IPC markChatResponded payload).
+ * Params for markChatResponded (mirrors the REST API markChatResponded payload).
  */
 export type MarkChatRespondedParams = {
   chatId: string;
@@ -204,7 +204,7 @@ export type MarkChatRespondedParams = {
 /**
  * Handler for markChatResponded requests. Delegates to the channel's
  * markChatResponded capability (temp-chat lifecycle, Issue #1703) — REST
- * parity with the IPC method (Issue #4281).
+ * parity with the REST API method (Issue #4281).
  */
 export type MarkChatRespondedHandler = (
   chatId: string,
@@ -528,23 +528,23 @@ export class HttpApiServer {
   private setupRoutes(): void {
     this.addRoute('GET', '/api/status', this.handleStatus.bind(this));
     this.addRoute('GET', '/api/health/detailed', this.handleDetailedHealth.bind(this));
-    // Issue #4279: REST parity with IPC uploadFile.
+    // Issue #4279: REST parity with REST API uploadFile.
     this.addRoute('POST', '/api/upload-file', this.handleUploadFile.bind(this));
-    // Issue #4168 (Phase 1, #4279): REST parity with the IPC `ping` method —
+    // Issue #4168 (Phase 1, #4279): REST parity with the REST API `ping` method —
     // a token-exempt (GET) health-check endpoint.
     this.addRoute('GET', '/api/ping', this.handlePing.bind(this));
-    // Issue #4279: REST parity with IPC sendMessage.
+    // Issue #4279: REST parity with REST API sendMessage.
     this.addRoute('POST', '/api/send-message', this.handleSendMessage.bind(this));
-    // Issue #4279: REST parity with IPC sendCard.
+    // Issue #4279: REST parity with REST API sendCard.
     this.addRoute('POST', '/api/send-card', this.handleSendCard.bind(this));
-    // Issue #4279: REST parity with IPC sendInteractive.
+    // Issue #4279: REST parity with REST API sendInteractive.
     this.addRoute('POST', '/api/send-interactive', this.handleSendInteractive.bind(this));
-    // Issue #4279: REST parity with IPC listTempChats.
+    // Issue #4279: REST parity with REST API listTempChats.
     this.addRoute('GET', '/api/temp-chats', this.handleListTempChats.bind(this));
 
-    // Issue #4279: REST parity with IPC uploadImage.
+    // Issue #4279: REST parity with REST API uploadImage.
     this.addRoute('POST', '/api/upload-image', this.handleUploadImage.bind(this));
-    // Issue #4281: REST parity with IPC markChatResponded (temp-chat lifecycle).
+    // Issue #4281: REST parity with REST API markChatResponded (temp-chat lifecycle).
     this.addRoute('POST', '/api/mark-chat-responded', this.handleMarkChatResponded.bind(this));
     this.addRoute('POST', '/api/push', this.handlePush.bind(this));
     // Issue #4031: SSE endpoint for topic group message notifications
@@ -625,7 +625,7 @@ export class HttpApiServer {
    * GET /api/ping handler.
    *
    * Issue #4168 (Phase 1, #4279): REST health-check endpoint. The response
-   * payload mirrors the IPC `ping` method's payload (`{ pong: true }`); the IPC
+   * payload mirrors the REST API `ping` method's payload (`{ pong: true }`); the REST API
    * envelope (`{ success: true, payload: ... }`) is dropped because HTTP 200
    * already signals success. GET routes are token-exempt (see the apiToken
    * check), so it works like /api/status for liveness probes.
@@ -759,7 +759,7 @@ export class HttpApiServer {
    * uploadFile capability (reads the local file and uploads it). Uses a local
    * filePath rather than multipart because the REST face is localhost-bound —
    * the caller (MCP server) and Primary Node are co-located, so the file is
-   * already readable on the host (exact IPC parity, no transfer needed).
+   * already readable on the host (exact REST API parity, no transfer needed).
    * Response: `{ ok: true, success, fileKey?, fileType?, fileName?, fileSize? }`.
    */
   private async handleUploadFile(
@@ -831,8 +831,8 @@ export class HttpApiServer {
    * POST /api/send-message handler (Issue #4279).
    *
    * Accepts `{ chatId, text, threadId?, mentions? }` and delegates to the
-   * channel's sendMessage capability. Mirrors the IPC sendMessage method
-   * (payload aligned with IpcRequestPayloads). Response: `{ success, messageId? }`.
+   * channel's sendMessage capability. Mirrors the REST API sendMessage method
+   * (payload aligned with ChannelApiRequestPayloads). Response: `{ success, messageId? }`.
    */
   private async handleSendMessage(
     req: IncomingMessage,
@@ -885,7 +885,7 @@ export class HttpApiServer {
     const threadId = typeof raw.threadId === 'string' ? raw.threadId : undefined;
 
     // Validate mentions element shape (each must be { openId: string }). REST is
-    // the trust boundary, so harden here even though the IPC path casts unchecked.
+    // the trust boundary, so harden here even though the REST API path casts unchecked.
     const mentions = normalizeMentions(raw.mentions);
     if (mentions === null) {
       this.sendJson(res, 400, {
@@ -914,8 +914,8 @@ export class HttpApiServer {
    * POST /api/send-card handler (Issue #4279).
    *
    * Accepts `{ chatId, card, threadId?, description? }` and delegates to the
-   * channel's sendCard capability. Mirrors the IPC sendCard method (payload
-   * aligned with IpcRequestPayloads). `card` is a Feishu card JSON object.
+   * channel's sendCard capability. Mirrors the REST API sendCard method (payload
+   * aligned with ChannelApiRequestPayloads). `card` is a Feishu card JSON object.
    * Response: `{ ok: true, success: true }`.
    */
   private async handleSendCard(
@@ -982,7 +982,7 @@ export class HttpApiServer {
    *
    * Accepts `{ chatId, question, options, title?, context?, threadId?, actionPrompts? }`
    * and delegates to the channel's sendInteractive capability (which builds+sends
-   * the card and registers action prompts). Mirrors the IPC sendInteractive method.
+   * the card and registers action prompts). Mirrors the REST API sendInteractive method.
    * Response: `{ ok: true, success, messageId? }`.
    */
   private async handleSendInteractive(
@@ -1100,7 +1100,7 @@ export class HttpApiServer {
    * Accepts `{ filePath }` and delegates to the channel's uploadImage capability
    * (reads the local image and returns a Feishu image_key for card embedding).
    * Channel-agnostic (no chatId). Uses a local filePath (see handleUploadFile
-   * rationale: the REST face is localhost-bound, co-located, exact IPC parity).
+   * rationale: the REST face is localhost-bound, co-located, exact REST API parity).
    * Response: `{ ok: true, success, imageKey? }`.
    */
   private async handleUploadImage(
@@ -1163,7 +1163,7 @@ export class HttpApiServer {
    *
    * Accepts `{ chatId, response: { selectedValue, responder, repliedAt } }` and
    * delegates to the channel's markChatResponded capability (temp-chat lifecycle,
-   * Issue #1703). Mirrors the IPC markChatResponded method. Response:
+   * Issue #1703). Mirrors the REST API markChatResponded method. Response:
    * `{ ok: true, success }`.
    */
   private async handleMarkChatResponded(
@@ -1199,7 +1199,7 @@ export class HttpApiServer {
     }
 
     // REST is the trust boundary: validate the response payload shape that the
-    // IPC path casts unchecked (mirror of normalizeMentions' rationale, #4279).
+    // REST API path casts unchecked (mirror of normalizeMentions' rationale, #4279).
     const r = raw.response as Record<string, unknown> | undefined;
     if (
       typeof r !== 'object' ||
@@ -1287,7 +1287,7 @@ function readBody(req: IncomingMessage): Promise<string> {
  * - `null` when the field is present but malformed (caller responds 400).
  *
  * REST is the trust boundary, so this validates element shape even though the
- * IPC path casts `mentions` unchecked (Issue #4279).
+ * REST API path casts `mentions` unchecked (Issue #4279).
  */
 function normalizeMentions(
   raw: unknown

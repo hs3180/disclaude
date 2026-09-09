@@ -1,5 +1,5 @@
 /**
- * Tests for ipc-client-facade — the IPC convenience methods.
+ * Tests for client-methods — the REST API convenience methods.
  *
  * These functions (sendMessage, sendCard, uploadFile, etc.) are the primary
  * API the mcp-server uses to communicate with PrimaryNode. They had zero
@@ -9,29 +9,29 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import type { IpcRequestType, IpcRequestPayloads, IpcResponsePayloads } from './protocol.js';
-import type { IpcClientLike } from './ipc-client-facade.js';
+import type { ChannelApiRequestType, ChannelApiRequestPayloads, ChannelApiResponsePayloads } from './protocol.js';
+import type { ChannelApiClientLike } from './client-methods.js';
 
 function createMockClient(
   responses: Partial<Record<string, unknown>>,
-): IpcClientLike {
+): ChannelApiClientLike {
   return {
-    request: vi.fn(<T extends IpcRequestType>(
+    request: vi.fn(<T extends ChannelApiRequestType>(
       type: T,
-      _payload: IpcRequestPayloads[T],
-    ): Promise<IpcResponsePayloads[T]> => {
+      _payload: ChannelApiRequestPayloads[T],
+    ): Promise<ChannelApiResponsePayloads[T]> => {
       const r = responses[type];
       if (r instanceof Error) { return Promise.reject(r); }
-      return Promise.resolve(r as IpcResponsePayloads[T]);
+      return Promise.resolve(r as ChannelApiResponsePayloads[T]);
     }),
   };
 }
 
-describe('ipc-client-facade', () => {
+describe('client-methods', () => {
   describe('sendMessage', () => {
     it('should delegate to client.request with correct payload', async () => {
       const client = createMockClient({ sendMessage: { success: true, messageId: 'om_1' } });
-      const { sendMessage } = await import('./ipc-client-facade.js');
+      const { sendMessage } = await import('./client-methods.js');
 
       const result = await sendMessage(client, 'oc_test', 'hello', 'om_thread', [{ openId: 'ou_a' }]);
 
@@ -42,20 +42,20 @@ describe('ipc-client-facade', () => {
     });
 
     it('should return error result on failure', async () => {
-      const client = createMockClient({ sendMessage: new Error('IPC down') });
-      const { sendMessage } = await import('./ipc-client-facade.js');
+      const client = createMockClient({ sendMessage: new Error('REST API down') });
+      const { sendMessage } = await import('./client-methods.js');
 
       const result = await sendMessage(client, 'oc_test', 'hi');
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('IPC down');
+      expect(result.error).toContain('REST API down');
     });
   });
 
   describe('sendCard', () => {
     it('should delegate with card payload', async () => {
       const client = createMockClient({ sendCard: { success: true, messageId: 'om_2' } });
-      const { sendCard } = await import('./ipc-client-facade.js');
+      const { sendCard } = await import('./client-methods.js');
       const card = { config: {}, elements: [] };
 
       const result = await sendCard(client, 'oc_test', card as never, 'om_root', 'desc');
@@ -70,7 +70,7 @@ describe('ipc-client-facade', () => {
   describe('uploadFile', () => {
     it('should delegate with filePath payload', async () => {
       const client = createMockClient({ uploadFile: { success: true, fileKey: 'fk_1', fileType: 'pdf', fileName: 'a.pdf', fileSize: 42 } });
-      const { uploadFile } = await import('./ipc-client-facade.js');
+      const { uploadFile } = await import('./client-methods.js');
 
       const result = await uploadFile(client, 'oc_test', '/tmp/a.pdf', 'om_root');
 
@@ -81,7 +81,7 @@ describe('ipc-client-facade', () => {
   describe('uploadImage', () => {
     it('should delegate with filePath payload', async () => {
       const client = createMockClient({ uploadImage: { success: true, imageKey: 'img_1' } });
-      const { uploadImage } = await import('./ipc-client-facade.js');
+      const { uploadImage } = await import('./client-methods.js');
 
       const result = await uploadImage(client, '/tmp/img.png');
 
@@ -92,7 +92,7 @@ describe('ipc-client-facade', () => {
   describe('pushToAgent', () => {
     it('should delegate with chatId + message payload', async () => {
       const client = createMockClient({ pushToAgent: { success: true } });
-      const { pushToAgent } = await import('./ipc-client-facade.js');
+      const { pushToAgent } = await import('./client-methods.js');
 
       const result = await pushToAgent(client, 'oc_test', 'do something');
 
@@ -108,7 +108,7 @@ describe('ipc-client-facade', () => {
       const client = createMockClient({
         listTempChats: { success: true, chats: [{ chatId: 'oc_t1', createdAt: '', expiresAt: '', responded: false }] },
       });
-      const { listTempChats } = await import('./ipc-client-facade.js');
+      const { listTempChats } = await import('./client-methods.js');
 
       const result = await listTempChats(client);
 
@@ -120,7 +120,7 @@ describe('ipc-client-facade', () => {
   describe('markChatResponded', () => {
     it('should delegate with response payload', async () => {
       const client = createMockClient({ markChatResponded: { success: true } });
-      const { markChatResponded } = await import('./ipc-client-facade.js');
+      const { markChatResponded } = await import('./client-methods.js');
 
       const result = await markChatResponded(client, 'oc_test', {
         selectedValue: 'approve', responder: 'ou_a', repliedAt: '2026-07-16T00:00:00Z',
@@ -133,7 +133,7 @@ describe('ipc-client-facade', () => {
   describe('sendInteractive', () => {
     it('should delegate with chatId merged into raw card params', async () => {
       const client = createMockClient({ sendInteractive: { success: true, messageId: 'om_3' } });
-      const { sendInteractive } = await import('./ipc-client-facade.js');
+      const { sendInteractive } = await import('./client-methods.js');
       const params = {
         question: 'Approve?',
         options: [
@@ -158,34 +158,34 @@ describe('ipc-client-facade', () => {
 
   describe('classifyError', () => {
     // classifyError is internal; exercise it through the public error path.
-    it('classifies IPC_NOT_AVAILABLE prefix as ipc_unavailable', async () => {
-      const client = createMockClient({ sendMessage: new Error('IPC_NOT_AVAILABLE: socket not connected') });
-      const { sendMessage } = await import('./ipc-client-facade.js');
+    it('classifies CHANNEL_API_NOT_AVAILABLE prefix as channel_api_unavailable', async () => {
+      const client = createMockClient({ sendMessage: new Error('CHANNEL_API_NOT_AVAILABLE: HTTP connection refused') });
+      const { sendMessage } = await import('./client-methods.js');
 
       const result = await sendMessage(client, 'oc_test', 'hi');
 
       expect(result.success).toBe(false);
-      expect(result.errorType).toBe('ipc_unavailable');
+      expect(result.errorType).toBe('channel_api_unavailable');
     });
 
-    it('classifies IPC_TIMEOUT prefix as ipc_timeout', async () => {
-      const client = createMockClient({ sendMessage: new Error('IPC_TIMEOUT: request timed out after 5000ms') });
-      const { sendMessage } = await import('./ipc-client-facade.js');
+    it('classifies CHANNEL_API_TIMEOUT prefix as channel_api_timeout', async () => {
+      const client = createMockClient({ sendMessage: new Error('CHANNEL_API_TIMEOUT: request timed out after 5000ms') });
+      const { sendMessage } = await import('./client-methods.js');
 
       const result = await sendMessage(client, 'oc_test', 'hi');
 
       expect(result.success).toBe(false);
-      expect(result.errorType).toBe('ipc_timeout');
+      expect(result.errorType).toBe('channel_api_timeout');
     });
 
-    it('defaults to ipc_request_failed for generic errors', async () => {
+    it('defaults to channel_api_request_failed for generic errors', async () => {
       const client = createMockClient({ sendMessage: new Error('unexpected payload shape') });
-      const { sendMessage } = await import('./ipc-client-facade.js');
+      const { sendMessage } = await import('./client-methods.js');
 
       const result = await sendMessage(client, 'oc_test', 'hi');
 
       expect(result.success).toBe(false);
-      expect(result.errorType).toBe('ipc_request_failed');
+      expect(result.errorType).toBe('channel_api_request_failed');
     });
   });
 });

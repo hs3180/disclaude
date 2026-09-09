@@ -27,13 +27,13 @@ vi.mock('@disclaude/core', () => ({
   pushToAgent: (_client: unknown, ...rest: unknown[]) => mockPushToAgent(...rest),
 }));
 
-// Mock ipc-utils
-const mockIsIpcAvailable = vi.fn().mockResolvedValue(true);
-vi.mock('./ipc-utils.js', () => ({
-  isIpcAvailable: () => mockIsIpcAvailable(),
-  getIpcErrorMessage: vi.fn((_type, err) => `Error: ${err}`),
+// Mock channel-api-utils
+const mockIsChannelApiAvailable = vi.fn().mockResolvedValue(true);
+vi.mock('./channel-api-utils.js', () => ({
+  isChannelApiAvailable: () => mockIsChannelApiAvailable(),
+  getChannelApiErrorMessage: vi.fn((_type, err) => `Error: ${err}`),
   // Issue #4280 (Phase 3, part 3): REST client factory — returns the shared mock.
-  getRestIpcClient: () => ({
+  getChannelApiClient: () => ({
     pushToAgent: mockPushToAgent,
     connect: mockConnect,
     isConnected: mockIsConnected,
@@ -46,8 +46,8 @@ import { push_to_agent } from './push-to-agent.js';
 describe('push_to_agent', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Reset IPC availability mock to return true by default
-    mockIsIpcAvailable.mockResolvedValue(true);
+    // Reset REST API availability mock to return true by default
+    mockIsChannelApiAvailable.mockResolvedValue(true);
   });
 
   afterEach(() => {
@@ -89,11 +89,11 @@ describe('push_to_agent', () => {
     expect(mockPushToAgent).not.toHaveBeenCalled();
   });
 
-  it('should return error when IPC fails', async () => {
+  it('should return error when REST API fails', async () => {
     mockPushToAgent.mockResolvedValue({
       success: false,
       error: 'Router not initialized',
-      errorType: 'ipc_request_failed',
+      errorType: 'channel_api_request_failed',
     });
 
     const result = await push_to_agent({

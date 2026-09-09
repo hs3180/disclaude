@@ -8,12 +8,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Issue #4129: sendMessage is now a standalone function exported from @disclaude/core.
 // Production calls sendMessage(client, ...). Mock it to drop the client arg and delegate
 // to the same spy as the legacy client.sendMessage(...) instance method so existing
-// test assertions (mockIpcClient.sendMessage) keep working unchanged.
-const { mockIpcClient, mockSendMessage, mockGetRestIpcClient } = vi.hoisted(() => {
+// test assertions (mockChannelApiClient.sendMessage) keep working unchanged.
+const { mockChannelApiClient, mockSendMessage, mockGetChannelApiClient } = vi.hoisted(() => {
   const mockSendMessage = vi.fn();
-  const mockIpcClient = { sendMessage: mockSendMessage };
-  const mockGetRestIpcClient = vi.fn().mockReturnValue(mockIpcClient);
-  return { mockIpcClient, mockSendMessage, mockGetRestIpcClient };
+  const mockChannelApiClient = { sendMessage: mockSendMessage };
+  const mockGetChannelApiClient = vi.fn().mockReturnValue(mockChannelApiClient);
+  return { mockChannelApiClient, mockSendMessage, mockGetChannelApiClient };
 });
 
 vi.mock('@disclaude/core', () => ({
@@ -26,17 +26,17 @@ vi.mock('@disclaude/core', () => ({
   sendMessage: (...args: unknown[]) => mockSendMessage(...args.slice(1)),
 }));
 
-vi.mock('./ipc-utils.js', () => ({
+vi.mock('./channel-api-utils.js', () => ({
   // Issue #4280 (Phase 3, part 3): tools construct the REST client via this
-  // factory — mock it to return the shared mockIpcClient.
-  getRestIpcClient: () => mockGetRestIpcClient(),
-  isIpcAvailable: vi.fn(),
+  // factory — mock it to return the shared mockChannelApiClient.
+  getChannelApiClient: () => mockGetChannelApiClient(),
+  isChannelApiAvailable: vi.fn(),
   // Issue #4576: deterministic stub — the unavailable-branch tests assert the
   // fallback hint (thread-preserving +messages-reply) is appended.
-  buildIpcFallbackHint: (parentMessageId?: string) =>
+  buildChannelApiFallbackHint: (parentMessageId?: string) =>
     `HINT:lark-cli im +messages-reply --message-id ${parentMessageId ?? '<om_...>'}`,
-  getIpcErrorMessage: vi.fn((type?: string, originalError?: string) => {
-    if (type === 'ipc_unavailable') {return '❌ IPC 服务不可用。';}
+  getChannelApiErrorMessage: vi.fn((type?: string, originalError?: string) => {
+    if (type === 'channel_api_unavailable') {return '❌ REST API 服务不可用。';}
     return `❌ 操作失败: ${originalError ?? '未知错误'}`;
   }),
 }));
@@ -48,14 +48,14 @@ vi.mock('./callback-manager.js', () => ({
 }));
 
 import { send_text } from './send-message.js';
-import { isIpcAvailable } from './ipc-utils.js';
+import { isChannelApiAvailable } from './channel-api-utils.js';
 import { invokeMessageSentCallback } from './callback-manager.js';
 
 describe('send_text', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGetRestIpcClient.mockReturnValue(mockIpcClient);
-    vi.mocked(isIpcAvailable).mockResolvedValue(true);
+    mockGetChannelApiClient.mockReturnValue(mockChannelApiClient);
+    vi.mocked(isChannelApiAvailable).mockResolvedValue(true);
   });
 
   describe('parameter validation', () => {
@@ -72,16 +72,16 @@ describe('send_text', () => {
     });
   });
 
-  describe('IPC availability', () => {
-    it('should return error when IPC is unavailable', async () => {
-      vi.mocked(isIpcAvailable).mockResolvedValue(false);
+  describe('REST API availability', () => {
+    it('should return error when REST API is unavailable', async () => {
+      vi.mocked(isChannelApiAvailable).mockResolvedValue(false);
       const result = await send_text({ text: 'hello', chatId: 'oc_test' });
       expect(result.success).toBe(false);
-      expect(result.message).toContain('IPC');
+      expect(result.message).toContain('REST API');
     });
 
     it('should append the thread-preserving lark-cli fallback hint (Issue #4576)', async () => {
-      vi.mocked(isIpcAvailable).mockResolvedValue(false);
+      vi.mocked(isChannelApiAvailable).mockResolvedValue(false);
       const result = await send_text({
         text: 'hello',
         chatId: 'oc_test',
@@ -94,29 +94,29 @@ describe('send_text', () => {
 
   describe('successful send', () => {
     it('should send text message successfully', async () => {
-      mockIpcClient.sendMessage.mockResolvedValue({ success: true, messageId: 'msg_123' });
+      mockChannelApiClient.sendMessage.mockResolvedValue({ success: true, messageId: 'msg_123' });
       const result = await send_text({ text: 'hello world', chatId: 'oc_test' });
       expect(result.success).toBe(true);
       expect(result.message).toContain('sent');
       expect(invokeMessageSentCallback).toHaveBeenCalledWith('oc_test');
     });
 
-    it('should pass parentMessageId to IPC', async () => {
-      mockIpcClient.sendMessage.mockResolvedValue({ success: true, messageId: 'msg_123' });
+    it('should pass parentMessageId to REST API', async () => {
+      mockChannelApiClient.sendMessage.mockResolvedValue({ success: true, messageId: 'msg_123' });
       await send_text({ text: 'reply', chatId: 'oc_test', parentMessageId: 'parent_456' });
-      expect(mockIpcClient.sendMessage).toHaveBeenCalledWith('oc_test', 'reply', 'parent_456', undefined);
+      expect(mockChannelApiClient.sendMessage).toHaveBeenCalledWith('oc_test', 'reply', 'parent_456', undefined);
     });
 
     it('should not pass parentMessageId when undefined', async () => {
-      mockIpcClient.sendMessage.mockResolvedValue({ success: true, messageId: 'msg_123' });
+      mockChannelApiClient.sendMessage.mockResolvedValue({ success: true, messageId: 'msg_123' });
       await send_text({ text: 'hello', chatId: 'oc_test' });
-      expect(mockIpcClient.sendMessage).toHaveBeenCalledWith('oc_test', 'hello', undefined, undefined);
+      expect(mockChannelApiClient.sendMessage).toHaveBeenCalledWith('oc_test', 'hello', undefined, undefined);
     });
   });
 
-  describe('IPC failure', () => {
-    it('should return error when IPC send fails', async () => {
-      mockIpcClient.sendMessage.mockResolvedValue({ success: false, error: 'Connection lost', errorType: 'ipc_request_failed' });
+  describe('REST API failure', () => {
+    it('should return error when REST API send fails', async () => {
+      mockChannelApiClient.sendMessage.mockResolvedValue({ success: false, error: 'Connection lost', errorType: 'channel_api_request_failed' });
       const result = await send_text({ text: 'hello', chatId: 'oc_test' });
       expect(result.success).toBe(false);
       expect(result.error).toContain('Connection lost');
@@ -125,7 +125,7 @@ describe('send_text', () => {
 
   describe('error handling', () => {
     it('should catch unexpected errors and return error result', async () => {
-      mockGetRestIpcClient.mockImplementation(() => { throw new Error('Unexpected error'); });
+      mockGetChannelApiClient.mockImplementation(() => { throw new Error('Unexpected error'); });
       const result = await send_text({ text: 'hello', chatId: 'oc_test' });
       expect(result.success).toBe(false);
       expect(result.message).toContain('Unexpected error');
@@ -133,7 +133,7 @@ describe('send_text', () => {
 
     it('should handle non-Error objects in catch', async () => {
       // eslint-disable-next-line no-throw-literal
-      mockGetRestIpcClient.mockImplementation(() => { throw 'string error'; });
+      mockGetChannelApiClient.mockImplementation(() => { throw 'string error'; });
       const result = await send_text({ text: 'hello', chatId: 'oc_test' });
       expect(result.success).toBe(false);
       expect(result.message).toContain('Unknown error');

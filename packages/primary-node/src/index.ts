@@ -7,7 +7,7 @@
  * - Channels (Feishu, REST, Ruliu)
  * - PrimaryNode implementation
  * - Platform adapters
- * - IPC server
+ * - REST API server
  * - Agent factory and ChatAgent (Issue #2717)
  *
  * @see Issue #1040 - Separate Primary Node code to @disclaude/primary-node
@@ -50,17 +50,16 @@ export { DEFAULT_CHANNEL_CAPABILITIES, createLogger } from '@disclaude/core';
 // Channel base class
 export { BaseChannel } from '@disclaude/core';
 
-// IPC module (Issue #4168 Phase 3: REST-only — handler contracts + protocol
-// types survive; the Unix-socket transport exports are gone)
+// Channel API handler and payload contracts
 export {
   type ChannelApiHandlers,
   type ChannelHandlersContainer,
   type FeishuApiHandlers,
   type FeishuHandlersContainer,
-  type IpcRequestType,
-  type IpcRequestPayloads,
-  type IpcResponsePayloads,
-} from './ipc/index.js';
+  type ChannelApiRequestType,
+  type ChannelApiRequestPayloads,
+  type ChannelApiResponsePayloads,
+} from './channel-api/index.js';
 
 // Note: ChannelManager is now internal to PrimaryNode (Issue #1594).
 // Access it via primaryNode.getChannelManager() instead of direct import.

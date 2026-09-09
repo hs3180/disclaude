@@ -55,10 +55,10 @@ export interface IPrimaryNodeForSetup {
   };
   registerFeishuHandlers(handlers: FeishuApiHandlers): void;
   /**
-   * Register channel API handlers for IPC routing.
-   * Issue #3814: Generalized handler registration for multi-channel IPC.
+   * Register channel API handlers for REST API routing.
+   * Issue #3814: Generalized handler registration for multi-channel REST API.
    * @param channelType - Channel type identifier (e.g., 'feishu', 'wechat')
-   * @param handlers - Channel API handlers for IPC dispatch
+   * @param handlers - Channel API handlers for REST API dispatch
    * @param channel - Channel instance for chatId ownership resolution
    */
   registerChannelHandlers(channelType: string, handlers: ChannelApiHandlers, channel: IChannel): void;
@@ -121,7 +121,7 @@ export interface WiredContext extends ChannelSetupContext {
  * this includes hooks for:
  * - Creating ChatAgentCallbacks (wraps channel.sendMessage into agent interface)
  * - Creating message handlers (processes incoming messages through agentPool)
- * - Post-registration setup (passive mode, IPC handlers, etc.)
+ * - Post-registration setup (passive mode, REST API handlers, etc.)
  */
 export interface WiredChannelDescriptor<TConfig extends ChannelConfig = ChannelConfig>
   extends ChannelDescriptor<TConfig> {
@@ -152,7 +152,7 @@ export interface WiredChannelDescriptor<TConfig extends ChannelConfig = ChannelC
    * but before the channel starts. Use for:
    * - Setting up passive mode adapters
    * - Configuring action prompt resolvers
-   * - Registering IPC handlers
+   * - Registering REST API handlers
    */
   setup?: (
     channel: IChannel,

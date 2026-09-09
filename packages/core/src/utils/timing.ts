@@ -21,7 +21,7 @@ import type { Logger } from 'pino';
  * 3. **Failure** (ok: false) — includes error message + elapsed time
  *
  * @param logger - Pino Logger instance to write structured logs
- * @param label - Human-readable label (e.g. 'mcp:send_text', 'ipc:handleRequest')
+ * @param label - Human-readable label (e.g. 'mcp:send_text', 'channel-api:handleRequest')
  * @param chatId - Optional chatId for correlation across subsystems
  * @param fn - Async function to time
  * @returns The return value of `fn`, or re-throws its error

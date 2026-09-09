@@ -8,11 +8,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Issue #4129: sendCard is now a standalone function exported from @disclaude/core.
 // Production calls sendCard(client, ...). Mock it to drop the client arg and delegate
 // to the same spy as the legacy client.sendCard(...) instance method.
-const { mockIpcClient, mockSendCard, mockGetRestIpcClient } = vi.hoisted(() => {
+const { mockChannelApiClient, mockSendCard, mockGetChannelApiClient } = vi.hoisted(() => {
   const mockSendCard = vi.fn();
-  const mockIpcClient = { sendCard: mockSendCard };
-  const mockGetRestIpcClient = vi.fn().mockReturnValue(mockIpcClient);
-  return { mockIpcClient, mockSendCard, mockGetRestIpcClient };
+  const mockChannelApiClient = { sendCard: mockSendCard };
+  const mockGetChannelApiClient = vi.fn().mockReturnValue(mockChannelApiClient);
+  return { mockChannelApiClient, mockSendCard, mockGetChannelApiClient };
 });
 
 vi.mock('@disclaude/core', () => ({
@@ -30,16 +30,16 @@ vi.mock('../utils/card-validator.js', () => ({
   getCardValidationError: vi.fn((_card: unknown) => 'Invalid card structure'),
 }));
 
-vi.mock('./ipc-utils.js', () => ({
+vi.mock('./channel-api-utils.js', () => ({
   // Issue #4280 (Phase 3, part 3): REST client factory — returns the shared mock.
-  getRestIpcClient: () => mockGetRestIpcClient(),
-  isIpcAvailable: vi.fn(),
+  getChannelApiClient: () => mockGetChannelApiClient(),
+  isChannelApiAvailable: vi.fn(),
   // Issue #4576: deterministic stub — the unavailable-branch tests assert the
   // fallback hint (thread-preserving +messages-reply) is appended.
-  buildIpcFallbackHint: (parentMessageId?: string) =>
+  buildChannelApiFallbackHint: (parentMessageId?: string) =>
     `HINT:lark-cli im +messages-reply --message-id ${parentMessageId ?? '<om_...>'}`,
-  getIpcErrorMessage: vi.fn((type?: string, originalError?: string) => {
-    if (type === 'ipc_unavailable') {return '❌ IPC 服务不可用。';}
+  getChannelApiErrorMessage: vi.fn((type?: string, originalError?: string) => {
+    if (type === 'channel_api_unavailable') {return '❌ REST API 服务不可用。';}
     return `❌ 操作失败: ${originalError ?? '未知错误'}`;
   }),
 }));
@@ -49,7 +49,7 @@ vi.mock('./callback-manager.js', () => ({
 }));
 
 import { send_card } from './send-card.js';
-import { isIpcAvailable } from './ipc-utils.js';
+import { isChannelApiAvailable } from './channel-api-utils.js';
 import { isValidFeishuCard } from '../utils/card-validator.js';
 import { invokeMessageSentCallback } from './callback-manager.js';
 
@@ -62,8 +62,8 @@ const validCard = {
 describe('send_card', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGetRestIpcClient.mockReturnValue(mockIpcClient);
-    vi.mocked(isIpcAvailable).mockResolvedValue(true);
+    mockGetChannelApiClient.mockReturnValue(mockChannelApiClient);
+    vi.mocked(isChannelApiAvailable).mockResolvedValue(true);
     vi.mocked(isValidFeishuCard).mockReturnValue(true);
   });
 
@@ -90,16 +90,16 @@ describe('send_card', () => {
     });
   });
 
-  describe('IPC availability', () => {
-    it('should return error when IPC is unavailable', async () => {
-      vi.mocked(isIpcAvailable).mockResolvedValue(false);
+  describe('REST API availability', () => {
+    it('should return error when REST API is unavailable', async () => {
+      vi.mocked(isChannelApiAvailable).mockResolvedValue(false);
       const result = await send_card({ card: validCard, chatId: 'oc_test' });
       expect(result.success).toBe(false);
-      expect(result.message).toContain('IPC');
+      expect(result.message).toContain('REST API');
     });
 
     it('should append the thread-preserving lark-cli fallback hint (Issue #4576)', async () => {
-      vi.mocked(isIpcAvailable).mockResolvedValue(false);
+      vi.mocked(isChannelApiAvailable).mockResolvedValue(false);
       const result = await send_card({
         card: validCard,
         chatId: 'oc_test',
@@ -112,25 +112,25 @@ describe('send_card', () => {
 
   describe('successful send', () => {
     it('should send card message successfully', async () => {
-      mockIpcClient.sendCard.mockResolvedValue({ success: true, messageId: 'msg_123' });
+      mockChannelApiClient.sendCard.mockResolvedValue({ success: true, messageId: 'msg_123' });
       const result = await send_card({ card: validCard, chatId: 'oc_test' });
       expect(result.success).toBe(true);
       expect(result.message).toContain('sent');
       expect(invokeMessageSentCallback).toHaveBeenCalledWith('oc_test');
     });
 
-    it('should pass parentMessageId to IPC', async () => {
-      mockIpcClient.sendCard.mockResolvedValue({ success: true, messageId: 'msg_123' });
+    it('should pass parentMessageId to REST API', async () => {
+      mockChannelApiClient.sendCard.mockResolvedValue({ success: true, messageId: 'msg_123' });
       await send_card({ card: validCard, chatId: 'oc_test', parentMessageId: 'parent_456' });
-      expect(mockIpcClient.sendCard).toHaveBeenCalledWith(
+      expect(mockChannelApiClient.sendCard).toHaveBeenCalledWith(
         'oc_test', validCard, 'parent_456', undefined
       );
     });
   });
 
-  describe('IPC failure', () => {
-    it('should return error when IPC send fails', async () => {
-      mockIpcClient.sendCard.mockResolvedValue({ success: false, error: 'Send failed', errorType: 'ipc_request_failed' });
+  describe('REST API failure', () => {
+    it('should return error when REST API send fails', async () => {
+      mockChannelApiClient.sendCard.mockResolvedValue({ success: false, error: 'Send failed', errorType: 'channel_api_request_failed' });
       const result = await send_card({ card: validCard, chatId: 'oc_test' });
       expect(result.success).toBe(false);
       expect(result.error).toContain('Send failed');
@@ -139,7 +139,7 @@ describe('send_card', () => {
 
   describe('error handling', () => {
     it('should catch unexpected errors and return error result', async () => {
-      mockGetRestIpcClient.mockImplementation(() => { throw new Error('Unexpected'); });
+      mockGetChannelApiClient.mockImplementation(() => { throw new Error('Unexpected'); });
       const result = await send_card({ card: validCard, chatId: 'oc_test' });
       expect(result.success).toBe(false);
       expect(result.message).toContain('Unexpected');

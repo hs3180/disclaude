@@ -10,9 +10,9 @@ export type {
 } from './tools/types.js';
 
 export {
-  getIpcErrorMessage,
-  buildIpcFallbackHint,
-  isIpcAvailable,
+  getChannelApiErrorMessage,
+  buildChannelApiFallbackHint,
+  isChannelApiAvailable,
   setMessageSentCallback,
   getMessageSentCallback,
   invokeMessageSentCallback,

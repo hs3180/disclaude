@@ -5,7 +5,7 @@
  * must NOT set the DISCLAUDE_WORKER_IPC_SOCKET env var, must NOT write the
  * IPC socket-path discovery file, and stop() must NOT touch either. MCP
  * tools and push-cli reach PrimaryNode exclusively over the REST API
- * (--api-port / DISCLAUDE_REST_IPC_BASE_URL).
+ * (--api-port / DISCLAUDE_API_BASE_URL).
  *
  * These tests pin that removal: any regression that reintroduces the IPC
  * server into start() (e.g. re-adding startIpcServer()) fails here even
