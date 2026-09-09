@@ -411,6 +411,18 @@ export class PrimaryAgentPool {
     return false;
   }
 
+  steer(chatId: string, _prompt: string, threadRootId?: string):
+    { ok: true; message: string } | { ok: false; error: string } {
+    const agent = this.agents.get(this.sessionKeyOf(chatId, threadRootId));
+    if (!agent?.isBusy) {
+      return { ok: false, error: 'No active turn to steer. Send the message normally to start or queue a turn.' };
+    }
+    return {
+      ok: false,
+      error: 'Immediate steer is not supported by the current `codex exec` transport. The instruction was not queued or applied. Send it as a normal message to queue it, or use `/stop` and then follow up.',
+    };
+  }
+
   /**
    * Dispose all agents and clear the pool.
    */

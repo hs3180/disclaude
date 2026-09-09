@@ -838,6 +838,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       return;
     }
 
+    // S03: a message arriving during a live turn is ordinary queued input,
+    // never an implicit stop/steer. Acknowledge that boundary before pushing
+    // it into the existing serial channel; notification failure must not drop
+    // the user's queued message.
+    const queuedBehindActiveTurn = this.isBusy;
+
     this.logger.info(
       {
         chatId,
@@ -974,6 +980,18 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             );
           });
         return;
+      }
+      if (queuedBehindActiveTurn) {
+        void this.callbacks.sendMessage(
+          chatId,
+          '⏳ 当前回合仍在执行；这条消息已排队，将在当前回合结束后处理。使用 `/stop` 可停止当前回合；`/steer` 会报告后端的即时纠偏能力。',
+          threadRootId
+        ).catch((error) => {
+          this.logger.warn(
+            { err: error, chatId, messageId },
+            'Failed to send queued-message notice'
+          );
+        });
       }
     } else {
       this.logger.error({ chatId, messageId }, 'No channel found after session creation');

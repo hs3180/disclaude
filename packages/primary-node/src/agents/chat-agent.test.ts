@@ -289,6 +289,26 @@ describe('ChatAgent (primary-node)', () => {
       });
       expect(chatAgent.hasActiveSession()).toBe(true);
     });
+
+    it('acknowledges ordinary input queued behind an active turn', async () => {
+      const push = vi.fn().mockReturnValue(true);
+      (chatAgent as any).channel = { push, close: vi.fn() };
+      (chatAgent as any).isSessionActive = true;
+      (chatAgent as any).isProcessingMessage = true;
+
+      await chatAgent.processMessage({
+        chatId: 'oc_test_chat',
+        payload: 'follow-up',
+        messageId: 'msg_queued',
+      });
+
+      expect(push).toHaveBeenCalledTimes(1);
+      expect(callbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_test_chat',
+        expect.stringContaining('已排队'),
+        undefined
+      );
+    });
   });
 
   describe('runOnce', () => {
