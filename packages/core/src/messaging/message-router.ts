@@ -31,6 +31,7 @@ const defaultLogger = createLogger('InputMessageRouter');
  * Issue #3779: Convert positional parameters to options objects for type safety.
  */
 export interface UserMessageParams {
+  agentSession?: Message['agentSession'];
   /** Target chat ID */
   chatId: string;
   /** Message text / prompt */
@@ -84,7 +85,7 @@ export interface IAgentMessageHandler {
     chatId: string,
     payload: string,
     messageId: string,
-    options?: { waitForCompletion?: boolean; scheduleSession?: SystemMessage['scheduleSession'] }
+    options?: { waitForCompletion?: boolean; agentSession?: Message['agentSession'] }
   ): Promise<void>;
 }
 
@@ -208,6 +209,7 @@ export class MessageRouter {
       chatType: message.chatType,
       threadContext: message.threadContext,
       threadRootId: message.threadRootId,
+      ...(message.agentSession ? { agentSession: message.agentSession } : {}),
     });
   }
 
@@ -216,7 +218,7 @@ export class MessageRouter {
       message.chatId,
       message.payload,
       message.id,
-      { waitForCompletion: message.waitForCompletion, ...(message.scheduleSession ? { scheduleSession: message.scheduleSession } : {}) }
+      { waitForCompletion: message.waitForCompletion, ...(message.agentSession ? { agentSession: message.agentSession } : {}) }
     );
   }
 }

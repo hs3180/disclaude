@@ -535,7 +535,7 @@ describe('Scheduler', () => {
       }, { timeout: 2000 });
 
       expect(mockCallbacks.resetAgent).not.toHaveBeenCalled();
-      expect(getRoutedMessage().scheduleSession).toMatchObject({ freshSession: true, skipHistory: true });
+      expect(getRoutedMessage().agentSession).toMatchObject({ releaseAfterTurn: true, skipHistory: true });
     });
 
     it('should NOT call resetAgent when clearContext is unset (#4206)', async () => {
@@ -549,7 +549,7 @@ describe('Scheduler', () => {
       }, { timeout: 2000 });
 
       expect(mockCallbacks.resetAgent).not.toHaveBeenCalled();
-      expect(getRoutedMessage().scheduleSession).toMatchObject({ freshSession: true, skipHistory: false });
+      expect(getRoutedMessage().agentSession).toMatchObject({ releaseAfterTurn: true, skipHistory: false });
     });
 
     it('retains blocking ownership after wait timeout until the isolated turn actually settles', async () => {
@@ -608,12 +608,11 @@ describe('Scheduler', () => {
       expect(mockCallbacks.resetAgent).not.toHaveBeenCalled();
     });
 
-    it('should construct SystemMessage with model and modelTier', async () => {
+    it('should construct SystemMessage with an explicit model', async () => {
       const task = createTask({
         id: 'exec-2',
         createdBy: 'user-123',
         model: 'claude-sonnet-4',
-        modelTier: 'low',
       });
       scheduler.addTask(task);
 
@@ -627,7 +626,7 @@ describe('Scheduler', () => {
       expect(routedMessage.data!.taskId).toBe('exec-2');
       expect(routedMessage.data!.createdBy).toBe('user-123');
       expect(routedMessage.data!.model).toBe('claude-sonnet-4');
-      expect(routedMessage.modelTier).toBe('low');
+      expect(routedMessage.agentSession?.model).toBe('claude-sonnet-4');
     });
 
     it('should send error message when router fails', async () => {

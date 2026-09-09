@@ -85,29 +85,29 @@ describe('PrimaryAgentPool', () => {
     const pool = new PrimaryAgentPool();
     const callbacks = createMockCallbacks();
     const user = pool.getOrCreateChatAgent('chat-1', callbacks);
-    const a = pool.createScheduledAgent('chat-1', callbacks, 'tick-a', { skipHistory: false, model: 'task-model' });
-    const b = pool.createScheduledAgent('chat-1', callbacks, 'tick-b', { skipHistory: true });
+    const a = pool.getOrCreateChatAgent('chat-1', callbacks, undefined, { id: 'execution:tick-a', releaseAfterTurn: true, skipHistory: false, model: 'task-model' });
+    const b = pool.getOrCreateChatAgent('chat-1', callbacks, undefined, { id: 'execution:tick-b', releaseAfterTurn: true, skipHistory: true });
     expect(a).not.toBe(b);
     expect(a).not.toBe(user);
     expect(pool.get('chat-1')).toBe(user);
-    expect(AgentFactory.createChatAgent).toHaveBeenCalledWith('pilot', 'chat-1', callbacks, expect.objectContaining({ sdkSessionKey: 'chat-1::schedule:tick-a', skipHistory: false, model: 'task-model' }));
-    expect(AgentFactory.createChatAgent).toHaveBeenCalledWith('pilot', 'chat-1', callbacks, expect.objectContaining({ sdkSessionKey: 'chat-1::schedule:tick-b', skipHistory: true }));
-    expect(() => pool.createScheduledAgent('chat-1', callbacks, 'tick-a', { skipHistory: false })).toThrow('already owns');
-    pool.releaseScheduledAgent('chat-1', 'tick-b', b);
+    expect(AgentFactory.createChatAgent).toHaveBeenCalledWith('pilot', 'chat-1', callbacks, expect.objectContaining({ sdkSessionKey: 'chat-1::execution:tick-a', skipHistory: false, model: 'task-model' }));
+    expect(AgentFactory.createChatAgent).toHaveBeenCalledWith('pilot', 'chat-1', callbacks, expect.objectContaining({ sdkSessionKey: 'chat-1::execution:tick-b', skipHistory: true }));
+    expect(() => pool.getOrCreateChatAgent('chat-1', callbacks, undefined, { id: 'execution:tick-a', releaseAfterTurn: true, skipHistory: false })).toThrow('already owns');
+    pool.releaseChatAgent('chat-1', 'execution:tick-b', b);
     expect(b.reset).toHaveBeenCalledOnce();
     expect(b.dispose).toHaveBeenCalledOnce();
     expect(user.dispose).not.toHaveBeenCalled();
     expect(a.dispose).not.toHaveBeenCalled();
-    pool.releaseScheduledAgent('chat-1', 'tick-a', a);
-    pool.releaseScheduledAgent('chat-1', 'tick-a', a);
+    pool.releaseChatAgent('chat-1', 'execution:tick-a', a);
+    pool.releaseChatAgent('chat-1', 'execution:tick-a', a);
     expect(a.dispose).toHaveBeenCalledOnce();
     expect(pool.get('chat-1')).toBe(user);
     pool.disposeAll();
   });
 
-  it('rejects invalid scheduled model tiers before creating an agent', () => {
+  it('rejects an empty temporary scope before creating an agent', () => {
     const pool = new PrimaryAgentPool();
-    expect(() => pool.createScheduledAgent('chat-1', createMockCallbacks(), 'tick', { skipHistory: false, modelTier: 'invalid' })).toThrow('Invalid scheduled model tier');
+    expect(() => pool.getOrCreateChatAgent('chat-1', createMockCallbacks(), undefined, { id: '' })).toThrow('nonempty');
     pool.disposeAll();
   });
   beforeEach(() => {
@@ -132,7 +132,7 @@ describe('PrimaryAgentPool', () => {
         'pilot',
         'chat-1',
         callbacks,
-        { messageBuilderOptions: undefined, cwdProvider: undefined, cwdResolver: undefined, skipHistory: false },
+        { messageBuilderOptions: undefined, cwdProvider: undefined, cwdResolver: undefined, skipHistory: false, sdkSessionKey: 'chat-1' },
       );
     });
 
@@ -169,7 +169,7 @@ describe('PrimaryAgentPool', () => {
         'pilot',
         'chat-opts',
         callbacks,
-        { messageBuilderOptions, cwdProvider: undefined, cwdResolver: undefined, skipHistory: false },
+        { messageBuilderOptions, cwdProvider: undefined, cwdResolver: undefined, skipHistory: false, sdkSessionKey: 'chat-opts' },
       );
     });
 
@@ -184,7 +184,7 @@ describe('PrimaryAgentPool', () => {
         'pilot',
         'chat-cwd',
         callbacks,
-        { messageBuilderOptions: undefined, cwdProvider, cwdResolver: undefined, skipHistory: false },
+        { messageBuilderOptions: undefined, cwdProvider, cwdResolver: undefined, skipHistory: false, sdkSessionKey: 'chat-cwd' },
       );
     });
 
@@ -200,7 +200,7 @@ describe('PrimaryAgentPool', () => {
         'pilot',
         'chat-both',
         callbacks,
-        { messageBuilderOptions, cwdProvider, cwdResolver: undefined, skipHistory: false },
+        { messageBuilderOptions, cwdProvider, cwdResolver: undefined, skipHistory: false, sdkSessionKey: 'chat-both' },
       );
     });
 
@@ -223,7 +223,7 @@ describe('PrimaryAgentPool', () => {
         'pilot',
         'chat-resolver',
         callbacks,
-        { messageBuilderOptions: undefined, cwdProvider, cwdResolver, skipHistory: false },
+        { messageBuilderOptions: undefined, cwdProvider, cwdResolver, skipHistory: false, sdkSessionKey: 'chat-resolver' },
       );
     });
 
@@ -338,7 +338,7 @@ describe('PrimaryAgentPool', () => {
         'pilot',
         'chat-skip',
         callbacks,
-        { messageBuilderOptions: undefined, cwdProvider: undefined, skipHistory: true },
+        { messageBuilderOptions: undefined, cwdProvider: undefined, skipHistory: true, sdkSessionKey: 'chat-skip' },
       );
     });
 
@@ -358,7 +358,7 @@ describe('PrimaryAgentPool', () => {
         'pilot',
         'chat-stale',
         callbacks,
-        { messageBuilderOptions: undefined, cwdProvider: undefined, cwdResolver: undefined, skipHistory: false },
+        { messageBuilderOptions: undefined, cwdProvider: undefined, cwdResolver: undefined, skipHistory: false, sdkSessionKey: 'chat-stale' },
       );
     });
 
@@ -390,7 +390,7 @@ describe('PrimaryAgentPool', () => {
       expect(forgotten).toEqual(['chat-gone']);
     });
 
-    it('forgets with the plain chatId on a THREAD reset too — matching the SDK sessionKey wiring (#4644)', () => {
+    it('forgets the same scoped SDK key on a thread reset', () => {
       const forgotten: string[] = [];
       const pool = new PrimaryAgentPool({
         forgetProviderSession: (chatId) => forgotten.push(chatId),
@@ -402,7 +402,7 @@ describe('PrimaryAgentPool', () => {
 
       // Pool slot key is chat-t::om_root, but the codex stash is keyed by the
       // plain chatId the stream registered with — the forget must use that.
-      expect(forgotten).toEqual(['chat-t']);
+      expect(forgotten).toEqual(['chat-t::om_root']);
     });
   });
 
@@ -1008,7 +1008,7 @@ describe('PrimaryAgentPool', () => {
         'pilot',
         'oc_topic',
         callbacks,
-        { messageBuilderOptions: undefined, cwdProvider: undefined, cwdResolver: undefined, skipHistory: false },
+        { messageBuilderOptions: undefined, cwdProvider: undefined, cwdResolver: undefined, skipHistory: false, sdkSessionKey: 'oc_topic::om_threadA' },
       );
       // And it is still retrievable only via the thread key...
       expect(pool.get('oc_topic', 'om_threadA')).toBeDefined();

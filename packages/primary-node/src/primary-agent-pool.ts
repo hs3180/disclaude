@@ -11,7 +11,7 @@
  * @see Issue #1040 - Separate Primary Node code to @disclaude/primary-node
  */
 
-import { type MessageBuilderOptions, type CwdProvider, type CwdResolution, type ModelTier, buildSessionKey, chatIdOfSessionKey, createLogger, getProvider } from '@disclaude/core';
+import { type MessageBuilderOptions, type CwdProvider, type CwdResolution, type AgentSessionOptions, buildSessionKey, chatIdOfSessionKey, createLogger, getProvider } from '@disclaude/core';
 import { AgentFactory } from './agents/factory.js';
 import type { ChatAgentCallbacks } from './agents/types.js';
 import type { ChatAgent } from './agents/chat-agent.js';
@@ -166,48 +166,13 @@ export interface AgentPoolStats {
  * existing sessions are unaffected until a thread message starts a new one.
  */
 export class PrimaryAgentPool {
-  private readonly scheduledAgents = new Map<string, ChatAgent>();
-  /** Create an execution-owned pool slot without replacing the chat's live agent. */
-  createScheduledAgent(chatId: string, callbacks: ChatAgentCallbacks, executionId: string, options: { skipHistory: boolean; model?: string; modelTier?: string }): ChatAgent {
-    if (options.modelTier && !['high', 'low', 'multimodal'].includes(options.modelTier)) {
-      throw new Error(`Invalid scheduled model tier: ${options.modelTier}`);
-    }
-    const key = this.sessionKeyOf(chatId, `schedule:${executionId}`);
-    if (this.scheduledAgents.has(key)) {
-      throw new Error('Scheduled execution already owns an agent');
-    }
-    const agent = AgentFactory.createChatAgent('pilot', chatId, callbacks, {
-      messageBuilderOptions: this.options.messageBuilderOptions,
-      cwdProvider: this.options.cwdProvider,
-      cwdResolver: this.options.cwdResolver,
-      skipHistory: options.skipHistory,
-      model: options.model,
-      modelTier: options.modelTier as ModelTier | undefined,
-      sdkSessionKey: key,
-    });
-    this.agents.set(key, agent);
-    this.scheduledAgents.set(key, agent);
-    this.lastUsedAt.set(key, Date.now());
-    this.peakActive = Math.max(this.peakActive, this.agents.size);
-    return agent;
+  /** Release a completed temporary scope only if it still owns the pool slot. */
+  releaseChatAgent(chatId: string, sessionId: string, agent: ChatAgent): void {
+    const key = this.sessionKeyOf(chatId, sessionId);
+    if (this.agents.get(key) !== agent) { return; }
+    try { agent.reset(); } finally { this.reset(chatId, false, sessionId); }
   }
 
-  /** Called after the owned turn settles; timeout of a caller's wait is not settlement. */
-  releaseScheduledAgent(chatId: string, executionId: string, agent: ChatAgent): void {
-    const key = this.sessionKeyOf(chatId, `schedule:${executionId}`);
-    if (this.scheduledAgents.get(key) !== agent) {
-      return;
-    }
-    this.agents.delete(key);
-    this.scheduledAgents.delete(key);
-    this.lastUsedAt.delete(key);
-    this.busySince.delete(key);
-    const stoppedFor = agent.turnStartedAtMs;
-    if (typeof stoppedFor === 'number' && stoppedFor > 0) {
-      this.busyTurnStoppedFor.delete(busyTurnGuardKey(key, stoppedFor));
-    }
-    try { agent.reset(); } finally { agent.dispose(); }
-  }
   /** Keyed by buildSessionKey(chatId, threadRootId) — see class doc (Issue #4587 part 2). */
   private readonly agents = new Map<string, ChatAgent>();
   private readonly options: PrimaryAgentPoolOptions;
@@ -334,17 +299,26 @@ export class PrimaryAgentPool {
   getOrCreateChatAgent(
     chatId: string,
     callbacks: ChatAgentCallbacks,
-    threadRootId?: string
+    threadRootId?: string,
+    session?: AgentSessionOptions,
   ): ChatAgent {
-    const sessionKey = this.sessionKeyOf(chatId, threadRootId);
+    if (session && (!session.id.trim() || (threadRootId && threadRootId !== session.id))) {
+      throw new Error('Agent session must have a nonempty, unambiguous scope');
+    }
+    const sessionKey = this.sessionKeyOf(chatId, session?.id ?? threadRootId);
     let agent = this.agents.get(sessionKey);
+    if (agent && session?.releaseAfterTurn) {
+      throw new Error('Temporary session already owns an agent');
+    }
     if (!agent) {
-      const skipHistory = this.skipHistoryChatIds.has(sessionKey);
+      const skipHistory = session?.skipHistory ?? this.skipHistoryChatIds.has(sessionKey);
       agent = AgentFactory.createChatAgent('pilot', chatId, callbacks, {
         messageBuilderOptions: this.options.messageBuilderOptions,
         cwdProvider: this.options.cwdProvider,
         cwdResolver: this.options.cwdResolver,
         skipHistory,
+        ...(session ? { model: session.model } : {}),
+        sdkSessionKey: sessionKey,
       });
       this.agents.set(sessionKey, agent);
       // Issue #3696: clear skip-history flag after agent creation
@@ -417,9 +391,8 @@ export class PrimaryAgentPool {
     // Issue #4644: clear provider-side session state BEFORE the agent lookup —
     // it must fire even when no ChatAgent instance exists (the chat may have
     // been idle-evicted from this pool while its codex stash lived on). Keyed
-    // by the PLAIN chatId, matching what ChatAgent passes as the SDK
-    // sessionKey (S7 wiring) — not this pool's composite thread key.
-    this.forgetProviderSession(chatId);
+    // by the same session key used when constructing the scoped agent.
+    this.forgetProviderSession(sessionKey);
     const agent = this.agents.get(sessionKey);
     if (agent) {
       this.agents.delete(sessionKey);

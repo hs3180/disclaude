@@ -24,7 +24,18 @@ import type { FileRef } from './file.js';
  * All messages share a payload (instruction text) and are differentiated
  * by source and source-specific fields.
  */
+/** Optional session scope shared by user, scheduler, and webhook messages. */
+export interface AgentSessionOptions {
+  /** Pool scope within the delivery chat; omitted messages use the usual chat/thread scope. */
+  id: string;
+  skipHistory?: boolean;
+  model?: string;
+  /** Release this pool slot after the actual message turn settles. */
+  releaseAfterTurn?: boolean;
+}
+
 export interface Message {
+  agentSession?: AgentSessionOptions;
   /** Unique message identifier */
   id: string;
   /** Message source discriminator */
@@ -98,8 +109,6 @@ export interface SystemMessage extends Message {
   data?: Record<string, unknown>;
   /** If true, handler should await agent turn completion (Issue #4063: Loop Runner) */
   waitForCompletion?: boolean;
-  /** Scheduled ticks use an isolated native session by default (#4812). */
-  scheduleSession?: { freshSession: boolean; skipHistory: boolean; model?: string; modelTier?: string };
 }
 
 // ============================================================================

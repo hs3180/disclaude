@@ -615,6 +615,9 @@ ${task.prompt}`;
 
       const freshSession = task.freshSession ?? (task.clearContext === false ? false : true);
       const skipHistory = task.skipHistory ?? task.clearContext === true;
+      if (!freshSession && (skipHistory || task.model)) {
+        throw new Error('History/model overrides require freshSession:true');
+      }
       if ((!freshSession && skipHistory) || (task.clearContext === true && (!freshSession || !skipHistory))) {
         throw new Error('Conflicting schedule context options: skipHistory/clearContext:true require freshSession:true');
       }
@@ -633,8 +636,7 @@ ${task.prompt}`;
           chatId: task.chatId,
           trigger: 'scheduled',
           taskName: task.name,
-          modelTier: task.modelTier,
-          scheduleSession: { freshSession, skipHistory, model: task.model, modelTier: task.modelTier },
+          ...(freshSession ? { agentSession: { id: `execution:${randomUUID()}`, skipHistory, model: task.model, releaseAfterTurn: true } } : {}),
           data: {
             taskId: task.id,
             createdBy: task.createdBy,

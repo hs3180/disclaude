@@ -203,9 +203,9 @@ describe('MessageRouter', () => {
     it('forwards isolated schedule settings to the actual system-message handler', async () => {
       const handler = createMockHandler();
       const router = new MessageRouter({ handler });
-      const message = createSystemMessage({ scheduleSession: { freshSession: true, skipHistory: false, model: 'task-model' }, waitForCompletion: true });
+      const message = createSystemMessage({ agentSession: { id: 'execution:tick', releaseAfterTurn: true, skipHistory: false, model: 'task-model' }, waitForCompletion: true });
       await router.route(message);
-      expect(handler.handleSystemMessage).toHaveBeenCalledWith(message.chatId, message.payload, message.id, { waitForCompletion: true, scheduleSession: message.scheduleSession });
+      expect(handler.handleSystemMessage).toHaveBeenCalledWith(message.chatId, message.payload, message.id, { waitForCompletion: true, agentSession: message.agentSession });
     });
     it('should route SystemMessage to handleSystemMessage', async () => {
       const handler = createMockHandler();

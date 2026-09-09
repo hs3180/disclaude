@@ -115,7 +115,6 @@ Schedule content prompt here
 | `chatId` | Yes | - | Chat ID for execution context |
 | `createdAt` | No | - | Creation timestamp |
 | `model` | No | - | Model to use for execution (e.g., "sonnet", "opus") |
-| `modelTier` | No | - | Three-level model tier: `"high"`, `"low"`, or `"multimodal"` (resolved to a concrete model via `Config.getModelForTier`; Issue #3059). |
 | `timezone` | No | `Asia/Shanghai` | IANA timezone for cron scheduling (e.g., `"UTC"`, `"America/New_York"`). Validated against the IANA database (Issue #3860). |
 | `timeoutMs` | No | `7200000` (2 h) | Max wait in ms for the task's agent turn (Issue #3894; turn-level since #4648). Not a kill switch: on timeout the scheduler stops waiting and logs a neutral outcome — the turn may still finish in the background (stuck turns are killed separately by the agent pool's busy-turn cap). Tasks that legitimately run longer must set this explicitly (Issue #4649). |
 | `cooldownPeriod` | No | - | Cooldown in ms; prevents re-execution for this duration after a run completes (Issue #869). |
@@ -127,7 +126,7 @@ Migration examples (0.5.0): omit all three fields for fresh session + history;
 use `freshSession: true` and `skipHistory: true` for a blank session; retain
 `freshSession: false` only when live conversation reuse is explicitly required.
 Existing `clearContext: true` remains blank but leaves the user's live agent intact.
-Conflicting/non-boolean options are rejected. Per-task model/tier overrides require
+Conflicting/non-boolean options are rejected. Per-task model overrides require
 fresh sessions; they are never silently applied to a running user session. On a
 wait timeout, an isolated turn may continue; blocking ownership remains until that
 turn settles, and cleanup disposes only its own agent/provider session.
@@ -179,7 +178,6 @@ enabled: false
 - `enabled`: Enable/disable
 - `blocking`: Blocking mode
 - `model`: Model selection
-- `modelTier`: Model tier selection
 - `timezone`: Cron timezone (IANA)
 - `timeoutMs`: Turn-wait timeout (ms; default 2 h — set higher for long-running tasks)
 - `cooldownPeriod`: Post-run cooldown (ms)
@@ -446,3 +444,5 @@ createdAt: 2026-03-06T00:00:00.000Z
 - [ ] 能生成灵魂拷问内容
 - [ ] 能发送到话题群
 ```
+
+Scheduled prompts use the ordinary Agent pool and message processing path. A fresh execution supplies a scoped session with the selected model/history options; its slot is released only after the actual turn settles. There is no separate scheduler Agent type or pool.
