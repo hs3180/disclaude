@@ -45,7 +45,7 @@ S01 独占首批共享配置与 Agent 创建链。S02 若需公共 SDK 接口修
 
 1. 从现有 transport/session pool/event adapter 接线，核实真实 dsh 协议与启动方式；不得凭空发明方法名并用同一假实现自证。
 2. queryStream 将输入转为 RPC，将文本/工具/完成/错误转换为统一 SDK 事件；响应关联、完成一次与释放资源覆盖真实子进程测试。
-3. 明确 inline tool 的注册、执行和结果回送；仅暴露实际支持的工具方式，保留后端能力诊断。
+3. 核实工具契约：本机 dsh 0.1.2-rc.1 仅有原生工具事件，没有外部 inline/MCP 工具注册与结果回送 RPC。适配原生事件；不支持的工具限制应 fail closed，不虚构协议。外部工具桥接保持未完成，等待实际协议支持。
 4. 覆盖分片/乱序/EOF/进程失败/取消/恢复和重复终态；缺二进制、认证、profile 可操作报错。
 5. S02-A4 真机验收另记：版本、单/多轮、工具文件产物、错误路径与最终投递回执。无真实环境标 blocked，不能用 fixture 代替。
 
@@ -53,7 +53,7 @@ S01 独占首批共享配置与 Agent 创建链。S02 若需公共 SDK 接口修
 
 1. 验证输入 messageId、执行 ID、attempt、投递 ID 的关联；补 A/B 乱序、取消后迟到完成、重复完成行为测试。
 2. queue 不中断当前回合；stop 确认后取消旧 attempt 的后续工具/重试/输出，同时保留可继续交流的上下文。
-3. 核实 Codex CLI 上游是否支持真实 steer；有能力则接入并验证后续执行受影响，无能力则明确 capability 限制和未完成条目，不能把 queue 冒充 steer。
+3. Codex 0.153.4 app-server 支持 turn/steer，但 exec JSONL 不暴露可操控的活动 turn。先交付真实 stop/queue 与明确的 exec capability 限制；再按可选 app-server transport、thread/turn 生命周期、真实 steer 拆分增量 PR，保持默认 exec 兼容。新进程恢复旧 thread 不能冒充对活动 exec 的 steer。
 4. 记录停止确认与子进程退出时延，说明不能中止的操作边界。
 5. 流式交付覆盖 thinking→replying→done，按 chat 节流；429、更新失败、finalize 失败降级，成功/失败/取消/工具后无正文均交付一次可见终态。
 6. 保留原子去重与完整诊断，按最新 #4398 决策确定参数；真实卡片/普通消息回执单列外部证据。
