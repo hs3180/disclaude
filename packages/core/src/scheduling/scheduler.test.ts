@@ -244,6 +244,61 @@ describe('Scheduler', () => {
         expect.stringContaining('执行失败'),
       );
     });
+
+    it('does not spawn when stopped while the start notification is pending', async () => {
+      let releaseNotification!: () => void;
+      const notification = new Promise<void>((resolve) => { releaseNotification = resolve; });
+      const callbacks = { ...mockCallbacks, sendMessage: vi.fn().mockReturnValue(notification) };
+      const scriptRunner = vi.fn<ScriptRunner>();
+      const scriptScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks,
+        scriptRunner,
+        jobFactory: testJobFactory,
+      });
+      scriptScheduler.addTask(createTask({ id: 'script-pre-spawn-stop', prompt: undefined, script: 'echo no' }));
+
+      void scriptScheduler.getActiveJobs()[0].job.fireOnTick();
+      await vi.waitFor(() => expect(callbacks.sendMessage).toHaveBeenCalledOnce());
+      await scriptScheduler.stop(0);
+      releaseNotification();
+      await vi.waitFor(() => expect(scriptScheduler.isTaskRunning('script-pre-spawn-stop')).toBe(false));
+
+      expect(scriptRunner).not.toHaveBeenCalled();
+      expect(callbacks.sendMessage).not.toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('执行失败'),
+      );
+    });
+
+    it('cancels every concurrent non-blocking execution of the same script task', async () => {
+      const scriptRunner = vi.fn<ScriptRunner>((_script, options) => new Promise((_resolve, reject) => {
+        options.signal.addEventListener('abort', () => reject(new ScriptCancelledError()), { once: true });
+      }));
+      const scriptScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        scriptRunner,
+        jobFactory: testJobFactory,
+      });
+      scriptScheduler.addTask(createTask({
+        id: 'script-concurrent-stop',
+        prompt: undefined,
+        script: 'sleep 30',
+        blocking: false,
+      }));
+
+      const [{ job }] = scriptScheduler.getActiveJobs();
+      void job.fireOnTick();
+      void job.fireOnTick();
+      await vi.waitFor(() => expect(scriptRunner).toHaveBeenCalledTimes(2));
+      const signals = scriptRunner.mock.calls.map((call) => call[1].signal);
+      await scriptScheduler.stop();
+
+      expect(signals).toHaveLength(2);
+      expect(signals.every((signal) => signal.aborted)).toBe(true);
+      expect(scriptScheduler.isTaskRunning('script-concurrent-stop')).toBe(false);
+    });
   });
 
   describe('start / stop', () => {

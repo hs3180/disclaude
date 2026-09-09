@@ -406,7 +406,10 @@ export class Scheduler {
   /** Issue #4218 (fix A): injectable job factory; undefined → real CronJob. */
   private jobFactory?: SchedulerJobFactory;
   private scriptRunner: ScriptRunner;
-  private activeScriptControllers = new Map<string, AbortController>();
+  /** Every non-blocking tick owns its controller; task IDs are not execution IDs. */
+  private activeScriptControllers = new Map<string, Set<AbortController>>();
+  /** Stop barrier captured before preflight awaits; explicit later executions remain supported. */
+  private scriptStopGeneration = 0;
   private activeJobs: Map<string, ActiveJob> = new Map();
   private running = false;
   /** Tracks tasks currently being executed (for blocking mechanism) */
@@ -497,6 +500,7 @@ export class Scheduler {
    */
   async stop(timeoutMs?: number): Promise<void> {
     this.running = false;
+    this.scriptStopGeneration++;
 
     // Stop all cron timers first (prevents new executions)
     for (const [taskId, entry] of this.activeJobs) {
@@ -508,8 +512,10 @@ export class Scheduler {
 
     // Script schedules own subprocesses, unlike agent turns. Cancel them
     // before waiting for drain so shutdown cannot abandon process groups.
-    for (const controller of this.activeScriptControllers.values()) {
-      controller.abort();
+    for (const controllers of this.activeScriptControllers.values()) {
+      for (const controller of controllers) {
+        controller.abort();
+      }
     }
 
     // Wait for currently running tasks to complete (graceful shutdown).
@@ -593,6 +599,9 @@ export class Scheduler {
    * Issue #4102: Also cleans up per-chatId blocking task tracking.
    */
   private cleanupTaskTracking(task: ScheduledTask): void {
+    if ((this.activeScriptControllers.get(task.id)?.size ?? 0) > 0) {
+      return;
+    }
     this.runningTasks.delete(task.id);
     if (task.blocking && task.chatId) {
       this.runningBlockingTaskChatIds.delete(task.chatId);
@@ -743,6 +752,7 @@ ${task.prompt ?? ''}`;
 
     // Mark task as running
     this.runningTasks.add(task.id);
+    const scriptExecutionGeneration = this.scriptStopGeneration;
     // Issue #4102: Track blocking tasks by chatId for per-chat serialization
     if (task.blocking && task.chatId) {
       this.runningBlockingTaskChatIds.add(task.chatId);
@@ -797,13 +807,20 @@ ${task.prompt ?? ''}`;
       }
 
       if (task.script) {
-        await this.callbacks.sendMessage(task.chatId, `⏰ 定时任务「${task.name}」开始执行脚本...`);
-        logger.debug({ taskId: task.id, chatId: task.chatId }, 'Executing scheduled task script');
         const controller = new AbortController();
-        this.activeScriptControllers.set(task.id, controller);
-        let result: ScriptExecutionResult;
+        const controllers = this.activeScriptControllers.get(task.id) ?? new Set<AbortController>();
+        controllers.add(controller);
+        this.activeScriptControllers.set(task.id, controllers);
         try {
-          result = await this.scriptRunner(task.script, {
+          if (scriptExecutionGeneration !== this.scriptStopGeneration) {
+            throw new ScriptCancelledError();
+          }
+          await this.callbacks.sendMessage(task.chatId, `⏰ 定时任务「${task.name}」开始执行脚本...`);
+          if (controller.signal.aborted || scriptExecutionGeneration !== this.scriptStopGeneration) {
+            throw new ScriptCancelledError();
+          }
+          logger.debug({ taskId: task.id, chatId: task.chatId }, 'Executing scheduled task script');
+          const result: ScriptExecutionResult = await this.scriptRunner(task.script, {
             timeoutMs: task.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS,
             env: {
             ...process.env,
@@ -813,21 +830,24 @@ ${task.prompt ?? ''}`;
             },
             signal: controller.signal,
           });
+          await this.clearFailureStreak(task.id);
+          logger.info({
+            taskId: task.id,
+            name: task.name,
+            chatId: task.chatId,
+            elapsedMs: Date.now() - taskStartedAt,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            stdoutTruncated: result.stdoutTruncated,
+            stderrTruncated: result.stderrTruncated,
+          }, 'Scheduled script completed');
+          return;
         } finally {
-          this.activeScriptControllers.delete(task.id);
+          controllers.delete(controller);
+          if (controllers.size === 0) {
+            this.activeScriptControllers.delete(task.id);
+          }
         }
-        await this.clearFailureStreak(task.id);
-        logger.info({
-          taskId: task.id,
-          name: task.name,
-          chatId: task.chatId,
-          elapsedMs: Date.now() - taskStartedAt,
-          stdout: result.stdout,
-          stderr: result.stderr,
-          stdoutTruncated: result.stdoutTruncated,
-          stderrTruncated: result.stderrTruncated,
-        }, 'Scheduled script completed');
-        return;
       }
 
       // Build wrapped prompt with anti-recursion instructions
