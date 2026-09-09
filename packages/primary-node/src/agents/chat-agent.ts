@@ -2352,7 +2352,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // driver's finish() is idempotent and only acts in the streaming state.
       if (streamDriver) {
         const finishThreadRoot = resolveReplyThreadRoot();
-        await streamDriver.finish(finishThreadRoot);
+        const terminalDelivered = await streamDriver.finish(finishThreadRoot);
+        if (!terminalDelivered) {
+          this.logger.error(
+            { chatId, turnMessageId: currentTurnMessageId, ...this.activeLifecycleContext },
+            'Streaming terminal delivery failed after fallback'
+          );
+        }
       }
     }
 

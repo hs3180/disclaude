@@ -258,8 +258,20 @@ describe('StreamingReplyDriver — finish semantics', () => {
       sendMessage: vi.fn(() => Promise.reject(new Error('send-fail'))),
     });
     const driver = makeDriver(cb);
-    // Must not throw even though the fallback itself failed.
+    // Must not throw, but must not claim user-visible delivery either.
+    await expect(driver.pushText('hello')).resolves.toBe(false);
+    await expect(driver.finish()).resolves.toBe(false);
+  });
+
+  it('reports terminal delivery failure when final PATCH and fallback both fail', async () => {
+    const cb = makeCallbacks({
+      streamText: vi.fn(() => Promise.reject(new Error('patch-fail'))),
+      sendMessage: vi.fn(() => Promise.reject(new Error('fallback-fail'))),
+    });
+    const driver = makeDriver(cb);
+
     await expect(driver.pushText('hello')).resolves.toBe(true);
-    await expect(driver.finish()).resolves.toBeUndefined();
+    await expect(driver.finish()).resolves.toBe(false);
+    expect(cb.sendMessage).toHaveBeenCalledTimes(1);
   });
 });
