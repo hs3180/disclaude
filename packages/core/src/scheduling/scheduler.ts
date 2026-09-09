@@ -23,6 +23,7 @@ import type { TaskFailureStore } from './task-failure-store.js';
 import type { MessageRouter as InputMessageRouter } from '../messaging/message-router.js';
 import { TurnSupersededError } from '../messaging/turn-superseded-error.js';
 import type { SystemMessage } from '../types/message.js';
+import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
 const logger = createLogger('Scheduler');
@@ -161,6 +162,179 @@ export interface SchedulerCallbacks {
   isChatBusy?: (chatId: string) => boolean;
 }
 
+/** Result returned by a directly executed schedule command. */
+export interface CommandExecutionResult {
+  stdout: string;
+  stderr: string;
+  stdoutTruncated: boolean;
+  stderrTruncated: boolean;
+}
+
+/** Injectable command runner; the default runner is used in production. */
+export type CommandRunner = (command: string, options: {
+  timeoutMs: number;
+  env: NodeJS.ProcessEnv;
+  signal: AbortSignal;
+}) => Promise<CommandExecutionResult>;
+
+const COMMAND_DIAGNOSTIC_LIMIT_BYTES = 64 * 1024;
+const COMMAND_KILL_GRACE_MS = 1000;
+
+export class CommandCancelledError extends Error {
+  constructor() {
+    super('Scheduled command cancelled');
+    this.name = 'CommandCancelledError';
+  }
+}
+
+export class CommandTimeoutError extends Error {
+  constructor(readonly timeoutMs: number) {
+    super(`Scheduled command timed out after ${formatTimeout(timeoutMs)}`);
+    this.name = 'CommandTimeoutError';
+  }
+}
+
+function appendDiagnostic(current: Buffer, chunk: Buffer): { value: Buffer; truncated: boolean } {
+  const remaining = COMMAND_DIAGNOSTIC_LIMIT_BYTES - current.length;
+  if (remaining <= 0) { return { value: current, truncated: true }; }
+  return {
+    value: Buffer.concat([current, chunk.subarray(0, remaining)]),
+    truncated: chunk.length > remaining,
+  };
+}
+
+/** Real POSIX runner used by production and process-lifecycle tests. */
+export const defaultCommandRunner: CommandRunner = (command, options) => {
+  // A pre-cancelled schedule must not spawn: even a short-lived shell could
+  // perform a side effect before an abort listener gets its first turn.
+  if (options.signal.aborted) { return Promise.reject(new CommandCancelledError()); }
+
+  return new Promise((resolve, reject) => {
+  const child = spawn('/bin/sh', ['-c', command], {
+    detached: process.platform !== 'win32',
+    env: options.env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stdout: Buffer = Buffer.alloc(0);
+  let stderr: Buffer = Buffer.alloc(0);
+  let stdoutTruncated = false;
+  let stderrTruncated = false;
+  let settled = false;
+  let termination: 'cancelled' | 'timeout' | undefined;
+  let terminationTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const terminate = (signal: NodeJS.Signals): void => {
+    if (!child.pid) { return; }
+    try {
+      if (process.platform === 'win32') {
+        if (child.exitCode === null && child.signalCode === null) { child.kill(signal); }
+      }
+      else { process.kill(-child.pid, signal); }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
+        logger.warn({ err: error, pid: child.pid }, 'Failed to terminate scheduled command process group');
+      }
+    }
+  };
+
+  const result = (): CommandExecutionResult => ({
+    stdout: stdout.toString('utf8'),
+    stderr: stderr.toString('utf8'),
+    stdoutTruncated,
+    stderrTruncated,
+  });
+  const groupIsAlive = (): boolean => {
+    if (!child.pid) { return false; }
+    if (process.platform === 'win32') {
+      return child.exitCode === null && child.signalCode === null;
+    }
+    try {
+      process.kill(-child.pid, 0);
+      return true;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code !== 'ESRCH';
+    }
+  };
+  const cleanup = (): void => {
+    clearTimeout(timeout);
+    if (terminationTimer) { clearTimeout(terminationTimer); }
+    options.signal.removeEventListener('abort', onAbort);
+  };
+  const settleTermination = (): void => {
+    if (settled || !termination) { return; }
+    settled = true;
+    cleanup();
+    const error = termination === 'cancelled'
+      ? new CommandCancelledError()
+      : new CommandTimeoutError(options.timeoutMs);
+    reject(Object.assign(error, result()));
+  };
+  const awaitKilledGroup = (deadline: number): void => {
+    if (!groupIsAlive() || Date.now() >= deadline) {
+      if (groupIsAlive()) {
+        logger.error({ pid: child.pid }, 'Scheduled command process group remained after SIGKILL');
+      }
+      settleTermination();
+      return;
+    }
+    terminationTimer = setTimeout(() => awaitKilledGroup(deadline), 10);
+  };
+  const beginTermination = (kind: 'cancelled' | 'timeout'): void => {
+    if (termination || settled) { return; }
+    termination = kind;
+    clearTimeout(timeout);
+    terminate('SIGTERM');
+    if (!groupIsAlive()) {
+      settleTermination();
+      return;
+    }
+    // This timer intentionally remains referenced: cancellation completion
+    // means cleanup finished, not merely that the shell's close event fired.
+    terminationTimer = setTimeout(() => {
+      terminate('SIGKILL');
+      awaitKilledGroup(Date.now() + 250);
+    }, COMMAND_KILL_GRACE_MS);
+  };
+
+  const timeout = setTimeout(() => beginTermination('timeout'), options.timeoutMs);
+  timeout.unref();
+  const onAbort = (): void => beginTermination('cancelled');
+  options.signal.addEventListener('abort', onAbort, { once: true });
+
+  child.stdout.on('data', (chunk: Buffer) => {
+    const next = appendDiagnostic(stdout, chunk);
+    stdout = next.value;
+    stdoutTruncated ||= next.truncated;
+  });
+  child.stderr.on('data', (chunk: Buffer) => {
+    const next = appendDiagnostic(stderr, chunk);
+    stderr = next.value;
+    stderrTruncated ||= next.truncated;
+  });
+  child.once('error', (error) => {
+    if (settled) { return; }
+    settled = true;
+    cleanup();
+    reject(error);
+  });
+  child.once('close', (code, signal) => {
+    if (settled) { return; }
+    if (termination) {
+      if (!groupIsAlive()) { settleTermination(); }
+      return;
+    }
+    settled = true;
+    cleanup();
+    const diagnostics = result();
+    if (code !== 0) {
+      reject(Object.assign(new Error(`Scheduled command exited with code ${code ?? 'unknown'}${signal ? ` (${signal})` : ''}`), diagnostics));
+    } else {
+      resolve(diagnostics);
+    }
+  });
+  });
+};
+
 /**
  * Scheduler options.
  *
@@ -193,6 +367,8 @@ export interface SchedulerOptions {
    * scheduling real OS timers. Production leaves this unset.
    */
   jobFactory?: SchedulerJobFactory;
+  /** Direct runner for command schedules; defaults to /bin/sh -c. */
+  commandRunner?: CommandRunner;
 }
 
 /**
@@ -224,6 +400,11 @@ export class Scheduler {
   private inputMessageRouter?: InputMessageRouter;
   /** Issue #4218 (fix A): injectable job factory; undefined → real CronJob. */
   private jobFactory?: SchedulerJobFactory;
+  private commandRunner: CommandRunner;
+  /** Every non-blocking tick owns its controller; task IDs are not execution IDs. */
+  private activeCommandControllers = new Map<string, Set<AbortController>>();
+  /** Stop barrier captured before preflight awaits; explicit later executions remain supported. */
+  private commandStopGeneration = 0;
   private activeJobs: Map<string, ActiveJob> = new Map();
   private running = false;
   /** Tracks tasks currently being executed (for blocking mechanism) */
@@ -267,6 +448,7 @@ export class Scheduler {
     this.inputMessageRouter = options.inputMessageRouter;
     this.jobFactory = options.jobFactory;
     this.failureStore = options.failureStore;
+    this.commandRunner = options.commandRunner ?? defaultCommandRunner;
     logger.info('Scheduler created');
   }
 
@@ -313,6 +495,7 @@ export class Scheduler {
    */
   async stop(timeoutMs?: number): Promise<void> {
     this.running = false;
+    this.commandStopGeneration++;
 
     // Stop all cron timers first (prevents new executions)
     for (const [taskId, entry] of this.activeJobs) {
@@ -321,6 +504,14 @@ export class Scheduler {
     }
 
     this.activeJobs.clear();
+
+    // Command schedules own subprocesses, unlike agent turns. Cancel them
+    // before waiting for drain so shutdown cannot abandon process groups.
+    for (const controllers of this.activeCommandControllers.values()) {
+      for (const controller of controllers) {
+        controller.abort();
+      }
+    }
 
     // Wait for currently running tasks to complete (graceful shutdown).
     // Issue #3415: Uses a drain promise instead of polling.
@@ -403,6 +594,9 @@ export class Scheduler {
    * Issue #4102: Also cleans up per-chatId blocking task tracking.
    */
   private cleanupTaskTracking(task: ScheduledTask): void {
+    if ((this.activeCommandControllers.get(task.id)?.size ?? 0) > 0) {
+      return;
+    }
     this.runningTasks.delete(task.id);
     if (task.blocking && task.chatId) {
       this.runningBlockingTaskChatIds.delete(task.chatId);
@@ -446,7 +640,7 @@ Scheduled task creation is blocked during scheduled task execution to prevent in
 ---
 
 **Task Prompt:**
-${task.prompt}`;
+${task.prompt ?? ''}`;
   }
 
   /**
@@ -553,6 +747,7 @@ ${task.prompt}`;
 
     // Mark task as running
     this.runningTasks.add(task.id);
+    const commandExecutionGeneration = this.commandStopGeneration;
     // Issue #4102: Track blocking tasks by chatId for per-chat serialization
     if (task.blocking && task.chatId) {
       this.runningBlockingTaskChatIds.add(task.chatId);
@@ -597,11 +792,59 @@ ${task.prompt}`;
     const taskStartedAt = Date.now();
 
     try {
+      if ((!task.prompt && !task.command) || (task.prompt && task.command)) {
+        throw new Error('Schedule task must define exactly one of prompt or command');
+      }
+
+      if (task.command) {
+        const controller = new AbortController();
+        const controllers = this.activeCommandControllers.get(task.id) ?? new Set<AbortController>();
+        controllers.add(controller);
+        this.activeCommandControllers.set(task.id, controllers);
+        try {
+          if (commandExecutionGeneration !== this.commandStopGeneration) {
+            throw new CommandCancelledError();
+          }
+          await this.callbacks.sendMessage(task.chatId, `⏰ 定时任务「${task.name}」开始执行命令...`);
+          if (controller.signal.aborted || commandExecutionGeneration !== this.commandStopGeneration) {
+            throw new CommandCancelledError();
+          }
+          logger.debug({ taskId: task.id, chatId: task.chatId }, 'Executing scheduled task command');
+          const result: CommandExecutionResult = await this.commandRunner(task.command, {
+            timeoutMs: task.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS,
+            env: {
+            ...process.env,
+            DISCLAUDE_SCHEDULE_ID: task.id,
+            DISCLAUDE_SCHEDULE_NAME: task.name,
+            DISCLAUDE_CHAT_ID: task.chatId,
+            },
+            signal: controller.signal,
+          });
+          await this.clearFailureStreak(task.id);
+          logger.info({
+            taskId: task.id,
+            name: task.name,
+            chatId: task.chatId,
+            elapsedMs: Date.now() - taskStartedAt,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            stdoutTruncated: result.stdoutTruncated,
+            stderrTruncated: result.stderrTruncated,
+          }, 'Scheduled command completed');
+          return;
+        } finally {
+          controllers.delete(controller);
+          if (controllers.size === 0) {
+            this.activeCommandControllers.delete(task.id);
+          }
+        }
+      }
+
       // Build wrapped prompt with anti-recursion instructions
       const wrappedPrompt = this.buildScheduledTaskPrompt(task);
 
       // Issue #3582: Route through InputMessageRouter
-      if (!this.inputMessageRouter || !task.chatId) {
+      if (!this.inputMessageRouter || !task.chatId || !task.prompt) {
         logger.warn(
           { taskId: task.id, hasRouter: !!this.inputMessageRouter, hasChatId: !!task.chatId },
           'Cannot execute scheduled task: InputMessageRouter not configured or task has no chatId'
@@ -736,6 +979,11 @@ ${task.prompt}`;
           outcomeContext,
           'Scheduled task turn superseded by a newer message (neutral — not counted as failure)',
         );
+        return;
+      }
+
+      if (error instanceof CommandCancelledError) {
+        logger.info(outcomeContext, 'Scheduled command cancelled during scheduler shutdown (neutral)');
         return;
       }
 

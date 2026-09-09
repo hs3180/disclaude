@@ -116,8 +116,9 @@ Schedule content prompt here
 | `createdAt` | No | - | Creation timestamp |
 | `model` | No | - | Model to use for execution (e.g., "sonnet", "opus") |
 | `timezone` | No | `Asia/Shanghai` | IANA timezone for cron scheduling (e.g., `"UTC"`, `"America/New_York"`). Validated against the IANA database (Issue #3860). |
-| `timeoutMs` | No | `7200000` (2 h) | Max wait in ms for the task's agent turn (Issue #3894; turn-level since #4648). Not a kill switch: on timeout the scheduler stops waiting and logs a neutral outcome — the turn may still finish in the background (stuck turns are killed separately by the agent pool's busy-turn cap). Tasks that legitimately run longer must set this explicitly (Issue #4649). |
+| `timeoutMs` | No | `7200000` (2 h) | For prompt schedules, max wait for the agent turn: not a kill switch, and the turn may continue in the background (#3894/#4648/#4649). For direct `command` schedules, this is a hard process-group timeout: the scheduler sends TERM and escalates to KILL after a bounded grace. |
 | `cooldownPeriod` | No | - | Cooldown in ms; prevents re-execution for this duration after a run completes (Issue #869). |
+| `command` | No | - | Execute a shell command directly, without an agent turn. Mutually exclusive with the markdown body prompt; exactly one must be provided (Issue #4798). The process receives `DISCLAUDE_SCHEDULE_ID`, `DISCLAUDE_SCHEDULE_NAME`, and `DISCLAUDE_CHAT_ID`. |
 | `freshSession` | No | `true` | Use an isolated agent/native session for each tick; preserve the user's live chat and project/delivery identity. Explicit `false` reuses the live chat and can accumulate context. |
 | `skipHistory` | No | `false` | Suppress the bounded history snapshot in an isolated session. Requires `freshSession: true`. |
 | `clearContext` | No | unset | Legacy alias: `true` means fresh session + no history; explicit `false` retains legacy live-chat reuse unless `freshSession` is set. It no longer resets the user's agent. |
@@ -251,6 +252,25 @@ The prompt must contain all required task state. By default each tick has a fres
 native session and may receive a bounded recent-history snapshot; persistent live
 memory is available only through explicit legacy reuse. Store cross-tick state in
 bounded files instead of relying on the SDK conversation.
+
+### 2. Direct Command Schedules (Issue #4798)
+
+The old `script` field is replaced by `command`. `modelTier` is removed; use an explicit `model` instead. Old fields are rejected with migration errors.
+
+Use `command` in frontmatter when a task should run a shell command directly, without consuming an agent turn:
+
+```markdown
+---
+name: Refresh cache
+cron: "*/5 * * * *"
+enabled: true
+blocking: true
+chatId: oc_xxx
+command: "node scripts/refresh-cache.js"
+---
+```
+
+The markdown body is omitted for command schedules. `prompt` (the body) and `command` are mutually exclusive, and exactly one is required. The command receives `DISCLAUDE_SCHEDULE_ID`, `DISCLAUDE_SCHEDULE_NAME`, and `DISCLAUDE_CHAT_ID`; non-zero exit status and `timeoutMs` expiry are recorded as failed runs and participate in cooldown/blocking/failure-streak handling. Scheduler shutdown cancels an active command and waits for bounded process-group cleanup. Stdout and stderr are diagnostics only (not automatically sent to the chat), and each retained stream is limited to 64 KiB with an explicit truncation marker in structured logs. A command that intentionally daemonizes into another session/process group is outside this cleanup guarantee and must manage its own lifecycle.
 
 ### 2. Avoid Creating New Schedules
 

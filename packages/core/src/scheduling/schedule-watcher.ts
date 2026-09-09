@@ -63,7 +63,8 @@ function stripQuotes(value: string): string {
   const [first, ...rest] = value;
   const last = rest[rest.length - 1];
   if ((first === '"' || first === "'") && first === last && value.length >= 2) {
-    return value.slice(1, -1);
+    const unquoted = value.slice(1, -1);
+    return first === '"' ? unquoted.replaceAll('\\"', '"') : unquoted;
   }
   return value;
 }
@@ -96,6 +97,8 @@ function parseScheduleFrontmatter(content: string): {
     switch (key) {
       case 'modelTier':
         throw new Error('Schedule modelTier has been removed; use an explicit model instead');
+      case 'script':
+        throw new Error('Schedule script has been renamed to command; update the frontmatter');
       case 'name':
       case 'cron':
       case 'chatId':
@@ -104,6 +107,7 @@ function parseScheduleFrontmatter(content: string): {
       case 'lastExecutedAt':
       case 'model':
       case 'timezone':
+      case 'command':
         frontmatter[key] = stripQuotes(value);
         break;
       case 'enabled':
@@ -229,6 +233,11 @@ export class ScheduleFileScanner {
       }
 
       const prompt = content.slice(contentStart).trim();
+      const command = frontmatter['command'] as string | undefined;
+      if ((!prompt && !command) || (prompt && command)) {
+        logger.warn({ filePath }, 'Schedule file must define exactly one of prompt body or command frontmatter');
+        return null;
+      }
       for (const key of ['freshSession', 'skipHistory', 'clearContext']) {
         if (frontmatter[key] !== undefined && typeof frontmatter[key] !== 'boolean') {
           throw new Error(`${key} must be a boolean`);
@@ -247,7 +256,8 @@ export class ScheduleFileScanner {
         name: frontmatter['name'] as string,
         cron: frontmatter['cron'] as string,
         chatId: frontmatter['chatId'] as string,
-        prompt,
+        prompt: prompt || undefined,
+        command,
         enabled: (frontmatter['enabled'] as boolean) ?? true,
         blocking: (frontmatter['blocking'] as boolean) ?? true,
         clearContext: frontmatter['clearContext'] as boolean | undefined,
@@ -332,9 +342,12 @@ export class ScheduleFileScanner {
     if (task.model) {
       frontmatter.push(`model: "${task.model}"`);
     }
+    if (task.command) {
+      frontmatter.push(`command: "${task.command.replaceAll('"', '\\"')}"`);
+    }
 
     frontmatter.push('---', '');
-    const content = frontmatter.join('\n') + task.prompt;
+    const content = frontmatter.join('\n') + (task.prompt ?? '');
 
     await fsPromises.writeFile(filePath, content, 'utf-8');
     logger.info({ taskId: task.id, filePath }, 'Wrote schedule file');

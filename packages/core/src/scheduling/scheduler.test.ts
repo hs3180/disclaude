@@ -13,7 +13,13 @@ import { CronJob } from 'cron';
 import * as fsPromises from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
-import { Scheduler, TaskTimeoutError, type SchedulerCallbacks } from './scheduler.js';
+import {
+  Scheduler,
+  CommandCancelledError,
+  TaskTimeoutError,
+  type SchedulerCallbacks,
+  type CommandRunner,
+} from './scheduler.js';
 import { TurnSupersededError } from '../messaging/turn-superseded-error.js';
 import { TaskFailureStore } from './task-failure-store.js';
 import type { ScheduleManager } from './schedule-manager.js';
@@ -162,6 +168,182 @@ describe('Scheduler', () => {
       });
 
       expect(s).toBeInstanceOf(Scheduler);
+    });
+  });
+
+  describe('direct command execution (Issue #4798)', () => {
+    it('reads current environment per tick, overrides task identity, and leaves the parent unchanged', async () => {
+      const commandRunner = vi.fn<CommandRunner>().mockResolvedValue({
+        stdout: '', stderr: '', stdoutTruncated: false, stderrTruncated: false,
+      });
+      const commandScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager, callbacks: mockCallbacks,
+        inputMessageRouter: mockRouter, commandRunner, jobFactory: testJobFactory,
+      });
+      const task = createTask({ id: 'env-boundary', name: 'name with spaces; $HOME', prompt: undefined, command: 'echo ok' });
+      const keys = ['DISCLAUDE_API_BASE_URL', 'DISCLAUDE_API_TOKEN', 'DISCLAUDE_SCHEDULE_ID', 'DISCLAUDE_SCHEDULE_NAME', 'DISCLAUDE_CHAT_ID'];
+      const previous = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+      try {
+        for (const key of keys) { process.env[key] = 'stale-parent'; }
+        process.env.DISCLAUDE_API_BASE_URL = 'http://127.0.0.1:43123';
+        process.env.DISCLAUDE_API_TOKEN = 'test-token with spaces=$value';
+        commandScheduler.addTask(task);
+        void commandScheduler.getActiveJobs()[0].job.fireOnTick();
+        await vi.waitFor(() => expect(commandRunner).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() => expect(commandScheduler.isTaskRunning(task.id)).toBe(false));
+        const first = commandRunner.mock.calls[0][1].env;
+        expect(first).toMatchObject({
+          DISCLAUDE_API_BASE_URL: 'http://127.0.0.1:43123',
+          DISCLAUDE_API_TOKEN: 'test-token with spaces=$value',
+          DISCLAUDE_SCHEDULE_ID: task.id, DISCLAUDE_SCHEDULE_NAME: task.name, DISCLAUDE_CHAT_ID: task.chatId,
+          PATH: process.env.PATH,
+        });
+        expect(process.env.DISCLAUDE_CHAT_ID).toBe('stale-parent');
+        expect(process.env.DISCLAUDE_SCHEDULE_ID).toBe('stale-parent');
+        process.env.DISCLAUDE_API_BASE_URL = 'http://127.0.0.1:43124';
+        delete process.env.DISCLAUDE_API_TOKEN;
+        void commandScheduler.getActiveJobs()[0].job.fireOnTick();
+        await vi.waitFor(() => expect(commandRunner).toHaveBeenCalledTimes(2));
+        const second = commandRunner.mock.calls[1][1].env;
+        expect(second.DISCLAUDE_API_BASE_URL).toBe('http://127.0.0.1:43124');
+        expect(second).not.toHaveProperty('DISCLAUDE_API_TOKEN');
+        expect(first.DISCLAUDE_API_BASE_URL).toBe('http://127.0.0.1:43123');
+        expect(first.DISCLAUDE_API_TOKEN).toBe('test-token with spaces=$value');
+        expect(mockRouterAsMock.route).not.toHaveBeenCalled();
+      } finally {
+        await commandScheduler.stop(0);
+        for (const [key, value] of Object.entries(previous)) {
+          if (value === undefined) { delete process.env[key]; } else { process.env[key] = value; }
+        }
+      }
+    });
+
+    it('should execute a command without routing through the agent', async () => {
+      const commandRunner = vi.fn<CommandRunner>().mockResolvedValue({
+        stdout: 'ok\n',
+        stderr: '',
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      });
+      const commandScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        inputMessageRouter: mockRouter,
+        commandRunner,
+        jobFactory: testJobFactory,
+      });
+      const task = createTask({ id: 'command-1', prompt: undefined, command: 'echo ok' });
+      commandScheduler.addTask(task);
+
+      void commandScheduler.getActiveJobs()[0].job.fireOnTick();
+      await vi.waitFor(() => expect(commandRunner).toHaveBeenCalledTimes(1));
+
+      expect(commandRunner).toHaveBeenCalledWith('echo ok', expect.objectContaining({
+        timeoutMs: expect.any(Number),
+        signal: expect.any(AbortSignal),
+        env: expect.objectContaining({
+          DISCLAUDE_SCHEDULE_ID: 'command-1',
+          DISCLAUDE_CHAT_ID: 'oc_test',
+        }),
+      }));
+      expect(mockRouterAsMock.route).not.toHaveBeenCalled();
+      await commandScheduler.stop(0);
+    });
+
+    it('should report a command failure and clean up running state', async () => {
+      const commandRunner = vi.fn<CommandRunner>().mockRejectedValue(new Error('exit 2'));
+      const commandScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        commandRunner,
+        jobFactory: testJobFactory,
+      });
+      commandScheduler.addTask(createTask({ id: 'command-fail', prompt: undefined, command: 'exit 2' }));
+
+      void commandScheduler.getActiveJobs()[0].job.fireOnTick();
+      await vi.waitFor(() => expect(commandRunner).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(commandScheduler.isTaskRunning('command-fail')).toBe(false));
+      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith('oc_test', expect.stringContaining('执行失败'));
+      await commandScheduler.stop(0);
+    });
+
+    it('should cancel an active command during scheduler shutdown without reporting failure', async () => {
+      const commandRunner = vi.fn<CommandRunner>((_command, options) => new Promise((_resolve, reject) => {
+        options.signal.addEventListener('abort', () => reject(new CommandCancelledError()), { once: true });
+      }));
+      const commandScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        commandRunner,
+        jobFactory: testJobFactory,
+      });
+      commandScheduler.addTask(createTask({ id: 'command-cancel', prompt: undefined, command: 'sleep 30' }));
+
+      void commandScheduler.getActiveJobs()[0].job.fireOnTick();
+      await vi.waitFor(() => expect(commandRunner).toHaveBeenCalledOnce());
+      await commandScheduler.stop();
+
+      expect(commandRunner.mock.calls[0][1].signal.aborted).toBe(true);
+      expect(commandScheduler.isTaskRunning('command-cancel')).toBe(false);
+      expect(mockCallbacks.sendMessage).not.toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('执行失败'),
+      );
+    });
+
+    it('does not spawn when stopped while the start notification is pending', async () => {
+      let releaseNotification!: () => void;
+      const notification = new Promise<void>((resolve) => { releaseNotification = resolve; });
+      const callbacks = { ...mockCallbacks, sendMessage: vi.fn().mockReturnValue(notification) };
+      const commandRunner = vi.fn<CommandRunner>();
+      const commandScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks,
+        commandRunner,
+        jobFactory: testJobFactory,
+      });
+      commandScheduler.addTask(createTask({ id: 'command-pre-spawn-stop', prompt: undefined, command: 'echo no' }));
+
+      void commandScheduler.getActiveJobs()[0].job.fireOnTick();
+      await vi.waitFor(() => expect(callbacks.sendMessage).toHaveBeenCalledOnce());
+      await commandScheduler.stop(0);
+      releaseNotification();
+      await vi.waitFor(() => expect(commandScheduler.isTaskRunning('command-pre-spawn-stop')).toBe(false));
+
+      expect(commandRunner).not.toHaveBeenCalled();
+      expect(callbacks.sendMessage).not.toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('执行失败'),
+      );
+    });
+
+    it('cancels every concurrent non-blocking execution of the same command task', async () => {
+      const commandRunner = vi.fn<CommandRunner>((_command, options) => new Promise((_resolve, reject) => {
+        options.signal.addEventListener('abort', () => reject(new CommandCancelledError()), { once: true });
+      }));
+      const commandScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        commandRunner,
+        jobFactory: testJobFactory,
+      });
+      commandScheduler.addTask(createTask({
+        id: 'command-concurrent-stop',
+        prompt: undefined,
+        command: 'sleep 30',
+        blocking: false,
+      }));
+
+      const [{ job }] = commandScheduler.getActiveJobs();
+      void job.fireOnTick();
+      void job.fireOnTick();
+      await vi.waitFor(() => expect(commandRunner).toHaveBeenCalledTimes(2));
+      const signals = commandRunner.mock.calls.map((call) => call[1].signal);
+      await commandScheduler.stop();
+
+      expect(signals).toHaveLength(2);
+      expect(signals.every((signal) => signal.aborted)).toBe(true);
+      expect(commandScheduler.isTaskRunning('command-concurrent-stop')).toBe(false);
     });
   });
 
@@ -626,6 +808,7 @@ describe('Scheduler', () => {
       expect(routedMessage.data!.taskId).toBe('exec-2');
       expect(routedMessage.data!.createdBy).toBe('user-123');
       expect(routedMessage.data!.model).toBe('claude-sonnet-4');
+      expect(routedMessage).not.toHaveProperty('modelTier');
       expect(routedMessage.agentSession?.model).toBe('claude-sonnet-4');
     });
 

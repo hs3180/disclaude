@@ -109,6 +109,28 @@ describe('ScheduleFileScanner', () => {
   });
 
   describe('parseFile', () => {
+    it('should parse a command schedule without routing it as a prompt', async () => {
+      mockReadFile.mockResolvedValue([
+        '---',
+        'name: "Refresh cache"',
+        'cron: "*/5 * * * *"',
+        'chatId: "oc_command"',
+        'command: "node scripts/refresh-cache.js"',
+        '---',
+        '',
+      ].join('\n'));
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/refresh-cache/SCHEDULE.md`);
+
+      expect(task?.command).toBe('node scripts/refresh-cache.js');
+      expect(task?.prompt).toBeUndefined();
+    });
+
+    it('should reject schedules that define both prompt and command', async () => {
+      mockReadFile.mockResolvedValue(makeScheduleContent({ command: 'echo nope' }));
+      await expect(scanner.parseFile(`${MOCK_DIR}/invalid/SCHEDULE.md`)).resolves.toBeNull();
+    });
+
     it('should parse a valid schedule file (Issue #2526: subdirectory layout)', async () => {
       const content = makeScheduleContent();
       mockReadFile.mockResolvedValue(content);
@@ -523,6 +545,24 @@ describe('ScheduleFileScanner', () => {
       expect(writtenContent).toContain('createdAt: "2026-03-01"');
     });
 
+    it('should write a command schedule in frontmatter', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-refresh-cache',
+        name: 'Refresh cache',
+        cron: '*/5 * * * *',
+        command: 'node scripts/refresh-cache.js',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-03-01',
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).toContain('command: "node scripts/refresh-cache.js"');
+      expect(writtenContent).toMatch(/command:.*\n---\n/);
+    });
+
     it('should write model field when present (Issue #1338)', async () => {
       const task: ScheduledTask = {
         id: 'schedule-coding',
@@ -758,8 +798,13 @@ describe('ScheduleFileScanner', () => {
       expect(task).toBeNull();
     });
 
-    it('should reject an invalid modelTier instead of silently using the default model', async () => {
-      mockReadFile.mockResolvedValue(makeScheduleContent({ modelTier: 'economy' }));
+    it('rejects legacy script even when a prompt body is present', async () => {
+      mockReadFile.mockResolvedValue(makeScheduleContent({ script: 'echo old' }));
+      expect(await scanner.parseFile(`${MOCK_DIR}/legacy-script/SCHEDULE.md`)).toBeNull();
+    });
+
+    it.each(['low', 'high', 'multimodal', 'economy', ''])('rejects removed modelTier %s with no silent fallback', async (modelTier) => {
+      mockReadFile.mockResolvedValue(makeScheduleContent({ modelTier }));
 
       const task = await scanner.parseFile(`${MOCK_DIR}/invalid-tier/SCHEDULE.md`);
 
