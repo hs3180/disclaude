@@ -84,7 +84,7 @@ export interface IAgentMessageHandler {
     chatId: string,
     payload: string,
     messageId: string,
-    options?: { waitForCompletion?: boolean }
+    options?: { waitForCompletion?: boolean; scheduleSession?: SystemMessage['scheduleSession'] }
   ): Promise<void>;
 }
 
@@ -216,7 +216,7 @@ export class MessageRouter {
       message.chatId,
       message.payload,
       message.id,
-      { waitForCompletion: message.waitForCompletion }
+      { waitForCompletion: message.waitForCompletion, ...(message.scheduleSession ? { scheduleSession: message.scheduleSession } : {}) }
     );
   }
 }

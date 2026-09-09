@@ -50,6 +50,49 @@ function createMockOptions(overrides?: Partial<AgentPoolHandlerOptions>): AgentP
   };
 }
 
+describe('isolated scheduled execution lifecycle (#4812)', () => {
+  it('waits for its own message result before releasing, preserving model and history options', async () => {
+    const options = createMockOptions();
+    const agent = createMockAgent();
+    let complete!: () => void;
+    const done = new Promise<void>(resolve => { complete = resolve; });
+    vi.mocked(agent.turnCompleteFor).mockReturnValue(done);
+    options.agentPool.createScheduledAgent = vi.fn().mockReturnValue(agent);
+    options.agentPool.releaseScheduledAgent = vi.fn();
+    const handler = new AgentPoolMessageHandler(options);
+    const session = { freshSession: true, skipHistory: true, model: 'task-model' };
+    const pending = handler.handleSystemMessage('chat-1', 'run', 'tick-1', { waitForCompletion: true, scheduleSession: session });
+    await Promise.resolve();
+    expect(options.agentPool.getOrCreateChatAgent).not.toHaveBeenCalled();
+    expect(options.agentPool.createScheduledAgent).toHaveBeenCalledWith('chat-1', expect.anything(), 'tick-1', session);
+    expect(agent.processMessage).toHaveBeenCalledWith({ chatId: 'chat-1', payload: 'run', messageId: 'tick-1' });
+    expect(agent.turnCompleteFor).toHaveBeenCalledWith('tick-1');
+    expect(options.agentPool.releaseScheduledAgent).not.toHaveBeenCalled();
+    complete();
+    await pending;
+    expect(options.agentPool.releaseScheduledAgent).toHaveBeenCalledWith('chat-1', 'tick-1', agent);
+  });
+
+  it('releases only the isolated agent after startup failure and propagates failure', async () => {
+    const options = createMockOptions();
+    const agent = createMockAgent();
+    vi.mocked(agent.processMessage).mockRejectedValue(new Error('startup failed'));
+    options.agentPool.createScheduledAgent = vi.fn().mockReturnValue(agent);
+    options.agentPool.releaseScheduledAgent = vi.fn();
+    const handler = new AgentPoolMessageHandler(options);
+    await expect(handler.handleSystemMessage('chat-1', 'run', 'tick-1', { scheduleSession: { freshSession: true, skipHistory: false } })).rejects.toThrow('startup failed');
+    expect(options.agentPool.releaseScheduledAgent).toHaveBeenCalledOnce();
+    expect(options.agentPool.getOrCreateChatAgent).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when isolated execution is not wired instead of reusing user context', async () => {
+    const options = createMockOptions();
+    const handler = new AgentPoolMessageHandler(options);
+    await expect(handler.handleSystemMessage('chat-1', 'run', 'tick-1', { scheduleSession: { freshSession: true, skipHistory: false } })).rejects.toThrow('not wired');
+    expect(options.agentPool.getOrCreateChatAgent).not.toHaveBeenCalled();
+  });
+});
+
 describe('AgentPoolMessageHandler', () => {
   let handler: AgentPoolMessageHandler;
   let options: AgentPoolHandlerOptions;

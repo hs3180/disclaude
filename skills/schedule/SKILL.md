@@ -119,7 +119,18 @@ Schedule content prompt here
 | `timezone` | No | `Asia/Shanghai` | IANA timezone for cron scheduling (e.g., `"UTC"`, `"America/New_York"`). Validated against the IANA database (Issue #3860). |
 | `timeoutMs` | No | `7200000` (2 h) | Max wait in ms for the task's agent turn (Issue #3894; turn-level since #4648). Not a kill switch: on timeout the scheduler stops waiting and logs a neutral outcome — the turn may still finish in the background (stuck turns are killed separately by the agent pool's busy-turn cap). Tasks that legitimately run longer must set this explicitly (Issue #4649). |
 | `cooldownPeriod` | No | - | Cooldown in ms; prevents re-execution for this duration after a run completes (Issue #869). |
-| `clearContext` | No | `false` | Reset the chat's persistent agent **before** this task runs, so it executes on a fresh session with no prior conversation context (Issue #4206). ⚠️ **Destructive**: subsequent user messages in the same chat also land on the fresh session until context re-accumulates — confirm intent before enabling. |
+| `freshSession` | No | `true` | Use an isolated agent/native session for each tick; preserve the user's live chat and project/delivery identity. Explicit `false` reuses the live chat and can accumulate context. |
+| `skipHistory` | No | `false` | Suppress the bounded history snapshot in an isolated session. Requires `freshSession: true`. |
+| `clearContext` | No | unset | Legacy alias: `true` means fresh session + no history; explicit `false` retains legacy live-chat reuse unless `freshSession` is set. It no longer resets the user's agent. |
+
+Migration examples (0.5.0): omit all three fields for fresh session + history;
+use `freshSession: true` and `skipHistory: true` for a blank session; retain
+`freshSession: false` only when live conversation reuse is explicitly required.
+Existing `clearContext: true` remains blank but leaves the user's live agent intact.
+Conflicting/non-boolean options are rejected. Per-task model/tier overrides require
+fresh sessions; they are never silently applied to a running user session. On a
+wait timeout, an isolated turn may continue; blocking ownership remains until that
+turn settles, and cleanup disposes only its own agent/provider session.
 
 ---
 
@@ -172,7 +183,9 @@ enabled: false
 - `timezone`: Cron timezone (IANA)
 - `timeoutMs`: Turn-wait timeout (ms; default 2 h — set higher for long-running tasks)
 - `cooldownPeriod`: Post-run cooldown (ms)
-- `clearContext`: Fresh-session toggle (resets persistent agent before the task runs; see Field Reference)
+- `freshSession`: Isolate each execution from the user's persistent session (default true)
+- `skipHistory`: Omit the initial history snapshot (requires a fresh session)
+- `clearContext`: Legacy alias; never resets the user's persistent agent (see Field Reference)
 - Content (body text)
 
 **Steps:**
@@ -236,7 +249,10 @@ minute hour day month weekday
 **Bad**: "Continue the task from yesterday"
 **Good**: "Check the disclaude repository for new issues and create a PR if applicable"
 
-The prompt must contain ALL necessary context. The scheduler executes in a fresh session with no memory of previous conversations.
+The prompt must contain all required task state. By default each tick has a fresh
+native session and may receive a bounded recent-history snapshot; persistent live
+memory is available only through explicit legacy reuse. Store cross-tick state in
+bounded files instead of relying on the SDK conversation.
 
 ### 2. Avoid Creating New Schedules
 

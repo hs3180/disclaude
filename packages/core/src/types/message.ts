@@ -98,6 +98,8 @@ export interface SystemMessage extends Message {
   data?: Record<string, unknown>;
   /** If true, handler should await agent turn completion (Issue #4063: Loop Runner) */
   waitForCompletion?: boolean;
+  /** Scheduled ticks use an isolated native session by default (#4812). */
+  scheduleSession?: { freshSession: boolean; skipHistory: boolean; model?: string; modelTier?: string };
 }
 
 // ============================================================================

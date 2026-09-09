@@ -524,7 +524,7 @@ describe('Scheduler', () => {
       expect(routedMessage.trigger).toBe('scheduled');
     });
 
-    it('should call resetAgent before the start message when task.clearContext is true (#4206)', async () => {
+    it('maps clearContext to an isolated blank session without resetting the user (#4812)', async () => {
       const task = createTask({ id: 'clear-ctx-1', clearContext: true });
       scheduler.addTask(task);
       const jobs = scheduler.getActiveJobs();
@@ -534,20 +534,8 @@ describe('Scheduler', () => {
         expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
       }, { timeout: 2000 });
 
-      // resetAgent was called once with the chat's id and skipContext=true…
-      expect(mockCallbacks.resetAgent).toHaveBeenCalledTimes(1);
-      expect(mockCallbacks.resetAgent).toHaveBeenCalledWith('oc_test', true);
-      // …and it happened BEFORE the start-notification sendMessage.
-      const resetAgent = mockCallbacks.resetAgent!;
-      const [resetOrder] = vi.mocked(resetAgent).mock.invocationCallOrder;
-      const sendCalls = vi.mocked(mockCallbacks.sendMessage).mock.calls;
-      const sendOrders = vi.mocked(mockCallbacks.sendMessage).mock.invocationCallOrder;
-      const startIdx = sendCalls.findIndex(c => (c[1] as string)?.includes('开始执行'));
-      expect(startIdx).toBeGreaterThanOrEqual(0);
-      const startOrder = sendOrders[startIdx];
-      expect(resetOrder).toBeDefined();
-      expect(startOrder).toBeDefined();
-      expect(resetOrder!).toBeLessThan(startOrder!);
+      expect(mockCallbacks.resetAgent).not.toHaveBeenCalled();
+      expect(getRoutedMessage().scheduleSession).toMatchObject({ freshSession: true, skipHistory: true });
     });
 
     it('should NOT call resetAgent when clearContext is unset (#4206)', async () => {
@@ -561,9 +549,28 @@ describe('Scheduler', () => {
       }, { timeout: 2000 });
 
       expect(mockCallbacks.resetAgent).not.toHaveBeenCalled();
+      expect(getRoutedMessage().scheduleSession).toMatchObject({ freshSession: true, skipHistory: false });
     });
 
-    it('should clear the skip-history flag via resetAgent(chatId, false) when a clearContext task fails (#4206 nit)', async () => {
+    it('retains blocking ownership after wait timeout until the isolated turn actually settles', async () => {
+      const task = createTask({ id: 'isolated-timeout', blocking: true, timeoutMs: 20 });
+      let finish!: () => void;
+      mockRouterAsMock.route.mockReturnValueOnce(new Promise<void>(resolve => { finish = resolve; }));
+      scheduler.addTask(task);
+      fireJob(scheduler.getActiveJobs());
+      await vi.waitFor(() => expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(scheduler.isTaskRunning(task.id)).toBe(false));
+      fireJob(scheduler.getActiveJobs());
+      await new Promise(resolve => setTimeout(resolve, 30));
+      expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
+      finish();
+      await Promise.resolve();
+      fireJob(scheduler.getActiveJobs());
+      await vi.waitFor(() => expect(mockRouterAsMock.route).toHaveBeenCalledTimes(2));
+      expect(mockCallbacks.resetAgent).not.toHaveBeenCalled();
+    });
+
+    it('does not alter user-session history when an isolated clearContext task fails (#4812)', async () => {
       const task = createTask({ id: 'clear-ctx-fail', clearContext: true });
       scheduler.addTask(task);
       const jobs = scheduler.getActiveJobs();
@@ -579,12 +586,7 @@ describe('Scheduler', () => {
         );
       }, { timeout: 2000 });
 
-      // resetAgent called twice: first (chatId, true) before route, then
-      // (chatId, false) in the catch to clear the leaked skip-history flag so
-      // it doesn't drop history from the next unrelated message.
-      expect(mockCallbacks.resetAgent).toHaveBeenCalledTimes(2);
-      expect(mockCallbacks.resetAgent).toHaveBeenNthCalledWith(1, 'oc_test', true);
-      expect(mockCallbacks.resetAgent).toHaveBeenNthCalledWith(2, 'oc_test', false);
+      expect(mockCallbacks.resetAgent).not.toHaveBeenCalled();
     });
 
     it('should NOT clear context when clearContext task fails but clearContext was unset (#4206 nit)', async () => {
@@ -983,11 +985,7 @@ describe('Scheduler', () => {
           expect(scheduler.isTaskRunning('clear-skip-superseded')).toBe(false);
         }, { timeout: 2000 });
 
-        // resetAgent was called exactly once — the pre-turn clearContext
-        // reset (chatId, true). The (chatId, false) cleanup never ran.
-        expect(mockCallbacks.resetAgent).toHaveBeenCalledTimes(1);
-        expect(mockCallbacks.resetAgent).toHaveBeenCalledWith('oc_test', true);
-        expect(mockCallbacks.resetAgent).not.toHaveBeenCalledWith('oc_test', false);
+        expect(mockCallbacks.resetAgent).not.toHaveBeenCalled();
       });
 
       it('timeout outcome skips the contextCleared cleanup', async () => {
@@ -1000,7 +998,7 @@ describe('Scheduler', () => {
           expect(scheduler.isTaskRunning('clear-skip-timeout')).toBe(false);
         }, { timeout: 3000 });
 
-        expect(mockCallbacks.resetAgent).toHaveBeenCalledTimes(1);
+        expect(mockCallbacks.resetAgent).not.toHaveBeenCalled();
         expect(mockCallbacks.resetAgent).not.toHaveBeenCalledWith('oc_test', false);
       });
     });
@@ -1612,13 +1610,13 @@ describe('Scheduler', () => {
       }, { timeout: 2000 });
     });
 
-    it('should allow re-execution after timeout with blocking=true', async () => {
+    it('preserves legacy explicit live-session reuse after wait timeout', async () => {
       // First call hangs (will timeout)
       mockRouterAsMock.route.mockReturnValueOnce(new Promise(() => {}));
       // Second call succeeds
       mockRouterAsMock.route.mockResolvedValueOnce(undefined);
 
-      const task = createTask({ id: 'timeout-retry', timeoutMs: 50, blocking: true });
+      const task = createTask({ id: 'timeout-retry', timeoutMs: 50, blocking: true, freshSession: false });
       scheduler.addTask(task);
 
       const jobs = scheduler.getActiveJobs();

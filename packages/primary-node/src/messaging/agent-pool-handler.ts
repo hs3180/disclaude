@@ -13,6 +13,7 @@ import {
   createLogger,
   type IAgentMessageHandler,
   type UserMessageParams,
+  type SystemMessage,
 } from '@disclaude/core';
 import type { Logger } from 'pino';
 import type { ChatAgent } from '../agents/chat-agent.js';
@@ -28,6 +29,8 @@ const AGENT_CREATION_FAILED_MESSAGE = '⚠️ Agent 创建失败，请发送 /re
 export interface AgentPoolHandlerOptions {
   /** Agent pool for creating/getting persistent agents */
   agentPool: {
+    createScheduledAgent?: (chatId: string, callbacks: ChatAgentCallbacks, executionId: string, options: { skipHistory: boolean; model?: string; modelTier?: string }) => ChatAgent;
+    releaseScheduledAgent?: (chatId: string, executionId: string, agent: ChatAgent) => void;
     /**
      * Issue #4587 (part 2): `threadRootId` (topic-group messages only)
      * selects that thread's agent — one session per thread. Omitted for
@@ -90,14 +93,21 @@ export class AgentPoolMessageHandler implements IAgentMessageHandler {
     chatId: string,
     payload: string,
     messageId: string,
-    options?: { waitForCompletion?: boolean },
+    options?: { waitForCompletion?: boolean; scheduleSession?: SystemMessage['scheduleSession'] },
   ): Promise<void> {
     this.log.info(
       { chatId, messageId, waitForCompletion: options?.waitForCompletion },
       'Handling system message',
     );
 
-    // Unified path: use persistent agent from pool (RFC #3329)
+    if (options?.scheduleSession?.freshSession) {
+      return this.handleScheduledExecution(chatId, payload, messageId, options.scheduleSession);
+    }
+    if (options?.scheduleSession?.skipHistory || options?.scheduleSession?.model || options?.scheduleSession?.modelTier) {
+      return Promise.reject(new Error('History/model overrides require freshSession:true; live chat configuration is unchanged'));
+    }
+
+    // Explicit legacy reuse retains the ordinary persistent pool path.
     const agent = this.getAgentSafely(chatId, messageId, 'system message');
     if (!agent) {
       if (options?.waitForCompletion) {
@@ -149,6 +159,24 @@ export class AgentPoolMessageHandler implements IAgentMessageHandler {
       this.log.error({ err, chatId, messageId }, 'Agent processMessage failed for system message');
     });
     return Promise.resolve();
+  }
+
+  private async handleScheduledExecution(chatId: string, payload: string, messageId: string, session: NonNullable<SystemMessage['scheduleSession']>): Promise<void> {
+    if (!this.agentPool.createScheduledAgent || !this.agentPool.releaseScheduledAgent) {
+      throw new Error('Isolated schedule sessions are not wired; refusing to reuse user context');
+    }
+    const callbacks = this.callbacksFactory(chatId);
+    const agent = this.agentPool.createScheduledAgent(chatId, callbacks, messageId, session);
+    try {
+      await agent.processMessage({ chatId, payload, messageId });
+      const done = agent.turnCompleteFor(messageId);
+      if (!done) {
+        throw new Error('Scheduled agent turn never started');
+      }
+      await done;
+    } finally {
+      this.agentPool.releaseScheduledAgent(chatId, messageId, agent);
+    }
   }
 
   /**

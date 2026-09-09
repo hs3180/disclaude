@@ -23,6 +23,7 @@ import type { TaskFailureStore } from './task-failure-store.js';
 import type { MessageRouter as InputMessageRouter } from '../messaging/message-router.js';
 import { TurnSupersededError } from '../messaging/turn-superseded-error.js';
 import type { SystemMessage } from '../types/message.js';
+import { randomUUID } from 'node:crypto';
 
 const logger = createLogger('Scheduler');
 
@@ -147,16 +148,8 @@ export interface SchedulerCallbacks {
   /** Send a text message to a chat */
   sendMessage: (chatId: string, message: string) => Promise<void>;
   /**
-   * Reset (dispose) the persistent agent for a chat so the next message starts
-   * a fresh session. Used by the `clearContext` schedule option (Issue #4206).
-   * Optional: if not wired, `clearContext: true` logs a warning and is ignored.
-   *
-   * @param skipContext - When true (default for clearContext), the next agent
-   *   for this chat skips reloading persisted history (true fresh session).
-   *   When false, the next agent reloads history normally — used by the
-   *   scheduler to CLEAR a stale skip flag if a clearContext task fails before
-   *   its turn consumes it (Issue #4206 review nit), so the leaked flag does
-   *   not drop history from a subsequent, unrelated message.
+   * @deprecated Compatibility hook only; scheduled executions no longer reset
+   * the user's persistent agent. Fresh sessions are owned by the pool handler.
    */
   resetAgent?: (chatId: string, skipContext?: boolean) => void;
   /**
@@ -223,6 +216,8 @@ export interface SchedulerOptions {
  * ```
  */
 export class Scheduler {
+  /** Blocking isolated turns remain owned after their caller stops waiting. */
+  private readonly isolatedBlockingTurns = new Map<string, string>();
   private scheduleManager: ScheduleManager;
   private callbacks: SchedulerCallbacks;
   private cooldownManager?: CooldownManager;
@@ -520,7 +515,7 @@ ${task.prompt}`;
     }
 
     // Check blocking mechanism
-    if (task.blocking && this.runningTasks.has(task.id)) {
+    if (task.blocking && (this.runningTasks.has(task.id) || this.isolatedBlockingTurns.has(task.id))) {
       logger.info(
         { taskId: task.id, name: task.name },
         'Task skipped - previous execution still running'
@@ -532,7 +527,7 @@ ${task.prompt}`;
     // Previously used isAgentBusy() which also blocked on user-initiated conversations,
     // causing scheduled tasks to be indefinitely skipped in active chats.
     // Now we only block on OTHER scheduled blocking tasks for the same chatId.
-    if (task.blocking && task.chatId && this.runningBlockingTaskChatIds.has(task.chatId)) {
+    if (task.blocking && task.chatId && (this.runningBlockingTaskChatIds.has(task.chatId) || [...this.isolatedBlockingTurns.values()].includes(task.chatId))) {
       logger.info(
         { taskId: task.id, name: task.name, chatId: task.chatId },
         'Task skipped - another blocking scheduled task is running for this chatId'
@@ -596,11 +591,6 @@ ${task.prompt}`;
       return;
     }
 
-    // Issue #4206 (review nit): tracks whether we already applied a clearContext
-    // reset, so the catch path can undo the leaked skip-history flag if the
-    // task fails before its turn consumes it.
-    let contextCleared = false;
-
     // Issue #4648: elapsed-time anchor for the truthful completion/failure
     // logs below (previously "completed" was logged at routing time, ~0.3s
     // BEFORE the agent even produced its first token).
@@ -623,30 +613,10 @@ ${task.prompt}`;
         return;
       }
 
-      // Issue #4206: opt-in clearContext — reset the persistent agent so this
-      // task runs in a fresh session (no accumulated context). Done before the
-      // start notification so the reset is visible in logs ahead of the turn.
-      if (task.clearContext && task.chatId) {
-        if (this.callbacks.resetAgent) {
-          try {
-            this.callbacks.resetAgent(task.chatId, true);
-            contextCleared = true;
-            logger.info(
-              { taskId: task.id, name: task.name, chatId: task.chatId },
-              'Cleared agent context before scheduled task (clearContext: true)'
-            );
-          } catch (err) {
-            logger.warn(
-              { err, taskId: task.id, chatId: task.chatId },
-              'Failed to clear agent context before scheduled task; continuing with existing context'
-            );
-          }
-        } else {
-          logger.warn(
-            { taskId: task.id, name: task.name, chatId: task.chatId },
-            'Schedule has clearContext: true but no resetAgent callback wired; ignoring (running with existing context)'
-          );
-        }
+      const freshSession = task.freshSession ?? (task.clearContext === false ? false : true);
+      const skipHistory = task.skipHistory ?? task.clearContext === true;
+      if ((!freshSession && skipHistory) || (task.clearContext === true && (!freshSession || !skipHistory))) {
+        throw new Error('Conflicting schedule context options: skipHistory/clearContext:true require freshSession:true');
       }
 
       // Send start notification
@@ -657,13 +627,14 @@ ${task.prompt}`;
 
       {
         const systemMessage: SystemMessage = {
-          id: `sched-${task.id}-${Date.now()}`,
+          id: `sched-${task.id}-${randomUUID()}`,
           source: 'system',
           payload: wrappedPrompt,
           chatId: task.chatId,
           trigger: 'scheduled',
           taskName: task.name,
           modelTier: task.modelTier,
+          scheduleSession: { freshSession, skipHistory, model: task.model, modelTier: task.modelTier },
           data: {
             taskId: task.id,
             createdBy: task.createdBy,
@@ -695,8 +666,17 @@ ${task.prompt}`;
           timeoutId = setTimeout(() => reject(new TaskTimeoutError(task.id, timeoutMs)), timeoutMs);
         });
         try {
+          const turn = this.inputMessageRouter.route(systemMessage);
+          if (freshSession && task.blocking) {
+            this.isolatedBlockingTurns.set(task.id, task.chatId);
+            // Observe both outcomes without creating an unhandled rejection.
+            void turn.then(
+              () => { this.isolatedBlockingTurns.delete(task.id); },
+              () => { this.isolatedBlockingTurns.delete(task.id); },
+            );
+          }
           await Promise.race([
-            this.inputMessageRouter.route(systemMessage),
+            turn,
             timeoutPromise,
           ]);
         } finally {
@@ -741,9 +721,8 @@ ${task.prompt}`;
         // - streak deliberately untouched: a superseded run is neither
         //   evidence of health (resetting would mask real failures) nor of
         //   breakage,
-        // - no contextCleared cleanup below: the superseded turn may still
-        //   be draining in the background, and resetAgent→dispose would
-        //   abort the SUPERSEDING message's turn (review finding ④ shape).
+        // - session cleanup belongs to the handler after its turn settles;
+        //   never reset a user's agent in response to this wait outcome.
         //
         // Issue #4649 (review ③) note: with per-message turn completions an
         // ordinary interjection no longer produces this error at all (each
@@ -768,9 +747,8 @@ ${task.prompt}`;
         //   nor fake them); genuinely stuck turns are caught earlier by the
         //   pool's busy-turn hard cap and land here as countable REAL
         //   errors (see DEFAULT_TASK_TIMEOUT_MS),
-        // - no contextCleared cleanup below — the turn may STILL be running
-        //   (review finding ④: dispose would kill the live turn the
-        //   notification below says might continue),
+        // - the handler retains its session until the actual turn settles;
+        //   this wait timeout must not dispose a turn that may still run,
         // - the notification keeps the honest wording and teaches the knob.
         logger.warn(
           { ...outcomeContext, timeoutMs: error.timeoutMs },
@@ -822,36 +800,8 @@ ${task.prompt}`;
         );
       }
 
-      // Issue #4206 (review nit): if we cleared context for this task but it
-      // then failed before its turn consumed the skip-history flag, clear that
-      // stale flag so the next real message for this chat reloads history
-      // normally. Otherwise a failed clearContext run would leak skip-history
-      // to a subsequent, unrelated user message. resetAgent(chatId, false)
-      // disposes any partial fresh agent and restores the with-history default.
-      //
-      // Issue #4649 (reviews ③④⑤): the dispose inside this cleanup is safe
-      // here and ONLY here — every error that reaches the generic branch now
-      // means THIS chat's agent session is dead or was never started (turn
-      // death, channel closed at push, agent creation failure, session
-      // replacement), so there is no live turn to abort. The two "the turn
-      // may still be running" outcomes — timeout and superseded — return in
-      // their own branches above and deliberately skip this cleanup (review
-      // finding ④: dispose would kill the very turn the notification says
-      // might still finish).
-      if (contextCleared && task.chatId && this.callbacks.resetAgent) {
-        try {
-          this.callbacks.resetAgent(task.chatId, false);
-          logger.warn(
-            { taskId: task.id, chatId: task.chatId },
-            'Cleared stale skip-history flag after failed clearContext task'
-          );
-        } catch (cleanupErr) {
-          logger.warn(
-            { err: cleanupErr, taskId: task.id, chatId: task.chatId },
-            'Failed to clear stale skip-history flag after failed clearContext task'
-          );
-        }
-      }
+      // The handler owns isolated-agent cleanup. Never reset the user's live
+      // chat here, including when a scheduled turn fails before startup.
 
       // Timeout notifications are handled in the TaskTimeoutError branch
       // above (Issue #4649 review ②: timeout is an unknown outcome, not a

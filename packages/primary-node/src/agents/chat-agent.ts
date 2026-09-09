@@ -157,6 +157,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
   /** The chatId this ChatAgent is bound to (Issue #644) */
   private readonly boundChatId: string;
+  private readonly sdkSessionKey: string;
 
   /**
    * Callbacks for sending responses to the channel.
@@ -322,6 +323,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Issue #644: Bind chatId at construction time
     this.boundChatId = config.chatId;
+    this.sdkSessionKey = config.sdkSessionKey ?? config.chatId;
     this.callbacks = config.callbacks;
     this.cwdProvider = config.cwdProvider;
     // Issue #4448 (direction #1)
@@ -1128,7 +1130,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       disallowedTools: buildDisallowedTools(),
       // Issue #4634 (S7): chatId as session identity for concurrency
       // governance on backends that bound active sessions (codex).
-      sessionKey: chatId,
+      sessionKey: this.sdkSessionKey,
     });
 
     this.logger.info({ chatId }, 'Starting SDK query with message channel');
@@ -2606,7 +2608,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // pool already disposed the agent) would otherwise resurrect the
     // conversation the user reset away. Optional capability — claude/pi
     // providers don't implement it and stay untouched.
-    this.sdkProvider.forgetSession?.(this.boundChatId);
+    this.sdkProvider.forgetSession?.(this.sdkSessionKey);
 
     // Clear conversation context
     this.conversationOrchestrator.deleteThreadRoot(this.boundChatId);

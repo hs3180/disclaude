@@ -11,7 +11,7 @@
  * @see Issue #1040 - Separate Primary Node code to @disclaude/primary-node
  */
 
-import { type MessageBuilderOptions, type CwdProvider, type CwdResolution, buildSessionKey, chatIdOfSessionKey, createLogger, getProvider } from '@disclaude/core';
+import { type MessageBuilderOptions, type CwdProvider, type CwdResolution, type ModelTier, buildSessionKey, chatIdOfSessionKey, createLogger, getProvider } from '@disclaude/core';
 import { AgentFactory } from './agents/factory.js';
 import type { ChatAgentCallbacks } from './agents/types.js';
 import type { ChatAgent } from './agents/chat-agent.js';
@@ -166,6 +166,48 @@ export interface AgentPoolStats {
  * existing sessions are unaffected until a thread message starts a new one.
  */
 export class PrimaryAgentPool {
+  private readonly scheduledAgents = new Map<string, ChatAgent>();
+  /** Create an execution-owned pool slot without replacing the chat's live agent. */
+  createScheduledAgent(chatId: string, callbacks: ChatAgentCallbacks, executionId: string, options: { skipHistory: boolean; model?: string; modelTier?: string }): ChatAgent {
+    if (options.modelTier && !['high', 'low', 'multimodal'].includes(options.modelTier)) {
+      throw new Error(`Invalid scheduled model tier: ${options.modelTier}`);
+    }
+    const key = this.sessionKeyOf(chatId, `schedule:${executionId}`);
+    if (this.scheduledAgents.has(key)) {
+      throw new Error('Scheduled execution already owns an agent');
+    }
+    const agent = AgentFactory.createChatAgent('pilot', chatId, callbacks, {
+      messageBuilderOptions: this.options.messageBuilderOptions,
+      cwdProvider: this.options.cwdProvider,
+      cwdResolver: this.options.cwdResolver,
+      skipHistory: options.skipHistory,
+      model: options.model,
+      modelTier: options.modelTier as ModelTier | undefined,
+      sdkSessionKey: key,
+    });
+    this.agents.set(key, agent);
+    this.scheduledAgents.set(key, agent);
+    this.lastUsedAt.set(key, Date.now());
+    this.peakActive = Math.max(this.peakActive, this.agents.size);
+    return agent;
+  }
+
+  /** Called after the owned turn settles; timeout of a caller's wait is not settlement. */
+  releaseScheduledAgent(chatId: string, executionId: string, agent: ChatAgent): void {
+    const key = this.sessionKeyOf(chatId, `schedule:${executionId}`);
+    if (this.scheduledAgents.get(key) !== agent) {
+      return;
+    }
+    this.agents.delete(key);
+    this.scheduledAgents.delete(key);
+    this.lastUsedAt.delete(key);
+    this.busySince.delete(key);
+    const stoppedFor = agent.turnStartedAtMs;
+    if (typeof stoppedFor === 'number' && stoppedFor > 0) {
+      this.busyTurnStoppedFor.delete(busyTurnGuardKey(key, stoppedFor));
+    }
+    try { agent.reset(); } finally { agent.dispose(); }
+  }
   /** Keyed by buildSessionKey(chatId, threadRootId) — see class doc (Issue #4587 part 2). */
   private readonly agents = new Map<string, ChatAgent>();
   private readonly options: PrimaryAgentPoolOptions;

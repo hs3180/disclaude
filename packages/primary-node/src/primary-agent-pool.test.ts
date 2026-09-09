@@ -54,6 +54,7 @@ vi.mock('./agents/factory.js', () => ({
     createChatAgent: vi.fn((_name: string, chatId: string, _callbacks: unknown, _options?: unknown) => {
       const agent = {
         dispose: vi.fn(),
+        reset: vi.fn(),
         stop: vi.fn().mockReturnValue(true),
         updateCallbacks: vi.fn().mockReturnValue(true),
         taskComplete: undefined as Promise<void> | undefined,
@@ -80,6 +81,35 @@ const createMockCallbacks = () => ({
 });
 
 describe('PrimaryAgentPool', () => {
+  it('isolates repeated scheduled ticks and preserves the user agent and delivery chat (#4812)', () => {
+    const pool = new PrimaryAgentPool();
+    const callbacks = createMockCallbacks();
+    const user = pool.getOrCreateChatAgent('chat-1', callbacks);
+    const a = pool.createScheduledAgent('chat-1', callbacks, 'tick-a', { skipHistory: false, model: 'task-model' });
+    const b = pool.createScheduledAgent('chat-1', callbacks, 'tick-b', { skipHistory: true });
+    expect(a).not.toBe(b);
+    expect(a).not.toBe(user);
+    expect(pool.get('chat-1')).toBe(user);
+    expect(AgentFactory.createChatAgent).toHaveBeenCalledWith('pilot', 'chat-1', callbacks, expect.objectContaining({ sdkSessionKey: 'chat-1::schedule:tick-a', skipHistory: false, model: 'task-model' }));
+    expect(AgentFactory.createChatAgent).toHaveBeenCalledWith('pilot', 'chat-1', callbacks, expect.objectContaining({ sdkSessionKey: 'chat-1::schedule:tick-b', skipHistory: true }));
+    expect(() => pool.createScheduledAgent('chat-1', callbacks, 'tick-a', { skipHistory: false })).toThrow('already owns');
+    pool.releaseScheduledAgent('chat-1', 'tick-b', b);
+    expect(b.reset).toHaveBeenCalledOnce();
+    expect(b.dispose).toHaveBeenCalledOnce();
+    expect(user.dispose).not.toHaveBeenCalled();
+    expect(a.dispose).not.toHaveBeenCalled();
+    pool.releaseScheduledAgent('chat-1', 'tick-a', a);
+    pool.releaseScheduledAgent('chat-1', 'tick-a', a);
+    expect(a.dispose).toHaveBeenCalledOnce();
+    expect(pool.get('chat-1')).toBe(user);
+    pool.disposeAll();
+  });
+
+  it('rejects invalid scheduled model tiers before creating an agent', () => {
+    const pool = new PrimaryAgentPool();
+    expect(() => pool.createScheduledAgent('chat-1', createMockCallbacks(), 'tick', { skipHistory: false, modelTier: 'invalid' })).toThrow('Invalid scheduled model tier');
+    pool.disposeAll();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     mockAgents.clear();
