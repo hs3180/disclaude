@@ -42,7 +42,7 @@ export interface ControlHandlerContext {
      */
     stopThread?(chatId: string, threadRootId: string): boolean;
     steer?(chatId: string, prompt: string, threadRootId?: string):
-      { ok: true; message: string } | { ok: false; error: string };
+      Promise<{ ok: true; message: string } | { ok: false; error: string }>;
   };
 
   /** 节点相关能力 */

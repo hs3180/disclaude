@@ -2725,6 +2725,36 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     return true;
   }
 
+  /** Apply an instruction to the currently executing native turn after backend acknowledgement. */
+  async steer(prompt: string): Promise<{ ok: true; turnId: string } | { ok: false; error: string }> {
+    type SteerCapableQueryHandle = QueryHandle & {
+      steer(text: string): Promise<{ turnId: string }>;
+    };
+    const handle = this.queryHandle;
+    if (!handle || !this.isBusy) {
+      return { ok: false, error: 'No active turn to steer. The instruction was not queued.' };
+    }
+    if (typeof (handle as Partial<SteerCapableQueryHandle>).steer !== 'function') {
+      return {
+        ok: false,
+        error: 'Immediate steer is unsupported by this backend. The instruction was not queued.',
+      };
+    }
+    const generation = this.sessionGeneration;
+    try {
+      const acknowledgement = await (handle as SteerCapableQueryHandle).steer(prompt);
+      if (this.queryHandle !== handle || this.sessionGeneration !== generation || !this.isBusy) {
+        return { ok: false, error: 'The active turn changed before steer was acknowledged.' };
+      }
+      return { ok: true, turnId: acknowledgement.turnId };
+    } catch (error) {
+      return {
+        ok: false,
+        error: `Steer was rejected by the active backend: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+
   /**
    * Dispose of resources held by this agent.
    *
