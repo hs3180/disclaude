@@ -172,6 +172,50 @@ describe('PrimaryAgentPool', () => {
       expect(pool.get('chat-fail')).toBe(old);
       expect(pool.getActiveAgentPreset('chat-fail')?.name).toBe('default');
     });
+
+    it('releases evicted callbacks while preserving the selected preset', () => {
+      const pool = new PrimaryAgentPool({
+        agentPresets: presets,
+        validatePresetBackend: () => ({ available: true }),
+        idleTimeoutMs: 1,
+      });
+      const oldCallbacks = createMockCallbacks();
+      pool.getOrCreateChatAgent('chat-evicted', oldCallbacks);
+      pool.evictIdleAgents(Date.now() + 100);
+
+      // With no live agent/callback, switching records the next-session choice
+      // but must not construct a candidate using the stale channel closure.
+      expect(pool.switchAgentPreset('chat-evicted', 'fast')).toMatchObject({
+        ok: true,
+        active: { name: 'fast' },
+      });
+      expect(AgentFactory.createChatAgent).toHaveBeenCalledTimes(1);
+
+      const newCallbacks = createMockCallbacks();
+      pool.getOrCreateChatAgent('chat-evicted', newCallbacks);
+      expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith(
+        'pilot',
+        'chat-evicted',
+        newCallbacks,
+        expect.objectContaining({ model: 'claude-haiku' })
+      );
+      expect(pool.getActiveAgentPreset('chat-evicted')?.name).toBe('fast');
+    });
+
+    it('releases reset callbacks while preserving the selected preset', () => {
+      const pool = new PrimaryAgentPool({
+        agentPresets: presets,
+        validatePresetBackend: () => ({ available: true }),
+      });
+      pool.getOrCreateChatAgent('chat-reset', createMockCallbacks());
+      expect(pool.switchAgentPreset('chat-reset', 'fast')).toMatchObject({ ok: true });
+      pool.reset('chat-reset');
+
+      const callsBeforeSelection = vi.mocked(AgentFactory.createChatAgent).mock.calls.length;
+      expect(pool.switchAgentPreset('chat-reset', 'fast')).toMatchObject({ ok: true });
+      expect(AgentFactory.createChatAgent).toHaveBeenCalledTimes(callsBeforeSelection);
+      expect(pool.getActiveAgentPreset('chat-reset')?.name).toBe('fast');
+    });
   });
 
   describe('getOrCreateChatAgent()', () => {

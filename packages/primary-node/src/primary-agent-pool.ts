@@ -499,6 +499,9 @@ export class PrimaryAgentPool {
    */
   reset(chatId: string, skipContext?: boolean, threadRootId?: string): void {
     const sessionKey = this.sessionKeyOf(chatId, threadRootId);
+    // Callbacks capture channel/request state and are only needed while an
+    // agent occupies this slot. Preset selection intentionally survives reset.
+    this.callbacksBySession.delete(sessionKey);
     if (skipContext) {
       this.skipHistoryChatIds.add(sessionKey);
     } else {
@@ -648,6 +651,9 @@ export class PrimaryAgentPool {
       if (now - last >= timeout) {
         this.agents.delete(sessionKey);
         this.lastUsedAt.delete(sessionKey);
+        // Do not retain channel closures after the owning agent is evicted.
+        // selectedPresetBySession remains so the next agent uses the same preset.
+        this.callbacksBySession.delete(sessionKey);
         agent.dispose();
         evicted.push(sessionKey);
       }
