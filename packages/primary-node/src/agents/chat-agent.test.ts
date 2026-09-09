@@ -360,6 +360,78 @@ describe('ChatAgent (primary-node)', () => {
 
   });
 
+  describe('steer acknowledgement', () => {
+    it('waits for backend acknowledgement before reporting success', async () => {
+      let acknowledge!: (value: { turnId: string }) => void;
+      const steer = vi.fn().mockReturnValue(new Promise((resolve) => { acknowledge = resolve; }));
+      (chatAgent as any).isProcessingMessage = true;
+      (chatAgent as any).activeTurnMessageId = 'message-a';
+      (chatAgent as any).queryHandle = { close: vi.fn(), steer };
+
+      const result = ChatAgent.prototype.steer.call(chatAgent, 'change direction');
+      let settled = false;
+      void result.then(() => { settled = true; });
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      acknowledge({ turnId: 'turn-1' });
+      await expect(result).resolves.toEqual({ ok: true, turnId: 'turn-1' });
+    });
+
+    it('reports reject, unsupported, completed, and stale acknowledgements as failures', async () => {
+      (chatAgent as any).isProcessingMessage = true;
+      (chatAgent as any).activeTurnMessageId = 'message-a';
+      (chatAgent as any).queryHandle = {
+        close: vi.fn(),
+        steer: vi.fn().mockRejectedValue(new Error('turn disconnected')),
+      };
+      await expect(ChatAgent.prototype.steer.call(chatAgent, 'change')).resolves.toMatchObject({
+        ok: false,
+        error: expect.stringContaining('turn disconnected'),
+      });
+
+      (chatAgent as any).queryHandle = { close: vi.fn() };
+      await expect(ChatAgent.prototype.steer.call(chatAgent, 'change')).resolves.toMatchObject({
+        ok: false,
+        error: expect.stringContaining('unsupported'),
+      });
+
+      (chatAgent as any).isProcessingMessage = false;
+      await expect(ChatAgent.prototype.steer.call(chatAgent, 'change')).resolves.toMatchObject({
+        ok: false,
+        error: expect.stringContaining('No active turn'),
+      });
+
+      let acknowledge!: (value: { turnId: string }) => void;
+      const original = { close: vi.fn(), steer: vi.fn().mockReturnValue(new Promise((resolve) => { acknowledge = resolve; })) };
+      (chatAgent as any).isProcessingMessage = true;
+      (chatAgent as any).activeTurnMessageId = 'message-a';
+      (chatAgent as any).queryHandle = original;
+      const stale = ChatAgent.prototype.steer.call(chatAgent, 'change');
+      (chatAgent as any).queryHandle = { close: vi.fn() };
+      acknowledge({ turnId: 'old-turn' });
+      await expect(stale).resolves.toMatchObject({
+        ok: false,
+        error: expect.stringContaining('turn changed'),
+      });
+
+      let acknowledgeSameHandle!: (value: { turnId: string }) => void;
+      const persistentHandle = {
+        close: vi.fn(),
+        steer: vi.fn().mockReturnValue(new Promise((resolve) => { acknowledgeSameHandle = resolve; })),
+      };
+      (chatAgent as any).queryHandle = persistentHandle;
+      (chatAgent as any).activeTurnMessageId = 'message-a';
+      const lateFromA = ChatAgent.prototype.steer.call(chatAgent, 'change A');
+      // B starts on the same persistent handle and session generation.
+      (chatAgent as any).activeTurnMessageId = 'message-b';
+      acknowledgeSameHandle({ turnId: 'turn-a' });
+      await expect(lateFromA).resolves.toMatchObject({
+        ok: false,
+        error: expect.stringContaining('turn changed'),
+      });
+    });
+  });
+
   describe('MCP-free startup (Issue #4652)', () => {
     it('starts the production query path without constructing or injecting mcpServers', () => {
       (chatAgent as any).startAgentLoop();
