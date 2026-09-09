@@ -324,7 +324,9 @@ export class PrimaryNode extends EventEmitter {
    * If scheduler fails, PrimaryNode still starts (Feishu, REST channels work).
    * Scheduler status is logged and queryable via getSchedulerStatus().
    */
-  async start(): Promise<void> {
+  private schedulerDeferred = false;
+
+  async start(options: { deferScheduler?: boolean } = {}): Promise<void> {
     if (this.running) {
       logger.warn('PrimaryNode already running');
       return;
@@ -367,6 +369,26 @@ export class PrimaryNode extends EventEmitter {
     // serves REST-only via the HttpApiServer wired in cli.ts (--api-port).
     // Channel CLI tools and push-cli connect as REST clients.
 
+    this.schedulerDeferred = options.deferScheduler === true;
+    if (!this.schedulerDeferred) {
+      await this.startSchedulerSafely();
+    }
+
+    this.running = true;
+    this.emit('started');
+    logger.info({ nodeId: this.localNodeId }, 'PrimaryNode started');
+  }
+
+  /** Called by CLI only after the actual REST address has been published. */
+  async startDeferredScheduler(): Promise<void> {
+    if (!this.running || !this.schedulerDeferred) {
+      return;
+    }
+    this.schedulerDeferred = false;
+    await this.startSchedulerSafely();
+  }
+
+  private async startSchedulerSafely(): Promise<void> {
     // Initialize Scheduler (Issue #1377)
     // Issue #3361: Wrap in try-catch to prevent scheduler failure from
     // blocking the entire PrimaryNode startup. Main channels (Feishu, REST)
@@ -381,9 +403,6 @@ export class PrimaryNode extends EventEmitter {
       );
     }
 
-    this.running = true;
-    this.emit('started');
-    logger.info({ nodeId: this.localNodeId }, 'PrimaryNode started');
   }
 
   /**
@@ -396,6 +415,7 @@ export class PrimaryNode extends EventEmitter {
     }
 
     logger.info({ nodeId: this.localNodeId }, 'Stopping PrimaryNode');
+    this.schedulerDeferred = false;
 
     // Stop Scheduler (Issue #1377)
     await this.stopScheduler();

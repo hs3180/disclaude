@@ -501,7 +501,7 @@ export async function main(): Promise<void> {
 
   try {
     // Start PrimaryNode
-    await primaryNode.start();
+    await primaryNode.start({ deferScheduler: true });
 
     // Start all registered channels via ChannelLifecycleManager (Issue #1594 Phase 2)
     await lifecycleManager.startAll();
@@ -623,6 +623,9 @@ export async function main(): Promise<void> {
       // Keep in-process managed clients on the address actually bound by the
       // server. A configured port of 0 is not a usable client address.
       publishChannelApiEnvironment(baseUrl, options.apiToken);
+      // Cron callbacks may spawn channel CLI immediately. Never enable them
+      // before the listening server's real (possibly dynamic) address exists.
+      await primaryNode.startDeferredScheduler();
       console.log(`HTTP API server started on ${baseUrl}`);
 
       // Issue #4031: Subscribe InternalEventBus to HttpApiServer SSE broadcast.
