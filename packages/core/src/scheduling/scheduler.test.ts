@@ -13,7 +13,13 @@ import { CronJob } from 'cron';
 import * as fsPromises from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
-import { Scheduler, TaskTimeoutError, type SchedulerCallbacks, type ScriptRunner } from './scheduler.js';
+import {
+  Scheduler,
+  ScriptCancelledError,
+  TaskTimeoutError,
+  type SchedulerCallbacks,
+  type ScriptRunner,
+} from './scheduler.js';
 import { TurnSupersededError } from '../messaging/turn-superseded-error.js';
 import { TaskFailureStore } from './task-failure-store.js';
 import type { ScheduleManager } from './schedule-manager.js';
@@ -167,7 +173,12 @@ describe('Scheduler', () => {
 
   describe('direct script execution (Issue #4798)', () => {
     it('should execute a script without routing through the agent', async () => {
-      const scriptRunner = vi.fn<ScriptRunner>().mockResolvedValue({ stdout: 'ok\n', stderr: '' });
+      const scriptRunner = vi.fn<ScriptRunner>().mockResolvedValue({
+        stdout: 'ok\n',
+        stderr: '',
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      });
       const scriptScheduler = new Scheduler({
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
@@ -183,6 +194,7 @@ describe('Scheduler', () => {
 
       expect(scriptRunner).toHaveBeenCalledWith('echo ok', expect.objectContaining({
         timeoutMs: expect.any(Number),
+        signal: expect.any(AbortSignal),
         env: expect.objectContaining({
           DISCLAUDE_SCHEDULE_ID: 'script-1',
           DISCLAUDE_CHAT_ID: 'oc_test',
@@ -207,6 +219,30 @@ describe('Scheduler', () => {
       await vi.waitFor(() => expect(scriptScheduler.isTaskRunning('script-fail')).toBe(false));
       expect(mockCallbacks.sendMessage).toHaveBeenCalledWith('oc_test', expect.stringContaining('执行失败'));
       await scriptScheduler.stop(0);
+    });
+
+    it('should cancel an active script during scheduler shutdown without reporting failure', async () => {
+      const scriptRunner = vi.fn<ScriptRunner>((_script, options) => new Promise((_resolve, reject) => {
+        options.signal.addEventListener('abort', () => reject(new ScriptCancelledError()), { once: true });
+      }));
+      const scriptScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        scriptRunner,
+        jobFactory: testJobFactory,
+      });
+      scriptScheduler.addTask(createTask({ id: 'script-cancel', prompt: undefined, script: 'sleep 30' }));
+
+      void scriptScheduler.getActiveJobs()[0].job.fireOnTick();
+      await vi.waitFor(() => expect(scriptRunner).toHaveBeenCalledOnce());
+      await scriptScheduler.stop();
+
+      expect(scriptRunner.mock.calls[0][1].signal.aborted).toBe(true);
+      expect(scriptScheduler.isTaskRunning('script-cancel')).toBe(false);
+      expect(mockCallbacks.sendMessage).not.toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('执行失败'),
+      );
     });
   });
 

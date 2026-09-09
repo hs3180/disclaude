@@ -117,7 +117,7 @@ Schedule content prompt here
 | `model` | No | - | Model to use for execution (e.g., "sonnet", "opus") |
 | `modelTier` | No | - | Three-level model tier: `"high"`, `"low"`, or `"multimodal"` (resolved to a concrete model via `Config.getModelForTier`; Issue #3059). |
 | `timezone` | No | `Asia/Shanghai` | IANA timezone for cron scheduling (e.g., `"UTC"`, `"America/New_York"`). Validated against the IANA database (Issue #3860). |
-| `timeoutMs` | No | `7200000` (2 h) | Max wait in ms for the task's agent turn (Issue #3894; turn-level since #4648). Not a kill switch: on timeout the scheduler stops waiting and logs a neutral outcome — the turn may still finish in the background (stuck turns are killed separately by the agent pool's busy-turn cap). Tasks that legitimately run longer must set this explicitly (Issue #4649). |
+| `timeoutMs` | No | `7200000` (2 h) | For prompt schedules, max wait for the agent turn: not a kill switch, and the turn may continue in the background (#3894/#4648/#4649). For direct `script` schedules, this is a hard process-group timeout: the scheduler sends TERM and escalates to KILL after a bounded grace. |
 | `cooldownPeriod` | No | - | Cooldown in ms; prevents re-execution for this duration after a run completes (Issue #869). |
 | `clearContext` | No | `false` | Reset the chat's persistent agent **before** this task runs, so it executes on a fresh session with no prior conversation context (Issue #4206). ⚠️ **Destructive**: subsequent user messages in the same chat also land on the fresh session until context re-accumulates — confirm intent before enabling. |
 | `script` | No | - | Execute a shell command directly, without an agent turn. Mutually exclusive with the markdown body prompt; exactly one must be provided (Issue #4798). The process receives `DISCLAUDE_SCHEDULE_ID`, `DISCLAUDE_SCHEDULE_NAME`, and `DISCLAUDE_CHAT_ID`. |
@@ -254,7 +254,7 @@ script: "node scripts/refresh-cache.js"
 ---
 ```
 
-The markdown body is omitted for script schedules. `prompt` (the body) and `script` are mutually exclusive, and exactly one is required. The command receives `DISCLAUDE_SCHEDULE_ID`, `DISCLAUDE_SCHEDULE_NAME`, and `DISCLAUDE_CHAT_ID`; non-zero exit status is recorded as a failed run and participates in cooldown/blocking/failure-streak handling.
+The markdown body is omitted for script schedules. `prompt` (the body) and `script` are mutually exclusive, and exactly one is required. The command receives `DISCLAUDE_SCHEDULE_ID`, `DISCLAUDE_SCHEDULE_NAME`, and `DISCLAUDE_CHAT_ID`; non-zero exit status and `timeoutMs` expiry are recorded as failed runs and participate in cooldown/blocking/failure-streak handling. Scheduler shutdown cancels an active script and waits for bounded process-group cleanup. Stdout and stderr are diagnostics only (not automatically sent to the chat), and each retained stream is limited to 64 KiB with an explicit truncation marker in structured logs. A script that intentionally daemonizes into another session/process group is outside this cleanup guarantee and must manage its own lifecycle.
 
 ### 2. Avoid Creating New Schedules
 

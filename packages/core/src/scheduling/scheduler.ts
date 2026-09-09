@@ -23,7 +23,7 @@ import type { TaskFailureStore } from './task-failure-store.js';
 import type { MessageRouter as InputMessageRouter } from '../messaging/message-router.js';
 import { TurnSupersededError } from '../messaging/turn-superseded-error.js';
 import type { SystemMessage } from '../types/message.js';
-import { execFile } from 'node:child_process';
+import { spawn } from 'node:child_process';
 
 const logger = createLogger('Scheduler');
 
@@ -173,27 +173,174 @@ export interface SchedulerCallbacks {
 export interface ScriptExecutionResult {
   stdout: string;
   stderr: string;
+  stdoutTruncated: boolean;
+  stderrTruncated: boolean;
 }
 
 /** Injectable script runner; the default runner is used in production. */
 export type ScriptRunner = (script: string, options: {
   timeoutMs: number;
   env: NodeJS.ProcessEnv;
+  signal: AbortSignal;
 }) => Promise<ScriptExecutionResult>;
 
-const defaultScriptRunner: ScriptRunner = (script, options) => new Promise((resolve, reject) => {
-  execFile('/bin/sh', ['-c', script], {
-    timeout: options.timeoutMs,
+const SCRIPT_DIAGNOSTIC_LIMIT_BYTES = 64 * 1024;
+const SCRIPT_KILL_GRACE_MS = 1000;
+
+export class ScriptCancelledError extends Error {
+  constructor() {
+    super('Scheduled script cancelled');
+    this.name = 'ScriptCancelledError';
+  }
+}
+
+export class ScriptTimeoutError extends Error {
+  constructor(readonly timeoutMs: number) {
+    super(`Scheduled script timed out after ${formatTimeout(timeoutMs)}`);
+    this.name = 'ScriptTimeoutError';
+  }
+}
+
+function appendDiagnostic(current: Buffer, chunk: Buffer): { value: Buffer; truncated: boolean } {
+  const remaining = SCRIPT_DIAGNOSTIC_LIMIT_BYTES - current.length;
+  if (remaining <= 0) { return { value: current, truncated: true }; }
+  return {
+    value: Buffer.concat([current, chunk.subarray(0, remaining)]),
+    truncated: chunk.length > remaining,
+  };
+}
+
+/** Real POSIX runner used by production and process-lifecycle tests. */
+export const defaultScriptRunner: ScriptRunner = (script, options) => {
+  // A pre-cancelled schedule must not spawn: even a short-lived shell could
+  // perform a side effect before an abort listener gets its first turn.
+  if (options.signal.aborted) { return Promise.reject(new ScriptCancelledError()); }
+
+  return new Promise((resolve, reject) => {
+  const child = spawn('/bin/sh', ['-c', script], {
+    detached: process.platform !== 'win32',
     env: options.env,
-    maxBuffer: 10 * 1024 * 1024,
-  }, (error, stdout, stderr) => {
-    if (error) {
-      reject(Object.assign(error, { stdout, stderr }));
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stdout: Buffer = Buffer.alloc(0);
+  let stderr: Buffer = Buffer.alloc(0);
+  let stdoutTruncated = false;
+  let stderrTruncated = false;
+  let settled = false;
+  let termination: 'cancelled' | 'timeout' | undefined;
+  let terminationTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const terminate = (signal: NodeJS.Signals): void => {
+    if (!child.pid) { return; }
+    try {
+      if (process.platform === 'win32') {
+        if (child.exitCode === null && child.signalCode === null) { child.kill(signal); }
+      }
+      else { process.kill(-child.pid, signal); }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
+        logger.warn({ err: error, pid: child.pid }, 'Failed to terminate scheduled script process group');
+      }
+    }
+  };
+
+  const result = (): ScriptExecutionResult => ({
+    stdout: stdout.toString('utf8'),
+    stderr: stderr.toString('utf8'),
+    stdoutTruncated,
+    stderrTruncated,
+  });
+  const groupIsAlive = (): boolean => {
+    if (!child.pid) { return false; }
+    if (process.platform === 'win32') {
+      return child.exitCode === null && child.signalCode === null;
+    }
+    try {
+      process.kill(-child.pid, 0);
+      return true;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code !== 'ESRCH';
+    }
+  };
+  const cleanup = (): void => {
+    clearTimeout(timeout);
+    if (terminationTimer) { clearTimeout(terminationTimer); }
+    options.signal.removeEventListener('abort', onAbort);
+  };
+  const settleTermination = (): void => {
+    if (settled || !termination) { return; }
+    settled = true;
+    cleanup();
+    const error = termination === 'cancelled'
+      ? new ScriptCancelledError()
+      : new ScriptTimeoutError(options.timeoutMs);
+    reject(Object.assign(error, result()));
+  };
+  const awaitKilledGroup = (deadline: number): void => {
+    if (!groupIsAlive() || Date.now() >= deadline) {
+      if (groupIsAlive()) {
+        logger.error({ pid: child.pid }, 'Scheduled script process group remained after SIGKILL');
+      }
+      settleTermination();
       return;
     }
-    resolve({ stdout, stderr });
+    terminationTimer = setTimeout(() => awaitKilledGroup(deadline), 10);
+  };
+  const beginTermination = (kind: 'cancelled' | 'timeout'): void => {
+    if (termination || settled) { return; }
+    termination = kind;
+    clearTimeout(timeout);
+    terminate('SIGTERM');
+    if (!groupIsAlive()) {
+      settleTermination();
+      return;
+    }
+    // This timer intentionally remains referenced: cancellation completion
+    // means cleanup finished, not merely that the shell's close event fired.
+    terminationTimer = setTimeout(() => {
+      terminate('SIGKILL');
+      awaitKilledGroup(Date.now() + 250);
+    }, SCRIPT_KILL_GRACE_MS);
+  };
+
+  const timeout = setTimeout(() => beginTermination('timeout'), options.timeoutMs);
+  timeout.unref();
+  const onAbort = (): void => beginTermination('cancelled');
+  options.signal.addEventListener('abort', onAbort, { once: true });
+
+  child.stdout.on('data', (chunk: Buffer) => {
+    const next = appendDiagnostic(stdout, chunk);
+    stdout = next.value;
+    stdoutTruncated ||= next.truncated;
   });
-});
+  child.stderr.on('data', (chunk: Buffer) => {
+    const next = appendDiagnostic(stderr, chunk);
+    stderr = next.value;
+    stderrTruncated ||= next.truncated;
+  });
+  child.once('error', (error) => {
+    if (settled) { return; }
+    settled = true;
+    cleanup();
+    reject(error);
+  });
+  child.once('close', (code, signal) => {
+    if (settled) { return; }
+    if (termination) {
+      if (!groupIsAlive()) { settleTermination(); }
+      return;
+    }
+    settled = true;
+    cleanup();
+    const diagnostics = result();
+    if (code !== 0) {
+      reject(Object.assign(new Error(`Scheduled script exited with code ${code ?? 'unknown'}${signal ? ` (${signal})` : ''}`), diagnostics));
+    } else {
+      resolve(diagnostics);
+    }
+  });
+  });
+};
 
 /**
  * Scheduler options.
@@ -259,6 +406,7 @@ export class Scheduler {
   /** Issue #4218 (fix A): injectable job factory; undefined → real CronJob. */
   private jobFactory?: SchedulerJobFactory;
   private scriptRunner: ScriptRunner;
+  private activeScriptControllers = new Map<string, AbortController>();
   private activeJobs: Map<string, ActiveJob> = new Map();
   private running = false;
   /** Tracks tasks currently being executed (for blocking mechanism) */
@@ -357,6 +505,12 @@ export class Scheduler {
     }
 
     this.activeJobs.clear();
+
+    // Script schedules own subprocesses, unlike agent turns. Cancel them
+    // before waiting for drain so shutdown cannot abandon process groups.
+    for (const controller of this.activeScriptControllers.values()) {
+      controller.abort();
+    }
 
     // Wait for currently running tasks to complete (graceful shutdown).
     // Issue #3415: Uses a drain promise instead of polling.
@@ -645,17 +799,34 @@ ${task.prompt ?? ''}`;
       if (task.script) {
         await this.callbacks.sendMessage(task.chatId, `⏰ 定时任务「${task.name}」开始执行脚本...`);
         logger.debug({ taskId: task.id, chatId: task.chatId }, 'Executing scheduled task script');
-        const result = await this.scriptRunner(task.script, {
-          timeoutMs: task.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS,
-          env: {
+        const controller = new AbortController();
+        this.activeScriptControllers.set(task.id, controller);
+        let result: ScriptExecutionResult;
+        try {
+          result = await this.scriptRunner(task.script, {
+            timeoutMs: task.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS,
+            env: {
             ...process.env,
             DISCLAUDE_SCHEDULE_ID: task.id,
             DISCLAUDE_SCHEDULE_NAME: task.name,
             DISCLAUDE_CHAT_ID: task.chatId,
-          },
-        });
+            },
+            signal: controller.signal,
+          });
+        } finally {
+          this.activeScriptControllers.delete(task.id);
+        }
         await this.clearFailureStreak(task.id);
-        logger.info({ taskId: task.id, name: task.name, chatId: task.chatId, elapsedMs: Date.now() - taskStartedAt, stdout: result.stdout, stderr: result.stderr }, 'Scheduled script completed');
+        logger.info({
+          taskId: task.id,
+          name: task.name,
+          chatId: task.chatId,
+          elapsedMs: Date.now() - taskStartedAt,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          stdoutTruncated: result.stdoutTruncated,
+          stderrTruncated: result.stderrTruncated,
+        }, 'Scheduled script completed');
         return;
       }
 
@@ -807,6 +978,11 @@ ${task.prompt ?? ''}`;
           outcomeContext,
           'Scheduled task turn superseded by a newer message (neutral — not counted as failure)',
         );
+        return;
+      }
+
+      if (error instanceof ScriptCancelledError) {
+        logger.info(outcomeContext, 'Scheduled script cancelled during scheduler shutdown (neutral)');
         return;
       }
 
