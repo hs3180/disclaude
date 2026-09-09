@@ -181,34 +181,34 @@ describe('Scheduler', () => {
         inputMessageRouter: mockRouter, commandRunner, jobFactory: testJobFactory,
       });
       const task = createTask({ id: 'env-boundary', name: 'name with spaces; $HOME', prompt: undefined, command: 'echo ok' });
-      const keys = ['DISCLAUDE_REST_IPC_BASE_URL', 'DISCLAUDE_REST_IPC_API_TOKEN', 'DISCLAUDE_SCHEDULE_ID', 'DISCLAUDE_SCHEDULE_NAME', 'DISCLAUDE_CHAT_ID'];
+      const keys = ['DISCLAUDE_API_BASE_URL', 'DISCLAUDE_API_TOKEN', 'DISCLAUDE_SCHEDULE_ID', 'DISCLAUDE_SCHEDULE_NAME', 'DISCLAUDE_CHAT_ID'];
       const previous = Object.fromEntries(keys.map(key => [key, process.env[key]]));
       try {
         for (const key of keys) { process.env[key] = 'stale-parent'; }
-        process.env.DISCLAUDE_REST_IPC_BASE_URL = 'http://127.0.0.1:43123';
-        process.env.DISCLAUDE_REST_IPC_API_TOKEN = 'test-token with spaces=$value';
+        process.env.DISCLAUDE_API_BASE_URL = 'http://127.0.0.1:43123';
+        process.env.DISCLAUDE_API_TOKEN = 'test-token with spaces=$value';
         commandScheduler.addTask(task);
         void commandScheduler.getActiveJobs()[0].job.fireOnTick();
         await vi.waitFor(() => expect(commandRunner).toHaveBeenCalledTimes(1));
         await vi.waitFor(() => expect(commandScheduler.isTaskRunning(task.id)).toBe(false));
         const first = commandRunner.mock.calls[0][1].env;
         expect(first).toMatchObject({
-          DISCLAUDE_REST_IPC_BASE_URL: 'http://127.0.0.1:43123',
-          DISCLAUDE_REST_IPC_API_TOKEN: 'test-token with spaces=$value',
+          DISCLAUDE_API_BASE_URL: 'http://127.0.0.1:43123',
+          DISCLAUDE_API_TOKEN: 'test-token with spaces=$value',
           DISCLAUDE_SCHEDULE_ID: task.id, DISCLAUDE_SCHEDULE_NAME: task.name, DISCLAUDE_CHAT_ID: task.chatId,
           PATH: process.env.PATH,
         });
         expect(process.env.DISCLAUDE_CHAT_ID).toBe('stale-parent');
         expect(process.env.DISCLAUDE_SCHEDULE_ID).toBe('stale-parent');
-        process.env.DISCLAUDE_REST_IPC_BASE_URL = 'http://127.0.0.1:43124';
-        delete process.env.DISCLAUDE_REST_IPC_API_TOKEN;
+        process.env.DISCLAUDE_API_BASE_URL = 'http://127.0.0.1:43124';
+        delete process.env.DISCLAUDE_API_TOKEN;
         void commandScheduler.getActiveJobs()[0].job.fireOnTick();
         await vi.waitFor(() => expect(commandRunner).toHaveBeenCalledTimes(2));
         const second = commandRunner.mock.calls[1][1].env;
-        expect(second.DISCLAUDE_REST_IPC_BASE_URL).toBe('http://127.0.0.1:43124');
-        expect(second).not.toHaveProperty('DISCLAUDE_REST_IPC_API_TOKEN');
-        expect(first.DISCLAUDE_REST_IPC_BASE_URL).toBe('http://127.0.0.1:43123');
-        expect(first.DISCLAUDE_REST_IPC_API_TOKEN).toBe('test-token with spaces=$value');
+        expect(second.DISCLAUDE_API_BASE_URL).toBe('http://127.0.0.1:43124');
+        expect(second).not.toHaveProperty('DISCLAUDE_API_TOKEN');
+        expect(first.DISCLAUDE_API_BASE_URL).toBe('http://127.0.0.1:43123');
+        expect(first.DISCLAUDE_API_TOKEN).toBe('test-token with spaces=$value');
         expect(mockRouterAsMock.route).not.toHaveBeenCalled();
       } finally {
         await commandScheduler.stop(0);
