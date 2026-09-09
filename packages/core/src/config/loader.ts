@@ -327,6 +327,17 @@ export function validateRequiredConfig(config: DisclaudeConfig): {
   errors: ConfigValidationError[];
 } {
   const errors: ConfigValidationError[] = [];
+  // A canonical API service block is independent of the model vendor.
+  if (config.anthropic && config.agent?.provider !== 'glm' && config.agent?.agentBackend !== 'codex') {
+    if (!(config.anthropic.apiKey ?? process.env.ANTHROPIC_API_KEY)) {
+      errors.push({ field: 'anthropic.apiKey', message: 'anthropic.apiKey or ANTHROPIC_API_KEY is required' });
+    }
+    if (!(config.agent?.model || config.anthropic.model)) {
+      errors.push({ field: 'anthropic.model', message: 'anthropic.model or agent.model is required' });
+    }
+    return { valid: errors.length === 0, errors };
+  }
+
   const explicitlyUsesGlm =
     config.agent?.agentBackend !== 'codex' && config.agent?.provider === 'glm';
 

@@ -208,9 +208,10 @@ export class Config {
     fileConfigOnly.deepseek?.apiKey || process.env.DEEPSEEK_API_KEY || '';
   static readonly DSH_HOME = fileConfigOnly.deepseek?.dshHome || process.env.DSH_HOME || '';
 
-  // Anthropic Claude configuration (from env for fallback)
-  static readonly ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
-  static readonly CLAUDE_MODEL = fileConfigOnly.agent?.model || '';
+  // Anthropic Messages API service; file credentials take precedence over env.
+  static readonly ANTHROPIC_API_KEY = fileConfigOnly.anthropic?.apiKey ?? process.env.ANTHROPIC_API_KEY ?? '';
+  static readonly ANTHROPIC_API_BASE_URL = fileConfigOnly.anthropic?.apiBaseUrl;
+  static readonly CLAUDE_MODEL = fileConfigOnly.agent?.model || fileConfigOnly.anthropic?.model || '';
 
   // Agent SDK backend — which agent runtime boots (Issue #4388).
   // Orthogonal to the model-layer provider (GLM vs Anthropic LLM API).
@@ -230,9 +231,9 @@ export class Config {
   static readonly CODEX_EXEC_TIMEOUT_MS = fileConfigOnly.agent?.codex?.execTimeoutMs;
 
   // Tier model configuration (Issue #3059)
-  private static readonly CLAUDE_HIGH_MODEL = fileConfigOnly.agent?.highModel || '';
-  private static readonly CLAUDE_LOW_MODEL = fileConfigOnly.agent?.lowModel || '';
-  private static readonly CLAUDE_MULTIMODAL_MODEL = fileConfigOnly.agent?.multimodalModel || '';
+  private static readonly CLAUDE_HIGH_MODEL = fileConfigOnly.agent?.highModel || fileConfigOnly.anthropic?.highModel || '';
+  private static readonly CLAUDE_LOW_MODEL = fileConfigOnly.agent?.lowModel || fileConfigOnly.anthropic?.lowModel || '';
+  private static readonly CLAUDE_MULTIMODAL_MODEL = fileConfigOnly.agent?.multimodalModel || fileConfigOnly.anthropic?.multimodalModel || '';
   private static readonly GLM_HIGH_MODEL = fileConfigOnly.glm?.highModel || '';
   private static readonly GLM_LOW_MODEL = fileConfigOnly.glm?.lowModel || '';
   private static readonly GLM_MULTIMODAL_MODEL = fileConfigOnly.glm?.multimodalModel || '';
@@ -394,7 +395,7 @@ export class Config {
     }
 
     // Get provider preference from config file
-    const provider = fileConfigOnly.agent?.provider;
+    const provider = fileConfigOnly.agent?.provider ?? (fileConfigOnly.anthropic ? 'anthropic' : undefined);
 
     // Determine which provider to validate based on config priority
     if (provider === 'glm') {
@@ -424,13 +425,13 @@ export class Config {
         errors.push({
           field: 'ANTHROPIC_API_KEY',
           message:
-            'ANTHROPIC_API_KEY environment variable is required when agent.provider is "anthropic"',
+            'anthropic.apiKey or ANTHROPIC_API_KEY is required for the Anthropic API service',
         });
       }
       if (!this.CLAUDE_MODEL) {
         errors.push({
           field: 'agent.model',
-          message: 'agent.model is required when using Anthropic provider',
+          message: 'anthropic.model or agent.model is required for the Anthropic API service',
         });
       }
     } else if (this.GLM_API_KEY) {
@@ -461,7 +462,7 @@ export class Config {
       errors.push({
         field: 'apiKey',
         message:
-          'No API key configured. Set glm.apiKey in disclaude.config.yaml or ANTHROPIC_API_KEY environment variable',
+          'No API key configured. Set anthropic.apiKey in disclaude.config.yaml or ANTHROPIC_API_KEY environment variable',
       });
     }
 
@@ -471,9 +472,9 @@ export class Config {
       throw new Error(
         `Configuration validation failed:\n\n${messages}\n\n` +
           'Please update your disclaude.config.yaml file:\n' +
-          '  glm:\n' +
+          '  anthropic:\n' +
           '    apiKey: "your-key"\n' +
-          '    model: "glm-5"\n' +
+          '    model: "your-model"\n' +
           '    apiBaseUrl: "https://your-anthropic-compatible-proxy.example"'
       );
     }
@@ -481,7 +482,7 @@ export class Config {
 
   /**
    * Get agent configuration based on available API keys.
-   * Prefers GLM if configured, otherwise falls back to Anthropic.
+   * Uses the selected API service; anthropic is canonical and glm is a legacy fallback.
    *
    * @returns Agent configuration with API key and model
    * @throws Error if no API key is configured or model is missing
@@ -509,7 +510,7 @@ export class Config {
     this.validateRequiredConfig();
 
     // Prefer GLM if configured
-    if (this.GLM_API_KEY) {
+    if (fileConfigOnly.agent?.provider === 'glm' || (!fileConfigOnly.anthropic && fileConfigOnly.agent?.provider !== 'anthropic' && this.GLM_API_KEY)) {
       logger.debug({ provider: 'GLM', model: this.GLM_MODEL }, 'Using GLM API configuration');
 
       // Issue #3706: Warn when GLM + Agent Teams is enabled.
@@ -539,6 +540,7 @@ export class Config {
     );
     return {
       apiKey: this.ANTHROPIC_API_KEY,
+      apiBaseUrl: this.ANTHROPIC_API_BASE_URL,
       model: this.CLAUDE_MODEL,
       provider: 'anthropic',
     };
@@ -555,7 +557,7 @@ export class Config {
    */
   static getModelForTier(tier: 'high' | 'low' | 'multimodal'): string | undefined {
     // Check GLM tier models first (if GLM is configured)
-    if (this.GLM_API_KEY) {
+    if (fileConfigOnly.agent?.provider === 'glm' || (!fileConfigOnly.anthropic && fileConfigOnly.agent?.provider !== 'anthropic' && this.GLM_API_KEY)) {
       const glmTierMap: Record<string, string> = {
         high: this.GLM_HIGH_MODEL,
         low: this.GLM_LOW_MODEL,
