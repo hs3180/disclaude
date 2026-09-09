@@ -170,7 +170,7 @@ async function restIsReachable(baseUrl: string): Promise<boolean> {
   }
 }
 async function failureHint(baseUrl: string, error: string): Promise<string | undefined> {
-  if (/REST API|ECONNREFUSED|ENOTFOUND|fetch failed/i.test(error)) {return restHint(baseUrl);}
+  if (/CHANNEL_API|REST API|ECONNREFUSED|ENOTFOUND|fetch failed/i.test(error)) {return restHint(baseUrl);}
   return await restIsReachable(baseUrl) ? undefined : restHint(baseUrl);
 }
 
