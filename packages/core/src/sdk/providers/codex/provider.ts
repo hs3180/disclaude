@@ -765,6 +765,10 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         try {
           const result: CodexExecRunResult = await promise;
           if (stalled || result.aborted) {
+            logger.info(
+              { sessionKey, abortExitLatencyMs: result.abortExitLatencyMs },
+              'codex run aborted; late events and retry paths suppressed'
+            );
             // Stall terminator is synthesized by the consumer loop; a user
             // abort ends the stream without a turn terminator (pi parity).
             return;
