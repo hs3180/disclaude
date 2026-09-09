@@ -41,7 +41,10 @@ async function loadModule() {
   vi.doMock('@disclaude/core', () => ({
     createLogger: (...args: unknown[]) => mockCreateLogger(...args),
     RestIpcClient: MockRestIpcClient,
-    REST_IPC_DEFAULT_BASE_URL: 'http://localhost:19200',
+    normalizeRestIpcBaseUrl: (value: string) => {
+      if (!value) { throw new Error('PrimaryNode REST address is required'); }
+      return new URL(value).origin;
+    },
   }));
   vi.resetModules();
   return await import('./ipc-utils.js');
@@ -194,6 +197,7 @@ describe('isIpcAvailable (REST-only)', () => {
   });
 
   it('should return true when REST /api/ping responds with { pong: true }', async () => {
+    process.env.DISCLAUDE_REST_IPC_BASE_URL = 'http://127.0.0.1:19200';
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: () => ({ pong: true }),
@@ -203,23 +207,24 @@ describe('isIpcAvailable (REST-only)', () => {
     const result = await isIpcAvailable();
     expect(result).toBe(true);
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:19200/api/ping',
+      'http://127.0.0.1:19200/api/ping',
       expect.objectContaining({ method: 'GET' }),
     );
   });
 
-  it('should return true with all env unset — no toggle gates REST (acceptance #1)', async () => {
+  it('should reject a missing REST address with all env unset', async () => {
     // DISCLAUDE_REST_IPC_ENABLED explicitly unset above; REST must still be probed.
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: () => ({ pong: true }),
     });
     await loadWithPing(fetchMock as unknown as typeof globalThis.fetch);
-    expect(await isIpcAvailable()).toBe(true);
-    expect(fetchMock).toHaveBeenCalled();
+    await expect(isIpcAvailable()).rejects.toThrow('PrimaryNode REST address is required');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('should ignore DISCLAUDE_REST_IPC_ENABLED=false — still probes REST (acceptance #2)', async () => {
+    process.env.DISCLAUDE_REST_IPC_BASE_URL = 'http://127.0.0.1:19200';
     process.env.DISCLAUDE_REST_IPC_ENABLED = 'false';
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -228,7 +233,7 @@ describe('isIpcAvailable (REST-only)', () => {
     await loadWithPing(fetchMock as unknown as typeof globalThis.fetch);
     expect(await isIpcAvailable()).toBe(true);
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:19200/api/ping',
+      'http://127.0.0.1:19200/api/ping',
       expect.anything(),
     );
   });
@@ -249,6 +254,7 @@ describe('isIpcAvailable (REST-only)', () => {
   });
 
   it('should return false when ping responds without pong', async () => {
+    process.env.DISCLAUDE_REST_IPC_BASE_URL = 'http://127.0.0.1:19200';
     await loadWithPing(vi.fn().mockResolvedValue({
       ok: true,
       json: () => ({ pong: false }),
@@ -257,6 +263,7 @@ describe('isIpcAvailable (REST-only)', () => {
   });
 
   it('should return false when ping responds non-2xx', async () => {
+    process.env.DISCLAUDE_REST_IPC_BASE_URL = 'http://127.0.0.1:19200';
     await loadWithPing(vi.fn().mockResolvedValue({
       ok: false,
       status: 503,
@@ -266,6 +273,7 @@ describe('isIpcAvailable (REST-only)', () => {
   });
 
   it('should return false when fetch throws (PrimaryNode not running)', async () => {
+    process.env.DISCLAUDE_REST_IPC_BASE_URL = 'http://127.0.0.1:19200';
     await loadWithPing(vi.fn().mockRejectedValue(
       new Error('ECONNREFUSED'),
     ) as unknown as typeof globalThis.fetch);
@@ -291,10 +299,8 @@ describe('getRestIpcClient (REST-only construction)', () => {
     await vi.resetModules();
   });
 
-  it('should construct a RestIpcClient directly with all env unset (no IPC fallback)', () => {
-    const client = getRestIpcClient() as unknown as MockRestIpcClient;
-    expect(client).toBeInstanceOf(MockRestIpcClient);
-    expect(client.opts.baseUrl).toBe('http://localhost:19200');
+  it('should reject construction with all env unset', () => {
+    expect(() => getRestIpcClient()).toThrow('PrimaryNode REST address is required');
   });
 
   it('should wire the REST base URL into the client without local auth state', () => {
@@ -310,24 +316,27 @@ describe('getRestIpcClient (REST-only construction)', () => {
   });
 
   it('should be unaffected by DISCLAUDE_REST_IPC_ENABLED', () => {
+    process.env.DISCLAUDE_REST_IPC_BASE_URL = 'http://127.0.0.1:19200';
     process.env.DISCLAUDE_REST_IPC_ENABLED = 'true';
     const on = getRestIpcClient() as unknown as MockRestIpcClient;
     process.env.DISCLAUDE_REST_IPC_ENABLED = 'false';
     const off = getRestIpcClient() as unknown as MockRestIpcClient;
-    expect(on.opts.baseUrl).toBe('http://localhost:19200');
-    expect(off.opts.baseUrl).toBe('http://localhost:19200');
+    expect(on.opts.baseUrl).toBe('http://127.0.0.1:19200');
+    expect(off.opts.baseUrl).toBe('http://127.0.0.1:19200');
   });
 
   // Issue #4801 (P0): when the primary runs with --api-token, the client must
   // attach the bearer token so channel writes don't 401 while the (token-exempt)
   // GET /api/ping probe reports "available".
   it('should forward DISCLAUDE_REST_IPC_API_TOKEN as the API token', () => {
+    process.env.DISCLAUDE_REST_IPC_BASE_URL = 'http://127.0.0.1:19200';
     process.env.DISCLAUDE_REST_IPC_API_TOKEN = 'tok-123';
     const client = getRestIpcClient() as unknown as MockRestIpcClient;
     expect(client.opts.apiToken).toBe('tok-123');
   });
 
   it('should leave apiToken undefined when the env token is absent', () => {
+    process.env.DISCLAUDE_REST_IPC_BASE_URL = 'http://127.0.0.1:19200';
     delete process.env.DISCLAUDE_REST_IPC_API_TOKEN;
     const client = getRestIpcClient() as unknown as MockRestIpcClient;
     expect(client.opts.apiToken).toBeUndefined();

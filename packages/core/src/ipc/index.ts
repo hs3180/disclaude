@@ -33,7 +33,7 @@ export {
 // REST IPC client (Issue #4279 Phase 2 — channel-method surface via HTTP)
 export {
   RestIpcClient,
-  REST_IPC_DEFAULT_BASE_URL,
+  normalizeRestIpcBaseUrl,
   type RestIpcClientOptions,
 } from './rest-ipc-client.js';
 

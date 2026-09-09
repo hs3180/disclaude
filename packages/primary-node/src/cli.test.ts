@@ -130,27 +130,27 @@ describe('parseArgs', () => {
     expect(result.apiPort).toBe(0);
   });
 
-  it('should leave apiPort undefined when not specified', () => {
+  it('should default to an OS-assigned API port when not specified', () => {
     const result = parseArgs(['start']);
-    expect(result.apiPort).toBeUndefined();
+    expect(result.apiPort).toBe(0);
   });
 
   it('should leave apiPort undefined when --api-port has no value', () => {
     const result = parseArgs(['start', '--api-port']);
     expect(result.command).toBe('start');
-    expect(result.apiPort).toBeUndefined();
+    expect(result.apiPort).toBe(0);
   });
 
   it('should ignore --api-port with non-numeric value', () => {
     const result = parseArgs(['start', '--api-port', 'abc']);
     expect(result.command).toBe('start');
-    expect(result.apiPort).toBeUndefined();
+    expect(result.apiPort).toBe(0);
   });
 
   it('should ignore --api-port with out-of-range value', () => {
     const result = parseArgs(['start', '--api-port', '99999']);
     expect(result.command).toBe('start');
-    expect(result.apiPort).toBeUndefined();
+    expect(result.apiPort).toBe(0);
   });
 
   it('should handle all options together', () => {

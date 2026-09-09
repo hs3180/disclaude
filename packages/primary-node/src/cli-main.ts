@@ -60,7 +60,7 @@ interface CliOptions {
 }
 
 export function parseArgs(args: string[]): CliOptions {
-  const options: CliOptions = { command: 'help' };
+  const options: CliOptions = { command: 'help', apiPort: 0 };
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -518,7 +518,8 @@ export async function main(): Promise<void> {
       console.log('Primary Node started (Feishu only mode)');
     }
 
-    // Issue #3857 Phase 2: Start HTTP API server if --api-port is specified
+    // The internal HTTP API is always enabled. Port 0 is the safe default so
+    // concurrent instances never contend for a historical fixed port.
     if (options.apiPort !== undefined) {
       // #4608: bind explicitly to IPv4 loopback, NOT 'localhost'. A 'localhost'
       // bind can resolve ::1-first and end up IPv6-only, while undici fetch
@@ -527,7 +528,7 @@ export async function main(): Promise<void> {
       // only". REST IPC is loopback-only by design, so the IPv4 pin is always
       // correct; mirror it client-side via DISCLAUDE_REST_IPC_BASE_URL.
       const apiHost = '127.0.0.1';
-      const apiPortReady = await isPortAvailable(options.apiPort, apiHost);
+      const apiPortReady = options.apiPort === 0 || await isPortAvailable(options.apiPort, apiHost);
       if (!apiPortReady) {
         console.error(`Error: API port ${options.apiPort} is already in use. Exiting.`);
         processLock?.release();

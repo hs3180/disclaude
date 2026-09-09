@@ -28,14 +28,31 @@ import {
 const logger = createLogger('RestIpcClient');
 
 /**
- * Default PrimaryNode REST API base URL.
- *
- * Issue #4801 (P7): the single source of truth for the default base URL, so
- * REST IPC consumers can't silently drift on the port (changing it here updates
- * every consumer). Currently that is channel-cli; the PrimaryNode server has no
- * default `--api-port`, so it is unaffected.
+ * Validate the explicit PrimaryNode REST address shared by all clients.
+ * Credentials are deliberately rejected in URLs so diagnostics and debug logs
+ * cannot disclose them; bearer authentication uses the separate token option.
  */
-export const REST_IPC_DEFAULT_BASE_URL = 'http://localhost:19200';
+export function normalizeRestIpcBaseUrl(value: string): string {
+  const raw = value.trim();
+  if (!raw) {
+    throw new Error(
+      'PrimaryNode REST address is required; pass --base-url or set DISCLAIMAUDE_REST_IPC_BASE_URL',
+    );
+  }
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`Invalid PrimaryNode REST address: ${JSON.stringify(raw)}`);
+  }
+  if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.username || url.password) {
+    throw new Error('PrimaryNode REST address must be an absolute http(s) URL without credentials');
+  }
+  if (url.pathname !== '/' || url.search || url.hash) {
+    throw new Error('PrimaryNode REST address must not include a path, query, or fragment');
+  }
+  return url.origin;
+}
 
 /** Default request timeout (30s), matching the IPC client default. */
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -96,7 +113,7 @@ const ROUTES: Readonly<Record<string, Route>> = {
 };
 
 export interface RestIpcClientOptions {
-  /** Base URL of the HttpApiServer (e.g. http://localhost:19200). */
+  /** Explicit base URL of the HttpApiServer (e.g. http://127.0.0.1:43123). */
   baseUrl: string;
   /** Optional bearer token for POST endpoints (GET routes are token-exempt). */
   apiToken?: string;
@@ -107,8 +124,7 @@ export class RestIpcClient implements IpcClientLike {
   private readonly apiToken?: string;
 
   constructor(opts: RestIpcClientOptions) {
-    // Strip trailing slash for clean URL concatenation.
-    this.baseUrl = opts.baseUrl.replace(/\/$/, '');
+    this.baseUrl = normalizeRestIpcBaseUrl(opts.baseUrl);
     this.apiToken = opts.apiToken;
   }
 

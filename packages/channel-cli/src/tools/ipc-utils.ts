@@ -13,21 +13,21 @@
  * @module channel-cli/tools/ipc-utils
  */
 
-import { createLogger, REST_IPC_DEFAULT_BASE_URL, RestIpcClient } from '@disclaude/core';
+import { createLogger, normalizeRestIpcBaseUrl, RestIpcClient } from '@disclaude/core';
 
 const logger = createLogger('IpcUtils');
 
 /**
  * Resolve the PrimaryNode REST base URL from the standard env wiring.
  *
- * `DISCLAUDE_REST_IPC_BASE_URL` (default `http://localhost:19200`), with a
+ * `DISCLAUDE_REST_IPC_BASE_URL` (required), with a
  * trailing slash stripped — shared by `getRestIpcClient` and the
  * `isIpcAvailable` probe so the two can't drift apart on env handling.
  * (`RestIpcClient`'s constructor also strips; that one stays as defense for
  * direct constructions elsewhere.)
  */
 function resolveRestBaseUrl(): string {
-  return (process.env.DISCLAUDE_REST_IPC_BASE_URL || REST_IPC_DEFAULT_BASE_URL).replace(/\/$/, '');
+  return normalizeRestIpcBaseUrl(process.env.DISCLAUDE_REST_IPC_BASE_URL ?? '');
 }
 
 /**
@@ -50,7 +50,7 @@ function resolveRestApiToken(): string | undefined {
  * Build a REST IPC client from the standard env wiring.
  *
  * - `DISCLAUDE_REST_IPC_BASE_URL` — PrimaryNode HTTP API server URL
- *   (default `http://localhost:19200`)
+ *   (required for standalone clients; injected into managed children)
  * - `DISCLAUDE_REST_IPC_API_TOKEN` — optional bearer token, forwarded to
  *   `RestIpcClient` so authenticated writes succeed (Issue #4801).
  * Issue #4280 (Phase 3, part 3): every MCP tool that previously reached for

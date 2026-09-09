@@ -3,9 +3,17 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { RestIpcClient } from './rest-ipc-client.js';
+import { normalizeRestIpcBaseUrl, RestIpcClient } from './rest-ipc-client.js';
 
 describe('RestIpcClient', () => {
+  it('normalizes an explicit HTTP address without changing its port', () => {
+    expect(normalizeRestIpcBaseUrl(' http://127.0.0.1:43123/ ')).toBe('http://127.0.0.1:43123');
+  });
+
+  it.each(['', 'localhost:19200', 'ftp://localhost:19200', 'http://user:secret@localhost:19200', 'http://localhost:19200/api'])(
+    'rejects missing or unsafe REST address %j',
+    (value) => expect(() => normalizeRestIpcBaseUrl(value)).toThrow(/PrimaryNode REST address/),
+  );
   const originalFetch = globalThis.fetch;
 
   beforeEach(() => {

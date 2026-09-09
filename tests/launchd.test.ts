@@ -81,9 +81,9 @@ function snapshotEnv() {
 }
 
 describe('resolveApiPort (#4576)', () => {
-  it('defaults to 19200 when no env override is set', () => {
+  it('defaults to an OS-assigned port when no env override is set', () => {
     snapshotEnv();
-    expect(resolveApiPort()).toBe(19200);
+    expect(resolveApiPort()).toBe(0);
   });
 
   it('accepts a valid override in 1-65535', () => {
@@ -94,9 +94,9 @@ describe('resolveApiPort (#4576)', () => {
 
   it('rejects out-of-range values and falls back to the default', () => {
     snapshotEnv();
-    for (const bad of ['0', '99999', '-1']) {
+    for (const bad of ['99999', '-1']) {
       process.env.DISCLAUDE_LAUNCHD_API_PORT = bad;
-      expect(resolveApiPort()).toBe(19200);
+      expect(resolveApiPort()).toBe(0);
     }
   });
 
@@ -106,24 +106,24 @@ describe('resolveApiPort (#4576)', () => {
     // CLI parser (packages/primary-node/src/cli.ts); only NaN cases here.
     for (const bad of ['abc', '']) {
       process.env.DISCLAUDE_LAUNCHD_API_PORT = bad;
-      expect(resolveApiPort()).toBe(19200);
+      expect(resolveApiPort()).toBe(0);
     }
   });
 });
 
 describe('buildProgramArguments REST API wiring (#4576)', () => {
-  it('appends --api-port 19200 by default (REST-only MCP tools need it)', () => {
+  it('appends --api-port 0 by default for isolated managed instances', () => {
     snapshotEnv();
     const args = buildProgramArguments(NODE, null);
     // Without caffeinate: [node, cli, 'start', '--api-port', '19200']
-    expect(args).toEqual([NODE, expect.any(String), 'start', '--api-port', '19200']);
+    expect(args).toEqual([NODE, expect.any(String), 'start', '--api-port', '0']);
   });
 
   it('keeps the caffeinate wrapper and still appends --api-port', () => {
     snapshotEnv();
     const args = buildProgramArguments(NODE, CAFFEINATE);
     expect(args.slice(0, 2)).toEqual([CAFFEINATE, '-s']);
-    expect(args.slice(-3)).toEqual(['start', '--api-port', '19200']);
+    expect(args.slice(-3)).toEqual(['start', '--api-port', '0']);
   });
 
   it('honours DISCLAUDE_LAUNCHD_API_PORT in the generated args', () => {
@@ -140,19 +140,19 @@ describe('buildProgramArguments REST API wiring (#4576)', () => {
     process.env.DISCLAUDE_LAUNCHD_API_TOKEN = 'secret-token';
     const args = buildProgramArguments(NODE, null);
     // args = [node, cli, 'start', '--api-port', '19200', '--api-token', token]
-    expect(args.slice(-4)).toEqual(['--api-port', '19200', '--api-token', 'secret-token']);
+    expect(args.slice(-4)).toEqual(['--api-port', '0', '--api-token', 'secret-token']);
   });
 });
 
 describe('resolveRestIpcBaseUrl (port-override propagation, #4578 review nit 1)', () => {
-  it('stays null at the default port — plist gains no env entry', () => {
+  it('does not publish an unusable port-zero URL in the plist', () => {
     snapshotEnv();
-    expect(resolveRestIpcBaseUrl(19200)).toBeNull();
+    expect(resolveRestIpcBaseUrl(0)).toBeNull();
   });
 
   it('mirrors a non-default port so MCP tools probe the override', () => {
     snapshotEnv();
-    expect(resolveRestIpcBaseUrl(9300)).toBe('http://localhost:9300');
+    expect(resolveRestIpcBaseUrl(9300)).toBe('http://127.0.0.1:9300');
   });
 
   it('never clobbers an explicit DISCLAUDE_REST_IPC_BASE_URL', () => {

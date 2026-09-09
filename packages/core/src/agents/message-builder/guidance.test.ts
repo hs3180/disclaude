@@ -20,7 +20,6 @@ import {
   CHANNEL_CLI_HELP,
   buildChannelCliHelpGuidance,
 } from './channel-cli-help.js';
-import { REST_IPC_DEFAULT_BASE_URL } from '../../ipc/rest-ipc-client.js';
 
 describe('buildChatHistorySection', () => {
   it('should return empty string when no context is provided', () => {
@@ -333,7 +332,8 @@ describe('buildChannelCliHelpGuidance', () => {
   });
 
   it('CHANNEL_CLI_HELP sources its default base URL from the shared constant', () => {
-    expect(CHANNEL_CLI_HELP).toContain(REST_IPC_DEFAULT_BASE_URL);
+    expect(CHANNEL_CLI_HELP).toContain('required unless supplied by the managed environment');
+    expect(CHANNEL_CLI_HELP).not.toContain('19200');
   });
 
   // PR #4803 added this paragraph to the CLI's own help. Nothing asserted it, so

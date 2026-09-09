@@ -64,8 +64,8 @@ function showHelp() {
 }
 
 const ROUTES = {
-  start: { file: resolve(ROOT, 'packages/primary-node/dist/cli.js') },
-  channel: { file: resolve(ROOT, 'packages/channel-cli/dist/cli.js') },
+  start: { file: resolve(ROOT, 'node_modules/@disclaude/primary-node/dist/cli.js') },
+  channel: { file: resolve(ROOT, 'node_modules/@disclaude/channel-cli/dist/cli.js') },
   // Issue #4807: routes to scripts/launchd.mjs chromium-cdp <cmd>. The launchd
   // script reads the service selector from argv[2], so we must PRESERVE it in
   // the forwarded args (launchd.mjs "chromium-cdp" <cmd>), not drop it.
