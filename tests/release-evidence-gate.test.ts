@@ -1,23 +1,31 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { resolve, join } from 'node:path';
+import { relative, resolve, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
 const script = resolve('scripts/validate-release-evidence.mjs');
+const repoRoot = resolve('.');
+const evidenceRoot = resolve('tests/e2e/0.5.0');
 const source = JSON.parse(readFileSync('tests/e2e/0.5.0/acceptance.json', 'utf8'));
-const candidate = 'a'.repeat(40);
+const candidate = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
 const temporary: string[] = [];
-afterEach(() => { for (const dir of temporary.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => {
+  for (const dir of temporary.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
 function fixture() {
-  const dir = mkdtempSync(join(tmpdir(), 'disclaude-release-evidence-'));
+  const dir = mkdtempSync(join(evidenceRoot, '.gate-test-'));
   temporary.push(dir);
   const manifest = structuredClone(source);
   const file = join(dir, 'acceptance.json');
-  const run = (mode = '--schema', sha = candidate) => {
+  const run = (mode = '--schema', sha = candidate, manifestPath = relative(repoRoot, file)) => {
     writeFileSync(file, JSON.stringify(manifest));
-    return spawnSync(process.execPath, [script, mode, ...(mode === '--gate' ? ['--candidate', sha] : []), file], { encoding: 'utf8' });
+    return spawnSync(
+      process.execPath,
+      [script, mode, ...(mode === '--gate' ? ['--candidate', sha] : []), manifestPath],
+      { encoding: 'utf8', cwd: repoRoot }
+    );
   };
   return { dir, manifest, run };
 }
@@ -28,12 +36,29 @@ function verifyAll(f: ReturnType<typeof fixture>) {
     entry.status = 'verified';
     entry.evidence = (entry.variants ?? ['unit']).map((variant: string) => {
       const name = `${entry.id}-${variant}.json`;
-      writeFileSync(join(f.dir, name), JSON.stringify({
-        criterion: entry.id, candidateSha: candidate, variant, environment: 'test fixture',
-        command: ['node', '--test', 'behavior.test.mjs'], testCases: [entry.requirement],
-        exitCode: 0, passed: 1, failed: 0, skipped: 0, expected: 'Expected behavior', observed: 'Observed behavior',
-        artifacts: [{ path: 'artifact.txt', sha256: createHash('sha256').update('Actual test evidence fixture\n').digest('hex') }],
-      }));
+      writeFileSync(
+        join(f.dir, name),
+        JSON.stringify({
+          criterion: entry.id,
+          candidateSha: candidate,
+          variant,
+          environment: 'test fixture',
+          command: ['node', '--test', 'behavior.test.mjs'],
+          testCases: [entry.requirement],
+          exitCode: 0,
+          passed: 1,
+          failed: 0,
+          skipped: 0,
+          expected: 'Expected behavior',
+          observed: 'Observed behavior',
+          artifacts: [
+            {
+              path: 'artifact.txt',
+              sha256: createHash('sha256').update('Actual test evidence fixture\n').digest('hex'),
+            },
+          ],
+        })
+      );
       return name;
     });
   }
@@ -72,17 +97,97 @@ describe('release evidence inventory gate', () => {
     entry.evidence.pop();
     expect(f.run('--gate').stderr).toContain('no evidence for launchd');
     entry.variants = ['docker'];
-    expect(f.run().stderr).toContain('missing required variant launchd');
+    expect(f.run().stderr).toContain('variants differ from canonical release inventory');
   });
-  it.each(['skipped', 'failed', 'passed', 'exitCode', 'candidateSha', 'command', 'testCases'])('rejects invalid %s evidence', (field) => {
+
+  it('rejects a well-formed SHA that is not a commit in this repository', () => {
     const f = fixture();
     verifyAll(f);
-    const file = join(f.dir, f.manifest.criteria[0].evidence[0]);
-    const record = JSON.parse(readFileSync(file, 'utf8'));
-    record[field] = field === 'passed' ? 0 : field === 'candidateSha' ? 'b'.repeat(40) : ['command', 'testCases'].includes(field) ? [] : 1;
-    writeFileSync(file, JSON.stringify(record));
-    expect(f.run('--gate').status).toBe(1);
+    const nonexistent = 'a'.repeat(40);
+    f.manifest.candidateSha = nonexistent;
+    expect(f.run('--gate', nonexistent).stderr).toContain('not a commit in the current repository');
   });
+
+  it('rejects requirement and variant changes against candidate canonical metadata', () => {
+    const f = fixture();
+    f.manifest.criteria[0].requirement = 'weaker replacement';
+    expect(f.run().stderr).toContain('requirement differs from canonical release inventory');
+    f.manifest.criteria[0].requirement = source.criteria[0].requirement;
+    f.manifest.criteria[0].variants = ['invented'];
+    expect(f.run().stderr).toContain('variants differ from canonical release inventory');
+  });
+
+  it('rejects absolute and traversing manifest or record paths', () => {
+    const f = fixture();
+    expect(f.run('--schema', candidate, f.dir).stderr).toContain('Manifest path must be relative');
+    verifyAll(f);
+    f.manifest.criteria[0].evidence = ['../../../package.json'];
+    expect(f.run('--gate').stderr).toContain('path escapes evidence root');
+    f.manifest.criteria[0].evidence = [join(f.dir, 'absolute.json')];
+    expect(f.run('--gate').stderr).toContain('path must be relative');
+
+    verifyAll(f);
+    const recordPath = join(f.dir, f.manifest.criteria[0].evidence[0]);
+    const record = JSON.parse(readFileSync(recordPath, 'utf8'));
+    record.artifacts = [{ path: join(f.dir, 'artifact.txt'), sha256: '0'.repeat(64) }];
+    writeFileSync(recordPath, JSON.stringify(record));
+    expect(f.run('--gate').stderr).toContain('path must be relative');
+    record.artifacts = [{ path: '../../../../package.json', sha256: '0'.repeat(64) }];
+    writeFileSync(recordPath, JSON.stringify(record));
+    expect(f.run('--gate').stderr).toContain('path escapes evidence root');
+  });
+
+  it('rejects record and artifact symlinks that escape the evidence root', () => {
+    const f = fixture();
+    verifyAll(f);
+    const outside = mkdtempSync(join(tmpdir(), 'disclaude-gate-outside-'));
+    temporary.push(outside);
+    const outsideRecord = join(outside, 'record.json');
+    writeFileSync(outsideRecord, '{}');
+    const outsideManifest = join(outside, 'acceptance.json');
+    writeFileSync(outsideManifest, JSON.stringify(source));
+    symlinkSync(outsideManifest, join(f.dir, 'escaped-manifest.json'));
+    expect(
+      f.run('--schema', candidate, relative(repoRoot, join(f.dir, 'escaped-manifest.json'))).stderr
+    ).toContain('symlink escapes evidence root');
+    symlinkSync(outsideRecord, join(f.dir, 'escaped-record.json'));
+    f.manifest.criteria[0].evidence = ['escaped-record.json'];
+    expect(f.run('--gate').stderr).toContain('symlink escapes evidence root');
+
+    verifyAll(f);
+    const outsideArtifact = join(outside, 'artifact.txt');
+    writeFileSync(outsideArtifact, 'outside');
+    symlinkSync(outsideArtifact, join(f.dir, 'escaped-artifact.txt'));
+    const recordPath = join(f.dir, f.manifest.criteria[0].evidence[0]);
+    const record = JSON.parse(readFileSync(recordPath, 'utf8'));
+    record.artifacts = [
+      {
+        path: 'escaped-artifact.txt',
+        sha256: createHash('sha256').update('outside').digest('hex'),
+      },
+    ];
+    writeFileSync(recordPath, JSON.stringify(record));
+    expect(f.run('--gate').stderr).toContain('symlink escapes evidence root');
+  });
+  it.each(['skipped', 'failed', 'passed', 'exitCode', 'candidateSha', 'command', 'testCases'])(
+    'rejects invalid %s evidence',
+    (field) => {
+      const f = fixture();
+      verifyAll(f);
+      const file = join(f.dir, f.manifest.criteria[0].evidence[0]);
+      const record = JSON.parse(readFileSync(file, 'utf8'));
+      record[field] =
+        field === 'passed'
+          ? 0
+          : field === 'candidateSha'
+            ? 'b'.repeat(40)
+            : ['command', 'testCases'].includes(field)
+              ? []
+              : 1;
+      writeFileSync(file, JSON.stringify(record));
+      expect(f.run('--gate').status).toBe(1);
+    }
+  );
   it('rejects missing records and altered evidence artifacts', () => {
     const f = fixture();
     verifyAll(f);
