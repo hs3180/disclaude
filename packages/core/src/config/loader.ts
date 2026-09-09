@@ -327,6 +327,16 @@ export function validateRequiredConfig(config: DisclaudeConfig): {
   errors: ConfigValidationError[];
 } {
   const errors: ConfigValidationError[] = [];
+  const explicitlyUsesGlm =
+    config.agent?.agentBackend !== 'codex' && config.agent?.provider === 'glm';
+
+  if (explicitlyUsesGlm && !config.glm?.apiBaseUrl) {
+    errors.push({
+      field: 'glm.apiBaseUrl',
+      message:
+        'glm.apiBaseUrl is required for the selected GLM provider; configure a supported Anthropic-compatible proxy endpoint',
+    });
+  }
 
   // If GLM API key is configured, model must also be configured
   if (config.glm?.apiKey && !config.glm?.model) {

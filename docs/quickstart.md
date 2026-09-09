@@ -44,7 +44,7 @@ npm run build
 cp disclaude.config.example.yaml disclaude.config.yaml
 ```
 
-编辑 `disclaude.config.yaml`，只需填两行：
+编辑 `disclaude.config.yaml`，填入飞书凭证和模型提供方配置：
 
 ```yaml
 feishu:
@@ -53,6 +53,8 @@ feishu:
 
 glm:
   apiKey: "your_glm_api_key_here"   # 智谱 AI Key（推荐）
+  model: "glm-4.7"
+  apiBaseUrl: "https://your-anthropic-compatible-proxy.example" # 必填：部署方提供的 Anthropic-compatible endpoint
   # 或者用 Anthropic：
   # agent:
   #   provider: "anthropic"

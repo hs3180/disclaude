@@ -201,8 +201,7 @@ export class Config {
   // No fallback defaults - model must be explicitly configured
   static readonly GLM_API_KEY = fileConfigOnly.glm?.apiKey || '';
   static readonly GLM_MODEL = fileConfigOnly.glm?.model || '';
-  static readonly GLM_API_BASE_URL =
-    fileConfigOnly.glm?.apiBaseUrl || 'https://open.bigmodel.cn/api/anthropic';
+  static readonly GLM_API_BASE_URL = fileConfigOnly.glm?.apiBaseUrl || '';
 
   // DeepSeek harness configuration (Issue #4741).
   static readonly DEEPSEEK_API_KEY =
@@ -412,6 +411,13 @@ export class Config {
           message: 'glm.model is required when using GLM provider',
         });
       }
+      if (!this.GLM_API_BASE_URL) {
+        errors.push({
+          field: 'glm.apiBaseUrl',
+          message:
+            'glm.apiBaseUrl is required when using GLM; set it to your supported Anthropic-compatible proxy endpoint',
+        });
+      }
     } else if (provider === 'anthropic') {
       // User explicitly chose Anthropic - only validate Anthropic config
       if (!this.ANTHROPIC_API_KEY) {
@@ -433,6 +439,13 @@ export class Config {
         errors.push({
           field: 'glm.model',
           message: 'glm.model is required when GLM API key is configured',
+        });
+      }
+      if (!this.GLM_API_BASE_URL) {
+        errors.push({
+          field: 'glm.apiBaseUrl',
+          message:
+            'glm.apiBaseUrl is required when GLM is selected by glm.apiKey; the removed legacy default is no longer assumed',
         });
       }
     } else if (this.ANTHROPIC_API_KEY) {
@@ -460,7 +473,8 @@ export class Config {
           'Please update your disclaude.config.yaml file:\n' +
           '  glm:\n' +
           '    apiKey: "your-key"\n' +
-          '    model: "glm-5"'
+          '    model: "glm-5"\n' +
+          '    apiBaseUrl: "https://your-anthropic-compatible-proxy.example"'
       );
     }
   }

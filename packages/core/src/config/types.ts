@@ -199,7 +199,8 @@ export interface FeishuConfig {
 /**
  * GLM (Zhipu AI) API configuration section.
  *
- * When using GLM provider, both apiKey and model are REQUIRED.
+ * When using GLM provider, apiKey, model, and an explicit Anthropic-compatible
+ * apiBaseUrl are REQUIRED.
  * Fallback defaults are intentionally removed for strict configuration.
  */
 export interface GlmConfig {
@@ -207,7 +208,7 @@ export interface GlmConfig {
   apiKey?: string;
   /** Model identifier - REQUIRED when apiKey is set */
   model?: string;
-  /** API base URL (overrides GLM_API_BASE_URL env var) */
+  /** Explicit Anthropic-compatible proxy URL; there is no built-in endpoint default. */
   apiBaseUrl?: string;
   /** High-capability model for complex analysis (Issue #3059) */
   highModel?: string;

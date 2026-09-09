@@ -173,8 +173,12 @@ glm:
   # GLM API key from https://open.bigmodel.cn/
   apiKey: "your_glm_api_key_here"
 
-  # API base URL (usually no need to change)
-  apiBaseUrl: "https://open.bigmodel.cn/api/anthropic"
+  # Model exposed by your proxy
+  model: "glm-4.7"
+
+  # Required: your deployment's supported Anthropic-compatible proxy endpoint.
+  # No endpoint is assumed by default; verify this URL with your provider/operator.
+  apiBaseUrl: "https://your-anthropic-compatible-proxy.example"
 
   # Three-level model configuration (Issue #3059)
   # highModel: "glm-5.1"
