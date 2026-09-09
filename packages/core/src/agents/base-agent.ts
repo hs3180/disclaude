@@ -130,6 +130,7 @@ export abstract class BaseAgent implements Disposable {
   readonly apiBaseUrl?: string;
   readonly permissionMode: 'default' | 'bypassPermissions';
   readonly provider: AgentProvider;
+  readonly agentBackend?: BaseAgentConfig['agentBackend'];
 
   protected readonly logger: Logger;
   protected initialized = false;
@@ -140,6 +141,7 @@ export abstract class BaseAgent implements Disposable {
     this.model = config.model;
     this.apiBaseUrl = config.apiBaseUrl;
     this.permissionMode = config.permissionMode ?? 'bypassPermissions';
+    this.agentBackend = config.agentBackend;
 
     // Get provider from config, fallback to runtime context
     // This allows agents to be created with explicit provider setting
@@ -150,7 +152,7 @@ export abstract class BaseAgent implements Disposable {
     this.logger = createLogger(this.getAgentName());
 
     // Get SDK provider instance
-    this.sdkProvider = getProvider();
+    this.sdkProvider = getProvider(config.agentBackend);
   }
 
   /**
@@ -192,9 +194,11 @@ export abstract class BaseAgent implements Disposable {
       cwd: effectiveCwd,
       permissionMode: this.permissionMode,
       ...(extra.sessionKey !== undefined ? { sessionKey: extra.sessionKey } : {}),
-      systemPrompt: { type: 'preset', preset: 'claude_code' },
-      tools: { type: 'preset', preset: 'claude_code' },
       settingSources: ['user', 'project', 'local'],
+      ...(this.agentBackend === 'deepseek' ? {} : {
+        systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const },
+        tools: { type: 'preset' as const, preset: 'claude_code' as const },
+      }),
     };
 
     // Add allowed/disallowed tools
@@ -202,7 +206,16 @@ export abstract class BaseAgent implements Disposable {
       options.allowedTools = extra.allowedTools;
     }
     if (extra.disallowedTools) {
-      options.disallowedTools = extra.disallowedTools;
+      const nonApplicableDeepSeekDefaults = new Set([
+        'EnterPlanMode', 'AskUserQuestion', 'CronCreate', 'CronList',
+        'CronDelete', 'ScheduleWakeup',
+      ]);
+      const disallowedTools = this.agentBackend === 'deepseek'
+        ? extra.disallowedTools.filter((tool) => !nonApplicableDeepSeekDefaults.has(tool))
+        : extra.disallowedTools;
+      if (disallowedTools.length > 0) {
+        options.disallowedTools = disallowedTools;
+      }
     }
 
     // Add MCP servers (convert to SDK format)

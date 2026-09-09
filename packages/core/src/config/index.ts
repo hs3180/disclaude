@@ -19,11 +19,13 @@ import {
 } from './loader.js';
 import type {
   DisclaudeConfig,
+  AgentPresets,
   ConfigValidationError,
   TransportConfig,
   DebugConfig,
   SessionTimeoutConfig,
 } from './types.js';
+import { resolveAgentPreset } from './agent-presets.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 
 // Re-export sub-modules
@@ -211,12 +213,19 @@ export class Config {
 
   // Anthropic Claude configuration (from env for fallback)
   static readonly ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
-  static readonly CLAUDE_MODEL = fileConfigOnly.agent?.model || '';
+  private static readonly DEFAULT_AGENT_PRESET = fileConfigOnly.agents
+    ? resolveAgentPreset(fileConfigOnly.agents)
+    : undefined;
+  static readonly CLAUDE_MODEL =
+    (this.DEFAULT_AGENT_PRESET?.ok ? this.DEFAULT_AGENT_PRESET.preset.model : undefined) ||
+    fileConfigOnly.agent?.model || '';
 
   // Agent SDK backend — which agent runtime boots (Issue #4388).
   // Orthogonal to the model-layer provider (GLM vs Anthropic LLM API).
   // undefined ⇒ 'claude' default. Consumed by PrimaryNode.start().
-  static readonly AGENT_BACKEND = fileConfigOnly.agent?.agentBackend;
+  static readonly AGENT_BACKEND =
+    (this.DEFAULT_AGENT_PRESET?.ok ? this.DEFAULT_AGENT_PRESET.preset.agentBackend : undefined) ||
+    fileConfigOnly.agent?.agentBackend;
 
   // Codex exec sandbox override (Issue #4631, S4 of #4627). Only
   // meaningful with AGENT_BACKEND === 'codex'; consumed by the
@@ -307,6 +316,11 @@ export class Config {
       return getConfigFromFile(preloaded);
     }
     return fileConfigOnly;
+  }
+
+  /** Named runtime presets, when configured. Selection is managed per chat by the pool. */
+  static getAgentPresets(): AgentPresets | undefined {
+    return this.getRawConfig().agents;
   }
 
   /**
@@ -495,7 +509,10 @@ export class Config {
     this.validateRequiredConfig();
 
     // Prefer GLM if configured
-    if (this.GLM_API_KEY) {
+    const presetProvider = this.DEFAULT_AGENT_PRESET?.ok
+      ? this.DEFAULT_AGENT_PRESET.preset.provider
+      : undefined;
+    if (presetProvider === 'glm' || (!presetProvider && this.GLM_API_KEY)) {
       logger.debug({ provider: 'GLM', model: this.GLM_MODEL }, 'Using GLM API configuration');
 
       // Issue #3706: Warn when GLM + Agent Teams is enabled.
@@ -512,8 +529,12 @@ export class Config {
 
       return {
         apiKey: this.GLM_API_KEY,
-        model: this.GLM_MODEL,
-        apiBaseUrl: this.GLM_API_BASE_URL,
+        model: this.DEFAULT_AGENT_PRESET?.ok
+          ? this.DEFAULT_AGENT_PRESET.preset.model
+          : this.GLM_MODEL,
+        apiBaseUrl: this.DEFAULT_AGENT_PRESET?.ok
+          ? this.DEFAULT_AGENT_PRESET.preset.apiBaseUrl ?? this.GLM_API_BASE_URL
+          : this.GLM_API_BASE_URL,
         provider: 'glm',
       };
     }
@@ -526,6 +547,9 @@ export class Config {
     return {
       apiKey: this.ANTHROPIC_API_KEY,
       model: this.CLAUDE_MODEL,
+      ...(this.DEFAULT_AGENT_PRESET?.ok && this.DEFAULT_AGENT_PRESET.preset.apiBaseUrl
+        ? { apiBaseUrl: this.DEFAULT_AGENT_PRESET.preset.apiBaseUrl }
+        : {}),
       provider: 'anthropic',
     };
   }

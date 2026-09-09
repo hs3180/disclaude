@@ -57,13 +57,14 @@ function createMockSdkMessage(overrides: Partial<AgentMessage> = {}): AgentMessa
 }
 
 // Minimal mock for SDK provider
-const mockSdkProvider = {
-  queryStream: vi.fn(),
-};
+const { mockSdkProvider, mockGetProvider } = vi.hoisted(() => {
+  const provider = { queryStream: vi.fn() };
+  return { mockSdkProvider: provider, mockGetProvider: vi.fn(() => provider) };
+});
 
 // Mock the SDK module
 vi.mock('../sdk/index.js', () => ({
-  getProvider: () => mockSdkProvider,
+  getProvider: mockGetProvider,
   IAgentSDKProvider: class {},
 }));
 
@@ -87,12 +88,36 @@ describe('BaseAgent', () => {
   let config: BaseAgentConfig;
 
   beforeEach(() => {
+    mockGetProvider.mockClear();
     config = {
       apiKey: 'test-api-key',
       model: 'claude-3-5-sonnet-20241022',
       provider: 'anthropic',
     };
     agent = new TestAgent(config);
+  });
+
+  it('binds an explicitly selected SDK backend to this agent', () => {
+    new TestAgent({ ...config, agentBackend: 'pi' });
+    expect(mockGetProvider).toHaveBeenLastCalledWith('pi');
+  });
+
+  it('omits Claude-only presets and inapplicable default denies for deepseek', () => {
+    const deepseek = new TestAgent({ ...config, agentBackend: 'deepseek' });
+    const options = deepseek.testCreateSdkOptions({
+      disallowedTools: ['EnterPlanMode', 'CronCreate'],
+    });
+    expect(options.systemPrompt).toBeUndefined();
+    expect(options.tools).toBeUndefined();
+    expect(options.disallowedTools).toBeUndefined();
+  });
+
+  it('retains enforceable tool restrictions for deepseek to reject explicitly', () => {
+    const deepseek = new TestAgent({ ...config, agentBackend: 'deepseek' });
+    const options = deepseek.testCreateSdkOptions({
+      disallowedTools: ['AskUserQuestion', 'Bash', 'Write'],
+    });
+    expect(options.disallowedTools).toEqual(['Bash', 'Write']);
   });
 
   afterEach(() => {

@@ -37,6 +37,7 @@ import {
   type ModelTier,
   type CwdProvider,
   type CwdResolution,
+  type AgentPreset,
 } from '@disclaude/core';
 import { ChatAgent } from './chat-agent.js';
 import type { ChatAgentConfig, ChatAgentCallbacks } from './types.js';
@@ -86,6 +87,8 @@ export function toChatAgentCallbacks(callbacks: SchedulerCallbacks): ChatAgentCa
  * Uses unified configuration structure (Issue #327).
  */
 export interface AgentCreateOptions {
+  /** Agent SDK runtime override (normally supplied by a named preset). */
+  agentBackend?: AgentPreset['agentBackend'];
   /** Override API key */
   apiKey?: string;
   /** Override model */
@@ -165,6 +168,7 @@ export class AgentFactory {
       provider: options.provider ?? defaultConfig.provider,
       apiBaseUrl: options.apiBaseUrl ?? defaultConfig.apiBaseUrl,
       permissionMode: options.permissionMode ?? 'bypassPermissions',
+      agentBackend: options.agentBackend,
     };
   }
 
