@@ -1181,6 +1181,50 @@ echo done > "$CODEX_HOME/turn-$n.done"
     expect(provider.getGovernanceStats().evictedSessions).toBe(1);
   }, 25_000);
 
+  it('preserves an observed thread when eviction races run settlement', async () => {
+    const body = `
+n=$(cat "$CODEX_HOME/count" 2>/dev/null || echo 0)
+n=$((n+1)); echo "$n" > "$CODEX_HOME/count"
+echo "$*" > "$CODEX_HOME/argv-$n"
+if [ "$n" = 1 ]; then
+  trap 'exit 143' TERM
+  echo '{"type":"thread.started","thread_id":"t-observed"}'
+  echo '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"visible before close"}}'
+  echo ready > "$CODEX_HOME/observed.ready"
+  while :; do sleep 1; done
+fi
+echo '{"type":"thread.started","thread_id":"t-other"}'
+echo '{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"ok"}}'
+echo '{"type":"turn.completed"}'
+`;
+    fixtures = makeFixtures({ withBinary: true, withAuth: true, body });
+    const provider = governedProvider(fixtures, { maxActiveSessions: 1 });
+
+    const resultA = provider.queryStream(
+      (async function* () {
+        yield { role: 'user', content: 'a1' } as UserInput;
+        await new Promise<void>(() => {});
+      })(),
+      { settingSources: [], sessionKey: 'chat-a' } as AgentQueryOptions
+    );
+    const collectedA = (async () => {
+      const out: unknown[] = [];
+      for await (const message of resultA.iterator) {
+        out.push(message);
+      }
+      return out;
+    })();
+    await waitFor(() => existsSync(join(fixtures.codexHome, 'observed.ready')));
+
+    await drainStream(provider, ['b1'], { sessionKey: 'chat-b' });
+    await collectedA;
+    await drainStream(provider, ['a2'], { sessionKey: 'chat-a' });
+
+    const argv3 = readFileSync(join(fixtures.codexHome, 'argv-3'), 'utf8');
+    expect(argv3).toContain('resume');
+    expect(argv3).toContain('t-observed');
+  }, 25_000);
+
   it('normal teardown does NOT stash — /reset keeps meaning reset', async () => {
     // Same scripted happy body; the stream ends normally after one turn.
     const body = `

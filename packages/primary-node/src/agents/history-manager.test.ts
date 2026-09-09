@@ -64,6 +64,61 @@ beforeEach(() => {
 });
 
 describe('HistoryManager (Issue #4125 part 2)', () => {
+  describe('single bounded history snapshot (#4795)', () => {
+    it('shares persisted/first-message loading and consumes explicit history only once', async () => {
+      const getChatHistory = vi.fn().mockResolvedValue('stored snapshot');
+      const mgr = makeManager(makeCallbacks({ getChatHistory, getChatLogFilePaths: vi.fn().mockResolvedValue(['/history.md']) }));
+      await Promise.all([mgr.loadPersistedHistory(), mgr.loadFirstMessageHistory()]);
+      expect(getChatHistory).toHaveBeenCalledTimes(1);
+      expect(mgr.consumeFirstMessageContext('receive-time snapshot')).toBe('receive-time snapshot');
+      expect(mgr.persistedHistoryContext).toBeUndefined();
+      for (let tick = 0; tick < 20; tick++) {
+        await mgr.loadFirstMessageHistory();
+        expect(mgr.consumeFirstMessageContext('later repeated snapshot')).toBeUndefined();
+      }
+      expect(getChatHistory).toHaveBeenCalledTimes(1);
+      expect(mgr.chatLogFilePaths).toEqual(['/history.md']);
+    });
+
+    it('bounds rendered history including explicit snapshots without taking older-day tails', async () => {
+      const mgr = makeManager(makeCallbacks({ getChatHistory: vi.fn().mockResolvedValue(`${'newest-day'.repeat(20)}older-day`) }));
+      await mgr.loadFirstMessageHistory();
+      const context = mgr.consumeFirstMessageContext();
+      expect(context).toHaveLength(100);
+      expect(context).toMatch(/^newest-day/);
+      expect(context).not.toContain('older-day');
+      mgr.reset();
+      expect(mgr.consumeFirstMessageContext('x'.repeat(250))).toHaveLength(100);
+    });
+
+    it('does not let reset-era in-flight loads populate a new instance snapshot', async () => {
+      let finishOld!: (value: string) => void;
+      const getChatHistory = vi.fn().mockImplementationOnce(() => new Promise<string>(resolve => { finishOld = resolve; })).mockResolvedValue('new snapshot');
+      const mgr = makeManager(makeCallbacks({ getChatHistory }));
+      const old = mgr.loadFirstMessageHistory();
+      mgr.reset();
+      await mgr.loadFirstMessageHistory();
+      finishOld('stale snapshot');
+      await old;
+      expect(mgr.consumeFirstMessageContext()).toBe('new snapshot');
+      expect(getChatHistory).toHaveBeenCalledTimes(2);
+    });
+
+    it('preserves no-context across an in-flight load, explicit input and reset', async () => {
+      let finish!: (value: string) => void;
+      const getChatHistory = vi.fn(() => new Promise<string>(resolve => { finish = resolve; }));
+      const mgr = makeManager(makeCallbacks({ getChatHistory }));
+      const pending = mgr.loadFirstMessageHistory();
+      mgr.markSkipped();
+      finish('must not appear');
+      await pending;
+      expect(mgr.consumeFirstMessageContext('explicit history')).toBeUndefined();
+      mgr.reset();
+      await mgr.loadFirstMessageHistory();
+      expect(getChatHistory).toHaveBeenCalledTimes(1);
+      expect(mgr.persistedHistoryContext).toBeUndefined();
+    });
+  });
   describe('markSkipped (Issue #3696)', () => {
     it('marks both history types as loaded without fetching', async () => {
       const callbacks = makeCallbacks({ getChatHistory: vi.fn() });
@@ -206,7 +261,7 @@ describe('HistoryManager (Issue #4125 part 2)', () => {
 
       expect(mgr.firstMessageHistoryLoaded).toBe(true);
       expect(sendMessage).toHaveBeenCalledTimes(1);
-      expect(sendMessage.mock.calls[0][1]).toContain('加载聊天记录失败');
+      expect(sendMessage.mock.calls[0][1]).toContain('加载历史记录失败');
     });
   });
 
@@ -239,7 +294,6 @@ describe('HistoryManager (Issue #4125 part 2)', () => {
       const getChatHistory = vi
         .fn()
         .mockResolvedValueOnce('first') // persisted load #1
-        .mockResolvedValueOnce('fm') // first-message load
         .mockResolvedValueOnce('second'); // persisted reload after reset
       const callbacks = makeCallbacks({
         getChatHistory,
@@ -261,7 +315,7 @@ describe('HistoryManager (Issue #4125 part 2)', () => {
       // Reload after reset fetches fresh data.
       await mgr.loadPersistedHistory();
       expect(mgr.persistedHistoryContext).toBe('second');
-      expect(getChatHistory).toHaveBeenCalledTimes(3); // persisted x2 + firstMessage x1
+      expect(getChatHistory).toHaveBeenCalledTimes(2); // one shared snapshot per instance
     });
   });
 

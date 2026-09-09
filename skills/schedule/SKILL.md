@@ -282,6 +282,30 @@ Scheduled tasks should complete within reasonable time. Break large tasks into s
 
 ### Prompt Template
 
+For recurring work with a progress ledger, define retention in the schedule itself:
+keep permanent constraints before round history, keep at most five recent rounds
+and a 12 KiB active file, and archive older rounds before loading the active state.
+Use `## Round N` (or `## 第 N 轮`) markers with increasing unique numbers; use `###`
+for round subsections. Migrate older custom headings explicitly before using the
+compactor; it refuses unrecognized or ambiguous layouts.
+
+Resolve the installed disclaude root first, then run its absolute script path:
+
+```bash
+node /absolute/disclaude/scripts/compact-loop-ledger.mjs --file /absolute/task/STATE.md --keep-rounds 5 --max-bytes 12288 --dry-run
+# After verifying the proposed retained/archived round numbers:
+node /absolute/disclaude/scripts/compact-loop-ledger.mjs --file /absolute/task/STATE.md --keep-rounds 5 --max-bytes 12288 --apply
+```
+
+The script writes exact older blocks to `STATE.md.archive/` before replacing the
+active file; repeat execution does not duplicate archives. Do not append while
+`STATE.md.compact.lock` exists. A stale lock after a process crash requires checking
+that its writer has stopped before removing that specific lock. If current state
+plus the newest round exceeds the budget, explicitly summarize it without dropping
+constraints; compaction fails instead of silently truncating it. Read only the active
+ledger on normal ticks; consult specific archived rounds on demand. This bounds the
+file, not the SDK's live session: configure session/history behavior separately.
+
 ```markdown
 ## Objective
 [What should be accomplished]

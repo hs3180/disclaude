@@ -126,7 +126,8 @@ export type ControlCommandType =
   | 'trigger'
   // Project management commands (Issue #3335)
   | 'project'
-  | 'agent';
+  | 'agent'
+  | 'steer';
 
 /**
  * Typed data schema for each command type (Issue #3529).
@@ -143,6 +144,7 @@ export interface CommandDataMap {
   reset: { skipContext?: boolean };
   /** /agent — inspect or select a named runtime preset */
   agent: { subcommand: string; preset?: string };
+  steer: { prompt?: string };
 }
 
 /**

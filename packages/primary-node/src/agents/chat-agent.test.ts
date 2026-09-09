@@ -264,6 +264,18 @@ describe('ChatAgent (primary-node)', () => {
   });
 
   describe('processMessage', () => {
+    it('injects one bounded history section on the first message and none on later turns (#4795)', async () => {
+      callbacks.getChatHistory.mockResolvedValue('stored snapshot' as never);
+      await chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'first', messageId: 'history-1', chatHistoryContext: 'explicit first snapshot' });
+      await chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'second', messageId: 'history-2', chatHistoryContext: 'repeated receive-time snapshot' });
+      const builder = (chatAgent as any).messageBuilder.buildEnhancedContent;
+      expect(builder.mock.calls[0][0].chatHistoryContext).toBe('explicit first snapshot');
+      expect(builder.mock.calls[0][0].persistedHistoryContext).toBeUndefined();
+      expect(builder.mock.calls[1][0].chatHistoryContext).toBeUndefined();
+      expect(builder.mock.calls[1][0].persistedHistoryContext).toBeUndefined();
+      expect(callbacks.getChatHistory).toHaveBeenCalledTimes(1);
+      ChatAgent.prototype.dispose.call(chatAgent);
+    });
     it('should ignore messages for wrong chatId', () => {
       void chatAgent.processMessage({ chatId: 'oc_wrong', payload: 'hello', messageId: 'msg_1' });
       expect(chatAgent.hasActiveSession()).toBe(false);
@@ -276,6 +288,26 @@ describe('ChatAgent (primary-node)', () => {
         messageId: 'msg_1',
       });
       expect(chatAgent.hasActiveSession()).toBe(true);
+    });
+
+    it('acknowledges ordinary input queued behind an active turn', async () => {
+      const push = vi.fn().mockReturnValue(true);
+      (chatAgent as any).channel = { push, close: vi.fn() };
+      (chatAgent as any).isSessionActive = true;
+      (chatAgent as any).isProcessingMessage = true;
+
+      await chatAgent.processMessage({
+        chatId: 'oc_test_chat',
+        payload: 'follow-up',
+        messageId: 'msg_queued',
+      });
+
+      expect(push).toHaveBeenCalledTimes(1);
+      expect(callbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_test_chat',
+        expect.stringContaining('已排队'),
+        undefined
+      );
     });
   });
 
@@ -328,6 +360,78 @@ describe('ChatAgent (primary-node)', () => {
 
   });
 
+  describe('steer acknowledgement', () => {
+    it('waits for backend acknowledgement before reporting success', async () => {
+      let acknowledge!: (value: { turnId: string }) => void;
+      const steer = vi.fn().mockReturnValue(new Promise((resolve) => { acknowledge = resolve; }));
+      (chatAgent as any).isProcessingMessage = true;
+      (chatAgent as any).activeTurnMessageId = 'message-a';
+      (chatAgent as any).queryHandle = { close: vi.fn(), steer };
+
+      const result = ChatAgent.prototype.steer.call(chatAgent, 'change direction');
+      let settled = false;
+      void result.then(() => { settled = true; });
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      acknowledge({ turnId: 'turn-1' });
+      await expect(result).resolves.toEqual({ ok: true, turnId: 'turn-1' });
+    });
+
+    it('reports reject, unsupported, completed, and stale acknowledgements as failures', async () => {
+      (chatAgent as any).isProcessingMessage = true;
+      (chatAgent as any).activeTurnMessageId = 'message-a';
+      (chatAgent as any).queryHandle = {
+        close: vi.fn(),
+        steer: vi.fn().mockRejectedValue(new Error('turn disconnected')),
+      };
+      await expect(ChatAgent.prototype.steer.call(chatAgent, 'change')).resolves.toMatchObject({
+        ok: false,
+        error: expect.stringContaining('turn disconnected'),
+      });
+
+      (chatAgent as any).queryHandle = { close: vi.fn() };
+      await expect(ChatAgent.prototype.steer.call(chatAgent, 'change')).resolves.toMatchObject({
+        ok: false,
+        error: expect.stringContaining('unsupported'),
+      });
+
+      (chatAgent as any).isProcessingMessage = false;
+      await expect(ChatAgent.prototype.steer.call(chatAgent, 'change')).resolves.toMatchObject({
+        ok: false,
+        error: expect.stringContaining('No active turn'),
+      });
+
+      let acknowledge!: (value: { turnId: string }) => void;
+      const original = { close: vi.fn(), steer: vi.fn().mockReturnValue(new Promise((resolve) => { acknowledge = resolve; })) };
+      (chatAgent as any).isProcessingMessage = true;
+      (chatAgent as any).activeTurnMessageId = 'message-a';
+      (chatAgent as any).queryHandle = original;
+      const stale = ChatAgent.prototype.steer.call(chatAgent, 'change');
+      (chatAgent as any).queryHandle = { close: vi.fn() };
+      acknowledge({ turnId: 'old-turn' });
+      await expect(stale).resolves.toMatchObject({
+        ok: false,
+        error: expect.stringContaining('turn changed'),
+      });
+
+      let acknowledgeSameHandle!: (value: { turnId: string }) => void;
+      const persistentHandle = {
+        close: vi.fn(),
+        steer: vi.fn().mockReturnValue(new Promise((resolve) => { acknowledgeSameHandle = resolve; })),
+      };
+      (chatAgent as any).queryHandle = persistentHandle;
+      (chatAgent as any).activeTurnMessageId = 'message-a';
+      const lateFromA = ChatAgent.prototype.steer.call(chatAgent, 'change A');
+      // B starts on the same persistent handle and session generation.
+      (chatAgent as any).activeTurnMessageId = 'message-b';
+      acknowledgeSameHandle({ turnId: 'turn-a' });
+      await expect(lateFromA).resolves.toMatchObject({
+        ok: false,
+        error: expect.stringContaining('turn changed'),
+      });
+    });
+  });
+
   describe('MCP-free startup (Issue #4652)', () => {
     it('starts the production query path without constructing or injecting mcpServers', () => {
       (chatAgent as any).startAgentLoop();
@@ -343,8 +447,8 @@ describe('ChatAgent (primary-node)', () => {
   });
 
   // Issue #4448 (direction #1): a chat bound to a directory that does not
-  // exist silently falls back to the workspace cwd. The structured cwdResolver
-  // must turn that into a user-visible warning pushed to the chat — the plain
+  // exist must fail closed rather than falling back to the workspace cwd. The
+  // structured cwdResolver turns that into a user-visible rejection — the plain
   // cwdProvider can't distinguish bound-missing from unbound.
   describe('bound-missing cwd fallback warning (Issue #4448 direction #1)', () => {
     // `resolverStates` lets the mutating tests flip the resolution between
@@ -378,7 +482,7 @@ describe('ChatAgent (primary-node)', () => {
       });
     };
 
-    it('pushes a user-visible warning when the bound directory is missing', () => {
+    it('rejects without constructing an SDK query when the bound directory is missing', () => {
       const agent = mkAgent('bound-missing');
       (agent as any).startAgentLoop();
 
@@ -389,7 +493,25 @@ describe('ChatAgent (primary-node)', () => {
       ];
       expect(chatId).toBe('oc_test_chat');
       expect(text).toContain('/gone/project/dir');
-      expect(text).toContain('回退');
+      expect(text).toContain('不会回退');
+      expect((agent as any).createSdkOptions).not.toHaveBeenCalled();
+      expect((agent as any).createQueryStream).not.toHaveBeenCalled();
+      expect((agent as any).isSessionActive).toBe(false);
+    });
+
+    it('returns from processMessage without parking the turn on a missing binding', async () => {
+      const agent = mkAgent('bound-missing');
+
+      await expect(
+        agent.processMessage({
+          chatId: 'oc_test_chat',
+          payload: 'do not run this elsewhere',
+          messageId: 'om_missing_cwd',
+        })
+      ).resolves.toBeUndefined();
+
+      expect((agent as any).createQueryStream).not.toHaveBeenCalled();
+      expect((agent as any).channel).toBeUndefined();
     });
 
     it('does not warn when the binding resolves cleanly (bound)', () => {
@@ -406,13 +528,14 @@ describe('ChatAgent (primary-node)', () => {
       expect(callbacks.sendMessage).not.toHaveBeenCalled();
     });
 
-    it('a rejecting sendMessage does not break the agent loop start', () => {
+    it('a rejecting sendMessage still fails closed', () => {
       const sendErr = callbacks.sendMessage as unknown as ReturnType<typeof vi.fn>;
       sendErr.mockRejectedValueOnce(new Error('channel down'));
 
       const agent = mkAgent('bound-missing');
       // Must not throw despite the rejected warning send (fire-and-forget).
       expect(() => (agent as any).startAgentLoop()).not.toThrow();
+      expect((agent as any).createQueryStream).not.toHaveBeenCalled();
     });
 
     // Nit (restart re-announce): startAgentLoop() re-runs on restart cycles —
@@ -3686,6 +3809,47 @@ describe('ChatAgent (primary-node)', () => {
       expect(localCallbacks.startStreaming).not.toHaveBeenCalled();
       expect(localCallbacks.streamText).not.toHaveBeenCalled();
       expect(localCallbacks.finalizeStreaming).not.toHaveBeenCalled();
+    });
+
+    it('records terminal delivery failure when card flush and fallback both fail', async () => {
+      const localCallbacks = {
+        ...createMockCallbacks(),
+        getCapabilities: vi.fn(() => caps(true)),
+        startStreaming: vi.fn(() => Promise.resolve('card-failed')),
+        streamText: vi.fn(() => Promise.reject(new Error('patch failed'))),
+        finalizeStreaming: vi.fn(() => Promise.resolve()),
+        sendMessage: vi.fn(() => Promise.reject(new Error('fallback failed'))),
+      };
+      const agent = new ChatAgent({
+        chatId: 'oc_stream_failed',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          yield { parsed: { type: 'text', role: 'assistant', content: 'Answer' }, raw: {} };
+          yield { parsed: { type: 'result', content: '✅ Complete' }, raw: {} };
+        })(),
+      });
+      (agent as any).isAgentTeamsEnabled = () => false;
+
+      void agent.processMessage({
+        chatId: 'oc_stream_failed',
+        payload: 'hi',
+        messageId: 'msg_failed',
+        chatType: 'p2p',
+      });
+
+      await vi.waitFor(() => {
+        expect((agent as any).logger.error).toHaveBeenCalledWith(
+          expect.objectContaining({ chatId: 'oc_stream_failed', turnMessageId: 'msg_failed' }),
+          'Streaming terminal delivery failed after fallback'
+        );
+      });
     });
   });
 

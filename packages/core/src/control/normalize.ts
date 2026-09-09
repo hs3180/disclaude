@@ -49,6 +49,10 @@ export function normalizeCommandData<T extends ControlCommandType>(
         ...(args[1] ? { preset: args[1] } : {}),
       };
     }
+    case 'steer': {
+      const args = Array.isArray(rawData.args) ? rawData.args as string[] : [];
+      return { prompt: args.join(' ').trim() || undefined };
+    }
     default:
       return undefined;
   }

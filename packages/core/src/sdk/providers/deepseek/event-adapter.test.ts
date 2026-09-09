@@ -2,23 +2,64 @@ import { describe, expect, it } from 'vitest';
 import { adaptDeepSeekEvent } from './event-adapter.js';
 
 describe('adaptDeepSeekEvent (Issue #4743 contract)', () => {
-  it('maps text deltas without changing their content', () => {
-    expect(adaptDeepSeekEvent({ type: 'text_delta', delta: 'hello' })).toMatchObject({
-      type: 'text',
-      role: 'assistant',
-      content: 'hello',
-    });
+  it('maps live assistant/chunk deltas emitted by dsh 0.1.2', () => {
+    expect(
+      adaptDeepSeekEvent({
+        type: 'assistant/chunk',
+        data: { chunk: { type: 'text-delta', text: 'hi' } },
+      })[0]
+    ).toMatchObject({ type: 'text', content: 'hi' });
+  });
+
+  it('maps text from the official assistant/message envelope', () => {
+    expect(
+      adaptDeepSeekEvent({
+        type: 'assistant/message',
+        data: {
+          message: {
+            id: 'msg-1',
+            content: [
+              { type: 'reasoning', text: 'think' },
+              { type: 'text', text: 'hello' },
+            ],
+          },
+        },
+      })
+    ).toEqual([
+      expect.objectContaining({
+        type: 'text',
+        role: 'assistant',
+        content: 'think',
+      }),
+      expect.objectContaining({ content: 'hello' }),
+    ]);
   });
 
   it('maps tool calls and results with a stable call id', () => {
     expect(
-      adaptDeepSeekEvent({ type: 'tool_call', id: 'call-1', name: 'lookup', input: { q: 'x' } })
+      adaptDeepSeekEvent({
+        type: 'tool/call',
+        data: { callId: 'call-1', name: 'lookup', arguments: '{"q":"x"}' },
+      })[0]
     ).toMatchObject({
       type: 'tool_use',
       metadata: { messageId: 'call-1', toolName: 'lookup', toolInput: { q: 'x' } },
     });
     expect(
-      adaptDeepSeekEvent({ type: 'tool_result', id: 'call-1', name: 'lookup', result: 'ok' })
+      adaptDeepSeekEvent({
+        type: 'tool/result',
+        data: {
+          message: {
+            content: [
+              {
+                type: 'tool-result',
+                toolCallId: 'call-1',
+                content: [{ type: 'text', text: 'ok' }],
+              },
+            ],
+          },
+        },
+      })[0]
     ).toMatchObject({
       type: 'tool_result',
       content: 'ok',
@@ -26,20 +67,23 @@ describe('adaptDeepSeekEvent (Issue #4743 contract)', () => {
     });
   });
 
-  it('keeps completion usage on the result and distinguishes retryable errors', () => {
+  it('maps official turn/end completion and failure reasons', () => {
     expect(
-      adaptDeepSeekEvent({ type: 'completed', usage: { input_tokens: 4, output_tokens: 2 } })
+      adaptDeepSeekEvent({ type: 'turn/end', data: { reason: { kind: 'completed' } } })[0]
     ).toMatchObject({
       type: 'result',
-      metadata: { inputTokens: 4, outputTokens: 2 },
     });
-    expect(adaptDeepSeekEvent({ type: 'error', message: 'retry', retryable: true })?.type).toBe(
-      'status'
-    );
-    expect(adaptDeepSeekEvent({ type: 'error', message: 'fatal' })?.type).toBe('error');
+    expect(
+      adaptDeepSeekEvent({
+        type: 'turn/end',
+        data: { reason: { kind: 'error', error: { message: 'fatal' } } },
+      })[0]?.type
+    ).toBe('error');
   });
 
   it('ignores unknown events instead of leaking arbitrary payloads to chat', () => {
-    expect(adaptDeepSeekEvent({ type: 'future_event', text: 'do not display' })).toBeNull();
+    expect(adaptDeepSeekEvent({ type: 'future/event', data: { text: 'do not display' } })).toEqual(
+      []
+    );
   });
 });

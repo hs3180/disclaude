@@ -46,7 +46,7 @@ vi.mock('@disclaude/core', async (importOriginal) => {
 // Track mock agent instances for assertions
 // Issue #4620: mock now carries turnStartedAtMs (0 = not set; tests that
 // exercise the observation-based fallback leave it 0/undefined).
-const mockAgents: Map<string, { dispose: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; updateCallbacks: ReturnType<typeof vi.fn>; taskComplete?: Promise<void>; isBusy: boolean; turnStartedAtMs?: number }> = new Map();
+const mockAgents: Map<string, { dispose: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; steer: ReturnType<typeof vi.fn>; updateCallbacks: ReturnType<typeof vi.fn>; taskComplete?: Promise<void>; isBusy: boolean; turnStartedAtMs?: number }> = new Map();
 
 // Mock AgentFactory
 vi.mock('./agents/factory.js', () => ({
@@ -55,6 +55,7 @@ vi.mock('./agents/factory.js', () => ({
       const agent = {
         dispose: vi.fn(),
         stop: vi.fn().mockReturnValue(true),
+        steer: vi.fn().mockResolvedValue({ ok: false, error: 'unsupported' }),
         updateCallbacks: vi.fn().mockReturnValue(true),
         taskComplete: undefined as Promise<void> | undefined,
         isBusy: false,
@@ -557,6 +558,46 @@ describe('PrimaryAgentPool', () => {
       const result = pool.stop('nonexistent');
 
       expect(result).toBe(false);
+    });
+  });
+
+  describe('steer capability', () => {
+    it('reports no active turn separately from unsupported runtime steer', async () => {
+      const pool = new PrimaryAgentPool();
+      await expect(pool.steer('chat', 'change')).resolves.toEqual({
+        ok: false,
+        error: 'No active turn to steer. Send the message normally to start or queue a turn.',
+      });
+
+      const agent = pool.getOrCreateChatAgent('chat', createMockCallbacks());
+      const mutable = mockAgents.get('chat');
+      if (!mutable) { throw new Error('expected mock agent'); }
+      mutable.isBusy = true;
+      mutable.steer.mockResolvedValue({ ok: false, error: 'Immediate steer unsupported; instruction was not queued.' });
+      await expect(pool.steer('chat', 'change')).resolves.toEqual({
+        ok: false,
+        error: 'Immediate steer unsupported; instruction was not queued.',
+      });
+      expect(agent.stop).not.toHaveBeenCalled();
+    });
+
+    it('waits for agent acknowledgement and forwards the active turn id', async () => {
+      const pool = new PrimaryAgentPool();
+      pool.getOrCreateChatAgent('chat', createMockCallbacks());
+      const agent = mockAgents.get('chat')!;
+      agent.isBusy = true;
+      let acknowledge!: (value: { ok: true; turnId: string }) => void;
+      agent.steer.mockReturnValue(new Promise((resolve) => { acknowledge = resolve; }));
+      const result = pool.steer('chat', 'change');
+      let settled = false;
+      void result.then(() => { settled = true; });
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      acknowledge({ ok: true, turnId: 'turn-2' });
+      await expect(result).resolves.toEqual({
+        ok: true,
+        message: 'Steer acknowledged for active turn turn-2.',
+      });
     });
   });
 

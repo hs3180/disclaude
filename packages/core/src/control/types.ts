@@ -47,6 +47,8 @@ export interface ControlHandlerContext {
     switchAgentPreset?(chatId: string, presetName: string, threadRootId?: string):
       | { ok: true; active: { name: string; agentBackend: string; model: string }; sessionBoundary: 'new-session' }
       | { ok: false; error: string };
+    steer?(chatId: string, prompt: string, threadRootId?: string):
+      Promise<{ ok: true; message: string } | { ok: false; error: string }>;
   };
 
   /** 节点相关能力 */

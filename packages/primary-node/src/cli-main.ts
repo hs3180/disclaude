@@ -371,6 +371,7 @@ export async function main(): Promise<void> {
         agentPool.getActiveAgentPreset(chatId, threadRootId),
       switchAgentPreset: (chatId, presetName, threadRootId) =>
         agentPool.switchAgentPreset(chatId, presetName, threadRootId),
+      steer: (chatId, prompt, threadRootId) => agentPool.steer(chatId, prompt, threadRootId),
     },
     node: {
       nodeId: primaryNode.getNodeId(),

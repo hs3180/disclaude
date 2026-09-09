@@ -1109,6 +1109,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       // A failed freeze degrades (driver sendMessage-flushes the full buffer);
       // still clean up so the per-card counter does not leak.
       logger.warn({ err, cardId: id }, 'finalizeStreaming failed — driver will sendMessage-flush');
+      throw err;
     } finally {
       this.streamingSequences.delete(id);
     }
