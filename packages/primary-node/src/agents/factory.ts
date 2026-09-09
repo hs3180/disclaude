@@ -306,6 +306,7 @@ export class AgentFactory {
       cwdProvider: options.cwdProvider,
       cwdResolver: options.cwdResolver,
       skipHistory: options.skipHistory,
+      sdkSessionKey: options.sdkSessionKey,
     };
 
     return new ChatAgent(config);

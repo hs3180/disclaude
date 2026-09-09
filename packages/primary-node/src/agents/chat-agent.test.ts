@@ -183,6 +183,15 @@ describe('ChatAgent (primary-node)', () => {
   });
 
   describe('constructor', () => {
+    it('uses an isolated provider session key while remaining bound to the real chat (#4812)', async () => {
+      const agent = new ChatAgent({ chatId: 'oc_test_chat', callbacks, apiKey: 'test', model: 'test', provider: 'anthropic', sdkSessionKey: 'oc_test_chat::schedule:tick-1' });
+      await agent.processMessage({ chatId: 'oc_test_chat', payload: 'run', messageId: 'tick-1' });
+      expect((agent as any).createSdkOptions).toHaveBeenCalledWith(expect.objectContaining({ sessionKey: 'oc_test_chat::schedule:tick-1' }));
+      expect(agent.getChatId()).toBe('oc_test_chat');
+      agent.reset();
+      expect((agent as any).sdkProvider.forgetSession).toHaveBeenCalledWith('oc_test_chat::schedule:tick-1');
+      ChatAgent.prototype.dispose.call(agent);
+    });
     it('should create a ChatAgent with bound chatId', () => {
       expect(chatAgent.getChatId()).toBe('oc_test_chat');
     });

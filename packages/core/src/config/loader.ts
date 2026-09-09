@@ -15,7 +15,7 @@ import type {
   ConfigFileInfo,
   ConfigValidationError,
 } from './types.js';
-import { validateAgentPresets } from './agent-presets.js';
+import { resolveAgentPreset, validateAgentPresets } from './agent-presets.js';
 
 const logger = createLogger('ConfigLoader');
 
@@ -327,6 +327,34 @@ export function validateRequiredConfig(config: DisclaudeConfig): {
   errors: ConfigValidationError[];
 } {
   const errors: ConfigValidationError[] = [];
+  const selected = config.agents ? resolveAgentPreset(config.agents) : undefined;
+  const preset = selected?.ok ? selected.preset : undefined;
+  const backend = preset?.agentBackend ?? config.agent?.agentBackend;
+  const provider = preset?.provider ?? config.agent?.provider ?? (config.anthropic ? 'anthropic' : undefined);
+  const model = preset?.model || config.agent?.model || config.anthropic?.model;
+  if (backend === 'codex') {
+    return { valid: true, errors };
+  }
+  // A canonical API service block is independent of the model vendor.
+  if (config.anthropic && provider !== 'glm') {
+    if (!(config.anthropic.apiKey ?? process.env.ANTHROPIC_API_KEY)) {
+      errors.push({ field: 'anthropic.apiKey', message: 'anthropic.apiKey or ANTHROPIC_API_KEY is required' });
+    }
+    if (!model) {
+      errors.push({ field: 'anthropic.model', message: 'anthropic.model or agent.model is required' });
+    }
+    return { valid: errors.length === 0, errors };
+  }
+
+  const explicitlyUsesGlm = provider === 'glm';
+
+  if (explicitlyUsesGlm && !config.glm?.apiBaseUrl) {
+    errors.push({
+      field: 'glm.apiBaseUrl',
+      message:
+        'glm.apiBaseUrl is required for the selected GLM provider; configure a supported Anthropic-compatible proxy endpoint',
+    });
+  }
 
   // If GLM API key is configured, model must also be configured
   if (config.glm?.apiKey && !config.glm?.model) {
@@ -345,7 +373,7 @@ export function validateRequiredConfig(config: DisclaudeConfig): {
   }
 
   // If Anthropic API key is configured (from env), agent.model should be set
-  if (process.env.ANTHROPIC_API_KEY && !config.agent?.model) {
+  if (process.env.ANTHROPIC_API_KEY && !model) {
     errors.push({
       field: 'agent.model',
       message: 'agent.model is required when ANTHROPIC_API_KEY env var is set',

@@ -39,7 +39,7 @@ import { Config } from './index.js';
 
 describe('Config.validateRequiredConfig — provider=anthropic without ANTHROPIC_API_KEY', () => {
   it('should throw when provider=anthropic but ANTHROPIC_API_KEY is not set', () => {
-    expect(() => Config.getAgentConfig()).toThrow('ANTHROPIC_API_KEY environment variable is required');
+    expect(() => Config.getAgentConfig()).toThrow('anthropic.apiKey or ANTHROPIC_API_KEY is required');
   });
 
   it('should include field name in error', () => {

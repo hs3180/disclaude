@@ -27,8 +27,8 @@ workspace:
 # -----------------------------------------------------------------------------
 agent:
   # API provider preference
-  # Options: anthropic, glm
-  provider: "glm"
+  # Options: anthropic (API protocol); glm is accepted for legacy configurations
+  provider: "anthropic"
 
   # Agent SDK backend — which agent runtime boots (Issue #4388).
   # Options: claude (default), pi, codex
@@ -186,14 +186,18 @@ ruliu:
   webhookPath: "/webhook/ruliu"
 
 # -----------------------------------------------------------------------------
-# GLM (Zhipu AI) API Configuration
+# Anthropic Messages API Service (including compatible providers)
 # -----------------------------------------------------------------------------
-glm:
-  # GLM API key from https://open.bigmodel.cn/
-  apiKey: "your_glm_api_key_here"
+anthropic:
+  # API key supplied by your Anthropic-compatible service
+  apiKey: "your_api_key_here"
 
-  # API base URL (usually no need to change)
-  apiBaseUrl: "https://open.bigmodel.cn/api/anthropic"
+  # Model exposed by your proxy
+  model: "glm-4.7"
+
+  # Your service endpoint; omit apiBaseUrl when using Anthropic directly.
+  # No endpoint is assumed by default; verify this URL with your provider/operator.
+  apiBaseUrl: "https://your-anthropic-compatible-proxy.example"
 
   # Three-level model configuration (Issue #3059)
   # highModel: "glm-5.1"
