@@ -34,8 +34,10 @@ export interface ScheduledTask {
    * Issue #3860: Configurable timezone for scheduled tasks.
    */
   timezone?: string;
-  /** Prompt to execute when task triggers */
-  prompt: string;
+  /** Prompt to execute when task triggers (mutually exclusive with script). */
+  prompt?: string;
+  /** Shell command to execute directly when task triggers (mutually exclusive with prompt). */
+  script?: string;
   /** Chat ID where task was created (scope) */
   chatId: string;
   /** User ID who created the task */

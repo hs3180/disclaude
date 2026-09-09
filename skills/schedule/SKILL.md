@@ -120,6 +120,7 @@ Schedule content prompt here
 | `timeoutMs` | No | `7200000` (2 h) | Max wait in ms for the task's agent turn (Issue #3894; turn-level since #4648). Not a kill switch: on timeout the scheduler stops waiting and logs a neutral outcome — the turn may still finish in the background (stuck turns are killed separately by the agent pool's busy-turn cap). Tasks that legitimately run longer must set this explicitly (Issue #4649). |
 | `cooldownPeriod` | No | - | Cooldown in ms; prevents re-execution for this duration after a run completes (Issue #869). |
 | `clearContext` | No | `false` | Reset the chat's persistent agent **before** this task runs, so it executes on a fresh session with no prior conversation context (Issue #4206). ⚠️ **Destructive**: subsequent user messages in the same chat also land on the fresh session until context re-accumulates — confirm intent before enabling. |
+| `script` | No | - | Execute a shell command directly, without an agent turn. Mutually exclusive with the markdown body prompt; exactly one must be provided (Issue #4798). The process receives `DISCLAUDE_SCHEDULE_ID`, `DISCLAUDE_SCHEDULE_NAME`, and `DISCLAUDE_CHAT_ID`. |
 
 ---
 
@@ -237,6 +238,23 @@ minute hour day month weekday
 **Good**: "Check the disclaude repository for new issues and create a PR if applicable"
 
 The prompt must contain ALL necessary context. The scheduler executes in a fresh session with no memory of previous conversations.
+
+### 2. Direct Script Schedules (Issue #4798)
+
+Use `script` in frontmatter when a task should run a shell command directly, without consuming an agent turn:
+
+```markdown
+---
+name: Refresh cache
+cron: "*/5 * * * *"
+enabled: true
+blocking: true
+chatId: oc_xxx
+script: "node scripts/refresh-cache.js"
+---
+```
+
+The markdown body is omitted for script schedules. `prompt` (the body) and `script` are mutually exclusive, and exactly one is required. The command receives `DISCLAUDE_SCHEDULE_ID`, `DISCLAUDE_SCHEDULE_NAME`, and `DISCLAUDE_CHAT_ID`; non-zero exit status is recorded as a failed run and participates in cooldown/blocking/failure-streak handling.
 
 ### 2. Avoid Creating New Schedules
 

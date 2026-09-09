@@ -109,6 +109,28 @@ describe('ScheduleFileScanner', () => {
   });
 
   describe('parseFile', () => {
+    it('should parse a script schedule without routing it as a prompt', async () => {
+      mockReadFile.mockResolvedValue([
+        '---',
+        'name: "Refresh cache"',
+        'cron: "*/5 * * * *"',
+        'chatId: "oc_script"',
+        'script: "node scripts/refresh-cache.js"',
+        '---',
+        '',
+      ].join('\n'));
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/refresh-cache/SCHEDULE.md`);
+
+      expect(task?.script).toBe('node scripts/refresh-cache.js');
+      expect(task?.prompt).toBeUndefined();
+    });
+
+    it('should reject schedules that define both prompt and script', async () => {
+      mockReadFile.mockResolvedValue(makeScheduleContent({ script: 'echo nope' }));
+      await expect(scanner.parseFile(`${MOCK_DIR}/invalid/SCHEDULE.md`)).resolves.toBeNull();
+    });
+
     it('should parse a valid schedule file (Issue #2526: subdirectory layout)', async () => {
       const content = makeScheduleContent();
       mockReadFile.mockResolvedValue(content);
@@ -503,6 +525,24 @@ describe('ScheduleFileScanner', () => {
       expect(writtenContent).toContain('cooldownPeriod: 3600000');
       expect(writtenContent).toContain('createdBy: ou_user');
       expect(writtenContent).toContain('createdAt: "2026-03-01"');
+    });
+
+    it('should write a script schedule in frontmatter', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-refresh-cache',
+        name: 'Refresh cache',
+        cron: '*/5 * * * *',
+        script: 'node scripts/refresh-cache.js',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-03-01',
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).toContain('script: "node scripts/refresh-cache.js"');
+      expect(writtenContent).toMatch(/script:.*\n---\n/);
     });
 
     it('should write model field when present (Issue #1338)', async () => {

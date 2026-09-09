@@ -13,7 +13,7 @@ import { CronJob } from 'cron';
 import * as fsPromises from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
-import { Scheduler, TaskTimeoutError, type SchedulerCallbacks } from './scheduler.js';
+import { Scheduler, TaskTimeoutError, type SchedulerCallbacks, type ScriptRunner } from './scheduler.js';
 import { TurnSupersededError } from '../messaging/turn-superseded-error.js';
 import { TaskFailureStore } from './task-failure-store.js';
 import type { ScheduleManager } from './schedule-manager.js';
@@ -162,6 +162,51 @@ describe('Scheduler', () => {
       });
 
       expect(s).toBeInstanceOf(Scheduler);
+    });
+  });
+
+  describe('direct script execution (Issue #4798)', () => {
+    it('should execute a script without routing through the agent', async () => {
+      const scriptRunner = vi.fn<ScriptRunner>().mockResolvedValue({ stdout: 'ok\n', stderr: '' });
+      const scriptScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        inputMessageRouter: mockRouter,
+        scriptRunner,
+        jobFactory: testJobFactory,
+      });
+      const task = createTask({ id: 'script-1', prompt: undefined, script: 'echo ok' });
+      scriptScheduler.addTask(task);
+
+      void scriptScheduler.getActiveJobs()[0].job.fireOnTick();
+      await vi.waitFor(() => expect(scriptRunner).toHaveBeenCalledTimes(1));
+
+      expect(scriptRunner).toHaveBeenCalledWith('echo ok', expect.objectContaining({
+        timeoutMs: expect.any(Number),
+        env: expect.objectContaining({
+          DISCLAUDE_SCHEDULE_ID: 'script-1',
+          DISCLAUDE_CHAT_ID: 'oc_test',
+        }),
+      }));
+      expect(mockRouterAsMock.route).not.toHaveBeenCalled();
+      await scriptScheduler.stop(0);
+    });
+
+    it('should report a script failure and clean up running state', async () => {
+      const scriptRunner = vi.fn<ScriptRunner>().mockRejectedValue(new Error('exit 2'));
+      const scriptScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        scriptRunner,
+        jobFactory: testJobFactory,
+      });
+      scriptScheduler.addTask(createTask({ id: 'script-fail', prompt: undefined, script: 'exit 2' }));
+
+      void scriptScheduler.getActiveJobs()[0].job.fireOnTick();
+      await vi.waitFor(() => expect(scriptRunner).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(scriptScheduler.isTaskRunning('script-fail')).toBe(false));
+      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith('oc_test', expect.stringContaining('执行失败'));
+      await scriptScheduler.stop(0);
     });
   });
 

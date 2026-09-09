@@ -23,6 +23,7 @@ import type { TaskFailureStore } from './task-failure-store.js';
 import type { MessageRouter as InputMessageRouter } from '../messaging/message-router.js';
 import { TurnSupersededError } from '../messaging/turn-superseded-error.js';
 import type { SystemMessage } from '../types/message.js';
+import { execFile } from 'node:child_process';
 
 const logger = createLogger('Scheduler');
 
@@ -168,6 +169,32 @@ export interface SchedulerCallbacks {
   isChatBusy?: (chatId: string) => boolean;
 }
 
+/** Result returned by a directly executed schedule script. */
+export interface ScriptExecutionResult {
+  stdout: string;
+  stderr: string;
+}
+
+/** Injectable script runner; the default runner is used in production. */
+export type ScriptRunner = (script: string, options: {
+  timeoutMs: number;
+  env: NodeJS.ProcessEnv;
+}) => Promise<ScriptExecutionResult>;
+
+const defaultScriptRunner: ScriptRunner = (script, options) => new Promise((resolve, reject) => {
+  execFile('/bin/sh', ['-c', script], {
+    timeout: options.timeoutMs,
+    env: options.env,
+    maxBuffer: 10 * 1024 * 1024,
+  }, (error, stdout, stderr) => {
+    if (error) {
+      reject(Object.assign(error, { stdout, stderr }));
+      return;
+    }
+    resolve({ stdout, stderr });
+  });
+});
+
 /**
  * Scheduler options.
  *
@@ -200,6 +227,8 @@ export interface SchedulerOptions {
    * scheduling real OS timers. Production leaves this unset.
    */
   jobFactory?: SchedulerJobFactory;
+  /** Direct runner for script schedules; defaults to /bin/sh -c. */
+  scriptRunner?: ScriptRunner;
 }
 
 /**
@@ -229,6 +258,7 @@ export class Scheduler {
   private inputMessageRouter?: InputMessageRouter;
   /** Issue #4218 (fix A): injectable job factory; undefined → real CronJob. */
   private jobFactory?: SchedulerJobFactory;
+  private scriptRunner: ScriptRunner;
   private activeJobs: Map<string, ActiveJob> = new Map();
   private running = false;
   /** Tracks tasks currently being executed (for blocking mechanism) */
@@ -272,6 +302,7 @@ export class Scheduler {
     this.inputMessageRouter = options.inputMessageRouter;
     this.jobFactory = options.jobFactory;
     this.failureStore = options.failureStore;
+    this.scriptRunner = options.scriptRunner ?? defaultScriptRunner;
     logger.info('Scheduler created');
   }
 
@@ -451,7 +482,7 @@ Scheduled task creation is blocked during scheduled task execution to prevent in
 ---
 
 **Task Prompt:**
-${task.prompt}`;
+${task.prompt ?? ''}`;
   }
 
   /**
@@ -607,11 +638,32 @@ ${task.prompt}`;
     const taskStartedAt = Date.now();
 
     try {
+      if ((!task.prompt && !task.script) || (task.prompt && task.script)) {
+        throw new Error('Schedule task must define exactly one of prompt or script');
+      }
+
+      if (task.script) {
+        await this.callbacks.sendMessage(task.chatId, `⏰ 定时任务「${task.name}」开始执行脚本...`);
+        logger.debug({ taskId: task.id, chatId: task.chatId }, 'Executing scheduled task script');
+        const result = await this.scriptRunner(task.script, {
+          timeoutMs: task.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS,
+          env: {
+            ...process.env,
+            DISCLAUDE_SCHEDULE_ID: task.id,
+            DISCLAUDE_SCHEDULE_NAME: task.name,
+            DISCLAUDE_CHAT_ID: task.chatId,
+          },
+        });
+        await this.clearFailureStreak(task.id);
+        logger.info({ taskId: task.id, name: task.name, chatId: task.chatId, elapsedMs: Date.now() - taskStartedAt, stdout: result.stdout, stderr: result.stderr }, 'Scheduled script completed');
+        return;
+      }
+
       // Build wrapped prompt with anti-recursion instructions
       const wrappedPrompt = this.buildScheduledTaskPrompt(task);
 
       // Issue #3582: Route through InputMessageRouter
-      if (!this.inputMessageRouter || !task.chatId) {
+      if (!this.inputMessageRouter || !task.chatId || !task.prompt) {
         logger.warn(
           { taskId: task.id, hasRouter: !!this.inputMessageRouter, hasChatId: !!task.chatId },
           'Cannot execute scheduled task: InputMessageRouter not configured or task has no chatId'

@@ -63,7 +63,8 @@ function stripQuotes(value: string): string {
   const [first, ...rest] = value;
   const last = rest[rest.length - 1];
   if ((first === '"' || first === "'") && first === last && value.length >= 2) {
-    return value.slice(1, -1);
+    const unquoted = value.slice(1, -1);
+    return first === '"' ? unquoted.replaceAll('\\"', '"') : unquoted;
   }
   return value;
 }
@@ -103,6 +104,7 @@ function parseScheduleFrontmatter(content: string): {
       case 'model':
       case 'timezone':
       case 'modelTier':
+      case 'script':
         frontmatter[key] = stripQuotes(value);
         break;
       case 'enabled':
@@ -224,13 +226,19 @@ export class ScheduleFileScanner {
       }
 
       const prompt = content.slice(contentStart).trim();
+      const script = frontmatter['script'] as string | undefined;
+      if ((!prompt && !script) || (prompt && script)) {
+        logger.warn({ filePath }, 'Schedule file must define exactly one of prompt body or script frontmatter');
+        return null;
+      }
 
       const task: ScheduleFileTask = {
         id: generateTaskId(filePath),
         name: frontmatter['name'] as string,
         cron: frontmatter['cron'] as string,
         chatId: frontmatter['chatId'] as string,
-        prompt,
+        prompt: prompt || undefined,
+        script,
         enabled: (frontmatter['enabled'] as boolean) ?? true,
         blocking: (frontmatter['blocking'] as boolean) ?? true,
         clearContext: (frontmatter['clearContext'] as boolean) ?? false,
@@ -331,9 +339,11 @@ export class ScheduleFileScanner {
     if (task.modelTier) {
       frontmatter.push(`modelTier: "${task.modelTier}"`);
     }
-
+    if (task.script) {
+      frontmatter.push(`script: "${task.script.replaceAll('"', '\\"')}"`);
+    }
     frontmatter.push('---', '');
-    const content = frontmatter.join('\n') + task.prompt;
+    const content = frontmatter.join('\n') + (task.prompt ?? '');
 
     await fsPromises.writeFile(filePath, content, 'utf-8');
     logger.info({ taskId: task.id, filePath }, 'Wrote schedule file');
