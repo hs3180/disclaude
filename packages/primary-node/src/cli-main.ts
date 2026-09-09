@@ -59,6 +59,13 @@ interface CliOptions {
   apiToken?: string;
 }
 
+/** Publish the bound server's address and matching auth for managed child processes. */
+export function publishChannelApiEnvironment(baseUrl: string, apiToken?: string, env: NodeJS.ProcessEnv = process.env): void {
+  env.DISCLAUDE_API_BASE_URL = baseUrl;
+  if (apiToken) { env.DISCLAUDE_API_TOKEN = apiToken; }
+  else { delete env.DISCLAUDE_API_TOKEN; }
+}
+
 export function parseArgs(args: string[]): CliOptions {
   const options: CliOptions = { command: 'help', apiPort: 0 };
 
@@ -614,7 +621,7 @@ export async function main(): Promise<void> {
       const baseUrl = `http://127.0.0.1:${actualPort}`;
       // Keep in-process managed clients on the address actually bound by the
       // server. A configured port of 0 is not a usable client address.
-      process.env.DISCLAUDE_API_BASE_URL = baseUrl;
+      publishChannelApiEnvironment(baseUrl, options.apiToken);
       console.log(`HTTP API server started on ${baseUrl}`);
 
       // Issue #4031: Subscribe InternalEventBus to HttpApiServer SSE broadcast.
