@@ -1,0 +1,139 @@
+{
+  "release": "0.5.0",
+  "source": "docs/releases/0.5.0.md",
+  "policy": {
+    "ciDefault": "contract",
+    "externalRequiresExplicitOptIn": true,
+    "verifiedRequiresEvidence": true
+  },
+  "cases": [
+    {
+      "id": "S01-A1",
+      "spec": "S01",
+      "title": "Named presets and legacy agent compatibility",
+      "kind": "contract",
+      "status": "implemented",
+      "command": "npm test packages/core/src/config"
+    },
+    {
+      "id": "S01-A3",
+      "spec": "S01",
+      "title": "Backend selection is isolated per chat",
+      "kind": "contract",
+      "status": "implemented",
+      "command": "npm test packages/primary-node/src"
+    },
+    {
+      "id": "S02-A1",
+      "spec": "S02",
+      "title": "DeepSeek missing binary and auth diagnostics",
+      "kind": "external",
+      "status": "planned",
+      "command": "DISCLAUDE_E2E_DEEPSEEK=1 npm run test:e2e:deepseek"
+    },
+    {
+      "id": "S02-A4",
+      "spec": "S02",
+      "title": "DeepSeek conversation, tool call, failure and Feishu delivery",
+      "kind": "external",
+      "status": "planned",
+      "command": "DISCLAUDE_E2E_DEEPSEEK=1 npm run test:e2e:deepseek"
+    },
+    {
+      "id": "S03-A1",
+      "spec": "S03",
+      "title": "Out-of-order and duplicate round settlement",
+      "kind": "contract",
+      "status": "implemented",
+      "command": "npm test packages/primary-node/src"
+    },
+    {
+      "id": "S03-A2",
+      "spec": "S03",
+      "title": "Codex stop prevents subsequent tool dispatch",
+      "kind": "external",
+      "status": "planned",
+      "command": "DISCLAUDE_E2E_CODEX_CONTROL=1 npm run test:e2e:codex-control"
+    },
+    {
+      "id": "S03-A3",
+      "spec": "S03",
+      "title": "Codex queue and steer have distinct semantics",
+      "kind": "external",
+      "status": "planned",
+      "command": "DISCLAUDE_E2E_CODEX_CONTROL=1 npm run test:e2e:codex-control"
+    },
+    {
+      "id": "S04-A2",
+      "spec": "S04",
+      "title": "Card update failure degrades to a final ordinary message",
+      "kind": "contract",
+      "status": "implemented",
+      "command": "npm test packages/primary-node/src"
+    },
+    {
+      "id": "S05-A2",
+      "spec": "S05",
+      "title": "Two instances use independent dynamic ports",
+      "kind": "integration",
+      "status": "implemented",
+      "command": "npm run test:integration"
+    },
+    {
+      "id": "S05-A3",
+      "spec": "S05",
+      "title": "Restart propagates the current managed endpoint",
+      "kind": "integration",
+      "status": "implemented",
+      "command": "npm run test:integration"
+    },
+    {
+      "id": "S06-A1",
+      "spec": "S06",
+      "title": "No-change polling makes zero LLM calls; changes wake and deliver",
+      "kind": "contract",
+      "status": "implemented",
+      "command": "npm test packages/core/src"
+    },
+    {
+      "id": "S06-A4",
+      "spec": "S06",
+      "title": "History injection and ledger archival remain bounded after restart",
+      "kind": "contract",
+      "status": "implemented",
+      "command": "npm test packages/core/src"
+    },
+    {
+      "id": "S08-A4",
+      "spec": "S08",
+      "title": "Docker installation, upgrade and rollback rehearsal",
+      "kind": "external",
+      "status": "planned",
+      "command": "DISCLAUDE_E2E_DEPLOYMENT=1 npm run test:e2e:deployment"
+    },
+    {
+      "id": "S07-A1",
+      "spec": "S07",
+      "title": "Harness and SDK upgrade preserve provider regressions",
+      "kind": "contract",
+      "status": "implemented",
+      "command": "npm test packages/core/src/sdk"
+    },
+    {
+      "id": "S08-A4-launchd",
+      "spec": "S08",
+      "title": "macOS launchd installation, upgrade and rollback rehearsal",
+      "kind": "external",
+      "status": "planned",
+      "command": "DISCLAUDE_E2E_DEPLOYMENT=1 npm run test:e2e:deployment"
+    },
+    {
+      "id": "S09-A2",
+      "spec": "S09",
+      "title": "Full release matrix has evidence for every supported backend",
+      "kind": "release",
+      "status": "planned",
+      "command": "npm run test:e2e:release"
+    }
+  ]
+}

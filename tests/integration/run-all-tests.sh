@@ -109,6 +109,9 @@ show_test_plan_body() {
     echo "  6. Multimodal Tests (5 tests)"
     echo "     - Health check, single image, multi-image, mixed message, screenshot"
     echo ""
+    echo "  7. 0.5.0 E2E Matrix Contract"
+    echo "     - Validate release acceptance coverage and execution policy"
+    echo ""
     echo "  (Codex coverage: set agentBackend: codex in the config; the generic"
     echo "   suites above then run against the Codex backend. Issue #4737)"
     echo "Configuration:"
@@ -503,6 +506,12 @@ main() {
         show_test_plan_body
         exit 0
     fi
+
+    # Keep the release acceptance matrix inside the canonical integration
+    # entry point. This static check does not require a running server or
+    # provider credentials.
+    log_info "Validating 0.5.0 E2E matrix contract..."
+    node "$PROJECT_ROOT/scripts/validate-e2e-matrix.mjs"
 
     check_prerequisites || exit 1
 
