@@ -24,7 +24,18 @@ import type { FileRef } from './file.js';
  * All messages share a payload (instruction text) and are differentiated
  * by source and source-specific fields.
  */
+/** Optional session scope shared by user, scheduler, and webhook messages. */
+export interface AgentSessionOptions {
+  /** Pool scope within the delivery chat; omitted messages use the usual chat/thread scope. */
+  id: string;
+  skipHistory?: boolean;
+  model?: string;
+  /** Release this pool slot after the actual message turn settles. */
+  releaseAfterTurn?: boolean;
+}
+
 export interface Message {
+  agentSession?: AgentSessionOptions;
   /** Unique message identifier */
   id: string;
   /** Message source discriminator */
