@@ -42,7 +42,8 @@ export class CodexAppServerTransport {
   private resolveExit!: (exit: CodexAppServerExit) => void;
   private stderrTail = '';
   private nextId = 1;
-  private closed = false;
+  private acceptingRequests = true;
+  private shutdownStarted = false;
 
   constructor(private readonly options: CodexAppServerTransportOptions = {}) {
     this.child = spawn(options.binary ?? 'codex', ['app-server', '--stdio'], {
@@ -78,7 +79,7 @@ export class CodexAppServerTransport {
   }
 
   request(method: string, params?: unknown): Promise<unknown> {
-    if (this.closed) {
+    if (!this.acceptingRequests) {
       return Promise.reject(new Error('codex app-server transport is closed'));
     }
     const id = this.nextId++;
@@ -94,16 +95,17 @@ export class CodexAppServerTransport {
   }
 
   notify(method: string, params?: unknown): void {
-    if (!this.closed) {
+    if (this.acceptingRequests) {
       this.write({ jsonrpc: '2.0', method, params });
     }
   }
 
   close(): Promise<CodexAppServerExit> {
-    if (this.closed) {
+    if (this.shutdownStarted) {
       return this.exitPromise;
     }
-    this.closed = true;
+    this.shutdownStarted = true;
+    this.acceptingRequests = false;
     this.lines.close();
     this.child.kill('SIGTERM');
     const killTimer = setTimeout(() => this.child.kill('SIGKILL'), this.options.killGraceMs ?? 1_000);
@@ -161,12 +163,17 @@ export class CodexAppServerTransport {
       return;
     }
     if (message.method) {
-      this.options.onNotification?.(message.method, message.params);
+      try {
+        this.options.onNotification?.(message.method, message.params);
+      } catch (error) {
+        this.failAll(error instanceof Error ? error : new Error(String(error)));
+        void this.close();
+      }
     }
   }
 
   private failAll(error: Error): void {
-    this.closed = true;
+    this.acceptingRequests = false;
     for (const waiter of this.pending.values()) {
       clearTimeout(waiter.timer);
       waiter.reject(error);
