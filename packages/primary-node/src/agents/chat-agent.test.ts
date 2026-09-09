@@ -343,8 +343,8 @@ describe('ChatAgent (primary-node)', () => {
   });
 
   // Issue #4448 (direction #1): a chat bound to a directory that does not
-  // exist silently falls back to the workspace cwd. The structured cwdResolver
-  // must turn that into a user-visible warning pushed to the chat — the plain
+  // exist must fail closed rather than falling back to the workspace cwd. The
+  // structured cwdResolver turns that into a user-visible rejection — the plain
   // cwdProvider can't distinguish bound-missing from unbound.
   describe('bound-missing cwd fallback warning (Issue #4448 direction #1)', () => {
     // `resolverStates` lets the mutating tests flip the resolution between
@@ -378,7 +378,7 @@ describe('ChatAgent (primary-node)', () => {
       });
     };
 
-    it('pushes a user-visible warning when the bound directory is missing', () => {
+    it('rejects without constructing an SDK query when the bound directory is missing', () => {
       const agent = mkAgent('bound-missing');
       (agent as any).startAgentLoop();
 
@@ -389,7 +389,25 @@ describe('ChatAgent (primary-node)', () => {
       ];
       expect(chatId).toBe('oc_test_chat');
       expect(text).toContain('/gone/project/dir');
-      expect(text).toContain('回退');
+      expect(text).toContain('不会回退');
+      expect((agent as any).createSdkOptions).not.toHaveBeenCalled();
+      expect((agent as any).createQueryStream).not.toHaveBeenCalled();
+      expect((agent as any).isSessionActive).toBe(false);
+    });
+
+    it('returns from processMessage without parking the turn on a missing binding', async () => {
+      const agent = mkAgent('bound-missing');
+
+      await expect(
+        agent.processMessage({
+          chatId: 'oc_test_chat',
+          payload: 'do not run this elsewhere',
+          messageId: 'om_missing_cwd',
+        })
+      ).resolves.toBeUndefined();
+
+      expect((agent as any).createQueryStream).not.toHaveBeenCalled();
+      expect((agent as any).channel).toBeUndefined();
     });
 
     it('does not warn when the binding resolves cleanly (bound)', () => {
@@ -406,13 +424,14 @@ describe('ChatAgent (primary-node)', () => {
       expect(callbacks.sendMessage).not.toHaveBeenCalled();
     });
 
-    it('a rejecting sendMessage does not break the agent loop start', () => {
+    it('a rejecting sendMessage still fails closed', () => {
       const sendErr = callbacks.sendMessage as unknown as ReturnType<typeof vi.fn>;
       sendErr.mockRejectedValueOnce(new Error('channel down'));
 
       const agent = mkAgent('bound-missing');
       // Must not throw despite the rejected warning send (fire-and-forget).
       expect(() => (agent as any).startAgentLoop()).not.toThrow();
+      expect((agent as any).createQueryStream).not.toHaveBeenCalled();
     });
 
     // Nit (restart re-announce): startAgentLoop() re-runs on restart cycles —
