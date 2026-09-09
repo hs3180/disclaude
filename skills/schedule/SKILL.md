@@ -118,8 +118,19 @@ Schedule content prompt here
 | `timezone` | No | `Asia/Shanghai` | IANA timezone for cron scheduling (e.g., `"UTC"`, `"America/New_York"`). Validated against the IANA database (Issue #3860). |
 | `timeoutMs` | No | `7200000` (2 h) | For prompt schedules, max wait for the agent turn: not a kill switch, and the turn may continue in the background (#3894/#4648/#4649). For direct `command` schedules, this is a hard process-group timeout: the scheduler sends TERM and escalates to KILL after a bounded grace. |
 | `cooldownPeriod` | No | - | Cooldown in ms; prevents re-execution for this duration after a run completes (Issue #869). |
-| `clearContext` | No | `false` | Reset the chat's persistent agent **before** this task runs, so it executes on a fresh session with no prior conversation context (Issue #4206). ⚠️ **Destructive**: subsequent user messages in the same chat also land on the fresh session until context re-accumulates — confirm intent before enabling. |
 | `command` | No | - | Execute a shell command directly, without an agent turn. Mutually exclusive with the markdown body prompt; exactly one must be provided (Issue #4798). The process receives `DISCLAUDE_SCHEDULE_ID`, `DISCLAUDE_SCHEDULE_NAME`, and `DISCLAUDE_CHAT_ID`. |
+| `freshSession` | No | `true` | Use an isolated agent/native session for each tick; preserve the user's live chat and project/delivery identity. Explicit `false` reuses the live chat and can accumulate context. |
+| `skipHistory` | No | `false` | Suppress the bounded history snapshot in an isolated session. Requires `freshSession: true`. |
+| `clearContext` | No | unset | Legacy alias: `true` means fresh session + no history; explicit `false` retains legacy live-chat reuse unless `freshSession` is set. It no longer resets the user's agent. |
+
+Migration examples (0.5.0): omit all three fields for fresh session + history;
+use `freshSession: true` and `skipHistory: true` for a blank session; retain
+`freshSession: false` only when live conversation reuse is explicitly required.
+Existing `clearContext: true` remains blank but leaves the user's live agent intact.
+Conflicting/non-boolean options are rejected. Per-task model overrides require
+fresh sessions; they are never silently applied to a running user session. On a
+wait timeout, an isolated turn may continue; blocking ownership remains until that
+turn settles, and cleanup disposes only its own agent/provider session.
 
 ---
 
@@ -171,7 +182,9 @@ enabled: false
 - `timezone`: Cron timezone (IANA)
 - `timeoutMs`: Turn-wait timeout (ms; default 2 h — set higher for long-running tasks)
 - `cooldownPeriod`: Post-run cooldown (ms)
-- `clearContext`: Fresh-session toggle (resets persistent agent before the task runs; see Field Reference)
+- `freshSession`: Isolate each execution from the user's persistent session (default true)
+- `skipHistory`: Omit the initial history snapshot (requires a fresh session)
+- `clearContext`: Legacy alias; never resets the user's persistent agent (see Field Reference)
 - Content (body text)
 
 **Steps:**
@@ -235,7 +248,10 @@ minute hour day month weekday
 **Bad**: "Continue the task from yesterday"
 **Good**: "Check the disclaude repository for new issues and create a PR if applicable"
 
-The prompt must contain ALL necessary context. The scheduler executes in a fresh session with no memory of previous conversations.
+The prompt must contain all required task state. By default each tick has a fresh
+native session and may receive a bounded recent-history snapshot; persistent live
+memory is available only through explicit legacy reuse. Store cross-tick state in
+bounded files instead of relying on the SDK conversation.
 
 ### 2. Direct Command Schedules (Issue #4798)
 
@@ -299,6 +315,30 @@ Include full paths, URLs, or identifiers. Don't assume the executor knows where 
 Scheduled tasks should complete within reasonable time. Break large tasks into smaller scheduled checks.
 
 ### Prompt Template
+
+For recurring work with a progress ledger, define retention in the schedule itself:
+keep permanent constraints before round history, keep at most five recent rounds
+and a 12 KiB active file, and archive older rounds before loading the active state.
+Use `## Round N` (or `## 第 N 轮`) markers with increasing unique numbers; use `###`
+for round subsections. Migrate older custom headings explicitly before using the
+compactor; it refuses unrecognized or ambiguous layouts.
+
+Resolve the installed disclaude root first, then run its absolute script path:
+
+```bash
+node /absolute/disclaude/scripts/compact-loop-ledger.mjs --file /absolute/task/STATE.md --keep-rounds 5 --max-bytes 12288 --dry-run
+# After verifying the proposed retained/archived round numbers:
+node /absolute/disclaude/scripts/compact-loop-ledger.mjs --file /absolute/task/STATE.md --keep-rounds 5 --max-bytes 12288 --apply
+```
+
+The script writes exact older blocks to `STATE.md.archive/` before replacing the
+active file; repeat execution does not duplicate archives. Do not append while
+`STATE.md.compact.lock` exists. A stale lock after a process crash requires checking
+that its writer has stopped before removing that specific lock. If current state
+plus the newest round exceeds the budget, explicitly summarize it without dropping
+constraints; compaction fails instead of silently truncating it. Read only the active
+ledger on normal ticks; consult specific archived rounds on demand. This bounds the
+file, not the SDK's live session: configure session/history behavior separately.
 
 ```markdown
 ## Objective
@@ -448,3 +488,5 @@ createdAt: 2026-03-06T00:00:00.000Z
 - [ ] 能生成灵魂拷问内容
 - [ ] 能发送到话题群
 ```
+
+Scheduled prompts use the ordinary Agent pool and message processing path. A fresh execution supplies a scoped session with the selected model/history options; its slot is released only after the actual turn settles. There is no separate scheduler Agent type or pool.

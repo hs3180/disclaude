@@ -10,7 +10,7 @@
  * @module messaging/adapters/feishu-message-builder
  */
 
-import { buildChannelCliHelpGuidance, type MessageBuilderContext, type MessageBuilderOptions } from '@disclaude/core';
+import { buildChannelCliHelpGuidance, type MessageBuilderContext, type MessageBuilderOptions, type MessageBuilderStableContext } from '@disclaude/core';
 
 /**
  * Build Feishu platform header.
@@ -60,7 +60,6 @@ function buildFeishuToolsSection(ctx: MessageBuilderContext): string {
   const { chatId, msg, capabilities } = ctx;
   const channelCli = 'disclaude channel';
   const parts: string[] = [];
-  parts.push(`For the current channel feature list and command options, run \`${channelCli} help\`.`);
   const supportedTools = capabilities?.supportedMcpTools;
 
   // If supportedMcpTools is defined, use it for dynamic tool filtering
@@ -113,18 +112,16 @@ ${messagingTools.join('\n')}
 - Note: Thread replies are NOT supported on this channel.`);
   }
 
-  // Issue #4705: append the canonical CLI help (shared with the CLI's own
-  // `help` output) so the agent never has to invent flags or guess a
-  // subcommand — the full vocabulary/constraints are in the prompt already.
-  // Narrow it with the same hasTool() gate used above, otherwise this block
-  // would re-advertise commands the notes above just declared unsupported.
-  parts.push(
-    buildChannelCliHelpGuidance(channelCli, {
-      sendCommands: ['send_text', 'send_file', 'send_card', 'send_interactive'].filter(hasTool),
-    }),
-  );
-
   return parts.join('\n');
+}
+
+/** Capability-scoped help with no chat/message identity, safe as a reusable prefix. */
+function buildFeishuStableToolsSection(ctx: MessageBuilderStableContext): string {
+  const channelCli = 'disclaude channel';
+  const supported = ctx.capabilities?.supportedMcpTools;
+  const sendCommands = ['send_text', 'send_file', 'send_card', 'send_interactive']
+    .filter(command => supported === undefined || supported.includes(command));
+  return `For the current channel feature list and command options, run \`${channelCli} help\`.\n${buildChannelCliHelpGuidance(channelCli, { sendCommands })}`;
 }
 
 /**
@@ -177,6 +174,7 @@ Use the Read tool to view image files directly.`;
 export function createFeishuMessageBuilderOptions(): MessageBuilderOptions {
   return {
     buildHeader: buildFeishuHeader,
+    buildStableToolsSection: buildFeishuStableToolsSection,
     buildPostHistory: buildFeishuMentionSection,
     buildToolsSection: buildFeishuToolsSection,
     buildAttachmentExtra: buildFeishuAttachmentExtra,

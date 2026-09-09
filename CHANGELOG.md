@@ -5,19 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.0] - 2026-09-09
+## [Unreleased]
 
 ### Highlights
 
-This release delivers the merged 0.5.0 implementation set for named agent
-presets, backend configuration, turn settlement, streaming finalization,
-dynamic internal ports, scheduler behavior, SDK maintenance, project
-isolation, and release evidence.
+0.5.0 is in development. The root package version was prepared on 2026-09-09;
+this is not a release announcement. The changes below describe merged
+foundations, while runtime integration and release acceptance remain incomplete.
 
 ### Added
 
-- Named backend/model presets with validation and legacy `agent:` compatibility.
-- DeepSeek harness configuration and isolated dsh stdio JSON-RPC transport.
+- Named backend/model preset validation and resolution helpers with legacy `agent:` compatibility; runtime selection is still required.
+- DeepSeek harness configuration and isolated dsh stdio JSON-RPC transport; the provider execution path is still required.
 - OS-assigned internal API ports with actual-address propagation.
 
 ### Changed
@@ -29,13 +28,11 @@ isolation, and release evidence.
 
 ### Verification notes
 
-- All 0.5.0 implementation PRs are merged and displayed GitHub checks are green.
-- The root package remains private; this is a GitHub Release, not an npm package publication.
-- Real DeepSeek credentials/tool delivery and Docker install/upgrade/rollback were not available in the release environment and remain follow-up verification items.
+- Passing CI for merged foundations does not establish that all 0.5.0 goals are implemented or accepted. See the [candidate record](docs/releases/0.5.0/release-candidate.md).
+- The root package remains private; GitHub distribution is intended, with no 0.5.0 Release observed in the 2026-09-09 audit. The npm workflow is manual and is not a release acceptance test.
+- Runtime backend selection, DeepSeek execution, running-turn control, script scheduling and bounded context still require implementation or integration. Real backend/tool/final-delivery and Docker/macOS install/upgrade/rollback evidence remain release gates.
 
-## [Unreleased]
-
-### 0.5.0 Release Targets (Historical)
+### 0.5.0 Release Targets
 
 Theme: **多后端 Agent 的统一使用与可控自动化**. These are planned acceptance targets, not completed changes or a released version. The [release plan](docs/releases/0.5.0.md) defines scope, issue mapping, and release gates.
 

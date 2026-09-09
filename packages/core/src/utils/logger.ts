@@ -20,6 +20,7 @@
 
 import pino, { Logger, Level, LoggerOptions } from 'pino';
 import { PassThrough } from 'node:stream';
+import { finished } from 'node:stream/promises';
 import pinoRoll from 'pino-roll';
 
 // Re-export Logger type for consumers
@@ -731,5 +732,17 @@ export function flushLogger(): Promise<void> {
  */
 export async function closeLogger(): Promise<void> {
   await flushLogger();
+  const passthrough = logPassthrough;
+  const fileTargets = passthroughTargets.filter(
+    (target) => target !== process.stdout && target !== process.stderr
+  );
+  if (passthrough && !passthrough.destroyed && !passthrough.writableEnded) {
+    // flushLogger() only flushes data already received by the destination.
+    // Ending the proxy supplies a stream-level barrier: pipe() ends each file
+    // target after all queued log chunks, and finished() waits for its final
+    // rotation/write before resetLogger() destroys the handles.
+    passthrough.end();
+    await Promise.all(fileTargets.map(async (target) => await finished(target)));
+  }
   resetLogger();
 }

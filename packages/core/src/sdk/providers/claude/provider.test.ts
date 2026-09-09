@@ -6,6 +6,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
 import { StderrCapture, getErrorStderr, isStartupFailure, attachStderrToError, ClaudeSDKProvider, stderrIndicatesUpstreamApiError } from './provider.js';
 import { ErrorCategory } from '../../../utils/error-handler.js';
 import type { AgentMessage, UserInput } from '../../types.js';
@@ -329,6 +332,14 @@ describe('ClaudeSDKProvider', () => {
   // --------------------------------------------------------------------------
 
   describe('getInfo', () => {
+    it('reports the installed Claude Agent SDK version', () => {
+      const require = createRequire(import.meta.url);
+      const sdkEntry = require.resolve('@anthropic-ai/claude-agent-sdk');
+      const sdkPackage = JSON.parse(readFileSync(join(dirname(sdkEntry), 'package.json'), 'utf8')) as { version: string };
+
+      expect(provider.version).toBe(sdkPackage.version);
+    });
+
     it('should return available info when API key is set', () => {
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
       const info = provider.getInfo();

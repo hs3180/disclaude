@@ -47,7 +47,7 @@ describe('Config.validateRequiredConfig — no provider at all', () => {
       expect.unreachable('Should have thrown');
     } catch (error) {
       const {message} = (error as Error);
-      expect(message).toContain('glm.apiKey');
+      expect(message).toContain('anthropic.apiKey');
       expect(message).toContain('disclaude.config.yaml');
       expect(message).toContain('ANTHROPIC_API_KEY');
     }

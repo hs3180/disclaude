@@ -11,7 +11,7 @@
  * @see Issue #1040 - Separate Primary Node code to @disclaude/primary-node
  */
 
-import { type MessageBuilderOptions, type CwdProvider, type CwdResolution, buildSessionKey, chatIdOfSessionKey, createLogger, getProvider } from '@disclaude/core';
+import { type MessageBuilderOptions, type CwdProvider, type CwdResolution, type AgentSessionOptions, buildSessionKey, chatIdOfSessionKey, createLogger, getProvider } from '@disclaude/core';
 import { AgentFactory } from './agents/factory.js';
 import type { ChatAgentCallbacks } from './agents/types.js';
 import type { ChatAgent } from './agents/chat-agent.js';
@@ -166,6 +166,13 @@ export interface AgentPoolStats {
  * existing sessions are unaffected until a thread message starts a new one.
  */
 export class PrimaryAgentPool {
+  /** Release a completed temporary scope only if it still owns the pool slot. */
+  releaseChatAgent(chatId: string, sessionId: string, agent: ChatAgent): void {
+    const key = this.sessionKeyOf(chatId, sessionId);
+    if (this.agents.get(key) !== agent) { return; }
+    try { agent.reset(); } finally { this.reset(chatId, false, sessionId); }
+  }
+
   /** Keyed by buildSessionKey(chatId, threadRootId) — see class doc (Issue #4587 part 2). */
   private readonly agents = new Map<string, ChatAgent>();
   private readonly options: PrimaryAgentPoolOptions;
@@ -292,17 +299,26 @@ export class PrimaryAgentPool {
   getOrCreateChatAgent(
     chatId: string,
     callbacks: ChatAgentCallbacks,
-    threadRootId?: string
+    threadRootId?: string,
+    session?: AgentSessionOptions,
   ): ChatAgent {
-    const sessionKey = this.sessionKeyOf(chatId, threadRootId);
+    if (session && (!session.id.trim() || (threadRootId && threadRootId !== session.id))) {
+      throw new Error('Agent session must have a nonempty, unambiguous scope');
+    }
+    const sessionKey = this.sessionKeyOf(chatId, session?.id ?? threadRootId);
     let agent = this.agents.get(sessionKey);
+    if (agent && session?.releaseAfterTurn) {
+      throw new Error('Temporary session already owns an agent');
+    }
     if (!agent) {
-      const skipHistory = this.skipHistoryChatIds.has(sessionKey);
+      const skipHistory = session?.skipHistory ?? this.skipHistoryChatIds.has(sessionKey);
       agent = AgentFactory.createChatAgent('pilot', chatId, callbacks, {
         messageBuilderOptions: this.options.messageBuilderOptions,
         cwdProvider: this.options.cwdProvider,
         cwdResolver: this.options.cwdResolver,
         skipHistory,
+        ...(session ? { model: session.model } : {}),
+        sdkSessionKey: sessionKey,
       });
       this.agents.set(sessionKey, agent);
       // Issue #3696: clear skip-history flag after agent creation
@@ -375,9 +391,8 @@ export class PrimaryAgentPool {
     // Issue #4644: clear provider-side session state BEFORE the agent lookup —
     // it must fire even when no ChatAgent instance exists (the chat may have
     // been idle-evicted from this pool while its codex stash lived on). Keyed
-    // by the PLAIN chatId, matching what ChatAgent passes as the SDK
-    // sessionKey (S7 wiring) — not this pool's composite thread key.
-    this.forgetProviderSession(chatId);
+    // by the same session key used when constructing the scoped agent.
+    this.forgetProviderSession(sessionKey);
     const agent = this.agents.get(sessionKey);
     if (agent) {
       this.agents.delete(sessionKey);
@@ -409,6 +424,26 @@ export class PrimaryAgentPool {
       return agent.stop(chatId);
     }
     return false;
+  }
+
+  async steer(chatId: string, prompt: string, threadRootId?: string): Promise<
+    { ok: true; message: string } | { ok: false; error: string }
+  > {
+    const agent = this.agents.get(this.sessionKeyOf(chatId, threadRootId));
+    if (!agent?.isBusy) {
+      return { ok: false, error: 'No active turn to steer. Send the message normally to start or queue a turn.' };
+    }
+    try {
+      const result = await agent.steer(prompt);
+      return result.ok
+        ? { ok: true, message: `Steer acknowledged for active turn ${result.turnId}.` }
+        : result;
+    } catch (error) {
+      return {
+        ok: false,
+        error: `Steer failed before acknowledgement: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
   }
 
   /**
