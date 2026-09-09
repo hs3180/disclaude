@@ -3,7 +3,7 @@
  *
  * Issue #1594 Phase 2: Each descriptor encapsulates the full wiring lifecycle
  * for its channel type, including ChatAgentCallbacks creation, message handling,
- * and post-registration setup (passive mode, IPC handlers).
+ * and post-registration setup (passive mode, REST API handlers).
  *
  * Issue #1555 Phase 2: Shared handler utilities extracted to utils/channel-handlers.ts
  * for reuse across all channel types. This file now only contains
@@ -110,7 +110,7 @@ export const REST_WIRED_DESCRIPTOR: WiredChannelDescriptor<RestChannelConfig> = 
  * Provides full wiring for the Feishu channel:
  * - ChatAgentCallbacks without done signal (async mode)
  * - Message handler with attachment conversion
- * - Post-registration setup: action prompt resolver, passive mode, IPC handlers
+ * - Post-registration setup: action prompt resolver, passive mode, REST API handlers
  */
 export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig> = {
   type: 'feishu',
@@ -162,7 +162,7 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
    *
    * 1. Set up action prompt resolver (Issue #1572)
    * 2. Configure passive mode adapter (Issue #1464)
-   * 3. Register IPC handlers (Issue #1042, #1571)
+   * 3. Register REST API handlers (Issue #1042, #1571)
    */
   setup: (channel: IChannel, config: FeishuChannelConfig, context: ChannelSetupContext) => {
     const feishuChannel = channel as FeishuChannel;
@@ -188,7 +188,7 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
     };
     context.controlHandlerContext.triggerMode = triggerModeAdapter;
 
-    // 3. Register IPC handlers for MCP Server connections
+    // 3. Register REST API handlers for MCP Server connections
     // Base handlers reuse the same channel.sendMessage pattern as ChatAgentCallbacks
     // (Issue #1555: unified handler injection — avoids duplication)
     const baseHandlers = createChannelApiHandlers(feishuChannel, {
@@ -215,7 +215,7 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
       }) => {
         const { question, options, title, context: cardContext, threadId, actionPrompts } = params;
 
-        // Validate params at IPC boundary
+        // Validate params at REST API boundary
         const validationError = validateInteractiveParams(params);
         if (validationError) {
           context.logger.warn({ chatId, error: validationError }, 'sendInteractive: invalid params');
@@ -265,7 +265,7 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
     };
 
     context.primaryNode.registerFeishuHandlers(feishuHandlers);
-    context.logger.info('Feishu IPC handlers registered via descriptor setup');
+    context.logger.info('Feishu REST API handlers registered via descriptor setup');
   },
 };
 
@@ -285,7 +285,7 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
  * Provides full wiring for the WeChat channel:
  * - ChatAgentCallbacks without done signal (async mode)
  * - Message handler with basic text processing
- * - No post-registration setup (no passive mode, no IPC handlers)
+ * - No post-registration setup (no passive mode, no REST API handlers)
  *
  * Capabilities:
  * - sendCard: downgrades to JSON-serialized text (WeChat API doesn't support cards)
@@ -327,7 +327,7 @@ export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig
 
   /**
    * Post-registration setup for WeChat channel.
-   * Issue #3814: Register IPC handlers for MCP Server tool routing.
+   * Issue #3814: Register REST API handlers for MCP Server tool routing.
    *
    * Registers handlers for:
    * - sendMessage (base: delegates to channel.sendMessage)
@@ -390,9 +390,9 @@ export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig
       },
     };
 
-    // Register with PrimaryNode for IPC routing
+    // Register with PrimaryNode for REST API routing
     context.primaryNode.registerChannelHandlers('wechat', wechatHandlers, wechatChannel);
-    context.logger.info('WeChat IPC handlers registered via descriptor setup');
+    context.logger.info('WeChat REST API handlers registered via descriptor setup');
   },
 };
 // Built-in Wired Descriptors Registry

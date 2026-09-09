@@ -4,7 +4,7 @@
 // API server (`--api-port`); the generated launchd plist used to pass bare
 // `start`, so nothing listened on 19200 and every channel-mcp send tool
 // (send_card / send_text / send_file / send_interactive) failed with
-// 「IPC 服务不可用」in launchd production deployments. The fix makes
+// 「REST API 服务不可用」in launchd production deployments. The fix makes
 // `buildProgramArguments` append `--api-port <port>` (default 19200, override
 // via DISCLAUDE_LAUNCHD_API_PORT) and `--api-token` when
 // DISCLAUDE_LAUNCHD_API_TOKEN is set.
@@ -44,7 +44,7 @@ import {
   resolveChromiumProfileDir,
   resolveApiPort,
   resolveAppLog,
-  resolveRestIpcBaseUrl,
+  resolveRestChannelApiBaseUrl,
   xmlEscape,
 } from '../scripts/launchd.mjs';
 
@@ -55,7 +55,7 @@ const savedEnv: Record<string, string | undefined> = {};
 const ENV_KEYS = [
   'DISCLAUDE_LAUNCHD_API_PORT',
   'DISCLAUDE_LAUNCHD_API_TOKEN',
-  'DISCLAUDE_REST_IPC_BASE_URL',
+  'DISCLAUDE_API_BASE_URL',
   'CHROMIUM_CDP_PORT',
   'CHROMIUM_CDP_ADDRESS',
   'CHROMIUM_CDP_PROFILE_DIR',
@@ -144,21 +144,21 @@ describe('buildProgramArguments REST API wiring (#4576)', () => {
   });
 });
 
-describe('resolveRestIpcBaseUrl (port-override propagation, #4578 review nit 1)', () => {
+describe('resolveRestChannelApiBaseUrl (port-override propagation, #4578 review nit 1)', () => {
   it('does not publish an unusable port-zero URL in the plist', () => {
     snapshotEnv();
-    expect(resolveRestIpcBaseUrl(0)).toBeNull();
+    expect(resolveRestChannelApiBaseUrl(0)).toBeNull();
   });
 
   it('mirrors a non-default port so MCP tools probe the override', () => {
     snapshotEnv();
-    expect(resolveRestIpcBaseUrl(9300)).toBe('http://127.0.0.1:9300');
+    expect(resolveRestChannelApiBaseUrl(9300)).toBe('http://127.0.0.1:9300');
   });
 
-  it('never clobbers an explicit DISCLAUDE_REST_IPC_BASE_URL', () => {
+  it('never clobbers an explicit DISCLAUDE_API_BASE_URL', () => {
     snapshotEnv();
-    process.env.DISCLAUDE_REST_IPC_BASE_URL = 'http://elsewhere:9999';
-    expect(resolveRestIpcBaseUrl(9300)).toBeNull();
+    process.env.DISCLAUDE_API_BASE_URL = 'http://elsewhere:9999';
+    expect(resolveRestChannelApiBaseUrl(9300)).toBeNull();
   });
 });
 

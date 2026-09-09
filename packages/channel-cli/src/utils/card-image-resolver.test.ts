@@ -11,14 +11,14 @@ import { isLocalImagePath, resolveCardImages } from './card-image-resolver.js';
 // Mock @disclaude/core
 // Issue #4129: uploadImage is now a standalone function exported from @disclaude/core.
 // Production calls uploadImage(client, ...). Delegate to the current test's mock client.
-const { ipcClientRef, mockGetRestIpcClient } = vi.hoisted(() => ({
-  ipcClientRef: { current: null as unknown as { uploadImage: (...args: unknown[]) => unknown } },
-  mockGetRestIpcClient: vi.fn(),
+const { apiClientRef, mockGetChannelApiClient } = vi.hoisted(() => ({
+  apiClientRef: { current: null as unknown as { uploadImage: (...args: unknown[]) => unknown } },
+  mockGetChannelApiClient: vi.fn(),
 }));
 // Issue #4280 (Phase 3, part 3): production constructs the REST client via
-// tools/ipc-utils.getRestIpcClient — mock it to return the per-test client.
-vi.mock('../tools/ipc-utils.js', () => ({
-  getRestIpcClient: () => mockGetRestIpcClient(),
+// tools/channel-api-utils.getChannelApiClient — mock it to return the per-test client.
+vi.mock('../tools/channel-api-utils.js', () => ({
+  getChannelApiClient: () => mockGetChannelApiClient(),
 }));
 
 vi.mock('@disclaude/core', () => ({
@@ -28,7 +28,7 @@ vi.mock('@disclaude/core', () => ({
     error: vi.fn(),
     debug: vi.fn(),
   }),
-  uploadImage: (...args: unknown[]) => ipcClientRef.current.uploadImage(...args.slice(1)),
+  uploadImage: (...args: unknown[]) => apiClientRef.current.uploadImage(...args.slice(1)),
 }));
 
 // Helper to access elements from the result card with proper typing
@@ -129,16 +129,16 @@ describe('isLocalImagePath', () => {
 // ============================================================================
 
 describe('resolveCardImages', () => {
-  let mockIpcClient: any;
+  let mockChannelApiClient: any;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockIpcClient = {
+    mockChannelApiClient = {
       uploadImage: vi.fn(),
     };
-    mockGetRestIpcClient.mockReturnValue(mockIpcClient);
+    mockGetChannelApiClient.mockReturnValue(mockChannelApiClient);
     // Issue #4129: wire the per-test mock client into the standalone uploadImage mock.
-    ipcClientRef.current = mockIpcClient;
+    apiClientRef.current = mockChannelApiClient;
   });
 
   it('should return card unchanged when no local image paths are present', async () => {
@@ -154,7 +154,7 @@ describe('resolveCardImages', () => {
     expect(result.uploadedCount).toBe(0);
     expect(result.failedCount).toBe(0);
     expect(result.card).toEqual(card);
-    expect(mockIpcClient.uploadImage).not.toHaveBeenCalled();
+    expect(mockChannelApiClient.uploadImage).not.toHaveBeenCalled();
   });
 
   it('should handle card with Feishu image_key (no upload needed)', async () => {
@@ -167,12 +167,12 @@ describe('resolveCardImages', () => {
     const result = await resolveCardImages(card);
     expect(result.uploadedCount).toBe(0);
     expect(getElements(result)[0].img_key).toBe('img_v3_existing_key');
-    expect(mockIpcClient.uploadImage).not.toHaveBeenCalled();
+    expect(mockChannelApiClient.uploadImage).not.toHaveBeenCalled();
   });
 
   it('should upload and replace local image path in img element', async () => {
     const imgPath = createTestImage('chart.png');
-    mockIpcClient.uploadImage.mockResolvedValue({
+    mockChannelApiClient.uploadImage.mockResolvedValue({
       success: true,
       imageKey: 'img_v3_uploaded123',
     });
@@ -189,12 +189,12 @@ describe('resolveCardImages', () => {
     expect(result.uploadedCount).toBe(1);
     expect(result.failedCount).toBe(0);
     expect(getElements(result)[0].img_key).toBe('img_v3_uploaded123');
-    expect(mockIpcClient.uploadImage).toHaveBeenCalledTimes(1);
+    expect(mockChannelApiClient.uploadImage).toHaveBeenCalledTimes(1);
   });
 
   it('should handle upload failure gracefully', async () => {
     const imgPath = createTestImage('missing.png');
-    mockIpcClient.uploadImage.mockResolvedValue({
+    mockChannelApiClient.uploadImage.mockResolvedValue({
       success: false,
       error: 'Upload failed',
     });
@@ -216,7 +216,7 @@ describe('resolveCardImages', () => {
 
   it('should upload and replace markdown image references', async () => {
     const imgPath = createTestImage('chart.png');
-    mockIpcClient.uploadImage.mockResolvedValue({
+    mockChannelApiClient.uploadImage.mockResolvedValue({
       success: true,
       imageKey: 'img_v3_md_upload',
     });
@@ -234,7 +234,7 @@ describe('resolveCardImages', () => {
 
   it('should handle markdown image upload failure gracefully', async () => {
     const imgPath = createTestImage('chart.png');
-    mockIpcClient.uploadImage.mockResolvedValue({
+    mockChannelApiClient.uploadImage.mockResolvedValue({
       success: false,
       error: 'File not found',
     });
@@ -255,7 +255,7 @@ describe('resolveCardImages', () => {
     const img2 = createTestImage('chart2.png');
     // Use mockImplementation to return deterministic results based on input path,
     // since Promise.all resolves uploads in non-deterministic order
-    mockIpcClient.uploadImage.mockImplementation((filePath: string) => {
+    mockChannelApiClient.uploadImage.mockImplementation((filePath: string) => {
       if (filePath.includes('chart1')) {
         return Promise.resolve({ success: true, imageKey: 'img_v3_first' });
       }
@@ -277,7 +277,7 @@ describe('resolveCardImages', () => {
 
   it('should not mutate the original card object', async () => {
     const imgPath = createTestImage('chart.png');
-    mockIpcClient.uploadImage.mockResolvedValue({
+    mockChannelApiClient.uploadImage.mockResolvedValue({
       success: true,
       imageKey: 'img_v3_new',
     });
@@ -297,7 +297,7 @@ describe('resolveCardImages', () => {
 
   it('should handle nested card structures', async () => {
     const imgPath = createTestImage('nested.png');
-    mockIpcClient.uploadImage.mockResolvedValue({
+    mockChannelApiClient.uploadImage.mockResolvedValue({
       success: true,
       imageKey: 'img_v3_nested',
     });
@@ -329,9 +329,9 @@ describe('resolveCardImages', () => {
     expect(nestedImg.img_key).toBe('img_v3_nested');
   });
 
-  it('should handle IPC upload error gracefully', async () => {
+  it('should handle REST API upload error gracefully', async () => {
     const imgPath = createTestImage('chart.png');
-    mockIpcClient.uploadImage.mockRejectedValue(new Error('IPC connection lost'));
+    mockChannelApiClient.uploadImage.mockRejectedValue(new Error('REST API connection lost'));
 
     const card = {
       elements: [
@@ -350,7 +350,7 @@ describe('resolveCardImages', () => {
   it('should preserve non-image content in the card', async () => {
     const img1 = createTestImage('chart.png');
     const img2 = createTestImage('img.png');
-    mockIpcClient.uploadImage.mockResolvedValue({
+    mockChannelApiClient.uploadImage.mockResolvedValue({
       success: true,
       imageKey: 'img_v3_uploaded',
     });
@@ -382,7 +382,7 @@ describe('resolveCardImages', () => {
     expect(result.uploadedCount).toBe(0);
     expect(result.failedCount).toBe(1);
     // File doesn't exist, upload is not called, gracefully degraded
-    expect(mockIpcClient.uploadImage).not.toHaveBeenCalled();
+    expect(mockChannelApiClient.uploadImage).not.toHaveBeenCalled();
   });
 });
 
@@ -391,16 +391,16 @@ describe('resolveCardImages', () => {
 // ============================================================================
 
 describe('resolveCardImages progress reporting (#4568)', () => {
-  let mockIpcClient: any;
+  let mockChannelApiClient: any;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockIpcClient = {
+    mockChannelApiClient = {
       uploadImage: vi.fn(),
     };
-    mockGetRestIpcClient.mockReturnValue(mockIpcClient);
-    ipcClientRef.current = mockIpcClient;
-    mockIpcClient.uploadImage.mockResolvedValue({
+    mockGetChannelApiClient.mockReturnValue(mockChannelApiClient);
+    apiClientRef.current = mockChannelApiClient;
+    mockChannelApiClient.uploadImage.mockResolvedValue({
       success: true,
       imageKey: 'img_v3_uploaded',
     });
@@ -436,7 +436,7 @@ describe('resolveCardImages progress reporting (#4568)', () => {
 
   it('counts failed uploads as settled progress too', async () => {
     const img = createTestImage('chart.png');
-    mockIpcClient.uploadImage.mockResolvedValue({
+    mockChannelApiClient.uploadImage.mockResolvedValue({
       success: false,
       error: 'Upload failed',
     });

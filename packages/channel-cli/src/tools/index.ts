@@ -10,7 +10,7 @@ export type {
 } from './types.js';
 
 // Shared utilities
-export { isIpcAvailable, getIpcErrorMessage, buildIpcFallbackHint } from './ipc-utils.js';
+export { isChannelApiAvailable, getChannelApiErrorMessage, buildChannelApiFallbackHint } from './channel-api-utils.js';
 export {
   setMessageSentCallback,
   getMessageSentCallback,
@@ -30,10 +30,6 @@ export { send_file } from './send-file.js';
 export { push_to_agent } from './push-to-agent.js';
 
 // Interactive Message
-// Issue #4280 (part 4): the former UnixSocketIpcServer lifecycle
-// exports (startIpcServer/stopIpcServer/isIpcServerRunning/
-// getIpcServerSocketPath/registerFeishuHandlers/unregisterFeishuHandlers)
-// are removed — dead code since part 3 made every tool a REST client.
 export {
   send_interactive_message,
   send_interactive,

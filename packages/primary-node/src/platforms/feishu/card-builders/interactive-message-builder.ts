@@ -2,7 +2,7 @@
  * Interactive Message Builder.
  *
  * Builds interactive cards from raw parameters (question, options, title, context)
- * for the sendInteractive IPC flow. Primary Node owns the full card building lifecycle.
+ * for the sendInteractive REST API flow. Primary Node owns the full card building lifecycle.
  *
  * Unlike interactive-card-builder.ts (which uses { action: value } object format for
  * button values), this builder uses plain string values for compatibility with the
@@ -101,7 +101,7 @@ const DEFAULT_PROMPT_TEMPLATE = '[用户操作] 用户选择了「{text}」';
 
 /**
  * Validate InteractiveMessageParams.
- * Called at IPC boundary where data comes from an external process (MCP Server).
+ * Called at REST API boundary where data comes from an external process (MCP Server).
  *
  * @param params - Raw params to validate
  * @returns Error message if invalid, or null if valid

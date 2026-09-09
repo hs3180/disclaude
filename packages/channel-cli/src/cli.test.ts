@@ -39,8 +39,8 @@ describe('@disclaude/channel-cli', () => {
   });
 
   it('requires an explicit REST address for a standalone invocation', async () => {
-    const previous = process.env.DISCLAUDE_REST_IPC_BASE_URL;
-    delete process.env.DISCLAUDE_REST_IPC_BASE_URL;
+    const previous = process.env.DISCLAUDE_API_BASE_URL;
+    delete process.env.DISCLAUDE_API_BASE_URL;
     try {
       const { code, writes } = await capture([
         'send_text', '--chat', 'oc_0123456789012345678901234567890123', '--text', 'hello',
@@ -51,8 +51,8 @@ describe('@disclaude/channel-cli', () => {
         error: expect.stringContaining('--base-url'),
       });
     } finally {
-      if (previous === undefined) { delete process.env.DISCLAUDE_REST_IPC_BASE_URL; }
-      else { process.env.DISCLAUDE_REST_IPC_BASE_URL = previous; }
+      if (previous === undefined) { delete process.env.DISCLAUDE_API_BASE_URL; }
+      else { process.env.DISCLAUDE_API_BASE_URL = previous; }
     }
   });
 

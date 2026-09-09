@@ -140,7 +140,7 @@ export class AgentPoolMessageHandler implements IAgentMessageHandler {
         })
         .catch((err) => {
           this.log.error({ err, chatId, messageId }, 'Agent processMessage or turnComplete failed for system message (waitForCompletion)');
-          throw err; // Propagate error so IPC caller knows the agent failed
+          throw err; // Propagate error so REST API caller knows the agent failed
         });
     }
 

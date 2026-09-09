@@ -6,7 +6,7 @@
  * source of truth for interactive card action prompts, eliminating the
  * previous cross-process state dependency on MCP Server.
  *
- * Part of Phase 3 (#1572) of IPC layer responsibility refactoring (#1568).
+ * Part of Phase 3 (#1572) of REST API layer responsibility refactoring (#1568).
  *
  * @module interactive-context
  */

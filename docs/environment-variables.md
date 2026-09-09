@@ -9,8 +9,8 @@
 | `DISCLAUDE_WORKSPACE_DIR` | `packages/core/src/config/index.ts` 工作区目录解析 | 配置 `workspace.dir` | active |
 | `DISCLAUDE_CONFIG_PATH` | `packages/core/src/config/loader.ts`、`primary-node/src/cli.ts`、`channel-cli/src/cli.ts` 配置路径解析 | `disclaude.config.yaml` | active |
 | `DISCLAUDE_ALLOW_BUILTIN_CRON` | `primary-node/src/agents/disallowed-tools.ts`（经 `buildDisallowedTools(env)` 的 `env` 参数读取，非 `process.env.` 字面量） | 未设置 = 禁用内置 cron 工具 | active（truthy `1` / `true` 时放开） |
-| `DISCLAUDE_REST_IPC_BASE_URL` | `channel-cli/src/cli.ts`、`channel-cli/src/tools/ipc-utils.ts` REST 客户端 | `http://localhost:19200`（目前两处各自硬编码字面量；#4804 会收敛为单一常量 `REST_IPC_DEFAULT_BASE_URL`） | active |
-| `DISCLAUDE_REST_IPC_API_TOKEN` | **暂无生产读取点** —— `getRestIpcClient()` 构造 `RestIpcClient` 时不传 token；仅 `docs/designs/rest-ipc-design.md` 描述了目标形态 | 无 | **planned（待 #4804）** —— 现在设置了不生效，主服务开 `--api-token` 时 channel 写请求仍会 401 |
+| `DISCLAUDE_API_BASE_URL` | `channel-cli/src/cli.ts`、`channel-cli/src/tools/channel-api-utils.ts` REST 客户端 | `http://localhost:19200`（目前两处各自硬编码字面量；#4804 会收敛为单一常量 `REST_IPC_DEFAULT_BASE_URL`） | active |
+| `DISCLAUDE_API_TOKEN` | **暂无生产读取点** —— `getChannelApiClient()` 构造 `ChannelApiClient` 时不传 token；仅 `docs/designs/rest-channel-api-design.md` 描述了目标形态 | 无 | **planned（待 #4804）** —— 现在设置了不生效，主服务开 `--api-token` 时 channel 写请求仍会 401 |
 | `DISCLAUDE_REST_IPC_ENABLED` | 无（已废弃） | — | **deprecated / 已废弃**，REST 是唯一通路，设置了也无效 |
 | `DISCLAUDE_STALL_TIMEOUT_MS` / `DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS` | `core/src/sdk/providers/{claude,codex}/provider.ts` 停顿检测 | 180000 ms / 运行时常量 | active |
 | `DISCLAUDE_SYSTEM_FLOOD_THRESHOLD` | `core/src/sdk/providers/claude/provider.ts` 消息洪泛保护 | 50 | active |
@@ -34,3 +34,7 @@ git grep -ho "DISCLAUDE_[A-Z_0-9]\+" origin/main | sort -u
 - `DISCLAUDE_TEST_PROTECT_KEY__` —— `apply-global-env.test.ts` 里构造的测试字符串
 
 另有 `DISCLAUDE_CONFIG`（无 `_PATH` 后缀）仅被 `tests/integration/rest-channel-test.sh` 读取，属集成测试脚本入参，不是运行时变量。
+
+### Channel API configuration migration
+
+Use `DISCLAUDE_API_BASE_URL` and `DISCLAUDE_API_TOKEN` for the PrimaryNode HTTP API. The former `DISCLAUDE_REST_IPC_BASE_URL` and `DISCLAUDE_REST_IPC_API_TOKEN` names are removed and are not read as fallbacks. Update external callers and regenerate launchd configuration when upgrading. Managed children receive the current HTTP address after the server starts.

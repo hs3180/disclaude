@@ -1,7 +1,7 @@
 /**
  * Tests for InteractiveContextStore.
  *
- * Part of Phase 3 (#1572) of IPC layer responsibility refactoring (#1568).
+ * Part of Phase 3 (#1572) of REST API layer responsibility refactoring (#1568).
  * Extended for multi-card coexistence fix (#1625).
  * Extended with supplementary tests from deep review (PR #1996).
  */
@@ -155,7 +155,7 @@ describe('InteractiveContextStore', () => {
 
   describe('findActionPromptsByChatId', () => {
     it('should find prompts containing the actionValue across multiple contexts (#1625)', () => {
-      // Card A (IPC script) with AI-related actions
+      // Card A (REST API script) with AI-related actions
       store.register('msg-a', 'chat-1', {
         explain_ai: 'Tell me about AI',
         ai_applications: 'Show AI applications',
@@ -322,7 +322,7 @@ describe('InteractiveContextStore', () => {
 
     it('should find actionValue across multiple cards in the same chat (#1625)', () => {
       // Simulate the exact scenario from the bug report:
-      // 1. IPC script sends Card A with AI-related buttons
+      // 1. REST API script sends Card A with AI-related buttons
       store.register('card-a', 'chat-group', {
         explain_ai: '[用户操作] 用户想了解AI解释',
         ai_applications: '[用户操作] 用户想看AI应用',

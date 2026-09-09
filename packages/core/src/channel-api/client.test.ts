@@ -1,18 +1,18 @@
 /**
- * Tests for RestIpcClient — the REST IPC channel-method client (Issue #4279 Phase 2).
+ * Tests for ChannelApiClient — the REST API channel-method client (Issue #4279 Phase 2).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { normalizeRestIpcBaseUrl, RestIpcClient } from './rest-ipc-client.js';
+import { normalizeChannelApiBaseUrl, ChannelApiClient } from './client.js';
 
-describe('RestIpcClient', () => {
+describe('ChannelApiClient', () => {
   it('normalizes an explicit HTTP address without changing its port', () => {
-    expect(normalizeRestIpcBaseUrl(' http://127.0.0.1:43123/ ')).toBe('http://127.0.0.1:43123');
+    expect(normalizeChannelApiBaseUrl(' http://127.0.0.1:43123/ ')).toBe('http://127.0.0.1:43123');
   });
 
   it.each(['', 'localhost:19200', 'ftp://localhost:19200', 'http://user:secret@localhost:19200', 'http://localhost:19200/api'])(
     'rejects missing or unsafe REST address %j',
-    (value) => expect(() => normalizeRestIpcBaseUrl(value)).toThrow(/PrimaryNode REST address/),
+    (value) => expect(() => normalizeChannelApiBaseUrl(value)).toThrow(/PrimaryNode REST address/),
   );
   const originalFetch = globalThis.fetch;
 
@@ -43,9 +43,9 @@ describe('RestIpcClient', () => {
   }
 
   describe('requestChannel', () => {
-    it('should POST sendMessage and return the IPC payload (strip ok envelope)', async () => {
+    it('should POST sendMessage and return the REST API payload (strip ok envelope)', async () => {
       const { calls } = mockFetch([{ json: { ok: true, success: true, messageId: 'om_123' } }]);
-      const client = new RestIpcClient({ baseUrl: 'http://localhost:19200', apiToken: 'tok' });
+      const client = new ChannelApiClient({ baseUrl: 'http://localhost:19200', apiToken: 'tok' });
 
       const result = await client.requestChannel('sendMessage', { chatId: 'oc_test', text: 'hi' });
 
@@ -62,7 +62,7 @@ describe('RestIpcClient', () => {
 
     it('should GET listTempChats without a body or auth header', async () => {
       const { calls } = mockFetch([{ json: { ok: true, success: true, chats: [] } }]);
-      const client = new RestIpcClient({ baseUrl: 'http://localhost:19200', apiToken: 'tok' });
+      const client = new ChannelApiClient({ baseUrl: 'http://localhost:19200', apiToken: 'tok' });
 
       await client.requestChannel('listTempChats');
 
@@ -76,7 +76,7 @@ describe('RestIpcClient', () => {
 
     it('should strip trailing slash from baseUrl', async () => {
       const { calls } = mockFetch([{ json: { pong: true } }]);
-      const client = new RestIpcClient({ baseUrl: 'http://localhost:19200/' });
+      const client = new ChannelApiClient({ baseUrl: 'http://localhost:19200/' });
 
       await client.requestChannel('ping');
 
@@ -87,7 +87,7 @@ describe('RestIpcClient', () => {
       // Real handlePing returns `{ pong: true }` (no `ok`); ping's success
       // predicate is `res.ok && json.pong === true`, not the default `ok` guard.
       const { calls } = mockFetch([{ json: { pong: true } }]);
-      const client = new RestIpcClient({ baseUrl: 'http://localhost:19200' });
+      const client = new ChannelApiClient({ baseUrl: 'http://localhost:19200' });
 
       const result = await client.requestChannel('ping');
 
@@ -98,47 +98,47 @@ describe('RestIpcClient', () => {
 
     it('should throw on HTTP error status', async () => {
       mockFetch([{ status: 500, json: { ok: false, message: 'handler error' } }]);
-      const client = new RestIpcClient({ baseUrl: 'http://localhost:19200' });
+      const client = new ChannelApiClient({ baseUrl: 'http://localhost:19200' });
 
       await expect(client.requestChannel('sendCard', { chatId: 'x', card: {} })).rejects.toThrow(
-        'IPC_REQUEST_FAILED: REST sendCard (handler error)',
+        'CHANNEL_API_REQUEST_FAILED: REST sendCard (handler error)',
       );
     });
 
     it('should throw on ok:false in the response body', async () => {
       mockFetch([{ status: 503, json: { ok: false, message: 'handler not configured' } }]);
-      const client = new RestIpcClient({ baseUrl: 'http://localhost:19200' });
+      const client = new ChannelApiClient({ baseUrl: 'http://localhost:19200' });
 
       await expect(client.requestChannel('uploadFile', { chatId: 'x', filePath: '/a' })).rejects.toThrow(
-        'IPC_REQUEST_FAILED: REST uploadFile (handler not configured)',
+        'CHANNEL_API_REQUEST_FAILED: REST uploadFile (handler not configured)',
       );
     });
 
-    it('should classify a fetch network failure as IPC_NOT_AVAILABLE', async () => {
+    it('should classify a fetch network failure as CHANNEL_API_NOT_AVAILABLE', async () => {
       globalThis.fetch = (() => Promise.reject(new Error('ECONNREFUSED'))) as typeof fetch;
-      const client = new RestIpcClient({ baseUrl: 'http://localhost:19200' });
+      const client = new ChannelApiClient({ baseUrl: 'http://localhost:19200' });
 
       await expect(client.requestChannel('ping')).rejects.toThrow(
-        'IPC_NOT_AVAILABLE: REST ping (ECONNREFUSED)',
+        'CHANNEL_API_NOT_AVAILABLE: REST ping (ECONNREFUSED)',
       );
     });
 
-    it('should classify a fetch timeout as IPC_TIMEOUT', async () => {
+    it('should classify a fetch timeout as CHANNEL_API_TIMEOUT', async () => {
       // AbortSignal.timeout surfaces as a TimeoutError/AbortError — must map to
-      // IPC_TIMEOUT so classifyError → 'ipc_timeout' (not ipc_request_failed).
+      // CHANNEL_API_TIMEOUT so classifyError → 'channel_api_timeout' (not channel_api_request_failed).
       const timeoutErr = new Error('The operation was aborted due to timeout');
       timeoutErr.name = 'TimeoutError';
       globalThis.fetch = (() => Promise.reject(timeoutErr)) as typeof fetch;
-      const client = new RestIpcClient({ baseUrl: 'http://localhost:19200' });
+      const client = new ChannelApiClient({ baseUrl: 'http://localhost:19200' });
 
       await expect(client.requestChannel('sendMessage', { chatId: 'x', text: 'hi' })).rejects.toThrow(
-        'IPC_TIMEOUT: REST sendMessage',
+        'CHANNEL_API_TIMEOUT: REST sendMessage',
       );
     });
 
     it('should route pushToAgent to /api/push and shape {ok} → {success}', async () => {
       const { calls } = mockFetch([{ json: { ok: true, message: 'Push accepted' } }]);
-      const client = new RestIpcClient({ baseUrl: 'http://localhost:19200', apiToken: 'tok' });
+      const client = new ChannelApiClient({ baseUrl: 'http://localhost:19200', apiToken: 'tok' });
 
       const result = await client.requestChannel('pushToAgent', { chatId: 'oc_test', message: 'hi' });
 
@@ -147,13 +147,13 @@ describe('RestIpcClient', () => {
     });
 
     it('should throw for truly unsupported methods', async () => {
-      const client = new RestIpcClient({ baseUrl: 'http://localhost:19200' });
+      const client = new ChannelApiClient({ baseUrl: 'http://localhost:19200' });
       await expect(client.requestChannel('unknownMethod')).rejects.toThrow('unsupported method');
     });
 
-    it('should support IpcClientLike.request<T> (drop-in interface)', async () => {
+    it('should support ChannelApiClientLike.request<T> (drop-in interface)', async () => {
       mockFetch([{ json: { ok: true, success: true, messageId: 'om_456' } }]);
-      const client = new RestIpcClient({ baseUrl: 'http://localhost:19200', apiToken: 'tok' });
+      const client = new ChannelApiClient({ baseUrl: 'http://localhost:19200', apiToken: 'tok' });
 
       // request<T> delegates to requestChannel — same behavior, typed return.
       const result = await client.request('sendMessage', { chatId: 'oc_test', text: 'hi' });
@@ -166,27 +166,21 @@ describe('RestIpcClient', () => {
     it('should return true when /api/ping responds with pong:true', async () => {
       // Real handlePing returns `{ pong: true }` (no `ok` envelope).
       mockFetch([{ json: { pong: true } }]);
-      const client = new RestIpcClient({ baseUrl: 'http://localhost:19200' });
+      const client = new ChannelApiClient({ baseUrl: 'http://localhost:19200' });
       expect(await client.isAvailable()).toBe(true);
     });
 
     it('should return false on pong missing', async () => {
       mockFetch([{ json: { ok: true } }]);
-      const client = new RestIpcClient({ baseUrl: 'http://localhost:19200' });
+      const client = new ChannelApiClient({ baseUrl: 'http://localhost:19200' });
       expect(await client.isAvailable()).toBe(false);
     });
 
     it('should return false on fetch error', async () => {
       globalThis.fetch = (() => Promise.reject(new Error('ECONNREFUSED'))) as typeof fetch;
-      const client = new RestIpcClient({ baseUrl: 'http://localhost:19200' });
+      const client = new ChannelApiClient({ baseUrl: 'http://localhost:19200' });
       expect(await client.isAvailable()).toBe(false);
     });
   });
 
-  describe('close', () => {
-    it('should be a no-op (stateless HTTP)', () => {
-      const client = new RestIpcClient({ baseUrl: 'http://localhost:19200' });
-      expect(() => client.close()).not.toThrow();
-    });
-  });
 });

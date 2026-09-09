@@ -8,12 +8,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Issue #4129: sendInteractive is now a standalone function exported from @disclaude/core.
 // The production code calls sendInteractive(client, ...) — mock it to delegate to the
 // same spy as the legacy client.sendInteractive(...) instance method so existing
-// test assertions (mockIpcClient.sendInteractive) keep working unchanged.
-const { mockIpcClient, mockSendInteractive, mockGetRestIpcClient } = vi.hoisted(() => {
+// test assertions (mockChannelApiClient.sendInteractive) keep working unchanged.
+const { mockChannelApiClient, mockSendInteractive, mockGetChannelApiClient } = vi.hoisted(() => {
   const mockSendInteractive = vi.fn();
-  const mockIpcClient = { sendInteractive: mockSendInteractive };
-  const mockGetRestIpcClient = vi.fn().mockReturnValue(mockIpcClient);
-  return { mockIpcClient, mockSendInteractive, mockGetRestIpcClient };
+  const mockChannelApiClient = { sendInteractive: mockSendInteractive };
+  const mockGetChannelApiClient = vi.fn().mockReturnValue(mockChannelApiClient);
+  return { mockChannelApiClient, mockSendInteractive, mockGetChannelApiClient };
 });
 
 vi.mock('@disclaude/core', () => ({
@@ -29,16 +29,16 @@ vi.mock('@disclaude/core', () => ({
   sendInteractive: (_client: unknown, ...rest: unknown[]) => mockSendInteractive(...rest),
 }));
 
-vi.mock('./ipc-utils.js', () => ({
+vi.mock('./channel-api-utils.js', () => ({
   // Issue #4280 (Phase 3, part 3): REST client factory — returns the shared mock.
-  getRestIpcClient: () => mockGetRestIpcClient(),
-  isIpcAvailable: vi.fn(),
+  getChannelApiClient: () => mockGetChannelApiClient(),
+  isChannelApiAvailable: vi.fn(),
   // Issue #4576: deterministic stub — the unavailable-branch tests assert the
   // fallback hint (thread-preserving +messages-reply) is appended.
-  buildIpcFallbackHint: (parentMessageId?: string) =>
+  buildChannelApiFallbackHint: (parentMessageId?: string) =>
     `HINT:lark-cli im +messages-reply --message-id ${parentMessageId ?? '<om_...>'}`,
-  getIpcErrorMessage: vi.fn((type?: string, originalError?: string) => {
-    if (type === 'ipc_unavailable') {return '❌ IPC 服务不可用。';}
+  getChannelApiErrorMessage: vi.fn((type?: string, originalError?: string) => {
+    if (type === 'channel_api_unavailable') {return '❌ REST API 服务不可用。';}
     return `❌ 操作失败: ${originalError ?? '未知错误'}`;
   }),
 }));
@@ -47,22 +47,22 @@ vi.mock('./callback-manager.js', () => ({
   getMessageSentCallback: vi.fn(),
 }));
 
-// Issue #4280 (part 4): the IPC-server lifecycle exports
-// (startIpcServer/stopIpcServer/isIpcServerRunning/getIpcServerSocketPath/
+// Issue #4280 (part 4): the REST API-server lifecycle exports
+// (startChannelApiServer/stopChannelApiServer/isChannelApiServerRunning/getChannelApiServerSocketPath/
 // registerFeishuHandlers/unregisterFeishuHandlers) and their tests are gone
-// with the former package's own UnixSocketIpcServer.
+// with the former package's own UnixSocketChannelApiServer.
 import {
   send_interactive_message,
   send_interactive,
 } from './interactive-message.js';
-import { isIpcAvailable } from './ipc-utils.js';
+import { isChannelApiAvailable } from './channel-api-utils.js';
 import { getMessageSentCallback } from './callback-manager.js';
 
 describe('send_interactive_message', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGetRestIpcClient.mockReturnValue(mockIpcClient);
-    vi.mocked(isIpcAvailable).mockResolvedValue(true);
+    mockGetChannelApiClient.mockReturnValue(mockChannelApiClient);
+    vi.mocked(isChannelApiAvailable).mockResolvedValue(true);
     vi.mocked(getMessageSentCallback).mockReturnValue(null);
   });
 
@@ -135,7 +135,7 @@ describe('send_interactive_message', () => {
 
     it('should accept valid option types: primary, default, danger', async () => {
       for (const type of ['primary', 'default', 'danger'] as const) {
-        mockIpcClient.sendInteractive.mockResolvedValue({ success: true });
+        mockChannelApiClient.sendInteractive.mockResolvedValue({ success: true });
         const result = await send_interactive_message({
           question: 'Q?', options: [{ text: 'A', value: 'a', type }], chatId: 'oc_test',
         });
@@ -144,7 +144,7 @@ describe('send_interactive_message', () => {
     });
 
     it('should accept option without type', async () => {
-      mockIpcClient.sendInteractive.mockResolvedValue({ success: true });
+      mockChannelApiClient.sendInteractive.mockResolvedValue({ success: true });
       const result = await send_interactive_message({
         question: 'Q?', options: [{ text: 'A', value: 'a' }], chatId: 'oc_test',
       });
@@ -170,18 +170,18 @@ describe('send_interactive_message', () => {
     });
   });
 
-  describe('IPC availability', () => {
-    it('should return error when IPC is unavailable', async () => {
-      vi.mocked(isIpcAvailable).mockResolvedValue(false);
+  describe('REST API availability', () => {
+    it('should return error when REST API is unavailable', async () => {
+      vi.mocked(isChannelApiAvailable).mockResolvedValue(false);
       const result = await send_interactive_message({
         question: 'Q?', options: [{ text: 'A', value: 'a' }], chatId: 'oc_test',
       });
       expect(result.success).toBe(false);
-      expect(result.message).toContain('IPC');
+      expect(result.message).toContain('REST API');
     });
 
     it('should append the thread-preserving lark-cli fallback hint (Issue #4576)', async () => {
-      vi.mocked(isIpcAvailable).mockResolvedValue(false);
+      vi.mocked(isChannelApiAvailable).mockResolvedValue(false);
       const result = await send_interactive_message({
         question: 'Q?',
         options: [{ text: 'A', value: 'a' }],
@@ -195,14 +195,14 @@ describe('send_interactive_message', () => {
 
   describe('successful send', () => {
     it('should send interactive message successfully', async () => {
-      mockIpcClient.sendInteractive.mockResolvedValue({ success: true });
+      mockChannelApiClient.sendInteractive.mockResolvedValue({ success: true });
       const result = await send_interactive_message({
         question: 'Which option?', options: [{ text: 'A', value: 'a' }, { text: 'B', value: 'b' }],
         chatId: 'oc_test',
       });
       expect(result.success).toBe(true);
       expect(result.message).toContain('2 action');
-      expect(mockIpcClient.sendInteractive).toHaveBeenCalledWith('oc_test', {
+      expect(mockChannelApiClient.sendInteractive).toHaveBeenCalledWith('oc_test', {
         question: 'Which option?',
         options: [{ text: 'A', value: 'a' }, { text: 'B', value: 'b' }],
         title: undefined,
@@ -212,8 +212,8 @@ describe('send_interactive_message', () => {
       });
     });
 
-    it('should pass all optional parameters to IPC', async () => {
-      mockIpcClient.sendInteractive.mockResolvedValue({ success: true });
+    it('should pass all optional parameters to REST API', async () => {
+      mockChannelApiClient.sendInteractive.mockResolvedValue({ success: true });
       await send_interactive_message({
         question: 'Q?',
         options: [{ text: 'OK', value: 'ok', type: 'primary' }],
@@ -223,7 +223,7 @@ describe('send_interactive_message', () => {
         parentMessageId: 'parent_123',
         actionPrompts: { ok: 'User chose OK' },
       });
-      expect(mockIpcClient.sendInteractive).toHaveBeenCalledWith('oc_test', {
+      expect(mockChannelApiClient.sendInteractive).toHaveBeenCalledWith('oc_test', {
         question: 'Q?',
         options: [{ text: 'OK', value: 'ok', type: 'primary' }],
         title: 'My Title',
@@ -238,7 +238,7 @@ describe('send_interactive_message', () => {
     it('should invoke message sent callback when set', async () => {
       const callback = vi.fn();
       vi.mocked(getMessageSentCallback).mockReturnValue(callback);
-      mockIpcClient.sendInteractive.mockResolvedValue({ success: true });
+      mockChannelApiClient.sendInteractive.mockResolvedValue({ success: true });
       await send_interactive_message({
         question: 'Q?', options: [{ text: 'A', value: 'a' }], chatId: 'oc_test',
       });
@@ -248,7 +248,7 @@ describe('send_interactive_message', () => {
     it('should not throw when callback throws', async () => {
       const callback = vi.fn().mockImplementation(() => { throw new Error('Callback error'); });
       vi.mocked(getMessageSentCallback).mockReturnValue(callback);
-      mockIpcClient.sendInteractive.mockResolvedValue({ success: true });
+      mockChannelApiClient.sendInteractive.mockResolvedValue({ success: true });
       const result = await send_interactive_message({
         question: 'Q?', options: [{ text: 'A', value: 'a' }], chatId: 'oc_test',
       });
@@ -256,10 +256,10 @@ describe('send_interactive_message', () => {
     });
   });
 
-  describe('IPC failure', () => {
-    it('should return error when IPC send fails', async () => {
-      mockIpcClient.sendInteractive.mockResolvedValue({
-        success: false, error: 'Send failed', errorType: 'ipc_request_failed',
+  describe('REST API failure', () => {
+    it('should return error when REST API send fails', async () => {
+      mockChannelApiClient.sendInteractive.mockResolvedValue({
+        success: false, error: 'Send failed', errorType: 'channel_api_request_failed',
       });
       const result = await send_interactive_message({
         question: 'Q?', options: [{ text: 'A', value: 'a' }], chatId: 'oc_test',
@@ -271,7 +271,7 @@ describe('send_interactive_message', () => {
 
   describe('error handling', () => {
     it('should catch unexpected errors and return error result', async () => {
-      mockGetRestIpcClient.mockImplementation(() => { throw new Error('Unexpected'); });
+      mockGetChannelApiClient.mockImplementation(() => { throw new Error('Unexpected'); });
       const result = await send_interactive_message({
         question: 'Q?', options: [{ text: 'A', value: 'a' }], chatId: 'oc_test',
       });
@@ -290,8 +290,8 @@ describe('send_interactive alias', () => {
 describe('send_interactive_message edge cases', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGetRestIpcClient.mockReturnValue(mockIpcClient);
-    vi.mocked(isIpcAvailable).mockResolvedValue(true);
+    mockGetChannelApiClient.mockReturnValue(mockChannelApiClient);
+    vi.mocked(isChannelApiAvailable).mockResolvedValue(true);
     vi.mocked(getMessageSentCallback).mockReturnValue(null);
   });
 
@@ -327,7 +327,7 @@ describe('send_interactive_message edge cases', () => {
   });
 
   it('should accept option with type explicitly undefined', async () => {
-    mockIpcClient.sendInteractive.mockResolvedValue({ success: true });
+    mockChannelApiClient.sendInteractive.mockResolvedValue({ success: true });
     const result = await send_interactive_message({
       question: 'Q?',
       options: [{ text: 'A', value: 'a', type: undefined }],
@@ -336,11 +336,11 @@ describe('send_interactive_message edge cases', () => {
     expect(result.success).toBe(true);
   });
 
-  it('should use fallback error message when IPC result has no error string', async () => {
-    mockIpcClient.sendInteractive.mockResolvedValue({
+  it('should use fallback error message when REST API result has no error string', async () => {
+    mockChannelApiClient.sendInteractive.mockResolvedValue({
       success: false,
       error: null as any,
-      errorType: 'ipc_request_failed',
+      errorType: 'channel_api_request_failed',
     });
     const result = await send_interactive_message({
       question: 'Q?',
@@ -348,14 +348,14 @@ describe('send_interactive_message edge cases', () => {
       chatId: 'oc_test',
     });
     expect(result.success).toBe(false);
-    expect(result.error).toContain('Failed to send interactive message via IPC');
+    expect(result.error).toContain('Failed to send interactive message via REST API');
   });
 
-  it('should handle IPC failure with ipc_unavailable error type', async () => {
-    mockIpcClient.sendInteractive.mockResolvedValue({
+  it('should handle REST API failure with channel_api_unavailable error type', async () => {
+    mockChannelApiClient.sendInteractive.mockResolvedValue({
       success: false,
       error: 'Connection lost',
-      errorType: 'ipc_unavailable',
+      errorType: 'channel_api_unavailable',
     });
     const result = await send_interactive_message({
       question: 'Q?',
@@ -364,13 +364,13 @@ describe('send_interactive_message edge cases', () => {
     });
     expect(result.success).toBe(false);
     expect(result.error).toBe('Connection lost');
-    expect(result.message).toContain('IPC');
+    expect(result.message).toContain('REST API');
   });
 
   it('should not invoke callback when callback is null', async () => {
     const callback = vi.fn();
     vi.mocked(getMessageSentCallback).mockReturnValue(null);
-    mockIpcClient.sendInteractive.mockResolvedValue({ success: true });
+    mockChannelApiClient.sendInteractive.mockResolvedValue({ success: true });
     await send_interactive_message({
       question: 'Q?',
       options: [{ text: 'A', value: 'a' }],

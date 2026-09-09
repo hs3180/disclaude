@@ -9,28 +9,28 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { Config, createLogger, uploadFile, type ToolProgressCallback } from '@disclaude/core';
-import { isIpcAvailable, getRestIpcClient, buildIpcFallbackHint } from './ipc-utils.js';
+import { isChannelApiAvailable, getChannelApiClient, buildChannelApiFallbackHint } from './channel-api-utils.js';
 import type { SendFileResult } from './types.js';
 
 const logger = createLogger('SendFile');
 
 /**
- * Upload file via IPC to PrimaryNode's LarkClientService.
+ * Upload file via REST API to PrimaryNode's LarkClientService.
  * Issue #1035: Routes Feishu API calls through unified client.
  * Issue #1619: Added threadId parameter for thread reply support.
- * Issue #2300: Propagate IPC error details for better diagnostics.
+ * Issue #2300: Propagate REST API error details for better diagnostics.
  */
-async function uploadFileViaIpc(
+async function uploadFileViaChannelApi(
   chatId: string,
   filePath: string,
   threadId?: string
 ): Promise<{ fileKey: string; fileType: string; fileName: string; fileSize: number }> {
-  // Issue #4280 (Phase 3, part 3): REST-only — direct RestIpcClient.
-  const ipcClient = getRestIpcClient();
-  const result = await uploadFile(ipcClient, chatId, filePath, threadId);
+  // Issue #4280 (Phase 3, part 3): REST-only — direct ChannelApiClient.
+  const apiClient = getChannelApiClient();
+  const result = await uploadFile(apiClient, chatId, filePath, threadId);
   if (!result.success) {
     const errorDetail = result.error ? `: ${result.error}` : '';
-    throw new Error(`Failed to upload file via IPC${errorDetail}`);
+    throw new Error(`Failed to upload file via REST API${errorDetail}`);
   }
   return {
     fileKey: result.fileKey ?? '',
@@ -66,25 +66,25 @@ export async function send_file(params: {
     const stats = await fs.stat(resolvedPath);
     if (!stats.isFile()) { throw new Error(`Path is not a file: ${filePath}`); }
 
-    // Issue #1035: Try IPC first if available
-    // Issue #1042: Removed file-transfer fallback, require IPC
+    // Issue #1035: Try REST API first if available
+    // Issue #1042: Removed file-transfer fallback, require REST API
     // Issue #1355: async connection probe
-    const useIpc = await isIpcAvailable();
+    const useChannelApi = await isChannelApiAvailable();
 
-    if (!useIpc) {
+    if (!useChannelApi) {
       return {
         success: false,
-        error: 'IPC not available',
+        error: 'REST API not available',
         // Issue #4576: actionable fallback — +messages-send loses thread
         // attribution in topic groups; +messages-reply preserves it.
         // filePath (the original arg, not the workspace-resolved absolute
         // path) rides along so the suggested reply command carries --file —
         // +messages-reply requires a content flag or the reply is empty.
-        message: `❌ File upload requires IPC connection. Please ensure Primary Node is running.${buildIpcFallbackHint(parentMessageId, { filePath })}`,
+        message: `❌ File upload requires REST API connection. Please ensure Primary Node is running.${buildChannelApiFallbackHint(parentMessageId, { filePath })}`,
       };
     }
 
-    logger.debug({ chatId, filePath, parentMessageId }, 'Using IPC for file upload');
+    logger.debug({ chatId, filePath, parentMessageId }, 'Using REST API for file upload');
     // Issue #4568: the upload is one long-silent REST request; report the
     // size (already known from stat) right before it starts so the tool is
     // not misjudged as stalled while the bytes transfer.
@@ -92,7 +92,7 @@ export async function send_file(params: {
       const sizeMBBefore = (stats.size / 1024 / 1024).toFixed(2);
       onProgress({ message: `Uploading ${path.basename(resolvedPath)} (${sizeMBBefore} MB)…` });
     }
-    const { fileSize } = await uploadFileViaIpc(chatId, resolvedPath, parentMessageId);
+    const { fileSize } = await uploadFileViaChannelApi(chatId, resolvedPath, parentMessageId);
 
     const sizeMB = (fileSize / 1024 / 1024).toFixed(2);
     const fileName = path.basename(resolvedPath);

@@ -1,7 +1,7 @@
 /**
  * Chat ID validation utilities for channel tools.
  *
- * Validates chatId format before making IPC calls to prevent
+ * Validates chatId format before making REST API calls to prevent
  * confusing HTTP 400 errors from the Feishu API.
  *
  * @module channel-cli/utils/chat-id-validator

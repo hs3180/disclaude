@@ -811,11 +811,11 @@ describe('createChannelApiHandlers', () => {
       logger: mockLogger,
       channelName: 'Test',
     });
-    await handlers.sendMessage('chat-001', 'Hello IPC');
+    await handlers.sendMessage('chat-001', 'Hello REST API');
     expect(channel.sendMessage).toHaveBeenCalledWith({
       chatId: 'chat-001',
       type: 'text',
-      text: 'Hello IPC',
+      text: 'Hello REST API',
       threadId: undefined,
     });
   });
@@ -987,7 +987,7 @@ describe('createChannelApiHandlers', () => {
     await expect(handlers.sendMessage('chat-001', 'fail')).rejects.toThrow('Network error');
     expect(mockLogger.error).toHaveBeenCalledWith(
       expect.objectContaining({ chatId: 'chat-001', channel: 'Test', handler: 'sendMessage' }),
-      'IPC handler failed',
+      'REST API handler failed',
     );
   });
 
@@ -1002,7 +1002,7 @@ describe('createChannelApiHandlers', () => {
     await expect(handlers.sendCard('chat-001', card)).rejects.toThrow('Card send failed');
     expect(mockLogger.error).toHaveBeenCalledWith(
       expect.objectContaining({ chatId: 'chat-001', channel: 'Test', handler: 'sendCard' }),
-      'IPC handler failed',
+      'REST API handler failed',
     );
   });
 
@@ -1016,7 +1016,7 @@ describe('createChannelApiHandlers', () => {
     await expect(handlers.uploadFile('chat-001', '/path/to/file.pdf')).rejects.toThrow('File send failed');
     expect(mockLogger.error).toHaveBeenCalledWith(
       expect.objectContaining({ chatId: 'chat-001', channel: 'Test', handler: 'uploadFile' }),
-      'IPC handler failed',
+      'REST API handler failed',
     );
   });
 });
