@@ -3810,6 +3810,47 @@ describe('ChatAgent (primary-node)', () => {
       expect(localCallbacks.streamText).not.toHaveBeenCalled();
       expect(localCallbacks.finalizeStreaming).not.toHaveBeenCalled();
     });
+
+    it('records terminal delivery failure when card flush and fallback both fail', async () => {
+      const localCallbacks = {
+        ...createMockCallbacks(),
+        getCapabilities: vi.fn(() => caps(true)),
+        startStreaming: vi.fn(() => Promise.resolve('card-failed')),
+        streamText: vi.fn(() => Promise.reject(new Error('patch failed'))),
+        finalizeStreaming: vi.fn(() => Promise.resolve()),
+        sendMessage: vi.fn(() => Promise.reject(new Error('fallback failed'))),
+      };
+      const agent = new ChatAgent({
+        chatId: 'oc_stream_failed',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          yield { parsed: { type: 'text', role: 'assistant', content: 'Answer' }, raw: {} };
+          yield { parsed: { type: 'result', content: '✅ Complete' }, raw: {} };
+        })(),
+      });
+      (agent as any).isAgentTeamsEnabled = () => false;
+
+      void agent.processMessage({
+        chatId: 'oc_stream_failed',
+        payload: 'hi',
+        messageId: 'msg_failed',
+        chatType: 'p2p',
+      });
+
+      await vi.waitFor(() => {
+        expect((agent as any).logger.error).toHaveBeenCalledWith(
+          expect.objectContaining({ chatId: 'oc_stream_failed', turnMessageId: 'msg_failed' }),
+          'Streaming terminal delivery failed after fallback'
+        );
+      });
+    });
   });
 
   // Issue #4510 (part 2, 2026-08-16 revision): the p2p-first gray rollout is
