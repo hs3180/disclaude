@@ -43,7 +43,7 @@ printf '{"jsonrpc":"2.0","id":%s,"result":{"turnId":"turn-1"}}\\n' "$id"
         'thread/started', { thread: { id: 't-1' } }
       ));
     } finally {
-      transport.close();
+      await transport.close();
     }
   });
 
@@ -65,5 +65,40 @@ printf '%s' "$response" > "$(dirname "$0")/response"
       id: 99,
       error: { code: -32601 },
     });
+  });
+
+  it('times out a silent request and clears it without killing the transport', async () => {
+    const transport = new CodexAppServerTransport({
+      binary: fixture('read line\nwhile :; do sleep 1; done'),
+      requestTimeoutMs: 25,
+    });
+    await expect(transport.request('thread/start', {})).rejects.toThrow(/timed out: thread\/start/);
+    await transport.close();
+  });
+
+  it('drains bounded stderr and escalates a stubborn child to SIGKILL', async () => {
+    const transport = new CodexAppServerTransport({
+      binary: fixture(`
+trap '' TERM
+printf '%09000d' 0 >&2
+while :; do sleep 1; done
+`),
+      killGraceMs: 25,
+    });
+    await vi.waitFor(() => expect(transport.getStderrTail().length).toBe(8192));
+    const exit = await transport.close();
+    expect(exit.signal).toBe('SIGKILL');
+    expect(exit.stderrTail).toHaveLength(8192);
+  });
+
+  it('ignores valid non-object JSON without crashing request correlation', async () => {
+    const binary = fixture(`
+read request
+printf 'null\\n[]\\n'
+id=$(printf '%s' "$request" | sed -n 's/.*"id":\\([0-9]*\\).*/\\1/p')
+printf '{"id":%s,"result":"ok"}\\n' "$id"
+`);
+    const transport = new CodexAppServerTransport({ binary });
+    await expect(transport.request('thread/read', {})).resolves.toBe('ok');
   });
 });

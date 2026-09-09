@@ -15,6 +15,14 @@ export interface CodexAppServerTransportOptions {
   binary?: string;
   env?: NodeJS.ProcessEnv;
   onNotification?: (method: string, params: unknown) => void;
+  requestTimeoutMs?: number;
+  killGraceMs?: number;
+}
+
+export interface CodexAppServerExit {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  stderrTail: string;
 }
 
 /**
@@ -28,7 +36,11 @@ export class CodexAppServerTransport {
   private readonly pending = new Map<JsonRpcId, {
     resolve: (value: unknown) => void;
     reject: (error: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
   }>();
+  private readonly exitPromise: Promise<CodexAppServerExit>;
+  private resolveExit!: (exit: CodexAppServerExit) => void;
+  private stderrTail = '';
   private nextId = 1;
   private closed = false;
 
@@ -39,9 +51,20 @@ export class CodexAppServerTransport {
     });
     this.lines = createInterface({ input: this.child.stdout });
     this.lines.on('line', (line) => this.receive(line));
-    this.child.once('error', (error) => this.failAll(error));
+    this.exitPromise = new Promise((resolve) => {
+      this.resolveExit = resolve;
+    });
+    this.child.stderr.on('data', (chunk: Buffer | string) => {
+      this.stderrTail = `${this.stderrTail}${String(chunk)}`.slice(-8192);
+    });
+    this.child.stdin.on('error', (error) => this.failAll(error));
+    this.child.once('error', (error) => {
+      this.failAll(error);
+      this.resolveExit({ code: null, signal: null, stderrTail: this.stderrTail });
+    });
     this.child.once('close', (code, signal) => {
       this.failAll(new Error(`codex app-server exited (code=${String(code)}, signal=${String(signal)})`));
+      this.resolveExit({ code, signal, stderrTail: this.stderrTail });
     });
   }
 
@@ -60,7 +83,12 @@ export class CodexAppServerTransport {
     }
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`codex app-server request timed out: ${method}`));
+      }, this.options.requestTimeoutMs ?? 30_000);
+      timer.unref();
+      this.pending.set(id, { resolve, reject, timer });
       this.write({ jsonrpc: '2.0', id, method, params });
     });
   }
@@ -71,24 +99,40 @@ export class CodexAppServerTransport {
     }
   }
 
-  close(): void {
+  close(): Promise<CodexAppServerExit> {
     if (this.closed) {
-      return;
+      return this.exitPromise;
     }
     this.closed = true;
     this.lines.close();
     this.child.kill('SIGTERM');
+    const killTimer = setTimeout(() => this.child.kill('SIGKILL'), this.options.killGraceMs ?? 1_000);
+    killTimer.unref();
+    void this.exitPromise.finally(() => clearTimeout(killTimer));
     this.failAll(new Error('codex app-server transport closed'));
+    return this.exitPromise;
+  }
+
+  getStderrTail(): string {
+    return this.stderrTail;
   }
 
   private write(message: Record<string, unknown>): void {
-    this.child.stdin.write(`${JSON.stringify(message)}\n`);
+    this.child.stdin.write(`${JSON.stringify(message)}\n`, (error) => {
+      if (error) {
+        this.failAll(error);
+      }
+    });
   }
 
   private receive(line: string): void {
     let message: JsonRpcMessage;
     try {
-      message = JSON.parse(line) as JsonRpcMessage;
+      const parsed: unknown = JSON.parse(line);
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        return;
+      }
+      message = parsed as JsonRpcMessage;
     } catch {
       return;
     }
@@ -108,6 +152,7 @@ export class CodexAppServerTransport {
         return;
       }
       this.pending.delete(message.id);
+      clearTimeout(waiter.timer);
       if (message.error) {
         waiter.reject(new Error(`Codex app-server error ${message.error.code}: ${message.error.message}`));
       } else {
@@ -123,6 +168,7 @@ export class CodexAppServerTransport {
   private failAll(error: Error): void {
     this.closed = true;
     for (const waiter of this.pending.values()) {
+      clearTimeout(waiter.timer);
       waiter.reject(error);
     }
     this.pending.clear();
