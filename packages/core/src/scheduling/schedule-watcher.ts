@@ -94,6 +94,8 @@ function parseScheduleFrontmatter(content: string): {
     const value = line.slice(colonIndex + 1).trim();
 
     switch (key) {
+      case 'modelTier':
+        throw new Error('Schedule modelTier has been removed; use an explicit model instead');
       case 'name':
       case 'cron':
       case 'chatId':
@@ -102,13 +104,16 @@ function parseScheduleFrontmatter(content: string): {
       case 'lastExecutedAt':
       case 'model':
       case 'timezone':
-      case 'modelTier':
         frontmatter[key] = stripQuotes(value);
         break;
       case 'enabled':
       case 'blocking':
-      case 'clearContext':
         frontmatter[key] = value === 'true';
+        break;
+      case 'clearContext':
+      case 'freshSession':
+      case 'skipHistory':
+        frontmatter[key] = value === 'true' ? true : value === 'false' ? false : value;
         break;
       case 'cooldownPeriod':
       case 'timeoutMs':
@@ -224,6 +229,18 @@ export class ScheduleFileScanner {
       }
 
       const prompt = content.slice(contentStart).trim();
+      for (const key of ['freshSession', 'skipHistory', 'clearContext']) {
+        if (frontmatter[key] !== undefined && typeof frontmatter[key] !== 'boolean') {
+          throw new Error(`${key} must be a boolean`);
+        }
+      }
+      const freshSession = (frontmatter['freshSession'] as boolean | undefined)
+        ?? (frontmatter['clearContext'] === false ? false : true);
+      const skipHistory = (frontmatter['skipHistory'] as boolean | undefined)
+        ?? frontmatter['clearContext'] === true;
+      if ((!freshSession && skipHistory) || (frontmatter['clearContext'] === true && (!freshSession || !skipHistory))) {
+        throw new Error('skipHistory/clearContext:true require freshSession:true; conflicting context options');
+      }
 
       const task: ScheduleFileTask = {
         id: generateTaskId(filePath),
@@ -233,7 +250,9 @@ export class ScheduleFileScanner {
         prompt,
         enabled: (frontmatter['enabled'] as boolean) ?? true,
         blocking: (frontmatter['blocking'] as boolean) ?? true,
-        clearContext: (frontmatter['clearContext'] as boolean) ?? false,
+        clearContext: frontmatter['clearContext'] as boolean | undefined,
+        freshSession,
+        skipHistory,
         cooldownPeriod: frontmatter['cooldownPeriod'] as number | undefined,
         timeoutMs: frontmatter['timeoutMs'] as number | undefined,
         createdBy: frontmatter['createdBy'] as string | undefined,
@@ -241,7 +260,6 @@ export class ScheduleFileScanner {
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
         timezone: frontmatter['timezone'] as string | undefined,
         model: frontmatter['model'] as string | undefined,
-        modelTier: frontmatter['modelTier'] as 'high' | 'low' | 'multimodal' | undefined,
         sourceFile: filePath,
         fileMtime: stats.mtime,
       };
@@ -251,20 +269,6 @@ export class ScheduleFileScanner {
         logger.warn({ taskId: task.id, name: task.name }, 'Schedule task has empty model value, will be ignored');
       } else if (task.model) {
         logger.info({ taskId: task.id, name: task.name, model: task.model }, 'Schedule task will use model override');
-      }
-
-      // Issue #3059: Log model tier usage
-      if (task.modelTier) {
-        const validTiers = ['high', 'low', 'multimodal'];
-        if (!validTiers.includes(task.modelTier)) {
-          throw new Error(
-            `Invalid modelTier: "${task.modelTier}". Must be one of: ${validTiers.join(', ')}`
-          );
-        } else if (task.model) {
-          logger.info({ taskId: task.id, name: task.name, model: task.model }, 'Schedule task has both model and modelTier; explicit model takes priority');
-        } else {
-          logger.info({ taskId: task.id, name: task.name, modelTier: task.modelTier }, 'Schedule task will use model tier');
-        }
       }
 
       // Issue #3860: Validate timezone against IANA database
@@ -327,9 +331,6 @@ export class ScheduleFileScanner {
     }
     if (task.model) {
       frontmatter.push(`model: "${task.model}"`);
-    }
-    if (task.modelTier) {
-      frontmatter.push(`modelTier: "${task.modelTier}"`);
     }
 
     frontmatter.push('---', '');

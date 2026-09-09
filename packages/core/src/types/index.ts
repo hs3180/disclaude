@@ -137,6 +137,7 @@ export type {
 // Input Message types (Issue #3580: RFC #3329 Phase 1)
 export type {
   Message,
+  AgentSessionOptions,
   UserMessage,
   SystemMessage,
   SystemTrigger,

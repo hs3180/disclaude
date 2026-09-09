@@ -95,6 +95,10 @@ export interface CodexExecRunResult {
   spawnError?: Error;
   /** Rolling tail of stderr for actionable error messages. */
   stderrTail: string;
+  /** Wall-clock time from spawn attempt until exit/abort settlement. */
+  durationMs: number;
+  /** Time from an explicit abort request until process close. */
+  abortExitLatencyMs?: number;
 }
 
 /** Handle for aborting an in-flight run (maps onto QueryHandle cancel/close). */
@@ -147,6 +151,7 @@ export class CodexExecRunner {
           aborted: false,
           spawnError: tooLong,
           stderrTail: '',
+          durationMs: 0,
         }),
         handle: { abort: (): void => {} },
       };
@@ -199,6 +204,7 @@ export class CodexExecRunner {
     let settled = false;
     let timedOut = false;
     let aborted = false;
+    let abortRequestedAt: number | undefined;
     // Two independent timers (S2 review): the run timeout and the
     // SIGTERM→SIGKILL escalation grace. Sharing one slot let abort()'s
     // escalation timer overwrite the pending timeout timer's handle (the
@@ -273,6 +279,7 @@ export class CodexExecRunner {
           aborted: false,
           spawnError: error as Error,
           stderrTail: '',
+          durationMs: Date.now() - startedAt,
         });
         return;
       }
@@ -338,6 +345,10 @@ export class CodexExecRunner {
           aborted: false,
           spawnError: error,
           stderrTail: stderrTail.text(),
+          durationMs: Date.now() - startedAt,
+          ...(abortRequestedAt !== undefined
+            ? { abortExitLatencyMs: Date.now() - abortRequestedAt }
+            : {}),
         });
       });
 
@@ -369,6 +380,10 @@ export class CodexExecRunner {
           aborted,
           spawnError: undefined,
           stderrTail: stderrTail.text(),
+          durationMs: Date.now() - startedAt,
+          ...(abortRequestedAt !== undefined
+            ? { abortExitLatencyMs: Date.now() - abortRequestedAt }
+            : {}),
         });
       });
 
@@ -391,6 +406,7 @@ export class CodexExecRunner {
           return;
         }
         aborted = true;
+        abortRequestedAt ??= Date.now();
         killWithEscalation(child);
       },
     };

@@ -789,7 +789,7 @@ describe('MessageBuilder', () => {
       expect(userMessageIdx).toBeGreaterThan(outputFormatIdx);
     });
 
-    it('should place history before guidance sections', () => {
+    it('should place stable guidance before volatile history', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
         messageId: 'msg-123',
@@ -798,7 +798,44 @@ describe('MessageBuilder', () => {
 
       const historyIdx = result.indexOf('Recent Chat History');
       const outputFormatIdx = result.indexOf('Output Format Requirements');
-      expect(outputFormatIdx).toBeGreaterThan(historyIdx);
+      expect(outputFormatIdx).toBeLessThan(historyIdx);
+    });
+  });
+
+  describe('typed stable-to-dynamic sections (Issue #4706)', () => {
+    it('keeps the regular-message stable prefix byte-identical across turns', () => {
+      const builder = new MessageBuilder({
+        buildHeader: () => 'Stable channel header',
+        buildStableToolsSection: () => 'Stable tool help',
+      });
+      const first = builder.buildSections({ text: 'first', messageId: 'm1', chatHistoryContext: 'h1' }, 'chat-a');
+      const second = builder.buildSections({ text: 'second', messageId: 'm2', chatHistoryContext: 'h2' }, 'chat-a');
+      const stable = (sections: typeof first) =>
+        builder.renderSections(sections.filter(section => section.stability === 'stable'));
+
+      expect(stable(first)).toBe(stable(second));
+      expect(first.findIndex(section => section.stability === 'dynamic'))
+        .toBeGreaterThan(first.map(section => section.stability).lastIndexOf('stable'));
+      expect(builder.renderSections(first)).not.toBe(builder.renderSections(second));
+    });
+
+    it('identifies topic context and attachments as dynamic without changing semantics', () => {
+      const sections = messageBuilder.buildSections({
+        text: 'topic question', messageId: 'm1', chatType: 'topic', threadContext: 'thread history',
+        attachments: [{ id: 'a1', fileName: 'report.txt', localPath: '/tmp/report.txt', source: 'user', createdAt: 1 }],
+      }, 'topic-chat');
+      expect(sections.filter(section => section.stability === 'dynamic').map(section => section.kind))
+        .toEqual(expect.arrayContaining(['metadata', 'thread-context', 'channel-context', 'user-message', 'attachments']));
+      const rendered = messageBuilder.renderSections(sections);
+      expect(rendered).toContain('thread history');
+      expect(rendered).toContain('report.txt');
+      expect(rendered).not.toContain('Next Steps After Response');
+    });
+
+    it('keeps skill commands minimal and omits empty optional sections', () => {
+      const sections = messageBuilder.buildSections({ text: '/reset', messageId: 'm1', attachments: [] }, 'chat-a');
+      expect(sections.map(section => section.kind)).toEqual(['user-message', 'metadata']);
+      expect(sections.every(section => section.stability === 'dynamic')).toBe(true);
     });
   });
 });
