@@ -886,6 +886,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     if (!this.isSessionActive) {
       this.logger.info({ chatId }, 'No active session, starting agent loop');
       this.startAgentLoop();
+      if (!this.isSessionActive) {
+        this.logger.error(
+          { chatId, messageId },
+          'Message rejected because the bound project directory is unavailable'
+        );
+        return;
+      }
     }
 
     // Issue #4587 (part 1, review fix): enqueue this turn's reply anchor —
@@ -1085,11 +1092,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Build SDK options using BaseAgent's createSdkOptions
     // Issue #1916: Resolve cwd from CwdProvider if available (project-scoped context)
     // Issue #4448 (direction #1): when the structured resolver reports the
-    // bound directory as missing, the agent silently falls back to the workspace
-    // below (`cwd: undefined` → BaseAgent uses workspaceDir) while `/project info`
-    // still shows the stale target. Push a user-visible warning to the chat so
-    // the mismatch is no longer silent — the plain cwdProvider can't distinguish
-    // this from "unbound" (both yield undefined).
+    // bound directory as missing, fail closed. Passing cwd: undefined would make
+    // BaseAgent silently use the shared workspace and could write into the wrong
+    // project. The plain cwdProvider cannot distinguish this from "unbound".
     // Nit: the resolver subsumes cwdProvider (same resolveCwd() underneath,
     // effectiveCwd is the plain provider's return value) — call it once and use
     // the result for both the cwd and the warning check, instead of running
@@ -1110,15 +1115,17 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             [
               `⚠️ **项目绑定目录不存在**: \`${resolution.boundWorkingDir}\``,
               '',
-              '本次会话将**回退到工作空间根目录**运行（而非绑定的项目目录）。',
+              '本次消息已停止，**不会回退到工作空间根目录运行**。',
               '可能原因：容器重启时 volume 尚未就绪 / 目录被移动或卸载 / 路径大小写或规范化差异。',
               '可用 `/project reset` 回到默认，或 `/project use <dir>` 重新绑定。',
             ].join('\n')
           )
           .catch((err) => {
-            this.logger.error({ err, chatId }, 'Failed to send bound-missing cwd fallback warning');
+            this.logger.error({ err, chatId }, 'Failed to send bound-missing cwd rejection');
           });
       }
+      this.isSessionActive = false;
+      return;
     } else if (this.warnedMissingWorkingDir !== undefined) {
       // Binding recovered (bound or unbound now) — allow a future
       // bound-missing for a different (or re-vanished) target to warn again.
