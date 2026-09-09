@@ -196,10 +196,23 @@ export interface FeishuConfig {
   };
 }
 
+/** Anthropic Messages API service configuration, including compatible providers. */
+export interface AnthropicConfig {
+  apiKey?: string;
+  model?: string;
+  /** Explicit endpoint for a compatible service; omitted for Anthropic's default endpoint. */
+  apiBaseUrl?: string;
+  highModel?: string;
+  lowModel?: string;
+  multimodalModel?: string;
+}
+
 /**
+ * @deprecated Use anthropic for any Anthropic-compatible API service.
  * GLM (Zhipu AI) API configuration section.
  *
- * When using GLM provider, both apiKey and model are REQUIRED.
+ * When using GLM provider, apiKey, model, and an explicit Anthropic-compatible
+ * apiBaseUrl are REQUIRED.
  * Fallback defaults are intentionally removed for strict configuration.
  */
 export interface GlmConfig {
@@ -207,7 +220,7 @@ export interface GlmConfig {
   apiKey?: string;
   /** Model identifier - REQUIRED when apiKey is set */
   model?: string;
-  /** API base URL (overrides GLM_API_BASE_URL env var) */
+  /** Explicit Anthropic-compatible proxy URL; there is no built-in endpoint default. */
   apiBaseUrl?: string;
   /** High-capability model for complex analysis (Issue #3059) */
   highModel?: string;
@@ -462,7 +475,9 @@ export interface DisclaudeConfig {
   feishu?: FeishuConfig;
   /** Ruliu (如流) platform settings */
   ruliu?: RuliuConfig;
-  /** GLM API settings */
+  /** Anthropic Messages API service settings (including compatible providers). */
+  anthropic?: AnthropicConfig;
+  /** @deprecated Use anthropic instead. */
   glm?: GlmConfig;
   /** DeepSeek harness settings */
   deepseek?: DeepSeekConfig;
