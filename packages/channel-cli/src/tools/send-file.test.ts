@@ -11,11 +11,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Issue #4129: uploadFile is now a standalone function exported from @disclaude/core.
 // Production calls uploadFile(client, ...). Mock it to drop the client arg and delegate
 // to the same spy as the legacy client.uploadFile(...) instance method.
-const { mockIpcClient, mockUploadFile, mockGetRestIpcClient } = vi.hoisted(() => {
+const { mockChannelApiClient, mockUploadFile, mockGetChannelApiClient } = vi.hoisted(() => {
   const mockUploadFile = vi.fn();
-  const mockIpcClient = { uploadFile: mockUploadFile };
-  const mockGetRestIpcClient = vi.fn().mockReturnValue(mockIpcClient);
-  return { mockIpcClient, mockUploadFile, mockGetRestIpcClient };
+  const mockChannelApiClient = { uploadFile: mockUploadFile };
+  const mockGetChannelApiClient = vi.fn().mockReturnValue(mockChannelApiClient);
+  return { mockChannelApiClient, mockUploadFile, mockGetChannelApiClient };
 });
 
 vi.mock('@disclaude/core', () => ({
@@ -29,14 +29,14 @@ vi.mock('@disclaude/core', () => ({
   uploadFile: (...args: unknown[]) => mockUploadFile(...args.slice(1)),
 }));
 
-vi.mock('./ipc-utils.js', () => ({
+vi.mock('./channel-api-utils.js', () => ({
   // Issue #4280 (Phase 3, part 3): REST client factory — returns the shared mock.
-  getRestIpcClient: () => mockGetRestIpcClient(),
-  isIpcAvailable: vi.fn(),
+  getChannelApiClient: () => mockGetChannelApiClient(),
+  isChannelApiAvailable: vi.fn(),
   // Issue #4576: deterministic stub — the unavailable-branch tests assert the
   // fallback hint (thread-preserving +messages-reply) is appended. Mirrors
   // the real signature: filePath rides along as --file.
-  buildIpcFallbackHint: (parentMessageId?: string, options?: { filePath?: string }) =>
+  buildChannelApiFallbackHint: (parentMessageId?: string, options?: { filePath?: string }) =>
     `HINT:lark-cli im +messages-reply --message-id ${parentMessageId ?? '<om_...>'}${options?.filePath ? ` --file ${options.filePath}` : ''}`,
 }));
 
@@ -45,13 +45,13 @@ vi.mock('fs/promises', () => ({
 }));
 
 import { send_file } from './send-file.js';
-import { isIpcAvailable } from './ipc-utils.js';
+import { isChannelApiAvailable } from './channel-api-utils.js';
 
 describe('send_file', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGetRestIpcClient.mockReturnValue(mockIpcClient);
-    vi.mocked(isIpcAvailable).mockResolvedValue(true);
+    mockGetChannelApiClient.mockReturnValue(mockChannelApiClient);
+    vi.mocked(isChannelApiAvailable).mockResolvedValue(true);
     vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true, size: 1024 * 1024 } as any);
   });
 
@@ -65,19 +65,19 @@ describe('send_file', () => {
 
   describe('file path resolution', () => {
     it('should resolve relative paths using workspace dir', async () => {
-      mockIpcClient.uploadFile.mockResolvedValue({
+      mockChannelApiClient.uploadFile.mockResolvedValue({
         success: true, fileKey: 'key', fileType: 'txt', fileName: 'file.txt', fileSize: 1024,
       });
       await send_file({ filePath: 'file.txt', chatId: 'oc_test' });
-      expect(mockIpcClient.uploadFile).toHaveBeenCalledWith('oc_test', '/workspace/file.txt', undefined);
+      expect(mockChannelApiClient.uploadFile).toHaveBeenCalledWith('oc_test', '/workspace/file.txt', undefined);
     });
 
     it('should use absolute paths directly', async () => {
-      mockIpcClient.uploadFile.mockResolvedValue({
+      mockChannelApiClient.uploadFile.mockResolvedValue({
         success: true, fileKey: 'key', fileType: 'txt', fileName: 'file.txt', fileSize: 1024,
       });
       await send_file({ filePath: '/absolute/path/file.txt', chatId: 'oc_test' });
-      expect(mockIpcClient.uploadFile).toHaveBeenCalledWith('oc_test', '/absolute/path/file.txt', undefined);
+      expect(mockChannelApiClient.uploadFile).toHaveBeenCalledWith('oc_test', '/absolute/path/file.txt', undefined);
     });
   });
 
@@ -97,16 +97,16 @@ describe('send_file', () => {
     });
   });
 
-  describe('IPC availability', () => {
-    it('should return error when IPC is unavailable', async () => {
-      vi.mocked(isIpcAvailable).mockResolvedValue(false);
+  describe('REST API availability', () => {
+    it('should return error when REST API is unavailable', async () => {
+      vi.mocked(isChannelApiAvailable).mockResolvedValue(false);
       const result = await send_file({ filePath: '/test/file.txt', chatId: 'oc_test' });
       expect(result.success).toBe(false);
-      expect(result.message).toContain('IPC connection');
+      expect(result.message).toContain('REST API connection');
     });
 
     it('should append the thread-preserving lark-cli fallback hint (Issue #4576)', async () => {
-      vi.mocked(isIpcAvailable).mockResolvedValue(false);
+      vi.mocked(isChannelApiAvailable).mockResolvedValue(false);
       const result = await send_file({
         filePath: '/test/file.txt',
         chatId: 'oc_test',
@@ -117,7 +117,7 @@ describe('send_file', () => {
     });
 
     it('should pass the original filePath into the hint as --file (Issue #4576 review nit)', async () => {
-      vi.mocked(isIpcAvailable).mockResolvedValue(false);
+      vi.mocked(isChannelApiAvailable).mockResolvedValue(false);
       const result = await send_file({
         filePath: './report.pdf',
         chatId: 'oc_test',
@@ -129,7 +129,7 @@ describe('send_file', () => {
 
   describe('successful send', () => {
     it('should send file successfully and return file info', async () => {
-      mockIpcClient.uploadFile.mockResolvedValue({
+      mockChannelApiClient.uploadFile.mockResolvedValue({
         success: true, fileKey: 'file_key_123', fileType: 'pdf', fileName: 'doc.pdf', fileSize: 2048000,
       });
       const result = await send_file({ filePath: '/test/doc.pdf', chatId: 'oc_test' });
@@ -141,7 +141,7 @@ describe('send_file', () => {
     });
 
     it('should calculate correct sizeMB', async () => {
-      mockIpcClient.uploadFile.mockResolvedValue({
+      mockChannelApiClient.uploadFile.mockResolvedValue({
         success: true, fileKey: 'key', fileType: 'txt', fileName: 'file.txt', fileSize: 512000,
       });
       const result = await send_file({ filePath: '/test/file.txt', chatId: 'oc_test' });
@@ -151,7 +151,7 @@ describe('send_file', () => {
 
   describe('progress reporting (#4568)', () => {
     it('reports the file size once before the upload starts', async () => {
-      mockIpcClient.uploadFile.mockResolvedValue({
+      mockChannelApiClient.uploadFile.mockResolvedValue({
         success: true, fileKey: 'file_key_123', fileType: 'pdf', fileName: 'doc.pdf', fileSize: 2048000,
       });
       const onProgress = vi.fn();
@@ -165,8 +165,8 @@ describe('send_file', () => {
       });
     });
 
-    it('does not report progress when IPC is unavailable', async () => {
-      vi.mocked(isIpcAvailable).mockResolvedValue(false);
+    it('does not report progress when REST API is unavailable', async () => {
+      vi.mocked(isChannelApiAvailable).mockResolvedValue(false);
       const onProgress = vi.fn();
       const result = await send_file({ filePath: '/test/doc.pdf', chatId: 'oc_test', onProgress });
 
@@ -175,7 +175,7 @@ describe('send_file', () => {
     });
 
     it('behaves identically without a callback (back-compat, Claude backend)', async () => {
-      mockIpcClient.uploadFile.mockResolvedValue({
+      mockChannelApiClient.uploadFile.mockResolvedValue({
         success: true, fileKey: 'file_key_123', fileType: 'pdf', fileName: 'doc.pdf', fileSize: 2048000,
       });
       // No onProgress arg — must not throw.
@@ -184,24 +184,24 @@ describe('send_file', () => {
     });
   });
 
-  describe('IPC failure', () => {
-    it('should return error when IPC upload fails', async () => {
-      mockIpcClient.uploadFile.mockResolvedValue({ success: false });
+  describe('REST API failure', () => {
+    it('should return error when REST API upload fails', async () => {
+      mockChannelApiClient.uploadFile.mockResolvedValue({ success: false });
       const result = await send_file({ filePath: '/test/file.txt', chatId: 'oc_test' });
       expect(result.success).toBe(false);
-      expect(result.error).toContain('Failed to upload file via IPC');
+      expect(result.error).toContain('Failed to upload file via REST API');
     });
 
-    it('should include IPC error details in error message (Issue #2300)', async () => {
-      mockIpcClient.uploadFile.mockResolvedValue({
+    it('should include REST API error details in error message (Issue #2300)', async () => {
+      mockChannelApiClient.uploadFile.mockResolvedValue({
         success: false,
-        error: 'IPC_REQUEST_FAILED: Request failed with status code 400',
-        errorType: 'ipc_request_failed' as const,
+        error: 'CHANNEL_API_REQUEST_FAILED: Request failed with status code 400',
+        errorType: 'channel_api_request_failed' as const,
       });
       const result = await send_file({ filePath: '/test/file.txt', chatId: 'oc_test' });
       expect(result.success).toBe(false);
-      expect(result.error).toContain('Failed to upload file via IPC');
-      expect(result.error).toContain('IPC_REQUEST_FAILED');
+      expect(result.error).toContain('Failed to upload file via REST API');
+      expect(result.error).toContain('CHANNEL_API_REQUEST_FAILED');
     });
   });
 
@@ -211,7 +211,7 @@ describe('send_file', () => {
         response: { data: [{ code: 99991668, msg: 'file type not allowed', log_id: 'log_123', troubleshooter: 'https://example.com' }] };
       };
       platformError.response = { data: [{ code: 99991668, msg: 'file type not allowed', log_id: 'log_123', troubleshooter: 'https://example.com' }] };
-      mockIpcClient.uploadFile.mockRejectedValue(platformError);
+      mockChannelApiClient.uploadFile.mockRejectedValue(platformError);
       const result = await send_file({ filePath: '/test/file.txt', chatId: 'oc_test' });
       expect(result.success).toBe(false);
       expect(result.platformCode).toBe(99991668);
@@ -223,14 +223,14 @@ describe('send_file', () => {
     it('should extract error code from numeric code property', async () => {
       const codeError = new Error('API Error') as Error & { code: 1001 };
       codeError.code = 1001;
-      mockIpcClient.uploadFile.mockRejectedValue(codeError);
+      mockChannelApiClient.uploadFile.mockRejectedValue(codeError);
       const result = await send_file({ filePath: '/test/file.txt', chatId: 'oc_test' });
       expect(result.success).toBe(false);
       expect(result.platformCode).toBe(1001);
     });
 
     it('should handle non-Error objects in catch', async () => {
-      mockIpcClient.uploadFile.mockRejectedValue('string error');
+      mockChannelApiClient.uploadFile.mockRejectedValue('string error');
       const result = await send_file({ filePath: '/test/file.txt', chatId: 'oc_test' });
       expect(result.success).toBe(false);
       expect(result.error).toBe('Unknown error');
@@ -238,24 +238,24 @@ describe('send_file', () => {
   });
 
   describe('thread reply support (Issue #1619)', () => {
-    it('should pass parentMessageId to IPC uploadFile', async () => {
-      mockIpcClient.uploadFile.mockResolvedValue({
+    it('should pass parentMessageId to REST API uploadFile', async () => {
+      mockChannelApiClient.uploadFile.mockResolvedValue({
         success: true, fileKey: 'key', fileType: 'pdf', fileName: 'doc.pdf', fileSize: 2048,
       });
       await send_file({ filePath: '/test/doc.pdf', chatId: 'oc_test', parentMessageId: 'thread_123' });
-      expect(mockIpcClient.uploadFile).toHaveBeenCalledWith('oc_test', '/test/doc.pdf', 'thread_123');
+      expect(mockChannelApiClient.uploadFile).toHaveBeenCalledWith('oc_test', '/test/doc.pdf', 'thread_123');
     });
 
     it('should pass undefined when parentMessageId is not provided', async () => {
-      mockIpcClient.uploadFile.mockResolvedValue({
+      mockChannelApiClient.uploadFile.mockResolvedValue({
         success: true, fileKey: 'key', fileType: 'txt', fileName: 'file.txt', fileSize: 1024,
       });
       await send_file({ filePath: '/test/file.txt', chatId: 'oc_test' });
-      expect(mockIpcClient.uploadFile).toHaveBeenCalledWith('oc_test', '/test/file.txt', undefined);
+      expect(mockChannelApiClient.uploadFile).toHaveBeenCalledWith('oc_test', '/test/file.txt', undefined);
     });
 
     it('should send file successfully with thread reply', async () => {
-      mockIpcClient.uploadFile.mockResolvedValue({
+      mockChannelApiClient.uploadFile.mockResolvedValue({
         success: true, fileKey: 'file_key_456', fileType: 'png', fileName: 'image.png', fileSize: 512000,
       });
       const result = await send_file({ filePath: '/test/image.png', chatId: 'oc_test', parentMessageId: 'root_msg_789' });
@@ -268,7 +268,7 @@ describe('send_file', () => {
     it('should not extract platform code when err.code is a string', async () => {
       const error = new Error('API Error') as Error & { code: string };
       error.code = 'EACCES';
-      mockIpcClient.uploadFile.mockRejectedValue(error);
+      mockChannelApiClient.uploadFile.mockRejectedValue(error);
       const result = await send_file({ filePath: '/test/file.txt', chatId: 'oc_test' });
       expect(result.success).toBe(false);
       expect(result.platformCode).toBeUndefined();
@@ -277,7 +277,7 @@ describe('send_file', () => {
     it('should handle non-array response data gracefully', async () => {
       const error = new Error('API Error') as Error & { response: { data: object } };
       error.response = { data: { code: 123, msg: 'error' } };
-      mockIpcClient.uploadFile.mockRejectedValue(error);
+      mockChannelApiClient.uploadFile.mockRejectedValue(error);
       const result = await send_file({ filePath: '/test/file.txt', chatId: 'oc_test' });
       expect(result.success).toBe(false);
       expect(result.platformCode).toBeUndefined();
@@ -290,7 +290,7 @@ describe('send_file', () => {
       };
       error.msg = 'Fallback message';
       error.response = { data: [{ code: 9999 }] };
-      mockIpcClient.uploadFile.mockRejectedValue(error);
+      mockChannelApiClient.uploadFile.mockRejectedValue(error);
       const result = await send_file({ filePath: '/test/file.txt', chatId: 'oc_test' });
       expect(result.success).toBe(false);
       expect(result.platformMsg).toBe('Fallback message');
@@ -301,16 +301,16 @@ describe('send_file', () => {
         response: { data: Array<{ code?: number }> };
       };
       error.response = { data: [{ code: 1001 }] };
-      mockIpcClient.uploadFile.mockRejectedValue(error);
+      mockChannelApiClient.uploadFile.mockRejectedValue(error);
       const result = await send_file({ filePath: '/test/file.txt', chatId: 'oc_test' });
       expect(result.success).toBe(false);
       expect(result.platformMsg).toBe('Final fallback message');
     });
   });
 
-  describe('IPC upload fallback fields', () => {
-    it('should use fallbacks when IPC upload returns success with missing fields', async () => {
-      mockIpcClient.uploadFile.mockResolvedValue({ success: true });
+  describe('REST API upload fallback fields', () => {
+    it('should use fallbacks when REST API upload returns success with missing fields', async () => {
+      mockChannelApiClient.uploadFile.mockResolvedValue({ success: true });
       const result = await send_file({ filePath: '/test/doc.pdf', chatId: 'oc_test' });
       expect(result.success).toBe(true);
       expect(result.fileSize).toBe(0);

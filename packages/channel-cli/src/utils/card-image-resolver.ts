@@ -2,7 +2,7 @@
  * Card Image Resolver — auto-translate local image paths in card JSON to Feishu image_keys.
  *
  * Issue #2951: When Agent sends a card with local image paths (e.g., /tmp/chart.png),
- * this utility detects them, uploads via IPC, and replaces paths with Feishu image_keys.
+ * this utility detects them, uploads via REST API, and replaces paths with Feishu image_keys.
  *
  * Design decisions:
  * - Operates on the channel CLI layer (not channel adapter layer)
@@ -16,7 +16,7 @@
 import { promises as fsp } from 'fs';
 import { resolve, extname } from 'path';
 import { createLogger, uploadImage, type ToolProgressCallback } from '@disclaude/core';
-import { getRestIpcClient } from '../tools/ipc-utils.js';
+import { getChannelApiClient } from '../tools/channel-api-utils.js';
 
 const logger = createLogger('CardImageResolver');
 
@@ -78,7 +78,7 @@ export interface ResolveCardImagesResult {
 }
 
 /**
- * Upload a local image file via IPC and return the Feishu image_key.
+ * Upload a local image file via REST API and return the Feishu image_key.
  *
  * @returns The image_key, or undefined if upload failed
  */
@@ -95,9 +95,9 @@ async function uploadAndGetImageKey(filePath: string): Promise<string | undefine
       return undefined;
     }
 
-    // Issue #4280 (Phase 3, part 3): REST-only — direct RestIpcClient.
-    const ipcClient = getRestIpcClient();
-    const result = await uploadImage(ipcClient, absolutePath);
+    // Issue #4280 (Phase 3, part 3): REST-only — direct ChannelApiClient.
+    const apiClient = getChannelApiClient();
+    const result = await uploadImage(apiClient, absolutePath);
 
     if (result.success && result.imageKey) {
       logger.debug({ filePath: absolutePath, imageKey: result.imageKey }, 'Image uploaded successfully');

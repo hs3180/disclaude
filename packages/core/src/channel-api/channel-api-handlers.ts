@@ -1,17 +1,4 @@
-/**
- * Channel API handler contracts.
- *
- * Issue #4168 (Phase 3 residual): these interfaces originally lived in
- * `unix-socket-server.ts`, where they described the handlers the IPC server
- * dispatched to. The Unix-socket transport is gone (REST is the only channel
- * between the MCP server / push-cli and PrimaryNode), but the contracts
- * survive: the REST-facing methods (`resolveApiHandlers` on PrimaryNode) and
- * the channel registration surface (`registerChannelHandlers`) route through
- * exactly these shapes. Extracted here so the dead transport files could be
- * deleted without touching the live handler surface.
- *
- * @module ipc/channel-api-handlers
- */
+/** Channel handler contracts used by PrimaryNode HTTP routes and registered channels. */
 
 import type { FeishuCard } from '../types/platform.js';
 

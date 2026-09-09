@@ -5,7 +5,7 @@
  * that are automatically converted to user messages when interactions occur.
  *
  * Issue #1571 (Phase 2): the channel client passes raw parameters (question, options)
- * via sendInteractive IPC. Primary Node owns the full card building lifecycle.
+ * via sendInteractive REST API. Primary Node owns the full card building lifecycle.
  * Issue #1572: Interactive context management has been moved to Primary Node's
  * InteractiveContextStore. The channel client is now a pure forwarding client.
  *
@@ -16,7 +16,7 @@ import {
   createLogger,
   sendInteractive,
 } from '@disclaude/core';
-import { isIpcAvailable, getIpcErrorMessage, getRestIpcClient, buildIpcFallbackHint } from './ipc-utils.js';
+import { isChannelApiAvailable, getChannelApiErrorMessage, getChannelApiClient, buildChannelApiFallbackHint } from './channel-api-utils.js';
 import { getMessageSentCallback } from './callback-manager.js';
 import type { SendInteractiveResult, ActionPromptMap, InteractiveOption } from './types.js';
 
@@ -26,7 +26,7 @@ const logger = createLogger('InteractiveMessage');
  * Send an interactive message by forwarding raw parameters to Primary Node.
  *
  * Issue #1571: MCP Server no longer builds cards. It passes raw parameters
- * (question, options) via sendInteractive IPC. Primary Node builds the card,
+ * (question, options) via sendInteractive REST API. Primary Node builds the card,
  * sends it, and registers action prompts.
  *
  * Issue #1572: Action prompt management is handled by Primary Node's
@@ -119,25 +119,25 @@ export async function send_interactive_message(params: {
       }
     }
 
-    // Check IPC availability - IPC is required for sending messages (Issue #1355: async connection probe)
-    if (!(await isIpcAvailable())) {
-      const errorMsg = 'IPC service unavailable. Please ensure Primary Node is running.';
+    // Check REST API availability - REST API is required for sending messages (Issue #1355: async connection probe)
+    if (!(await isChannelApiAvailable())) {
+      const errorMsg = 'REST API service unavailable. Please ensure Primary Node is running.';
       logger.error({ chatId }, errorMsg);
       return {
         success: false,
         error: errorMsg,
         // Issue #4576: actionable fallback — +messages-send loses thread
         // attribution in topic groups; +messages-reply preserves it.
-        message: `❌ IPC 服务不可用。请检查 Primary Node 服务是否正在运行。${buildIpcFallbackHint(parentMessageId)}`,
+        message: `❌ REST API 服务不可用。请检查 Primary Node 服务是否正在运行。${buildChannelApiFallbackHint(parentMessageId)}`,
       };
     }
 
-    // Issue #1571: Forward raw params via sendInteractive IPC.
+    // Issue #1571: Forward raw params via sendInteractive REST API.
     // Primary Node builds the card, sends it, and registers action prompts.
-    logger.debug({ chatId, parentMessageId }, 'Forwarding raw params via sendInteractive IPC');
-    // Issue #4280 (Phase 3, part 3): REST-only — direct RestIpcClient.
-    const ipcClient = getRestIpcClient();
-    const result = await sendInteractive(ipcClient, chatId, {
+    logger.debug({ chatId, parentMessageId }, 'Forwarding raw params via sendInteractive REST API');
+    // Issue #4280 (Phase 3, part 3): REST-only — direct ChannelApiClient.
+    const apiClient = getChannelApiClient();
+    const result = await sendInteractive(apiClient, chatId, {
       question,
       options,
       title: params.title,
@@ -147,11 +147,11 @@ export async function send_interactive_message(params: {
     });
 
     if (!result.success) {
-      const errorMsg = getIpcErrorMessage(result.errorType, result.error);
-      logger.error({ chatId, errorType: result.errorType, error: result.error }, 'sendInteractive IPC failed');
+      const errorMsg = getChannelApiErrorMessage(result.errorType, result.error);
+      logger.error({ chatId, errorType: result.errorType, error: result.error }, 'sendInteractive REST API failed');
       return {
         success: false,
-        error: result.error ?? 'Failed to send interactive message via IPC',
+        error: result.error ?? 'Failed to send interactive message via REST API',
         message: errorMsg,
       };
     }
@@ -177,19 +177,6 @@ export async function send_interactive_message(params: {
     return { success: false, error: errorMessage, message: `❌ Failed to send interactive message: ${errorMessage}` };
   }
 }
-
-// ============================================================================
-// IPC Server for Cross-Process Communication — REMOVED (Issue #4280 part 4)
-// ============================================================================
-// The former package no longer hosted a UnixSocketIpcServer. It was the
-// pre-#4280 sibling of PrimaryNode's own IPC server and had zero production
-// callers once part 3 (#4547) moved every MCP tool to the REST client:
-// PrimaryNode serves `/api/*` via HttpApiServer and registers channel
-// handlers on its own instance (primary-node.ts startIpcServer), while MCP
-// The channel CLI connects as a REST client
-// via getRestIpcClient(). The startIpcServer/stopIpcServer/
-// isIpcServerRunning/getIpcServerSocketPath/registerFeishuHandlers/
-// unregisterFeishuHandlers exports were dead code and are gone.
 
 /**
  * Alias for send_interactive_message for consistency with other tool names.

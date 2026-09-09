@@ -239,7 +239,7 @@ export async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Derive IPC host from REST channel config if available
+  // Derive REST API host from REST channel config if available
   const restEntry = channelEntries.find((e) => e.type === 'rest');
   const host = (restEntry?.config as { host?: string } | undefined)?.host || '0.0.0.0';
 
@@ -523,10 +523,10 @@ export async function main(): Promise<void> {
     if (options.apiPort !== undefined) {
       // #4608: bind explicitly to IPv4 loopback, NOT 'localhost'. A 'localhost'
       // bind can resolve ::1-first and end up IPv6-only, while undici fetch
-      // (the REST IPC client) tries 127.0.0.1 first — the exact family split
+      // (the REST API client) tries 127.0.0.1 first — the exact family split
       // observed in docs/channel-skill-rest-live-verification.md §"loopback
-      // only". REST IPC is loopback-only by design, so the IPv4 pin is always
-      // correct; mirror it client-side via DISCLAUDE_REST_IPC_BASE_URL.
+      // only". REST API is loopback-only by design, so the IPv4 pin is always
+      // correct; mirror it client-side via DISCLAUDE_API_BASE_URL.
       const apiHost = '127.0.0.1';
       const apiPortReady = options.apiPort === 0 || await isPortAvailable(options.apiPort, apiHost);
       if (!apiPortReady) {
@@ -570,19 +570,19 @@ export async function main(): Promise<void> {
       }
 
       // Issue #4279: wire REST /api/upload-file to the channel's uploadFile
-      // capability (REST parity with the IPC method).
+      // capability (REST parity with the REST API method).
       httpApiServer.setUploadFileHandler((chatId, filePath, threadId) =>
         primaryNode.uploadFile(chatId, filePath, threadId)
       );
 
       // Issue #4279: wire REST /api/send-message to the channel's sendMessage
-      // capability (REST parity with the IPC method).
+      // capability (REST parity with the REST API method).
       httpApiServer.setSendMessageHandler((chatId, text, threadId, mentions) =>
         primaryNode.sendMessage(chatId, text, threadId, mentions)
       );
 
       // Issue #4279: wire REST /api/send-card to the channel's sendCard
-      // capability (REST parity with the IPC method).
+      // capability (REST parity with the REST API method).
       httpApiServer.setSendCardHandler((chatId, card, threadId, description) =>
         primaryNode.sendCard(chatId, card, threadId, description)
       );
@@ -594,16 +594,16 @@ export async function main(): Promise<void> {
       );
 
       // Issue #4279: wire REST GET /api/temp-chats to the channel's
-      // listTempChats capability (REST parity with the IPC method).
+      // listTempChats capability (REST parity with the REST API method).
       httpApiServer.setListTempChatsHandler(() => primaryNode.listTempChats());
 
       // Issue #4279: wire REST /api/upload-image to the channel's uploadImage
-      // capability (REST parity with the IPC method).
+      // capability (REST parity with the REST API method).
       httpApiServer.setUploadImageHandler((filePath) => primaryNode.uploadImage(filePath));
 
       // Issue #4281: wire REST /api/mark-chat-responded to the channel's
       // markChatResponded capability (temp-chat lifecycle; REST parity with
-      // the IPC method).
+      // the REST API method).
       httpApiServer.setMarkChatRespondedHandler((chatId, response) =>
         primaryNode.markChatResponded(chatId, response)
       );
@@ -614,7 +614,7 @@ export async function main(): Promise<void> {
       const baseUrl = `http://127.0.0.1:${actualPort}`;
       // Keep in-process managed clients on the address actually bound by the
       // server. A configured port of 0 is not a usable client address.
-      process.env.DISCLAUDE_REST_IPC_BASE_URL = baseUrl;
+      process.env.DISCLAUDE_API_BASE_URL = baseUrl;
       // Cron callbacks may spawn channel CLI immediately. Never enable them
       // before the listening server's real (possibly dynamic) address exists.
       await primaryNode.startDeferredScheduler();

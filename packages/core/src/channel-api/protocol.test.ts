@@ -1,30 +1,23 @@
-/**
- * Unit tests for IPC Protocol
- *
- * Issue #4168 (Phase 3 residual): the Unix-socket config surface
- * (DEFAULT_IPC_CONFIG / generateSocketPath / IpcConfig) and the wire-frame
- * types (IpcRequest / IpcResponse) are gone with the transport — this file
- * now covers the payload surface the REST client + facade still share.
- */
+/** Tests for Channel API request and response payloads. */
 
 import { describe, it, expect } from 'vitest';
 import type {
-  IpcRequestPayloads,
-  IpcResponsePayloads,
+  ChannelApiRequestPayloads,
+  ChannelApiResponsePayloads,
 } from './protocol.js';
 
-describe('IPC Protocol payload surface', () => {
+describe('REST API Protocol payload surface', () => {
   it('response payloads for messaging methods carry success', () => {
-    const sendMessage: IpcResponsePayloads['sendMessage'] = { success: true };
-    const sendCard: IpcResponsePayloads['sendCard'] = { success: true };
-    const pushToAgent: IpcResponsePayloads['pushToAgent'] = { success: true };
+    const sendMessage: ChannelApiResponsePayloads['sendMessage'] = { success: true };
+    const sendCard: ChannelApiResponsePayloads['sendCard'] = { success: true };
+    const pushToAgent: ChannelApiResponsePayloads['pushToAgent'] = { success: true };
     expect(sendMessage.success).toBe(true);
     expect(sendCard.success).toBe(true);
     expect(pushToAgent.success).toBe(true);
   });
 
   it('uploadFile response carries the uploaded-file descriptor', () => {
-    const uploadFile: IpcResponsePayloads['uploadFile'] = {
+    const uploadFile: ChannelApiResponsePayloads['uploadFile'] = {
       success: true,
       fileKey: 'fk',
       fileType: 'file',
@@ -35,7 +28,7 @@ describe('IPC Protocol payload surface', () => {
   });
 
   it('sendInteractive request carries the raw card params', () => {
-    const payload: IpcRequestPayloads['sendInteractive'] = {
+    const payload: ChannelApiRequestPayloads['sendInteractive'] = {
       chatId: 'oc_1',
       question: 'q',
       options: [{ text: 't', value: 'v', type: 'primary' }],
@@ -47,7 +40,7 @@ describe('IPC Protocol payload surface', () => {
   });
 
   it('markChatResponded request carries the responder record', () => {
-    const payload: IpcRequestPayloads['markChatResponded'] = {
+    const payload: ChannelApiRequestPayloads['markChatResponded'] = {
       chatId: 'oc_1',
       response: { selectedValue: 'v', responder: 'u', repliedAt: '2026-08-24T00:00:00Z' },
     };

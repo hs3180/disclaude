@@ -1,28 +1,18 @@
-/**
- * IPC Protocol definitions for cross-process communication.
- *
- * Defines the channel-method request/response payload types shared by the
- * REST IPC client (`rest-ipc-client.ts`) and the protocol facade
- * (`ipc-client-facade.ts`). The Unix-socket wire format that also lived here
- * is gone with the transport (#4168 Phase 3); what remains is the
- * method/payload surface the REST routes mirror.
- *
- * @module core/ipc/protocol
- */
+/** Channel API request and response payloads shared by the HTTP client and method helpers. */
 
 import type { FeishuCard } from '../types/platform.js';
 
 /**
- * IPC request types.
+ * REST API request types.
  */
-export type IpcRequestType =
+export type ChannelApiRequestType =
   | 'ping'
-  // Platform-agnostic messaging operations (Issue #1574: Phase 5 of IPC refactor)
+  // Platform-agnostic messaging operations (Issue #1574: Phase 5 of REST API refactor)
   | 'sendMessage'
   | 'sendCard'
   | 'uploadFile'
   | 'uploadImage'
-  // Raw-param interactive card (Issue #1570: Phase 1 of IPC refactor)
+  // Raw-param interactive card (Issue #1570: Phase 1 of REST API refactor)
   | 'sendInteractive'
   // Temporary chat lifecycle management (Issue #1703)
   | 'listTempChats'
@@ -31,9 +21,9 @@ export type IpcRequestType =
   | 'pushToAgent';
 
 /**
- * IPC request payloads.
+ * REST API request payloads.
  */
-export interface IpcRequestPayloads {
+export interface ChannelApiRequestPayloads {
   ping: Record<string, never>;
   sendMessage: {
     chatId: string;
@@ -78,9 +68,9 @@ export interface IpcRequestPayloads {
 }
 
 /**
- * IPC response payloads.
+ * REST API response payloads.
  */
-export interface IpcResponsePayloads {
+export interface ChannelApiResponsePayloads {
   ping: { pong: boolean };
   sendMessage: { success: boolean };
   sendCard: { success: boolean };

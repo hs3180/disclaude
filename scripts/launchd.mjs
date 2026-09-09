@@ -214,8 +214,8 @@ export function buildProgramArguments(nodePath, caffeinatePath = getCaffeinatePa
  * @returns {string | null} base URL env value, or null when the default
  *   already matches (no env entry needed)
  */
-export function resolveRestIpcBaseUrl(apiPort) {
-  const override = process.env.DISCLAUDE_REST_IPC_BASE_URL;
+export function resolveRestChannelApiBaseUrl(apiPort) {
+  const override = process.env.DISCLAUDE_API_BASE_URL;
   if (override) {
     // Operator set it explicitly — never clobber their value.
     return null;
@@ -228,7 +228,7 @@ function generatePlist() {
   const caffeinatePath = getCaffeinatePath();
   const programArgs = buildProgramArguments(nodePath, caffeinatePath);
   const apiPort = resolveApiPort();
-  const restIpcBaseUrl = resolveRestIpcBaseUrl(apiPort);
+  const restChannelApiBaseUrl = resolveRestChannelApiBaseUrl(apiPort);
 
   // Issue #2934: Application logs go through pino file transport
   // (triggered by LOG_TO_FILE env var). Issue #3416: pino-roll removed,
@@ -270,7 +270,7 @@ ${programArgs.map((a) => `    <string>${xmlEscape(a)}</string>`).join('\n')}
   <dict>
     <key>PATH</key>
     <string>${xmlEscape(process.env.PATH ?? '')}</string>
-${restIpcBaseUrl ? `    <key>DISCLAUDE_REST_IPC_BASE_URL</key>\n    <string>${xmlEscape(restIpcBaseUrl)}</string>\n` : ''}    <key>HOME</key>
+${restChannelApiBaseUrl ? `    <key>DISCLAUDE_API_BASE_URL</key>\n    <string>${xmlEscape(restChannelApiBaseUrl)}</string>\n` : ''}    <key>HOME</key>
     <string>${homedir()}</string>
     <key>NODE_ENV</key>
     <string>production</string>
@@ -292,9 +292,9 @@ ${restIpcBaseUrl ? `    <key>DISCLAUDE_REST_IPC_BASE_URL</key>\n    <string>${xm
   console.log(
     `  Caffeinate: ${caffeinatePath ? `enabled (${caffeinatePath} -s)` : 'not available'}`
   );
-  console.log(`  API server: --api-port ${apiPort} (REST IPC for MCP tools; Issue #4576)`);
+  console.log(`  API server: --api-port ${apiPort} (REST API for MCP tools; Issue #4576)`);
   console.log(
-    `  REST IPC base URL env: ${restIpcBaseUrl ? `${restIpcBaseUrl} (fixed override)` : 'set after dynamic HTTP listen readiness'}`
+    `  REST API base URL env: ${restChannelApiBaseUrl ? `${restChannelApiBaseUrl} (fixed override)` : 'set after dynamic HTTP listen readiness'}`
   );
   console.log(
     `  API token: ${process.env.DISCLAUDE_LAUNCHD_API_TOKEN ? 'enabled (--api-token)' : 'not set (GET-only routes are token-exempt)'}`

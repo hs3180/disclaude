@@ -313,12 +313,12 @@ export interface ChannelApiHandlersOptions {
 /**
  * Create common ChannelApiHandlers from a channel instance.
  *
- * Extracts the shared IPC handler pattern (sendMessage, sendCard, uploadFile)
+ * Extracts the shared REST API handler pattern (sendMessage, sendCard, uploadFile)
  * that was previously duplicated in each channel descriptor's setup() method.
  * Callers can spread the result and add channel-specific handlers
  * (sendInteractive, listTempChats, etc.) on top.
  *
- * This unifies the IPC handler creation with the same `channel.sendMessage()`
+ * This unifies the REST API handler creation with the same `channel.sendMessage()`
  * delegation pattern used by `createChannelCallbacksFactory`.
  *
  * @see createChannelCallbacksFactory — for ChatAgentCallbacks (worker-to-channel),
@@ -350,7 +350,7 @@ export function createChannelApiHandlers(
       try {
         await channel.sendMessage({ chatId, type: 'text', text, threadId, mentions });
       } catch (error) {
-        logger.error({ err: error, chatId, channel: channelName, handler: 'sendMessage' }, 'IPC handler failed');
+        logger.error({ err: error, chatId, channel: channelName, handler: 'sendMessage' }, 'REST API handler failed');
         throw error;
       }
     },
@@ -364,7 +364,7 @@ export function createChannelApiHandlers(
       try {
         await channel.sendMessage({ chatId, type: 'card', card, threadId, description });
       } catch (error) {
-        logger.error({ err: error, chatId, channel: channelName, handler: 'sendCard' }, 'IPC handler failed');
+        logger.error({ err: error, chatId, channel: channelName, handler: 'sendCard' }, 'REST API handler failed');
         throw error;
       }
     },
@@ -377,7 +377,7 @@ export function createChannelApiHandlers(
       try {
         await channel.sendMessage({ chatId, type: 'file', filePath, threadId });
       } catch (error) {
-        logger.error({ err: error, chatId, channel: channelName, handler: 'uploadFile' }, 'IPC handler failed');
+        logger.error({ err: error, chatId, channel: channelName, handler: 'uploadFile' }, 'REST API handler failed');
         throw error;
       }
       // NOTE: fileKey and fileSize are synthetic placeholders.

@@ -10,13 +10,13 @@
  */
 
 import { createLogger, pushToAgent } from '@disclaude/core';
-import { isIpcAvailable, getIpcErrorMessage, getRestIpcClient } from './ipc-utils.js';
+import { isChannelApiAvailable, getChannelApiErrorMessage, getChannelApiClient } from './channel-api-utils.js';
 import type { SendMessageResult } from './types.js';
 
 const logger = createLogger('PushToAgent');
 
 /**
- * Push an instruction to a chat agent via IPC.
+ * Push an instruction to a chat agent via REST API.
  *
  * @param params.chatId - Target chat ID
  * @param params.message - The instruction text to push
@@ -40,27 +40,27 @@ export async function push_to_agent(params: {
       throw new Error('chatId is required');
     }
 
-    // Check IPC availability
-    if (!(await isIpcAvailable())) {
-      const errorMsg = 'IPC service unavailable. Please ensure Primary Node is running.';
+    // Check REST API availability
+    if (!(await isChannelApiAvailable())) {
+      const errorMsg = 'REST API service unavailable. Please ensure Primary Node is running.';
       logger.error({ chatId }, errorMsg);
       return {
         success: false,
         error: errorMsg,
-        message: '❌ IPC 服务不可用。请检查 Primary Node 服务是否正在运行。',
+        message: '❌ REST API 服务不可用。请检查 Primary Node 服务是否正在运行。',
       };
     }
 
-    logger.debug({ chatId }, 'Using IPC for push_to_agent');
-    // Issue #4280 (Phase 3, part 3): REST-only — direct RestIpcClient.
-    const ipcClient = getRestIpcClient();
-    const result = await pushToAgent(ipcClient, chatId, message);
+    logger.debug({ chatId }, 'Using REST API for push_to_agent');
+    // Issue #4280 (Phase 3, part 3): REST-only — direct ChannelApiClient.
+    const apiClient = getChannelApiClient();
+    const result = await pushToAgent(apiClient, chatId, message);
     if (!result.success) {
-      const errorMsg = getIpcErrorMessage(result.errorType, result.error);
-      logger.error({ chatId, errorType: result.errorType, error: result.error }, 'IPC push_to_agent failed');
+      const errorMsg = getChannelApiErrorMessage(result.errorType, result.error);
+      logger.error({ chatId, errorType: result.errorType, error: result.error }, 'REST API push_to_agent failed');
       return {
         success: false,
-        error: result.error ?? 'Failed to push to agent via IPC',
+        error: result.error ?? 'Failed to push to agent via REST API',
         message: errorMsg,
       };
     }

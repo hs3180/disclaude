@@ -3,7 +3,7 @@
  *
  * Checks macOS power management settings at startup. If auto-sleep is enabled
  * (pmset sleep > 0), logs a WARNING because system sleep can disrupt
- * long-lived connections (WebSocket, Unix Socket IPC, etc.).
+ * long-lived connections (WebSocket, HTTP, etc.).
  *
  * Issue #2263: Startup check for macOS auto-sleep setting.
  *
@@ -61,7 +61,7 @@ export function checkMacAutoSleep(): MacSleepCheckResult {
       logger.warn(
         { sleepMinutes },
         'macOS auto-sleep is enabled. This may cause long-lived connection ' +
-        'disruptions (WebSocket, IPC, etc.) when the system sleeps. ' +
+        'disruptions (WebSocket, REST API, etc.) when the system sleeps. ' +
         'Consider running: sudo pmset -a sleep 0'
       );
       return { checked: true, sleepEnabled: true, sleepMinutes };

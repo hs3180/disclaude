@@ -31,7 +31,7 @@ There is **no single-prompt CLI mode** (`--prompt`/`feishu` subcommands were rem
 
 | Thing | Value |
 |---|---|
-| API (REST IPC) port | **19200** default — plist, docker-compose, and the channel-CLI client all use it (`REST_IPC_DEFAULT_BASE_URL = http://localhost:19200`) |
+| API port | OS-assigned by default; managed agents receive `DISCLAUDE_API_BASE_URL`. Standalone clients set it explicitly or use `--base-url`. Docker exposes its configured HTTP port. |
 | Key REST routes | `/api/health/detailed`, `/api/push`, `/api/send-card`, `/api/send-interactive`, `/api/send-message`, `/api/topic-stream` |
 | launchd plist | `~/Library/LaunchAgents/com.disclaude.primary.plist`, label `com.disclaude.primary` |
 | launchd logs | `~/Library/Logs/disclaude/{disclaude-combined.log, launchd-stdout.log, launchd-stderr.log}` (not `/tmp`) |
@@ -45,7 +45,7 @@ Restart policy: only restart when the user asks. Prefer `npm run launchd:restart
 
 | Package | Purpose |
 |---|---|
-| `packages/core` | Config, agents, SDK provider layer, IPC (REST client/server), channels abstraction, control commands, scheduling |
+| `packages/core` | Config, agents, SDK provider layer, REST API (REST client/server), channels abstraction, control commands, scheduling |
 | `packages/primary-node` | Primary Node runtime: channel impls (Feishu, REST), ChatAgent pool, control handler, scheduler, HTTP API |
 | `packages/channel-cli` | Channel messaging tools (`send_card`, `send_file`, …), talks to Primary Node over REST |
 | `packages/voice-orchestrator` | Voice intent snapshot store (MVP) |
@@ -53,7 +53,7 @@ Restart policy: only restart when the user asks. Prefer `npm run launchd:restart
 ### Entry points
 
 - `bin/disclaude.js` — routes `disclaude start` → `packages/primary-node/src/cli.ts`, `disclaude channel` → `packages/channel-cli/src/cli.ts`, `disclaude chromium-cdp` → launchd script.
-- `packages/primary-node/src/cli.ts` is a thin bootstrap (pre-scans `--config` into `DISCLAUDE_CONFIG_PATH`, Issue #4654); the real parser is `cli-main.ts`: subcommand `start`, flags `--config/-c`, `--api-port`, `--api-token`. The channel CLI additionally accepts `--base-url` / `DISCLAUDE_REST_IPC_BASE_URL` (#4801).
+- `packages/primary-node/src/cli.ts` is a thin bootstrap (pre-scans `--config` into `DISCLAUDE_CONFIG_PATH`, Issue #4654); the real parser is `cli-main.ts`: subcommand `start`, flags `--config/-c`, `--api-port`, `--api-token`. The channel CLI additionally accepts `--base-url` / `DISCLAUDE_API_BASE_URL` (#4801).
 
 ### Data flow (Feishu mode)
 
@@ -78,7 +78,7 @@ Feishu WS event → handleMessageReceive() [channels/feishu/message-handler.ts]
 Config is file-based (`disclaude.config.yaml`), **gitignored** (holds secrets). Copy from the committed, canonical **`disclaude.config.example.yaml`** — it is the authoritative full reference and this section only highlights essentials. Loader searches the project root, then `$HOME`.
 
 - **Provider resolution**: `agent.provider` (`anthropic` | `glm`) if set; otherwise GLM wins when `glm.apiKey` is present, else Anthropic. GLM is usually routed through an Anthropic-compatible base URL (`glm.apiBaseUrl`).
-- **Env fallback** is minimal: `ANTHROPIC_API_KEY` (when provider is anthropic), `WORKSPACE_DIR` / `DISCLAUDE_WORKSPACE_DIR` (override `workspace.dir`), `DISCLAUDE_CONFIG_PATH`, `DISCLAUDE_REST_IPC_BASE_URL`, logging knobs. See `docs/environment-variables.md`.
+- **Env fallback** is minimal: `ANTHROPIC_API_KEY` (when provider is anthropic), `WORKSPACE_DIR` / `DISCLAUDE_WORKSPACE_DIR` (override `workspace.dir`), `DISCLAUDE_CONFIG_PATH`, `DISCLAUDE_API_BASE_URL`, logging knobs. See `docs/environment-variables.md`.
 - **`agent` essentials**: `provider`, `agentBackend`, `model`, `permissionMode` (`default`|`bypassPermissions`; bots default bypass), tier models (`high/low/multimodalModel`), `maxConcurrentTasks`, `enableAgentTeams`, and the codex block below.
 - **`feishu`**: `appId`/`appSecret` auto-enable the Feishu channel; `deduplication.{maxIds,maxAgeMs}`, `cliChatId`, `streamingCard`, `topicNotify`.
 - Advanced keys (`channels.rest`, `transport` (local/http distributed), `messaging`, `sessionRestore`, `ruliu`, `glm` tiers) — see the example file.
@@ -121,7 +121,7 @@ Vitest runs single-fork (OOM-safe), coverage via v8 with **70% thresholds** (lin
 1. **No `vi.mock()` for external SDKs.** ESLint (`eslint.config.js`, `no-restricted-syntax`) blocks `vi.mock()` of `@anthropic-ai/*` and `@larksuiteoapi/*` — CI fails on it. Intercept HTTP with **nock** (or recorded fixtures).
 2. **Network isolation** on by default (`tests/setup.ts`): external requests blocked, only localhost allowed; opt specific hosts in via `allowHost(host)`.
 3. **Don't mock the mechanism under test** — keep the real setTimeout→abort chain (use `vi.useFakeTimers`), etc.
-4. **Hygiene**: avoid needless `async`; free resources (IPC server/client, temp files) in `try/finally`; integration tests go under `tests/integration/`, not in `packages/*/src`.
+4. **Hygiene**: avoid needless `async`; free resources (REST API server/client, temp files) in `try/finally`; integration tests go under `tests/integration/`, not in `packages/*/src`.
 5. **Build before delete** when refactoring tests: add replacement tests first so coverage doesn't drop below 70%, then remove old ones.
 
 ## Common Pitfalls

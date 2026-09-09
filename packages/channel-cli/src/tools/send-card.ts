@@ -7,27 +7,27 @@
  * @module channel-cli/tools/send-card
  */
 
-import { createLogger, sendCard, type FeishuCard, type IpcMethodResult } from '@disclaude/core';
+import { createLogger, sendCard, type FeishuCard, type ChannelApiMethodResult } from '@disclaude/core';
 import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
-import { isIpcAvailable, getIpcErrorMessage, getRestIpcClient, buildIpcFallbackHint } from './ipc-utils.js';
+import { isChannelApiAvailable, getChannelApiErrorMessage, getChannelApiClient, buildChannelApiFallbackHint } from './channel-api-utils.js';
 import { invokeMessageSentCallback } from './callback-manager.js';
 import type { SendMessageResult } from './types.js';
 
 const logger = createLogger('SendCard');
 
 /**
- * Send card message via IPC to PrimaryNode's LarkClientService.
+ * Send card message via REST API to PrimaryNode's LarkClientService.
  */
-async function sendCardViaIpc(
+async function sendCardViaChannelApi(
   chatId: string,
   card: Record<string, unknown>,
   threadId?: string,
   description?: string
-): Promise<IpcMethodResult & { messageId?: string }> {
-  // Issue #4280 (Phase 3, part 3): REST-only — direct RestIpcClient.
-  const ipcClient = getRestIpcClient();
+): Promise<ChannelApiMethodResult & { messageId?: string }> {
+  // Issue #4280 (Phase 3, part 3): REST-only — direct ChannelApiClient.
+  const apiClient = getChannelApiClient();
   // Card has been validated by isValidFeishuCard() before this call
-  return await sendCard(ipcClient, chatId, card as FeishuCard, threadId, description);
+  return await sendCard(apiClient, chatId, card as FeishuCard, threadId, description);
 }
 
 /**
@@ -72,27 +72,27 @@ export async function send_card(params: {
 
     // Card preprocessing is performed by the channel CLI before this transport function.
 
-    // Check IPC availability (Issue #1355: async connection probe)
-    if (!(await isIpcAvailable())) {
-      const errorMsg = 'IPC service unavailable. Please ensure Primary Node is running.';
+    // Check REST API availability (Issue #1355: async connection probe)
+    if (!(await isChannelApiAvailable())) {
+      const errorMsg = 'REST API service unavailable. Please ensure Primary Node is running.';
       logger.error({ chatId }, errorMsg);
       return {
         success: false,
         error: errorMsg,
         // Issue #4576: actionable fallback — +messages-send loses thread
         // attribution in topic groups; +messages-reply preserves it.
-        message: `❌ IPC 服务不可用。请检查 Primary Node 服务是否正在运行。${buildIpcFallbackHint(parentMessageId)}`,
+        message: `❌ REST API 服务不可用。请检查 Primary Node 服务是否正在运行。${buildChannelApiFallbackHint(parentMessageId)}`,
       };
     }
 
-    logger.debug({ chatId, parentMessageId }, 'Using IPC for card message');
-    const result = await sendCardViaIpc(chatId, card, parentMessageId);
+    logger.debug({ chatId, parentMessageId }, 'Using REST API for card message');
+    const result = await sendCardViaChannelApi(chatId, card, parentMessageId);
     if (!result.success) {
-      const errorMsg = getIpcErrorMessage(result.errorType, result.error);
-      logger.error({ chatId, errorType: result.errorType, error: result.error }, 'IPC card message failed');
+      const errorMsg = getChannelApiErrorMessage(result.errorType, result.error);
+      logger.error({ chatId, errorType: result.errorType, error: result.error }, 'REST API card message failed');
       return {
         success: false,
-        error: result.error ?? 'Failed to send card via IPC',
+        error: result.error ?? 'Failed to send card via REST API',
         message: errorMsg,
       };
     }
