@@ -907,21 +907,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       await this.historyManager.loadFirstMessageHistory();
     }
 
-    // Issue #1230: Attach chat history on first message for new sessions
-    // Use pre-loaded firstMessageHistoryContext if no context was provided (passive mode).
-    // consumeFirstMessageContext() returns the value and clears it so it attaches to
-    // exactly one message (consume-once).
-    let effectiveChatHistoryContext = chatHistoryContext;
-    if (!effectiveChatHistoryContext) {
-      const preloaded = this.historyManager.consumeFirstMessageContext();
-      if (preloaded) {
-        effectiveChatHistoryContext = preloaded;
-        this.logger.info(
-          { chatId, messageId, historyLength: effectiveChatHistoryContext.length },
-          'Using pre-loaded chat history for first message'
-        );
-      }
-    }
+    // One bounded snapshot per instance/recovery session (#4795). Explicit
+    // receive-time history wins on the first message and consumes the stash too;
+    // subsequent turns retain only cheap log-path hints, not repeated snapshots.
+    const effectiveChatHistoryContext = this.historyManager.consumeFirstMessageContext(chatHistoryContext);
 
     // Get capabilities for message building
     const capabilities = this.callbacks.getCapabilities?.(chatId);
@@ -935,7 +924,6 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         senderOpenId,
         attachments,
         chatHistoryContext: effectiveChatHistoryContext,
-        persistedHistoryContext: this.historyManager.persistedHistoryContext,
         chatLogFilePaths: this.historyManager.chatLogFilePaths,
         chatType: this.chatType,
         threadContext,
@@ -1999,12 +1987,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                     'Re-injected chat history into empty-turn replay context ' +
                       '(stale receive-time snapshot param dropped) (Issue #4391)'
                   );
-                  // Issue #4391 (part 3 review nit): the fresh stash supersedes
-                  // the session-start persisted snapshot (same getChatHistory
-                  // source, fetched later). Drop the snapshot CONTENT so the
-                  // replay's message renders one history section instead of two;
-                  // the log-paths hint survives inside history-manager.
-                  this.historyManager.dropPersistedHistoryContent();
+                  // The single snapshot is consumed by the replay. Log paths
+                  // survive independently; no second persisted stash is sent.
                 }
                 // Session-only teardown: close query+channel, keep this agent
                 // (history, restartManager accounting, thread roots) intact.

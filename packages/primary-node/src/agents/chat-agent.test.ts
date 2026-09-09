@@ -264,6 +264,18 @@ describe('ChatAgent (primary-node)', () => {
   });
 
   describe('processMessage', () => {
+    it('injects one bounded history section on the first message and none on later turns (#4795)', async () => {
+      callbacks.getChatHistory.mockResolvedValue('stored snapshot' as never);
+      await chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'first', messageId: 'history-1', chatHistoryContext: 'explicit first snapshot' });
+      await chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'second', messageId: 'history-2', chatHistoryContext: 'repeated receive-time snapshot' });
+      const builder = (chatAgent as any).messageBuilder.buildEnhancedContent;
+      expect(builder.mock.calls[0][0].chatHistoryContext).toBe('explicit first snapshot');
+      expect(builder.mock.calls[0][0].persistedHistoryContext).toBeUndefined();
+      expect(builder.mock.calls[1][0].chatHistoryContext).toBeUndefined();
+      expect(builder.mock.calls[1][0].persistedHistoryContext).toBeUndefined();
+      expect(callbacks.getChatHistory).toHaveBeenCalledTimes(1);
+      ChatAgent.prototype.dispose.call(chatAgent);
+    });
     it('should ignore messages for wrong chatId', () => {
       void chatAgent.processMessage({ chatId: 'oc_wrong', payload: 'hello', messageId: 'msg_1' });
       expect(chatAgent.hasActiveSession()).toBe(false);
