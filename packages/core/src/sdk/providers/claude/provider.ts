@@ -318,7 +318,7 @@ export function isStartupFailure(messageCount: number, elapsedMs: number): boole
  */
 export class ClaudeSDKProvider implements IAgentSDKProvider {
   readonly name = 'claude';
-  readonly version = '0.3.177';
+  readonly version = '0.3.263';
 
   private disposed = false;
 
