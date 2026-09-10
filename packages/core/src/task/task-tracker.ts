@@ -15,6 +15,9 @@
 import * as fs from 'fs/promises';
 import * as syncFs from 'fs';
 import * as path from 'path';
+import { createLogger } from '../utils/logger.js';
+
+const logger = createLogger('TaskTracker');
 
 /**
  * Task tracker for persisting message processing records to disk.
@@ -34,7 +37,7 @@ export class TaskTracker {
     try {
       await fs.mkdir(this.tasksDir, { recursive: true });
     } catch (error) {
-      console.error('Failed to create tasks directory:', error);
+      logger.error({ err: error }, 'Failed to create tasks directory');
     }
   }
 
@@ -50,7 +53,7 @@ export class TaskTracker {
       await fs.mkdir(taskDir, { recursive: true });
       return taskDir;
     } catch (error) {
-      console.error(`Failed to create task directory for ${messageId}:`, error);
+      logger.error({ err: error, messageId }, 'Failed to create task directory');
       throw error;
     }
   }
@@ -65,7 +68,7 @@ export class TaskTracker {
       try {
         syncFs.mkdirSync(this.tasksDir, { recursive: true });
       } catch (error) {
-        console.error('Failed to create regular tasks directory:', error);
+        logger.error({ err: error }, 'Failed to create regular tasks directory');
         throw error;
       }
     }
@@ -76,7 +79,7 @@ export class TaskTracker {
       try {
         syncFs.mkdirSync(taskDir, { recursive: true });
       } catch (error) {
-        console.error(`Failed to create task directory for ${messageId}:`, error);
+        logger.error({ err: error, messageId }, 'Failed to create task directory');
         throw error;
       }
     }
@@ -123,9 +126,9 @@ export class TaskTracker {
 
     try {
       await fs.writeFile(filePath, markdown, 'utf-8');
-      console.log(`[Task saved] ${messageId} -> ${filePath}`);
+      logger.debug({ messageId, filePath }, 'Task saved');
     } catch (error) {
-      console.error(`[Task save failed] ${messageId}:`, error);
+      logger.error({ err: error, messageId }, 'Task save failed');
     }
   }
 
@@ -159,9 +162,9 @@ export class TaskTracker {
 
     try {
       syncFs.writeFileSync(filePath, markdown, 'utf-8');
-      console.log(`[Task saved sync] ${messageId} -> ${filePath}`);
+      logger.debug({ messageId, filePath }, 'Task saved synchronously');
     } catch (error) {
-      console.error(`[Task save failed] ${messageId}:`, error);
+      logger.error({ err: error, messageId }, 'Task save failed synchronously');
     }
   }
 
@@ -256,10 +259,10 @@ ${metadata.text}
 
     try {
       await fs.writeFile(taskPath, content, 'utf-8');
-      console.log(`[Dialogue task created] ${messageId} -> ${taskPath}`);
+      logger.debug({ messageId, taskPath }, 'Dialogue task created');
       return taskPath;
     } catch (error) {
-      console.error(`[Dialogue task creation failed] ${messageId}:`, error);
+      logger.error({ err: error, messageId }, 'Dialogue task creation failed');
       throw error;
     }
   }
