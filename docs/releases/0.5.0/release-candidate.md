@@ -2,7 +2,74 @@
 
 Status: candidate evidence is incomplete; do not publish or report `RELEASE_READY`.
 
-## Current local candidate (2026-09-10)
+## Current local candidate (2026-09-10, continuation)
+
+Candidate: `62b75df050508e237e4ca6fdf709eec07a2a65fa`, branch
+`fix/050-final-validation`. This includes the earlier local fixes plus:
+
+- `dc0d08a5`: real Codex testing reproduced stop → immediate follow-up failing
+  because the previous native turn was still active. Interruption now waits for
+  its matching terminal event, coalesces duplicate interrupts, suppresses late
+  output, and fails closed on missing completion. A natural-completion race may
+  return “no active turn” to the interrupt RPC; the terminal event remains the
+  authority. Added deterministic cancellation/resume and timeout regressions.
+- `c535c8fa`: repeatable isolated launchd install/upgrade/rollback runner, explicit
+  version entry, separate PID lock and shell-free launchctl path arguments.
+- `62b75df0`: repeatable live Codex runner; stricter per-suite skipped/empty
+  verdicts and shared-server ownership; valid channel fixture IDs, isolated file
+  paths and explicit delivery targets; unique async probe IDs and consistent
+  drain deadlines. Tool names alone no longer count as execution evidence.
+
+| Check | Observed result |
+|---|---|
+| `npm run type-check` / `npm run lint` / `git diff --check` | pass, exit 0 |
+| Full Vitest coverage using Node 20.20.2 | **214 files / 4,612 tests passed**, exit 0 |
+| Coverage statements / branches / functions / lines (Node 20) | **90.46% / 88.09% / 93.19% / 90.46%**, all above 70% |
+| Earlier full Node 24.8.0 run at `c535c8fa` | 214 files / 4,606 passed; later changes affect test harnesses, not the native runtime fix |
+| Live Codex 0.153.4, app-server, gpt-5.6-sol | **tool artifact + read-back, acknowledged steer affecting final reply, cancellation during shell execution, immediate same-thread continuation all pass** |
+| Live REST/AI integration exploration | Basic reply, task execution, multi-turn memory, chat isolation, pool helper and all four multimodal requests pass; initial REST drain deadline and channel tool suite failed, so the full exploratory invocation exited 2 |
+| Affected REST suite after harness fixes, 120-second deadline | **pass**, exit 0, including async receipt versus completion, custom chat and error responses; exit-listener growth 0 |
+| Live launchd baseline → candidate → baseline | **pass**, fresh dynamic API address and health at every stage, workspace sentinel preserved; test label/plist removed after stop/uninstall |
+| Real DeepSeek request | **blocked**: route `deepseek-official` reported no API key; not counted as a passing backend |
+
+All runtime tests used dedicated temporary workspaces. Launchd compared baseline
+checkout `2f921fe2` (runtime SHA-256 prefix `d69738f4c9b1`) with the candidate's
+independent built checkout (`d9caf940374d`), then restored the baseline. The full
+hashes and source commits are in the stage records; identical thin CLI bootstrap
+hashes alone are not used to claim a version change. No default launchd service
+was targeted.
+
+Reproduction instructions: [live checks](LIVE-VALIDATION.md) and
+[launchd rehearsal](LAUNCHD-REHEARSAL.md). Local evidence is under
+`.local/release-0.5.0/continuation/`:
+
+- `coverage-node20-final.log`, `type-check-final.log`, `lint-final.log`;
+- `codex-final/codex-live.json` (candidate, model and per-turn events);
+- `launchd-candidate/launchd-rehearsal.json` (version identities, health, cleanup);
+- `integration.log`, `integration-result.json` (initial failures retained);
+- `integration-rest-fixed.log`, `integration-rest-result.json` (passing retest);
+- `deepseek.json` (real missing-credential failure).
+
+The exploratory integration run was followed by test-harness fixes; it is not a
+blanket all-green certification of the final candidate. The final full Node 20 run
+covers those harness changes, and the affected REST suite was executed again.
+The channel suite now explicitly requires an authorized test delivery target;
+without one it skips delivery checks and exits nonzero. Feishu receipts remain
+missing rather than being replaced by a successful HTTP or model acknowledgement.
+
+Remaining blockers are **real DeepSeek credentials/acceptance, real Claude/pi
+acceptance, authorized Feishu text/card/file delivery receipts, Docker deployment
+rehearsal, and final remote CI/review plus complete 44-criterion evidence**.
+GitHub CLI and the configured noninteractive credential helper supplied no usable
+GitHub credential. Changes are local commits; no PR was created, no merge or
+publication was performed. Docker/alternative container runtimes were unavailable.
+The launchd installation/upgrade/rollback gap from the earlier record is now
+closed for this macOS host; the Docker variant of S08/S09 remains blocked.
+
+`RELEASE_READY` is still false. The evidence gate must continue rejecting the
+incomplete manifest; passing local suites do not waive missing live variants.
+
+## Earlier local candidate (2026-09-10, first pass)
 
 Candidate: `4efda382a9a813daad5098eadfe69a6cdd67c862`, branch
 `fix/050-final-validation`, based on fetched main `3efaad9bb641f0a9a506e4f4a974a208ec50070f`.
