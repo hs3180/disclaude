@@ -2,7 +2,66 @@
 
 Status: candidate evidence is incomplete; do not publish or report `RELEASE_READY`.
 
-## Current audit baseline (2026-09-09)
+## Current local candidate (2026-09-10)
+
+Candidate: `4efda382a9a813daad5098eadfe69a6cdd67c862`, branch
+`fix/050-final-validation`, based on fetched main `3efaad9bb641f0a9a506e4f4a974a208ec50070f`.
+The earlier runtime-gap observations below are historical. Main now contains
+runtime presets, direct command schedules, acknowledged Codex app-server steer,
+ordinary scheduled Agent sessions, Channel API address propagation and hardened
+evidence validation.
+
+This candidate adds the remaining launchd isolation guard, explicit test config
+and PID-lock separation; prevents integration tests from adopting/killing an
+unrelated service; rejects skipped/empty integration acceptance; fixes a broken
+provider-error shell regression and includes shell regressions in normal CI;
+limits package contents to exclude local runtime/evidence logs; and corrects
+installation/version documentation.
+
+| Executed check | Result |
+|---|---|
+| `npm ci --include=dev` | pass, independent worktree dependencies |
+| `npm run type-check` (includes build) | pass, exit 0 |
+| `npm run lint` | pass, exit 0 |
+| `npm run test:coverage` | pass, 213 files / 4,602 tests; exit 0 |
+| Coverage statements / branches / functions / lines | 90.42% / 89.26% / 93.49% / 90.42%; all exceed 70% |
+| `npm run test:rfc3329` | pass, 3 files / 21 tests |
+| Bash helper regressions | pass in Vitest, including provider errors, quota, drain, build, pool, lifecycle and runner verdicts |
+| Isolated REST listener start/health/stop | pass on an OS-selected test port; process and port released |
+| `npm pack --dry-run --json` and `npm pack` | pass; no `.local`, workspace or coverage artifacts in pack inventory |
+| Extracted tarball in an external cwd | help, channel help, send_text and push pass against a local HTTP fixture |
+| Isolated launchd `generate` | plist parses; test label, explicit config and separate PID lock verified; no launchctl operation |
+| `git diff --check` | pass |
+| Evidence validator `--schema` | pass; schema validation only |
+| Evidence validator `--gate --candidate <SHA>` | expected rejection, exit 1; missing candidate-specific acceptance evidence |
+
+Environment: macOS arm64, Node 24.8.0, npm 11.6.0. This is local validation,
+not the CI Node 20 environment. Raw logs and scripts are local at
+`.local/release-0.5.0/final-audit/`; see `coverage-final.log`,
+`type-check-final.log`, `lint-final.log`, `rfc3329.log`, `rest-isolation.log`,
+`package-smoke.json`, `launchd-generation.json`, `packed.json`, and `gate.log`.
+The packaged send/push fixture proves CLI routing only, not real tool execution
+or Feishu delivery. Bundled SDK binaries make the local tarball platform-specific;
+use the documented GitHub source checkout on other platforms.
+
+Remaining release blockers:
+
+1. Real Claude/Codex/pi/DeepSeek conversation, executed tools, failure/cancel and
+   final delivery evidence tied to this candidate; real active-turn steer.
+   The historical DeepSeek credential failure has not been re-certified as fixed.
+2. Real Feishu card/plain-message receipts. No message to a real recipient was
+   sent by this validation run.
+3. Docker installation/upgrade/rollback (Docker unavailable here), and full
+   isolated launchd install/start/upgrade/rollback/stop. Generation is not an
+   installation rehearsal; no existing service was restarted.
+4. Candidate remote CI and reviewed, complete 44-criterion evidence records.
+   GitHub CLI has no authenticated session; no PR, tag, release or deployment
+   was created. Public git refs were fetched, but do not substitute for CI.
+
+Do not report `RELEASE_READY`. This record closes local validation fixes and
+records a passing local regression baseline; it does not close S09.
+
+## Historical audit baseline (2026-09-09)
 
 Main: `987e4b91d5fbe804729eba12e72785a3aa7758ca`. No new release candidate has been selected. Public Releases contained only v0.3.1 at audit time; the prepared package version and dated Changelog did not indicate an actual 0.5.0 publication.
 
