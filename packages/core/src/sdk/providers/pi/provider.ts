@@ -1,3 +1,4 @@
+import { readStallPolicy } from '../stall-policy.js';
 /** pi Agent runtime with optional, per-query Anthropic-compatible production wiring. */
 
 import { loadPiProduction, resolvePiModel } from './production-runtime.js';
@@ -172,17 +173,10 @@ export class PiAgentProvider implements IAgentSDKProvider {
       // drive it deterministically. Between-turn idle (runActive === false,
       // the input generator parked) is excluded: the watchdog only covers
       // in-flight runs, mirroring #3706's message_start→message_stop arming.
-      const STALL_TIMEOUT_MS = (() => {
-        const env = Number.parseInt(process.env.DISCLAUDE_STALL_TIMEOUT_MS ?? '', 10);
-        return Number.isFinite(env) && env > 0 ? env : 180_000;
-      })();
+      const { timeoutMs: STALL_TIMEOUT_MS, graceMs: STALL_FORCE_CLOSE_GRACE_MS } = readStallPolicy();
       // Grace after abort() before force-closing the consumer loop, in case
       // abort() alone cannot settle a run parked on a never-resolving
       // streamFn promise (#3706 review — same rationale as force-close there).
-      const STALL_FORCE_CLOSE_GRACE_MS = (() => {
-        const env = Number.parseInt(process.env.DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS ?? '', 10);
-        return Number.isFinite(env) && env > 0 ? env : 5_000;
-      })();
       let stalled = false;
       let stallWatchdog: ReturnType<typeof setTimeout> | null = null;
       let stallForceCloseTimer: ReturnType<typeof setTimeout> | null = null;

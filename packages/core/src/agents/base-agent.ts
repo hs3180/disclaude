@@ -161,7 +161,10 @@ export abstract class BaseAgent implements Disposable {
     // Primary-node may select DeepSeek as the global default without passing
     // an explicit per-agent override. Build options for the resolved backend.
     this.agentBackend =
-      config.agentBackend ?? (this.sdkProvider.name === 'deepseek' ? 'deepseek' : undefined);
+      config.agentBackend ??
+      (['claude', 'codex', 'pi', 'deepseek'].includes(this.sdkProvider.name)
+        ? (this.sdkProvider.name as BaseAgentConfig['agentBackend'])
+        : undefined);
   }
 
   /**
@@ -204,7 +207,7 @@ export abstract class BaseAgent implements Disposable {
       permissionMode: this.permissionMode,
       ...(extra.sessionKey !== undefined ? { sessionKey: extra.sessionKey } : {}),
       settingSources: ['user', 'project', 'local'],
-      ...(this.agentBackend === 'deepseek'
+      ...((this.agentBackend ?? 'claude') !== 'claude'
         ? {}
         : {
             systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const },
@@ -254,24 +257,26 @@ export abstract class BaseAgent implements Disposable {
     // to a Claude default (e.g., "claude-haiku-4-5-20251001") that
     // non-Anthropic endpoints don't recognize, causing sub-agents to fail
     // with 400 Invalid model name errors.
-    const opusModel = Config.getModelForTier('high');
-    const haikuModel = Config.getModelForTier('low');
-    const sonnetModel = Config.getModelForTier('multimodal');
+    if ((this.agentBackend ?? 'claude') === 'claude') {
+      const opusModel = Config.getModelForTier('high');
+      const haikuModel = Config.getModelForTier('low');
+      const sonnetModel = Config.getModelForTier('multimodal');
 
-    if (opusModel && !globalEnv.ANTHROPIC_DEFAULT_OPUS_MODEL) {
-      globalEnv.ANTHROPIC_DEFAULT_OPUS_MODEL = opusModel;
-    }
-    if (sonnetModel && !globalEnv.ANTHROPIC_DEFAULT_SONNET_MODEL) {
-      globalEnv.ANTHROPIC_DEFAULT_SONNET_MODEL = sonnetModel;
-    }
-    if (haikuModel && !globalEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL) {
-      globalEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL = haikuModel;
-    }
+      if (opusModel && !globalEnv.ANTHROPIC_DEFAULT_OPUS_MODEL) {
+        globalEnv.ANTHROPIC_DEFAULT_OPUS_MODEL = opusModel;
+      }
+      if (sonnetModel && !globalEnv.ANTHROPIC_DEFAULT_SONNET_MODEL) {
+        globalEnv.ANTHROPIC_DEFAULT_SONNET_MODEL = sonnetModel;
+      }
+      if (haikuModel && !globalEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL) {
+        globalEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL = haikuModel;
+      }
 
-    // Issue #3532: Set CLAUDE_CONFIG_DIR to workspace .claude dir when project-bound.
-    // This redirects SDK's user scope to workspace, making workspace skills always available.
-    if (isProjectBound) {
-      globalEnv.CLAUDE_CONFIG_DIR = path.join(workspaceDir, '.claude');
+      // Issue #3532: Set CLAUDE_CONFIG_DIR to workspace .claude dir when project-bound.
+      // This redirects SDK's user scope to workspace, making workspace skills always available.
+      if (isProjectBound) {
+        globalEnv.CLAUDE_CONFIG_DIR = path.join(workspaceDir, '.claude');
+      }
     }
 
     // Issue #3803: Expose workspace directory to agent so skills (e.g., schedule)
@@ -293,7 +298,7 @@ export abstract class BaseAgent implements Disposable {
 
     // SDK 0.3.177+: Agent Teams is enabled via teammateMode Settings field,
     // replacing the deprecated CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS env var.
-    if (this.isAgentTeamsEnabled()) {
+    if ((this.agentBackend ?? 'claude') === 'claude' && this.isAgentTeamsEnabled()) {
       options.teammateMode = 'in-process';
     }
 
@@ -301,7 +306,9 @@ export abstract class BaseAgent implements Disposable {
     // can observe content_block_delta / message_start / message_stop and run a
     // no-content-progress watchdog. stream_events are filtered in adaptIterator
     // (not yielded to ChatAgent), so this only adds watchdog visibility, not downstream volume.
-    options.includePartialMessages = true;
+    if ((this.agentBackend ?? 'claude') === 'claude') {
+      options.includePartialMessages = true;
+    }
 
     return options;
   }

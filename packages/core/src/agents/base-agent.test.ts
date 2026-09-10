@@ -122,6 +122,18 @@ describe('BaseAgent', () => {
     expect(options.disallowedTools).toBeUndefined();
   });
 
+  it.each(['codex', 'pi', 'deepseek'] as const)('does not inject Claude runtime options into %s', (backend) => {
+    const instance = new TestAgent({ ...config, agentBackend: backend });
+    const options = instance.testCreateSdkOptions({});
+    expect(options.systemPrompt).toBeUndefined();
+    expect(options.tools).toBeUndefined();
+    expect(options.includePartialMessages).toBeUndefined();
+    expect(options.teammateMode).toBeUndefined();
+    expect(options.env?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
+    expect(options.env?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
+    expect(options.env?.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBeUndefined();
+  });
+
   it('uses DeepSeek options when the backend is selected globally', () => {
     mockGetProvider.mockReturnValueOnce({
       ...mockSdkProvider,

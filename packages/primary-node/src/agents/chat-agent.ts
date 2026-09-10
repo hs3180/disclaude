@@ -44,7 +44,6 @@ import {
   EmptyTurnRetryPolicy,
   getErrorStderr,
   isStartupFailure,
-  forceCleanupLeakedListeners,
   tagErrorCategory,
   StreamingReplyDriver,
   TurnSupersededError,
@@ -1204,28 +1203,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Issue #3378: Log process exit listener count for leak monitoring.
     // Each Claude Agent SDK query() registers process.on("exit", handler) via ProcessTransport.
     // Normal range is 1-3; values > 8 indicate a leak.
-    // Issue #3745: Forcefully clean up leaked listeners when count is elevated.
+    // #4813: only the provider's guarded per-query owner cleans SDK listeners.
+    // A process-wide count cannot distinguish active queries or host listeners.
     const exitListenerCount = process.listenerCount('exit');
-    if (exitListenerCount > 5) {
-      const cleaned = forceCleanupLeakedListeners();
-      if (cleaned > 0) {
-        this.logger.info(
-          {
-            chatId,
-            before: exitListenerCount,
-            after: process.listenerCount('exit'),
-            cleaned,
-            timing: 'agent:startLoop',
-          },
-          'Forcefully cleaned up leaked exit listeners'
-        );
-      } else {
-        this.logger.warn(
-          { chatId, exitListenerCount, timing: 'agent:startLoop' },
-          'Process exit listener count is elevated but no leaked listeners found (may be legitimate)'
-        );
-      }
-    }
     this.logger.info({
       chatId,
       timing: 'agent:startLoop',
