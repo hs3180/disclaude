@@ -6,7 +6,7 @@
 
 A multi-platform AI agent bot connecting Feishu/Lark and REST channels to Claude, Codex, and pi agent runtimes. Written in TypeScript, it supports chat-driven development, file operations, browser automation, and scheduled work.
 
-**Next release: 0.5.0 — 多后端 Agent 的统一使用与可控自动化。** The release focuses on backend/model selection, interaction with running agents, and low-cost reliable scheduling. These are release targets, not a claim that every capability is available today. See the [release goals and acceptance criteria](docs/releases/0.5.0.md).
+**Current release: 0.5.0 — 多后端 Agent 的统一使用与可控自动化。** This release adds backend/model selection, interaction with running agents, and low-cost reliable scheduling. See the [release goals and acceptance record](docs/releases/0.5.0.md).
 
 ## 📚 Documentation
 
@@ -24,7 +24,7 @@ A multi-platform AI agent bot connecting Feishu/Lark and REST channels to Claude
 - **Streaming responses** - Real-time output with smart throttling for messaging platforms
 - **Persistent conversations** - Per-user session management (in-memory)
 - **Slash commands** - `/reset`, `/status`, `/help` for quick actions
-- **Multiple agent backends** - Claude, Codex, and pi; runtime selection is currently configuration-based. In-chat selection and DeepSeek harness support are 0.5.0 targets.
+- **Multiple agent backends** - Named Claude, Codex, pi, and DeepSeek presets with in-chat selection.
 - **Browser automation** - browser-use Skill (CLI + shared CDP endpoint; the Playwright MCP server is retired)
 - **Custom skills** - Extensible workflow system (`.claude/skills/`)
 - **Message deduplication** - Prevents duplicate responses in WebSocket mode
@@ -32,7 +32,7 @@ A multi-platform AI agent bot connecting Feishu/Lark and REST channels to Claude
 
 ## Version
 
-The repository package version is **0.5.0**. Release acceptance is incomplete; see the [release plan](docs/releases/0.5.0.md) and [GitHub milestone](https://github.com/hs3180/disclaude/milestone/9).
+The current release is **0.5.0**. See the [release plan and acceptance record](docs/releases/0.5.0.md) and [GitHub milestone](https://github.com/hs3180/disclaude/milestone/9).
 
 ### Implementation Status
 
@@ -93,7 +93,7 @@ From another directory, use the absolute path to `bin/disclaude.js` and pass an
 absolute config path. For upgrades and rollback, keep the previous checkout and
 its configuration/workspace backup until the new checkout has passed health and
 backend checks. See the [candidate record](docs/releases/0.5.0/release-candidate.md)
-for outstanding acceptance.
+for validation evidence and accepted boundaries.
 
 ### Option B: Clone for Development
 
