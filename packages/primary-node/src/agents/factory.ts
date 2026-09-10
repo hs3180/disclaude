@@ -164,10 +164,20 @@ export class AgentFactory {
       resolvedModel = defaultConfig.model;
     }
 
+    // A Codex/dsh default has no Anthropic key in getAgentConfig(). A named
+    // Claude/pi selection must resolve credentials from its API service rather
+    // than inherit the default runtime's deliberately empty key.
+    const provider = options.provider ?? defaultConfig.provider;
+    const selectingApiBackend = options.agentBackend === 'claude' || options.agentBackend === 'pi';
+    const defaultHasNativeAuth = Config.AGENT_BACKEND === 'codex' || Config.AGENT_BACKEND === 'deepseek';
+    const apiKey = selectingApiBackend && defaultHasNativeAuth
+      ? (provider === 'glm' ? Config.GLM_API_KEY : Config.ANTHROPIC_API_KEY)
+      : defaultConfig.apiKey;
+
     return {
-      apiKey: options.apiKey ?? defaultConfig.apiKey,
+      apiKey: options.apiKey ?? apiKey,
       model: resolvedModel,
-      provider: options.provider ?? defaultConfig.provider,
+      provider,
       apiBaseUrl: options.apiBaseUrl ?? defaultConfig.apiBaseUrl,
       permissionMode: options.permissionMode ?? 'bypassPermissions',
       agentBackend: options.agentBackend,

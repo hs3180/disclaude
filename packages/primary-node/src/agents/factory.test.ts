@@ -26,6 +26,9 @@ const { mockLoggerWarn } = vi.hoisted(() => ({ mockLoggerWarn: vi.fn() }));
 // factory's module-level `logger` (Issue #4448 direction #4 guard).
 vi.mock('@disclaude/core', () => ({
   Config: {
+    AGENT_BACKEND: 'claude',
+    ANTHROPIC_API_KEY: 'anthropic-service-key',
+    GLM_API_KEY: 'glm-service-key',
     getAgentConfig: vi.fn(() => ({
       apiKey: 'default-api-key',
       model: 'default-model',
@@ -106,6 +109,37 @@ describe('AgentFactory', () => {
       expect(config.permissionMode).toBe('bypassPermissions');
       // Model tier resolution should not be invoked when no tier is specified
       expect(Config.getModelForTier).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['codex', 'claude', 'anthropic', 'anthropic-service-key'],
+      ['codex', 'pi', 'anthropic', 'anthropic-service-key'],
+      ['deepseek', 'claude', 'anthropic', 'anthropic-service-key'],
+      ['deepseek', 'pi', 'glm', 'glm-service-key'],
+    ] as const)('resolves %s -> %s credentials for %s', (defaultBackend, backend, provider, expected) => {
+      const prior = Config.AGENT_BACKEND;
+      Object.defineProperty(Config, 'AGENT_BACKEND', { configurable: true, value: defaultBackend });
+      vi.mocked(Config.getAgentConfig).mockReturnValueOnce({ apiKey: '', model: 'native-model', provider: 'anthropic' });
+      try {
+        AgentFactory.createAgent('chat-credential-switch', createMockCallbacks(), { agentBackend: backend, provider });
+        expect(getLastConfig().apiKey).toBe(expected);
+      } finally {
+        Object.defineProperty(Config, 'AGENT_BACKEND', { configurable: true, value: prior });
+      }
+    });
+
+    it('preserves an explicit key override when switching from Codex', () => {
+      const prior = Config.AGENT_BACKEND;
+      Object.defineProperty(Config, 'AGENT_BACKEND', { configurable: true, value: 'codex' });
+      vi.mocked(Config.getAgentConfig).mockReturnValueOnce({ apiKey: '', model: 'native-model', provider: 'anthropic' });
+      try {
+        AgentFactory.createAgent('chat-credential-override', createMockCallbacks(), {
+          agentBackend: 'pi', provider: 'anthropic', apiKey: 'explicit-key',
+        });
+        expect(getLastConfig().apiKey).toBe('explicit-key');
+      } finally {
+        Object.defineProperty(Config, 'AGENT_BACKEND', { configurable: true, value: prior });
+      }
     });
 
     it('should accept callbacks without the optional streaming fields (Issue #4397 P2-a)', () => {
