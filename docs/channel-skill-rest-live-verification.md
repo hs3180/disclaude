@@ -20,10 +20,10 @@
 | PrimaryNode | second instance: `node packages/primary-node/dist/cli.js start --config disclaude.config.yaml --api-port 9201` with `LOCKFILE_PATH=` (lockfile disabled — another PrimaryNode already runs in the container) and a scratch `LOG_DIR` |
 | Channel | Feishu (real credentials from a local `disclaude.config.yaml`, appId `cli_a8a0…`; **not** committed) |
 | Target chat | a real `oc_…` chat bound to this workspace |
-| Transport | CLI → `RestIpcClient` → `HttpApiServer` (`/api/send-message`, `/api/send-card`, `/api/upload-file`, `/api/send-interactive`, `/api/push`). No Unix socket on the CLI path; the running default PrimaryNode's socket was irrelevant to these calls |
+| Transport | CLI → `ChannelApiClient` → `HttpApiServer` (`/api/send-message`, `/api/send-card`, `/api/upload-file`, `/api/send-interactive`, `/api/push`). No Unix socket on the CLI path; the running default PrimaryNode's socket was irrelevant to these calls |
 
 The one-shot CLI invocations used `--base-url` (flag path). The env-var path
-(`DISCLAUDE_REST_IPC_BASE_URL`) is covered by part 1's unit tests; both resolve
+(`DISCLAUDE_API_BASE_URL`) is covered by part 1's unit tests; both resolve
 identically in `wireRestTransport()` (named `resolveRestBaseUrl()` at the verified repo state `f207ba04`; renamed by post-run review fix `97820fe`).
 
 ## 2. Results — all 5 subcommands
@@ -42,7 +42,7 @@ Parity details actually exercised:
   carried a GFM table in a markdown element and the result annotates the
   `column_set` auto-conversion (#2340), proving `transformCardTables` (and the
   image-resolution branch it shares the pipeline with, #2951) executed inside
-  the one-shot CLI process whose `getIpcClient()` was REST-selected.
+  the one-shot CLI process whose `getChannelApiClient()` was REST-selected.
 - **`send_interactive`** sent a 2-button card (button-click routing is owned by
   the PrimaryNode, as documented — the CLI is a one-shot client).
 - **`push_to_agent`** reached the live agent (non-blocking enqueue, #631).
@@ -51,8 +51,8 @@ Parity details actually exercised:
 
 | Scenario | stdout | Exit |
 |---|---|---|
-| Server stopped after a successful send (`kill` the API-enabled PrimaryNode, re-run `send_text`) | `{"ok":false,…,"error":"IPC service unavailable. Please ensure Primary Node is running.","hint":"PrimaryNode REST http://[::1]:9201 unreachable — start the main service (disclaude-primary start --api-port <port>) or pass --base-url / DISCLAUDE_REST_IPC_BASE_URL"}` | 1 |
-| Ill-formed chat id (`--chat bad_chat_id`, server up) | `{"ok":false,…,"error":"IPC_REQUEST_FAILED: REST sendMessage (Request failed with status code 400)"}` | 1 |
+| Server stopped after a successful send (`kill` the API-enabled PrimaryNode, re-run `send_text`) | `{"ok":false,…,"error":"REST API service unavailable. Please ensure Primary Node is running.","hint":"PrimaryNode REST http://[::1]:9201 unreachable — start the main service (disclaude-primary start --api-port <port>) or pass --base-url / DISCLAUDE_API_BASE_URL"}` | 1 |
+| Ill-formed chat id (`--chat bad_chat_id`, server up) | `{"ok":false,…,"error":"CHANNEL_API_REQUEST_FAILED: REST sendMessage (Request failed with status code 400)"}` | 1 |
 
 The down-server case shows the part-1 probe-based hint firing against a *real*
 stopped server (not a unit-test ephemeral port): exactly one JSON object on
@@ -72,13 +72,13 @@ deployer reproducing this verification can hit it:
   first and failed with `ECONNREFUSED` — repeatedly, deterministically (no
   happy-eyeballs fallback across families within the 2s probe timeout).
   `curl` succeeded because its resolver ordered `::1` first.
-- Consequence: with `DISCLAUDE_REST_IPC_BASE_URL=http://localhost:19200` (the
-  #4168 decision-3 default) on such a host, `isIpcAvailable()` and every REST
+- Consequence: with `DISCLAUDE_API_BASE_URL=http://localhost:19200` (the
+  #4168 decision-3 default) on such a host, `isChannelApiAvailable()` and every REST
   call fail while `curl http://localhost:19200/api/ping` succeeds — a confusing
   split.
 - Workarounds verified in this run: pass `--base-url 'http://[::1]:9201'`
   (used for all five successful sends above), or set
-  `DISCLAUDE_REST_IPC_BASE_URL` accordingly, or bind the server explicitly to a
+  `DISCLAUDE_API_BASE_URL` accordingly, or bind the server explicitly to a
   single family (`--api-port` has no host flag today; the HttpApiServer config
   accepts `host`).
 

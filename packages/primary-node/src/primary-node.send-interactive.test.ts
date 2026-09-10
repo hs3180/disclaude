@@ -1,14 +1,14 @@
 /**
  * Tests for PrimaryNode.sendInteractive — the REST-parity counterpart of the
- * IPC sendInteractive handler (Issue #4279, part 5).
+ * REST API sendInteractive handler (Issue #4279, part 5).
  *
  * The HTTP layer (http-api-server.test.ts) mocks the handler, so it cannot
  * verify the *non-trivial* part of this slice: that the public method delegates
- * to the channel's sendInteractive AND mirrors the IPC handler by registering
+ * to the channel's sendInteractive AND mirrors the REST API handler by registering
  * the resolved action prompts via InteractiveContextStore.register so button
  * clicks resolve. These tests exercise that registration path directly.
  *
- * Canonical reference: packages/core/src/ipc/unix-socket-server.ts sendInteractive case.
+ * Canonical reference: packages/core/src/channel-api/unix-socket-server.ts sendInteractive case.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -65,7 +65,7 @@ describe('PrimaryNode.sendInteractive (Issue #4279 — registration path)', () =
     expect(sendInteractive).toHaveBeenCalledWith(TEST_CHAT, BASE_PARAMS);
     expect(registerSpy).toHaveBeenCalledTimes(1);
     expect(registerSpy).toHaveBeenCalledWith('om_card_1', TEST_CHAT, resolvedPrompts);
-    // Mirrors the IPC handler: success is true whenever the channel resolves.
+    // Mirrors the REST API handler: success is true whenever the channel resolves.
     expect(res).toEqual({ success: true, messageId: 'om_card_1' });
   });
 
@@ -92,7 +92,7 @@ describe('PrimaryNode.sendInteractive (Issue #4279 — registration path)', () =
   });
 
   it('does not register when there is no messageId even if action prompts are present', async () => {
-    // Mirrors the IPC guard `if (resolvedPrompts && result.messageId)`.
+    // Mirrors the REST API guard `if (resolvedPrompts && result.messageId)`.
     const sendInteractive = vi.fn().mockResolvedValue({
       actionPrompts: { approve: '[user] approved' },
     });

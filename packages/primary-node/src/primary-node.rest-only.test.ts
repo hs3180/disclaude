@@ -5,7 +5,7 @@
  * must NOT set the DISCLAUDE_WORKER_IPC_SOCKET env var, must NOT write the
  * IPC socket-path discovery file, and stop() must NOT touch either. MCP
  * tools and push-cli reach PrimaryNode exclusively over the REST API
- * (--api-port / DISCLAUDE_REST_IPC_BASE_URL).
+ * (--api-port / DISCLAUDE_API_BASE_URL).
  *
  * These tests pin that removal: any regression that reintroduces the IPC
  * server into start() (e.g. re-adding startIpcServer()) fails here even
@@ -18,6 +18,8 @@ import { existsSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PrimaryNode } from './primary-node.js';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 
 /**
  * The socket-path discovery file the IPC server used to write (Issue #3808).
@@ -81,6 +83,48 @@ describe('PrimaryNode REST-only serving (Issue #4280 part 5)', () => {
 
     await node.stop();
     await nodeLate.stop();
+  });
+
+  it('defers cron initialization until the real REST listener is ready, exactly once', async () => {
+    const node = new PrimaryNode();
+    const init = vi.spyOn(PrimaryNode.prototype as unknown as { initScheduler(): Promise<void> }, 'initScheduler');
+    const server = createServer((_req, res) => res.end('ready'));
+    try {
+      await node.start({ deferScheduler: true });
+      expect(init).not.toHaveBeenCalled();
+      server.listen(0, '127.0.0.1');
+      await once(server, 'listening');
+      const address = server.address();
+      if (!address || typeof address === 'string') { throw new Error('Expected TCP address'); }
+      init.mockImplementation(async () => {
+        const result = await fetch(`http://127.0.0.1:${address.port}`);
+        expect(await result.text()).toBe('ready');
+      });
+      await Promise.all([node.startDeferredScheduler(), node.startDeferredScheduler()]);
+      expect(init).toHaveBeenCalledTimes(1);
+    } finally {
+      await node.stop();
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('never starts a deferred scheduler after shutdown or before node startup', async () => {
+    const node = new PrimaryNode();
+    const init = vi.spyOn(PrimaryNode.prototype as unknown as { initScheduler(): Promise<void> }, 'initScheduler');
+    await node.startDeferredScheduler();
+    await node.start({ deferScheduler: true });
+    await node.stop();
+    await node.startDeferredScheduler();
+    expect(init).not.toHaveBeenCalled();
+  });
+
+  it('keeps deferred scheduler initialization failure non-fatal', async () => {
+    const node = new PrimaryNode();
+    vi.spyOn(PrimaryNode.prototype as unknown as { initScheduler(): Promise<void> }, 'initScheduler').mockRejectedValue(new Error('fixture failure'));
+    await node.start({ deferScheduler: true });
+    await expect(node.startDeferredScheduler()).resolves.toBeUndefined();
+    await node.stop();
   });
 
   it('stop() completes without an IPC server to stop', async () => {

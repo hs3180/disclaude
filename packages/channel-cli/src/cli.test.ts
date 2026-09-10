@@ -38,18 +38,45 @@ describe('@disclaude/channel-cli', () => {
     expect(JSON.parse(writes[0])).toMatchObject({ ok: false, command: 'send_text' });
   });
 
+  it('requires an explicit REST address for a standalone invocation', async () => {
+    const previous = process.env.DISCLAUDE_API_BASE_URL;
+    delete process.env.DISCLAUDE_API_BASE_URL;
+    try {
+      const { code, writes } = await capture([
+        'send_text', '--chat', 'oc_0123456789012345678901234567890123', '--text', 'hello',
+      ]);
+      expect(code).toBe(1);
+      expect(JSON.parse(writes[0])).toMatchObject({
+        ok: false,
+        error: expect.stringContaining('--base-url'),
+      });
+    } finally {
+      if (previous === undefined) { delete process.env.DISCLAUDE_API_BASE_URL; }
+      else { process.env.DISCLAUDE_API_BASE_URL = previous; }
+    }
+  });
+
+  it('rejects invalid REST addresses before loading channel tools', async () => {
+    const { code, writes } = await capture([
+      'send_text', '--chat', 'oc_0123456789012345678901234567890123', '--text', 'hello',
+      '--base-url', 'localhost:19200/api',
+    ]);
+    expect(code).toBe(1);
+    expect(JSON.parse(writes[0]).error).toContain('absolute http(s) URL');
+  });
+
   it('routes `push` to push_to_agent and reports the canonical name', async () => {
     // Missing --message fails before any network call, which is enough to prove
     // the alias resolved: an unrouted command would fail on chat validation with
     // a different error, and `command` pins the JSON contract callers parse.
-    const { code, writes } = await capture(['push', '--chat', 'oc_0123456789012345678901234567890123']);
+    const { code, writes } = await capture(['push', '--chat', 'oc_0123456789012345678901234567890123', '--base-url', 'http://127.0.0.1:19200']);
     expect(code).toBe(1);
     expect(writes).toHaveLength(1);
     expect(JSON.parse(writes[0])).toMatchObject({ ok: false, command: 'push_to_agent', error: 'Missing message content' });
   });
 
   it('still accepts the canonical push_to_agent spelling', async () => {
-    const { code, writes } = await capture(['push_to_agent', '--chat', 'oc_0123456789012345678901234567890123']);
+    const { code, writes } = await capture(['push_to_agent', '--chat', 'oc_0123456789012345678901234567890123', '--base-url', 'http://127.0.0.1:19200']);
     expect(code).toBe(1);
     expect(JSON.parse(writes[0])).toMatchObject({ ok: false, command: 'push_to_agent' });
   });

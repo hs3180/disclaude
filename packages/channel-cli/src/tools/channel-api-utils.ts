@@ -1,82 +1,64 @@
-/**
- * REST transport utility functions for channel tools.
- *
- * Shared utilities for transport availability checking and error message
- * generation.
- *
- * Issue #4280 (Phase 3, part 3): the transport is REST, unconditionally.
- * The Unix-socket availability probe and `getIpcSocketPath` discovery are
- * removed with it — `GET /api/ping` on the PrimaryNode HTTP API server is
- * the only liveness signal. `DISCLAUDE_REST_IPC_ENABLED` is no longer read:
- * it had no effect once REST became the only transport.
- *
- * @module channel-cli/tools/ipc-utils
- */
+/** Channel API client construction, availability checking, and actionable error messages. */
 
-import { createLogger, REST_IPC_DEFAULT_BASE_URL, RestIpcClient } from '@disclaude/core';
+import { createLogger, normalizeChannelApiBaseUrl, ChannelApiClient } from '@disclaude/core';
 
-const logger = createLogger('IpcUtils');
+const logger = createLogger('ChannelApiUtils');
 
 /**
  * Resolve the PrimaryNode REST base URL from the standard env wiring.
  *
- * `DISCLAUDE_REST_IPC_BASE_URL` (default `http://localhost:19200`), with a
- * trailing slash stripped — shared by `getRestIpcClient` and the
- * `isIpcAvailable` probe so the two can't drift apart on env handling.
- * (`RestIpcClient`'s constructor also strips; that one stays as defense for
+ * `DISCLAUDE_API_BASE_URL` (required), with a
+ * trailing slash stripped — shared by `getChannelApiClient` and the
+ * `isChannelApiAvailable` probe so the two can't drift apart on env handling.
+ * (`ChannelApiClient`'s constructor also strips; that one stays as defense for
  * direct constructions elsewhere.)
  */
 function resolveRestBaseUrl(): string {
-  return (process.env.DISCLAUDE_REST_IPC_BASE_URL || REST_IPC_DEFAULT_BASE_URL).replace(/\/$/, '');
+  return normalizeChannelApiBaseUrl(process.env.DISCLAUDE_API_BASE_URL ?? '');
 }
 
 /**
  * Resolve the REST API token from the standard env wiring.
  *
- * `DISCLAUDE_REST_IPC_API_TOKEN` — mirrors the PrimaryNode `--api-token`.
+ * `DISCLAUDE_API_TOKEN` — mirrors the PrimaryNode `--api-token`.
  * When the primary service runs with `--api-token`, every non-GET REST route
  * requires `Authorization: Bearer <token>` (http-api-server.ts). Issue #4801:
  * channel-cli previously never attached the header, so enabling the token made
  * all channel writes 401 while `GET /api/ping` (token-exempt) kept the
  * availability probe green. The token is read here and attached by
- * `getRestIpcClient` so send paths authenticate.
+ * `getChannelApiClient` so send paths authenticate.
  */
 function resolveRestApiToken(): string | undefined {
-  const token = process.env.DISCLAUDE_REST_IPC_API_TOKEN;
+  const token = process.env.DISCLAUDE_API_TOKEN;
   return token && token.trim() ? token : undefined;
 }
 
 /**
- * Build a REST IPC client from the standard env wiring.
+ * Build a REST API client from the standard env wiring.
  *
- * - `DISCLAUDE_REST_IPC_BASE_URL` — PrimaryNode HTTP API server URL
- *   (default `http://localhost:19200`)
- * - `DISCLAUDE_REST_IPC_API_TOKEN` — optional bearer token, forwarded to
- *   `RestIpcClient` so authenticated writes succeed (Issue #4801).
- * Issue #4280 (Phase 3, part 3): every MCP tool that previously reached for
- * the dual-path `getIpcClient()` facade (default Unix socket) constructs the
- * `RestIpcClient` directly here. No transport toggle remains.
+ * - `DISCLAUDE_API_BASE_URL` — PrimaryNode HTTP API server URL
+ *   (required for standalone clients; injected into managed children)
+ * - `DISCLAUDE_API_TOKEN` — optional bearer token, forwarded to
+ *   `ChannelApiClient` so authenticated writes succeed (Issue #4801).
  */
-export function getRestIpcClient(): RestIpcClient {
+export function getChannelApiClient(): ChannelApiClient {
   const baseUrl = resolveRestBaseUrl();
-  return new RestIpcClient({ baseUrl, apiToken: resolveRestApiToken() });
+  return new ChannelApiClient({ baseUrl, apiToken: resolveRestApiToken() });
 }
 
 /**
  * Check if the PrimaryNode REST API is available for channel calls.
  *
- * Issue #1355: probe the real endpoint (`GET /api/ping`), not a file —
- * a socket file can disappear while the server still holds the fd, or
- * exist while nothing is listening. REST carries the same requirement:
+ * Probe GET /api/ping:
  * only a 200 with `{ pong: true }` counts as available.
  *
  * Every channel tool that gates on this (`send-card`, `interactive-message`,
- * `push-to-agent`, …) reports "IPC 服务不可用" when it returns false, so
- * the failure must be actionable on the REST wiring, not the socket path.
+ * `push-to-agent`, …) reports "REST API 服务不可用" when it returns false, so
+ * the failure must describe the required HTTP address and authentication.
  *
  * @returns Promise resolving to true if the PrimaryNode REST API is reachable
  */
-export async function isIpcAvailable(): Promise<boolean> {
+export async function isChannelApiAvailable(): Promise<boolean> {
   const baseUrl = resolveRestBaseUrl();
   const apiToken = resolveRestApiToken();
   try {
@@ -99,21 +81,21 @@ export async function isIpcAvailable(): Promise<boolean> {
       signal: AbortSignal.timeout(2000),
     });
     if (!res.ok) {
-      logger.debug({ baseUrl, status: res.status, reason: 'rest_ping_not_ok' }, 'IPC availability check: REST ping non-OK');
+      logger.debug({ baseUrl, status: res.status, reason: 'rest_ping_not_ok' }, 'REST API availability check: REST ping non-OK');
       return false;
     }
     const json = (await res.json()) as { pong?: boolean };
     const available = json.pong === true;
-    logger.debug({ baseUrl, available }, `IPC availability check: REST ${available ? 'available (ping ok)' : 'not available (no pong)'}`);
+    logger.debug({ baseUrl, available }, `REST API availability check: REST ${available ? 'available (ping ok)' : 'not available (no pong)'}`);
     return available;
   } catch (error) {
-    logger.debug({ baseUrl, reason: 'rest_ping_exception', err: error }, 'IPC availability check: REST ping failed');
+    logger.debug({ baseUrl, reason: 'rest_ping_exception', err: error }, 'REST API availability check: REST ping failed');
     return false;
   }
 }
 
 /**
- * Build the lark-cli fallback hint appended to IPC-unavailable errors.
+ * Build the lark-cli fallback hint appended to REST API-unavailable errors.
  *
  * Issue #4576: when the PrimaryNode REST API is down, agents fall back to
  * `lark-cli im +messages-send` — which has no reply/thread flag, so in topic
@@ -131,38 +113,38 @@ export async function isIpcAvailable(): Promise<boolean> {
  *   `filePath` argument, not the workspace-resolved absolute path.
  * @returns The fallback hint string (empty-context callers append nothing).
  */
-export function buildIpcFallbackHint(
+export function buildChannelApiFallbackHint(
   parentMessageId?: string,
   options?: { filePath?: string }
 ): string {
   const target = parentMessageId ?? '<om_...>';
   const fileFlag = options?.filePath ? ` --file ${options.filePath}` : '';
-  return `IPC 不可用期间发送消息会丢失话题归属：lark-cli im +messages-send 没有 reply/thread 参数。请改用 \`lark-cli im +messages-reply --message-id ${target}${fileFlag}\` 回到原话题（Issue #4576），或等 PrimaryNode REST 恢复后重试。`;
+  return `REST API 不可用期间发送消息会丢失话题归属：lark-cli im +messages-send 没有 reply/thread 参数。请改用 \`lark-cli im +messages-reply --message-id ${target}${fileFlag}\` 回到原话题（Issue #4576），或等 PrimaryNode REST 恢复后重试。`;
 }
 
 /**
- * Generate user-facing error message based on IPC error type.
+ * Generate user-facing error message based on REST API error type.
  * Issue #1088: Provide actionable error messages.
  * Issue #4280 (Phase 3, part 3): the service behind these errors is the
- * PrimaryNode REST API (`--api-port`, not a Unix socket), so the
+ * PrimaryNode REST API (`--api-port`), so the
  * unavailable case points at the REST startup requirement.
  *
- * @param errorType - The type of IPC error
+ * @param errorType - The type of REST API error
  * @param originalError - The original error message
  * @param defaultMessage - Default message if no specific error type matches
  * @returns User-friendly error message
  */
-export function getIpcErrorMessage(
+export function getChannelApiErrorMessage(
   errorType?: string,
   originalError?: string,
   defaultMessage?: string
 ): string {
   switch (errorType) {
-    case 'ipc_unavailable':
-      return '❌ PrimaryNode REST 服务不可用。请检查主服务是否以 --api-port 启动，DISCLAUDE_REST_IPC_BASE_URL 是否指向正确地址，且（若主服务启用了 --api-token）DISCLAUDE_REST_IPC_API_TOKEN 是否一致。';
-    case 'ipc_timeout':
+    case 'channel_api_unavailable':
+      return '❌ PrimaryNode REST 服务不可用。请检查主服务是否以 --api-port 启动，DISCLAUDE_API_BASE_URL 是否指向正确地址，且（若主服务启用了 --api-token）DISCLAUDE_API_TOKEN 是否一致。';
+    case 'channel_api_timeout':
       return '❌ PrimaryNode 请求超时。服务可能过载，请稍后重试。';
-    case 'ipc_request_failed':
+    case 'channel_api_request_failed':
       return `❌ PrimaryNode 请求失败: ${originalError ?? '未知错误'}`;
     default:
       return defaultMessage ?? `❌ 操作失败: ${originalError ?? '未知错误'}`;

@@ -229,7 +229,7 @@ describe('AgentPoolMessageHandler', () => {
 
     it('should catch processMessage rejection and log error', async () => {
       const mockAgent = createMockAgent();
-      const processError = new Error('IPC socket disconnected');
+      const processError = new Error('REST API socket disconnected');
       vi.mocked(mockAgent.processMessage).mockRejectedValue(processError);
       vi.mocked(options.agentPool.getOrCreateChatAgent).mockReturnValue(mockAgent);
 
@@ -334,7 +334,7 @@ describe('AgentPoolMessageHandler', () => {
 
     it('should catch processMessage rejection and log error', async () => {
       const mockAgent = createMockAgent();
-      const processError = new Error('IPC socket disconnected');
+      const processError = new Error('REST API socket disconnected');
       vi.mocked(mockAgent.processMessage).mockRejectedValue(processError);
       vi.mocked(options.agentPool.getOrCreateChatAgent).mockReturnValue(mockAgent);
 

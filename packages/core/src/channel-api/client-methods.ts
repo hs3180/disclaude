@@ -1,76 +1,62 @@
-/**
- * IPC Client Facade — high-level protocol convenience methods.
- *
- * Issue #4129: Extracted from UnixSocketIpcClient to separate
- * connection management from protocol-level convenience methods.
- *
- * Each method takes a client instance and delegates to the low-level
- * `request()` method, adding consistent error classification.
- *
- * @module ipc/ipc-client-facade
- */
+/** Typed Channel API helpers with consistent error classification. Each helper delegates to the HTTP client request method. */
 
 import { createLogger } from '../utils/logger.js';
 import type { FeishuCard } from '../types/platform.js';
 import type {
-  IpcRequestType,
-  IpcRequestPayloads,
-  IpcResponsePayloads,
+  ChannelApiRequestType,
+  ChannelApiRequestPayloads,
+  ChannelApiResponsePayloads,
 } from './protocol.js';
 
-// Issue #4129 review nit#2: keep the pre-refactor 'IpcClient' context so high-level
-// method error logs (sendMessage failed, etc.) stay on the same source as the
-// connection layer — preserves dashboard/alert continuity and keeps the Loop
-// Runner logs on 'IpcClient' too once those move here.
-const logger = createLogger('IpcClient');
+const logger = createLogger('ChannelApiClient');
 
 /** Consistent error type returned by all facade methods. */
-export type IpcMethodErrorType = 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed';
+export type ChannelApiMethodErrorType = 'channel_api_unavailable' | 'channel_api_timeout' | 'channel_api_request_failed';
 
 /** Base return type for facade methods. */
-export type IpcMethodResult = {
+export type ChannelApiMethodResult = {
   success: boolean;
   error?: string;
-  errorType?: IpcMethodErrorType;
+  errorType?: ChannelApiMethodErrorType;
 };
 
 /**
- * Classify an error into an IPC error type based on its message prefix.
+ * Classify an error into an REST API error type based on its message prefix.
  */
-function classifyError(error: unknown): { err: Error; errorType: IpcMethodErrorType } {
+function classifyError(error: unknown): { err: Error; errorType: ChannelApiMethodErrorType } {
   const err = error instanceof Error ? error : new Error(String(error));
-  let errorType: IpcMethodErrorType = 'ipc_request_failed';
-  if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
-    errorType = 'ipc_unavailable';
-  } else if (err.message.startsWith('IPC_TIMEOUT')) {
-    errorType = 'ipc_timeout';
+  let errorType: ChannelApiMethodErrorType = 'channel_api_request_failed';
+  if (err.message.startsWith('CHANNEL_API_NOT_AVAILABLE')) {
+    errorType = 'channel_api_unavailable';
+  } else if (err.message.startsWith('CHANNEL_API_TIMEOUT')) {
+    errorType = 'channel_api_timeout';
   }
   return { err, errorType };
 }
 
 /**
  * Client interface required by facade methods.
- * Implemented by UnixSocketIpcClient — kept minimal to avoid circular deps.
+ * Implemented by ChannelApiClient; kept minimal to avoid circular dependencies.
  */
-export interface IpcClientLike {
-  request<T extends IpcRequestType>(
+export interface ChannelApiClientLike {
+  request<T extends ChannelApiRequestType>(
     type: T,
-    payload: IpcRequestPayloads[T],
+    payload: ChannelApiRequestPayloads[T],
     options?: { timeoutMs?: number }
-  ): Promise<IpcResponsePayloads[T]>;
+  ): Promise<ChannelApiResponsePayloads[T]>;
 }
 
 /**
- * Send a text message via IPC.
+ * Send a text message via REST API.
  * Issue #1088: Return detailed error information for better troubleshooting.
  */
 export async function sendMessage(
-  client: IpcClientLike,
+  client: ChannelApiClientLike,
   chatId: string,
   text: string,
   threadId?: string,
   mentions?: Array<{ openId: string; name?: string }>
-): Promise<IpcMethodResult & { messageId?: string }> {
+): Promise<ChannelApiMethodResult & { messageId?: string }> {
   try {
     return await client.request('sendMessage', { chatId, text, threadId, mentions });
   } catch (error) {
@@ -81,16 +67,16 @@ export async function sendMessage(
 }
 
 /**
- * Send a card message via IPC.
+ * Send a card message via REST API.
  * Issue #1088: Return detailed error information for better troubleshooting.
  */
 export async function sendCard(
-  client: IpcClientLike,
+  client: ChannelApiClientLike,
   chatId: string,
   card: FeishuCard,
   threadId?: string,
   description?: string
-): Promise<IpcMethodResult & { messageId?: string }> {
+): Promise<ChannelApiMethodResult & { messageId?: string }> {
   try {
     return await client.request('sendCard', { chatId, card, threadId, description });
   } catch (error) {
@@ -101,15 +87,15 @@ export async function sendCard(
 }
 
 /**
- * Upload a file via IPC.
- * Issue #2300: Return detailed error information consistent with other IPC methods.
+ * Upload a file via REST API.
+ * Issue #2300: Return detailed error information consistent with other REST API methods.
  */
 export async function uploadFile(
-  client: IpcClientLike,
+  client: ChannelApiClientLike,
   chatId: string,
   filePath: string,
   threadId?: string
-): Promise<IpcMethodResult & { fileKey?: string; fileType?: string; fileName?: string; fileSize?: number }> {
+): Promise<ChannelApiMethodResult & { fileKey?: string; fileType?: string; fileName?: string; fileSize?: number }> {
   try {
     return await client.request('uploadFile', { chatId, filePath, threadId });
   } catch (error) {
@@ -120,13 +106,13 @@ export async function uploadFile(
 }
 
 /**
- * Upload an image for card embedding via IPC.
+ * Upload an image for card embedding via REST API.
  * Issue #2951: Returns Feishu image_key for use in card img elements.
  */
 export async function uploadImage(
-  client: IpcClientLike,
+  client: ChannelApiClientLike,
   filePath: string
-): Promise<IpcMethodResult & { imageKey?: string }> {
+): Promise<ChannelApiMethodResult & { imageKey?: string }> {
   try {
     return await client.request('uploadImage', { filePath });
   } catch (error) {
@@ -137,11 +123,11 @@ export async function uploadImage(
 }
 
 /**
- * Send an interactive card with raw parameters via IPC.
- * Issue #1570: Phase 1 of IPC refactor — Primary Node owns card building.
+ * Send an interactive card with raw parameters via REST API.
+ * Issue #1570: Phase 1 of REST API refactor — Primary Node owns card building.
  */
 export async function sendInteractive(
-  client: IpcClientLike,
+  client: ChannelApiClientLike,
   chatId: string,
   params: {
     question: string;
@@ -151,7 +137,7 @@ export async function sendInteractive(
     threadId?: string;
     actionPrompts?: Record<string, string>;
   }
-): Promise<IpcMethodResult & { messageId?: string }> {
+): Promise<ChannelApiMethodResult & { messageId?: string }> {
   try {
     return await client.request('sendInteractive', { chatId, ...params });
   } catch (error) {
@@ -162,12 +148,12 @@ export async function sendInteractive(
 }
 
 /**
- * List all tracked temporary chats via IPC.
+ * List all tracked temporary chats via REST API.
  * Issue #1703: Temp chat lifecycle management.
  */
 export async function listTempChats(
-  client: IpcClientLike
-): Promise<IpcMethodResult & { chats?: Array<{ chatId: string; createdAt: string; expiresAt: string; creatorChatId?: string; responded: boolean }> }> {
+  client: ChannelApiClientLike
+): Promise<ChannelApiMethodResult & { chats?: Array<{ chatId: string; createdAt: string; expiresAt: string; creatorChatId?: string; responded: boolean }> }> {
   try {
     return await client.request('listTempChats', {});
   } catch (error) {
@@ -178,14 +164,14 @@ export async function listTempChats(
 }
 
 /**
- * Mark a temporary chat as responded by a user via IPC.
+ * Mark a temporary chat as responded by a user via REST API.
  * Issue #1703: Temp chat lifecycle management.
  */
 export async function markChatResponded(
-  client: IpcClientLike,
+  client: ChannelApiClientLike,
   chatId: string,
   response: { selectedValue: string; responder: string; repliedAt: string }
-): Promise<IpcMethodResult> {
+): Promise<ChannelApiMethodResult> {
   try {
     return await client.request('markChatResponded', { chatId, response });
   } catch (error) {
@@ -196,15 +182,15 @@ export async function markChatResponded(
 }
 
 /**
- * Push an instruction to a chat agent via IPC.
+ * Push an instruction to a chat agent via REST API.
  * Issue #631: Allows skills to push instructions to agents.
  */
 export async function pushToAgent(
-  client: IpcClientLike,
+  client: ChannelApiClientLike,
   chatId: string,
   message: string,
   options?: { waitForCompletion?: boolean; timeoutMs?: number }
-): Promise<IpcMethodResult> {
+): Promise<ChannelApiMethodResult> {
   try {
     return await client.request('pushToAgent', { chatId, message, waitForCompletion: options?.waitForCompletion }, { timeoutMs: options?.timeoutMs });
   } catch (error) {

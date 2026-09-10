@@ -64,8 +64,11 @@ function showHelp() {
 }
 
 const ROUTES = {
-  start: { file: resolve(ROOT, 'packages/primary-node/dist/cli.js') },
-  channel: { file: resolve(ROOT, 'packages/channel-cli/dist/cli.js') },
+  start: { file: resolve(ROOT, 'node_modules/@disclaude/primary-node/dist/cli.js') },
+  channel: {
+    file: resolve(ROOT, 'node_modules/@disclaude/channel-cli/dist/cli.js'),
+    jsonOutput: !['help', '--help', '-h'].includes(args[1]),
+  },
   // Issue #4807: routes to scripts/launchd.mjs chromium-cdp <cmd>. The launchd
   // script reads the service selector from argv[2], so we must PRESERVE it in
   // the forwarded args (launchd.mjs "chromium-cdp" <cmd>), not drop it.
@@ -100,9 +103,27 @@ if (!existsSync(target)) {
 // the forwarded argv because the target parses the service selector there.
 const forwardArgs = route.keepCommand ? [command, ...args.slice(1)] : args.slice(1);
 const child = spawn(process.execPath, [target, ...forwardArgs], {
-  stdio: 'inherit',
+  stdio: route.jsonOutput ? ['inherit', 'pipe', 'inherit'] : 'inherit',
   env: process.env,
 });
+
+if (route.jsonOutput && child.stdout) {
+  let pending = '';
+  child.stdout.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => {
+    pending += chunk;
+    const lines = pending.split('\n');
+    pending = lines.pop() ?? '';
+    for (const line of lines) {
+      (line.startsWith('{"ok":') ? process.stdout : process.stderr).write(`${line}\n`);
+    }
+  });
+  child.stdout.on('end', () => {
+    if (pending) {
+      (pending.startsWith('{"ok":') ? process.stdout : process.stderr).write(pending);
+    }
+  });
+}
 
 child.on('error', (err) => {
   console.error(`Failed to start subprocess: ${err.message}`);

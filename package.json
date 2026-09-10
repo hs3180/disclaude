@@ -89,6 +89,14 @@
   },
   "homepage": "https://github.com/hs3180/disclaude#readme",
   "dependencies": {
+    "@disclaude/channel-cli": "*",
+    "@disclaude/core": "*",
+    "@disclaude/primary-node": "*",
     "qrcode": "1.5.4"
-  }
+  },
+  "bundledDependencies": [
+    "@disclaude/channel-cli",
+    "@disclaude/core",
+    "@disclaude/primary-node"
+  ]
 }

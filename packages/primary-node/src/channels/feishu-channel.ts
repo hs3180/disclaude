@@ -1170,7 +1170,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
-   * Get bot info for IPC handlers.
+   * Get bot info for REST API handlers.
    * Returns bot's open_id and app_id.
    */
   getBotInfo(): { openId: string; name?: string; avatarUrl?: string } {

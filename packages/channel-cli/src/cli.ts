@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 /** Typed, distributable entry point for the channel CLI. */
 import { existsSync, readFileSync } from 'node:fs';
-import { CHANNEL_CLI_HELP, REST_IPC_DEFAULT_BASE_URL } from '@disclaude/core';
+import { CHANNEL_CLI_HELP, normalizeChannelApiBaseUrl } from '@disclaude/core';
 import type { ActionPromptMap, InteractiveOption } from './tools/types.js';
 
-const DEFAULT_REST_BASE_URL = REST_IPC_DEFAULT_BASE_URL;
 const CHAT_ID_PATTERNS = [
   { prefix: 'oc_', label: 'Feishu group chat', minLength: 35 },
   { prefix: 'ou_', label: 'Feishu user (p2p chat)', minLength: 35 },
@@ -32,16 +31,21 @@ export const HELP = CHANNEL_CLI_HELP;
 type Args = { _: string[]; [key: string]: string | string[] | undefined };
 type ToolResult = { success?: boolean; error?: string; message?: string };
 let emitted = false;
+let autoRunOutput: typeof process.stdout.write | undefined;
+
+function writeResult(value: string): void {
+  (autoRunOutput ?? process.stdout.write).call(process.stdout, value);
+}
 
 function emitOk(payload: Record<string, unknown>): void {
-  if (!emitted) { emitted = true; process.stdout.write(`${JSON.stringify({ ok: true, ...payload })}\n`); }
+  if (!emitted) { emitted = true; writeResult(`${JSON.stringify({ ok: true, ...payload })}\n`); }
 }
 function emitFail(command: string, error: string, hint?: string): void {
   if (emitted) {return;}
   emitted = true;
   const result: Record<string, unknown> = { ok: false, command, error };
   if (hint) {result.hint = hint;}
-  process.stdout.write(`${JSON.stringify(result)}\n`);
+  writeResult(`${JSON.stringify(result)}\n`);
 }
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 function parseArgs(argv: string[]): Args {
@@ -135,15 +139,16 @@ function parseActionPrompts(raw: string | undefined): ActionPromptMap | undefine
   return value as ActionPromptMap;
 }
 function setupRest(args: Args): string {
-  const baseUrl = arg(args, 'base-url') || process.env.DISCLAUDE_REST_IPC_BASE_URL || DEFAULT_REST_BASE_URL;
-  process.env.DISCLAUDE_REST_IPC_BASE_URL = baseUrl;
+  const configured = arg(args, 'base-url') ?? process.env.DISCLAUDE_API_BASE_URL;
+  const baseUrl = normalizeChannelApiBaseUrl(configured ?? '');
+  process.env.DISCLAUDE_API_BASE_URL = baseUrl;
   // Issue #4801: mirror the PrimaryNode --api-token into the env the REST
   // client reads, so authenticated writes attach the bearer header. Without
   // this, a token-enabled primary 401s every channel POST while the probe
   // still reports "available".
   const apiToken = arg(args, 'api-token');
   if (apiToken !== undefined) {
-    process.env.DISCLAUDE_REST_IPC_API_TOKEN = apiToken;
+    process.env.DISCLAUDE_API_TOKEN = apiToken;
   }
   return baseUrl;
 }
@@ -152,7 +157,7 @@ function withLogsRedirected<T>(fn: () => Promise<T>): Promise<T> {
   process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, callback?: (error?: Error | null) => void) => process.stderr.write(chunk, encoding, callback)) as typeof process.stdout.write;
   return fn().finally(() => { process.stdout.write = originalWrite; });
 }
-function restHint(baseUrl: string): string { return `PrimaryNode REST ${baseUrl} unreachable — start the main service (disclaude-primary start --api-port <port>) or pass --base-url / DISCLAUDE_REST_IPC_BASE_URL`; }
+function restHint(baseUrl: string): string { return `PrimaryNode REST ${baseUrl} unreachable — start the main service (disclaude-primary start --api-port <port>) or pass --base-url / DISCLAUDE_API_BASE_URL`; }
 async function restIsReachable(baseUrl: string): Promise<boolean> {
   try {
     const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/ping`, {
@@ -165,7 +170,7 @@ async function restIsReachable(baseUrl: string): Promise<boolean> {
   }
 }
 async function failureHint(baseUrl: string, error: string): Promise<string | undefined> {
-  if (/IPC|ECONNREFUSED|ENOTFOUND|fetch failed/i.test(error)) {return restHint(baseUrl);}
+  if (/CHANNEL_API|REST API|ECONNREFUSED|ENOTFOUND|fetch failed/i.test(error)) {return restHint(baseUrl);}
   return await restIsReachable(baseUrl) ? undefined : restHint(baseUrl);
 }
 
@@ -242,7 +247,7 @@ export async function run(argv: string[]): Promise<number> {
   await Promise.resolve();
   emitted = false;
   const [invokedAs] = argv;
-  if (!invokedAs || invokedAs === 'help' || invokedAs === '--help' || invokedAs === '-h') { process.stdout.write(`${HELP}\n`); return 0; }
+  if (!invokedAs || invokedAs === 'help' || invokedAs === '--help' || invokedAs === '-h') { writeResult(`${HELP}\n`); return 0; }
   // `push` is the agent-facing spelling; `push_to_agent` stays as the canonical
   // command name so the stdout JSON contract (`command` field) is unchanged.
   const command = invokedAs === 'push' ? 'push_to_agent' : invokedAs;
@@ -250,13 +255,20 @@ export async function run(argv: string[]): Promise<number> {
   // Derived from COMMAND_FLAGS so a new command cannot be routable yet have no
   // flag whitelist (which would reject every one of its own options).
   const commands = Object.keys(COMMAND_FLAGS);
-  if (!commands.includes(command)) { process.stderr.write(`Unknown command: ${invokedAs}\n`); process.stdout.write(`${HELP}\n`); return 1; }
+  if (!commands.includes(command)) { process.stderr.write(`Unknown command: ${invokedAs}\n`); writeResult(`${HELP}\n`); return 1; }
   // Before chat validation: a mistyped `--chat` shows up as an unknown flag, and
   // naming it beats the generic "Missing required option --chat" it would cause.
   if (rejectUnknownFlags(command, args)) {return 1;}
   const chat = validateChat(command, args);
   if (!chat) {return 1;}
-  return execute(command, args, chat, setupRest(args));
+  let baseUrl: string;
+  try {
+    baseUrl = setupRest(args);
+  } catch (error) {
+    emitFail(command, errorMessage(error));
+    return 1;
+  }
+  return execute(command, args, chat, baseUrl);
 }
 
 // Only auto-run when executed as a script (the `disclaude channel` router spawns
@@ -265,5 +277,7 @@ export async function run(argv: string[]): Promise<number> {
 // substring match would also fire when a *test* imports this module from a repo
 // checkout whose path happens to contain "disclaude".
 if (process.argv[1]?.endsWith('/cli.js')) {
+  autoRunOutput = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, callback?: (error?: Error | null) => void) => process.stderr.write(chunk, encoding, callback)) as typeof process.stdout.write;
   run(process.argv.slice(2)).then((code) => { process.exitCode = code; }).catch((error) => { process.stderr.write(`channel CLI crashed: ${errorMessage(error)}\n`); emitFail('channel', `CLI crashed: ${errorMessage(error)}`); process.exitCode = 1; });
 }

@@ -2,7 +2,7 @@
  * Input MessageRouter — routes incoming Messages to AgentPool by chatId.
  *
  * This is the unified input routing layer for all messages entering the system.
- * Both UserMessage (from chat channels) and SystemMessage (from scheduler/webhook/IPC)
+ * Both UserMessage (from chat channels) and SystemMessage (from scheduler/webhook/REST API)
  * are routed through this single router to the appropriate ChatAgent.
  *
  * Design: Fully decoupled from Project system. Routes by chatId only.

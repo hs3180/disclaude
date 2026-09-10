@@ -4,18 +4,18 @@
 > part 1, owner ruling 2026-08-18):** the CLI now reaches the PrimaryNode over
 > the **REST API** (HttpApiServer `/api/send-message`, `/api/send-card`,
 > `/api/upload-file`, `/api/send-interactive`, `/api/push`) — it no longer opens
-> a Unix socket, and there is **no IPC fallback** on the CLI path. REST is the
+> a Unix socket, and there is **no REST API fallback** on the CLI path. REST is the
 > only transport (unconditional — `DISCLAUDE_REST_IPC_ENABLED` is ignored).
-> Base URL: `--base-url` > `DISCLAUDE_REST_IPC_BASE_URL` >
+> Base URL: `--base-url` > `DISCLAUDE_API_BASE_URL` >
 > `http://localhost:19200`. **The CLI does not authenticate yet:** it attaches
 > no bearer header, so a primary started with `--api-token` 401s every channel
 > write while `GET /api/ping` (token-exempt) keeps the availability probe green
 > — [#4804](https://github.com/hs3180/disclaude/pull/4804) adds the `--api-token`
-> flag and `DISCLAUDE_REST_IPC_API_TOKEN` wiring (#4801). When the REST face
+> flag and `DISCLAUDE_API_TOKEN` wiring (#4801). When the REST face
 > is unreachable, the CLI emits an actionable "start the main service" hint
 > instead of a raw `fetch` ECONNREFUSED (#4532 scope 3). The #4521 chatId
 > pre-check substance was re-landed on the REST CLI by part 11 (see §Parity).
-> The Unix-socket IPC face itself is
+> The Unix-socket REST API face itself is
 > deprecated for this consumer and will be removed in #4280 (Phase 3).
 
 > **Status (parts 3–7 + 11 of [#4459](https://github.com/hs3180/disclaude/issues/4459)):**
@@ -182,7 +182,7 @@ you typed: `push` is the agent-facing spelling of `push_to_agent`, so it echoes
 {"ok":false,"command":"send_card","error":"Invalid card JSON: Unexpected token ...","hint":"pass --card <json>, --card-file <path>, or pipe card JSON on stdin"}
 {"ok":false,"command":"send_card","error":"Invalid card structure: ..."}
 {"ok":false,"command":"push_to_agent","error":"Missing message content","hint":"pass --message <string>, --message-file <path>, or pipe content on stdin"}
-{"ok":false,"command":"send_text","error":"IPC service unavailable. Please ensure Primary Node is running.","hint":"PrimaryNode REST http://localhost:19200 unreachable — start the main service (disclaude-primary start --api-port <port>) or pass --base-url / DISCLAUDE_REST_IPC_BASE_URL"}
+{"ok":false,"command":"send_text","error":"REST API service unavailable. Please ensure Primary Node is running.","hint":"PrimaryNode REST http://localhost:19200 unreachable — start the main service (disclaude-primary start --api-port <port>) or pass --base-url / DISCLAUDE_API_BASE_URL"}
 {"ok":false,"command":"send_text","error":"Failed to load channel implementation: ...","hint":"run inside a disclaude workspace with packages built (npm run build); ..."}
 ```
 
@@ -212,18 +212,18 @@ create/lazily-resume the target chat's agent.)
 | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | `packages/channel-cli` (channel operations and card helpers) | workspace package                                               | build the monorepo (`npm run build`)                                                                                                    |
 | disclaude PrimaryNode (**REST API**, #4532)                                                                                  | runtime                                                         | start it with `--api-port` (e.g. `19200`); the CLI POSTs to `/api/*` — no Unix socket involved                                          |
-| REST base URL                                                                                                                | `--base-url` flag > `DISCLAUDE_REST_IPC_BASE_URL` env > default | default `http://localhost:19200`; the env var reaches one-shot CLI processes via the agent runtime env (`.runtime-env`, Issue #1361)    |
+| REST base URL                                                                                                                | `--base-url` flag > `DISCLAUDE_API_BASE_URL` env > default | default `http://localhost:19200`; the env var reaches one-shot CLI processes via the agent runtime env (`.runtime-env`, Issue #1361)    |
 
 **Same-host constraint of the file-carrying routes (#4532 review note):** the
 REST file contract is path-based, not content-based — `send_file` and
 `send_card`'s local-image auto-upload send a **file path** to
 `/api/upload-file` / `/api/upload-image`, and the PrimaryNode reads that path
-from **its own filesystem** (exact IPC parity; see the server-side "local
+from **its own filesystem** (exact REST API parity; see the server-side "local
 filePath" contract in `http-api-server.ts`). Pointing `--base-url` at a
 PrimaryNode on another host therefore works for `send_text` /
 `send_interactive` / `push` but makes `send_file` fail server-side
 (ENOENT) and degrades card local images to placeholders. This is a limitation
-of the current endpoint contract (inherited from IPC, where same-host was
+of the current endpoint contract (inherited from REST API, where same-host was
 implicit), not of the transport switch; relaxing it (multipart / base64 upload)
 is deferred with the endpoint work, not the CLI.
 
@@ -242,7 +242,7 @@ Recorded explicitly per #4459 acceptance ("迁移/下线不静默"):
 | Aspect                     | MCP tool (S1)                                                     | This CLI Skill                                                                                                                                              | Delta                                                      |
 | -------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
 | Transport                  | in-process MCP tool dispatch                                      | one-shot process, shells out via `Bash`                                                                                                                     | different transport, same first-party impl                 |
-| IPC reach-back             | in-process `getIpcClient()` (Unix socket by default)              | `RestIpcClient` → HttpApiServer `/api/*` (unconditional, no toggle) (#4532)                                                                                | REST only — no Unix socket, no IPC fallback                |
+| REST API reach-back             | in-process `getChannelApiClient()` (Unix socket by default)              | `ChannelApiClient` → HttpApiServer `/api/*` (unconditional, no toggle) (#4532)                                                                                | REST only — no Unix socket, no REST API fallback                |
 | `send_text` parameters     | `text`, `chatId`, `parentMessageId`, `mentions`                   | identical, via `--chat`/`--text`/`--text-file`/`--parent`/`--mentions`                                                                                      | text gains `--text-file`/stdin for large bodies            |
 | `send_file` parameters     | `filePath`, `chatId`, `parentMessageId`                           | identical, via `--file`/`--chat`/`--parent` (relative `--file` resolves against the workspace dir, as in the MCP tool)                                      | none                                                       |
 | `push` parameters | `chatId`, `message`                                               | identical, via `--chat`/`--message`/`--message-file`                                                                                                        | message gains `--message-file`/stdin for long instructions |
@@ -253,11 +253,11 @@ Recorded explicitly per #4459 acceptance ("迁移/下线不静默"):
 `send_interactive` (part 7) parity is the same shape, with one extra note worth
 recording explicitly: the first-party `send_interactive_message` is a **pure
 forwarding client** — it passes the raw `question`/`options`/`title`/`context`/
-`actionPrompts` to the PrimaryNode via the `sendInteractive` IPC, and the
+`actionPrompts` to the PrimaryNode via the `sendInteractive` REST API, and the
 **PrimaryNode** builds the card, sends it, and registers the button-click action
 prompts (`packages/channel-cli/src/tools/interactive-message.ts`, #1571/#1572).
 Button handling therefore lives on the PrimaryNode side and is **not** part of
-this one-shot CLI — the CLI never starts an IPC server or owns a button handler,
+this one-shot CLI — the CLI never starts an REST API server or owns a button handler,
 exactly like `send_text`. Parameters map 1:1 via `--chat`/`--question`/
 `--question-file`/`--options`/`--title`/`--context`/`--action-prompts`/`--parent`.
 
@@ -283,14 +283,14 @@ channel CLI). No card/table/image transforms apply to `push`, so unlike
 
 **#4521 chatId pre-check ruling (#4532 acceptance, explicit — migration is not
 silent):** PR #4521 (chatId-format pre-checks on all 5 subcommands) was
-direction-rejected because it was built on the IPC foundation; its substance is
+direction-rejected because it was built on the REST API foundation; its substance is
 transport-independent. #4532's acceptance item — _"the pre-check's fate on the
 REST CLI is explicitly decided"_ — is now settled by **part 11**: **kept, and
 extended to all 5 subcommands**. Every subcommand runs the format pre-check
 **pre-import** via a twin of the exported pattern table (`parseChatId` in the
 channel CLI; byte-identical rules to `getChatIdValidationError`), so an
 ill-formed id fails cheaply before the channel implementation is loaded. This
-matters _more_ on REST than it did on IPC: the REST handlers validate `chatId`
+matters _more_ on REST than it did on REST API: the REST handlers validate `chatId`
 as a non-empty string only (`/api/send-message` et al.), so without the twin an
 ill-formed id would surface as a confusing Feishu 4xx deep behind the server.
 `send_card` additionally re-runs the exported helper post-import (part 5,
@@ -312,7 +312,7 @@ implemented in `packages/channel-cli` (`transformCardTables`,
 | Card preprocessing       | `transformCardTables` → `resolveCardImages` in the entry handler | identical pipeline in `cmdSendCard`, same helpers         | none                                            |
 | GFM tables (#2340)       | auto-converted to `column_set`                                   | auto-converted; success result annotates the conversion   | none                                            |
 | Local images (#2951)     | auto-uploaded, paths → `image_key`                               | auto-uploaded via `resolveCardImages`; counts annotated   | none                                            |
-| Card / chatId validation | `isValidFeishuCard`, `getChatIdValidationError` in handler       | identical checks, same helpers, before any IPC            | none                                            |
+| Card / chatId validation | `isValidFeishuCard`, `getChatIdValidationError` in handler       | identical checks, same helpers, before any REST API            | none                                            |
 | Parameters               | `card`, `chatId`, `parentMessageId`                              | identical, via `--chat`/`--card`/`--card-file`/`--parent` | card gains `--card-file`/stdin for large bodies |
 
 **Out of scope for these parts:** live end-to-end delivery verification (needs

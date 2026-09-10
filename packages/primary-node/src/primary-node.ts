@@ -37,10 +37,6 @@ import {
   createLogger,
   type IChannel,
   type OutgoingMessage,
-  // Issue #4280 (part 5): the IPC server import is gone — PrimaryNode serves
-  // REST-only via its HttpApiServer (cli.ts --api-port). Only the handler-
-  // container types remain: resolveApiHandlers still routes REST-facing calls
-  // to the owning channel's handlers.
   type FeishuHandlersContainer,
   type FeishuApiHandlers,
   type ChannelApiHandlers,
@@ -152,10 +148,6 @@ export class PrimaryNode extends EventEmitter {
   // Channel management (Issue #1594: unified channel lifecycle)
   protected channelManager: ChannelManager;
 
-  // Issue #4280 (part 5): the UnixSocketIpcServer field is gone — PrimaryNode
-  // no longer starts an IPC server; MCP tools / push-cli reach it over the
-  // REST API (--api-port). The handler containers below stay: REST-facing
-  // methods (uploadFile/sendCard/… via resolveApiHandlers) route through them.
   protected feishuHandlersContainer: FeishuHandlersContainer = { handlers: undefined };
   // Issue #3814: Multi-channel handler routing (chatId ownership)
   protected channelHandlersMap = new Map<string, { handlers: ChannelApiHandlers; channel: IChannel }>();
@@ -253,7 +245,7 @@ export class PrimaryNode extends EventEmitter {
 
   /**
    * Get the InteractiveContextStore.
-   * Issue #1572: Phase 3 of IPC layer responsibility refactoring.
+   * Issue #1572: Phase 3 of REST API layer responsibility refactoring.
    */
   getInteractiveContextStore(): InteractiveContextStore {
     return this.interactiveContextStore;
@@ -310,11 +302,6 @@ export class PrimaryNode extends EventEmitter {
     logger.info({ channelType }, 'Channel API handlers registered');
   }
 
-  // Issue #4280 (part 5): createCompositeHandlersContainer() is removed with
-  // the IPC server — it existed to adapt the registered handlers into the
-  // UnixSocketIpcServer's ChannelHandlersContainer shape. The REST-facing
-  // public methods (uploadFile/sendMessage/sendCard/sendInteractive/
-  // listTempChats/markChatResponded/…) call resolveApiHandlers directly.
 
   /**
    * Get all registered channels.
@@ -337,7 +324,9 @@ export class PrimaryNode extends EventEmitter {
    * If scheduler fails, PrimaryNode still starts (Feishu, REST channels work).
    * Scheduler status is logged and queryable via getSchedulerStatus().
    */
-  async start(): Promise<void> {
+  private schedulerDeferred = false;
+
+  async start(options: { deferScheduler?: boolean } = {}): Promise<void> {
     if (this.running) {
       logger.warn('PrimaryNode already running');
       return;
@@ -376,10 +365,30 @@ export class PrimaryNode extends EventEmitter {
       }
     }
 
-    // Issue #4280 (part 5): no IPC server is started anymore — PrimaryNode
+    // Issue #4280 (part 5): no REST API server is started anymore — PrimaryNode
     // serves REST-only via the HttpApiServer wired in cli.ts (--api-port).
     // Channel CLI tools and push-cli connect as REST clients.
 
+    this.schedulerDeferred = options.deferScheduler === true;
+    if (!this.schedulerDeferred) {
+      await this.startSchedulerSafely();
+    }
+
+    this.running = true;
+    this.emit('started');
+    logger.info({ nodeId: this.localNodeId }, 'PrimaryNode started');
+  }
+
+  /** Called by CLI only after the actual REST address has been published. */
+  async startDeferredScheduler(): Promise<void> {
+    if (!this.running || !this.schedulerDeferred) {
+      return;
+    }
+    this.schedulerDeferred = false;
+    await this.startSchedulerSafely();
+  }
+
+  private async startSchedulerSafely(): Promise<void> {
     // Initialize Scheduler (Issue #1377)
     // Issue #3361: Wrap in try-catch to prevent scheduler failure from
     // blocking the entire PrimaryNode startup. Main channels (Feishu, REST)
@@ -394,9 +403,6 @@ export class PrimaryNode extends EventEmitter {
       );
     }
 
-    this.running = true;
-    this.emit('started');
-    logger.info({ nodeId: this.localNodeId }, 'PrimaryNode started');
   }
 
   /**
@@ -409,11 +415,12 @@ export class PrimaryNode extends EventEmitter {
     }
 
     logger.info({ nodeId: this.localNodeId }, 'Stopping PrimaryNode');
+    this.schedulerDeferred = false;
 
     // Stop Scheduler (Issue #1377)
     await this.stopScheduler();
 
-    // Issue #4280 (part 5): no IPC server to stop — REST-only serving.
+    // Issue #4280 (part 5): no REST API server to stop — REST-only serving.
 
     this.running = false;
     this.emit('stopped');
@@ -548,7 +555,7 @@ export class PrimaryNode extends EventEmitter {
   /**
    * Upload a local file to a chat — delegates to the channel's uploadFile
    * capability (reads the file at filePath and uploads it). REST parity with
-   * the IPC uploadFile method (Issue #4279). filePath (not multipart) because
+   * the REST API uploadFile method (Issue #4279). filePath (not multipart) because
    * the REST face is localhost-bound and the caller is co-located.
    *
    * @returns upload metadata (fileKey/fileType/fileName/fileSize)
@@ -569,7 +576,7 @@ export class PrimaryNode extends EventEmitter {
   /**
    * Upload a local image and return a Feishu image_key (for card embedding) —
    * delegates to the channel's uploadImage capability. Channel-agnostic (no
-   * chatId). REST parity with the IPC uploadImage method (Issue #4279).
+   * chatId). REST parity with the REST API uploadImage method (Issue #4279).
    *
    * @returns { success: boolean; imageKey?: string }
    */
@@ -584,9 +591,9 @@ export class PrimaryNode extends EventEmitter {
 
   /**
    * Send a text message to a chat — delegates to the channel's sendMessage
-   * capability. REST parity with the IPC sendMessage method (Issue #4279).
+   * capability. REST parity with the REST API sendMessage method (Issue #4279).
    *
-   * @returns { success: boolean; messageId?: string } (mirrors IPC IpcResponsePayloads)
+   * @returns { success: boolean; messageId?: string } (mirrors REST API ChannelApiResponsePayloads)
    */
   async sendMessage(
     chatId: string,
@@ -598,7 +605,7 @@ export class PrimaryNode extends EventEmitter {
     if (!h) {
       throw new Error('No channel handlers available');
     }
-    // The channel handler returns Promise<void> (the IPC layer synthesizes
+    // The channel handler returns Promise<void> (the REST API layer synthesizes
     // success/messageId); REST confirms acceptance with { success: true }.
     await h.sendMessage(chatId, text, threadId, mentions);
     return { success: true };
@@ -606,9 +613,9 @@ export class PrimaryNode extends EventEmitter {
 
   /**
    * Send a Feishu card to a chat — delegates to the channel's sendCard
-   * capability. REST parity with the IPC sendCard method (Issue #4279).
+   * capability. REST parity with the REST API sendCard method (Issue #4279).
    *
-   * @returns { success: boolean; messageId?: string } (mirrors IPC IpcResponsePayloads)
+   * @returns { success: boolean; messageId?: string } (mirrors REST API ChannelApiResponsePayloads)
    */
   async sendCard(
     chatId: string,
@@ -620,7 +627,7 @@ export class PrimaryNode extends EventEmitter {
     if (!h) {
       throw new Error('No channel handlers available');
     }
-    // The channel handler returns Promise<void> (the IPC layer synthesizes
+    // The channel handler returns Promise<void> (the REST API layer synthesizes
     // success/messageId); REST confirms acceptance with { success: true }.
     await h.sendCard(chatId, card, threadId, description);
     return { success: true };
@@ -629,8 +636,8 @@ export class PrimaryNode extends EventEmitter {
   /**
    * Send an interactive card (with buttons) to a chat — builds+sends the card
    * via the channel's sendInteractive capability and registers the action
-   * prompts so button clicks resolve. REST parity with the IPC sendInteractive
-   * method (Issue #4279); the registration mirrors the IPC handler (Issue #1572).
+   * prompts so button clicks resolve. REST parity with the REST API sendInteractive
+   * method (Issue #4279); the registration mirrors the REST API handler (Issue #1572).
    *
    * @returns { success: boolean; messageId?: string }
    */
@@ -650,22 +657,22 @@ export class PrimaryNode extends EventEmitter {
       throw new Error('sendInteractive not supported by this channel');
     }
     const result = await h.sendInteractive(chatId, params);
-    // Mirror the IPC handler: register resolved action prompts (defaults may be
+    // Mirror the REST API handler: register resolved action prompts (defaults may be
     // auto-generated by the channel handler — Issue #1572).
     const resolvedPrompts = (result as { actionPrompts?: Record<string, string> }).actionPrompts
       ?? params.actionPrompts;
     if (resolvedPrompts && result.messageId) {
       this.interactiveContextStore.register(result.messageId, chatId, resolvedPrompts);
     }
-    // success mirrors the IPC handler, which returns success: true whenever the
-    // channel handler resolves without throwing (unix-socket-server.ts sendInteractive).
+    // success mirrors the REST API handler, which returns success: true whenever the
+    // channel handler resolves without throwing.
     return { success: true, messageId: result.messageId };
   }
 
   /**
    * Resolve and invoke the channel's listTempChats capability (Issue #1703).
    *
-   * Issue #4280 (part 5): with the IPC server gone this has a single caller —
+   * Issue #4280 (part 5): with the REST API server gone this has a single caller —
    * the REST-facing `listTempChats()` public method below (which wraps the raw
    * chat list into `{ success, chats }`). Throws if the active channel does
    * not support temp-chat tracking. Returns the raw chat list so the caller
@@ -682,7 +689,7 @@ export class PrimaryNode extends EventEmitter {
 
   /**
    * List tracked temporary chats (Issue #1703) — delegates to the channel's
-   * listTempChats capability. Channel-agnostic. REST parity with the IPC
+   * listTempChats capability. Channel-agnostic. REST parity with the REST API
    * listTempChats method (Issue #4279). Single-process semantics.
    *
    * @returns { success: boolean; chats: TempChat[] }
@@ -698,7 +705,7 @@ export class PrimaryNode extends EventEmitter {
   /**
    * Mark a tracked temporary chat as responded — delegates to the channel's
    * markChatResponded capability (temp-chat lifecycle, Issue #1703). REST
-   * parity with the IPC markChatResponded method (Issue #4281); throws
+   * parity with the REST API markChatResponded method (Issue #4281); throws
    * "not supported by this channel" when the active channel lacks the
    * capability.
    *

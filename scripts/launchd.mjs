@@ -75,20 +75,18 @@ const CLI_ENTRY = resolve(PROJECT_ROOT, 'packages/primary-node/dist/cli.js');
 
 // Issue #4576: since #4280 Phase 3 the MCP tools' only transport is the
 // PrimaryNode REST API (GET /api/ping on the HTTP API server). A launchd
-// deployment started with bare `start` has no --api-port, so nothing listens
-// on 19200 and every channel send tool reports「IPC 服务不可用」. The
-// plist therefore enables the HTTP API server by default. The server binds
+// deployment started with bare `start` used to have no HTTP API. The plist
+// enables it on an OS-assigned port by default. The server binds
 // localhost only (HttpApiServerConfig.host default) and GET routes are
 // token-exempt, so this matches the security posture of interactive runs.
 // Override with DISCLAUDE_LAUNCHD_API_PORT / DISCLAUDE_LAUNCHD_API_TOKEN.
-const DEFAULT_API_PORT = 19200;
+const DEFAULT_API_PORT = 0;
 
 /**
  * Resolve the --api-port value for the plist (Issue #4576).
  *
- * Reads DISCLAUDE_LAUNCHD_API_PORT; valid range 1-65535 (same bounds as the
- * CLI parser in packages/primary-node/src/cli.ts). Falls back to 19200 — the
- * same default DISCLAUDE_REST_IPC_BASE_URL already assumes.
+ * Reads DISCLAUDE_LAUNCHD_API_PORT; valid range 0-65535 (same bounds as the
+ * CLI parser). Falls back to 0 so parallel services do not contend.
  *
  * @returns {number} port for --api-port
  */
@@ -96,7 +94,7 @@ export function resolveApiPort() {
   const raw = process.env.DISCLAUDE_LAUNCHD_API_PORT;
   if (raw) {
     const port = parseInt(raw, 10);
-    if (!isNaN(port) && port >= 1 && port <= 65535) {
+    if (!isNaN(port) && port >= 0 && port <= 65535) {
       return port;
     }
     console.warn(
@@ -183,7 +181,7 @@ function getCaffeinatePath() {
  * service, caffeinate terminates automatically (along with the node child),
  * so no separate cleanup is needed.
  *
- * Issue #4576: appends --api-port (default 19200) so the PrimaryNode HTTP API
+ * Issue #4576: appends --api-port (default 0) so the PrimaryNode HTTP API
  * server is up for the REST-only MCP tools; --api-token only when provided
  * via DISCLAUDE_LAUNCHD_API_TOKEN (mirrors the interactive-run posture — GET
  * routes stay token-exempt, write routes gain Bearer auth).
@@ -208,23 +206,21 @@ export function buildProgramArguments(nodePath, caffeinatePath = getCaffeinatePa
 }
 
 /**
- * Review of #4578: when the port override differs from 19200, the MCP tools'
- * REST probe (ipc-utils.ts in core and channel-cli) would still default to
- * http://localhost:19200 unless DISCLAUDE_REST_IPC_BASE_URL is set. The plist
- * must propagate the override into the service's EnvironmentVariables so
- * both sides agree.
+ * A fixed operator override can be propagated into the service environment.
+ * Port 0 cannot be published before listen; managed children inherit the
+ * actual address that cli-main installs after the server reports ready.
  *
  * @param {number} apiPort - the resolved --api-port value
  * @returns {string | null} base URL env value, or null when the default
  *   already matches (no env entry needed)
  */
-export function resolveRestIpcBaseUrl(apiPort) {
-  const override = process.env.DISCLAUDE_REST_IPC_BASE_URL;
+export function resolveRestChannelApiBaseUrl(apiPort) {
+  const override = process.env.DISCLAUDE_API_BASE_URL;
   if (override) {
     // Operator set it explicitly — never clobber their value.
     return null;
   }
-  return apiPort === DEFAULT_API_PORT ? null : `http://localhost:${apiPort}`;
+  return apiPort === 0 ? null : `http://127.0.0.1:${apiPort}`;
 }
 
 function generatePlist() {
@@ -232,7 +228,7 @@ function generatePlist() {
   const caffeinatePath = getCaffeinatePath();
   const programArgs = buildProgramArguments(nodePath, caffeinatePath);
   const apiPort = resolveApiPort();
-  const restIpcBaseUrl = resolveRestIpcBaseUrl(apiPort);
+  const restChannelApiBaseUrl = resolveRestChannelApiBaseUrl(apiPort);
 
   // Issue #2934: Application logs go through pino file transport
   // (triggered by LOG_TO_FILE env var). Issue #3416: pino-roll removed,
@@ -274,7 +270,7 @@ ${programArgs.map((a) => `    <string>${xmlEscape(a)}</string>`).join('\n')}
   <dict>
     <key>PATH</key>
     <string>${xmlEscape(process.env.PATH ?? '')}</string>
-${restIpcBaseUrl ? `    <key>DISCLAUDE_REST_IPC_BASE_URL</key>\n    <string>${xmlEscape(restIpcBaseUrl)}</string>\n` : ''}    <key>HOME</key>
+${restChannelApiBaseUrl ? `    <key>DISCLAUDE_API_BASE_URL</key>\n    <string>${xmlEscape(restChannelApiBaseUrl)}</string>\n` : ''}    <key>HOME</key>
     <string>${homedir()}</string>
     <key>NODE_ENV</key>
     <string>production</string>
@@ -296,9 +292,9 @@ ${restIpcBaseUrl ? `    <key>DISCLAUDE_REST_IPC_BASE_URL</key>\n    <string>${xm
   console.log(
     `  Caffeinate: ${caffeinatePath ? `enabled (${caffeinatePath} -s)` : 'not available'}`
   );
-  console.log(`  API server: --api-port ${apiPort} (REST IPC for MCP tools; Issue #4576)`);
+  console.log(`  API server: --api-port ${apiPort} (REST API for MCP tools; Issue #4576)`);
   console.log(
-    `  REST IPC base URL env: ${restIpcBaseUrl ? `${restIpcBaseUrl} (injected so MCP tools probe the override)` : 'not set (default http://localhost:19200 already matches)'}`
+    `  REST API base URL env: ${restChannelApiBaseUrl ? `${restChannelApiBaseUrl} (fixed override)` : 'set after dynamic HTTP listen readiness'}`
   );
   console.log(
     `  API token: ${process.env.DISCLAUDE_LAUNCHD_API_TOKEN ? 'enabled (--api-token)' : 'not set (GET-only routes are token-exempt)'}`

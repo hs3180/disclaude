@@ -12,6 +12,7 @@ import { describe, it, expect, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { execFileSync } from 'node:child_process';
 
 // Mock core dependencies used at module level by cli.ts (createLogger, etc.)
 // Issue #4394: the mocked logger's calls are exposed on a module-level array
@@ -60,7 +61,7 @@ vi.mock('./channels/wired-descriptors.js', () => ({
   BUILTIN_WIRED_DESCRIPTORS: [],
 }));
 
-import { parseArgs, resolveChannelConfigs, isPortAvailable, waitForPortAvailable, validateWorkspaceDir } from './cli-main.js';
+import { publishChannelApiEnvironment, parseArgs, resolveChannelConfigs, isPortAvailable, waitForPortAvailable, validateWorkspaceDir } from './cli-main.js';
 import type { DisclaudeConfigWithChannels } from '@disclaude/core';
 
 // ============================================================================
@@ -130,27 +131,27 @@ describe('parseArgs', () => {
     expect(result.apiPort).toBe(0);
   });
 
-  it('should leave apiPort undefined when not specified', () => {
+  it('should default to an OS-assigned API port when not specified', () => {
     const result = parseArgs(['start']);
-    expect(result.apiPort).toBeUndefined();
+    expect(result.apiPort).toBe(0);
   });
 
   it('should leave apiPort undefined when --api-port has no value', () => {
     const result = parseArgs(['start', '--api-port']);
     expect(result.command).toBe('start');
-    expect(result.apiPort).toBeUndefined();
+    expect(result.apiPort).toBe(0);
   });
 
   it('should ignore --api-port with non-numeric value', () => {
     const result = parseArgs(['start', '--api-port', 'abc']);
     expect(result.command).toBe('start');
-    expect(result.apiPort).toBeUndefined();
+    expect(result.apiPort).toBe(0);
   });
 
   it('should ignore --api-port with out-of-range value', () => {
     const result = parseArgs(['start', '--api-port', '99999']);
     expect(result.command).toBe('start');
-    expect(result.apiPort).toBeUndefined();
+    expect(result.apiPort).toBe(0);
   });
 
   it('should handle all options together', () => {
@@ -514,5 +515,18 @@ describe('validateWorkspaceDir', () => {
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('managed Channel API environment', () => {
+  it('passes the actual server address and matching CLI token to a child, then clears stale auth', () => {
+    const env = { ...process.env, DISCLAUDE_API_BASE_URL: 'http://127.0.0.1:1', DISCLAUDE_API_TOKEN: 'stale-test-token' };
+    publishChannelApiEnvironment('http://127.0.0.1:43123', 'cli-test-token', env);
+    const readChild = () => JSON.parse(execFileSync(process.execPath, ['-e',
+      'process.stdout.write(JSON.stringify({url: process.env.DISCLAUDE_API_BASE_URL, token: process.env.DISCLAUDE_API_TOKEN}))',
+    ], { env, encoding: 'utf8' }));
+    expect(readChild()).toEqual({ url: 'http://127.0.0.1:43123', token: 'cli-test-token' });
+    publishChannelApiEnvironment('http://127.0.0.1:43124', undefined, env);
+    expect(readChild()).toEqual({ url: 'http://127.0.0.1:43124' });
   });
 });

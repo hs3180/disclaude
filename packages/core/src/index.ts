@@ -7,7 +7,7 @@
  * - Type definitions (platform, websocket, file)
  * - Constants (deduplication, dialogue, api config)
  * - Utility functions (logger, error-handler, retry)
- * - IPC Protocol (shared between Primary Node and MCP Server)
+ * - REST API Protocol (shared between Primary Node and MCP Server)
  * - Agent SDK abstraction layer
  */
 
@@ -20,8 +20,8 @@ export * from './constants/index.js';
 // Utils
 export * from './utils/index.js';
 
-// IPC Protocol (shared between Primary Node and MCP Server)
-export * from './ipc/index.js';
+// REST API Protocol (shared between Primary Node and MCP Server)
+export * from './channel-api/index.js';
 
 // Config
 export * from './config/index.js';

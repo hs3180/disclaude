@@ -92,7 +92,7 @@ export interface UserMessage extends Message {
 export type SystemTrigger = 'scheduled' | 'signal' | 'command';
 
 /**
- * SystemMessage — message from system infrastructure (scheduler, webhook, IPC).
+ * SystemMessage — message from system infrastructure (scheduler, webhook, REST API).
  *
  * Carries chatId for routing. The MessageRouter routes by chatId
  * without knowledge of the Project system.
