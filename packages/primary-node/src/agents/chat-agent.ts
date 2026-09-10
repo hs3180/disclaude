@@ -223,6 +223,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   // and superseded mid-flight (empty-turn reset+replay) — see the interception
   // next to the stalledTerminated check in processIterator.
   private sessionGeneration = 0;
+  private readonly stoppedQueryGenerations = new Set<number>();
 
   // Issue #4626: user-visible delivery isolation state. A channel sendMessage
   // failure (invalid receive_id → 400, transient 5xx, network blip) used to
@@ -2250,115 +2251,117 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         }
       }
     } catch (error) {
-      iteratorError = error as Error;
-      const elapsedMs = Date.now() - startTime; // Issue #2920: 计算耗时
+      if (!this.stoppedQueryGenerations.has(myGeneration)) {
+        iteratorError = error as Error;
+        const elapsedMs = Date.now() - startTime; // Issue #2920: 计算耗时
 
-      // Issue #3003: Log detailed timing on iterator error
-      this.logger.error(
-        {
-          err: iteratorError,
-          chatId,
-          messageCount,
-          elapsedMs,
-          ttftMs: firstMessageMs ? firstMessageMs - startTime : undefined,
-          toolCallCount,
-          errorMessage: iteratorError.message,
-          errorStack: iteratorError.stack,
-          errorName: iteratorError.constructor.name,
-          errorCause: iteratorError.cause,
-        },
-        'Iterator error'
-      );
-
-      // Issue #2920: 检测启动阶段失败
-      // 启动失败的特征：没有收到任何 SDK 消息且耗时很短。
-      // 根因通常是配置错误（MCP 配置无效、API Key 过期等），
-      // 重试无法解决，直接向用户展示具体错误。
-      if (isStartupFailure(messageCount, elapsedMs)) {
-        const stderr = getErrorStderr(iteratorError);
-        const threadRoot = resolveReplyThreadRoot();
-
-        // 提取有用的错误信息：优先使用 stderr 内容
-        let diagnosticMessage = iteratorError.message;
-        if (stderr) {
-          // 取 stderr 最后几行作为诊断信息（去空行，限制长度）
-          const stderrLines = stderr.split('\n').filter((l) => l.trim());
-          const tailLines = stderrLines.slice(-5).join('\n');
-          diagnosticMessage = tailLines.length > 800 ? tailLines.slice(-800) : tailLines;
-        }
-
+        // Issue #3003: Log detailed timing on iterator error
         this.logger.error(
           {
+            err: iteratorError,
             chatId,
             messageCount,
             elapsedMs,
-            stderr: stderr ? stderr.slice(-500) : undefined,
+            ttftMs: firstMessageMs ? firstMessageMs - startTime : undefined,
+            toolCallCount,
+            errorMessage: iteratorError.message,
+            errorStack: iteratorError.stack,
+            errorName: iteratorError.constructor.name,
+            errorCause: iteratorError.cause,
           },
-          'Startup failure detected — skipping retry/circuit-breaker'
+          'Iterator error'
         );
 
-        // Issue #4626: isolated delivery — this catch-path notice throwing
-        // used to escape processIterator into the outer "Agent loop error"
-        // handler, which was the second kill in the incident chain (the same
-        // invalid target rejects the error notice too).
-        await this.deliverUserVisible(
-          chatId,
-          `❌ Agent 启动失败: ${diagnosticMessage}\n\n` +
-            '这是一次配置或环境错误，重试无法解决。\n' +
-            '请检查上述错误信息，修复后发送 /reset 重置会话。',
-          threadRoot
-        );
+        // Issue #2920: 检测启动阶段失败
+        // 启动失败的特征：没有收到任何 SDK 消息且耗时很短。
+        // 根因通常是配置错误（MCP 配置无效、API Key 过期等），
+        // 重试无法解决，直接向用户展示具体错误。
+        if (isStartupFailure(messageCount, elapsedMs)) {
+          const stderr = getErrorStderr(iteratorError);
+          const threadRoot = resolveReplyThreadRoot();
 
-        // 启动失败不触发重试，直接标记会话为非活跃
-        this.isSessionActive = false;
-        this.isProcessingMessage = false;
+          // 提取有用的错误信息：优先使用 stderr 内容
+          let diagnosticMessage = iteratorError.message;
+          if (stderr) {
+            // 取 stderr 最后几行作为诊断信息（去空行，限制长度）
+            const stderrLines = stderr.split('\n').filter((l) => l.trim());
+            const tailLines = stderrLines.slice(-5).join('\n');
+            diagnosticMessage = tailLines.length > 800 ? tailLines.slice(-800) : tailLines;
+          }
 
-        // Issue #4063: Reject per-turn completion on startup failure.
-        // Issue #4649 (review ③): generation guard — a superseded iterator
-        // (its session was replaced via reset / replay / restart) must not
-        // settle the NEW session's entries; its own entries died with its
-        // session and the replacement already settled them.
+          this.logger.error(
+            {
+              chatId,
+              messageCount,
+              elapsedMs,
+              stderr: stderr ? stderr.slice(-500) : undefined,
+            },
+            'Startup failure detected — skipping retry/circuit-breaker'
+          );
+
+          // Issue #4626: isolated delivery — this catch-path notice throwing
+          // used to escape processIterator into the outer "Agent loop error"
+          // handler, which was the second kill in the incident chain (the same
+          // invalid target rejects the error notice too).
+          await this.deliverUserVisible(
+            chatId,
+            `❌ Agent 启动失败: ${diagnosticMessage}\n\n` +
+              '这是一次配置或环境错误，重试无法解决。\n' +
+              '请检查上述错误信息，修复后发送 /reset 重置会话。',
+            threadRoot
+          );
+
+          // 启动失败不触发重试，直接标记会话为非活跃
+          this.isSessionActive = false;
+          this.isProcessingMessage = false;
+
+          // Issue #4063: Reject per-turn completion on startup failure.
+          // Issue #4649 (review ③): generation guard — a superseded iterator
+          // (its session was replaced via reset / replay / restart) must not
+          // settle the NEW session's entries; its own entries died with its
+          // session and the replacement already settled them.
+          if (this.sessionGeneration === myGeneration) {
+            this.rejectTurn(iteratorError);
+          }
+
+          // Issue #3124: Reject completion promise on startup failure
+          this.taskCompletionReject?.(iteratorError);
+          this.clearTaskCompletion();
+
+          if (this.callbacks.onDone) {
+            await this.callbacks.onDone(chatId, threadRoot);
+          }
+          return; // 直接返回，不进入重启逻辑
+        }
+
+        // Notify user about the error
+        {
+          const threadRoot = resolveReplyThreadRoot();
+          // Issue #4626: isolated delivery (see the startup-failure notice above
+          // for why a throwing error-notice must not escape processIterator).
+          await this.deliverUserVisible(
+            chatId,
+            `❌ Session error: ${iteratorError.message}`,
+            threadRoot
+          );
+        }
+
+        // Issue #4063: Reject per-turn completion on runtime error.
+        // Issue #4649 (review ③): generation guard — see the startup-failure
+        // branch above for why a superseded iterator must not settle the
+        // replacement session's entries.
         if (this.sessionGeneration === myGeneration) {
           this.rejectTurn(iteratorError);
         }
 
-        // Issue #3124: Reject completion promise on startup failure
+        // Issue #3124: Reject completion promise on runtime error
         this.taskCompletionReject?.(iteratorError);
         this.clearTaskCompletion();
 
         if (this.callbacks.onDone) {
+          const threadRoot = resolveReplyThreadRoot();
           await this.callbacks.onDone(chatId, threadRoot);
         }
-        return; // 直接返回，不进入重启逻辑
-      }
-
-      // Notify user about the error
-      {
-        const threadRoot = resolveReplyThreadRoot();
-        // Issue #4626: isolated delivery (see the startup-failure notice above
-        // for why a throwing error-notice must not escape processIterator).
-        await this.deliverUserVisible(
-          chatId,
-          `❌ Session error: ${iteratorError.message}`,
-          threadRoot
-        );
-      }
-
-      // Issue #4063: Reject per-turn completion on runtime error.
-      // Issue #4649 (review ③): generation guard — see the startup-failure
-      // branch above for why a superseded iterator must not settle the
-      // replacement session's entries.
-      if (this.sessionGeneration === myGeneration) {
-        this.rejectTurn(iteratorError);
-      }
-
-      // Issue #3124: Reject completion promise on runtime error
-      this.taskCompletionReject?.(iteratorError);
-      this.clearTaskCompletion();
-
-      if (this.callbacks.onDone) {
-        const threadRoot = resolveReplyThreadRoot();
-        await this.callbacks.onDone(chatId, threadRoot);
       }
     } finally {
       // Issue #4399 (#4208 P2-b): finalize the in-place streaming card on every
@@ -2375,6 +2378,27 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           );
         }
       }
+    }
+
+    // A user stop is a terminal outcome, not an unknown upstream failure.
+    // Keep the generation check so late teardown cannot finish a replacement
+    // session's REST request or turn-completion promises.
+    if (this.stoppedQueryGenerations.delete(myGeneration)) {
+      if (this.sessionGeneration === myGeneration) {
+        const threadRoot = resolveReplyThreadRoot();
+        const error = new Error('Agent turn cancelled by stop');
+        this.rejectTurn(error);
+        this.taskCompletionReject?.(error);
+        this.clearTaskCompletion();
+        await this.deliverUserVisible(chatId, '⏹️ 本轮已停止。', threadRoot);
+        if (this.sessionGeneration !== myGeneration) { return; }
+        await this.callbacks.onDone?.(chatId, threadRoot);
+        if (this.sessionGeneration !== myGeneration) { return; }
+        this.isSessionActive = false;
+        this.isProcessingMessage = false;
+        this.activeTurnMessageId = undefined;
+      }
+      return;
     }
 
     // Check if this was an explicit close (reset cleared the session)
@@ -2716,6 +2740,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
 
     this.logger.info({ chatId: this.boundChatId }, 'Stopping current query');
+    this.stoppedQueryGenerations.add(this.sessionGeneration);
 
     // Issue #2926: Abort the running iterator so processIterator breaks
     // immediately instead of continuing to process buffered messages.
@@ -2738,8 +2763,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     this.queryHandle = undefined;
 
     // Note: We do NOT set isSessionActive to false here.
-    // The session remains active; processIterator will detect the ended iterator
-    // and restart via startAgentLoop(), which creates a fresh query and channel.
+    // processIterator settles the cancelled turn and ends this native query.
+    // The next user message starts a fresh query through startAgentLoop().
 
     return true;
   }
