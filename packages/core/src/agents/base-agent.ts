@@ -24,7 +24,13 @@ import { buildSdkEnv } from '../utils/sdk.js';
 import { createLogger, type Logger } from '../utils/logger.js';
 import { AppError, ErrorCategory, formatError } from '../utils/error-handler.js';
 import type { AgentMessage } from '../types/index.js';
-import { getRuntimeContext, hasRuntimeContext, type Disposable, type BaseAgentConfig, type AgentProvider } from './types.js';
+import {
+  getRuntimeContext,
+  hasRuntimeContext,
+  type Disposable,
+  type BaseAgentConfig,
+  type AgentProvider,
+} from './types.js';
 import { Config } from '../config/index.js';
 import { loadRuntimeEnv } from '../config/runtime-env.js';
 import path from 'node:path';
@@ -71,8 +77,8 @@ export interface IteratorYieldResult {
       | 'max_turns'
       | 'max_budget_usd'
       | 'max_structured_output_retries'
-    | 'turn_failed'
-    | 'evicted';
+      | 'turn_failed'
+      | 'evicted';
     /**
      * provider 据本轮 stderr 标记:SDK 在上游 overloaded_error / 5xx 重试耗尽后仍发
      * subtype=success result,ChatAgent 据此改报 ❌ Failed + recordFailure(Issue #4322)。
@@ -141,7 +147,6 @@ export abstract class BaseAgent implements Disposable {
     this.model = config.model;
     this.apiBaseUrl = config.apiBaseUrl;
     this.permissionMode = config.permissionMode ?? 'bypassPermissions';
-    this.agentBackend = config.agentBackend;
 
     // Get provider from config, fallback to runtime context
     // This allows agents to be created with explicit provider setting
@@ -153,6 +158,10 @@ export abstract class BaseAgent implements Disposable {
 
     // Get SDK provider instance
     this.sdkProvider = getProvider(config.agentBackend);
+    // Primary-node may select DeepSeek as the global default without passing
+    // an explicit per-agent override. Build options for the resolved backend.
+    this.agentBackend =
+      config.agentBackend ?? (this.sdkProvider.name === 'deepseek' ? 'deepseek' : undefined);
   }
 
   /**
@@ -195,10 +204,12 @@ export abstract class BaseAgent implements Disposable {
       permissionMode: this.permissionMode,
       ...(extra.sessionKey !== undefined ? { sessionKey: extra.sessionKey } : {}),
       settingSources: ['user', 'project', 'local'],
-      ...(this.agentBackend === 'deepseek' ? {} : {
-        systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const },
-        tools: { type: 'preset' as const, preset: 'claude_code' as const },
-      }),
+      ...(this.agentBackend === 'deepseek'
+        ? {}
+        : {
+            systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const },
+            tools: { type: 'preset' as const, preset: 'claude_code' as const },
+          }),
     };
 
     // Add allowed/disallowed tools
@@ -207,12 +218,17 @@ export abstract class BaseAgent implements Disposable {
     }
     if (extra.disallowedTools) {
       const nonApplicableDeepSeekDefaults = new Set([
-        'EnterPlanMode', 'AskUserQuestion', 'CronCreate', 'CronList',
-        'CronDelete', 'ScheduleWakeup',
+        'EnterPlanMode',
+        'AskUserQuestion',
+        'CronCreate',
+        'CronList',
+        'CronDelete',
+        'ScheduleWakeup',
       ]);
-      const disallowedTools = this.agentBackend === 'deepseek'
-        ? extra.disallowedTools.filter((tool) => !nonApplicableDeepSeekDefaults.has(tool))
-        : extra.disallowedTools;
+      const disallowedTools =
+        this.agentBackend === 'deepseek'
+          ? extra.disallowedTools.filter((tool) => !nonApplicableDeepSeekDefaults.has(tool))
+          : extra.disallowedTools;
       if (disallowedTools.length > 0) {
         options.disallowedTools = disallowedTools;
       }
@@ -220,7 +236,10 @@ export abstract class BaseAgent implements Disposable {
 
     // Add MCP servers (convert to SDK format)
     if (extra.mcpServers) {
-      options.mcpServers = extra.mcpServers as Record<string, import('../sdk/index.js').SdkMcpServerConfig>;
+      options.mcpServers = extra.mcpServers as Record<
+        string,
+        import('../sdk/index.js').SdkMcpServerConfig
+      >;
     }
 
     // Set environment: config env + runtime env file (Issue #1361)
@@ -264,7 +283,7 @@ export abstract class BaseAgent implements Disposable {
       this.apiBaseUrl,
       globalEnv,
       loggingConfig.sdkDebug,
-      this.getSdkTimeoutMs(),
+      this.getSdkTimeoutMs()
     );
 
     // Set model
@@ -348,19 +367,21 @@ export abstract class BaseAgent implements Disposable {
     return {
       type: message.type,
       content: message.content,
-      metadata: message.metadata ? {
-        toolName: message.metadata.toolName,
-        toolInput: message.metadata.toolInput,
-        toolInputRaw: message.metadata.toolInput,
-        toolOutput: message.metadata.toolOutput,
-        elapsed: message.metadata.elapsedMs,
-        cost: message.metadata.costUsd,
-        tokens: (message.metadata.inputTokens ?? 0) + (message.metadata.outputTokens ?? 0),
-        stopReason: message.metadata.stopReason,
-        numTurns: message.metadata.numTurns,
-        durationMs: message.metadata.durationMs,
-        durationApiMs: message.metadata.durationApiMs,
-      } : undefined,
+      metadata: message.metadata
+        ? {
+            toolName: message.metadata.toolName,
+            toolInput: message.metadata.toolInput,
+            toolInputRaw: message.metadata.toolInput,
+            toolOutput: message.metadata.toolOutput,
+            elapsed: message.metadata.elapsedMs,
+            cost: message.metadata.costUsd,
+            tokens: (message.metadata.inputTokens ?? 0) + (message.metadata.outputTokens ?? 0),
+            stopReason: message.metadata.stopReason,
+            numTurns: message.metadata.numTurns,
+            durationMs: message.metadata.durationMs,
+            durationApiMs: message.metadata.durationApiMs,
+          }
+        : undefined,
       sessionId: message.metadata?.sessionId,
       terminatedReason: message.metadata?.terminatedReason,
       upstreamApiError: message.metadata?.upstreamApiError,
@@ -395,9 +416,10 @@ export abstract class BaseAgent implements Disposable {
       for await (const msg of input) {
         yield {
           role: 'user',
-          content: typeof msg.message?.content === 'string'
-            ? msg.message.content
-            : JSON.stringify(msg.message?.content ?? ''),
+          content:
+            typeof msg.message?.content === 'string'
+              ? msg.message.content
+              : JSON.stringify(msg.message?.content ?? ''),
         };
       }
     }
@@ -416,34 +438,43 @@ export abstract class BaseAgent implements Disposable {
         // Issue #3003: Track TTFT at baseAgent level
         if (!firstYieldMs) {
           firstYieldMs = Date.now();
-          self.logger.info({
-            provider: self.provider,
-            ttftMs: firstYieldMs - streamStartMs,
-            messageType: parsed.type,
-          }, 'First message yielded from SDK stream (TTFT)');
+          self.logger.info(
+            {
+              provider: self.provider,
+              ttftMs: firstYieldMs - streamStartMs,
+              messageType: parsed.type,
+            },
+            'First message yielded from SDK stream (TTFT)'
+          );
         }
 
         // Log SDK message with full details for debugging
-        self.logger.debug({
-          provider: self.provider,
-          messageType: parsed.type,
-          contentLength: parsed.content?.length || 0,
-          toolName: parsed.metadata?.toolName,
-          elapsedMs: Date.now() - streamStartMs,
-          yieldCount,
-        }, 'SDK message received');
+        self.logger.debug(
+          {
+            provider: self.provider,
+            messageType: parsed.type,
+            contentLength: parsed.content?.length || 0,
+            toolName: parsed.metadata?.toolName,
+            elapsedMs: Date.now() - streamStartMs,
+            yieldCount,
+          },
+          'SDK message received'
+        );
 
         yield { parsed, raw: message };
       }
 
       // Issue #3003: Log stream completion timing
       const totalMs = Date.now() - streamStartMs;
-      self.logger.info({
-        provider: self.provider,
-        totalMs,
-        yieldCount,
-        ttftMs: firstYieldMs ? firstYieldMs - streamStartMs : undefined,
-      }, 'SDK stream completed');
+      self.logger.info(
+        {
+          provider: self.provider,
+          totalMs,
+          yieldCount,
+          ttftMs: firstYieldMs ? firstYieldMs - streamStartMs : undefined,
+        },
+        'SDK stream completed'
+      );
     }
 
     return {

@@ -44,7 +44,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
       events: AgentMessage[];
       wake: () => void;
       abort: AbortController;
-      sawAssistantDelta: boolean;
+      pendingText: string;
     }
   >();
   private readonly pool: DshSessionPool;
@@ -100,7 +100,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
       events: [] as AgentMessage[],
       wake: () => wake(),
       abort,
-      sawAssistantDelta: false,
+      pendingText: '',
     };
     this.queues.set(sessionId, state);
     let inputDone = false;
@@ -253,18 +253,20 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
       return;
     }
     if (params.event.type === 'assistant/chunk') {
-      const chunk = params.event.data?.chunk as { type?: unknown } | undefined;
-      if (chunk?.type === 'text-delta' || chunk?.type === 'reasoning-delta') {
-        state.sawAssistantDelta = true;
+      const chunk = params.event.data?.chunk as { type?: unknown; text?: unknown } | undefined;
+      if (chunk?.type === 'text-delta' && typeof chunk.text === 'string') {
+        state.pendingText += chunk.text;
       }
-    }
-    if (params.event.type === 'assistant/message' && state.sawAssistantDelta) {
       return;
     }
-    state.events.push(...adaptDeepSeekEvent(params.event));
-    if (params.event.type === 'turn/end') {
-      state.sawAssistantDelta = false;
+    if (params.event.type === 'assistant/message') {
+      state.pendingText = '';
     }
+    if (params.event.type === 'turn/end' && state.pendingText) {
+      state.events.push({ type: 'text', content: state.pendingText, role: 'assistant' });
+      state.pendingText = '';
+    }
+    state.events.push(...adaptDeepSeekEvent(params.event));
     state.wake();
   }
 }

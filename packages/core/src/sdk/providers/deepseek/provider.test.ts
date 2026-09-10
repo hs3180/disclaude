@@ -27,7 +27,9 @@ rl.on('line', line => {
   reply(req.id, { messageId: 'user-1' });
   notify('session.event', { sessionId: sid, event: { type: 'tool/call', data: { callId: 'call-1', name: 'read_file', arguments: '{"path":"a.txt"}' } } });
   notify('session.event', { sessionId: sid, event: { type: 'tool/result', data: { message: { content: [{ type: 'tool-result', toolCallId: 'call-1', content: [{ type: 'text', text: 'file data' }] }] } } } });
-  notify('session.event', { sessionId: sid, event: { type: 'assistant/chunk', data: { chunk: { type: 'text-delta', text: 'done' } } } });
+  notify('session.event', { sessionId: sid, event: { type: 'assistant/chunk', data: { chunk: { type: 'reasoning-delta', text: 'private reasoning' } } } });
+  notify('session.event', { sessionId: sid, event: { type: 'assistant/chunk', data: { chunk: { type: 'text-delta', text: 'do' } } } });
+  notify('session.event', { sessionId: sid, event: { type: 'assistant/chunk', data: { chunk: { type: 'text-delta', text: 'ne' } } } });
   notify('session.event', { sessionId: sid, event: { type: 'assistant/message', data: { message: { id: 'assistant-1', content: [{ type: 'text', text: 'done' }] } } } });
   notify('session.event', { sessionId: sid, event: { type: 'turn/end', data: { reason: { kind: 'completed' } } } });
 });
@@ -92,6 +94,9 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
       });
       expect(events[1]).toMatchObject({ content: 'file data' });
       expect(events.filter((event) => event.type === 'result')).toHaveLength(1);
+      expect(events.filter((event) => event.type === 'text').map((event) => event.content)).toEqual(
+        ['done']
+      );
     } finally {
       provider.dispose();
       await rm(fixture.dir, { recursive: true, force: true });

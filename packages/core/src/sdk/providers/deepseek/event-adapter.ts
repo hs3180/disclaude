@@ -37,13 +37,8 @@ export function adaptDeepSeekEvent(event: DeepSeekSessionEvent): AgentMessage[] 
   const data = event.data ?? {};
   switch (event.type) {
     case 'assistant/chunk': {
-      const chunk = data.chunk as Record<string, unknown> | undefined;
-      if (
-        (chunk?.type === 'text-delta' || chunk?.type === 'reasoning-delta') &&
-        typeof chunk.text === 'string'
-      ) {
-        return [makeMessage('text', chunk.text, {})];
-      }
+      // The provider buffers text deltas until a message boundary. A shared
+      // text event represents a deliverable reply, not one token or reasoning.
       return [];
     }
     case 'assistant/message': {
@@ -54,7 +49,7 @@ export function adaptDeepSeekEvent(event: DeepSeekSessionEvent): AgentMessage[] 
           return [];
         }
         const value = block as Record<string, unknown>;
-        if (value.type !== 'text' && value.type !== 'reasoning') {
+        if (value.type !== 'text') {
           return [];
         }
         if (typeof value.text !== 'string' || value.text.length === 0) {
