@@ -1876,7 +1876,7 @@ describe('ChatAgent (primary-node)', () => {
       expect(agent.hasActiveSession()).toBe(false);
     });
 
-    it('should break out of iterator when stop() is called during processing', async () => {
+    it.each([false, true])('settles explicit stop without restart when close throws: %s', async (throwsOnClose) => {
       const agent = new ChatAgent({
         chatId: 'oc_stop_test',
         callbacks,
@@ -1898,6 +1898,7 @@ describe('ChatAgent (primary-node)', () => {
         for (let i = 1; i <= 20; i++) {
           yield { parsed: { type: 'text', content: `msg-${i}` } };
           await parked; // park until close(); no real timer
+          if (throwsOnClose) { throw new Error('interrupted'); }
         }
       }
 
@@ -1906,7 +1907,7 @@ describe('ChatAgent (primary-node)', () => {
         iterator: parkingIterator(),
       });
 
-      void agent.processMessage({ chatId: 'oc_stop_test', payload: 'hello', messageId: 'msg_1' });
+      await agent.processMessage({ chatId: 'oc_stop_test', payload: 'hello', messageId: 'msg_1' });
 
       // Wait until the session is active (streaming has started), then stop.
       // (Issue #4394: deterministic wait instead of a fixed 50ms setTimeout.)
@@ -1916,9 +1917,18 @@ describe('ChatAgent (primary-node)', () => {
         },
         { timeout: 1000, interval: 20 }
       );
+      const completion = agent.turnCompleteFor('msg_1');
+      const cancelled = completion?.catch((error: Error) => error.message);
       const stopped = agent.stop();
 
       expect(stopped).toBe(true);
+      await vi.waitFor(() => expect(agent.isBusy).toBe(false));
+      expect(await cancelled).toBe('Agent turn cancelled by stop');
+      expect(callbacks.onDone).toHaveBeenCalledWith('oc_stop_test', 'thread-root-123');
+      expect(callbacks.sendMessage).toHaveBeenCalledWith('oc_stop_test', '⏹️ 本轮已停止。', 'thread-root-123');
+      expect(JSON.stringify(callbacks.sendMessage.mock.calls)).not.toMatch(/non_transient|会话已暂停/);
+      expect(agent.hasActiveSession()).toBe(false);
+      await agent.dispose();
     });
 
     it('should abort AbortController on reset()', () => {
@@ -3640,7 +3650,7 @@ describe('ChatAgent (primary-node)', () => {
       await vi.waitFor(() => {
         expect(
           localCallbacks.sendMessage.mock.calls.some(
-            (call: any[]) => typeof call[1] === 'string' && call[1].includes('Codex 执行失败')
+            (call: any[]) => typeof call[1] === 'string' && call[1].includes('执行失败')
           )
         ).toBe(true);
       }, { timeout: 1000, interval: 20 });

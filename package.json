@@ -98,5 +98,23 @@
     "@disclaude/channel-cli",
     "@disclaude/core",
     "@disclaude/primary-node"
+  ],
+  "files": [
+    "bin/",
+    "packages/*/dist/",
+    "packages/*/src/",
+    "packages/*/package.json",
+    "packages/*/tsconfig.json",
+    "scripts/",
+    "skills/",
+    "examples/skills/",
+    "docs/",
+    "tests/",
+    "disclaude.config.example.yaml",
+    "tsconfig*.json",
+    "vitest.config.ts",
+    "eslint.config.*",
+    "Dockerfile*",
+    "docker-compose.yml"
   ]
 }

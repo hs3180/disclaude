@@ -2,13 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { adaptDeepSeekEvent } from './event-adapter.js';
 
 describe('adaptDeepSeekEvent (Issue #4743 contract)', () => {
-  it('maps live assistant/chunk deltas emitted by dsh 0.1.2', () => {
+  it('leaves token buffering to the provider', () => {
     expect(
       adaptDeepSeekEvent({
         type: 'assistant/chunk',
         data: { chunk: { type: 'text-delta', text: 'hi' } },
-      })[0]
-    ).toMatchObject({ type: 'text', content: 'hi' });
+      })
+    ).toEqual([]);
   });
 
   it('maps text from the official assistant/message envelope', () => {
@@ -25,14 +25,7 @@ describe('adaptDeepSeekEvent (Issue #4743 contract)', () => {
           },
         },
       })
-    ).toEqual([
-      expect.objectContaining({
-        type: 'text',
-        role: 'assistant',
-        content: 'think',
-      }),
-      expect.objectContaining({ content: 'hello' }),
-    ]);
+    ).toEqual([expect.objectContaining({ content: 'hello' })]);
   });
 
   it('maps tool calls and results with a stable call id', () => {

@@ -32,7 +32,7 @@ A multi-platform AI agent bot connecting Feishu/Lark and REST channels to Claude
 
 ## Version
 
-The repository package version is **0.4.0**. **0.5.0 is planned and has not been released**; see the [release plan](docs/releases/0.5.0.md) and [GitHub milestone](https://github.com/hs3180/disclaude/milestone/9).
+The repository package version is **0.5.0**. Release acceptance is incomplete; see the [release plan](docs/releases/0.5.0.md) and [GitHub milestone](https://github.com/hs3180/disclaude/milestone/9).
 
 ### Implementation Status
 
@@ -74,54 +74,26 @@ claude --version
 
 ## Quick Start
 
-### Option A: Install from GitHub (Recommended for Users)
+### Option A: Install the GitHub source distribution
 
-Install directly from GitHub without cloning the repository:
-
-```bash
-# Install globally from GitHub
-npm install -g hs3180/disclaude
-
-# Or using SSH
-npm install -g git+ssh://git@github.com:hs3180/disclaude.git
-```
-
-After installation, you can use the `disclaude` command directly:
+The root package is private. Use a checkout so npm can install all local workspaces:
 
 ```bash
-# Show help
-disclaude --help
-
-# Start Feishu bot
-disclaude start --mode feishu
+git clone https://github.com/hs3180/disclaude.git
+cd disclaude
+npm ci --include=dev
+npm run build
+cp disclaude.config.example.yaml disclaude.config.yaml
+mkdir -p workspace
+# Edit disclaude.config.yaml with your backend and channel configuration.
+node bin/disclaude.js start --config "$PWD/disclaude.config.yaml"
 ```
 
-#### Configuration for Global Install
-
-Create a configuration file in your working directory:
-
-```bash
-# Create config directory
-mkdir -p ~/.disclaude
-
-# Copy example config (if you have the repo cloned)
-cp disclaude.config.example.yaml ~/.disclaude/disclaude.config.yaml
-
-# Or download from GitHub
-curl -o ~/.disclaude/disclaude.config.yaml https://raw.githubusercontent.com/hs3180/disclaude/main/disclaude.config.example.yaml
-```
-
-Edit `~/.disclaude/disclaude.config.yaml` with your credentials.
-
-#### Update to Latest Version
-
-```bash
-# Update to latest version
-npm update -g hs3180/disclaude
-
-# Or reinstall for a clean update
-npm install -g hs3180/disclaude
-```
+From another directory, use the absolute path to `bin/disclaude.js` and pass an
+absolute config path. For upgrades and rollback, keep the previous checkout and
+its configuration/workspace backup until the new checkout has passed health and
+backend checks. See the [candidate record](docs/releases/0.5.0/release-candidate.md)
+for outstanding acceptance.
 
 ### Option B: Clone for Development
 

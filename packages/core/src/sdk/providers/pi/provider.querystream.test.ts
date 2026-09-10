@@ -239,7 +239,7 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
   it('throws a clear error when no stream function is configured', () => {
     provider.streamFn = null;
     expect(() => provider.queryStream(inputs(userInput('hi')), baseOptions())).toThrow(
-      /no stream function configured/,
+      /requires model and ANTHROPIC_API_KEY/,
     );
   });
 
@@ -805,8 +805,10 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
       ],
     ];
     fakeState.hangPrompt = true;
+    let result: ReturnType<PiAgentProvider['queryStream']> | undefined;
+    let drained: Promise<void> | undefined;
     try {
-      const result = provider.queryStream(
+      result = provider.queryStream(
         (async function* (): AsyncGenerator<UserInput> {
           yield userInput('build it');
           await new Promise<void>(() => {}); // channel never closes
@@ -814,8 +816,9 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
         baseOptions(),
       );
       const messages: AgentMessage[] = [];
-      const drained = (async () => {
-        for await (const message of result.iterator) {
+      const {iterator} = result;
+      drained = (async () => {
+        for await (const message of iterator) {
           messages.push(message);
         }
       })();
@@ -833,6 +836,8 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
         new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 100)),
       ])).toBe(false);
     } finally {
+      result?.handle.close();
+      await drained;
       delete process.env.DISCLAUDE_STALL_TIMEOUT_MS;
       fakeState.hangPrompt = false;
     }

@@ -159,6 +159,9 @@ export function adaptSDKMessage(message: SDKMessage, taskRegistry?: TaskSubjectR
         metadata.durationApiMs = message.duration_api_ms;
       }
 
+      if (message.subtype === 'success' && message.is_error) {
+        return { type: 'result', content: message.result || 'Claude API request failed', role: 'assistant', metadata: { ...metadata, terminatedReason: 'turn_failed' }, raw: message };
+      }
       if (message.subtype === 'success') {
         // TypeScript 通过 subtype === 'success' 将 message 收窄为 SDKResultSuccess。
         // SDKResultSuccess 包含 usage: NonNullableUsage 和 total_cost_usd: number。
@@ -211,10 +214,10 @@ export function adaptSDKMessage(message: SDKMessage, taskRegistry?: TaskSubjectR
       // errors 字段类型为 string[]，无需类型断言。
       if (message.subtype === 'error_during_execution' && 'errors' in message) {
         return {
-          type: 'error',
+          type: 'result',
           content: `❌ Error: ${message.errors.join(', ')}`,
           role: 'assistant',
-          metadata,
+          metadata: { ...metadata, terminatedReason: 'turn_failed' },
           raw: message,
         };
       }
@@ -306,7 +309,19 @@ export function adaptSDKMessage(message: SDKMessage, taskRegistry?: TaskSubjectR
       };
     }
 
-    case 'user':
+    case 'user': {
+      const {content} = message.message;
+      const results = Array.isArray(content) ? content.filter(block => block.type === 'tool_result') : [];
+      if (results.length > 0) {
+        return {
+          type: 'tool_result', role: 'assistant',
+          content: results.map(block => typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? '')).join('\n'),
+          metadata: { ...metadata, messageId: results[0].tool_use_id, toolOutput: results },
+          raw: message,
+        };
+      }
+      return { type: 'text', content: '', role: 'user', raw: message };
+    }
     case 'stream_event':
     default:
       // 忽略用户消息回显和流事件

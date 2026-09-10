@@ -129,3 +129,16 @@ describe('getChatIdValidationError', () => {
     expect(error).toContain('...');
   });
 });
+
+
+describe('REST destination compatibility', () => {
+  it('accepts the REST channel ownership formats without weakening malformed ID rejection', () => {
+    for (const id of ['rest-schedule-proof', 'b7fe2bd2-bb4c-4b14-9967-cf889db136d8']) {
+      expect(isValidChatId(id)).toBe(true);
+      expect(getChatIdValidationError(id)).toBeNull();
+    }
+    for (const id of ['rest-', ' rest-proof', 'b7fe2bd2-bb4c-4b14-9967-invalid']) {
+      expect(isValidChatId(id)).toBe(false);
+    }
+  });
+});

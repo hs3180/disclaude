@@ -1,3 +1,4 @@
+import { readStallPolicy } from '../stall-policy.js';
 /**
  * Claude SDK Provider 实现
  *
@@ -161,54 +162,7 @@ export function cleanupNewProcessListeners(snapshot: ProcessListenerSnapshot): v
   }
 }
 
-// ============================================================================
-// Process Listener Baseline (Issue #3745)
-// ============================================================================
 
-/**
- * Baseline snapshot captured once at module load time.
- * Used by `forceCleanupLeakedListeners()` to restore listener counts when
- * the per-query snapshot/cleanup mechanism misses leaked listeners.
- */
-const baselineSnapshot = snapshotProcessListeners();
-
-/**
- * Forcefully remove all SDK-registered process listeners that have accumulated
- * beyond the baseline captured at module load time.
- *
- * Issue #3745: When agents are created/destroyed in rapid succession (CLI tests,
- * scheduled tasks), the per-query snapshot/cleanup can miss listeners if the
- * iterator's finally block hasn't run by the time the next agent is created.
- * This function provides a process-level ceiling check: if listener counts are
- * elevated, restore them to the baseline.
- *
- * @returns Number of listeners removed, or 0 if no cleanup was needed
- */
-export function forceCleanupLeakedListeners(): number {
-  const before = process.listenerCount('exit');
-  if (before <= (baselineSnapshot.listeners.get('exit')?.size ?? 0)) {
-    return 0; // No leak detected
-  }
-  let cleaned = 0;
-  for (const event of SDK_PROCESS_EVENTS) {
-    const baseline = baselineSnapshot.listeners.get(event);
-    if (!baseline) { continue; }
-    for (const listener of _process.listeners(event)) {
-      if (!baseline.has(listener)) {
-        try {
-          _process.off(event, listener);
-          cleaned++;
-        } catch {
-          // Listener may have already been removed
-        }
-      }
-    }
-  }
-  if (cleaned > 0) {
-    logger.info({ cleaned, before, after: process.listenerCount('exit') }, 'Force-cleaned leaked process listeners above baseline');
-  }
-  return cleaned;
-}
 
 /**
  * stderr 捕获器 — 缓冲 Claude Code 进程的 stderr 输出行
@@ -392,6 +346,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     // `let` (not const): Issue #4192 (L1) reassigns this on a transient-error
     // retry before the first SDK message. Created eagerly here so handle.close
     // works even before iteration starts.
+    let cancelled = false;
     let queryResult = query({
       prompt: adaptInputStream(),
       options: sdkOptions as Parameters<typeof query>[0]['options'],
@@ -416,16 +371,9 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
       // ── Issue #3706 (GLM stall): no-content-progress watchdog ──
       // Timeout is read per-call (env DISCLAUDE_STALL_TIMEOUT_MS, default 180s) so
       // tests can set a short value. Declared BEFORE try so catch/finally can access.
-      const STALL_TIMEOUT_MS = (() => {
-        const env = Number.parseInt(process.env.DISCLAUDE_STALL_TIMEOUT_MS ?? '', 10);
-        return Number.isFinite(env) && env > 0 ? env : 180_000;
-      })();
+      const { timeoutMs: STALL_TIMEOUT_MS, graceMs: STALL_FORCE_CLOSE_GRACE_MS } = readStallPolicy();
       // Grace after interrupt() before force-closing the query, in case interrupt()
       // alone cannot tear down a stalled upstream socket (Issue #3706 review).
-      const STALL_FORCE_CLOSE_GRACE_MS = (() => {
-        const env = Number.parseInt(process.env.DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS ?? '', 10);
-        return Number.isFinite(env) && env > 0 ? env : 5_000;
-      })();
       // Declared BEFORE try so catch/finally can access them. Armed on
       // message_start, advanced on content_block_delta (any content incl. thinking
       // — so legit reasoning never fires), cleared on message_stop. Fires on the
@@ -619,6 +567,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         const model = options.model as string | undefined;
 
         for await (const message of queryResult) {
+          if (cancelled) {return;}
           // Issue #3706 (stall): handle stream_event (partial) messages for the
           // watchdog ONLY — filter them (not adapted/logged/yielded to ChatAgent).
           // Requires includePartialMessages (set in base-agent createSdkOptions).
@@ -771,6 +720,9 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
 
           yield adapted;
         }
+        if (cancelled) {
+          return;
+        }
         // Issue #4442 (part 4): the attempt's stream ended — the blind window has
         // no purpose past this point. Clear it NOW rather than waiting for the
         // retry `continue`/`finally` below, so it can never fire during the retry
@@ -875,6 +827,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         );
         return; // success — exit the retry loop + generator (Issue #4192 L1)
       } catch (error) {
+        if (cancelled) {return;}
         // Issue #3706 (stall): the watchdog's interrupt() likely threw into the
         // for-await — convert to a clean terminal result instead of propagating the error.
         if (stalled) {
@@ -961,9 +914,15 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           cleanupListeners();
         },
         cancel: () => {
-          if ('cancel' in queryResult && typeof queryResult.cancel === 'function') {
-            queryResult.cancel();
+          cancelled = true;
+          // cancel ends this query; interrupt alone may leave SDK background
+          // tools/follow-ups running. close tears down the owned subprocess.
+          if (typeof queryResult.interrupt === 'function') {
+            void queryResult.interrupt().catch((err: unknown) => {
+              logger.debug({ err }, 'Interrupt settled after cancellation');
+            });
           }
+          queryResult.close?.();
           // Issue #3378: Clean up listeners on cancel as well.
           cleanupListeners();
         },

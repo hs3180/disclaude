@@ -10,7 +10,6 @@ export {
   snapshotProcessListeners,
   cleanupNewProcessListeners,
   SDK_PROCESS_EVENTS,
-  forceCleanupLeakedListeners,
 } from './claude/index.js';
 export type { ProcessListenerSnapshot, ProcessEventListener } from './claude/index.js';
 

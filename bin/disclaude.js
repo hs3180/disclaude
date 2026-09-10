@@ -64,7 +64,10 @@ function showHelp() {
 }
 
 const ROUTES = {
-  start: { file: resolve(ROOT, 'node_modules/@disclaude/primary-node/dist/cli.js') },
+  start: {
+    file: resolve(ROOT, 'node_modules/@disclaude/primary-node/dist/cli.js'),
+    keepCommand: true,
+  },
   channel: {
     file: resolve(ROOT, 'node_modules/@disclaude/channel-cli/dist/cli.js'),
     jsonOutput: !['help', '--help', '-h'].includes(args[1]),

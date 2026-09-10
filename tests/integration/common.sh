@@ -91,6 +91,7 @@ NC='\033[0m' # No Color
 # =============================================================================
 TESTS_PASSED=0
 TESTS_FAILED=0
+TESTS_SKIPPED=0
 
 # =============================================================================
 # Logging Functions
@@ -111,6 +112,7 @@ log_fail() {
 }
 
 log_skip() {
+    TESTS_SKIPPED=$((TESTS_SKIPPED + 1))
     echo -e "${YELLOW}[SKIP]${NC} $1"
 }
 
@@ -151,7 +153,7 @@ is_port_in_use() {
 # Check if server is already running on the target port
 # Returns: 0 if server is running and healthy, 1 otherwise
 is_server_running() {
-    curl -s "${API_URL}/api/health" > /dev/null 2>&1
+    curl --fail --silent --max-time 5 "${API_URL}/api/health" > /dev/null 2>&1
 }
 
 # Wait for port to be released
@@ -180,36 +182,19 @@ wait_for_port_release() {
 start_server() {
     log_info "Starting test server on port ${REST_PORT}..."
 
-    # Check if server is already running and healthy
+    # Only reuse the server started by this test process. Never adopt or kill
+    # an unrelated service merely because it occupies the configured port.
     if is_server_running; then
-        log_info "Server already running on port ${REST_PORT}, reusing existing server"
-        SERVER_PID=""
-        return 0
-    fi
-
-    # Wait for port to be released if it's in use but server is not healthy
-    if is_port_in_use "$REST_PORT"; then
-        log_warn "Port ${REST_PORT} is in use but server is not healthy, waiting for release..."
-        if ! wait_for_port_release "$REST_PORT" 15; then
-            log_error "Port ${REST_PORT} is still in use, cannot start server"
-            # Try to kill any process using the port
-            # Issue #3415: Use SIGTERM first, then SIGKILL as fallback
-            if command -v lsof &> /dev/null; then
-                local pid_using_port
-                pid_using_port=$(lsof -t -i:"$REST_PORT" 2>/dev/null | head -1)
-                if [ -n "$pid_using_port" ]; then
-                    log_warn "Sending SIGTERM to process $pid_using_port using port ${REST_PORT}"
-                    kill -TERM "$pid_using_port" 2>/dev/null || true
-                    sleep 2
-                    # Check if still running before SIGKILL
-                    if kill -0 "$pid_using_port" 2>/dev/null; then
-                        log_warn "Process still alive, sending SIGKILL"
-                        kill -9 "$pid_using_port" 2>/dev/null || true
-                        sleep 2
-                    fi
-                fi
-            fi
+        if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
+            log_info "Reusing owned test server (PID: $SERVER_PID)"
+            return 0
         fi
+        log_error "Port $REST_PORT belongs to an existing service; choose an isolated test port"
+        return 1
+    fi
+    if is_port_in_use "$REST_PORT"; then
+        log_error "Port $REST_PORT is occupied; refusing to terminate an unrelated process"
+        return 1
     fi
 
     cd "$PROJECT_ROOT"
@@ -243,15 +228,15 @@ start_server() {
     fi
 
     # Build config argument if provided
-    local config_arg=""
+    local config_args=()
     if [ -n "$CONFIG_PATH" ]; then
-        config_arg="--config ${CONFIG_PATH}"
+        config_args=(--config "$CONFIG_PATH")
         log_info "Using config file: ${CONFIG_PATH}"
     fi
 
     # Start server in background (using new primary-node CLI)
     # Note: Port and host are read from config file (channels.rest.port, channels.rest.host)
-    node packages/primary-node/dist/cli.js start ${config_arg} > "${SERVER_LOG}" 2>&1 &
+    node packages/primary-node/dist/cli.js start "${config_args[@]}" > "${SERVER_LOG}" 2>&1 &
     SERVER_PID=$!
 
     log_debug "Server PID: ${SERVER_PID}"
@@ -260,7 +245,7 @@ start_server() {
     local max_retries=30
     local retry=0
     while [ $retry -lt $max_retries ]; do
-        if curl -s "${API_URL}/api/health" > /dev/null 2>&1; then
+        if curl --fail --silent --max-time 5 "${API_URL}/api/health" > /dev/null 2>&1; then
             log_info "Server is ready"
             return 0
         fi
@@ -723,18 +708,21 @@ assert_body_contains() {
     fi
 }
 
-# Extract JSON field value using grep (simple extraction)
-# Usage: value=$(extract_json_field "fieldName")
+# Parse JSON scalars without truncating escaped quotes, newlines or tool output.
+# Node is already required by the integration runner.
 extract_json_field() {
     local field="$1"
-    echo "$RESPONSE_BODY" | grep -o "\"$field\":\"[^\"]*\"" | cut -d'"' -f4
+    printf '%s' "$RESPONSE_BODY" | node -e '
+const fs = require("node:fs");
+const value = JSON.parse(fs.readFileSync(0, "utf8"))[process.argv[1]];
+if (typeof value === "string" || typeof value === "boolean" || typeof value === "number") {
+    process.stdout.write(String(value));
+}
+' "$field"
 }
 
-# Extract JSON boolean field
-# Usage: value=$(extract_json_bool "fieldName")
 extract_json_bool() {
-    local field="$1"
-    echo "$RESPONSE_BODY" | grep -o "\"$field\":[^,}]*" | cut -d':' -f2 | tr -d ' '
+    extract_json_field "$1"
 }
 
 # Issue #4690: assert the agent replied with exactly one expected number.
@@ -792,7 +780,7 @@ TOOL_ENV_MARKERS="sandbox_apply|Operation not permitted|Operation not allowed|fu
 # Hard tool-execution failure markers — FAIL.
 TOOL_FAIL_MARKERS="EACCES|Permission denied|was not executed|did not (execute|run|send)|not executed|unable to (execute|call|send)|execution failed|发送失败|执行不了|没有执行|无法执行|工具调用.*失败"
 # Positive confirmation the tool ran / delivered — PASS.
-TOOL_OK_MARKERS="send_text|send_file|send_message|已发送|发送成功|delivered|message.?id|上传成功|执行成功|工具调用.*成功"
+TOOL_OK_MARKERS="已发送|发送成功|delivered|message.?id|上传成功|执行成功|工具调用.*成功"
 
 report_tool_verdict() {
     local tool="$1"
@@ -809,6 +797,25 @@ report_tool_verdict() {
         log_fail "$tool: agent reported the tool did NOT run (regression or permission failure surfaced) (#4691)"
         log_debug "Response: $RESPONSE_TEXT"
         return 1
+    fi
+    if printf '%s' "$RESPONSE_TEXT" | node -e '
+      let text = "";
+      process.stdin.on("data", chunk => { text += chunk; });
+      process.stdin.on("end", () => {
+        const command = process.argv[1];
+        const success = text.split("\n").some(line => {
+          try {
+            const result = JSON.parse(line.trim());
+            return result.ok === true && result.command === command &&
+              typeof result.chatId === "string" && result.chatId.length > 0 &&
+              typeof result.result === "string" && result.result.length > 0;
+          } catch { return false; }
+        });
+        process.exit(success ? 0 : 1);
+      });
+    ' "$tool"; then
+        log_pass "$tool: structured CLI execution result verified (delivery receipt checked separately)"
+        return 0
     fi
     if echo "$RESPONSE_TEXT" | grep -qiE "$TOOL_OK_MARKERS"; then
         log_pass "$tool: agent confirmed tool execution"
@@ -1022,7 +1029,7 @@ assert_response_not_empty() {
 response_contains_provider_failure() {
     local body="${1:-}"
     echo "$body" | grep -iqE \
-        "codex exec (exited|failed)|exec exited with code [1-9]|HTTP (400|401|403|500)|API error|provider error|\\\"type\\\"[[:space:]]*:[[:space:]]*\\\"error\\\""
+        "本轮 .*执行失败|codex exec (exited|failed)|exec exited with code [1-9]|HTTP (400|401|403|500)|API error|provider error|\\\"type\\\"[[:space:]]*:[[:space:]]*\\\"error\\\""
 }
 
 # Assert response body matches pattern (case-insensitive)
@@ -1424,8 +1431,13 @@ main_test_suite() {
     log_info "Checking server..."
     if ! is_server_running; then
         start_server || exit 1
+    elif [ "${INTEGRATION_SHARED_SERVER_URL:-}" = "$API_URL" ] &&
+         [ -n "${INTEGRATION_SHARED_SERVER_PID:-}" ] &&
+         kill -0 "$INTEGRATION_SHARED_SERVER_PID" 2>/dev/null; then
+        log_info "Using the integration runner's shared test server on port ${REST_PORT}"
     else
-        log_info "Server already running on port ${REST_PORT}"
+        log_error "Existing service is not owned by this test runner; choose an isolated port"
+        exit 1
     fi
     echo ""
 
@@ -1521,6 +1533,8 @@ parse_common_args() {
                 ;;
         esac
     done
+    # The explicit port must also update the URL computed when this file loaded.
+    API_URL="http://${HOST}:${REST_PORT}"
 }
 
 # =============================================================================
@@ -1532,6 +1546,10 @@ print_summary() {
     echo ""
     echo "=========================================="
 
+    if [ "$TESTS_SKIPPED" -gt 0 ] || [ "$TESTS_PASSED" -eq 0 ]; then
+        log_error "Incomplete acceptance: $TESTS_SKIPPED skipped, $TESTS_PASSED passed"
+        exit 1
+    fi
     if [ $TESTS_FAILED -eq 0 ]; then
         log_info "All tests passed! ($TESTS_PASSED/$TESTS_PASSED)"
         echo "=========================================="

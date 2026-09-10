@@ -106,7 +106,7 @@ show_test_plan_body() {
     echo "  5. Channel CLI Tools Tests (4 tests)"
     echo "     - Health check, send_text, send_file, tool result format"
     echo ""
-    echo "  6. Multimodal Tests (5 tests)"
+    echo "  6. REST Attachment Contract Tests (5 tests)"
     echo "     - Health check, single image, multi-image, mixed message, screenshot"
     echo ""
     echo "  (Codex coverage: set agentBackend: codex in the config; the generic"
@@ -176,7 +176,7 @@ run_test_script() {
         echo "  Running: $name (attempt ${attempt}/${max_attempts})"
         echo "=========================================="
 
-        if bash "$script" "${args[@]}" 2>&1 | tee "$output_file" \
+        if INTEGRATION_SHARED_SERVER_PID="$SERVER_PID" INTEGRATION_SHARED_SERVER_URL="$API_URL" bash "$script" "${args[@]}" 2>&1 | tee "$output_file" \
             && [ "${PIPESTATUS[0]}" -eq 0 ]; then
             if [ $attempt -gt 1 ]; then
                 log_warn "$name passed on attempt ${attempt}/${max_attempts}"
@@ -326,10 +326,9 @@ warmup_agent() {
         parse_response "$result"
 
         if [ "$RESPONSE_STATUS" = "200" ]; then
-            if [ -n "$CONFIG_PATH" ] && grep -qE '^[[:space:]]*agentBackend:.*codex' "$CONFIG_PATH" 2>/dev/null \
-                && { response_contains_provider_failure "$RESPONSE_BODY" \
-                    || server_log_contains_provider_failure "$warmup_chat_id"; }; then
-                log_error "Codex warm-up failed: provider returned an error despite HTTP 200"
+            if response_contains_provider_failure "$RESPONSE_BODY" \
+                || server_log_contains_provider_failure "$warmup_chat_id"; then
+                log_error "Agent warm-up failed: provider returned an error despite HTTP 200"
                 log_debug "Warm-up response: $RESPONSE_BODY"
                 show_server_logs
                 return 1
@@ -548,7 +547,7 @@ main() {
         "use-case-2-task-execution.sh|Use Case 2 - Task Execution|ai" \
         "use-case-3-multi-turn.sh|Use Case 3 - Multi-turn Conversation|ai" \
         "channel-cli-test.sh|Channel CLI Tools Tests|ai" \
-        "multimodal-test.sh|Multimodal Tests|ai"; do
+        "multimodal-test.sh|REST Attachment Contract Tests|ai"; do
         # Issue #4737: the separate Codex Compatibility E2E suite was removed.
         # The generic suites above run under whatever backend the test
         # environment is configured with (set `agentBackend: codex` in the
@@ -586,8 +585,8 @@ main() {
 
     echo ""
     echo "=========================================="
-    if [ $failed -eq 0 ]; then
-        log_info "All test suites passed!"
+    if [ $failed -eq 0 ] && [ "${#SKIPPED_SUITE_NAMES[@]}" -eq 0 ] && [ "$_SUITE_COUNT" -gt 0 ]; then
+        log_info "All selected test suites passed!"
     else
         log_error "$failed test suite(s) failed"
         # Issue #4584: name the failing suites right after the count, so
@@ -633,8 +632,15 @@ main() {
 
     echo "=========================================="
 
+    # Skipped or empty execution is incomplete acceptance, never a green gate.
+    if [ "$failed" -eq 0 ] && { [ "${#SKIPPED_SUITE_NAMES[@]}" -gt 0 ] || [ "$_SUITE_COUNT" -eq 0 ]; }; then
+        log_error "Integration acceptance incomplete: skipped suites or no matching suites"
+        failed=1
+    fi
     cleanup
     exit $failed
 }
 
-main
+if [[ "${BASH_SOURCE[0]}" = "$0" ]]; then
+    main
+fi

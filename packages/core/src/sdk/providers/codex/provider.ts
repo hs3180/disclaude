@@ -1,3 +1,4 @@
+import { readStallPolicy } from '../stall-policy.js';
 /**
  * Codex CLI Agent Provider (Issue #4629 skeleton + #4630 exec bridge +
  * #4628 sessions & auth).
@@ -531,14 +532,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       // line is progress), exempt while a tool item is open (started
       // without completed — a long build/test legitimately stays silent).
       // Env knob DISCLAUDE_STALL_TIMEOUT_MS matches the Claude/pi bridges.
-      const STALL_TIMEOUT_MS = (() => {
-        const parsed = Number.parseInt(process.env.DISCLAUDE_STALL_TIMEOUT_MS ?? '', 10);
-        return Number.isFinite(parsed) && parsed > 0 ? parsed : 180_000;
-      })();
-      const STALL_FORCE_CLOSE_GRACE_MS = (() => {
-        const parsed = Number.parseInt(process.env.DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS ?? '', 10);
-        return Number.isFinite(parsed) && parsed > 0 ? parsed : 5_000;
-      })();
+      const { timeoutMs: STALL_TIMEOUT_MS, graceMs: STALL_FORCE_CLOSE_GRACE_MS } = readStallPolicy();
       let stalled = false;
       let stallWatchdog: ReturnType<typeof setTimeout> | null = null;
       let stallForceCloseTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1077,10 +1071,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     let activeTurnId: string | undefined;
     let turnDone: ((error?: Error) => void) | undefined;
     let stallTimer: ReturnType<typeof setTimeout> | undefined;
-    const stallTimeoutMs = (() => {
-      const parsed = Number.parseInt(this.env.DISCLAUDE_STALL_TIMEOUT_MS ?? '', 10);
-      return Number.isFinite(parsed) && parsed > 0 ? parsed : 180_000;
-    })();
+    const { timeoutMs: stallTimeoutMs } = readStallPolicy(this.env);
     const armStall = (): void => {
       if (stallTimer) {clearTimeout(stallTimer);}
       stallTimer = setTimeout(() => {
@@ -1089,6 +1080,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       }, stallTimeoutMs);
       stallTimer.unref?.();
     };
+    let interruptFlight: Promise<void> | undefined;
     const earlyEvents: Array<{ method: string; params: unknown }> = [];
     const deliveredItems = new Set<string>();
     const registration = this.governor.registerSession(sessionKey, {
@@ -1114,6 +1106,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         turnDone = undefined;
         return;
       }
+      if (stopped) {return;}
       const event = params as {
         turnId?: string;
         item?: { id?: string; type?: string; text?: string; command?: string; aggregatedOutput?: string };
@@ -1226,6 +1219,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           role: 'system',
         });
       } finally {
+        await interruptFlight;
         if (stallTimer) {clearTimeout(stallTimer);}
         registration.unregister();
         if (threadId) {
@@ -1247,11 +1241,13 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     })();
 
     const stopHandle = (reason: string): void => {
-      if (stopped) {return;}
+      if (stopped || done) {return;}
       stopped = true;
       stopInput();
       void input.return?.(undefined);
-      void lifecycle.interrupt(sessionKey).catch(() => {});
+      interruptFlight = lifecycle.interrupt(sessionKey).catch((error: unknown) => {
+        push({ type: 'error', content: error instanceof Error ? error.message : String(error), role: 'system' });
+      });
       turnDone?.(new Error(reason));
     };
 

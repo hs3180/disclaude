@@ -150,3 +150,9 @@ describe('adaptPiEvent (Issue #4386 / #4384)', () => {
     }
   });
 });
+
+it('does not report native API errors as successful turn completion', () => {
+  expect(adaptPiEvent({ type: 'agent_end', messages: [
+    { role: 'assistant', stopReason: 'error', errorMessage: 'HTTP 401' },
+  ] })).toMatchObject({ type: 'result', content: 'HTTP 401', metadata: { terminatedReason: 'turn_failed' } });
+});

@@ -3,7 +3,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { BaseAgent, type SdkOptionsExtra, type IteratorYieldResult, type QueryStreamResult } from './base-agent.js';
+import {
+  BaseAgent,
+  type SdkOptionsExtra,
+  type IteratorYieldResult,
+  type QueryStreamResult,
+} from './base-agent.js';
 import { setRuntimeContext, clearRuntimeContext, type BaseAgentConfig } from './types.js';
 import type { AgentMessage, StreamingUserMessage, QueryHandle } from '../sdk/index.js';
 import { Config } from '../config/index.js';
@@ -70,7 +75,12 @@ vi.mock('../sdk/index.js', () => ({
 
 // Mock buildSdkEnv to return a simple env object
 vi.mock('../utils/sdk.js', () => ({
-  buildSdkEnv: (apiKey: string, apiBaseUrl: string | undefined, globalEnv: Record<string, string>, sdkDebug: boolean) => ({
+  buildSdkEnv: (
+    apiKey: string,
+    apiBaseUrl: string | undefined,
+    globalEnv: Record<string, string>,
+    sdkDebug: boolean
+  ) => ({
     ANTHROPIC_API_KEY: apiKey,
     ...(apiBaseUrl ? { ANTHROPIC_BASE_URL: apiBaseUrl } : {}),
     ...globalEnv,
@@ -109,6 +119,33 @@ describe('BaseAgent', () => {
     });
     expect(options.systemPrompt).toBeUndefined();
     expect(options.tools).toBeUndefined();
+    expect(options.disallowedTools).toBeUndefined();
+  });
+
+  it.each(['codex', 'pi', 'deepseek'] as const)('does not inject Claude runtime options into %s', (backend) => {
+    const instance = new TestAgent({ ...config, agentBackend: backend });
+    const options = instance.testCreateSdkOptions({});
+    expect(options.systemPrompt).toBeUndefined();
+    expect(options.tools).toBeUndefined();
+    expect(options.includePartialMessages).toBeUndefined();
+    expect(options.teammateMode).toBeUndefined();
+    expect(options.env?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
+    expect(options.env?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
+    expect(options.env?.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBeUndefined();
+  });
+
+  it('uses DeepSeek options when the backend is selected globally', () => {
+    mockGetProvider.mockReturnValueOnce({
+      ...mockSdkProvider,
+      name: 'deepseek',
+    } as typeof mockSdkProvider);
+    const defaultAgent = new TestAgent(config);
+    const options = defaultAgent.testCreateSdkOptions({
+      disallowedTools: ['EnterPlanMode', 'AskUserQuestion', 'CronCreate'],
+    });
+    expect(defaultAgent.agentBackend).toBe('deepseek');
+    expect(options.tools).toBeUndefined();
+    expect(options.systemPrompt).toBeUndefined();
     expect(options.disallowedTools).toBeUndefined();
   });
 
@@ -304,7 +341,9 @@ describe('BaseAgent', () => {
       settingSources: ['user', 'project', 'local'],
     };
 
-    async function* createMockInput(messages: StreamingUserMessage[]): AsyncGenerator<StreamingUserMessage> {
+    async function* createMockInput(
+      messages: StreamingUserMessage[]
+    ): AsyncGenerator<StreamingUserMessage> {
       for (const msg of messages) {
         yield msg;
       }
@@ -316,9 +355,7 @@ describe('BaseAgent', () => {
         cancel: vi.fn(),
         sessionId: 'stream-session-1',
       };
-      const sdkMessages = [
-        createMockSdkMessage({ type: 'text', content: 'Streaming response' }),
-      ];
+      const sdkMessages = [createMockSdkMessage({ type: 'text', content: 'Streaming response' })];
 
       mockSdkProvider.queryStream.mockImplementation((_input: unknown) => ({
         handle: mockHandle,
@@ -660,9 +697,15 @@ describe('BaseAgent', () => {
 
     it('should inject model tier env vars for GLM provider even without Agent Teams', () => {
       getModelForTierSpy.mockImplementation(((tier: string) => {
-        if (tier === 'high') {return 'glm-5.1';}
-        if (tier === 'low') {return 'glm-5-turbo';}
-        if (tier === 'multimodal') {return 'glm-5v-turbo';}
+        if (tier === 'high') {
+          return 'glm-5.1';
+        }
+        if (tier === 'low') {
+          return 'glm-5-turbo';
+        }
+        if (tier === 'multimodal') {
+          return 'glm-5v-turbo';
+        }
         return undefined;
       }) as any);
 
@@ -686,9 +729,15 @@ describe('BaseAgent', () => {
 
     it('should inject model tier env vars when Agent Teams is also enabled', () => {
       getModelForTierSpy.mockImplementation(((tier: string) => {
-        if (tier === 'high') {return 'glm-5.1';}
-        if (tier === 'low') {return 'glm-5-turbo';}
-        if (tier === 'multimodal') {return 'glm-5v-turbo';}
+        if (tier === 'high') {
+          return 'glm-5.1';
+        }
+        if (tier === 'low') {
+          return 'glm-5-turbo';
+        }
+        if (tier === 'multimodal') {
+          return 'glm-5v-turbo';
+        }
         return undefined;
       }) as any);
 
@@ -712,7 +761,9 @@ describe('BaseAgent', () => {
 
     it('should respect user overrides in globalEnv for model tier env vars', () => {
       getModelForTierSpy.mockImplementation(((tier: string) => {
-        if (tier === 'high') {return 'glm-5.1';}
+        if (tier === 'high') {
+          return 'glm-5.1';
+        }
         return undefined;
       }) as any);
 

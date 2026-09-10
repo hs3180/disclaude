@@ -28,15 +28,26 @@ export class CodexAppServerLifecycle {
   private readonly sessions = new Map<string, CodexAppServerSessionSnapshot>();
   private readonly threadFlights = new Map<string, Promise<string>>();
   private readonly completedTurns = new Set<string>();
+  private readonly interruptFlights = new Map<string, Promise<void>>();
+  private readonly turnWaiters = new Map<string, { resolve: () => void; reject: (error: Error) => void }>();
+  private readonly interruptTimeoutMs: number;
   private initialized = false;
   private initializeFlight?: Promise<void>;
 
   constructor(options: CodexAppServerTransportOptions = {}) {
+    this.interruptTimeoutMs = options.requestTimeoutMs ?? 10000;
     this.transport = new CodexAppServerTransport({
       ...options,
       onNotification: (method, params) => {
-        options.onNotification?.(method, params);
         this.receive(method, params);
+        options.onNotification?.(method, params);
+      },
+      onExit: (exit) => {
+        for (const waiter of this.turnWaiters.values()) {
+          waiter.reject(new Error('codex app-server exited before interruption completed'));
+        }
+        this.turnWaiters.clear();
+        options.onExit?.(exit);
       },
     });
   }
@@ -165,11 +176,40 @@ export class CodexAppServerLifecycle {
   }
 
   async interrupt(sessionKey: string): Promise<void> {
+    const pending = this.interruptFlights.get(sessionKey);
+    if (pending) {return pending;}
+    const flight = this.interruptTurn(sessionKey);
+    this.interruptFlights.set(sessionKey, flight);
+    try { await flight; } finally { this.interruptFlights.delete(sessionKey); }
+  }
+
+  private async interruptTurn(sessionKey: string): Promise<void> {
     const session = this.requireActive(sessionKey);
-    await this.transport.request('turn/interrupt', {
-      threadId: session.threadId,
-      turnId: session.activeTurnId,
+    const turnId = session.activeTurnId;
+    const key = `${session.threadId}:${turnId}`;
+    // The RPC ACK only accepts the interrupt. Keep the stream busy until the
+    // matching terminal notification makes it safe to start another turn.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const completed = new Promise<void>((resolve, reject) => {
+      this.turnWaiters.set(key, { resolve, reject });
+      timer = setTimeout(() => reject(new Error('codex interruption completion timed out')), this.interruptTimeoutMs);
     });
+    try {
+      await Promise.all([
+        completed,
+        this.transport.request('turn/interrupt', { threadId: session.threadId, turnId }).catch((error: unknown) => {
+          // A natural completion can win the interrupt RPC. Its matching
+          // terminal event, not this error or the ACK, remains the authority.
+          if (!(error instanceof Error && error.message.includes('no active turn to interrupt'))) {throw error;}
+        }),
+      ]);
+    } catch (error) {
+      if (session.activeTurnId === turnId) {session.state = 'uncertain';}
+      throw error;
+    } finally {
+      if (timer) {clearTimeout(timer);}
+      this.turnWaiters.delete(key);
+    }
   }
 
   async steer(sessionKey: string, input: string): Promise<string> {
@@ -205,6 +245,7 @@ export class CodexAppServerLifecycle {
     const turnId = event.turn?.id;
     if (threadId && turnId) {
       this.completedTurns.add(`${threadId}:${turnId}`);
+      this.turnWaiters.get(`${threadId}:${turnId}`)?.resolve();
     }
     for (const session of this.sessions.values()) {
       if (session.threadId === threadId && session.activeTurnId === turnId) {

@@ -69,8 +69,8 @@ describe('PiAgentProvider (skeleton, Issue #4385)', () => {
       expect(provider.name).toBe('pi');
     });
 
-    it("exposes the skeleton version '0.0.0-skeleton'", () => {
-      expect(provider.version).toBe('0.0.0-skeleton');
+    it("exposes the skeleton version '0.83.0'", () => {
+      expect(provider.version).toBe('0.83.0');
     });
   });
 
@@ -121,7 +121,7 @@ describe('PiAgentProvider (skeleton, Issue #4385)', () => {
       provider.validateConfig();
 
       expect(mockResolve).toHaveBeenCalledTimes(1);
-      expect(mockResolve).toHaveBeenCalledWith('@earendil-works/pi-agent-core');
+      expect(mockResolve).toHaveBeenCalledWith('@earendil-works/pi-agent-core/package.json');
     });
 
     it('returns false after dispose() even when the package is resolvable', () => {
@@ -151,7 +151,7 @@ describe('PiAgentProvider (skeleton, Issue #4385)', () => {
 
       expect(info).toMatchObject({
         name: 'pi',
-        version: '0.0.0-skeleton',
+        version: '0.83.0',
         available: true,
       });
       expect(info.unavailableReason).toBeUndefined();
@@ -162,7 +162,7 @@ describe('PiAgentProvider (skeleton, Issue #4385)', () => {
 
       expect(info).toMatchObject({
         name: 'pi',
-        version: '0.0.0-skeleton',
+        version: '0.83.0',
         available: false,
       });
       expect(info.unavailableReason).toBe(
@@ -218,7 +218,7 @@ describe('PiAgentProvider (skeleton, Issue #4385)', () => {
       const options = { settingSources: ['user'] } as AgentQueryOptions;
 
       expect(() => provider.queryStream(input(), options)).toThrow(
-        /no stream function configured/,
+        /requires model and ANTHROPIC_API_KEY/,
       );
     });
 

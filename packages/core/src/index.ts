@@ -39,7 +39,6 @@ export {
   getErrorStderr,
   isStartupFailure,
   // Process listener cleanup (Issue #3745)
-  forceCleanupLeakedListeners,
   // Factory functions
   getProvider,
   registerProvider,

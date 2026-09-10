@@ -72,6 +72,39 @@ echo '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"t
     provider.dispose();
   });
 
+  it('waits for cancellation completion before an immediate same-thread follow-up', async () => {
+    const { provider } = providerFixture(`
+read initialize; echo '{"id":1,"result":{}}'
+read initialized
+read thread; echo '{"id":2,"result":{"thread":{"id":"thread-1"}}}'
+read start; echo '{"id":3,"result":{"turn":{"id":"turn-1"}}}'
+read interrupt; echo '{"id":4,"error":{"code":-32600,"message":"no active turn to interrupt"}}'
+/bin/sleep 0.05
+echo '{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","item":{"id":"late","type":"agentMessage","text":"stale output"}}}'
+echo '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"interrupted"}}}'
+read next; echo '{"id":5,"result":{"turn":{"id":"turn-2"}}}'
+echo '{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-2","item":{"id":"reply","type":"agentMessage","text":"resumed"}}}'
+echo '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-2","status":"completed"}}}'
+`);
+    const options = { sessionKey: 'stop-resume', settingSources: [] } as AgentQueryOptions;
+    const input = async function* () { yield { role: 'user', content: 'hello' } as UserInput; };
+    try {
+      const first = provider.queryStream(input(), options);
+      const cancelled: AgentMessage[] = [];
+      for await (const message of first.iterator) {
+        cancelled.push(message);
+        if (message.type === 'status') {first.handle.cancel();}
+      }
+      expect(cancelled.some(message => message.type === 'text' || message.type === 'result')).toBe(false);
+      const second = provider.queryStream(input(), options);
+      const resumed: AgentMessage[] = [];
+      for await (const message of second.iterator) {resumed.push(message);}
+      expect(resumed.filter(message => message.type === 'error')).toEqual([]);
+      expect(resumed).toContainEqual(expect.objectContaining({ type: 'text', content: 'resumed' }));
+      expect(second.handle.sessionId).toBe('thread-1');
+    } finally {provider.dispose();}
+  });
+
   it('keeps exec as the default transport', () => {
     const { provider } = providerFixture('exit 0', 'exec');
     const result = provider.queryStream((async function* () {

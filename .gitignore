@@ -77,3 +77,7 @@ browser-use-smoke/
 
 # Test data
 data/
+
+# Local release evidence and disposable integration workspaces
+.local/
+.disclaude-test-workspace.*/

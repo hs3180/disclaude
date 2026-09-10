@@ -251,3 +251,8 @@ describe('adaptInput', () => {
     expect(result).toEqual([]);
   });
 });
+
+it('forwards partial streaming so the progress watchdog can observe content', () => {
+  expect(adaptOptions({ settingSources: [], includePartialMessages: true }).includePartialMessages).toBe(true);
+  expect(adaptOptions({ settingSources: [], includePartialMessages: false }).includePartialMessages).toBe(false);
+});

@@ -334,6 +334,25 @@ describe('RestChannel', () => {
       });
     });
 
+    describe('unsupported REST chat attachments', () => {
+      for (const path of ['/api/chat', '/api/chat/sync', '/api/chat/attachment-test']) {
+        for (const attachments of [[{ file_name: 'image.png', local_path: '/tmp/image.png' }], 'invalid']) {
+          it(`rejects ${path} attachments before dispatch or session creation: ${JSON.stringify(attachments)}`, async () => {
+            const handler = vi.fn();
+            channel.onMessage(handler);
+            const response = await simulateRequest({
+              method: 'POST', path, body: { message: 'Describe the image', attachments },
+            });
+            expect(response.status).toBe(400);
+            expect(response.body.error).toBe('REST chat attachments are not supported');
+            expect(handler).not.toHaveBeenCalled();
+            const poll = await simulateRequest({ method: 'POST', path: '/api/chat/attachment-test' });
+            expect(poll.status).toBe(204);
+          });
+        }
+      }
+    });
+
     describe('POST /api/chat', () => {
       it('should return 400 for empty body', async () => {
         const response = await simulateRequest({

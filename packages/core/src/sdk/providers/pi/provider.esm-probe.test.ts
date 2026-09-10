@@ -18,7 +18,7 @@ import { describe, it, expect } from 'vitest';
 import { createRequire } from 'node:module';
 import { PiAgentProvider } from './provider.js';
 
-const PI_SPECIFIER = '@earendil-works/pi-agent-core';
+const PI_SPECIFIER = '@earendil-works/pi-agent-core/package.json';
 
 // Compute the genuine resolvability of the pi package from THIS ESM context,
 // using the same mechanism the provider uses. validateConfig() must agree with
@@ -43,11 +43,4 @@ describe('PiAgentProvider — real ESM probe (PR #4390, un-mocked)', () => {
     expect(provider.validateConfig()).toBe(isPiResolvable());
   });
 
-  it('in the current skeleton (package not a dependency) the probe reports false', () => {
-    // Documents the expected skeleton state. If #4384 makes pi-agent-core a
-    // real dependency, isPiResolvable() flips to true and the test above keeps
-    // passing; this explicit assertion would then need updating.
-    expect(isPiResolvable()).toBe(false);
-    expect(new PiAgentProvider().validateConfig()).toBe(false);
-  });
 });

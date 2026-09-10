@@ -1349,14 +1349,14 @@ describe('ClaudeSDKProvider', () => {
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
 
       const closeFn = vi.fn();
-      const cancelFn = vi.fn();
+      const cancelFn = vi.fn().mockResolvedValue(undefined);
 
       // Create an async iterable with close/cancel methods
       const asyncIterable = Object.assign(
         (async function* () {
           yield { type: 'assistant', message: { content: [{ type: 'text', text: 'Hi' }] } };
         })(),
-        { close: closeFn, cancel: cancelFn },
+        { close: closeFn, interrupt: cancelFn },
       );
 
       mockQuery.mockReturnValue(asyncIterable);
@@ -1374,6 +1374,20 @@ describe('ClaudeSDKProvider', () => {
 
       result.handle.cancel();
       expect(cancelFn).toHaveBeenCalled();
+    });
+
+    it('does not retry or synthesize success when an early cancel ends the SDK stream', async () => {
+      const close = vi.fn();
+      const interrupt = vi.fn().mockResolvedValue(undefined);
+      mockQuery.mockReturnValue(Object.assign((async function* () {})(), { close, interrupt }));
+      const stream = provider.queryStream((async function* () { yield { role: 'user', content: 'test' } as UserInput; })(), { settingSources: [] });
+      stream.handle.cancel();
+      const events = [];
+      for await (const event of stream.iterator) {events.push(event);}
+      expect(events).toEqual([]);
+      expect(mockQuery).toHaveBeenCalledTimes(1);
+      expect(close).toHaveBeenCalledOnce();
+      expect(interrupt).toHaveBeenCalledOnce();
     });
 
     it('should handle multiple user inputs', async () => {

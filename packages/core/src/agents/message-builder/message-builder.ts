@@ -168,7 +168,9 @@ export class MessageBuilder {
 
     // Core guidance sections (framework-agnostic)
     // Issue #3641: Skip next-step guidance in topic threads to reduce noise
-    const nextStepGuidance = isTopicThread ? '' : buildNextStepGuidance(capabilities?.supportsCard !== false);
+    const supportsInteractiveCards = capabilities?.supportsCard !== false &&
+      (capabilities?.supportedMcpTools === undefined || capabilities.supportedMcpTools.includes('send_interactive'));
+    const nextStepGuidance = isTopicThread ? '' : buildNextStepGuidance(supportsInteractiveCards);
     const outputFormatGuidance = buildOutputFormatGuidance();
     const taskRecordGuidance = buildTaskRecordGuidance();
     const locationAwarenessGuidance = buildLocationAwarenessGuidance();

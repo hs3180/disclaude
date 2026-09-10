@@ -13,6 +13,7 @@ const CHAT_ID_PATTERNS = [
   { prefix: 'oc_', label: 'Feishu group chat', minLength: 35 },
   { prefix: 'ou_', label: 'Feishu user (p2p chat)', minLength: 35 },
   { prefix: 'cli-', label: 'CLI session', minLength: 5 },
+  { prefix: 'rest-', label: 'REST session', minLength: 6 },
 ] as const;
 
 /**
@@ -26,6 +27,7 @@ export function isValidChatId(chatId: string): boolean {
   if (chatId !== chatId.trim()) {
     return false;
   }
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(chatId)) { return true; }
   return CHAT_ID_PATTERNS.some(({ prefix, minLength }) =>
     chatId.startsWith(prefix) && chatId.length >= minLength,
   );
@@ -47,9 +49,9 @@ export function getChatIdValidationError(chatId: string): string | null {
   }
 
   // Build a helpful message listing accepted formats
-  const formatList = CHAT_ID_PATTERNS
+  const formatList = `${CHAT_ID_PATTERNS
     .map(({ prefix, label }) => `- \`${prefix}...\` (${label})`)
-    .join('\n');
+    .join('\n')  }\n- UUID (REST session)`;
 
   return (
     `Invalid chatId format: "${chatId.length > 20 ? `${chatId.slice(0, 20)}...` : chatId}"\n` +

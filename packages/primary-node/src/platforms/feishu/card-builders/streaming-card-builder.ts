@@ -68,6 +68,8 @@ export interface StreamingCard {
 export interface BuildStreamingCardOptions {
   /** Overrides the default thinking placeholder. */
   thinkingPlaceholder?: string;
+  /** Full accumulated answer when transitioning from thinking to replying. */
+  replyText?: string;
 }
 
 /**
@@ -98,7 +100,7 @@ export function buildStreamingPlaceholderCard(
         {
           tag: 'markdown',
           element_id: STREAMING_REPLY_ELEMENT_ID,
-          content: '',
+          content: options.replyText ?? '',
         },
       ],
     },

@@ -40,20 +40,20 @@ test_number_context() {
 
     # Turn 1: Tell agent my favorite number
     log_debug "Turn 1: Telling agent my favorite number is 42"
-    assert_sync_chat_ok "我的幸运数字是 42，请记住它" "$chat_id" || return 1
+    assert_sync_chat_ok "仅在本次对话中记住：我的幸运数字是 42。禁止调用工具，禁止读写文件或长期记忆。" "$chat_id" || return 1
 
     sleep 1
 
     # Turn 2: Ask agent to recall the number (reply with only the number)
     log_debug "Turn 2: Asking agent to recall my favorite number"
-    assert_sync_chat_ok "我的幸运数字是多少？只回复这个数字本身，不要加其他内容。" "$chat_id" || return 1
+    assert_sync_chat_ok "只根据本次对话回答我的幸运数字。禁止调用工具或读取文件。只回复这个数字本身，不要加其他内容。" "$chat_id" || return 1
     assert_exact_number "42" "Recall favorite number" || return 1
 
     sleep 1
 
     # Turn 3: Ask agent to calculate using the remembered number (reply with only the result)
     log_debug "Turn 3: Asking agent to calculate using the number"
-    assert_sync_chat_ok "用我的幸运数字乘以 2 等于多少？只回复结果数字，不要加其他内容。" "$chat_id" || return 1
+    assert_sync_chat_ok "只根据本次对话，用我的幸运数字乘以 2。禁止调用工具或读取文件。只回复结果数字，不要加其他内容。" "$chat_id" || return 1
     assert_exact_number "84" "Calculate favorite number * 2" || return 1
 }
 

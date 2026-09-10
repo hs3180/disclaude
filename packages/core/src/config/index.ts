@@ -514,6 +514,11 @@ export class Config {
     apiBaseUrl?: string;
     provider: 'anthropic' | 'glm';
   } {
+    // The dsh runtime resolves its own credentials and endpoint. Do not gate
+    // primary-node startup on unrelated Anthropic/GLM configuration.
+    if (this.AGENT_BACKEND === 'deepseek') {
+      return { apiKey: '', model: this.CLAUDE_MODEL, provider: 'anthropic' };
+    }
     // Codex uses ChatGPT OAuth and does not require an API key in disclaude.
     if (this.AGENT_BACKEND === 'codex') {
       this.validateRequiredConfig();
