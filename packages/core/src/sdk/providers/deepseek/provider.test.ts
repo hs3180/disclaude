@@ -13,11 +13,17 @@ async function sdkFixture(): Promise<{ dir: string; binary: string }> {
 const rl = require('node:readline').createInterface({ input: process.stdin });
 const reply = (id, result) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id, result }) + '\\n');
 const notify = (method, params) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method, params }) + '\\n');
+const seen = new Set();
 rl.on('line', line => {
   const req = JSON.parse(line);
   if (req.method === 'initialize') { reply(req.id, { serverInfo: { name: 'deepseek-harness-sdk-runtime', version: '0.0.1' } }); return; }
   if (req.method === 'shutdown') { reply(req.id, {}); process.exit(0); return; }
   const sid = req.params.sessionId;
+  if (!seen.has(sid)) {
+    try { require('node:fs').writeFileSync(require('node:path').join(${JSON.stringify(dir)}, sid), '', { flag: 'wx' }); }
+    catch { process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: req.id, error: { code: -32000, message: 'persisted session id collision' } }) + '\\n'); return; }
+    seen.add(sid);
+  }
   reply(req.id, { messageId: 'user-1' });
   notify('session.event', { sessionId: sid, event: { type: 'tool/call', data: { callId: 'call-1', name: 'read_file', arguments: '{"path":"a.txt"}' } } });
   notify('session.event', { sessionId: sid, event: { type: 'tool/result', data: { message: { content: [{ type: 'tool-result', toolCallId: 'call-1', content: [{ type: 'text', text: 'file data' }] }] } } } });
@@ -91,6 +97,42 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
       await rm(fixture.dir, { recursive: true, force: true });
     }
   });
+
+  it.each(['completion', 'cancellation'])(
+    'uses a fresh durable ID for the same logical chat after %s',
+    async (ending) => {
+      const fixture = await sdkFixture();
+      const provider = new DeepSeekHarnessProvider({ binary: fixture.binary });
+      try {
+        const first = provider.queryStream(oneInput(), {
+          sessionKey: 'same-chat',
+          settingSources: [],
+        });
+        for await (const event of first.iterator) {
+          if (ending === 'cancellation' && event.type === 'tool_use') {
+            first.handle.cancel();
+            break;
+          }
+        }
+        const second = provider.queryStream(oneInput(), {
+          sessionKey: 'same-chat',
+          settingSources: [],
+        });
+        // A late close of the old stream must not kill the replacement process.
+        first.handle.close();
+        const events = [];
+        for await (const event of second.iterator) {
+          events.push(event);
+        }
+        expect(second.handle.sessionId).not.toBe(first.handle.sessionId);
+        expect(events.filter((event) => event.type === 'result')).toHaveLength(1);
+        expect(events.some((event) => event.type === 'error')).toBe(false);
+      } finally {
+        provider.dispose();
+        await rm(fixture.dir, { recursive: true, force: true });
+      }
+    }
+  );
 
   it('fails fast when unsupported client tool controls are requested', () => {
     const provider = new DeepSeekHarnessProvider({ apiKey: 'test-key' });

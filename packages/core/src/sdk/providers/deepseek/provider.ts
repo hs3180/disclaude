@@ -37,6 +37,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
   private readonly apiKey?: string;
   private readonly dshHome?: string;
   private disposed = false;
+  private readonly sessionKeys = new Map<string, string>();
   private readonly queues = new Map<
     string,
     {
@@ -87,7 +88,11 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
         'DeepSeek Harness SDK protocol 0.1.2 does not support client tool registration or tool allow/deny filters; configure tools in the dsh sdk profile'
       );
     }
-    const sessionId = options.sessionKey ?? `disclaude-${crypto.randomUUID()}`;
+    // SDK 0.1.2 creates durable sessions but exposes no resume/load method.
+    // Each new process needs a fresh native ID, even for the same logical chat.
+    // Multi-turn context remains in the input stream's one live session.
+    const sessionId = `disclaude-${crypto.randomUUID()}`;
+    this.sessionKeys.set(sessionId, options.sessionKey ?? sessionId);
     const transport = this.pool.getOrCreate(sessionId);
     const abort = new AbortController();
     let wake: () => void = () => {};
@@ -144,7 +149,9 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
         for (;;) {
           while (state.events.length) {
             const event = state.events.shift();
-            if (!event) {continue;}
+            if (!event) {
+              continue;
+            }
             if (event.type === 'result' || event.type === 'error') {
               terminal++;
             }
@@ -165,6 +172,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
         }
       } finally {
         provider.queues.delete(sessionId);
+        provider.sessionKeys.delete(sessionId);
         if (!signal.aborted) {
           await transport.shutdown().catch((error: unknown) => {
             logger.warn({ err: error, sessionId }, 'dsh graceful shutdown failed');
@@ -208,10 +216,15 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
       state.wake();
     }
     this.queues.clear();
+    this.sessionKeys.clear();
   }
 
   forgetSession(sessionKey: string): void {
-    this.pool.release(sessionKey);
+    for (const [sessionId, key] of this.sessionKeys) {
+      if (key === sessionKey) {
+        this.pool.release(sessionId);
+      }
+    }
   }
 
   private hasDshHome(): boolean {
