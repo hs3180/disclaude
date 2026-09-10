@@ -180,36 +180,19 @@ wait_for_port_release() {
 start_server() {
     log_info "Starting test server on port ${REST_PORT}..."
 
-    # Check if server is already running and healthy
+    # Only reuse the server started by this test process. Never adopt or kill
+    # an unrelated service merely because it occupies the configured port.
     if is_server_running; then
-        log_info "Server already running on port ${REST_PORT}, reusing existing server"
-        SERVER_PID=""
-        return 0
-    fi
-
-    # Wait for port to be released if it's in use but server is not healthy
-    if is_port_in_use "$REST_PORT"; then
-        log_warn "Port ${REST_PORT} is in use but server is not healthy, waiting for release..."
-        if ! wait_for_port_release "$REST_PORT" 15; then
-            log_error "Port ${REST_PORT} is still in use, cannot start server"
-            # Try to kill any process using the port
-            # Issue #3415: Use SIGTERM first, then SIGKILL as fallback
-            if command -v lsof &> /dev/null; then
-                local pid_using_port
-                pid_using_port=$(lsof -t -i:"$REST_PORT" 2>/dev/null | head -1)
-                if [ -n "$pid_using_port" ]; then
-                    log_warn "Sending SIGTERM to process $pid_using_port using port ${REST_PORT}"
-                    kill -TERM "$pid_using_port" 2>/dev/null || true
-                    sleep 2
-                    # Check if still running before SIGKILL
-                    if kill -0 "$pid_using_port" 2>/dev/null; then
-                        log_warn "Process still alive, sending SIGKILL"
-                        kill -9 "$pid_using_port" 2>/dev/null || true
-                        sleep 2
-                    fi
-                fi
-            fi
+        if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
+            log_info "Reusing owned test server (PID: $SERVER_PID)"
+            return 0
         fi
+        log_error "Port $REST_PORT belongs to an existing service; choose an isolated test port"
+        return 1
+    fi
+    if is_port_in_use "$REST_PORT"; then
+        log_error "Port $REST_PORT is occupied; refusing to terminate an unrelated process"
+        return 1
     fi
 
     cd "$PROJECT_ROOT"
@@ -243,15 +226,15 @@ start_server() {
     fi
 
     # Build config argument if provided
-    local config_arg=""
+    local config_args=()
     if [ -n "$CONFIG_PATH" ]; then
-        config_arg="--config ${CONFIG_PATH}"
+        config_args=(--config "$CONFIG_PATH")
         log_info "Using config file: ${CONFIG_PATH}"
     fi
 
     # Start server in background (using new primary-node CLI)
     # Note: Port and host are read from config file (channels.rest.port, channels.rest.host)
-    node packages/primary-node/dist/cli.js start ${config_arg} > "${SERVER_LOG}" 2>&1 &
+    node packages/primary-node/dist/cli.js start "${config_args[@]}" > "${SERVER_LOG}" 2>&1 &
     SERVER_PID=$!
 
     log_debug "Server PID: ${SERVER_PID}"

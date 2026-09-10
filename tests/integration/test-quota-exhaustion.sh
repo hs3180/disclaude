@@ -338,6 +338,8 @@ H4584_PRE="$TMPDIR_FIX/harness-pre"
   echo 'source "$SCRIPT_DIR/common.sh" >/dev/null 2>&1'
   echo 'failed=0 RETRIED_SUCCESSES=0 TOTAL_RETRIES=0'
   echo 'FAILED_SUITE_NAMES=()'
+  echo 'SKIPPED_SUITE_NAMES=()'
+  echo '_SUITE_COUNT=1'
   echo 'script= name='
   echo 'run_suite() { [ "$2" != "Multimodal Tests" ]; }'
   cat "$H4584"
@@ -360,7 +362,7 @@ check_rc $? 1 "#4584: passing suite NOT listed in the failure summary"
 sed 's|^run_suite() { \[ "\$2" != "Multimodal Tests" \]; }$|run_suite() { return 0; }|' \
   "$H4584_PRE" > "$H4584.ok"
 H4584_OK_OUT="$( cd "$SCRATCH" && bash "$H4584.ok" < /dev/null 2>&1 )"
-printf '%s' "$H4584_OK_OUT" | sed 's/\x1b\[[0-9;]*m//g' | grep -q 'All test suites passed'
+printf '%s' "$H4584_OK_OUT" | sed 's/\x1b\[[0-9;]*m//g' | grep -q 'All selected test suites passed'
 check_rc $? 0 "#4584: all-pass summary unchanged"
 printf '%s' "$H4584_OK_OUT" | grep -qF 'Failed suite(s):'
 check_rc $? 1 "#4584: no Failed-suite line when everything passed"

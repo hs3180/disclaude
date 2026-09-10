@@ -12,7 +12,7 @@
 ```bash
 git clone https://github.com/hs3180/disclaude.git
 cd disclaude
-npm install
+npm ci --include=dev
 npm run build
 ```
 
@@ -62,8 +62,9 @@ anthropic:
 ## 第 4 步：启动
 
 ```bash
-# 开发模式（自动重载）
-npm run dev
+# 本地前台运行
+mkdir -p workspace
+node bin/disclaude.js start --config "$PWD/disclaude.config.yaml"
 
 # 生产模式（Docker 或 macOS launchd）
 docker compose up -d

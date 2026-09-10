@@ -586,8 +586,8 @@ main() {
 
     echo ""
     echo "=========================================="
-    if [ $failed -eq 0 ]; then
-        log_info "All test suites passed!"
+    if [ $failed -eq 0 ] && [ "${#SKIPPED_SUITE_NAMES[@]}" -eq 0 ] && [ "$_SUITE_COUNT" -gt 0 ]; then
+        log_info "All selected test suites passed!"
     else
         log_error "$failed test suite(s) failed"
         # Issue #4584: name the failing suites right after the count, so
@@ -633,8 +633,15 @@ main() {
 
     echo "=========================================="
 
+    # Skipped or empty execution is incomplete acceptance, never a green gate.
+    if [ "$failed" -eq 0 ] && { [ "${#SKIPPED_SUITE_NAMES[@]}" -gt 0 ] || [ "$_SUITE_COUNT" -eq 0 ]; }; then
+        log_error "Integration acceptance incomplete: skipped suites or no matching suites"
+        failed=1
+    fi
     cleanup
     exit $failed
 }
 
-main
+if [[ "${BASH_SOURCE[0]}" = "$0" ]]; then
+    main
+fi

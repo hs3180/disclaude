@@ -20,6 +20,14 @@
  *   logs        Tail log files
  *   status      Show service status
  *
+ * Isolated rehearsal (test services only):
+ *   Invoke `node scripts/launchd.mjs isolated <command>`.
+ *   Set `DISCLAUDE_LAUNCHD_ISOLATED=1`, a unique
+ *   `DISCLAUDE_LAUNCHD_LABEL=com.disclaude.test.<suffix>`, and an absolute
+ *   `DISCLAUDE_LAUNCHD_STATE_DIR`. `DISCLAUDE_LAUNCHD_CONFIG_PATH` must point to an absolute test config.
+ *   Overrides are rejected without the
+ *   isolation guard; production defaults remain unchanged.
+ *
  * Chromium CDP Commands (Issue #4807):
  *   generate / install / uninstall / start / stop / restart / logs / status
  *   The `com.disclaude.chromium-cdp` service keeps a headless Chromium up with a
@@ -42,9 +50,63 @@ import { fileURLToPath } from 'node:url';
 // Constants
 // ---------------------------------------------------------------------------
 
-const LABEL = 'com.disclaude.primary';
+const DEFAULT_LABEL = 'com.disclaude.primary';
+
+/** Resolve production defaults or guarded test-only launchd paths. */
+export function resolvePrimaryLaunchdConfig(
+  env = process.env,
+  home = homedir(),
+  isolatedSelector = false
+) {
+  const isolationFlag = env.DISCLAUDE_LAUNCHD_ISOLATED === '1';
+  const hasIsolationIntent = Object.prototype.hasOwnProperty.call(
+    env,
+    'DISCLAUDE_LAUNCHD_ISOLATED'
+  );
+  const hasOverride = Boolean(
+    env.DISCLAUDE_LAUNCHD_LABEL ||
+    env.DISCLAUDE_LAUNCHD_STATE_DIR ||
+    env.DISCLAUDE_LAUNCHD_CONFIG_PATH
+  );
+  if ((hasOverride || hasIsolationIntent) && (!isolationFlag || !isolatedSelector)) {
+    throw new Error('Launchd path/label overrides require DISCLAUDE_LAUNCHD_ISOLATED=1');
+  }
+  if (isolatedSelector && !isolationFlag) {
+    throw new Error('Isolated launchd command requires its isolation environment flag');
+  }
+  if (!isolatedSelector) {
+    return {
+      label: DEFAULT_LABEL,
+      launchAgentsDir: resolve(home, 'Library/LaunchAgents'),
+      logDir: resolve(home, 'Library/Logs/disclaude'),
+    };
+  }
+  const label = env.DISCLAUDE_LAUNCHD_LABEL ?? '';
+  const stateDir = env.DISCLAUDE_LAUNCHD_STATE_DIR ?? '';
+  if (!/^com\.disclaude\.test\.[a-z0-9.-]+$/.test(label)) {
+    throw new Error('Isolated launchd label must start with com.disclaude.test.');
+  }
+  if (!stateDir.startsWith('/')) {
+    throw new Error('Isolated launchd state directory must be absolute');
+  }
+  if (!env.DISCLAUDE_LAUNCHD_CONFIG_PATH?.startsWith('/')) {
+    throw new Error('Isolated launchd requires an absolute test config path');
+  }
+  return {
+    label,
+    launchAgentsDir: resolve(stateDir, 'LaunchAgents'),
+    logDir: resolve(stateDir, 'logs'),
+  };
+}
+
+const PRIMARY_SERVICE = resolvePrimaryLaunchdConfig(
+  process.env,
+  homedir(),
+  process.argv[2] === 'isolated'
+);
+const LABEL = PRIMARY_SERVICE.label;
 const PLIST_FILENAME = `${LABEL}.plist`;
-const LAUNCHAGENTS_DIR = resolve(homedir(), 'Library/LaunchAgents');
+const LAUNCHAGENTS_DIR = PRIMARY_SERVICE.launchAgentsDir;
 const PLIST_PATH = resolve(LAUNCHAGENTS_DIR, PLIST_FILENAME);
 
 // Issue #2934: Log directory moved from /tmp to ~/Library/Logs/disclaude
@@ -52,7 +114,7 @@ const PLIST_PATH = resolve(LAUNCHAGENTS_DIR, PLIST_FILENAME);
 // Issue #3416: Application writes to a single log file via pino.destination().
 // Use system-level tools (newsyslog) for log rotation — see config/ for examples.
 // Only stderr (for uncaught Node.js crashes) uses launchd's StandardErrorPath.
-const LOG_DIR = resolve(homedir(), 'Library/Logs/disclaude');
+const LOG_DIR = PRIMARY_SERVICE.logDir;
 const STDERR_LOG = resolve(LOG_DIR, 'launchd-stderr.log');
 const STDOUT_LOG = resolve(LOG_DIR, 'launchd-stdout.log');
 const APP_LOG = resolve(LOG_DIR, 'disclaude-combined.log');
@@ -198,6 +260,11 @@ export function buildProgramArguments(nodePath, caffeinatePath = getCaffeinatePa
 
   args.push(nodePath, CLI_ENTRY, 'start', '--api-port', String(resolveApiPort()));
 
+  const configPath = process.env.DISCLAUDE_LAUNCHD_CONFIG_PATH;
+  if (configPath) {
+    args.push('--config', configPath);
+  }
+
   const apiToken = process.env.DISCLAUDE_LAUNCHD_API_TOKEN;
   if (apiToken) {
     args.push('--api-token', apiToken);
@@ -272,7 +339,7 @@ ${programArgs.map((a) => `    <string>${xmlEscape(a)}</string>`).join('\n')}
     <string>${xmlEscape(process.env.PATH ?? '')}</string>
 ${restChannelApiBaseUrl ? `    <key>DISCLAUDE_API_BASE_URL</key>\n    <string>${xmlEscape(restChannelApiBaseUrl)}</string>\n` : ''}    <key>HOME</key>
     <string>${homedir()}</string>
-    <key>NODE_ENV</key>
+${process.argv[2] === 'isolated' ? `    <key>LOCKFILE_PATH</key>\n    <string>${xmlEscape(resolve(LAUNCHAGENTS_DIR, 'primary.pid'))}</string>\n` : ''}    <key>NODE_ENV</key>
     <string>production</string>
     <key>LOG_TO_FILE</key>
     <string>true</string>
@@ -835,7 +902,8 @@ function cmdStatus() {
 // `disclaude chromium-cdp ...` routes in (bin/disclaude.js prepends the selector).
 const FIRST_ARG = process.argv[2];
 const IS_CHROMIUM = FIRST_ARG === 'chromium' || FIRST_ARG === 'chromium-cdp';
-const command = IS_CHROMIUM ? process.argv[3] : FIRST_ARG;
+const IS_ISOLATED = FIRST_ARG === 'isolated';
+const command = IS_CHROMIUM || IS_ISOLATED ? process.argv[3] : FIRST_ARG;
 
 const commands = {
   generate: cmdGenerate,
@@ -897,6 +965,7 @@ Commands:
       process.exit(1);
     }
     console.log(`Usage: node scripts/launchd.mjs <command>
+       node scripts/launchd.mjs isolated <command>
 
 Commands:
   generate    Generate plist file
@@ -907,6 +976,9 @@ Commands:
   restart     Build + unload + load
   logs        Tail log files [--lines=N]
   status      Show service status
+
+The isolated form requires the isolation flag, a test-only label, and an
+absolute state directory. Missing settings fail closed before launchctl runs.
 `);
     process.exit(1);
   }
