@@ -50,6 +50,11 @@ RESPONSE_TEXT_FIXTURE='HTTP 400 from provider'
 rc=0; assert_sync_chat_ok "hello" || rc=$?
 check "$rc" 1 "embedded provider HTTP error fails"
 
+RESPONSE_BODY_FIXTURE='{"success":true,"response":"❌ 本轮 claude 执行失败，未生成可交付结果。"}'
+RESPONSE_TEXT_FIXTURE='❌ 本轮 claude 执行失败，未生成可交付结果。'
+rc=0; assert_sync_chat_ok "hello" || rc=$?
+check "$rc" 1 "localized terminal failure fails for every backend"
+
 # A REST 200 response may carry no provider error text even though the server
 # log records the Codex child failure.
 server_log_fixture="$(mktemp "${TMPDIR:-/tmp}/provider-error-log.XXXXXX")"

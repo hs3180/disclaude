@@ -708,18 +708,21 @@ assert_body_contains() {
     fi
 }
 
-# Extract JSON field value using grep (simple extraction)
-# Usage: value=$(extract_json_field "fieldName")
+# Parse JSON scalars without truncating escaped quotes, newlines or tool output.
+# Node is already required by the integration runner.
 extract_json_field() {
     local field="$1"
-    echo "$RESPONSE_BODY" | grep -o "\"$field\":\"[^\"]*\"" | cut -d'"' -f4
+    printf '%s' "$RESPONSE_BODY" | node -e '
+const fs = require("node:fs");
+const value = JSON.parse(fs.readFileSync(0, "utf8"))[process.argv[1]];
+if (typeof value === "string" || typeof value === "boolean" || typeof value === "number") {
+    process.stdout.write(String(value));
+}
+' "$field"
 }
 
-# Extract JSON boolean field
-# Usage: value=$(extract_json_bool "fieldName")
 extract_json_bool() {
-    local field="$1"
-    echo "$RESPONSE_BODY" | grep -o "\"$field\":[^,}]*" | cut -d':' -f2 | tr -d ' '
+    extract_json_field "$1"
 }
 
 # Issue #4690: assert the agent replied with exactly one expected number.
@@ -1007,7 +1010,7 @@ assert_response_not_empty() {
 response_contains_provider_failure() {
     local body="${1:-}"
     echo "$body" | grep -iqE \
-        "codex exec (exited|failed)|exec exited with code [1-9]|HTTP (400|401|403|500)|API error|provider error|\\\"type\\\"[[:space:]]*:[[:space:]]*\\\"error\\\""
+        "本轮 .*执行失败|codex exec (exited|failed)|exec exited with code [1-9]|HTTP (400|401|403|500)|API error|provider error|\\\"type\\\"[[:space:]]*:[[:space:]]*\\\"error\\\""
 }
 
 # Assert response body matches pattern (case-insensitive)

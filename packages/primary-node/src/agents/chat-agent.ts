@@ -1690,7 +1690,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             this.restartManager.recordFailure(chatId, 'turn_failed');
             await this.deliverUserVisible(
               chatId,
-              '❌ 本轮 Codex 执行失败，未生成可交付结果。请稍后重试；若持续失败，请检查 Codex CLI、凭据和超时配置。',
+              `❌ 本轮 ${this.sdkProvider.name === 'codex' ? 'Codex' : this.sdkProvider.name} 执行失败，未生成可交付结果。请稍后重试；若持续失败，请检查模型服务、凭据和超时配置。`,
               resolveReplyThreadRoot()
             );
           }

@@ -839,3 +839,17 @@ describe('MessageBuilder', () => {
     });
   });
 });
+
+
+it('does not instruct REST agents to send unsupported interactive cards', () => {
+  const builder = new MessageBuilder();
+  const input = { text: 'calculate 25 * 17', messageId: 'm' };
+  const rest = builder.buildEnhancedContent(input, 'rest-test', {
+    ...DEFAULT_CHANNEL_CAPABILITIES, supportsCard: true, supportedMcpTools: [],
+  });
+  expect(rest).not.toContain('send_interactive');
+  const feishu = builder.buildEnhancedContent(input, 'oc_test', {
+    ...DEFAULT_CHANNEL_CAPABILITIES, supportsCard: true, supportedMcpTools: ['send_interactive'],
+  });
+  expect(feishu).toContain('send_interactive');
+});

@@ -326,10 +326,9 @@ warmup_agent() {
         parse_response "$result"
 
         if [ "$RESPONSE_STATUS" = "200" ]; then
-            if [ -n "$CONFIG_PATH" ] && grep -qE '^[[:space:]]*agentBackend:.*codex' "$CONFIG_PATH" 2>/dev/null \
-                && { response_contains_provider_failure "$RESPONSE_BODY" \
-                    || server_log_contains_provider_failure "$warmup_chat_id"; }; then
-                log_error "Codex warm-up failed: provider returned an error despite HTTP 200"
+            if response_contains_provider_failure "$RESPONSE_BODY" \
+                || server_log_contains_provider_failure "$warmup_chat_id"; then
+                log_error "Agent warm-up failed: provider returned an error despite HTTP 200"
                 log_debug "Warm-up response: $RESPONSE_BODY"
                 show_server_logs
                 return 1

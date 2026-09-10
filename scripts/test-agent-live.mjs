@@ -119,7 +119,7 @@ for (const mode of ['basic', 'tool', 'multi-turn', 'cancel', 'after-cancel']) {
                 !text.includes('SLEEP_FINISHED') &&
                 Date.now() - start - row.cancelAtMs < 10000
               : success === 1 && text.includes('AFTER_CANCEL_OK');
-    if (row.timeout || row.events.some((e) => e.type === 'error')) row.pass = false;
+    if (row.timeout || row.events.some((e) => e.type === 'error' || e.metadata?.terminatedReason === 'turn_failed')) row.pass = false;
   } catch (e) {
     row.error = e.message;
     row.pass = false;

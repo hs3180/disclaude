@@ -3640,7 +3640,7 @@ describe('ChatAgent (primary-node)', () => {
       await vi.waitFor(() => {
         expect(
           localCallbacks.sendMessage.mock.calls.some(
-            (call: any[]) => typeof call[1] === 'string' && call[1].includes('Codex 执行失败')
+            (call: any[]) => typeof call[1] === 'string' && call[1].includes('执行失败')
           )
         ).toBe(true);
       }, { timeout: 1000, interval: 20 });

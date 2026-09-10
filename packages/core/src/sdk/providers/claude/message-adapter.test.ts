@@ -594,7 +594,8 @@ describe('adaptSDKMessage', () => {
       };
 
       const result = adaptSDKMessage(asMsg(message));
-      expect(result.type).toBe('error');
+      expect(result.type).toBe('result');
+      expect(result.metadata?.terminatedReason).toBe('turn_failed');
       expect(result.content).toContain('API rate limit exceeded');
       expect(result.content).toContain('Timeout');
     });
@@ -853,5 +854,5 @@ it('preserves real SDK user-envelope tool results', () => {
 it('does not label SDK success-envelope API errors as complete', () => {
   expect(adaptSDKMessage(asMsg({ type: 'result', subtype: 'success', is_error: true,
     result: 'Authentication failed', usage: {}, total_cost_usd: 0,
-  }))).toMatchObject({ type: 'error', content: 'Authentication failed' });
+  }))).toMatchObject({ type: 'result', content: 'Authentication failed', metadata: { terminatedReason: 'turn_failed' } });
 });

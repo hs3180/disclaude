@@ -167,7 +167,7 @@ export function adaptPiEvent(event: PiAgentEvent): AgentMessage | null {
     case 'agent_end': {
       const last = event.messages.at(-1) as { role?: string; stopReason?: string; errorMessage?: string } | undefined;
       if (last?.role === 'assistant' && last.stopReason === 'error') {
-        return makeMessage('error', last.errorMessage || 'pi model request failed', {});
+        return makeMessage('result', last.errorMessage || 'pi model request failed', { terminatedReason: 'turn_failed' });
       }
       return makeMessage('result', '', {});
     }

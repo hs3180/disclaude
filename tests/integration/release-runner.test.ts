@@ -171,3 +171,18 @@ test_chat_async_receipt
   expect(result.stderr).toMatch(/"chatId": "cli-rest-async-\d+"/);
   expect(result.stderr).not.toContain('$$');
 });
+
+
+describe('integration JSON response parsing', () => {
+  it('preserves escaped quotes, newlines and the final answer after tool output', () => {
+    const result = bash(String.raw`
+source "$TEST_COMMON"
+RESPONSE_BODY='{"response":"tool says \"ok\"\n425","success":true}'
+extract_json_field response
+printf '\n'
+extract_json_bool success
+`);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe('tool says "ok"\n425\ntrue');
+  });
+});

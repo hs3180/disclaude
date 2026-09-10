@@ -160,7 +160,7 @@ export function adaptSDKMessage(message: SDKMessage, taskRegistry?: TaskSubjectR
       }
 
       if (message.subtype === 'success' && message.is_error) {
-        return { type: 'error', content: message.result || 'Claude API request failed', role: 'assistant', metadata, raw: message };
+        return { type: 'result', content: message.result || 'Claude API request failed', role: 'assistant', metadata: { ...metadata, terminatedReason: 'turn_failed' }, raw: message };
       }
       if (message.subtype === 'success') {
         // TypeScript 通过 subtype === 'success' 将 message 收窄为 SDKResultSuccess。
@@ -214,10 +214,10 @@ export function adaptSDKMessage(message: SDKMessage, taskRegistry?: TaskSubjectR
       // errors 字段类型为 string[]，无需类型断言。
       if (message.subtype === 'error_during_execution' && 'errors' in message) {
         return {
-          type: 'error',
+          type: 'result',
           content: `❌ Error: ${message.errors.join(', ')}`,
           role: 'assistant',
-          metadata,
+          metadata: { ...metadata, terminatedReason: 'turn_failed' },
           raw: message,
         };
       }
