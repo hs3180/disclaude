@@ -29,19 +29,19 @@ register_cleanup
 # Helper Functions
 # =============================================================================
 
-TEST_FILE_PATH="workspace/channel-cli-test-file.txt"
+TEST_FILE_PATH="${DISCLAUDE_WORKSPACE_DIR:-$PROJECT_ROOT/workspace}/channel-cli-test-file.txt"
 # Issue #4691 tool-execution verdict: see report_tool_verdict() in common.sh.
 
 create_test_file() {
-    local workspace_dir="$PROJECT_ROOT/workspace"
+    local workspace_dir="$(dirname "$TEST_FILE_PATH")"
     mkdir -p "$workspace_dir"
-    echo "Channel CLI Test File - Created at $(date -Iseconds)" > "$workspace_dir/channel-cli-test-file.txt"
+    echo "Channel CLI Test File - Created at $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$workspace_dir/channel-cli-test-file.txt"
     echo "This is a test file for send_file tool integration test." >> "$workspace_dir/channel-cli-test-file.txt"
     log_debug "Created test file: $workspace_dir/channel-cli-test-file.txt"
 }
 
 cleanup_test_file() {
-    local file_path="$PROJECT_ROOT/$TEST_FILE_PATH"
+    local file_path="$TEST_FILE_PATH"
     if [ -f "$file_path" ]; then
         rm -f "$file_path"
         log_debug "Cleaned up test file: $file_path"
@@ -55,8 +55,14 @@ cleanup_test_file() {
 test_send_text_tool() {
     log_info "Test: send_text tool invocation..."
 
-    local chat_id="test-channel-send-text-$$"
-    assert_sync_chat_ok "请使用 channel CLI Skill 执行 send_text，发送消息 'Hello from channel CLI test'。只需调用一次，不要诊断、排查或重试。请在回复中如实报告工具是否执行成功。" "$chat_id" || return 1
+    if [ -z "${DISCLAUDE_TEST_DELIVERY_CHAT_ID:-}" ]; then
+        log_skip "send_text requires an explicitly configured DIS""CLAUDE_TEST_DELIVERY_CHAT_ID and live channel"
+        return 0
+    fi
+    local chat_id="cli-test-channel-send-text-$$"
+    local cli_command
+    printf -v cli_command 'disclaude channel send_text --chat %q --text %q' "$DISCLAUDE_TEST_DELIVERY_CHAT_ID" '0.5.0 发布验收测试'
+    assert_sync_chat_ok "请准确执行一次以下命令，不要添加子命令，不要诊断或重试：$cli_command 。请报告实际退出码和工具返回结果。" "$chat_id" || return 1
 
     report_tool_verdict "send_text"
 }
@@ -64,10 +70,16 @@ test_send_text_tool() {
 test_send_file_tool() {
     log_info "Test: send_file tool invocation..."
 
+    if [ -z "${DISCLAUDE_TEST_DELIVERY_CHAT_ID:-}" ]; then
+        log_skip "send_file requires an explicitly configured DIS""CLAUDE_TEST_DELIVERY_CHAT_ID and live channel"
+        return 0
+    fi
     create_test_file
 
-    local chat_id="test-channel-send-file-$$"
-    assert_sync_chat_ok "请使用 channel CLI Skill 执行 send_file 发送文件 $TEST_FILE_PATH。只需调用一次，不要诊断、排查或重试。请在回复中如实报告工具是否执行成功。" "$chat_id" || {
+    local chat_id="cli-test-channel-send-file-$$"
+    local cli_command
+    printf -v cli_command 'disclaude channel send_file --chat %q --file %q' "$DISCLAUDE_TEST_DELIVERY_CHAT_ID" "$TEST_FILE_PATH"
+    assert_sync_chat_ok "请准确执行一次以下命令，不要添加子命令，不要诊断或重试：$cli_command 。请报告实际退出码和工具返回结果。" "$chat_id" || {
         cleanup_test_file
         return 1
     }
@@ -80,7 +92,7 @@ test_send_file_tool() {
 test_tool_result_format() {
     log_info "Test: Tool result format validation..."
 
-    local chat_id="test-channel-tools-list-$$"
+    local chat_id="cli-test-channel-tools-list-$$"
     # Keep this a lightweight awareness check: list channel CLI Skill
     # operations without invoking them, so the test does not depend on a
     # provider-specific MCP namespace.
@@ -102,4 +114,6 @@ declare_test "send_text tool" test_send_text_tool "ai" "Agent calls send_text to
 declare_test "send_file tool" test_send_file_tool "ai" "Agent calls send_file tool with test file"
 declare_test "Tool result format" test_tool_result_format "ai" "Validate tool result formatting"
 
-main_test_suite "Integration Test: Channel CLI Tools"
+if [[ "${BASH_SOURCE[0]}" = "$0" ]]; then
+    main_test_suite "Integration Test: Channel CLI Tools"
+fi

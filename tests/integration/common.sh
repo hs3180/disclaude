@@ -91,6 +91,7 @@ NC='\033[0m' # No Color
 # =============================================================================
 TESTS_PASSED=0
 TESTS_FAILED=0
+TESTS_SKIPPED=0
 
 # =============================================================================
 # Logging Functions
@@ -111,6 +112,7 @@ log_fail() {
 }
 
 log_skip() {
+    TESTS_SKIPPED=$((TESTS_SKIPPED + 1))
     echo -e "${YELLOW}[SKIP]${NC} $1"
 }
 
@@ -775,7 +777,7 @@ TOOL_ENV_MARKERS="sandbox_apply|Operation not permitted|Operation not allowed|fu
 # Hard tool-execution failure markers — FAIL.
 TOOL_FAIL_MARKERS="EACCES|Permission denied|was not executed|did not (execute|run|send)|not executed|unable to (execute|call|send)|execution failed|发送失败|执行不了|没有执行|无法执行|工具调用.*失败"
 # Positive confirmation the tool ran / delivered — PASS.
-TOOL_OK_MARKERS="send_text|send_file|send_message|已发送|发送成功|delivered|message.?id|上传成功|执行成功|工具调用.*成功"
+TOOL_OK_MARKERS="已发送|发送成功|delivered|message.?id|上传成功|执行成功|工具调用.*成功"
 
 report_tool_verdict() {
     local tool="$1"
@@ -1407,8 +1409,13 @@ main_test_suite() {
     log_info "Checking server..."
     if ! is_server_running; then
         start_server || exit 1
+    elif [ "${INTEGRATION_SHARED_SERVER_URL:-}" = "$API_URL" ] &&
+         [ -n "${INTEGRATION_SHARED_SERVER_PID:-}" ] &&
+         kill -0 "$INTEGRATION_SHARED_SERVER_PID" 2>/dev/null; then
+        log_info "Using the integration runner's shared test server on port ${REST_PORT}"
     else
-        log_info "Server already running on port ${REST_PORT}"
+        log_error "Existing service is not owned by this test runner; choose an isolated port"
+        exit 1
     fi
     echo ""
 
@@ -1515,6 +1522,10 @@ print_summary() {
     echo ""
     echo "=========================================="
 
+    if [ "$TESTS_SKIPPED" -gt 0 ] || [ "$TESTS_PASSED" -eq 0 ]; then
+        log_error "Incomplete acceptance: $TESTS_SKIPPED skipped, $TESTS_PASSED passed"
+        exit 1
+    fi
     if [ $TESTS_FAILED -eq 0 ]; then
         log_info "All tests passed! ($TESTS_PASSED/$TESTS_PASSED)"
         echo "=========================================="

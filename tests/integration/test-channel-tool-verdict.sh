@@ -55,6 +55,9 @@ check_verdict \
   "send_text 已执行成功，消息已发送，messageId: om_123。" \
   0 "tool-ack-success"
 
+# A tool name alone is not evidence it ran.
+check_verdict "I know how to use send_text and send_file." 1 "tool-name-only"
+
 # 5. No verifiable signal -> FAIL (rc 1)
 check_verdict \
   "好的，我来看看。回答完毕。" \

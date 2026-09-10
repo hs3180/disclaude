@@ -94,7 +94,7 @@ test_chat_async_receipt() {
     log_info "Testing: POST /api/chat returns receipt (HTTP 200) but Agent turn completes later"
 
     local result
-    result=$(make_request "POST" "/api/chat" '{"message":"async protocol probe","chatId":"rest-async-probe-$$"}')
+    result=$(make_request "POST" "/api/chat" "$(jq -n --arg chatId "cli-rest-async-$$" '{message:"Reply only OK. Do not use tools.",chatId:$chatId}')")
     parse_response "$result"
 
     assert_status "200" "Async chat receipt status" || return 1
@@ -102,7 +102,7 @@ test_chat_async_receipt() {
     assert_body_contains '"messageId"' "Async messageId field" || return 1
     # Issue #4727 regression: 200 ≠ completion — the pool must drain before
     # the suite is allowed to continue.
-    wait_for_agent_pool_idle "${REST_DRAIN_TIMEOUT:-30}" "after async chat receipt" || return 1
+    wait_for_agent_pool_idle "${REST_DRAIN_TIMEOUT:-$TIMEOUT}" "after async chat receipt" || return 1
 }
 
 test_chat_missing_message() {
@@ -197,4 +197,6 @@ declare_test "Unknown route 404" test_unknown_route "fast" "Test 404 response"
 declare_test "Control missing fields" test_control_missing_fields "fast" "Error handling (400)"
 declare_test "Empty body" test_empty_body "fast" "Error handling (400)"
 
-main_test_suite "REST Channel Integration Tests"
+if [[ "${BASH_SOURCE[0]}" = "$0" ]]; then
+    main_test_suite "REST Channel Integration Tests"
+fi

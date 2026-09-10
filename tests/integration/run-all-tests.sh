@@ -176,7 +176,7 @@ run_test_script() {
         echo "  Running: $name (attempt ${attempt}/${max_attempts})"
         echo "=========================================="
 
-        if bash "$script" "${args[@]}" 2>&1 | tee "$output_file" \
+        if INTEGRATION_SHARED_SERVER_PID="$SERVER_PID" INTEGRATION_SHARED_SERVER_URL="$API_URL" bash "$script" "${args[@]}" 2>&1 | tee "$output_file" \
             && [ "${PIPESTATUS[0]}" -eq 0 ]; then
             if [ $attempt -gt 1 ]; then
                 log_warn "$name passed on attempt ${attempt}/${max_attempts}"
