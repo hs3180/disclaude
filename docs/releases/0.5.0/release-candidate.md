@@ -2,7 +2,65 @@
 
 Status: candidate evidence is incomplete; do not publish or report `RELEASE_READY`.
 
-## DeepSeek live acceptance update (2026-09-10)
+## Feishu delivery and release-scope update (2026-09-10)
+
+Runtime candidate: `41887ce7`, branch `fix/050-final-validation`, PR #4884.
+The user explicitly authorized creating a dedicated test group and end-to-end
+messages, and decided Docker deployment rehearsal is **non-blocking for 0.5.0**.
+S08-A4/S09-A4 now require launchd only; Docker remains unverified follow-up work.
+This supersedes Docker/Feishu-credential blockers in earlier records below.
+
+Existing project Feishu application credentials successfully obtained a bot token.
+The lark-cli Keychain login was unavailable, so a per-command environment token
+was used without changing Keychain settings. A private release-validation group
+was created with the existing Disclaude test group's sole user as a member.
+Credentials, group identifiers and full receipts remain in ignored local evidence.
+
+Real integration exposed and fixed three gaps:
+
+- Primary-node erroneously required Anthropic API credentials for DeepSeek.
+- A globally selected DeepSeek backend still received Claude-specific presets and
+  default tool denies because BaseAgent only inspected an explicit override.
+- DeepSeek token deltas and reasoning were emitted as deliverable text messages.
+  Text now arrives at message boundaries, reasoning is excluded, and a missing
+  final message can flush accumulated text at turn end.
+
+Validation with `deepseek-v4.1-flash-expires-on-0910`:
+
+- Real Channel CLI text, supported Card 1.0 and file sends were independently
+  read back from the dedicated Feishu group.
+- The downloaded file's SHA-256 matched the uploaded original.
+- A model executed a Channel CLI send command and its marker was read back.
+- On `41887ce7`, channel push → Primary Node → DeepSeek → Feishu automatic final
+  reply delivered exactly `FEISHU_FINAL_050_OK`; a second push recalling that
+  reply delivered the same intact marker. Neither reply contained token-per-line
+  fragmentation or reasoning text.
+- All five standalone DeepSeek provider live checks passed again on `41887ce7`.
+- Full Node 20 coverage: **215 files / 4,616 tests passed**, exit 0. Statements /
+  branches / functions / lines: **90.44% / 87.49% / 93.19% / 90.44%**.
+- Build/type check, lint and targeted regression tests passed.
+
+Scope: this is **REST/CLI ingress → live model → real Feishu egress**, not an
+incoming Feishu WebSocket/user-event test. The local fixture initializes the real
+outbound Feishu client but disables its WebSocket subscription, so no shared bot
+subscription or unrelated chat is consumed. The isolated server, workspace and
+PID were separate from existing services; the test process was stopped afterward.
+
+A Card 2.0 attempt was rejected locally by the existing CLI's 1.0 validator; the
+supported 1.0 card was delivered and read back. No claim is made that send_card
+supports 2.0. An initial model tool test also attempted an extra interactive card
+to its synthetic REST chat and received 400; that failed attempt is preserved.
+The final push test used the real Feishu chat and requested only a plain reply.
+
+Evidence: `.local/release-0.5.0/feishu-e2e/` holds the original failures, receipt
+JSON, file download, model results, isolated-server logs and coverage output.
+`tests/e2e/0.5.0/.local/feishu/acceptance.json` marks S02-A4 verified with hashed
+live artifacts on the runtime candidate and passes schema validation. Other
+criteria retain their incomplete states; this does not mark the whole release
+ready. Claude/pi live acceptance, remaining criterion consolidation and final
+review remain outstanding. The draft PR tracks remote CI for subsequent commits.
+
+## Earlier DeepSeek live acceptance update (2026-09-10)
 
 Runtime candidate: `ee14e2b7a8a78c20c423ecb34aa729a95f019320`, on
 `fix/050-final-validation`, in [PR #4884](https://github.com/hs3180/disclaude/pull/4884).

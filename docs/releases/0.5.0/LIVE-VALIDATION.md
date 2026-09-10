@@ -38,8 +38,8 @@ pass the tool-execution check. A positive agent report still needs a real channe
 receipt for the release evidence matrix.
 
 Launchd installation/upgrade/rollback is covered by [the deployment harness](LAUNCHD-REHEARSAL.md).
-Docker and non-Codex live backend checks still require their respective runtime
-and credentials. Do not infer a passing release gate from these local commands.
+Docker remains an unverified, non-blocking follow-up by the user’s 2026-09-10
+release decision. Other backend checks require their respective runtime and credentials. Do not infer a passing release gate from these local commands.
 
 DeepSeek can be checked through the actual dsh SDK profile using a private local
 `.env` containing `DEEPSEEK_API_KEY` and, when needed, `DEEPSEEK_BASE_URL`:
