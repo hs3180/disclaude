@@ -121,7 +121,7 @@ describe('PiAgentProvider (skeleton, Issue #4385)', () => {
       provider.validateConfig();
 
       expect(mockResolve).toHaveBeenCalledTimes(1);
-      expect(mockResolve).toHaveBeenCalledWith('@earendil-works/pi-agent-core');
+      expect(mockResolve).toHaveBeenCalledWith('@earendil-works/pi-agent-core/package.json');
     });
 
     it('returns false after dispose() even when the package is resolvable', () => {

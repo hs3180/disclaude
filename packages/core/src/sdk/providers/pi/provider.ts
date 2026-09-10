@@ -523,13 +523,16 @@ export class PiAgentProvider implements IAgentSDKProvider {
     // We don't actually import at module load time; this is called on demand
     // by getInfo() / isProviderAvailable().
     try {
+      // pi 0.83 exports its entry only under the ESM import condition. Probe
+      // the explicit package.json export so require resolution does not report
+      // an installed ESM-only runtime as missing.
       // Resolve the pi-agent-core package without importing it (avoids the
       // side-effects of a full import). This file is ESM, so bare `require`
       // is undefined here — using createRequire() gives us a working
       // require.resolve(). (import.meta.resolve is an alternative but only
       // became synchronous/unflagged in Node 20.6+; createRequire is stable
       // across our >=18 floor.)
-      createRequire(import.meta.url).resolve('@earendil-works/pi-agent-core');
+      createRequire(import.meta.url).resolve('@earendil-works/pi-agent-core/package.json');
       return true;
     } catch {
       return false;

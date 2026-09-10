@@ -18,7 +18,7 @@ import { describe, it, expect } from 'vitest';
 import { createRequire } from 'node:module';
 import { PiAgentProvider } from './provider.js';
 
-const PI_SPECIFIER = '@earendil-works/pi-agent-core';
+const PI_SPECIFIER = '@earendil-works/pi-agent-core/package.json';
 
 // Compute the genuine resolvability of the pi package from THIS ESM context,
 // using the same mechanism the provider uses. validateConfig() must agree with
