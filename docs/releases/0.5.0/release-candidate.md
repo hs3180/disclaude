@@ -1,33 +1,87 @@
 # 0.5.0 release-candidate record
 
-Status: candidate evidence is incomplete; do not publish or report `RELEASE_READY`.
+Status: runtime is reviewed and merged; final packaging exclusion and delivery documentation await follow-up PR review/merge. No tag, GitHub Release, npm publication or production deployment has been performed.
 
 ## 最终交付计划（2026-09-10）
 
-当前实现候选：`86408ec7d0f0a05528c633da83cd16c2f9f9c9b4`，统一交付 PR [#4884](https://github.com/hs3180/disclaude/pull/4884)。
-#4869、#4881 已更新说明并关闭；隔离实现和历史集成记录均已保留。
-以下计划及用户范围决策优先于下文历史记录。
+已审阅的实现 `d05d9da1ee3695591b02487856236dff6186f3d0` 已通过
+[PR #4884](https://github.com/hs3180/disclaude/pull/4884) 合并为
+`a31bda79a242540de51436ad8f91e3dc93c48e69`，两者 Git tree 相同。
+用户最新 APPROVED 对应 `d05d9da1`，合并前四项
+[CI](https://github.com/hs3180/disclaude/actions/runs/34440776813) 均通过。
+#4869、#4881 已说明被统一交付替代并关闭，原实现与历史记录保留。
+以下内容优先于下文历史候选记录。
 
-| 顺序 | 工作 | 完成条件 | 当前状态 |
+最终打包修复候选 `36a2de37` 只新增 `tests/.npmignore`，排除私有 `.local`
+验收证据。运行时代码与已审阅候选相同；完整测试不因仅改分发排除规则而重复。
+新的真实 tarball、仓库外安装和打包清单均针对该修复重验。交付文档另行审阅，
+不混入用户已批准并合并的提交。
+
+| 顺序 | 工作 | 结果 | 状态 |
 |---|---|---|---|
-| 1 | 修正 REST 共享服务探测与 Channel CLI 执行断言 | 定向回归通过；真实 REST、文件发送及平台回执通过 | 攻坚中：完整集成运行退出 2，保留失败日志 |
-| 2 | 排除多模态假绿 | 验证附件管道或明确拒绝；HTTP 200 不能作为图片理解证据 | 待修正验收脚本并核对运行时 |
-| 3 | 补齐关键跨模块验收 | 预设切换/失败回退、双实例/重启、脚本按需唤醒、包安装和 launchd 证据对应实际场景 | 核对既有证据，补跑缺项 |
-| 4 | 固定最终代码并全面验证 | build、type-check、lint、完整覆盖率、完整集成、四后端真实测试及必要飞书回执通过 | `86408ec7` 单测 4624/4624；四后端 live 19/19；完整集成未通过 |
-| 5 | 收敛交付 | 37 个 Issue 可追溯；44 条验收逐项有据；最终 SHA 的 CI 与审阅完成；更新 #4884 | 未完成，不发布 RELEASE_READY |
+| 1 | REST/CLI 真实契约与集成断言 | 端口传播、结构化工具结果、start 参数、REST 目标均修复；完整集成退出 0 | 完成 |
+| 2 | 附件验收真实性 | 三种 REST chat 入口对不支持附件明确返回 400；不再以 HTTP 200 宣称图片理解 | 完成 |
+| 3 | 跨模块实测 | 四后端 19 项、真实 Primary 6 项、真实调度 2 项、飞书回执、包安装及 launchd 均通过 | 完成 |
+| 4 | 完整验证与审阅 | 217 文件 / 4,638 测试，零失败/零跳过；四项 CI；用户批准后已合并 #4884 | 完成 |
+| 5 | 最终分发与证据 | 37 Issue 追溯、44 条验收证据、CHANGELOG；新增私有证据打包排除规则 | 后续 PR 审阅/合并后收口 |
 
-已确认的范围与环境：
+### 实测与证据
 
-- Claude Agent 验证 Claude SDK 接入即可；Claude、pi、DeepSeek 使用用户指定的
-  `deepseek-v4.1-flash-expires-on-0910`。不再要求 Anthropic 模型凭证。
-- 飞书测试群及测试消息已获授权，现有应用凭证可用。仅操作专用测试群。
-- Docker 部署演练不阻塞 0.5.0；launchd 安装、升级、回退仍须证据。
-- 既有生产服务不作为测试实例；不自动发 tag、GitHub Release 或 npm 包。
+忽略目录 `.local/release-0.5.0/` 保存原始结果和失败记录。未脱敏的凭证、群标识、
+平台回执与完整日志不提交，也不随发布包分发。
 
-当前候选证据位于忽略目录 `.local/release-0.5.0/`：`rc-unit.json`、
-`rc-coverage.log`、`rc-live/*.json`、`rc-integration.log`。
-四后端真实测试结果分别为 Claude 5、pi 5、DeepSeek 5、Codex 4 项通过。
-每轮修复后更新本节结论；下方旧候选结果仅供追溯，不能覆盖当前失败。
+| 验证 | 结果 / 原始入口 |
+|---|---|
+| build/type-check、lint | 通过；`delivery-typecheck.log`、`harness-lint.log`，远端同样通过 |
+| 完整 Node 20.20.2 覆盖率 | `delivery-unit.json` / `delivery-coverage.log`：217 文件，4638/4638；statement/branch/function/line 为 90.31% / 87.41% / 93.20% / 90.31% |
+| 完整真实集成 | `delivery-integration-current.log` / `final-delivery-integration/result.json`，退出 0；监听器 2 → 2，增长 0；测试服务、端口与工作区已清理 |
+| 四后端真实工具/对话/控制 | `final-live/*-live.json`：Claude 5、pi 5、DeepSeek 5、Codex 4；全部通过 |
+| 真实 Primary 控制/隔离 | `primary-final-live/result.json`：双实例实际 cwd/文件、实际预设切换、失败保留、busy 拒绝、stop 后请求结算及继续、重启地址更新，6/6 |
+| 真实调度 | `schedule-final-live/result.json`：三次空轮询零模型 API 请求；变化后脚本 → channel push → 模型工具 → 文件和最终交付，2/2 |
+| 真实飞书 | 合并候选的 DeepSeek 最终回复与 CardKit 正文/结束状态经独立读取确认；`delivery-feishu-verification.json`、`delivery-feishu-receipts.json` |
+| CardKit | `final-cardkit/result.json`：20 次顺序更新、finalize 和资源回收通过；200ms 目标间隔不等于实测饱和吞吐，429 恢复由确定性回归覆盖 |
+| 原生飞书 WebSocket 入站 | `final-feishu-ws-deepseek/inbound.jsonl` 与先前独立回执证明用户 @bot → WS → DeepSeek → 同线程回复；合并后重验采用 CLI 入站、真实飞书出站，不把它冒充新的 WS 测试 |
+| 安装/升级/回退 | `final-launchd/launchd-rehearsal.json`：隔离 test label 安装旧入口、升级新入口、回退；健康检查/工作区保留/清理均通过 |
+| 分发包 | `final-package/pack.json`、`package-smoke.json`：干净依赖布局打包、仓库外实际 npm install、CLI help/send/push；本地 HTTP fixture 的结果不冒充平台回执 |
+
+复跑的准确入口（本地 fixture 的配置来自现有私有凭证，不写入仓库）：
+
+```sh
+NODE_DISABLE_COMPILE_CACHE=1 npm run type-check
+NODE_DISABLE_COMPILE_CACHE=1 npm run lint
+NODE_DISABLE_COMPILE_CACHE=1 npm exec --yes --package=node@20 -- node node_modules/vitest/vitest.mjs run --coverage --reporter=default --reporter=json --outputFile=.local/release-0.5.0/delivery-unit.json
+node .local/release-0.5.0/integration-run.mjs
+node scripts/test-agent-live.mjs --backend claude --env-file ../disclaude/.env --model deepseek-v4.1-flash-expires-on-0910 --output .local/release-0.5.0/final-live
+node scripts/test-agent-live.mjs --backend pi --env-file ../disclaude/.env --model deepseek-v4.1-flash-expires-on-0910 --output .local/release-0.5.0/final-live
+node scripts/test-deepseek-live.mjs --env-file ../disclaude/.env --model deepseek-v4.1-flash-expires-on-0910 --output .local/release-0.5.0/final-live
+node scripts/test-codex-live.mjs --output .local/release-0.5.0/final-live
+node .local/release-0.5.0/primary-final-live.mjs
+node .local/release-0.5.0/schedule-final-live.mjs
+```
+
+Claude 测试应使用隔离 `CLAUDE_CONFIG_DIR`，防止本机 settings 覆盖用户指定模型或鉴权。
+pi 的可选依赖与 Node 要求见 [pi 文档](../../pi-backend.md)。初始打包使用 `npm ci`
+恢复 lockfile 声明的依赖布局，避免开发过程中 no-save 安装导致的嵌套依赖布局误判。
+旧包夹带本地证据的问题由 `tests/.npmignore` 修正，必须以修正后的包为分发产物。
+
+完整追溯见 [37 Issue 表](DELIVERY-TRACEABILITY.md) 和
+[兼容层审计](HARNESS-WORKAROUND-AUDIT.md)。44 条证据 manifest 位于
+`tests/e2e/0.5.0/.local/delivery/acceptance.json`；逐条包含原始测试用例、退出码、
+哈希及旧 SHA 复用说明。schema 校验只检查结构，不能替代真实测试或审阅。
+
+### 已接受的范围与剩余交付
+
+- Claude Agent 以真实 Claude SDK 接入 DeepSeek 验证；无需补 Anthropic 模型凭证。
+- 飞书凭证可用，专用群测试已完成；无需用户再提供测试环境。
+- Docker 演练按用户决定非阻塞；launchd 演练已完成，未修改既有生产服务。
+- #4398 饱和压测按 SPECS 和 Issue 决策延期；现有节流采样有明确边界。
+- REST chat 当前不支持入站附件，跨后端原生历史迁移、pi 外部 MCP、Research 等 P1 不作为已交付能力。
+- 最后动作是审阅/合并打包排除规则及交付文档，随后按明确发布指令制作 tag/Release。运行时修复已经合并，不再等待环境凭证。
+
+磁盘满造成的安装/覆盖率写入失败与多轮断言失败均保留。清理可重建缓存后完整重跑通过。
+多轮用例明确禁止读写工具/长期记忆，验证本次对话中的回忆与计算，未把上下文丢失降级为警告。
+
+## 历史候选（仅供追溯）
 
 ## Feishu delivery and release-scope update (2026-09-10)
 

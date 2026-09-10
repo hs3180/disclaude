@@ -9,38 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Highlights
 
-0.5.0 is in development. The root package version was prepared on 2026-09-09;
-this is not a release announcement. The changes below describe merged
-foundations, while runtime integration and release acceptance remain incomplete.
+0.5.0 is a release candidate. The runtime integration has been merged in
+[#4884](https://github.com/hs3180/disclaude/pull/4884); the final packaging exclusion
+and delivery record are follow-up changes. This is not a release announcement.
 
 ### Added
 
-- Named backend/model preset validation and resolution helpers with legacy `agent:` compatibility; runtime selection is still required.
-- DeepSeek harness configuration and isolated dsh stdio JSON-RPC transport; the provider execution path is still required.
-- OS-assigned internal API ports with actual-address propagation.
+- Named backend/model presets with legacy configuration support and chat-scoped selection. Failed or busy-session switches preserve the current selection.
+- DeepSeek harness execution through dsh 0.1.2, including native tools, multi-turn input, cancellation and Feishu final delivery.
+- Optional pi 0.83 execution with native Bash/Read/Write/Edit tools and an Anthropic-compatible provider endpoint.
+- Codex app-server steering with backend acknowledgement, cancellation completion and same-thread follow-up.
+- Script schedules that poll without model calls and explicitly push changed work to an agent.
 
 ### Changed
 
-- Turn completion is settled by message identity to avoid cross-turn results.
-- Streaming finalization is idempotent and busy scheduled chats retry later.
-- Invalid schedule model tiers fail with actionable validation errors.
-- Project cwd refresh and retired PM2 deployment instructions are corrected.
+- Settle turns by message identity and bound schedule/history state.
+- Propagate OS-assigned internal API addresses to managed clients; keep project cwd and instance state isolated.
+- Unify the channel CLI under `disclaude channel`, including REST destinations and the real `disclaude start` entry point.
+- Use Claude Agent SDK 0.3.263; share watchdog parameter parsing, scope Claude-specific injections and keep listener cleanup owned by each query.
+- Separate stable prompt guidance from per-turn content. This is a structural change, not a measured cache-hit claim.
+- Exclude private local acceptance evidence from distributable test files.
 
-### Verification notes
+### Fixed
 
-- Passing CI for merged foundations does not establish that all 0.5.0 goals are implemented or accepted. See the [candidate record](docs/releases/0.5.0/release-candidate.md).
-- The root package remains private; GitHub distribution is intended, with no 0.5.0 Release observed in the 2026-09-09 audit. The npm workflow is manual and is not a release acceptance test.
-- Runtime backend selection, DeepSeek execution, running-turn control, script scheduling and bounded context still require implementation or integration. Real backend/tool/final-delivery and Docker/macOS install/upgrade/rollback evidence remain release gates.
+- Report explicit stop as cancellation, settle waiting requests and allow the next message without a spurious circuit-breaker pause.
+- Complete streaming cards and deliver observable terminal outcomes after failures, cancellation or tool-only responses.
+- Preserve DeepSeek message boundaries and avoid exposing reasoning deltas as separate replies.
+- Reject unsupported REST chat attachments with HTTP 400 instead of silently dropping them.
+- Preserve bounded log rotation and stdout mirroring; remove obsolete PM2 deployment guidance.
 
-### 0.5.0 Release Targets
+### Verification and boundaries
 
-Theme: **多后端 Agent 的统一使用与可控自动化**. These are planned acceptance targets, not completed changes or a released version. The [release plan](docs/releases/0.5.0.md) defines scope, issue mapping, and release gates.
-
-- Backend/model presets and in-chat selection; DeepSeek harness integration and existing-backend acceptance.
-- Running-agent interruption, queueing and steering; streaming-card completion and visible final delivery.
-- Script scheduling without idle LLM calls; bounded session/history state and correct concurrent turn settlement.
-- Supporting harness simplification, SDK upgrade, CLI distribution, dynamic internal ports, and deployment diagnostics.
-- Research workflow based on Feishu documents/comments is P1 and does not block 0.5.0.
+- Runtime validation: 217 test files / 4,638 tests pass, complete integration runner passes, and four real backend suites pass 19 checks. The [candidate record](docs/releases/0.5.0/release-candidate.md) records exact revisions, commands, artifact boundaries and remaining review status.
+- Claude and pi were tested through the user-selected DeepSeek Anthropic-compatible provider. DeepSeek native was tested through dsh; Codex used authenticated app-server access. This does not claim every provider/model combination is supported.
+- pi is an optional install with its own Node requirement. DeepSeek cancellation starts a fresh native query; cross-backend native history migration is not promised.
+- Real Feishu text/file delivery, CardKit finalization, two-instance isolation, schedule wake-up and isolated launchd install/upgrade/rollback have evidence. CardKit sampling does not measure tenant-wide saturation or live 429 recovery.
+- The root package stays private; distribution is through GitHub. Docker rehearsal is explicitly non-blocking. Research and the other P1 release-plan items are not promised in this delivery.
 
 ### Completed Milestones
 

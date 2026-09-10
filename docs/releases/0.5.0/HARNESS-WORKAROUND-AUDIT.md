@@ -1,56 +1,23 @@
 # Claude harness workaround audit
 
-Related: #4813, #4826
+Related: #4813, #4826. Updated 2026-09-10 for implementation candidate `d05d9da1`.
+Locked `@anthropic-ai/claude-agent-sdk`: **0.3.263**; the live SDK initialization reports embedded Claude Code **2.1.263**. Tests use this SDK with the user-selected DeepSeek provider, not a global Claude CLI.
 
-Audit baseline: `987e4b91` (`origin/main`), 2026-09-09. Installed and locked
-`@anthropic-ai/claude-agent-sdk`: `0.3.263`.
+An upstream upgrade does not prove a workaround is unnecessary. Retained behavior below has one owner and a stated applicability/configuration boundary. No claim is made that all historical upstream defects have disappeared.
 
-This inventory records the compatibility behavior that remains around the
-Claude SDK. A passing regression test is evidence that current behavior is
-preserved; it is not evidence that the upstream defect disappeared. Removal
-requires an upstream changelog/source reference or a real-process regression
-that demonstrates the workaround is no longer needed.
+| Original concern | Owner and applicability/configuration | Decision and evidence |
+|---|---|---|
+| No-content stall #3706 and first-message blind window #4442 | `ClaudeSDKProvider.queryStream()`; `readStallPolicy()` supplies `DISCLAUDE_STALL_TIMEOUT_MS` (180s) and `DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS` (5s) | Retain distinct progress windows with one `fireWatchdog()` terminal path. Claude/Codex/pi now share parameter parsing; provider-specific progress and cancellation stay local. Existing watchdog/idle/tool regressions exercise each provider. |
+| Pre-output transient retry #4192/#4313 and empty-stream retry #4442 | Claude provider replay loop; `DISCLAUDE_QUERY_MAX_RETRIES` (2; 0 disables) | Retain one budget/backoff loop, restricted to no observed output or tool side effects. Empty-stream, retry exhaustion and no-replay-after-output tests pin the boundary. |
+| Success result after upstream 5xx #4322 | `stderrIndicatesUpstreamApiError()` plus Claude result adaptation; applies only to matching terminal stderr signatures | Retain one classifier; authentication and recovered transient failures are excluded. No evidence supports removing the custom-proxy compatibility path. |
+| SDK process-listener leak #3378/#3745 | Guarded per-query `cleanupListeners()`, reached from iterator `finally`, close and cancel | Retain query ownership. Remove module-load baseline, `forceCleanupLeakedListeners()` and its ChatAgent caller/exports: a global count cannot distinguish active SDK queries from host listeners. Real multi-query integration records listener counts before/after; provider regressions cover normal and explicit-close cleanup. This removes the duplicate sweeping mechanism, not the necessary SDK workaround. |
+| Builtin discovery #4224 | `claude/options-adapter.ts`, local plugin at `Config.getBuiltinsDir()` | Retain one Claude-only injection point instead of copy-on-start. The builtin root is resolved by configuration; no external MCP adapter is reintroduced. |
+| Model aliases #3770 | `BaseAgent.createSdkOptions()`, only for resolved Claude backend; configured tier names and explicit environment overrides | Retain compatibility with Task/Team aliases on non-Anthropic model endpoints. Codex/pi/DeepSeek no longer receive generated Claude tier aliases or presets; regression covers all three. User-provided environment values remain user input. |
+| Project settings scope #3532 | Same BaseAgent owner; Claude only, when project cwd differs from workspace | Retain conditional `CLAUDE_CONFIG_DIR`; project-cwd and live two-instance tests verify the runtime boundary. No claim of native cross-backend session migration. |
+| Workspace-owned state #3803/#4261 | BaseAgent provides `DISCLAUDE_WORKSPACE_DIR`; task-record/skill guidance consumes it | Retain an explicit producer/consumer contract because workspace state and project cwd differ. This is shared application context, not a Claude-only option. |
+| SDK diagnostics and nested-session environment, inventoried in #4813 | `utils/sdk.ts:buildSdkEnv()`; `logging.sdkDebug` controls debug (default true), `CLAUDECODE` deletion applies to the subprocess environment | Retain current compatibility behavior. Tests cover environment construction and the real subprocess succeeds with isolated settings. No removal is justified by this run; absence of a matching string in a packaged native binary is not proof that the upstream nesting restriction disappeared. |
+| Prompt injection/cache structure #4706/#4813 | MessageBuilder stable guidance prefix and per-turn dynamic sections | Retain application instructions with structural separation; restrict interactive-card guidance to channels advertising that capability. Input-comparison regression verifies structure only, not measured cache-hit savings. |
 
-## Retained behavior and boundaries
+Claude-only `includePartialMessages`, `teammateMode`, tools/system presets and generated model aliases are now capability-scoped. Partial events are passed through the Claude adapter for the watchdog and are not presented as chat text. Native `tool_result` messages are adapted as tool results rather than new user inputs.
 
-| Concern and source | Current entry point | Configuration / applicability | Audit result |
-|---|---|---|---|
-| No-content stall (#3706) and first-message blind window (#4442) | `ClaudeSDKProvider.queryStream()` in `sdk/providers/claude/provider.ts`; both timers terminate through `fireWatchdog()` | Claude SDK provider only; `DISCLAUDE_STALL_TIMEOUT_MS` (default 180 s), `DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS` (default 5 s); partial progress depends on `includePartialMessages` set by `BaseAgent.createSdkOptions()` | Retain. The blind timer and content timer cover different stream phases and already share one terminal path. SDK 0.3.263 does not supply this application-level failure result. Timeout parsing is still duplicated in the Codex and Pi providers; move parsing to one provider-neutral helper before claiming full single-entry convergence. |
-| Pre-output transient retry (#4192/#4313) and empty-stream retry (#4442) | One retry loop in `ClaudeSDKProvider.queryStream()` with a replay buffer | Claude SDK provider only; `DISCLAUDE_QUERY_MAX_RETRIES` (default 2, 0 disables). Retry is restricted to `messageCount === 0`, before output or tool side effects can be observed | Retain. Both failure modes share one budget and backoff implementation. Do not widen the replay gate without tool-side-effect evidence. |
-| Successful SDK result after upstream 5xx (#4322) | `stderrIndicatesUpstreamApiError()` plus the result adaptation branch in `ClaudeSDKProvider.queryStream()` | Claude SDK provider using an upstream/proxy that reports API failure on stderr; no operator switch | Retain. The classifier is a single entry and intentionally excludes authentication failures. No 0.3.263 evidence shows stderr/result disagreement is fixed for custom proxies. |
-| Per-query process listener cleanup (#3378) | `snapshotProcessListeners()` before `query()`, then one guarded `cleanupListeners()` callback from iterator `finally`, close, or cancel | Claude SDK provider on Node.js | Retain. Inspection of installed 0.3.263 shows SDK code still registers an `exit` handler (`process.on("exit", ...)`). Real query lifecycle tests remain the removal gate. |
-| Process-wide listener baseline cleanup (#3745) | Exported `forceCleanupLeakedListeners()` in `sdk/providers/claude/provider.ts` | No configuration | Not converged: the function and module-load baseline remain exported, but no production caller exists at this baseline. Either restore one documented owner with a reproducer showing per-query cleanup misses, or delete this fallback and its exports after proving the guarded per-query path suffices. Do not maintain two cleanup contracts implicitly. |
-| Builtin skills/agents discovery (#4224) | `adaptOptions()` in `sdk/providers/claude/options-adapter.ts` assigns one local plugin rooted at `Config.getBuiltinsDir()` | Claude SDK provider; bundled/discovered builtins root | Retain. It has one injection point and replaces the older copy-on-start race. Configurability is not itself a removal criterion; embedded callers should receive an explicit provider option before changing it. |
-| Provider model-tier aliases (#3770) | `BaseAgent.createSdkOptions()` injects the three `ANTHROPIC_DEFAULT_*_MODEL` variables | Claude SDK provider with Task/Team sub-agents, especially non-Anthropic compatible endpoints | Retain pending backend-capability split. It prevents SDK aliases from resolving to unsupported Claude model names. S01 backend routing must ensure non-Claude providers do not inherit these options. |
-| Project skill scope (#3532) | `BaseAgent.createSdkOptions()` sets `CLAUDE_CONFIG_DIR` when project-bound | Only when agent cwd differs from the workspace | Retain. This is a conditional single entry; removal needs an SDK-supported settings scope that preserves workspace skills during project switching. |
-| Workspace path contract (#3803/#4261) | `BaseAgent.createSdkOptions()` sets `DISCLAUDE_WORKSPACE_DIR`; task-record guidance consumes it | Claude harness and bundled skills that need workspace-owned state while cwd can point at a project | Retain, but the consumer contract is split between environment construction and prompt/skill guidance. A future typed runtime-context contract should replace the private environment variable atomically, not delete only its producer. |
-| SDK debug and nested-session environment handling | `buildSdkEnv()` in `utils/sdk.ts` sets `DEBUG_CLAUDE_AGENT_SDK` and deletes `CLAUDECODE` | Claude SDK provider; debug controlled by `logging.sdkDebug` (default behavior enables it) | Retain pending real subprocess tests. These are centralized, but the nested-session deletion and default-debug policy lack issue references in code. Add provenance and verify whether 0.3.263 still rejects inherited `CLAUDECODE` before removal. |
-
-## Outstanding convergence work
-
-1. Extract parsing of the shared stall timeout/grace policy used by Claude,
-   Codex, and Pi. Provider-specific progress signals and termination events
-   should remain local.
-2. Resolve the unused process-wide `forceCleanupLeakedListeners()` contract.
-   Its export is a second cleanup entry without a production owner; installed
-   SDK source still justifies per-query cleanup, not automatically this fallback.
-3. Make BaseAgent option injection capability-scoped as backend selection lands.
-   Claude-only model aliases, plugin options, partial-message behavior, and
-   environment contracts must not be silently passed to providers that cannot
-   honor them.
-4. Add provenance and subprocess evidence for `buildSdkEnv()`'s debug default
-   and `CLAUDECODE` deletion before changing either behavior.
-
-## Verification map
-
-- Listener cleanup: `sdk/providers/claude/provider.test.ts` cases for normal
-  iterator completion and explicit handle close.
-- Retry, empty-stream, watchdog, and stderr classification:
-  `sdk/providers/claude/provider.test.ts`.
-- Builtin local plugin: `sdk/providers/claude/options-adapter.test.ts`.
-- Model tier, project config directory, and workspace environment:
-  `agents/base-agent.test.ts`.
-
-This audit satisfies the inventory/evidence portion of S07-A2. The outstanding
-items above remain implementation work; this document does not mark #4813 or
-S07 complete.
+Verification entries: `packages/core/src/agents/base-agent.test.ts`, the Claude/Codex/pi provider tests, Claude option/message-adapter tests, MessageBuilder tests, and `packages/primary-node/src/agents/chat-agent.test.ts`. Exact assertions and real-run artifacts belong to the [candidate record](release-candidate.md). Future upstream replacement of retained compatibility behavior needs new evidence; it is not hidden unfinished work or a claim that all private environment contracts were removed.
