@@ -148,6 +148,13 @@ describe('buildThreadSelfServiceGuidance (Issue #4402)', () => {
 });
 
 describe('buildNextStepGuidance', () => {
+  it('anchors next-step cards to the triggering prompt in every chat type', () => {
+    const result = buildNextStepGuidance(true);
+    expect(result).toContain('--parent <trigger-message-id>');
+    expect(result).toContain('private chats, regular groups, and topic groups');
+    expect(result).toContain('retry once without it');
+  });
+
   it('should include interactive card template when cards are supported', () => {
     const result = buildNextStepGuidance(true);
     expect(result).toContain('Next Steps After Response');
