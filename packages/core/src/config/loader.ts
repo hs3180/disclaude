@@ -208,7 +208,7 @@ export function validateConfig(config: DisclaudeConfig): boolean {
     }
     if (config.agent.model && !isCodexModel(config.agent.model)) {
       logger.error(
-        `agent.model must be a Codex/ChatGPT model (expected gpt-5.x, got "${config.agent.model}")`
+        `agent.model must be a Codex/ChatGPT model (expected gpt-5.x or newer, got "${config.agent.model}")`
       );
       return false;
     }
@@ -322,7 +322,7 @@ export function isCodexModel(model: string): boolean {
   // `gpt-5` itself is an API model name and is explicitly rejected by the
   // Codex ChatGPT route; Codex model aliases carry a suffix (for example
   // `gpt-5.1-codex`).
-  return /^gpt-5(?:[.-].+)/i.test(model.trim());
+  return /^gpt-(?:[5-9]|[1-9]\d+)(?:[.-].+)/i.test(model.trim());
 }
 
 /**

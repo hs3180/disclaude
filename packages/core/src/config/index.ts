@@ -404,7 +404,7 @@ export class Config {
       if (this.CLAUDE_MODEL && !isCodexModel(this.CLAUDE_MODEL)) {
         errors.push({
           field: 'agent.model',
-          message: 'agent.model must be a Codex/ChatGPT model (expected gpt-5.x)',
+          message: 'agent.model must be a Codex/ChatGPT model (expected gpt-5.x or newer)',
         });
       }
       if (errors.length > 0) {
