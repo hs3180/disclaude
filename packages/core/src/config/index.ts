@@ -222,7 +222,7 @@ export class Config {
 
   // Agent SDK backend — which agent runtime boots (Issue #4388).
   // Orthogonal to the model-layer provider (GLM vs Anthropic LLM API).
-  // undefined ⇒ 'claude' default. Consumed by PrimaryNode.start().
+  // Undefined is a startup error; PrimaryNode never silently chooses another backend.
   static readonly AGENT_BACKEND =
     (this.DEFAULT_AGENT_PRESET?.ok ? this.DEFAULT_AGENT_PRESET.preset.agentBackend : undefined) ||
     fileConfigOnly.agent?.agentBackend;

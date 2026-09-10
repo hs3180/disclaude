@@ -145,6 +145,7 @@ glm:
 
 # Agent/AI Configuration
 agent:
+  agentBackend: "claude" # Required; startup never silently switches backend
   provider: "glm"          # Options: "glm" or "anthropic"
   model: "glm-5"           # Model to use
   permissionMode: "bypassPermissions"  # Auto-approve tool actions

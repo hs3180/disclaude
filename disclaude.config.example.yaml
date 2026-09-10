@@ -30,8 +30,8 @@ agent:
   # Options: anthropic (API protocol); glm is accepted for legacy configurations
   provider: "anthropic"
 
-  # Agent SDK backend — which agent runtime boots (Issue #4388).
-  # Options: claude (default), pi, codex
+  # Required agent runtime. Startup fails rather than silently switching.
+  # Options: claude, pi, codex, deepseek
   # - claude/pi: orthogonal to `provider` above — backend selects the agent
   #   runtime, `provider` selects the LLM API; they compose (e.g. pi + GLM).
   # - codex: runs the official Codex CLI in exec mode, powered by your
@@ -39,7 +39,7 @@ agent:
   #   glm/anthropic config (the login governs the model) — see
   #   docs/codex-backend.md and #4637. Requires: npm install -g @openai/codex
   #   + one-time interactive `codex login`.
-  # agentBackend: "codex"
+  agentBackend: "claude"
 
   # Codex exec sandbox level (for the active agent backend, Issue #4631).
   # Options: read-only, workspace-write, danger-full-access
