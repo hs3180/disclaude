@@ -392,6 +392,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     // `let` (not const): Issue #4192 (L1) reassigns this on a transient-error
     // retry before the first SDK message. Created eagerly here so handle.close
     // works even before iteration starts.
+    let cancelled = false;
     let queryResult = query({
       prompt: adaptInputStream(),
       options: sdkOptions as Parameters<typeof query>[0]['options'],
@@ -619,6 +620,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         const model = options.model as string | undefined;
 
         for await (const message of queryResult) {
+          if (cancelled) {return;}
           // Issue #3706 (stall): handle stream_event (partial) messages for the
           // watchdog ONLY — filter them (not adapted/logged/yielded to ChatAgent).
           // Requires includePartialMessages (set in base-agent createSdkOptions).
@@ -771,6 +773,9 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
 
           yield adapted;
         }
+        if (cancelled) {
+          return;
+        }
         // Issue #4442 (part 4): the attempt's stream ended — the blind window has
         // no purpose past this point. Clear it NOW rather than waiting for the
         // retry `continue`/`finally` below, so it can never fire during the retry
@@ -875,6 +880,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         );
         return; // success — exit the retry loop + generator (Issue #4192 L1)
       } catch (error) {
+        if (cancelled) {return;}
         // Issue #3706 (stall): the watchdog's interrupt() likely threw into the
         // for-await — convert to a clean terminal result instead of propagating the error.
         if (stalled) {
@@ -961,9 +967,15 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           cleanupListeners();
         },
         cancel: () => {
-          if ('cancel' in queryResult && typeof queryResult.cancel === 'function') {
-            queryResult.cancel();
+          cancelled = true;
+          // cancel ends this query; interrupt alone may leave SDK background
+          // tools/follow-ups running. close tears down the owned subprocess.
+          if (typeof queryResult.interrupt === 'function') {
+            void queryResult.interrupt().catch((err: unknown) => {
+              logger.debug({ err }, 'Interrupt settled after cancellation');
+            });
           }
+          queryResult.close?.();
           // Issue #3378: Clean up listeners on cancel as well.
           cleanupListeners();
         },

@@ -840,3 +840,18 @@ describe('adaptUserInput', () => {
     expect(result.message.content).toBeDefined();
   });
 });
+
+it('preserves real SDK user-envelope tool results', () => {
+  const result = adaptSDKMessage(asMsg({ type: 'user', session_id: 's', message: {
+    role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call-1', content: 'FILE_OK' }],
+  } }));
+  expect(result.type).toBe('tool_result');
+  expect(result.content).toBe('FILE_OK');
+  expect(result.metadata?.messageId).toBe('call-1');
+});
+
+it('does not label SDK success-envelope API errors as complete', () => {
+  expect(adaptSDKMessage(asMsg({ type: 'result', subtype: 'success', is_error: true,
+    result: 'Authentication failed', usage: {}, total_cost_usd: 0,
+  }))).toMatchObject({ type: 'error', content: 'Authentication failed' });
+});

@@ -54,6 +54,7 @@ export interface PiAgentOptions {
   streamFn: (model: unknown, context: unknown, options?: unknown) => unknown;
   /** Initial transcript (the first user turn) + the session's tool registry. */
   initialState?: {
+    model?: unknown;
     systemPrompt?: string;
     messages?: unknown[];
     tools?: unknown[];

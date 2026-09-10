@@ -1,19 +1,6 @@
-/**
- * pi.dev (earendil-works/pi) Agent Provider — Skeleton (Issue #4385)
- *
- * Implements the IAgentSDKProvider contract with real lifecycle methods
- * (name / version / getInfo / validateConfig / dispose) and STUBBED
- * agent-loop / tool / MCP methods. The stubs throw clear errors pointing
- * to the follow-up sub-issues (S3: #4386, S4: #4387) so callers get an
- * actionable message, not a silent no-op.
- *
- * This skeleton is self-contained: it does NOT import pi-agent-core (the
- * package decision is tracked in #4384 / S1). validateConfig() checks
- * whether the pi packages are *importable* at runtime — returning false
- * (never throwing) when they are absent, matching ClaudeSDKProvider's
- * pattern.
- */
+/** pi Agent runtime with optional, per-query Anthropic-compatible production wiring. */
 
+import { loadPiProduction, resolvePiModel } from './production-runtime.js';
 import { createRequire } from 'node:module';
 
 import type { IAgentSDKProvider } from '../../interface.js';
@@ -59,7 +46,7 @@ export type PiStreamFn = (model: unknown, context: unknown, options?: unknown) =
  */
 export class PiAgentProvider implements IAgentSDKProvider {
   readonly name = 'pi';
-  readonly version = '0.0.0-skeleton';
+  readonly version = '0.83.0';
 
   private disposed = false;
 
@@ -85,9 +72,8 @@ export class PiAgentProvider implements IAgentSDKProvider {
   // --------------------------------------------------------------------------
 
   /**
-   * Stream-fn injection seam (tests / future production wiring). When unset,
-   * queryStream throws with a pointer to the wiring slice — pi's Agent REQUIRES
-   * a streamFn (it makes no model/credential decisions on its own).
+   * Optional test/custom stream injection. The default resolves per-query model,
+   * credentials and native tools through the optional pi runtime.
    */
   streamFn: PiStreamFn | null = null;
 
@@ -98,12 +84,7 @@ export class PiAgentProvider implements IAgentSDKProvider {
     if (this.disposed) {
       throw new Error('Provider has been disposed');
     }
-    if (!this.streamFn) {
-      throw new Error(
-        'PiAgentProvider: no stream function configured — queryStream needs a pi-ai StreamFn ' +
-          '(model/credential wiring tracked in #4386 / #4383 §6; see docs/pi-backend.md).',
-      );
-    }
+    if (!this.streamFn) {resolvePiModel(options);}
 
     // Abort plumbing: pi's Agent.abort() cancels the active run; the handle's
     // cancel() maps onto it (spike §4 — AbortController pass-through applies
@@ -130,6 +111,7 @@ export class PiAgentProvider implements IAgentSDKProvider {
     const { streamFn } = this;
     const adaptIterator = async function* (this: void): AsyncGenerator<AgentMessage> {
       const { Agent } = await loadPiRuntime();
+      const production = streamFn ? null : await loadPiProduction(options);
 
       // Event bridge: pi AgentEvent → disclaude AgentMessage. The listener is
       // async (pi awaits listeners as part of run settlement) but the queue
@@ -299,10 +281,11 @@ export class PiAgentProvider implements IAgentSDKProvider {
       // `disallowedTools` is absent/empty → hook omitted, behavior unchanged.
       const toolPermissionGate = createPiToolPermissionGate(options);
       agent = new Agent({
-        streamFn: streamFn as PiAgentOptions['streamFn'],
+        streamFn: (streamFn ?? production?.streamFn) as PiAgentOptions['streamFn'],
         initialState: {
+          ...(production ? { model: production.model } : {}),
           systemPrompt: adaptedOptions.systemPrompt ?? '',
-          tools: collectInlineTools(options),
+          tools: [...(production?.tools ?? []), ...collectInlineTools(options)],
         },
         ...(toolPermissionGate
           ? { beforeToolCall: toolPermissionGate satisfies PiAgentOptions['beforeToolCall'] }
@@ -388,6 +371,7 @@ export class PiAgentProvider implements IAgentSDKProvider {
         // surfaces an unhandled rejection — teardown no longer awaits it.
       });
 
+      let pendingText = '';
       try {
         while (true) {
           // Issue #4386 (part 5, review): the watchdog fired and the run has
@@ -419,6 +403,15 @@ export class PiAgentProvider implements IAgentSDKProvider {
           // terminator.
           if (stalled) {
             continue;
+          }
+          // Native pi deltas are transport fragments; deliver complete messages.
+          if (production && event.type === 'message_update' && event.assistantMessageEvent.type === 'text_delta') {
+            pendingText += event.assistantMessageEvent.delta;
+            continue;
+          }
+          if (production && (event.type === 'message_end' || event.type === 'agent_end') && pendingText) {
+            yield { type: 'text', role: 'assistant', content: pendingText };
+            pendingText = '';
           }
           const adapted = adaptPiEvent(event);
           if (adapted) {

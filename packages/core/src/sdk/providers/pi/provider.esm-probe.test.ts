@@ -43,11 +43,4 @@ describe('PiAgentProvider — real ESM probe (PR #4390, un-mocked)', () => {
     expect(provider.validateConfig()).toBe(isPiResolvable());
   });
 
-  it('in the current skeleton (package not a dependency) the probe reports false', () => {
-    // Documents the expected skeleton state. If #4384 makes pi-agent-core a
-    // real dependency, isPiResolvable() flips to true and the test above keeps
-    // passing; this explicit assertion would then need updating.
-    expect(isPiResolvable()).toBe(false);
-    expect(new PiAgentProvider().validateConfig()).toBe(false);
-  });
 });

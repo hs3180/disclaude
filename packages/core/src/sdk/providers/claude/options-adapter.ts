@@ -43,6 +43,10 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
   // Path MUST be absolute (relative resolves against SDK cwd = workspace).
   sdkOptions.plugins = [{ type: 'local', path: path.resolve(Config.getBuiltinsDir()) }];
 
+  if (options.includePartialMessages !== undefined) {
+    sdkOptions.includePartialMessages = options.includePartialMessages;
+  }
+
   // 设置来源（必填）
   sdkOptions.settingSources = options.settingSources;
 
