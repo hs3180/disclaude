@@ -4,11 +4,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { CHANNEL_CLI_HELP, normalizeChannelApiBaseUrl } from '@disclaude/core';
 import type { ActionPromptMap, InteractiveOption } from './tools/types.js';
 
-const CHAT_ID_PATTERNS = [
-  { prefix: 'oc_', label: 'Feishu group chat', minLength: 35 },
-  { prefix: 'ou_', label: 'Feishu user (p2p chat)', minLength: 35 },
-  { prefix: 'cli-', label: 'CLI session', minLength: 5 },
-];
+import { getChatIdValidationError } from './utils/chat-id-validator.js';
+
 // Issue #4788 (second root cause): parseArgs used to store every `--foo` it saw
 // and silently consume the next argv entry as its value. A misspelled or invented
 // flag therefore ate a real argument and surfaced as a confusing downstream error
@@ -101,11 +98,9 @@ function resolveChat(args: Args): string | undefined {
 function validateChat(command: string, args: Args): string | undefined {
   const id = resolveChat(args);
   if (!id) { emitFail(command, 'Missing required option --chat <id>', 'pass --chat oc_xxx'); return undefined; }
-  const valid = id === id.trim() && CHAT_ID_PATTERNS.some((p) => id.startsWith(p.prefix) && id.length >= p.minLength);
-  if (!valid) {
-    const formats = CHAT_ID_PATTERNS.map((p) => `- \`${p.prefix}...\` (${p.label})`).join('\n');
-    const shown = id.length > 20 ? `${id.slice(0, 20)}...` : id;
-    emitFail(command, `Invalid chatId: Invalid chatId format: "${shown}"\nExpected one of the following formats:\n${formats}`);
+  const validationError = getChatIdValidationError(id);
+  if (validationError) {
+    emitFail(command, `Invalid chatId: ${validationError}`);
     return undefined;
   }
   return id;
