@@ -341,7 +341,7 @@ H4584_PRE="$TMPDIR_FIX/harness-pre"
   echo 'SKIPPED_SUITE_NAMES=()'
   echo '_SUITE_COUNT=1'
   echo 'script= name='
-  echo 'run_suite() { [ "$2" != "Multimodal Tests" ]; }'
+  echo 'run_suite() { [ "$2" != "REST Attachment Contract Tests" ]; }'
   cat "$H4584"
 } > "$H4584_PRE"
 H4584_OUT="$( cd "$SCRATCH" && bash "$H4584_PRE" < /dev/null 2>&1 )"
@@ -352,14 +352,14 @@ H4584_PLAIN="$(printf '%s' "$H4584_OUT" | sed 's/\x1b\[[0-9;]*m//g')"
 printf '%s' "$H4584_PLAIN" | grep -qE '\[ERROR\][[:space:]]+1 test suite\(s\) failed'
 check_rc $? 0 "#4584: summary still prints the failed count"
 
-printf '%s' "$H4584_PLAIN" | grep -qF 'Failed suite(s): Multimodal Tests'
+printf '%s' "$H4584_PLAIN" | grep -qF 'Failed suite(s): REST Attachment Contract Tests'
 check_rc $? 0 "#4584: summary names the failed suite (exact #4584 scenario)"
 
 printf '%s' "$H4584_PLAIN" | grep -qF 'REST Channel Tests'
 check_rc $? 1 "#4584: passing suite NOT listed in the failure summary"
 
 # All-pass variant: the names line must not appear.
-sed 's|^run_suite() { \[ "\$2" != "Multimodal Tests" \]; }$|run_suite() { return 0; }|' \
+sed 's|^run_suite() { \[ "\$2" != "REST Attachment Contract Tests" \]; }$|run_suite() { return 0; }|' \
   "$H4584_PRE" > "$H4584.ok"
 H4584_OK_OUT="$( cd "$SCRATCH" && bash "$H4584.ok" < /dev/null 2>&1 )"
 printf '%s' "$H4584_OK_OUT" | sed 's/\x1b\[[0-9;]*m//g' | grep -q 'All selected test suites passed'
