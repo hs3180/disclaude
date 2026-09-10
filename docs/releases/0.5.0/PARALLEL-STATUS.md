@@ -1,5 +1,7 @@
 # 0.5.0 并行交付记录
 
+旧 PR #4881 的独有集成记录已归档至 [INTEGRATION-NOTES.md](INTEGRATION-NOTES.md)，当前收尾统一由 #4884 承接（含 #4869 的隔离实现）。
+
 2026-09-10 续验结果见 [当前 RC 记录](release-candidate.md)：本地候选已补齐 launchd 隔离演练，并修复真实 Codex 停止后立即恢复的竞态。下文为 2026-09-09 历史交付记录，不代表最新验收状态。
 
 截至 2026-09-09 19:30（Asia/Shanghai）。实现基线 `987e4b91`；计划 #4852 已由外部操作合并到 `1682b79d`。以下记录各主题的交付与验证，不代替 GitHub 实时合并状态；未发布。详细步骤见 [PARALLEL-PLAN.md](PARALLEL-PLAN.md)。
