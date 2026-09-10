@@ -181,6 +181,14 @@ export function validateConfig(config: DisclaudeConfig): boolean {
     return false;
   }
 
+  if (
+    config.agent?.autoCompactWindow !== undefined &&
+    (!Number.isInteger(config.agent.autoCompactWindow) || config.agent.autoCompactWindow < 0)
+  ) {
+    logger.error('agent.autoCompactWindow must be a non-negative integer');
+    return false;
+  }
+
   // S01: validate named backend/model presets without changing the legacy
   // single-agent fallback path. Runtime selection is layered on afterwards.
   if (config.agents !== undefined) {

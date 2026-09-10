@@ -716,6 +716,11 @@ export class Config {
     return fileConfigOnly.agent?.enableAgentTeams ?? false;
   }
 
+  /** Context window for the non-Claude model auto-compaction fallback. */
+  static getAutoCompactWindow(): number {
+    return fileConfigOnly.agent?.autoCompactWindow ?? 100_000;
+  }
+
   /**
    * Get session restoration configuration.
    * Controls how chat history is loaded when agent starts or resets.

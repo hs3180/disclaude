@@ -112,6 +112,12 @@ export interface AgentConfig {
    */
   enableAgentTeams?: boolean;
   /**
+   * Context window used for Claude SDK auto-compaction when the Claude backend
+   * runs an unknown/non-Claude model. Native Claude models keep SDK defaults.
+   * Default: 100000. Set to 0 to disable the fallback.
+   */
+  autoCompactWindow?: number;
+  /**
    * SDK HTTP request timeout in milliseconds.
    * Sets the ANTHROPIC_TIMEOUT environment variable for the SDK subprocess,
    * preventing infinite hangs when the TCP connection to the API proxy stalls.

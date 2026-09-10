@@ -139,6 +139,18 @@ describe('adaptOptions', () => {
     expect(result.stderr).toBeUndefined();
   });
 
+  it('should enable auto-compaction with an explicit context window', () => {
+    const result = adaptOptions({
+      settingSources: ['user', 'project', 'local'],
+      autoCompactWindow: 100_000,
+    });
+
+    expect(result.settings).toEqual({
+      autoCompactEnabled: true,
+      autoCompactWindow: 100_000,
+    });
+  });
+
   it('should pass through systemPrompt preset (Issue #2890)', () => {
     const result = adaptOptions({
       settingSources: ['user', 'project', 'local'],

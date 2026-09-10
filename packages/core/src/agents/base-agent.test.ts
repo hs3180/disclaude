@@ -808,6 +808,43 @@ describe('BaseAgent', () => {
     });
   });
 
+  describe('createSdkOptions - Issue #4883: fallback auto-compaction', () => {
+    it('enables the default fallback for an unknown model on the Claude backend', () => {
+      const glmAgent = new TestAgent({ apiKey: 'key', model: 'glm-5.1', provider: 'glm' });
+      expect(glmAgent.testCreateSdkOptions().autoCompactWindow).toBe(100_000);
+    });
+
+    it.each(['claude-sonnet-4-20250514', 'sonnet', 'opus[1m]', 'haiku'])(
+      'preserves native SDK compaction for %s',
+      (model) => {
+        const nativeAgent = new TestAgent({ apiKey: 'key', model, provider: 'anthropic' });
+        expect(nativeAgent.testCreateSdkOptions().autoCompactWindow).toBeUndefined();
+      }
+    );
+
+    it('uses a configured fallback window and permits zero as an opt-out', () => {
+      const windowSpy = vi.spyOn(Config, 'getAutoCompactWindow');
+      const glmAgent = new TestAgent({ apiKey: 'key', model: 'glm-5.1', provider: 'glm' });
+
+      windowSpy.mockReturnValueOnce(64_000);
+      expect(glmAgent.testCreateSdkOptions().autoCompactWindow).toBe(64_000);
+
+      windowSpy.mockReturnValueOnce(0);
+      expect(glmAgent.testCreateSdkOptions().autoCompactWindow).toBeUndefined();
+      windowSpy.mockRestore();
+    });
+
+    it('does not leak the Claude-only fallback to another backend', () => {
+      const piAgent = new TestAgent({
+        apiKey: 'key',
+        model: 'glm-5.1',
+        provider: 'glm',
+        agentBackend: 'pi',
+      });
+      expect(piAgent.testCreateSdkOptions().autoCompactWindow).toBeUndefined();
+    });
+  });
+
   describe('createSdkOptions - Issue #3803: DISCLAUDE_WORKSPACE_DIR for schedule skill', () => {
     it('should always set DISCLAUDE_WORKSPACE_DIR to workspace dir', () => {
       setRuntimeContext({
