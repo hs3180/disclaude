@@ -39,7 +39,7 @@
  * @module scripts/launchd
  */
 
-import { execSync } from 'node:child_process';
+import { execSync, execFileSync } from 'node:child_process';
 import { writeFileSync, existsSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
 import { realpathSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
@@ -66,7 +66,8 @@ export function resolvePrimaryLaunchdConfig(
   const hasOverride = Boolean(
     env.DISCLAUDE_LAUNCHD_LABEL ||
     env.DISCLAUDE_LAUNCHD_STATE_DIR ||
-    env.DISCLAUDE_LAUNCHD_CONFIG_PATH
+    env.DISCLAUDE_LAUNCHD_CONFIG_PATH ||
+    env.DISCLAUDE_LAUNCHD_ENTRY
   );
   if ((hasOverride || hasIsolationIntent) && (!isolationFlag || !isolatedSelector)) {
     throw new Error('Launchd path/label overrides require DISCLAUDE_LAUNCHD_ISOLATED=1');
@@ -88,6 +89,9 @@ export function resolvePrimaryLaunchdConfig(
   }
   if (!stateDir.startsWith('/')) {
     throw new Error('Isolated launchd state directory must be absolute');
+  }
+  if (env.DISCLAUDE_LAUNCHD_ENTRY && !env.DISCLAUDE_LAUNCHD_ENTRY.startsWith('/')) {
+    throw new Error('Isolated launchd entry must be absolute');
   }
   if (!env.DISCLAUDE_LAUNCHD_CONFIG_PATH?.startsWith('/')) {
     throw new Error('Isolated launchd requires an absolute test config path');
@@ -133,7 +137,9 @@ export function resolveAppLog(dir = LOG_DIR) {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '..');
-const CLI_ENTRY = resolve(PROJECT_ROOT, 'packages/primary-node/dist/cli.js');
+const CLI_ENTRY = process.argv[2] === 'isolated' && process.env.DISCLAUDE_LAUNCHD_ENTRY
+  ? process.env.DISCLAUDE_LAUNCHD_ENTRY
+  : resolve(PROJECT_ROOT, 'packages/primary-node/dist/cli.js');
 
 // Issue #4576: since #4280 Phase 3 the MCP tools' only transport is the
 // PrimaryNode REST API (GET /api/ping on the HTTP API server). A launchd
@@ -802,7 +808,7 @@ function loadPlist() {
     console.error('Run "generate" or "install" first.');
     process.exit(1);
   }
-  run(`launchctl load ${PLIST_PATH}`);
+  execFileSync('launchctl', ['load', PLIST_PATH], { stdio: 'inherit' });
   console.log('Service loaded.');
 }
 
@@ -810,7 +816,7 @@ function unloadPlist() {
   if (!existsSync(PLIST_PATH)) {
     return; // Nothing to unload
   }
-  run(`launchctl unload ${PLIST_PATH}`, { allowFail: true, silent: true });
+  execFileSync('launchctl', ['unload', PLIST_PATH], { stdio: 'pipe' });
   console.log('Service unloaded.');
 }
 

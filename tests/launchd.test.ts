@@ -61,6 +61,7 @@ const ENV_KEYS = [
   'DISCLAUDE_LAUNCHD_LABEL',
   'DISCLAUDE_LAUNCHD_STATE_DIR',
   'DISCLAUDE_LAUNCHD_CONFIG_PATH',
+  'DISCLAUDE_LAUNCHD_ENTRY',
   'CHROMIUM_CDP_PORT',
   'CHROMIUM_CDP_ADDRESS',
   'CHROMIUM_CDP_PROFILE_DIR',
@@ -178,6 +179,19 @@ describe('isolated primary service paths (S08-A4)', () => {
         true
       )
     ).toThrow('must be absolute');
+  });
+
+  it('rejects version-entry overrides outside isolated commands', () => {
+    expect(() => resolvePrimaryLaunchdConfig({
+      DISCLAUDE_LAUNCHD_ENTRY: '/tmp/old/cli.js',
+    })).toThrow('ISOLATED');
+    expect(() => resolvePrimaryLaunchdConfig({
+      DISCLAUDE_LAUNCHD_ISOLATED: '1',
+      DISCLAUDE_LAUNCHD_LABEL: 'com.disclaude.test.entry',
+      DISCLAUDE_LAUNCHD_STATE_DIR: '/tmp/state',
+      DISCLAUDE_LAUNCHD_CONFIG_PATH: '/tmp/config.yaml',
+      DISCLAUDE_LAUNCHD_ENTRY: 'relative/cli.js',
+    }, '/Users/tester', true)).toThrow('entry must be absolute');
   });
 
   it('refuses isolation without an explicit test config', () => {
