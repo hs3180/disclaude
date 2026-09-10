@@ -83,10 +83,11 @@ git clone https://github.com/hs3180/disclaude.git
 cd disclaude
 npm ci --include=dev
 npm run build
-cp disclaude.config.example.yaml disclaude.config.yaml
+mkdir -p ~/.disclaude
+cp disclaude.config.example.yaml ~/.disclaude/disclaude.config.yaml
 mkdir -p workspace
-# Edit disclaude.config.yaml with your backend and channel configuration.
-node bin/disclaude.js start --config "$PWD/disclaude.config.yaml"
+# Edit ~/.disclaude/disclaude.config.yaml with your backend and channel configuration.
+node bin/disclaude.js start
 ```
 
 From another directory, use the absolute path to `bin/disclaude.js` and pass an
@@ -124,10 +125,11 @@ Error: Claude Code process exited with code 1
 Copy the example configuration file and customize it:
 
 ```bash
-cp disclaude.config.example.yaml disclaude.config.yaml
+mkdir -p ~/.disclaude
+cp disclaude.config.example.yaml ~/.disclaude/disclaude.config.yaml
 ```
 
-Edit `disclaude.config.yaml` with your credentials:
+Edit `~/.disclaude/disclaude.config.yaml` with your credentials:
 
 ```yaml
 # Feishu/Lark Platform Configuration

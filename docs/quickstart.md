@@ -41,10 +41,11 @@ npm run build
 ## 第 3 步：配置
 
 ```bash
-cp disclaude.config.example.yaml disclaude.config.yaml
+mkdir -p ~/.disclaude
+cp disclaude.config.example.yaml ~/.disclaude/disclaude.config.yaml
 ```
 
-编辑 `disclaude.config.yaml`，填入飞书凭证和模型提供方配置：
+编辑 `~/.disclaude/disclaude.config.yaml`，填入飞书凭证和模型提供方配置：
 
 ```yaml
 feishu:
@@ -64,7 +65,7 @@ anthropic:
 ```bash
 # 本地前台运行
 mkdir -p workspace
-node bin/disclaude.js start --config "$PWD/disclaude.config.yaml"
+node bin/disclaude.js start
 
 # 生产模式（Docker 或 macOS launchd）
 docker compose up -d

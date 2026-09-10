@@ -151,12 +151,13 @@ Disclaude 使用 WebSocket 长连接模式接收消息，无需公网服务器�
 
 ```bash
 # 复制示例配置
-cp disclaude.config.example.yaml disclaude.config.yaml
+mkdir -p ~/.disclaude
+cp disclaude.config.example.yaml ~/.disclaude/disclaude.config.yaml
 ```
 
 ### 7.2 填写飞书凭证
 
-编辑 `disclaude.config.yaml`：
+编辑 `~/.disclaude/disclaude.config.yaml`：
 
 ```yaml
 feishu:

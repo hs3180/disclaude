@@ -124,7 +124,8 @@ Options:
 
 Configuration:
   All settings (port, host, etc.) are read from the config file.
-  See disclaude.config.yaml for available options.
+  Default: ~/.disclaude/disclaude.config.yaml
+  Use --config to override it explicitly.
 
 Examples:
   disclaude-primary start

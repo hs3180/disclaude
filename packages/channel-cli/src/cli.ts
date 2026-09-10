@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 /** Typed, distributable entry point for the channel CLI. */
 import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { CHANNEL_CLI_HELP, normalizeChannelApiBaseUrl } from '@disclaude/core';
 import type { ActionPromptMap, InteractiveOption } from './tools/types.js';
 
@@ -88,7 +90,13 @@ function resolveChat(args: Args): string | undefined {
   const explicit = arg(args, 'chat');
   if (explicit !== undefined) {return explicit;}
   if (process.env.FEISHU_CLI_CHAT_ID) {return process.env.FEISHU_CLI_CHAT_ID;}
-  const configPath = process.env.DISCLAUDE_CONFIG_PATH || ['disclaude.config.yaml', 'disclaude.config.yml'].find(existsSync);
+  const configPath = process.env.DISCLAUDE_CONFIG_PATH || [
+    join(homedir(), '.disclaude', 'disclaude.config.yaml'),
+    join(homedir(), '.disclaude', 'disclaude.config.yml'),
+    // Legacy migration fallback.
+    'disclaude.config.yaml',
+    'disclaude.config.yml',
+  ].find(existsSync);
   if (!configPath) {return undefined;}
   try {
     const text = readFileSync(configPath, 'utf8');

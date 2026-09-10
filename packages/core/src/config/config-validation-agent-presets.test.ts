@@ -17,10 +17,10 @@ describe('validateConfig — named agent presets (S01)', () => {
     expect(validateConfig({} as DisclaudeConfig)).toBe(true);
   });
 
-  it('rejects an agents map without exactly one default', () => {
+  it('accepts an unmarked map and rejects multiple defaults', () => {
     expect(validateConfig({ agents: {
       codex: { agentBackend: 'codex', model: 'gpt-5.6' },
-    } })).toBe(false);
+    } })).toBe(true);
     expect(validateConfig({ agents: {
       default: { agentBackend: 'claude', model: 'claude-sonnet' },
       fast: { agentBackend: 'pi', model: 'glm-5', default: true },

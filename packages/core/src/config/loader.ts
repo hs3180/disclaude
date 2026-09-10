@@ -35,13 +35,14 @@ export const EXPLICIT_CONFIG_PATH_ENV = 'DISCLAUDE_CONFIG_PATH';
  * Search paths for configuration files.
  */
 const SEARCH_PATHS = [
-  process.cwd(), // Current working directory
+  process.env.HOME ? resolve(process.env.HOME, '.disclaude') : '',
+  // Legacy migration fallbacks. New installs should use ~/.disclaude or --config.
+  process.cwd(),
   // If workspace directory is configured, also search parent directory
   process.env.WORKSPACE_DIR ? resolve(process.env.WORKSPACE_DIR, '..') : '',
   // Import meta URL directory (for bundled executables)
   import.meta.url ? resolve(dirname(fileURLToPath(import.meta.url)), '..') : '',
   import.meta.url ? resolve(dirname(fileURLToPath(import.meta.url)), '..', '..') : '',
-  process.env.HOME || '', // Home directory
 ].filter(Boolean) as string[];
 
 /**
@@ -60,6 +61,12 @@ export function findConfigFile(): ConfigFileInfo {
     for (const fileName of CONFIG_FILE_NAMES) {
       const filePath = resolve(searchPath, fileName);
       if (existsSync(filePath)) {
+        if (searchPath !== SEARCH_PATHS[0]) {
+          logger.warn(
+            { filePath, preferredDirectory: SEARCH_PATHS[0] },
+            'Using legacy config location; move it to ~/.disclaude/disclaude.config.yaml'
+          );
+        }
         logger.debug({ filePath }, 'Found configuration file');
         return { path: filePath, exists: true };
       }

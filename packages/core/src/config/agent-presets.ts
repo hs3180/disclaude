@@ -13,11 +13,11 @@ export type AgentPresetResolution =
   | { ok: false; error: string };
 
 /**
- * Validate the public `agents:` map and resolve its one default preset.
+ * Validate the public `agents:` map and resolve its effective default preset.
  *
  * The reserved `default` key is the compatibility-friendly default marker.
  * A named preset may instead set `default: true`, but the two forms may not
- * be combined and exactly one default is required whenever `agents` exists.
+ * be combined. With no marker, declaration order provides a stable fallback.
  */
 export function validateAgentPresets(agents: unknown): AgentPresetValidation {
   if (!agents || typeof agents !== 'object' || Array.isArray(agents)) {
@@ -61,14 +61,14 @@ export function validateAgentPresets(agents: unknown): AgentPresetValidation {
     }
   }
 
-  if (defaults.length !== 1) {
-    errors.push(`agents must declare exactly one default preset (found ${defaults.length})`);
+  if (defaults.length > 1) {
+    errors.push(`agents must not declare multiple default presets (found ${defaults.length})`);
   }
   if (errors.length > 0) {
     return { ok: false, errors };
   }
 
-  const [name] = defaults;
+  const name = defaults[0] ?? entries[0][0];
   return { ok: true, name, preset: (agents as AgentPresets)[name] };
 }
 
@@ -94,13 +94,13 @@ export function resolveAgentPreset(
   const defaults = Object.entries(agents).filter(
     ([presetName, preset]) => presetName === 'default' || preset.default === true
   );
-  if (defaults.length !== 1) {
+  if (defaults.length > 1) {
     return {
       ok: false,
       error: `Unable to resolve default agent preset (found ${defaults.length})`,
     };
   }
 
-  const [[defaultName, preset]] = defaults;
+  const [defaultName, preset] = defaults[0] ?? Object.entries(agents)[0];
   return { ok: true, name: defaultName, preset };
 }
