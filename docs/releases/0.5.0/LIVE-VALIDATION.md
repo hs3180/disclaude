@@ -40,3 +40,25 @@ receipt for the release evidence matrix.
 Launchd installation/upgrade/rollback is covered by [the deployment harness](LAUNCHD-REHEARSAL.md).
 Docker and non-Codex live backend checks still require their respective runtime
 and credentials. Do not infer a passing release gate from these local commands.
+
+DeepSeek can be checked through the actual dsh SDK profile using a private local
+`.env` containing `DEEPSEEK_API_KEY` and, when needed, `DEEPSEEK_BASE_URL`:
+
+```bash
+node scripts/test-deepseek-live.mjs --env-file /absolute/private/.env \
+  --model deepseek-v4.1-flash-expires-on-0910 \
+  --output "$PWD/.local/release-0.5.0/deepseek"
+```
+
+This runner requires Node 20.12+ for `util.parseEnv`. It does not source shell
+commands from the env file or print the configured key/endpoint. Five checks cover
+single-turn streaming, a real tool artifact and read-back, sequential multi-turn
+memory within one input stream, cancellation at a tool-call event, and a new query
+with the same logical chat key after cancellation. Any failure/timeout exits
+nonzero. The JSON record includes commit, dirty status, model, events and timings.
+
+The 0.1.2 dsh SDK creates persisted sessions and has no load/resume RPC. A new
+query therefore uses a fresh native session ID; the post-cancellation check does
+not claim restoration of the cancelled native session's history. Multi-turn
+context is retained within a live query stream. Feishu delivery is a separate
+acceptance check and is not performed by this runner.

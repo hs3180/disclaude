@@ -2,7 +2,54 @@
 
 Status: candidate evidence is incomplete; do not publish or report `RELEASE_READY`.
 
-## Current local candidate (2026-09-10, continuation)
+## DeepSeek live acceptance update (2026-09-10)
+
+Runtime candidate: `ee14e2b7a8a78c20c423ecb34aa729a95f019320`, on
+`fix/050-final-validation`, in [PR #4884](https://github.com/hs3180/disclaude/pull/4884).
+The user supplied a private local `.env` and explicitly selected
+`deepseek-v4.1-flash-expires-on-0910`. Both API key and custom endpoint were
+forwarded to dsh 0.1.2-rc.1 without placing them in committed files.
+
+Real testing exposed a persisted-session collision when the same logical chat
+started another query after cancellation. The SDK only exposes initialize,
+session/prompt and shutdown, with no persisted-session load/resume method. Each
+query now receives a unique native session ID. Logical-key reset still locates
+its active transports; late close of an old query cannot release its replacement.
+Multi-turn history remains in one live input stream. A new query after cancellation
+is a fresh native session, not a restoration of the previous session's history.
+
+| Check | Result |
+|---|---|
+| Live single-turn stream and terminal result | pass |
+| Native tool execution, file artifact and read-back | pass |
+| Two sequential prompts with random marker recall in one stream | pass |
+| Cancellation at tool-call notification | pass |
+| New query using the cancelled query's logical chat key | pass |
+| DeepSeek transport/provider/event/pool tests | 4 files / 21 tests pass |
+| Full Node 20 coverage run with the session fix | **214 files / 4,614 tests pass**, exit 0 |
+| Statements / branches / functions / lines | **90.44% / 88.08% / 93.19% / 90.44%** |
+| Build/type check, lint, diff check | pass |
+
+The committed-code live rerun records `ee14e2b7` with `dirty: false`; all five
+checks pass. Evidence lives in `.local/release-0.5.0/deepseek-0910/`:
+`acceptance.json` preserves the original failure, `committed/deepseek-live.json`
+records the passing rerun, and `coverage-node20.log` records the full suite.
+The full suite began with the fix in the working tree before it was committed;
+it is evidence for that runtime change, not a clean-checkout claim.
+
+GitHub App authentication is now working. The earlier candidate `8a62db74`
+[passed all remote CI jobs](https://github.com/hs3180/disclaude/actions/runs/34429426442).
+The DeepSeek fix has been pushed to the same draft PR for fresh remote CI.
+No merge or publication has occurred.
+
+The DeepSeek credential blocker is resolved. S02-A4 is still incomplete until
+real Feishu final delivery is verified; model success does not replace a channel
+receipt. Remaining acceptance includes authorized Feishu text/card/file delivery,
+Claude/pi live checks, Docker deployment rehearsal, final CI/review and the
+complete evidence matrix. `RELEASE_READY` remains false. The earlier status below
+is historical and is superseded by this update where applicable.
+
+## Earlier local candidate (2026-09-10, continuation)
 
 Candidate: `62b75df050508e237e4ca6fdf709eec07a2a65fa`, branch
 `fix/050-final-validation`. This includes the earlier local fixes plus:
