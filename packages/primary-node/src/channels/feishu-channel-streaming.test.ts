@@ -21,7 +21,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { StreamingReplyDriver } from '@disclaude/core';
 import { FeishuChannel } from './feishu-channel.js';
-import { STREAMING_REPLY_ELEMENT_ID } from '../platforms/feishu/card-builders/streaming-card-builder.js';
+import { STREAMING_REPLY_ELEMENT_ID, STREAMING_THINKING_ELEMENT_ID } from '../platforms/feishu/card-builders/streaming-card-builder.js';
 
 // ─── Mocks ──────────────────────────────────────────────────────────────────
 
@@ -125,6 +125,7 @@ function createTestChannel(opts: { streamingCard?: boolean; client?: any } = {})
 beforeEach(() => {
   vi.clearAllMocks();
   mockCardKit.createCard.mockResolvedValue({ ok: true, status: 200, cardId: 'card_123' });
+  mockCardKit.updateCard.mockResolvedValue({ ok: true, status: 200 });
   mockCardKit.updateElementContent.mockResolvedValue({ ok: true, status: 200 });
   mockCardKit.finalizeStreaming.mockResolvedValue({ ok: true, status: 200 });
 });
@@ -231,11 +232,16 @@ describe('FeishuChannel.streamText / finalizeStreaming — Issue #4400', () => {
     await channel.streamText(id, 'Hello world');
     await channel.streamText(id, 'Hello world!');
 
-    expect(mockCardKit.updateElementContent).toHaveBeenCalledTimes(3);
+    expect(mockCardKit.updateCard).toHaveBeenCalledWith(id, expect.objectContaining({
+      body: { elements: [
+        expect.objectContaining({ element_id: STREAMING_THINKING_ELEMENT_ID, content: '✍️ 回复中…' }),
+        expect.objectContaining({ element_id: STREAMING_REPLY_ELEMENT_ID, content: 'Hello' }),
+      ] },
+    }), 1);
+    expect(mockCardKit.updateElementContent).toHaveBeenCalledTimes(2);
     const { calls } = mockCardKit.updateElementContent.mock;
-    expect(calls[0]).toEqual([id, STREAMING_REPLY_ELEMENT_ID, 'Hello', 1]);
-    expect(calls[1]).toEqual([id, STREAMING_REPLY_ELEMENT_ID, 'Hello world', 2]);
-    expect(calls[2]).toEqual([id, STREAMING_REPLY_ELEMENT_ID, 'Hello world!', 3]);
+    expect(calls[0]).toEqual([id, STREAMING_REPLY_ELEMENT_ID, 'Hello world', 2]);
+    expect(calls[1]).toEqual([id, STREAMING_REPLY_ELEMENT_ID, 'Hello world!', 3]);
   });
 
   it('streamText is a no-op for an unknown / already-finalized card', async () => {
@@ -250,8 +256,9 @@ describe('FeishuChannel.streamText / finalizeStreaming — Issue #4400', () => {
     await channel.finalizeStreaming(id);
 
     expect(mockCardKit.finalizeStreaming).toHaveBeenCalledTimes(1);
-    // streamText used seq 1 → finalizeStreaming uses seq 2.
-    expect(mockCardKit.finalizeStreaming.mock.calls[0]).toEqual([id, 2]);
+    // Reply seq 1 → terminal label seq 2 → freeze seq 3.
+    expect(mockCardKit.updateElementContent).toHaveBeenCalledWith(id, STREAMING_THINKING_ELEMENT_ID, '本次回复已结束', 2);
+    expect(mockCardKit.finalizeStreaming.mock.calls[0]).toEqual([id, 3]);
   });
 
   it('finalizeStreaming is idempotent (second call is a no-op)', async () => {

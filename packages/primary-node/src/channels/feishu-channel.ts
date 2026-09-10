@@ -65,6 +65,7 @@ import {
 import {
   buildStreamingPlaceholderCard,
   STREAMING_REPLY_ELEMENT_ID,
+  STREAMING_THINKING_ELEMENT_ID,
 } from '../platforms/feishu/card-builders/streaming-card-builder.js';
 import {
   configuredFeishuMessageBytes,
@@ -1086,7 +1087,15 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     }
     const sequence = (this.streamingSequences.get(id) ?? 0) + 1;
     this.streamingSequences.set(id, sequence);
-    await client.updateElementContent(id, STREAMING_REPLY_ELEMENT_ID, text, sequence);
+    if (sequence === 1) {
+      // Replace both regions atomically; otherwise the completed answer keeps
+      // the original 'thinking' placeholder visible to users.
+      await client.updateCard(id, buildStreamingPlaceholderCard({
+        thinkingPlaceholder: '✍️ 回复中…', replyText: text,
+      }), sequence);
+    } else {
+      await client.updateElementContent(id, STREAMING_REPLY_ELEMENT_ID, text, sequence);
+    }
   }
 
   /**
@@ -1102,7 +1111,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     this.streamingSequences.set(id, sequence);
     try {
       if (client) {
-        await client.finalizeStreaming(id, sequence);
+        await client.updateElementContent(id, STREAMING_THINKING_ELEMENT_ID, '本次回复已结束', sequence);
+        this.streamingSequences.set(id, sequence + 1);
+        await client.finalizeStreaming(id, sequence + 1);
       }
       logger.info({ cardId: id, sequence }, 'finalizeStreaming: streaming card frozen');
     } catch (err) {
