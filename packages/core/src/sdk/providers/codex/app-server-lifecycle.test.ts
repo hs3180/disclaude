@@ -36,7 +36,7 @@ echo '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"t
         .resolves.toBe('thread-1');
       await expect(lifecycle.startTurn('chat-1', 'first')).resolves.toBe('turn-1');
       await expect(lifecycle.steer('chat-1', 'correction')).resolves.toBe('turn-1');
-      await lifecycle.interrupt('chat-1');
+      await Promise.all([lifecycle.interrupt('chat-1'), lifecycle.interrupt('chat-1')]);
       await expect.poll(() => lifecycle.snapshot('chat-1')?.state).toBe('idle');
 
       const dir = dirname(binary);
@@ -103,6 +103,25 @@ while :; do sleep 1; done
     } finally {
       await lifecycle.close();
     }
+  });
+
+  it('fails closed when interrupt is acknowledged without terminal completion', async () => {
+    const binary = fixture(`
+read initialize; echo '{"id":1,"result":{}}'
+read initialized
+read thread; echo '{"id":2,"result":{"thread":{"id":"thread-1"}}}'
+read start; echo '{"id":3,"result":{"turn":{"id":"turn-1"}}}'
+read interrupt; echo '{"id":4,"result":{}}'
+/bin/sleep 2
+`);
+    const lifecycle = new CodexAppServerLifecycle({ binary, requestTimeoutMs: 1000 });
+    try {
+      await lifecycle.ensureThread('chat-1');
+      await lifecycle.startTurn('chat-1', 'work');
+      await expect(lifecycle.interrupt('chat-1')).rejects.toThrow('completion timed out');
+      expect(lifecycle.snapshot('chat-1')?.state).toBe('uncertain');
+      await expect(lifecycle.startTurn('chat-1', 'follow up')).rejects.toThrow('unknown commit');
+    } finally {await lifecycle.close();}
   });
 
   it('rejects steer and interrupt without a confirmed active turn', async () => {

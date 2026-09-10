@@ -1089,6 +1089,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       }, stallTimeoutMs);
       stallTimer.unref?.();
     };
+    let interruptFlight: Promise<void> | undefined;
     const earlyEvents: Array<{ method: string; params: unknown }> = [];
     const deliveredItems = new Set<string>();
     const registration = this.governor.registerSession(sessionKey, {
@@ -1114,6 +1115,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         turnDone = undefined;
         return;
       }
+      if (stopped) {return;}
       const event = params as {
         turnId?: string;
         item?: { id?: string; type?: string; text?: string; command?: string; aggregatedOutput?: string };
@@ -1226,6 +1228,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           role: 'system',
         });
       } finally {
+        await interruptFlight;
         if (stallTimer) {clearTimeout(stallTimer);}
         registration.unregister();
         if (threadId) {
@@ -1247,11 +1250,13 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     })();
 
     const stopHandle = (reason: string): void => {
-      if (stopped) {return;}
+      if (stopped || done) {return;}
       stopped = true;
       stopInput();
       void input.return?.(undefined);
-      void lifecycle.interrupt(sessionKey).catch(() => {});
+      interruptFlight = lifecycle.interrupt(sessionKey).catch((error: unknown) => {
+        push({ type: 'error', content: error instanceof Error ? error.message : String(error), role: 'system' });
+      });
       turnDone?.(new Error(reason));
     };
 
