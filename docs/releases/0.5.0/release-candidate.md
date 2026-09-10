@@ -1,6 +1,10 @@
 # 0.5.0 release-candidate record
 
-Status: runtime is reviewed and merged; final packaging exclusion and delivery documentation await follow-up PR review/merge. No tag, GitHub Release, npm publication or production deployment has been performed.
+Status: accepted and released on 2026-09-10. Runtime, packaging exclusions, and delivery documentation are merged. Production launchd deployment and post-deployment Feishu delivery passed. Distribution is through GitHub Release; the private root package is not published to npm.
+
+Release commit: the final tag points to the main-branch commit containing this
+record. The runtime deployed before publication was `de324bab`; release-only
+documentation changes do not alter that tested runtime tree.
 
 ## 最终交付计划（2026-09-10）
 
@@ -23,7 +27,7 @@ Status: runtime is reviewed and merged; final packaging exclusion and delivery d
 | 2 | 附件验收真实性 | 三种 REST chat 入口对不支持附件明确返回 400；不再以 HTTP 200 宣称图片理解 | 完成 |
 | 3 | 跨模块实测 | 四后端 19 项、真实 Primary 6 项、真实调度 2 项、飞书回执、包安装及 launchd 均通过 | 完成 |
 | 4 | 完整验证与审阅 | 217 文件 / 4,638 测试，零失败/零跳过；四项 CI；用户批准后已合并 #4884 | 完成 |
-| 5 | 最终分发与证据 | 37 Issue 追溯、44 条验收证据、CHANGELOG；新增私有证据打包排除规则 | 后续 PR 审阅/合并后收口 |
+| 5 | 最终分发与证据 | 37 Issue 追溯、44 条验收证据、CHANGELOG；新增私有证据打包排除规则 | 完成 |
 
 ### 实测与证据
 
@@ -76,7 +80,7 @@ pi 的可选依赖与 Node 要求见 [pi 文档](../../pi-backend.md)。初始�
 - Docker 演练按用户决定非阻塞；launchd 演练已完成，未修改既有生产服务。
 - #4398 饱和压测按 SPECS 和 Issue 决策延期；现有节流采样有明确边界。
 - REST chat 当前不支持入站附件，跨后端原生历史迁移、pi 外部 MCP、Research 等 P1 不作为已交付能力。
-- 最后动作是审阅/合并打包排除规则及交付文档，随后按明确发布指令制作 tag/Release。运行时修复已经合并，不再等待环境凭证。
+- 打包排除规则、交付文档和默认预设凭证解析修复均已合并；正式部署及发布后验收完成。
 
 磁盘满造成的安装/覆盖率写入失败与多轮断言失败均保留。清理可重建缓存后完整重跑通过。
 多轮用例明确禁止读写工具/长期记忆，验证本次对话中的回忆与计算，未把上下文丢失降级为警告。

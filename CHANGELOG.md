@@ -7,11 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-10
+
 ### Highlights
 
-0.5.0 is a release candidate. The runtime integration has been merged in
-[#4884](https://github.com/hs3180/disclaude/pull/4884); the final packaging exclusion
-and delivery record are follow-up changes. This is not a release announcement.
+0.5.0 delivers unified backend selection, runtime control, and reliable scheduled
+work across Claude, Codex, pi, and DeepSeek integrations.
 
 ### Added
 
