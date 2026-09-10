@@ -106,7 +106,7 @@ show_test_plan_body() {
     echo "  5. Channel CLI Tools Tests (4 tests)"
     echo "     - Health check, send_text, send_file, tool result format"
     echo ""
-    echo "  6. Multimodal Tests (5 tests)"
+    echo "  6. REST Attachment Contract Tests (5 tests)"
     echo "     - Health check, single image, multi-image, mixed message, screenshot"
     echo ""
     echo "  (Codex coverage: set agentBackend: codex in the config; the generic"
@@ -547,7 +547,7 @@ main() {
         "use-case-2-task-execution.sh|Use Case 2 - Task Execution|ai" \
         "use-case-3-multi-turn.sh|Use Case 3 - Multi-turn Conversation|ai" \
         "channel-cli-test.sh|Channel CLI Tools Tests|ai" \
-        "multimodal-test.sh|Multimodal Tests|ai"; do
+        "multimodal-test.sh|REST Attachment Contract Tests|ai"; do
         # Issue #4737: the separate Codex Compatibility E2E suite was removed.
         # The generic suites above run under whatever backend the test
         # environment is configured with (set `agentBackend: codex` in the

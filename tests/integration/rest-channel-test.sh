@@ -21,7 +21,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 HOST="${HOST:-127.0.0.1}"
 TIMEOUT="${TIMEOUT:-30}"
-CONFIG_PATH="${DISCLAUDE_CONFIG:-}"
+CONFIG_PATH="${CONFIG_PATH:-${DISCLAUDE_CONFIG:-}}"
 
 source "$SCRIPT_DIR/common.sh"
 parse_common_args "$@"

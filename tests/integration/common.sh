@@ -153,7 +153,7 @@ is_port_in_use() {
 # Check if server is already running on the target port
 # Returns: 0 if server is running and healthy, 1 otherwise
 is_server_running() {
-    curl -s "${API_URL}/api/health" > /dev/null 2>&1
+    curl --fail --silent --max-time 5 "${API_URL}/api/health" > /dev/null 2>&1
 }
 
 # Wait for port to be released
@@ -245,7 +245,7 @@ start_server() {
     local max_retries=30
     local retry=0
     while [ $retry -lt $max_retries ]; do
-        if curl -s "${API_URL}/api/health" > /dev/null 2>&1; then
+        if curl --fail --silent --max-time 5 "${API_URL}/api/health" > /dev/null 2>&1; then
             log_info "Server is ready"
             return 0
         fi
@@ -797,6 +797,25 @@ report_tool_verdict() {
         log_fail "$tool: agent reported the tool did NOT run (regression or permission failure surfaced) (#4691)"
         log_debug "Response: $RESPONSE_TEXT"
         return 1
+    fi
+    if printf '%s' "$RESPONSE_TEXT" | node -e '
+      let text = "";
+      process.stdin.on("data", chunk => { text += chunk; });
+      process.stdin.on("end", () => {
+        const command = process.argv[1];
+        const success = text.split("\n").some(line => {
+          try {
+            const result = JSON.parse(line.trim());
+            return result.ok === true && result.command === command &&
+              typeof result.chatId === "string" && result.chatId.length > 0 &&
+              typeof result.result === "string" && result.result.length > 0;
+          } catch { return false; }
+        });
+        process.exit(success ? 0 : 1);
+      });
+    ' "$tool"; then
+        log_pass "$tool: structured CLI execution result verified (delivery receipt checked separately)"
+        return 0
     fi
     if echo "$RESPONSE_TEXT" | grep -qiE "$TOOL_OK_MARKERS"; then
         log_pass "$tool: agent confirmed tool execution"
@@ -1514,6 +1533,8 @@ parse_common_args() {
                 ;;
         esac
     done
+    # The explicit port must also update the URL computed when this file loaded.
+    API_URL="http://${HOST}:${REST_PORT}"
 }
 
 # =============================================================================

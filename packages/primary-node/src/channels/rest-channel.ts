@@ -69,6 +69,8 @@ interface ChatRequest {
   threadId?: string;
   /** Response mode: 'stream' or 'sync' */
   mode?: 'stream' | 'sync';
+  /** Reserved: inbound attachments are not supported by the REST chat adapter. */
+  attachments?: unknown;
 }
 
 /**
@@ -504,6 +506,13 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
       return;
     }
 
+    // Do not silently turn a multimodal request into a text-only request.
+    if (chatRequest?.attachments !== undefined &&
+        (!Array.isArray(chatRequest.attachments) || chatRequest.attachments.length > 0)) {
+      this.sendError(res, 400, 'REST chat attachments are not supported');
+      return;
+    }
+
     // Validate request
     if (!chatRequest.message) {
       this.sendError(res, 400, 'Message is required');
@@ -602,14 +611,20 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     const body = await this.readBody(req);
 
     // Parse request if body exists
-    let chatRequest: { message?: string; userId?: string } | null = null;
+    let chatRequest: Partial<ChatRequest> | null = null;
     if (body) {
       try {
-        chatRequest = JSON.parse(body) as { message?: string; userId?: string };
+        chatRequest = JSON.parse(body) as Partial<ChatRequest>;
       } catch {
         this.sendError(res, 400, 'Invalid JSON');
         return;
       }
+    }
+
+    if (chatRequest?.attachments !== undefined &&
+        (!Array.isArray(chatRequest.attachments) || chatRequest.attachments.length > 0)) {
+      this.sendError(res, 400, 'REST chat attachments are not supported');
+      return;
     }
 
     // Get or create session state

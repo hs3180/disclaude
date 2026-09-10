@@ -61,7 +61,7 @@ test_send_text_tool() {
     fi
     local chat_id="cli-test-channel-send-text-$$"
     local cli_command
-    printf -v cli_command 'disclaude channel send_text --chat %q --text %q' "$DISCLAUDE_TEST_DELIVERY_CHAT_ID" '0.5.0 发布验收测试'
+    printf -v cli_command 'disclaude channel send_text --chat %q --text %q' "$DISCLAUDE_TEST_DELIVERY_CHAT_ID" "FEISHU_CHANNEL_050_$$"
     assert_sync_chat_ok "请准确执行一次以下命令，不要添加子命令，不要诊断或重试：$cli_command 。请报告实际退出码和工具返回结果。" "$chat_id" || return 1
 
     report_tool_verdict "send_text"

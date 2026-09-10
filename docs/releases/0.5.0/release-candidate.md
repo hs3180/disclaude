@@ -2,6 +2,33 @@
 
 Status: candidate evidence is incomplete; do not publish or report `RELEASE_READY`.
 
+## 最终交付计划（2026-09-10）
+
+当前实现候选：`86408ec7d0f0a05528c633da83cd16c2f9f9c9b4`，统一交付 PR [#4884](https://github.com/hs3180/disclaude/pull/4884)。
+#4869、#4881 已更新说明并关闭；隔离实现和历史集成记录均已保留。
+以下计划及用户范围决策优先于下文历史记录。
+
+| 顺序 | 工作 | 完成条件 | 当前状态 |
+|---|---|---|---|
+| 1 | 修正 REST 共享服务探测与 Channel CLI 执行断言 | 定向回归通过；真实 REST、文件发送及平台回执通过 | 攻坚中：完整集成运行退出 2，保留失败日志 |
+| 2 | 排除多模态假绿 | 验证附件管道或明确拒绝；HTTP 200 不能作为图片理解证据 | 待修正验收脚本并核对运行时 |
+| 3 | 补齐关键跨模块验收 | 预设切换/失败回退、双实例/重启、脚本按需唤醒、包安装和 launchd 证据对应实际场景 | 核对既有证据，补跑缺项 |
+| 4 | 固定最终代码并全面验证 | build、type-check、lint、完整覆盖率、完整集成、四后端真实测试及必要飞书回执通过 | `86408ec7` 单测 4624/4624；四后端 live 19/19；完整集成未通过 |
+| 5 | 收敛交付 | 37 个 Issue 可追溯；44 条验收逐项有据；最终 SHA 的 CI 与审阅完成；更新 #4884 | 未完成，不发布 RELEASE_READY |
+
+已确认的范围与环境：
+
+- Claude Agent 验证 Claude SDK 接入即可；Claude、pi、DeepSeek 使用用户指定的
+  `deepseek-v4.1-flash-expires-on-0910`。不再要求 Anthropic 模型凭证。
+- 飞书测试群及测试消息已获授权，现有应用凭证可用。仅操作专用测试群。
+- Docker 部署演练不阻塞 0.5.0；launchd 安装、升级、回退仍须证据。
+- 既有生产服务不作为测试实例；不自动发 tag、GitHub Release 或 npm 包。
+
+当前候选证据位于忽略目录 `.local/release-0.5.0/`：`rc-unit.json`、
+`rc-coverage.log`、`rc-live/*.json`、`rc-integration.log`。
+四后端真实测试结果分别为 Claude 5、pi 5、DeepSeek 5、Codex 4 项通过。
+每轮修复后更新本节结论；下方旧候选结果仅供追溯，不能覆盖当前失败。
+
 ## Feishu delivery and release-scope update (2026-09-10)
 
 Runtime candidate: `41887ce7`, branch `fix/050-final-validation`, PR #4884.

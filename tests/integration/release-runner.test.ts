@@ -186,3 +186,29 @@ extract_json_bool success
     expect(result.stdout).toBe('tool says "ok"\n425\ntrue');
   });
 });
+
+
+describe('explicit integration address', () => {
+  it('uses the CLI port for health and requests even when config supplied another port', () => {
+    const result = bash(`
+REST_PORT=3099
+source "$TEST_COMMON"
+parse_common_args --port 45678
+[ "$API_URL" = "http://127.0.0.1:45678" ]
+`);
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+  });
+  it('recognizes structured CLI success without treating a name or failed result as execution', () => {
+    for (const [response, success] of [
+      ['{"ok":true,"command":"send_file","chatId":"test","result":"File sent"}', true],
+      ['{"ok":false,"command":"send_file","chatId":"test","result":"File sent"}', false],
+      ['{"ok":true,"command":"send_text","chatId":"test","result":"File sent"}', false],
+      ['I will call send_file', false],
+    ] as const) {
+      const result = bash(`source "$TEST_COMMON"
+RESPONSE_TEXT='${response}'
+report_tool_verdict send_file`);
+      expect(result.status, result.stdout + result.stderr).toBe(success ? 0 : 1);
+    }
+  });
+});
