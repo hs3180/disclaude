@@ -14,6 +14,16 @@ describe('validateAgentPresets', () => {
     });
   });
 
+  it('rejects a model that is incompatible with the selected backend', () => {
+    const result = validateAgentPresets({
+      default: { agentBackend: 'codex', model: 'claude-sonnet-4' },
+    });
+    expect(result).toEqual({
+      ok: false,
+      errors: ['agents.default.model must be a Codex/ChatGPT model (expected gpt-5.x)'],
+    });
+  });
+
   it('accepts one explicit default marker on a non-reserved name', () => {
     const result = validateAgentPresets({
       fast: { agentBackend: 'pi', model: 'glm-5', default: true },

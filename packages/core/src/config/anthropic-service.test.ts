@@ -44,6 +44,18 @@ describe('Anthropic API service configuration', () => {
     expect(() => Config.getAgentConfig()).toThrow(/anthropic.apiKey/);
   });
 
+  it('keeps a named preset provider consistent across validation, credentials and tiers', async () => {
+    const config: DisclaudeConfig = {
+      agent: { provider: 'glm' },
+      agents: { default: { agentBackend: 'claude', model: 'preset-model', provider: 'anthropic' } },
+      anthropic: { apiKey: 'canonical-key', apiBaseUrl: 'https://canonical.example', lowModel: 'canonical-small' },
+    };
+    expect(validateRequiredConfig(config)).toEqual({ valid: true, errors: [] });
+    const Config = await loadService(config);
+    expect(Config.getAgentConfig()).toMatchObject({ apiKey: 'canonical-key', model: 'preset-model', apiBaseUrl: 'https://canonical.example', provider: 'anthropic' });
+    expect(Config.getModelForTier('low')).toBe('canonical-small');
+  });
+
   it('keeps legacy glm configurations readable during migration', async () => {
     const service = { apiKey: 'legacy-key', model: 'legacy-model', apiBaseUrl: 'https://legacy.example' };
     const Config = await loadService({ glm: service });
@@ -52,6 +64,16 @@ describe('Anthropic API service configuration', () => {
 
   it('keeps Codex authentication independent of API service credentials', async () => {
     const Config = await loadService({ anthropic: {}, agent: { agentBackend: 'codex', model: 'gpt-5.6' } });
+    expect(Config.getAgentConfig()).toMatchObject({ apiKey: '', model: 'gpt-5.6' });
+  });
+
+  it('allows a default Codex preset without credentials for an unused API service', async () => {
+    const config: DisclaudeConfig = {
+      anthropic: {},
+      agents: { default: { agentBackend: 'codex', model: 'gpt-5.6' } },
+    };
+    expect(validateRequiredConfig(config)).toEqual({ valid: true, errors: [] });
+    const Config = await loadService(config);
     expect(Config.getAgentConfig()).toMatchObject({ apiKey: '', model: 'gpt-5.6' });
   });
 });

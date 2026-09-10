@@ -144,6 +144,11 @@ describe('AgentFactory', () => {
       expect(config.model).toBe('default-model');
     });
 
+    it('passes an explicit agent backend into the ChatAgent SDK binding', () => {
+      AgentFactory.createAgent('chat-backend', createMockCallbacks(), { agentBackend: 'pi' });
+      expect(getLastConfig().agentBackend).toBe('pi');
+    });
+
     it('should use explicit model over tier and default', () => {
       const callbacks = createMockCallbacks();
       vi.mocked(Config.getModelForTier).mockReturnValue('tier-model');

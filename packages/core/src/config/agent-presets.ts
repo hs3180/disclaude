@@ -45,6 +45,8 @@ export function validateAgentPresets(agents: unknown): AgentPresetValidation {
     }
     if (typeof preset.model !== 'string' || !preset.model.trim()) {
       errors.push(`agents.${name}.model must be a non-empty string`);
+    } else if (preset.agentBackend === 'codex' && !/^gpt-5(?:[.-].+)/.test(preset.model)) {
+      errors.push(`agents.${name}.model must be a Codex/ChatGPT model (expected gpt-5.x)`);
     }
     if (preset.default !== undefined && typeof preset.default !== 'boolean') {
       errors.push(`agents.${name}.default must be a boolean`);

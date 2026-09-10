@@ -8,6 +8,7 @@ import { handleListNodes } from './list-nodes.js';
 import { handleDebug } from './debug.js';
 import { handleTrigger } from './passive.js';
 import { handleProject } from './project.js';
+import { handleAgent } from './agent.js';
 import { handleSteer } from './steer.js';
 
 /**
@@ -23,6 +24,7 @@ export const commandRegistry: CommandDefinition[] = [
   { type: 'debug', handler: handleDebug, description: '切换 Debug 群设置' },
   { type: 'trigger', handler: handleTrigger as CommandDefinition['handler'], description: '切换触发模式', usage: '/trigger [mention|always]' },
   { type: 'project', handler: handleProject as CommandDefinition['handler'], description: '项目管理命令', usage: '/project [use|reset|info]' },
+  { type: 'agent', handler: handleAgent as CommandDefinition['handler'], description: '查看或切换 Agent 预设', usage: '/agent [current|list|use <name>]' },
   { type: 'steer', handler: handleSteer as CommandDefinition['handler'], description: '运行中即时纠偏（按后端能力）', usage: '/steer <instruction>' },
 ];
 

@@ -288,6 +288,8 @@ export interface BaseAgentConfig {
   apiBaseUrl?: string;
   /** Permission mode for tool execution */
   permissionMode?: 'default' | 'bypassPermissions';
+  /** Agent SDK runtime. Omitted to preserve the process default. */
+  agentBackend?: 'claude' | 'pi' | 'codex' | 'deepseek';
 }
 
 /**
@@ -441,4 +443,3 @@ export function clearRuntimeContext(): void {
 // ============================================================================
 // Agent Factory Types (Issue #2941: Simplified to ChatAgent-only)
 // ============================================================================
-

@@ -19,11 +19,13 @@ import {
 } from './loader.js';
 import type {
   DisclaudeConfig,
+  AgentPresets,
   ConfigValidationError,
   TransportConfig,
   DebugConfig,
   SessionTimeoutConfig,
 } from './types.js';
+import { resolveAgentPreset } from './agent-presets.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 
 // Re-export sub-modules
@@ -211,12 +213,19 @@ export class Config {
   // Anthropic Messages API service; file credentials take precedence over env.
   static readonly ANTHROPIC_API_KEY = fileConfigOnly.anthropic?.apiKey ?? process.env.ANTHROPIC_API_KEY ?? '';
   static readonly ANTHROPIC_API_BASE_URL = fileConfigOnly.anthropic?.apiBaseUrl;
-  static readonly CLAUDE_MODEL = fileConfigOnly.agent?.model || fileConfigOnly.anthropic?.model || '';
+  private static readonly DEFAULT_AGENT_PRESET = fileConfigOnly.agents
+    ? resolveAgentPreset(fileConfigOnly.agents)
+    : undefined;
+  static readonly CLAUDE_MODEL =
+    (this.DEFAULT_AGENT_PRESET?.ok ? this.DEFAULT_AGENT_PRESET.preset.model : undefined) ||
+    fileConfigOnly.agent?.model || fileConfigOnly.anthropic?.model || '';
 
   // Agent SDK backend — which agent runtime boots (Issue #4388).
   // Orthogonal to the model-layer provider (GLM vs Anthropic LLM API).
   // undefined ⇒ 'claude' default. Consumed by PrimaryNode.start().
-  static readonly AGENT_BACKEND = fileConfigOnly.agent?.agentBackend;
+  static readonly AGENT_BACKEND =
+    (this.DEFAULT_AGENT_PRESET?.ok ? this.DEFAULT_AGENT_PRESET.preset.agentBackend : undefined) ||
+    fileConfigOnly.agent?.agentBackend;
 
   // Codex exec sandbox override (Issue #4631, S4 of #4627). Only
   // meaningful with AGENT_BACKEND === 'codex'; consumed by the
@@ -310,6 +319,17 @@ export class Config {
     return fileConfigOnly;
   }
 
+  /** Keep provider selection identical for validation, runtime credentials and tiers. */
+  private static getConfiguredApiProvider(): 'anthropic' | 'glm' | undefined {
+    const presetProvider = this.DEFAULT_AGENT_PRESET?.ok ? this.DEFAULT_AGENT_PRESET.preset.provider : undefined;
+    return presetProvider ?? fileConfigOnly.agent?.provider ?? (fileConfigOnly.anthropic ? 'anthropic' : undefined);
+  }
+
+  /** Named runtime presets, when configured. Selection is managed per chat by the pool. */
+  static getAgentPresets(): AgentPresets | undefined {
+    return this.getRawConfig().agents;
+  }
+
   /**
    * Get the workspace directory.
    *
@@ -396,7 +416,7 @@ export class Config {
     }
 
     // Get provider preference from config file
-    const provider = fileConfigOnly.agent?.provider ?? (fileConfigOnly.anthropic ? 'anthropic' : undefined);
+    const provider = this.getConfiguredApiProvider();
 
     // Determine which provider to validate based on config priority
     if (provider === 'glm') {
@@ -511,7 +531,8 @@ export class Config {
     this.validateRequiredConfig();
 
     // Prefer GLM if configured
-    if (fileConfigOnly.agent?.provider === 'glm' || (!fileConfigOnly.anthropic && fileConfigOnly.agent?.provider !== 'anthropic' && this.GLM_API_KEY)) {
+    const provider = this.getConfiguredApiProvider();
+    if (provider === 'glm' || (!provider && this.GLM_API_KEY)) {
       logger.debug({ provider: 'GLM', model: this.GLM_MODEL }, 'Using GLM API configuration');
 
       // Issue #3706: Warn when GLM + Agent Teams is enabled.
@@ -528,8 +549,12 @@ export class Config {
 
       return {
         apiKey: this.GLM_API_KEY,
-        model: this.GLM_MODEL,
-        apiBaseUrl: this.GLM_API_BASE_URL,
+        model: this.DEFAULT_AGENT_PRESET?.ok
+          ? this.DEFAULT_AGENT_PRESET.preset.model
+          : this.GLM_MODEL,
+        apiBaseUrl: this.DEFAULT_AGENT_PRESET?.ok
+          ? this.DEFAULT_AGENT_PRESET.preset.apiBaseUrl ?? this.GLM_API_BASE_URL
+          : this.GLM_API_BASE_URL,
         provider: 'glm',
       };
     }
@@ -543,6 +568,9 @@ export class Config {
       apiKey: this.ANTHROPIC_API_KEY,
       apiBaseUrl: this.ANTHROPIC_API_BASE_URL,
       model: this.CLAUDE_MODEL,
+      ...(this.DEFAULT_AGENT_PRESET?.ok && this.DEFAULT_AGENT_PRESET.preset.apiBaseUrl
+        ? { apiBaseUrl: this.DEFAULT_AGENT_PRESET.preset.apiBaseUrl }
+        : {}),
       provider: 'anthropic',
     };
   }
@@ -558,7 +586,8 @@ export class Config {
    */
   static getModelForTier(tier: 'high' | 'low' | 'multimodal'): string | undefined {
     // Check GLM tier models first (if GLM is configured)
-    if (fileConfigOnly.agent?.provider === 'glm' || (!fileConfigOnly.anthropic && fileConfigOnly.agent?.provider !== 'anthropic' && this.GLM_API_KEY)) {
+    const provider = this.getConfiguredApiProvider();
+    if (provider === 'glm' || (!provider && this.GLM_API_KEY)) {
       const glmTierMap: Record<string, string> = {
         high: this.GLM_HIGH_MODEL,
         low: this.GLM_LOW_MODEL,
