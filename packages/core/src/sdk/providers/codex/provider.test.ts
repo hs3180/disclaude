@@ -479,6 +479,16 @@ exit 1
       expect(argvOf(fixtures, 2)).not.toContain('resume'); // no anchor latched
     }, 20_000);
 
+    it('forwards query sensitivity declarations to actual runner diagnostics', async () => {
+      fixtures = makeFixtures({ withBinary: true, withAuth: true, body: 'echo "opaque-credential public-detail" >&2\nexit 1' });
+      const chunks: string[] = [];
+      const { messages } = await drainStream(makeProvider(fixtures), ['hi'], {
+        sensitiveValues: ['opaque-credential'], stderr: text => chunks.push(text),
+      });
+      expect(chunks.join('')).toContain('[REDACTED] public-detail');
+      expect(JSON.stringify(messages)).not.toContain('opaque-credential');
+    });
+
     it('detects 401 from stderr alone (no stdout error events)', async () => {
       fixtures = makeFixtures({
         withBinary: true,
