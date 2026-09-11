@@ -2,15 +2,32 @@
 // Test a built archive, never a symlink to the developer checkout. No live API calls.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, realpathSync, existsSync } from 'node:fs';
+import { mkdtempSync, readFileSync, realpathSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 
-const archive = resolve(process.argv[2] || '');
-assert(process.argv[2]?.endsWith('.tgz') && existsSync(archive), 'Pass an existing .tgz archive');
+const input = process.argv[2] || '';
+const isGit = /^github:hs3180\/disclaude#[a-f0-9]{40}$/.test(input);
+const archive = isGit ? input : resolve(input);
+assert(
+  isGit || (input.endsWith('.tgz') && existsSync(archive)),
+  'Pass a .tgz or github:hs3180/disclaude#<full SHA>'
+);
 const temp = mkdtempSync(join(tmpdir(), 'disclaude-package-test-'));
 const prefix = join(temp, 'prefix');
 const env = { ...process.env, NODE_ENV: 'production' };
+const config = join(temp, 'smoke.json');
+writeFileSync(
+  config,
+  JSON.stringify({
+    agent: { agentBackend: 'claude', provider: 'anthropic', model: 'claude-sonnet-4' },
+    anthropic: { apiKey: 'offline-test-placeholder' },
+    workspace: { dir: temp },
+    channels: { feishu: { enabled: false } },
+    logging: { level: 'silent' },
+  })
+);
+env.DISCLAUDE_CONFIG_PATH = config;
 delete env.NODE_PATH;
 delete env.NODE_OPTIONS;
 for (const key of Object.keys(env)) {
@@ -31,6 +48,9 @@ function run(command, args) {
   return result.stdout;
 }
 console.log(`Isolated installation evidence: ${temp}`);
+console.log(
+  `Runtime: ${process.version}; npm: ${run('npm', ['--version']).trim()}; input: ${archive}`
+);
 run('npm', [
   'install',
   '-g',
@@ -51,7 +71,13 @@ assert(
   'Package must not link to a temporary clone'
 );
 const pkg = JSON.parse(readFileSync(join(installed, 'package.json'), 'utf8'));
-assert.equal(pkg.scripts.prepare, undefined, 'User installation must not initialize Git hooks');
+assert.equal(pkg.scripts?.prepare, undefined, 'User installation must not initialize Git hooks');
+if (isGit) {
+  assert.equal(pkg.workspaces, undefined);
+  for (const script of ['build', 'prepack', 'preinstall', 'install', 'postinstall'])
+    assert.equal(pkg.scripts?.[script], undefined);
+  assert(existsSync(join(installed, 'release-source.json')));
+}
 assert(!existsSync(join(installed, 'node_modules/husky')), 'Husky must remain development-only');
 assert(existsSync(join(installed, 'disclaude.config.example.yaml')));
 const cli = join(prefix, 'bin/disclaude');
@@ -68,9 +94,19 @@ run(process.execPath, [
   import { join } from 'node:path';
   import { pathToFileURL } from 'node:url';
   const installed = ${JSON.stringify(installed)};
-  for (const name of ['@disclaude/core', '@disclaude/primary-node', '@disclaude/channel-cli']) {
-    await import(pathToFileURL(join(installed, 'node_modules', name, 'dist/index.js')).href);
+  const modulesRoot = ${JSON.stringify(isGit ? 'packages' : 'node_modules/@disclaude')};
+  const load = (name, file = 'index.js') => import(pathToFileURL(join(installed, modulesRoot, name, 'dist', file)).href);
+  for (const name of ['core', 'primary-node', 'channel-cli']) {
+    await load(name);
   }
+  const { PrimaryNode } = await load('primary-node', 'primary-node.js');
+  const { Config } = await load('core');
+  if (${isGit} && Config.getBuiltinsDir() !== installed) throw new Error('Builtins do not resolve to installed release');
+  const primary = new PrimaryNode();
+  await primary.start({ deferScheduler: true });
+  if (!primary.isRunning()) throw new Error('PrimaryNode did not start');
+  await primary.stop();
+  if (primary.isRunning()) throw new Error('PrimaryNode did not stop');
   process.exit(0);
 `,
 ]);

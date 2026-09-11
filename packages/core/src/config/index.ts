@@ -295,6 +295,16 @@ export class Config {
     // (e.g. /app/packages/core/<dirName>) where the resource doesn't exist.
     // Fall back to <cwd>/<dirName> in that case.
     if (!existsSync(resolvedDir)) {
+      // Prebuilt Git distributions preserve packages/core/dist but keep shared
+      // resources at the release root. Do not depend on the caller's cwd.
+      let ancestor = moduleDir;
+      while (path.dirname(ancestor) !== ancestor) {
+        if (existsSync(path.join(ancestor, 'release-source.json')) &&
+            existsSync(path.join(ancestor, dirName))) {
+          return path.join(ancestor, dirName);
+        }
+        ancestor = path.dirname(ancestor);
+      }
       const cwdDir = path.resolve(process.cwd(), dirName);
       if (existsSync(cwdDir)) {
         return cwdDir;
