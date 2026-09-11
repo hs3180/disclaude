@@ -381,6 +381,19 @@ Append each task as a new \`##\` section with today's date and task description:
 - **Read existing records before estimating**: Read a **bounded recent window** — the current and previous month's files under the workspace root (e.g., \`$DISCLAUDE_WORKSPACE_DIR/task-records/${cur}.md\` and \`$DISCLAUDE_WORKSPACE_DIR/task-records/${prev}.md\`) — for similar past tasks to improve your estimate. Do NOT load the entire history; if you need older context you may tail-read **only the last ~50 lines** of the legacy \`task-records.md\` (it can hold thousands of lines), but never load it fully`;
 }
 
+/** Describe the agent-owned workspace environment and its sharing boundaries. */
+export function buildRuntimeEnvironmentGuidance(): string {
+  return `
+
+## Shared Runtime Environment
+
+\`$DISCLAUDE_WORKSPACE_DIR/.runtime-env\` is shared across sessions and agents using this workspace. It is persistent workspace state, not a private session store. Project changes and session resets do not isolate or remove it.
+
+You own its contents and credential lifecycle. Before changing it, read the current file, preserve unrelated entries, and coordinate concurrent writers; replacing it from a stale snapshot can destroy another agent's changes. Do not store task-private credentials there unless sharing them with other workspace agents is intended and authorized. Keep private material out of replies and logs, and keep the file owner-only and out of version control.
+
+Disclaude reads this file when preparing an execution environment. Already-running processes retain their earlier environment snapshot; writing the file does not update those processes. Decide when to refresh or remove credentials according to the provider and task, without assuming disclaude expires them for you.`;
+}
+
 /**
  * Build the location awareness guidance section.
  *

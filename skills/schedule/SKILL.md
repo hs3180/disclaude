@@ -65,7 +65,7 @@ echo "${DISCLAUDE_WORKSPACE_DIR:-$(pwd)}/schedules"
 
 **Examples:**
 - `$DISCLAUDE_WORKSPACE_DIR/schedules/daily-report/SCHEDULE.md`
-- `$DISCLAUDE_WORKSPACE_DIR/schedules/issue-solver/SCHEDULE.md`
+- `$DISCLAUDE_WORKSPACE_DIR/schedules/daily-report/SCHEDULE.md`
 - `$DISCLAUDE_WORKSPACE_DIR/schedules/weekly-summary/SCHEDULE.md`
 
 ---

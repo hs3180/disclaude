@@ -12,8 +12,8 @@
  * Usage:
  *   // Main process: agent env auto-merged in createSdkOptions()
  *   // Agent: write via existing Write tool to {workspace}/.runtime-env
- *   //   GH_TOKEN=ghs_xxx
- *   //   AWS_KEY=AKIAxxx
+ *   //   SERVICE_TOKEN=example-value
+ *   //   SERVICE_ENDPOINT=https://service.example
  */
 
 import fs from 'fs';
