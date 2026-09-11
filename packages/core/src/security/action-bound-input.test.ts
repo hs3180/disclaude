@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ActionBoundInput } from './action-bound-input.js';
+import { redactDeclaredSensitive } from './sensitive-values.js';
 
 const secret = 'synthetic-private-input';
 function setup() {
@@ -42,6 +43,17 @@ describe('action-bound private input', () => {
     action.revoke();
     expect(await action.submit(input)).toBe('invalid');
     expect(() => action.issue('arbitrary-operation', 'actor', 'chat', 'source')).toThrow();
+  });
+
+  it('protects private values throughout consumption and releases even after failure', async () => {
+    const { action, input, consume } = setup();
+    consume.mockImplementationOnce(async value => {
+      await Promise.resolve();
+      expect(redactDeclaredSensitive(value)).toBe('[REDACTED]');
+      throw new Error('consumer failed');
+    });
+    expect(await action.submit(input)).toBe('failed');
+    expect(redactDeclaredSensitive(secret)).toBe(secret);
   });
 
   it('never serializes consumer errors and consumes failed attempts', async () => {

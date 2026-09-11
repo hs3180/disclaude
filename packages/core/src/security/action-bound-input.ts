@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { protectSensitiveValues } from './sensitive-values.js';
 
 export type PrivateActionOutcome = 'succeeded' | 'denied' | 'failed' | 'invalid';
 export interface PrivateAction {
@@ -58,8 +59,13 @@ export class ActionBoundInput {
     let outcome: PrivateActionOutcome = 'invalid';
     try {
       if (typeof input.value === 'string' && input.value.length > 0 && input.value.length <= 8192) {
-        const result = await this.action.consume(input.value);
-        outcome = result === 'succeeded' || result === 'denied' ? result : 'failed';
+        // Installing a private-input consumer is the harness's explicit
+        // declaration. Keep the value protected until that consumer drains.
+        const release = protectSensitiveValues([input.value]);
+        try {
+          const result = await this.action.consume(input.value);
+          outcome = result === 'succeeded' || result === 'denied' ? result : 'failed';
+        } finally {release();}
       }
     } catch {outcome = 'failed';}
     // Even a faulty consumer cannot reflect its input or error in the result.
