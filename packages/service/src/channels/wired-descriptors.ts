@@ -14,6 +14,10 @@
 
 import {
   createInboundAttachment,
+  Config,
+  ActionBoundInput,
+  createPrivateProcessAction,
+  createLogger,
   type IChannel,
   type IncomingMessage,
   type FileRef,
@@ -112,10 +116,17 @@ export const REST_WIRED_DESCRIPTOR: WiredChannelDescriptor<RestChannelConfig> = 
  * - Message handler with attachment conversion
  * - Post-registration setup: action prompt resolver, passive mode, REST API handlers
  */
+export function createConfiguredPrivateInput(): ActionBoundInput | undefined {
+  const definition = Config.getRawConfig().feishu?.privateAction;
+  if (!definition) {return undefined;}
+  const audit = createLogger('PrivateAction');
+  return new ActionBoundInput(createPrivateProcessAction(definition), event => audit.info(event, 'Private action completed'));
+}
+
 export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig> = {
   type: 'feishu',
   name: 'Feishu',
-  factory: (config) => new FeishuChannel(config),
+  factory: (config) => new FeishuChannel({ ...config, privateInput: config.privateInput ?? createConfiguredPrivateInput() }),
   defaultCapabilities: {
     supportsCard: true,
     supportsThread: true,

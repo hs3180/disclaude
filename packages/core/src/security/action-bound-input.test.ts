@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ActionBoundInput } from './action-bound-input.js';
+import { redactDeclaredSensitive } from './sensitive-values.js';
 
 const secret = 'synthetic-private-input';
 function setup() {
@@ -18,7 +19,7 @@ describe('action-bound private input', () => {
     const { action, input, consume, audit } = setup();
     const results = await Promise.all([action.submit(input), action.submit(input)]);
     expect(results).toEqual(['succeeded', 'invalid']);
-    expect(consume).toHaveBeenCalledExactlyOnceWith(secret);
+    expect(consume).toHaveBeenCalledExactlyOnceWith(secret, expect.objectContaining({ actor: 'actor', chat: 'chat', source: 'source', action: 'test-operation' }));
     expect(audit).toHaveBeenCalledTimes(1);
     expect(JSON.stringify([results, audit.mock.calls, action])).not.toContain(secret);
     expect(audit.mock.calls[0][0].correlationId).not.toBe(input.nonce);
@@ -42,6 +43,17 @@ describe('action-bound private input', () => {
     action.revoke();
     expect(await action.submit(input)).toBe('invalid');
     expect(() => action.issue('arbitrary-operation', 'actor', 'chat', 'source')).toThrow();
+  });
+
+  it('protects private values throughout consumption and releases even after failure', async () => {
+    const { action, input, consume } = setup();
+    consume.mockImplementationOnce(async value => {
+      await Promise.resolve();
+      expect(redactDeclaredSensitive(value)).toBe('[REDACTED]');
+      throw new Error('consumer failed');
+    });
+    expect(await action.submit(input)).toBe('failed');
+    expect(redactDeclaredSensitive(secret)).toBe(secret);
   });
 
   it('never serializes consumer errors and consumes failed attempts', async () => {

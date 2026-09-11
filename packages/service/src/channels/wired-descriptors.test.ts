@@ -13,13 +13,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   REST_WIRED_DESCRIPTOR,
   FEISHU_WIRED_DESCRIPTOR,
+  createConfiguredPrivateInput,
   WECHAT_WIRED_DESCRIPTOR,
 } from './wired-descriptors.js';
 import type {
   ChannelSetupContext,
   WiredContext,
 } from '../channel-lifecycle-manager.js';
-import type { IChannel, ControlHandler, ChannelCapabilities, FeishuApiHandlers, ChannelApiHandlers } from '@disclaude/core';
+import { Config, type IChannel, type ControlHandler, type ChannelCapabilities, type FeishuApiHandlers, type ChannelApiHandlers } from '@disclaude/core';
 
 // Mock logger
 const mockLogger = {
@@ -171,6 +172,21 @@ describe('WiredChannelDescriptors', () => {
         supportsUpdate: true,
         supportsStreaming: false,
       });
+    });
+
+    it('registers the configured harness process as the private consumer', async () => {
+      const previous = Config.getRawConfig();
+      const config = vi.spyOn(Config, 'getRawConfig').mockReturnValue({ ...previous, feishu: { ...previous.feishu,
+        privateAction: { id: 'configured-check', title: 'Check', description: 'Installed consumer', command: process.execPath,
+          args: ['-e', 'process.stdin.resume();process.stdin.on("end",()=>process.exit(0))'], env: {} },
+      } });
+      try {
+        const handoff = createConfiguredPrivateInput();
+        expect(handoff?.action.id).toBe('configured-check');
+        const issued = handoff!.issue('configured-check', 'actor', 'chat', 'source');
+        handoff!.bindCard(issued.nonce, 'card');
+        expect(await handoff!.submit({ nonce: issued.nonce, action: 'configured-check', actor: 'actor', chat: 'chat', source: 'source', card: 'card', value: 'private-fixture' })).toBe('succeeded');
+      } finally {config.mockRestore();}
     });
 
     it('should create a channel via factory', () => {
