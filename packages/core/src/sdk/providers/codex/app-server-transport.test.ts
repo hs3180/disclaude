@@ -4,6 +4,11 @@ import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CodexAppServerTransport } from './app-server-transport.js';
 
+const resourceLog = vi.hoisted(() => vi.fn());
+vi.mock('../../../utils/logger.js', () => ({ createLogger: (_context: string, bindings: Record<string, unknown>) => ({
+  info: (fields: Record<string, unknown>, message: string) => resourceLog({ ...bindings, ...fields }, message), warn: vi.fn(), debug: vi.fn(),
+}) }));
+
 const dirs: string[] = [];
 
 function fixture(body: string): string {
@@ -54,9 +59,10 @@ id=$(printf '%s' "$request" | sed -n 's/.*"id":\\([0-9]*\\).*/\\1/p')
 printf '{"jsonrpc":"2.0","id":%s,"result":{"turnId":"turn-1"}}\\n' "$id"
 `);
     const onNotification = vi.fn();
-    const transport = new CodexAppServerTransport({ binary, onNotification });
+    const transport = new CodexAppServerTransport({ binary, onNotification, sessionKey: 'resource-session', correlation: { runId: 'app-run', chatId: 'app-chat', sourceMessageId: 'source-message', traceId: 'app-trace' } });
     try {
       await expect(transport.initialize()).resolves.toMatchObject({ serverInfo: { name: 'fixture' } });
+      expect(resourceLog).toHaveBeenCalledWith(expect.objectContaining({ sessionKey: 'resource-session', runId: 'app-run', chatId: 'app-chat', sourceMessageId: 'source-message', traceId: 'app-trace', phase: 'initialized', available: true, processCount: expect.any(Number), rssKiB: expect.any(Number) }), 'Codex owned process resources');
       await expect(transport.request('turn/start', { threadId: 't-1', input: [] }))
         .resolves.toEqual({ turnId: 'turn-1' });
       await vi.waitFor(() => expect(onNotification).toHaveBeenCalledWith(
@@ -64,6 +70,7 @@ printf '{"jsonrpc":"2.0","id":%s,"result":{"turnId":"turn-1"}}\\n' "$id"
       ));
     } finally {
       await transport.close();
+      expect(resourceLog).toHaveBeenCalledWith(expect.objectContaining({ sessionKey: 'resource-session', runId: 'app-run', chatId: 'app-chat', sourceMessageId: 'source-message', traceId: 'app-trace', phase: 'closed', available: true, processCount: 0 }), 'Codex owned process resources');
     }
   });
 

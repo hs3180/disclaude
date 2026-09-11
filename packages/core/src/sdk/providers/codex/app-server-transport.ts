@@ -2,9 +2,11 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface, type Interface as ReadlineInterface } from 'node:readline';
 import { StringDecoder } from 'node:string_decoder';
 import { SensitiveOutputFilter } from '../../../security/sensitive-values.js';
+import { randomUUID } from 'node:crypto';
+import type { UserInput } from '../../types.js';
 import { createLogger } from '../../../utils/logger.js';
 
-const logger = createLogger('CodexAppServerTransport');
+import { readProcessGroupResources } from './process-resources.js';
 
 type JsonRpcId = number;
 
@@ -18,6 +20,8 @@ interface JsonRpcMessage {
 
 export interface CodexAppServerTransportOptions {
   binary?: string;
+  sessionKey?: string;
+  correlation?: UserInput['correlation'];
   env?: NodeJS.ProcessEnv;
   /** Exact values selected by the harness; no content classification. */
   sensitiveValues?: readonly string[];
@@ -39,6 +43,7 @@ export interface CodexAppServerExit {
  * remains the default until thread/turn lifecycle parity is implemented.
  */
 export class CodexAppServerTransport {
+  private readonly logger;
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly lines: ReadlineInterface;
   private readonly pending = new Map<JsonRpcId, {
@@ -67,6 +72,9 @@ export class CodexAppServerTransport {
       filter.write(decoder.end());
       filter.finish();
     };
+    this.logger = createLogger('CodexAppServerTransport', Object.freeze({
+      sessionKey: options.sessionKey, runId: randomUUID(), ...options.correlation,
+    }));
     this.child = spawn(options.binary ?? 'codex', ['app-server', '--stdio'], {
       env: options.env ?? process.env,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -80,6 +88,7 @@ export class CodexAppServerTransport {
     });
     this.child.stderr.on('data', (chunk: Buffer | string) => {
       filter.write(typeof chunk === 'string' ? chunk : decoder.write(chunk));
+      this.logger.debug({ source: 'stderr', chunkLength: chunk.length }, 'Codex app-server diagnostic chunk');
     });
     this.child.stderr.once('end', finishStderr);
     this.child.stdin.on('error', (error) => this.failAll(error));
@@ -105,6 +114,7 @@ export class CodexAppServerTransport {
       capabilities: null,
     });
     this.notify('initialized');
+    await this.reportResources('initialized');
     return result;
   }
 
@@ -149,9 +159,16 @@ export class CodexAppServerTransport {
         }
         if (this.groupAlive()) {this.signalOwnedGroup('SIGKILL');}
       }
-      return this.exitPromise;
+      const exit = await this.exitPromise;
+      await this.reportResources('closed');
+      return exit;
     })();
     return this.cleanup;
+  }
+
+  private async reportResources(phase: 'initialized' | 'closed'): Promise<void> {
+    const resources = await readProcessGroupResources(this.child.pid ?? 0);
+    this.logger.info({ sessionKey: this.options.sessionKey, phase, ...resources }, 'Codex owned process resources');
   }
 
   private groupAlive(): boolean {
@@ -171,7 +188,7 @@ export class CodexAppServerTransport {
       if ((error as NodeJS.ErrnoException).code === 'ESRCH') {return false;}
       // macOS can report EPERM while a dying group's final member is reaped.
       // Keep teardown idempotent; record a real signaling failure for operators.
-      logger.warn({ pid: this.child.pid, signal, code: (error as NodeJS.ErrnoException).code }, 'Could not signal owned app-server process group');
+      this.logger.warn({ pid: this.child.pid, signal, code: (error as NodeJS.ErrnoException).code }, 'Could not signal owned app-server process group');
       return signal !== 'SIGKILL';
     }
   }
@@ -199,6 +216,7 @@ export class CodexAppServerTransport {
     } catch {
       return;
     }
+    this.logger.debug({ source: 'stdout', eventType: message.method ?? 'response', requestId: message.id }, 'Codex app-server event');
     if (message.id !== undefined && message.method) {
       // Tool and approval requests require an explicit policy integration.
       // Rejecting is fail-closed; silently ignoring would hang the turn.
