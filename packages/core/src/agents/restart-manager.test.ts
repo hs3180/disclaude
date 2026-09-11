@@ -40,6 +40,18 @@ describe('RestartManager', () => {
   });
 
   describe('shouldRestart', () => {
+    it('bounds UNKNOWN recovery per chat until reset or a successful operation', () => {
+      const error = new Error('unclassified failure');
+      tagErrorCategory(error);
+      expect(manager.shouldRestart('a', error.message, error)).toMatchObject({ allowed: true, waitMs: 1000 });
+      expect(manager.shouldRestart('a', error.message, error)).toMatchObject({ allowed: false, circuitOpen: true, reason: 'unknown_recovery_exhausted' });
+      expect(manager.shouldRestart('b', error.message, error).allowed).toBe(true);
+      manager.recordSuccess('b');
+      expect(manager.shouldRestart('b', error.message, error).allowed).toBe(true);
+      manager.reset('a');
+      expect(manager.shouldRestart('a', error.message, error).allowed).toBe(true);
+    });
+
     it('Issue #4314 (L2): blocks restart for non-transient errors', () => {
       const decision = manager.shouldRestart('chat-1', 'validation failed: invalid input');
       expect(decision.allowed).toBe(false);
@@ -79,11 +91,10 @@ describe('RestartManager', () => {
       // With the fix: reads the tag → transient → restart allowed.
       const decision = manager.shouldRestart('chat-1', error.message, error);
       expect(decision.allowed).toBe(true);
-      // True regression: without the error arg (legacy message-only path), the
-      // bare-message re-classification says UNKNOWN/non-transient → refused.
+      // Message-only UNKNOWN gets one conservative recovery with a delay.
       const legacyDecision = manager.shouldRestart('chat-2', error.message);
-      expect(legacyDecision.allowed).toBe(false);
-      expect(legacyDecision.reason).toBe('non_transient');
+      expect(legacyDecision.allowed).toBe(true);
+      expect(legacyDecision.waitMs).toBe(1000);
     });
 
     it('Issue #4314 (L2): reuses L0 tag — name-classified persistent error refuses restart without consuming quota', () => {

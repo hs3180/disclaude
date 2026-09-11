@@ -22,7 +22,7 @@
  */
 
 import type { Logger } from '../utils/logger.js';
-import { isTransient, getErrorCategoryTag } from '../utils/error-handler.js';
+import { isTransient, getErrorCategoryTag, classifyError, ErrorCategory } from '../utils/error-handler.js';
 
 /**
  * Configuration for RestartManager.
@@ -48,6 +48,7 @@ export interface RestartManagerConfig {
 interface RestartState {
   /** Number of consecutive restarts */
   restartCount: number;
+  unknownRestartCount: number;
   /** Timestamp of last restart */
   lastRestartAt: number;
   /** Timestamp of last successful operation */
@@ -67,7 +68,7 @@ export interface RestartDecision {
   /** Whether restart is allowed */
   allowed: boolean;
   /** Reason if not allowed */
-  reason?: 'max_restarts_exceeded' | 'circuit_open' | 'backoff_pending' | 'non_transient';
+  reason?: 'max_restarts_exceeded' | 'circuit_open' | 'backoff_pending' | 'non_transient' | 'unknown_recovery_exhausted';
   /** Time to wait before restart in ms (if allowed) */
   waitMs?: number;
   /** Current restart count */
@@ -146,6 +147,7 @@ export class RestartManager {
     if (!state) {
       state = {
         restartCount: 0,
+        unknownRestartCount: 0,
         lastRestartAt: 0,
         lastSuccessAt: now,
         currentBackoffMs: this.initialBackoffMs,
@@ -203,7 +205,13 @@ export class RestartManager {
     const isTransientError = l0Tag
       ? l0Tag.transient
       : isTransient(error ?? new Error(errorMessage));
-    if (!isTransientError) {
+    const category = l0Tag?.category ?? classifyError(error ?? new Error(errorMessage));
+    const unknown = category === ErrorCategory.UNKNOWN;
+    if (unknown && state.unknownRestartCount >= 1) {
+      state.circuitOpen = true;
+      return { allowed: false, reason: 'unknown_recovery_exhausted', restartCount: state.restartCount, circuitOpen: true };
+    }
+    if (!isTransientError && !unknown) {
       this.logger.warn(
         { chatId, errorMessage, errorCategory: l0Tag?.category },
         'Non-transient error — restart skipped (Issue #4314 L2)',
@@ -218,10 +226,11 @@ export class RestartManager {
 
     // Calculate backoff
     const timeSinceLastRestart = now - state.lastRestartAt;
-    const waitMs = Math.max(0, state.currentBackoffMs - timeSinceLastRestart);
+    const waitMs = unknown ? state.currentBackoffMs : Math.max(0, state.currentBackoffMs - timeSinceLastRestart);
 
     // Update state
     state.restartCount++;
+    if (unknown) {state.unknownRestartCount++;}
     state.lastRestartAt = now;
     state.currentBackoffMs = Math.min(
       state.currentBackoffMs * this.backoffMultiplier,
@@ -271,6 +280,7 @@ export class RestartManager {
         'Success recorded, resetting restart state'
       );
       state.restartCount = 0;
+      state.unknownRestartCount = 0;
       state.currentBackoffMs = this.initialBackoffMs;
       state.recentErrors = [];
     }
@@ -303,6 +313,7 @@ export class RestartManager {
     if (!state) {
       state = {
         restartCount: 0,
+        unknownRestartCount: 0,
         lastRestartAt: 0,
         lastSuccessAt: now,
         currentBackoffMs: this.initialBackoffMs,
