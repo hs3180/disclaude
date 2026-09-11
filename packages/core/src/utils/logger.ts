@@ -22,7 +22,7 @@ import pino, { Logger, Level, LoggerOptions } from 'pino';
 import { PassThrough } from 'node:stream';
 import { finished } from 'node:stream/promises';
 import pinoRoll from 'pino-roll';
-import { redactSensitive, redactSensitiveText } from './redaction.js';
+import { redactDeclaredSensitive } from '../security/sensitive-values.js';
 
 // Re-export Logger type for consumers
 export type { Logger } from 'pino';
@@ -55,20 +55,6 @@ export interface LoggerConfig {
   /** Additional metadata to include in all logs */
   metadata?: Record<string, unknown>;
 }
-
-/**
- * Sensitive field patterns that should be redacted
- */
-const SENSITIVE_FIELDS = [
-  'apiKey',
-  'appSecret',
-  'token',
-  'password',
-  'secret',
-  'authorization',
-  'cookie',
-  'setCookie'
-];
 
 /**
  * Root logger instance (singleton)
@@ -257,7 +243,7 @@ async function buildFileDestination(
     } catch (symlinkError) {
       console.warn(
         'Log rotation symlink failed, retrying without it (filebeat still globs the numbered files):',
-        redactSensitive(symlinkError)
+        redactDeclaredSensitive(symlinkError)
       );
       dest = await pinoRoll({ ...rollOpts, symlink: false });
     }
@@ -270,7 +256,7 @@ async function buildFileDestination(
   } catch (error) {
     // Matches the pre-existing setupFileLogging() fallback: never crash the
     // process because the file destination failed — fall back to stdout.
-    console.warn('Failed to setup file logging, falling back to stdout:', redactSensitive(error));
+    console.warn('Failed to setup file logging, falling back to stdout:', redactDeclaredSensitive(error));
     return process.stdout;
   }
 }
@@ -305,7 +291,7 @@ function setupSyncFilePassthrough(): { passthrough: PassThrough; dest: NodeJS.Wr
 
   // Handle PassThrough errors to prevent silent log loss
   passthrough.on('error', (err: Error) => {
-    console.warn('Log passthrough stream error:', redactSensitiveText(err.message));
+    console.warn('Log passthrough stream error:', redactDeclaredSensitive(err.message));
   });
 
   const fileDry = dest as unknown as NodeJS.WritableStream;
@@ -349,7 +335,7 @@ const credentialProtection: LoggerOptions = {
   hooks: {
     // Filter the final structured record, after Pino interpolation/serializers
     // and child bindings, before any file/stdout/pretty transport receives it.
-    streamWrite: line => `${JSON.stringify(redactSensitive(JSON.parse(line)))}\n`,
+    streamWrite: line => `${JSON.stringify(redactDeclaredSensitive(JSON.parse(line)))}\n`,
   },
 };
 
@@ -411,7 +397,7 @@ function getProductionConfig(): LoggerOptions {
 /**
  * Create a redaction serializer for sensitive fields
  */
-function createRedactionSerializer(fields: string[] = SENSITIVE_FIELDS) {
+function createRedactionSerializer(fields: string[]) {
   const redactPaths = fields.map((field) => `*.${field}`);
 
   return {
@@ -458,8 +444,8 @@ export async function initLogger(config: LoggerConfig = {}): Promise<Logger> {
     options.level = config.level;
   }
 
-  // Add redaction for sensitive fields
-  if (!isDev || config.redact) {
+  // Field selection is an explicit caller declaration, never an inferred default.
+  if (config.redact) {
     const redactConfig = createRedactionSerializer(config.redact);
     options = {
       ...options,
@@ -503,7 +489,7 @@ export async function initLogger(config: LoggerConfig = {}): Promise<Logger> {
     // writes through this single stream.
     passthrough = new PassThrough();
     passthrough.on('error', (err: Error) => {
-      console.warn('Log passthrough stream error:', redactSensitiveText(err.message));
+      console.warn('Log passthrough stream error:', redactDeclaredSensitive(err.message));
     });
     logPassthrough = passthrough;
   }
@@ -708,7 +694,7 @@ export function flushLogger(): Promise<void> {
                 if (rootLogger && !flushInProgress) {
                   rootLogger.error({ err }, 'Logger flush error');
                 } else {
-                  console.warn('Logger flush error:', redactSensitiveText(err.message));
+                  console.warn('Logger flush error:', redactDeclaredSensitive(err.message));
                 }
               }
               res();

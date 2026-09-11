@@ -670,12 +670,10 @@ describe('logger', () => {
   });
 
   describe('redaction', () => {
-    it('should redact sensitive fields in production mode', async () => {
+    it('supports production logging without implicit field classification', async () => {
       process.env.NODE_ENV = 'production';
       const logger = await initLogger({ fileLogging: false });
 
-      // The logger should have redaction configured
-      // We verify by checking the logger was created with proper options
       expect(logger).toBeDefined();
 
       // Verify the logger can log without error
@@ -701,11 +699,15 @@ describe('logger', () => {
         const moduleUrl = new URL('../../dist/utils/logger.js', import.meta.url).href;
         const script = `
           const m = await import(${JSON.stringify(moduleUrl)});
+          const protection = await import(new URL('../security/sensitive-values.js', ${JSON.stringify(moduleUrl)}));
+          const release = protection.protectSensitiveValues(['synthetic-credential', 'ghs_synthetic123456789']);
           const logger = ${entry === 'init' ? 'await m.initLogger({fileLogging:false})' : entry === 'child' ? 'm.createLogger("test", {token:"synthetic-credential",runId:"run-123"})' : 'm.getRootLogger()'};
           logger.info({runId:"run-123",deep:[{api_key:"synthetic-credential"}],err:new Error("token=synthetic-credential",{cause:new Error("Bearer synthetic-credential")})}, "request password=%s", "synthetic-credential");
           logger.warn("stderr: %s", "ghs_synthetic123456789");
           logger.info({operation:"probe"}, "attempt %d", 2);
+          logger.info({password:'public-example'}, 'ghs_undeclaredexample');
           await m.closeLogger();
+          release();
         `;
         const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
           env: { ...process.env, NODE_ENV: environment, LOG_TO_FILE: 'false' }, encoding: 'utf8', timeout: 10000,
@@ -713,6 +715,8 @@ describe('logger', () => {
         expect(result.status, result.stderr).toBe(0);
         expect(result.stdout).toContain('run-123');
         expect(result.stdout).toContain('attempt 2');
+        expect(result.stdout).toContain('public-example');
+        expect(result.stdout).toContain('ghs_undeclaredexample');
         expect(result.stdout).toContain('[REDACTED]');
         expect(result.stdout + result.stderr).not.toMatch(/synthetic-credential|ghs_synthetic123456789/);
       }
