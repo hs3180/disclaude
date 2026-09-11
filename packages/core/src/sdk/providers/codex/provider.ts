@@ -1191,9 +1191,12 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               networkAccess: this.networkAccess,
               cwd: options.cwd,
             });
+            logger.debug({ sessionKey, threadId, turnId: activeTurnId }, 'Codex turn started');
+            // Keep the lifecycle anchor available to control/steer consumers,
+            // but provide no user-facing content for this internal status.
             push({
               type: 'status',
-              content: 'Codex turn started',
+              content: '',
               role: 'system',
               metadata: { messageId: activeTurnId, sessionId: threadId },
             });

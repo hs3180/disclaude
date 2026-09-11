@@ -2074,6 +2074,8 @@ describe('ChatAgent (service)', () => {
       mockGetDebugGroup.mockReturnValue({ chatId: 'oc_debug_group', setAt: Date.now() });
 
       async function* codexToolIterator() {
+        yield { parsed: { type: 'status', content: '', metadata: { messageId: 'turn-1' } } };
+        yield { parsed: { type: 'status', content: 'Please sign in again.' } };
         yield {
           parsed: {
             type: 'tool_use',
@@ -2117,6 +2119,9 @@ describe('ChatAgent (service)', () => {
       expect(userMessages).not.toContain('bash -lc cat /private/secret.env');
       expect(userMessages).not.toContain('API_TOKEN=should-not-reach-feishu-user');
       expect(userMessages).toContain('已完成处理。');
+      expect(userMessages).toContain('Please sign in again.');
+      expect(userMessages).not.toContain('');
+      expect(userMessages).not.toContain('Codex turn started');
 
       const debugMessages = localCallbacks.sendMessage.mock.calls
         .filter((call: any[]) => call[0] === 'oc_debug_group')

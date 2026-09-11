@@ -62,12 +62,14 @@ echo '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"t
       for await (const message of result.iterator) {messages.push(message);}
     })();
     await vi.waitFor(() => expect(messages).toContainEqual(expect.objectContaining({
-      type: 'status', metadata: expect.objectContaining({ messageId: 'turn-1' }),
+      type: 'status', content: '', metadata: expect.objectContaining({ messageId: 'turn-1' }),
     })));
     await expect(result.handle.steer?.('correction')).resolves.toEqual({ turnId: 'turn-1' });
     await vi.waitFor(() => expect(messages.some((message) => message.type === 'result')).toBe(true));
     releaseInput();
     await collecting;
+    expect(messages).toContainEqual(expect.objectContaining({ type: 'text', content: 'hello' }));
+    expect(messages.some(message => message.content === 'Codex turn started')).toBe(false);
     expect(result.handle.sessionId).toBe('thread-1');
     provider.dispose();
   });
