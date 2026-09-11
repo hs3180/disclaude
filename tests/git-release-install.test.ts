@@ -24,12 +24,22 @@ describe('Git distribution release gate (#4922)', () => {
       const candidate = JSON.parse(
         readFileSync('tests/fixtures/git-release-candidate.json', 'utf8')
       );
+      const ref = candidate.tag ?? candidate.commit;
+      if (candidate.tag) {
+        const { stdout: refs } = await execFileAsync('git', [
+          'ls-remote', 'https://github.com/hs3180/disclaude.git',
+          `refs/tags/${candidate.tag}`, `refs/tags/${candidate.tag}^{}`,
+        ], { encoding: 'utf8', timeout: 30_000 });
+        const rows = refs.trim().split('\n').filter(Boolean).map((line) => line.split(/\s+/));
+        const resolved = rows.find((row) => row[1].endsWith('^{}')) ?? rows[0];
+        expect(resolved?.[0], 'Release tag must resolve to the reviewed distribution').toBe(candidate.commit);
+      }
       // Keep the Vitest worker event loop responsive during npm's network work.
       const { stdout: output } = await execFileAsync(
         process.execPath,
         [
           'scripts/test-package-install.mjs',
-          `github:hs3180/disclaude#${candidate.commit}`,
+          `github:hs3180/disclaude#${ref}`,
           candidate.sourceFingerprint,
         ],
         { cwd: resolve('.'), encoding: 'utf8', timeout: 240_000 }
@@ -41,7 +51,7 @@ describe('Git distribution release gate (#4922)', () => {
           process.execPath,
           [
             'scripts/test-git-node22.mjs',
-            `github:hs3180/disclaude#${candidate.commit}`,
+            `github:hs3180/disclaude#${ref}`,
             candidate.sourceFingerprint,
           ],
           { cwd: resolve('.'), encoding: 'utf8', timeout: 960_000 }

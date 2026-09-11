@@ -37,7 +37,7 @@ node scripts/test-package-install.mjs github:hs3180/disclaude#FULL_40_CHARACTER_
 ```
 
 The smoke test uses a new prefix/cache and non-repository cwd, production-only
-dependencies, explicit placeholder configuration, both CLI executables, all
+dependencies, explicit placeholder configuration, the unified CLI, all
 runtime module imports, builtins discovery and offline DisclaudeService start/stop.
 It does not call models or send messages. Successful temporary installations are
 deleted; failures are retained for diagnosis. `--prefix-from-env` additionally
@@ -45,7 +45,7 @@ tests ordinary `npm install -g` with the destination configured via environment
 instead of a command-line prefix (without touching the user's installation).
 
 The existing CI `npm test` runs the remote SHA installation gate on GitHub Actions
-using the runner's Node 20/npm 10 and isolated Node 22.23.2/npm 11.6.0 tooling.
+using all four Node 20/22 × npm 10/11 combinations with isolated tooling.
 Locally opt in with `DISCLAUDE_TEST_GIT_INSTALL=1 npx vitest run tests/git-release-install.test.ts`.
 Source fingerprint verification runs even without the network gate. Runtime
 changes require regenerating the candidate; a passing stale candidate is rejected.
@@ -65,6 +65,12 @@ disclaude start --help
 disclaude channel --help
 disclaude --help
 ```
+
+For isolated verification without replacing the operator's installation, use
+`node scripts/test-package-install.mjs github:hs3180/disclaude#v0.5.1 EXPECTED_SOURCE_FINGERPRINT --prefix-from-env`.
+This checks CLI startup, HTTP status, graceful shutdown/restart, and package
+provenance, not merely npm's exit status. Resolve the remote tag to the reviewed
+distribution commit before running it; never silently retarget a published tag.
 
 Only then declare the release complete. Keep the source SHA in release notes.
 An optional `.tgz` must be packed from the same tested distribution; do not replace
