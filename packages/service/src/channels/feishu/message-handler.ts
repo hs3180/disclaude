@@ -33,6 +33,7 @@ import {
   type ControlResponse,
   type TopicGroupMessageEvent,
   type FilterReason,
+  type ActionBoundInput,
 } from '@disclaude/core';
 import { InteractionManager } from '../../platforms/feishu/interaction-manager.js';
 import { extractFullCardContent } from '../../platforms/feishu/card-builders/card-text-extractor.js';
@@ -40,6 +41,7 @@ import { messageLogger } from '../../utils/message-logger.js';
 import type { TriggerModeManager } from './passive-mode.js';
 import type { MentionDetector } from './mention-detector.js';
 import { evaluateMessageFilters } from './message-filters.js';
+import { FeishuPrivateInput } from './private-input.js';
 import { tryHandleSlashCommand } from './command-router.js';
 import {
   extractOpenId,
@@ -190,6 +192,7 @@ export class MessageHandler {
   private controlHandler: boolean;
   private getHasControlHandler: () => boolean;
   private tenantAccessToken: string;
+  private readonly privateInput?: FeishuPrivateInput;
 
   private readonly MAX_MESSAGE_AGE = DEDUPLICATION.MAX_MESSAGE_AGE;
 
@@ -204,6 +207,7 @@ export class MessageHandler {
     isRunning: () => boolean;
     hasControlHandler: () => boolean;
     tenantAccessToken: string;
+    privateInput?: ActionBoundInput;
   }) {
     this.triggerModeManager = options.triggerModeManager;
     this.mentionDetector = options.mentionDetector;
@@ -213,6 +217,7 @@ export class MessageHandler {
     this.getHasControlHandler = options.hasControlHandler;
     this.controlHandler = false;
     this.tenantAccessToken = options.tenantAccessToken;
+    if (options.privateInput) {this.privateInput = new FeishuPrivateInput(options.privateInput, options.callbacks.sendMessage);}
 
     if (!this.tenantAccessToken) {
       logger.warn('tenantAccessToken is empty — file downloads via lark-cli will fail');
@@ -391,6 +396,7 @@ export class MessageHandler {
    * Clear the client (on stop).
    */
   clearClient(): void {
+    this.privateInput?.revoke();
     this.client = undefined;
   }
 
@@ -1255,6 +1261,21 @@ export class MessageHandler {
       }
     }
 
+    if (/^\/private(?:\s|$)/.test(textWithoutMentions.trim())) {
+      if (chat_type !== 'p2p' || sender?.sender_type !== 'user') {
+        await this.callbacks.sendMessage({ chatId: chat_id, type: 'text', text: '请在与机器人的私聊中发起私密鉴权。' });
+        return;
+      }
+      const action = textWithoutMentions.trim().slice('/private'.length).trim();
+      try {
+        if (!this.privateInput) {throw new Error('No private input consumer');}
+        await this.privateInput.request(action, extractOpenId(sender) ?? '', chat_id, message_id);
+      } catch {
+        await this.callbacks.sendMessage({ chatId: chat_id, type: 'text', text: '当前操作未注册或暂时不可用，请让 agent 确认鉴权操作名称。' });
+      }
+      return;
+    }
+
     // Add typing reaction
     await this.addTypingReaction(message_id);
 
@@ -1397,6 +1418,12 @@ export class MessageHandler {
 
     // Parse actual Feishu event structure
     const rawData = data as Record<string, unknown>;
+    if (FeishuPrivateInput.isPrivateCallback(rawData)) {
+      // Acknowledge promptly; the one-shot handoff consumes before awaiting.
+      // Consumer failures never enter ordinary logs or the agent channel.
+      void this.privateInput?.submit(rawData).catch(() => logger.warn('Private input delivery failed'));
+      return;
+    }
     // Feishu reuses the card message id for every button click. Prefer its
     // event id for a stable unique agent input id, with a UUID fallback.
     const eventId = typeof rawData.event_id === 'string' ? rawData.event_id : undefined;
