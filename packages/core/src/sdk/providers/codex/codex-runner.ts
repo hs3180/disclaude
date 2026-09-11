@@ -18,13 +18,14 @@
  */
 
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import type { UserInput } from '../../types.js';
 import { createInterface } from 'node:readline';
 
 import { createLogger } from '../../../utils/logger.js';
 import type { CodexSandboxLevel } from './sandbox-policy.js';
 import type { CodexThreadEvent } from './exec-adapter.js';
 
-const logger = createLogger('CodexExecRunner');
 
 /** Rolling stderr tail kept for error mapping (bounded). */
 const STDERR_TAIL_BYTES = 8 * 1024;
@@ -53,6 +54,8 @@ function networkAccessConfigKey(sandboxMode?: CodexSandboxLevel): string {
 }
 
 export interface CodexExecRunOptions {
+  /** Correlates this process with its originating host request. */
+  correlation?: UserInput['correlation'];
   /** The user prompt (passed as the trailing positional argument). */
   prompt: string;
   /** Working directory for the codex process. */
@@ -138,6 +141,7 @@ export class CodexExecRunner {
     options: CodexExecRunOptions,
     onEvent: (event: CodexThreadEvent) => void
   ): { promise: Promise<CodexExecRunResult>; handle: CodexExecRunHandle } {
+    const logger = createLogger('CodexExecRunner', options.correlation ?? { runId: randomUUID() });
     if (options.prompt.length > MAX_PROMPT_CHARS) {
       // Fail with a clear message instead of a cryptic spawn E2BIG.
       const tooLong = new Error(
@@ -298,11 +302,13 @@ export class CodexExecRunner {
           }
           stdoutLineCount += 1;
           try {
-            onEvent(JSON.parse(trimmed) as CodexThreadEvent);
+            const event = JSON.parse(trimmed) as CodexThreadEvent;
+            logger.debug({ pid: currentChild.pid, source: 'stdout', eventType: event.type }, 'codex exec event');
+            onEvent(event);
           } catch {
             // Non-JSON line (banner, stray output): tolerate, never fatal.
             logger.debug(
-              { pid: currentChild.pid, line: trimmed.slice(0, 500), lineLength: trimmed.length },
+              { pid: currentChild.pid, source: 'stdout', lineLength: trimmed.length },
               'codex exec stdout line'
             );
           }
@@ -316,7 +322,7 @@ export class CodexExecRunner {
         stderrTail.append(text);
         options.stderr?.(text);
         logger.debug(
-          { pid: currentChild.pid, chunk: text.slice(0, 1000), chunkLength: text.length },
+          { pid: currentChild.pid, source: 'stderr', chunkLength: text.length },
           'codex exec stderr chunk'
         );
       });
