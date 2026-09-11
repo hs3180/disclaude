@@ -1,61 +1,41 @@
-# Withdrawn candidate: historical evidence only
+# 0.5.2 independent-channel candidate
 
-This candidate and integration PR #4970 were withdrawn after owner review of #4956. They contain rejected global output protection and security-audit work. The results below are historical only and do not establish acceptance of the revised independent-channel scope. #4915 is no longer a release gate.
-
-This records earlier development acceptance on 2026-09-11. Independent changes remain under review; no formal release/tag, deployment or production restart has been performed.
+This replaces the withdrawn #4970 integration and `fc74afe03f071bef645845468cb5cc77d5af7064` distribution. Old global-filter and audit acceptance is not evidence for this candidate. This is development acceptance, not a formal tag, deployment or production restart.
 
 ## Candidate identity
 
-- Distribution: [`fc74afe03f071bef645845468cb5cc77d5af7064`](https://github.com/hs3180/disclaude/commit/fc74afe03f071bef645845468cb5cc77d5af7064), branch `release-candidates/0.5.2-agent-owned`.
-- Version: `0.5.2`.
-- Runtime source: `a9927a9f3a71cecabae706fd3f3e3975cd5da22f` on the temporary integration branch.
-- Source fingerprint: `31e952adcb9b02136500dce46c15a938dd04d9ab2fc57d1ecec5f1af907c7995`.
-- [Integration / Linux CI PR #4970](https://github.com/hs3180/disclaude/pull/4970). This draft aggregates independent PRs for verification; review the individual changes first, then rebase release-only changes after they merge.
-- [Fingerprint repair #4963](https://github.com/hs3180/disclaude/pull/4963) includes nested runtime source. Earlier candidate checks accidentally omitted `packages/*/src/**`; older installation results are not evidence for this runtime.
+- Distribution: `d23d5a4db987e096024087bcc809563e8e695908`, branch `release-candidates/0.5.2-channel-release`.
+- Runtime source: `ec64bff0c6c2cbf14439c12c65c9bba5cede24a9`.
+- Source fingerprint: `9f82308de691619879e15e1da6f83519d74972c3e526565294e88b9ceb527712`.
+- Version: `0.5.2`. Source integration branch: `integration/052-channel-release`.
+- The candidate generator includes nested runtime sources using the #4963 repair. The fixture pins the distribution SHA; CI checks it against the current source.
 
-## Automated and installed-runtime checks
+## Review map
 
-Combined build, type check, lint and full suite passed: **4,730 passed, one skipped, 224 files**. The local skip is the CI-specific installation wrapper; installations were also exercised directly below.
+Review the independent PRs before this aggregate integration. After their merge, rebase the release-only changes and require CI on the resulting HEAD.
 
-| Host | Node | npm | Actual Git installation and CLI start/stop/restart |
-| --- | --- | --- | --- |
-| macOS | 20.20.2 | 10.9.9 | Pass |
-| macOS | 20.20.2 | 11.6.0 | Pass |
-| macOS | 22.23.2 | 10.9.9 | Pass |
-| macOS | 22.23.2 | 11.6.0 | Pass |
-| Linux CI | Node 20 / 22 | npm 10 / 11 | [Current-candidate CI gate](https://github.com/hs3180/disclaude/actions/runs/34589655470); require Unit Tests and Test Coverage success |
-
-Same-prefix upgrade and rollback passed on macOS Node 20/npm 10: pinned 0.5.1 distribution `55cb48616bca0ac08e95af1e0c746f6daddcf982` → this 0.5.2 candidate → the same 0.5.1 distribution. Each phase started through the public CLI, returned healthy status, stopped cleanly and released its instance lock. Configuration, `.runtime-env` and a user-data fixture remained byte-identical. This establishes the tested 0.5.1 baseline; direct 0.5.0 upgrade is not claimed.
-
-Reproduction: `scripts/test-package-install.mjs`, `scripts/test-git-node22.mjs`, and the integration branch's `scripts/test-upgrade-rollback.mjs`. The Linux CI installation gate also runs the pinned upgrade/rollback sequence. Every run uses isolated prefixes, configuration and loopback endpoints; none restarts a production service or prompts a live channel.
-
-## Live backend checks on combined runtime
-
-The following live checks used combined source `587b85e34778770255e4d1941e072ec9680ac88b`. The latest candidate adds CLI output protection and shared-environment guidance and removes rejected runtime-policy/skill changes; its backend implementations are unchanged. These live results retain their original source attribution.
-
-Native Codex 0.154.0 used an isolated home/workspace with copied owner-only auth. Turn one invoked a shell tool to write exactly `ready` to `acceptance.txt`; turn two used a new app-server process and recalled `cobalt orchard 052 SECOND_OK`. Both results completed without error. The first process group was absent between turns and all observed groups were absent after the second turn. The 100-turn real-child regression also passes in the combined suite.
-
-DeepSeek `deepseek-v4-flash` through Claude crossed an explicit 100,000-token compaction window using disposable archive rows. Three turns completed, a compaction boundary was observed, a random marker survived, continuation succeeded, and `17 * 19 = 323` was retained. There were no failed turns. The harness explicitly registered its API key for protection during this test.
-
-Local raw reports are `/tmp/052-native-integrated.log`, `/tmp/disclaude-052-compact-integrated-result.json`, `/tmp/052-agent-owned-mac-node20.log`, `/tmp/052-agent-owned-mac-matrix.log`, `/tmp/052-agent-owned-upgrade.log` and `/tmp/052-agent-owned-full-tests.log`. These machine-local paths are provenance references, not durable release assets; CI output and this summary are the shared evidence.
-
-## P0 review map
-
-| Concern | Independent changes / acceptance |
+| Concern | Changes |
 | --- | --- |
-| Owned children / forget / resource metrics | #4937, #4940, #4948, #4951, #4957, #4967; 100-turn fixture and native two-turn zero-child boundaries |
-| Bounded UNKNOWN recovery / no automatic input replay | #4934, #4938; startup and post-tool failure regressions |
-| Compaction / explicit backend failure | #4939, #4943; native/non-native boundaries and live threshold check |
-| Private authentication infrastructure | #4946, #4953, #4955, #4958, #4964, #4968, #4969; configured process, verified initiator context, one-use bindings and value-free results |
-| Shared environment and agent-owned policy | #4933, #4972; safe file primitives and common sharing/concurrency/snapshot guidance. #4949/#4950 were closed and their changes were removed from this candidate. |
-| Explicit diagnostics / visibility | #4930, #4931, #4954, #4956, #4959, #4960, #4962, #4965, #4966, #4971; no sensitivity classifier, declared-value tests across environments and chunk boundaries |
-| Input → execution → delivery correlation | #4942, #4945, #4952, #4967; queued-turn receipt tests and per-process frozen context |
-| Threat model and supply chain review | #4961; source findings, reachability distinctions and explicit remaining work |
+| Private input, consumer, verified context and registration | #4953, #4964, #4968, #4969; #4955 is included in #4953 |
+| Input/execution/delivery correlation | #4952, #4967 |
+| Agent-owned shared environment | #4972 |
+| Remove global output classification/filtering from main | #4976 |
+| Externalize GitHub auth and workflow skills | #4977, #4978 |
+| Generic external skill authoring and runnable scaffold | #4979 |
+| Release scope and candidate provenance | #4975, #4963 |
 
-## Open gates and limits
+Main already contains the runtime reliability, bounded recovery, compaction, backend failure, delivery visibility and owned-process cleanup fixes. Issues #4916, #4770, #4883, #4898, #4774 and #4927 were closed after their merged implementation and regression evidence were checked. The six remaining milestone issues retain open PR dependencies.
 
-- Historical external check (removed from the release gate): the AIvoluation GitHub App has `security_events: read` but no `secret_scanning_alerts` permission. Its repository-scoped token receives HTTP 403 from the real alerts endpoint. Neither that response nor human access to the GitHub UI establishes a successful read.
-- Linux installation and upgrade evidence is in the linked CI job. Require every job on the newest HEAD to pass after every rebase or integration update; older green checks are insufficient.
-- Feishu transport and configured consumers are tested through real callback/child-process fixtures. No live private card was sent to another user. Installed consumer code owns its authorization, endpoint and credential-exchange policy; disclaude itself sends the original value only through the bound private path.
-- Exact-value protection covers harness declarations; transformed/encoded or undeclared copies are not classified. Process groups reclaim ordinary owned descendants, not processes that deliberately escape an OS boundary.
-- The development candidate does not imply 0.5.1's separately tracked Docker validation is complete, nor does it authorize a formal 0.5.2 release.
+## Acceptance
+
+Build, type check, lint and the full local suite passed: **223 files, 4,683 passed, one CI-only installation wrapper skipped**. Linux CI, macOS Node 20/22 × npm 10/11 installation matrix and pinned upgrade/rollback are being recorded for this exact distribution. Do not infer completion from the old candidate or a different PR head.
+
+Reproduction: `npm test`, `scripts/test-package-install.mjs`, `scripts/test-git-node22.mjs`, and `scripts/test-upgrade-rollback.mjs`. The CI installation gate executes the matrix and upgrade/rollback, using isolated prefixes, configuration and loopback services. The upgrade baseline is 0.5.1 distribution `55cb48616bca0ac08e95af1e0c746f6daddcf982`; direct 0.5.0 upgrade is not claimed.
+
+## Boundaries and remaining evidence
+
+The independent channel verifies its initiator, destination, expiry and one-use bindings, passes the private value only through the configured consumer's stdin, and returns fixed public outcomes. Agent/consumer code owns provider, endpoint and credential lifecycle choices. There is no global sensitivity classifier or logger/CLI/harness filter. #4973 remains a separate delegation-contract discussion; #4895 and #4915 are not release gates.
+
+Feishu callbacks and real consumer children are covered by fixtures. No live private card was sent to another user. The 100-turn cleanup regression uses real child processes with a protocol fixture, not 100 live-model turns. Earlier native two-turn continuation/zero-child and DeepSeek compaction tests retain source `587b85e34778770255e4d1941e072ec9680ac88b`; they were not rerun against this new candidate and do not establish acceptance of its private-channel changes.
+
+The five removed GitHub skills were exported as a historical source snapshot outside this repository. No maintained external skill repository has been published. Users can create replacements with the bundled generic skill creator; existing user workspaces and schedules are not migrated automatically. #4924 remains separately tracked for 0.5.1.
