@@ -19,6 +19,7 @@ import {
   createLogger,
   BaseChannel,
   eventBus,
+  type ActionBoundInput,
   type FeishuEventData,
   type FeishuCardActionEventData,
   type FeishuChatMemberAddedEventData,
@@ -177,6 +178,8 @@ export function extractFeishuApiError(err: unknown): Record<string, unknown> {
  * Feishu channel configuration.
  */
 export interface FeishuChannelConfig {
+  /** Agent/tool integration owns the operation and its authorization policy. */
+  privateInput?: ActionBoundInput;
   /** Channel ID (optional) */
   id?: string;
   /** Feishu App ID */
@@ -302,6 +305,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       mentionDetector: this.mentionDetector,
       interactionManager: this.interactionManager,
       callbacks,
+      privateInput: config.privateInput,
       isRunning: () => this.isRunning,
       hasControlHandler: () => !!this.controlHandler,
       tenantAccessToken: process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN || '',
