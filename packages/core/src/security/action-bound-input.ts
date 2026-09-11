@@ -1,12 +1,19 @@
 import { createHash, randomBytes } from 'node:crypto';
 
 export type PrivateActionOutcome = 'succeeded' | 'denied' | 'failed' | 'invalid';
+export interface PrivateActionContext {
+  readonly action: string;
+  readonly actor: string;
+  readonly chat: string;
+  readonly source: string;
+  readonly correlationId: string;
+}
 export interface PrivateAction {
   readonly id: string;
   readonly title: string;
   readonly description: string;
-  /** A code-defined bounded consumer; never a model-selected URL or command. */
-  consume(value: string): Promise<Exclude<PrivateActionOutcome, 'invalid'>>;
+  /** Installed consumer; the submission cannot select a different URL or command. */
+  consume(value: string, context: PrivateActionContext): Promise<Exclude<PrivateActionOutcome, 'invalid'>>;
 }
 interface Binding { actor: string; chat: string; source: string; card?: string; expires: number }
 export interface PrivateActionAudit {
@@ -55,16 +62,18 @@ export class ActionBoundInput {
     }
     // Consume before awaiting the operation, including when validation fails.
     this.pending.delete(nonce);
+    const context = Object.freeze({ action: this.action.id, actor: binding.actor, chat: binding.chat, source: binding.source,
+      correlationId: createHash('sha256').update(nonce).digest('hex') });
     let outcome: PrivateActionOutcome = 'invalid';
     try {
       if (typeof input.value === 'string' && input.value.length > 0 && input.value.length <= 8192) {
-        const result = await this.action.consume(input.value);
+        const result = await this.action.consume(input.value, context);
         outcome = result === 'succeeded' || result === 'denied' ? result : 'failed';
       }
     } catch {outcome = 'failed';}
     // Even a faulty consumer cannot reflect its input or error in the result.
     const event = { action: this.action.id, actor: binding.actor, chat: binding.chat, outcome,
-      timestamp: this.now(), correlationId: createHash('sha256').update(nonce).digest('hex') };
+      timestamp: this.now(), correlationId: context.correlationId };
     try {this.audit(event);} catch { /* Auditing must not expose consumer failures. */ }
     return outcome;
   }
