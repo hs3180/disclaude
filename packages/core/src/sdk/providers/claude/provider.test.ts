@@ -1262,6 +1262,21 @@ describe('ClaudeSDKProvider', () => {
       expect(userStderrCalls).toContain('test stderr line');
     });
 
+    it('protects declared chunk-split stderr before callbacks and attached errors', async () => {
+      const chunks: string[] = [];
+      mockQuery.mockImplementation(({ options }: { options: { stderr: (data: string) => void } }) => {
+        options.stderr('before opaque-'); options.stderr('private-value public-tail');
+        return (async function* () {throw new Error('SDK process exited with code 1');})();
+      });
+      async function* input(): AsyncGenerator<UserInput> { /* no input */ }
+      const result = provider.queryStream(input(), { settingSources: [], sensitiveValues: ['opaque-private-value'], stderr: text => chunks.push(text) });
+      let failure: unknown;
+      try {for await (const _ of result.iterator) { /* consume */ }} catch (error) {failure = error;}
+      expect(chunks.join('')).toBe('before [REDACTED] public-tail');
+      expect(getErrorStderr(failure)).not.toContain('opaque-private-value');
+      expect(getErrorStderr(failure)).toContain('[REDACTED]');
+    });
+
     it('should capture stderr and attach to error on iterator failure', async () => {
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
 
