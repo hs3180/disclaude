@@ -1,0 +1,401 @@
+/**
+ * Composable guidance builder functions for MessageBuilder.
+ *
+ * Issue #1492: Extracted from worker-node MessageBuilder as standalone
+ * pure functions for testability and reusability.
+ *
+ * Each function builds a specific guidance section for the agent prompt.
+ * These are framework-agnostic and can be used by any channel.
+ *
+ * @module agents/message-builder/guidance
+ */
+/**
+ * Build the chat history section for passive mode.
+ *
+ * Issue #517: Provides recent conversation context when the agent
+ * is @mentioned in a group chat.
+ *
+ * Issue #1856: Enhanced guidance to help agent answer the last pending
+ * question when the user sends an empty @mention (no text attached).
+ *
+ * @param chatHistoryContext - Chat history context string, or undefined to skip
+ * @returns Formatted chat history section, or empty string if no context
+ */
+export function buildChatHistorySection(chatHistoryContext) {
+    if (!chatHistoryContext) {
+        return '';
+    }
+    return `
+
+---
+
+## Recent Chat History
+
+You were @mentioned in a group chat. Here's the recent conversation context:
+
+${chatHistoryContext}
+
+**Important**:
+- If the user's message above is empty (only an @mention with no text), look at the last question or request in the chat history and proactively answer it. Do not ask the user what they need — they are @mentioning you to get an answer to the pending question.
+- **Coreference resolution**: When a user uses referring expressions like "this link", "this thread", "that message", "这篇", "那个", and the chat history contains multiple possible referents (e.g., multiple links, multiple topics), do NOT guess. Instead, ask the user to clarify which one they mean. Example: "I see several links in the recent history — which one are you referring to?"
+
+---
+`;
+}
+/**
+ * Build the persisted history section for session restoration.
+ *
+ * Issue #955: Provides conversation history from the previous session
+ * after a service restart.
+ * Issue #3996: Includes chat log file paths so the agent can Read them
+ * to access conversation history beyond the context window.
+ *
+ * @param persistedHistoryContext - Persisted history context string, or undefined to skip
+ * @param chatLogFilePaths - Optional array of log file paths to include
+ * @returns Formatted persisted history section, or empty string if no context
+ */
+export function buildPersistedHistorySection(persistedHistoryContext, chatLogFilePaths) {
+    if (!persistedHistoryContext && (!chatLogFilePaths || chatLogFilePaths.length === 0)) {
+        return '';
+    }
+    // Issue #3996: Build log file paths hint
+    const logPathsHint = chatLogFilePaths && chatLogFilePaths.length > 0
+        ? `\n📁 **Chat log files** (use Read tool to access full history beyond the context window):\n${chatLogFilePaths.map(p => `- \`${p}\``).join('\n')}\n`
+        : '';
+    if (!persistedHistoryContext) {
+        // Only log paths, no history content
+        return `
+
+---
+
+## Previous Session Context
+
+The service was recently restarted.${logPathsHint}
+---
+`;
+    }
+    return `
+
+---
+
+## Previous Session Context
+
+The service was recently restarted. Here's the conversation history from your previous session:
+
+${persistedHistoryContext}
+${logPathsHint}
+---
+`;
+}
+/**
+ * Build the thread context section for topic groups.
+ *
+ * Issue #3641 sub-problem 1: Provides thread conversation history
+ * when the user sends a message in a Feishu topic group thread.
+ *
+ * @param threadContext - Thread context string, or undefined to skip
+ * @returns Formatted thread context section, or empty string if no context
+ */
+export function buildThreadContextSection(threadContext) {
+    if (!threadContext) {
+        return '';
+    }
+    return `
+
+---
+
+## Thread Context
+
+You are responding in a topic group thread. Here is the conversation history within this thread (from oldest to newest):
+
+${threadContext}
+
+**Coreference resolution**: When a user uses referring expressions like "this link", "this thread", "that message", "这篇", "那个", and the thread history contains multiple possible referents (e.g., multiple links, multiple topics), do NOT guess. Instead, ask the user to clarify which one they mean. Example: "I see several links in this thread — which one are you referring to?"
+
+---
+`;
+}
+/**
+ * Build the lark-cli self-service guidance for topic threads.
+ *
+ * Issue #4402: extracted from `buildThreadContextSection` so it is injected
+ * based on `isTopicThread` (topic mode) — NOT gated on whether `threadContext`
+ * was pre-built. The previous embedding meant this guidance disappeared exactly
+ * when the harness failed to pre-build thread context (the case where the agent
+ * most needs to know it can self-serve via lark-cli). See #4306 / #4401.
+ *
+ * Returned only for topic threads (the caller gates on `isTopicThread`); the
+ * content is the on-demand attachment/context fetch recipe (lark-cli).
+ */
+export function buildThreadSelfServiceGuidance() {
+    return `
+
+---
+
+## Topic-thread self-service context (on-demand)
+
+You are responding in a topic group thread. The Thread Context (when present) is text-only. Ancestor messages in this thread may carry attachments (research PDFs, images, media) that are NOT auto-delivered to you. When the user refers to "this thread / this report / 这篇" but the referenced attachment is absent from your context, fetch it yourself with \`lark-cli\` before answering (Issue #4306 / #4402):
+
+- List every message in this thread AND download its attachments (recommended):
+  \`npx @larksuite/cli im +threads-messages-list --thread <message-id> --as bot --download-resources\`
+- Fetch specific messages by id (up to 50), optionally downloading their attachments too:
+  \`npx @larksuite/cli im +messages-mget --message-ids <om_xxx>,<om_yyy> --as bot --download-resources\`
+- Download one message's attachment:
+  \`npx @larksuite/cli im +messages-resources-download --message-id <om_xxx> --file-key <key> --type image|file --as bot --output ./lark-im-resources/<name>\`
+
+The \`--thread\` flag accepts any \`om_xxx\`/\`omt_xxx\` from this thread (e.g. the Message ID in the metadata above, or one quoted in the Thread Context) and auto-resolves it to the thread root. Downloaded files land under \`./lark-im-resources/\` (or your \`--output\` path) — read them with the Read tool, then answer.
+
+---
+`;
+}
+/**
+ * Build the next-step guidance section.
+ *
+ * Issue #893: Provides in-prompt guidance for suggesting next steps
+ * to the user after responding, using interactive cards when supported.
+ *
+ * @param supportsCards - Whether the channel supports interactive cards
+ * @returns Formatted next-step guidance section
+ */
+export function buildNextStepGuidance(supportsCards) {
+    if (supportsCards !== false) {
+        return `
+
+---
+
+## Next Steps After Response
+
+At the end of your response, proactively suggest 2-3 relevant next steps the user might want to take, presented as an **interactive card** with clickable options.
+
+### Sending the next-steps card (send_interactive)
+
+Invoke the \`send_interactive\` channel command shown in the Tools section — it is a **command line**, not a JSON payload. Passing a card JSON blob on stdin does not work: it is consumed as the \`--question\` text and rendered verbatim into the card.
+
+\`\`\`bash
+<channel-cli> send_interactive --chat <chat-id> \\
+  --parent <trigger-message-id> \\
+  --title "接下来您可以..." \\
+  --question "选择下一步操作：" \\
+  --options '[{"text":"选项1","value":"action1","type":"primary"},{"text":"选项2","value":"action2"},{"text":"选项3","value":"action3"}]' \\
+  --action-prompts '{"action1":"[用户操作] 用户选择了选项1","action2":"[用户操作] 用户选择了选项2","action3":"[用户操作] 用户选择了选项3"}'
+\`\`\`
+
+Flags:
+
+- \`--chat\` — target chat ID. Required unless \`FEISHU_CLI_CHAT_ID\` or the config \`cliChatId\` supplies it.
+- \`--parent\` — the triggering prompt's **Message ID** from the metadata below. Always pass it so the card remains visibly associated with the request in private chats, regular groups, and topic groups. Omit it only when the channel rejects reply attribution, then retry once without it.
+- \`--question\` — the prompt text shown above the buttons (or \`--question-file <path>\`, or piped on stdin).
+- \`--options\` — JSON array of buttons; each an object with a button \`text\`, a \`value\`, and an optional \`type\` of \`primary\`/\`default\`/\`danger\`.
+- \`--action-prompts\` — JSON object mapping each button \`value\` to a short user-action description.
+- \`--title\` — card header text (optional; defaults to a generic header). Use \`"接下来您可以..."\` here.
+- \`--context\` — optional one-line subtitle under the header.
+
+Do **NOT** paste raw card fields such as \`content\`/\`format\`/\`elements\` — the card body is built by the channel.
+
+### Guidelines
+
+- Suggest 2-3 relevant next steps based on the conversation context
+- Make suggestions specific and actionable
+- Use \`"type": "primary"\` for the most recommended option
+- **CRITICAL**: Always include \`actionPrompts\` that maps each option's \`value\` to a user message
+- **CRITICAL**: Reply to the triggering prompt with \`--parent <trigger-message-id>\`; this applies to non-topic groups and private chats too
+- The action prompt format: \`"[用户操作] 用户选择了..."\` describes what the user did
+- Always include a suggestions card, even for simple questions (e.g., "Want to know more about X?", "Try this related feature")`;
+    }
+    // Fallback for channels without card support
+    return `
+
+---
+
+## Next Steps After Response
+
+At the end of your response, proactively suggest 2-3 relevant next steps the user might want to take.
+
+### Guidelines
+
+- Suggest 2-3 relevant next steps based on the conversation context
+- Make suggestions specific and actionable
+- Format as a simple list
+- Always include suggestions, even for simple questions (e.g., "Want to know more about X?", "Try this related feature")`;
+}
+/**
+ * Build the output format guidance section.
+ *
+ * Issue #962: Prevents raw JSON objects from appearing in model output.
+ * Some models may output JSON objects directly instead of formatting
+ * them as readable Markdown.
+ *
+ * @returns Formatted output format guidance section
+ */
+export function buildOutputFormatGuidance() {
+    return `
+
+---
+
+## Output Format Requirements
+
+**IMPORTANT: Never output raw JSON objects in your response.**
+
+When you need to present structured data (status, metrics, analysis results, etc.), always format it as **readable Markdown**:
+
+### ✅ Correct Format
+\`\`\`markdown
+> **储蓄率**: ❌ 入不敷出，储蓄率为负，建议审视支出结构
+\`\`\`
+
+### ❌ Wrong Format (Never do this)
+\`\`\`markdown
+> **储蓄率**: { "status": "bad", "comment": "入不敷出..." }
+\`\`\`
+
+### Guidelines
+
+- Convert JSON objects to readable text, tables, or formatted lists
+- Use emoji and formatting (bold, italic) to highlight important information
+- If you have structured data internally, extract and present the key values
+- For complex data, use Markdown tables instead of raw JSON`;
+}
+/**
+ * Build the task record guidance section.
+ *
+ * Issue #1234: Instructs the agent to record task execution information
+ * in a Markdown file for future ETA estimation. The agent records
+ * estimated time, actual time, and review notes after completing
+ * significant tasks.
+ *
+ * Phase 1 of the task ETA system: task record format and guidance.
+ * Records are stored as unstructured Markdown in monthly files
+ * `task-records/YYYY-MM.md` **under the workspace root** resolved from the
+ * `DISCLAUDE_WORKSPACE_DIR` env var (Issue #4261: rolling by month to prevent
+ * unbounded single-file growth). The root is stable for the whole session and
+ * is NOT the agent's transient cwd — anchoring on cwd made project-bound
+ * chats (cwd = a nested project repo) drop records into that project's own
+ * tree. Existing `.claude/task-records/` and `.claude/task-records.md` files
+ * are legacy read-only sources and must not be overwritten.
+ *
+ * @returns Formatted task record guidance section
+ */
+export function buildTaskRecordGuidance() {
+    // Issue #4261: derive the live current/previous month so the concrete example
+    // below never goes stale — a hardcoded month would mislead the agent into
+    // writing to last month's file once the calendar rolls over. new Date(y, m-1,
+    // 1) handles the Jan→Dec year-underflow for "previous month" for free.
+    const now = new Date();
+    const cur = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const prev = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
+    return `
+
+---
+
+## Task Execution Recording
+
+**After completing each significant task, record the execution information.**
+
+### When to Record
+
+Record a task entry when you have completed a meaningful unit of work, such as:
+- Implementing a feature or bug fix
+- Conducting research or analysis
+- Running tests or diagnostics
+- Any task that took more than a few minutes
+
+### Storage Location
+
+Append entries to the current month's file **under the workspace root — never
+under your transient current working directory**: \`$DISCLAUDE_WORKSPACE_DIR/task-records/YYYY-MM.md\`
+(e.g., \`$DISCLAUDE_WORKSPACE_DIR/task-records/${cur}.md\`). Resolve the
+workspace root from the \`DISCLAUDE_WORKSPACE_DIR\` environment variable, which
+is stable for the whole session. If your shell cwd differs from it (project-bound
+chat, or after \`cd\` into a nested repository), still write records under
+\`$DISCLAUDE_WORKSPACE_DIR/task-records/\` — never inside a project's own tree.
+Create the file if it does not exist (and create the \`task-records/\` directory
+under the workspace root if needed); when creating it for the first time, write
+a single top-level \`# Task Records\` heading on the first line so every monthly
+file has a consistent title (the example below shows this). Monthly files keep
+the active file small — **do not** write to a single ever-growing
+\`task-records.md\`.
+
+Legacy: pre-existing \`.claude/task-records/YYYY-MM.md\` files and the
+single-file \`.claude/task-records.md\` archive are read-only compatibility
+sources; leave them in place and write new records only to the monthly files
+under the workspace root.
+
+### Record Format
+
+Append each task as a new \`##\` section with today's date and task description:
+
+\`\`\`markdown
+## YYYY-MM-DD {Brief Task Description}
+
+- **Type**: {bugfix | feature | refactoring | research | test | docs | chore}
+- **Estimated Time**: {Your estimate before starting}
+- **Estimation Basis**: {Why you estimated this time — reference similar past tasks or complexity factors}
+- **Actual Time**: {How long it actually took}
+- **Review**: {What went well, what was underestimated, lessons learned}
+\`\`\`
+
+### Example
+
+\`\`\`markdown
+# Task Records
+
+## 2026-05-07 Fix WebSocket Reconnection Bug
+
+- **Type**: bugfix
+- **Estimated Time**: 30 minutes
+- **Estimation Basis**: Similar to the previous connection timeout fix, mostly error handling
+- **Actual Time**: 45 minutes
+- **Review**: Underestimated the edge case where multiple reconnects fire simultaneously. Need to add debouncing logic next time.
+
+## 2026-05-07 Add Markdown Export Feature
+
+- **Type**: feature
+- **Estimated Time**: 1 hour
+- **Estimation Basis**: Need data query + format conversion + file download, similar to the report feature
+- **Actual Time**: 55 minutes
+- **Review**: Estimation was accurate. The existing format helpers made conversion straightforward.
+\`\`\`
+
+### Guidelines
+
+- **Be honest about estimates**: Even rough estimates help build estimation accuracy over time
+- **Include estimation basis**: Reference similar past tasks or specific complexity factors
+- **Keep reviews concise**: One or two sentences about what was learned
+- **Do NOT skip recording**: Consistent records are essential for improving future estimates
+- **Read existing records before estimating**: Read a **bounded recent window** — the current and previous month's files under the workspace root (e.g., \`$DISCLAUDE_WORKSPACE_DIR/task-records/${cur}.md\` and \`$DISCLAUDE_WORKSPACE_DIR/task-records/${prev}.md\`) — for similar past tasks to improve your estimate. Do NOT load the entire history; if you need older context you may tail-read **only the last ~50 lines** of the legacy \`task-records.md\` (it can hold thousands of lines), but never load it fully`;
+}
+/**
+ * Build the location awareness guidance section.
+ *
+ * Issue #1198: The agent runs on a server that is physically separate
+ * from the user's terminal. Therefore, the agent should NOT attempt to
+ * infer the user's physical location through system information.
+ *
+ * @returns Formatted location awareness guidance section
+ */
+export function buildLocationAwarenessGuidance() {
+    return `
+
+---
+
+## Location Awareness
+
+**IMPORTANT: You do NOT know the user's physical location.**
+
+You are running on a remote server that is physically separate from the user's terminal. Therefore:
+
+- You CANNOT infer the user's location from system information (timezone, Wi-Fi networks, IP address, locale settings, etc.)
+- When the user asks about location-dependent information (weather, local events, etc.), you should:
+  1. Honestly state that you don't know their location
+  2. Ask them to provide their location if needed
+  3. Do NOT attempt to guess or infer their location from any system data
+
+### Examples
+
+**❌ Wrong Approach:**
+> "Based on your timezone (Asia/Shanghai), you're probably in Shanghai..."
+
+**✅ Correct Approach:**
+> "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
+}

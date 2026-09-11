@@ -1,0 +1,1423 @@
+/**
+ * Message Handler.
+ *
+ * Handles incoming message events and card actions for Feishu channel.
+ * Issue #694: Extracted from feishu-channel.ts
+ *
+ * Migrated to @disclaude/service (Issue #1040)
+ */
+import * as fs from 'fs/promises';
+import * as path from 'path';
+import { promisify } from 'util';
+import { setTimeout as sleep } from 'timers/promises';
+import { execFile } from 'child_process';
+import crypto from 'node:crypto';
+import { Config, DEDUPLICATION, REACTIONS, CHAT_HISTORY, createLogger, isGroupChat, stripLeadingMentions, ensureFileExtensionFromPath, } from "../../../../core/dist/index.js";
+import { extractFullCardContent } from '../../platforms/feishu/card-builders/card-text-extractor.js';
+import { messageLogger } from '../../utils/message-logger.js';
+import { evaluateMessageFilters } from './message-filters.js';
+import { tryHandleSlashCommand } from './command-router.js';
+import { extractOpenId, parsePostContent, parseShareChatContent, extractSenderName, } from './content-parser.js';
+const logger = createLogger('MessageHandler');
+function sanitizeLifecycleReason(reason) {
+    return String(reason).replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').slice(0, 240);
+}
+/**
+ * Map Feishu message type to resource download API `type` parameter.
+ *
+ * Feishu API only accepts "image" or "file":
+ * - "image" for images
+ * - "file" for files, audio, and video
+ *
+ * @see https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/message-resource/get
+ */
+function mapResourceType(messageType) {
+    return messageType === 'image' ? 'image' : 'file';
+}
+/**
+ * Issue #4319: message types whose content is a downloadable media payload.
+ * Used by getThreadContext to decide whether to surface download guidance
+ * (message_id + key + command) instead of extractMessageText's opaque
+ * placeholder. getThreadContext itself stays read-only and does NOT download.
+ */
+const MEDIA_MESSAGE_TYPES = new Set(['image', 'file', 'audio', 'media', 'video']);
+/**
+ * Issue #4591 (fix 2): backoff before the single retry of a failed per-node
+ * im.message.get in the thread walk. Short on purpose — the retry only needs
+ * to ride out a transient blip, not a sustained outage (a still-failing retry
+ * aborts the walk and the caller falls back, same as before).
+ */
+const THREAD_WALK_RETRY_DELAY_MS = 200;
+/** Issue #4319: short Chinese label for a media message type (thread-context display). */
+function mediaThreadLabel(messageType) {
+    switch (messageType) {
+        case 'image': return '图片';
+        case 'file': return '文件';
+        case 'audio': return '语音';
+        case 'video': return '视频';
+        default: return '媒体';
+    }
+}
+/**
+ * Does this chat resource describe a thread-capable ("topic") group?
+ *
+ * Feishu has two thread-isolated group forms, both arriving with event
+ * `chat_type === 'group'`:
+ *  1. True topic group — `chat_mode === 'topic'` (Issue #4401).
+ *  2. Group-format group switched to thread messages — `chat_mode === 'group'`
+ *     && `group_message_type === 'thread'` (Issue #4428, the #4401 residual).
+ *
+ * Both need the thread-isolation path (#3989/#4304), so both resolve the
+ * effective chat_type to `'topic'`. `chat_mode === 'topic'` chats do not return
+ * `group_message_type`, and the field is absent from the SDK's generated types,
+ * so it is read defensively upstream.
+ */
+function isThreadCapableGroup(chatMode, groupMessageType) {
+    if (chatMode === 'topic') {
+        return true;
+    }
+    // Issue #4428: the second thread-capable form.
+    return chatMode === 'group' && groupMessageType === 'thread';
+}
+/**
+ * Message Handler.
+ *
+ * Handles incoming Feishu messages and card actions.
+ */
+export class MessageHandler {
+    client;
+    /**
+     * Per-chat topic-detection cache (Issues #4401 / #4428).
+     *
+     * Keyed by chat_id; value holds the two chat-resource fields that decide
+     * thread isolation — `chat_mode` ('group' | 'topic' | …) and, for
+     * group-mode chats, `group_message_type` ('chat' | 'thread'). Both come from
+     * the same `GET /open-apis/im/v1/chats/{chat_id}` response (zero extra API
+     * cost). A failed lookup is intentionally NOT cached so a transient error
+     * doesn't permanently misclassify a chat. Invalidation on chat↔thread /
+     * group↔topic conversion (`im.chat.updated_v1`) is a documented follow-up —
+     * conversions are rare and the worst case is a stale classification until
+     * process restart.
+     */
+    chatModeCache = new Map();
+    interactionManager;
+    triggerModeManager;
+    mentionDetector;
+    callbacks;
+    isRunning;
+    controlHandler;
+    getHasControlHandler;
+    tenantAccessToken;
+    MAX_MESSAGE_AGE = DEDUPLICATION.MAX_MESSAGE_AGE;
+    /**
+     * Create a MessageHandler.
+     */
+    constructor(options) {
+        this.triggerModeManager = options.triggerModeManager;
+        this.mentionDetector = options.mentionDetector;
+        this.interactionManager = options.interactionManager;
+        this.callbacks = options.callbacks;
+        this.isRunning = options.isRunning;
+        this.getHasControlHandler = options.hasControlHandler;
+        this.controlHandler = false;
+        this.tenantAccessToken = options.tenantAccessToken;
+        if (!this.tenantAccessToken) {
+            logger.warn('tenantAccessToken is empty — file downloads via lark-cli will fail');
+        }
+    }
+    /**
+     * Initialize the handler with client.
+     */
+    initialize(client) {
+        this.client = client;
+        this.controlHandler = this.getHasControlHandler();
+        logger.debug({ controlHandler: this.controlHandler }, 'MessageHandler initialized');
+    }
+    /**
+     * Set whether control handler is available.
+     */
+    setControlHandler(hasHandler) {
+        this.controlHandler = hasHandler;
+    }
+    /**
+     * Get the client (for external use).
+     */
+    getClient() {
+        return this.client;
+    }
+    /**
+     * Download a Feishu message resource file via lark-cli.
+     *
+     * Uses `npx @larksuite/cli im +messages-resources-download` instead of the Feishu SDK,
+     * leveraging lark-cli's built-in retry, chunked download, and error handling.
+     *
+     * Issue #3960: Replaces SDK-based this.client.im.messageResource.get() + writeFile()
+     */
+    async downloadResourceViaLarkCli(messageId, fileKey, resourceType, outputPath) {
+        const env = {
+            ...process.env,
+            LARKSUITE_CLI_TENANT_ACCESS_TOKEN: this.tenantAccessToken,
+        };
+        const { stdout, stderr } = await promisify(execFile)('npx', [
+            '@larksuite/cli', 'im', '+messages-resources-download',
+            '--message-id', messageId,
+            '--file-key', fileKey,
+            '--type', resourceType,
+            '--output', outputPath,
+            '--as', 'bot',
+        ], { env, timeout: 120_000 });
+        if (stderr) {
+            if (!stdout) {
+                throw new Error(`lark-cli messages-resources-download failed: ${stderr}`);
+            }
+            logger.warn({ stderr }, 'lark-cli reported warnings during resource download');
+        }
+    }
+    /**
+     * Build a download command string for the agent to use as a fallback hint.
+     */
+    buildDownloadCmd(messageId, fileKey, resourceType, outputPath) {
+        const ext = resourceType === 'image' ? 'jpg' : 'bin';
+        const output = outputPath ?? `./downloaded_file.${ext}`;
+        return `npx @larksuite/cli im +messages-resources-download --message-id ${messageId} --file-key ${fileKey} --type ${resourceType} --as bot --output ${output}`;
+    }
+    /**
+     * Parse a media message's content JSON into its resource key + display name.
+     *
+     * Shared by the read-only thread guidance (buildMediaThreadGuidance) and the
+     * quoted-message download (handleQuotedFileMessage) so a new media type or key
+     * convention only has to be added in one place — the two paths previously
+     * duplicated this extraction verbatim.
+     *
+     * Returns `undefined` when `content` is not valid JSON, otherwise
+     * `{ fileKey, fileName }` — `fileKey` is undefined when the JSON carried no
+     * usable resource key. Callers own the fileKey-absent / parse-failure logging,
+     * which differs between the two paths.
+     */
+    parseMediaContent(messageType, content) {
+        try {
+            const parsed = JSON.parse(content);
+            let fileKey;
+            let fileName;
+            if (messageType === 'image') {
+                fileKey = parsed.image_key;
+                fileName = `image_${fileKey}`;
+            }
+            else if (messageType === 'audio') {
+                // Issue #1966: Audio messages use file_key in content JSON
+                fileKey = parsed.file_key;
+                fileName = parsed.file_name || `audio_${fileKey}`;
+            }
+            else {
+                fileKey = parsed.file_key;
+                fileName = parsed.file_name || `file_${fileKey}`;
+            }
+            return { fileKey, fileName };
+        }
+        catch {
+            return undefined;
+        }
+    }
+    /**
+     * Issue #4319 (read-only design, 2026-07-16): build actionable download
+     * guidance for a media message in thread context — WITHOUT downloading. The
+     * agent receives the message_id, the resource key, and a ready-to-run download
+     * command, so it can fetch the content on demand if it actually needs it.
+     *
+     * This is the read-only counterpart to handleQuotedFileMessage: getThreadContext
+     * must not spawn lark-cli or touch the filesystem just to summarize a thread.
+     *
+     * Returns undefined when no key can be parsed from content; the caller then
+     * keeps extractMessageText's opaque placeholder as the honest fallback.
+     */
+    buildMediaThreadGuidance(messageType, content, messageId) {
+        const media = this.parseMediaContent(messageType, content);
+        const fileKey = media?.fileKey;
+        const fileName = media?.fileName;
+        if (!fileKey || !fileName) {
+            // Review nit #4: surface why we fell back to the placeholder instead of
+            // going silent (the prior eager-download path logged on this branch).
+            logger.debug({ messageType, messageId }, 'No media key in thread context — using placeholder');
+            return undefined;
+        }
+        const label = mediaThreadLabel(messageType);
+        const keyField = messageType === 'image' ? 'image_key' : 'file_key';
+        const resourceType = mapResourceType(messageType);
+        // Review nit #3: prefer the resource's real filename (it carries the correct
+        // extension, e.g. report.pdf) so a later Read sees a properly-typed path;
+        // otherwise fall back to messageId with a best-effort extension. Images and
+        // nameless files only have a synthetic name with no extension, so the
+        // messageId fallback also keeps same-thread media messages from colliding.
+        const hasRealExt = fileName.includes('.');
+        const ext = resourceType === 'image' ? 'jpg' : 'bin';
+        const outputPath = hasRealExt
+            ? `./downloads/${fileName}`
+            : `./downloads/${messageId}.${ext}`;
+        const downloadCmd = this.buildDownloadCmd(messageId, fileKey, resourceType, outputPath);
+        // Review nit #2: fileName is always non-empty here (image → image_<key>;
+        // otherwise file_name || <type>_<key> with fileKey already checked), so the
+        // previous `fileName ? ... : ''` ternary was a dead branch — emit it directly.
+        return [
+            `[${label}消息 (${keyField}=${fileKey}, 名称=${fileName}): 线程上下文未自动获取其内容。如需查看，可执行下方命令下载后用 Read 工具读取]`,
+            '```bash',
+            downloadCmd,
+            '```',
+        ].join('\n');
+    }
+    /**
+     * Clear the client (on stop).
+     */
+    clearClient() {
+        this.client = undefined;
+    }
+    /**
+     * Invalidate the cached chat_mode / group_message_type for a chat.
+     *
+     * Called when a chat's properties change (im.chat.updated_v1) so the next
+     * message re-fetches the current mode instead of trusting a stale cached
+     * value — e.g. after an admin toggles a group between group / topic format,
+     * which would otherwise stay misclassified until process restart.
+     */
+    invalidateChatModeCache(chatId) {
+        this.chatModeCache.delete(chatId);
+    }
+    /**
+     * Extract open_id from sender object.
+     */
+    /**
+     * Add typing reaction to indicate processing started.
+     */
+    async addTypingReaction(messageId) {
+        if (!this.client) {
+            return;
+        }
+        try {
+            await this.client.im.messageReaction.create({
+                path: {
+                    message_id: messageId,
+                },
+                data: {
+                    reaction_type: {
+                        emoji_type: REACTIONS.TYPING,
+                    },
+                },
+            });
+        }
+        catch (error) {
+            logger.debug({ err: error, messageId }, 'Failed to add typing reaction');
+        }
+    }
+    /**
+     * Forward a filtered message (simplified - just logs for now).
+     */
+    forwardFilteredMessage(reason, messageId, chatId, _content, userId, metadata) {
+        logger.info({
+            event: 'filter_result', reason, sanitizedReason: sanitizeLifecycleReason(reason),
+            traceId: messageId, runId: messageId, sourceMessageId: messageId, chatId,
+            target: chatId, userId, metadata, user_visible: false,
+        }, 'filter_result');
+    }
+    /**
+     * Get formatted chat history context for passive mode.
+     */
+    async getChatHistoryContext(chatId) {
+        try {
+            // Truncation (recency-correct) is owned by getChatHistory(); pass our
+            // larger budget via the override so it isn't silently capped at the
+            // session default. The previous local truncation was dead code — it ran
+            // `slice(-CHAT_HISTORY.MAX_CONTEXT_LENGTH)` on a string getChatHistory had
+            // already capped smaller — and assumed oldest→newest ordering that no
+            // longer holds. Do not re-truncate here.
+            const history = await messageLogger.getChatHistory(chatId, CHAT_HISTORY.MAX_CONTEXT_LENGTH);
+            if (!history || history.length === 0) {
+                return undefined;
+            }
+            return history;
+        }
+        catch (error) {
+            logger.error({ err: error, chatId }, 'Failed to get chat history context');
+            return undefined;
+        }
+    }
+    /**
+     * Get thread context by walking up the parent_id chain in topic groups.
+     *
+     * Fetches messages in the reply chain from root to the immediate parent,
+     * building a chronological thread history for the agent to understand
+     * the full conversation context within the thread.
+     *
+     * Issue #3641 sub-problem 1: Thread context retrieval for topic groups.
+     * Issue #4587 (part 1): also returns `rootId` — the top ancestor's message
+     * ID reached by the walk. Unlike `parent_id ?? message_id` (which differs
+     * between replies in the same thread), the walked root is the stable
+     * per-thread identity part 2 will key agent sessions on. No extra API
+     * calls — the root is already fetched for the context text.
+     * Issue #4591: also returns `incomplete` — false only when the walk reached
+     * the true root (a message with no parent_id). When true, `rootId` is a
+     * mid-chain node that other replies of the same thread may resolve
+     * differently, so callers must NOT key sessions on it (they fall back to
+     * parent_id instead).
+     */
+    async getThreadContext(parentId, maxDepth = 10) {
+        if (!this.client) {
+            return undefined;
+        }
+        try {
+            // Walk up the parent_id chain to collect all thread messages
+            const threadMessages = [];
+            const visitedIds = new Set();
+            let currentId = parentId;
+            // Issue #4587 (part 1): thread-root tracking (see return-site comment)
+            let rootId;
+            let lastVisitedWithParent;
+            // Issue #4591 (fix 1): whether the walk reached the true root (a message
+            // with no parent_id). When it did not (depth cap or a fetch that stayed
+            // failed after retry), resolvedRootId is a mid-chain node — a per-message
+            // value that two replies in the same thread may disagree on. Callers use
+            // the flag to fall back to a uniform per-thread key instead.
+            let walkComplete = false;
+            // Issue #4591 (fix 1): count visited nodes, not assembled texts. The old
+            // `threadMessages.length < maxDepth` guard counted only messages with
+            // text, so a chain of media placeholders could silently walk past the
+            // intended cap; and capping mid-chain left different replies resolving
+            // different roots.
+            let visitedCount = 0;
+            while (currentId && visitedCount < maxDepth && !visitedIds.has(currentId)) {
+                visitedIds.add(currentId);
+                visitedCount++;
+                // Issue #4591 (fix 2): one retry with a short backoff on the per-node
+                // fetch. A transient im.message.get failure used to abort the whole
+                // walk (→ undefined → caller falls back to parent_id) while other
+                // messages in the same thread walked fine — splitting the session key.
+                let response;
+                try {
+                    response = await this.client.im.message.get({
+                        path: { message_id: currentId },
+                        params: { user_id_type: 'open_id' },
+                    });
+                }
+                catch (fetchError) {
+                    logger.debug({ err: fetchError, messageId: currentId }, 'Thread-walk fetch failed, retrying once');
+                    await sleep(THREAD_WALK_RETRY_DELAY_MS);
+                    response = await this.client.im.message.get({
+                        path: { message_id: currentId },
+                        params: { user_id_type: 'open_id' },
+                    });
+                }
+                const msg = response.data;
+                if (!msg?.message) {
+                    break;
+                }
+                const msgType = msg.message.message_type;
+                let text = this.extractMessageText(msgType, msg.message.content || '{}');
+                // Issue #4319 (read-only design, 2026-07-16): getThreadContext must stay
+                // read-only — it only does client.im.message.get and assembles text. For a
+                // media message we do NOT download (no handleQuotedFileMessage / spawned
+                // lark-cli); instead we surface actionable download guidance (message_id +
+                // key + a ready-to-run command) so the agent can fetch the bytes on demand
+                // if it actually needs them. This replaces the earlier eager-download
+                // approach (#4325), which had no place in a read-only context summary.
+                // Falls back to extractMessageText's placeholder only when no key can be
+                // parsed (nothing to point the agent at).
+                if (MEDIA_MESSAGE_TYPES.has(msgType || '')) {
+                    const guidance = this.buildMediaThreadGuidance(msgType || '', msg.message.content || '{}', msg.message.message_id || currentId);
+                    if (guidance) {
+                        text = guidance;
+                    }
+                }
+                if (text) {
+                    threadMessages.push({
+                        messageId: msg.message.message_id || currentId,
+                        content: text,
+                        senderType: msg.message.sender?.sender_type === 'app' ? 'bot' : 'user',
+                    });
+                }
+                // Issue #4587 (part 1): remember the last message that still has a
+                // parent — when the walk ends (no parent_id), the previously visited
+                // message is the thread root. Tracked on a non-text message too (the
+                // root may be a media message whose text is a placeholder).
+                lastVisitedWithParent = currentId;
+                if (msg.message.parent_id) {
+                    rootId = msg.message.parent_id;
+                }
+                else {
+                    // The current node has no parent — it IS the true root and the walk
+                    // is complete (Issue #4591 fix 1).
+                    walkComplete = true;
+                }
+                // Walk to parent
+                currentId = msg.message.parent_id;
+            }
+            // Issue #4587 (part 1): the walk stopped either at the root (no
+            // parent_id — rootId was set on the previous iteration) or at a fetch
+            // failure / depth cap (rootId may point past what we actually fetched).
+            // Only report a root we have seen: the last id we visited that itself
+            // has a parent, i.e. the highest real message in the chain.
+            const resolvedRootId = rootId && visitedIds.has(rootId) ? rootId : lastVisitedWithParent;
+            if (threadMessages.length === 0) {
+                // No text assembled, but the root is still known — surface it so
+                // session keying (part 2) works even when context text is empty.
+                return { text: undefined, rootId: resolvedRootId, incomplete: !walkComplete };
+            }
+            // Reverse to get chronological order (oldest first)
+            threadMessages.reverse();
+            // Format as thread history
+            const lines = threadMessages.map(m => {
+                const label = m.senderType === 'bot' ? '🤖' : '👤';
+                return `${label} ${m.content}`;
+            });
+            return { text: lines.join('\n\n'), rootId: resolvedRootId, incomplete: !walkComplete };
+        }
+        catch (error) {
+            logger.debug({ err: error, parentId }, 'Failed to get thread context');
+            return undefined;
+        }
+    }
+    /**
+     * Extract plain text from a Feishu message content string.
+     */
+    extractMessageText(messageType, content) {
+        if (!messageType || !content) {
+            return '';
+        }
+        try {
+            const parsed = JSON.parse(content);
+            if (messageType === 'text') {
+                return parsed.text || '';
+            }
+            else if (messageType === 'post' && parsed.content && Array.isArray(parsed.content)) {
+                return parsePostContent(parsed.content);
+            }
+            else if (messageType === 'interactive') {
+                // Issue #4083: Extract text from interactive card messages
+                return extractFullCardContent(parsed);
+            }
+            // Issue #4251: surface shared chat / user cards instead of silently
+            // dropping them from the thread history. A dropped topic-anchor message
+            // leaves the bot with an incomplete view of what the thread is about.
+            // Issue #4316 nit ②: match by type (not id), so a card missing its id
+            // still reads as a card rather than the generic placeholder.
+            if (messageType === 'share_chat') {
+                return parsed.share_chat_id
+                    ? `[分享的群名片: ${parsed.share_chat_id}]`
+                    : '[分享的群名片]';
+            }
+            if (messageType === 'share_user') {
+                return parsed.share_user_id
+                    ? `[分享的联系人名片: ${parsed.share_user_id}]`
+                    : '[分享的联系人名片]';
+            }
+        }
+        catch {
+            // Issue #4083: Handle non-JSON interactive card content
+            if (messageType === 'interactive') {
+                return extractFullCardContent(content);
+            }
+            // Fall through to the unhandled-type placeholder below (Issue #4251).
+        }
+        // Issue #4251: never silently drop a message from thread context. Note the
+        // type so the bot knows a message existed (and that its content is not
+        // captured), rather than seeing a contiguous-but-incomplete history that
+        // hides the gap — which can cause it to misread the thread's topic.
+        // Issue #4316 nit ①: this covers both unrecognized types AND recognized
+        // types with malformed content (e.g. post missing content array), so the
+        // behavior is intentional and traceable.
+        return `[未解析的 ${messageType} 消息]`;
+    }
+    /**
+     * Get quoted/replied message content.
+     *
+     * Supports text, post, interactive, image, file, and media message types.
+     * For image/file/media, downloads the file and returns both a text prompt
+     * and a structured MessageAttachment so the agent can access the file.
+     */
+    async getQuotedMessageContext(parentId) {
+        if (!this.client) {
+            return undefined;
+        }
+        try {
+            const response = await this.client.im.message.get({
+                path: {
+                    message_id: parentId,
+                },
+                params: {
+                    user_id_type: 'open_id',
+                },
+            });
+            const message = response.data;
+            if (!message?.message) {
+                return undefined;
+            }
+            const msgType = message.message.message_type;
+            const msgContent = message.message.content || '{}';
+            const msgId = message.message.message_id || parentId;
+            let quotedText = '';
+            try {
+                if (msgType === 'text') {
+                    const parsed = JSON.parse(msgContent);
+                    quotedText = parsed.text || msgContent || '';
+                }
+                else if (msgType === 'post') {
+                    const parsed = JSON.parse(msgContent);
+                    if (parsed.content && Array.isArray(parsed.content)) {
+                        for (const row of parsed.content) {
+                            if (Array.isArray(row)) {
+                                for (const segment of row) {
+                                    if (segment?.tag === 'text' && segment.text) {
+                                        quotedText += segment.text;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                else if (msgType === 'interactive') {
+                    // Issue #1711: Extract full text from interactive card messages
+                    const parsed = JSON.parse(msgContent);
+                    quotedText = extractFullCardContent(parsed);
+                }
+                else if (msgType === 'image' || msgType === 'file' || msgType === 'media' || msgType === 'audio' || msgType === 'video') {
+                    return await this.handleQuotedFileMessage(msgType, msgContent, msgId);
+                }
+            }
+            catch {
+                quotedText = msgContent || '';
+            }
+            if (!quotedText.trim()) {
+                return undefined;
+            }
+            return { text: `> **引用的消息**:\n> ${quotedText.split('\n').join('\n> ')}` };
+        }
+        catch (error) {
+            logger.debug({ err: error, parentId }, 'Failed to get quoted message context');
+            return undefined;
+        }
+    }
+    /**
+     * Handle quoted/replied file/image/media message.
+     *
+     * Downloads the file to workspace and returns both a descriptive prompt
+     * and a structured MessageAttachment so the agent can access the file.
+     */
+    async handleQuotedFileMessage(messageType, content, messageId) {
+        const media = this.parseMediaContent(messageType, content);
+        if (!media) {
+            logger.warn({ content, messageType, messageId }, 'Failed to parse quoted file message content');
+            return undefined;
+        }
+        const { fileKey } = media;
+        if (!fileKey) {
+            logger.warn({ messageType, messageId }, 'No file_key found in quoted message');
+            return undefined;
+        }
+        let { fileName } = media;
+        // Download file to workspace/downloads directory
+        // Issue #3960: downloadResourceViaLarkCli uses npx lark-cli, which only needs tenantAccessToken (not this.client)
+        let localPath;
+        if (this.tenantAccessToken) {
+            try {
+                const downloadDir = path.join(Config.getWorkspaceDir(), 'downloads');
+                await fs.mkdir(downloadDir, { recursive: true });
+                localPath = path.join(downloadDir, String(fileName || fileKey));
+                // Issue #4326: skip re-download when a non-empty file already exists at the
+                // target path or an extension-corrected sibling (left by ensureFileExtensionFromPath).
+                //
+                // Cache validity is bound to fileKey via a `<path>.key` sidecar (written on
+                // first download): downloadDir is shared/persistent, and for `file`/`audio`
+                // the on-disk name is the user-supplied file_name, which can collide across
+                // distinct resources. Only a matching sidecar proves the on-disk bytes belong
+                // to THIS resource — without it a same-named-but-different file would be a
+                // false hit, handing the agent stale/wrong content.
+                //
+                // Existence is gated on fs.access (not fs.stat): the test suite mocks
+                // fs.stat to always return {size:1024}, which would otherwise give false hits.
+                const isCacheHitFor = async (candidate) => {
+                    try {
+                        await fs.access(candidate);
+                        if ((await fs.stat(candidate)).size === 0) {
+                            return false;
+                        }
+                        const storedKey = (await fs.readFile(`${candidate}.key`, 'utf8')).trim();
+                        return storedKey === fileKey;
+                    }
+                    catch {
+                        return false;
+                    }
+                };
+                let cacheHit = false;
+                if (await isCacheHitFor(localPath)) {
+                    cacheHit = true;
+                }
+                else {
+                    // Bare path missed — look for an extension-corrected sibling
+                    // (ensureFileExtensionFromPath may have renamed <base> → <base>.<ext>).
+                    // If multiple siblings exist, the first in FS order wins; the sidecar
+                    // match still guarantees we only reuse the correct resource.
+                    const base = path.basename(localPath);
+                    let sibling;
+                    try {
+                        sibling = (await fs.readdir(downloadDir)).find(
+                        // Skip `<name>.key` sidecars (they also start with `<base>.`).
+                        e => e !== base && e.startsWith(`${base}.`) && !e.endsWith('.key'));
+                    }
+                    catch (readdirError) {
+                        logger.debug({ err: readdirError, downloadDir }, 'Failed to list download dir for cache sibling lookup');
+                    }
+                    if (sibling && await isCacheHitFor(path.join(downloadDir, sibling))) {
+                        localPath = path.join(downloadDir, sibling);
+                        fileName = path.basename(sibling);
+                        cacheHit = true;
+                    }
+                }
+                if (cacheHit) {
+                    logger.debug({ fileKey, localPath }, 'Quoted file cache hit — skipping download');
+                }
+                else {
+                    logger.info({ fileKey, fileName, localPath, quotedMessageId: messageId }, 'Downloading quoted file from Feishu');
+                    await this.downloadResourceViaLarkCli(messageId, fileKey, mapResourceType(messageType), localPath);
+                    // Issue #1637, #1663: Ensure file has correct extension via magic bytes detection
+                    const correctedPath = await ensureFileExtensionFromPath(localPath);
+                    if (correctedPath !== localPath) {
+                        localPath = correctedPath;
+                        fileName = path.basename(correctedPath);
+                    }
+                    // Issue #2411: Verify file was actually written to disk
+                    try {
+                        const stat = await fs.stat(localPath);
+                        if (stat.size === 0) {
+                            throw new Error(`Downloaded quoted file is empty (0 bytes): ${localPath}`);
+                        }
+                    }
+                    catch (statError) {
+                        throw new Error(`Downloaded quoted file not found on disk: ${localPath}`, { cause: statError });
+                    }
+                    // Issue #4326: persist the fileKey sidecar so future lookups can verify
+                    // the cache belongs to this resource (guards against same-named collisions).
+                    try {
+                        await fs.writeFile(`${localPath}.key`, fileKey, 'utf8');
+                    }
+                    catch (sidecarError) {
+                        // Non-fatal: a missing/unwritable sidecar just means the next lookup re-downloads.
+                        logger.debug({ err: sidecarError, localPath }, 'Failed to write cache key sidecar');
+                    }
+                    logger.info({ fileKey, localPath }, 'Quoted file downloaded successfully');
+                }
+            }
+            catch (downloadError) {
+                logger.error({ err: downloadError, fileKey, messageId }, 'Failed to download quoted file');
+                localPath = undefined;
+            }
+        }
+        let typeLabel;
+        if (messageType === 'image') {
+            typeLabel = '图片';
+        }
+        else if (messageType === 'file') {
+            typeLabel = '文件';
+        }
+        else if (messageType === 'audio') {
+            typeLabel = '语音消息';
+        }
+        else if (messageType === 'video') {
+            typeLabel = '视频';
+        }
+        else {
+            typeLabel = '媒体文件';
+        }
+        const resourceType = mapResourceType(messageType);
+        const downloadCmd = this.buildDownloadCmd(messageId, fileKey, resourceType);
+        if (!localPath) {
+            return {
+                text: `> **引用的消息**: [${typeLabel}] ${fileName || fileKey}（下载失败）\n> 可使用以下命令下载: ${downloadCmd}`,
+            };
+        }
+        return {
+            text: `> **引用的消息**: [${typeLabel}] ${fileName || fileKey}`,
+            attachment: {
+                fileName: fileName || fileKey,
+                filePath: localPath,
+            },
+        };
+    }
+    /**
+     * Handle incoming message event from WebSocket.
+     */
+    async handleMessageReceive(data) {
+        if (!this.isRunning()) {
+            return;
+        }
+        const event = (data.event || data);
+        const { message, sender } = event;
+        if (!message) {
+            return;
+        }
+        const { message_id, chat_id, chat_type: rawChatType, content, message_type, create_time, mentions, parent_id } = message;
+        const threadId = message_id;
+        if (!message_id || !chat_id || !content || !message_type) {
+            logger.info({ event: 'filter_result', reason: 'missing_fields', sanitizedReason: 'missing required message fields', traceId: message_id || 'unknown', runId: message_id || 'unknown', sourceMessageId: message_id, chatId: chat_id || 'unknown', target: chat_id, user_visible: false }, 'filter_result');
+            logger.warn('Missing required message fields');
+            return;
+        }
+        // Pre-compute whether a bot sender @mentions our bot (bot-to-bot, #1742).
+        const botMentionsUs = sender?.sender_type === 'app' && this.mentionDetector.isBotMentioned(mentions);
+        // Claim before topic lookup or other asynchronous work to close the
+        // check-then-mark race during concurrent Feishu redelivery (Issue #4750).
+        const filterVerdict = evaluateMessageFilters({ messageId: message_id, createTime: create_time, senderType: sender?.sender_type, botMentionsUs }, {
+            isProcessed: (id) => messageLogger.isMessageProcessed(id),
+            claim: (id) => messageLogger.claimMessage(id),
+            maxMessageAge: this.MAX_MESSAGE_AGE,
+        });
+        if (!filterVerdict.passed) {
+            const { reason } = filterVerdict;
+            if (reason === 'duplicate') {
+                logger.debug({ messageId: message_id }, 'Skipped duplicate message');
+                this.forwardFilteredMessage('duplicate', message_id, chat_id, content, extractOpenId(sender));
+            }
+            else if (reason === 'bot') {
+                logger.debug('Skipped bot message (not mentioning our bot)');
+                this.forwardFilteredMessage('bot', message_id, chat_id, content);
+            }
+            else {
+                logger.debug({ messageId: message_id }, 'Skipped old message');
+                this.forwardFilteredMessage('old', message_id, chat_id, content, extractOpenId(sender), { age: filterVerdict.age });
+            }
+            return;
+        }
+        try {
+            // Issue #4401: Resolve the effective topic chat type after dedup. Falls
+            // back to the event value on lookup errors so processing never blocks.
+            const chat_type = await this.resolveTopicChatType(chat_id, rawChatType);
+            // Bot-to-bot @mention messages that passed the filter are allowed through (#1742).
+            if (sender?.sender_type === 'app') {
+                logger.info({ messageId: message_id, chatId: chat_id }, 'Bot message mentions our bot, allowing through');
+            }
+            // Handle file/image messages - download to workspace and include path in prompt
+            if (message_type === 'image' || message_type === 'file' || message_type === 'media' || message_type === 'audio' || message_type === 'video') {
+                logger.info({ chatId: chat_id, messageType: message_type, messageId: message_id }, 'File/image message received');
+                // Parse content to extract file_key and file_name
+                let fileKey;
+                let fileName;
+                try {
+                    const parsed = JSON.parse(content);
+                    if (message_type === 'image') {
+                        fileKey = parsed.image_key;
+                        fileName = `image_${fileKey}`;
+                    }
+                    else if (message_type === 'audio') {
+                        // Issue #1966: Audio messages use file_key in content JSON
+                        fileKey = parsed.file_key;
+                        fileName = parsed.file_name || `audio_${fileKey}`;
+                    }
+                    else {
+                        fileKey = parsed.file_key;
+                        fileName = parsed.file_name || `file_${fileKey}`;
+                    }
+                }
+                catch (parseError) {
+                    logger.error({ err: parseError, content, messageType: message_type }, 'Failed to parse file message content');
+                }
+                if (!fileKey) {
+                    logger.warn({ messageType: message_type, messageId: message_id }, 'No file_key found in message');
+                    return;
+                }
+                // Download file to workspace/downloads directory
+                // Issue #3960: downloadResourceViaLarkCli uses npx lark-cli, which only needs tenantAccessToken (not this.client)
+                let localPath;
+                if (this.tenantAccessToken) {
+                    try {
+                        const downloadDir = path.join(Config.getWorkspaceDir(), 'downloads');
+                        await fs.mkdir(downloadDir, { recursive: true });
+                        localPath = path.join(downloadDir, String(fileName || fileKey));
+                        logger.info({ fileKey, fileName, localPath }, 'Downloading file from Feishu');
+                        await this.downloadResourceViaLarkCli(message_id, fileKey, mapResourceType(message_type), localPath);
+                        // Issue #2411: Verify file was actually written to disk
+                        try {
+                            const stat = await fs.stat(localPath);
+                            if (stat.size === 0) {
+                                throw new Error(`Downloaded file is empty (0 bytes): ${localPath}`);
+                            }
+                        }
+                        catch (statError) {
+                            throw new Error(`Downloaded file not found on disk: ${localPath}`, { cause: statError });
+                        }
+                        // Issue #1637, #1663: Ensure file has correct extension via magic bytes detection
+                        const correctedPath = await ensureFileExtensionFromPath(localPath);
+                        if (correctedPath !== localPath) {
+                            localPath = correctedPath;
+                            fileName = path.basename(correctedPath);
+                        }
+                        logger.info({ fileKey, localPath }, 'File downloaded successfully');
+                    }
+                    catch (downloadError) {
+                        logger.error({ err: downloadError, fileKey, messageId: message_id }, 'Failed to download file');
+                        localPath = undefined;
+                    }
+                }
+                // Log the incoming message
+                await messageLogger.logIncomingMessage(message_id, extractOpenId(sender) || 'unknown', chat_id, `[${message_type} received]${localPath ? ` → ${localPath}` : ''}`, message_type, create_time);
+                await this.addTypingReaction(message_id);
+                // Build content with file path for the agent prompt
+                let typeLabel;
+                if (message_type === 'image') {
+                    typeLabel = '图片';
+                }
+                else if (message_type === 'file') {
+                    typeLabel = '文件';
+                }
+                else if (message_type === 'audio') {
+                    typeLabel = '语音消息';
+                }
+                else if (message_type === 'video') {
+                    typeLabel = '视频';
+                }
+                else {
+                    typeLabel = '媒体文件';
+                }
+                const resourceType = mapResourceType(message_type);
+                const downloadCmd = this.buildDownloadCmd(message_id, fileKey, resourceType);
+                const filePrompt = localPath
+                    ? `用户${message_type === 'audio' ? '发送了一段' : '上传了一个'}${typeLabel}：${fileName || fileKey}\n\n文件已下载到本地: ${localPath}\n\n请使用 Read 工具读取该文件来查看内容。${message_type === 'image' ? '这是一个图片文件，Read 工具可以直接查看图片内容。' : message_type === 'audio' ? '这是一个音频文件。你可以根据自身能力处理音频（如调用 ASR 工具转录、分析音频特征等）。' : ''}\n\n如果文件读取失败，可以使用以下命令重新下载:\n${downloadCmd}`
+                    : `用户${message_type === 'audio' ? '发送了一段' : '上传了一个'}${typeLabel}：${fileName || fileKey}，但自动下载失败。\n\n你可以尝试手动下载该文件：\n- message_id: \`${message_id}\`\n- file_key: \`${fileKey}\`\n- 消息类型: ${message_type}\n- API type 参数: ${resourceType}\n\n下载命令:\n\`\`\`bash\n${downloadCmd}\n\`\`\``;
+                // Issue #3702: Build metadata for file/image messages to pass chatType and threadContext,
+                // ensuring intermediate message filtering works correctly in topic groups.
+                const fileMetadata = {};
+                if (chat_type) {
+                    fileMetadata.chatType = chat_type;
+                }
+                let fileThreadContext;
+                if (chat_type === 'topic' && parent_id) {
+                    // Issue #4587 (part 1): capture the walked thread root for session keying
+                    const threadInfo = await this.getThreadContext(parent_id);
+                    fileThreadContext = threadInfo?.text;
+                    // Issue #4591 (fix 1): same rule as the text path — trust the walked
+                    // root only when the walk completed; otherwise fall back to parent_id.
+                    // (The old fallback here was message_id, a per-message value no other
+                    // message in the thread could ever share — a guaranteed session-key
+                    // split that even a successful walk on the next message would hit.)
+                    fileMetadata.threadRootId = threadInfo && !threadInfo.incomplete && threadInfo.rootId
+                        ? threadInfo.rootId
+                        : parent_id;
+                }
+                else if (chat_type === 'topic') {
+                    // Issue #4587 (part 1, review fix): a topic media message with no
+                    // parent_id starts a new thread — same rule as the text path. Without
+                    // this, part 2's session keying would treat thread-starting media as
+                    // chat-scoped (no identity), diverging from the text path.
+                    fileMetadata.threadRootId = message_id;
+                }
+                if (fileThreadContext) {
+                    fileMetadata.threadContext = fileThreadContext;
+                }
+                // Issue #3828: Apply @mention/trigger mode check for file/image messages in group/topic chats
+                const fileBotMentioned = this.mentionDetector.isBotMentioned(mentions);
+                if (isGroupChat(chat_type) && !fileBotMentioned) {
+                    if (this.triggerModeManager.getMode(chat_id) === 'auto'
+                        && this.triggerModeManager.needsSmallGroupRecheck(chat_id)) {
+                        await this.checkAndAutoDisableSmallGroup(chat_id);
+                    }
+                    if (!this.triggerModeManager.isTriggerEnabled(chat_id)) {
+                        logger.debug({ messageId: message_id, chatId: chat_id, chat_type, messageType: message_type }, 'Skipped file/image message in group chat without @mention (trigger mode disabled)');
+                        this.forwardFilteredMessage('trigger_mode', message_id, chat_id, filePrompt, extractOpenId(sender), { chat_type, messageType: message_type });
+                        return;
+                    }
+                }
+                // Get chat history context when bot IS mentioned in group/topic for file messages
+                // Issue #4304: Skip group-level chat history for topic groups — it mixes
+                // messages from different threads. Topic groups already have thread-isolated
+                // context set above (fileThreadContext at line ~753).
+                if (isGroupChat(chat_type) && chat_type !== 'topic' && fileBotMentioned) {
+                    const chatHistoryContext = await this.getChatHistoryContext(chat_id);
+                    if (chatHistoryContext) {
+                        fileMetadata.chatHistoryContext = chatHistoryContext;
+                    }
+                }
+                await this.callbacks.emitMessage({
+                    messageId: `${message_id}-${message_type === 'audio' ? 'audio' : 'file'}`,
+                    chatId: chat_id,
+                    userId: extractOpenId(sender),
+                    content: filePrompt,
+                    messageType: message_type === 'audio' ? 'audio' : 'file',
+                    timestamp: create_time,
+                    threadId,
+                    attachments: localPath ? [{ fileName: fileName || fileKey, filePath: localPath }] : undefined,
+                    metadata: Object.keys(fileMetadata).length > 0 ? fileMetadata : undefined,
+                });
+                return;
+            }
+            // Handle text, post, share_chat, and interactive messages
+            // Issue #846: Add support for share_chat (forwarded chat history) messages
+            // Issue #3657: Add support for interactive (card) messages
+            if (message_type !== 'text' && message_type !== 'post' && message_type !== 'share_chat' && message_type !== 'interactive') {
+                logger.debug({ messageType: message_type }, 'Skipped unsupported message type');
+                this.forwardFilteredMessage('unsupported', message_id, chat_id, content, extractOpenId(sender), { messageType: message_type });
+                return;
+            }
+            // Parse content
+            let text = '';
+            try {
+                const parsed = JSON.parse(content);
+                if (message_type === 'text') {
+                    text = parsed.text?.trim() || '';
+                }
+                else if (message_type === 'post' && parsed.content && Array.isArray(parsed.content)) {
+                    text = parsePostContent(parsed.content);
+                }
+                else if (message_type === 'share_chat') {
+                    // Issue #846: Parse share_chat (forwarded/merged chat history) messages
+                    text = parseShareChatContent(parsed);
+                }
+                else if (message_type === 'interactive') {
+                    // Issue #3657: Parse interactive card messages
+                    text = extractFullCardContent(parsed);
+                }
+            }
+            catch (parseError) {
+                // Issue #4083: Handle non-JSON interactive card content (<card> format)
+                if (message_type === 'interactive' && content) {
+                    text = extractFullCardContent(content);
+                }
+                else {
+                    logger.info({ event: 'filter_result', reason: 'parse_failure', sanitizedReason: sanitizeLifecycleReason(parseError), traceId: message_id, runId: message_id, sourceMessageId: message_id, chatId: chat_id, target: chat_id, user_visible: false }, 'filter_result');
+                    logger.error('Failed to parse content');
+                    return;
+                }
+            }
+            if (!text) {
+                logger.debug('Skipped empty text');
+                this.forwardFilteredMessage('empty', message_id, chat_id, content, extractOpenId(sender));
+                return;
+            }
+            // Log message
+            await messageLogger.logIncomingMessage(message_id, extractOpenId(sender) || 'unknown', chat_id, text, message_type, create_time);
+            // Issue #4031: Emit topic group message notification if enabled.
+            // Placed BEFORE trigger_mode check so notifications fire for all topic messages,
+            // regardless of whether the bot is @mentioned.
+            if (chat_type === 'topic' && this.callbacks.onTopicMessage
+                && Config.getRawConfig().feishu?.topicNotify?.enabled === true) {
+                try {
+                    const senderOpenId = extractOpenId(sender);
+                    const senderName = extractSenderName({ sender, sender_name: sender?.sender_id });
+                    this.callbacks.onTopicMessage({
+                        type: 'topic_group_message',
+                        chatId: chat_id,
+                        rootId: parent_id ?? message_id,
+                        threadId: message_id,
+                        sender: {
+                            name: senderName,
+                            openId: senderOpenId,
+                        },
+                        content: (text || '').substring(0, 500),
+                        isReply: !!parent_id,
+                        timestamp: create_time
+                            ? new Date(create_time).toISOString()
+                            : new Date().toISOString(),
+                    });
+                }
+                catch (topicNotifyError) {
+                    logger.warn({ err: topicNotifyError, messageId: message_id }, 'Failed to emit topic group notification (non-critical)');
+                }
+            }
+            // Check for control commands
+            const botMentioned = this.mentionDetector.isBotMentioned(mentions);
+            const textWithoutMentions = stripLeadingMentions(text, mentions);
+            // Group chat trigger mode (Issue #2291: triggerMode enum, #3345: 'auto' mode)
+            // Issue #2052: Auto-enable trigger mode for 2-member group chats (bot + 1 user)
+            // Issue #3592: Re-check small group status even when already marked (allows unmarking when group grows)
+            const isTriggerCommand = textWithoutMentions.startsWith('/trigger');
+            if (isGroupChat(chat_type) && !botMentioned && !isTriggerCommand) {
+                // Issue #3592: Always re-check small group status in 'auto' mode (with throttle)
+                // In 'mention' mode, user explicitly wants mention-only regardless of group size
+                if (this.triggerModeManager.getMode(chat_id) === 'auto'
+                    && this.triggerModeManager.needsSmallGroupRecheck(chat_id)) {
+                    await this.checkAndAutoDisableSmallGroup(chat_id);
+                }
+                if (!this.triggerModeManager.isTriggerEnabled(chat_id)) {
+                    logger.debug({ messageId: message_id, chatId: chat_id, chat_type }, 'Skipped group chat message without @mention (trigger mode disabled)');
+                    this.forwardFilteredMessage('trigger_mode', message_id, chat_id, text, extractOpenId(sender), { chat_type });
+                    return;
+                }
+            }
+            // Add typing reaction
+            await this.addTypingReaction(message_id);
+            // Issue #4587 (part 3) review fix: slash-prefixed text skips the reply and
+            // history fetches below. A recognized command is consumed by the router
+            // before those results are ever read — for a file parent the quoted fetch
+            // downloads the real resource via lark-cli and the download is immediately
+            // dropped. An UNrecognized `/xxx` still falls through as a normal message
+            // (skill invocations such as /mineru-pdf rely on quoted context), so it is
+            // fetched after the router declines — matching main's dispatch-then-fetch
+            // ordering. getThreadContext stays at thread-root resolution: commands in
+            // topic groups need threadRootId to address the right agent slot.
+            const isSlashCommand = textWithoutMentions.startsWith('/');
+            // Get quoted/replied message context if this is a reply
+            let quotedMessageResult;
+            if (parent_id && !isSlashCommand) {
+                quotedMessageResult = await this.getQuotedMessageContext(parent_id);
+            }
+            // Get chat history context for trigger mode (Issue #2193: renamed from passive mode)
+            // Issue #3989: For topic groups, use thread context only (not flat chat history)
+            // to avoid mixing messages from different threads.
+            const isTriggerModeMention = isGroupChat(chat_type) && botMentioned;
+            let chatHistoryContext;
+            let threadContext;
+            // Issue #4587 (part 1): thread root for topic-group session keying (part 2)
+            let threadRootId;
+            if (chat_type === 'topic') {
+                if (parent_id) {
+                    // Topic groups: build thread context from parent chain only
+                    const threadInfo = await this.getThreadContext(parent_id);
+                    threadContext = threadInfo?.text;
+                    // Issue #4591 (fix 1): a walked root is only trustworthy when the walk
+                    // reached the true root. On an incomplete walk (depth cap / fetch that
+                    // stayed failed after retry) the resolved root is a mid-chain node that
+                    // differs between replies of the same thread — fall back to parent_id,
+                    // the same uniform fallback the total-failure path uses, so every
+                    // message in the thread still lands on ONE session key.
+                    threadRootId = threadInfo && !threadInfo.incomplete
+                        ? threadInfo.rootId ?? parent_id
+                        : parent_id;
+                }
+                else {
+                    // A topic message without parent_id starts a new thread — it IS the root
+                    threadRootId = message_id;
+                }
+            }
+            else if (isTriggerModeMention && chat_type !== 'topic') {
+                // Regular groups: use flat chat history.
+                // Issue #4304 (part 2): topic groups never use flat chat history — it
+                // mixes messages across threads. A topic message without parent_id gets
+                // no injected context here, matching the file/image path.
+                // Issue #4587 (part 3) review fix: skipped for slash commands — a
+                // consumed command never reads it, and an unrecognized one re-fetches
+                // below after the router declines.
+                if (!isSlashCommand) {
+                    chatHistoryContext = await this.getChatHistoryContext(chat_id);
+                }
+            }
+            // Handle commands (Issue #4126 part 2: extracted to channels/feishu/command-router.ts)
+            // Issue #4587 (part 3): resolve thread identity BEFORE dispatching, so a
+            // /reset or /stop typed inside a topic-group thread addresses that
+            // thread's agent slot rather than the chat-scoped one.
+            const commandHandled = await tryHandleSlashCommand({ textWithoutMentions, chatId: chat_id, threadRootId }, {
+                hasControlHandler: this.controlHandler,
+                emitControl: (command) => this.callbacks.emitControl(command),
+                sendMessage: async (reply) => {
+                    await this.callbacks.sendMessage(reply);
+                },
+            });
+            if (commandHandled) {
+                return;
+            }
+            // Issue #4587 (part 3) review fix: the router declined — this is an
+            // unrecognized `/xxx` (e.g. a skill invocation) processed as a normal
+            // message. Fetch the context we skipped above so reply/history context
+            // behaves exactly as it did before the dispatch moved (main ordering).
+            if (isSlashCommand) {
+                if (parent_id) {
+                    quotedMessageResult = await this.getQuotedMessageContext(parent_id);
+                }
+                if (isTriggerModeMention && chat_type !== 'topic') {
+                    chatHistoryContext = await this.getChatHistoryContext(chat_id);
+                }
+            }
+            // Build metadata
+            const metadata = {};
+            if (chat_type) {
+                metadata.chatType = chat_type;
+            }
+            if (quotedMessageResult?.text) {
+                metadata.quotedMessage = quotedMessageResult.text;
+            }
+            if (chatHistoryContext) {
+                metadata.chatHistoryContext = chatHistoryContext;
+            }
+            if (threadContext) {
+                metadata.threadContext = threadContext;
+            }
+            if (threadRootId) {
+                // Issue #4587 (part 1): stable thread identity for session keying
+                metadata.threadRootId = threadRootId;
+            }
+            // Build attachments from quoted message if available
+            const quotedAttachments = quotedMessageResult?.attachment
+                ? [quotedMessageResult.attachment]
+                : undefined;
+            // Emit as incoming message
+            await this.callbacks.emitMessage({
+                messageId: message_id,
+                chatId: chat_id,
+                userId: extractOpenId(sender),
+                content: text,
+                messageType: message_type,
+                timestamp: create_time,
+                threadId,
+                metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+                attachments: quotedAttachments,
+            });
+        }
+        catch (error) {
+            messageLogger.releaseMessage(message_id);
+            throw error;
+        }
+    }
+    /**
+     * Handle card action event from WebSocket.
+     */
+    async handleCardAction(data) {
+        if (!this.isRunning()) {
+            return;
+        }
+        // Parse actual Feishu event structure
+        const rawData = data;
+        // Feishu reuses the card message id for every button click. Prefer its
+        // event id for a stable unique agent input id, with a UUID fallback.
+        const eventId = typeof rawData.event_id === 'string' ? rawData.event_id : undefined;
+        const context = rawData.context;
+        const operator = rawData.operator;
+        const actionData = rawData.action;
+        const message_id = context?.open_message_id;
+        const chat_id = context?.open_chat_id;
+        const action = actionData ? {
+            type: actionData.tag ?? actionData.type ?? '',
+            value: actionData.value ?? '',
+            trigger: 'button',
+            text: actionData.text,
+        } : undefined;
+        const user = operator ? {
+            sender_id: {
+                open_id: operator.open_id ?? '',
+                user_id: operator.user_id,
+                union_id: operator.union_id,
+            },
+        } : undefined;
+        if (!action || !message_id || !chat_id) {
+            logger.warn({
+                hasAction: !!action,
+                hasMessageId: !!message_id,
+                hasChatId: !!chat_id,
+                eventData: JSON.stringify(data),
+            }, 'Missing required card action fields');
+            return;
+        }
+        logger.info({
+            messageId: message_id,
+            chatId: chat_id,
+            actionType: action.type,
+            actionValue: action.value,
+            userId: user?.sender_id?.open_id,
+        }, 'Card action received');
+        // Send user-visible confirmation message
+        const buttonText = action.text || action.value;
+        if (buttonText) {
+            try {
+                await this.callbacks.sendMessage({
+                    chatId: chat_id,
+                    type: 'text',
+                    text: `✅ 您选择了「${buttonText}」`,
+                    threadId: message_id,
+                });
+            }
+            catch (error) {
+                logger.warn({ err: error, messageId: message_id, chatId: chat_id }, 'Failed to send user confirmation');
+            }
+        }
+        // Resolve contextual prompt content before delivering it to the agent.
+        // Issue #1572: Try to resolve action prompt from InteractiveContextStore.
+        // Falls back to default text if no prompt template is registered.
+        const defaultMessage = `用户点击了按钮「${buttonText}」`;
+        let messageContent;
+        try {
+            if (this.callbacks.resolveActionPrompt) {
+                const promptFromTemplate = this.callbacks.resolveActionPrompt(message_id, chat_id, action.value, action.text);
+                messageContent = promptFromTemplate || defaultMessage;
+            }
+            else {
+                messageContent = defaultMessage;
+            }
+        }
+        catch (err) {
+            logger.warn({ err, messageId: message_id, chatId: chat_id }, 'Failed to resolve action prompt, using default');
+            messageContent = defaultMessage;
+        }
+        // Issue #4197: Log the card click under the ORIGINAL message_id with the
+        // RESOLVED prompt content (not a synthetic id + generic button text).
+        // The system-prompt/history builder looks up incoming content by the
+        // original Feishu message_id; the previous synthetic id
+        // (`card_action_<id>_<ts>`) meant the click was invisible there, so the LLM
+        // only ever saw the card's `[Interactive Card]` text instead of the
+        // `actionPrompts` content. Awaited (not fire-and-forget) so the entry is
+        // persisted before the turn is processed.
+        //
+        // Issue #4197 (refinement): route through logCardInteraction, NOT
+        // logIncomingMessage. A card interaction is a distinct event from
+        // im.message.receive; logCardInteraction registers the click under a
+        // namespaced dedup key (`card_action:<message_id>`) instead of the bare
+        // message_id, so the click can no longer mark the card message as
+        // "processed" and suppress a later im.message.receive for the same card.
+        // (issue #4197 方案 A)
+        await messageLogger.logCardInteraction(message_id, user?.sender_id?.open_id || 'unknown', chat_id, messageContent).catch(err => {
+            logger.warn({ err, messageId: message_id, chatId: chat_id }, 'Failed to log card action');
+        });
+        // Card actions use the same local agent pipeline as text messages.
+        let emitFailed = false;
+        const cardActionMessageId = `card_action_${message_id}_${eventId ?? crypto.randomUUID()}`;
+        try {
+            logger.debug({ messageId: cardActionMessageId, cardMessageId: message_id, chatId: chat_id, actionValue: action.value }, 'Emitting card action as local message to agent');
+            await this.callbacks.emitMessage({
+                // The card id is not unique per click. Keep it in metadata for
+                // prompt/history lookup, but use a unique id for agent turn state.
+                messageId: cardActionMessageId,
+                chatId: chat_id,
+                userId: user?.sender_id?.open_id,
+                content: messageContent,
+                messageType: 'card',
+                timestamp: Date.now(),
+                metadata: {
+                    cardAction: action,
+                    cardMessageId: message_id,
+                    // Preserve the actual Feishu card as the reply thread anchor.
+                    threadRootId: message_id,
+                },
+            });
+            logger.debug({ messageId: cardActionMessageId, cardMessageId: message_id, chatId: chat_id }, 'Card action message emitted successfully');
+        }
+        catch (error) {
+            emitFailed = true;
+            logger.error({ err: error, messageId: message_id, chatId: chat_id }, 'Failed to emit card action message');
+            // Issue #1357: Notify user that their card action was not processed
+            this.callbacks.sendMessage({
+                chatId: chat_id,
+                type: 'text',
+                text: '❌ 处理卡片操作时发生错误，请重试。',
+            }).catch((notifyErr) => {
+                logger.error({ err: notifyErr, chatId: chat_id }, 'Failed to send card action error notification');
+            });
+        }
+        // Try to handle via InteractionManager (only if emit succeeded — the agent
+        // won't process the action if the message was never delivered, so sending
+        // a second error notification would be redundant and confusing).
+        if (!emitFailed) {
+            try {
+                const compatEvent = {
+                    action,
+                    message_id,
+                    chat_id,
+                    user: user ?? { sender_id: { open_id: '' } },
+                    tenant_key: rawData.tenant_key || '',
+                };
+                await this.interactionManager.handleAction(compatEvent);
+            }
+            catch (error) {
+                logger.error({ err: error, messageId: message_id, chatId: chat_id }, 'Card action handler error');
+                await this.callbacks.sendMessage({
+                    chatId: chat_id,
+                    type: 'text',
+                    text: `❌ 处理卡片操作时发生错误：${error instanceof Error ? error.message : '未知错误'}`,
+                });
+            }
+        }
+    }
+    /**
+     * Resolve the effective chat type, detecting thread-capable groups.
+     *
+     * Feishu message events expose `chat_type` as `'p2p' | 'group'` only — both
+     * thread-isolated group forms still arrive with `chat_type === 'group'`:
+     *  1. A true topic group (chat resource `chat_mode === 'topic'`) — Issue #4401.
+     *  2. A group-format group switched to thread messages
+     *     (`chat_mode === 'group'` && `group_message_type === 'thread'`) — Issue #4428.
+     * Without this resolution, every `chat_type === 'topic'` predicate downstream
+     * is structurally dead and thread isolation (#3989/#4304) is silently bypassed.
+     *
+     * Fetches `chat_mode` and `group_message_type` from the same
+     * `GET /open-apis/im/v1/chats/{chat_id}` response (the same call
+     * `checkAndAutoDisableSmallGroup` uses for member counts), cached per chat_id.
+     * Non-group events and cache misses that error fall back to the event's
+     * chat_type so message processing is never blocked.
+     *
+     * @param chatId - Chat the message arrived in.
+     * @param eventChatType - Raw `chat_type` from the message event.
+     * @returns `'topic'` for thread-capable groups, otherwise the event's chat_type.
+     */
+    async resolveTopicChatType(chatId, eventChatType) {
+        // Only group chats can be topic groups; p2p is never topic. Preserving a
+        // literal `'topic'` event value keeps existing tests (and any future event
+        // that does carry it) meaningful.
+        if (eventChatType !== 'group') {
+            return eventChatType;
+        }
+        const cached = this.chatModeCache.get(chatId);
+        if (cached !== undefined) {
+            return isThreadCapableGroup(cached.chatMode, cached.groupMessageType) ? 'topic' : eventChatType;
+        }
+        if (!this.client) {
+            return eventChatType;
+        }
+        try {
+            const response = await this.client.im.chat.get({
+                path: { chat_id: chatId },
+            });
+            // chat_mode / group_message_type exist on the chat resource but are absent
+            // from the SDK's generated types, so read them defensively.
+            const data = response.data;
+            const chatMode = data?.chat_mode;
+            const groupMessageType = data?.group_message_type;
+            this.chatModeCache.set(chatId, { chatMode, groupMessageType });
+            if (isThreadCapableGroup(chatMode, groupMessageType)) {
+                logger.debug({ chatId, chatMode, groupMessageType }, 'Thread-capable group detected (event chat_type was "group")');
+                return 'topic';
+            }
+            return eventChatType;
+        }
+        catch (error) {
+            // Don't cache the failure — let the next message retry.
+            logger.debug({ err: error, chatId }, 'Failed to fetch chat_mode for topic detection; falling back to event chat_type');
+            return eventChatType;
+        }
+    }
+    /**
+     * Check if a group chat has ≤2 members and auto-disable passive mode.
+     *
+     * Uses Feishu API `GET /open-apis/im/v1/chats/{chat_id}` to get member counts.
+     * A group with user_count=1 and bot_count=1 (or fewer) is considered a small group.
+     *
+     * Once detected, the chat is permanently marked as a small group — even if
+     * more members join later, passive mode stays off to avoid disruptive changes.
+     *
+     * Issue #2052: Disable passive mode by default for 2-member group chats.
+     *
+     * @param chatId - Chat ID to check
+     */
+    async checkAndAutoDisableSmallGroup(chatId) {
+        if (!this.client) {
+            return;
+        }
+        try {
+            const response = await this.client.im.chat.get({
+                path: { chat_id: chatId },
+            });
+            const chatData = response.data;
+            if (!chatData) {
+                return;
+            }
+            // user_count and bot_count are strings in Feishu API
+            const userCount = parseInt(chatData.user_count || '0', 10);
+            const botCount = parseInt(chatData.bot_count || '0', 10);
+            const totalMembers = userCount + botCount;
+            if (totalMembers > 0 && totalMembers <= 2) {
+                this.triggerModeManager.markAsSmallGroup(chatId);
+                logger.info({ chatId, userCount, botCount, totalMembers }, 'Small group detected (≤2 members), auto-enabling trigger mode');
+            }
+            else {
+                // Issue #3592: Unmark if group has grown beyond 2 members
+                this.triggerModeManager.unmarkSmallGroup(chatId);
+                logger.debug({ chatId, userCount, botCount, totalMembers }, 'Group has more than 2 members, trigger mode disabled');
+            }
+            // Issue #3592: Record check time for throttling
+            this.triggerModeManager.updateSmallGroupCheckTime(chatId);
+        }
+        catch (error) {
+            // Don't block message processing if member count check fails
+            logger.debug({ err: error, chatId }, 'Failed to check group member count for auto-detection');
+        }
+    }
+}
