@@ -409,12 +409,14 @@ describe('BaseAgent', () => {
         };
       });
 
+      const correlation = { runId: 'run-1', chatId: 'chat-1', sourceMessageId: 'message-1', traceId: 'trace-1' };
       const inputStream = createMockInput([
         {
           type: 'user' as const,
           message: { role: 'user' as const, content: 'Hello world' },
           parent_tool_use_id: null,
           session_id: 'session-1',
+          correlation,
         },
       ]);
 
@@ -427,6 +429,9 @@ describe('BaseAgent', () => {
 
       // The input to queryStream should be an async generator
       expect(capturedInput).toBeDefined();
+      const converted = await (capturedInput as AsyncGenerator).next();
+      expect(converted.value).toEqual({ role: 'user', content: 'Hello world', correlation });
+      expect(converted.value.correlation).not.toBe(correlation);
     });
 
     it('should handle StreamingUserMessage with ContentBlock array', async () => {
