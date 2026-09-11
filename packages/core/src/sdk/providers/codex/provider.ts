@@ -324,6 +324,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
    * Idempotent; unknown keys are a no-op.
    */
   forgetSession(sessionKey: string): void {
+    this.appServerStops.get(sessionKey)?.();
     void this.appServerLifecycles.get(sessionKey)?.close();
     this.appServerLifecycles.delete(sessionKey);
     this.appServerThreadIds.delete(sessionKey);
@@ -1068,6 +1069,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     const sessionKey = options.sessionKey ?? `anon-app-${++this.anonSessionCounter}`;
     const queue: AgentMessage[] = [];
     const wakeups: Array<() => void> = [];
+    this.appServerStops.get(sessionKey)?.();
     let threadId = this.appServerThreadIds.get(sessionKey);
     let done = false;
     let stopped = false;
@@ -1167,6 +1169,20 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       }
     };
 
+    const stopHandle = (reason: string): void => {
+      if (stopped || done) {return;}
+      stopped = true;
+      stopInput();
+      void input.return?.(undefined);
+      interruptFlight = lifecycle?.interrupt(sessionKey).catch((error: unknown) => {
+        push({ type: 'error', content: error instanceof Error ? error.message : String(error), role: 'system' });
+      });
+      turnDone?.(new Error(reason));
+    };
+
+    const stopSession = (): void => stopHandle('codex app-server session closed');
+    this.appServerStops.set(sessionKey, stopSession);
+
     void (async () => {
       try {
         const inputIterator = input[Symbol.asyncIterator]();
@@ -1218,7 +1234,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             this.governor.touchSession(sessionKey);
           } finally {
             await interruptFlight;
-            if (threadId) {this.appServerRoutes.delete(threadId);}
+            if (threadId && this.appServerRoutes.get(threadId) === onNotification) {this.appServerRoutes.delete(threadId);}
             await lifecycle?.close();
             if (this.appServerLifecycles.get(sessionKey) === lifecycle) {this.appServerLifecycles.delete(sessionKey);}
             lifecycle = undefined;
@@ -1236,8 +1252,8 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         await interruptFlight;
         if (stallTimer) {clearTimeout(stallTimer);}
         registration.unregister();
-        this.appServerStops.delete(sessionKey);
-        if (threadId) {
+        if (this.appServerStops.get(sessionKey) === stopSession) {this.appServerStops.delete(sessionKey);}
+        if (threadId && this.appServerRoutes.get(threadId) === onNotification) {
           this.appServerRoutes.delete(threadId);
         }
         done = true;
@@ -1255,18 +1271,6 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       }
     })();
 
-    const stopHandle = (reason: string): void => {
-      if (stopped || done) {return;}
-      stopped = true;
-      stopInput();
-      void input.return?.(undefined);
-      interruptFlight = lifecycle?.interrupt(sessionKey).catch((error: unknown) => {
-        push({ type: 'error', content: error instanceof Error ? error.message : String(error), role: 'system' });
-      });
-      turnDone?.(new Error(reason));
-    };
-
-    this.appServerStops.set(sessionKey, () => stopHandle('codex provider disposed'));
     return {
       handle: {
         close: () => stopHandle('codex app-server stream closed'),
@@ -1296,6 +1300,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         if (threadId) {this.appServerRoutes.get(threadId)?.(method, params);}
       },
       onExit: (exit) => {
+        if (this.appServerLifecycles.get(sessionKey) !== lifecycle) {return;}
         const error = new Error(`codex app-server exited (code=${String(exit.code)}, signal=${String(exit.signal)})`);
         const threadId = lifecycle.snapshot(sessionKey)?.threadId;
         if (threadId) {this.appServerRoutes.get(threadId)?.('transport/exited', { error });}
