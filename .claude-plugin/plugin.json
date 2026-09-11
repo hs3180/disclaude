@@ -1,0 +1,5 @@
+{
+  "name": "disclaude-builtins",
+  "version": "1.0.0",
+  "description": "Built-in skills and agents for disclaude, loaded in place via the SDK local-plugin option (Issue #4224). The loader auto-scans the sibling skills/ and agents/ directories."
+}
