@@ -1,34 +1,6 @@
 /**
- * disclaude service - Main node with both communication and execution capabilities.
- *
- * This self-contained node can:
- * - Handle multiple communication channels (Feishu, REST, etc.)
- * - Execute Agent tasks locally
- *
- * Architecture (Refactored - Issue #435, Issue #695, Issue #1040, Issue #2717):
- * ```
- * ┌─────────────────────────────────────────────────────────────┐
- * │                      disclaude service                           │
- * │                                                             │
- * │  ┌─────────────────────────────────────────────────────────┐│
- * │  │                    Coordination Layer                     ││
- * │  │   - Lifecycle management (start/stop)                     ││
- * │  │   - Channel registration                                   ││
- * │  │   - Local execution setup                                  ││
- * │  └─────────────────────────────────────────────────────────┘│
- * │                                                             │
- * │  ┌───────────────┐ ┌───────────────┐                        │
- * │  │CardActionRouter│ │FeedbackRouter│                        │
- * │  └───────────────┘ └───────────────┘                        │
- * │                                                             │
- * │  ┌─────────────────────────────────────────────────────────┐│
- * │  │              SchedulerService + LocalExecution           ││
- * │  └─────────────────────────────────────────────────────────┘│
- * └─────────────────────────────────────────────────────────────┘
- * ```
- *
- * Issue #1040: Migrated to @disclaude/service
- * Issue #2717: Removed Worker Node / ExecNodeRegistry / WebSocketServerService
+ * Application lifecycle: channels, local harness execution, interaction context
+ * and scheduling. No execution-node roles or remote-node routing are exposed.
  */
 
 import * as path from 'path';

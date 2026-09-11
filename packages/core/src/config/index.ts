@@ -21,7 +21,6 @@ import type {
   DisclaudeConfig,
   AgentPresets,
   ConfigValidationError,
-  TransportConfig,
   DebugConfig,
   SessionTimeoutConfig,
 } from './types.js';
@@ -656,15 +655,6 @@ export class Config {
    */
   static getToolConfig(): DisclaudeConfig['tools'] {
     return fileConfigOnly.tools;
-  }
-
-  /**
-   * Get transport configuration.
-   *
-   * @returns Transport configuration object
-   */
-  static getTransportConfig(): TransportConfig {
-    return fileConfigOnly.transport || { type: 'local' };
   }
 
   /**

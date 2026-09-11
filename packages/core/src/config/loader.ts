@@ -177,7 +177,7 @@ export function validateConfig(config: DisclaudeConfig): boolean {
   }
 
   // Reject obsolete role settings rather than silently treating them as active.
-  const obsoleteRoleKeys = ['primaryNode', 'primary', 'worker', 'nodeType', 'nodeId', 'nodeName', 'enableLocalExec'];
+  const obsoleteRoleKeys = ['primaryNode', 'primary', 'worker', 'nodeType', 'nodeId', 'nodeName', 'enableLocalExec', 'transport', 'runMode'];
   const obsoleteKey = obsoleteRoleKeys.find((key) => Object.hasOwn(config, key));
   if (obsoleteKey) {
     logger.error({ key: obsoleteKey }, 'Execution-node role configuration has been removed. Use disclaude start with agent/channels configuration; see docs/migrations/0.5.1-service.md.');

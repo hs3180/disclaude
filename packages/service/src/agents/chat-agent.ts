@@ -32,7 +32,7 @@
  * - Error handling
  *
  * Issue #2717: Migrated from @disclaude/worker-node to @disclaude/service.
- * The Worker Node concept is being removed — agents now live where they are used.
+ * Agents live with the service that owns their lifecycle.
  */
 
 import {

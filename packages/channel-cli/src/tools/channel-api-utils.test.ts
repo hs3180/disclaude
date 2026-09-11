@@ -342,7 +342,7 @@ describe('getChannelApiClient (REST-only construction)', () => {
     expect(off.opts.baseUrl).toBe('http://127.0.0.1:19200');
   });
 
-  // Issue #4801 (P0): when the primary runs with --api-token, the client must
+  // Issue #4801 (P0): when the service runs with --api-token, the client must
   // attach the bearer token so channel writes don't 401 while the (token-exempt)
   // GET /api/ping probe reports "available".
   it('should forward DISCLAUDE_API_TOKEN as the API token', () => {

@@ -147,7 +147,7 @@ function setupRest(args: Args): string {
   process.env.DISCLAUDE_API_BASE_URL = baseUrl;
   // Issue #4801: mirror the DisclaudeService --api-token into the env the REST
   // client reads, so authenticated writes attach the bearer header. Without
-  // this, a token-enabled primary 401s every channel POST while the probe
+  // this, a token-enabled service 401s every channel POST while the probe
   // still reports "available".
   const apiToken = arg(args, 'api-token');
   if (apiToken !== undefined) {

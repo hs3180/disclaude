@@ -21,7 +21,7 @@ function resolveRestBaseUrl(): string {
  * Resolve the REST API token from the standard env wiring.
  *
  * `DISCLAUDE_API_TOKEN` — mirrors the DisclaudeService `--api-token`.
- * When the primary service runs with `--api-token`, every non-GET REST route
+ * When the service runs with `--api-token`, every non-GET REST route
  * requires `Authorization: Bearer <token>` (http-api-server.ts). Issue #4801:
  * channel-cli previously never attached the header, so enabling the token made
  * all channel writes 401 while `GET /api/ping` (token-exempt) kept the
