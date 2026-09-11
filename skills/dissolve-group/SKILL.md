@@ -88,7 +88,7 @@ bot-chat-mapping.json ──read──→ resolve chatId/key
 
 | Skill | Role |
 |-------|------|
-| `pr-scanner` | Creates groups, tracks mappings (step 4 detects closed PRs) |
+| External automation | May create groups and track their lifecycle |
 | `chat-timeout` | Dissolves groups for expired temporary chats |
 | `rename-group` | Renames groups via lark-cli |
 | `start-discussion` | Creates discussion groups |

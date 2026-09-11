@@ -162,6 +162,6 @@ Concretely, when composing the initialization prompt (Step 3):
 
 | Skill | Relationship |
 |-------|-------------|
-| `pr-scanner` | Separate system for PR review groups (purpose: `pr-review`) |
+| External review automation | May manage review groups separately |
 | `daily-chat-review` | May trigger `start-discussion` when repetitive issues detected |
 | `daily-soul-question` | May trigger `start-discussion` for deep reflection topics |

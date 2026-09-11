@@ -53,7 +53,7 @@ The following is disclaude's complete feature set. Each item is a real use case 
 
 10. **Check PR status** — "看看现在有哪些 open 的 PR"
 11. **View issue details** — "帮我看看 issue #1617 的内容"
-12. **Submit feedback** — "/feedback 搜索功能有时候不太准确"
+12. **Draft feedback** — "帮我整理一份搜索功能的改进建议"
 
 ### Category D: Feishu/Lark Features (飞书功能)
 
