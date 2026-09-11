@@ -226,6 +226,16 @@ describe('ChatSessionPool', () => {
       expect(old.dispose).not.toHaveBeenCalled();
     });
 
+    it('contains a failed backend factory/probe and retains the old session', () => {
+      const pool = new ChatSessionPool({ agentPresets: presets, validatePresetBackend: () => {throw new Error('token=private-backend-detail');} });
+      const old = pool.getOrCreateChatAgent('chat-probe-failed', createMockCallbacks());
+      const result = pool.switchAgentPreset('chat-probe-failed', 'fast');
+      expect(result).toMatchObject({ ok: false, error: expect.stringContaining('current session is unchanged') });
+      expect(JSON.stringify(result)).not.toContain('private-backend-detail');
+      expect(pool.getOrCreateChatAgent('chat-probe-failed', createMockCallbacks())).toBe(old);
+      expect(old.dispose).not.toHaveBeenCalled();
+    });
+
     it('preserves the old agent when candidate construction fails', () => {
       const pool = new ChatSessionPool({ agentPresets: presets, validatePresetBackend: () => ({ available: true }) });
       const old = pool.getOrCreateChatAgent('chat-fail', createMockCallbacks());
