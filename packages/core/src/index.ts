@@ -369,3 +369,5 @@ export {
   STATE_FILE_NAME,
   STATE_VERSION,
 } from './project/index.js';
+
+export { protectSensitiveValues, redactDeclaredSensitive, SensitiveOutputFilter } from './security/sensitive-values.js';
