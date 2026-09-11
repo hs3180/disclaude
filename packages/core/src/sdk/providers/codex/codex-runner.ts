@@ -9,7 +9,7 @@
  * - parse stdout line-by-line as JSONL ThreadEvents (blank / non-JSON lines
  *   are tolerated and logged — schema resilience, cf. exec-adapter.ts)
  * - per-run timeout: SIGTERM → grace → SIGKILL, resolving `timedOut`
- * - stderr: forwarded chunk-wise to the caller (Issue #2920 seam) and kept
+ * - stderr: redacted line-wise before forwarding to the caller (Issue #2920 seam) and kept
  *   as a rolling tail for exit-code error mapping
  * - exit-code / spawn-error mapping left to the caller via the run result
  *
@@ -21,6 +21,7 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 
 import { createLogger } from '../../../utils/logger.js';
+import { RedactedDiagnosticStream } from '../../../utils/redaction.js';
 import type { CodexSandboxLevel } from './sandbox-policy.js';
 import type { CodexThreadEvent } from './exec-adapter.js';
 
@@ -214,6 +215,10 @@ export class CodexExecRunner {
     let killTimer: ReturnType<typeof setTimeout> | null = null;
 
     const stderrTail = createRollingTail(STDERR_TAIL_BYTES);
+    const diagnostics = new RedactedDiagnosticStream(text => {
+      stderrTail.append(text);
+      options.stderr?.(text);
+    });
     const startedAt = Date.now();
     let stdoutLineCount = 0;
     let stderrByteCount = 0;
@@ -313,13 +318,14 @@ export class CodexExecRunner {
       currentChild.stderr?.on('data', (chunk: Buffer) => {
         const text = chunk.toString();
         stderrByteCount += Buffer.byteLength(text);
-        stderrTail.append(text);
-        options.stderr?.(text);
+        diagnostics.write(text);
         logger.debug(
-          { pid: currentChild.pid, chunk: text.slice(0, 1000), chunkLength: text.length },
+          { pid: currentChild.pid, chunkLength: text.length },
           'codex exec stderr chunk'
         );
       });
+
+      currentChild.stderr?.once('end', () => diagnostics.finish());
 
       // ── spawn failure (ENOENT etc.) ────────────────────────────────────
       currentChild.on('error', (error: Error) => {
@@ -354,6 +360,7 @@ export class CodexExecRunner {
 
       // ── exit ───────────────────────────────────────────────────────────
       currentChild.on('close', (code: number | null) => {
+        diagnostics.finish();
         if (settled) {
           return;
         }

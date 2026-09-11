@@ -90,6 +90,20 @@ describe('CodexExecRunner (Issue #4630)', () => {
     fixture.cleanup();
   });
 
+  it('redacts split credentials before callbacks and bounded error tails', async () => {
+    fixture.cleanup();
+    fixture = makeScriptedBinary(`printf 'token=synthetic-' >&2
+sleep 0.03
+printf 'credential\\n-----BEGIN PRIVATE KEY-----\\nraw-key\\n' >&2
+exit 1`);
+    const chunks: string[] = [];
+    const runner = new CodexExecRunner({ binary: fixture.binaryPath });
+    const result = await runner.run({ prompt: 'test', stderr: text => chunks.push(text) }, () => {}).promise;
+    expect(result.exitCode).toBe(1);
+    expect(chunks.join('')).toContain('token=[REDACTED]');
+    expect(JSON.stringify([chunks, result])).not.toMatch(/synthetic-|credential|raw-key/);
+  });
+
   const runWith = (
     body: string,
     runOptions: { timeoutMs?: number } = {},
