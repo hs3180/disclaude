@@ -1,5 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface, type Interface as ReadlineInterface } from 'node:readline';
+import { createLogger } from '../../../utils/logger.js';
+
+const logger = createLogger('CodexAppServerTransport');
 
 type JsonRpcId = number;
 
@@ -46,11 +49,14 @@ export class CodexAppServerTransport {
   private acceptingRequests = true;
   private shutdownStarted = false;
   private exitReported = false;
+  private cleanup?: Promise<CodexAppServerExit>;
 
   constructor(private readonly options: CodexAppServerTransportOptions = {}) {
     this.child = spawn(options.binary ?? 'codex', ['app-server', '--stdio'], {
       env: options.env ?? process.env,
       stdio: ['pipe', 'pipe', 'pipe'],
+      // A dedicated POSIX process group owns ordinary tool descendants too.
+      detached: process.platform !== 'win32',
     });
     this.lines = createInterface({ input: this.child.stdout });
     this.lines.on('line', (line) => this.receive(line));
@@ -68,6 +74,11 @@ export class CodexAppServerTransport {
     this.child.once('close', (code, signal) => {
       this.failAll(new Error(`codex app-server exited (code=${String(code)}, signal=${String(signal)})`));
       this.reportExit({ code, signal, stderrTail: this.stderrTail });
+    });
+    // Descendants can outlive a crashed parent, including with detached stdio.
+    this.child.once('exit', (code, signal) => {
+      this.failAll(new Error(`codex app-server exited (code=${String(code)}, signal=${String(signal)})`));
+      void this.close();
     });
   }
 
@@ -104,17 +115,38 @@ export class CodexAppServerTransport {
 
   close(): Promise<CodexAppServerExit> {
     if (this.shutdownStarted) {
-      return this.exitPromise;
+      return this.cleanup ?? this.exitPromise;
     }
     this.shutdownStarted = true;
     this.acceptingRequests = false;
     this.lines.close();
-    this.child.kill('SIGTERM');
-    const killTimer = setTimeout(() => this.child.kill('SIGKILL'), this.options.killGraceMs ?? 1_000);
-    killTimer.unref();
-    void this.exitPromise.finally(() => clearTimeout(killTimer));
     this.failAll(new Error('codex app-server transport closed'));
-    return this.exitPromise;
+    const signalled = this.signalOwnedGroup('SIGTERM');
+    this.cleanup = (async () => {
+      if (signalled) {
+        // Parent exit is not proof that its children exited. Await the grace
+        // period before escalating the owned group, even after parent close.
+        await new Promise(resolve => setTimeout(resolve, this.options.killGraceMs ?? 1_000));
+        this.signalOwnedGroup('SIGKILL');
+      }
+      return this.exitPromise;
+    })();
+    return this.cleanup;
+  }
+
+  private signalOwnedGroup(signal: NodeJS.Signals): boolean {
+    if (!this.child.pid) {return false;}
+    try {
+      if (process.platform === 'win32') {return this.child.kill(signal);}
+      process.kill(-this.child.pid, signal);
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ESRCH') {return false;}
+      // macOS can report EPERM while a dying group's final member is reaped.
+      // Keep teardown idempotent; record a real signaling failure for operators.
+      logger.warn({ pid: this.child.pid, signal, code: (error as NodeJS.ErrnoException).code }, 'Could not signal owned app-server process group');
+      return signal !== 'SIGKILL';
+    }
   }
 
   getStderrTail(): string {
