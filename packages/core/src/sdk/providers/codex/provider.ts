@@ -206,7 +206,9 @@ export class CodexAgentProvider implements IAgentSDKProvider {
   private readonly builtinRoot: string;
   private readonly transportMode: 'exec' | 'app-server';
   private readonly appServerRoutes = new Map<string, (method: string, params: unknown) => void>();
-  private appServerLifecycle?: CodexAppServerLifecycle;
+  private readonly appServerLifecycles = new Map<string, CodexAppServerLifecycle>();
+  private readonly appServerStops = new Map<string, () => void>();
+  private readonly appServerThreadIds = new Map<string, string>();
   /** Cumulative quota counters (S5, #4632) — see CodexQuotaStats. */
   private readonly quota: CodexQuotaStats = {
     turnsCompleted: 0,
@@ -322,7 +324,9 @@ export class CodexAgentProvider implements IAgentSDKProvider {
    * Idempotent; unknown keys are a no-op.
    */
   forgetSession(sessionKey: string): void {
-    this.appServerLifecycle?.forgetSession(sessionKey);
+    void this.appServerLifecycles.get(sessionKey)?.close();
+    this.appServerLifecycles.delete(sessionKey);
+    this.appServerThreadIds.delete(sessionKey);
     const hadRegistration = this.governor.forgetSession(sessionKey);
     const hadStash = this.threadStash.delete(sessionKey);
     if (hadRegistration || hadStash) {
@@ -382,8 +386,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     }
 
     if (this.transportMode === 'app-server') {
-      this.ensureAppServerLifecycle(binary);
-      return this.queryAppServer(input, options, sandboxDecision.sandbox);
+      return this.queryAppServer(input, options, sandboxDecision.sandbox, binary);
     }
 
     const runner = new CodexExecRunner({
@@ -1058,12 +1061,13 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     input: AsyncGenerator<UserInput>,
     options: AgentQueryOptions,
     sandbox: CodexSandboxLevel,
+    binary: string,
   ): StreamQueryResult {
-    const lifecycle = this.appServerLifecycle as CodexAppServerLifecycle;
+    let lifecycle: CodexAppServerLifecycle | undefined;
     const sessionKey = options.sessionKey ?? `anon-app-${++this.anonSessionCounter}`;
     const queue: AgentMessage[] = [];
     const wakeups: Array<() => void> = [];
-    let threadId: string | undefined;
+    let threadId = this.appServerThreadIds.get(sessionKey);
     let done = false;
     let stopped = false;
     let stopInput!: () => void;
@@ -1075,7 +1079,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     const armStall = (): void => {
       if (stallTimer) {clearTimeout(stallTimer);}
       stallTimer = setTimeout(() => {
-        void lifecycle.interrupt(sessionKey).catch(() => {});
+        void lifecycle?.interrupt(sessionKey).catch(() => {});
         turnDone?.(new Error(`codex app-server stalled for ${stallTimeoutMs}ms`));
       }, stallTimeoutMs);
       stallTimer.unref?.();
@@ -1087,7 +1091,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       evict: () => {
         stopped = true;
         stopInput();
-        void lifecycle.interrupt(sessionKey).catch(() => {});
+        void lifecycle?.interrupt(sessionKey).catch(() => {});
         turnDone?.(new Error('codex app-server session evicted'));
       },
     });
@@ -1164,12 +1168,6 @@ export class CodexAgentProvider implements IAgentSDKProvider {
 
     void (async () => {
       try {
-        threadId = await lifecycle.ensureThread(sessionKey, {
-          cwd: options.cwd,
-          model: codexModelForChatGpt(options.model),
-          sandbox,
-        });
-        this.appServerRoutes.set(threadId, onNotification);
         const inputIterator = input[Symbol.asyncIterator]();
         while (!stopped) {
           const next = await Promise.race([
@@ -1185,6 +1183,12 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           }
           try {
             if (stopped) {break;}
+            lifecycle = this.createAppServerLifecycle(binary, sessionKey);
+            threadId = await lifecycle.ensureThread(sessionKey, { threadId, cwd: options.cwd, model: codexModelForChatGpt(options.model), sandbox });
+            if (this.appServerLifecycles.get(sessionKey) === lifecycle) {this.appServerThreadIds.set(sessionKey, threadId);}
+            if (stopped || this.disposed) {break;}
+            this.appServerRoutes.set(threadId, onNotification);
+            deliveredItems.clear();
             this.governor.touchSession(sessionKey);
             activeTurnId = await lifecycle.startTurn(sessionKey, userInputText(next.value), {
               sandbox,
@@ -1212,6 +1216,12 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             await completed;
             this.governor.touchSession(sessionKey);
           } finally {
+            await interruptFlight;
+            if (threadId) {this.appServerRoutes.delete(threadId);}
+            await lifecycle?.close();
+            if (this.appServerLifecycles.get(sessionKey) === lifecycle) {this.appServerLifecycles.delete(sessionKey);}
+            lifecycle = undefined;
+            if (stallTimer) {clearTimeout(stallTimer);}
             lease.release();
           }
         }
@@ -1225,6 +1235,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         await interruptFlight;
         if (stallTimer) {clearTimeout(stallTimer);}
         registration.unregister();
+        this.appServerStops.delete(sessionKey);
         if (threadId) {
           this.appServerRoutes.delete(threadId);
         }
@@ -1248,34 +1259,34 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       stopped = true;
       stopInput();
       void input.return?.(undefined);
-      interruptFlight = lifecycle.interrupt(sessionKey).catch((error: unknown) => {
+      interruptFlight = lifecycle?.interrupt(sessionKey).catch((error: unknown) => {
         push({ type: 'error', content: error instanceof Error ? error.message : String(error), role: 'system' });
       });
       turnDone?.(new Error(reason));
     };
 
+    this.appServerStops.set(sessionKey, () => stopHandle('codex provider disposed'));
     return {
       handle: {
         close: () => stopHandle('codex app-server stream closed'),
         cancel: () => stopHandle('codex app-server stream cancelled'),
         interrupt: () => stopped
           ? Promise.reject(new Error('codex app-server stream is closed'))
-          : lifecycle.interrupt(sessionKey),
+          : lifecycle?.interrupt(sessionKey) ?? Promise.reject(new Error('No active app-server turn')),
         steer: async (text) => {
-          if (stopped) {throw new Error('codex app-server stream is closed');}
+          if (stopped || !lifecycle) {throw new Error('No active app-server turn');}
           return { turnId: await lifecycle.steer(sessionKey, text) };
         },
         get sessionId(): string | undefined {
-          return lifecycle.snapshot(sessionKey)?.threadId;
+          return threadId;
         },
       },
       iterator,
     };
   }
 
-  private ensureAppServerLifecycle(binary: string): void {
-    if (this.appServerLifecycle) {return;}
-    this.appServerLifecycle = new CodexAppServerLifecycle({
+  private createAppServerLifecycle(binary: string, sessionKey: string): CodexAppServerLifecycle {
+    const lifecycle = new CodexAppServerLifecycle({
       binary,
       env: this.env,
       requestTimeoutMs: this.execTimeoutMs && this.execTimeoutMs > 0 ? this.execTimeoutMs : undefined,
@@ -1285,9 +1296,12 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       },
       onExit: (exit) => {
         const error = new Error(`codex app-server exited (code=${String(exit.code)}, signal=${String(exit.signal)})`);
-        for (const route of this.appServerRoutes.values()) {route('transport/exited', { error });}
+        const threadId = lifecycle.snapshot(sessionKey)?.threadId;
+        if (threadId) {this.appServerRoutes.get(threadId)?.('transport/exited', { error });}
       },
     });
+    this.appServerLifecycles.set(sessionKey, lifecycle);
+    return lifecycle;
   }
 
   createInlineTool(_definition: InlineToolDefinition): unknown {
@@ -1321,7 +1335,11 @@ export class CodexAgentProvider implements IAgentSDKProvider {
 
   dispose(): void {
     this.disposed = true;
-    void this.appServerLifecycle?.close();
+    for (const stop of this.appServerStops.values()) {stop();}
+    this.appServerStops.clear();
+    for (const lifecycle of this.appServerLifecycles.values()) {void lifecycle.close();}
+    this.appServerLifecycles.clear();
+    this.appServerThreadIds.clear();
   }
 
   // --------------------------------------------------------------------------
