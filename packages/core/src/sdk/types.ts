@@ -35,6 +35,8 @@ export type ContentBlock = TextContentBlock | ImageContentBlock;
 export interface UserInput {
   role: 'user';
   content: string | ContentBlock[];
+  /** Host-only identifiers; adapters must not append these to model content. */
+  correlation?: { runId: string; chatId: string; sourceMessageId: string; traceId: string };
 }
 
 /** API 消息格式（用于流式输入） */
@@ -53,6 +55,7 @@ export interface StreamingUserMessage {
   message: StreamingMessageContent;
   parent_tool_use_id: string | null;
   session_id: string;
+  correlation?: UserInput['correlation'];
 }
 
 // ============================================================================
