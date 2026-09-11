@@ -74,23 +74,27 @@ claude --version
 
 ## Quick Start
 
-### Option A: Install a tagged release directly from GitHub
+### Option A: Install a prebuilt package from GitHub Releases
 
-Once the `v0.5.1` tag is published, install that exact release globally:
+Once the `v0.5.1` Release and its package asset are published, install globally:
 
-> Release gate: the current candidate's global GitHub installation test fails.
-> This path must be fixed and revalidated before publishing `v0.5.1`; see the
-> [candidate record](docs/releases/0.5.1/release-candidate.md).
+> 0.5.1 is not published yet. This URL requires the Release asset, not just a tag.
 
 ```bash
-npm install -g "github:hs3180/disclaude#v0.5.1"
+npm install -g "https://github.com/hs3180/disclaude/releases/download/v0.5.1/disclaude-0.5.1.tgz"
 disclaude --version
+disclaude start --help
 ```
 
 This installs from GitHub, not the npm registry; the root package can remain
-private. Git and Node.js 20+ are recommended for the source build. Allow npm
-lifecycle scripts to run (do not use `--ignore-scripts`), because installation
-builds the TypeScript packages through `prepack`.
+private. Use Node.js 20+. The archive already includes compiled packages; users
+do not need Git, TypeScript or Husky. Normal dependency installation is still
+required; do not disable dependency lifecycle scripts globally.
+
+The source shortcut `npm install -g "github:hs3180/disclaude#v0.5.1"` is currently
+unsupported: npm's Git dependency preparation can inherit global installation
+settings. Removing Husky alone does not fix that path. Use the Release archive
+above or a local source checkout below.
 
 For a new installation, the example configuration is available at
 `$(npm root -g)/disclaude/disclaude.config.example.yaml`. Copy it to
@@ -100,7 +104,7 @@ create the workspace directory specified in your configuration before running
 
 See the [0.5.1 release notes](docs/releases/0.5.1.md) for release availability
 and installation details. Before the tag exists, use the source-checkout option
-below; the tagged command will not resolve yet.
+below; the Release asset URL will not resolve yet.
 
 ### Option B: Install the GitHub source distribution
 
@@ -132,6 +136,7 @@ For development or customization, clone the repository:
 git clone https://github.com/hs3180/disclaude.git
 cd disclaude
 npm install
+npm run hooks:install
 ```
 
 The project includes an `.npmrc` file that ensures devDependencies are installed correctly. If you still encounter issues, try:

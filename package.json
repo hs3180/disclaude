@@ -9,7 +9,7 @@
   ],
   "bin": {
     "disclaude": "./bin/disclaude.js",
-    "disclaude-primary": "./packages/primary-node/dist/cli.js"
+    "disclaude-primary": "./bin/disclaude-primary.js"
   },
   "scripts": {
     "build": "node scripts/prune-build-artifacts.mjs && tsc -b",
@@ -51,7 +51,8 @@
     "launchd:chromium:restart": "node scripts/launchd.mjs chromium-cdp restart",
     "launchd:chromium:logs": "node scripts/launchd.mjs chromium-cdp logs",
     "launchd:chromium:status": "node scripts/launchd.mjs chromium-cdp status",
-    "prepare": "husky"
+    "hooks:install": "husky",
+    "test:install": "node scripts/test-package-install.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
