@@ -1,0 +1,5 @@
+{
+  "sourceCommit": "ecc2349487f6d7929ac5560751ba02c9edc15206",
+  "version": "0.5.1",
+  "generator": "scripts/build-git-release.mjs"
+}

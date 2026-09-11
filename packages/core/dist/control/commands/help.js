@@ -1,0 +1,25 @@
+/**
+ * /help 命令处理
+ */
+export const handleHelp = (_command, _context) => {
+    return {
+        success: true,
+        message: [
+            '📖 **命令列表**',
+            '',
+            '| 命令 | 说明 | 用法 |',
+            '|------|------|------|',
+            '| `/help` | 显示帮助信息 | `/help` |',
+            '| `/reset` | 重置当前会话 | `/reset [--no-context]` |',
+            '| `/stop` | 停止当前响应 | `/stop` |',
+            '| `/steer` | 运行中即时纠偏（按后端能力） | `/steer <instruction>` |',
+            '| `/status` | 查看服务状态 | `/status` |',
+            '| `/restart` | 重启整个服务进程 | `/restart` |',
+            '| `/trigger` | 切换触发模式 | `/trigger [mention\\|always\\|auto]` |',
+            '| `/project` | 项目管理 | `/project [use\\|reset\\|info]` |',
+            '| `/agent` | 查看或切换 Agent 预设 | `/agent [current\\|list\\|use <name>]` |',
+            '| `/list-nodes` | 查看已连接的执行节点 | `/list-nodes` |',
+            '| `/debug` | 设置/取消 Debug 群 | `/debug` |',
+        ].join('\n'),
+    };
+};
