@@ -1,8 +1,10 @@
-# 0.5.2 independent-channel candidate
+# 0.5.2 development acceptance record
 
 This replaces the withdrawn #4970 integration and `fc74afe03f071bef645845468cb5cc77d5af7064` distribution. Old global-filter and audit acceptance is not evidence for this candidate. This is development acceptance, not a formal tag, deployment or production restart.
 
-## Candidate identity
+The recorded distribution below predates the agent-defined workflow revision of #4969. It is historical evidence for that recorded source, not acceptance of the current integration. Current CI builds the checkout; release-time acceptance must use the final reviewed source.
+
+## Recorded candidate identity
 
 - Distribution: `d23d5a4db987e096024087bcc809563e8e695908`, branch `release-candidates/0.5.2-channel-release`.
 - Runtime source: `ec64bff0c6c2cbf14439c12c65c9bba5cede24a9`.
@@ -16,7 +18,7 @@ Review the independent PRs before this aggregate integration. After their merge,
 
 | Concern | Changes |
 | --- | --- |
-| Private input, consumer, verified context and registration | #4953, #4964, #4968, #4969; #4955 is included in #4953 |
+| Private input, consumer, verified context and agent-defined workflows | #4953, #4964, #4968, #4969; #4955 is included in #4953 |
 | Input/execution/delivery correlation | #4952, #4967 |
 | Agent-owned shared environment | #4972 |
 | Remove global output classification/filtering from main | #4976 |
@@ -34,7 +36,7 @@ Reproduction: `npm test`, `scripts/test-package-install.mjs`, `scripts/test-git-
 
 ## Boundaries and remaining evidence
 
-The independent channel verifies its initiator, destination, expiry and one-use bindings, passes the private value only through the configured consumer's stdin, and returns fixed public outcomes. Agent/consumer code owns provider, endpoint and credential lifecycle choices. There is no global sensitivity classifier or logger/CLI/harness filter. #4973 remains a separate delegation-contract discussion; #4895 and #4915 are not release gates.
+The agent defines each workflow at task time through the authenticated private-workflows API. The independent channel verifies the resulting initiator, destination, expiry and one-use bindings, passes the private value only through the agent-selected consumer's stdin, and returns fixed public outcomes. No feishu.privateAction configuration is used. Agent/consumer code owns provider, endpoint and credential lifecycle choices. There is no global sensitivity classifier or logger/CLI/harness filter. #4973 remains a separate delegation-contract discussion; #4895 and #4915 are not release gates.
 
 Feishu callbacks and real consumer children are covered by fixtures. No live private card was sent to another user. The 100-turn cleanup regression uses real child processes with a protocol fixture, not 100 live-model turns. Earlier native two-turn continuation/zero-child and DeepSeek compaction tests retain source `587b85e34778770255e4d1941e072ec9680ac88b`; they were not rerun against this new candidate and do not establish acceptance of its private-channel changes.
 
