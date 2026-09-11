@@ -40,13 +40,15 @@ describe('Git distribution release gate (#4922)', () => {
             `github:hs3180/disclaude#${candidate.commit}`,
             candidate.sourceFingerprint,
           ],
-          { cwd: resolve('.'), encoding: 'utf8', timeout: 480_000 }
+          { cwd: resolve('.'), encoding: 'utf8', timeout: 960_000 }
         );
         expect(node22Output).toContain('Runtime: v22.23.2; npm: 11.6.0');
+        expect(node22Output).toContain('Runtime: v22.23.2; npm: 10.9.9');
+        expect(node22Output.match(/CLI_START_STOP_RESTART_OK/g)).toHaveLength(3);
         expect(node22Output).toContain('PACKAGE_INSTALL_OK 0.5.1');
         console.info(node22Output.trim());
       }
     },
-    750_000
+    1_250_000
   );
 });
