@@ -371,3 +371,4 @@ export {
 } from './project/index.js';
 
 export { protectSensitiveValues, redactDeclaredSensitive, SensitiveOutputFilter } from './security/sensitive-values.js';
+export { createPrivateProcessAction, type PrivateProcessActionOptions } from './security/private-process-action.js';
