@@ -35,6 +35,6 @@ await response.body?.cancel();
 process.exitCode = response.ok ? 0 : 1;
 ```
 
-Choose a consumer that completes its work before returning. The host terminates the owned POSIX group on completion or timeout; this is resource ownership, not an OS sandbox. Configure filesystem/network isolation separately when the installed consumer itself is untrusted. Protect any derived credential with the harness's explicit declaration and bounded distribution tools; do not persist the original form value.
+Choose a consumer that completes its work before returning. The host terminates the owned POSIX group on completion or timeout; this is resource ownership, not an OS sandbox. Configure filesystem/network isolation separately when the installed consumer itself is untrusted. The agent or external skill decides how to use or exchange the received value. This channel does not sanitize arbitrary later consumer activity or own its credential lifecycle.
 
-The explicit sensitive-value/logger PRs are dependencies of this integration. Core consumers can also be supplied programmatically through `FeishuChannelConfig.privateInput`; configuration does not override an explicitly injected consumer.
+This channel has no global logger, sensitivity registry or harness-output filter dependency. Consumers can also be supplied programmatically through `FeishuChannelConfig.privateInput`; configuration does not override an explicitly injected consumer.
