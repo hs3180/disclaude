@@ -165,3 +165,27 @@ describe('runtime-env', () => {
     });
   });
 });
+
+
+describe('runtime credential infrastructure boundary', () => {
+  it('leaves credential names and lifetime selection to the agent', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-policy-'));
+    try {
+      setRuntimeEnv(dir, 'CUSTOM_PROVIDER_CREDENTIAL', 'synthetic-value', { expiresAt: new Date(Date.now() + 86400000).toISOString() });
+      setRuntimeEnv(dir, 'ANOTHER_SERVICE_TOKEN', 'another-value');
+      expect(loadRuntimeEnv(dir)).toMatchObject({ CUSTOM_PROVIDER_CREDENTIAL: 'synthetic-value', ANOTHER_SERVICE_TOKEN: 'another-value' });
+    } finally {fs.rmSync(dir, { recursive: true, force: true });}
+  });
+  it('honors declared expiry and rejects explicit process-control injection', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-policy-'));
+    try {
+      fs.writeFileSync(path.join(dir, '.runtime-env'), 'CUSTOM_TOKEN=secret\nCUSTOM_TOKEN_EXPIRES_AT=2000-01-01T00:00:00Z\nNODE_OPTIONS=unsafe\nSAFE_TOKEN=valid\n');
+      expect(loadRuntimeEnv(dir)).toEqual({ SAFE_TOKEN: 'valid' });
+      for (const key of ['NODE_OPTIONS', 'LD_PRELOAD', 'PATH', 'HTTPS_PROXY', 'GIT_SSH_COMMAND']) {
+        expect(() => setRuntimeEnv(dir, key, 'unsafe')).toThrow('Unsafe runtime');
+      }
+      expect(() => setRuntimeEnv(dir, 'TOKEN', 'value\nNODE_OPTIONS=unsafe')).toThrow('Unsafe runtime');
+      expect(() => setRuntimeEnv(dir, 'TOKEN', 'value', { expiresAt: 'invalid' })).toThrow('expiry');
+    } finally {fs.rmSync(dir, { recursive: true, force: true });}
+  });
+});

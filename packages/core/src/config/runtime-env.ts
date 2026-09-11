@@ -23,6 +23,14 @@ import { readRuntimeFile, writeRuntimeFile } from './runtime-env-file.js';
 
 const logger = createLogger('RuntimeEnv');
 
+// These variables alter executable loading, injected startup code or trust /
+// proxy settings. Credential names and business permissions remain agent policy.
+const PROCESS_CONTROL = /^(?:PATH|SHELL|ENV|BASH_ENV|NODE_OPTIONS|NODE_EXTRA_CA_CERTS|PYTHONPATH|PYTHONHOME|PYTHONSTARTUP|RUBYOPT|PERL5OPT|JAVA_TOOL_OPTIONS|_JAVA_OPTIONS|GIT_SSH_COMMAND|GIT_CONFIG.*|LD_.*|DYLD_.*|SSL_CERT_FILE|SSL_CERT_DIR|HTTPS?_PROXY|ALL_PROXY|NO_PROXY)$/i;
+const EXPIRY_SUFFIX = '_EXPIRES_AT';
+function acceptsRuntimeKey(key: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(key) && !PROCESS_CONTROL.test(key);
+}
+
 const FILENAME = '.runtime-env';
 
 /**
@@ -56,17 +64,27 @@ export function loadRuntimeEnv(workspaceDir: string, strict = false): Record<str
 
   try {
     const content = readRuntimeFile(filePath);
-    const env: Record<string, string> = {};
+    const env: Record<string, string> = Object.create(null) as Record<string, string>;
 
     for (const line of content.split('\n')) {
       const trimmed = line.trim();
       if (!trimmed || trimmed.startsWith('#')) { continue; }
       const eqIndex = trimmed.indexOf('=');
       if (eqIndex > 0) {
-        env[trimmed.slice(0, eqIndex).trim()] = unquoteValue(trimmed.slice(eqIndex + 1).trim());
+        const key = trimmed.slice(0, eqIndex).trim();
+        const value = unquoteValue(trimmed.slice(eqIndex + 1).trim());
+        if (acceptsRuntimeKey(key) && !value.includes('\0')) {env[key] = value;}
       }
     }
 
+    // Expiry is declared by the credential issuer/agent. Do not impose a
+    // provider-specific key allowlist or a universal credential lifetime.
+    for (const [key, value] of Object.entries(env)) {
+      if (key.endsWith(EXPIRY_SUFFIX) && (!Number.isFinite(Date.parse(value)) || Date.parse(value) <= Date.now())) {
+        delete env[key.slice(0, -EXPIRY_SUFFIX.length)];
+        delete env[key];
+      }
+    }
     if (Object.keys(env).length > 0) {
       logger.debug({ keys: Object.keys(env) }, 'Loaded runtime env vars');
     }
@@ -80,12 +98,19 @@ export function loadRuntimeEnv(workspaceDir: string, strict = false): Record<str
 /**
  * Write a runtime env var to the workspace file.
  * Creates or appends to `.runtime-env` in the workspace directory.
- * Thread-safe for single-writer scenarios.
+ * Optional expiry comes from the agent/issuer; replacing a value clears its
+ * previous expiry unless supplied again. Thread-safe for single-writer scenarios.
  */
-export function setRuntimeEnv(workspaceDir: string, key: string, value: string): void {
+export function setRuntimeEnv(workspaceDir: string, key: string, value: string, options: { expiresAt?: string } = {}): void {
+  if (!acceptsRuntimeKey(key) || /[\r\n\0]/.test(value)) {throw new Error('Unsafe runtime environment entry');}
+  if (options.expiresAt !== undefined && (!Number.isFinite(Date.parse(options.expiresAt)) || Date.parse(options.expiresAt) <= Date.now())) {
+    throw new Error('Runtime credential expiry must be a future date');
+  }
   const filePath = path.join(workspaceDir, FILENAME);
   const existing = loadRuntimeEnv(workspaceDir, true);
   existing[key] = value;
+  delete existing[`${key}${EXPIRY_SUFFIX}`];
+  if (options.expiresAt !== undefined) {existing[`${key}${EXPIRY_SUFFIX}`] = new Date(options.expiresAt).toISOString();}
 
   const lines = Object.entries(existing).map(([k, v]) => `${k}=${quoteValue(v)}`);
   writeRuntimeFile(filePath, `${lines.join('\n')}\n`);
@@ -101,6 +126,7 @@ export function deleteRuntimeEnv(workspaceDir: string, key: string): void {
   if (!(key in existing)) { return; }
 
   delete existing[key];
+  delete existing[`${key}${EXPIRY_SUFFIX}`];
   const filePath = path.join(workspaceDir, FILENAME);
 
   if (Object.keys(existing).length === 0) {
