@@ -293,3 +293,109 @@ echo '{"id":4,"result":{}}'
     provider.dispose();
   });
 });
+
+describe('app-server session capacity regression', () => {
+  function controlledProvider() {
+    const fixture = providerFixture('exit 0');
+    writeFileSync(join(fixture.dir, 'bin', 'codex'), `#!${process.execPath}
+require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
+  const request = JSON.parse(line);
+  if (!request.id) return;
+  const threadId = request.params?.threadId || 'thread-' + process.pid;
+  let result = {};
+  if (request.method === 'thread/start' || request.method === 'thread/resume') result = { thread: { id: threadId } };
+  if (request.method === 'turn/start') result = { turn: { id: 'turn-1' } };
+  if (request.method === 'turn/steer') result = { turnId: 'turn-1' };
+  console.log(JSON.stringify({ id: request.id, result }));
+  if (request.method === 'turn/steer') console.log(JSON.stringify({method:'turn/completed',params:{threadId,turn:{id:'turn-1',status:'completed'}}}));
+});
+`);
+    return fixture.provider;
+  }
+
+  function start(provider: CodexAgentProvider, sessionKey: string) {
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const result = provider.queryStream((async function* () {
+      yield { role: 'user', content: 'hold until steer' } as UserInput;
+      await pending;
+    })(), { sessionKey, settingSources: [] } as AgentQueryOptions);
+    const messages: AgentMessage[] = [];
+    const collecting = (async () => {
+      for await (const message of result.iterator) {messages.push(message);}
+    })();
+    return { ...result, messages, collecting, release };
+  }
+  type Stream = ReturnType<typeof start>;
+  const started = (stream: Stream) => vi.waitFor(() => expect(stream.messages.some(m => m.type === 'status')).toBe(true));
+  const complete = async (stream: Stream) => {
+    await stream.handle.steer?.('finish');
+    await vi.waitFor(() => expect(stream.messages.some(m => m.content === '✅ Complete')).toBe(true));
+  };
+
+  it('protects the older running turn, silently evicts idle, and resumes its thread', async () => {
+    const provider = controlledProvider();
+    provider.setGovernanceLimits({ maxActiveSessions: 2, maxConcurrentRuns: 2 });
+    const streams: Stream[] = [];
+    try {
+      const active = start(provider, 'active'); streams.push(active);
+      await started(active);
+      const idle = start(provider, 'idle'); streams.push(idle);
+      await started(idle);
+      await complete(idle);
+      await vi.waitFor(() => expect(provider.getGovernanceStats().runningRuns).toBe(1));
+      const threadId = idle.handle.sessionId;
+      const newcomer = start(provider, 'new'); streams.push(newcomer);
+      await started(newcomer);
+      await idle.collecting;
+      expect(idle.messages.filter(m => m.type === 'error')).toEqual([]);
+      expect(idle.messages.filter(m => m.metadata?.terminatedReason === 'evicted')).toEqual([
+        { type: 'result', content: '', role: 'system', metadata: { terminatedReason: 'evicted' } },
+      ]);
+      expect(active.messages.some(m => m.type === 'result' || m.type === 'error')).toBe(false);
+      await complete(active);
+      await complete(newcomer);
+      await vi.waitFor(() => expect(provider.getGovernanceStats().runningRuns).toBe(0));
+      const resumed = start(provider, 'idle'); streams.push(resumed);
+      await started(resumed);
+      expect(resumed.handle.sessionId).toBe(threadId);
+      expect(provider.getGovernanceStats().activeSessions).toBe(2);
+    } finally {
+      provider.dispose();
+      for (const stream of streams) {stream.release();}
+      await Promise.all(streams.map(s => s.collecting));
+    }
+    expect(provider.getGovernanceStats().activeSessions).toBe(0);
+  });
+
+  it('queues at an all-busy cap and removes cancelled admission without spawning a turn', async () => {
+    const provider = controlledProvider();
+    provider.setGovernanceLimits({ maxActiveSessions: 1, maxConcurrentRuns: 1 });
+    const streams: Stream[] = [];
+    try {
+      const active = start(provider, 'active'); streams.push(active);
+      await started(active);
+      const cancelled = start(provider, 'cancelled'); streams.push(cancelled);
+      const waiting = start(provider, 'waiting'); streams.push(waiting);
+      // Let the input generators reach admission before cancelling.
+      await new Promise(resolve => setImmediate(resolve));
+      expect(provider.getGovernanceStats().activeSessions).toBe(1);
+      expect(provider.getGovernanceStats().evictedSessions).toBe(0);
+      cancelled.handle.cancel();
+      await cancelled.collecting;
+      expect(cancelled.messages).toEqual([]);
+      expect(waiting.messages).toEqual([]);
+      await complete(active);
+      await started(waiting);
+      await active.collecting;
+      expect(active.messages.some(m => m.metadata?.terminatedReason === 'evicted')).toBe(true);
+      expect(provider.getGovernanceStats().runningRuns).toBe(1);
+      await complete(waiting);
+    } finally {
+      provider.dispose();
+      for (const stream of streams) {stream.release();}
+      await Promise.all(streams.map(s => s.collecting));
+    }
+    expect(provider.getGovernanceStats().activeSessions).toBe(0);
+  });
+});

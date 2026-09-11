@@ -234,3 +234,64 @@ describe('CodexSessionGovernor forgetSession (Issue #4644)', () => {
     expect(g.getStats().evictedSessions).toBe(1);
   });
 });
+
+describe('busy session admission', () => {
+  it('evicts a newer idle session instead of an older running turn', async () => {
+    const g = new CodexSessionGovernor({ maxActiveSessions: 2 });
+    const evicted: string[] = [];
+    const {signal} = new AbortController();
+    const active = await g.acquireSession('active', { evict: () => evicted.push('active') }, signal);
+    const idle = await g.acquireSession('idle', { evict: () => evicted.push('idle') }, signal);
+    idle.setBusy(false);
+    const next = await g.acquireSession('next', { evict: NOOP }, signal);
+    expect(evicted).toEqual(['idle']);
+    expect(g.getStats().activeSessions).toBe(2);
+    active.unregister();
+    next.unregister();
+  });
+
+  it('waits FIFO when all sessions are busy and cancels pending admission', async () => {
+    const g = new CodexSessionGovernor({ maxActiveSessions: 1 });
+    const {signal} = new AbortController();
+    const first = await g.acquireSession('first', { evict: NOOP }, signal);
+    const cancelled = new AbortController();
+    const abortResult = g.acquireSession('cancelled', { evict: NOOP }, cancelled.signal);
+    const rejection = expect(abortResult).rejects.toThrow('admission cancelled');
+    const order: string[] = [];
+    const second = g.acquireSession('second', { evict: NOOP }, signal).then(r => {order.push('second'); return r;});
+    const third = g.acquireSession('third', { evict: NOOP }, signal).then(r => {order.push('third'); return r;});
+    await Promise.resolve();
+    expect(order).toEqual([]);
+    expect(g.getStats().activeSessions).toBe(1);
+    cancelled.abort();
+    await rejection;
+    first.setBusy(false);
+    const admitted = await second;
+    expect(order).toEqual(['second']);
+    first.unregister(); // a late eviction cleanup cannot free the admitted session
+    expect(g.getStats().activeSessions).toBe(1);
+    admitted.unregister();
+    (await third).unregister();
+    expect(order).toEqual(['second', 'third']);
+    expect(g.getStats().activeSessions).toBe(0);
+  });
+
+  it('wakes admissions when capacity grows and ignores stale busy updates', async () => {
+    const g = new CodexSessionGovernor({ maxActiveSessions: 1 });
+    const {signal} = new AbortController();
+    const old = await g.acquireSession('same', { evict: NOOP }, signal);
+    const replacement = await g.acquireSession('same', { evict: NOOP }, signal);
+    old.setBusy(false);
+    let admitted = false;
+    const waiting = g.acquireSession('other', { evict: NOOP }, signal).then(r => {admitted = true; return r;});
+    await Promise.resolve();
+    expect(admitted).toBe(false);
+    g.setLimits({ maxActiveSessions: 2 });
+    (await waiting).unregister();
+    replacement.unregister();
+    const aborted = new AbortController();
+    aborted.abort();
+    await expect(g.acquireSession('never', { evict: NOOP }, aborted.signal)).rejects.toThrow('cancelled');
+    expect(g.getStats().activeSessions).toBe(0);
+  });
+});
