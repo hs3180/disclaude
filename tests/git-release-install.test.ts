@@ -44,7 +44,7 @@ describe('Git distribution release gate (#4922)', () => {
         ],
         { cwd: resolve('.'), encoding: 'utf8', timeout: 240_000 }
       );
-      expect(output).toContain('PACKAGE_INSTALL_OK 0.5.1');
+      expect(output).toContain(`PACKAGE_INSTALL_OK ${candidate.version}`);
       console.info(output.trim());
       if (process.env.GITHUB_ACTIONS === 'true') {
         const { stdout: node22Output } = await execFileAsync(
@@ -59,7 +59,7 @@ describe('Git distribution release gate (#4922)', () => {
         expect(node22Output).toContain('Runtime: v22.23.2; npm: 11.6.0');
         expect(node22Output).toContain('Runtime: v22.23.2; npm: 10.9.9');
         expect(node22Output.match(/CLI_START_STOP_RESTART_OK/g)).toHaveLength(3);
-        expect(node22Output).toContain('PACKAGE_INSTALL_OK 0.5.1');
+        expect(node22Output).toContain(`PACKAGE_INSTALL_OK ${candidate.version}`);
         console.info(node22Output.trim());
       }
     },
