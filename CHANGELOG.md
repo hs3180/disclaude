@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - Unreleased
+
+### Added
+
+- Agent-defined private input workflows through `disclaude channel request_private_input`, with one-use identity-bound delivery and fixed public outcomes.
+- Prompt-based external skill authoring guidance, including GitHub App creation and authentication in one external skill.
+
+### Fixed
+
+- Owned Codex process cleanup and resource diagnostics, bounded UNKNOWN recovery without input replay, and queued input-to-delivery correlation.
+- Internal tool/status visibility, explicit backend failure behavior and non-native compaction boundaries.
+- Generated distribution fingerprints now include nested runtime sources.
+
+### Changed
+
+- Move bundled GitHub authentication and automation skills out of the distribution; existing user workspaces and schedules require explicit migration.
+- Keep credential lifecycle with agents and remove global security-output filtering.
+- Replace committed Git candidate fixtures with CI installation checks built from the current checkout.
+
+See [0.5.2 release notes](docs/releases/0.5.2.md) for migration, verification and limits. No final tag is implied by this unreleased entry.
+
 ## [0.5.1] - Unreleased
 
 ### Fixed

@@ -1,61 +1,41 @@
-# Withdrawn candidate: historical evidence only
+# 0.5.2 final validation
 
-This candidate and integration PR #4970 were withdrawn after owner review of #4956. They contain rejected global output protection and security-audit work. The results below are historical only and do not establish acceptance of the revised independent-channel scope. #4915 is no longer a release gate.
+Validated on 2026-09-11 after the agent-defined channel CLI workflow and prompt-only skill authoring revisions. Earlier candidates do not establish acceptance of this scope.
 
-This records earlier development acceptance on 2026-09-11. Independent changes remain under review; no formal release/tag, deployment or production restart has been performed.
+## Exact artifact identity
 
-## Candidate identity
+- Source: `cd616c6e977642e65a5276d3b104e92534a12b3d`.
+- Runtime fingerprint: `af15453846c97b088bb0fb8d4fef29eb4b3f2bb98ea6d410253001cd2ae6ac2b`.
+- Generated Git distribution: `11b928a2f38f0ca0d81e24c3f0dc79dd6bf896ac`, branch `release-candidates/0.5.2-final`.
+- Archive: `disclaude-0.5.2.tgz`, 728933 bytes, 314 files.
+- Archive SHA-256: `dc9ed43865d6173502ea6037eb47932ed1aba10629e1516e66f2d6e2e6256d6a`.
 
-- Distribution: [`fc74afe03f071bef645845468cb5cc77d5af7064`](https://github.com/hs3180/disclaude/commit/fc74afe03f071bef645845468cb5cc77d5af7064), branch `release-candidates/0.5.2-agent-owned`.
-- Version: `0.5.2`.
-- Runtime source: `a9927a9f3a71cecabae706fd3f3e3975cd5da22f` on the temporary integration branch.
-- Source fingerprint: `31e952adcb9b02136500dce46c15a938dd04d9ab2fc57d1ecec5f1af907c7995`.
-- [Integration / Linux CI PR #4970](https://github.com/hs3180/disclaude/pull/4970). This draft aggregates independent PRs for verification; review the individual changes first, then rebase release-only changes after they merge.
-- [Fingerprint repair #4963](https://github.com/hs3180/disclaude/pull/4963) includes nested runtime source. Earlier candidate checks accidentally omitted `packages/*/src/**`; older installation results are not evidence for this runtime.
+This is an explicit release-time artifact, not a tracked candidate fixture or a requirement to regenerate candidates for PRs. This evidence document was completed after artifact generation; the artifact contains the earlier in-progress evidence page. Subsequent evidence-only commits do not change the tested runtime. A newly generated formal release archive must be identified and checked separately.
 
-## Automated and installed-runtime checks
+## Completed local acceptance
 
-Combined build, type check, lint and full suite passed: **4,730 passed, one skipped, 224 files**. The local skip is the CI-specific installation wrapper; installations were also exercised directly below.
-
-| Host | Node | npm | Actual Git installation and CLI start/stop/restart |
-| --- | --- | --- | --- |
-| macOS | 20.20.2 | 10.9.9 | Pass |
-| macOS | 20.20.2 | 11.6.0 | Pass |
-| macOS | 22.23.2 | 10.9.9 | Pass |
-| macOS | 22.23.2 | 11.6.0 | Pass |
-| Linux CI | Node 20 / 22 | npm 10 / 11 | [Current-candidate CI gate](https://github.com/hs3180/disclaude/actions/runs/34589655470); require Unit Tests and Test Coverage success |
-
-Same-prefix upgrade and rollback passed on macOS Node 20/npm 10: pinned 0.5.1 distribution `55cb48616bca0ac08e95af1e0c746f6daddcf982` → this 0.5.2 candidate → the same 0.5.1 distribution. Each phase started through the public CLI, returned healthy status, stopped cleanly and released its instance lock. Configuration, `.runtime-env` and a user-data fixture remained byte-identical. This establishes the tested 0.5.1 baseline; direct 0.5.0 upgrade is not claimed.
-
-Reproduction: `scripts/test-package-install.mjs`, `scripts/test-git-node22.mjs`, and the integration branch's `scripts/test-upgrade-rollback.mjs`. The Linux CI installation gate also runs the pinned upgrade/rollback sequence. Every run uses isolated prefixes, configuration and loopback endpoints; none restarts a production service or prompts a live channel.
-
-## Live backend checks on combined runtime
-
-The following live checks used combined source `587b85e34778770255e4d1941e072ec9680ac88b`. The latest candidate adds CLI output protection and shared-environment guidance and removes rejected runtime-policy/skill changes; its backend implementations are unchanged. These live results retain their original source attribution.
-
-Native Codex 0.154.0 used an isolated home/workspace with copied owner-only auth. Turn one invoked a shell tool to write exactly `ready` to `acceptance.txt`; turn two used a new app-server process and recalled `cobalt orchard 052 SECOND_OK`. Both results completed without error. The first process group was absent between turns and all observed groups were absent after the second turn. The 100-turn real-child regression also passes in the combined suite.
-
-DeepSeek `deepseek-v4-flash` through Claude crossed an explicit 100,000-token compaction window using disposable archive rows. Three turns completed, a compaction boundary was observed, a random marker survived, continuation succeeded, and `17 * 19 = 323` was retained. There were no failed turns. The harness explicitly registered its API key for protection during this test.
-
-Local raw reports are `/tmp/052-native-integrated.log`, `/tmp/disclaude-052-compact-integrated-result.json`, `/tmp/052-agent-owned-mac-node20.log`, `/tmp/052-agent-owned-mac-matrix.log`, `/tmp/052-agent-owned-upgrade.log` and `/tmp/052-agent-owned-full-tests.log`. These machine-local paths are provenance references, not durable release assets; CI output and this summary are the shared evidence.
-
-## P0 review map
-
-| Concern | Independent changes / acceptance |
+| Check | Result |
 | --- | --- |
-| Owned children / forget / resource metrics | #4937, #4940, #4948, #4951, #4957, #4967; 100-turn fixture and native two-turn zero-child boundaries |
-| Bounded UNKNOWN recovery / no automatic input replay | #4934, #4938; startup and post-tool failure regressions |
-| Compaction / explicit backend failure | #4939, #4943; native/non-native boundaries and live threshold check |
-| Private authentication infrastructure | #4946, #4953, #4955, #4958, #4964, #4968, #4969; configured process, verified initiator context, one-use bindings and value-free results |
-| Shared environment and agent-owned policy | #4933, #4972; safe file primitives and common sharing/concurrency/snapshot guidance. #4949/#4950 were closed and their changes were removed from this candidate. |
-| Explicit diagnostics / visibility | #4930, #4931, #4954, #4956, #4959, #4960, #4962, #4965, #4966, #4971; no sensitivity classifier, declared-value tests across environments and chunk boundaries |
-| Input → execution → delivery correlation | #4942, #4945, #4952, #4967; queued-turn receipt tests and per-process frozen context |
-| Threat model and supply chain review | #4961; source findings, reachability distinctions and explicit remaining work |
+| Build, TypeScript, ESLint | PASS, Node 20.20.2 / npm 10.9.9 |
+| Full suite | PASS: 224 files, 4688 tests passed, 1 CI-only install check skipped locally |
+| Actual remote Git install on macOS | PASS: Node 20.20.2 and 22.23.2, each with npm 10.9.9 and 11.6.0; isolated install, version/fingerprint, CLI start/stop/restart |
+| Same-prefix upgrade and rollback | PASS: 0.5.1 → 0.5.2 → 0.5.1; configuration, `.runtime-env` and user data preserved |
+| Installed private-input CLI | PASS: actual packaged CLI → authenticated local HTTP service → workflow consumer stdin; verified actor/source context, wrong-actor rejection, replay rejection and no value reflected in CLI/card output |
+| Native Codex live continuation | PASS: two turns, file creation and recall after a new app-server; zero remaining managed processes between turns and after completion |
+| DeepSeek live compaction | PASS: deepseek-v4-flash, explicit 100000-token window; compaction occurred, marker retained, continuation and arithmetic correct, three completed turns and zero failed turns |
+| Prompt-only skill | PASS: metadata validation and actual built-in discovery; single external GitHub App creation/authentication skill example |
+| Distribution inventory | PASS: five removed GitHub skills absent; authoring prompt present; old creation script, local configuration, `.runtime-env`, `.local`, and fixed candidate fixture absent |
 
-## Open gates and limits
+The private-input acceptance used a synthetic card transport/callback with the installed runtime, real HTTP and real child process; it did not send a live Feishu card. Backend credentials were supplied only in isolated local acceptance environments and are not part of the artifact or evidence bundle.
 
-- Historical external check (removed from the release gate): the AIvoluation GitHub App has `security_events: read` but no `secret_scanning_alerts` permission. Its repository-scoped token receives HTTP 403 from the real alerts endpoint. Neither that response nor human access to the GitHub UI establishes a successful read.
-- Linux installation and upgrade evidence is in the linked CI job. Require every job on the newest HEAD to pass after every rebase or integration update; older green checks are insufficient.
-- Feishu transport and configured consumers are tested through real callback/child-process fixtures. No live private card was sent to another user. Installed consumer code owns its authorization, endpoint and credential-exchange policy; disclaude itself sends the original value only through the bound private path.
-- Exact-value protection covers harness declarations; transformed/encoded or undeclared copies are not classified. Process groups reclaim ordinary owned descendants, not processes that deliberately escape an OS boundary.
-- The development candidate does not imply 0.5.1's separately tracked Docker validation is complete, nor does it authorize a formal 0.5.2 release.
+## CI and review gates
+
+The independent prompt authoring change [#4983](https://github.com/hs3180/disclaude/pull/4983) is merged as `8f9efce9c77a510da258bb16ef9f1cb8b994c533`. On 2026-09-12, the release branch synchronized that main commit without runtime changes. Its runtime fingerprint remains the exact value above. [#4980](https://github.com/hs3180/disclaude/pull/4980) now contains only six release-preparation files; no feature dependency remains.
+
+[CI run 34613059761](https://github.com/hs3180/disclaude/actions/runs/34613059761) passed all four checks on `775c133103e79847a2bda50f3b1406412b610a31`: lint/type, unit, build and coverage. Linux passed 224 files and 4689 tests with zero skips, including the real-child 100-turn cleanup fixture. Checkout-generated archive installation and CLI start/stop/restart passed on Node/npm pairs 20.20.2/10.8.2, 22.23.2/11.6.0, 20.20.2/11.6.0 and 22.23.2/10.9.9. This is distinct from the actual remote Git installation verified above.
+
+Require the synchronized PR HEAD's four CI checks before merging; the final run identity is recorded in the PR and release handoff after this documentation commit. No fixed candidate fixture is maintained. The reviewed distribution remains unchanged; synchronizing identical runtime content does not require a replacement distribution.
+
+## Scope and limits
+
+No formal tag, release publication, deployment, production restart, Docker acceptance or live private card was performed. Provider policy and credential lifecycle remain agent/external-skill responsibilities. No global sensitivity classifier, comprehensive security audit, task capability grant implementation (#4973), or Secret Scanning permission gate is claimed. Supported release acceptance here covers Node 20/22; it does not claim an exhaustive matrix of every version allowed by the package engine range.
