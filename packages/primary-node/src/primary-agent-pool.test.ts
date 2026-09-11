@@ -40,6 +40,11 @@ vi.mock('@disclaude/core', async (importOriginal) => {
   return {
     ...actual,
     createLogger: () => mockLogger,
+    // Preset tests supply their own maps; legacy pool tests need no presets.
+    // Developer config must not change the factory arguments or reset routing.
+    Config: class extends actual.Config {
+      static getAgentPresets() { return undefined; }
+    },
   };
 });
 
