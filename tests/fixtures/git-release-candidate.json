@@ -1,7 +1,6 @@
 {
-  "tag": "v0.5.1",
-  "commit": "55cb48616bca0ac08e95af1e0c746f6daddcf982",
-  "sourceCommit": "10cc7ecd258216436381471a9757aec2070cd0f8",
-  "sourceFingerprint": "2539564935d40b6b312462c07130014ea5f9ecc3049b8227352cb5f9cec9f27e",
-  "version": "0.5.1"
+  "sourceCommit": "4dd8de3c92705ec77be8635b53b739e4265019a0",
+  "sourceFingerprint": "0fc826d9c52dd6fb28119521ae5de3b68821e3f4d6a1548db6da23d459f9edd7",
+  "version": "0.5.1",
+  "commit": "0dec62dce8dc7f9f347a83eb8eaf13810770f3cd"
 }
