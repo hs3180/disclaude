@@ -189,7 +189,7 @@ case stays environment-blocked):
 
 The one outstanding item — the same matrix through the **nginx-fronted compose
 endpoint** rather than a bare loopback listener — was executed from the
-disclaude **primary container itself** (a peer container on the compose Docker
+disclaude **service container itself** (a peer container on the compose Docker
 network), which exercises exactly the path the bare-listener run could not:
 
 - Endpoint: `http://disclaude-chromium:9222` — the compose default
