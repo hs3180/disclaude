@@ -42,9 +42,19 @@ export async function bootstrap(
   await main();
 }
 
+/** Resolve protection lazily, preserving --config precedence before core loads. */
+export async function writeStartupFailure(error: unknown): Promise<void> {
+  let message = 'Startup failed; check --config and the installation.';
+  try {
+    const { redactDeclaredSensitive } = await import('@disclaude/core');
+    message = String(redactDeclaredSensitive(error instanceof Error ? error.message : String(error)));
+  } catch { /* Core/config loading failed; do not reflect an unprocessed error. */ }
+  console.error('Unhandled error:', message);
+}
+
 if (process.argv[1]?.match(/cli\.[jt]s$/)) {
-  bootstrap().catch((error) => {
-    console.error('Unhandled error:', error instanceof Error ? error.message : String(error));
+  bootstrap().catch(async (error) => {
+    await writeStartupFailure(error);
     process.exit(1);
   });
 }

@@ -3,7 +3,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { CHANNEL_CLI_HELP, normalizeChannelApiBaseUrl } from '@disclaude/core';
+import { CHANNEL_CLI_HELP, normalizeChannelApiBaseUrl, redactDeclaredSensitive } from '@disclaude/core';
 import type { ActionPromptMap, InteractiveOption } from './tools/types.js';
 
 import { getChatIdValidationError } from './utils/chat-id-validator.js';
@@ -37,16 +37,16 @@ function writeResult(value: string): void {
 }
 
 function emitOk(payload: Record<string, unknown>): void {
-  if (!emitted) { emitted = true; writeResult(`${JSON.stringify({ ok: true, ...payload })}\n`); }
+  if (!emitted) { emitted = true; writeResult(`${JSON.stringify(redactDeclaredSensitive({ ok: true, ...payload }))}\n`); }
 }
 function emitFail(command: string, error: string, hint?: string): void {
   if (emitted) {return;}
   emitted = true;
   const result: Record<string, unknown> = { ok: false, command, error };
   if (hint) {result.hint = hint;}
-  writeResult(`${JSON.stringify(result)}\n`);
+  writeResult(`${JSON.stringify(redactDeclaredSensitive(result))}\n`);
 }
-function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+function errorMessage(error: unknown): string { return String(redactDeclaredSensitive(error instanceof Error ? error.message : String(error))); }
 function parseArgs(argv: string[]): Args {
   const args: Args = { _: [] };
   for (let i = 0; i < argv.length; i += 1) {
@@ -258,7 +258,7 @@ export async function run(argv: string[]): Promise<number> {
   // Derived from COMMAND_FLAGS so a new command cannot be routable yet have no
   // flag whitelist (which would reject every one of its own options).
   const commands = Object.keys(COMMAND_FLAGS);
-  if (!commands.includes(command)) { process.stderr.write(`Unknown command: ${invokedAs}\n`); writeResult(`${HELP}\n`); return 1; }
+  if (!commands.includes(command)) { process.stderr.write(`Unknown command: ${errorMessage(invokedAs)}\n`); writeResult(`${HELP}\n`); return 1; }
   // Before chat validation: a mistyped `--chat` shows up as an unknown flag, and
   // naming it beats the generic "Missing required option --chat" it would cause.
   if (rejectUnknownFlags(command, args)) {return 1;}
