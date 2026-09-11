@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
+import { protectSensitiveValues } from '@disclaude/core';
 import { HELP, run } from './cli.js';
 
 /** Run the CLI with stdout captured, returning the emitted lines and exit code. */
@@ -29,6 +30,20 @@ describe('@disclaude/channel-cli', () => {
     // The `disclaude-channel` bin was removed so `disclaude channel` is the only
     // entry point; help must not resurrect the second spelling.
     expect(HELP).not.toContain('disclaude-channel');
+  });
+
+  it('protects declared values in the single JSON failure without classifying other text', async () => {
+    const release = protectSensitiveValues(['opaque-private-flag']);
+    try {
+      const { code, writes } = await capture(['send_text', '--opaque-private-flag', 'value']);
+      expect(code).toBe(1);
+      expect(writes).toHaveLength(1);
+      const result = JSON.parse(writes[0]);
+      expect(result.ok).toBe(false);
+      expect(writes[0]).toContain('[REDACTED]');
+      expect(writes[0]).not.toContain('opaque-private-flag');
+      expect(writes[0]).toContain('send_text');
+    } finally {release();}
   });
 
   it('keeps argument failures to one JSON result', async () => {

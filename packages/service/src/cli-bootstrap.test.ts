@@ -14,6 +14,24 @@ describe('disclaude service CLI config bootstrap (Issue #4654)', () => {
     delete process.env[EXPLICIT_CONFIG_PATH_ENV];
   });
 
+  it('protects harness-declared values in the real startup stderr sink', () => {
+    const cliUrl = pathToFileURL(join(process.cwd(), 'packages/service/dist/cli.js')).href;
+    const coreUrl = pathToFileURL(join(process.cwd(), 'packages/core/dist/index.js')).href;
+    const script = `
+      const {protectSensitiveValues} = await import(${JSON.stringify(coreUrl)});
+      const release = protectSensitiveValues(['opaque-startup-value']);
+      const {writeStartupFailure} = await import(${JSON.stringify(cliUrl)});
+      await writeStartupFailure(new Error('failure opaque-startup-value public-detail'));
+      release();
+    `;
+    const child = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
+      encoding: 'utf8', env: { ...process.env, LOG_LEVEL: 'silent' },
+    });
+    expect(child.status).toBe(0);
+    expect(child.stderr).toContain('failure [REDACTED] public-detail');
+    expect(child.stderr).not.toContain('opaque-startup-value');
+  });
+
   it('finds long and short config flags before core is imported', () => {
     expect(findExplicitConfigPath(['start', '--config', '/tmp/long.yaml'])).toBe('/tmp/long.yaml');
     expect(findExplicitConfigPath(['start', '-c', '/tmp/short.yaml'])).toBe('/tmp/short.yaml');
