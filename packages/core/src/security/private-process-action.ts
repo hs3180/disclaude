@@ -26,11 +26,13 @@ export function createPrivateProcessAction(options: PrivateProcessActionOptions)
   }
   return {
     id: definition.id, title: definition.title, description: definition.description,
-    consume: value => new Promise(resolve => {
+    consume: (value, context) => new Promise(resolve => {
       let timedOut = false;
       let settled = false;
       const child = spawn(definition.command, definition.args, {
-        cwd: definition.cwd, env: definition.env, shell: false,
+        cwd: definition.cwd, env: { ...definition.env,
+          DISCLAUDE_PRIVATE_CONTEXT: JSON.stringify(context),
+        }, shell: false,
         stdio: ['pipe', 'ignore', 'ignore'], detached: process.platform !== 'win32',
       });
       const killOwned = () => {
