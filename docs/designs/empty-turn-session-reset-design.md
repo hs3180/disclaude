@@ -85,7 +85,7 @@ fires (`chat-agent.ts:1294`).
 | Diagnostic ⚠️ notice (to suppress on a retrying attempt) | `chat-agent.ts:1147`–`1188` |
 | Failure accounting | `restartManager.recordFailure(chatId, 'empty-turn')` — `chat-agent.ts:1283` |
 | Turn-completion gate (replay trigger) | `this.resolveTurn()` — `chat-agent.ts:1294` |
-| Session reset | `callbacks.resetAgent(chatId, skipContext=true)` — declared `scheduler.ts:136`, wired `primary-node.ts:936` → `agentPool.reset(chatId, true)` |
+| Session reset | `callbacks.resetAgent(chatId, skipContext=true)` — declared `scheduler.ts:136`, wired `service.ts:936` → `agentPool.reset(chatId, true)` |
 | Eligibility + bounding | `EmptyTurnRetryPolicy` (`packages/core/src/agents/empty-turn-retry-policy.ts`) — `canRetry` / `markRetried` / `reset`, already exported from `packages/core/src/index.ts` |
 
 `EmptyTurnRetryPolicy` is complete and has no caller yet ("No caller wires this yet" —

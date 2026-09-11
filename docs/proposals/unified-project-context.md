@@ -214,7 +214,7 @@ ProjectManager
   ├──→ ChatAgent (CwdProvider 注入)   §5 详细设计
   │     startAgentLoop() → createSdkOptions({ cwd: project.workingDir })
   │
-  ├──→ PrimaryAgentPool           创建 Agent 时注入 CwdProvider
+  ├──→ ChatSessionPool           创建 Agent 时注入 CwdProvider
   │     getOrCreateChatAgent() → agent.setCwdProvider(...)
   │
   └──→ Control Handler            处理 /project 命令 + 触发 Session Reset
@@ -227,7 +227,7 @@ ProjectManager
 | 文件 | 改动内容 | 行数 |
 |------|----------|------|
 | `chat-agent/index.ts` | 新增 `cwdProvider` 属性 + `startAgentLoop` 注入 cwd | +5 |
-| `primary-agent-pool.ts` | 创建 Agent 时注入 cwdProvider | +3 |
+| `chat-session-pool.ts` | 创建 Agent 时注入 cwdProvider | +3 |
 | `control/types.ts` | ControlHandlerContext 新增 `projectManager` | +3 |
 | `control/commands/project.ts` | 新增 /project 命令处理 | ~60 |
 | **总计** | | **~70** |
@@ -260,7 +260,7 @@ ProjectManager
 ```
 User Message
   → createDefaultMessageHandler()                      // channel-handlers.ts:175
-    → agentPool.getOrCreateChatAgent(chatId, callbacks) // primary-agent-pool.ts:57
+    → agentPool.getOrCreateChatAgent(chatId, callbacks) // chat-session-pool.ts:57
     → agent.processMessage(chatId, text, ...)           // chat-agent/index.ts:512
       → if (!isSessionActive) startAgentLoop()          // chat-agent/index.ts:539
         → createSdkOptions({ disallowedTools, mcpServers })  // chat-agent/index.ts:689
@@ -329,11 +329,11 @@ const sdkOptions = this.createSdkOptions({
 });
 ```
 
-**④ PrimaryAgentPool 注入**
+**④ ChatSessionPool 注入**
 
 ```typescript
-// packages/primary-node/src/primary-agent-pool.ts
-class PrimaryAgentPool {
+// packages/service/src/chat-session-pool.ts
+class ChatSessionPool {
   private projectManager?: ProjectManager;  // 新增
 
   setProjectManager(pm: ProjectManager): void {  // 新增
@@ -595,9 +595,9 @@ packages/worker-node/
 └── src/agents/chat-agent/
     └── index.ts                    # 新增 cwdProvider 属性 + startAgentLoop 注入 cwd (+5 行)
 
-packages/primary-node/
+packages/service/
 └── src/
-    └── primary-agent-pool.ts       # 新增 setProjectManager + getOrCreateChatAgent 注入 (+3 行)
+    └── chat-session-pool.ts       # 新增 setProjectManager + getOrCreateChatAgent 注入 (+3 行)
 
 packages/core/
 └── templates/                      # 内置模板 CLAUDE.md

@@ -7,7 +7,7 @@
  * - Type definitions (platform, websocket, file)
  * - Constants (deduplication, dialogue, api config)
  * - Utility functions (logger, error-handler, retry)
- * - REST API Protocol (shared between Primary Node and MCP Server)
+ * - REST API Protocol (shared between disclaude service and MCP Server)
  * - Agent SDK abstraction layer
  */
 
@@ -20,7 +20,7 @@ export * from './constants/index.js';
 // Utils
 export * from './utils/index.js';
 
-// REST API Protocol (shared between Primary Node and MCP Server)
+// REST API Protocol (shared between disclaude service and MCP Server)
 export * from './channel-api/index.js';
 
 // Config
@@ -247,7 +247,7 @@ export {
   type TaskResult,
 } from './queue/index.js';
 
-// Messaging module (Issue #515 Phase 2 - migrated from primary-node)
+// Messaging module (Issue #515 Phase 2 - migrated from service)
 export type {
   TextContent,
   MarkdownContent,
@@ -291,7 +291,7 @@ export type {
   UserMessageParams,
 } from './messaging/index.js';
 
-// Channels module (Issue #1041 - migrated from primary-node)
+// Channels module (Issue #1041 - migrated from service)
 export { BaseChannel } from './channels/index.js';
 
 // Channel Registry (Issue #1553)

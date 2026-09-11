@@ -10,6 +10,8 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -25,12 +27,18 @@ args = parser.parse_args()
 if sys.platform != 'darwin':
     parser.error('macOS launchd is required')
 root = Path(__file__).resolve().parent.parent
-candidate = root / 'packages/primary-node/dist/cli.js'
+candidate = root / 'bin/disclaude.js'
 baseline = args.baseline_entry.resolve()
 for entry in (baseline, candidate):
     if not entry.is_file():
         parser.error('Build the baseline and candidate first: ' + str(entry))
 state = Path(tempfile.mkdtemp(prefix='disclaude-launchd-rehearsal-'))
+# One-time baseline adapter: old internal JS entries are not executable. The
+# candidate always uses the public CLI; no old runtime alias is installed.
+baseline_launcher = state / 'baseline-launcher'
+baseline_launcher.write_text('#!/bin/sh\nexec ' + shlex.quote(shutil.which('node')) + ' ' +
+    shlex.quote(str(baseline)) + ' "$@"\n')
+baseline_launcher.chmod(0o700)
 label = 'com.disclaude.test.rc-' + uuid.uuid4().hex[:12]
 workspace = state / 'workspace'
 workspace.mkdir()
@@ -41,7 +49,8 @@ with socket.socket() as probe:
     rest_port = probe.getsockname()[1]
 config = state / 'config.json'
 config.write_text(json.dumps({'workspace': {'dir': str(workspace)},
-    'agent': {'agentBackend': 'codex', 'model': 'gpt-5.6-sol'},
+    'agent': {'agentBackend': 'claude', 'provider': 'anthropic', 'model': 'claude-sonnet-4'},
+    'anthropic': {'apiKey': 'offline-test-placeholder'},
     'channels': {'rest': {'port': rest_port, 'host': '127.0.0.1', 'fileStorageDir': str(state / 'files')}},
     'logging': {'level': 'info', 'pretty': False}}))
 env = {**os.environ, 'DISCLAUDE_LAUNCHD_ISOLATED': '1',
@@ -55,7 +64,7 @@ args.output.mkdir(parents=True, exist_ok=True)
 loaded = False
 
 def runtime_identity(entry):
-    checkout = entry.parents[3]
+    checkout = entry.parents[1] if entry.parent.name == 'bin' else entry.parents[3]
     digest = hashlib.sha256()
     files = sorted(checkout.glob('packages/*/dist/**/*.js'))
     if not files:
@@ -69,7 +78,7 @@ def runtime_identity(entry):
 
 def command(name, entry):
     result = subprocess.run(['node', str(root / 'scripts/launchd.mjs'), 'isolated', name],
-        env={**env, 'DISCLAUDE_LAUNCHD_ENTRY': str(entry)}, cwd=root,
+        env={**env, 'DISCLAUDE_LAUNCHD_ENTRY': str(baseline_launcher if entry == baseline else entry)}, cwd=root,
         capture_output=True, text=True, timeout=45)
     (args.output / (str(len(record['stages'])) + '-' + name + '.log')).write_text(result.stdout + result.stderr)
     if result.returncode:

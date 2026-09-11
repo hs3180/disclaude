@@ -1,7 +1,7 @@
 /**
  * Tests for channel-cli/tools/channel-api-utils (Issue #4280 Phase 3 part 3: REST-only).
  *
- * `isChannelApiAvailable` probes `GET /api/ping` on the PrimaryNode HTTP API server —
+ * `isChannelApiAvailable` probes `GET /api/ping` on the DisclaudeService HTTP API server —
  * unconditionally. The Unix-socket probe (existsSync + createConnection) and
  * `getChannelApiSocketPath` discovery are gone with the transport, so these tests
  * pin the REST contract, including that `DISCLAUDE_REST_IPC_ENABLED` no
@@ -42,7 +42,7 @@ async function loadModule() {
     createLogger: (...args: unknown[]) => mockCreateLogger(...args),
     ChannelApiClient: MockChannelApiClient,
     normalizeChannelApiBaseUrl: (value: string) => {
-      if (!value) { throw new Error('PrimaryNode REST address is required'); }
+      if (!value) { throw new Error('DisclaudeService REST address is required'); }
       return new URL(value).origin;
     },
   }));
@@ -219,7 +219,7 @@ describe('isChannelApiAvailable (REST-only)', () => {
       json: () => ({ pong: true }),
     });
     await loadWithPing(fetchMock as unknown as typeof globalThis.fetch);
-    await expect(isChannelApiAvailable()).rejects.toThrow('PrimaryNode REST address is required');
+    await expect(isChannelApiAvailable()).rejects.toThrow('DisclaudeService REST address is required');
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -272,7 +272,7 @@ describe('isChannelApiAvailable (REST-only)', () => {
     expect(await isChannelApiAvailable()).toBe(false);
   });
 
-  it('should return false when fetch throws (PrimaryNode not running)', async () => {
+  it('should return false when fetch throws (DisclaudeService not running)', async () => {
     process.env.DISCLAUDE_API_BASE_URL = 'http://127.0.0.1:19200';
     await loadWithPing(vi.fn().mockRejectedValue(
       new Error('ECONNREFUSED'),
@@ -300,7 +300,7 @@ describe('getChannelApiClient (REST-only construction)', () => {
   });
 
   it('should reject construction with all env unset', () => {
-    expect(() => getChannelApiClient()).toThrow('PrimaryNode REST address is required');
+    expect(() => getChannelApiClient()).toThrow('DisclaudeService REST address is required');
   });
 
   it('does not discover an address or token through removed IPC variables', () => {
@@ -310,7 +310,7 @@ describe('getChannelApiClient (REST-only construction)', () => {
       process.env.DISCLAUDE_REST_IPC_BASE_URL = 'http://127.0.0.1:49999';
       process.env.DISCLAUDE_REST_IPC_API_TOKEN = 'old-test-token';
       delete process.env.DISCLAUDE_API_TOKEN;
-      expect(() => getChannelApiClient()).toThrow('PrimaryNode REST address is required');
+      expect(() => getChannelApiClient()).toThrow('DisclaudeService REST address is required');
       process.env.DISCLAUDE_API_BASE_URL = 'http://127.0.0.1:49998';
       const client = getChannelApiClient() as unknown as MockChannelApiClient;
       expect(client.opts).toEqual({ baseUrl: 'http://127.0.0.1:49998', apiToken: undefined });
@@ -342,7 +342,7 @@ describe('getChannelApiClient (REST-only construction)', () => {
     expect(off.opts.baseUrl).toBe('http://127.0.0.1:19200');
   });
 
-  // Issue #4801 (P0): when the primary runs with --api-token, the client must
+  // Issue #4801 (P0): when the service runs with --api-token, the client must
   // attach the bearer token so channel writes don't 401 while the (token-exempt)
   // GET /api/ping probe reports "available".
   it('should forward DISCLAUDE_API_TOKEN as the API token', () => {

@@ -7,10 +7,10 @@
  * (Issue #1957).
  *
  * Usage:
- *   node scripts/launchd.mjs <command>           # primary-node service
+ *   node scripts/launchd.mjs <command>           # application service
  *   node scripts/launchd.mjs chromium-cdp <cmd>  # persistent Chromium CDP service
  *
- * Primary Commands:
+ * Service Commands:
  *   generate    Generate plist file (writes to ~/Library/LaunchAgents/)
  *   install     Generate + load (first-time setup)
  *   uninstall   Unload + remove plist
@@ -50,10 +50,10 @@ import { fileURLToPath } from 'node:url';
 // Constants
 // ---------------------------------------------------------------------------
 
-const DEFAULT_LABEL = 'com.disclaude.primary';
+const DEFAULT_LABEL = 'com.disclaude.service';
 
 /** Resolve production defaults or guarded test-only launchd paths. */
-export function resolvePrimaryLaunchdConfig(
+export function resolveServiceLaunchdConfig(
   env = process.env,
   home = homedir(),
   isolatedSelector = false
@@ -103,14 +103,14 @@ export function resolvePrimaryLaunchdConfig(
   };
 }
 
-const PRIMARY_SERVICE = resolvePrimaryLaunchdConfig(
+const APP_SERVICE = resolveServiceLaunchdConfig(
   process.env,
   homedir(),
   process.argv[2] === 'isolated'
 );
-const LABEL = PRIMARY_SERVICE.label;
+const LABEL = APP_SERVICE.label;
 const PLIST_FILENAME = `${LABEL}.plist`;
-const LAUNCHAGENTS_DIR = PRIMARY_SERVICE.launchAgentsDir;
+const LAUNCHAGENTS_DIR = APP_SERVICE.launchAgentsDir;
 const PLIST_PATH = resolve(LAUNCHAGENTS_DIR, PLIST_FILENAME);
 
 // Issue #2934: Log directory moved from /tmp to ~/Library/Logs/disclaude
@@ -118,7 +118,7 @@ const PLIST_PATH = resolve(LAUNCHAGENTS_DIR, PLIST_FILENAME);
 // Issue #3416: Application writes to a single log file via pino.destination().
 // Use system-level tools (newsyslog) for log rotation — see config/ for examples.
 // Only stderr (for uncaught Node.js crashes) uses launchd's StandardErrorPath.
-const LOG_DIR = PRIMARY_SERVICE.logDir;
+const LOG_DIR = APP_SERVICE.logDir;
 const STDERR_LOG = resolve(LOG_DIR, 'launchd-stderr.log');
 const STDOUT_LOG = resolve(LOG_DIR, 'launchd-stdout.log');
 const APP_LOG = resolve(LOG_DIR, 'disclaude-combined.log');
@@ -139,10 +139,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '..');
 const CLI_ENTRY = process.argv[2] === 'isolated' && process.env.DISCLAUDE_LAUNCHD_ENTRY
   ? process.env.DISCLAUDE_LAUNCHD_ENTRY
-  : resolve(PROJECT_ROOT, 'packages/primary-node/dist/cli.js');
+  : resolve(PROJECT_ROOT, 'bin/disclaude.js');
 
 // Issue #4576: since #4280 Phase 3 the MCP tools' only transport is the
-// PrimaryNode REST API (GET /api/ping on the HTTP API server). A launchd
+// DisclaudeService REST API (GET /api/ping on the HTTP API server). A launchd
 // deployment started with bare `start` used to have no HTTP API. The plist
 // enables it on an OS-assigned port by default. The server binds
 // localhost only (HttpApiServerConfig.host default) and GET routes are
@@ -249,22 +249,22 @@ function getCaffeinatePath() {
  * service, caffeinate terminates automatically (along with the node child),
  * so no separate cleanup is needed.
  *
- * Issue #4576: appends --api-port (default 0) so the PrimaryNode HTTP API
+ * Issue #4576: appends --api-port (default 0) so the DisclaudeService HTTP API
  * server is up for the REST-only MCP tools; --api-token only when provided
  * via DISCLAUDE_LAUNCHD_API_TOKEN (mirrors the interactive-run posture — GET
  * routes stay token-exempt, write routes gain Bearer auth).
  *
- * @param {string} nodePath - Absolute path to the node binary
+ * @param {string} cliPath - Absolute path to the unified executable
  * @returns {string[]} ProgramArguments entries
  */
-export function buildProgramArguments(nodePath, caffeinatePath = getCaffeinatePath()) {
+export function buildProgramArguments(cliPath = CLI_ENTRY, caffeinatePath = getCaffeinatePath()) {
   const args = [];
 
   if (caffeinatePath) {
     args.push(caffeinatePath, '-s');
   }
 
-  args.push(nodePath, CLI_ENTRY, 'start', '--api-port', String(resolveApiPort()));
+  args.push(cliPath, 'start', '--api-port', String(resolveApiPort()));
 
   const configPath = process.env.DISCLAUDE_LAUNCHD_CONFIG_PATH;
   if (configPath) {
@@ -297,9 +297,10 @@ export function resolveRestChannelApiBaseUrl(apiPort) {
 }
 
 function generatePlist() {
+  assertServiceMigrationComplete(LAUNCHAGENTS_DIR);
   const nodePath = getNodePath();
   const caffeinatePath = getCaffeinatePath();
-  const programArgs = buildProgramArguments(nodePath, caffeinatePath);
+  const programArgs = buildProgramArguments(CLI_ENTRY, caffeinatePath);
   const apiPort = resolveApiPort();
   const restChannelApiBaseUrl = resolveRestChannelApiBaseUrl(apiPort);
 
@@ -345,7 +346,7 @@ ${programArgs.map((a) => `    <string>${xmlEscape(a)}</string>`).join('\n')}
     <string>${xmlEscape(process.env.PATH ?? '')}</string>
 ${restChannelApiBaseUrl ? `    <key>DISCLAUDE_API_BASE_URL</key>\n    <string>${xmlEscape(restChannelApiBaseUrl)}</string>\n` : ''}    <key>HOME</key>
     <string>${homedir()}</string>
-${process.argv[2] === 'isolated' ? `    <key>LOCKFILE_PATH</key>\n    <string>${xmlEscape(resolve(LAUNCHAGENTS_DIR, 'primary.pid'))}</string>\n` : ''}    <key>NODE_ENV</key>
+${process.argv[2] === 'isolated' ? `    <key>LOCKFILE_PATH</key>\n    <string>${xmlEscape(resolve(LAUNCHAGENTS_DIR, 'disclaude.pid'))}</string>\n` : ''}    <key>NODE_ENV</key>
     <string>production</string>
     <key>LOG_TO_FILE</key>
     <string>true</string>
@@ -379,6 +380,14 @@ ${process.argv[2] === 'isolated' ? `    <key>LOCKFILE_PATH</key>\n    <string>${
   console.log(
     `  Note: an already-loaded service must be reloaded (npm run launchd:restart) to pick up the new plist.`
   );
+}
+
+// Migration guard only: never boot out or delete an existing user service.
+export function assertServiceMigrationComplete(directory) {
+  const legacy = resolve(directory, 'com.disclaude.primary.plist');
+  if (existsSync(legacy)) {
+    throw new Error(`Retire the legacy launchd service before installing this one: ${legacy}. See docs/migrations/0.5.1-service.md; configuration and workspace must be preserved.`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -627,7 +636,7 @@ function generateChromiumPlist() {
   const caffeinatePath = getCaffeinatePath();
   const chromeArgs = buildChromiumArguments();
 
-  // ProgramArguments: wrap with caffeinate -s (same as primary) so the
+  // ProgramArguments: wrap with caffeinate -s (same as the service) so the
   // machine doesn't sleep and drop the overnight CDP endpoint; KeepAlive
   // relaunches the whole chain on crash.
   const programArgs = caffeinatePath
@@ -821,6 +830,8 @@ function unloadPlist() {
 }
 
 function build() {
+  // Tagged installations already contain compiled modules and no build tools.
+  if (existsSync(resolve(PROJECT_ROOT, 'release-source.json'))) return;
   console.log('Building...');
   run('npm run build', { cwd: PROJECT_ROOT });
 }
@@ -903,7 +914,7 @@ function cmdStatus() {
 // ---------------------------------------------------------------------------
 
 // Issue #4807: an optional first service selector. The default path (`launchd.mjs
-// <command>`) keeps the primary-node service; `launchd.mjs chromium-cdp <command>`
+// <command>`) keeps the service service; `launchd.mjs chromium-cdp <command>`
 // (alias `chromium`) manages the headless-Chromium CDP service. This is how
 // `disclaude chromium-cdp ...` routes in (bin/disclaude.js prepends the selector).
 const FIRST_ARG = process.argv[2];

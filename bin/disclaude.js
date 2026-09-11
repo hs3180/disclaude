@@ -3,7 +3,7 @@
  * Unified CLI entry point for disclaude.
  *
  * Routes subcommands to the appropriate package CLI:
- *   disclaude start [options]  → @disclaude/primary-node
+ *   disclaude start [options]  → @disclaude/service
  *   disclaude channel <command> → @disclaude/channel-cli
  *   disclaude chromium-cdp <cmd> → scripts/launchd.mjs chromium-cdp (Issue #4807)
  *
@@ -44,8 +44,8 @@ function showHelp() {
       '  disclaude <command> [options]',
       '',
       'Commands:',
-      '  start [options]    Start the Primary Node server',
-      '  channel <command>  Send channel messages through the PrimaryNode',
+      '  start [options]    Start disclaude',
+      '  channel <command>  Send channel messages through the service',
       '  chromium-cdp <cmd> Manage the persistent Chromium CDP launchd service (Issue #4807)',
       '',
       'Global Options:',
@@ -65,7 +65,7 @@ function showHelp() {
 
 const ROUTES = {
   start: {
-    file: resolve(ROOT, 'node_modules/@disclaude/primary-node/dist/cli.js'),
+    file: resolve(ROOT, 'node_modules/@disclaude/service/dist/cli.js'),
     keepCommand: true,
   },
   channel: {

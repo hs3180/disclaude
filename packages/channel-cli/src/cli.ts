@@ -145,9 +145,9 @@ function setupRest(args: Args): string {
   const configured = arg(args, 'base-url') ?? process.env.DISCLAUDE_API_BASE_URL;
   const baseUrl = normalizeChannelApiBaseUrl(configured ?? '');
   process.env.DISCLAUDE_API_BASE_URL = baseUrl;
-  // Issue #4801: mirror the PrimaryNode --api-token into the env the REST
+  // Issue #4801: mirror the DisclaudeService --api-token into the env the REST
   // client reads, so authenticated writes attach the bearer header. Without
-  // this, a token-enabled primary 401s every channel POST while the probe
+  // this, a token-enabled service 401s every channel POST while the probe
   // still reports "available".
   const apiToken = arg(args, 'api-token');
   if (apiToken !== undefined) {
@@ -160,7 +160,7 @@ function withLogsRedirected<T>(fn: () => Promise<T>): Promise<T> {
   process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, callback?: (error?: Error | null) => void) => process.stderr.write(chunk, encoding, callback)) as typeof process.stdout.write;
   return fn().finally(() => { process.stdout.write = originalWrite; });
 }
-function restHint(baseUrl: string): string { return `PrimaryNode REST ${baseUrl} unreachable — start the main service (disclaude-primary start --api-port <port>) or pass --base-url / DISCLAUDE_API_BASE_URL`; }
+function restHint(baseUrl: string): string { return `DisclaudeService REST ${baseUrl} unreachable — start the main service (disclaude start --api-port <port>) or pass --base-url / DISCLAUDE_API_BASE_URL`; }
 async function restIsReachable(baseUrl: string): Promise<boolean> {
   try {
     const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/ping`, {

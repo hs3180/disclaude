@@ -1,7 +1,7 @@
 /**
  * Control module.
  *
- * Provides unified control command handling for the Primary node.
+ * Provides unified control command handling for the disclaude service.
  *
  * @module control
  */

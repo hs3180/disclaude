@@ -1,0 +1,3909 @@
+/**
+ * Unit tests for MessageHandler.
+ *
+ * Tests message parsing, deduplication, bot filtering, trigger mode,
+ * command handling, and card action routing.
+ *
+ * Issue #1617: Phase 4 — Feishu platform test coverage
+ */
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// ---------------------------------------------------------------------------
+// Shared mock state (hoisted so vi.mock factories can reference it)
+// ---------------------------------------------------------------------------
+const mockState = vi.hoisted(() => ({
+  isRunning: true,
+  hasControlHandler: false,
+  emitMessage: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+  emitControl: vi.fn<() => Promise<{ success: boolean; message?: string }>>().mockResolvedValue({ success: false }),
+  sendMessage: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+  resolveActionPrompt: vi.fn().mockReturnValue(undefined),
+  isMessageProcessed: false,
+  claimMessage: vi.fn<(id: string) => boolean>(() => false),
+  releaseMessage: vi.fn(),
+  logIncomingMessage: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+  logCardInteraction: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+  getChatHistory: vi.fn<() => Promise<string | undefined>>().mockResolvedValue(undefined),
+  isBotMentioned: false,
+  interactionHandleAction: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+  workspaceDir: '/tmp/mh-test',
+  execFileCallback: null as ((err: Error | null, result?: { stdout: string; stderr: string }) => void) | null,
+  topicNotifyEnabled: false,
+  onTopicMessage: vi.fn(),
+}));
+
+const mockExecFile = vi.hoisted(() =>
+  vi.fn((...args: unknown[]) => {
+    const callback = args[args.length - 1] as (err: Error | null, result?: { stdout: string; stderr: string }) => void;
+    if (mockState.execFileCallback) {
+      mockState.execFileCallback(null, { stdout: 'ok', stderr: '' });
+    } else {
+      callback(null, { stdout: 'ok', stderr: '' });
+    }
+  })
+);
+
+// ---------------------------------------------------------------------------
+// Module mocks
+// ---------------------------------------------------------------------------
+vi.mock('@disclaude/core', async () => {
+  const actual = await vi.importActual<typeof import('@disclaude/core')>('@disclaude/core');
+  return {
+    ...actual,
+    Config: {
+      getWorkspaceDir: () => mockState.workspaceDir,
+      getRawConfig: () => ({
+        feishu: {
+          topicNotify: { enabled: mockState.topicNotifyEnabled },
+        },
+      }),
+    },
+    DEDUPLICATION: { MAX_MESSAGE_AGE: 300_000 },
+    REACTIONS: { TYPING: 'Typing' },
+    CHAT_HISTORY: { MAX_CONTEXT_LENGTH: 10000 },
+    createLogger: () => ({
+      info: vi.fn(),
+      debug: vi.fn(),
+      error: vi.fn(),
+      warn: vi.fn(),
+    }),
+    stripLeadingMentions: (text: string) => text,
+  };
+});
+
+vi.mock('child_process', () => ({
+  execFile: mockExecFile,
+}));
+
+vi.mock('../../platforms/feishu/interaction-manager.js', () => ({
+  InteractionManager: vi.fn().mockImplementation(() => ({
+    handleAction: mockState.interactionHandleAction,
+  })),
+}));
+
+vi.mock('../../platforms/feishu/card-builders/card-text-extractor.js', () => ({
+  extractCardTextContent: vi.fn().mockReturnValue('Extracted card text'),
+  extractFullCardContent: vi.fn().mockReturnValue('Mocked full card content'),
+}));
+
+vi.mock('fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs/promises')>();
+  return {
+    ...actual,
+    mkdir: vi.fn().mockResolvedValue(undefined),
+    stat: vi.fn().mockResolvedValue({ size: 1024 }),
+    writeFile: vi.fn().mockResolvedValue(undefined),
+  };
+});
+
+vi.mock('../../utils/message-logger.js', () => ({
+  messageLogger: {
+    isMessageProcessed: () => mockState.isMessageProcessed,
+    claimMessage: mockState.claimMessage,
+    releaseMessage: mockState.releaseMessage,
+    logIncomingMessage: mockState.logIncomingMessage,
+    logCardInteraction: mockState.logCardInteraction,
+    getChatHistory: mockState.getChatHistory,
+  },
+}));
+
+// ---------------------------------------------------------------------------
+// Import SUT after mocks
+// ---------------------------------------------------------------------------
+import { MessageHandler } from './message-handler.js';
+import { TriggerModeManager } from './passive-mode.js';
+import { MentionDetector } from './mention-detector.js';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Get the first call argument from a mocked function. */
+function firstCallArg(fn: { mock: { calls: any[][] } }): any {
+  const {calls} = fn.mock;
+  return calls[0]?.[0];
+}
+
+/** Create a MessageHandler with sensible defaults. */
+function createHandler(overrides: Record<string, unknown> = {}) {
+  const triggerModeManager = new TriggerModeManager();
+  const mentionDetector = new MentionDetector();
+
+  // Spy on mentionDetector.isBotMentioned to use mock state
+  vi.spyOn(mentionDetector, 'isBotMentioned').mockImplementation(() => mockState.isBotMentioned);
+
+  const handler = new MessageHandler({
+    triggerModeManager,
+    mentionDetector,
+    interactionManager: { handleAction: mockState.interactionHandleAction } as any,
+    callbacks: {
+      emitMessage: mockState.emitMessage,
+      emitControl: mockState.emitControl,
+      sendMessage: mockState.sendMessage,
+      resolveActionPrompt: mockState.resolveActionPrompt,
+      onTopicMessage: mockState.onTopicMessage,
+    },
+    isRunning: () => mockState.isRunning,
+    hasControlHandler: () => mockState.hasControlHandler,
+    tenantAccessToken: 'test-tenant-token',
+    ...overrides,
+  });
+
+  return { handler, triggerModeManager, mentionDetector };
+}
+
+/** Build a Feishu text message event. */
+function textEvent(text: string, overrides: Record<string, unknown> = {}) {
+  return {
+    event: {
+      message: {
+        message_id: 'msg_001',
+        chat_id: 'chat_001',
+        chat_type: 'p2p',
+        content: JSON.stringify({ text }),
+        message_type: 'text',
+        create_time: Date.now(),
+        mentions: undefined,
+        parent_id: undefined,
+      },
+      sender: {
+        sender_type: 'user',
+        sender_id: { open_id: 'user_001' },
+      },
+    },
+    ...overrides,
+  } as any;
+}
+
+/** Build a Feishu post message event. */
+function postEvent(content: unknown[], overrides: Record<string, unknown> = {}) {
+  return {
+    event: {
+      message: {
+        message_id: 'msg_post',
+        chat_id: 'chat_001',
+        chat_type: 'p2p',
+        content: JSON.stringify({ content }),
+        message_type: 'post',
+        create_time: Date.now(),
+        mentions: undefined,
+        parent_id: undefined,
+      },
+      sender: {
+        sender_type: 'user',
+        sender_id: { open_id: 'user_001' },
+      },
+    },
+    ...overrides,
+  } as any;
+}
+
+/** Build a Feishu card action event. */
+function cardActionEvent(overrides: Record<string, unknown> = {}) {
+  return {
+    context: { open_message_id: 'card_msg_001', open_chat_id: 'chat_001' },
+    operator: { open_id: 'user_001', user_id: 'uid_001' },
+    action: { tag: 'button', value: 'action_value', text: 'Click me' },
+    tenant_key: 'tenant_001',
+    ...overrides,
+  } as any;
+}
+
+// ===========================================================================
+// Tests
+// ===========================================================================
+
+describe('MessageHandler', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockState.isRunning = true;
+    mockState.hasControlHandler = false;
+    mockState.isMessageProcessed = false;
+    mockState.claimMessage.mockImplementation(() => !mockState.isMessageProcessed);
+    mockState.isBotMentioned = false;
+    mockState.topicNotifyEnabled = false;
+  });
+
+  // -----------------------------------------------------------------------
+  // Constructor & lifecycle
+  // -----------------------------------------------------------------------
+  describe('constructor and lifecycle', () => {
+    it('should construct without errors', () => {
+      const { handler } = createHandler();
+      expect(handler).toBeDefined();
+    });
+
+    it('should return undefined client before initialization', () => {
+      const { handler } = createHandler();
+      expect(handler.getClient()).toBeUndefined();
+    });
+
+    it('should store client after initialize()', () => {
+      const { handler } = createHandler();
+      const mockClient = {} as any;
+      handler.initialize(mockClient);
+      expect(handler.getClient()).toBe(mockClient);
+    });
+
+    it('should clear client on clearClient()', () => {
+      const { handler } = createHandler();
+      handler.initialize({} as any);
+      handler.clearClient();
+      expect(handler.getClient()).toBeUndefined();
+    });
+
+    it('should update control handler flag', () => {
+      const { handler } = createHandler();
+      handler.setControlHandler(true);
+      // Control handler affects command routing; tested via command tests below
+      handler.setControlHandler(false);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Text message handling
+  // -----------------------------------------------------------------------
+  describe('handleMessageReceive — text messages', () => {
+    it('should emit a valid text message', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(textEvent('Hello world'));
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.content).toBe('Hello world');
+      expect(msg.chatId).toBe('chat_001');
+      expect(msg.userId).toBe('user_001');
+      expect(msg.messageType).toBe('text');
+    });
+
+    it('should skip messages when handler is not running', async () => {
+      mockState.isRunning = false;
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(textEvent('Hello'));
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+
+    it('should skip messages missing required fields', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive({
+        event: {
+          message: { message_id: '', chat_id: '', content: '', message_type: '' },
+          sender: {},
+        },
+      });
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+
+    it('should skip duplicate messages', async () => {
+      mockState.isMessageProcessed = true;
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(textEvent('dup'));
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+
+    it('should dispatch only once for concurrent deliveries of the same message', async () => {
+      const claimed = new Set<string>();
+      mockState.claimMessage.mockImplementation((id: string) => {
+        if (claimed.has(id)) {
+          return false;
+        }
+        claimed.add(id);
+        return true;
+      });
+      const { handler } = createHandler();
+
+      await Promise.all([
+        handler.handleMessageReceive(textEvent('concurrent')),
+        handler.handleMessageReceive(textEvent('concurrent')),
+      ]);
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('should skip messages older than MAX_MESSAGE_AGE', async () => {
+      const { handler } = createHandler();
+      const oldTimestamp = Date.now() - 600_000; // 10 min ago
+      await handler.handleMessageReceive(textEvent('old', {
+        event: {
+          message: {
+            message_id: 'msg_old',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ text: 'old' }),
+            message_type: 'text',
+            create_time: oldTimestamp,
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      }));
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+
+    it('should skip empty text messages', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(textEvent('   '));
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+
+    it('should skip unsupported message types', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_unsupported',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: '{}',
+            message_type: 'sticker',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+
+    it('should log incoming messages', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(textEvent('Hello'));
+      expect(mockState.logIncomingMessage).toHaveBeenCalledWith(
+        'msg_001',
+        'user_001',
+        'chat_001',
+        'Hello',
+        'text',
+        expect.any(Number),
+      );
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Bot message filtering
+  // -----------------------------------------------------------------------
+  describe('handleMessageReceive — bot message filtering', () => {
+    it('should skip bot messages when bot is not mentioned', async () => {
+      mockState.isBotMentioned = false;
+      const { handler } = createHandler();
+
+      await handler.handleMessageReceive(textEvent('bot says hi', {
+        event: {
+          message: {
+            message_id: 'msg_bot',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ text: 'bot says hi' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'app', sender_id: { open_id: 'bot_001' } },
+        },
+      }));
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+
+    it('should allow bot messages that @mention our bot', async () => {
+      mockState.isBotMentioned = true;
+      const { handler } = createHandler();
+
+      await handler.handleMessageReceive(textEvent('hey @bot', {
+        event: {
+          message: {
+            message_id: 'msg_bot_mention',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ text: 'hey @bot' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'app', sender_id: { open_id: 'bot_001' } },
+        },
+      }));
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Post message parsing
+  // -----------------------------------------------------------------------
+  describe('handleMessageReceive — post message parsing', () => {
+    it('should parse plain text segments', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(postEvent([
+        [{ tag: 'text', text: 'Hello ' }, { tag: 'text', text: 'world' }],
+      ]));
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      expect(firstCallArg(mockState.emitMessage).content).toBe('Hello world');
+    });
+
+    it('should parse link segments', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(postEvent([
+        [{ tag: 'a', text: 'Click here', href: 'https://example.com' }],
+      ]));
+      expect(firstCallArg(mockState.emitMessage).content).toBe('Click here');
+    });
+
+    it('should parse @mention segments', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(postEvent([
+        [{ tag: 'at', user_id: 'user_002', text: 'John' }],
+      ]));
+      expect(firstCallArg(mockState.emitMessage).content).toBe('@John');
+    });
+
+    it('should parse image segments as [图片]', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(postEvent([
+        [{ tag: 'img', image_key: 'img_001' }],
+      ]));
+      expect(firstCallArg(mockState.emitMessage).content).toBe('[图片]');
+    });
+
+    it('should parse code_block segments into markdown', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(postEvent([
+        [{ tag: 'code_block', language: 'python', text: 'print("hi")' }],
+      ]));
+      const content = firstCallArg(mockState.emitMessage).content as string;
+      expect(content).toContain('```python');
+      expect(content).toContain('print("hi")');
+      expect(content).toContain('```');
+    });
+
+    it('should parse pre segments into markdown', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(postEvent([
+        [{ tag: 'pre', text: 'raw text' }],
+      ]));
+      const content = firstCallArg(mockState.emitMessage).content as string;
+      expect(content).toContain('```\nraw text\n```');
+    });
+
+    it('should parse chat_history segments', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(postEvent([
+        [{
+          tag: 'chat_history',
+          messages: [
+            { sender: 'Alice', content: 'Hello', create_time: '10:00' },
+            { sender: 'Bob', content: 'World', create_time: '10:01' },
+          ],
+        }],
+      ]));
+      const content = firstCallArg(mockState.emitMessage).content as string;
+      expect(content).toContain('Alice: Hello');
+      expect(content).toContain('Bob: World');
+      expect(content).toContain('转发的聊天记录');
+    });
+
+    it('should extract text from unknown tags with text field', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(postEvent([
+        [{ tag: 'custom_tag', text: 'Custom content' }],
+      ]));
+      expect(firstCallArg(mockState.emitMessage).content).toBe('Custom content');
+    });
+
+    it('should skip segments without a tag', async () => {
+      const { handler } = createHandler();
+      // Post with a segment that has no tag alongside a text segment
+      await handler.handleMessageReceive(postEvent([
+        [{ text: 'No tag' }, { tag: 'text', text: 'Has tag' }],
+      ]));
+      // Only the tagged segment's text should appear
+      expect(firstCallArg(mockState.emitMessage).content).toBe('Has tag');
+    });
+
+    it('should handle mixed content in multiple rows', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(postEvent([
+        [{ tag: 'text', text: 'Row 1' }],
+        [{ tag: 'text', text: 'Row 2' }],
+      ]));
+      const content = firstCallArg(mockState.emitMessage).content as string;
+      expect(content).toContain('Row 1');
+      expect(content).toContain('Row 2');
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // share_chat message parsing
+  // -----------------------------------------------------------------------
+  describe('handleMessageReceive — share_chat messages', () => {
+    function shareChatEvent(parsed: Record<string, unknown>) {
+      return {
+        event: {
+          message: {
+            message_id: 'msg_share',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify(parsed),
+            message_type: 'share_chat',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      } as any;
+    }
+
+    it('should parse share_chat with structured chat history', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(shareChatEvent({
+        title: 'Meeting Notes',
+        chat_history: [
+          { sender: 'Alice', content: 'Agenda item 1', create_time: '2026-01-01T10:00:00Z' },
+          { sender: 'Bob', content: 'Agenda item 2', create_time: '2026-01-01T10:01:00Z' },
+        ],
+      }));
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const content = firstCallArg(mockState.emitMessage).content as string;
+      expect(content).toContain('Meeting Notes');
+      expect(content).toContain('Alice');
+      expect(content).toContain('Agenda item 1');
+    });
+
+    it('should fall back to body when no structured history', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(shareChatEvent({
+        body: 'Forwarded body text',
+      }));
+
+      const content = firstCallArg(mockState.emitMessage).content as string;
+      expect(content).toContain('Forwarded body text');
+    });
+
+    it('should show fallback message when no content available', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(shareChatEvent({}));
+
+      const content = firstCallArg(mockState.emitMessage).content as string;
+      expect(content).toContain('无法解析内容');
+    });
+
+    it('should extract sender name from object format', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(shareChatEvent({
+        chat_history: [
+          { sender: { name: 'Charlie' }, content: 'test' },
+        ],
+      }));
+
+      const content = firstCallArg(mockState.emitMessage).content as string;
+      expect(content).toContain('Charlie');
+    });
+
+    it('should format numeric timestamps as time strings', async () => {
+      const { handler } = createHandler();
+      const ts = 1704067200; // 2024-01-01T00:00:00Z (seconds)
+
+      await handler.handleMessageReceive(shareChatEvent({
+        chat_history: [
+          { sender: 'Alice', content: 'Hello', create_time: ts },
+        ],
+      }));
+
+      const content = firstCallArg(mockState.emitMessage).content as string;
+      expect(content).toContain('Alice');
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Interactive card messages (Issue #3657)
+  // -----------------------------------------------------------------------
+  describe('handleMessageReceive — interactive card messages', () => {
+    function interactiveEvent(card: Record<string, unknown>) {
+      return {
+        event: {
+          message: {
+            message_id: 'msg_interactive',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify(card),
+            message_type: 'interactive',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      } as any;
+    }
+
+    it('should emit interactive card message with extracted content', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(interactiveEvent({
+        header: { title: { content: '搜索结果' } },
+        elements: [
+          { tag: 'markdown', content: '找到 3 条结果' },
+        ],
+      }));
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.messageType).toBe('interactive');
+      expect(msg.content).toBe('Mocked full card content');
+    });
+
+    it('should skip interactive card that extracts to empty content', async () => {
+      // Reset and set mock to return empty
+      const { extractFullCardContent } = await import('../../platforms/feishu/card-builders/card-text-extractor.js');
+      vi.mocked(extractFullCardContent).mockReturnValueOnce('');
+
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(interactiveEvent({}));
+
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+
+    it('should not skip interactive card that extracts to [Interactive Card]', async () => {
+      // Even when card is generic, it should still be emitted
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(interactiveEvent({ elements: [] }));
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Group chat trigger mode
+  // -----------------------------------------------------------------------
+  describe('handleMessageReceive — group chat trigger mode', () => {
+    function groupTextEvent(text: string) {
+      return {
+        event: {
+          message: {
+            message_id: 'msg_group',
+            chat_id: 'chat_group',
+            chat_type: 'group',
+            content: JSON.stringify({ text }),
+            message_type: 'text',
+            create_time: Date.now(),
+            mentions: undefined,
+            parent_id: undefined,
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      } as any;
+    }
+
+    it('should skip group messages without @mention when trigger mode disabled', async () => {
+      mockState.isBotMentioned = false;
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(groupTextEvent('Hello'));
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+
+    it('should process group messages with @mention', async () => {
+      mockState.isBotMentioned = true;
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(groupTextEvent('@bot Hello'));
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('should process group messages when trigger mode enabled', async () => {
+      mockState.isBotMentioned = false;
+      const { handler, triggerModeManager } = createHandler();
+      triggerModeManager.setTriggerEnabled('chat_group', true);
+
+      await handler.handleMessageReceive(groupTextEvent('Hello'));
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('should process /trigger command in group chat without @mention', async () => {
+      mockState.isBotMentioned = false;
+      const { handler } = createHandler();
+      handler.setControlHandler(true);
+      mockState.emitControl.mockResolvedValue({ success: true, message: 'Trigger enabled' });
+
+      await handler.handleMessageReceive(groupTextEvent('/trigger'));
+      expect(mockState.emitControl).toHaveBeenCalledTimes(1);
+    });
+
+    it('should process small group messages (auto-detected)', async () => {
+      mockState.isBotMentioned = false;
+      const { handler, triggerModeManager } = createHandler();
+      triggerModeManager.markAsSmallGroup('chat_group');
+
+      await handler.handleMessageReceive(groupTextEvent('Hello'));
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Command handling
+  // -----------------------------------------------------------------------
+  describe('handleMessageReceive — commands', () => {
+    it('should handle /reset command without control handler', async () => {
+      mockState.hasControlHandler = false;
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(textEvent('/reset'));
+
+      expect(mockState.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: expect.stringContaining('重置') }),
+      );
+    });
+
+    it('should handle /status command without control handler', async () => {
+      mockState.hasControlHandler = false;
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(textEvent('/status'));
+
+      expect(mockState.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: expect.stringContaining('状态') }),
+      );
+    });
+
+    it('should handle /stop command without control handler', async () => {
+      mockState.hasControlHandler = false;
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(textEvent('/stop'));
+
+      expect(mockState.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: expect.stringContaining('停止') }),
+      );
+    });
+
+    it('should delegate to control handler when available', async () => {
+      mockState.hasControlHandler = true;
+      mockState.emitControl.mockResolvedValue({ success: true, message: 'Done' });
+      const { handler } = createHandler();
+      handler.setControlHandler(true);
+      await handler.handleMessageReceive(textEvent('/debug'));
+
+      expect(mockState.emitControl).toHaveBeenCalledTimes(1);
+      const cmd = firstCallArg(mockState.emitControl);
+      expect(cmd.type).toBe('debug');
+    });
+
+    it('should relay control handler error messages', async () => {
+      mockState.hasControlHandler = true;
+      mockState.emitControl.mockResolvedValue({ success: false, message: 'Unknown command' });
+      const { handler } = createHandler();
+      handler.setControlHandler(true);
+      await handler.handleMessageReceive(textEvent('/unknown'));
+
+      expect(mockState.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: 'Unknown command' }),
+      );
+    });
+
+    it('should fall through when control handler returns no success and no message', async () => {
+      mockState.hasControlHandler = true;
+      mockState.emitControl.mockResolvedValue({ success: false });
+      const { handler } = createHandler();
+      handler.setControlHandler(true);
+      await handler.handleMessageReceive(textEvent('/reset'));
+
+      // Falls through to default /reset handler
+      expect(mockState.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: expect.stringContaining('重置') }),
+      );
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // File/image message handling
+  // -----------------------------------------------------------------------
+  describe('handleMessageReceive — file/image messages', () => {
+    function fileEvent(messageType: string, content: Record<string, unknown>) {
+      return {
+        event: {
+          message: {
+            message_id: 'msg_file',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify(content),
+            message_type: messageType,
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      } as any;
+    }
+
+    it('should skip file messages without file_key', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(fileEvent('file', {}));
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+
+    it('should handle image messages without tenantAccessToken (no download)', async () => {
+      const { handler } = createHandler({ tenantAccessToken: '' });
+      // No tenant access token — cannot download
+      await handler.handleMessageReceive(fileEvent('image', { image_key: 'img_001' }));
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.messageType).toBe('file');
+      expect(msg.content).toContain('下载失败');
+    });
+
+    it('should include manual download instructions in failure prompt', async () => {
+      const { handler } = createHandler({ tenantAccessToken: '' });
+      await handler.handleMessageReceive(fileEvent('file', { file_key: 'file_abc', file_name: 'report.pdf' }));
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.content).toContain('下载失败');
+      expect(msg.content).toContain('message_id: `msg_file`');
+      expect(msg.content).toContain('file_key: `file_abc`');
+      expect(msg.content).toContain('npx @larksuite/cli im +messages-resources-download');
+      expect(msg.content).toContain('--message-id msg_file');
+      expect(msg.content).toContain('--file-key file_abc');
+      expect(msg.content).toContain('report.pdf');
+    });
+
+    it('should emit correct message type for audio messages', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(fileEvent('audio', { file_key: 'audio_001' }));
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.messageType).toBe('audio');
+    });
+
+    it('should use file message type for non-audio file messages', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(fileEvent('file', { file_key: 'file_001', file_name: 'doc.pdf' }));
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.messageType).toBe('file');
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Card action handling
+  // -----------------------------------------------------------------------
+  describe('handleCardAction', () => {
+    it('should skip card actions when handler is not running', async () => {
+      mockState.isRunning = false;
+      const { handler } = createHandler();
+      await handler.handleCardAction(cardActionEvent());
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+
+    it('should skip card actions with missing fields', async () => {
+      const { handler } = createHandler();
+      await handler.handleCardAction({}); // No context, operator, or action
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+
+    it('should send user confirmation on card action', async () => {
+      const { handler } = createHandler();
+      await handler.handleCardAction(cardActionEvent());
+
+      expect(mockState.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: expect.stringContaining('Click me'),
+        }),
+      );
+    });
+
+    it('should use action.value as fallback for button text', async () => {
+      const { handler } = createHandler();
+      await handler.handleCardAction({
+        context: { open_message_id: 'card_msg', open_chat_id: 'chat_001' },
+        operator: { open_id: 'user_001' },
+        action: { tag: 'button', value: 'val_no_text' },
+      });
+
+      expect(mockState.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: expect.stringContaining('val_no_text'),
+        }),
+      );
+    });
+
+    it('should emit card actions directly to the local agent', async () => {
+      const { handler } = createHandler();
+      await handler.handleCardAction(cardActionEvent());
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.messageType).toBe('card');
+      expect(msg.chatId).toBe('chat_001');
+    });
+
+    it('should resolve action prompt from template', async () => {
+      mockState.resolveActionPrompt.mockReturnValue('Resolved prompt text');
+      const { handler } = createHandler();
+      await handler.handleCardAction(cardActionEvent());
+
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.content).toBe('Resolved prompt text');
+    });
+
+    it('should fall back to default message when no prompt template', async () => {
+      mockState.resolveActionPrompt.mockReturnValue(undefined);
+      const { handler } = createHandler();
+      await handler.handleCardAction(cardActionEvent());
+
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.content).toContain('用户点击了按钮');
+    });
+
+    it('should handle resolveActionPrompt throwing an error', async () => {
+      mockState.resolveActionPrompt.mockImplementation(() => {
+        throw new Error('Template error');
+      });
+      const { handler } = createHandler();
+      await handler.handleCardAction(cardActionEvent());
+
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.content).toContain('用户点击了按钮');
+    });
+
+    it('should call InteractionManager.handleAction', async () => {
+      const { handler } = createHandler();
+      await handler.handleCardAction(cardActionEvent());
+
+      expect(mockState.interactionHandleAction).toHaveBeenCalledTimes(1);
+    });
+
+    it('should pass card action metadata in emitted message', async () => {
+      const { handler } = createHandler();
+      await handler.handleCardAction(cardActionEvent());
+
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata).toBeDefined();
+      expect(msg.metadata.cardAction).toBeDefined();
+      expect(msg.metadata.cardAction.value).toBe('action_value');
+      expect(msg.metadata.cardMessageId).toBe('card_msg_001');
+      expect(msg.metadata.threadRootId).toBe('card_msg_001');
+      expect(msg.messageId).toMatch(/^card_action_card_msg_001_/);
+      expect(msg.messageId).not.toBe('card_msg_001');
+    });
+
+    it('should give repeated clicks distinct agent message ids while reusing the event id when supplied', async () => {
+      const { handler } = createHandler();
+      await handler.handleCardAction(cardActionEvent({ event_id: 'evt_001' }));
+      const first = firstCallArg(mockState.emitMessage);
+
+      vi.clearAllMocks();
+      await handler.handleCardAction(cardActionEvent({ event_id: 'evt_002' }));
+      const second = firstCallArg(mockState.emitMessage);
+
+      expect(first.messageId).toBe('card_action_card_msg_001_evt_001');
+      expect(second.messageId).toBe('card_action_card_msg_001_evt_002');
+      expect(first.messageId).not.toBe(second.messageId);
+      expect(first.metadata.threadRootId).toBe('card_msg_001');
+      expect(second.metadata.threadRootId).toBe('card_msg_001');
+    });
+
+    it('should log card click under the original message id (not a synthetic id)', async () => {
+      const { handler } = createHandler();
+      await handler.handleCardAction(cardActionEvent());
+
+      // Issue #4197: must use the ORIGINAL Feishu message_id (not a synthetic
+      // `card_action_<id>_<ts>`) so the history/system-prompt builder, which
+      // looks up incoming content by the original id, can see the click.
+      // Routed through logCardInteraction (not logIncomingMessage) so the click
+      // is registered under a namespaced dedup key and cannot pollute the
+      // receive-dedup registry.
+      expect(mockState.logCardInteraction).toHaveBeenCalledWith(
+        'card_msg_001',
+        'user_001',
+        'chat_001',
+        '用户点击了按钮「Click me」',
+      );
+    });
+
+    it('should log card click with action.value fallback when text is missing', async () => {
+      const { handler } = createHandler();
+      await handler.handleCardAction({
+        context: { open_message_id: 'card_msg', open_chat_id: 'chat_001' },
+        operator: { open_id: 'user_001' },
+        action: { tag: 'button', value: 'fallback_val' },
+      });
+
+      expect(mockState.logCardInteraction).toHaveBeenCalledWith(
+        'card_msg',
+        'user_001',
+        'chat_001',
+        '用户点击了按钮「fallback_val」',
+      );
+    });
+
+    it('should log the resolved actionPrompt content (not generic button text) under the original message id', async () => {
+      // Issue #4197 core: the LLM must receive the registered actionPrompt
+      // content, not `[Interactive Card]` / a generic button label.
+      mockState.resolveActionPrompt.mockReturnValueOnce('[用户操作] 用户选择了选项A');
+      const { handler } = createHandler();
+      await handler.handleCardAction(cardActionEvent());
+
+      expect(mockState.resolveActionPrompt).toHaveBeenCalledWith(
+        'card_msg_001',
+        'chat_001',
+        'action_value',
+        'Click me',
+      );
+      expect(mockState.logCardInteraction).toHaveBeenCalledWith(
+        'card_msg_001',
+        'user_001',
+        'chat_001',
+        '[用户操作] 用户选择了选项A',
+      );
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Quoted message context
+  // -----------------------------------------------------------------------
+  describe('handleMessageReceive — quoted message context', () => {
+    it('should not include metadata when parent_id exists but client is not initialized', async () => {
+      const { handler } = createHandler();
+      const event = textEvent('Reply', {
+        event: {
+          message: {
+            message_id: 'msg_reply',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ text: 'Reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      await handler.handleMessageReceive(event);
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      // Without client, quoted message context is undefined → only chatType in metadata
+      expect(msg.metadata?.quotedMessage).toBeUndefined();
+      expect(msg.metadata?.chatType).toBe('p2p');
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Chat history context for trigger mode
+  // -----------------------------------------------------------------------
+  describe('handleMessageReceive — chat history context', () => {
+    it('should fetch chat history for group chat @mention messages', async () => {
+      mockState.isBotMentioned = true;
+      const { handler } = createHandler();
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_hist',
+            chat_id: 'chat_group',
+            chat_type: 'group',
+            content: JSON.stringify({ text: '@bot hello' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      // Feishu passes its own (larger) budget through to getChatHistory instead
+      // of being silently capped at the session default — see #4171 refactor.
+      expect(mockState.getChatHistory).toHaveBeenCalledWith('chat_group', 10000);
+    });
+
+    it('should not fetch chat history for p2p messages', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(textEvent('hello'));
+      expect(mockState.getChatHistory).not.toHaveBeenCalled();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // extractOpenId — tested indirectly through message events
+  // -----------------------------------------------------------------------
+  describe('extractOpenId (via emitted messages)', () => {
+    it('should extract open_id from object sender_id', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(textEvent('Test'));
+      expect(firstCallArg(mockState.emitMessage).userId).toBe('user_001');
+    });
+
+    it('should extract open_id from string sender_id', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_str',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ text: 'Hi' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: 'string_id_123' } as any,
+        },
+      });
+      expect(firstCallArg(mockState.emitMessage).userId).toBe('string_id_123');
+    });
+
+    it('should handle missing sender_id', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_no_sender',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ text: 'Hi' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: {},
+        },
+      });
+      expect(firstCallArg(mockState.emitMessage).userId).toBeUndefined();
+    });
+
+    it('should handle missing sender entirely', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_no_sender_obj',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ text: 'Hi' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: {} as any,
+        },
+      });
+      expect(firstCallArg(mockState.emitMessage).userId).toBeUndefined();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // checkAndAutoDisableSmallGroup
+  // -----------------------------------------------------------------------
+  describe('checkAndAutoDisableSmallGroup', () => {
+    it('should mark as small group when total members ≤ 2', async () => {
+      const { handler, triggerModeManager } = createHandler();
+      const mockClient = {
+        im: {
+          chat: {
+            get: vi.fn().mockResolvedValue({
+              data: { user_count: '1', bot_count: '1' },
+            }),
+          },
+        },
+      };
+      handler.initialize(mockClient as any);
+
+      // Send a group message without @mention
+      mockState.isBotMentioned = false;
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_auto_1',
+            chat_id: 'chat_small',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'Hello' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(triggerModeManager.isTriggerEnabled('chat_small')).toBe(true);
+    });
+
+    it('should not mark as small group when total members > 2', async () => {
+      const { handler, triggerModeManager } = createHandler();
+      const mockClient = {
+        im: {
+          chat: {
+            get: vi.fn().mockResolvedValue({
+              data: { user_count: '3', bot_count: '1' },
+            }),
+          },
+        },
+      };
+      handler.initialize(mockClient as any);
+
+      mockState.isBotMentioned = false;
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_auto_2',
+            chat_id: 'chat_large',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'Hello' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(triggerModeManager.isTriggerEnabled('chat_large')).toBe(false);
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+
+    it('should handle API error gracefully without blocking', async () => {
+      const { handler, triggerModeManager } = createHandler();
+      const mockClient = {
+        im: {
+          chat: {
+            get: vi.fn().mockRejectedValue(new Error('API error')),
+          },
+        },
+      };
+      handler.initialize(mockClient as any);
+
+      mockState.isBotMentioned = false;
+      // Should not throw
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_auto_err',
+            chat_id: 'chat_api_err',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'Hello' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(triggerModeManager.isTriggerEnabled('chat_api_err')).toBe(false);
+    });
+
+    it('should skip auto-detection when client is not initialized', async () => {
+      const { handler, triggerModeManager } = createHandler();
+      // No client initialized
+
+      mockState.isBotMentioned = false;
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_auto_noclient',
+            chat_id: 'chat_noclient',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'Hello' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(triggerModeManager.isTriggerEnabled('chat_noclient')).toBe(false);
+    });
+
+    // Issue #3592: Small group should be unmarked when group grows beyond 2 members
+    it('should unmark small group when group grows beyond 2 members', async () => {
+      const { handler, triggerModeManager } = createHandler();
+      const mockClient = {
+        im: {
+          chat: {
+            get: vi.fn()
+              // Call 1: topic-detection (Issue #4401) for the 1st message — value
+              // is irrelevant (no chat_mode ⇒ treated as a plain group, cached).
+              .mockResolvedValueOnce({ data: { user_count: '1', bot_count: '1' } })
+              // Call 2: 2 members (small group) — small-group check on 1st message
+              .mockResolvedValueOnce({ data: { user_count: '1', bot_count: '1' } })
+              // Call 3: 3 members (group grew) — small-group recheck on 2nd message
+              .mockResolvedValueOnce({ data: { user_count: '2', bot_count: '1' } }),
+          },
+        },
+      };
+      handler.initialize(mockClient as any);
+
+      // First message: should be marked as small group
+      mockState.isBotMentioned = false;
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_grow_1',
+            chat_id: 'chat_growing',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'Hello' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+      expect(triggerModeManager.isTriggerEnabled('chat_growing')).toBe(true);
+      expect(triggerModeManager.isSmallGroup('chat_growing')).toBe(true);
+      // Message should be processed (trigger enabled)
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      mockState.emitMessage.mockClear();
+
+      // Backdate the check time so recheck is allowed
+      (triggerModeManager as any).lastSmallGroupCheck.set('chat_growing', Date.now() - 11 * 60 * 1000);
+
+      // Second message: group grew to 3 members — should unmark
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_grow_2',
+            chat_id: 'chat_growing',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'Hello again' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+      expect(triggerModeManager.isSmallGroup('chat_growing')).toBe(false);
+      expect(triggerModeManager.isTriggerEnabled('chat_growing')).toBe(false);
+      // Message should be skipped (trigger disabled)
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+
+    // Issue #3592: Throttled re-check should not call API within cooldown
+    it('should not recheck small group status within cooldown', async () => {
+      const { handler, triggerModeManager } = createHandler();
+      const mockClient = {
+        im: {
+          chat: {
+            get: vi.fn().mockResolvedValue({
+              data: { user_count: '1', bot_count: '1' },
+            }),
+          },
+        },
+      };
+      handler.initialize(mockClient as any);
+
+      // First message: marks as small group and records check time
+      mockState.isBotMentioned = false;
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_throttle_1',
+            chat_id: 'chat_throttle',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'Hello' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+      // 2 calls on the 1st message: 1 topic-detection (#4401) + 1 small-group check.
+      expect(mockClient.im.chat.get).toHaveBeenCalledTimes(2);
+      expect(triggerModeManager.isTriggerEnabled('chat_throttle')).toBe(true);
+
+      // Second message: within cooldown, should NOT recheck
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_throttle_2',
+            chat_id: 'chat_throttle',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'Hello again' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+      // API should NOT have been called again (still the 2 calls from msg 1:
+      // topic-detection is cached per chat_id, and small-group is in cooldown).
+      expect(mockClient.im.chat.get).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // addTypingReaction with client
+  // -----------------------------------------------------------------------
+  describe('addTypingReaction (via handleMessageReceive)', () => {
+    it('should add typing reaction when client is available', async () => {
+      const mockCreate = vi.fn().mockResolvedValue({});
+      const mockClient = {
+        im: {
+          messageReaction: { create: mockCreate },
+          chat: { get: vi.fn().mockResolvedValue({ data: { user_count: '3', bot_count: '1' } }) },
+        },
+      };
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive(textEvent('Hello'));
+
+      expect(mockCreate).toHaveBeenCalledWith({
+        path: { message_id: 'msg_001' },
+        data: { reaction_type: { emoji_type: 'Typing' } },
+      });
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // File download with client
+  // -----------------------------------------------------------------------
+  describe('handleMessageReceive — file download with client', () => {
+    it('should download file when client is available', async () => {
+      mockExecFile.mockImplementation((...args: unknown[]) => {
+        const callback = args[args.length - 1] as (err: Error | null, result?: { stdout: string; stderr: string }) => void;
+        callback(null, { stdout: 'download ok', stderr: '' });
+      });
+
+      const mockClient = {
+        im: {
+          message: {
+            create: vi.fn().mockResolvedValue({ data: {} }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_dl',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ image_key: 'img_001' }),
+            message_type: 'image',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockExecFile).toHaveBeenCalledWith(
+        'npx',
+        expect.arrayContaining(['@larksuite/cli', 'im', '+messages-resources-download']),
+        expect.objectContaining({ timeout: 120_000 }),
+        expect.any(Function),
+      );
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.content).toContain('文件已下载到本地');
+      expect(msg.content).toContain('+messages-resources-download');
+      expect(msg.content).toContain('msg_dl');
+      expect(msg.content).toContain('img_001');
+      expect(msg.attachments).toBeDefined();
+      expect(msg.attachments[0].fileName).toContain('image_img_001');
+    });
+
+    it('should handle download failure gracefully', async () => {
+      mockExecFile.mockImplementation((...args: unknown[]) => {
+        const callback = args[args.length - 1] as (err: Error | null) => void;
+        callback(new Error('lark-cli not found'));
+      });
+
+      const mockClient = {
+        im: {
+          message: {
+            create: vi.fn().mockResolvedValue({ data: {} }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_dl_fail',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ image_key: 'img_fail' }),
+            message_type: 'image',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.content).toContain('下载失败');
+      expect(msg.content).toContain('img_fail');
+      expect(msg.content).toContain('+messages-resources-download');
+      expect(msg.content).toContain('msg_dl_fail');
+      expect(msg.content).toContain('message_id');
+      expect(msg.content).toContain('file_key');
+      expect(msg.attachments).toBeUndefined();
+    });
+
+    it('should handle audio message with correct type label', async () => {
+      mockExecFile.mockImplementation((...args: unknown[]) => {
+        const callback = args[args.length - 1] as (err: Error | null, result?: { stdout: string; stderr: string }) => void;
+        callback(null, { stdout: 'ok', stderr: '' });
+      });
+
+      const mockClient = {
+        im: {
+          message: {
+            create: vi.fn().mockResolvedValue({ data: {} }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_audio',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ file_key: 'audio_001', file_name: 'voice.mp3' }),
+            message_type: 'audio',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.content).toContain('语音');
+      expect(msg.content).toContain('发送了一段');
+      expect(msg.content).toContain('voice.mp3');
+      expect(msg.content).toContain('音频文件');
+      expect(msg.attachments).toBeDefined();
+    });
+
+    it('should handle media message with correct type label', async () => {
+      mockExecFile.mockImplementation((...args: unknown[]) => {
+        const callback = args[args.length - 1] as (err: Error | null, result?: { stdout: string; stderr: string }) => void;
+        callback(null, { stdout: 'ok', stderr: '' });
+      });
+
+      const mockClient = {
+        im: {
+          message: {
+            create: vi.fn().mockResolvedValue({ data: {} }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_media',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ file_key: 'media_001', file_name: 'video.mp4' }),
+            message_type: 'media',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.content).toContain('媒体');
+      expect(msg.content).toContain('video.mp4');
+      expect(msg.attachments).toBeDefined();
+    });
+
+    it('should handle video message with correct type label', async () => {
+      // Issue #4330: a received video can arrive as message_type 'video' (not just
+      // 'media'); it must be handled (not silently dropped), labeled 视频, and
+      // downloaded via type=file per the Feishu resource API.
+      mockExecFile.mockImplementation((...args: unknown[]) => {
+        const callback = args[args.length - 1] as (err: Error | null, result?: { stdout: string; stderr: string }) => void;
+        callback(null, { stdout: 'ok', stderr: '' });
+      });
+
+      const mockClient = {
+        im: {
+          message: {
+            create: vi.fn().mockResolvedValue({ data: {} }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_video',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ file_key: 'video_001', file_name: 'clip.mp4' }),
+            message_type: 'video',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.content).toContain('视频');
+      expect(msg.content).toContain('clip.mp4');
+      expect(msg.attachments).toBeDefined();
+      // Video downloads via type=file (Feishu spec; mapResourceType('video') -> 'file').
+      expect(mockExecFile).toHaveBeenCalledTimes(1);
+      const dlArgs = mockExecFile.mock.calls[0][1] as string[];
+      expect(dlArgs[dlArgs.indexOf('--type') + 1]).toBe('file');
+    });
+
+    it('should show original message_type in failed download prompt', async () => {
+      mockExecFile.mockImplementation((...args: unknown[]) => {
+        const callback = args[args.length - 1] as (err: Error | null) => void;
+        callback(new Error('download failed'));
+      });
+
+      const mockClient = {
+        im: {
+          message: {
+            create: vi.fn().mockResolvedValue({ data: {} }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_audio_fail',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ file_key: 'audio_fail', file_name: 'voice_fail.mp3' }),
+            message_type: 'audio',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.content).toContain('消息类型: audio');
+      expect(msg.content).toContain('API type 参数: file');
+      expect(msg.content).not.toContain('文件类型: file');
+    });
+  });
+  // -----------------------------------------------------------------------
+  describe('handleMessageReceive — quoted file message (handleQuotedFileMessage)', () => {
+    it('should download quoted image and include it as attachment', async () => {
+      mockExecFile.mockImplementation((...args: unknown[]) => {
+        const callback = args[args.length - 1] as (err: Error | null, result?: { stdout: string; stderr: string }) => void;
+        callback(null, { stdout: 'ok', stderr: '' });
+      });
+
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn().mockResolvedValue({
+              data: {
+                message: {
+                  message_type: 'image',
+                  content: JSON.stringify({ image_key: 'img_q_001' }),
+                  message_id: 'msg_q_parent',
+                },
+              },
+            }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive(textEvent('Reply', {
+        event: {
+          message: {
+            message_id: 'msg_reply_q_img',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ text: 'Reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_q_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      }));
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.quotedMessage).toContain('图片');
+      expect(msg.attachments).toBeDefined();
+      expect(msg.attachments[0].fileName).toContain('image_img_q_001');
+    });
+
+    it('should handle quoted audio message with correct type label', async () => {
+      mockExecFile.mockImplementation((...args: unknown[]) => {
+        const callback = args[args.length - 1] as (err: Error | null, result?: { stdout: string; stderr: string }) => void;
+        callback(null, { stdout: 'ok', stderr: '' });
+      });
+
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn().mockResolvedValue({
+              data: {
+                message: {
+                  message_type: 'audio',
+                  content: JSON.stringify({ file_key: 'audio_q_001', file_name: 'voice.mp3' }),
+                  message_id: 'msg_q_audio',
+                },
+              },
+            }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive(textEvent('Reply', {
+        event: {
+          message: {
+            message_id: 'msg_reply_q_audio',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ text: 'Reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_q_audio',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      }));
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.quotedMessage).toContain('语音');
+      expect(msg.metadata.quotedMessage).toContain('voice.mp3');
+      expect(msg.attachments).toBeDefined();
+    });
+
+    it('should skip download when file exists with a matching key sidecar (cache hit, Issue #4326)', async () => {
+      // Cache validity is bound to fileKey via a `<path>.key` sidecar. fs.access
+      // and fs.readFile are unmocked (real); fs.stat is mocked to {size:1024} and
+      // fs.mkdir/writeFile are no-ops — so seed real files via sync fs.
+      const realFs = await import('fs');
+      const { join } = await import('path');
+      const downloadDir = join('/tmp/mh-test', 'downloads');
+      realFs.mkdirSync(downloadDir, { recursive: true });
+      const filePath = join(downloadDir, 'image_img_cached');
+      realFs.writeFileSync(filePath, 'fake image data');
+      realFs.writeFileSync(`${filePath}.key`, 'img_cached');
+
+      try {
+        const { handler } = createHandler();
+        const spy = vi.spyOn(handler as any, 'downloadResourceViaLarkCli').mockResolvedValue(undefined);
+
+        const result = await (handler as any).handleQuotedFileMessage(
+          'image',
+          JSON.stringify({ image_key: 'img_cached' }),
+          'msg_cached',
+        );
+
+        // Cache hit: download was NOT called
+        expect(spy).not.toHaveBeenCalled();
+        // File path is returned in the attachment
+        expect(result?.attachment?.filePath).toBe(filePath);
+      } finally {
+        realFs.rmSync(downloadDir, { recursive: true, force: true });
+      }
+    });
+
+    it('should re-download when no cached file exists (cache miss, Issue #4326)', async () => {
+      const realFs = await import('fs');
+      const { join } = await import('path');
+      const downloadDir = join('/tmp/mh-test', 'downloads');
+      realFs.mkdirSync(downloadDir, { recursive: true });
+
+      try {
+        const { handler } = createHandler();
+        const spy = vi.spyOn(handler as any, 'downloadResourceViaLarkCli').mockResolvedValue(undefined);
+
+        await (handler as any).handleQuotedFileMessage(
+          'image',
+          JSON.stringify({ image_key: 'img_miss' }),
+          'msg_miss',
+        );
+
+        // No file on disk → cache miss → download IS invoked
+        expect(spy).toHaveBeenCalledTimes(1);
+      } finally {
+        realFs.rmSync(downloadDir, { recursive: true, force: true });
+      }
+    });
+
+    it('should hit via extension-corrected sibling when the bare path is absent (Issue #4326)', async () => {
+      const realFs = await import('fs');
+      const { join } = await import('path');
+      const downloadDir = join('/tmp/mh-test', 'downloads');
+      realFs.mkdirSync(downloadDir, { recursive: true });
+      // ensureFileExtensionFromPath may rename image_img_sib → image_img_sib.png.
+      // Seed only the renamed sibling + its sidecar; the bare path must not exist.
+      const siblingPath = join(downloadDir, 'image_img_sib.png');
+      realFs.writeFileSync(siblingPath, 'fake png data');
+      realFs.writeFileSync(`${siblingPath}.key`, 'img_sib');
+
+      try {
+        const { handler } = createHandler();
+        const spy = vi.spyOn(handler as any, 'downloadResourceViaLarkCli').mockResolvedValue(undefined);
+
+        const result = await (handler as any).handleQuotedFileMessage(
+          'image',
+          JSON.stringify({ image_key: 'img_sib' }),
+          'msg_sib',
+        );
+
+        expect(spy).not.toHaveBeenCalled();
+        expect(result?.attachment?.filePath).toBe(siblingPath);
+      } finally {
+        realFs.rmSync(downloadDir, { recursive: true, force: true });
+      }
+    });
+
+    it('should re-download when a same-named file belongs to a different fileKey (Issue #4326 collision)', async () => {
+      // P1 regression: a user-supplied file_name can collide across distinct
+      // resources in the shared downloadDir. The sidecar must prevent a false hit
+      // that would hand the agent a different file's bytes.
+      const realFs = await import('fs');
+      const { join } = await import('path');
+      const downloadDir = join('/tmp/mh-test', 'downloads');
+      realFs.mkdirSync(downloadDir, { recursive: true });
+      const filePath = join(downloadDir, 'report.pdf');
+      realFs.writeFileSync(filePath, 'resource A content');
+      realFs.writeFileSync(`${filePath}.key`, 'keyA');
+
+      try {
+        const { handler } = createHandler();
+        const spy = vi.spyOn(handler as any, 'downloadResourceViaLarkCli').mockResolvedValue(undefined);
+
+        // Same file_name, DIFFERENT file_key → sidecar mismatch → must re-download
+        await (handler as any).handleQuotedFileMessage(
+          'file',
+          JSON.stringify({ file_key: 'keyB', file_name: 'report.pdf' }),
+          'msg_collision',
+        );
+
+        expect(spy).toHaveBeenCalledTimes(1);
+      } finally {
+        realFs.rmSync(downloadDir, { recursive: true, force: true });
+      }
+    });
+
+    it('should re-download when the cached file is 0 bytes (stale, Issue #4326)', async () => {
+      const realFs = await import('fs');
+      const { join } = await import('path');
+      const fsPromises = await import('fs/promises');
+      const downloadDir = join('/tmp/mh-test', 'downloads');
+      realFs.mkdirSync(downloadDir, { recursive: true });
+      const filePath = join(downloadDir, 'image_img_zero');
+      realFs.writeFileSync(filePath, ''); // 0 bytes
+      realFs.writeFileSync(`${filePath}.key`, 'img_zero');
+
+      try {
+        // fs.stat is globally mocked to {size:1024}; force the first stat (inside
+        // isCacheHitFor) to report 0 so the empty file is treated as a miss.
+        vi.mocked(fsPromises.stat).mockResolvedValueOnce({ size: 0 } as any);
+
+        const { handler } = createHandler();
+        const spy = vi.spyOn(handler as any, 'downloadResourceViaLarkCli').mockResolvedValue(undefined);
+
+        await (handler as any).handleQuotedFileMessage(
+          'image',
+          JSON.stringify({ image_key: 'img_zero' }),
+          'msg_zero',
+        );
+
+        expect(spy).toHaveBeenCalledTimes(1);
+      } finally {
+        realFs.rmSync(downloadDir, { recursive: true, force: true });
+      }
+    });
+
+    it('should handle quoted media message with correct type label', async () => {
+      mockExecFile.mockImplementation((...args: unknown[]) => {
+        const callback = args[args.length - 1] as (err: Error | null, result?: { stdout: string; stderr: string }) => void;
+        callback(null, { stdout: 'ok', stderr: '' });
+      });
+
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn().mockResolvedValue({
+              data: {
+                message: {
+                  message_type: 'media',
+                  content: JSON.stringify({ file_key: 'media_q_001', file_name: 'video.mp4' }),
+                  message_id: 'msg_q_media',
+                },
+              },
+            }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive(textEvent('Reply', {
+        event: {
+          message: {
+            message_id: 'msg_reply_q_media',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ text: 'Reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_q_media',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      }));
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.quotedMessage).toContain('媒体');
+      expect(msg.metadata.quotedMessage).toContain('video.mp4');
+      expect(msg.attachments).toBeDefined();
+    });
+
+    it('should handle quoted video message with correct type label', async () => {
+      // Issue #4330: a quoted (replied-to) video with message_type 'video' must be
+      // downloaded + labeled 视频 in the quoted context (previously dropped because
+      // the quoted path's inline type check omitted 'video').
+      mockExecFile.mockImplementation((...args: unknown[]) => {
+        const callback = args[args.length - 1] as (err: Error | null, result?: { stdout: string; stderr: string }) => void;
+        callback(null, { stdout: 'ok', stderr: '' });
+      });
+
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn().mockResolvedValue({
+              data: {
+                message: {
+                  message_type: 'video',
+                  content: JSON.stringify({ file_key: 'video_q_001', file_name: 'clip.mp4' }),
+                  message_id: 'msg_q_video',
+                },
+              },
+            }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive(textEvent('Reply', {
+        event: {
+          message: {
+            message_id: 'msg_reply_q_video',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ text: 'Reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_q_video',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      }));
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.quotedMessage).toContain('视频');
+      expect(msg.metadata.quotedMessage).toContain('clip.mp4');
+      expect(msg.attachments).toBeDefined();
+      // Video downloads via type=file.
+      expect(mockExecFile).toHaveBeenCalledTimes(1);
+      const dlArgs = mockExecFile.mock.calls[0][1] as string[];
+      expect(dlArgs[dlArgs.indexOf('--type') + 1]).toBe('file');
+    });
+
+    it('should return download failure message when quoted file download fails', async () => {
+      mockExecFile.mockImplementation((...args: unknown[]) => {
+        const callback = args[args.length - 1] as (err: Error | null) => void;
+        callback(new Error('download failed'));
+      });
+
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn().mockResolvedValue({
+              data: {
+                message: {
+                  message_type: 'file',
+                  content: JSON.stringify({ file_key: 'file_q_fail', file_name: 'doc.pdf' }),
+                  message_id: 'msg_q_fail',
+                },
+              },
+            }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive(textEvent('Reply', {
+        event: {
+          message: {
+            message_id: 'msg_reply_q_fail',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ text: 'Reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_q_fail',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      }));
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.quotedMessage).toContain('文件');
+      expect(msg.metadata.quotedMessage).toContain('下载失败');
+      expect(msg.attachments).toBeUndefined();
+    });
+  });
+
+  describe('handleMessageReceive — quoted text/post message with client', () => {
+    it('should include quoted message context when client is available', async () => {
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn().mockResolvedValue({
+              data: {
+                message: {
+                  message_type: 'text',
+                  content: JSON.stringify({ text: 'Quoted text' }),
+                  message_id: 'msg_parent',
+                },
+              },
+            }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive(textEvent('Reply', {
+        event: {
+          message: {
+            message_id: 'msg_reply_2',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ text: 'Reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      }));
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata).toBeDefined();
+      expect(msg.metadata.quotedMessage).toContain('Quoted text');
+    });
+
+    it('should handle quoted post message', async () => {
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn().mockResolvedValue({
+              data: {
+                message: {
+                  message_type: 'post',
+                  content: JSON.stringify({
+                    content: [[{ tag: 'text', text: 'Bold post' }]],
+                  }),
+                  message_id: 'msg_parent_post',
+                },
+              },
+            }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive(textEvent('Reply', {
+        event: {
+          message: {
+            message_id: 'msg_reply_post',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ text: 'Reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_parent_post',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      }));
+
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.quotedMessage).toContain('Bold post');
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Thread context for topic groups (Issue #3641 sub-problem 1)
+  // -----------------------------------------------------------------------
+  describe('handleMessageReceive — thread context for topic groups', () => {
+    it('should fetch thread context in topic group when parent_id exists', async () => {
+      mockState.isBotMentioned = true;
+      // Mock responses: quoted message + thread chain (parent → root)
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              // 1st call: getQuotedMessageContext(parent_id) — fetches the immediate parent
+              .mockResolvedValueOnce({
+                data: {
+                  message: {
+                    message_type: 'text',
+                    content: JSON.stringify({ text: 'First reply' }),
+                    message_id: 'msg_parent',
+                  },
+                },
+              })
+              // 2nd call: getThreadContext(parent_id) — walks up from parent
+              .mockResolvedValueOnce({
+                data: {
+                  message: {
+                    message_type: 'text',
+                    content: JSON.stringify({ text: 'First reply' }),
+                    message_id: 'msg_parent',
+                    parent_id: 'msg_root',
+                    sender: { sender_type: 'user' },
+                  },
+                },
+              })
+              // 3rd call: getThreadContext continues to root
+              .mockResolvedValueOnce({
+                data: {
+                  message: {
+                    message_type: 'text',
+                    content: JSON.stringify({ text: 'Root message' }),
+                    message_id: 'msg_root',
+                    parent_id: undefined,
+                    sender: { sender_type: 'user' },
+                  },
+                },
+              }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_current',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'My reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata).toBeDefined();
+      expect(msg.metadata.threadContext).toBeDefined();
+      // Should contain both messages in chronological order (root first)
+      expect(msg.metadata.threadContext).toContain('Root message');
+      expect(msg.metadata.threadContext).toContain('First reply');
+      // Root should appear before first reply (chronological order)
+      const rootIdx = msg.metadata.threadContext.indexOf('Root message');
+      const replyIdx = msg.metadata.threadContext.indexOf('First reply');
+      expect(rootIdx).toBeLessThan(replyIdx);
+      // Issue #3989: topic groups should NOT get flat chat history
+      expect(msg.metadata.chatHistoryContext).toBeUndefined();
+    });
+
+    it('emits threadRootId = walked chain root for topic-group reply (Issue #4587 part 1)', async () => {
+      mockState.isBotMentioned = true;
+      // Same chain shape as the thread-context test above: parent → root.
+      // The walked root (msg_root) — not parent_id (msg_parent) and not the
+      // incoming message_id — is the stable per-thread identity.
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              // 1st call: getQuotedMessageContext(parent_id)
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent' } },
+              })
+              // 2nd call: getThreadContext(parent_id) — parent itself
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent', parent_id: 'msg_root', sender: { sender_type: 'user' } } },
+              })
+              // 3rd call: getThreadContext walks to root
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'Root message' }), message_id: 'msg_root', sender: { sender_type: 'user' } } },
+              }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_current',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'My reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.threadRootId).toBe('msg_root');
+    });
+
+    it('emits threadRootId = message_id for a topic-group message without parent_id (Issue #4587 part 1)', async () => {
+      // A topic post that starts a new thread IS the thread root.
+      mockState.isBotMentioned = true;
+      const { handler } = createHandler();
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_thread_start',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'New thread' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.threadRootId).toBe('msg_thread_start');
+    });
+
+    it('routes a /reset typed in a topic-group thread to that thread (Issue #4587 part 3)', async () => {
+      // A /reset inside a thread must carry the thread root on the control
+      // command so it resets the chatId::threadRoot slot, not the chat-scoped
+      // agent. Thread-start form (no parent_id): message_id IS the root.
+      mockState.hasControlHandler = true;
+      mockState.isBotMentioned = true;
+      mockState.emitControl.mockResolvedValue({ success: true, message: 'done' });
+      const { handler } = createHandler();
+      handler.setControlHandler(true);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_cmd_thread',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: '/reset' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitControl).toHaveBeenCalledTimes(1);
+      const cmd = firstCallArg(mockState.emitControl);
+      expect(cmd.type).toBe('reset');
+      expect(cmd.threadRootId).toBe('msg_cmd_thread');
+      // The command was consumed — no message forwarded to the agent
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+
+    it('routes a /stop reply inside a topic-group thread to the walked root (Issue #4587 part 3)', async () => {
+      // Reply form (parent_id set): the command's threadRootId uses the same
+      // walked-root resolution as the message path, so /stop in a reply hits
+      // the same thread slot the original question landed in.
+      mockState.hasControlHandler = true;
+      mockState.isBotMentioned = true;
+      mockState.emitControl.mockResolvedValue({ success: true, message: 'done' });
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              // Issue #4587 part 3 review fix: the quoted-context fetch is
+              // skipped for slash commands, so the walk starts at call 1.
+              // 1st call: getThreadContext(parent_id) — parent itself
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent', parent_id: 'msg_root', sender: { sender_type: 'user' } } },
+              })
+              // 2nd call: getThreadContext walks to root
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'Root message' }), message_id: 'msg_root', sender: { sender_type: 'user' } } },
+              }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_cmd_reply',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: '/stop' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitControl).toHaveBeenCalledTimes(1);
+      const cmd = firstCallArg(mockState.emitControl);
+      expect(cmd.type).toBe('stop');
+      expect(cmd.threadRootId).toBe('msg_root');
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+
+    it('a consumed command replying to a file message does NOT download it (Issue #4587 part 3 review fix)', async () => {
+      // The command dispatch moved after the quoted-context fetch, so a reply
+      // to a file message used to eagerly download the file (lark-cli + disk
+      // write) only for the download to be dropped when the command was
+      // consumed. The slash guard must keep the quoted fetch off the consumed
+      // path — lock it so reordering the dispatch turns this red.
+      mockState.hasControlHandler = true;
+      mockState.isBotMentioned = true;
+      mockState.emitControl.mockResolvedValue({ success: true, message: 'done' });
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              // getThreadContext(parent_id) — parent itself (text, has root)
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent', parent_id: 'msg_root', sender: { sender_type: 'user' } } },
+              })
+              // getThreadContext walks to root
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'Root message' }), message_id: 'msg_root', sender: { sender_type: 'user' } } },
+              }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+      handler.setControlHandler(true);
+      const downloadSpy = vi.spyOn(handler as any, 'handleQuotedFileMessage').mockResolvedValue(undefined);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_cmd_file_reply',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: '/reset' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      // Command consumed with the right thread slot …
+      expect(mockState.emitControl).toHaveBeenCalledTimes(1);
+      expect(firstCallArg(mockState.emitControl).threadRootId).toBe('msg_root');
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+      // … and the quoted-context fetch (the only handleQuotedFileMessage entry
+      // point on this path) never ran — no eager download for a dropped command.
+      expect(downloadSpy).not.toHaveBeenCalled();
+      // The mock parent chain above is text-only, so also prove the quoted
+      // fetch itself never started: only the two thread-walk calls happened.
+      expect(mockClient.im.message.get).toHaveBeenCalledTimes(2);
+    });
+
+    it('an UNrecognized slash command replying to a message still gets quoted context (Issue #4587 part 3 review fix)', async () => {
+      // Unrecognized `/xxx` (e.g. a skill invocation like /mineru-pdf) falls
+      // through as a normal message and NEEDS the quoted reply context. The
+      // slash guard must not permanently starve it — the deferred fetch after
+      // the router declines restores main's dispatch-then-fetch ordering.
+      mockState.hasControlHandler = true;
+      mockState.isBotMentioned = true;
+      // Control handler declines the command → router returns false.
+      mockState.emitControl.mockResolvedValue({ success: false });
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              // getThreadContext(parent_id) — parent itself
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent', parent_id: 'msg_root', sender: { sender_type: 'user' } } },
+              })
+              // getThreadContext walks to root
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'Root message' }), message_id: 'msg_root', sender: { sender_type: 'user' } } },
+              })
+              // Deferred getQuotedMessageContext(parent_id) after router decline
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent' } },
+              }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+      handler.setControlHandler(true);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_skill_reply',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: '/mineru-pdf parse this' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      // Fell through to the agent with the deferred quoted context intact.
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.quotedMessage).toContain('First reply');
+      expect(msg.metadata.threadRootId).toBe('msg_root');
+    });
+
+    it('leaves commands in non-topic chats chat-scoped (Issue #4587 part 3)', async () => {
+      mockState.hasControlHandler = true;
+      mockState.emitControl.mockResolvedValue({ success: true, message: 'done' });
+      const { handler } = createHandler();
+      handler.setControlHandler(true);
+
+      await handler.handleMessageReceive(textEvent('/reset'));
+
+      const cmd = firstCallArg(mockState.emitControl);
+      expect(cmd.type).toBe('reset');
+      expect(cmd.threadRootId).toBeUndefined();
+    });
+
+    it('emits threadRootId = message_id for a topic-group FILE message without parent_id (Issue #4587 part 1 review fix)', async () => {
+      // Review fix: the file/image path originally had no no-parent_id branch,
+      // so a thread-starting media message emitted NO threadRootId while the
+      // text path emitted message_id — part 2's session keying would treat
+      // media thread-starts as chat-scoped. Same rule, second path.
+      const { handler } = createHandler();
+      mockState.isBotMentioned = true;
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_file_thread_start',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ file_key: 'file_key_1', file_name: 'a.pdf' }),
+            message_type: 'file',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.threadRootId).toBe('msg_file_thread_start');
+    });
+
+    it('does NOT emit threadRootId for non-topic chats (Issue #4587 part 1)', async () => {
+      // Session keying stays chat-scoped for p2p/plain groups — no thread
+      // identity must leak into their metadata.
+      mockState.isBotMentioned = true;
+      mockState.getChatHistory.mockResolvedValue('some history');
+      const { handler } = createHandler();
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_group_reply',
+            chat_id: 'chat_plain_group',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'Plain group reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_group_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.threadRootId).toBeUndefined();
+    });
+
+    it('falls back to parent_id when the walk hits the depth cap (Issue #4591 fix 1 — deep-chain unification)', async () => {
+      // A chain deeper than maxDepth must not resolve a mid-chain node as the
+      // thread root: shallow replies to the true root walk 1 step and get the
+      // real root, deep replies used to cap out and get lastVisitedWithParent —
+      // two different keys for one thread. On an incomplete walk we now fall
+      // back to parent_id (identical to the total-failure fallback).
+      mockState.isBotMentioned = true;
+      const deepMsg = (id: string, parent: string) => ({
+        data: {
+          message: {
+            message_type: 'text',
+            content: JSON.stringify({ text: `msg ${id}` }),
+            message_id: id,
+            parent_id: parent,
+            sender: { sender_type: 'user' },
+          },
+        },
+      });
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              // 1st call: getQuotedMessageContext(parent_id)
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'msg d9' }), message_id: 'd9' } },
+              })
+              // getThreadContext walk: d9 → d8 → ... → d0 → (parent of d0,
+              // never fetched) — 10 nodes visited, cap hit before the root.
+              .mockResolvedValueOnce(deepMsg('d9', 'd8'))
+              .mockResolvedValueOnce(deepMsg('d8', 'd7'))
+              .mockResolvedValueOnce(deepMsg('d7', 'd6'))
+              .mockResolvedValueOnce(deepMsg('d6', 'd5'))
+              .mockResolvedValueOnce(deepMsg('d5', 'd4'))
+              .mockResolvedValueOnce(deepMsg('d4', 'd3'))
+              .mockResolvedValueOnce(deepMsg('d3', 'd2'))
+              .mockResolvedValueOnce(deepMsg('d2', 'd1'))
+              .mockResolvedValueOnce(deepMsg('d1', 'd0'))
+              .mockResolvedValueOnce(deepMsg('d0', 'd_root_unfetched')),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_current_deep',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'Deep reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'd9',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      // Incomplete walk → parent_id, NOT the mid-chain d0 the old code resolved.
+      expect(msg.metadata.threadRootId).toBe('d9');
+      // Context text still assembled from the walked part of the chain.
+      expect(msg.metadata.threadContext).toContain('msg d0');
+      expect(mockClient.im.message.get).toHaveBeenCalledTimes(11);
+    });
+
+    it('retries a transient fetch failure and reports the true root (Issue #4591 fix 2)', async () => {
+      // One transient im.message.get blip must not abort the walk: the retry
+      // succeeds and the session key still lands on the true root — same key
+      // as a sibling reply whose walk never blipped.
+      mockState.isBotMentioned = true;
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              // 1st call: getQuotedMessageContext(parent_id)
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent' } },
+              })
+              // 2nd call: getThreadContext(parent_id) — transient failure
+              .mockRejectedValueOnce(new Error('ETIMEDOUT'))
+              // retry of the same node succeeds
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent', parent_id: 'msg_root', sender: { sender_type: 'user' } } },
+              })
+              // walk continues to root
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'Root message' }), message_id: 'msg_root', sender: { sender_type: 'user' } } },
+              }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_current_blip',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'My reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      // Retry rode out the blip → walk completed → true root, not parent_id.
+      expect(msg.metadata.threadRootId).toBe('msg_root');
+      expect(msg.metadata.threadContext).toContain('Root message');
+    });
+
+    it('falls back to parent_id when the fetch fails even after the retry (Issue #4591 fix 2 — unified failure path)', async () => {
+      // A persistent failure aborts the walk (undefined) — the text path then
+      // falls back to parent_id, the same key a depth-capped walk now uses:
+      // both incomplete-walk flavors converge on ONE fallback instead of two.
+      mockState.isBotMentioned = true;
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              // 1st call: getQuotedMessageContext(parent_id)
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent' } },
+              })
+              // getThreadContext(parent_id) — fails, retry fails, walk aborts
+              .mockRejectedValue(new Error('ECONNRESET')),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_current_hardfail',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'My reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      // Walk aborted → parent_id fallback (unchanged behavior), and exactly
+      // one retry was attempted (2 thread-walk calls + 1 quoted-context call).
+      expect(msg.metadata.threadRootId).toBe('msg_parent');
+      expect(msg.metadata.threadContext).toBeUndefined();
+      expect(mockClient.im.message.get).toHaveBeenCalledTimes(3);
+    });
+
+    it('FILE path: walk failure falls back to parent_id, not message_id (Issue #4591 fix 1 — call-site parity)', async () => {
+      // The media call site used message_id as its failure fallback — a value
+      // unique to this message, so no other message in the thread could ever
+      // share the key: a guaranteed split. Now both paths use parent_id.
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              .mockRejectedValue(new Error('ECONNRESET')),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+      mockState.isBotMentioned = true;
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_file_reply',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ file_key: 'file_key_deep', file_name: 'b.pdf' }),
+            message_type: 'file',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      // Same key the text path resolves for a sibling reply of msg_parent.
+      expect(msg.metadata.threadRootId).toBe('msg_parent');
+      expect(msg.metadata.threadRootId).not.toBe('msg_file_reply');
+    });
+
+    it('FILE path: depth-capped walk also falls back to parent_id (Issue #4591 fix 1)', async () => {
+      // Media reply in an over-cap chain — must not resolve the mid-chain
+      // node either; identical rule to the text path.
+      const deepMsg = (id: string, parent: string) => ({
+        data: {
+          message: {
+            message_type: 'text',
+            content: JSON.stringify({ text: `msg ${id}` }),
+            message_id: id,
+            parent_id: parent,
+            sender: { sender_type: 'user' },
+          },
+        },
+      });
+      // Topic chats are group chats: without a @mention the message is filtered
+      // before the thread walk (trigger mode off).
+      mockState.isBotMentioned = true;
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              .mockResolvedValueOnce(deepMsg('d9', 'd8'))
+              .mockResolvedValueOnce(deepMsg('d8', 'd7'))
+              .mockResolvedValueOnce(deepMsg('d7', 'd6'))
+              .mockResolvedValueOnce(deepMsg('d6', 'd5'))
+              .mockResolvedValueOnce(deepMsg('d5', 'd4'))
+              .mockResolvedValueOnce(deepMsg('d4', 'd3'))
+              .mockResolvedValueOnce(deepMsg('d3', 'd2'))
+              .mockResolvedValueOnce(deepMsg('d2', 'd1'))
+              .mockResolvedValueOnce(deepMsg('d1', 'd0'))
+              .mockResolvedValueOnce(deepMsg('d0', 'd_root_unfetched')),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_file_deep',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ file_key: 'file_key_cap', file_name: 'c.pdf' }),
+            message_type: 'file',
+            create_time: Date.now(),
+            parent_id: 'd9',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.threadRootId).toBe('d9');
+      expect(msg.metadata.threadRootId).not.toBe('d0');
+    });
+
+    it('should NOT set chatHistoryContext for topic-group text messages without parent_id (Issue #4304 part 2)', async () => {
+      // Issue #4304 part 2: a topic message with NO parent_id must not fall back
+      // to flat chat history (which mixes messages across threads). Mock non-empty
+      // history so this test FAILS if the `chat_type !== 'topic'` guard is removed
+      // from the text-path else-if.
+      mockState.getChatHistory.mockReset();
+      mockState.getChatHistory.mockResolvedValue('LEAKED_FLAT_HISTORY');
+
+      const { handler } = createHandler();
+      mockState.isBotMentioned = true;
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_topic_no_parent',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'Standalone topic message' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            // intentionally no parent_id
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      expect(mockState.getChatHistory).not.toHaveBeenCalled();
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata).toBeDefined();
+      expect(msg.metadata.chatHistoryContext).toBeUndefined();
+    });
+
+    it('detects a topic group from chat_mode when the event chat_type is "group" (Issue #4401)', async () => {
+      // Issue #4401: real topic groups arrive with chat_type "group" (the event
+      // enum is only p2p|group); chat_mode is the only authoritative signal.
+      // Mock non-empty flat history so this test FAILS if chat_mode resolution
+      // regresses (flat history would leak across threads).
+      mockState.getChatHistory.mockReset();
+      mockState.getChatHistory.mockResolvedValue('LEAKED_FLAT_HISTORY');
+
+      const chatGet = vi.fn().mockResolvedValue({
+        data: { chat_mode: 'topic', user_count: '5', bot_count: '1' },
+      });
+      const mockClient = { im: { chat: { get: chatGet } } };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+      mockState.isBotMentioned = true;
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_topic_via_chatmode',
+            chat_id: 'chat_topic_group',
+            chat_type: 'group', // <- the real-world case: event says "group"
+            content: JSON.stringify({ text: 'Topic reply via chat_mode' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            // no parent_id: a standalone topic post must still skip flat history
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(chatGet).toHaveBeenCalledWith({ path: { chat_id: 'chat_topic_group' } });
+      expect(mockState.getChatHistory).not.toHaveBeenCalled();
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata).toBeDefined();
+      // chat_type is normalized to "topic" so the downstream contract fires.
+      expect(msg.metadata.chatType).toBe('topic');
+      expect(msg.metadata.chatHistoryContext).toBeUndefined();
+    });
+
+    it('caches chat_mode so a second message in the same chat does not re-fetch (Issue #4401)', async () => {
+      const chatGet = vi.fn().mockResolvedValue({
+        data: { chat_mode: 'topic', user_count: '5', bot_count: '1' },
+      });
+      const mockClient = { im: { chat: { get: chatGet } } };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+      mockState.isBotMentioned = true;
+
+      const event = (messageId: string) => ({
+        event: {
+          message: {
+            message_id: messageId,
+            chat_id: 'chat_topic_cached',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'hi' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      } as any);
+
+      await handler.handleMessageReceive(event('msg_a'));
+      await handler.handleMessageReceive(event('msg_b'));
+
+      // One chat.get per chat_id, then served from cache.
+      expect(chatGet).toHaveBeenCalledTimes(1);
+    });
+
+    it('re-fetches chat_mode after invalidateChatModeCache clears the cache (Issue #4428 invalidation)', async () => {
+      // im.chat.updated_v1 fires when a chat's properties change (rename, or a
+      // group/topic format toggle). The channel dispatcher calls
+      // invalidateChatModeCache so the next message does not trust a stale
+      // cached mode. Prime the cache, confirm a second message is served from
+      // cache, invalidate, then confirm a third message re-fetches.
+      const chatGet = vi.fn().mockResolvedValue({
+        data: { chat_mode: 'topic', user_count: '5', bot_count: '1' },
+      });
+      const mockClient = { im: { chat: { get: chatGet } } };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+      mockState.isBotMentioned = true;
+
+      const event = (messageId: string) => ({
+        event: {
+          message: {
+            message_id: messageId,
+            chat_id: 'chat_topic_invalidate',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'hi' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      } as any);
+
+      await handler.handleMessageReceive(event('msg_a'));
+      await handler.handleMessageReceive(event('msg_b'));
+      // Cached after the first fetch; the second message did not re-fetch.
+      expect(chatGet).toHaveBeenCalledTimes(1);
+
+      // Simulate im.chat.updated_v1 arriving from the channel dispatcher.
+      handler.invalidateChatModeCache('chat_topic_invalidate');
+
+      await handler.handleMessageReceive(event('msg_c'));
+      // Cache was invalidated, so the third message re-fetches chat_mode.
+      expect(chatGet).toHaveBeenCalledTimes(2);
+    });
+
+    it('detects a topic-format group from group_message_type=thread when chat_mode is "group" (Issue #4428)', async () => {
+      // Issue #4428 (#4401 residual): a group-format group switched to thread
+      // messages arrives with chat_type "group" AND chat_mode "group", so the
+      // #4401 chat_mode signal does not fire. group_message_type="thread" is the
+      // only authoritative signal for this second thread-capable form. Mock
+      // non-empty flat history so this test FAILS if group_message_type
+      // resolution regresses (flat history would leak across threads).
+      mockState.getChatHistory.mockReset();
+      mockState.getChatHistory.mockResolvedValue('LEAKED_FLAT_HISTORY');
+
+      const chatGet = vi.fn().mockResolvedValue({
+        data: { chat_mode: 'group', group_message_type: 'thread', user_count: '5', bot_count: '1' },
+      });
+      const mockClient = { im: { chat: { get: chatGet } } };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+      mockState.isBotMentioned = true;
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_topic_via_groupMessageType',
+            chat_id: 'chat_topic_format_group',
+            chat_type: 'group', // <- chat_mode is also "group"; only group_message_type reveals the thread form
+            content: JSON.stringify({ text: 'Topic reply via group_message_type' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            // no parent_id: a standalone topic post must still skip flat history
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(chatGet).toHaveBeenCalledWith({ path: { chat_id: 'chat_topic_format_group' } });
+      expect(mockState.getChatHistory).not.toHaveBeenCalled();
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata).toBeDefined();
+      // chat_type is normalized to "topic" so the downstream contract fires.
+      expect(msg.metadata.chatType).toBe('topic');
+      expect(msg.metadata.chatHistoryContext).toBeUndefined();
+    });
+
+    it('does NOT classify a plain group (group_message_type=chat) as a topic group (Issue #4428)', async () => {
+      // Issue #4428 negative case: a group-mode chat with thread messages OFF
+      // (group_message_type="chat") must stay a plain group — only the "thread"
+      // value triggers topic isolation.
+      const chatGet = vi.fn().mockResolvedValue({
+        data: { chat_mode: 'group', group_message_type: 'chat', user_count: '5', bot_count: '1' },
+      });
+      const mockClient = { im: { chat: { get: chatGet } } };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+      mockState.isBotMentioned = true;
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_plain_group',
+            chat_id: 'chat_plain_group',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'Plain group reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.chatType).toBe('group');
+    });
+
+    it('should surface download guidance (not eager download) for media in thread context (Issue #4319)', async () => {
+      const mockClient = {
+        im: {
+          message: {
+            // Chain: image message (parent → root text)
+            get: vi.fn()
+              .mockResolvedValueOnce({
+                data: {
+                  message: {
+                    message_type: 'image',
+                    content: JSON.stringify({ image_key: 'img_test123' }),
+                    message_id: 'msg_image',
+                    parent_id: 'msg_root',
+                    sender: { sender_type: 'user' },
+                  },
+                },
+              })
+              .mockResolvedValueOnce({
+                data: {
+                  message: {
+                    message_type: 'text',
+                    content: JSON.stringify({ text: 'See this screenshot' }),
+                    message_id: 'msg_root',
+                    parent_id: undefined,
+                    sender: { sender_type: 'user' },
+                  },
+                },
+              }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      // getThreadContext must stay read-only: prove the eager-download path is
+      // never reached while building thread context.
+      const downloadSpy = vi.spyOn(handler as any, 'handleQuotedFileMessage');
+
+      const result = await (handler as any).getThreadContext('msg_image');
+
+      expect(result).toBeDefined();
+      // Read-only: no eager download happened while building context.
+      expect(downloadSpy).not.toHaveBeenCalled();
+      // Issue #4587 (part 1): shape is now { text, rootId }.
+      expect(result.text).toBeDefined();
+      // Actionable download guidance is surfaced — the resource key + the
+      // message_id it points at + a ready-to-run download command — not the
+      // opaque placeholder, and not a pre-downloaded local path.
+      expect(result.text).toContain('img_test123');
+      expect(result.text).toContain('msg_image');
+      expect(result.text).toContain('messages-resources-download');
+      expect(result.text).not.toContain('[未解析的 image 消息]');
+      expect(result.text).not.toMatch(/已下载到本地/);
+      // Non-media (text) message is still extracted normally
+      expect(result.text).toContain('See this screenshot');
+    });
+
+    it('should use the real filename (with extension) as the download target (review nit #3)', () => {
+      const { handler } = createHandler();
+      const guidance = (handler as any).buildMediaThreadGuidance(
+        'file',
+        JSON.stringify({ file_key: 'file_xyz', file_name: 'report.pdf' }),
+        'msg_real_ext',
+      );
+      expect(guidance).toBeDefined();
+      // The real name carries its extension — a later Read sees report.pdf, not <id>.bin
+      expect(guidance).toContain('./downloads/report.pdf');
+      expect(guidance).not.toMatch(/msg_real_ext\.bin/);
+      // Still surfaces the key + message id + ready-to-run command
+      expect(guidance).toContain('file_key=file_xyz');
+      expect(guidance).toContain('名称=report.pdf');
+      expect(guidance).toContain('messages-resources-download');
+      expect(guidance).toContain('msg_real_ext');
+    });
+
+    it('should fall back to messageId + best-effort extension when there is no real filename (review nit #3)', () => {
+      const { handler } = createHandler();
+      // Nameless file → synthetic fileName has no extension → use messageId.bin
+      const guidance = (handler as any).buildMediaThreadGuidance(
+        'file',
+        JSON.stringify({ file_key: 'file_noname' }),
+        'msg_no_ext',
+      );
+      expect(guidance).toBeDefined();
+      expect(guidance).toContain('./downloads/msg_no_ext.bin');
+      expect(guidance).toContain('file_key=file_noname');
+    });
+
+    it('should keep the per-messageId .jpg path for images (no real name available)', () => {
+      const { handler } = createHandler();
+      const guidance = (handler as any).buildMediaThreadGuidance(
+        'image',
+        JSON.stringify({ image_key: 'img_only' }),
+        'msg_img',
+      );
+      expect(guidance).toBeDefined();
+      expect(guidance).toContain('./downloads/msg_img.jpg');
+      expect(guidance).toContain('image_key=img_only');
+    });
+
+    it('should return undefined (keep the opaque placeholder) when a media message has no parseable key (Issue #4329)', () => {
+      // Issue #4329: the read-only thread-context path must keep an honest
+      // fallback when it cannot point the agent at a downloadable resource.
+      // buildMediaThreadGuidance returns undefined for media content with no
+      // resource key (malformed / missing image_key|file_key); getThreadContext
+      // then keeps extractMessageText's opaque `[未解析的 <type> 消息]`
+      // placeholder instead of fabricating guidance or silently dropping the
+      // message.
+      // Re-scoped from #4329's original "stub handleQuotedFileMessage returns
+      // no filePath" suggestion: getThreadContext has been read-only since
+      // #4319/#4358 and no longer calls handleQuotedFileMessage, so the
+      // equivalent gap is the no-key branch of buildMediaThreadGuidance.
+      const { handler } = createHandler();
+      // No resource key in content → nothing to point the agent at.
+      expect((handler as any).buildMediaThreadGuidance('image', JSON.stringify({}), 'msg_no_key'))
+        .toBeUndefined();
+      expect((handler as any).buildMediaThreadGuidance('file', JSON.stringify({ unrelated: 'x' }), 'msg_no_key'))
+        .toBeUndefined();
+      // Malformed (non-JSON) content → parseMediaContent returns undefined →
+      // guidance is again undefined (placeholder kept downstream).
+      expect((handler as any).buildMediaThreadGuidance('audio', 'not-json', 'msg_bad'))
+        .toBeUndefined();
+    });
+
+    it('should surface the correct label for non-image media in read-only guidance (Issue #4329)', () => {
+      // Issue #4329: mediaThreadLabel mappings for non-image types were
+      // previously untested in the read-only thread-context path (only
+      // image/file guidance was covered). Lock audio→语音, video→视频, and the
+      // default fallback so a future label change is caught.
+      const { handler } = createHandler();
+
+      const audioGuidance = (handler as any).buildMediaThreadGuidance(
+        'audio',
+        JSON.stringify({ file_key: 'aud_1', file_name: 'voice.opus' }),
+        'msg_audio',
+      );
+      expect(audioGuidance).toBeDefined();
+      expect(audioGuidance).toContain('语音');
+      expect(audioGuidance).toContain('file_key=aud_1');
+
+      const videoGuidance = (handler as any).buildMediaThreadGuidance(
+        'video',
+        JSON.stringify({ file_key: 'vid_1', file_name: 'clip.mp4' }),
+        'msg_video',
+      );
+      expect(videoGuidance).toBeDefined();
+      expect(videoGuidance).toContain('视频');
+      expect(videoGuidance).toContain('file_key=vid_1');
+
+      // Unknown / generic media type → default 媒体 label.
+      const mediaGuidance = (handler as any).buildMediaThreadGuidance(
+        'media',
+        JSON.stringify({ file_key: 'gen_1', file_name: 'blob.dat' }),
+        'msg_media',
+      );
+      expect(mediaGuidance).toBeDefined();
+      expect(mediaGuidance).toContain('媒体');
+    });
+
+    it('getThreadContext keeps the opaque placeholder (no download command) for a keyless media ancestor (Issue #4329)', async () => {
+      // End-to-end lock for the no-key fallback: a thread media ancestor whose
+      // content carries no resource key surfaces extractMessageText's opaque
+      // placeholder, with NO download command and NO eager download — the
+      // read-only contract from #4319 must hold even when guidance is absent.
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              .mockResolvedValueOnce({
+                data: {
+                  message: {
+                    // image with no image_key — nothing to point the agent at
+                    message_type: 'image',
+                    content: JSON.stringify({}),
+                    message_id: 'msg_no_key',
+                    parent_id: 'msg_root',
+                    sender: { sender_type: 'user' },
+                  },
+                },
+              })
+              .mockResolvedValueOnce({
+                data: {
+                  message: {
+                    message_type: 'text',
+                    content: JSON.stringify({ text: 'thread root' }),
+                    message_id: 'msg_root',
+                    parent_id: undefined,
+                    sender: { sender_type: 'user' },
+                  },
+                },
+              }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      const downloadSpy = vi.spyOn(handler as any, 'handleQuotedFileMessage');
+
+      const result = await (handler as any).getThreadContext('msg_no_key');
+
+      expect(result).toBeDefined();
+      // Issue #4587 (part 1): shape is now { text, rootId }.
+      // Honest placeholder retained; no fabricated download guidance / command.
+      expect(result.text).toContain('[未解析的 image 消息]');
+      expect(result.text).not.toContain('messages-resources-download');
+      // Read-only: still no eager download on the fallback path.
+      expect(downloadSpy).not.toHaveBeenCalled();
+      // Non-media ancestor still extracted normally.
+      expect(result.text).toContain('thread root');
+    });
+
+    it('should not fetch thread context for non-topic groups', async () => {
+      mockState.isBotMentioned = true;
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn().mockResolvedValue({
+              data: {
+                message: {
+                  message_type: 'text',
+                  content: JSON.stringify({ text: 'Parent' }),
+                  message_id: 'msg_parent',
+                },
+              },
+            }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_current',
+            chat_id: 'chat_group',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'My reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata?.threadContext).toBeUndefined();
+    });
+
+    it('should not fetch thread context when no parent_id', async () => {
+      mockState.isBotMentioned = true;
+      const { handler } = createHandler();
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_current',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'New topic' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata?.threadContext).toBeUndefined();
+    });
+
+    it('should not fetch thread context without client', async () => {
+      mockState.isBotMentioned = true;
+      const { handler } = createHandler();
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_current',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'Reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata?.threadContext).toBeUndefined();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // handleCardAction error paths
+  // -----------------------------------------------------------------------
+  describe('handleCardAction — error paths', () => {
+    it('should notify user when emitMessage throws', async () => {
+      mockState.emitMessage.mockRejectedValueOnce(new Error('Emit failed'));
+      const { handler } = createHandler();
+
+      await handler.handleCardAction(cardActionEvent());
+
+      // Should still attempt to send error notification
+      expect(mockState.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: expect.stringContaining('错误') }),
+      );
+    });
+
+    it('should skip InteractionManager when emitMessage fails (no double notification)', async () => {
+      mockState.emitMessage.mockRejectedValueOnce(new Error('Emit failed'));
+      mockState.interactionHandleAction.mockRejectedValueOnce(new Error('Interaction error'));
+      const { handler } = createHandler();
+
+      await handler.handleCardAction(cardActionEvent());
+
+      // InteractionManager should NOT be called when emit already failed
+      expect(mockState.interactionHandleAction).not.toHaveBeenCalled();
+      // Only ONE error notification should be sent (not two)
+      const errorCalls = mockState.sendMessage.mock.calls.filter(
+        (call: any[]) => call[0]?.text?.includes('错误'),
+      );
+      expect(errorCalls).toHaveLength(1);
+    });
+
+    it('should send error message when InteractionManager throws', async () => {
+      mockState.interactionHandleAction.mockRejectedValueOnce(new Error('Interaction error'));
+      const { handler } = createHandler();
+
+      await handler.handleCardAction(cardActionEvent());
+
+      expect(mockState.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: expect.stringContaining('Interaction error') }),
+      );
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Media message type
+  // -----------------------------------------------------------------------
+  describe('handleMessageReceive — media messages', () => {
+    it('should handle media message type like file', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_media',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ file_key: 'media_001', file_name: 'video.mp4' }),
+            message_type: 'media',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.messageType).toBe('file');
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // File/image message metadata in topic groups (PR #3704)
+  // -----------------------------------------------------------------------
+  describe('handleMessageReceive — file metadata in topic groups', () => {
+    it('should pass chatType metadata for file messages in topic group', async () => {
+      const { handler } = createHandler();
+      mockState.isBotMentioned = true;
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_file_topic',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ file_key: 'file_001', file_name: 'doc.pdf' }),
+            message_type: 'file',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata).toBeDefined();
+      expect(msg.metadata.chatType).toBe('topic');
+    });
+
+    it('should pass chatType metadata for image messages in topic group', async () => {
+      const { handler } = createHandler();
+      mockState.isBotMentioned = true;
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_img_topic',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ image_key: 'img_001' }),
+            message_type: 'image',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata).toBeDefined();
+      expect(msg.metadata.chatType).toBe('topic');
+    });
+
+    it('should pass threadContext for file messages in topic group with parent_id', async () => {
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              // getThreadContext walks up: parent → root
+              .mockResolvedValueOnce({
+                data: {
+                  message: {
+                    message_type: 'text',
+                    content: JSON.stringify({ text: 'Reply in thread' }),
+                    message_id: 'msg_parent',
+                    parent_id: 'msg_root',
+                    sender: { sender_type: 'user' },
+                  },
+                },
+              })
+              .mockResolvedValueOnce({
+                data: {
+                  message: {
+                    message_type: 'text',
+                    content: JSON.stringify({ text: 'Root message' }),
+                    message_id: 'msg_root',
+                    parent_id: undefined,
+                    sender: { sender_type: 'user' },
+                  },
+                },
+              }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+      mockState.isBotMentioned = true;
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_file_thread',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ file_key: 'file_001', file_name: 'doc.pdf' }),
+            message_type: 'file',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata).toBeDefined();
+      expect(msg.metadata.chatType).toBe('topic');
+      expect(msg.metadata.threadContext).toBeDefined();
+      expect(msg.metadata.threadContext).toContain('Root message');
+      expect(msg.metadata.threadContext).toContain('Reply in thread');
+    });
+
+    it('should pass chatType metadata for file messages in group chat', async () => {
+      const { handler } = createHandler();
+      mockState.isBotMentioned = true;
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_file_group',
+            chat_id: 'chat_group',
+            chat_type: 'group',
+            content: JSON.stringify({ file_key: 'file_001', file_name: 'doc.pdf' }),
+            message_type: 'file',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata).toBeDefined();
+      expect(msg.metadata.chatType).toBe('group');
+      // group chat should NOT have threadContext even with chat_type set
+      expect(msg.metadata.threadContext).toBeUndefined();
+    });
+
+    it('should set chatType but not threadContext for p2p file messages', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_file_p2p',
+            chat_id: 'chat_p2p',
+            chat_type: 'p2p',
+            content: JSON.stringify({ file_key: 'file_001', file_name: 'doc.pdf' }),
+            message_type: 'file',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata).toBeDefined();
+      expect(msg.metadata.chatType).toBe('p2p');
+      expect(msg.metadata.threadContext).toBeUndefined();
+    });
+
+    it('should NOT set chatHistoryContext for topic-group file messages (Issue #4304)', async () => {
+      // Regression: the file path previously injected flat chat history for ALL
+      // group chats incl. topic, mixing messages across threads. Mock a non-empty
+      // history so this test FAILS if the topic guard is removed.
+      mockState.getChatHistory.mockReset();
+      mockState.getChatHistory.mockResolvedValue('LEAKED_FLAT_HISTORY');
+
+      const { handler } = createHandler();
+      mockState.isBotMentioned = true;
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_file_topic_hist',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ file_key: 'file_001', file_name: 'doc.pdf' }),
+            message_type: 'file',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      // Topic groups must not fetch flat history (avoids cross-thread mixing)
+      expect(mockState.getChatHistory).not.toHaveBeenCalled();
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata).toBeDefined();
+      expect(msg.metadata.chatHistoryContext).toBeUndefined();
+    });
+
+    it('should set chatHistoryContext for regular-group file messages (Issue #4304 control)', async () => {
+      // Positive control: regular groups still get flat chat history, proving
+      // the topic guard is specific to topic chats (not a blanket removal).
+      mockState.getChatHistory.mockReset();
+      mockState.getChatHistory.mockResolvedValue('GROUP_FLAT_HISTORY');
+
+      const { handler } = createHandler();
+      mockState.isBotMentioned = true;
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_file_group_hist',
+            chat_id: 'chat_group',
+            chat_type: 'group',
+            content: JSON.stringify({ file_key: 'file_001', file_name: 'doc.pdf' }),
+            message_type: 'file',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      expect(mockState.getChatHistory).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata).toBeDefined();
+      expect(msg.metadata.chatHistoryContext).toBe('GROUP_FLAT_HISTORY');
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Topic group chat detection
+  // -----------------------------------------------------------------------
+  describe('handleMessageReceive — topic chat type', () => {
+    it('should treat topic chats like group chats for trigger mode', async () => {
+      mockState.isBotMentioned = false;
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(textEvent('Hello', {
+        event: {
+          message: {
+            message_id: 'msg_topic',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'Hello' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      }));
+      // topic chat should behave like group chat — skip without @mention
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Topic group message notification (Issue #4031)
+  // -----------------------------------------------------------------------
+  describe('handleMessageReceive — topic group notification (onTopicMessage)', () => {
+    it('should call onTopicMessage when topicNotify is enabled for topic chat', async () => {
+      mockState.isBotMentioned = true;
+      mockState.topicNotifyEnabled = true;
+      const { handler } = createHandler();
+      const fixedTime = Date.now();
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_topic_001',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'Hello topic' }),
+            message_type: 'text',
+            create_time: fixedTime,
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      } as any);
+
+      expect(mockState.onTopicMessage).toHaveBeenCalledTimes(1);
+      const [[event]] = mockState.onTopicMessage.mock.calls;
+      expect(event.type).toBe('topic_group_message');
+      expect(event.chatId).toBe('chat_topic');
+      expect(event.threadId).toBe('msg_topic_001');
+      expect(event.rootId).toBe('msg_topic_001');
+      expect(event.content).toBe('Hello topic');
+      expect(event.isReply).toBe(false);
+      expect(event.timestamp).toBe(new Date(fixedTime).toISOString());
+    });
+
+    it('should set isReply=true and rootId=parent_id when parent_id exists', async () => {
+      mockState.isBotMentioned = true;
+      mockState.topicNotifyEnabled = true;
+      const { handler } = createHandler();
+      const fixedTime = Date.now();
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_reply',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'A reply' }),
+            message_type: 'text',
+            create_time: fixedTime,
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      } as any);
+
+      expect(mockState.onTopicMessage).toHaveBeenCalledTimes(1);
+      const [[event]] = mockState.onTopicMessage.mock.calls;
+      expect(event.rootId).toBe('msg_parent');
+      expect(event.threadId).toBe('msg_reply');
+      expect(event.isReply).toBe(true);
+      expect(event.timestamp).toBe(new Date(fixedTime).toISOString());
+    });
+
+    it('should NOT call onTopicMessage when topicNotify is disabled', async () => {
+      mockState.isBotMentioned = true;
+      mockState.topicNotifyEnabled = false;
+      const { handler } = createHandler();
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_topic_002',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'Hello' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      } as any);
+
+      expect(mockState.onTopicMessage).not.toHaveBeenCalled();
+    });
+
+    it('should NOT call onTopicMessage for non-topic chats', async () => {
+      mockState.topicNotifyEnabled = true;
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(textEvent('Hello'));
+
+      expect(mockState.onTopicMessage).not.toHaveBeenCalled();
+    });
+
+    it('should truncate content to 500 characters', async () => {
+      mockState.isBotMentioned = true;
+      mockState.topicNotifyEnabled = true;
+      const longText = 'A'.repeat(600);
+      const { handler } = createHandler();
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_topic_long',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: longText }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      } as any);
+
+      expect(mockState.onTopicMessage).toHaveBeenCalledTimes(1);
+      const [[event]] = mockState.onTopicMessage.mock.calls;
+      expect(event.content.length).toBe(500);
+    });
+
+    it('should use current time as fallback when create_time is missing', async () => {
+      mockState.isBotMentioned = true;
+      mockState.topicNotifyEnabled = true;
+      const { handler } = createHandler();
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_topic_notime',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'Hello' }),
+            message_type: 'text',
+            create_time: undefined as any,
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      } as any);
+
+      expect(mockState.onTopicMessage).toHaveBeenCalledTimes(1);
+      const [[event]] = mockState.onTopicMessage.mock.calls;
+      // Should be a valid ISO timestamp
+      expect(new Date(event.timestamp).toISOString()).toBe(event.timestamp);
+    });
+
+    it('should fire notification even when trigger_mode would filter the message', async () => {
+      mockState.isBotMentioned = false; // not @mentioned
+      mockState.topicNotifyEnabled = true;
+      const { handler } = createHandler();
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_topic_no_mention',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'Hello without mention' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      } as any);
+
+      // Notification should fire even though trigger_mode would filter
+      expect(mockState.onTopicMessage).toHaveBeenCalledTimes(1);
+      // But the message should NOT be emitted (filtered by trigger_mode)
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+
+    it('should not block main message flow if onTopicMessage throws', async () => {
+      mockState.isBotMentioned = true;
+      mockState.topicNotifyEnabled = true;
+      mockState.onTopicMessage.mockImplementation(() => {
+        throw new Error('Notification failed');
+      });
+      const { handler } = createHandler();
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_topic_err',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'Hello' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      } as any);
+
+      // Main message flow should still proceed
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('Issue #4251: extractMessageText thread-context completeness', () => {
+    // extractMessageText feeds getThreadContext; previously any message type
+    // other than text/post/interactive returned '' and was SILENTLY DROPPED
+    // from the thread history, leaving the bot with an incomplete view of the
+    // thread (and no signal that a message was missing).
+    it('extracts text / post / interactive content as before', () => {
+      const { handler } = createHandler();
+      const ext = (handler as any).extractMessageText.bind(handler);
+      expect(ext('text', JSON.stringify({ text: 'hello' }))).toBe('hello');
+      // interactive is mocked at module level to return a fixed string
+      expect(ext('interactive', JSON.stringify({}))).toBe('Mocked full card content');
+    });
+
+    it('surfaces share_chat / share_user cards instead of dropping them', () => {
+      const { handler } = createHandler();
+      const ext = (handler as any).extractMessageText.bind(handler);
+      expect(ext('share_chat', JSON.stringify({ share_chat_id: 'oc_share123' })))
+        .toBe('[分享的群名片: oc_share123]');
+      expect(ext('share_user', JSON.stringify({ share_user_id: 'on_user456' })))
+        .toBe('[分享的联系人名片: on_user456]');
+      // Issue #4316 nit ②: a card missing its id still reads as a card
+      expect(ext('share_chat', JSON.stringify({}))).toBe('[分享的群名片]');
+      expect(ext('share_user', JSON.stringify({}))).toBe('[分享的联系人名片]');
+    });
+
+    it('emits a transparent placeholder for any other unrecognized type (not empty)', () => {
+      const { handler } = createHandler();
+      const ext = (handler as any).extractMessageText.bind(handler);
+      // image/file/audio/media are no longer silently dropped
+      expect(ext('image', JSON.stringify({ image_key: 'img_ok' }))).toBe('[未解析的 image 消息]');
+      expect(ext('audio', JSON.stringify({ file_key: 'f' }))).toBe('[未解析的 audio 消息]');
+      // unknown type
+      expect(ext('some_future_type', '{}')).toBe('[未解析的 some_future_type 消息]');
+      // empty input still returns ''
+      expect(ext(undefined, '')).toBe('');
+    });
+
+    it('returns placeholder for a recognized type with malformed content (not silently dropped)', () => {
+      // Issue #4318: lock the recognized-type-but-malformed-content branch
+      // (the #4296 review nit). A `post` whose JSON lacks the `content` array
+      // enters the post branch but fails the `Array.isArray(parsed.content)`
+      // guard, so it falls through to the unhandled-type placeholder — surfacing
+      // the gap rather than silently dropping the message from thread history.
+      const { handler } = createHandler();
+      const ext = (handler as any).extractMessageText.bind(handler);
+      expect(ext('post', JSON.stringify({ title: 'x' }))).toBe('[未解析的 post 消息]');
+      // Contrast: a recognized type that is genuinely empty (no payload) still
+      // returns '' — only unparseable / unhandled content becomes a placeholder,
+      // never a legitimately empty message.
+      expect(ext('text', JSON.stringify({}))).toBe('');
+    });
+  });
+});

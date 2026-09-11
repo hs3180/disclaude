@@ -23,7 +23,7 @@ import {
   type RoutedMessage,
   MessageLevel,
   DEFAULT_USER_LEVELS,
-} from '@disclaude/primary-node';
+} from '@disclaude/service';
 
 /**
  * Create a mock sender that captures all sendText calls.

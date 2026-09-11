@@ -189,7 +189,7 @@ case stays environment-blocked):
 
 The one outstanding item — the same matrix through the **nginx-fronted compose
 endpoint** rather than a bare loopback listener — was executed from the
-disclaude **primary container itself** (a peer container on the compose Docker
+disclaude **service container itself** (a peer container on the compose Docker
 network), which exercises exactly the path the bare-listener run could not:
 
 - Endpoint: `http://disclaude-chromium:9222` — the compose default
@@ -264,7 +264,7 @@ it a prompt that never names the skill (so discovery is genuinely unprompted),
 and prints a PASS/FAIL table for the 5 checks. Live-only inputs (model API
 key, reachable CDP endpoint) mean the run belongs to an operator shell — the
 same tooling/live split as the Card Kit bench. The assertion core is
-unit-tested in CI (`packages/primary-node/src/testing/browser-use-e2e.test.ts`).
+unit-tested in CI (`packages/service/src/testing/browser-use-e2e.test.ts`).
 
 The dead-endpoint check inherits the daemon-pin trap above: the prompt tells
 the agent to reload the harness CLI (without naming it — discovery must stay

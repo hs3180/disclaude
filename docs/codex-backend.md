@@ -63,19 +63,19 @@ codex login
 
 ### Docker 部署
 
-`Dockerfile.primary` 已内置 Codex CLI，并将 `CODEX_HOME` 固定为 `/data/codex`；Compose
+`Dockerfile.service` 已内置 Codex CLI，并将 `CODEX_HOME` 固定为 `/data/codex`；Compose
 通过命名卷 `codex_data` 持久化 OAuth 凭据和 Codex 会话。首次部署后，在容器内完成一次登录：
 
 ```bash
-docker compose run --rm primary codex login --device-auth
-docker compose up -d primary
+docker compose run --rm service codex login --device-auth
+docker compose up -d service
 ```
 
 如果环境已取得 API key，也可以使用非交互方式写入同一目录：
 
 ```bash
 printf '%s' "$OPENAI_API_KEY" | docker compose run --rm -T \
-  -e OPENAI_API_KEY primary sh -c 'printf "%s" "$OPENAI_API_KEY" | codex login --with-api-key'
+  -e OPENAI_API_KEY service sh -c 'printf "%s" "$OPENAI_API_KEY" | codex login --with-api-key'
 ```
 
 不要把 `CODEX_HOME` 映射到源码 workspace；命名卷可避免容器重建时丢失登录态和 rollout。
@@ -133,7 +133,7 @@ codex `exec` 是无头模式，**没有逐调用的审批钩子**（0.132.0 实�
 2. **LLM 供应商绑定**：见第 3 节（#4637）。glm/anthropic 配置静默忽略——后续会在 config 校验层显式告警。
 3. **web_search 无法禁用**：当前支持版本实证 `-c tools.web_search=false` 与 `--disable web_search` 均无效。因此 denylist 含 `WebSearch` 时 codex 后端**拒绝启动查询**（可操作的报错），而不是静默违反策略。
 4. **无逐调用审批**：见第 5 节。细于沙箱级别的「询问用户」语义在 codex 后端不可表达。
-5. **事件 schema 随 CLI 版本漂移**：适配层按结构性镜像 + 未知事件容忍跳过设计（不炸桥）；当前行为基线为 0.151.0。升级 CLI 后可单独运行 `npm run test:e2e:codex`，或运行完整 `npm run test:integration` 将 Codex 兼容性作为独立 E2E 区段执行。该 suite 通过真实 Primary Node REST 链路验证 resume、workspace-write 和请求后的 AgentPool 状态，需真 CLI + 登录态。
+5. **事件 schema 随 CLI 版本漂移**：适配层按结构性镜像 + 未知事件容忍跳过设计（不炸桥）；当前行为基线为 0.151.0。升级 CLI 后可单独运行 `npm run test:e2e:codex`，或运行完整 `npm run test:integration` 将 Codex 兼容性作为独立 E2E 区段执行。该 suite 通过真实 disclaude service REST 链路验证 resume、workspace-write 和请求后的 AgentPool 状态，需真 CLI + 登录态。
 
    如果 Codex CLI 因缺少登录、app-server 权限、CLI 安装或网络而无法启动，完整集成运行会按公共 warm-up 规则跳过依赖 Codex 的 suite，不把环境问题误报为产品回归。退出码 1 表示真实兼容性断言失败。
 6. **模型名受限**：仅订阅可服务型号（gpt-5.x family）；`agent.model` 传其他家族名会在 CLI 内报错。

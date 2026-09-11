@@ -124,7 +124,7 @@ export async function uploadImage(
 
 /**
  * Send an interactive card with raw parameters via REST API.
- * Issue #1570: Phase 1 of REST API refactor — Primary Node owns card building.
+ * Issue #1570: Phase 1 of REST API refactor — disclaude service owns card building.
  */
 export async function sendInteractive(
   client: ChannelApiClientLike,

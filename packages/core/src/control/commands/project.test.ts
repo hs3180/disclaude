@@ -55,8 +55,7 @@ function createTestContext(overrides?: Partial<ControlHandlerContext>): ControlH
       reset: () => {},
       stop: () => false,
     },
-    node: {
-      nodeId: 'test-node',
+    debugGroups: {
       getDebugGroup: () => null,
       setDebugGroup: () => {},
       clearDebugGroup: () => null,

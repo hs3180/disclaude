@@ -158,7 +158,7 @@ export abstract class BaseAgent implements Disposable {
 
     // Get SDK provider instance
     this.sdkProvider = getProvider(config.agentBackend);
-    // Primary-node may select DeepSeek as the global default without passing
+    // disclaude service may select DeepSeek as the global default without passing
     // an explicit per-agent override. Build options for the resolved backend.
     this.agentBackend =
       config.agentBackend ??

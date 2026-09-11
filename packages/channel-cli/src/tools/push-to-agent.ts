@@ -42,12 +42,12 @@ export async function push_to_agent(params: {
 
     // Check REST API availability
     if (!(await isChannelApiAvailable())) {
-      const errorMsg = 'REST API service unavailable. Please ensure Primary Node is running.';
+      const errorMsg = 'REST API service unavailable. Please ensure disclaude service is running.';
       logger.error({ chatId }, errorMsg);
       return {
         success: false,
         error: errorMsg,
-        message: '❌ REST API 服务不可用。请检查 Primary Node 服务是否正在运行。',
+        message: '❌ REST API 服务不可用。请检查 disclaude service 服务是否正在运行。',
       };
     }
 

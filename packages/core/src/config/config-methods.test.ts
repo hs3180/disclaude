@@ -118,10 +118,9 @@ describe('Config', () => {
     });
   });
 
-  describe('getTransportConfig', () => {
-    it('should return default local transport', () => {
-      const transport = Config.getTransportConfig();
-      expect(transport).toEqual({ type: 'local' });
+  describe('removed transport configuration', () => {
+    it('does not expose the unused distributed node transport', () => {
+      expect((Config as unknown as Record<string, unknown>).getTransportConfig).toBeUndefined();
     });
   });
 

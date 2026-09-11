@@ -94,7 +94,7 @@ export function generateRelease(root, output) {
     'Build from a committed source tree'
   );
   mkdirSync(output, { recursive: true });
-  const names = ['core', 'primary-node', 'channel-cli'];
+  const names = ['core', 'service', 'channel-cli'];
   const targets = Object.fromEntries(
     names.map((name) => [`@disclaude/${name}`, join(output, 'packages', name, 'dist/index.js')])
   );

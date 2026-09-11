@@ -5,8 +5,8 @@
  * that are automatically converted to user messages when interactions occur.
  *
  * Issue #1571 (Phase 2): the channel client passes raw parameters (question, options)
- * via sendInteractive REST API. Primary Node owns the full card building lifecycle.
- * Issue #1572: Interactive context management has been moved to Primary Node's
+ * via sendInteractive REST API. disclaude service owns the full card building lifecycle.
+ * Issue #1572: Interactive context management has been moved to disclaude service's
  * InteractiveContextStore. The channel client is now a pure forwarding client.
  *
  * @module channel-cli/tools/interactive-message
@@ -23,13 +23,13 @@ import type { SendInteractiveResult, ActionPromptMap, InteractiveOption } from '
 const logger = createLogger('InteractiveMessage');
 
 /**
- * Send an interactive message by forwarding raw parameters to Primary Node.
+ * Send an interactive message by forwarding raw parameters to disclaude service.
  *
  * Issue #1571: MCP Server no longer builds cards. It passes raw parameters
- * (question, options) via sendInteractive REST API. Primary Node builds the card,
+ * (question, options) via sendInteractive REST API. disclaude service builds the card,
  * sends it, and registers action prompts.
  *
- * Issue #1572: Action prompt management is handled by Primary Node's
+ * Issue #1572: Action prompt management is handled by disclaude service's
  * InteractiveContextStore. MCP Server is a pure forwarding client.
  *
  * @example
@@ -121,19 +121,19 @@ export async function send_interactive_message(params: {
 
     // Check REST API availability - REST API is required for sending messages (Issue #1355: async connection probe)
     if (!(await isChannelApiAvailable())) {
-      const errorMsg = 'REST API service unavailable. Please ensure Primary Node is running.';
+      const errorMsg = 'REST API service unavailable. Please ensure disclaude service is running.';
       logger.error({ chatId }, errorMsg);
       return {
         success: false,
         error: errorMsg,
         // Issue #4576: actionable fallback — +messages-send loses thread
         // attribution in topic groups; +messages-reply preserves it.
-        message: `❌ REST API 服务不可用。请检查 Primary Node 服务是否正在运行。${buildChannelApiFallbackHint(parentMessageId)}`,
+        message: `❌ REST API 服务不可用。请检查 disclaude service 服务是否正在运行。${buildChannelApiFallbackHint(parentMessageId)}`,
       };
     }
 
     // Issue #1571: Forward raw params via sendInteractive REST API.
-    // Primary Node builds the card, sends it, and registers action prompts.
+    // disclaude service builds the card, sends it, and registers action prompts.
     logger.debug({ chatId, parentMessageId }, 'Forwarding raw params via sendInteractive REST API');
     // Issue #4280 (Phase 3, part 3): REST-only — direct ChannelApiClient.
     const apiClient = getChannelApiClient();

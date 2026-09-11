@@ -22,7 +22,7 @@
   "references": [
     { "path": "./packages/core" },
     { "path": "./packages/channel-cli" },
-    { "path": "./packages/primary-node" },
+    { "path": "./packages/service" },
     { "path": "./packages/voice-orchestrator" }
   ]
 }

@@ -1,8 +1,7 @@
 /**
- * Tests for Config transport, logging defaults, and debug config edge cases.
+ * Tests for Config logging defaults and debug config edge cases.
  *
  * Covers:
- * - getTransportConfig() with HTTP transport configuration
  * - getLoggingConfig() defaults when logging section is absent
  * - getDebugConfig() with specific filter fields
  * - getSessionTimeoutConfig() with partial configuration (only enabled=true)
@@ -19,15 +18,6 @@ import { describe, it, expect, vi } from 'vitest';
 
 const { mockGetConfigFromFile } = vi.hoisted(() => ({
   mockGetConfigFromFile: vi.fn(() => ({
-    // HTTP transport config
-    transport: {
-      type: 'http',
-      http: {
-        execution: { host: 'localhost', port: 3000 },
-        communication: { callbackHost: 'localhost', callbackPort: 3000, executionUrl: 'http://localhost:3000/api/execute' },
-        authToken: 'secret-token',
-      },
-    },
     // No logging section — tests defaults
     // No explicit logging field at all
     agent: {
@@ -65,32 +55,6 @@ vi.mock('./loader.js', () => ({
 }));
 
 import { Config } from './index.js';
-
-// ─── HTTP Transport Configuration ──────────────────────────────────────────
-
-describe('Config.getTransportConfig — HTTP transport', () => {
-  it('should return HTTP transport config', () => {
-    const transport = Config.getTransportConfig();
-    expect(transport.type).toBe('http');
-  });
-
-  it('should include execution config and auth token', () => {
-    const transport = Config.getTransportConfig();
-    if (transport.type === 'http') {
-      expect(transport.http?.execution?.host).toBe('localhost');
-      expect(transport.http?.execution?.port).toBe(3000);
-      expect(transport.http?.authToken).toBe('secret-token');
-    }
-  });
-
-  it('should include communication config', () => {
-    const transport = Config.getTransportConfig();
-    if (transport.type === 'http') {
-      expect(transport.http?.communication?.callbackHost).toBe('localhost');
-      expect(transport.http?.communication?.callbackPort).toBe(3000);
-    }
-  });
-});
 
 // ─── Logging Defaults (no logging section) ─────────────────────────────────
 

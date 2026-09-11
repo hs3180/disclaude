@@ -7,7 +7,7 @@
  * the pass/fail table for the 5 assertion points (skill discovery / attach
  * without self-spawn / js() round-trip / screenshot artifact / CDP failure
  * path). Assertion + orchestration logic lives in
- * `packages/primary-node/src/testing/browser-use-e2e.ts` (unit-tested there);
+ * `packages/service/src/testing/browser-use-e2e.ts` (unit-tested there);
  * this file is the thin operator shell.
  *
  * Run with (from the repo root, one repeatable command — the #4602 acceptance):
@@ -31,14 +31,14 @@
 
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
-import { AgentFactory } from '../packages/primary-node/src/agents/factory.js';
+import { AgentFactory } from '../packages/service/src/agents/factory.js';
 import {
   AGENT_E2E_PROMPT,
   E2E_SCREENSHOT_RELATIVE_PATH,
   evaluateE2EReport,
   preflight,
   type HarnessConfig,
-} from '../packages/primary-node/src/testing/browser-use-e2e.js';
+} from '../packages/service/src/testing/browser-use-e2e.js';
 
 interface Argv {
   workspaceDir?: string;

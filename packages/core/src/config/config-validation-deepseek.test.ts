@@ -17,7 +17,7 @@ vi.mock('./loader.js', () => ({
 
 import { Config } from './index.js';
 
-describe('DeepSeek primary-node configuration', () => {
+describe('DeepSeek service configuration', () => {
   it('boots without unrelated Anthropic credentials and preserves the selected model', () => {
     expect(Config.getAgentConfig()).toEqual({
       apiKey: '',

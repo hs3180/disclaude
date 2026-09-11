@@ -1,8 +1,8 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { WeChatApiClient } from '../packages/primary-node/src/channels/wechat/api-client.js';
-import { WeChatAuth } from '../packages/primary-node/src/channels/wechat/auth.js';
+import { WeChatApiClient } from '../packages/service/src/channels/wechat/api-client.js';
+import { WeChatAuth } from '../packages/service/src/channels/wechat/auth.js';
 
 const CRED_DIR = join(homedir(), '.disclaude');
 const CRED_FILE = join(CRED_DIR, 'wechat-auth.json');

@@ -38,7 +38,7 @@ node scripts/test-package-install.mjs github:hs3180/disclaude#FULL_40_CHARACTER_
 
 The smoke test uses a new prefix/cache and non-repository cwd, production-only
 dependencies, explicit placeholder configuration, both CLI executables, all
-runtime module imports, builtins discovery and offline PrimaryNode start/stop.
+runtime module imports, builtins discovery and offline DisclaudeService start/stop.
 It does not call models or send messages. Successful temporary installations are
 deleted; failures are retained for diagnosis. `--prefix-from-env` additionally
 tests ordinary `npm install -g` with the destination configured via environment
@@ -63,7 +63,7 @@ npm install -g "github:hs3180/disclaude#v0.5.1"
 disclaude --version
 disclaude start --help
 disclaude channel --help
-disclaude-primary --help
+disclaude --help
 ```
 
 Only then declare the release complete. Keep the source SHA in release notes.

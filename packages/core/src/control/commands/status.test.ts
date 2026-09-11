@@ -12,8 +12,7 @@ import type { ControlHandlerContext } from '../types.js';
 function createMockContext(overrides?: Partial<ControlHandlerContext>): ControlHandlerContext {
   return {
     agentPool: { reset: vi.fn(), stop: vi.fn().mockReturnValue(true) },
-    node: {
-      nodeId: 'test-node-id',
+    debugGroups: {
       getDebugGroup: vi.fn().mockReturnValue(null),
       setDebugGroup: vi.fn(),
       clearDebugGroup: vi.fn().mockReturnValue(null),
@@ -23,20 +22,20 @@ function createMockContext(overrides?: Partial<ControlHandlerContext>): ControlH
 }
 
 describe('handleStatus', () => {
-  it('should return status with node ID', async () => {
+  it('reports the running service', async () => {
     const context = createMockContext();
     const result = await handleStatus({ type: 'status', chatId: 'chat-1' }, context);
 
     expect(result.success).toBe(true);
-    expect(result.message).toContain('test-node-id');
+    expect(result.message).toContain('运行中');
     expect(result.message).toContain('服务状态');
   });
 
-  it('should show local single-node mode', async () => {
+  it('does not expose removed execution roles', async () => {
     const context = createMockContext();
     const result = await handleStatus({ type: 'status', chatId: 'chat-1' }, context);
 
     expect(result.success).toBe(true);
-    expect(result.message).toContain('本地单节点模式');
+    expect(result.message).not.toContain('节点');
   });
 });

@@ -3,13 +3,13 @@
  *
  * Monitors sessions for inactivity and enforces maximum session limits.
  * Designed as a core utility with callback-based integration —
- * it does NOT directly reference ChatAgent, PrimaryAgentPool, or any specific implementation.
+ * it does NOT directly reference ChatAgent, ChatSessionPool, or any specific implementation.
  *
  * Key design decisions (learned from rejected PRs #1409, #1427, #1438):
  *
  * | Issue | Previous PR | Fix |
  * |-------|------------|-----|
- * | #1409 | Implemented in primary-node | Located in packages/core/src/conversation/ |
+ * | #1409 | Implemented in service | Located in packages/core/src/conversation/ |
  * | #1427 | Boolean isChecking flag | Promise-based guard with await |
  * | #1427 | checkNow() bypassed guard | checkNow() delegates to runCheck() |
  * | #1427 | isProcessing not checked | Callback always checked before close |
@@ -25,7 +25,7 @@ export type ResolvedTimeoutConfig = Required<SessionTimeoutConfig> & { enabled: 
 
 /**
  * Callbacks for session timeout events.
- * The consumer (e.g., PrimaryAgentPool) provides these to handle actual session cleanup.
+ * The consumer (e.g., ChatSessionPool) provides these to handle actual session cleanup.
  */
 export interface SessionTimeoutCallbacks {
   /**

@@ -9,8 +9,7 @@ describe('handleStop', () => {
       reset: vi.fn(),
       stop: vi.fn(),
     },
-    node: {
-      nodeId: 'test-node',
+    debugGroups: {
       getDebugGroup: vi.fn(() => null),
       setDebugGroup: vi.fn(),
       clearDebugGroup: vi.fn().mockReturnValue(null),

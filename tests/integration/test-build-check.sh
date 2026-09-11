@@ -3,7 +3,7 @@
 # Regression test for Issue #4689.
 #
 # check_build() must probe the real per-package dist/ artifacts
-# (packages/primary-node/dist/cli.js + packages/core/dist), NOT a root
+# (packages/service/dist/cli.js + packages/core/dist), NOT a root
 # dist/ dir. A clean `npm run build` emits to packages/*/dist, so probing
 # "$PROJECT_ROOT/dist" misreports "not built" even after a successful build.
 #
@@ -26,10 +26,10 @@ _fail_count=0
 workspace="$(mktemp -d "${TMPDIR:-/tmp}/build-check.XXXXXX")"
 trap 'rm -rf "$workspace"' EXIT
 
-# Simulate a real build graph: primary-node cli.js + core/dist present.
+# Simulate a real build graph: service cli.js + core/dist present.
 build_ok_workspace() {
-    mkdir -p "$workspace/packages/primary-node/dist" "$workspace/packages/core/dist"
-    printf '#!/usr/bin/env node\n' > "$workspace/packages/primary-node/dist/cli.js"
+    mkdir -p "$workspace/packages/service/dist" "$workspace/packages/core/dist"
+    printf '#!/usr/bin/env node\n' > "$workspace/packages/service/dist/cli.js"
 }
 
 PROJECT_ROOT="$workspace"
@@ -51,13 +51,13 @@ else
     _fail_count=$((_fail_count + 1))
 fi
 
-# --- failure path: primary-node cli.js missing -> check fails --------------
-rm -rf "$workspace/packages/primary-node"
+# --- failure path: service cli.js missing -> check fails --------------
+rm -rf "$workspace/packages/service"
 if check_build; then
-    log_fail "check_build should fail when packages/primary-node/dist/cli.js is missing"
+    log_fail "check_build should fail when packages/service/dist/cli.js is missing"
     _fail_count=$((_fail_count + 1))
 else
-    log_pass "check_build fails when primary-node cli.js is missing"
+    log_pass "check_build fails when service cli.js is missing"
 fi
 
 # --- failure path: only a root dist exists (the old false-positive) --------

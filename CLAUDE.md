@@ -19,7 +19,7 @@ npm run launchd:chromium:start|stop|restart|logs|status   # Chromium CDP sidecar
 #   launchd:restart = build + reload plist. launchd:logs tails combined/stdout/stderr (--lines=N).
 
 # Docker (production, recommended) — builds inside the container, no local build needed
-docker compose up -d --build    # build + start (Dockerfile.primary; Debian node:22-trixie-slim)
+docker compose up -d --build    # build + start (Dockerfile.service; Debian node:22-trixie-slim)
 docker compose logs -f          # tail logs
 docker compose down             # stop
 #   Services: primary; chromium (profile chromium); filebeat (profile logging)
@@ -33,7 +33,7 @@ There is **no single-prompt CLI mode** (`--prompt`/`feishu` subcommands were rem
 |---|---|
 | API port | OS-assigned by default; managed agents receive `DISCLAUDE_API_BASE_URL`. Standalone clients set it explicitly or use `--base-url`. Docker exposes its configured HTTP port. |
 | Key REST routes | `/api/health/detailed`, `/api/push`, `/api/send-card`, `/api/send-interactive`, `/api/send-message`, `/api/topic-stream` |
-| launchd plist | `~/Library/LaunchAgents/com.disclaude.primary.plist`, label `com.disclaude.primary` |
+| launchd plist | `~/Library/LaunchAgents/com.disclaude.service.plist`, label `com.disclaude.service` |
 | launchd logs | `~/Library/Logs/disclaude/{disclaude-combined.log, launchd-stdout.log, launchd-stderr.log}` (not `/tmp`) |
 | Local workspace | `./workspace`; Docker mounts host `./workspace` → container `/data/workspace` |
 | In-container user | `disclaude` (uid 1001); passwordless sudo limited to `apt-get` (audited to `/data/logs/sudo.log`). Base image pre-installs cmake, gcc/g++/make, python3-dev, gh, codex, lark CLI |
@@ -46,14 +46,14 @@ Restart policy: only restart when the user asks. Prefer `npm run launchd:restart
 | Package | Purpose |
 |---|---|
 | `packages/core` | Config, agents, SDK provider layer, REST API (REST client/server), channels abstraction, control commands, scheduling |
-| `packages/primary-node` | Primary Node runtime: channel impls (Feishu, REST), ChatAgent pool, control handler, scheduler, HTTP API |
-| `packages/channel-cli` | Channel messaging tools (`send_card`, `send_file`, …), talks to Primary Node over REST |
+| `packages/service` | disclaude service runtime: channel impls (Feishu, REST), ChatAgent pool, control handler, scheduler, HTTP API |
+| `packages/channel-cli` | Channel messaging tools (`send_card`, `send_file`, …), talks to disclaude service over REST |
 | `packages/voice-orchestrator` | Voice intent snapshot store (MVP) |
 
 ### Entry points
 
-- `bin/disclaude.js` — routes `disclaude start` → `packages/primary-node/src/cli.ts`, `disclaude channel` → `packages/channel-cli/src/cli.ts`, `disclaude chromium-cdp` → launchd script.
-- `packages/primary-node/src/cli.ts` is a thin bootstrap (pre-scans `--config` into `DISCLAUDE_CONFIG_PATH`, Issue #4654); the real parser is `cli-main.ts`: subcommand `start`, flags `--config/-c`, `--api-port`, `--api-token`. The channel CLI additionally accepts `--base-url` / `DISCLAUDE_API_BASE_URL` (#4801).
+- `bin/disclaude.js` — routes `disclaude start` → `packages/service/src/cli.ts`, `disclaude channel` → `packages/channel-cli/src/cli.ts`, `disclaude chromium-cdp` → launchd script.
+- `packages/service/src/cli.ts` is a thin bootstrap (pre-scans `--config` into `DISCLAUDE_CONFIG_PATH`, Issue #4654); the real parser is `cli-main.ts`: subcommand `start`, flags `--config/-c`, `--api-port`, `--api-token`. The channel CLI additionally accepts `--base-url` / `DISCLAUDE_API_BASE_URL` (#4801).
 
 ### Data flow (Feishu mode)
 
@@ -67,10 +67,10 @@ Feishu WS event → handleMessageReceive() [channels/feishu/message-handler.ts]
 
 ### Key modules
 
-- **Agent system** — Template Method. `packages/core/src/agents/base-agent.ts` (abstract base, `createSdkOptions()`); `packages/primary-node/src/agents/chat-agent.ts` (`processMessage()` non-blocking queue, per-chatId instances, streaming input). Pool lives in `packages/core/src/agents/agent-pool.ts`; factory is `packages/primary-node/src/agents/factory.ts` (`AgentFactory.createChatAgent`, default `permissionMode: 'bypassPermissions'`). `history-manager.ts` attaches session-restore context + chat log paths so restarts keep context.
-- **Disallowed tools** — `packages/primary-node/src/agents/disallowed-tools.ts` (`buildDisallowedTools()`). Base list always includes `EnterPlanMode` + `AskUserQuestion`; built-in cron/loop tools are also disallowed by default → persistent recurring work uses file-based `schedules/<slug>/SCHEDULE.md` + the `schedule` skill. `DISCLAUDE_ALLOW_BUILTIN_CRON=1` restores them.
+- **Agent system** — Template Method. `packages/core/src/agents/base-agent.ts` (abstract base, `createSdkOptions()`); `packages/service/src/agents/chat-agent.ts` (`processMessage()` non-blocking queue, per-chatId instances, streaming input). Pool lives in `packages/core/src/agents/agent-pool.ts`; factory is `packages/service/src/agents/factory.ts` (`AgentFactory.createChatAgent`, default `permissionMode: 'bypassPermissions'`). `history-manager.ts` attaches session-restore context + chat log paths so restarts keep context.
+- **Disallowed tools** — `packages/service/src/agents/disallowed-tools.ts` (`buildDisallowedTools()`). Base list always includes `EnterPlanMode` + `AskUserQuestion`; built-in cron/loop tools are also disallowed by default → persistent recurring work uses file-based `schedules/<slug>/SCHEDULE.md` + the `schedule` skill. `DISCLAUDE_ALLOW_BUILTIN_CRON=1` restores them.
 - **SDK backend** — `packages/core/src/sdk/factory.ts` selects by `agent.agentBackend` (`claude` | `pi` | `codex`); providers under `packages/core/src/sdk/providers/<name>/`.
-- **Feishu channel** — `packages/primary-node/src/channels/feishu/{message-handler,message-filters,ws-connection-manager,command-router,mention-detector}.ts` plus the newer `feishu-channel.ts` / `messaging/adapters/feishu-adapter.ts` split. Slash commands dispatch through a control handler (`/trigger` etc.); keep the reset/status/stop fallbacks working.
+- **Feishu channel** — `packages/service/src/channels/feishu/{message-handler,message-filters,ws-connection-manager,command-router,mention-detector}.ts` plus the newer `feishu-channel.ts` / `messaging/adapters/feishu-adapter.ts` split. Slash commands dispatch through a control handler (`/trigger` etc.); keep the reset/status/stop fallbacks working.
 - **channel-cli tools** — `packages/channel-cli/src/tools/{send-card,send-file,send-message,interactive-message,push-to-agent}.ts`; the CLI subcommands are `send_card`, `send_file`, `send_text`, `send_interactive`, `push`. External MCP servers (`tools.mcpServers`) were **removed** (#4459) — migrate to Skills (`skills/`, `docs/skill-format-spec.md`).
 
 ## Configuration

@@ -15,12 +15,12 @@ export const handleDebug: CommandHandler = (
   command: ControlCommand,
   context: ControlHandlerContext
 ): ControlResponse => {
-  const debugGroup = context.node.getDebugGroup();
+  const debugGroup = context.debugGroups.getDebugGroup();
   const { chatId } = command;
 
   // No debug group set — set current chat
   if (!debugGroup) {
-    context.node.setDebugGroup(chatId);
+    context.debugGroups.setDebugGroup(chatId);
     context.logger?.info({ chatId }, 'Debug group set');
     return {
       success: true,
@@ -30,7 +30,7 @@ export const handleDebug: CommandHandler = (
 
   // Current chat IS the debug group — toggle off (clear)
   if (debugGroup.chatId === chatId) {
-    const previous = context.node.clearDebugGroup();
+    const previous = context.debugGroups.clearDebugGroup();
     context.logger?.info({ previousChatId: previous?.chatId }, 'Debug group cleared (toggle off)');
     return {
       success: true,
@@ -39,8 +39,8 @@ export const handleDebug: CommandHandler = (
   }
 
   // Different chat is the debug group — switch to current chat
-  const previous = context.node.clearDebugGroup();
-  context.node.setDebugGroup(chatId);
+  const previous = context.debugGroups.clearDebugGroup();
+  context.debugGroups.setDebugGroup(chatId);
   context.logger?.info(
     { chatId, previousChatId: previous?.chatId },
     'Debug group switched to current chat'

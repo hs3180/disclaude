@@ -11,7 +11,7 @@
  *
  * Architecture:
  * ```
- * PrimaryNode
+ * DisclaudeService
  *     └── AgentPool
  *             └── Map<chatId, ChatAgent>
  *                     └── Each ChatAgent handles ONE chatId only
@@ -136,7 +136,7 @@ export class AgentPool {
    * the shared reset contract (used polymorphically by /reset and the scheduler),
    * but the core AgentPool does NOT honor it — its simple factory
    * (`ChatAgentFactory = (chatId) => ChatAgent`) has no options channel.
-   * `PrimaryAgentPool` implements its own reset() that honors skipContext via
+   * `ChatSessionPool` implements its own reset() that honors skipContext via
    * its own `skipHistoryChatIds` set + options-aware factory.
    *
    * @param chatId - The chat identifier

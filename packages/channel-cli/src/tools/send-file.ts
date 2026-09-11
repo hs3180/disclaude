@@ -15,7 +15,7 @@ import type { SendFileResult } from './types.js';
 const logger = createLogger('SendFile');
 
 /**
- * Upload file via REST API to PrimaryNode's LarkClientService.
+ * Upload file via REST API to DisclaudeService's LarkClientService.
  * Issue #1035: Routes Feishu API calls through unified client.
  * Issue #1619: Added threadId parameter for thread reply support.
  * Issue #2300: Propagate REST API error details for better diagnostics.
@@ -80,7 +80,7 @@ export async function send_file(params: {
         // filePath (the original arg, not the workspace-resolved absolute
         // path) rides along so the suggested reply command carries --file —
         // +messages-reply requires a content flag or the reply is empty.
-        message: `❌ File upload requires REST API connection. Please ensure Primary Node is running.${buildChannelApiFallbackHint(parentMessageId, { filePath })}`,
+        message: `❌ File upload requires REST API connection. Please ensure disclaude service is running.${buildChannelApiFallbackHint(parentMessageId, { filePath })}`,
       };
     }
 

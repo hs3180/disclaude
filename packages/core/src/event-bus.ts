@@ -6,7 +6,7 @@
  * FeishuChannel internals.
  *
  * Design:
- * - Wraps Node.js EventEmitter for consistency with BaseChannel, WsConnectionManager, PrimaryNode
+ * - Wraps Node.js EventEmitter for consistency with BaseChannel, WsConnectionManager, DisclaudeService
  * - Typed on/off/emit API via InternalEventMap
  * - Async handler execution with error isolation (one handler failure doesn't affect others)
  * - Simple on/off/emit API, no wildcards or namespaces

@@ -36,7 +36,7 @@ else
     _fail_count=$((_fail_count + 1))
 fi
 
-# 2. confirm it answers a health-shaped request (self-contained, no Primary Node)
+# 2. confirm it answers a health-shaped request (self-contained, no disclaude service)
 health=$(curl -s --max-time 5 "http://${HOST}:${ISOLATED_PORT}/api/health" 2>/dev/null || true)
 if echo "$health" | grep -q '"status":"ok"'; then
     log_pass "isolated server answered /api/health (self-contained: $health)"

@@ -112,9 +112,9 @@ describe('createControlCommand', () => {
     expect(cmd.data).toEqual({ skipContext: true });
   });
 
-  it('should create command with targetNodeId', () => {
-    const cmd = createControlCommand('switch-node', 'chat-1', undefined, { targetNodeId: 'node-2' });
-    expect(cmd.type).toBe('switch-node');
-    expect(cmd.targetNodeId).toBe('node-2');
+  it('should preserve the target conversation thread', () => {
+    const cmd = createControlCommand('reset', 'chat-1', undefined, { threadRootId: 'thread-2' });
+    expect(cmd.type).toBe('reset');
+    expect(cmd.threadRootId).toBe('thread-2');
   });
 });

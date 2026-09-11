@@ -317,40 +317,6 @@ export interface ToolsConfig {
 }
 
 /**
- * HTTP transport configuration.
- */
-export interface HttpTransportConfig {
-  /** Execution Node server configuration */
-  execution?: {
-    /** Server host */
-    host?: string;
-    /** Server port */
-    port?: number;
-  };
-  /** Communication Node callback configuration */
-  communication?: {
-    /** Callback server host */
-    callbackHost?: string;
-    /** Callback server port */
-    callbackPort?: number;
-    /** Execution Node URL */
-    executionUrl?: string;
-  };
-  /** Authentication token for securing requests */
-  authToken?: string;
-}
-
-/**
- * Transport configuration section.
- */
-export interface TransportConfig {
-  /** Transport mode: local (single process) or http (distributed) */
-  type?: 'local' | 'http';
-  /** HTTP transport configuration (only used when type is 'http') */
-  http?: HttpTransportConfig;
-}
-
-/**
  * Trigger mode for group chat message handling.
  * Issue #2291: Upgraded from boolean to enum for extensibility.
  * Issue #3345: Added 'auto' mode for intelligent group size detection.
@@ -459,13 +425,6 @@ export interface SessionTimeoutConfig {
 }
 
 /**
- * Run mode for the application.
- * - comm: Communication Node (Feishu WebSocket handler)
- * - exec: Execution Node (ChatAgent/Agent handler)
- */
-export type RunMode = 'comm' | 'exec';
-
-/**
  * Main configuration interface (core).
  *
  * This represents the structure of disclaude.config.yaml WITHOUT channel-specific config.
@@ -494,8 +453,6 @@ export interface DisclaudeConfig {
   logging?: LoggingConfig;
   /** Tool configuration */
   tools?: ToolsConfig;
-  /** Transport configuration */
-  transport?: TransportConfig;
   /** Message routing configuration */
   messaging?: MessagingConfig;
   /** Session restoration configuration (Issue #1213) */

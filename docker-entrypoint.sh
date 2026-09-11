@@ -1,6 +1,6 @@
 #!/bin/sh
 # docker-entrypoint.sh
-# Infrastructure-layer entrypoint for Primary Node.
+# Infrastructure-layer entrypoint for disclaude service.
 # Auto-configure lark-cli auth from disclaude.config.yaml (Issue #3987)
 #
 # This entrypoint runs AS the disclaude user (USER directive in the Dockerfile).

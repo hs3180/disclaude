@@ -1,6 +1,6 @@
 # REST IPC Design Document
 
-> Issue: #4168 — 用 REST API 取代 IPC 进行内部通信（MCP ↔ PrimaryNode）
+> Issue: #4168 — 用 REST API 取代 IPC 进行内部通信（MCP ↔ DisclaudeService）
 > Sub-issue: #4279 — Phase 1+2 (endpoints + RestIpcClient)
 > Version: Phase 1+2 complete
 > Status: Implemented (pending review)
@@ -10,7 +10,7 @@
 
 ### 1.1 Goal
 
-Replace the Unix-socket IPC between the MCP server and Primary Node with a REST API (HttpApiServer), enabling:
+Replace the Unix-socket IPC between the MCP server and disclaude service with a REST API (HttpApiServer), enabling:
 
 - Simpler deployment (no Unix socket lifecycle)
 - Better observability (HTTP logging, health probes)
@@ -35,9 +35,9 @@ directly-constructed `RestIpcClient`, then this removal swept the now-dead trans
 Channel CLI / push-cli
   ↓ RestIpcClient (HTTP fetch, direct construction)
   ↓
-  HttpApiServer (primary-node, localhost, --api-port)
+  HttpApiServer (service, localhost, --api-port)
   ↓ route handler
-  primaryNode.{sendMessage|sendCard|...}()
+  service.{sendMessage|sendCard|...}()
   ↓ resolveApiHandlers(chatId)
   Channel handler (Feishu/WeChat/REST)
 ```
@@ -68,7 +68,7 @@ Channel CLI / push-cli
 
 ### Detailed health diagnostics (Issue #4718)
 
-`GET /api/health/detailed` reports only the Primary Node process and Disclaude's
+`GET /api/health/detailed` reports only the disclaude service process and Disclaude's
 own channel delivery counters. It does not probe or classify external services;
 external dependency availability is outside the scope of the Disclaude health
 contract. Delivery failures may still mark this diagnostic endpoint degraded,
@@ -109,40 +109,40 @@ equivalent inline construction in `push-cli.ts`. There is no transport toggle.
 
 (`DISCLAUDE_REST_IPC_ENABLED` is gone with the dual path — REST is unconditional.)
 
-### 4.4 Token coordination across processes (PrimaryNode ↔ MCP server)
+### 4.4 Token coordination across processes (DisclaudeService ↔ MCP server)
 
 The env-var table above covers only the **MCP-server / `RestIpcClient`** side. The
-**`HttpApiServer` (PrimaryNode)** reads its token from a different source, and the two
+**`HttpApiServer` (DisclaudeService)** reads its token from a different source, and the two
 processes are **not** wired together by spawn injection or a shared file — the operator
 must coordinate them manually. This is a required deployment step before flipping the
 REST flag; a mismatch silently breaks every write route.
 
 | Process                       | Token source                           | Where it is read                                                                                           |
 | ----------------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| PrimaryNode (`HttpApiServer`) | `--api-token TOKEN` CLI flag           | `packages/primary-node/src/cli.ts:86` → `cli.ts:481` (`new HttpApiServer({ apiToken })`)                   |
+| DisclaudeService (`HttpApiServer`) | `--api-token TOKEN` CLI flag           | `packages/service/src/cli.ts:86` → `cli.ts:481` (`new HttpApiServer({ apiToken })`)                   |
 | Channel CLI (`RestIpcClient`)  | `DISCLAUDE_REST_IPC_API_TOKEN` env var | §4.3 above → `getRestIpcClient()` (`packages/channel-cli/src/tools/ipc-utils.ts`) / inline in `push-cli.ts` |
 
-The PrimaryNode token is **not** read from an env var and is **not** auto-generated; it is
-only present when `--api-token` is passed on the PrimaryNode command line.
+The DisclaudeService token is **not** read from an env var and is **not** auto-generated; it is
+only present when `--api-token` is passed on the DisclaudeService command line.
 
-Enforcement (`packages/primary-node/src/http-api-server.ts:528-536`): every non-GET route
+Enforcement (`packages/service/src/http-api-server.ts:528-536`): every non-GET route
 compares `Authorization: Bearer <token>` against the configured `apiToken` with
 `timingSafeEqual`; GET routes (e.g. `/api/ping`) are token-exempt.
 
 Failure modes when the two sides disagree:
 
 - **Both set to the same value** → POST routes authenticate normally. ✅
-- **PrimaryNode has `--api-token` but the MCP server's env is unset _or_ a different value**
+- **DisclaudeService has `--api-token` but the MCP server's env is unset _or_ a different value**
   → every POST route returns `401 { error: 'Unauthorized', message: 'Invalid or missing API token' }`.
   The health probe (`GET /api/ping`) still succeeds, so `isAvailable()` stays green while real
   calls fail — easy to misdiagnose as a networking issue.
-- **PrimaryNode started _without_ `--api-token`** → the auth guard is skipped
+- **DisclaudeService started _without_ `--api-token`** → the auth guard is skipped
   (`if (req.method !== 'GET' && this.config.apiToken)` is falsy), so the server accepts any
   request regardless of the client token. This is only acceptable for a trusted localhost
   binding during local development; it must not be used for any reachable binding.
 
 **Recommendation:** in any deployment where REST IPC is enabled, pass the same secret both as
-`--api-token` to the PrimaryNode and as `DISCLAUDE_REST_IPC_API_TOKEN` to the MCP server. Leave
+`--api-token` to the DisclaudeService and as `DISCLAUDE_REST_IPC_API_TOKEN` to the MCP server. Leave
 both unset only for single-host local testing.
 
 ## 5. Remaining Work

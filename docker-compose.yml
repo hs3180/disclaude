@@ -3,9 +3,9 @@
 # =============================================================================
 #
 # Architecture: Single-node application
-# - Primary Node: Handles Feishu WebSocket connections + Agent execution + MCP
+# - disclaude service: Handles Feishu WebSocket connections + Agent execution + MCP
 #
-# Note: MCP functionality is built into Primary node, no separate deployment needed.
+# Note: MCP functionality is built into disclaude service, no separate deployment needed.
 # For multi-instance scaling, deploy multiple independent application instances.
 #
 # Usage:
@@ -26,13 +26,13 @@
 
 services:
   # ===========================================================================
-  # Primary Node (Comm + Exec)
+  # Disclaude application service
   # ===========================================================================
-  # Self-contained node that handles both communication and execution
-  primary:
+  # Channels, sessions and scheduled work run in one service.
+  service:
     build:
       context: .
-      dockerfile: Dockerfile.primary
+      dockerfile: Dockerfile.service
       args:
         APT_MIRROR: ${APT_MIRROR:-}
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
@@ -41,22 +41,22 @@ services:
         GH_INSTALL_MODE: ${GH_INSTALL_MODE:-apt-repo}
         GH_DEB_URL: ${GH_DEB_URL:-}
         CODEX_VERSION: ${CODEX_VERSION:-0.151.0}
-    image: disclaude:primary
-    container_name: disclaude-primary
+    image: disclaude:service
+    container_name: disclaude
     restart: unless-stopped
 
-    # Command: run Primary Node directly
+    # Command: run disclaude service directly
     # Docker restart policy handles process management
     # --api-port starts the HttpApiServer (REST API). Since #4168 Phase 3
     # removed the Unix-socket transport, REST is the ONLY REST API path: channel
     # MCP tools (send_interactive_message, upload_file, send-card, ...) reach
-    # PrimaryNode via DISCLAUDE_API_BASE_URL, whose default matches this
+    # DisclaudeService via DISCLAUDE_API_BASE_URL, whose default matches this
     # port (http://localhost:19200). Port is not published to the host.
-    command: ["node", "packages/primary-node/dist/cli.js", "start", "--api-port", "19200"]
+    command: ["disclaude", "start", "--api-port", "19200"]
 
     # Uses bridge network (disclaude-net) for container-to-container communication
     # (e.g., CDP endpoint from chromium service). Re-add `network_mode: host`
-    # if primary needs to access other host-local services.
+    # if the service needs to access other host-local services.
     networks:
       - disclaude-net
 
@@ -150,7 +150,7 @@ services:
     #   DOCKER_RUNTIME=nvidia SHM_SIZE=4G WORKER_MEMORY=40G \
     #     NVIDIA_VISIBLE_DEVICES=all docker compose up -d
     # See docs/gpu-setup.md for prerequisites and the #4285 open questions
-    # deferred from this PR (Dockerfile base-image decision, primary-vs-worker
+    # deferred from this PR (Dockerfile base-image decision, obsolete deployment-role
     # scope, shm_size default sizing).
     runtime: ${DOCKER_RUNTIME:-runc}
     shm_size: ${SHM_SIZE:-64m}
@@ -171,7 +171,7 @@ services:
         max-file: "3"
 
     healthcheck:
-      test: ["CMD", "pgrep", "-f", "packages/primary-node/dist/cli.js"]
+      test: ["CMD", "pgrep", "-f", "[n]ode_modules/@disclaude/service/dist/cli.js"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -350,7 +350,7 @@ services:
   # ===========================================================================
   # Filebeat Log Forwarder (optional)
   # ===========================================================================
-  # Forwards Pino JSON logs from primary container to Elasticsearch.
+  # Forwards Pino JSON logs from service container to Elasticsearch.
   # Reads from shared Docker volume (log_data), connects to ES via host network.
   # Configure ES connection in .env (ES_HOST, ES_PORT, ES_USERNAME, ES_PASSWORD).
   # Start with: docker compose --profile logging up -d
@@ -362,7 +362,7 @@ services:
     network_mode: host
 
     depends_on:
-      primary:
+      service:
         condition: service_started
 
     volumes:

@@ -10,7 +10,7 @@
  * place — so it gets a dedicated error class instead of a plain `Error`,
  * letting consumers branch on `instanceof` rather than string-matching.
  *
- * Lives in core (not primary-node, where ChatAgent throws it) so the
+ * Lives in core (not service, where ChatAgent throws it) so the
  * Scheduler can instanceof-check it across the package boundary; both
  * sides import the same module instance in-process.
  *

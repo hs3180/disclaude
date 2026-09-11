@@ -234,9 +234,9 @@ start_server() {
         log_info "Using config file: ${CONFIG_PATH}"
     fi
 
-    # Start server in background (using new primary-node CLI)
+    # Start server in background (using new service CLI)
     # Note: Port and host are read from config file (channels.rest.port, channels.rest.host)
-    node packages/primary-node/dist/cli.js start "${config_args[@]}" > "${SERVER_LOG}" 2>&1 &
+    node packages/service/dist/cli.js start "${config_args[@]}" > "${SERVER_LOG}" 2>&1 &
     SERVER_PID=$!
 
     log_debug "Server PID: ${SERVER_PID}"
@@ -596,9 +596,9 @@ check_curl() {
 # each workspace package's own dist/, not a root dist/. The integration runner
 # previously probed "$PROJECT_ROOT/dist" — a dir that only an empty `mkdir`
 # bypass could create — so a clean `npm run build` still "failed" the check.
-# Check the actual primary-node launch entrypoint and the core build output.
+# Check the actual service launch entrypoint and the core build output.
 check_build() {
-    local cli_js="$PROJECT_ROOT/packages/primary-node/dist/cli.js"
+    local cli_js="$PROJECT_ROOT/packages/service/dist/cli.js"
     local core_dist="$PROJECT_ROOT/packages/core/dist"
     if [ ! -f "$cli_js" ]; then
         log_error "Project not built. Run 'npm run build' first (missing $cli_js)."
@@ -762,7 +762,7 @@ pool_busy() {
 # merely that the agent "acknowledged" tool usage. Previously the channel CLI
 # tests grepped the reply for a tool keyword and reported PASS even when the
 # tool was silently rejected (e.g. `sandbox_apply: Operation not permitted`),
-# hiding regressions. The channel tool communicates with Primary Node over
+# hiding regressions. The channel tool communicates with disclaude service over
 # REST, so real side-effect delivery needs channel credentials; this verdict:
 #   - FAILs when the agent reports the tool could not run (a regression or a
 #     hard permission failure), surfacing the marker.
@@ -860,7 +860,7 @@ start_isolated_server() {
     is_port_in_use "$port" && { log_error "isolated port $port already in use (Issue #4729)"; return 1; }
     # A bare python3 http.server holds the port and answers /api/health-shape
     # requests so an async protocol test can verify its isolated server is up
-    # without ever touching the shared Primary Node / Agent pool.
+    # without ever touching the shared disclaude service / Agent pool.
     python3 -c 'import http.server, sys
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):

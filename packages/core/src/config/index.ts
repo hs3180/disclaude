@@ -21,7 +21,6 @@ import type {
   DisclaudeConfig,
   AgentPresets,
   ConfigValidationError,
-  TransportConfig,
   DebugConfig,
   SessionTimeoutConfig,
 } from './types.js';
@@ -222,7 +221,7 @@ export class Config {
 
   // Agent SDK backend — which agent runtime boots (Issue #4388).
   // Orthogonal to the model-layer provider (GLM vs Anthropic LLM API).
-  // Undefined is a startup error; PrimaryNode never silently chooses another backend.
+  // Undefined is a startup error; DisclaudeService never silently chooses another backend.
   static readonly AGENT_BACKEND =
     (this.DEFAULT_AGENT_PRESET?.ok ? this.DEFAULT_AGENT_PRESET.preset.agentBackend : undefined) ||
     fileConfigOnly.agent?.agentBackend;
@@ -525,7 +524,7 @@ export class Config {
     provider: 'anthropic' | 'glm';
   } {
     // The dsh runtime resolves its own credentials and endpoint. Do not gate
-    // primary-node startup on unrelated Anthropic/GLM configuration.
+    // service startup on unrelated Anthropic/GLM configuration.
     if (this.AGENT_BACKEND === 'deepseek') {
       return { apiKey: '', model: this.CLAUDE_MODEL, provider: 'anthropic' };
     }
@@ -656,15 +655,6 @@ export class Config {
    */
   static getToolConfig(): DisclaudeConfig['tools'] {
     return fileConfigOnly.tools;
-  }
-
-  /**
-   * Get transport configuration.
-   *
-   * @returns Transport configuration object
-   */
-  static getTransportConfig(): TransportConfig {
-    return fileConfigOnly.transport || { type: 'local' };
   }
 
   /**
