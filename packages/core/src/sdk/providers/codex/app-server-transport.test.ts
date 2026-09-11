@@ -67,6 +67,17 @@ printf '{"jsonrpc":"2.0","id":%s,"result":{"turnId":"turn-1"}}\\n' "$id"
     }
   });
 
+  it('protects explicitly declared split stderr before exposing the tail or exit', async () => {
+    const transport = new CodexAppServerTransport({
+      binary: fixture(`exec "${process.execPath}" -e 'const b=Buffer.from("私密\\ncredential password=public-example");let i=0;const t=setInterval(()=>{if(i===b.length){clearInterval(t);}else{process.stderr.write(b.subarray(i,i+1));i++;}},1)'`),
+      sensitiveValues: ['私密\ncredential'],
+    });
+    await expect(transport.request('wait')).rejects.toThrow(/exited/);
+    const exit = await transport.close();
+    expect(exit.stderrTail).toBe('[REDACTED] password=public-example');
+    expect(transport.getStderrTail()).toBe(exit.stderrTail);
+  });
+
   it('rejects pending requests when the process exits', async () => {
     const transport = new CodexAppServerTransport({ binary: fixture('read line\nexit 7') });
     await expect(transport.request('thread/start', {})).rejects.toThrow(/exited.*code=7/);

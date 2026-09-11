@@ -1,5 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface, type Interface as ReadlineInterface } from 'node:readline';
+import { StringDecoder } from 'node:string_decoder';
+import { SensitiveOutputFilter } from '../../../security/sensitive-values.js';
 import { createLogger } from '../../../utils/logger.js';
 
 const logger = createLogger('CodexAppServerTransport');
@@ -17,6 +19,8 @@ interface JsonRpcMessage {
 export interface CodexAppServerTransportOptions {
   binary?: string;
   env?: NodeJS.ProcessEnv;
+  /** Exact values selected by the harness; no content classification. */
+  sensitiveValues?: readonly string[];
   onNotification?: (method: string, params: unknown) => void;
   onExit?: (exit: CodexAppServerExit) => void;
   requestTimeoutMs?: number;
@@ -52,6 +56,17 @@ export class CodexAppServerTransport {
   private cleanup?: Promise<CodexAppServerExit>;
 
   constructor(private readonly options: CodexAppServerTransportOptions = {}) {
+    const decoder = new StringDecoder('utf8');
+    const filter = new SensitiveOutputFilter(options.sensitiveValues ?? [], text => {
+      this.stderrTail = `${this.stderrTail}${text}`.slice(-8192);
+    });
+    let drained = false;
+    const finishStderr = () => {
+      if (drained) {return;}
+      drained = true;
+      filter.write(decoder.end());
+      filter.finish();
+    };
     this.child = spawn(options.binary ?? 'codex', ['app-server', '--stdio'], {
       env: options.env ?? process.env,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -64,14 +79,16 @@ export class CodexAppServerTransport {
       this.resolveExit = resolve;
     });
     this.child.stderr.on('data', (chunk: Buffer | string) => {
-      this.stderrTail = `${this.stderrTail}${String(chunk)}`.slice(-8192);
+      filter.write(typeof chunk === 'string' ? chunk : decoder.write(chunk));
     });
+    this.child.stderr.once('end', finishStderr);
     this.child.stdin.on('error', (error) => this.failAll(error));
     this.child.once('error', (error) => {
       this.failAll(error);
       this.reportExit({ code: null, signal: null, stderrTail: this.stderrTail });
     });
     this.child.once('close', (code, signal) => {
+      finishStderr();
       this.failAll(new Error(`codex app-server exited (code=${String(code)}, signal=${String(signal)})`));
       this.reportExit({ code, signal, stderrTail: this.stderrTail });
     });
