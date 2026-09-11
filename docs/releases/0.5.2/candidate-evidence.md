@@ -30,7 +30,11 @@ The private-input acceptance used a synthetic card transport/callback with the i
 
 ## CI and review gates
 
-The final release PR is [#4980](https://github.com/hs3180/disclaude/pull/4980); independent prompt authoring review is [#4983](https://github.com/hs3180/disclaude/pull/4983). Verify the final PR HEAD's four checks (lint/type, unit, build, coverage) before merging. CI generates an archive from its checkout and exercises Linux Node 20/22 × npm 10/11 installation; this is distinct from the actual remote Git installation verified above. Final CI run identity/results are recorded in the release handoff after this evidence commit.
+The independent prompt authoring change [#4983](https://github.com/hs3180/disclaude/pull/4983) is merged as `8f9efce9c77a510da258bb16ef9f1cb8b994c533`. On 2026-09-12, the release branch synchronized that main commit without runtime changes. Its runtime fingerprint remains the exact value above. [#4980](https://github.com/hs3180/disclaude/pull/4980) now contains only six release-preparation files; no feature dependency remains.
+
+[CI run 34613059761](https://github.com/hs3180/disclaude/actions/runs/34613059761) passed all four checks on `775c133103e79847a2bda50f3b1406412b610a31`: lint/type, unit, build and coverage. Linux passed 224 files and 4689 tests with zero skips, including the real-child 100-turn cleanup fixture. Checkout-generated archive installation and CLI start/stop/restart passed on Node/npm pairs 20.20.2/10.8.2, 22.23.2/11.6.0, 20.20.2/11.6.0 and 22.23.2/10.9.9. This is distinct from the actual remote Git installation verified above.
+
+Require the synchronized PR HEAD's four CI checks before merging; the final run identity is recorded in the PR and release handoff after this documentation commit. No fixed candidate fixture is maintained. The reviewed distribution remains unchanged; synchronizing identical runtime content does not require a replacement distribution.
 
 ## Scope and limits
 
