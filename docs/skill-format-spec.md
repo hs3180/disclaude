@@ -27,7 +27,7 @@ Two distinct "skill" concepts coexist in disclaude. This spec defines **one** of
 | Invoked by | SDK dispatch — the agent loads `SKILL.md`, acts via `allowed-tools` | a **process** the agent shells out to: `node skills/<name>/cli.mjs <command> …` |
 | Tool surface | whatever `allowed-tools` grants (incl. MCP tools today) | its own `cli.mjs` subcommands |
 | Replaces | nothing — disclaude's native skill-dispatch mechanism | an **MCP server** (stdio *or* inline) |
-| Examples | `skills/skill-creator/SKILL.md`, `skills/issue-solver/SKILL.md` | `skills/channel/` (reference implementation) |
+| Examples | `skills/skill-creator/SKILL.md` | `skills/channel/` (reference implementation) |
 
 A **CLI Skill** is a deterministic command-line program. The agent runs it through the shell
 (`Bash`), reads its output, and acts on it — instead of the runtime calling an MCP tool in-process.

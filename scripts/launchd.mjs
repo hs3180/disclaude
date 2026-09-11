@@ -944,7 +944,7 @@ const chromiumCommands = {
   status: cmdChromiumStatus,
 };
 
-// Issue #4576: entry guard (same pattern as skills/issue-solver/scan.mjs) so
+// Issue #4576: entry guard so
 // the pure helpers (resolveApiPort, buildProgramArguments, ...) can be imported
 // by tests without triggering command dispatch. Compared via realpath so a
 // symlinked invocation still matches.
