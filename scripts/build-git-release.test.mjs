@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { rewriteImports, generateRelease, sourceFingerprint } from './build-git-release.mjs';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -100,4 +100,27 @@ test('generates a standalone manifest and excludes untracked resources', () => {
   assert.throws(() => generateRelease(root, output), /new or empty/);
   write('bin/disclaude.js', 'changed');
   assert.throws(() => generateRelease(root, join(root, 'other')), /committed source tree/);
+});
+
+
+test('fingerprint includes nested runtime source across packages but excludes test-only changes', () => {
+  const root = mkdtempSync(join(tmpdir(), 'git-fingerprint-source-'));
+  try {
+    execFileSync('git', ['init', '-q'], { cwd: root });
+    for (const name of ['core', 'service', 'channel-cli']) {
+      const directory = join(root, 'packages', name, 'src', 'nested');
+      mkdirSync(directory, { recursive: true });
+      writeFileSync(join(directory, 'runtime.ts'), 'export const version = 1;');
+      writeFileSync(join(directory, 'runtime.test.ts'), '// fixture');
+    }
+    execFileSync('git', ['add', '.'], { cwd: root });
+    for (const name of ['core', 'service', 'channel-cli']) {
+      const before = sourceFingerprint(root);
+      writeFileSync(join(root, 'packages', name, 'src', 'nested', 'runtime.ts'), 'export const version = 2;');
+      assert.notEqual(sourceFingerprint(root), before, `${name} runtime must invalidate a stale candidate`);
+    }
+    const beforeTestChange = sourceFingerprint(root);
+    writeFileSync(join(root, 'packages/core/src/nested/runtime.test.ts'), '// changed fixture');
+    assert.equal(sourceFingerprint(root), beforeTestChange);
+  } finally {rmSync(root, { recursive: true, force: true });}
 });
