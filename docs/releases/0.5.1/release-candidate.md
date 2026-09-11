@@ -18,7 +18,7 @@
 - 根包版本：0.5.1；package-lock 根版本同步。
 - 根包保持 `private: true`，仅通过 GitHub 分发。
 - 正式发行标签发布后：`npm install -g "github:hs3180/disclaude#v0.5.1"`；`.tgz` 仅为补充路径。
-- 候选 SHA 与源码指纹记录在 `tests/fixtures/git-release-candidate.json`。现有 CI 的 `npm test` 执行源码一致性检查和远程 SHA 安装回归；额外 [跨平台工作流模板](../package-install.workflow.yml) 尚待维护者安装，未运行项不能计作通过。
+- 当时的候选 SHA 与源码指纹使用仓库 fixture 记录；该机制现已移除。现有 CI 从当前 checkout 生成临时分发包进行安装回归，远程 SHA/标签安装在发布时单独验证；额外 [跨平台工作流模板](../package-install.workflow.yml) 尚待维护者安装，未运行项不能计作通过。
 - Husky 仅通过开发者命令 `npm run hooks:install` 初始化，不参与用户安装。
 
 ## 历史验证（安装修复 PR 之前）
