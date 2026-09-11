@@ -2512,6 +2512,40 @@ describe('ChatAgent (service)', () => {
       expect(plainCall![2]).toBe('thread-root-123');
     });
 
+    it('keeps queued source metadata out of the active turn and its delivery receipts', async () => {
+      const callbacks = createMockCallbacks();
+      callbacks.sendMessage.mockImplementation((_chat: string, text: string) => Promise.resolve(`receipt:${text}`));
+      const agent = new ChatAgent({ chatId: 'chat', callbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+      (agent as any).isAgentTeamsEnabled = () => false;
+      let resume!: () => void;
+      const gate = new Promise<void>(resolve => {resume = resolve;});
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          yield { parsed: { type: 'text', content: 'A1' } };
+          await gate;
+          yield { parsed: { type: 'text', content: 'A2' } };
+          yield { parsed: { type: 'result', content: 'Done A' } };
+          yield { parsed: { type: 'text', content: 'B1' } };
+          yield { parsed: { type: 'result', content: 'Done B' } };
+        })(),
+      });
+      await agent.processMessage({ chatId: 'chat', payload: 'question A', messageId: 'source-a' });
+      await vi.waitFor(() => expect(callbacks.sendMessage.mock.calls.some((call: any[]) => call[1] === 'A1')).toBe(true));
+      await agent.processMessage({ chatId: 'chat', payload: 'question B', messageId: 'source-b' });
+      const inputs = (agent as any).channel.push.mock.calls.map((call: any[]) => call[0]);
+      expect(inputs.map((input: any) => input.correlation.sourceMessageId)).toEqual(['source-a', 'source-b']);
+      expect(inputs[0].message.content).not.toContain(inputs[0].correlation.runId);
+      resume();
+      await vi.waitFor(() => {
+        const records = (agent as any).logger.info.mock.calls.map((call: any[]) => call[0]);
+        for (const [text, index] of [['A1', 0], ['A2', 0], ['B1', 1]] as const) {
+          expect(records).toContainEqual(expect.objectContaining({ event: 'delivery_final', messageId: `receipt:${text}`, ...inputs[index].correlation }));
+        }
+      });
+      agent.dispose();
+    });
+
     it('freezes the reply anchor per turn — thread B arriving MID-TURN of thread A cannot hijack A\'s tail output (Issue #4587 part 1 review fix)', async () => {
       // The original part-1 shape resolved the anchor live at each output site
       // (currentThreadRootId ?? orchestrator). But processMessage(B) overwrites
