@@ -26,7 +26,7 @@ export function sourceFingerprint(root) {
       'package.json',
       'package-lock.json',
       'tsconfig*.json',
-      'packages/*/src',
+      'packages/*/src/**',
       'packages/*/package.json',
       'packages/*/tsconfig.json',
       'bin',
