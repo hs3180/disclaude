@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - Unreleased
+
+### Fixed
+
+- Honor YAML-only Anthropic/GLM credentials during Claude backend startup; fail clearly instead of silently switching backends.
+- Accept future suffixed Codex model IDs and prefer user-level configuration files.
+- Resolve unmarked agent presets in declaration order; reject ambiguous numeric names and report empty maps without a TypeError.
+- Remove retired task/dialogue trackers and prune obsolete generated files before building and packaging.
+- Isolate unit tests from local developer configuration and clarify channel CLI parent-reply guidance.
+
+### Changed
+
+- Replace the fixed non-Claude compaction threshold with explicit configuration first, then provider model-context discovery at 80% of the reported limit. Missing metadata warns without injecting a guessed threshold; `0` disables automatic compaction.
+
+### Documentation
+
+- Document installation from the forthcoming GitHub `v0.5.1` tag with `npm install -g "github:hs3180/disclaude#v0.5.1"`. See the [0.5.1 release notes](docs/releases/0.5.1.md); the command requires the tag to be published.
+
+### Known limitations
+
+- DeepSeek's model API currently omits context limits: set `agent.autoCompactWindow` explicitly. Oversized single inputs can still fail before later compaction/recovery.
+- Live 0.5.1 delivery acceptance covers text, files, and text parent replies in the designated regular group, not every private/topic/card scenario.
+
 ## [0.5.0] - 2026-09-10
 
 ### Highlights

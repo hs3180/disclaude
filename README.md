@@ -74,7 +74,39 @@ claude --version
 
 ## Quick Start
 
-### Option A: Install the GitHub source distribution
+### Option A: Install a prebuilt package from GitHub Releases
+
+Once the `v0.5.1` Release and its package asset are published, install globally:
+
+> 0.5.1 is not published yet. This URL requires the Release asset, not just a tag.
+
+```bash
+npm install -g "https://github.com/hs3180/disclaude/releases/download/v0.5.1/disclaude-0.5.1.tgz"
+disclaude --version
+disclaude start --help
+```
+
+This installs from GitHub, not the npm registry; the root package can remain
+private. Use Node.js 20+. The archive already includes compiled packages; users
+do not need Git, TypeScript or Husky. Normal dependency installation is still
+required; do not disable dependency lifecycle scripts globally.
+
+The source shortcut `npm install -g "github:hs3180/disclaude#v0.5.1"` is currently
+unsupported: npm's Git dependency preparation can inherit global installation
+settings. Removing Husky alone does not fix that path. Use the Release archive
+above or a local source checkout below.
+
+For a new installation, the example configuration is available at
+`$(npm root -g)/disclaude/disclaude.config.example.yaml`. Copy it to
+`~/.disclaude/disclaude.config.yaml`, configure the backend and channels, and
+create the workspace directory specified in your configuration before running
+`disclaude start`. Preserve an existing configuration when upgrading.
+
+See the [0.5.1 release notes](docs/releases/0.5.1.md) for release availability
+and installation details. Before the tag exists, use the source-checkout option
+below; the Release asset URL will not resolve yet.
+
+### Option B: Install the GitHub source distribution
 
 The root package is private. Use a checkout so npm can install all local workspaces:
 
@@ -96,7 +128,7 @@ its configuration/workspace backup until the new checkout has passed health and
 backend checks. See the [candidate record](docs/releases/0.5.0/release-candidate.md)
 for validation evidence and accepted boundaries.
 
-### Option B: Clone for Development
+### Option C: Clone for Development
 
 For development or customization, clone the repository:
 
@@ -104,6 +136,7 @@ For development or customization, clone the repository:
 git clone https://github.com/hs3180/disclaude.git
 cd disclaude
 npm install
+npm run hooks:install
 ```
 
 The project includes an `.npmrc` file that ensures devDependencies are installed correctly. If you still encounter issues, try:
