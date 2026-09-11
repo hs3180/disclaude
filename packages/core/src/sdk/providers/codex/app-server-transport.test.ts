@@ -27,6 +27,19 @@ afterEach(() => {
 });
 
 describe('CodexAppServerTransport', () => {
+  it('disables the Codex browser while preserving shared CDP environment', async () => {
+    const binary = fixture(`printf '%s\\n' "$@" > "$(dirname "$0")/args"
+printenv BU_CDP_URL > "$(dirname "$0")/cdp"
+while read line; do :; done`);
+    const transport = new CodexAppServerTransport({ binary, env: { ...process.env, BU_CDP_URL: 'http://127.0.0.1:9222' } });
+    try {
+      await vi.waitFor(() => expect(readFileSync(join(dirname(binary), 'cdp'), 'utf8').trim()).toBe('http://127.0.0.1:9222'));
+      expect(readFileSync(join(dirname(binary), 'args'), 'utf8').trim().split('\n')).toEqual([
+        'app-server', '--stdio', '--disable', 'browser_use', '--disable', 'browser_use_external', '--disable', 'browser_use_full_cdp_access',
+      ]);
+    } finally { await transport.close(); }
+  });
+
   it.each(['close', 'crash'])('reclaims a stubborn descendant after parent %s', async mode => {
     const binary = fixture(`
 "${process.execPath}" -e 'process.on("SIGTERM",()=>{});setInterval(()=>{},1000)' </dev/null >/dev/null 2>&1 &
