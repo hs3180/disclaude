@@ -4,7 +4,7 @@ The agent specifies a workflow at task time. There is no `feishu.privateAction` 
 
 ## Request a workflow
 
-The service must run with API authentication (`--api-token`). Managed agents receive `DISCLAUDE_API_BASE_URL` and `DISCLAUDE_API_TOKEN`. This credential authorizes the agent to select executable code running as the service user; keep it within the trusted agent environment. An unconfigured token disables this endpoint, and missing/wrong tokens are rejected. This is the existing service API trust boundary, not a new per-agent permission or delegation system.
+The service generates a fresh random API token in memory on every startup; no token file or manual configuration is needed. `--api-token` remains an explicit operator override. Managed agents receive `DISCLAUDE_API_BASE_URL` and `DISCLAUDE_API_TOKEN`. This credential authorizes the agent to select executable code running as the service user; keep it within the trusted agent environment. Managed child processes inherit the current address and matching token; old process environments must not be reused after restart. Missing/wrong tokens are rejected. Programmatic servers without a configured token still disable this endpoint. This is the existing service API trust boundary, not a new per-agent permission or delegation system.
 
 The agent writes or selects the workflow implementation and saves its definition as `task-workflow.json`:
 

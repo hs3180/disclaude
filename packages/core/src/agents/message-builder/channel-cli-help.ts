@@ -39,7 +39,7 @@ Common options:
   --chat <id>      Target chat ID (oc_..., ou_..., or cli-...).
   --parent <id>   Optional parent message ID.
   --base-url <url> DisclaudeService REST URL (required unless supplied by the managed environment).
-  --api-token <t>  Bearer token when the service runs with --api-token.
+  --api-token <t>  Bearer token (managed agents inherit it automatically).
 
 Unknown options are rejected and named; each command accepts only its own
 flags plus the common ones above.
@@ -92,7 +92,7 @@ Send outbound channel messages with the channel CLI.
 - Text/content inputs accept a value, a file (\`--{x}-file <path>\`), or stdin${fileHint}.
 - Pass \`--chat <id>\` (feishu group \`oc_...\`, p2p \`ou_...\`, or \`cli-...\` session).
 - Pass \`--parent <id>\` to keep a topic/thread reply in-thread.
-- The CLI talks to the DisclaudeService REST API: pass \`--base-url\` / \`DISCLAUDE_API_BASE_URL\` unless the CLI is launched by a managed agent process; pass \`--api-token\` / \`DISCLAUDE_API_TOKEN\` when the service runs with \`--api-token\`.
+- The CLI talks to the DisclaudeService REST API: pass \`--base-url\` / \`DISCLAUDE_API_BASE_URL\` unless the CLI is launched by a managed agent process; pass \`--api-token\` / \`DISCLAUDE_API_TOKEN\` for authenticated requests. The service generates a fresh token at startup; managed agents inherit the current address/token and must not reuse values from previous sessions.
 - For a Feishu task needing private input, use \`${invoke} request_private_input --chat <chat-id> --actor <initiator-open-id> --source <source-message-id> --workflow-file <path>\`. The file contains your task's workflow definition: \`{title, description, command, args?, cwd?, env?, timeoutMs?}\`. JSON may also come from \`--workflow\` or stdin. Use the current conversation's IDs; no preconfigured action is required.
 - This command uses the same managed API address and token as other channel commands; service API authentication is required. It opens a one-use, five-minute input card and returns an \`actionId\`; successful CLI completion means the card was requested, not that the workflow finished. Never submit the private value through CLI flags, files, stdin or ordinary chat: the workflow definition is public metadata, while the private value is entered only in the card.
 - Your workflow reads the private value from its process stdin and verified actor/chat/source metadata from \`DISCLAUDE_PRIVATE_CONTEXT\`; its stdout/stderr are suppressed. You own provider, endpoint, authorization policy and credential use.
