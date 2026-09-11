@@ -232,7 +232,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   // Both fields are session-scoped: reset on every startAgentLoop().
   private consecutiveSendFailures = 0;
   private sendCircuitOpen = false;
-  private activeLifecycleContext?: { traceId: string; runId: string; sourceMessageId: string };
+  private activeLifecycleContext?: NonNullable<StreamingUserMessage['correlation']>;
+  private pendingLifecycleContexts: Array<NonNullable<StreamingUserMessage['correlation']>> = [];
   private didDeliverUserVisibleThisTurn = false;
 
   // Issue #4391 (#4194 follow-up ②): empty-turn session-reset + bounded replay.
@@ -861,13 +862,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       },
       'processMessage called'
     );
-    this.activeLifecycleContext = {
+    const lifecycleContext = Object.freeze({
+      chatId,
       traceId: `${chatId}:${messageId}`,
       runId: crypto.randomUUID(),
       sourceMessageId: messageId,
-    };
-    this.didDeliverUserVisibleThisTurn = false;
-    this.logger.info({ event: 'agent_turn', state: 'started', chatId, ...this.activeLifecycleContext, user_visible: false }, 'agent_turn');
+    });
+    this.logger.info({ event: 'agent_turn', state: 'started', ...lifecycleContext, user_visible: false }, 'agent_turn');
 
     // Issue #3641: Store chat type for topic group detection
     if (chatType) {
@@ -908,6 +909,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       threadRootId ?? this.conversationOrchestrator.getThreadRoot(chatId)
     );
     this.pendingTurnMessageIds.push(messageId);
+    this.pendingLifecycleContexts.push(lifecycleContext);
+    if (!queuedBehindActiveTurn) {this.activeLifecycleContext = lifecycleContext;}
+    if (this.pendingLifecycleContexts.length > 50) {this.pendingLifecycleContexts.splice(0, this.pendingLifecycleContexts.length - 50);}
     // Bounded: a dead/parked session with no iterator draining would otherwise
     // grow this unboundedly (anchors for messages the session never answers).
     if (this.pendingTurnAnchors.length > 50) {
@@ -951,6 +955,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     const userMessage: StreamingUserMessage = {
       type: 'user',
+      correlation: lifecycleContext,
       message: {
         role: 'user',
         content: enhancedContent,
@@ -1191,6 +1196,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // enqueue site), so a live anchor is never eaten here.
     this.pendingTurnAnchors = [];
     this.pendingTurnMessageIds = [];
+    this.pendingLifecycleContexts = [];
 
     // Issue #4649 (review ③): fresh session — the OLD session's queued
     // messages will never get a turn (their channel is closed above), so
@@ -1467,10 +1473,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     let currentTurnAnchor: string | undefined;
     let currentTurnMessageId: string | undefined;
     const consumeTurnAnchor = (): string | undefined => {
-      if (!turnAnchorConsumed) {
+      if (!turnAnchorConsumed && this.pendingTurnMessageIds.length > 0) {
         turnAnchorConsumed = true;
         currentTurnAnchor = this.pendingTurnAnchors.shift();
         currentTurnMessageId = this.pendingTurnMessageIds.shift();
+        this.activeLifecycleContext = this.pendingLifecycleContexts.shift();
+        this.didDeliverUserVisibleThisTurn = false;
         this.activeTurnMessageId = currentTurnMessageId;
       }
       return currentTurnAnchor;
@@ -2209,7 +2217,6 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // for the tail paths below (onDone above already ran; error paths
           // after a result are not expected but read the frozen value).
           turnAnchorConsumed = false;
-          currentTurnMessageId = undefined;
           this.activeTurnMessageId = undefined;
 
           // Issue #3124: In once-mode, close channel after result to end the iterator.
@@ -2337,7 +2344,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // when streaming never started or the channel doesn't stream — the
       // driver's finish() is idempotent and only acts in the streaming state.
       if (streamDriver) {
-        const finishThreadRoot = resolveReplyThreadRoot();
+        const finishThreadRoot = currentTurnAnchor ?? this.conversationOrchestrator.getThreadRoot(chatId);
         const terminalDelivered = await streamDriver.finish(finishThreadRoot);
         if (!terminalDelivered) {
           this.logger.error(
@@ -2646,6 +2653,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // the session.
     this.pendingTurnAnchors = [];
     this.pendingTurnMessageIds = [];
+    this.pendingLifecycleContexts = [];
 
     // Issue #4063: Clear per-turn completion state
     this.rejectTurn(new Error('Agent reset'));
