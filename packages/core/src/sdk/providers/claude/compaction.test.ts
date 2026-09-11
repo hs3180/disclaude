@@ -21,10 +21,25 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   vi.useRealTimers();
 });
 
 describe('model context discovery', () => {
+  it('keeps native Claude compaction under SDK ownership without metadata discovery', async () => {
+    expect(await discoverCompactionWindow({ ...options(), model: 'claude-native-fixture' }, new AbortController().signal)).toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('uses the process auth token when no API key is configured', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', '');
+    vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'synthetic-auth-token');
+    const opts = options();
+    delete opts.env!.ANTHROPIC_API_KEY;
+    fetchMock.mockResolvedValue(response({ id: opts.model, context_length: 100000 }));
+    expect(await discoverCompactionWindow(opts, new AbortController().signal)).toBe(80000);
+    expect(fetchMock.mock.calls[0][1].headers.authorization).toBe('Bearer synthetic-auth-token');
+  });
   it.each(['max_input_tokens', 'context_length', 'context_window'])(
     'reads %s and reserves 20%%',
     async (field) => {
@@ -130,6 +145,7 @@ describe('deferred SDK startup', () => {
     expect(start).not.toHaveBeenCalled();
     await stream.iterator.next();
     expect(start.mock.calls[0][1]).toMatchObject({ autoCompactWindow: 800000 });
+    expect(start).toHaveBeenCalledTimes(1);
     expect(close).toHaveBeenCalled();
   });
 

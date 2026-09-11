@@ -25,6 +25,9 @@ export async function discoverCompactionWindow(
   if (!model) {
     return undefined;
   }
+  // Native Claude IDs already have SDK-owned context/compaction policy.
+  // An explicit numeric override bypasses discovery in the provider.
+  if (/^claude-/i.test(model)) {return undefined;}
   let base: URL;
   try {
     base = new URL(
@@ -46,6 +49,7 @@ export async function discoverCompactionWindow(
     options.env?.ANTHROPIC_API_KEY ||
     options.env?.ANTHROPIC_AUTH_TOKEN ||
     process.env.ANTHROPIC_API_KEY ||
+    process.env.ANTHROPIC_AUTH_TOKEN ||
     '';
   const cacheKey = createHash('sha256')
     .update(JSON.stringify([base.href, model, key]))
