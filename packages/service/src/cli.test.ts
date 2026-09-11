@@ -61,7 +61,7 @@ vi.mock('./channels/wired-descriptors.js', () => ({
   BUILTIN_WIRED_DESCRIPTORS: [],
 }));
 
-import { publishChannelApiEnvironment, parseArgs, resolveChannelConfigs, isPortAvailable, waitForPortAvailable, validateWorkspaceDir } from './cli-main.js';
+import { resolveStartupApiToken, publishChannelApiEnvironment, parseArgs, resolveChannelConfigs, isPortAvailable, waitForPortAvailable, validateWorkspaceDir } from './cli-main.js';
 import type { DisclaudeConfigWithChannels } from '@disclaude/core';
 
 // ============================================================================
@@ -522,6 +522,20 @@ describe('validateWorkspaceDir', () => {
 });
 
 describe('managed Channel API environment', () => {
+  it('rotates the default credential for each startup and forwards it to managed children', () => {
+    const first = resolveStartupApiToken();
+    const second = resolveStartupApiToken();
+    expect(first).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(second).not.toBe(first);
+    expect(resolveStartupApiToken('operator-supplied')).toBe('operator-supplied');
+    const env = { ...process.env };
+    publishChannelApiEnvironment('http://127.0.0.1:43125', second, env);
+    const output = execFileSync(process.execPath, ['-e',
+      'process.stdout.write(process.env.DISCLAUDE_API_TOKEN || "")',
+    ], { env, encoding: 'utf8' });
+    expect(output).toBe(second);
+  });
+
   it('passes the actual server address and matching CLI token to a child, then clears stale auth', () => {
     const env = { ...process.env, DISCLAUDE_API_BASE_URL: 'http://127.0.0.1:1', DISCLAUDE_API_TOKEN: 'stale-test-token' };
     publishChannelApiEnvironment('http://127.0.0.1:43123', 'cli-test-token', env);

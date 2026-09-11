@@ -59,6 +59,11 @@ interface CliOptions {
   apiToken?: string;
 }
 
+/** Generate a fresh in-memory credential for each startup unless explicitly configured. */
+export function resolveStartupApiToken(explicitToken?: string): string {
+  return explicitToken || crypto.randomBytes(32).toString('base64url');
+}
+
 /** Publish the bound server's address and matching auth for managed child processes. */
 export function publishChannelApiEnvironment(baseUrl: string, apiToken?: string, env: NodeJS.ProcessEnv = process.env): void {
   env.DISCLAUDE_API_BASE_URL = baseUrl;
@@ -123,7 +128,7 @@ Commands:
 Options:
   --config, -c PATH       Path to configuration file
   --api-port PORT         Enable HTTP API server (0 = OS-assigned port)
-  --api-token TOKEN       Bearer token for authenticating write routes (Issue #3857)
+  --api-token TOKEN       Override the random per-startup token for write routes
   --help                  Show this help message
 
 Configuration:
@@ -180,6 +185,8 @@ export async function main(): Promise<void> {
     printUsage();
     process.exit(0);
   }
+
+  options.apiToken = resolveStartupApiToken(options.apiToken);
 
   // Initialize logger with file logging support.
   // When LOG_TO_FILE=true (set by launchd), writes to a single log file.
