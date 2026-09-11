@@ -1,3 +1,4 @@
+import { isPrivateWorkflowRequest, type PrivateWorkflowRequest } from './channels/feishu/private-workflows.js';
 /**
  * HTTP API Server for disclaude service.
  *
@@ -253,6 +254,11 @@ export class HttpApiServer {
   private uploadFileHandler?: UploadFileHandler;
   private sendMessageHandler?: SendMessageHandler;
   private sendCardHandler?: SendCardHandler;
+  private privateWorkflowHandler?: (request: PrivateWorkflowRequest) => Promise<{ actionId: string }>;
+  setPrivateWorkflowHandler(handler: (request: PrivateWorkflowRequest) => Promise<{ actionId: string }>): void {
+    this.privateWorkflowHandler = handler;
+  }
+
   private sendInteractiveHandler?: SendInteractiveHandler;
   private listTempChatsHandler?: ListTempChatsHandler;
   private uploadImageHandler?: UploadImageHandler;
@@ -536,6 +542,7 @@ export class HttpApiServer {
     // Issue #4279: REST parity with REST API sendMessage.
     this.addRoute('POST', '/api/send-message', this.handleSendMessage.bind(this));
     // Issue #4279: REST parity with REST API sendCard.
+    this.addRoute('POST', '/api/private-workflows', this.handlePrivateWorkflow.bind(this));
     this.addRoute('POST', '/api/send-card', this.handleSendCard.bind(this));
     // Issue #4279: REST parity with REST API sendInteractive.
     this.addRoute('POST', '/api/send-interactive', this.handleSendInteractive.bind(this));
@@ -918,6 +925,18 @@ export class HttpApiServer {
    * aligned with ChannelApiRequestPayloads). `card` is a Feishu card JSON object.
    * Response: `{ ok: true, success: true }`.
    */
+  private async handlePrivateWorkflow(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    // This endpoint selects executable code. Never expose it in unauthenticated API mode.
+    if (!this.config.apiToken) {this.sendJson(res, 503, { ok: false, message: 'Private workflows require API authentication' }); return;}
+    if (!this.privateWorkflowHandler) {this.sendJson(res, 503, { ok: false, message: 'Private workflows unavailable' }); return;}
+    let body: unknown;
+    try {body = JSON.parse(await readBody(req));}
+    catch {this.sendJson(res, 400, { ok: false, message: 'Invalid private workflow request' }); return;}
+    if (!isPrivateWorkflowRequest(body)) {this.sendJson(res, 400, { ok: false, message: 'Invalid private workflow request' }); return;}
+    try {this.sendJson(res, 200, { ok: true, ...await this.privateWorkflowHandler(body) });}
+    catch {this.sendJson(res, 500, { ok: false, message: 'Private workflow request failed' });}
+  }
+
   private async handleSendCard(
     req: IncomingMessage,
     res: ServerResponse,

@@ -37,7 +37,7 @@ export class FeishuPrivateInput {
       Boolean(value && typeof value === 'object' && 'private_action' in value);
   }
 
-  async submit(data: Record<string, unknown>): Promise<void> {
+  async submit(data: Record<string, unknown>): Promise<import('@disclaude/core').PrivateActionOutcome | undefined> {
     const context = data.context as { open_message_id?: string; open_chat_id?: string } | undefined;
     const operator = data.operator as { open_id?: string } | undefined;
     const action = data.action as { value?: Record<string, unknown>; form_value?: Record<string, unknown> } | undefined;
@@ -51,6 +51,7 @@ export class FeishuPrivateInput {
       : outcome === 'denied' ? '本次鉴权操作未获授权，请检查所需权限。'
         : outcome === 'invalid' ? '表单无效、已过期或已使用，请重新发起。' : '本次鉴权操作未完成，请稍后重新发起。';
     await this.send({ chatId: context.open_chat_id, type: 'text', text });
+    return outcome;
   }
 
   revoke(): void {this.handoff.revoke();}

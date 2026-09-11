@@ -15,6 +15,7 @@ import { getChatIdValidationError } from './utils/chat-id-validator.js';
 // content"). These lists let the CLI name the bad flag instead.
 const COMMON_FLAGS = ['chat', 'parent', 'base-url', 'api-token'];
 const COMMAND_FLAGS: Record<string, string[]> = {
+  request_private_input: ['actor', 'source', 'workflow', 'workflow-file'],
   send_text: ['text', 'text-file', 'mentions'],
   send_file: ['file'],
   send_card: ['card', 'card-file'],
@@ -28,7 +29,7 @@ const COMMAND_FLAGS: Record<string, string[]> = {
 export const HELP = CHANNEL_CLI_HELP;
 
 type Args = { _: string[]; [key: string]: string | string[] | undefined };
-type ToolResult = { success?: boolean; error?: string; message?: string };
+type ToolResult = { success?: boolean; error?: string; message?: string; actionId?: string };
 let emitted = false;
 let autoRunOutput: typeof process.stdout.write | undefined;
 
@@ -186,6 +187,7 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
   let question: string | undefined;
   let filePath: string | undefined;
   let card: Record<string, unknown> | undefined;
+  let workflow: Record<string, unknown> | undefined;
   let parsedMentions: Array<{ openId: string; name?: string }> | undefined;
   let parsedOptions: InteractiveOption[] | undefined;
   let parsedActionPrompts: ActionPromptMap | undefined;
@@ -202,6 +204,17 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
       if (!raw) { emitFail(command, 'Missing card content', 'pass --card <json>, --card-file <path>, or pipe card JSON on stdin'); return 1; }
       card = parseJson<Record<string, unknown>>(raw, 'card');
       if (!card || Array.isArray(card) || typeof card !== 'object') { emitFail(command, 'Card must be an object'); return 1; }
+    } else if (command === 'request_private_input') {
+      if (!arg(args, 'actor')?.trim() || !arg(args, 'source')?.trim()) {
+        emitFail(command, 'Missing --actor <open-id> or --source <message-id>'); return 1;
+      }
+      const raw = readInput(args, 'workflow', 'workflow-file');
+      if (!raw) {emitFail(command, 'Missing workflow definition', 'pass --workflow-file <path>, --workflow <json>, or pipe workflow JSON on stdin'); return 1;}
+      workflow = parseJson<Record<string, unknown>>(raw, 'workflow');
+      if (!workflow || Array.isArray(workflow) || typeof workflow !== 'object' ||
+          ['command', 'title', 'description'].some(key => typeof workflow?.[key] !== 'string' || !(workflow?.[key] as string).trim())) {
+        emitFail(command, 'Workflow must be an object with command, title and description'); return 1;
+      }
     } else if (command === 'push_to_agent') {
       message = readInput(args, 'message', 'message-file');
       if (!message) { emitFail(command, 'Missing message content', 'pass --message <string>, --message-file <path>, or pipe content on stdin'); return 1; }
@@ -230,6 +243,9 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
       const transformed = mod.transformCardTables(card as Record<string, unknown>);
       const resolved = await mod.resolveCardImages(transformed);
       result = await withLogsRedirected(() => mod.send_card({ card: resolved.card, chatId, parentMessageId }));
+    } else if (command === 'request_private_input') {
+      result = await withLogsRedirected(() => mod.request_private_input({ chatId, actorId: arg(args, 'actor') as string,
+        sourceMessageId: arg(args, 'source') as string, workflow: workflow as Record<string, unknown> }));
     } else if (command === 'push_to_agent') {
       result = await withLogsRedirected(() => mod.push_to_agent({ chatId, message: message as string }));
     } else {
@@ -240,7 +256,7 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
     emitFail(command, errorText, await failureHint(baseUrl, errorText));
     return 1;
   }
-  if (result.success) { emitOk({ command, chatId, result: result.message || 'sent', durationMs: 0 }); return 0; }
+  if (result.success) { emitOk({ command, chatId, result: result.message || 'sent', durationMs: 0, ...(result.actionId ? { actionId: result.actionId } : {}) }); return 0; }
   const resultError = result.error || result.message || `${command} returned without success`;
   emitFail(command, resultError, await failureHint(baseUrl, resultError));
   return 1;

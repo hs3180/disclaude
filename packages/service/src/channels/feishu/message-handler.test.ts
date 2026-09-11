@@ -73,7 +73,8 @@ vi.mock('@disclaude/core', async () => {
   };
 });
 
-vi.mock('child_process', () => ({
+vi.mock('child_process', async (importOriginal) => ({
+  ...await importOriginal<typeof import('node:child_process')>(),
   execFile: mockExecFile,
 }));
 
@@ -230,6 +231,25 @@ describe('MessageHandler', () => {
   // Constructor & lifecycle
   // -----------------------------------------------------------------------
   describe('constructor and lifecycle', () => {
+    it('accepts an agent-defined workflow without a configured consumer and keeps submission out of chat', async () => {
+      const { handler } = createHandler();
+      mockState.sendMessage.mockResolvedValueOnce('task-card' as never);
+      try {
+        await handler.requestPrivateWorkflow({ chatId: 'chat_001', actorId: 'user_001', sourceMessageId: 'msg_001',
+          workflow: { title: 'Task workflow', description: 'Agent selected', command: process.execPath,
+            args: ['-e', 'process.stdin.resume();process.stdin.on("end",()=>process.exit(0))'], env: {} } });
+        const { card } = firstCallArg(mockState.sendMessage);
+        const [{ value }] = card.body.elements[1].elements[1].behaviors;
+        await handler.handleCardAction(cardActionEvent({ context: { open_message_id: 'task-card', open_chat_id: 'chat_001' },
+          action: { tag: 'button', value, form_value: { credential: 'synthetic-task-private' } } }));
+        await vi.waitFor(() => expect(mockState.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: '本次鉴权操作已完成。' })));
+        expect(mockState.emitMessage).not.toHaveBeenCalled();
+        expect(mockState.logCardInteraction).not.toHaveBeenCalled();
+        expect(mockState.resolveActionPrompt).not.toHaveBeenCalled();
+        expect(JSON.stringify(mockState.sendMessage.mock.calls)).not.toContain('synthetic-task-private');
+      } finally {handler.clearClient();}
+    });
+
     it('keeps private callbacks outside history, prompts and ordinary card routing', async () => {
     const secret = 'synthetic-private-input';
     const consume = vi.fn((_value: string) => Promise.resolve('succeeded' as const));

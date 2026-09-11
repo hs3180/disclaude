@@ -28,6 +28,11 @@ Commands:
   send_card        Send a display-only card (--card, --card-file, or stdin).
   push             Push an instruction to a chat agent.
   send_interactive Send an interactive card with clickable buttons.
+  request_private_input Request private input for an agent-defined workflow.
+    --actor <open-id> --source <message-id>
+    --workflow-file <path> | --workflow <json> | workflow JSON on stdin
+    Workflow fields: title, description, command, args?, cwd?, env?, timeoutMs?.
+    Requires service API authentication; never put the private input in this command.
   help             Show this help message.
 
 Common options:
@@ -70,7 +75,7 @@ export function buildChannelCliHelpGuidance(
   const sendCommands = options.sendCommands ?? ALL_SEND_COMMANDS;
   // `push` targets another agent rather than this channel's transport, so it is
   // never gated by the channel's send capabilities.
-  const commandList = [...sendCommands, 'push'].map((c) => `\`${c}\``).join(', ');
+  const commandList = [...sendCommands, 'push', ...(sendCommands.includes('send_card') ? ['request_private_input'] : [])].map((c) => `\`${c}\``).join(', ');
   const fileHint = sendCommands.includes('send_file')
     ? '; \`send_file\` needs \`--file <path>\`'
     : '';
@@ -88,6 +93,9 @@ Send outbound channel messages with the channel CLI.
 - Pass \`--chat <id>\` (feishu group \`oc_...\`, p2p \`ou_...\`, or \`cli-...\` session).
 - Pass \`--parent <id>\` to keep a topic/thread reply in-thread.
 - The CLI talks to the DisclaudeService REST API: pass \`--base-url\` / \`DISCLAUDE_API_BASE_URL\` unless the CLI is launched by a managed agent process; pass \`--api-token\` / \`DISCLAUDE_API_TOKEN\` when the service runs with \`--api-token\`.
+- For a Feishu task needing private input, use \`${invoke} request_private_input --chat <chat-id> --actor <initiator-open-id> --source <source-message-id> --workflow-file <path>\`. The file contains your task's workflow definition: \`{title, description, command, args?, cwd?, env?, timeoutMs?}\`. JSON may also come from \`--workflow\` or stdin. Use the current conversation's IDs; no preconfigured action is required.
+- This command uses the same managed API address and token as other channel commands; service API authentication is required. It opens a one-use, five-minute input card and returns an \`actionId\`; successful CLI completion means the card was requested, not that the workflow finished. Never submit the private value through CLI flags, files, stdin or ordinary chat: the workflow definition is public metadata, while the private value is entered only in the card.
+- Your workflow reads the private value from its process stdin and verified actor/chat/source metadata from \`DISCLAUDE_PRIVATE_CONTEXT\`; its stdout/stderr are suppressed. You own provider, endpoint, authorization policy and credential use.
 - One JSON result on stdout; diagnostics on stderr.
 
 ---`;

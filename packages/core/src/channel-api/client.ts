@@ -84,6 +84,7 @@ const ROUTES: Readonly<Record<string, Route>> = {
   ping: { method: 'GET', path: '/api/ping', success: (json, res) => res.ok && json.pong === true },
   sendMessage: { method: 'POST', path: '/api/send-message' },
   sendCard: { method: 'POST', path: '/api/send-card' },
+  requestPrivateInput: { method: 'POST', path: '/api/private-workflows' },
   uploadFile: { method: 'POST', path: '/api/upload-file' },
   uploadImage: { method: 'POST', path: '/api/upload-image' },
   sendInteractive: { method: 'POST', path: '/api/send-interactive' },
