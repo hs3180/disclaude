@@ -22,6 +22,7 @@ import pino, { Logger, Level, LoggerOptions } from 'pino';
 import { PassThrough } from 'node:stream';
 import { finished } from 'node:stream/promises';
 import pinoRoll from 'pino-roll';
+import { redactSensitive, redactSensitiveText } from './redaction.js';
 
 // Re-export Logger type for consumers
 export type { Logger } from 'pino';
@@ -256,7 +257,7 @@ async function buildFileDestination(
     } catch (symlinkError) {
       console.warn(
         'Log rotation symlink failed, retrying without it (filebeat still globs the numbered files):',
-        symlinkError
+        redactSensitive(symlinkError)
       );
       dest = await pinoRoll({ ...rollOpts, symlink: false });
     }
@@ -269,7 +270,7 @@ async function buildFileDestination(
   } catch (error) {
     // Matches the pre-existing setupFileLogging() fallback: never crash the
     // process because the file destination failed — fall back to stdout.
-    console.warn('Failed to setup file logging, falling back to stdout:', error);
+    console.warn('Failed to setup file logging, falling back to stdout:', redactSensitive(error));
     return process.stdout;
   }
 }
@@ -304,7 +305,7 @@ function setupSyncFilePassthrough(): { passthrough: PassThrough; dest: NodeJS.Wr
 
   // Handle PassThrough errors to prevent silent log loss
   passthrough.on('error', (err: Error) => {
-    console.warn('Log passthrough stream error:', err.message);
+    console.warn('Log passthrough stream error:', redactSensitiveText(err.message));
   });
 
   const fileDry = dest as unknown as NodeJS.WritableStream;
@@ -344,8 +345,17 @@ function getDefaultLogLevel(): LogLevel {
  * The transport uses worker_threads internally which can cause module
  * loading timeouts in CI environments.
  */
+const credentialProtection: LoggerOptions = {
+  hooks: {
+    // Filter the final structured record, after Pino interpolation/serializers
+    // and child bindings, before any file/stdout/pretty transport receives it.
+    streamWrite: line => `${JSON.stringify(redactSensitive(JSON.parse(line)))}\n`,
+  },
+};
+
 function getDevelopmentConfig(): LoggerOptions {
   const baseConfig: LoggerOptions = {
+    ...credentialProtection,
     level: getDefaultLogLevel(),
     formatters: {
       level: (label) => {
@@ -379,6 +389,7 @@ function getDevelopmentConfig(): LoggerOptions {
  */
 function getProductionConfig(): LoggerOptions {
   return {
+    ...credentialProtection,
     level: getDefaultLogLevel(),
     formatters: {
       level: (label) => {
@@ -492,7 +503,7 @@ export async function initLogger(config: LoggerConfig = {}): Promise<Logger> {
     // writes through this single stream.
     passthrough = new PassThrough();
     passthrough.on('error', (err: Error) => {
-      console.warn('Log passthrough stream error:', err.message);
+      console.warn('Log passthrough stream error:', redactSensitiveText(err.message));
     });
     logPassthrough = passthrough;
   }
@@ -697,7 +708,7 @@ export function flushLogger(): Promise<void> {
                 if (rootLogger && !flushInProgress) {
                   rootLogger.error({ err }, 'Logger flush error');
                 } else {
-                  console.warn('Logger flush error:', err.message);
+                  console.warn('Logger flush error:', redactSensitiveText(err.message));
                 }
               }
               res();
