@@ -51,7 +51,7 @@
     "launchd:chromium:restart": "node scripts/launchd.mjs chromium-cdp restart",
     "launchd:chromium:logs": "node scripts/launchd.mjs chromium-cdp logs",
     "launchd:chromium:status": "node scripts/launchd.mjs chromium-cdp status",
-    "prepare": "husky"
+    "prepare": "node scripts/prepare-install.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
