@@ -597,6 +597,13 @@ export async function main(): Promise<void> {
 
       // Issue #4279: wire REST /api/send-card to the channel's sendCard
       // capability (REST parity with the REST API method).
+      httpApiServer.setPrivateWorkflowHandler(async request => {
+        const { FeishuChannel } = await import('./channels/feishu-channel.js');
+        const channel = service.getChannelManager().resolveChannelForChatId(request.chatId);
+        if (!(channel instanceof FeishuChannel)) {throw new Error('Private workflows require Feishu');}
+        return channel.requestPrivateWorkflow(request);
+      });
+
       httpApiServer.setSendCardHandler((chatId, card, threadId, description) =>
         service.sendCard(chatId, card, threadId, description)
       );

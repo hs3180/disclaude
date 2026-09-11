@@ -1,3 +1,4 @@
+import type { PrivateWorkflowRequest } from './feishu/private-workflows.js';
 /**
  * Feishu Channel Implementation.
  *
@@ -257,6 +258,10 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
    * older than `WS_HEALTH.OFFLINE_QUEUE.MAX_MESSAGE_AGE_MS` are discarded.
    */
   private offlineQueue: Array<{ message: OutgoingMessage; queuedAt: number }> = [];
+
+  requestPrivateWorkflow(request: PrivateWorkflowRequest): Promise<{ actionId: string }> {
+    return this.feishuMessageHandler.requestPrivateWorkflow(request);
+  }
 
   constructor(config: FeishuChannelConfig = {}) {
     super(config, 'feishu', 'Feishu');

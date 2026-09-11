@@ -42,6 +42,7 @@ import type { TriggerModeManager } from './passive-mode.js';
 import type { MentionDetector } from './mention-detector.js';
 import { evaluateMessageFilters } from './message-filters.js';
 import { FeishuPrivateInput } from './private-input.js';
+import { FeishuPrivateWorkflows, type PrivateWorkflowRequest } from './private-workflows.js';
 import { tryHandleSlashCommand } from './command-router.js';
 import {
   extractOpenId,
@@ -193,6 +194,11 @@ export class MessageHandler {
   private getHasControlHandler: () => boolean;
   private tenantAccessToken: string;
   private readonly privateInput?: FeishuPrivateInput;
+  private readonly privateWorkflows: FeishuPrivateWorkflows;
+
+  requestPrivateWorkflow(request: PrivateWorkflowRequest): Promise<{ actionId: string }> {
+    return this.privateWorkflows.request(request);
+  }
 
   private readonly MAX_MESSAGE_AGE = DEDUPLICATION.MAX_MESSAGE_AGE;
 
@@ -213,6 +219,7 @@ export class MessageHandler {
     this.mentionDetector = options.mentionDetector;
     this.interactionManager = options.interactionManager;
     this.callbacks = options.callbacks;
+    this.privateWorkflows = new FeishuPrivateWorkflows(options.callbacks.sendMessage);
     this.isRunning = options.isRunning;
     this.getHasControlHandler = options.hasControlHandler;
     this.controlHandler = false;
@@ -397,6 +404,7 @@ export class MessageHandler {
    */
   clearClient(): void {
     this.privateInput?.revoke();
+    this.privateWorkflows.revoke();
     this.client = undefined;
   }
 
@@ -1421,7 +1429,10 @@ export class MessageHandler {
     if (FeishuPrivateInput.isPrivateCallback(rawData)) {
       // Acknowledge promptly; the one-shot handoff consumes before awaiting.
       // Consumer failures never enter ordinary logs or the agent channel.
-      void this.privateInput?.submit(rawData).catch(() => logger.warn('Private input delivery failed'));
+      void this.privateWorkflows.submit(rawData).then(handled => {
+        if (!handled) {return this.privateInput?.submit(rawData);}
+        return undefined;
+      }).catch(() => logger.warn('Private input delivery failed'));
       return;
     }
     // Feishu reuses the card message id for every button click. Prefer its
