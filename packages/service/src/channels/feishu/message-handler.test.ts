@@ -245,7 +245,7 @@ describe('MessageHandler', () => {
       action: { tag: 'button', value, form_value: { credential: secret } } });
     await handler.handleCardAction(callback);
     await vi.waitFor(() => expect(mockState.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: '本次鉴权操作已完成。' })));
-    expect(consume).toHaveBeenCalledExactlyOnceWith(secret);
+    expect(consume).toHaveBeenCalledExactlyOnceWith(secret, expect.objectContaining({ actor: 'user_001', chat: 'chat_001', source: 'msg_001' }));
     expect(mockState.emitMessage).not.toHaveBeenCalled();
     expect(mockState.logCardInteraction).not.toHaveBeenCalled();
     expect(mockState.resolveActionPrompt).not.toHaveBeenCalled();
