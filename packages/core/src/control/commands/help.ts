@@ -24,7 +24,6 @@ export const handleHelp: CommandHandler = (
       '| `/trigger` | 切换触发模式 | `/trigger [mention\\|always\\|auto]` |',
       '| `/project` | 项目管理 | `/project [use\\|reset\\|info]` |',
       '| `/agent` | 查看或切换 Agent 预设 | `/agent [current\\|list\\|use <name>]` |',
-      '| `/list-nodes` | 查看已连接的执行节点 | `/list-nodes` |',
       '| `/debug` | 设置/取消 Debug 群 | `/debug` |',
     ].join('\n'),
   };

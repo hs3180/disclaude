@@ -14,6 +14,6 @@ Related: #4798, #4826. Stacked on PR #4851 (`89a60af9`).
    non-zero exit, timeout, stop cancellation, and descendant cleanup. No live
    channel, API, or service is used.
 
-The dynamic REST readiness window is intentionally separate: PrimaryNode should
+The dynamic REST readiness window is intentionally separate: DisclaudeService should
 receive the resolved REST base URL before starting Scheduler (or Scheduler
 should receive an explicit async environment supplier/readiness dependency).

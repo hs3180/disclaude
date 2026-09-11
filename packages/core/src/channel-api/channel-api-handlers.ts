@@ -1,4 +1,4 @@
-/** Channel handler contracts used by PrimaryNode HTTP routes and registered channels. */
+/** Channel handler contracts used by DisclaudeService HTTP routes and registered channels. */
 
 import type { FeishuCard } from '../types/platform.js';
 

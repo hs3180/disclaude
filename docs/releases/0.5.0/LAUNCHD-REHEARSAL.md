@@ -6,7 +6,7 @@ candidate. This harness uses no Feishu credentials and performs no model calls.
 
 ```bash
 python3 scripts/rehearse-launchd.py \
-  --baseline-entry /absolute/previous-checkout/packages/primary-node/dist/cli.js \
+  --baseline-entry /absolute/previous-checkout/packages/service/dist/cli.js \
   --output /absolute/local-evidence/launchd
 ```
 

@@ -12,7 +12,7 @@ With `LOG_TO_FILE=true`, Pino also writes to a log file that Filebeat can read d
 ```yaml
 # docker-compose.yml
 services:
-  primary:
+  service:
     # ... existing config ...
     logging:
       driver: fluentd
@@ -63,7 +63,7 @@ services:
 ### Step 3: Add Fluentd to Docker Compose (optional sidecar)
 
 ```yaml
-# docker-compose.yml — add under services: alongside your primary service
+# docker-compose.yml — add under services: alongside your service service
 services:
   fluentd:
     image: fluent/fluentd:v1.16
@@ -108,7 +108,7 @@ docker compose logs filebeat --tail=20
 
 ```
 ┌──────────────────────┐  Docker volume   ┌──────────────────┐
-│  disclaude-primary   │── log_data:/data ──→│   Filebeat       │
+│  disclaude   │── log_data:/data ──→│   Filebeat       │
 │  (Pino → stdout +    │   /logs (shared)   │  (host network)  │
 │   file to /data/logs)│                    └───────┬──────────┘
 └──────────────────────┘                            │
@@ -165,7 +165,7 @@ See `filebeat.yml` in the project root for the full configuration.
   curl -X DELETE "http://localhost:9200/_template/disclaude-logs"
   ```
 - **Network mode**: Filebeat uses `network_mode: host` for maximum compatibility
-  (same as primary and chromium services). If you need stricter network isolation,
+  (same as service and chromium services). If you need stricter network isolation,
   replace it with a custom bridge network and expose only the ES port.
 
 ## macOS (launchd): Filebeat
@@ -221,7 +221,7 @@ Pino outputs structured JSON. Verify logs are flowing:
 
 ```bash
 # Docker: check container stdout
-docker compose logs primary --tail 1 | jq .
+docker compose logs service --tail 1 | jq .
 
 # macOS: check log file
 tail -1 ~/Library/Logs/disclaude/disclaude-combined.log | jq .
@@ -234,9 +234,9 @@ Expected output format (production):
   "level": "info",
   "time": "2024-06-06T12:00:00.000Z",
   "pid": 1,
-  "hostname": "disclaude-primary",
+  "hostname": "disclaude",
   "msg": "Server started",
-  "context": "PrimaryNode"
+  "context": "DisclaudeService"
 }
 ```
 

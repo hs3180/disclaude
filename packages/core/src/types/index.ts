@@ -68,11 +68,6 @@ export type {
 
 // WebSocket message types
 export type {
-  PromptMessage,
-  CommandMessage,
-  FeedbackMessage,
-  CardActionMessage,
-  CardContextMessage,
   TopicGroupMessageEvent,
 } from './websocket-messages.js';
 
@@ -113,16 +108,6 @@ export {
   SAFE_CHANNEL_ID_PATTERN,
   RESERVED_CHANNEL_IDS,
 } from './channel-plugin.js';
-
-// Primary Node types (Issue #1040)
-export type {
-  NodeType,
-  NodeCapabilities,
-  BaseNodeConfig,
-  RestChannelConfig,
-  FileStorageConfig,
-  PrimaryNodeConfig,
-} from './primary-node.js';
 
 // Adapter types (Issue #1040)
 export type {

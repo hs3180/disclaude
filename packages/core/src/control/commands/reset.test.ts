@@ -13,8 +13,7 @@ import type { ControlResponse } from '../../types/channel.js';
 function createMockContext(overrides?: Partial<ControlHandlerContext>): ControlHandlerContext {
   return {
     agentPool: { reset: vi.fn(), stop: vi.fn().mockReturnValue(true) },
-    node: {
-      nodeId: 'node-1',
+    debugGroups: {
       getDebugGroup: vi.fn().mockReturnValue(null),
       setDebugGroup: vi.fn(),
       clearDebugGroup: vi.fn().mockReturnValue(null),

@@ -1,0 +1,169 @@
+/**
+ * @disclaude/service
+ *
+ * disclaude service process for disclaude.
+ *
+ * This package contains:
+ * - Channels (Feishu, REST, Ruliu)
+ * - DisclaudeService implementation
+ * - Platform adapters
+ * - REST API server
+ * - Agent factory and ChatAgent (Issue #2717)
+ *
+ * @see Issue #1040 - Separate disclaude service code to @disclaude/service
+ * @see Issue #2717 - Remove Worker Node design
+ */
+
+// Re-export types from @disclaude/core
+export type {
+  // Channel types
+  IncomingMessage,
+  OutgoingMessage,
+  OutgoingContentType,
+  MessageAttachment,
+  ControlCommand,
+  ControlCommandType,
+  ControlResponse,
+  ChannelStatus,
+  MessageHandler,
+  ControlHandler,
+  IChannel,
+  ChannelConfig,
+  ChannelFactory,
+  ChannelCapabilities,
+
+} from '@disclaude/core';
+
+// Re-export constants and utilities from @disclaude/core
+export { DEFAULT_CHANNEL_CAPABILITIES, createLogger } from '@disclaude/core';
+
+// Channel base class
+export { BaseChannel } from '@disclaude/core';
+
+// Channel API handler and payload contracts
+export {
+  type ChannelApiHandlers,
+  type ChannelHandlersContainer,
+  type FeishuApiHandlers,
+  type FeishuHandlersContainer,
+  type ChannelApiRequestType,
+  type ChannelApiRequestPayloads,
+  type ChannelApiResponsePayloads,
+} from './channel-api/index.js';
+
+// Note: ChannelManager is now internal to DisclaudeService (Issue #1594).
+// Access it via service.getChannelManager() instead of direct import.
+
+// Platform adapters (Issue #1040)
+export {
+  // Welcome service
+  WelcomeService,
+  initWelcomeService,
+  getWelcomeService,
+  resetWelcomeService,
+  type WelcomeServiceConfig,
+  // Feishu client factory
+  createFeishuClient,
+  type CreateFeishuClientOptions,
+  // Interaction manager
+  InteractionManager,
+  type InteractionManagerConfig,
+  // Card builders
+  buildTextContent,
+  buildPostContent,
+  buildSimplePostContent,
+  buildButton,
+  buildMenu,
+  buildDiv,
+  buildMarkdown,
+  buildDivider,
+  buildActionGroup,
+  buildNote,
+  buildColumnSet,
+  buildCard,
+  buildConfirmCard,
+  buildSelectionCard,
+  extractCardTextContent,
+  extractFullCardContent,
+  type PostElement,
+  type PostTextElement,
+  type PostAtElement,
+  type PostLinkElement,
+  type PostImageElement,
+  type PostContent,
+  type ButtonStyle,
+  type ButtonConfig,
+  type MenuOptionConfig,
+  type MenuConfig,
+  type DividerConfig,
+  type MarkdownConfig,
+  type ColumnConfig,
+  type CardElement,
+  type ActionElement,
+  type ButtonAction,
+  type MenuAction,
+  type CardHeaderConfig,
+  type CardConfig,
+} from './platforms/index.js';
+
+// Routers (Issue #1040)
+export { CardActionRouter, type CardActionRouterConfig } from './routers/card-action-router.js';
+
+// Services (Issue #1040)
+export {
+  DebugGroupService,
+  getDebugGroupService,
+  resetDebugGroupService,
+  type DebugGroupInfo,
+} from './services/index.js';
+
+// DisclaudeService main class (Issue #1040)
+export { DisclaudeService, type ServiceOptions } from './service.js';
+
+// Agent pool (Issue #1040)
+export { ChatSessionPool, type ChatSessionPoolOptions } from './chat-session-pool.js';
+
+// Agents (Issue #2717: consolidated into service)
+export { AgentFactory, toChatAgentCallbacks, type AgentCreateOptions } from './agents/factory.js';
+export { ChatAgent } from './agents/chat-agent.js';
+export type { ChatAgentCallbacks, ChatAgentConfig } from './agents/types.js';
+
+// Channel Lifecycle Manager (Issue #1594 Phase 2)
+export {
+  ChannelLifecycleManager,
+  type ChannelSetupContext,
+  type WiredContext,
+  type WiredChannelDescriptor,
+  type IDisclaudeServiceForSetup,
+} from './channel-lifecycle-manager.js';
+
+// Interactive context store (Issue #1626, #1572)
+export {
+  InteractiveContextStore,
+  type ActionPromptMap,
+  type InteractiveContext,
+} from './interactive-context.js';
+
+// Feishu message handling (Issue #1626: integration test exports)
+export {
+  MessageHandler as FeishuMessageHandler,
+  type MessageCallbacks,
+} from './channels/feishu/message-handler.js';
+export { TriggerModeManager, type TriggerModeRecord } from './channels/feishu/passive-mode.js';
+export { MentionDetector, type BotInfo } from './channels/feishu/mention-detector.js';
+
+// Version (Issue #3857: extracted to version.ts to avoid heavy import chain in tests)
+export { SERVICE_VERSION } from './version.js';
+
+// HTTP API Server (Issue #3857 Phase 2)
+export {
+  HttpApiServer,
+  type HttpApiServerConfig,
+  type StatusResponse,
+  type PushResponse,
+  type DetailedHealthResponse,
+} from './http-api-server.js';
+export { type DeliveryHealth } from './health-types.js';
+
+// Messaging module (Issue #513, Issue #515)
+export * from './messaging/index.js';

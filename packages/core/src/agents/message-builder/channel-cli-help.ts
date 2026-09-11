@@ -33,7 +33,7 @@ Commands:
 Common options:
   --chat <id>      Target chat ID (oc_..., ou_..., or cli-...).
   --parent <id>   Optional parent message ID.
-  --base-url <url> PrimaryNode REST URL (required unless supplied by the managed environment).
+  --base-url <url> DisclaudeService REST URL (required unless supplied by the managed environment).
   --api-token <t>  Bearer token when the primary runs with --api-token.
 
 Unknown options are rejected and named; each command accepts only its own
@@ -87,7 +87,7 @@ Send outbound channel messages with the channel CLI.
 - Text/content inputs accept a value, a file (\`--{x}-file <path>\`), or stdin${fileHint}.
 - Pass \`--chat <id>\` (feishu group \`oc_...\`, p2p \`ou_...\`, or \`cli-...\` session).
 - Pass \`--parent <id>\` to keep a topic/thread reply in-thread.
-- The CLI talks to the PrimaryNode REST API: pass \`--base-url\` / \`DISCLAUDE_API_BASE_URL\` unless the CLI is launched by a managed agent process; pass \`--api-token\` / \`DISCLAUDE_API_TOKEN\` when the primary runs with \`--api-token\`.
+- The CLI talks to the DisclaudeService REST API: pass \`--base-url\` / \`DISCLAUDE_API_BASE_URL\` unless the CLI is launched by a managed agent process; pass \`--api-token\` / \`DISCLAUDE_API_TOKEN\` when the primary runs with \`--api-token\`.
 - One JSON result on stdout; diagnostics on stderr.
 
 ---`;

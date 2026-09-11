@@ -274,14 +274,14 @@ So B-Q3's hoped-for "more native than per-tool wrapping" mechanism **does not ex
 
 ## B-Q4 — Which MCP servers does disclaude actually consume? (converter coverage)
 
-`buildMcpServers()` (`packages/primary-node/src/agents/mcp-setup.ts:33-75`) produces two classes of
+`buildMcpServers()` (`packages/service/src/agents/mcp-setup.ts:33-75`) produces two classes of
 MCP servers, and the config layer (`packages/core/src/config/index.ts:521-523`,
 `Config.getMcpServersConfig()`) supplies the external ones:
 
 ### Class (a) — inline, in-process `channel-mcp`
 
 ```ts
-// packages/primary-node/src/agents/mcp-setup.ts:50-57
+// packages/service/src/agents/mcp-setup.ts:50-57
 mcpServers['channel-mcp'] = createChannelMcpServer();   // inline transport
 ```
 
@@ -416,7 +416,7 @@ Until part 2 lands, the recommendation above is honestly labeled **conditional**
 - disclaude: `packages/core/src/sdk/providers/pi/options-adapter.ts:16-20,25,38`;
   `packages/core/src/sdk/providers/claude/options-adapter.ts` (`adaptMcpServers:124`,
   `adaptInlineMcpServer:157`);
-  `packages/primary-node/src/agents/mcp-setup.ts` (`buildMcpServers:33-75`,
+  `packages/service/src/agents/mcp-setup.ts` (`buildMcpServers:33-75`,
   `collectInlineMcpInstances:99`, `contextTools:47`);
   `packages/core/src/config/index.ts:521`; `disclaude.config.example.yaml:249-268`;
   `package-lock.json` (`@modelcontextprotocol/sdk@1.29.0`).

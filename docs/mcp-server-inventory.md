@@ -32,7 +32,7 @@ disclaude touches MCP in **three distinct places**. They have different transpor
 | # | Surface | Transport | Lives in | Tools exposed | Spawned/managed by | Retirement profile |
 |---|---|---|---|---|---|---|
 | **S1** | **`channel-mcp`** — disclaude's own messaging/IPC tools | **inline / in-process** (SDK `createSdkMcpServer`) | former `packages/channel-cli/src/` implementation | `send_text`, `send_card`, `send_interactive`, `send_file`, `push_to_agent` (5) | the agent SDK, in-process | **Migrated and removed (#4726)** |
-| **S2** | **External stdio MCP servers** (user-configured) | **stdio subprocess** | ~~config `tools.mcpServers`; loader `packages/primary-node/src/agents/mcp-setup.ts`~~ | whatever the server exports (canonical: **Playwright MCP**, ~15 tools) | the agent SDK spawns the subprocess; disclaude has **no handle** on it | ✅ **Loader REMOVED** (`#4459` Scope 4 removal half, part 10): config type/reader/loader deleted; Playwright migrated via `#4460` |
+| **S2** | **External stdio MCP servers** (user-configured) | **stdio subprocess** | ~~config `tools.mcpServers`; loader `packages/service/src/agents/mcp-setup.ts`~~ | whatever the server exports (canonical: **Playwright MCP**, ~15 tools) | the agent SDK spawns the subprocess; disclaude has **no handle** on it | ✅ **Loader REMOVED** (`#4459` Scope 4 removal half, part 10): config type/reader/loader deleted; Playwright migrated via `#4460` |
 | **S3** | disclaude standalone stdio MCP server | **stdio** | — | — | — | **Removed (#4726)** |
 
 Plus the **adapter/transport plumbing** that all three flow through (S4 below), and the **config + health**
@@ -58,7 +58,7 @@ primary "channel" tool surface (send messages / cards / files into the bound cha
   `instance` is an MCP SDK `McpServer` exposing `close()`.
 - **Teardown**: no ChatAgent-owned MCP lifecycle remains. Each channel CLI invocation is a bounded child process;
   the standalone MCP export owns its own lifecycle when used by an external consumer.
-- **Transport backing**: the tools talk to the Primary Node over REST via a directly-constructed
+- **Transport backing**: the tools talk to the disclaude service over REST via a directly-constructed
   `RestIpcClient` (`getRestIpcClient()` in `tools/ipc-utils.ts`)
   (the former `channel-mcp.ts` module doc). The Unix-socket IPC
   transport is removed ([#4168](https://github.com/hs3180/disclaude/issues/4168) Phase 3); that is orthogonal
@@ -73,7 +73,7 @@ primary "channel" tool surface (send messages / cards / files into the bound cha
 
 The former `loop_start` / `loop_stop` / `loop_status` tools — along with their `tools/loop-{start,stop,status}.ts`
 implementations, their entries in the legacy `channelTools` record, the `LoopRunner` / `LoopFileWatcher`
-runtime (`packages/primary-node/src/loop/`), the `loop-md` parser (`packages/core/src/loop/`), the
+runtime (`packages/service/src/loop/`), the `loop-md` parser (`packages/core/src/loop/`), the
 `skills/loop` skill, the `loopStart`/`loopStop`/`loopStatus` IPC methods, and the `/api/loop/*` REST
 endpoints — were removed by the loop-system deprecation
 ([#4430](https://github.com/hs3180/disclaude/issues/4430)); recurring execution is unified on the
@@ -96,7 +96,7 @@ agent. This is the surface the "reduce MCP" direction most directly targets, and
 - **Config reader**: `Config.getMcpServersConfig()` (was `packages/core/src/config/index.ts:521`; returned
   `fileConfigOnly.tools?.mcpServers`).
 - **Loader**: `buildMcpServers()` read the config and emitted one stdio entry per server (was
-  `packages/primary-node/src/agents/mcp-setup.ts:62-73`):
+  `packages/service/src/agents/mcp-setup.ts:62-73`):
   ```ts
   const configuredMcpServers = Config.getMcpServersConfig();
   if (configuredMcpServers) {
@@ -157,7 +157,7 @@ inverse direction from S1/S2: disclaude *is* the MCP server, not the consumer.
   the former `tools/tool-definitions.ts` —
   `send_text` (`:28`), `send_card` (`:50`), `send_interactive` (`:90`), `send_file` (`:165`),
   `push_to_agent` (`:187`). **Same 5 tools as S1**, dispatched via `tool-dispatch.ts`.
-- **IPC backing**: same as S1 — tools reach the Primary Node over IPC (`getIpcSocketPath()`, loaded in `cli.ts`).
+- **IPC backing**: same as S1 — tools reach the disclaude service over IPC (`getIpcSocketPath()`, loaded in `cli.ts`).
 
 > **Scope flag (`#4459`):** S3 is **disclaude-as-server**, which is a *product surface* (letting external MCP
 > clients drive disclaude), not disclaude *consuming* MCP. The `#4459` "retire MCP server support" title is
@@ -245,7 +245,7 @@ Mapping the inventory to `#4459`'s four scopes:
 
 ### Decisions landed from the original open questions
 
-1. **Skill transport for S1's send-side tools**: `disclaude channel` is one-shot and reaches PrimaryNode over REST.
+1. **Skill transport for S1's send-side tools**: `disclaude channel` is one-shot and reaches DisclaudeService over REST.
 2. **Capability gating**: `supportedMcpTools` remains the per-chat filter for the CLI command guidance injected by
    the Feishu message builder; it no longer controls MCP construction.
 3. **S3 product decision**: **resolved by #4726** — `disclaude-mcp` (standalone server) is removed.

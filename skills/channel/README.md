@@ -1,7 +1,7 @@
 # channel Skill — Channel CLI
 
 > **Transport switch ([#4532](https://github.com/hs3180/disclaude/issues/4532)
-> part 1, owner ruling 2026-08-18):** the CLI now reaches the PrimaryNode over
+> part 1, owner ruling 2026-08-18):** the CLI now reaches the DisclaudeService over
 > the **REST API** (HttpApiServer `/api/send-message`, `/api/send-card`,
 > `/api/upload-file`, `/api/send-interactive`, `/api/push`) — it no longer opens
 > a Unix socket, and there is **no REST API fallback** on the CLI path. REST is the
@@ -32,7 +32,7 @@
 > additionally replicates the MCP entry handler's card preprocessing
 > (GFM-table conversion, local-image auto-upload) for feature parity. **Live
 > end-to-end parity** against the inline MCP tool is **deferred** (requires a
-> running PrimaryNode) — these parts verify the command
+> running DisclaudeService) — these parts verify the command
 > surface, validation, and graceful-degradation paths, mirroring how
 > [#4464](https://github.com/hs3180/disclaude/pull/4464) part 1 deferred live
 > browser parity. This README does **not** auto-close the parent issue.
@@ -67,7 +67,7 @@ disclaude channel send_text --chat oc_xxx --text-file ./msg.md --parent om_root
 disclaude channel send_text --chat oc_xxx --text "pls review" \
   --mentions '[{"openId":"ou_yyy","name":"owner"}]'
 
-# Send an interactive card with buttons (PrimaryNode builds the card; button
+# Send an interactive card with buttons (DisclaudeService builds the card; button
 # clicks are routed back to the agent as prompts)
 disclaude channel send_interactive --chat oc_xxx \
   --question "Which option do you prefer?" \
@@ -102,10 +102,10 @@ echo '{"elements":[{"tag":"markdown","content":"hi"}]}' \
 
 **Runtime (host deps, not bundled):** reuses `send_text` / `send_file` /
 `send_card` (and the card preprocessing helpers) / `push` /
-`send_interactive` from `packages/channel-cli`, which talk to the PrimaryNode
+`send_interactive` from `packages/channel-cli`, which talk to the DisclaudeService
 over its REST API (#4532 — no Unix socket). Run
 inside a disclaude workspace where the packages are built (`npm run build`), and
-start the PrimaryNode with `--api-port`. No browser or extra binaries required.
+start the DisclaudeService with `--api-port`. No browser or extra binaries required.
 
 ## Commands
 
@@ -182,7 +182,7 @@ you typed: `push` is the agent-facing spelling of `push_to_agent`, so it echoes
 {"ok":false,"command":"send_card","error":"Invalid card JSON: Unexpected token ...","hint":"pass --card <json>, --card-file <path>, or pipe card JSON on stdin"}
 {"ok":false,"command":"send_card","error":"Invalid card structure: ..."}
 {"ok":false,"command":"push_to_agent","error":"Missing message content","hint":"pass --message <string>, --message-file <path>, or pipe content on stdin"}
-{"ok":false,"command":"send_text","error":"REST API service unavailable. Please ensure Primary Node is running.","hint":"PrimaryNode REST http://localhost:19200 unreachable — start the main service (disclaude-primary start --api-port <port>) or pass --base-url / DISCLAUDE_API_BASE_URL"}
+{"ok":false,"command":"send_text","error":"REST API service unavailable. Please ensure disclaude service is running.","hint":"DisclaudeService REST http://localhost:19200 unreachable — start the main service (disclaude start --api-port <port>) or pass --base-url / DISCLAUDE_API_BASE_URL"}
 {"ok":false,"command":"send_text","error":"Failed to load channel implementation: ...","hint":"run inside a disclaude workspace with packages built (npm run build); ..."}
 ```
 
@@ -192,14 +192,14 @@ Failure modes covered: missing/invalid args, unreadable `--text-file` /
 invalid chatId format (**every** subcommand, part 11 — same check as the MCP
 entry handlers, run pre-import), invalid option structure (empty `text`/`value`, bad
 `type`), channel implementation not built/resolvable, REST face unreachable
-(PrimaryNode not started / port not open — reported with an actionable hint),
+(DisclaudeService not started / port not open — reported with an actionable hint),
 and REST send failure (the underlying first-party tools map these to `SendMessageResult` /
 `SendInteractiveResult` / `{ success:false, error, message }` results).
 
 ## Artifacts
 
 None. `send_text`, `push`, and `send_interactive` are side-effect-free
-on the local filesystem — they reach the PrimaryNode over its REST API and
+on the local filesystem — they reach the DisclaudeService over its REST API and
 return. `send_file` **reads** the local file at `--file` (uploaded over REST)
 and writes
 nothing. No files are written by any command. (`push` does have an
@@ -211,16 +211,16 @@ create/lazily-resume the target chat's agent.)
 | Dependency                                                                                                                   | Source                                                          | How to satisfy                                                                                                                          |
 | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | `packages/channel-cli` (channel operations and card helpers) | workspace package                                               | build the monorepo (`npm run build`)                                                                                                    |
-| disclaude PrimaryNode (**REST API**, #4532)                                                                                  | runtime                                                         | start it with `--api-port` (e.g. `19200`); the CLI POSTs to `/api/*` — no Unix socket involved                                          |
+| disclaude DisclaudeService (**REST API**, #4532)                                                                                  | runtime                                                         | start it with `--api-port` (e.g. `19200`); the CLI POSTs to `/api/*` — no Unix socket involved                                          |
 | REST base URL                                                                                                                | `--base-url` flag > `DISCLAUDE_API_BASE_URL` env > default | default `http://localhost:19200`; the env var reaches one-shot CLI processes via the agent runtime env (`.runtime-env`, Issue #1361)    |
 
 **Same-host constraint of the file-carrying routes (#4532 review note):** the
 REST file contract is path-based, not content-based — `send_file` and
 `send_card`'s local-image auto-upload send a **file path** to
-`/api/upload-file` / `/api/upload-image`, and the PrimaryNode reads that path
+`/api/upload-file` / `/api/upload-image`, and the DisclaudeService reads that path
 from **its own filesystem** (exact REST API parity; see the server-side "local
 filePath" contract in `http-api-server.ts`). Pointing `--base-url` at a
-PrimaryNode on another host therefore works for `send_text` /
+DisclaudeService on another host therefore works for `send_text` /
 `send_interactive` / `push` but makes `send_file` fail server-side
 (ENOENT) and degrades card local images to placeholders. This is a limitation
 of the current endpoint contract (inherited from REST API, where same-host was
@@ -229,10 +229,10 @@ is deferred with the endpoint work, not the CLI.
 
 If the channel implementation cannot be loaded, the CLI emits a failure JSON with
 a build hint rather than crashing (analogous to #4464's missing-`playwright`
-hint). If the PrimaryNode REST face is unavailable (service not started / port
+hint). If the DisclaudeService REST face is unavailable (service not started / port
 not open), `send_text` / `send_file` / `send_card` / `push` /
 `send_interactive` surface that, and the CLI relays it as a failure JSON with
-the actionable hint `PrimaryNode REST <url> unreachable — start the main service
+the actionable hint `DisclaudeService REST <url> unreachable — start the main service
 …` (#4532 scope 3) instead of a bare `fetch` ECONNREFUSED.
 
 ## Parity / migration notes
@@ -253,17 +253,17 @@ Recorded explicitly per #4459 acceptance ("迁移/下线不静默"):
 `send_interactive` (part 7) parity is the same shape, with one extra note worth
 recording explicitly: the first-party `send_interactive_message` is a **pure
 forwarding client** — it passes the raw `question`/`options`/`title`/`context`/
-`actionPrompts` to the PrimaryNode via the `sendInteractive` REST API, and the
-**PrimaryNode** builds the card, sends it, and registers the button-click action
+`actionPrompts` to the DisclaudeService via the `sendInteractive` REST API, and the
+**DisclaudeService** builds the card, sends it, and registers the button-click action
 prompts (`packages/channel-cli/src/tools/interactive-message.ts`, #1571/#1572).
-Button handling therefore lives on the PrimaryNode side and is **not** part of
+Button handling therefore lives on the DisclaudeService side and is **not** part of
 this one-shot CLI — the CLI never starts an REST API server or owns a button handler,
 exactly like `send_text`. Parameters map 1:1 via `--chat`/`--question`/
 `--question-file`/`--options`/`--title`/`--context`/`--action-prompts`/`--parent`.
 
 **Open item deferred to a later part / owner input (not resolved here):** the MCP
 `channel-mcp` surface is gated per-chat on `supportedMcpTools`
-(`packages/primary-node/src/channels/channel-descriptors.ts`). A CLI is invoked at the
+(`packages/service/src/channels/channel-descriptors.ts`). A CLI is invoked at the
 agent's discretion, so moving to a CLI loses that per-chat capability filter
 unless it is re-imposed elsewhere. The `send_text` / `send_file` / `send_card` /
 `push` migrations do **not** re-impose it; the inventory flags this as open question 2
@@ -316,5 +316,5 @@ implemented in `packages/channel-cli` (`transformCardTables`,
 | Parameters               | `card`, `chatId`, `parentMessageId`                              | identical, via `--chat`/`--card`/`--card-file`/`--parent` | card gains `--card-file`/stdin for large bodies |
 
 **Out of scope for these parts:** live end-to-end delivery verification (needs
-a running PrimaryNode); the S2 external-MCP-loader removal (#4459 scope 4, gated
+a running DisclaudeService); the S2 external-MCP-loader removal (#4459 scope 4, gated
 on the Playwright migration #4460).

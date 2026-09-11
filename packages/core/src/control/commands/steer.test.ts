@@ -5,7 +5,7 @@ import type { ControlHandlerContext } from '../types.js';
 function context(steer?: ControlHandlerContext['agentPool']['steer']): ControlHandlerContext {
   return {
     agentPool: { reset: vi.fn(), stop: vi.fn(), ...(steer ? { steer } : {}) },
-    node: { nodeId: 'node', getDebugGroup: () => null, setDebugGroup: vi.fn(), clearDebugGroup: () => null },
+    debugGroups: { getDebugGroup: () => null, setDebugGroup: vi.fn(), clearDebugGroup: () => null },
   };
 }
 

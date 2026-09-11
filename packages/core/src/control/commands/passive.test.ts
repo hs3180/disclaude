@@ -35,8 +35,7 @@ function createModeManagerMock(initialMode: TriggerMode = 'auto') {
 function createContext(overrides?: Partial<ControlHandlerContext>): ControlHandlerContext {
   return {
     agentPool: { reset: vi.fn(), stop: vi.fn() },
-    node: {
-      nodeId: 'test-node',
+    debugGroups: {
       getDebugGroup: vi.fn().mockReturnValue(null),
       setDebugGroup: vi.fn(),
       clearDebugGroup: vi.fn().mockReturnValue(null),

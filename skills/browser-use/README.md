@@ -77,7 +77,7 @@ Legacy pre-3.0 subcommands (`open`, `state`, `screenshot`, `eval`, `-c`, `--sess
 ## Runtime
 
 - Python **3.11+** (`pip install browser-use`). In the Docker deployment the CLI is **baked into
-  `Dockerfile.primary`** (pinned `browser-use==0.13.8`, #4599): a fresh
+  `Dockerfile.service`** (pinned `browser-use==0.13.8`, #4599): a fresh
   `docker compose up -d --build` has it on PATH with no manual pip step, and it survives container
   recreates. Chromium via `browser-use install` (needs `uvx` on PATH) is **not** needed on the
   supported CDP-attach path below.

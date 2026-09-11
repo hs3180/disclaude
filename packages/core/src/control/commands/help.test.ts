@@ -58,9 +58,10 @@ describe('handleHelp', () => {
     expect(result.message).toContain('/project');
   });
 
-  it('should include /list-nodes command', async () => {
+  it('does not expose removed node-role commands', async () => {
     const result = await handleHelp(mockCommand, mockContext);
-    expect(result.message).toContain('/list-nodes');
+    expect(result.message).not.toContain('/list-nodes');
+    expect(result.message).not.toContain('/switch-node');
   });
 
   it('should include /debug command', async () => {

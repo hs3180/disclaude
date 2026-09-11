@@ -5,7 +5,7 @@ import { createLogger, normalizeChannelApiBaseUrl, ChannelApiClient } from '@dis
 const logger = createLogger('ChannelApiUtils');
 
 /**
- * Resolve the PrimaryNode REST base URL from the standard env wiring.
+ * Resolve the DisclaudeService REST base URL from the standard env wiring.
  *
  * `DISCLAUDE_API_BASE_URL` (required), with a
  * trailing slash stripped — shared by `getChannelApiClient` and the
@@ -20,7 +20,7 @@ function resolveRestBaseUrl(): string {
 /**
  * Resolve the REST API token from the standard env wiring.
  *
- * `DISCLAUDE_API_TOKEN` — mirrors the PrimaryNode `--api-token`.
+ * `DISCLAUDE_API_TOKEN` — mirrors the DisclaudeService `--api-token`.
  * When the primary service runs with `--api-token`, every non-GET REST route
  * requires `Authorization: Bearer <token>` (http-api-server.ts). Issue #4801:
  * channel-cli previously never attached the header, so enabling the token made
@@ -36,7 +36,7 @@ function resolveRestApiToken(): string | undefined {
 /**
  * Build a REST API client from the standard env wiring.
  *
- * - `DISCLAUDE_API_BASE_URL` — PrimaryNode HTTP API server URL
+ * - `DISCLAUDE_API_BASE_URL` — DisclaudeService HTTP API server URL
  *   (required for standalone clients; injected into managed children)
  * - `DISCLAUDE_API_TOKEN` — optional bearer token, forwarded to
  *   `ChannelApiClient` so authenticated writes succeed (Issue #4801).
@@ -47,7 +47,7 @@ export function getChannelApiClient(): ChannelApiClient {
 }
 
 /**
- * Check if the PrimaryNode REST API is available for channel calls.
+ * Check if the DisclaudeService REST API is available for channel calls.
  *
  * Probe GET /api/ping:
  * only a 200 with `{ pong: true }` counts as available.
@@ -56,7 +56,7 @@ export function getChannelApiClient(): ChannelApiClient {
  * `push-to-agent`, …) reports "REST API 服务不可用" when it returns false, so
  * the failure must describe the required HTTP address and authentication.
  *
- * @returns Promise resolving to true if the PrimaryNode REST API is reachable
+ * @returns Promise resolving to true if the DisclaudeService REST API is reachable
  */
 export async function isChannelApiAvailable(): Promise<boolean> {
   const baseUrl = resolveRestBaseUrl();
@@ -97,7 +97,7 @@ export async function isChannelApiAvailable(): Promise<boolean> {
 /**
  * Build the lark-cli fallback hint appended to REST API-unavailable errors.
  *
- * Issue #4576: when the PrimaryNode REST API is down, agents fall back to
+ * Issue #4576: when the DisclaudeService REST API is down, agents fall back to
  * `lark-cli im +messages-send` — which has no reply/thread flag, so in topic
  * groups the fallback reply "escapes" the thread and starts a new topic at
  * the group root. The actionable hint tells the agent to use
@@ -119,14 +119,14 @@ export function buildChannelApiFallbackHint(
 ): string {
   const target = parentMessageId ?? '<om_...>';
   const fileFlag = options?.filePath ? ` --file ${options.filePath}` : '';
-  return `REST API 不可用期间发送消息会丢失话题归属：lark-cli im +messages-send 没有 reply/thread 参数。请改用 \`lark-cli im +messages-reply --message-id ${target}${fileFlag}\` 回到原话题（Issue #4576），或等 PrimaryNode REST 恢复后重试。`;
+  return `REST API 不可用期间发送消息会丢失话题归属：lark-cli im +messages-send 没有 reply/thread 参数。请改用 \`lark-cli im +messages-reply --message-id ${target}${fileFlag}\` 回到原话题（Issue #4576），或等 DisclaudeService REST 恢复后重试。`;
 }
 
 /**
  * Generate user-facing error message based on REST API error type.
  * Issue #1088: Provide actionable error messages.
  * Issue #4280 (Phase 3, part 3): the service behind these errors is the
- * PrimaryNode REST API (`--api-port`), so the
+ * DisclaudeService REST API (`--api-port`), so the
  * unavailable case points at the REST startup requirement.
  *
  * @param errorType - The type of REST API error
@@ -141,11 +141,11 @@ export function getChannelApiErrorMessage(
 ): string {
   switch (errorType) {
     case 'channel_api_unavailable':
-      return '❌ PrimaryNode REST 服务不可用。请检查主服务是否以 --api-port 启动，DISCLAUDE_API_BASE_URL 是否指向正确地址，且（若主服务启用了 --api-token）DISCLAUDE_API_TOKEN 是否一致。';
+      return '❌ DisclaudeService REST 服务不可用。请检查主服务是否以 --api-port 启动，DISCLAUDE_API_BASE_URL 是否指向正确地址，且（若主服务启用了 --api-token）DISCLAUDE_API_TOKEN 是否一致。';
     case 'channel_api_timeout':
-      return '❌ PrimaryNode 请求超时。服务可能过载，请稍后重试。';
+      return '❌ DisclaudeService 请求超时。服务可能过载，请稍后重试。';
     case 'channel_api_request_failed':
-      return `❌ PrimaryNode 请求失败: ${originalError ?? '未知错误'}`;
+      return `❌ DisclaudeService 请求失败: ${originalError ?? '未知错误'}`;
     default:
       return defaultMessage ?? `❌ 操作失败: ${originalError ?? '未知错误'}`;
   }

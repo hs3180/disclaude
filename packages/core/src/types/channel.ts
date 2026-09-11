@@ -5,7 +5,7 @@
  * Different platforms (Feishu, REST API, etc.) can implement this interface
  * to provide a unified way of receiving and sending messages.
  *
- * These types are shared between @disclaude/core and @disclaude/primary-node.
+ * These types are shared between @disclaude/core and @disclaude/service.
  *
  * @module types/channel
  */
@@ -118,8 +118,6 @@ export type ControlCommandType =
   | 'stop'
   | 'status'
   | 'help'
-  | 'list-nodes'
-  | 'switch-node' // Primary Node only — not forwarded via WebSocket
   // Debug group command (Issue #2244: merged /show-debug & /clear-debug into /debug toggle)
   | 'debug'
   // Trigger mode control (Issue #511, renamed #2193)
@@ -174,8 +172,6 @@ export interface ControlCommand<T extends ControlCommandType = ControlCommandTyp
     T extends keyof CommandDataMap ? CommandDataMap[T] :
     Record<string, unknown>;
 
-  /** Target node ID for switch-node command */
-  targetNodeId?: string;
 
   /**
    * Thread root for topic-group commands (Issue #4587 part 3).
@@ -272,7 +268,7 @@ export const DEFAULT_CHANNEL_CAPABILITIES: ChannelCapabilities = {
  * Channel interface.
  *
  * All communication channels must implement this interface.
- * The PrimaryNode uses this interface to interact with channels.
+ * The DisclaudeService uses this interface to interact with channels.
  */
 export interface IChannel {
   /**

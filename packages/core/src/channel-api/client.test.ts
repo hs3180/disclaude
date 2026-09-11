@@ -12,7 +12,7 @@ describe('ChannelApiClient', () => {
 
   it.each(['', 'localhost:19200', 'ftp://localhost:19200', 'http://user:secret@localhost:19200', 'http://localhost:19200/api'])(
     'rejects missing or unsafe REST address %j',
-    (value) => expect(() => normalizeChannelApiBaseUrl(value)).toThrow(/PrimaryNode REST address/),
+    (value) => expect(() => normalizeChannelApiBaseUrl(value)).toThrow(/DisclaudeService REST address/),
   );
   const originalFetch = globalThis.fetch;
 

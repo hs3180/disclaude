@@ -27,15 +27,15 @@ describe('Claude startup with real YAML configuration (offline)', () => {
           `${apiProvider}:\n  apiKey: ${provider === 'missing' ? '""' : 'offline-placeholder'}\n  model: ${model}\n  apiBaseUrl: http://127.0.0.1:1`,
         ].join('\n')
       );
-      const entry = pathToFileURL(resolve('packages/primary-node/dist/primary-node.js')).href;
+      const entry = pathToFileURL(resolve('packages/service/dist/service.js')).href;
       const result = spawnSync(
         process.execPath,
         [
           '--input-type=module',
           '-e',
           `
-      const { PrimaryNode } = await import(${JSON.stringify(entry)});
-      const node = new PrimaryNode();
+      const { DisclaudeService } = await import(${JSON.stringify(entry)});
+      const node = new DisclaudeService();
       try {
         await node.start({ deferScheduler: true });
         await node.stop();

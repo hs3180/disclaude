@@ -2,7 +2,7 @@
  * Tests for client-methods — the REST API convenience methods.
  *
  * These functions (sendMessage, sendCard, uploadFile, etc.) are the primary
- * API the mcp-server uses to communicate with PrimaryNode. They had zero
+ * API the mcp-server uses to communicate with DisclaudeService. They had zero
  * test coverage. This tests:
  * - Happy path: delegates to client.request with correct type + payload
  * - Error path: catches errors, classifies them, returns {success:false}

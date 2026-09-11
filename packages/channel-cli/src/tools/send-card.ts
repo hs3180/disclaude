@@ -16,7 +16,7 @@ import type { SendMessageResult } from './types.js';
 const logger = createLogger('SendCard');
 
 /**
- * Send card message via REST API to PrimaryNode's LarkClientService.
+ * Send card message via REST API to DisclaudeService's LarkClientService.
  */
 async function sendCardViaChannelApi(
   chatId: string,
@@ -74,14 +74,14 @@ export async function send_card(params: {
 
     // Check REST API availability (Issue #1355: async connection probe)
     if (!(await isChannelApiAvailable())) {
-      const errorMsg = 'REST API service unavailable. Please ensure Primary Node is running.';
+      const errorMsg = 'REST API service unavailable. Please ensure disclaude service is running.';
       logger.error({ chatId }, errorMsg);
       return {
         success: false,
         error: errorMsg,
         // Issue #4576: actionable fallback — +messages-send loses thread
         // attribution in topic groups; +messages-reply preserves it.
-        message: `❌ REST API 服务不可用。请检查 Primary Node 服务是否正在运行。${buildChannelApiFallbackHint(parentMessageId)}`,
+        message: `❌ REST API 服务不可用。请检查 disclaude service 服务是否正在运行。${buildChannelApiFallbackHint(parentMessageId)}`,
       };
     }
 

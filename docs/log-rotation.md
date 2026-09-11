@@ -25,7 +25,7 @@ so the volume stays bounded even though containers have no logrotate.
 | `LOG_ROTATE_LIMIT`      | `3`      | Total log files kept (current + N-1 rolled) |
 | `LOG_ROTATE_FREQUENCY`  | —        | Optional schedule: `daily` / `hourly` |
 
-In the shipped `docker-compose.yml` the `primary` service sets
+In the shipped `docker-compose.yml` the `service` service sets
 `LOG_ROTATE=true` by default (override in `.env`), so `log_data` stays bounded
 out of the box. E.g. `LOG_ROTATE_SIZE=50m LOG_ROTATE_LIMIT=3` keeps at most
 ~150MB across the current file plus two rolled files.
@@ -48,7 +48,7 @@ Manual smoke check:
 ```bash
 npm run build
 LOG_TO_FILE=true LOG_DIR=/tmp/lrot LOG_ROTATE=true LOG_ROTATE_SIZE=1m \
-  npx tsx packages/primary-node/src/cli.ts start --api-port 19200   # watch /tmp/lrot
+  npx tsx packages/service/src/cli.ts start --api-port 19200   # watch /tmp/lrot
 ls -la /tmp/lrot   # expect disclaude-combined.1.log/.2.log plus a current.log symlink
 ```
 
@@ -123,7 +123,7 @@ text. Two options:
 - **Rely on JSON-level mirroring** for warn/error only — not yet built; the
   simple all-level mirror above covers the common case.
 
-`docker compose logs -f disclaude-primary` then shows the full app log while
+`docker compose logs -f disclaude` then shows the full app log while
 the file in `log_data` stays bounded by Option A rotation.
 
 ---

@@ -1,4 +1,4 @@
-/** HTTP client for PrimaryNode channel endpoints. Requires an explicit base URL and uses an optional bearer token for authenticated requests. */
+/** HTTP client for DisclaudeService channel endpoints. Requires an explicit base URL and uses an optional bearer token for authenticated requests. */
 
 import { createLogger } from '../utils/logger.js';
 import type { ChannelApiRequestType, ChannelApiRequestPayloads, ChannelApiResponsePayloads } from './protocol.js';
@@ -9,7 +9,7 @@ import {
 const logger = createLogger('ChannelApiClient');
 
 /**
- * Validate the explicit PrimaryNode REST address shared by all clients.
+ * Validate the explicit DisclaudeService REST address shared by all clients.
  * Credentials are deliberately rejected in URLs so diagnostics and debug logs
  * cannot disclose them; bearer authentication uses the separate token option.
  */
@@ -17,20 +17,20 @@ export function normalizeChannelApiBaseUrl(value: string): string {
   const raw = value.trim();
   if (!raw) {
     throw new Error(
-      'PrimaryNode REST address is required; pass --base-url or set DISCLAUDE_API_BASE_URL',
+      'DisclaudeService REST address is required; pass --base-url or set DISCLAUDE_API_BASE_URL',
     );
   }
   let url: URL;
   try {
     url = new URL(raw);
   } catch {
-    throw new Error(`Invalid PrimaryNode REST address: ${JSON.stringify(raw)}`);
+    throw new Error(`Invalid DisclaudeService REST address: ${JSON.stringify(raw)}`);
   }
   if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.username || url.password) {
-    throw new Error('PrimaryNode REST address must be an absolute http(s) URL without credentials');
+    throw new Error('DisclaudeService REST address must be an absolute http(s) URL without credentials');
   }
   if (url.pathname !== '/' || url.search || url.hash) {
-    throw new Error('PrimaryNode REST address must not include a path, query, or fragment');
+    throw new Error('DisclaudeService REST address must not include a path, query, or fragment');
   }
   return url.origin;
 }
@@ -155,7 +155,7 @@ export class ChannelApiClient implements ChannelApiClientLike {
       // Map REST transport failures onto the REST API error-prefix contract so the
       // shared `classifyError` (client-methods) tags them correctly:
       //   timeout        → CHANNEL_API_TIMEOUT        (→ "请求超时，稍后重试")
-      //   conn refused…  → CHANNEL_API_NOT_AVAILABLE  (→ "Primary Node 未运行")
+      //   conn refused…  → CHANNEL_API_NOT_AVAILABLE  (→ "disclaude service 未运行")
       // The method name is preserved in the message for debuggability.
       const msg = err instanceof Error ? err.message : String(err);
       const isTimeout = err instanceof Error &&

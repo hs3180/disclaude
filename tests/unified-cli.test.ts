@@ -6,14 +6,14 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 describe('installed unified CLI argument forwarding', () => {
-  it('preserves start for the primary parser and keeps channel routing unchanged outside the repo', () => {
+  it('preserves start for the service parser and keeps channel routing unchanged outside the repo', () => {
     const root = mkdtempSync(join(tmpdir(), 'disclaude-cli-routing-'));
     try {
       mkdirSync(join(root, 'bin'));
       mkdirSync(join(root, 'outside'));
       writeFileSync(join(root, 'package.json'), '{"type":"module"}');
       copyFileSync(fileURLToPath(new URL('../bin/disclaude.js', import.meta.url)), join(root, 'bin/disclaude.js'));
-      for (const name of ['primary-node', 'channel-cli']) {
+      for (const name of ['service', 'channel-cli']) {
         const target = join(root, 'node_modules/@disclaude', name, 'dist');
         mkdirSync(target, { recursive: true });
         writeFileSync(join(target, '../package.json'), '{"type":"module"}');

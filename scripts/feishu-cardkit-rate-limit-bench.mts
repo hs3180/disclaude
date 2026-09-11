@@ -3,7 +3,7 @@
  * Card Kit streaming-update rate-limit characterization bench — CLI (#4398 / #4208 P1-c).
  *
  * Standalone entry point for the bench implemented in
- * `packages/primary-node/src/platforms/feishu/feishu-cardkit-rate-limit-bench.ts`.
+ * `packages/service/src/platforms/feishu/feishu-cardkit-rate-limit-bench.ts`.
  * Runs the sustained-rate sweep → 429 capture → burst test against a LIVE
  * streaming card and prints the findings table that feeds the `StreamingThrottle`
  * defaults (#4414).
@@ -32,7 +32,7 @@ import {
   formatFindingsTable,
   DEFAULT_BENCH_CONFIG,
   type BenchConfig,
-} from '../packages/primary-node/src/platforms/feishu/feishu-cardkit-rate-limit-bench.js';
+} from '../packages/service/src/platforms/feishu/feishu-cardkit-rate-limit-bench.js';
 
 function requiredEnv(name: string): string {
   const v = process.env[name];

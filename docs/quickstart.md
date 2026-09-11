@@ -97,7 +97,7 @@ docker compose up -d
 
 **❌ 权限不足** → 确认权限已审批生效，重新发布应用版本
 
-**❌ 连接失败** → 检查 App ID / App Secret 是否正确，查看 Docker 日志 `docker compose logs -f primary`；macOS launchd 用户查看 `npm run launchd:logs`
+**❌ 连接失败** → 检查 App ID / App Secret 是否正确，查看 Docker 日志 `docker compose logs -f service`；macOS launchd 用户查看 `npm run launchd:logs`
 
 ---
 

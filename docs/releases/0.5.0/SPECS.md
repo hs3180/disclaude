@@ -49,7 +49,7 @@
 
 ## S01 — 命名预设与会话内选择
 
-入口：`packages/core/src/config/`、`sdk/factory.ts`、`sdk/interface.ts`、`control/`，`packages/primary-node/src/agents/factory.ts` 与 Agent pool。
+入口：`packages/core/src/config/`、`sdk/factory.ts`、`sdk/interface.ts`、`control/`，`packages/service/src/agents/factory.ts` 与 Agent pool。
 
 交付：预设 schema、唯一默认规则、旧配置兼容、查看/切换命令、后端能力矩阵。先确定 chat/session 作用域、配置持久化边界和忙碌会话切换策略；将这些契约交给 S02/S03/S06。pi 从现有 provider 起步做验收。
 
@@ -80,7 +80,7 @@
 
 ## S03 — 回合身份与运行中控制
 
-入口：`packages/primary-node/src/agents/chat-agent.ts`、`packages/core/src/task/`、`sdk/providers/codex/`、控制命令和调度调用边界。
+入口：`packages/service/src/agents/chat-agent.ts`、`packages/core/src/task/`、`sdk/providers/codex/`、控制命令和调度调用边界。
 
 交付：先修正 FIFO 结算为有身份的回合结算契约，再实现 Codex stop/queue/steer。明确输入 messageId、执行标识、重试 attempt 和最终通知的对应关系，为 S04/S06 提供单一结算入口。
 
@@ -128,7 +128,7 @@
 
 ## S06 — 调度与上下文
 
-入口：`packages/core/src/scheduling/`、`packages/primary-node/src/agents/history-manager.ts`、ChatAgent、`skills/schedule/` 与相应模板。
+入口：`packages/core/src/scheduling/`、`packages/service/src/agents/history-manager.ts`、ChatAgent、`skills/schedule/` 与相应模板。
 
 交付：脚本/提示调度互斥校验，脚本按需 push；明确 fresh session/history skip/兼容 clearContext 语义；历史仅按实例首次注入；账本有界归档；修复非法 modelTier 静默回落。
 

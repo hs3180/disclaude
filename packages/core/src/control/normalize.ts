@@ -68,7 +68,7 @@ export function createControlCommand<T extends ControlCommandType>(
   type: T,
   chatId: string,
   rawData: Record<string, unknown> | undefined,
-  extra?: { targetNodeId?: string; threadRootId?: string },
+  extra?: { threadRootId?: string },
 ): ControlCommand<T> {
   return {
     type,

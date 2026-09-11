@@ -21,7 +21,7 @@
 | 干净 worktree `npm ci --include=dev` + `npm pack` | 通过，产物版本 0.5.1 |
 | 干净产物审计 | 11870 文件，100222358 bytes；旧 tracker 0，敏感配置路径 0 |
 | 干净 .tgz 隔离全局安装 | 通过；`disclaude --version` 为 v0.5.1，`disclaude start --help` 可运行 |
-| 安装后的 PrimaryNode 离线启动/停止 | 通过，使用占位 YAML 凭据、deferScheduler，不调用模型或发送消息 |
+| 安装后的 DisclaudeService 离线启动/停止 | 通过，使用占位 YAML 凭据、deferScheduler，不调用模型或发送消息 |
 | GitHub SHA 全局安装 | **失败，仍为发布阻断**；npm 10.9.9、11.6.0、11.19.1 均复现 |
 
 干净产物 SHA-512 integrity：

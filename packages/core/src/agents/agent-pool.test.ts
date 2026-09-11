@@ -155,7 +155,7 @@ describe('AgentPool', () => {
     it('should accept skipContext param without error (Issue #4217: core pool does not honor it)', () => {
       // The core AgentPool accepts skipContext for LSP compatibility with the
       // shared reset contract but does not honor it (no options-aware factory).
-      // PrimaryAgentPool implements its own reset() to actually use it.
+      // ChatSessionPool implements its own reset() to actually use it.
       expect(() => pool.reset('chat-1', true)).not.toThrow();
       pool.getOrCreateChatAgent('chat-1');
       pool.reset('chat-2');

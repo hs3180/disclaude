@@ -14,7 +14,7 @@ function context(overrides: Partial<ControlHandlerContext['agentPool']> = {}): C
       switchAgentPreset: () => ({ ok: true, active: { name: 'fast', agentBackend: 'pi', model: 'glm-fast' }, sessionBoundary: 'new-session' }),
       ...overrides,
     },
-    node: { nodeId: 'node', getDebugGroup: () => null, setDebugGroup: vi.fn(), clearDebugGroup: () => null },
+    debugGroups: { getDebugGroup: () => null, setDebugGroup: vi.fn(), clearDebugGroup: () => null },
   };
 }
 

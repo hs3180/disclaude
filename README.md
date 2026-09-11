@@ -34,6 +34,8 @@ A multi-platform AI agent bot connecting Feishu/Lark and REST channels to Claude
 
 The current release is **0.5.0**. See the [release plan and acceptance record](docs/releases/0.5.0.md) and [GitHub milestone](https://github.com/hs3180/disclaude/milestone/9).
 
+For the upcoming **0.5.1**, service startup is unified under `disclaude start`; the old Primary Node executable, package and role settings are removed. Read the [migration guide](docs/migrations/0.5.1-service.md) before upgrading launchd or Docker deployments. Existing configuration data, workspaces, sessions and schedules do not need to be deleted.
+
 ### Implementation Status
 
 | Capability | Status |
@@ -508,7 +510,7 @@ This architecture enables:
 
 | Symptom | Solution |
 |---------|----------|
-| `browser-use: command not found` | Rebuild the image (`docker compose up -d --build`) — the CLI is baked into `Dockerfile.primary` (#4599). On non-Docker installs, see `skills/browser-use/README.md` → Runtime |
+| `browser-use: command not found` | Rebuild the image (`docker compose up -d --build`) — the CLI is baked into `Dockerfile.service` (#4599). On non-Docker installs, see `skills/browser-use/README.md` → Runtime |
 | CDP attach fails | Start the endpoint (`docker compose --profile chromium up -d`) — `BU_CDP_URL` defaults to it in `docker-compose.yml` — see `docs/cdp-endpoint.md` |
 | Browser errors | Check the CDP endpoint is reachable: `curl http://disclaude-chromium:9222/json/version` |
 

@@ -51,9 +51,8 @@ export interface ControlHandlerContext {
       Promise<{ ok: true; message: string } | { ok: false; error: string }>;
   };
 
-  /** 节点相关能力 */
-  node: {
-    nodeId: string;
+  /** Debug group settings, independent of any execution-node role. */
+  debugGroups: {
     getDebugGroup(): DebugGroup | null;
     setDebugGroup(chatId: string, name?: string): void;
     clearDebugGroup(): DebugGroup | null;

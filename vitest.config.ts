@@ -71,7 +71,7 @@ export default defineConfig({
         'packages/worker-node/**',
         // Migrated from worker-node in Phase 1 (#2909), tests not yet moved
         // Will be cleaned up when worker-node is fully removed (Phase 3)
-        'packages/primary-node/src/agents/**',
+        'packages/service/src/agents/**',
       ],
       thresholds: {
         lines: 70,

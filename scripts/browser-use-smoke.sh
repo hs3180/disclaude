@@ -10,13 +10,13 @@
 # Scope-1 options a/b — HTTP API push or direct ChatAgent instantiation)
 # remains a separate decision.
 #
-# Manual checklist this script replaces (run inside the primary container or
+# Manual checklist this script replaces (run inside the service container or
 # any host with the browser-use CLI + a reachable CDP endpoint):
 #   [x] 1. CDP front reachable         — GET /json/version answers
 #   [x] 2. BU_CDP_URL attach            — new_tab + js() title round-trip
 #   [x] 2b. no self-spawned Chrome      — chrome process count unchanged (best
 #           effort: only checked when pgrep exists; only meaningful on a host
-#           that runs no Chrome of its own, e.g. the primary container)
+#           that runs no Chrome of its own, e.g. the service container)
 #   [x] 3. js() structured round-trip   — JSON.stringify(...) parsed back
 #   [x] 4. page_info / list_tabs        — session + tab introspection answer
 #   [x] 5. screenshot artifact          — PNG (magic bytes) in workspace, non-empty

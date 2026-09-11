@@ -19,8 +19,7 @@ function createMockContext(): ControlHandlerContext {
       reset: vi.fn(),
       stop: vi.fn(),
     },
-    node: {
-      nodeId: 'test-node',
+    debugGroups: {
       getDebugGroup: vi.fn().mockReturnValue(null),
       setDebugGroup: vi.fn(),
       clearDebugGroup: vi.fn().mockReturnValue(null),
@@ -111,12 +110,11 @@ describe('createControlHandler', () => {
     const context = createMockContext();
     const handler = createControlHandler(context);
 
-    // switch-node is a valid ControlCommandType (Primary Node only),
+    // switch-node is a valid ControlCommandType (disclaude service only),
     // but no handler is registered yet — backend switchChatNode() exists
     const command: ControlCommand = {
       type: 'switch-node' as ControlCommandType,
       chatId: 'test-chat',
-      targetNodeId: 'target-node-id',
     };
 
     const result = await handler(command);
@@ -164,7 +162,7 @@ describe('getHandler', () => {
 
     const registeredTypes: ControlCommandType[] = [
       'help', 'status', 'reset', 'restart', 'stop',
-      'list-nodes', 'debug', 'trigger',
+      'debug', 'trigger',
     ];
 
     for (const type of registeredTypes) {

@@ -314,7 +314,7 @@ describe('Provider Factory', () => {
 
   describe('config-driven backend selection (Issue #4388)', () => {
     it("setDefaultProvider('pi') makes getProvider() return the pi backend", () => {
-      // Mirrors the boot wiring in PrimaryNode.start(): a non-'claude'
+      // Mirrors the boot wiring in DisclaudeService.start(): a non-'claude'
       // agentBackend in config → setDefaultProvider(agentBackend).
       setDefaultProvider('pi');
       expect(getDefaultProviderType()).toBe('pi');

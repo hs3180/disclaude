@@ -19,7 +19,7 @@
 
 /**
  * Minimal interface for resources that can be stopped.
- * Compatible with Scheduler, PrimaryNode, and similar classes.
+ * Compatible with Scheduler, DisclaudeService, and similar classes.
  */
 interface StoppableResource {
   isRunning(): boolean;

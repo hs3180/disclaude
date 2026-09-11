@@ -18,7 +18,7 @@ const logger = createLogger('SendText');
 export { setMessageSentCallback, getMessageSentCallback };
 
 /**
- * Send text message via REST API to PrimaryNode's LarkClientService.
+ * Send text message via REST API to DisclaudeService's LarkClientService.
  * Issue #1035: Routes Feishu API calls through unified client.
  * Issue #1088: Improved error handling with detailed error information.
  */
@@ -63,14 +63,14 @@ export async function send_text(params: {
 
     // Check REST API availability (Issue #1355: async connection probe)
     if (!(await isChannelApiAvailable())) {
-      const errorMsg = 'REST API service unavailable. Please ensure Primary Node is running.';
+      const errorMsg = 'REST API service unavailable. Please ensure disclaude service is running.';
       logger.error({ chatId }, errorMsg);
       return {
         success: false,
         error: errorMsg,
         // Issue #4576: actionable fallback — +messages-send loses thread
         // attribution in topic groups; +messages-reply preserves it.
-        message: `❌ REST API 服务不可用。请检查 Primary Node 服务是否正在运行。${buildChannelApiFallbackHint(parentMessageId)}`,
+        message: `❌ REST API 服务不可用。请检查 disclaude service 服务是否正在运行。${buildChannelApiFallbackHint(parentMessageId)}`,
       };
     }
 

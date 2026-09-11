@@ -1,6 +1,6 @@
 // Regression guard for the launchd plist's REST API wiring (Issue #4576).
 //
-// Since #4280 Phase 3 the MCP tools' only transport is the PrimaryNode HTTP
+// Since #4280 Phase 3 the MCP tools' only transport is the DisclaudeService HTTP
 // API server (`--api-port`); the generated launchd plist used to pass bare
 // `start`, so nothing listened on 19200 and every channel-mcp send tool
 // (send_card / send_text / send_file / send_interactive) failed with
@@ -11,7 +11,7 @@
 //
 // This file pins that contract. A future edit that drops the flags — or
 // changes the port resolution bounds (must mirror the CLI parser in
-// packages/primary-node/src/cli.ts) — fails CI loudly.
+// packages/service/src/cli.ts) — fails CI loudly.
 //
 // Scope notes (why adding this file is safe — mirrors the precedent set by
 // skills/issue-solver/scan.test.ts / #4376):
@@ -28,9 +28,24 @@
 //    command (no launchctl, no writes to ~/Library/LaunchAgents).
 
 import { describe, it, expect, afterEach } from 'vitest';
+import { assertServiceMigrationComplete } from '../scripts/launchd.mjs';
 import { mkdtempSync, rmSync, writeFileSync, symlinkSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+describe('service upgrade guard', () => {
+  it('requires explicit retirement of the old launchd definition without deleting it', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'service-migration-'));
+    const old = join(dir, 'com.disclaude.primary.plist');
+    writeFileSync(old, 'preserve operator configuration');
+    try {
+      expect(() => assertServiceMigrationComplete(dir)).toThrow('Retire the legacy launchd service');
+      expect(readFileSync(old, 'utf8')).toBe('preserve operator configuration');
+      rmSync(old);
+      expect(() => assertServiceMigrationComplete(dir)).not.toThrow();
+    } finally { rmSync(dir, { recursive: true }); }
+  });
+});
 // Pure helpers exported from launchd.mjs; .mjs has no type declarations and
 // scripts/ is not type-checked.
 // @ts-expect-error — .mjs module without type declarations
@@ -45,7 +60,7 @@ import {
   resolveApiPort,
   resolveAppLog,
   resolveRestChannelApiBaseUrl,
-  resolvePrimaryLaunchdConfig,
+  resolveServiceLaunchdConfig,
   xmlEscape,
 } from '../scripts/launchd.mjs';
 
@@ -109,7 +124,7 @@ describe('resolveApiPort (#4576)', () => {
   it('rejects non-numeric values and falls back to the default', () => {
     snapshotEnv();
     // NB: parseInt('92 00') === 92 — same parseInt-prefix semantics as the
-    // CLI parser (packages/primary-node/src/cli.ts); only NaN cases here.
+    // CLI parser (packages/service/src/cli.ts); only NaN cases here.
     for (const bad of ['abc', '']) {
       process.env.DISCLAUDE_LAUNCHD_API_PORT = bad;
       expect(resolveApiPort()).toBe(0);
@@ -117,10 +132,10 @@ describe('resolveApiPort (#4576)', () => {
   });
 });
 
-describe('isolated primary service paths (S08-A4)', () => {
+describe('isolated service service paths (S08-A4)', () => {
   it('preserves production paths by default', () => {
-    expect(resolvePrimaryLaunchdConfig({}, '/Users/tester')).toEqual({
-      label: 'com.disclaude.primary',
+    expect(resolveServiceLaunchdConfig({}, '/Users/tester')).toEqual({
+      label: 'com.disclaude.service',
       launchAgentsDir: '/Users/tester/Library/LaunchAgents',
       logDir: '/Users/tester/Library/Logs/disclaude',
     });
@@ -128,25 +143,25 @@ describe('isolated primary service paths (S08-A4)', () => {
 
   it('rejects path or label overrides without the isolation guard', () => {
     expect(() =>
-      resolvePrimaryLaunchdConfig({ DISCLAUDE_LAUNCHD_LABEL: 'com.disclaude.test.unsafe' })
+      resolveServiceLaunchdConfig({ DISCLAUDE_LAUNCHD_LABEL: 'com.disclaude.test.unsafe' })
     ).toThrow('DISCLAUDE_LAUNCHD_ISOLATED=1');
     expect(() =>
-      resolvePrimaryLaunchdConfig({ ['DIS' + 'CLAUDE_LAUNCHD_CONFIG_PATH']: '/tmp/unsafe.yaml' })
+      resolveServiceLaunchdConfig({ ['DIS' + 'CLAUDE_LAUNCHD_CONFIG_PATH']: '/tmp/unsafe.yaml' })
     ).toThrow('DISCLAUDE_LAUNCHD_ISOLATED=1');
   });
 
   it('fails closed when the isolated selector survives but its environment does not', () => {
-    expect(() => resolvePrimaryLaunchdConfig({}, '/Users/tester', true)).toThrow(
+    expect(() => resolveServiceLaunchdConfig({}, '/Users/tester', true)).toThrow(
       'isolation environment flag'
     );
   });
 
   it('fails closed when isolation intent is malformed or omits the selector', () => {
     expect(() =>
-      resolvePrimaryLaunchdConfig({ ['DIS' + 'CLAUDE_LAUNCHD_ISOLATED']: '1' }, '/Users/tester')
+      resolveServiceLaunchdConfig({ ['DIS' + 'CLAUDE_LAUNCHD_ISOLATED']: '1' }, '/Users/tester')
     ).toThrow('ISOLATED');
     expect(() =>
-      resolvePrimaryLaunchdConfig(
+      resolveServiceLaunchdConfig(
         {
           ['DIS' + 'CLAUDE_LAUNCHD_ISOLATED']:
             '1 DIS' + 'CLAUDE_LAUNCHD_LABEL=com.disclaude.test.accident',
@@ -158,10 +173,10 @@ describe('isolated primary service paths (S08-A4)', () => {
 
   it('requires a test-only label and absolute state directory', () => {
     expect(() =>
-      resolvePrimaryLaunchdConfig(
+      resolveServiceLaunchdConfig(
         {
           DISCLAUDE_LAUNCHD_ISOLATED: '1',
-          DISCLAUDE_LAUNCHD_LABEL: 'com.disclaude.primary',
+          DISCLAUDE_LAUNCHD_LABEL: 'com.disclaude.service',
           DISCLAUDE_LAUNCHD_STATE_DIR: '/tmp/state',
         },
         '/Users/tester',
@@ -169,7 +184,7 @@ describe('isolated primary service paths (S08-A4)', () => {
       )
     ).toThrow('com.disclaude.test.');
     expect(() =>
-      resolvePrimaryLaunchdConfig(
+      resolveServiceLaunchdConfig(
         {
           DISCLAUDE_LAUNCHD_ISOLATED: '1',
           DISCLAUDE_LAUNCHD_LABEL: 'com.disclaude.test.safe',
@@ -182,10 +197,10 @@ describe('isolated primary service paths (S08-A4)', () => {
   });
 
   it('rejects version-entry overrides outside isolated commands', () => {
-    expect(() => resolvePrimaryLaunchdConfig({
+    expect(() => resolveServiceLaunchdConfig({
       DISCLAUDE_LAUNCHD_ENTRY: '/tmp/old/cli.js',
     })).toThrow('ISOLATED');
-    expect(() => resolvePrimaryLaunchdConfig({
+    expect(() => resolveServiceLaunchdConfig({
       DISCLAUDE_LAUNCHD_ISOLATED: '1',
       DISCLAUDE_LAUNCHD_LABEL: 'com.disclaude.test.entry',
       DISCLAUDE_LAUNCHD_STATE_DIR: '/tmp/state',
@@ -195,7 +210,7 @@ describe('isolated primary service paths (S08-A4)', () => {
   });
 
   it('refuses isolation without an explicit test config', () => {
-    expect(() => resolvePrimaryLaunchdConfig({
+    expect(() => resolveServiceLaunchdConfig({
       DISCLAUDE_LAUNCHD_ISOLATED: '1',
       DISCLAUDE_LAUNCHD_LABEL: 'com.disclaude.test.missing-config',
       DISCLAUDE_LAUNCHD_STATE_DIR: '/tmp/isolated',
@@ -204,7 +219,7 @@ describe('isolated primary service paths (S08-A4)', () => {
 
   it('derives every mutable path below the isolated state directory', () => {
     expect(
-      resolvePrimaryLaunchdConfig(
+      resolveServiceLaunchdConfig(
         {
           DISCLAUDE_LAUNCHD_ISOLATED: '1',
           DISCLAUDE_LAUNCHD_LABEL: 'com.disclaude.test.s08-123',
@@ -226,8 +241,8 @@ describe('buildProgramArguments REST API wiring (#4576)', () => {
   it('appends --api-port 0 by default for isolated managed instances', () => {
     snapshotEnv();
     const args = buildProgramArguments(NODE, null);
-    // Without caffeinate: [node, cli, 'start', '--api-port', '19200']
-    expect(args).toEqual([NODE, expect.any(String), 'start', '--api-port', '0']);
+    // The first argument is the executable, not Node plus a private module.
+    expect(args).toEqual([NODE, 'start', '--api-port', '0']);
   });
 
   it('keeps the caffeinate wrapper and still appends --api-port', () => {
@@ -254,7 +269,7 @@ describe('buildProgramArguments REST API wiring (#4576)', () => {
     expect(args.slice(-4)).toEqual(['--api-port', '0', '--api-token', 'secret-token']);
   });
 
-  it('passes an explicit isolated config path to the primary', () => {
+  it('passes an explicit isolated config path to the service', () => {
     snapshotEnv();
     process.env.DISCLAUDE_LAUNCHD_CONFIG_PATH = '/tmp/s08/config.yaml';
     expect(buildProgramArguments(NODE, null).slice(-2)).toEqual([

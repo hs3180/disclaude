@@ -25,7 +25,7 @@ args = parser.parse_args()
 if sys.platform != 'darwin':
     parser.error('macOS launchd is required')
 root = Path(__file__).resolve().parent.parent
-candidate = root / 'packages/primary-node/dist/cli.js'
+candidate = root / 'packages/service/dist/cli.js'
 baseline = args.baseline_entry.resolve()
 for entry in (baseline, candidate):
     if not entry.is_file():
