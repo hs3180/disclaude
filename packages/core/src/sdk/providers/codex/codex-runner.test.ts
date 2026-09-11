@@ -145,6 +145,19 @@ echo 'diagnostic' >&2`);
     expect(result.stderrTail).toContain('auth expired');
   });
 
+  it('protects harness-declared stderr before callbacks and error tails, across UTF-8 chunks', async () => {
+    const script = makeScriptedBinary(`exec "${process.execPath}" -e 'const b=Buffer.from("before 私密\\ncredential after password=public-example"); let i=0; const t=setInterval(()=>{if(i===b.length){clearInterval(t);process.exitCode=3;}else{process.stderr.write(b.subarray(i,i+1));i++;}},1)'`);
+    const chunks: string[] = [];
+    try {
+      const runner = new CodexExecRunner({ binary: script.binaryPath });
+      const { promise } = runner.run({ prompt: 'hi', sensitiveValues: ['私密\ncredential'], stderr: text => chunks.push(text) }, () => {});
+      const result = await promise;
+      expect(result.exitCode).toBe(3);
+      expect(chunks.join('')).toBe('before [REDACTED] after password=public-example');
+      expect(result.stderrTail).toBe(chunks.join(''));
+    } finally {script.cleanup();}
+  });
+
   it('maps spawn failure (ENOENT) onto spawnError, not a throw', async () => {
     const runner = new CodexExecRunner({ binary: '/nonexistent/codex-path' });
     const events: CodexThreadEvent[] = [];
