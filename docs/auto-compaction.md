@@ -5,7 +5,8 @@ For the Claude backend, disclaude resolves the compaction policy in this order:
 1. If `agent.autoCompactWindow` is configured, use that value without querying
    model metadata. This applies to native Claude models as well as compatible
    third-party models. `0` disables SDK automatic compaction.
-2. Otherwise, query the configured provider's models API for the current model.
+2. Native `claude-*` model IDs retain the SDK's automatic policy without a
+   discovery override. Otherwise, query the configured provider's models API.
    Read `max_input_tokens`, `context_length`, or `context_window`, then use
    `floor(limit * 0.8)` to reserve 20% for output and growth between checks.
    Output-only `max_tokens` is never treated as a context limit.
