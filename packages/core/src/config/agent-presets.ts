@@ -35,6 +35,9 @@ export function validateAgentPresets(agents: unknown): AgentPresetValidation {
     if (!name.trim()) {
       errors.push('agents preset names must not be empty');
     }
+    if (/^\d+$/.test(name)) {
+      errors.push(`agents.${name}: preset names must not be numeric; use a name such as agent-${name}`);
+    }
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
       errors.push(`agents.${name} must be a mapping`);
       continue;
@@ -91,7 +94,16 @@ export function resolveAgentPreset(
       : { ok: false, error: `Unknown agent preset: ${name}` };
   }
 
-  const defaults = Object.entries(agents).filter(
+  const entries = Object.entries(agents);
+  if (entries.length === 0) {
+    return { ok: false, error: 'agents must contain at least one named preset' };
+  }
+  // Do not silently reorder integer-index keys, even when a caller resolves
+  // the default directly without first validating the map.
+  if (entries.some(([presetName]) => /^\d+$/.test(presetName))) {
+    return { ok: false, error: 'agents preset names must not be numeric' };
+  }
+  const defaults = entries.filter(
     ([presetName, preset]) => presetName === 'default' || preset.default === true
   );
   if (defaults.length > 1) {
@@ -101,6 +113,6 @@ export function resolveAgentPreset(
     };
   }
 
-  const [defaultName, preset] = defaults[0] ?? Object.entries(agents)[0];
+  const [defaultName, preset] = defaults[0] ?? entries[0];
   return { ok: true, name: defaultName, preset };
 }

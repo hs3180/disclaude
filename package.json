@@ -12,8 +12,9 @@
     "disclaude-primary": "./packages/primary-node/dist/cli.js"
   },
   "scripts": {
-    "build": "tsc -b",
-    "build:packages": "tsc -b",
+    "build": "node scripts/prune-build-artifacts.mjs && tsc -b",
+    "build:packages": "npm run build",
+    "prepack": "npm run build",
     "build:core": "npm run build --workspace=@disclaude/core",
     "build:primary": "npm run build --workspace=@disclaude/primary-node",
     "type-check": "npm run build && tsc --noEmit",

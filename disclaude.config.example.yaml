@@ -98,6 +98,7 @@ agent:
 
 # Optional named runtime presets. An explicit default (reserved name `default`
 # or `default: true`) wins; otherwise the first declared preset is selected.
+# Preset names must not be purely numeric (use e.g. agent-1, not "1").
 # Use `/agent list`, `/agent`, and `/agent use <name>` to inspect or switch the
 # current chat. Switching starts a fresh native session without moving context;
 # the per-chat choice lasts until the service restarts. If omitted, the legacy

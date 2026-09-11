@@ -13,6 +13,11 @@ import { StderrCapture, getErrorStderr, isStartupFailure, attachStderrToError, C
 import { ErrorCategory } from '../../../utils/error-handler.js';
 import type { AgentMessage, UserInput } from '../../types.js';
 
+const { getAgentConfig } = vi.hoisted(() => ({ getAgentConfig: vi.fn() }));
+vi.mock('../../../config/index.js', () => ({
+  Config: { getAgentConfig, getBuiltinsDir: () => process.cwd() },
+}));
+
 // ============================================================================
 // Mocks for ClaudeSDKProvider tests
 // ============================================================================
@@ -267,6 +272,7 @@ describe('ClaudeSDKProvider', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    getAgentConfig.mockReset().mockImplementation(() => ({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' }));
     originalApiKey = process.env.ANTHROPIC_API_KEY;
     originalStallTimeout = process.env.DISCLAUDE_STALL_TIMEOUT_MS;
     originalStallGrace = process.env.DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS;
@@ -311,6 +317,22 @@ describe('ClaudeSDKProvider', () => {
   // --------------------------------------------------------------------------
 
   describe('validateConfig', () => {
+    it.each(['anthropic', 'glm'])('accepts resolved YAML-only %s credentials', (apiProvider) => {
+      delete process.env.ANTHROPIC_API_KEY;
+      getAgentConfig.mockReturnValue({ apiKey: 'yaml-only-key', provider: apiProvider });
+      expect(provider.getInfo().available).toBe(true);
+    });
+
+    it('rejects invalid resolved configuration even if an unrelated env key exists', () => {
+      process.env.ANTHROPIC_API_KEY = 'unrelated-key';
+      getAgentConfig.mockImplementation(() => { throw new Error('Missing GLM model'); });
+      expect(provider.validateConfig()).toBe(false);
+    });
+
+    it('rejects whitespace-only resolved credentials', () => {
+      getAgentConfig.mockReturnValue({ apiKey: '   ' });
+      expect(provider.validateConfig()).toBe(false);
+    });
     it('should return true when ANTHROPIC_API_KEY is set', () => {
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
       expect(provider.validateConfig()).toBe(true);
@@ -355,7 +377,7 @@ describe('ClaudeSDKProvider', () => {
       const info = provider.getInfo();
 
       expect(info.available).toBe(false);
-      expect(info.unavailableReason).toBe('ANTHROPIC_API_KEY not set');
+      expect(info.unavailableReason).toContain('Claude API configuration is missing or invalid');
     });
   });
 
