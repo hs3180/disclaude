@@ -1,5 +1,5 @@
 # =============================================================================
-# Disclaude disclaude service Dockerfile
+# Disclaude service Dockerfile
 # =============================================================================
 # Multi-stage build for disclaude service - handles Feishu WebSocket + Agent execution.
 #
@@ -239,7 +239,7 @@ ENV CMAKE_BUILD_PARALLEL_LEVEL=2
 # Health check - verify Node.js process is running
 # Uses pgrep with exact binary path to avoid false positives
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD pgrep -f "packages/service/dist/cli.js" > /dev/null 2>&1 || exit 1
+    CMD pgrep -f "[n]ode_modules/@disclaude/service/dist/cli.js" > /dev/null 2>&1 || exit 1
 
 # Run as the non-root user. The entrypoint has no privileged steps (OOM protection
 # is host-side via docker-compose `oom_score_adj`), so the whole container runs as

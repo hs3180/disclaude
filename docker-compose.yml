@@ -171,7 +171,7 @@ services:
         max-file: "3"
 
     healthcheck:
-      test: ["CMD", "pgrep", "-f", "packages/service/dist/cli.js"]
+      test: ["CMD", "pgrep", "-f", "[n]ode_modules/@disclaude/service/dist/cli.js"]
       interval: 30s
       timeout: 10s
       retries: 3

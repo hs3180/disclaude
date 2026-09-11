@@ -22,4 +22,13 @@ describe('single service public contract (#4924)', () => {
     expect(readFileSync('Dockerfile.service', 'utf8')).toContain('CMD ["disclaude", "start"]');
     expect(readFileSync('docker-compose.yml', 'utf8')).toContain('command: ["disclaude", "start", "--api-port", "19200"]');
   });
+  it('checks the child path actually launched by the public CLI', () => {
+    const cli = readFileSync('bin/disclaude.js', 'utf8');
+    expect(cli).toContain('node_modules/@disclaude/service/dist/cli.js');
+    for (const file of ['Dockerfile.service', 'docker-compose.yml']) {
+      const source = readFileSync(file, 'utf8');
+      expect(source).toContain('[n]ode_modules/@disclaude/service/dist/cli.js');
+      expect(source).not.toContain('"packages/service/dist/cli.js"');
+    }
+  });
 });

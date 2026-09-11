@@ -116,7 +116,7 @@ Validation with `deepseek-v4.1-flash-expires-on-0910`:
   read back from the dedicated Feishu group.
 - The downloaded file's SHA-256 matched the uploaded original.
 - A model executed a Channel CLI send command and its marker was read back.
-- On `41887ce7`, channel push → disclaude service → DeepSeek → Feishu automatic final
+- On `41887ce7`, channel push → Primary Node → DeepSeek → Feishu automatic final
   reply delivered exactly `FEISHU_FINAL_050_OK`; a second push recalling that
   reply delivered the same intact marker. Neither reply contained token-per-line
   fragmentation or reasoning text.
@@ -362,7 +362,7 @@ S01–S08 have some merged implementation PRs and focused regression evidence. M
 | Configuration, control, scheduling, concurrency and delivery | Focused tests and merged PRs | Re-run affected runtime scenarios on this candidate; retain backend/tool/final-delivery evidence |
 | dsh backend | Contract and adapter tests; historical host reported the profile absent (superseded above) | A real `dsh --profile sdk` run, including executed tool output and final delivery receipt |
 | Docker deployment | Static configuration checks | Isolated install, upgrade and rollback rehearsal; Docker is unavailable on this host |
-| macOS launchd | `com.disclaude.service`, `com.disclaude.chromium-cdp`, and `com.disclaude.log-cleanup` are loaded | Isolated install, upgrade and rollback rehearsal with backed-up state |
+| macOS launchd | `com.disclaude.primary`, `com.disclaude.chromium-cdp`, and `com.disclaude.log-cleanup` are loaded | Isolated install, upgrade and rollback rehearsal with backed-up state |
 | Distribution | Historical pack dry-run; #4848 records GitHub-only distribution and manual npm workflow | Validate the intended GitHub artifact/install path on the new candidate; private root is not an npm publishing target |
 
 ## Release decision

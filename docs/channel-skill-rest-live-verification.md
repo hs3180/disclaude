@@ -5,7 +5,7 @@
 > on the transport switch shipped in part 1
 > ([PR #4533](https://github.com/hs3180/disclaude/pull/4533)).
 > This is the live-parity run #4459 had deferred since parts 3–7 ("requires a
-> running DisclaudeService + Feishu credentials"), executed against the REST
+> running PrimaryNode + Feishu credentials"), executed against the REST
 > transport. Environment, commands, raw results, and one real-world finding
 > (IPv6 loopback) are recorded below so the run is reproducible.
 
@@ -17,10 +17,10 @@
 |---|---|
 | Host | Linux container, Node `v22.23.1` |
 | Repo state | PR #4533 head (`f207ba04`), `npm ci` + `npm run build` (tsc -b) |
-| DisclaudeService | second instance: `node packages/service/dist/cli.js start --config disclaude.config.yaml --api-port 9201` with `LOCKFILE_PATH=` (lockfile disabled — another DisclaudeService already runs in the container) and a scratch `LOG_DIR` |
+| PrimaryNode | second instance: `node packages/primary-node/dist/cli.js start --config disclaude.config.yaml --api-port 9201` with `LOCKFILE_PATH=` (lockfile disabled — another PrimaryNode already runs in the container) and a scratch `LOG_DIR` |
 | Channel | Feishu (real credentials from a local `disclaude.config.yaml`, appId `cli_a8a0…`; **not** committed) |
 | Target chat | a real `oc_…` chat bound to this workspace |
-| Transport | CLI → `ChannelApiClient` → `HttpApiServer` (`/api/send-message`, `/api/send-card`, `/api/upload-file`, `/api/send-interactive`, `/api/push`). No Unix socket on the CLI path; the running default DisclaudeService's socket was irrelevant to these calls |
+| Transport | CLI → `ChannelApiClient` → `HttpApiServer` (`/api/send-message`, `/api/send-card`, `/api/upload-file`, `/api/send-interactive`, `/api/push`). No Unix socket on the CLI path; the running default PrimaryNode's socket was irrelevant to these calls |
 
 The one-shot CLI invocations used `--base-url` (flag path). The env-var path
 (`DISCLAUDE_API_BASE_URL`) is covered by part 1's unit tests; both resolve
@@ -44,14 +44,14 @@ Parity details actually exercised:
   image-resolution branch it shares the pipeline with, #2951) executed inside
   the one-shot CLI process whose `getChannelApiClient()` was REST-selected.
 - **`send_interactive`** sent a 2-button card (button-click routing is owned by
-  the DisclaudeService, as documented — the CLI is a one-shot client).
+  the PrimaryNode, as documented — the CLI is a one-shot client).
 - **`push_to_agent`** reached the live agent (non-blocking enqueue, #631).
 
 ## 3. Error semantics (scope 3, re-verified live)
 
 | Scenario | stdout | Exit |
 |---|---|---|
-| Server stopped after a successful send (`kill` the API-enabled DisclaudeService, re-run `send_text`) | `{"ok":false,…,"error":"REST API service unavailable. Please ensure disclaude service is running.","hint":"DisclaudeService REST http://[::1]:9201 unreachable — start the main service (disclaude start --api-port <port>) or pass --base-url / DISCLAUDE_API_BASE_URL"}` | 1 |
+| Server stopped after a successful send (`kill` the API-enabled PrimaryNode, re-run `send_text`) | `{"ok":false,…,"error":"REST API service unavailable. Please ensure Primary Node is running.","hint":"PrimaryNode REST http://[::1]:9201 unreachable — start the main service (disclaude-primary start --api-port <port>) or pass --base-url / DISCLAUDE_API_BASE_URL"}` | 1 |
 | Ill-formed chat id (`--chat bad_chat_id`, server up) | `{"ok":false,…,"error":"CHANNEL_API_REQUEST_FAILED: REST sendMessage (Request failed with status code 400)"}` | 1 |
 
 The down-server case shows the part-1 probe-based hint firing against a *real*
@@ -64,7 +64,7 @@ One real environment issue surfaced during the run — recorded here because any
 deployer reproducing this verification can hit it:
 
 - `HttpApiServer` binds `host: 'localhost'`
-  ([`packages/service/src/http-api-server.ts:238`](../packages/service/src/http-api-server.ts)
+  ([`packages/primary-node/src/http-api-server.ts:238`](../packages/primary-node/src/http-api-server.ts)
   default). On this host `/etc/hosts` maps `localhost` → `::1` **first** (then
   `127.0.0.1`), and Node's `net.Server.listen('localhost')` bound **IPv6
   loopback only** (`/proc/net/tcp6` shows the listener; nothing on `127.0.0.1`).
@@ -89,8 +89,8 @@ code change is bundled in this PR.
 
 ## 5. Verification hygiene
 
-- The verification DisclaudeService was stopped after the run (`kill`); the
-  container's default DisclaudeService (Unix-socket mode, no `--api-port`) was never
+- The verification PrimaryNode was stopped after the run (`kill`); the
+  container's default PrimaryNode (Unix-socket mode, no `--api-port`) was never
   touched.
 - The target chat received 5 verification messages + 1 pushed instruction
   (labeled with the issue number in-text); no other chats were written.
@@ -104,7 +104,7 @@ code change is bundled in this PR.
 |---|---|
 | CLI 全部子命令在纯 REST 下工作 | ✅ verified live (this doc, §2) |
 | token / base-url wiring 落地并有文档 | ✅ part 1 (PR #4533) — flag > env > default, documented in `skills/channel/README.md` |
-| DisclaudeService 未启动场景可操作错误 + 测试 | ✅ part 1 tests + live re-verification (§3) |
+| PrimaryNode 未启动场景可操作错误 + 测试 | ✅ part 1 tests + live re-verification (§3) |
 | README transport parity 更新 | ✅ part 1 (PR #4533) |
 | live 端到端验证（5 子命令逐一过） | ✅ **this part** (§2) |
 | #4521 chatId 预检去留显式裁定 | ✅ part 1 recorded the ruling (keep for `send_card`, deferred for the rest); §3 shows the current deferred behavior (`400` from the REST layer) |
