@@ -1439,6 +1439,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // superseded mid-flight and must exit as an intercepted teardown below,
     // not as an "unexpected end".
     const myGeneration = this.sessionGeneration;
+    const diagnosticId = crypto.randomUUID();
     let iteratorError: Error | null = null;
     let messageCount = 0;
     const startTime = Date.now(); // Issue #2920: 追踪启动时间
@@ -2231,6 +2232,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         this.logger.error(
           {
             err: iteratorError,
+            diagnosticId,
+            ...this.activeLifecycleContext,
             chatId,
             messageCount,
             elapsedMs,
@@ -2248,25 +2251,18 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         // 启动失败的特征：没有收到任何 SDK 消息且耗时很短。
         // 根因通常是配置错误（MCP 配置无效、API Key 过期等），
         // 重试无法解决，直接向用户展示具体错误。
-        if (isStartupFailure(messageCount, elapsedMs)) {
+        const classification = tagErrorCategory(iteratorError);
+        if (isStartupFailure(messageCount, elapsedMs) && !classification.transient && classification.category !== 'UNKNOWN') {
           const stderr = getErrorStderr(iteratorError);
           const threadRoot = resolveReplyThreadRoot();
-
-          // 提取有用的错误信息：优先使用 stderr 内容
-          let diagnosticMessage = iteratorError.message;
-          if (stderr) {
-            // 取 stderr 最后几行作为诊断信息（去空行，限制长度）
-            const stderrLines = stderr.split('\n').filter((l) => l.trim());
-            const tailLines = stderrLines.slice(-5).join('\n');
-            diagnosticMessage = tailLines.length > 800 ? tailLines.slice(-800) : tailLines;
-          }
 
           this.logger.error(
             {
               chatId,
               messageCount,
               elapsedMs,
-              stderr: stderr ? stderr.slice(-500) : undefined,
+              stderr,
+              diagnosticId,
             },
             'Startup failure detected — skipping retry/circuit-breaker'
           );
@@ -2277,8 +2273,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // invalid target rejects the error notice too).
           await this.deliverUserVisible(
             chatId,
-            `❌ Agent 启动失败: ${diagnosticMessage}\n\n` +
-              '这是一次配置或环境错误，重试无法解决。\n' +
+            `❌ Agent 启动失败（${classification.category}）。诊断 ID: ${diagnosticId}\n\n` +
+              '请检查配置、权限和运行环境。\n' +
               '请检查上述错误信息，修复后发送 /reset 重置会话。',
             threadRoot
           );
@@ -2313,7 +2309,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // for why a throwing error-notice must not escape processIterator).
           await this.deliverUserVisible(
             chatId,
-            `❌ Session error: ${iteratorError.message}`,
+            `❌ 本次请求中断，结果可能不完整。诊断 ID: ${diagnosticId}。请先核对已经执行的操作，再决定是否重新提交。`,
             threadRoot
           );
         }
@@ -2479,6 +2475,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.logger.warn(
         {
           chatId,
+          diagnosticId,
           errorCategory: category,
           transient,
           errorMessage,
@@ -2494,17 +2491,16 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     if (!decision.allowed) {
       // Circuit breaker opened - notify user and stop
       this.logger.error(
-        { chatId, reason: decision.reason, restartCount: decision.restartCount },
+        { chatId, diagnosticId, reason: decision.reason, restartCount: decision.restartCount },
         'Restart blocked by circuit breaker'
       );
 
       // Notify user that circuit breaker opened
       {
         const threadRoot = resolveReplyThreadRoot();
-        const blockMessage =
-          decision.reason === 'max_restarts_exceeded'
-            ? `🚫 会话多次异常中断，已暂停处理。请发送 /reset 重置会话。\n\n最近错误: ${errorMessage}`
-            : `🚫 会话已暂停，请发送 /reset 重置。\n\n原因: ${decision.reason}`;
+        const blockMessage = decision.reason === 'non_transient'
+          ? `🚫 会话已暂停。请检查配置与权限，修复后发送 /reset。诊断 ID: ${diagnosticId}`
+          : `🚫 自动恢复次数已用完，会话已暂停。请核对上次操作后发送 /reset。诊断 ID: ${diagnosticId}`;
         // Issue #4626: isolated delivery — a failing channel here must not
         // throw processIterator into the outer "Agent loop error" handler.
         await this.deliverUserVisible(chatId, blockMessage, threadRoot);
@@ -2514,7 +2510,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Restart allowed - apply backoff
     this.logger.warn(
-      { chatId, error: errorMessage, restartCount: decision.restartCount, waitMs: decision.waitMs },
+      { chatId, diagnosticId, error: errorMessage, restartCount: decision.restartCount, waitMs: decision.waitMs },
       'Agent loop ended unexpectedly, attempting restart with backoff'
     );
 
@@ -2523,17 +2519,17 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       await new Promise((resolve) => setTimeout(resolve, decision.waitMs));
     }
 
-    // Notify user about the restart
+    // A reset/stop/new request during backoff owns the replacement session.
+    if (this.sessionGeneration !== myGeneration || this.isSessionActive || this.stoppedQueryGenerations.has(myGeneration)) {return;}
     const threadRoot = resolveReplyThreadRoot();
-    const restartMessage = iteratorError
-      ? `⚠️ 会话遇到错误，正在重新连接... (${iteratorError.message})`
-      : '⚠️ 会话意外断开，正在重新连接...';
+    const restartMessage = `⚠️ 会话正在重新连接，后续消息可继续处理。上次请求不会自动重放。诊断 ID: ${diagnosticId}`;
     // Issue #4626: isolated delivery (same rationale as the notices above).
     await this.deliverUserVisible(chatId, restartMessage, threadRoot);
 
     // Restart the agent loop to preserve context for future messages
+    if (this.sessionGeneration !== myGeneration || this.isSessionActive || this.stoppedQueryGenerations.has(myGeneration)) {return;}
     this.startAgentLoop();
-    this.logger.info({ chatId }, 'Agent loop restarted');
+    this.logger.info({ chatId, diagnosticId }, 'Agent loop restarted');
   }
 
   /**
