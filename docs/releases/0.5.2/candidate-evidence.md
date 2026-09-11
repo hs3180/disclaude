@@ -8,7 +8,7 @@ This replaces the withdrawn #4970 integration and `fc74afe03f071bef645845468cb5c
 - Runtime source: `ec64bff0c6c2cbf14439c12c65c9bba5cede24a9`.
 - Source fingerprint: `9f82308de691619879e15e1da6f83519d74972c3e526565294e88b9ceb527712`.
 - Version: `0.5.2`. Source integration branch: `integration/052-channel-release`.
-- The candidate generator includes nested runtime sources using the #4963 repair. The fixture pins the distribution SHA; CI checks it against the current source.
+- The candidate generator includes nested runtime sources using the #4963 repair. Distribution identity remains release evidence only. CI now builds and installs the current checkout; no candidate SHA fixture is tracked.
 
 ## Review map
 
@@ -30,7 +30,7 @@ Main already contains the runtime reliability, bounded recovery, compaction, bac
 
 Build, type check, lint and the full local suite passed: **223 files, 4,683 passed, one CI-only installation wrapper skipped**. The actual macOS Git-install matrix passed for Node 20.20.2 / 22.23.2 × npm 10.9.9 / 11.6.0, including CLI start/stop/restart in all four combinations. Same-prefix 0.5.1 → candidate → 0.5.1 upgrade/rollback passed on Node 20.20.2/npm 10.9.9; configuration, `.runtime-env` and user data remained byte-identical. Linux CI must pass on the newest HEAD of [integration PR #4980](https://github.com/hs3180/disclaude/pull/4980). Do not infer completion from the old candidate or a different PR head.
 
-Reproduction: `npm test`, `scripts/test-package-install.mjs`, `scripts/test-git-node22.mjs`, and `scripts/test-upgrade-rollback.mjs`. The CI installation gate executes the matrix and upgrade/rollback, using isolated prefixes, configuration and loopback services. The upgrade baseline is 0.5.1 distribution `55cb48616bca0ac08e95af1e0c746f6daddcf982`; direct 0.5.0 upgrade is not claimed.
+Reproduction: `npm test`, `scripts/test-package-install.mjs`, `scripts/test-git-node22.mjs`, and `scripts/test-upgrade-rollback.mjs`. CI executes the installation matrix against a temporary archive built from the checkout. Remote Git installation and upgrade/rollback are explicit release checks, using isolated prefixes, configuration and loopback services. The upgrade baseline is 0.5.1 distribution `55cb48616bca0ac08e95af1e0c746f6daddcf982`; direct 0.5.0 upgrade is not claimed.
 
 ## Boundaries and remaining evidence
 
