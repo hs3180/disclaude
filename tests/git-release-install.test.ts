@@ -61,6 +61,15 @@ describe('Git distribution release gate (#4922)', () => {
         expect(node22Output.match(/CLI_START_STOP_RESTART_OK/g)).toHaveLength(3);
         expect(node22Output).toContain(`PACKAGE_INSTALL_OK ${candidate.version}`);
         console.info(node22Output.trim());
+        const { stdout: upgradeOutput } = await execFileAsync(process.execPath, [
+          'scripts/test-upgrade-rollback.mjs',
+          'github:hs3180/disclaude#55cb48616bca0ac08e95af1e0c746f6daddcf982',
+          `github:hs3180/disclaude#${candidate.commit}`, candidate.sourceFingerprint,
+        ], { cwd: resolve('.'), encoding: 'utf8', timeout: 720_000 });
+        expect(upgradeOutput).toContain(`UPGRADE_PHASE_OK upgrade ${candidate.version}`);
+        expect(upgradeOutput).toContain('UPGRADE_PHASE_OK rollback 0.5.1');
+        expect(upgradeOutput).toContain('UPGRADE_ROLLBACK_OK');
+        console.info(upgradeOutput.trim());
       }
     },
     1_250_000
