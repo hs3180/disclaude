@@ -175,6 +175,43 @@ echo '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"t
     } finally {provider.dispose();}
   });
 
+  it('forgets an idle input stream without letting it resurrect a native thread', async () => {
+    const { provider } = providerFixture('exit 0');
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => {release = resolve;});
+    const stream = provider.queryStream((async function* () {
+      await gate;
+      yield { role: 'user', content: 'must not execute after reset' } as UserInput;
+    })(), { sessionKey: 'forgotten', settingSources: [] } as AgentQueryOptions);
+    try {
+      const collected = (async () => {const messages = []; for await (const message of stream.iterator) {messages.push(message);} return messages;})();
+      provider.forgetSession('forgotten');
+      await expect(collected).resolves.toEqual([]);
+      release();
+      await new Promise(resolve => setTimeout(resolve, 30));
+      expect(stream.handle.sessionId).toBeUndefined();
+      expect(provider.getQuotaStats().turnsCompleted).toBe(0);
+    } finally {release(); provider.dispose();}
+  });
+
+  it('keeps replacement teardown ownership when an older same-key stream finishes', async () => {
+    const { provider } = providerFixture('exit 0');
+    const releases: Array<() => void> = [];
+    const waitingInput = () => (async function* () {
+      await new Promise<void>(resolve => releases.push(resolve));
+      yield { role: 'user', content: 'must not start' } as UserInput;
+    })();
+    const options = { sessionKey: 'replacement', settingSources: [] } as AgentQueryOptions;
+    const first = provider.queryStream(waitingInput(), options);
+    const second = provider.queryStream(waitingInput(), options);
+    const drain = async (stream: typeof first) => {for await (const _message of stream.iterator) { /* drain */ }};
+    try {
+      await drain(first);
+      provider.dispose();
+      await drain(second);
+    } finally {for (const release of releases) {release();} provider.dispose();}
+  });
+
   it('keeps exec as the default transport', () => {
     const { provider } = providerFixture('exit 0', 'exec');
     const result = provider.queryStream((async function* () {
