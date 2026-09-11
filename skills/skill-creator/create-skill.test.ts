@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -35,6 +35,19 @@ it('does not overwrite an existing skill', () => {
   const original = readFileSync(file, 'utf8');
   expect(run('team-tool', root, 'Changed purpose', 'other-cli').status).toBe(1);
   expect(readFileSync(file, 'utf8')).toBe(original);
+});
+
+it('generates a runnable help command for an executable path containing spaces and quotes', () => {
+  const root = temp();
+  const executable = join(root, "team's CLI");
+  writeFileSync(executable, '#!/bin/sh\nprintf "external CLI help"\n', { mode: 0o700 });
+  const result = run('team-tool', root, 'Use team resources', executable);
+  expect(result.status).toBe(0);
+  const content = readFileSync(join(root, 'team-tool/SKILL.md'), 'utf8');
+  const command = content.split('~~~sh\n')[1].split('\n~~~')[0];
+  const help = spawnSync('/bin/sh', ['-c', command], { encoding: 'utf8' });
+  expect(help.status).toBe(0);
+  expect(help.stdout).toBe('external CLI help');
 });
 
 it('rejects paths as skill names and multiline metadata', () => {
