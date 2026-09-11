@@ -16,11 +16,11 @@ import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 
 const input = process.argv[2] || '';
-const isGit = /^github:hs3180\/disclaude#[a-f0-9]{40}$/.test(input);
+const isGit = /^github:hs3180\/disclaude#(?:[a-f0-9]{40}|v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/.test(input);
 const archive = isGit ? input : resolve(input);
 assert(
   isGit || (input.endsWith('.tgz') && existsSync(archive)),
-  'Pass a .tgz or github:hs3180/disclaude#<full SHA>'
+  'Pass a .tgz or github:hs3180/disclaude#<full SHA or version tag>'
 );
 const temp = mkdtempSync(join(tmpdir(), 'disclaude-package-test-'));
 const prefix = join(temp, 'prefix');
@@ -44,6 +44,10 @@ for (const key of Object.keys(env)) {
 }
 const prefixFromEnv = process.argv.includes('--prefix-from-env');
 if (prefixFromEnv) env.npm_config_prefix = prefix;
+const plainInstall = process.argv.includes('--plain-install');
+assert(!plainInstall || prefixFromEnv, '--plain-install requires an isolated prefix from the environment');
+env.npm_config_cache = join(temp, 'cache');
+env.npm_config_userconfig = join(temp, 'empty.npmrc');
 function run(command, args) {
   const result = spawnSync(command, args, {
     cwd: temp,
@@ -62,27 +66,25 @@ console.log(`Isolated installation evidence: ${temp}`);
 console.log(
   `Runtime: ${process.version}; npm: ${run('npm', ['--version']).trim()}; input: ${archive}`
 );
-run('npm', [
+const installArgs = [
   'install',
   '-g',
   ...(prefixFromEnv ? [] : ['--prefix', prefix]),
-  '--cache',
-  join(temp, 'cache'),
-  '--userconfig',
-  join(temp, 'empty.npmrc'),
-  '--omit=dev',
-  '--no-audit',
-  '--no-fund',
+  ...(plainInstall ? [] : ['--omit=dev', '--no-audit', '--no-fund']),
   archive,
-]);
+];
+console.log(`Install command: npm ${installArgs.join(' ')}`);
+run('npm', installArgs);
 const installed = join(prefix, 'lib/node_modules/disclaude');
 assert(
   realpathSync(installed).startsWith(realpathSync(prefix) + sep),
   'Package must not link to a temporary clone'
 );
 const pkg = JSON.parse(readFileSync(join(installed, 'package.json'), 'utf8'));
+const isPrebuilt = existsSync(join(installed, 'release-source.json'));
 assert.equal(pkg.scripts?.prepare, undefined, 'User installation must not initialize Git hooks');
-if (isGit) {
+if (isGit) assert(isPrebuilt, 'Git installations must use the prebuilt distribution');
+if (isPrebuilt) {
   assert.equal(pkg.workspaces, undefined);
   for (const script of ['build', 'prepack', 'preinstall', 'install', 'postinstall'])
     assert.equal(pkg.scripts?.[script], undefined);
@@ -118,14 +120,14 @@ run(process.execPath, [
   import { realpathSync } from 'node:fs';
   import { pathToFileURL } from 'node:url';
   const installed = ${JSON.stringify(installed)};
-  const modulesRoot = ${JSON.stringify(isGit ? 'packages' : 'node_modules/@disclaude')};
+  const modulesRoot = ${JSON.stringify(isPrebuilt ? 'packages' : 'node_modules/@disclaude')};
   const load = (name, file = 'index.js') => import(pathToFileURL(join(installed, modulesRoot, name, 'dist', file)).href);
   for (const name of ['core', 'service', 'channel-cli']) {
     await load(name);
   }
   const { DisclaudeService } = await load('service', 'service.js');
   const { Config } = await load('core');
-  if (${isGit} && realpathSync(Config.getBuiltinsDir()) !== realpathSync(installed)) throw new Error('Builtins do not resolve to installed release');
+  if (${isPrebuilt} && realpathSync(Config.getBuiltinsDir()) !== realpathSync(installed)) throw new Error('Builtins do not resolve to installed release');
   const service = new DisclaudeService();
   await service.start({ deferScheduler: true });
   if (!service.isRunning()) throw new Error('DisclaudeService did not start');

@@ -78,10 +78,10 @@ claude --version
 
 ### Option A: Install a prebuilt GitHub tag
 
-Once the validated `v0.5.1` distribution tag is published, install globally:
+Install the prebuilt `v0.5.1` distribution tag globally:
 
-> 0.5.1 is not published yet. GitHub tag installation is a required release gate
-> tracked in [#4922](https://github.com/hs3180/disclaude/issues/4922).
+> The Git tag is available. GitHub Release publication remains pending final
+> deployment acceptance; see the [installation record](docs/releases/0.5.1/npm-tag-acceptance.md).
 
 ```bash
 npm install -g "github:hs3180/disclaude#v0.5.1"
@@ -109,8 +109,8 @@ create the workspace directory specified in your configuration before running
 `disclaude start`. Preserve an existing configuration when upgrading.
 
 See the [0.5.1 release notes](docs/releases/0.5.1.md) for release availability
-and installation details. Before the tag exists, use the source-checkout option
-below; the tag and Release asset will not resolve yet.
+and installation details. The optional Release asset URL only becomes available
+when the GitHub Release is published; the Git tag does not require that asset.
 
 ### Option B: Install the GitHub source distribution
 
