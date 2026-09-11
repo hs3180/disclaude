@@ -18,7 +18,6 @@ const mockState = vi.hoisted(() => ({
   emitMessage: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
   emitControl: vi.fn<() => Promise<{ success: boolean; message?: string }>>().mockResolvedValue({ success: false }),
   sendMessage: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
-  routeCardAction: vi.fn<() => Promise<{ routed: boolean; expired?: boolean }>>().mockResolvedValue({ routed: false }),
   resolveActionPrompt: vi.fn().mockReturnValue(undefined),
   isMessageProcessed: false,
   claimMessage: vi.fn<(id: string) => boolean>(() => false),
@@ -142,7 +141,6 @@ function createHandler(overrides: Record<string, unknown> = {}) {
       emitMessage: mockState.emitMessage,
       emitControl: mockState.emitControl,
       sendMessage: mockState.sendMessage,
-      routeCardAction: mockState.routeCardAction,
       resolveActionPrompt: mockState.resolveActionPrompt,
       onTopicMessage: mockState.onTopicMessage,
     },
@@ -917,28 +915,7 @@ describe('MessageHandler', () => {
       );
     });
 
-    it('should route card action to Worker Node when available', async () => {
-      mockState.routeCardAction.mockResolvedValue({ routed: true });
-      const { handler } = createHandler();
-      await handler.handleCardAction(cardActionEvent());
-
-      expect(mockState.routeCardAction).toHaveBeenCalledTimes(1);
-      // Should NOT emit local message when routed
-      expect(mockState.emitMessage).not.toHaveBeenCalled();
-    });
-
-    it('should notify user when card context is expired', async () => {
-      mockState.routeCardAction.mockResolvedValue({ routed: false, expired: true });
-      const { handler } = createHandler();
-      await handler.handleCardAction(cardActionEvent());
-
-      expect(mockState.sendMessage).toHaveBeenCalledWith(
-        expect.objectContaining({ text: expect.stringContaining('超时') }),
-      );
-    });
-
-    it('should emit local message when routeCardAction returns not routed', async () => {
-      mockState.routeCardAction.mockResolvedValue({ routed: false });
+    it('should emit card actions directly to the local agent', async () => {
       const { handler } = createHandler();
       await handler.handleCardAction(cardActionEvent());
 
@@ -949,7 +926,6 @@ describe('MessageHandler', () => {
     });
 
     it('should resolve action prompt from template', async () => {
-      mockState.routeCardAction.mockResolvedValue({ routed: false });
       mockState.resolveActionPrompt.mockReturnValue('Resolved prompt text');
       const { handler } = createHandler();
       await handler.handleCardAction(cardActionEvent());
@@ -959,7 +935,6 @@ describe('MessageHandler', () => {
     });
 
     it('should fall back to default message when no prompt template', async () => {
-      mockState.routeCardAction.mockResolvedValue({ routed: false });
       mockState.resolveActionPrompt.mockReturnValue(undefined);
       const { handler } = createHandler();
       await handler.handleCardAction(cardActionEvent());
@@ -969,7 +944,6 @@ describe('MessageHandler', () => {
     });
 
     it('should handle resolveActionPrompt throwing an error', async () => {
-      mockState.routeCardAction.mockResolvedValue({ routed: false });
       mockState.resolveActionPrompt.mockImplementation(() => {
         throw new Error('Template error');
       });
@@ -988,7 +962,6 @@ describe('MessageHandler', () => {
     });
 
     it('should pass card action metadata in emitted message', async () => {
-      mockState.routeCardAction.mockResolvedValue({ routed: false });
       const { handler } = createHandler();
       await handler.handleCardAction(cardActionEvent());
 

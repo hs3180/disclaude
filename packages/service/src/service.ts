@@ -31,7 +31,6 @@ import {
   // Issue #4279: FeishuCard type for REST sendCard parity.
   type FeishuCard,
 } from '@disclaude/core';
-import { CardActionRouter } from './routers/card-action-router.js';
 import { DebugGroupService, getDebugGroupService } from './services/debug-group-service.js';
 import { ChannelManager } from './channel-manager.js';
 import { InteractiveContextStore } from './interactive-context.js';
@@ -58,7 +57,6 @@ export interface ServiceOptions {
  * - Coordination between services
  *
  * Delegated concerns:
- * - CardActionRouter: Card action routing to channels
  * - FeedbackRouter: Feedback routing to channels
  * - SchedulerService: Scheduler and file watcher management
  *
@@ -71,7 +69,6 @@ export class DisclaudeService extends EventEmitter {
   protected instanceId: string;
 
   // Services
-  protected cardActionRouter: CardActionRouter;
   protected debugGroupService: DebugGroupService;
 
   // Channel management (Issue #1594: unified channel lifecycle)
@@ -114,8 +111,6 @@ export class DisclaudeService extends EventEmitter {
     }
     this.instanceId = config.instanceId || `service-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-    // Initialize CardActionRouter (Issue #2939: removed remote node stubs)
-    this.cardActionRouter = new CardActionRouter();
 
     // Initialize DebugGroupService
     this.debugGroupService = getDebugGroupService();
@@ -145,12 +140,6 @@ export class DisclaudeService extends EventEmitter {
     return this.running;
   }
 
-  /**
-   * Get the CardActionRouter.
-   */
-  getCardActionRouter(): CardActionRouter {
-    return this.cardActionRouter;
-  }
 
   /**
    * Get the DebugGroupService.

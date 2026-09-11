@@ -74,28 +74,7 @@ export interface MessageCallbacks {
   emitMessage: (message: IncomingMessage) => Promise<void>;
   emitControl: (control: ControlCommand) => Promise<ControlResponse>;
   sendMessage: (message: { chatId: string; type: string; text?: string; card?: Record<string, unknown>; description?: string; threadId?: string; filePath?: string }) => Promise<string | void>;
-  /**
-   * Route card action to the local agent if applicable.
-   * Issue #1629: Includes resolvedPrompt from InteractiveContextStore
-   * so the agent receives the contextual prompt.
-   * Issue #2247: Returns RouteCardActionResult to distinguish expired contexts.
-   */
-  routeCardAction?: (message: {
-    chatId: string;
-    cardMessageId: string;
-    actionType: string;
-    actionValue: string;
-    actionText?: string;
-    userId?: string;
-    /** Resolved prompt from InteractiveContextStore (Issue #1629) */
-    resolvedPrompt?: string;
-    action?: {
-      type: string;
-      value: string;
-      text?: string;
-      trigger?: string;
-    };
-  }) => Promise<{ routed: boolean; expired?: boolean }>;
+
   /**
    * Resolve action prompt for a card action.
    * Issue #1572: Looks up the prompt template from InteractiveContextStore.
@@ -1478,13 +1457,11 @@ export class MessageHandler {
       }
     }
 
-    // Issue #1629: Resolve action prompt BEFORE routing so that
-    // the agent receives the contextual prompt via the resolvedPrompt field.
+    // Resolve contextual prompt content before delivering it to the agent.
     // Issue #1572: Try to resolve action prompt from InteractiveContextStore.
     // Falls back to default text if no prompt template is registered.
     const defaultMessage = `用户点击了按钮「${buttonText}」`;
     let messageContent: string;
-    let resolvedPrompt: string | undefined;
     try {
       if (this.callbacks.resolveActionPrompt) {
         const promptFromTemplate = this.callbacks.resolveActionPrompt(
@@ -1493,7 +1470,6 @@ export class MessageHandler {
           action.value,
           action.text,
         );
-        resolvedPrompt = promptFromTemplate || undefined;
         messageContent = promptFromTemplate || defaultMessage;
       } else {
         messageContent = defaultMessage;
@@ -1528,59 +1504,12 @@ export class MessageHandler {
       logger.warn({ err, messageId: message_id, chatId: chat_id }, 'Failed to log card action');
     });
 
-    // Consult routeCardAction first (single-node mode: checks context status only,
-    // never routes remotely — see card-action-router.ts)
-    if (this.callbacks.routeCardAction) {
-      logger.debug(
-        { messageId: message_id, chatId: chat_id, actionValue: action.value },
-        'Attempting to route card action'
-      );
-      const result = await this.callbacks.routeCardAction({
-        chatId: chat_id,
-        cardMessageId: message_id,
-        actionType: action.type,
-        actionValue: action.value,
-        actionText: action.text,
-        userId: user?.sender_id?.open_id,
-        resolvedPrompt,
-        action: {
-          type: action.type,
-          value: action.value,
-          text: action.text,
-          trigger: action.trigger,
-        },
-      });
-
-      if (result.routed) {
-        logger.info({ messageId: message_id, chatId: chat_id, actionValue: action.value }, 'Card action routed');
-        return;
-      }
-
-      // Issue #2247 Problem 7: When the card context has expired, notify the user
-      // instead of falling through to local emit (which may silently discard the action).
-      if (result.expired) {
-        logger.info({ messageId: message_id, chatId: chat_id }, 'Card context expired, notifying user');
-        await this.callbacks.sendMessage({
-          chatId: chat_id,
-          type: 'text',
-          text: '⏰ 您的操作已超时，请重新开始对话。',
-        }).catch((notifyErr) => {
-          logger.error({ err: notifyErr, chatId: chat_id }, 'Failed to send card action expiry notification');
-        });
-        return;
-      }
-      logger.debug({ messageId: message_id, chatId: chat_id }, 'Card action not routed, falling back to local emit');
-    }
-
-    // Emit card action as a message to the agent
-    // Issue #2007: routeCardAction never routes remotely in single-node mode, so
-    // card actions go through the same pipeline as text messages via
-    // createDefaultMessageHandler → ChatAgent.processMessage.
+    // Card actions use the same local agent pipeline as text messages.
     let emitFailed = false;
     const cardActionMessageId = `card_action_${message_id}_${eventId ?? crypto.randomUUID()}`;
     try {
       logger.debug(
-        { messageId: cardActionMessageId, cardMessageId: message_id, chatId: chat_id, actionValue: action.value, routed: false },
+        { messageId: cardActionMessageId, cardMessageId: message_id, chatId: chat_id, actionValue: action.value },
         'Emitting card action as local message to agent'
       );
       await this.callbacks.emitMessage({

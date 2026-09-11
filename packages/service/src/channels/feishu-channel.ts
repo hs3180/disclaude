@@ -192,28 +192,7 @@ export interface FeishuChannelConfig {
    * chats only; group/topic turns keep sendMessage.
    */
   streamingCard?: boolean;
-  /**
-   * Route card action to the local agent if applicable.
-   * Issue #1629: Includes resolvedPrompt from InteractiveContextStore
-   * so the agent receives the contextual prompt.
-   * Issue #2247: Returns RouteCardActionResult to distinguish expired contexts.
-   */
-  routeCardAction?: (message: {
-    chatId: string;
-    cardMessageId: string;
-    actionType: string;
-    actionValue: string;
-    actionText?: string;
-    userId?: string;
-    /** Resolved prompt from InteractiveContextStore (Issue #1629) */
-    resolvedPrompt?: string;
-    action?: {
-      type: string;
-      value: string;
-      text?: string;
-      trigger?: string;
-    };
-  }) => Promise<{ routed: boolean; expired?: boolean }>;
+
   /**
    * Resolve action prompt for a card action.
    * Issue #1572: Looks up the prompt template from InteractiveContextStore.
@@ -311,7 +290,6 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       }) => {
         return await this.sendMessage(message as OutgoingMessage);
       },
-      routeCardAction: config.routeCardAction,
       resolveActionPrompt: config.resolveActionPrompt,
       // Issue #4031: Emit topic message events through InternalEventBus
       onTopicMessage: (event) => {

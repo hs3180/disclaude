@@ -8,7 +8,7 @@
 > only transport (unconditional — `DISCLAUDE_REST_IPC_ENABLED` is ignored).
 > Base URL: `--base-url` > `DISCLAUDE_API_BASE_URL` >
 > `http://localhost:19200`. **The CLI does not authenticate yet:** it attaches
-> no bearer header, so a primary started with `--api-token` 401s every channel
+> no bearer header, so a service started with `--api-token` 401s every channel
 > write while `GET /api/ping` (token-exempt) keeps the availability probe green
 > — [#4804](https://github.com/hs3180/disclaude/pull/4804) adds the `--api-token`
 > flag and `DISCLAUDE_API_TOKEN` wiring (#4801). When the REST face
