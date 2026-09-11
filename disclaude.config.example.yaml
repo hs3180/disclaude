@@ -90,11 +90,12 @@ agent:
   # Default: false
   # enableAgentTeams: true
 
-  # Auto-compaction context window for unknown/non-Claude model IDs used through
-  # the Claude backend. Native Claude models retain the SDK's own model-aware
-  # compaction behavior. Set to 0 to disable this fallback.
-  # Default: 100000
-  # autoCompactWindow: 100000
+  # Explicit auto-compaction threshold for the Claude backend (all models).
+  # Omit to query the provider's model API and use 80% of its context limit.
+  # If the API omits the limit (e.g. DeepSeek /models), a warning asks you to
+  # configure this value; no fixed fallback is injected. SDK behavior remains
+  # unchanged in that case. Set to 0 to disable automatic compaction.
+  # autoCompactWindow: 80000
 
 # Optional named runtime presets. An explicit default (reserved name `default`
 # or `default: true`) wins; otherwise the first declared preset is selected.

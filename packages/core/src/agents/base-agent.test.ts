@@ -815,16 +815,16 @@ describe('BaseAgent', () => {
   });
 
   describe('createSdkOptions - Issue #4883: fallback auto-compaction', () => {
-    it('enables the default fallback for an unknown model on the Claude backend', () => {
+    it('discovers the context limit instead of injecting a fixed fallback', () => {
       const glmAgent = new TestAgent({ apiKey: 'key', model: 'glm-5.1', provider: 'glm' });
-      expect(glmAgent.testCreateSdkOptions().autoCompactWindow).toBe(100_000);
+      expect(glmAgent.testCreateSdkOptions().autoCompactWindow).toBe('auto');
     });
 
     it.each(['claude-sonnet-4-20250514', 'sonnet', 'opus[1m]', 'haiku'])(
-      'preserves native SDK compaction for %s',
+      'also discovers native model metadata for %s when not configured',
       (model) => {
         const nativeAgent = new TestAgent({ apiKey: 'key', model, provider: 'anthropic' });
-        expect(nativeAgent.testCreateSdkOptions().autoCompactWindow).toBeUndefined();
+        expect(nativeAgent.testCreateSdkOptions().autoCompactWindow).toBe('auto');
       }
     );
 
@@ -836,7 +836,7 @@ describe('BaseAgent', () => {
       expect(glmAgent.testCreateSdkOptions().autoCompactWindow).toBe(64_000);
 
       windowSpy.mockReturnValueOnce(0);
-      expect(glmAgent.testCreateSdkOptions().autoCompactWindow).toBeUndefined();
+      expect(glmAgent.testCreateSdkOptions().autoCompactWindow).toBe(0);
       windowSpy.mockRestore();
     });
 
@@ -848,6 +848,14 @@ describe('BaseAgent', () => {
         agentBackend: 'pi',
       });
       expect(piAgent.testCreateSdkOptions().autoCompactWindow).toBeUndefined();
+    });
+
+    it('honors explicit configuration for native Claude models too', () => {
+      const spy = vi.spyOn(Config, 'getAutoCompactWindow').mockReturnValue(42000);
+      try {
+        const agent = new TestAgent({ apiKey: 'key', model: 'claude-sonnet-4', provider: 'anthropic' });
+        expect(agent.testCreateSdkOptions().autoCompactWindow).toBe(42000);
+      } finally { spy.mockRestore(); }
     });
   });
 

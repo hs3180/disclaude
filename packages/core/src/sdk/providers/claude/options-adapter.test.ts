@@ -151,6 +151,11 @@ describe('adaptOptions', () => {
     });
   });
 
+  it('disables SDK auto-compaction when the explicit threshold is zero', () => {
+    expect(adaptOptions({ settingSources: [], autoCompactWindow: 0 }).settings)
+      .toEqual({ autoCompactEnabled: false });
+  });
+
   it('should pass through systemPrompt preset (Issue #2890)', () => {
     const result = adaptOptions({
       settingSources: ['user', 'project', 'local'],

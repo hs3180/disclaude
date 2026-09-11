@@ -92,11 +92,11 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
     sdkOptions.settings = { ...(sdkOptions.settings as object | undefined), teammateMode: options.teammateMode };
   }
 
-  if (options.autoCompactWindow !== undefined) {
+  if (typeof options.autoCompactWindow === 'number') {
     sdkOptions.settings = {
       ...(sdkOptions.settings as object | undefined),
-      autoCompactEnabled: true,
-      autoCompactWindow: options.autoCompactWindow,
+      autoCompactEnabled: options.autoCompactWindow > 0,
+      ...(options.autoCompactWindow > 0 ? { autoCompactWindow: options.autoCompactWindow } : {}),
     };
   }
 
