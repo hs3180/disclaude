@@ -22,6 +22,26 @@ afterEach(() => {
 });
 
 describe('CodexAppServerTransport', () => {
+  it.each(['close', 'crash'])('reclaims a stubborn descendant after parent %s', async mode => {
+    const binary = fixture(`
+"${process.execPath}" -e 'process.on("SIGTERM",()=>{});setInterval(()=>{},1000)' </dev/null >/dev/null 2>&1 &
+echo $! > "$(dirname "$0")/descendant"
+read line
+${mode === 'crash' ? 'exit 7' : 'while :; do sleep 1; done'}
+`);
+    const transport = new CodexAppServerTransport({ binary, killGraceMs: 50 });
+    let pid: number | undefined;
+    try {
+      await vi.waitFor(() => {pid = Number(readFileSync(join(dirname(binary), 'descendant'), 'utf8')); expect(pid).toBeGreaterThan(0);});
+      if (mode === 'crash') {await expect(transport.request('crash')).rejects.toThrow();}
+      await transport.close();
+      await vi.waitFor(() => expect(() => process.kill(pid as number, 0)).toThrow(), { timeout: 2000 });
+    } finally {
+      await transport.close();
+      if (pid) {try {process.kill(pid, 'SIGKILL');} catch { /* already reaped */ }}
+    }
+  });
+
   it('initializes, correlates responses, and forwards notifications', async () => {
     const binary = fixture(`
 read initialize
