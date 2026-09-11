@@ -74,7 +74,31 @@ claude --version
 
 ## Quick Start
 
-### Option A: Install the GitHub source distribution
+### Option A: Install a tagged release directly from GitHub
+
+Once the `v0.5.1` tag is published, install that exact release globally:
+
+```bash
+npm install -g "github:hs3180/disclaude#v0.5.1"
+disclaude --version
+```
+
+This installs from GitHub, not the npm registry; the root package can remain
+private. Git and Node.js 20+ are recommended for the source build. Allow npm
+lifecycle scripts to run (do not use `--ignore-scripts`), because installation
+builds the TypeScript packages through `prepack`.
+
+For a new installation, the example configuration is available at
+`$(npm root -g)/disclaude/disclaude.config.example.yaml`. Copy it to
+`~/.disclaude/disclaude.config.yaml`, configure the backend and channels, and
+create the workspace directory specified in your configuration before running
+`disclaude start`. Preserve an existing configuration when upgrading.
+
+See the [0.5.1 release notes](docs/releases/0.5.1.md) for release availability
+and installation details. Before the tag exists, use the source-checkout option
+below; the tagged command will not resolve yet.
+
+### Option B: Install the GitHub source distribution
 
 The root package is private. Use a checkout so npm can install all local workspaces:
 
@@ -96,7 +120,7 @@ its configuration/workspace backup until the new checkout has passed health and
 backend checks. See the [candidate record](docs/releases/0.5.0/release-candidate.md)
 for validation evidence and accepted boundaries.
 
-### Option B: Clone for Development
+### Option C: Clone for Development
 
 For development or customization, clone the repository:
 

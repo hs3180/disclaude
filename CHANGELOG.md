@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- Document installation from the forthcoming GitHub `v0.5.1` tag with `npm install -g "github:hs3180/disclaude#v0.5.1"`. See the [0.5.1 release notes](docs/releases/0.5.1.md); the command requires the tag to be published.
+
 ## [0.5.0] - 2026-09-10
 
 ### Highlights
