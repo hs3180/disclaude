@@ -8,6 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { ActionBoundInput } from '@disclaude/core';
 
 // ---------------------------------------------------------------------------
 // Shared mock state (hoisted so vi.mock factories can reference it)
@@ -229,7 +230,39 @@ describe('MessageHandler', () => {
   // Constructor & lifecycle
   // -----------------------------------------------------------------------
   describe('constructor and lifecycle', () => {
-    it('should construct without errors', () => {
+    it('keeps private callbacks outside history, prompts and ordinary card routing', async () => {
+    const secret = 'synthetic-private-input';
+    const consume = vi.fn((_value: string) => Promise.resolve('succeeded' as const));
+    const handoff = new ActionBoundInput({ id: 'agent-operation', title: 'Agent operation', description: 'A bounded consumer', consume }, () => {});
+    const { handler } = createHandler({ privateInput: handoff });
+    mockState.sendMessage.mockResolvedValueOnce('private-card' as never);
+    await handler.handleMessageReceive(textEvent('/private agent-operation'));
+    const { card } = firstCallArg(mockState.sendMessage);
+    const form = card.body.elements.find((element: any) => element.tag === 'form');
+    const [, button] = form.elements;
+    const [{ value }] = button.behaviors;
+    const callback = cardActionEvent({ context: { open_message_id: 'private-card', open_chat_id: 'chat_001' },
+      action: { tag: 'button', value, form_value: { credential: secret } } });
+    await handler.handleCardAction(callback);
+    await vi.waitFor(() => expect(mockState.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: '本次鉴权操作已完成。' })));
+    expect(consume).toHaveBeenCalledExactlyOnceWith(secret);
+    expect(mockState.emitMessage).not.toHaveBeenCalled();
+    expect(mockState.logCardInteraction).not.toHaveBeenCalled();
+    expect(mockState.resolveActionPrompt).not.toHaveBeenCalled();
+    expect(JSON.stringify([mockState.logIncomingMessage.mock.calls, mockState.sendMessage.mock.calls])).not.toContain(secret);
+    handler.clearClient();
+    await handler.handleCardAction(callback);
+    expect(consume).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not downgrade an unknown private form into ordinary text', async () => {
+    const { handler } = createHandler();
+    await handler.handleCardAction(cardActionEvent({ action: { form_value: { credential: 'private' }, tag: 'button' } }));
+    expect(mockState.emitMessage).not.toHaveBeenCalled();
+    expect(mockState.logCardInteraction).not.toHaveBeenCalled();
+  });
+
+  it('should construct without errors', () => {
       const { handler } = createHandler();
       expect(handler).toBeDefined();
     });
