@@ -1,6 +1,6 @@
 {
-  "commit": "aa7473575521492354d9816697ef0cded921154b",
-  "sourceCommit": "d47e2e6d8714bc1c9d95fd90a7c0e37315dfdfc1",
-  "sourceFingerprint": "b1db7fbb21b5dff7c286b38f98d03d3a03554b129543faf75d4169737b8b2b96",
-  "version": "0.5.1"
+  "sourceCommit": "587b85e34778770255e4d1941e072ec9680ac88b",
+  "sourceFingerprint": "aaf4daac94941f464d348b7bb4a9fd48d159d9308bc4fb2f9889eea352913fa5",
+  "version": "0.5.2",
+  "commit": "227fa0029a08e168ddb186ed7f62f0c0ea34941e"
 }
