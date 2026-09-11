@@ -45,6 +45,8 @@ test('generates a standalone manifest and excludes untracked resources', () => {
   write('bin/disclaude.js', "const route = 'node_modules/@disclaude/primary-node/dist/cli.js';");
   write('scripts/launchd.mjs', 'export {};');
   write('skills/example/SKILL.md', 'tracked skill');
+  write('.claude-plugin/plugin.json', '{"name":"builtins"}');
+  write('agents/example.md', 'builtin agent');
   for (const name of ['core', 'primary-node', 'channel-cli']) {
     write(
       `packages/${name}/package.json`,
@@ -83,6 +85,8 @@ test('generates a standalone manifest and excludes untracked resources', () => {
   assert.equal(manifest.devDependencies, undefined);
   assert.deepEqual(manifest.dependencies, { 'js-yaml': '^4.1.0' });
   assert(!existsSync(join(output, 'skills/example/private.txt')));
+  assert(existsSync(join(output, '.claude-plugin/plugin.json')));
+  assert(existsSync(join(output, 'agents/example.md')));
   assert(!existsSync(join(output, 'packages/core/dist/index.test.js')));
   assert(!existsSync(join(output, 'packages/core/package.json')));
   assert.match(
