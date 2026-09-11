@@ -318,6 +318,8 @@ export interface AgentQueryOptions {
   mcpServers?: Record<string, McpServerConfig>;
   /** 环境变量 */
   env?: Record<string, string | undefined>;
+  /** Exact diagnostic values explicitly declared sensitive by the harness. */
+  sensitiveValues?: readonly string[];
   /**
    * System prompt 配置 (Issue #2890)
    * - `string` - 自定义 system prompt

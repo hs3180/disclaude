@@ -1184,7 +1184,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           }
           try {
             if (stopped) {break;}
-            lifecycle = this.createAppServerLifecycle(binary, sessionKey);
+            lifecycle = this.createAppServerLifecycle(binary, sessionKey, options.sensitiveValues);
             threadId = await lifecycle.ensureThread(sessionKey, { threadId, cwd: options.cwd, model: codexModelForChatGpt(options.model), sandbox });
             if (this.appServerLifecycles.get(sessionKey) === lifecycle) {this.appServerThreadIds.set(sessionKey, threadId);}
             if (stopped || this.disposed) {break;}
@@ -1286,9 +1286,10 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     };
   }
 
-  private createAppServerLifecycle(binary: string, sessionKey: string): CodexAppServerLifecycle {
+  private createAppServerLifecycle(binary: string, sessionKey: string, sensitiveValues?: readonly string[]): CodexAppServerLifecycle {
     const lifecycle = new CodexAppServerLifecycle({
       binary,
+      sensitiveValues,
       env: this.env,
       requestTimeoutMs: this.execTimeoutMs && this.execTimeoutMs > 0 ? this.execTimeoutMs : undefined,
       onNotification: (method, params) => {
