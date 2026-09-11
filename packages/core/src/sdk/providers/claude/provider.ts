@@ -18,6 +18,7 @@ import type {
 } from '../../types.js';
 import { adaptSDKMessage, adaptUserInput, TaskSubjectRegistry } from './message-adapter.js';
 import { adaptOptions } from './options-adapter.js';
+import { SensitiveOutputFilter } from '../../../security/sensitive-values.js';
 import { createLogger } from '../../../utils/logger.js';
 import { tagErrorCategory } from '../../../utils/error-handler.js';
 import { computeBackoffDelay } from '../../../utils/retry.js';
@@ -311,12 +312,11 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     const stderrCapture = new StderrCapture();
 
     const sdkOptions = adaptOptions(options);
-    // 将 stderr 回调注入 SDK 选项
-    sdkOptions.stderr = (data: string) => {
+    const stderrFilter = new SensitiveOutputFilter(options.sensitiveValues ?? [], data => {
       stderrCapture.append(data);
-      // 同时调用用户提供的回调（如果有）
       options.stderr?.(data);
-    };
+    });
+    sdkOptions.stderr = (data: string) => stderrFilter.write(data);
 
     // 创建输入适配器生成器
     // IMPORTANT: Use manual iteration instead of `for await...of` to avoid blocking on input
@@ -710,6 +710,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           // result,下游会静默报 ✅ Complete。若本轮捕获的 stderr 带上游 API 错误
           // 特征,给该 success result 打 upstreamApiError 标记,让 ChatAgent 改报
           // ❌ Failed + recordFailure。不覆盖 stall 合成的 result(terminatedReason)。
+          if (adapted.type === 'result') {stderrFilter.finish();}
           if (
             adapted.type === 'result' &&
             !adapted.metadata?.terminatedReason &&
@@ -834,6 +835,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         );
         return; // success — exit the retry loop + generator (Issue #4192 L1)
       } catch (error) {
+        stderrFilter.finish();
         if (cancelled) {return;}
         // Issue #3706 (stall): the watchdog's interrupt() likely threw into the
         // for-await — convert to a clean terminal result instead of propagating the error.
@@ -896,6 +898,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         );
         throw error;
       } finally {
+        stderrFilter.finish();
         clearContentWatchdog();
         clearForceClose();
         // Issue #4442 (part 4): `continue` (retry) passes through here between

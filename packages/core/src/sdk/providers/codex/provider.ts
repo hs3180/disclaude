@@ -775,6 +775,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             model: codexModel,
             env: { ...providerEnv, ...options.env },
             stderr: options.stderr,
+            sensitiveValues: options.sensitiveValues,
           },
           enqueue
         );

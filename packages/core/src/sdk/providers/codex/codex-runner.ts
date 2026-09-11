@@ -18,6 +18,8 @@
  */
 
 import { spawn } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
+import { SensitiveOutputFilter } from '../../../security/sensitive-values.js';
 import { randomUUID } from 'node:crypto';
 import type { UserInput } from '../../types.js';
 import { createInterface } from 'node:readline';
@@ -85,6 +87,8 @@ export interface CodexExecRunOptions {
   timeoutMs?: number;
   /** stderr chunk callback (Issue #2920 seam, forwarded from AgentQueryOptions). */
   stderr?: (data: string) => void;
+  /** Exact values explicitly selected by the harness for diagnostic protection. */
+  sensitiveValues?: readonly string[];
 }
 
 export interface CodexExecRunResult {
@@ -218,6 +222,18 @@ export class CodexExecRunner {
     let killTimer: ReturnType<typeof setTimeout> | null = null;
 
     const stderrTail = createRollingTail(STDERR_TAIL_BYTES);
+    const stderrDecoder = new StringDecoder('utf8');
+    const stderrFilter = new SensitiveOutputFilter(options.sensitiveValues ?? [], text => {
+      stderrTail.append(text);
+      options.stderr?.(text);
+    });
+    let stderrFinished = false;
+    const finishStderr = () => {
+      if (stderrFinished) {return;}
+      stderrFinished = true;
+      stderrFilter.write(stderrDecoder.end());
+      stderrFilter.finish();
+    };
     const startedAt = Date.now();
     let stdoutLineCount = 0;
     let stderrByteCount = 0;
@@ -317,15 +333,16 @@ export class CodexExecRunner {
 
       // ── stderr: forward + rolling tail ─────────────────────────────────
       currentChild.stderr?.on('data', (chunk: Buffer) => {
-        const text = chunk.toString();
-        stderrByteCount += Buffer.byteLength(text);
-        stderrTail.append(text);
-        options.stderr?.(text);
+        const text = stderrDecoder.write(chunk);
+        stderrByteCount += chunk.length;
+        stderrFilter.write(text);
         logger.debug(
           { pid: currentChild.pid, source: 'stderr', chunkLength: text.length },
           'codex exec stderr chunk'
         );
       });
+
+      currentChild.stderr?.once('end', finishStderr);
 
       // ── spawn failure (ENOENT etc.) ────────────────────────────────────
       currentChild.on('error', (error: Error) => {
@@ -360,6 +377,7 @@ export class CodexExecRunner {
 
       // ── exit ───────────────────────────────────────────────────────────
       currentChild.on('close', (code: number | null) => {
+        finishStderr();
         if (settled) {
           return;
         }
