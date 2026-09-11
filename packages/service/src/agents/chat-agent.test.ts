@@ -122,22 +122,7 @@ vi.mock('@disclaude/core', async (importOriginal) => {
       }
       return undefined;
     },
-    // Issue #4192 L0: real-ish tagErrorCategory — classifies once and returns
-    // {category, transient}. Covers the path under test (ECONNRESET → NETWORK,
-    // transient=true), matching error-handler.ts keyword logic for that path.
-    tagErrorCategory: (error: unknown): { category: string; transient: boolean } => {
-      const msg = (error instanceof Error ? error.message : String(error ?? '')).toLowerCase();
-      const isNetwork =
-        msg.includes('econnreset') ||
-        msg.includes('etimedout') ||
-        msg.includes('enotfound') ||
-        msg.includes('econnrefused') ||
-        msg.includes('network') ||
-        msg.includes('connection');
-      const category = isNetwork ? 'NETWORK' : msg.includes('timeout') ? 'TIMEOUT' : 'UNKNOWN';
-      const transient = isNetwork || msg.includes('timeout');
-      return { category, transient };
-    },
+    tagErrorCategory: actual.tagErrorCategory,
   };
 });
 
@@ -1584,6 +1569,33 @@ describe('ChatAgent (service)', () => {
     });
   });
 
+  it.each([false, true])('recovers UNKNOWN once without replaying input (tool emitted: %s)', async toolEmitted => {
+    const { RestartManager: RealRestartManager } = await vi.importActual<typeof import('@disclaude/core')>('@disclaude/core');
+    const callbacks = createMockCallbacks();
+    const agent = new ChatAgent({ chatId: 'unknown-recovery', callbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+    const internals = agent as any;
+    internals.restartManager = new RealRestartManager({ logger: internals.logger, initialBackoffMs: 5 });
+    internals.createQueryStream = vi.fn(() => ({
+      handle: { close: vi.fn(), cancel: vi.fn() },
+      iterator: (async function* () {
+        if (toolEmitted) {yield { parsed: { type: 'tool_use', content: 'operation already submitted' } };}
+        throw new Error('opaque failure token=synthetic-credential');
+      })(),
+    }));
+    void agent.processMessage({ chatId: 'unknown-recovery', payload: 'do work', messageId: 'source-123' });
+    await vi.waitFor(() => expect(JSON.stringify(callbacks.sendMessage.mock.calls)).toContain('自动恢复次数已用完'));
+    expect(internals.createQueryStream).toHaveBeenCalledTimes(2);
+    const { MessageChannel } = await import('@disclaude/core');
+    const pushes = vi.mocked(MessageChannel).mock.results.flatMap(result => result.value.push.mock.calls);
+    expect(pushes.filter(call => JSON.stringify(call).includes('do work'))).toHaveLength(1);
+    const output = JSON.stringify(callbacks.sendMessage.mock.calls);
+    expect(output).not.toContain('synthetic-credential');
+    expect(output).toContain('不会自动重放');
+    const [diagnostic] = internals.logger.error.mock.calls.find((call: any[]) => call[1] === 'Iterator error');
+    expect(output).toContain(diagnostic.diagnosticId);
+    agent.reset();
+  });
+
   describe('Issue #2920: startup failure detection and diagnostics', () => {
     it('should detect startup failure and show diagnostic message (no stderr)', async () => {
       const localCallbacks = createMockCallbacks();
@@ -1597,7 +1609,7 @@ describe('ChatAgent (service)', () => {
 
       // Iterator that throws immediately (0 messages = startup failure)
       async function* failingIterator() {
-        throw new Error('Claude Code process exited with code 1');
+        throw new Error('Invalid configuration');
       }
 
       (agent as any).createQueryStream = () => ({
@@ -1632,8 +1644,8 @@ describe('ChatAgent (service)', () => {
         (call: any[]) => typeof call[1] === 'string' && call[1].includes('Agent 启动失败')
       );
       expect(diagnosticCall).toBeDefined();
-      expect(diagnosticCall![1]).toContain('Claude Code process exited with code 1');
-      expect(diagnosticCall![1]).toContain('配置或环境错误');
+      expect(diagnosticCall![1]).toContain('诊断 ID:');
+      expect(diagnosticCall![1]).toContain('运行环境');
       expect(diagnosticCall![1]).toContain('/reset');
 
       // Session should be inactive
@@ -1643,7 +1655,7 @@ describe('ChatAgent (service)', () => {
       expect(localCallbacks.onDone).toHaveBeenCalled();
     });
 
-    it('should include stderr content in startup failure message', async () => {
+    it('keeps raw startup stderr out of user diagnostics', async () => {
       const localCallbacks = createMockCallbacks();
       const agent = new ChatAgent({
         chatId: 'oc_startup_stderr',
@@ -1655,7 +1667,7 @@ describe('ChatAgent (service)', () => {
 
       // Iterator that throws with stderr attached
       async function* failingIteratorWithStderr() {
-        const error = new Error('CLI process exited with code 1');
+        const error = new Error('Invalid MCP configuration');
         (error as any).__stderr__ =
           'MCP server "amap-maps" failed to initialize\nCaused by: command is empty';
         throw error;
@@ -1690,8 +1702,9 @@ describe('ChatAgent (service)', () => {
         (call: any[]) => typeof call[1] === 'string' && call[1].includes('Agent 启动失败')
       );
       expect(diagnosticCall).toBeDefined();
-      expect(diagnosticCall![1]).toContain('MCP server "amap-maps"');
-      expect(diagnosticCall![1]).toContain('command is empty');
+      expect(diagnosticCall![1]).not.toContain('MCP server');
+      expect(diagnosticCall![1]).not.toContain('command is empty');
+      expect(diagnosticCall![1]).toContain('诊断 ID:');
     });
 
     it('should NOT trigger restart/circuit-breaker for startup failure', async () => {
@@ -1705,7 +1718,7 @@ describe('ChatAgent (service)', () => {
       });
 
       async function* failingIterator() {
-        throw new Error('Startup crash');
+        throw new Error('Invalid configuration');
       }
 
       (agent as any).createQueryStream = () => ({
@@ -1785,7 +1798,7 @@ describe('ChatAgent (service)', () => {
         () => {
           expect(
             localCallbacks.sendMessage.mock.calls.find(
-              (call: any[]) => typeof call[1] === 'string' && call[1].includes('Session error')
+              (call: any[]) => typeof call[1] === 'string' && call[1].includes('本次请求中断')
             )
           ).toBeDefined();
         },
@@ -1795,10 +1808,10 @@ describe('ChatAgent (service)', () => {
       // Should show Session error (not startup failure)
       const sendMessageCalls = localCallbacks.sendMessage.mock.calls;
       const sessionErrorCall = sendMessageCalls.find(
-        (call: any[]) => typeof call[1] === 'string' && call[1].includes('Session error')
+        (call: any[]) => typeof call[1] === 'string' && call[1].includes('本次请求中断')
       );
       expect(sessionErrorCall).toBeDefined();
-      expect(sessionErrorCall![1]).toContain('Runtime crash after messages');
+      expect(sessionErrorCall![1]).not.toContain('Runtime crash after messages');
 
       // Should NOT show startup failure message
       const startupFailCall = sendMessageCalls.find(
