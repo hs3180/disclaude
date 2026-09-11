@@ -1,4 +1,4 @@
-import { describe, it, beforeEach, afterEach, expect } from 'vitest';
+import { describe, it, beforeEach, afterEach, expect, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -12,7 +12,39 @@ describe('runtime-env', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('creates private files and tightens permissions on legacy files', () => {
+    setRuntimeEnv(tmpDir, 'KEY', 'value');
+    const target = path.join(tmpDir, '.runtime-env');
+    if (process.platform === 'win32') {return;}
+    expect(fs.statSync(target).mode & 0o777).toBe(0o600);
+    fs.chmodSync(target, 0o644);
+    expect(loadRuntimeEnv(tmpDir)).toEqual({ KEY: 'value' });
+    expect(fs.statSync(target).mode & 0o777).toBe(0o600);
+  });
+
+  it.each(['symlink', 'hardlink', 'directory'])('refuses an unsafe %s without changing its target', kind => {
+    const source = path.join(tmpDir, 'source');
+    const target = path.join(tmpDir, '.runtime-env');
+    fs.writeFileSync(source, 'KEY=original\n');
+    if (kind === 'symlink') {fs.symlinkSync(source, target);}
+    else if (kind === 'hardlink') {fs.linkSync(source, target);}
+    else {fs.mkdirSync(target);}
+    expect(loadRuntimeEnv(tmpDir)).toEqual({});
+    expect(() => setRuntimeEnv(tmpDir, 'KEY', 'replacement')).toThrow('safely');
+    expect(() => deleteRuntimeEnv(tmpDir, 'KEY')).toThrow('safely');
+    expect(fs.readFileSync(source, 'utf8')).toBe('KEY=original\n');
+  });
+
+  it('preserves previous credentials and removes temporary files on a failed replacement', () => {
+    setRuntimeEnv(tmpDir, 'KEY', 'original');
+    vi.spyOn(fs, 'renameSync').mockImplementation(() => {throw new Error('disk failure');});
+    expect(() => setRuntimeEnv(tmpDir, 'KEY', 'replacement')).toThrow('safely');
+    expect(loadRuntimeEnv(tmpDir)).toEqual({ KEY: 'original' });
+    expect(fs.readdirSync(tmpDir)).toEqual(['.runtime-env']);
   });
 
   describe('loadRuntimeEnv', () => {
