@@ -1,7 +1,10 @@
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
+import { promisify } from 'node:util';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+
+const execFileAsync = promisify(execFile);
 
 describe('Git distribution release gate (#4922)', () => {
   it('validates import rewriting and candidate/source consistency', () => {
@@ -17,11 +20,12 @@ describe('Git distribution release gate (#4922)', () => {
     process.env.GITHUB_ACTIONS !== 'true' && process.env.DISCLAUDE_TEST_GIT_INSTALL !== '1'
   )(
     'installs the remote candidate and starts the installed runtime offline',
-    () => {
+    async () => {
       const candidate = JSON.parse(
         readFileSync('tests/fixtures/git-release-candidate.json', 'utf8')
       );
-      const output = execFileSync(
+      // Keep the Vitest worker event loop responsive during npm's network work.
+      const { stdout: output } = await execFileAsync(
         process.execPath,
         [
           'scripts/test-package-install.mjs',
@@ -33,7 +37,7 @@ describe('Git distribution release gate (#4922)', () => {
       expect(output).toContain('PACKAGE_INSTALL_OK 0.5.1');
       console.info(output.trim());
       if (process.env.GITHUB_ACTIONS === 'true') {
-        const node22Output = execFileSync(
+        const { stdout: node22Output } = await execFileAsync(
           process.execPath,
           [
             'scripts/test-git-node22.mjs',

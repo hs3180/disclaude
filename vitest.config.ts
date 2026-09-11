@@ -67,10 +67,7 @@ export default defineConfig({
         'src/runners/**',
         // Integration-test only modules (require complex setup)
         'src/nodes/**',
-        // Dead code — scheduled for removal in #2717 Phase 3
-        'packages/worker-node/**',
-        // Migrated from worker-node in Phase 1 (#2909), tests not yet moved
-        // Will be cleaned up when worker-node is fully removed (Phase 3)
+        // Agent integration tests run separately from the unit coverage budget.
         'packages/service/src/agents/**',
       ],
       thresholds: {
