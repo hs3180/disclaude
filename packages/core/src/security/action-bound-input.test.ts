@@ -18,7 +18,7 @@ describe('action-bound private input', () => {
     const { action, input, consume, audit } = setup();
     const results = await Promise.all([action.submit(input), action.submit(input)]);
     expect(results).toEqual(['succeeded', 'invalid']);
-    expect(consume).toHaveBeenCalledExactlyOnceWith(secret);
+    expect(consume).toHaveBeenCalledExactlyOnceWith(secret, expect.objectContaining({ actor: 'actor', chat: 'chat', source: 'source', action: 'test-operation' }));
     expect(audit).toHaveBeenCalledTimes(1);
     expect(JSON.stringify([results, audit.mock.calls, action])).not.toContain(secret);
     expect(audit.mock.calls[0][0].correlationId).not.toBe(input.nonce);
