@@ -302,19 +302,10 @@ export abstract class BaseAgent implements Disposable {
       options.teammateMode = 'in-process';
     }
 
-    // Issue #4883: the SDK cannot infer context metadata for arbitrary model
-    // IDs, so give non-Claude models an explicit auto-compaction boundary.
-    // Native Claude IDs retain the SDK's model-aware behavior, avoiding a
-    // second compaction policy. Zero is the documented opt-out.
-    if ((this.agentBackend ?? 'claude') === 'claude' && !isNativeClaudeModel(this.model)) {
-      const autoCompactWindow = Config.getAutoCompactWindow();
-      if (autoCompactWindow > 0) {
-        options.autoCompactWindow = autoCompactWindow;
-        this.logger.debug(
-          { model: this.model, autoCompactWindow },
-          'Enabled fallback auto-compaction for non-Claude model'
-        );
-      }
+    // Explicit configuration wins for every Claude-backend model. Discovery is
+    // asynchronous and runs in the provider before starting the SDK subprocess.
+    if ((this.agentBackend ?? 'claude') === 'claude') {
+      options.autoCompactWindow = Config.getAutoCompactWindow() ?? 'auto';
     }
 
     // Issue #3706 (GLM stall): enable partial (stream_event) messages so the provider
@@ -566,8 +557,4 @@ export abstract class BaseAgent implements Disposable {
     this.logger.debug(`${this.getAgentName()} disposed`);
     this.initialized = false;
   }
-}
-
-function isNativeClaudeModel(model: string): boolean {
-  return /^(?:claude(?:-|$)|sonnet(?:$|\[)|opus(?:$|\[)|haiku(?:$|\[))/i.test(model);
 }

@@ -21,6 +21,8 @@ import { adaptOptions } from './options-adapter.js';
 import { createLogger } from '../../../utils/logger.js';
 import { tagErrorCategory } from '../../../utils/error-handler.js';
 import { computeBackoffDelay } from '../../../utils/retry.js';
+import { Config } from '../../../config/index.js';
+import { withDiscoveredCompaction } from './compaction.js';
 
 const logger = createLogger('ClaudeSDKProvider');
 
@@ -282,7 +284,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
       name: this.name,
       version: this.version,
       available,
-      unavailableReason: available ? undefined : 'ANTHROPIC_API_KEY not set',
+      unavailableReason: available ? undefined : 'Claude API configuration is missing or invalid; check anthropic.apiKey / glm.apiKey and the selected model',
     };
   }
 
@@ -292,6 +294,11 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
   ): StreamQueryResult {
     if (this.disposed) {
       throw new Error('Provider has been disposed');
+    }
+
+    if (options.autoCompactWindow === 'auto') {
+      return withDiscoveredCompaction(input, options, (nextInput, nextOptions) =>
+        this.queryStream(nextInput, nextOptions));
     }
 
     // Issue #3378: Snapshot process listeners BEFORE calling SDK query().
@@ -959,8 +966,13 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
   }
 
   validateConfig(): boolean {
-    // 检查 API 密钥是否配置
-    return !!process.env.ANTHROPIC_API_KEY;
+    // Use the same resolved credentials as agent requests (YAML, env, GLM).
+    // Looking only at process.env incorrectly rejects YAML-only credentials.
+    try {
+      return !!Config.getAgentConfig().apiKey.trim();
+    } catch {
+      return false;
+    }
   }
 
   dispose(): void {

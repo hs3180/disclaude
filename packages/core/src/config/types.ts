@@ -112,9 +112,10 @@ export interface AgentConfig {
    */
   enableAgentTeams?: boolean;
   /**
-   * Context window used for Claude SDK auto-compaction when the Claude backend
-   * runs an unknown/non-Claude model. Native Claude models keep SDK defaults.
-   * Default: 100000. Set to 0 to disable the fallback.
+   * Explicit Claude-backend auto-compaction threshold, including native models.
+   * If absent, query the configured provider's model API and use 80% of its
+   * context limit. If unavailable, warn without inventing a fixed limit.
+   * Set to 0 to disable automatic compaction.
    */
   autoCompactWindow?: number;
   /**

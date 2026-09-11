@@ -716,9 +716,9 @@ export class Config {
     return fileConfigOnly.agent?.enableAgentTeams ?? false;
   }
 
-  /** Context window for the non-Claude model auto-compaction fallback. */
-  static getAutoCompactWindow(): number {
-    return fileConfigOnly.agent?.autoCompactWindow ?? 100_000;
+  /** Explicit override; absence means discover the current model's API limit. */
+  static getAutoCompactWindow(): number | undefined {
+    return fileConfigOnly.agent?.autoCompactWindow;
   }
 
   /**

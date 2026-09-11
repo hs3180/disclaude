@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { resolveAgentPreset, validateAgentPresets } from './agent-presets.js';
 
 describe('validateAgentPresets', () => {
+  it.each(['0', '1', '01', '4294967294'])('rejects numeric preset name %s', (name) => {
+    expect(validateAgentPresets({ [name]: { agentBackend: 'claude', model: 'claude-sonnet' } }))
+      .toMatchObject({ ok: false, errors: [expect.stringContaining('must not be numeric')] });
+  });
   it('accepts the reserved default name and returns its effective preset', () => {
     const result = validateAgentPresets({
       default: { agentBackend: 'claude', model: 'claude-sonnet' },
@@ -78,6 +82,15 @@ describe('validateAgentPresets', () => {
 });
 
 describe('resolveAgentPreset', () => {
+  it('returns a structured error for an empty map', () => {
+    expect(resolveAgentPreset({})).toEqual({ ok: false, error: 'agents must contain at least one named preset' });
+  });
+
+  it('does not silently reorder numeric preset names', () => {
+    const preset = { agentBackend: 'claude' as const, model: 'claude-sonnet' };
+    expect(resolveAgentPreset({ '2': preset, '1': preset }))
+      .toEqual({ ok: false, error: 'agents preset names must not be numeric' });
+  });
   const agents = {
     default: { agentBackend: 'pi' as const, model: 'pi-default' },
     codex: { agentBackend: 'codex' as const, model: 'gpt-5' },
