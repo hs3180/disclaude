@@ -370,5 +370,6 @@ export {
   STATE_VERSION,
 } from './project/index.js';
 
+export { createPrivateProcessAction, type PrivateProcessActionOptions } from './security/private-process-action.js';
 export { ActionBoundInput } from './security/action-bound-input.js';
 export type { PrivateAction, PrivateActionAudit, PrivateActionOutcome, PrivateSubmission } from './security/action-bound-input.js';
