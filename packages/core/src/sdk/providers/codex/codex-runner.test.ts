@@ -18,7 +18,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getRootLogger } from '../../../utils/logger.js';
 
 import { CodexExecRunner } from './codex-runner.js';
 import type { CodexThreadEvent } from './exec-adapter.js';
@@ -79,6 +80,25 @@ JSONL
 `;
 
 describe('CodexExecRunner (Issue #4630)', () => {
+  it('correlates process output and exit without logging stdout content', async () => {
+    const binary = makeScriptedBinary(`echo '{"type":"thread.started","thread_id":"t"}'
+echo 'banner-private-text'
+echo 'diagnostic' >&2`);
+    const root = getRootLogger();
+    const previousLevel = root.level;
+    root.level = 'debug';
+    const output = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const correlation = { runId: 'run-123', chatId: 'chat-123', sourceMessageId: 'source-123', traceId: 'trace-123' };
+    try {
+      await new CodexExecRunner({ binary: binary.binaryPath }).run({ prompt: 'private-prompt', correlation }, () => {}).promise;
+      const records = output.mock.calls.flatMap(([chunk]) => String(chunk).trim().split('\n')).filter(line => line.startsWith('{')).map(line => JSON.parse(line));
+      const lifecycle = records.filter(record => record.context === 'CodexExecRunner');
+      expect(lifecycle.map(record => record.msg)).toEqual(expect.arrayContaining(['codex exec process spawned', 'codex exec event', 'codex exec stdout line', 'codex exec stderr chunk', 'codex exec process closed']));
+      for (const record of lifecycle) {expect(record).toMatchObject(correlation);}
+      expect(JSON.stringify(lifecycle)).not.toMatch(/private-prompt|banner-private-text/);
+    } finally {output.mockRestore(); root.level = previousLevel; binary.cleanup();}
+  });
+
   let fixture: ScriptedBinary;
 
   beforeEach(() => {

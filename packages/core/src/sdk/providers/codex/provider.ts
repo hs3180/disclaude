@@ -718,7 +718,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       // S7 (#4634): each run holds a global lease — at most
       // maxConcurrentRuns codex exec children process-wide; excess turns
       // queue FIFO across chats with a backpressure notice.
-      const runInput = async (prompt: string): Promise<void> => {
+      const runInput = async (prompt: string, correlation?: UserInput['correlation']): Promise<void> => {
         // Item IDs are scoped to one exec invocation. Clear before every
         // run because older Codex versions (and test doubles) may omit
         // `turn.started` on resumed executions.
@@ -764,6 +764,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             prompt: thisBuiltinContext
               ? `${thisBuiltinContext}\n\nUser request:\n${prompt}`
               : prompt,
+            correlation,
             resumeSessionId: resumeTarget,
             sandboxMode: sandboxDecision.sandbox,
             fullAccess,
@@ -961,7 +962,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             if (done || terminated) {
               return;
             }
-            await runInput(userInputText(value));
+            await runInput(userInputText(value), value.correlation);
           }
         } finally {
           inputDone = true;
