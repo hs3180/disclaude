@@ -345,6 +345,8 @@ export interface AgentQueryOptions {
    * - `'auto'` — SDK decides automatically
    */
   teammateMode?: 'auto' | 'tmux' | 'in-process';
+  /** Enable SDK auto-compaction at this context-window size. */
+  autoCompactWindow?: number;
   /**
    * Enable partial (stream_event) messages (Issue #3706 GLM stall).
    * When true, the SDK yields stream_event messages (content_block_delta,

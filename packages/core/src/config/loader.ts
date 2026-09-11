@@ -35,13 +35,14 @@ export const EXPLICIT_CONFIG_PATH_ENV = 'DISCLAUDE_CONFIG_PATH';
  * Search paths for configuration files.
  */
 const SEARCH_PATHS = [
-  process.cwd(), // Current working directory
+  process.env.HOME ? resolve(process.env.HOME, '.disclaude') : '',
+  // Legacy migration fallbacks. New installs should use ~/.disclaude or --config.
+  process.cwd(),
   // If workspace directory is configured, also search parent directory
   process.env.WORKSPACE_DIR ? resolve(process.env.WORKSPACE_DIR, '..') : '',
   // Import meta URL directory (for bundled executables)
   import.meta.url ? resolve(dirname(fileURLToPath(import.meta.url)), '..') : '',
   import.meta.url ? resolve(dirname(fileURLToPath(import.meta.url)), '..', '..') : '',
-  process.env.HOME || '', // Home directory
 ].filter(Boolean) as string[];
 
 /**
@@ -60,6 +61,12 @@ export function findConfigFile(): ConfigFileInfo {
     for (const fileName of CONFIG_FILE_NAMES) {
       const filePath = resolve(searchPath, fileName);
       if (existsSync(filePath)) {
+        if (searchPath !== SEARCH_PATHS[0]) {
+          logger.warn(
+            { filePath, preferredDirectory: SEARCH_PATHS[0] },
+            'Using legacy config location; move it to ~/.disclaude/disclaude.config.yaml'
+          );
+        }
         logger.debug({ filePath }, 'Found configuration file');
         return { path: filePath, exists: true };
       }
@@ -181,6 +188,14 @@ export function validateConfig(config: DisclaudeConfig): boolean {
     return false;
   }
 
+  if (
+    config.agent?.autoCompactWindow !== undefined &&
+    (!Number.isInteger(config.agent.autoCompactWindow) || config.agent.autoCompactWindow < 0)
+  ) {
+    logger.error('agent.autoCompactWindow must be a non-negative integer');
+    return false;
+  }
+
   // S01: validate named backend/model presets without changing the legacy
   // single-agent fallback path. Runtime selection is layered on afterwards.
   if (config.agents !== undefined) {
@@ -208,7 +223,7 @@ export function validateConfig(config: DisclaudeConfig): boolean {
     }
     if (config.agent.model && !isCodexModel(config.agent.model)) {
       logger.error(
-        `agent.model must be a Codex/ChatGPT model (expected gpt-5.x, got "${config.agent.model}")`
+        `agent.model must be a Codex/ChatGPT model (expected gpt-5.x or newer, got "${config.agent.model}")`
       );
       return false;
     }
@@ -322,7 +337,7 @@ export function isCodexModel(model: string): boolean {
   // `gpt-5` itself is an API model name and is explicitly rejected by the
   // Codex ChatGPT route; Codex model aliases carry a suffix (for example
   // `gpt-5.1-codex`).
-  return /^gpt-5(?:[.-].+)/i.test(model.trim());
+  return /^gpt-(?:[5-9]|[1-9]\d+)(?:[.-].+)/i.test(model.trim());
 }
 
 /**

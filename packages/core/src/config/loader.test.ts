@@ -28,6 +28,14 @@ vi.mock('fs', () => ({
   existsSync: vi.fn(),
 }));
 
+// All suites own their discovery environment, including load/integration tests.
+beforeEach(() => {
+  vi.stubEnv(EXPLICIT_CONFIG_PATH_ENV, '');
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 describe('findConfigFile', () => {
   const originalExplicitConfigPath = process.env[EXPLICIT_CONFIG_PATH_ENV];
 
@@ -66,7 +74,7 @@ describe('findConfigFile', () => {
     expect(result.path).toBe('');
   });
 
-  it('should find disclaude.config.yaml in current directory', () => {
+  it('should prefer disclaude.config.yaml under ~/.disclaude', () => {
     vi.mocked(existsSync).mockImplementation((path) => {
       const pathStr = String(path);
       return pathStr.includes('disclaude.config.yaml');
@@ -75,7 +83,7 @@ describe('findConfigFile', () => {
     const result = findConfigFile();
 
     expect(result.exists).toBe(true);
-    expect(result.path).toContain('disclaude.config.yaml');
+    expect(result.path).toBe(resolve(process.env.HOME!, '.disclaude', 'disclaude.config.yaml'));
   });
 
   it('should find disclaude.config.yml as fallback', () => {
@@ -118,6 +126,13 @@ describe('findConfigFile', () => {
 
     expect(result.exists).toBe(true);
     expect(result.path).toContain(process.env.HOME);
+  });
+
+  it('should retain the current directory as a migration fallback', () => {
+    const legacyPath = resolve(process.cwd(), 'disclaude.config.yaml');
+    vi.mocked(existsSync).mockImplementation((path) => String(path) === legacyPath);
+
+    expect(findConfigFile()).toEqual({ path: legacyPath, exists: true });
   });
 });
 

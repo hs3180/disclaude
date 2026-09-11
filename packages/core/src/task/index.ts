@@ -6,12 +6,6 @@
  * @module task
  */
 
-// Dialogue Message Tracker
-export { DialogueMessageTracker } from './dialogue-message-tracker.js';
-
-// Task Tracker
-export { TaskTracker } from './task-tracker.js';
-
 export {
   LEGACY_TASK_RECORDS_DIR,
   LEGACY_TASK_RECORDS_FILE,

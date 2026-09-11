@@ -334,35 +334,33 @@ export class PrimaryNode extends EventEmitter {
 
     logger.info({ nodeId: this.localNodeId }, 'Starting PrimaryNode');
 
-    // Issue #4388: select the Agent SDK backend from config (default 'claude').
+    // Issue #4388: select the Agent SDK backend from config.
     // Must run before any ChatAgent is created (getProvider() reads the default).
     // agentBackend is orthogonal to the model-layer `provider` (LLM API).
     const agentBackend = Config.AGENT_BACKEND;
-    if (agentBackend && agentBackend !== 'claude') {
-      try {
-        setDefaultProvider(agentBackend);
-        logger.info({ agentBackend }, 'Agent SDK backend selected from config');
+    if (!agentBackend) {
+      throw new Error(
+        'No agent backend configured. Set agent.agentBackend (claude, pi, codex, or deepseek) ' +
+          'or declare an agents preset.'
+      );
+    }
 
-        // Issue #4629: probe the backend's environment NOW (e.g. codex CLI
-        // missing on PATH / OAuth not completed) so misconfiguration surfaces
-        // as an actionable error at startup, not at the first message. Boot
-        // continues — the surrounding philosophy is degrade, don't crash.
-        const backendInfo = getProvider(agentBackend).getInfo();
-        if (!backendInfo.available) {
-          logger.error(
-            { agentBackend, unavailableReason: backendInfo.unavailableReason },
-            `Agent backend "${agentBackend}" is not available — fix the issue above, ` +
-              'or agent queries will fail when they arrive.',
-          );
-        }
-      } catch (error) {
-        // Don't crash boot — fall back to the default 'claude' backend.
-        logger.error(
-          { err: error, agentBackend },
-          'Unknown agent.agentBackend in config — falling back to "claude". ' +
-            'Use one of the registered backends (see the error above).',
+    try {
+      setDefaultProvider(agentBackend);
+      const backendInfo = getProvider(agentBackend).getInfo();
+      if (!backendInfo.available) {
+        throw new Error(
+          `Agent backend "${agentBackend}" is unavailable: ` +
+            `${backendInfo.unavailableReason ?? 'environment check failed'}`
         );
       }
+      logger.info({ agentBackend }, 'Agent SDK backend selected from config');
+    } catch (error) {
+      logger.error(
+        { err: error, agentBackend },
+        'Configured agent backend failed startup; refusing to switch backends'
+      );
+      throw error;
     }
 
     // Issue #4280 (part 5): no REST API server is started anymore — PrimaryNode

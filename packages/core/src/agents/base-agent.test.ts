@@ -13,6 +13,12 @@ import { setRuntimeContext, clearRuntimeContext, type BaseAgentConfig } from './
 import type { AgentMessage, StreamingUserMessage, QueryHandle } from '../sdk/index.js';
 import { Config } from '../config/index.js';
 
+// Unit tests must not load developer credentials or workspace settings.
+vi.mock('../config/loader.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../config/loader.js')>(),
+  loadConfigFile: () => ({ _fromFile: false }),
+}));
+
 // Create a concrete implementation of BaseAgent for testing
 class TestAgent extends BaseAgent {
   readonly testProperty = 'test';
@@ -805,6 +811,43 @@ describe('BaseAgent', () => {
 
       // sonnet uses Config.getModelForTier('multimodal'), not this.model
       expect(options.env?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
+    });
+  });
+
+  describe('createSdkOptions - Issue #4883: fallback auto-compaction', () => {
+    it('enables the default fallback for an unknown model on the Claude backend', () => {
+      const glmAgent = new TestAgent({ apiKey: 'key', model: 'glm-5.1', provider: 'glm' });
+      expect(glmAgent.testCreateSdkOptions().autoCompactWindow).toBe(100_000);
+    });
+
+    it.each(['claude-sonnet-4-20250514', 'sonnet', 'opus[1m]', 'haiku'])(
+      'preserves native SDK compaction for %s',
+      (model) => {
+        const nativeAgent = new TestAgent({ apiKey: 'key', model, provider: 'anthropic' });
+        expect(nativeAgent.testCreateSdkOptions().autoCompactWindow).toBeUndefined();
+      }
+    );
+
+    it('uses a configured fallback window and permits zero as an opt-out', () => {
+      const windowSpy = vi.spyOn(Config, 'getAutoCompactWindow');
+      const glmAgent = new TestAgent({ apiKey: 'key', model: 'glm-5.1', provider: 'glm' });
+
+      windowSpy.mockReturnValueOnce(64_000);
+      expect(glmAgent.testCreateSdkOptions().autoCompactWindow).toBe(64_000);
+
+      windowSpy.mockReturnValueOnce(0);
+      expect(glmAgent.testCreateSdkOptions().autoCompactWindow).toBeUndefined();
+      windowSpy.mockRestore();
+    });
+
+    it('does not leak the Claude-only fallback to another backend', () => {
+      const piAgent = new TestAgent({
+        apiKey: 'key',
+        model: 'glm-5.1',
+        provider: 'glm',
+        agentBackend: 'pi',
+      });
+      expect(piAgent.testCreateSdkOptions().autoCompactWindow).toBeUndefined();
     });
   });
 

@@ -222,7 +222,7 @@ export class Config {
 
   // Agent SDK backend — which agent runtime boots (Issue #4388).
   // Orthogonal to the model-layer provider (GLM vs Anthropic LLM API).
-  // undefined ⇒ 'claude' default. Consumed by PrimaryNode.start().
+  // Undefined is a startup error; PrimaryNode never silently chooses another backend.
   static readonly AGENT_BACKEND =
     (this.DEFAULT_AGENT_PRESET?.ok ? this.DEFAULT_AGENT_PRESET.preset.agentBackend : undefined) ||
     fileConfigOnly.agent?.agentBackend;
@@ -404,7 +404,7 @@ export class Config {
       if (this.CLAUDE_MODEL && !isCodexModel(this.CLAUDE_MODEL)) {
         errors.push({
           field: 'agent.model',
-          message: 'agent.model must be a Codex/ChatGPT model (expected gpt-5.x)',
+          message: 'agent.model must be a Codex/ChatGPT model (expected gpt-5.x or newer)',
         });
       }
       if (errors.length > 0) {
@@ -714,6 +714,11 @@ export class Config {
    */
   static isAgentTeamsEnabled(): boolean {
     return fileConfigOnly.agent?.enableAgentTeams ?? false;
+  }
+
+  /** Context window for the non-Claude model auto-compaction fallback. */
+  static getAutoCompactWindow(): number {
+    return fileConfigOnly.agent?.autoCompactWindow ?? 100_000;
   }
 
   /**

@@ -185,6 +185,7 @@ Invoke the \`send_interactive\` channel command shown in the Tools section — i
 
 \`\`\`bash
 <channel-cli> send_interactive --chat <chat-id> \\
+  --parent <trigger-message-id> \\
   --title "接下来您可以..." \\
   --question "选择下一步操作：" \\
   --options '[{"text":"选项1","value":"action1","type":"primary"},{"text":"选项2","value":"action2"},{"text":"选项3","value":"action3"}]' \\
@@ -194,6 +195,7 @@ Invoke the \`send_interactive\` channel command shown in the Tools section — i
 Flags:
 
 - \`--chat\` — target chat ID. Required unless \`FEISHU_CLI_CHAT_ID\` or the config \`cliChatId\` supplies it.
+- \`--parent\` — the triggering prompt's **Message ID** from the metadata below. Always pass it so the card remains visibly associated with the request in private chats, regular groups, and topic groups. Omit it only when the channel rejects reply attribution, then retry once without it.
 - \`--question\` — the prompt text shown above the buttons (or \`--question-file <path>\`, or piped on stdin).
 - \`--options\` — JSON array of buttons; each an object with a button \`text\`, a \`value\`, and an optional \`type\` of \`primary\`/\`default\`/\`danger\`.
 - \`--action-prompts\` — JSON object mapping each button \`value\` to a short user-action description.
@@ -208,6 +210,7 @@ Do **NOT** paste raw card fields such as \`content\`/\`format\`/\`elements\` —
 - Make suggestions specific and actionable
 - Use \`"type": "primary"\` for the most recommended option
 - **CRITICAL**: Always include \`actionPrompts\` that maps each option's \`value\` to a user message
+- **CRITICAL**: Reply to the triggering prompt with \`--parent <trigger-message-id>\`; this applies to non-topic groups and private chats too
 - The action prompt format: \`"[用户操作] 用户选择了..."\` describes what the user did
 - Always include a suggestions card, even for simple questions (e.g., "Want to know more about X?", "Try this related feature")`;
   }

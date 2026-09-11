@@ -41,10 +41,11 @@ npm run build
 ## 第 3 步：配置
 
 ```bash
-cp disclaude.config.example.yaml disclaude.config.yaml
+mkdir -p ~/.disclaude
+cp disclaude.config.example.yaml ~/.disclaude/disclaude.config.yaml
 ```
 
-编辑 `disclaude.config.yaml`，填入飞书凭证和模型提供方配置：
+编辑 `~/.disclaude/disclaude.config.yaml`，填入飞书凭证和模型提供方配置：
 
 ```yaml
 feishu:
@@ -55,6 +56,9 @@ anthropic:
   apiKey: "your_api_key_here"
   model: "your_model_name"
   apiBaseUrl: "https://your-anthropic-compatible-proxy.example" # 兼容服务提供的 endpoint；直连 Anthropic 可省略
+
+agent:
+  agentBackend: claude # 必填；启动失败时不会静默切换到其他 backend
 ```
 
 `anthropic` 表示 Anthropic Messages API 协议，模型可以来自任意兼容服务。旧 `glm` 块可以整体改名为 `anthropic`；如设置了 `agent.provider: glm`，一并改为 `anthropic`。配置文件里的 `anthropic.apiKey` 优先于 `ANTHROPIC_API_KEY`，`agent.model` 可覆盖服务块内的默认模型。
@@ -64,7 +68,7 @@ anthropic:
 ```bash
 # 本地前台运行
 mkdir -p workspace
-node bin/disclaude.js start --config "$PWD/disclaude.config.yaml"
+node bin/disclaude.js start
 
 # 生产模式（Docker 或 macOS launchd）
 docker compose up -d

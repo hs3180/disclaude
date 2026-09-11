@@ -3,10 +3,10 @@
 # =============================================================================
 #
 # This is an example configuration file for Disclaude.
-# Copy this file to `disclaude.config.yaml` and customize it for your needs.
+# Copy this file to `~/.disclaude/disclaude.config.yaml` and customize it.
 #
 # IMPORTANT: Security Best Practices
-# - disclaude.config.yaml is in .gitignore - safe to store secrets locally
+# - Keep the real file under ~/.disclaude and restrict its filesystem permissions
 # - This example file (disclaude.config.example.yaml) is committed to git
 # - DO NOT commit your actual disclaude.config.yaml with real API keys
 #
@@ -30,8 +30,8 @@ agent:
   # Options: anthropic (API protocol); glm is accepted for legacy configurations
   provider: "anthropic"
 
-  # Agent SDK backend — which agent runtime boots (Issue #4388).
-  # Options: claude (default), pi, codex
+  # Required agent runtime. Startup fails rather than silently switching.
+  # Options: claude, pi, codex, deepseek
   # - claude/pi: orthogonal to `provider` above — backend selects the agent
   #   runtime, `provider` selects the LLM API; they compose (e.g. pi + GLM).
   # - codex: runs the official Codex CLI in exec mode, powered by your
@@ -39,7 +39,7 @@ agent:
   #   glm/anthropic config (the login governs the model) — see
   #   docs/codex-backend.md and #4637. Requires: npm install -g @openai/codex
   #   + one-time interactive `codex login`.
-  # agentBackend: "codex"
+  agentBackend: "claude"
 
   # Codex exec sandbox level (for the active agent backend, Issue #4631).
   # Options: read-only, workspace-write, danger-full-access
@@ -90,8 +90,14 @@ agent:
   # Default: false
   # enableAgentTeams: true
 
-# Optional named runtime presets. Exactly one preset must be the default,
-# either by using the reserved name `default` or by setting `default: true`.
+  # Auto-compaction context window for unknown/non-Claude model IDs used through
+  # the Claude backend. Native Claude models retain the SDK's own model-aware
+  # compaction behavior. Set to 0 to disable this fallback.
+  # Default: 100000
+  # autoCompactWindow: 100000
+
+# Optional named runtime presets. An explicit default (reserved name `default`
+# or `default: true`) wins; otherwise the first declared preset is selected.
 # Use `/agent list`, `/agent`, and `/agent use <name>` to inspect or switch the
 # current chat. Switching starts a fresh native session without moving context;
 # the per-chat choice lasts until the service restarts. If omitted, the legacy
@@ -334,7 +340,7 @@ env:
 # =============================================================================
 #
 # Setup:
-#   1. Copy this file to disclaude.config.yaml
+#   1. mkdir -p ~/.disclaude && copy this file there as disclaude.config.yaml
 #   2. Replace placeholder values with your actual configuration
 #   3. Run: npm run build
 #   4. Run: npm run launchd:restart (macOS) or docker compose up -d (Docker)

@@ -21,6 +21,24 @@ import { PrimaryNode } from './primary-node.js';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 
+const backend = vi.hoisted(() => ({
+  selected: 'claude' as string | undefined,
+  select: vi.fn(),
+  info: vi.fn(() => ({ available: true, unavailableReason: undefined as string | undefined })),
+}));
+
+vi.mock('@disclaude/core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@disclaude/core')>();
+  return {
+    ...actual,
+    Config: class extends actual.Config {
+      static get AGENT_BACKEND() { return backend.selected as typeof actual.Config.AGENT_BACKEND; }
+    },
+    setDefaultProvider: backend.select,
+    getProvider: () => ({ getInfo: backend.info }),
+  };
+});
+
 /**
  * The socket-path discovery file the IPC server used to write (Issue #3808).
  * Issue #4168 (Phase 3 residual) removed IPC_SOCKET_PATH_FILE from
@@ -38,6 +56,9 @@ const SCRATCH_DIR = join(tmpdir(), `disclaude-rest-only-test-${process.pid}`);
 
 describe('PrimaryNode REST-only serving (Issue #4280 part 5)', () => {
   beforeEach(() => {
+    backend.selected = 'claude';
+    backend.select.mockReset();
+    backend.info.mockReset().mockReturnValue({ available: true, unavailableReason: undefined });
     vi.resetModules();
     // initScheduler is non-fatal in start() (Issue #3361) but touches the real
     // workspace/cooldown dirs — stub it out; this test is only about the IPC
@@ -51,6 +72,28 @@ describe('PrimaryNode REST-only serving (Issue #4280 part 5)', () => {
     vi.restoreAllMocks();
     rmSync(SCRATCH_DIR, { recursive: true, force: true });
     delete process.env.DISCLAUDE_WORKER_IPC_SOCKET;
+  });
+
+  it('rejects a missing backend before starting the scheduler', async () => {
+    backend.selected = undefined;
+    await expect(new PrimaryNode().start()).rejects.toThrow('No agent backend configured');
+    expect(backend.select).not.toHaveBeenCalled();
+    expect(backend.info).not.toHaveBeenCalled();
+  });
+
+  it('propagates backend selection failure without switching to Claude', async () => {
+    backend.selected = 'unknown';
+    backend.select.mockImplementation(() => { throw new Error('Unknown provider type: unknown'); });
+    await expect(new PrimaryNode().start()).rejects.toThrow('Unknown provider type: unknown');
+    expect(backend.select).toHaveBeenCalledExactlyOnceWith('unknown');
+    expect(backend.info).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unavailable backend before starting the scheduler', async () => {
+    backend.selected = 'codex';
+    backend.info.mockReturnValue({ available: false, unavailableReason: 'Codex login required' });
+    await expect(new PrimaryNode().start()).rejects.toThrow('Codex login required');
+    expect(backend.select).toHaveBeenCalledExactlyOnceWith('codex');
   });
 
   it('start() does not set DISCLAUDE_WORKER_IPC_SOCKET', async () => {

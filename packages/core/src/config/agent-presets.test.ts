@@ -20,8 +20,19 @@ describe('validateAgentPresets', () => {
     });
     expect(result).toEqual({
       ok: false,
-      errors: ['agents.default.model must be a Codex/ChatGPT model (expected gpt-5.x)'],
+      errors: [
+        'agents.default.model must be a Codex/ChatGPT model (expected gpt-5.x or newer)',
+      ],
     });
+  });
+
+  it('accepts current and future Codex model generations', () => {
+    expect(
+      validateAgentPresets({ default: { agentBackend: 'codex', model: 'gpt-6-codex' } })
+    ).toMatchObject({ ok: true });
+    expect(
+      validateAgentPresets({ default: { agentBackend: 'codex', model: 'gpt-10.1-codex' } })
+    ).toMatchObject({ ok: true });
   });
 
   it('accepts one explicit default marker on a non-reserved name', () => {
@@ -34,10 +45,16 @@ describe('validateAgentPresets', () => {
     }
   });
 
-  it('rejects missing, duplicate, and conflicting defaults', () => {
+  it('uses declaration order when no default is marked', () => {
     expect(
-      validateAgentPresets({ codex: { agentBackend: 'codex', model: 'gpt-5.6' } })
-    ).toMatchObject({ ok: false });
+      validateAgentPresets({
+        codex: { agentBackend: 'codex', model: 'gpt-5.6' },
+        claude: { agentBackend: 'claude', model: 'claude-sonnet' },
+      })
+    ).toMatchObject({ ok: true, name: 'codex' });
+  });
+
+  it('rejects duplicate and conflicting defaults', () => {
     expect(
       validateAgentPresets({
         default: { agentBackend: 'claude', model: 'claude-sonnet' },
@@ -96,5 +113,17 @@ describe('resolveAgentPreset', () => {
         fallback: { ...agents.codex, default: true },
       })
     ).toEqual({ ok: false, error: 'Unable to resolve default agent preset (found 2)' });
+  });
+
+  it('stably resolves the first preset when no default is marked', () => {
+    const unmarked = {
+      fast: { agentBackend: 'pi' as const, model: 'glm-5' },
+      careful: { agentBackend: 'claude' as const, model: 'claude-sonnet' },
+    };
+    expect(resolveAgentPreset(unmarked)).toEqual({
+      ok: true,
+      name: 'fast',
+      preset: unmarked.fast,
+    });
   });
 });

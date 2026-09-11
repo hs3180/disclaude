@@ -7,6 +7,11 @@ describe('Codex backend compatibility (Issue #4637)', () => {
     expect(isCodexModel('gpt-5')).toBe(false);
     expect(isCodexModel('gpt-5.1-codex')).toBe(true);
     expect(isCodexModel('gpt-5-codex-mini')).toBe(true);
+    expect(isCodexModel('gpt-6-codex')).toBe(true);
+    expect(isCodexModel('gpt-6.1')).toBe(true);
+    expect(isCodexModel('gpt-10-codex-mini')).toBe(true);
+    expect(isCodexModel('gpt-4.1')).toBe(false);
+    expect(isCodexModel('gpt-6')).toBe(false);
     expect(isCodexModel('claude-sonnet-4-20250514')).toBe(false);
     expect(isCodexModel('glm-5')).toBe(false);
   });
