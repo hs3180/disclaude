@@ -13,6 +13,12 @@ import { setRuntimeContext, clearRuntimeContext, type BaseAgentConfig } from './
 import type { AgentMessage, StreamingUserMessage, QueryHandle } from '../sdk/index.js';
 import { Config } from '../config/index.js';
 
+// Unit tests must not load developer credentials or workspace settings.
+vi.mock('../config/loader.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../config/loader.js')>(),
+  loadConfigFile: () => ({ _fromFile: false }),
+}));
+
 // Create a concrete implementation of BaseAgent for testing
 class TestAgent extends BaseAgent {
   readonly testProperty = 'test';

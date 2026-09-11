@@ -28,6 +28,14 @@ vi.mock('fs', () => ({
   existsSync: vi.fn(),
 }));
 
+// All suites own their discovery environment, including load/integration tests.
+beforeEach(() => {
+  vi.stubEnv(EXPLICIT_CONFIG_PATH_ENV, '');
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 describe('findConfigFile', () => {
   const originalExplicitConfigPath = process.env[EXPLICIT_CONFIG_PATH_ENV];
 

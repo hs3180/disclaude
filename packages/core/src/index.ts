@@ -236,12 +236,6 @@ export {
   type OnFileRemoved,
 } from './scheduling/index.js';
 
-// Task module (Issue #1041 - migrated from worker-node)
-export {
-  DialogueMessageTracker,
-  TaskTracker,
-} from './task/index.js';
-
 // Queue module (Issue #1041)
 export {
   TaskQueue,
