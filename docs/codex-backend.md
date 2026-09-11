@@ -150,3 +150,16 @@ codex `exec` 是无头模式，**没有逐调用的审批钩子**（0.132.0 实�
 
 - **用 `codex`**：单人 bot 想把 ChatGPT 订阅当算力，并接受 CLI Skills 替代 disclaude 侧 MCP 工具与无细粒度逐调用审批的边界。
 - **留在 `claude`（默认）**：生产环境、需要 MCP / 权限模式 / 多模型供应商组合（GLM 等）——这是功能最全的后端。
+
+## Browser automation
+
+Disclaude-owned Codex exec, exec resume and app-server processes receive
+`--disable browser_use --disable browser_use_external --disable browser_use_full_cdp_access`.
+This keeps browser automation on the shared `browser-use` skill/CLI and its
+`BU_CDP_URL` attach path. Bash/shell execution and the standalone browser-use CLI
+remain available; the CDP environment is passed through unchanged.
+
+The flags apply only to Disclaude child processes. They do not edit
+`~/.codex/config.toml` or change the Codex desktop client. There is currently no
+Disclaude opt-in for the Codex-owned browser; configure the common browser-use
+path instead. This scope does not disable unrelated tools such as web search.

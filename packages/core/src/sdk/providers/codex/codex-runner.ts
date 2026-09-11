@@ -1,3 +1,4 @@
+import { CODEX_BROWSER_DISABLE_ARGS } from './browser-policy.js';
 /**
  * codex exec subprocess runner — spawn / JSONL parse / lifecycle (Issue #4630, S2 of #4627).
  *
@@ -173,6 +174,7 @@ export class CodexExecRunner {
           'resume',
           '--json',
           '--skip-git-repo-check',
+          ...CODEX_BROWSER_DISABLE_ARGS,
           ...(options.fullAccess ? ['--dangerously-bypass-approvals-and-sandbox'] : []),
           ...(options.model ? ['-m', options.model] : []),
           ...(options.sandboxMode ? ['-c', `sandbox_mode=${options.sandboxMode}`] : []),
@@ -190,6 +192,7 @@ export class CodexExecRunner {
           'exec',
           '--json',
           '--skip-git-repo-check',
+          ...CODEX_BROWSER_DISABLE_ARGS,
           ...(options.fullAccess ? ['--dangerously-bypass-approvals-and-sandbox'] : []),
           ...(options.model ? ['-m', options.model] : []),
           ...(options.sandboxMode ? ['-s', options.sandboxMode] : []),

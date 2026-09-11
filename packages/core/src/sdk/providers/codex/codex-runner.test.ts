@@ -80,6 +80,17 @@ JSONL
 `;
 
 describe('CodexExecRunner (Issue #4630)', () => {
+  it.each([undefined, 'existing-thread'])('preserves shared browser CDP access with browser features disabled (resume=%s)', async resumeSessionId => {
+    const fixture = makeScriptedBinary('echo "argv:$*" >&2\necho "cdp:$BU_CDP_URL" >&2\nexit 0');
+    try {
+      const runner = new CodexExecRunner({ binary: fixture.binaryPath });
+      const result = await runner.run({ prompt: 'browser task', resumeSessionId, env: { ...process.env, BU_CDP_URL: 'http://127.0.0.1:9222' } }, () => {}).promise;
+      expect(result.exitCode).toBe(0);
+      expect(result.stderrTail).toContain('--disable browser_use --disable browser_use_external --disable browser_use_full_cdp_access');
+      expect(result.stderrTail).toContain('cdp:http://127.0.0.1:9222');
+    } finally { fixture.cleanup(); }
+  });
+
   it('correlates process output and exit without logging stdout content', async () => {
     const binary = makeScriptedBinary(`echo '{"type":"thread.started","thread_id":"t"}'
 echo 'banner-private-text'
@@ -92,7 +103,7 @@ echo 'diagnostic' >&2`);
     try {
       await new CodexExecRunner({ binary: binary.binaryPath }).run({ prompt: 'private-prompt', correlation }, () => {}).promise;
       const records = output.mock.calls.flatMap(([chunk]) => String(chunk).trim().split('\n')).filter(line => line.startsWith('{')).map(line => JSON.parse(line));
-      const lifecycle = records.filter(record => record.context === 'CodexExecRunner');
+      const lifecycle = records.filter(record => record.context === 'CodexExecRunner' && record.runId === correlation.runId);
       expect(lifecycle.map(record => record.msg)).toEqual(expect.arrayContaining(['codex exec process spawned', 'codex exec event', 'codex exec stdout line', 'codex exec stderr chunk', 'codex exec process closed']));
       for (const record of lifecycle) {expect(record).toMatchObject(correlation);}
       expect(JSON.stringify(lifecycle)).not.toMatch(/private-prompt|banner-private-text/);
@@ -252,7 +263,7 @@ echo 'diagnostic' >&2`);
     // S3 (#4628): fresh runs are NOT --ephemeral — the rollout file they
     // write under codex's session storage is what later turns resume.
     expect(result.stderrTail).toContain(
-      'argv:exec --json --skip-git-repo-check -- do the thing',
+      'argv:exec --json --skip-git-repo-check --disable browser_use --disable browser_use_external --disable browser_use_full_cdp_access -- do the thing',
     );
   });
 
@@ -268,7 +279,7 @@ echo 'diagnostic' >&2`);
     );
     const result = await promise;
     expect(result.stderrTail).toContain(
-      'argv:exec resume --json --skip-git-repo-check -m gpt-5.1 t-abc -- next turn',
+      'argv:exec resume --json --skip-git-repo-check --disable browser_use --disable browser_use_external --disable browser_use_full_cdp_access -m gpt-5.1 t-abc -- next turn',
     );
   });
 
@@ -310,13 +321,13 @@ echo 'diagnostic' >&2`);
       { prompt: 'a', sandboxMode: 'read-only' },
       () => {},
     ).promise;
-    expect(fresh.stderrTail).toContain('argv:exec --json --skip-git-repo-check -s read-only -- a');
+    expect(fresh.stderrTail).toContain('argv:exec --json --skip-git-repo-check --disable browser_use --disable browser_use_external --disable browser_use_full_cdp_access -s read-only -- a');
     const resume = await runner.run(
       { prompt: 'b', resumeSessionId: 't-abc', sandboxMode: 'workspace-write' },
       () => {},
     ).promise;
     expect(resume.stderrTail).toContain(
-      'argv:exec resume --json --skip-git-repo-check -c sandbox_mode=workspace-write t-abc -- b',
+      'argv:exec resume --json --skip-git-repo-check --disable browser_use --disable browser_use_external --disable browser_use_full_cdp_access -c sandbox_mode=workspace-write t-abc -- b',
     );
   });
 
@@ -326,14 +337,14 @@ echo 'diagnostic' >&2`);
     const runner = new CodexExecRunner({ binary: fixture.binaryPath });
     const fresh = await runner.run({ prompt: 'a', fullAccess: true }, () => {}).promise;
     expect(fresh.stderrTail).toContain(
-      'argv:exec --json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox -- a',
+      'argv:exec --json --skip-git-repo-check --disable browser_use --disable browser_use_external --disable browser_use_full_cdp_access --dangerously-bypass-approvals-and-sandbox -- a',
     );
     const resumed = await runner.run(
       { prompt: 'b', resumeSessionId: 't-abc', fullAccess: true },
       () => {},
     ).promise;
     expect(resumed.stderrTail).toContain(
-      'argv:exec resume --json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox t-abc -- b',
+      'argv:exec resume --json --skip-git-repo-check --disable browser_use --disable browser_use_external --disable browser_use_full_cdp_access --dangerously-bypass-approvals-and-sandbox t-abc -- b',
     );
   });
 });
