@@ -44,7 +44,8 @@ deleted; failures are retained for diagnosis. `--prefix-from-env` additionally
 tests ordinary `npm install -g` with the destination configured via environment
 instead of a command-line prefix (without touching the user's installation).
 
-The existing CI `npm test` runs the remote SHA installation gate on GitHub Actions.
+The existing CI `npm test` runs the remote SHA installation gate on GitHub Actions
+using the runner's Node 20/npm 10 and isolated Node 22.23.2/npm 11.6.0 tooling.
 Locally opt in with `DISCLAUDE_TEST_GIT_INSTALL=1 npx vitest run tests/git-release-install.test.ts`.
 Source fingerprint verification runs even without the network gate. Runtime
 changes require regenerating the candidate; a passing stale candidate is rejected.

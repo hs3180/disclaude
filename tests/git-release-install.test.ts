@@ -31,7 +31,20 @@ describe('Git distribution release gate (#4922)', () => {
         { cwd: resolve('.'), encoding: 'utf8', timeout: 240_000 }
       );
       expect(output).toContain('PACKAGE_INSTALL_OK 0.5.1');
+      if (process.env.GITHUB_ACTIONS === 'true') {
+        const node22Output = execFileSync(
+          process.execPath,
+          [
+            'scripts/test-git-node22.mjs',
+            `github:hs3180/disclaude#${candidate.commit}`,
+            candidate.sourceFingerprint,
+          ],
+          { cwd: resolve('.'), encoding: 'utf8', timeout: 480_000 }
+        );
+        expect(node22Output).toContain('Runtime: v22.23.2; npm: 11.6.0');
+        expect(node22Output).toContain('PACKAGE_INSTALL_OK 0.5.1');
+      }
     },
-    250_000
+    750_000
   );
 });
