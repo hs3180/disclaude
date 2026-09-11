@@ -38,6 +38,7 @@ import {
   buildOutputFormatGuidance,
   buildTaskRecordGuidance,
   buildLocationAwarenessGuidance,
+  buildRuntimeEnvironmentGuidance,
 } from './guidance.js';
 
 /**
@@ -185,7 +186,7 @@ export class MessageBuilder {
     if (stableToolsSection) {
       sections.push({ kind: 'tools', stability: 'stable', content: `\n---\n\n## Tools\n${stableToolsSection}` });
     }
-    for (const guidance of [nextStepGuidance, outputFormatGuidance, taskRecordGuidance, locationAwarenessGuidance]) {
+    for (const guidance of [nextStepGuidance, outputFormatGuidance, taskRecordGuidance, locationAwarenessGuidance, buildRuntimeEnvironmentGuidance()]) {
       if (guidance) {
         sections.push({ kind: 'guidance', stability: 'stable', content: guidance });
       }
