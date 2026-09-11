@@ -36,6 +36,61 @@ afterEach(() => {
 });
 
 describe('CodexAgentProvider app-server transport', () => {
+  it('reclaims tool children over 100 turns while resuming one thread', async () => {
+    const { provider, dir } = providerFixture('exit 0');
+    const binary = join(dir, 'bin', 'codex');
+    writeFileSync(binary, `#!${process.execPath}
+const fs = require('node:fs');
+const { spawn } = require('node:child_process');
+const home = process.env.CODEX_HOME;
+require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
+  const request = JSON.parse(line);
+  if (!request.id) return;
+  fs.appendFileSync(home + '/methods', request.method + '\\n');
+  let result = {};
+  if (request.method === 'thread/start' || request.method === 'thread/resume') {
+    result = { thread: { id: 'retained-thread' } };
+    if (request.method === 'thread/resume' && request.params.threadId !== 'retained-thread') process.exit(9);
+  }
+  if (request.method === 'turn/start') {
+    const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore' });
+    fs.appendFileSync(home + '/children', child.pid + '\\n');
+    result = { turn: { id: 'turn' } };
+  }
+  console.log(JSON.stringify({ id: request.id, result }));
+  if (request.method === 'turn/start') {
+    console.log(JSON.stringify({ method: 'item/completed', params: {threadId:'retained-thread',turnId:'turn',item:{id:'reply',type:'agentMessage',text:'context retained'}} }));
+    console.log(JSON.stringify({ method: 'turn/completed', params: {threadId:'retained-thread',turn:{id:'turn',status:'completed'}} }));
+  }
+});
+`);
+    const seen: number[] = [];
+    const input = (async function* () {
+      for (let turn = 0; turn < 100; turn++) {
+        if (turn) {
+          const pids = readFileSync(join(dir, 'home', 'children'), 'utf8').trim().split('\n').map(Number);
+          for (const pid of pids) {expect(() => process.kill(pid, 0)).toThrow();}
+          seen.push(pids.length);
+        }
+        yield { role: 'user', content: `turn ${turn}` } as UserInput;
+      }
+    })();
+    const stream = provider.queryStream(input, { sessionKey: 'stress', settingSources: [] } as AgentQueryOptions);
+    const messages: AgentMessage[] = [];
+    try {
+      for await (const message of stream.iterator) {messages.push(message);}
+      expect(messages.filter(message => message.type === 'text')).toHaveLength(100);
+      expect(messages.filter(message => message.type === 'error')).toEqual([]);
+      expect(seen).toHaveLength(99);
+      const methods = readFileSync(join(dir, 'home', 'methods'), 'utf8').trim().split('\n');
+      expect(methods.filter(method => method === 'thread/start')).toHaveLength(1);
+      expect(methods.filter(method => method === 'thread/resume')).toHaveLength(99);
+      for (const pid of readFileSync(join(dir, 'home', 'children'), 'utf8').trim().split('\n').map(Number)) {
+        expect(() => process.kill(pid, 0)).toThrow();
+      }
+    } finally {provider.dispose();}
+  }, 60000);
+
   it('maps the real notification path and awaits steer acknowledgement', async () => {
     const { provider } = providerFixture(`
 read initialize; echo '{"id":1,"result":{}}'
@@ -46,10 +101,11 @@ read steer; echo '{"id":4,"result":{"turnId":"turn-1"}}'
 echo '{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","item":{"id":"item-1","type":"agentMessage","text":"hello"}}}'
 echo '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed"}}}'
 `);
-    let releaseInput: () => void = () => {};
+    let releaseInput!: () => void;
+    const inputReleased = new Promise<void>(resolve => {releaseInput = resolve;});
     const result = provider.queryStream((async function* () {
       yield { role: 'user', content: 'first' } as UserInput;
-      await new Promise<void>((resolve) => { releaseInput = resolve; });
+      await inputReleased;
     })(), {
       sessionKey: 'chat-1',
       cwd: '/tmp/project',
@@ -76,12 +132,24 @@ echo '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"t
 
   it('waits for cancellation completion before an immediate same-thread follow-up', async () => {
     const { provider } = providerFixture(`
+if [ -f "$CODEX_HOME/first-finished" ]; then
+  read initialize; echo '{"id":1,"result":{}}'
+  read initialized
+  read resume; printf '%s' "$resume" > "$CODEX_HOME/resume"
+  echo '{"id":2,"result":{"thread":{"id":"thread-1"}}}'
+  read start; echo '{"id":3,"result":{"turn":{"id":"turn-2"}}}'
+  echo '{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-2","item":{"id":"reply","type":"agentMessage","text":"resumed"}}}'
+  echo '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-2","status":"completed"}}}'
+  exit 0
+fi
+
 read initialize; echo '{"id":1,"result":{}}'
 read initialized
 read thread; echo '{"id":2,"result":{"thread":{"id":"thread-1"}}}'
 read start; echo '{"id":3,"result":{"turn":{"id":"turn-1"}}}'
 read interrupt; echo '{"id":4,"error":{"code":-32600,"message":"no active turn to interrupt"}}'
 /bin/sleep 0.05
+/usr/bin/touch "$CODEX_HOME/first-finished"
 echo '{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","item":{"id":"late","type":"agentMessage","text":"stale output"}}}'
 echo '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"interrupted"}}}'
 read next; echo '{"id":5,"result":{"turn":{"id":"turn-2"}}}'

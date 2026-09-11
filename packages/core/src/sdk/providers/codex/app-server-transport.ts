@@ -126,12 +126,22 @@ export class CodexAppServerTransport {
       if (signalled) {
         // Parent exit is not proof that its children exited. Await the grace
         // period before escalating the owned group, even after parent close.
-        await new Promise(resolve => setTimeout(resolve, this.options.killGraceMs ?? 1_000));
-        this.signalOwnedGroup('SIGKILL');
+        const deadline = Date.now() + (this.options.killGraceMs ?? 1_000);
+        while (this.groupAlive() && Date.now() < deadline) {
+          await new Promise(resolve => setTimeout(resolve, 25));
+        }
+        if (this.groupAlive()) {this.signalOwnedGroup('SIGKILL');}
       }
       return this.exitPromise;
     })();
     return this.cleanup;
+  }
+
+  private groupAlive(): boolean {
+    if (!this.child.pid) {return false;}
+    if (process.platform === 'win32') {return this.child.exitCode === null && this.child.signalCode === null;}
+    try {process.kill(-this.child.pid, 0); return true;}
+    catch (error) {return (error as NodeJS.ErrnoException).code !== 'ESRCH';}
   }
 
   private signalOwnedGroup(signal: NodeJS.Signals): boolean {
