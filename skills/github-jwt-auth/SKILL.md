@@ -161,32 +161,47 @@ const jwt = sigInput + "." + sign.sign(privateKey, "base64url");
   });
   if (!tokenResp.ok) {
     console.error("ERROR: Cannot create token: " + tokenResp.status);
-    const body = await tokenResp.text();
-    console.error(body);
     process.exit(1);
   }
   const tokenData = await tokenResp.json();
 
-  // Step D: Write to runtime env
-  let content = "";
-  try { content = fs.readFileSync(RUNTIME_ENV, "utf-8"); } catch {}
-  const keepLines = content.split("\n").filter((l) => {
-    return !l.startsWith("GH_TOKEN=")
-      && !l.startsWith("GH_TOKEN_EXPIRES_AT=")
-      && !l.startsWith("GH_INSTALLATION_ID=")
-      && !l.startsWith("GH_REPO=");
-  });
-  keepLines.push("GH_TOKEN=" + tokenData.token);
-  keepLines.push("GH_TOKEN_EXPIRES_AT=" + tokenData.expires_at);
-  keepLines.push("GH_INSTALLATION_ID=" + installId);
-  if (repoFullName) keepLines.push("GH_REPO=" + repoFullName);
-  fs.writeFileSync(RUNTIME_ENV, keepLines.filter(Boolean).join("\n") + "\n");
+  // Step D: Atomically persist only the derived, expiring credential.
+  const expires = Date.parse(tokenData.expires_at);
+  const fields = { GH_TOKEN: tokenData.token, GH_TOKEN_EXPIRES_AT: tokenData.expires_at,
+    GH_INSTALLATION_ID: String(installId), ...(repoFullName ? { GH_REPO: repoFullName } : {}) };
+  if (!Number.isFinite(expires) || expires <= Date.now() || expires > Date.now() + 3600000 ||
+      Object.values(fields).some(value => typeof value !== "string" || /[\r\n\0]/.test(value))) {
+    throw new Error("Invalid or expired installation credential");
+  }
+  // Refuse symlinks, hard links and special files; never follow a target link.
+  let existing;
+  try { existing = fs.openSync(RUNTIME_ENV, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK); }
+  catch (error) { if (error.code !== "ENOENT") throw new Error("Unsafe runtime credential target"); }
+  if (existing !== undefined) {
+    try {
+      const stat = fs.fstatSync(existing);
+      if (!stat.isFile() || stat.nlink !== 1) throw new Error("Unsafe runtime credential target");
+      fs.fchmodSync(existing, 0o600);
+    } finally { fs.closeSync(existing); }
+  }
+  const temporary = RUNTIME_ENV + "." + crypto.randomUUID() + ".tmp";
+  let descriptor;
+  try {
+    descriptor = fs.openSync(temporary, "wx", 0o600);
+    fs.writeFileSync(descriptor, Object.entries(fields).map(([key, value]) => key + "=" + value).join("\n") + "\n");
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor); descriptor = undefined;
+    fs.renameSync(temporary, RUNTIME_ENV);
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+    try { fs.unlinkSync(temporary); } catch (error) { if (error.code !== "ENOENT") throw error; }
+  }
 
   console.log("OK");
   console.log("  Expires: " + tokenData.expires_at);
   console.log("  Installation ID: " + installId);
   console.log("  Repo: " + (repoFullName || "unknown"));
-})();
+})().catch(() => { console.error("Authentication failed; no credential value is included in this diagnostic."); process.exitCode = 1; });
 SCRIPT
 
 node "$TMP_SCRIPT"
@@ -200,9 +215,18 @@ rm -f "$TMP_SCRIPT"
 # NOTE: an installation access token is NOT a user token — GET /user returns 403
 # ("Resource not accessible by integration"). Verify against the repositories the
 # installation can actually access instead.
-export $(grep '^GH_TOKEN=' .runtime-env | head -1)
-curl -s -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/installation/repositories \
-  | python3 -c "import json,sys; d=json.load(sys.stdin); print('OK — installation can see', d.get('total_count','?'), 'repo(s)')"
+node <<'SCRIPT'
+const fs = require("node:fs");
+const values = Object.fromEntries(fs.readFileSync(".runtime-env", "utf8").trim().split("\n").map(line => {
+  const index = line.indexOf("="); return [line.slice(0, index), line.slice(index + 1)];
+}));
+if (Date.parse(values.GH_TOKEN_EXPIRES_AT) <= Date.now()) throw new Error("Credential expired; refresh first");
+fetch("https://api.github.com/installation/repositories", {
+  headers: { Authorization: "Bearer " + values.GH_TOKEN, Accept: "application/vnd.github+json" },
+  redirect: "error", signal: AbortSignal.timeout(10000)
+}).then(response => console.log("Permission check HTTP status:", response.status))
+  .catch(() => { console.error("Permission check failed"); process.exitCode = 1; });
+SCRIPT
 ```
 
 ## Token Refresh
@@ -231,3 +255,7 @@ GitHub App Installation Tokens expire after **1 hour**. When other skills fail w
 - Tokens are written to `.runtime-env` which should be in `.gitignore`
 - Token scope is limited to the GitHub App's configured permissions
 - Tokens automatically expire after 1 hour
+
+### Responsibility boundary
+
+The agent selects the authentication flow, intended consumer and requested repository/permissions from the authorized task. Keep those policies in the skill, rather than in Feishu or the channel runtime. Disclaude supplies identity-bound handoff, expiry, safe persistence of derived credentials and redaction. Never print the original private input, private key, JWT or token into chat, tool output or ordinary diagnostics. A 403 is a permission failure, not evidence that Secret Scanning has no alerts.
