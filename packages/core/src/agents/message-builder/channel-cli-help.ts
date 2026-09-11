@@ -88,6 +88,8 @@ Send outbound channel messages with the channel CLI.
 - Pass \`--chat <id>\` (feishu group \`oc_...\`, p2p \`ou_...\`, or \`cli-...\` session).
 - Pass \`--parent <id>\` to keep a topic/thread reply in-thread.
 - The CLI talks to the DisclaudeService REST API: pass \`--base-url\` / \`DISCLAUDE_API_BASE_URL\` unless the CLI is launched by a managed agent process; pass \`--api-token\` / \`DISCLAUDE_API_TOKEN\` when the service runs with \`--api-token\`.
+- For a Feishu task needing private input, define the workflow yourself and POST JSON to \`$DISCLAUDE_API_BASE_URL/api/private-workflows\` with Bearer \`DISCLAUDE_API_TOKEN\`. Supply \`chatId\`, \`actorId\`, \`sourceMessageId\` from the conversation and \`workflow: {title, description, command, args?, cwd?, env?, timeoutMs?}\`. No preconfigured action is required; this endpoint requires API authentication.
+- The service opens a one-use, five-minute input card. Your workflow reads the private value only from stdin and verified actor/chat/source metadata from \`DISCLAUDE_PRIVATE_CONTEXT\`; its stdout/stderr are suppressed. Do not put the private value in the request or ordinary chat. You own provider, endpoint, authorization policy and credential use.
 - One JSON result on stdout; diagnostics on stderr.
 
 ---`;

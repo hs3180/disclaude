@@ -1,40 +1,39 @@
-# Harness-installed private actions
+# Agent-defined private workflows
 
-Configure one installed consumer in `disclaude.config.yaml`. The Feishu transport has no service-specific authentication logic. The consumer decides whether the bound actor may perform the operation, which service to contact and whether to exchange a credential.
+The agent specifies a workflow at task time. There is no `feishu.privateAction` configuration, preset consumer catalog or service restart to register a workflow. Disclaude supplies the separate input path and binds each submission to that request's actor, chat, source message, card and one-use nonce.
 
-```yaml
-feishu:
-  privateAction:
-    id: account-check
-    title: Check account access
-    description: Send this value only to the installed account-check consumer
-    command: /absolute/path/to/node
-    args: [/absolute/path/to/account-check.mjs]
-    timeoutMs: 30000
-    env:
-      AUTH_CHECK_URL: https://your-service.example/account
-      PERMITTED_ACTOR: your-feishu-open-id
+## Request a workflow
+
+The service must run with API authentication (`--api-token`). Managed agents receive `DISCLAUDE_API_BASE_URL` and `DISCLAUDE_API_TOKEN`. This credential authorizes the agent to select executable code running as the service user; keep it within the trusted agent environment. An unconfigured token disables this endpoint, and missing/wrong tokens are rejected. This is the existing service API trust boundary, not a new per-agent permission or delegation system.
+
+The agent writes or selects the workflow implementation, then POSTs to `/api/private-workflows` with `Authorization: Bearer <service API token>` and this JSON shape:
+
+```json
+{
+  "chatId": "oc_current_conversation",
+  "actorId": "ou_initiating_user",
+  "sourceMessageId": "om_source_message",
+  "workflow": {
+    "title": "Complete this task's authentication",
+    "description": "Use the input only for the workflow described to the user",
+    "command": "/absolute/path/to/node",
+    "args": ["/workspace/task-workflow.mjs"],
+    "cwd": "/workspace",
+    "timeoutMs": 30000
+  }
+}
 ```
 
-In a direct conversation, `/private account-check` opens a password form. disclaude binds the form to its actor, chat, source message, returned card and one-use nonce. Pending forms expire after five minutes and are revoked by reissue, shutdown or restart. Never put the value in the command message itself.
+These are task-selected values, not host presets. `env` is an optional string map; when omitted, the process inherits the service environment. Provide the current conversation's chat, initiator and source IDs; the eventual Feishu callback must match them. The authenticated agent chooses the workflow; it cannot be replaced by fields submitted in the form callback. The description is public, so never put the private input there or anywhere in this request.
 
-The installed process reads the exact value from stdin. Its stdout/stderr are suppressed; exit zero returns success, other exits or timeout return failure. Original values are never written to `.runtime-env` or passed in argv/environment. `DISCLAUDE_PRIVATE_CONTEXT` contains verified action/actor/chat/source/correlation metadata, which the consumer uses for its own authorization checks. The callback cannot replace this context or executable definition.
+A successful response is `{ "ok": true, "actionId": "..." }`: the card was delivered, not that the workflow has completed. The input card is opened immediately; the user does not need to issue `/private` or select a configured action.
 
-Example consumer policy (installed code, not a disclaude rule):
+## Consume the private input
 
-```js
-const context = JSON.parse(process.env.DISCLAUDE_PRIVATE_CONTEXT);
-if (context.actor !== process.env.PERMITTED_ACTOR) process.exit(1);
-let value = '';
-for await (const chunk of process.stdin) value += chunk;
-const response = await fetch(process.env.AUTH_CHECK_URL, {
-  headers: { Authorization: `Bearer ${value}` }, redirect: 'error',
-  signal: AbortSignal.timeout(10000),
-});
-await response.body?.cancel();
-process.exitCode = response.ok ? 0 : 1;
-```
+The agent-selected process reads the original input from stdin and verified `action`, `actor`, `chat`, `source` and `correlationId` metadata from `DISCLAUDE_PRIVATE_CONTEXT`. The agent chooses how to implement authorization, provider exchanges, endpoint selection and credential lifecycle. A workflow can perform multiple steps in its own process. Disclaude does not inspect or impose those policies.
 
-Choose a consumer that completes its work before returning. The host terminates the owned POSIX group on completion or timeout; this is resource ownership, not an OS sandbox. Configure filesystem/network isolation separately when the installed consumer itself is untrusted. The agent or external skill decides how to use or exchange the received value. This channel does not sanitize arbitrary later consumer activity or own its credential lifecycle.
+The process runs only after a matching submission. Its stdout/stderr are suppressed; exit zero returns a fixed success message, other exits or timeout a fixed failure. The host does not copy the original value to prompts/history, argv, environment or `.runtime-env`. If the workflow deliberately persists or uses it elsewhere, that lifecycle belongs to the agent.
 
-This channel has no global logger, sensitivity registry or harness-output filter dependency. Consumers can also be supplied programmatically through `FeishuChannelConfig.privateInput`; configuration does not override an explicitly injected consumer.
+Forms expire after five minutes. Reissuing for the same actor/chat, channel shutdown or restart revokes pending requests. Another actor or chat cannot use the binding, and replay cannot rerun the workflow. Different actors/chats have independent requests. Request definitions live only in memory. Expiry or revocation of a pending form does not roll back a workflow that has already received input; the workflow must finish within its execution timeout. Process-group cleanup is resource management, not an OS sandbox.
+
+Programmatic injection through `FeishuChannelConfig.privateInput` remains supported for existing callers. It is optional and is not the mechanism agents use to define workflows. #4973's broader task-grant contract remains separate.

@@ -133,6 +133,37 @@ describe('HttpApiServer', () => {
     (server as unknown as { stopSseHeartbeat: () => void }).stopSseHeartbeat();
   });
 
+  describe('POST /api/private-workflows', () => {
+    const request = { chatId: 'chat', actorId: 'actor', sourceMessageId: 'source', workflow: {
+      title: 'Task action', description: 'Agent-selected workflow', command: '/agent/consumer', args: ['task'],
+    } };
+    it('requires configured authentication and delegates a runtime workflow without config registration', async () => {
+      const handler = vi.fn().mockResolvedValue({ actionId: 'one-use' });
+      server.setPrivateWorkflowHandler(handler);
+      const options = { method: 'POST', url: '/api/private-workflows', body: JSON.stringify(request) };
+      expect((await dispatch(server, options)).statusCode).toBe(503);
+      server = new HttpApiServer({ port: 0, apiToken: 'agent-token' });
+      server.setPrivateWorkflowHandler(handler);
+      expect((await dispatch(server, options)).statusCode).toBe(401);
+      expect(handler).not.toHaveBeenCalled();
+      const response = await dispatch(server, { ...options, headers: { authorization: 'Bearer agent-token' } });
+      expect(response.statusCode).toBe(200);
+      expect(handler).toHaveBeenCalledExactlyOnceWith(request);
+      expect(JSON.parse(response.body)).toEqual({ ok: true, actionId: 'one-use' });
+    });
+    it('rejects malformed definitions and never reflects consumer failures', async () => {
+      server = new HttpApiServer({ port: 0, apiToken: 'agent-token' });
+      const handler = vi.fn().mockRejectedValue(new Error('synthetic-sensitive-error'));
+      server.setPrivateWorkflowHandler(handler);
+      const options = { method: 'POST', url: '/api/private-workflows', headers: { authorization: 'Bearer agent-token' } };
+      expect((await dispatch(server, { ...options, body: JSON.stringify({ ...request, workflow: {} }) })).statusCode).toBe(400);
+      expect(handler).not.toHaveBeenCalled();
+      const response = await dispatch(server, { ...options, body: JSON.stringify(request) });
+      expect(response.statusCode).toBe(500);
+      expect(response.body).not.toContain('synthetic-sensitive-error');
+    });
+  });
+
   describe('GET /api/status', () => {
     it('should return status ok', async () => {
       const { statusCode, body } = await dispatch(server, { method: 'GET', url: '/api/status' });
