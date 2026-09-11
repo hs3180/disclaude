@@ -1,5 +1,5 @@
 # Maintainer: copy to .github/workflows/package-install.yml to enable.
-# Existing CI npm test already runs the remote gate on Linux / Node 20.
+# Existing CI npm test already runs the checkout packaging test on Linux.
 name: Git package installation
 
 on:
@@ -25,8 +25,7 @@ jobs:
           node-version: ${{ matrix.node }}
       - run: npm install -g npm@${{ matrix.npm }}
       - run: npm ci --include=dev
-      - name: Verify source and install remote Git candidate
+      - name: Build and install checkout distribution
         run: |
           npm run build
-          node scripts/verify-git-candidate.mjs
           npx vitest run tests/git-release-install.test.ts
