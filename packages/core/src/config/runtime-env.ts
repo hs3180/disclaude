@@ -19,6 +19,7 @@
 import fs from 'fs';
 import path from 'path';
 import { createLogger } from '../utils/logger.js';
+import { readRuntimeFile, writeRuntimeFile } from './runtime-env-file.js';
 
 const logger = createLogger('RuntimeEnv');
 
@@ -50,11 +51,11 @@ function quoteValue(val: string): string {
  * Load runtime env vars from workspace directory.
  * Returns empty object if file doesn't exist or is unreadable.
  */
-export function loadRuntimeEnv(workspaceDir: string): Record<string, string> {
+export function loadRuntimeEnv(workspaceDir: string, strict = false): Record<string, string> {
   const filePath = path.join(workspaceDir, FILENAME);
 
   try {
-    const content = fs.readFileSync(filePath, 'utf-8');
+    const content = readRuntimeFile(filePath);
     const env: Record<string, string> = {};
 
     for (const line of content.split('\n')) {
@@ -71,6 +72,7 @@ export function loadRuntimeEnv(workspaceDir: string): Record<string, string> {
     }
     return env;
   } catch {
+    if (strict) {throw new Error('Cannot safely read runtime environment file');}
     return {};
   }
 }
@@ -82,11 +84,11 @@ export function loadRuntimeEnv(workspaceDir: string): Record<string, string> {
  */
 export function setRuntimeEnv(workspaceDir: string, key: string, value: string): void {
   const filePath = path.join(workspaceDir, FILENAME);
-  const existing = loadRuntimeEnv(workspaceDir);
+  const existing = loadRuntimeEnv(workspaceDir, true);
   existing[key] = value;
 
   const lines = Object.entries(existing).map(([k, v]) => `${k}=${quoteValue(v)}`);
-  fs.writeFileSync(filePath, `${lines.join('\n')}\n`, 'utf-8');
+  writeRuntimeFile(filePath, `${lines.join('\n')}\n`);
 
   logger.debug({ key }, 'Set runtime env var');
 }
@@ -95,7 +97,7 @@ export function setRuntimeEnv(workspaceDir: string, key: string, value: string):
  * Delete a runtime env var from the workspace file.
  */
 export function deleteRuntimeEnv(workspaceDir: string, key: string): void {
-  const existing = loadRuntimeEnv(workspaceDir);
+  const existing = loadRuntimeEnv(workspaceDir, true);
   if (!(key in existing)) { return; }
 
   delete existing[key];
@@ -105,7 +107,7 @@ export function deleteRuntimeEnv(workspaceDir: string, key: string): void {
     fs.rmSync(filePath, { force: true });
   } else {
     const lines = Object.entries(existing).map(([k, v]) => `${k}=${quoteValue(v)}`);
-    fs.writeFileSync(filePath, `${lines.join('\n')}\n`, 'utf-8');
+    writeRuntimeFile(filePath, `${lines.join('\n')}\n`);
   }
 
   logger.debug({ key }, 'Deleted runtime env var');
