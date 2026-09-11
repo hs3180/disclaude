@@ -289,9 +289,14 @@ export class ChatSessionPool {
       return { ok: false, error: 'The current chat is busy; wait for the response or use /stop before switching presets' };
     }
 
-    const info = this.options.validatePresetBackend
-      ? this.options.validatePresetBackend(resolved.preset.agentBackend)
-      : getProvider(resolved.preset.agentBackend).getInfo();
+    let info: { available: boolean; unavailableReason?: string };
+    try {
+      info = this.options.validatePresetBackend
+        ? this.options.validatePresetBackend(resolved.preset.agentBackend)
+        : getProvider(resolved.preset.agentBackend).getInfo();
+    } catch {
+      return { ok: false, error: `Could not validate agent preset "${resolved.name}". Check backend configuration and availability; the current session is unchanged.` };
+    }
     if (!info.available) {
       return {
         ok: false,
