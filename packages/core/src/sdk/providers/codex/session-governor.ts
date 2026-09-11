@@ -10,6 +10,8 @@
  *   NEW session arrives at cap, the IDLEST session is evicted (LRU by last
  *   activity — aligned with ChatAgent's idle cleanup) rather than rejecting
  *   the newcomer: active work always wins over idle sessions.
+ *   App-server admissions pin running/queued turns and wait FIFO when all
+ *   slots are busy. Only unpinned sessions can be selected as LRU victims.
  * - **Run cap** (`agent.codex.maxConcurrentRuns`, default 2): at most N
  *   `codex exec` children executing at once. Excess turns WAIT in a FIFO
  *   queue (they are per-chatId serial anyway; the queue only interleaves
@@ -33,12 +35,19 @@ export const DEFAULT_MAX_CONCURRENT_RUNS = 2;
 
 /** A registered session — the queryStream bridge registers itself. */
 interface ActiveSession {
+  busy: boolean;
   /** Unique registration id — unregister only removes ITS OWN entry (a chat's old stream may tear down after its replacement registered). */
   regId: number;
   /** Monotonic-ish activity clock (caller supplies Date.now() touches). */
   lastActivityAt: number;
   /** Abort the victim's stream (eviction) — idempotent. */
   evict: () => void;
+}
+
+export interface SessionRegistration {
+  evictedKey?: string;
+  setBusy(busy: boolean): void;
+  unregister(): void;
 }
 
 export interface CodexGovernanceStats {
@@ -69,6 +78,8 @@ export class CodexSessionGovernor {
   private runningRuns = 0;
   private evictedSessions = 0;
   private nextRegId = 1;
+  private readonly sessionWaiters: Array<() => boolean> = [];
+  private admitting = false;
   /** FIFO of waiters: resolve + enqueue position (for the "N ahead" notice). */
   private readonly runWaiters: Array<{
     resolve: (lease: RunLease) => void;
@@ -95,8 +106,8 @@ export class CodexSessionGovernor {
    */
   registerSession(
     sessionKey: string,
-    hooks: { evict: () => void },
-  ): { evictedKey?: string; unregister(): void } {
+    hooks: { evict: () => void; busy?: boolean },
+  ): SessionRegistration {
     let evictedKey: string | undefined;
     if (this.sessions.has(sessionKey)) {
       // Re-registration (stream restart for a known chat) — replace in place.
@@ -106,24 +117,66 @@ export class CodexSessionGovernor {
       // at runtime below the current session count (setLimits does not
       // proactively evict; the cap re-engages here).
       while (this.sessions.size >= this.maxActiveSessions) {
-        evictedKey = this.evictIdlest() ?? evictedKey;
+        const victim = this.evictIdlest();
+        if (!victim) {throw new Error('Codex session capacity is busy; use acquireSession');}
+        evictedKey = victim;
       }
     }
     const regId = this.nextRegId++;
     this.sessions.set(sessionKey, {
       regId,
+      busy: hooks.busy ?? false,
       lastActivityAt: this.now(),
       evict: hooks.evict,
     });
     return {
       ...(evictedKey ? { evictedKey } : {}),
+      setBusy: (busy): void => {
+        const current = this.sessions.get(sessionKey);
+        if (current?.regId !== regId) {return;}
+        current.busy = busy;
+        current.lastActivityAt = this.now();
+        if (!busy) {this.pumpSessions();}
+      },
       unregister: (): void => {
         const current = this.sessions.get(sessionKey);
         if (current?.regId === regId) {
           this.sessions.delete(sessionKey);
+          this.pumpSessions();
         }
       },
     };
+  }
+
+  /** Issue #4987: FIFO admission; abort removes the waiter without taking a slot. */
+  acquireSession(sessionKey: string, hooks: { evict: () => void }, signal: AbortSignal): Promise<SessionRegistration> {
+    return new Promise((resolve, reject) => {
+      const abort = (): void => {
+        const index = this.sessionWaiters.indexOf(admit);
+        if (index >= 0) {this.sessionWaiters.splice(index, 1);}
+        reject(new Error('Codex session admission cancelled'));
+        this.pumpSessions();
+      };
+      const admit = (): boolean => {
+        const busyCount = [...this.sessions.values()].filter(session => session.busy).length;
+        if (!this.sessions.has(sessionKey) && busyCount >= this.maxActiveSessions) {return false;}
+        signal.removeEventListener('abort', abort);
+        resolve(this.registerSession(sessionKey, { ...hooks, busy: true }));
+        return true;
+      };
+      if (signal.aborted) {abort(); return;}
+      signal.addEventListener('abort', abort, { once: true });
+      this.sessionWaiters.push(admit);
+      this.pumpSessions();
+    });
+  }
+
+  private pumpSessions(): void {
+    if (this.admitting) {return;}
+    this.admitting = true;
+    try {
+      while (this.sessionWaiters[0]?.()) {this.sessionWaiters.shift();}
+    } finally {this.admitting = false;}
   }
 
   /** Mark a session active (called at every turn boundary). */
@@ -147,7 +200,9 @@ export class CodexSessionGovernor {
    * @returns true when a live registration was dropped, false when unknown.
    */
   forgetSession(sessionKey: string): boolean {
-    return this.sessions.delete(sessionKey);
+    const removed = this.sessions.delete(sessionKey);
+    this.pumpSessions();
+    return removed;
   }
 
   /** Evict the idlest session (lowest activity timestamp). */
@@ -155,6 +210,7 @@ export class CodexSessionGovernor {
     let idlestKey: string | undefined;
     let idlestAt = Infinity;
     for (const [key, session] of this.sessions) {
+      if (session.busy) {continue;}
       // `<` (not `<=`) keeps the OLDEST registration on ties: a session that
       // has been idle equally long but longer-registered goes first.
       if (session.lastActivityAt < idlestAt) {
@@ -253,5 +309,6 @@ export class CodexSessionGovernor {
     if (limits.maxConcurrentRuns !== undefined) {
       this.maxConcurrentRuns = limits.maxConcurrentRuns;
     }
+    this.pumpSessions();
   }
 }

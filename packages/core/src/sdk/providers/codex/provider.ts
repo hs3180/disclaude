@@ -67,7 +67,7 @@ import {
   type CodexExecRunResult,
 } from './codex-runner.js';
 import { resolveCodexSandboxPolicy, type CodexSandboxLevel } from './sandbox-policy.js';
-import { CodexSessionGovernor } from './session-governor.js';
+import { CodexSessionGovernor, type SessionRegistration } from './session-governor.js';
 import { CodexAppServerLifecycle } from './app-server-lifecycle.js';
 import {
   adaptCodexEvent,
@@ -1073,6 +1073,9 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     let threadId = this.appServerThreadIds.get(sessionKey);
     let done = false;
     let stopped = false;
+    let wasEvicted = false;
+    const admissionAbort = new AbortController();
+    let registration: SessionRegistration | undefined;
     let stopInput!: () => void;
     const stopSignal = new Promise<void>((resolveStop) => { stopInput = resolveStop; });
     let activeTurnId: string | undefined;
@@ -1090,14 +1093,6 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     let interruptFlight: Promise<void> | undefined;
     const earlyEvents: Array<{ method: string; params: unknown }> = [];
     const deliveredItems = new Set<string>();
-    const registration = this.governor.registerSession(sessionKey, {
-      evict: () => {
-        stopped = true;
-        stopInput();
-        void lifecycle?.interrupt(sessionKey).catch(() => {});
-        turnDone?.(new Error('codex app-server session evicted'));
-      },
-    });
     const wake = (): void => {
       for (const resolveWake of wakeups.splice(0)) {
         resolveWake();
@@ -1172,6 +1167,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     const stopHandle = (reason: string): void => {
       if (stopped || done) {return;}
       stopped = true;
+      admissionAbort.abort();
       stopInput();
       void input.return?.(undefined);
       interruptFlight = lifecycle?.interrupt(sessionKey).catch((error: unknown) => {
@@ -1192,6 +1188,17 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             stopSignal.then(() => ({ done: true, value: undefined } as IteratorResult<UserInput>)),
           ]);
           if (next.done || stopped) {break;}
+          if (!registration) {
+            registration = await this.governor.acquireSession(sessionKey, {
+              evict: () => {
+                wasEvicted = true;
+                stopHandle('codex app-server session evicted');
+              },
+            }, admissionAbort.signal);
+          }
+          // Pin before waiting for a run slot, through subprocess teardown.
+          registration.setBusy(true);
+          if (stopped) {break;}
           const acquisition = this.governor.acquireRun();
           const lease = await Promise.race([acquisition, stopSignal.then(() => undefined)]);
           if (!lease) {
@@ -1240,18 +1247,25 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             lifecycle = undefined;
             if (stallTimer) {clearTimeout(stallTimer);}
             lease.release();
+            registration.setBusy(false);
           }
         }
       } catch (error) {
-        push({
-          type: 'error',
-          content: error instanceof Error ? error.message : String(error),
-          role: 'system',
-        });
+        if (!stopped) {
+          push({
+            type: 'error',
+            content: error instanceof Error ? error.message : String(error),
+            role: 'system',
+          });
+        }
       } finally {
         await interruptFlight;
         if (stallTimer) {clearTimeout(stallTimer);}
-        registration.unregister();
+        registration?.unregister();
+        if (wasEvicted) {
+          // Issue #4987: ChatAgent must end idle eviction without reconnecting.
+          push({ type: 'result', content: '', role: 'system', metadata: { terminatedReason: 'evicted' } });
+        }
         if (this.appServerStops.get(sessionKey) === stopSession) {this.appServerStops.delete(sessionKey);}
         if (threadId && this.appServerRoutes.get(threadId) === onNotification) {
           this.appServerRoutes.delete(threadId);
