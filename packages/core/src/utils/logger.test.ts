@@ -18,6 +18,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
+import { spawnSync } from 'node:child_process';
 import {
   initLogger,
   createLogger,
@@ -695,12 +696,26 @@ describe('logger', () => {
       }).not.toThrow();
     });
 
-    it('should not apply redaction in development by default', async () => {
-      process.env.NODE_ENV = 'development';
-      const logger = await initLogger({ fileLogging: false });
-
-      expect(logger).toBeDefined();
-      // Development mode skips redaction unless explicitly configured
+    it.each(['development', 'test', 'production'])('redacts real output for every initialization path in %s', environment => {
+      for (const entry of ['init', 'child', 'root']) {
+        const moduleUrl = new URL('../../dist/utils/logger.js', import.meta.url).href;
+        const script = `
+          const m = await import(${JSON.stringify(moduleUrl)});
+          const logger = ${entry === 'init' ? 'await m.initLogger({fileLogging:false})' : entry === 'child' ? 'm.createLogger("test", {token:"synthetic-credential",runId:"run-123"})' : 'm.getRootLogger()'};
+          logger.info({runId:"run-123",deep:[{api_key:"synthetic-credential"}],err:new Error("token=synthetic-credential",{cause:new Error("Bearer synthetic-credential")})}, "request password=%s", "synthetic-credential");
+          logger.warn("stderr: %s", "ghs_synthetic123456789");
+          logger.info({operation:"probe"}, "attempt %d", 2);
+          await m.closeLogger();
+        `;
+        const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+          env: { ...process.env, NODE_ENV: environment, LOG_TO_FILE: 'false' }, encoding: 'utf8', timeout: 10000,
+        });
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stdout).toContain('run-123');
+        expect(result.stdout).toContain('attempt 2');
+        expect(result.stdout).toContain('[REDACTED]');
+        expect(result.stdout + result.stderr).not.toMatch(/synthetic-credential|ghs_synthetic123456789/);
+      }
     });
   });
 
