@@ -12,7 +12,7 @@ export function redactSensitiveText(value: string): string {
     .replace(/\b(?:gh[pousr]_[a-z\d_]{6,}|github_pat_[a-z\d_]{6,}|sk-[a-z\d_-]{6,}|AKIA[A-Z\d]{16})\b/gi, MASK)
     .replace(/\b(Bearer|Basic)\s+[a-z\d+/_=.-]+/gi, `$1 ${MASK}`)
     .replace(/\b((?:set-cookie|cookie)\s*[:=]\s*)[^\r\n]+/gi, `$1${MASK}`)
-    .replace(/\b((?:[a-z\d]+[_-])*(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|passwd|secret|authorization)\s*[=:]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;&}\]]+)/gi, `$1${MASK}`);
+    .replace(/\b((?:[a-z\d]+[_-])*(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|passwd|secret|authorization)\s*[=:]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\[REDACTED\]|[^\s,;&}\]]+)/gi, `$1${MASK}`);
 }
 
 /** Clone before redacting; do not invoke getters/toJSON on diagnostic objects. */
@@ -36,4 +36,46 @@ export function redactSensitive(value: unknown, ancestors = new WeakSet<object>(
     }
     return result;
   } finally {ancestors.delete(value);}
+}
+
+/** Buffer complete diagnostic lines so a token split across chunks is never
+ * emitted in pieces. Oversized lines are discarded, not truncated before
+ * redaction. PEM bodies stay suppressed across lines and process EOF.
+ */
+export class RedactedDiagnosticStream {
+  private pending = '';
+  private oversized = false;
+  private privateKey = false;
+  constructor(private readonly emit: (text: string) => void, private readonly maxLineLength = 16_384) {}
+
+  write(chunk: string): void {
+    for (const part of chunk.match(/[^\n]*\n|[^\n]+$/g) ?? []) {
+      if (!this.oversized) {
+        if (this.pending.length + part.length > this.maxLineLength) {
+          this.pending = '';
+          this.oversized = true;
+        } else {this.pending += part;}
+      }
+      if (part.endsWith('\n')) {this.flushLine();}
+    }
+  }
+
+  finish(): void {
+    if (this.pending || this.oversized) {this.flushLine();}
+  }
+
+  private flushLine(): void {
+    const line = this.pending;
+    this.pending = '';
+    if (this.oversized) {
+      this.oversized = false;
+      this.emit('[Diagnostic line omitted: size limit]\n');
+      return;
+    }
+    if (/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----/.test(line)) {this.privateKey = true;}
+    if (this.privateKey) {
+      if (/-----END (?:[A-Z]+ )?PRIVATE KEY-----/.test(line)) {this.privateKey = false;}
+      this.emit('[REDACTED]\n');
+    } else {this.emit(redactSensitiveText(line));}
+  }
 }

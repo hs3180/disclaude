@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { redactSensitive, redactSensitiveText } from './redaction.js';
+import { redactSensitive, redactSensitiveText, RedactedDiagnosticStream } from './redaction.js';
 
 describe('credential value redaction', () => {
   it.each([
@@ -41,5 +41,35 @@ describe('credential value redaction', () => {
     Object.defineProperty(input, 'getter', { enumerable: true, get() { throw new Error('must not run'); } });
     expect(redactSensitive(input)).toMatchObject({ token: '[REDACTED]', self: '[Circular]', getter: '[Accessor]' });
     expect(redactSensitive([input, input])).toEqual([redactSensitive(input), redactSensitive(input)]);
+  });
+});
+
+describe('streaming diagnostic redaction', () => {
+  it('is idempotent through multiple sinks', () => {
+    for (const text of ['token=secret', 'Authorization: Bearer abcdef', '{"password":"secret"}', 'https://user:pass@example.test']) {
+      const once = redactSensitiveText(text);
+      expect(redactSensitiveText(once)).toBe(once);
+    }
+  });
+  it('redacts tokens at every chunk boundary before forwarding or tail truncation', () => {
+    const text = 'run-123 token=synthetic-credential\n';
+    for (let split = 1; split < text.length; split++) {
+      const output: string[] = [];
+      const stream = new RedactedDiagnosticStream(value => output.push(value));
+      stream.write(text.slice(0, split));
+      expect(output).toEqual([]);
+      stream.write(text.slice(split));
+      stream.finish();
+      expect(output.join('')).toBe('run-123 token=[REDACTED]\n');
+    }
+  });
+  it('drops oversized lines and suppresses multiline private keys through EOF', () => {
+    const output: string[] = [];
+    const stream = new RedactedDiagnosticStream(value => output.push(value), 64);
+    stream.write(`token=${'secret'.repeat(100)}`);
+    stream.write('tail-secret\nrun-ok\n-----BEGIN PRIVATE KEY-----\nraw-key');
+    stream.finish();
+    stream.finish();
+    expect(output.join('')).toBe('[Diagnostic line omitted: size limit]\nrun-ok\n[REDACTED]\n[REDACTED]\n');
   });
 });
