@@ -1289,6 +1289,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
   private createAppServerLifecycle(binary: string, sessionKey: string): CodexAppServerLifecycle {
     const lifecycle = new CodexAppServerLifecycle({
       binary,
+      sessionKey,
       env: this.env,
       requestTimeoutMs: this.execTimeoutMs && this.execTimeoutMs > 0 ? this.execTimeoutMs : undefined,
       onNotification: (method, params) => {

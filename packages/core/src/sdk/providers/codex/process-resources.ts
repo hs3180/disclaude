@@ -2,7 +2,6 @@ import { execFile } from 'node:child_process';
 import { basename } from 'node:path';
 import { promisify } from 'node:util';
 
-const execute = promisify(execFile);
 export interface ProcessGroupResources {
   groupId: number;
   available: boolean;
@@ -21,7 +20,7 @@ export async function readProcessGroupResources(groupId: number): Promise<Proces
     return { groupId, available: false };
   }
   try {
-    const { stdout } = await execute('ps', ['-axo', 'pid=,pgid=,rss=,etime=,comm='], {
+    const { stdout } = await promisify(execFile)('ps', ['-axo', 'pid=,pgid=,rss=,etime=,comm='], {
       timeout: 1000, maxBuffer: 2 * 1024 * 1024, encoding: 'utf8',
     });
     let processCount = 0;

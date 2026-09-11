@@ -2,6 +2,8 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface, type Interface as ReadlineInterface } from 'node:readline';
 import { createLogger } from '../../../utils/logger.js';
 
+import { readProcessGroupResources } from './process-resources.js';
+
 const logger = createLogger('CodexAppServerTransport');
 
 type JsonRpcId = number;
@@ -16,6 +18,7 @@ interface JsonRpcMessage {
 
 export interface CodexAppServerTransportOptions {
   binary?: string;
+  sessionKey?: string;
   env?: NodeJS.ProcessEnv;
   onNotification?: (method: string, params: unknown) => void;
   onExit?: (exit: CodexAppServerExit) => void;
@@ -88,6 +91,7 @@ export class CodexAppServerTransport {
       capabilities: null,
     });
     this.notify('initialized');
+    await this.reportResources('initialized');
     return result;
   }
 
@@ -132,9 +136,16 @@ export class CodexAppServerTransport {
         }
         if (this.groupAlive()) {this.signalOwnedGroup('SIGKILL');}
       }
-      return this.exitPromise;
+      const exit = await this.exitPromise;
+      await this.reportResources('closed');
+      return exit;
     })();
     return this.cleanup;
+  }
+
+  private async reportResources(phase: 'initialized' | 'closed'): Promise<void> {
+    const resources = await readProcessGroupResources(this.child.pid ?? 0);
+    logger.info({ sessionKey: this.options.sessionKey, phase, ...resources }, 'Codex owned process resources');
   }
 
   private groupAlive(): boolean {
