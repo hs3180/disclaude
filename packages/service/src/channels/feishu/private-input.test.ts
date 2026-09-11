@@ -22,7 +22,7 @@ describe('private input transport', () => {
     expect(FeishuPrivateInput.isPrivateCallback(callback)).toBe(true);
     await transport.submit(callback);
     await transport.submit(callback);
-    expect(consume).toHaveBeenCalledExactlyOnceWith(secret);
+    expect(consume).toHaveBeenCalledExactlyOnceWith(secret, expect.objectContaining({ actor: 'actor', chat: 'chat', source: 'source' }));
     expect(JSON.stringify([send.mock.calls, audit.mock.calls])).not.toContain(secret);
     expect(send).toHaveBeenLastCalledWith(expect.objectContaining({ text: expect.stringContaining('已使用') }));
   });
