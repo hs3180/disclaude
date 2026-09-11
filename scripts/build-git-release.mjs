@@ -1,11 +1,55 @@
 #!/usr/bin/env node
 // Generate a prebuilt Git distribution; never mutate the development manifest.
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  lstatSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
+
+export function sourceFingerprint(root) {
+  const files = execFileSync(
+    'git',
+    [
+      'ls-files',
+      '-z',
+      '--',
+      'package.json',
+      'package-lock.json',
+      'tsconfig*.json',
+      'packages/*/src',
+      'packages/*/package.json',
+      'packages/*/tsconfig.json',
+      'bin',
+      'skills',
+      'examples/skills',
+      'disclaude.config.example.yaml',
+      'scripts/build-git-release.mjs',
+      'scripts/prune-build-artifacts.mjs',
+      'scripts/launchd.mjs',
+    ],
+    { cwd: root, encoding: 'utf8' }
+  )
+    .split('\0')
+    .filter((file) => file && !/\.(test|spec)\.[cm]?[jt]s$/.test(file))
+    .sort();
+  const hash = createHash('sha256');
+  for (const file of files)
+    hash
+      .update(file + '\0')
+      .update(readFileSync(join(root, file)))
+      .update('\0');
+  return hash.digest('hex');
+}
 
 export function rewriteImports(code, file, targets) {
   const source = ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
@@ -88,8 +132,17 @@ export function generateRelease(root, output) {
   ]) {
     if (!existsSync(join(root, path))) continue;
     mkdirSync(dirname(join(output, path)), { recursive: true });
-    const tracked = execFileSync('git', ['ls-files', '-z', '--', path], { cwd: root, encoding: 'utf8' }).split('\0').filter(Boolean);
+    const tracked = execFileSync('git', ['ls-files', '-z', '--', path], {
+      cwd: root,
+      encoding: 'utf8',
+    })
+      .split('\0')
+      .filter(Boolean);
     for (const file of tracked) {
+      assert(
+        !lstatSync(join(root, file)).isSymbolicLink(),
+        `Release resources must not be symlinks: ${file}`
+      );
       mkdirSync(dirname(join(output, file)), { recursive: true });
       cpSync(join(root, file), join(output, file));
     }
@@ -141,7 +194,12 @@ export function generateRelease(root, output) {
   writeFileSync(
     join(output, 'release-source.json'),
     JSON.stringify(
-      { sourceCommit, version: pkg.version, generator: 'scripts/build-git-release.mjs' },
+      {
+        sourceCommit,
+        sourceFingerprint: sourceFingerprint(root),
+        version: pkg.version,
+        generator: 'scripts/build-git-release.mjs',
+      },
       null,
       2
     ) + '\n'

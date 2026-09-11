@@ -1,6 +1,6 @@
 # Maintainer: copy to .github/workflows/package-install.yml to enable.
-# Kept as a template because the submitting GitHub App lacks workflows permission.
-name: Package installation
+# Existing CI npm test already runs the remote gate on Linux / Node 20.
+name: Git package installation
 
 on:
   pull_request:
@@ -10,38 +10,23 @@ permissions:
   contents: read
 
 jobs:
-  package:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-      - run: npm ci --include=dev
-      - name: Build archive from clean dependency tree
-        run: npm pack --pack-destination "$RUNNER_TEMP"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: npm-release-package
-          path: ${{ runner.temp }}/disclaude-*.tgz
-          if-no-files-found: error
   install:
-    needs: package
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
         node: ['20', '22']
+        npm: ['10', '11']
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      - uses: actions/download-artifact@v4
-        with:
-          name: npm-release-package
-          path: ${{ runner.temp }}/release-package
-      - name: Install the same archive without development dependencies
-        run: node scripts/test-package-install.mjs "$RUNNER_TEMP"/release-package/disclaude-*.tgz
+      - run: npm install -g npm@${{ matrix.npm }}
+      - run: npm ci --include=dev
+      - name: Verify source and install remote Git candidate
+        run: |
+          npm run build
+          node scripts/verify-git-candidate.mjs
+          DISClAUDE_TEST_GIT_INSTALL=1 npx vitest run tests/git-release-install.test.ts

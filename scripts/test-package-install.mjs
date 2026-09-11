@@ -2,7 +2,14 @@
 // Test a built archive, never a symlink to the developer checkout. No live API calls.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, realpathSync, existsSync, writeFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  existsSync,
+  writeFileSync,
+  rmSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 
@@ -33,6 +40,8 @@ delete env.NODE_OPTIONS;
 for (const key of Object.keys(env)) {
   if (/^npm_config_/i.test(key)) delete env[key];
 }
+const prefixFromEnv = process.argv.includes('--prefix-from-env');
+if (prefixFromEnv) env.npm_config_prefix = prefix;
 function run(command, args) {
   const result = spawnSync(command, args, {
     cwd: temp,
@@ -54,8 +63,7 @@ console.log(
 run('npm', [
   'install',
   '-g',
-  '--prefix',
-  prefix,
+  ...(prefixFromEnv ? [] : ['--prefix', prefix]),
   '--cache',
   join(temp, 'cache'),
   '--userconfig',
@@ -77,6 +85,12 @@ if (isGit) {
   for (const script of ['build', 'prepack', 'preinstall', 'install', 'postinstall'])
     assert.equal(pkg.scripts?.[script], undefined);
   assert(existsSync(join(installed, 'release-source.json')));
+  if (process.argv[3] && !process.argv[3].startsWith('--'))
+    assert.equal(
+      JSON.parse(readFileSync(join(installed, 'release-source.json'), 'utf8')).sourceFingerprint,
+      process.argv[3],
+      'Installed candidate provenance mismatch'
+    );
 }
 assert(!existsSync(join(installed, 'node_modules/husky')), 'Husky must remain development-only');
 assert(existsSync(join(installed, 'disclaude.config.example.yaml')));
@@ -92,6 +106,7 @@ run(process.execPath, [
   '-e',
   `
   import { join } from 'node:path';
+  import { realpathSync } from 'node:fs';
   import { pathToFileURL } from 'node:url';
   const installed = ${JSON.stringify(installed)};
   const modulesRoot = ${JSON.stringify(isGit ? 'packages' : 'node_modules/@disclaude')};
@@ -101,7 +116,7 @@ run(process.execPath, [
   }
   const { PrimaryNode } = await load('primary-node', 'primary-node.js');
   const { Config } = await load('core');
-  if (${isGit} && Config.getBuiltinsDir() !== installed) throw new Error('Builtins do not resolve to installed release');
+  if (${isGit} && realpathSync(Config.getBuiltinsDir()) !== realpathSync(installed)) throw new Error('Builtins do not resolve to installed release');
   const primary = new PrimaryNode();
   await primary.start({ deferScheduler: true });
   if (!primary.isRunning()) throw new Error('PrimaryNode did not start');
@@ -111,3 +126,6 @@ run(process.execPath, [
 `,
 ]);
 console.log(`PACKAGE_INSTALL_OK ${pkg.version}`);
+// Only discard this run's generated installation/cache; retain failures for diagnosis.
+rmSync(prefix, { recursive: true });
+rmSync(join(temp, 'cache'), { recursive: true });
