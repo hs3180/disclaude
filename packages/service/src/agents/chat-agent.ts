@@ -1562,19 +1562,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         // (tool_use, tool_result, tool_progress) to reduce noise.
         // Issue #3809: Forward intermediate messages to debug group.
         if (parsed.content && parsed.terminatedReason !== 'turn_failed') {
-          const isTopicThread = this.chatType === 'topic';
           const isIntermediateMessage =
             parsed.type === 'tool_use' ||
             parsed.type === 'tool_result' ||
             parsed.type === 'tool_progress';
-          // Codex emits shell commands and their complete stdout/stderr as
-          // tool_use/tool_result messages. Those payloads are internal agent
-          // traces, not user-facing progress: exposing them leaks commands,
-          // paths, environment details, and potentially secrets. Keep the
-          // existing debug-group forwarding above, but suppress the raw trace
-          // in ordinary Codex chats. Final assistant text and synthesized
-          // errors still pass through normally.
-          const isCodexToolTrace = this.sdkProvider.name === 'codex' && isIntermediateMessage;
+          // #4774: tool traces are internal for every harness and chat type.
+          // Preserve debug forwarding and accounting without publishing raw
+          // commands/results as ordinary user-facing progress.
 
           // Issue #3809: Forward intermediate process messages to debug group.
           // This surfaces tool_use/tool_result/tool_progress events that are
@@ -1594,12 +1588,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             }
           }
 
-          if ((isTopicThread || isCodexToolTrace) && isIntermediateMessage) {
+          if (isIntermediateMessage) {
             this.logger.debug(
               { chatId, messageCount, type: parsed.type, provider: this.sdkProvider.name },
-              isCodexToolTrace
-                ? 'Filtered Codex tool trace from user chat'
-                : 'Filtered intermediate message in topic thread'
+              'Filtered tool trace from user chat'
             );
           } else if (parsed.terminatedReason !== 'evicted') {
             const threadRoot = resolveReplyThreadRoot();

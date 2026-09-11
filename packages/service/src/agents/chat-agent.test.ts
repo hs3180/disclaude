@@ -2060,7 +2060,7 @@ describe('ChatAgent (service)', () => {
       expect(userCalls.length).toBeGreaterThanOrEqual(1);
     });
 
-    it('should hide Codex tool traces from the user while keeping debug forwarding', async () => {
+    it.each(['claude', 'codex', 'pi', 'deepseek'])('hides %s tool traces while preserving debug and final delivery', async (backend) => {
       const localCallbacks = createMockCallbacks();
       const agent = new ChatAgent({
         chatId: 'oc_codex_user_chat',
@@ -2069,7 +2069,7 @@ describe('ChatAgent (service)', () => {
         model: 'model',
         provider: 'anthropic',
       });
-      (agent as any).sdkProvider = { name: 'codex' };
+      (agent as any).sdkProvider = { name: backend };
 
       mockGetDebugGroup.mockReturnValue({ chatId: 'oc_debug_group', setAt: Date.now() });
 
@@ -2086,6 +2086,7 @@ describe('ChatAgent (service)', () => {
             content: 'API_TOKEN=should-not-reach-feishu-user',
           },
         };
+        yield { parsed: { type: 'tool_progress', content: 'internal progress' } };
         yield { parsed: { type: 'text', content: '已完成处理。' } };
         yield { parsed: { type: 'result', content: 'Done' } };
       }
@@ -2116,6 +2117,7 @@ describe('ChatAgent (service)', () => {
         .map((call: any[]) => call[1]);
       expect(userMessages).not.toContain('bash -lc cat /private/secret.env');
       expect(userMessages).not.toContain('API_TOKEN=should-not-reach-feishu-user');
+      expect(userMessages).not.toContain('internal progress');
       expect(userMessages).toContain('已完成处理。');
 
       const debugMessages = localCallbacks.sendMessage.mock.calls
@@ -2124,6 +2126,7 @@ describe('ChatAgent (service)', () => {
       expect(debugMessages).toEqual([
         '[tool_use] bash -lc cat /private/secret.env',
         '[tool_result] API_TOKEN=should-not-reach-feishu-user',
+        '[tool_progress] internal progress',
       ]);
     });
 
