@@ -78,6 +78,10 @@ claude --version
 
 Once the `v0.5.1` tag is published, install that exact release globally:
 
+> Release gate: the current candidate's global GitHub installation test fails.
+> This path must be fixed and revalidated before publishing `v0.5.1`; see the
+> [candidate record](docs/releases/0.5.1/release-candidate.md).
+
 ```bash
 npm install -g "github:hs3180/disclaude#v0.5.1"
 disclaude --version

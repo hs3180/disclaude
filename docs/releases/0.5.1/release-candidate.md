@@ -1,6 +1,6 @@
 # 0.5.1 发布候选记录
 
-状态：发布准备中；尚未创建正式标签或 GitHub Release。
+状态：发布准备尚有安装阻断；尚未创建正式标签或 GitHub Release。
 
 ## 分发方式
 
@@ -11,7 +11,32 @@
 
 ## 本轮验证
 
-版本更新后的完整测试、制品检查和全新 GitHub 安装正在执行，结果将在发布准备完成前补充。
+测试代码候选：`5a62c402`（后续撤销实验性安装 workaround 后，运行代码保持一致）。环境：macOS arm64、Node.js 24.8.0。
+
+| 检查 | 结果 |
+| --- | --- |
+| 全量覆盖率测试 | 219 文件 / 4669 测试通过；statements/lines 90.48%，branches 89.47%，functions 93.37% |
+| Lint、type-check/build | 通过 |
+| 干净 worktree `npm ci --include=dev` + `npm pack` | 通过，产物版本 0.5.1 |
+| 干净产物审计 | 11870 文件，100222358 bytes；旧 tracker 0，敏感配置路径 0 |
+| 干净 .tgz 隔离全局安装 | 通过；`disclaude --version` 为 v0.5.1，`disclaude start --help` 可运行 |
+| 安装后的 PrimaryNode 离线启动/停止 | 通过，使用占位 YAML 凭据、deferScheduler，不调用模型或发送消息 |
+| GitHub SHA 全局安装 | **失败，仍为发布阻断**；npm 10.9.9、11.6.0、11.19.1 均复现 |
+
+干净产物 SHA-512 integrity：
+`sha512-80nJjKmiFn6YdBwurGIGP/FShlAzDOAkk6aBBKJRMNHp6jffzdZXSyJJevQCGba+FCYlRY3IdcD7Q13kfbt2Fg==`。
+
+### 安装阻断与实验边界
+
+从 GitHub 固定提交执行 `npm install -g --prefix <isolated-prefix> --cache <isolated-cache> github:hs3180/disclaude#5a62c402` 时，嵌套 Git 依赖准备没有正确安装 workspace 开发依赖，`prepare: husky` 报 command not found。
+
+实验性准备脚本强制安装本地依赖后，npm 虽返回成功，最终全局链接却指向已删除的临时 clone，CLI 不可用。因此该 workaround 已撤销，不能计作安装通过。
+
+已有开发工作区直接打包还会保留异常嵌套依赖布局，导致运行时无法解析 Claude SDK；全新 worktree 的 npm ci + pack 解决了该制品问题。最终分发必须采用干净构建，而不能复用开发目录产物。
+
+如保留单条 GitHub-tag 全局安装作为发布要求，必须先修复并通过该路径；已通过的 .tgz 安装不等同于 GitHub-tag 安装。不在本轮擅自更换已约定的安装入口。
+
+本机日志：`/tmp/disclaude-051-release-coverage.log`、`/tmp/disclaude-051-github-install.log`、`/tmp/disclaude-051-github-install-new-npm.log`、`/tmp/disclaude-051-github-install-npm10.log`、`/tmp/disclaude-051-clean-pack.json`、`/tmp/disclaude-051-clean-tar-startup.log`。原始日志对外分享前需检查脱敏。
 
 ## 已有真实验收
 
