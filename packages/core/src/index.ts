@@ -369,3 +369,5 @@ export {
   STATE_FILE_NAME,
   STATE_VERSION,
 } from './project/index.js';
+
+export { createPrivateProcessAction, type PrivateProcessActionOptions } from './security/private-process-action.js';
