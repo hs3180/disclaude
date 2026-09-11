@@ -152,6 +152,8 @@ export type AgentPresets = Record<string, AgentPreset>;
  * Feishu/Lark platform configuration section.
  */
 export interface FeishuConfig {
+  /** Harness-installed private consumer; authentication policy remains in that process. */
+  privateAction?: import('../security/private-process-action.js').PrivateProcessActionOptions;
   /** Application ID (overrides FEISHU_APP_ID env var) */
   appId?: string;
   /** Application secret (overrides FEISHU_APP_SECRET env var) */
