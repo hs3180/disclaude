@@ -15,7 +15,7 @@ A multi-platform AI agent bot connecting Feishu/Lark and REST channels to Claude
 | [0.5.0 发布目标](docs/releases/0.5.0.md) | 发布范围、关联 Issues、优先级和验收门槛 |
 | [5 分钟接入飞书](docs/quickstart.md) | 极简快速上手指南 |
 | [飞书应用配置指南](docs/feishu-setup.md) | 完整的飞书机器人配置教程（创建应用、权限、事件订阅等） |
-| [GitHub App 配置指南](docs/github-app-guide.md) | GitHub App 认证配置教程 |
+| [创建外部 Skill](skills/skill-creator/SKILL.md) | 通用技能模板与外部 CLI 接入 |
 | [CDP Endpoint（无头主机浏览器）](docs/cdp-endpoint.md) | 无头主机的容器化 Chromium / CDP endpoint 契约与接入 |
 
 ## Features
