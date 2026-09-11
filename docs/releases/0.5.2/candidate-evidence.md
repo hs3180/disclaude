@@ -1,6 +1,8 @@
-# 0.5.2 P0 candidate evidence
+# Withdrawn candidate: historical evidence only
 
-This records development acceptance on 2026-09-11. Independent changes remain under review; no formal release/tag, deployment or production restart has been performed.
+This candidate and integration PR #4970 were withdrawn after owner review of #4956. They contain rejected global output protection and security-audit work. The results below are historical only and do not establish acceptance of the revised independent-channel scope. #4915 is no longer a release gate.
+
+This records earlier development acceptance on 2026-09-11. Independent changes remain under review; no formal release/tag, deployment or production restart has been performed.
 
 ## Candidate identity
 
@@ -52,7 +54,7 @@ Local raw reports are `/tmp/052-native-integrated.log`, `/tmp/disclaude-052-comp
 
 ## Open gates and limits
 
-- #4915 remains blocked: the AIvoluation GitHub App has `security_events: read` but no `secret_scanning_alerts` permission. Its repository-scoped token receives HTTP 403 from the real alerts endpoint. Neither that response nor human access to the GitHub UI establishes a successful read.
+- Historical external check (removed from the release gate): the AIvoluation GitHub App has `security_events: read` but no `secret_scanning_alerts` permission. Its repository-scoped token receives HTTP 403 from the real alerts endpoint. Neither that response nor human access to the GitHub UI establishes a successful read.
 - Linux installation and upgrade evidence is in the linked CI job. Require every job on the newest HEAD to pass after every rebase or integration update; older green checks are insufficient.
 - Feishu transport and configured consumers are tested through real callback/child-process fixtures. No live private card was sent to another user. Installed consumer code owns its authorization, endpoint and credential-exchange policy; disclaude itself sends the original value only through the bound private path.
 - Exact-value protection covers harness declarations; transformed/encoded or undeclared copies are not classified. Process groups reclaim ordinary owned descendants, not processes that deliberately escape an OS boundary.
