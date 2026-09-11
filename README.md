@@ -74,27 +74,31 @@ claude --version
 
 ## Quick Start
 
-### Option A: Install a prebuilt package from GitHub Releases
+### Option A: Install a prebuilt GitHub tag
 
-Once the `v0.5.1` Release and its package asset are published, install globally:
+Once the validated `v0.5.1` distribution tag is published, install globally:
 
-> 0.5.1 is not published yet. This URL requires the Release asset, not just a tag.
+> 0.5.1 is not published yet. GitHub tag installation is a required release gate
+> tracked in [#4922](https://github.com/hs3180/disclaude/issues/4922).
 
 ```bash
-npm install -g "https://github.com/hs3180/disclaude/releases/download/v0.5.1/disclaude-0.5.1.tgz"
+npm install -g "github:hs3180/disclaude#v0.5.1"
 disclaude --version
 disclaude start --help
 ```
 
 This installs from GitHub, not the npm registry; the root package can remain
-private. Use Node.js 20+. The archive already includes compiled packages; users
-do not need Git, TypeScript or Husky. Normal dependency installation is still
+private. Use Git, Node.js 20+ and npm 10+. The tag contains compiled packages;
+users do not need TypeScript or Husky. Normal dependency installation is still
 required; do not disable dependency lifecycle scripts globally.
 
-The source shortcut `npm install -g "github:hs3180/disclaude#v0.5.1"` is currently
-unsupported: npm's Git dependency preparation can inherit global installation
-settings. Removing Husky alone does not fix that path. Use the Release archive
-above or a local source checkout below.
+Release tags point to generated distribution commits, with their source commit
+recorded in `release-source.json`; `main` remains the development monorepo and
+is not a supported global-install target. See the [Git release procedure](docs/releases/git-install.md).
+
+An optional Release asset can also be installed with
+`npm install -g "https://github.com/hs3180/disclaude/releases/download/v0.5.1/disclaude-0.5.1.tgz"`.
+Asset installation does not replace the required tag-installation acceptance.
 
 For a new installation, the example configuration is available at
 `$(npm root -g)/disclaude/disclaude.config.example.yaml`. Copy it to
@@ -104,7 +108,7 @@ create the workspace directory specified in your configuration before running
 
 See the [0.5.1 release notes](docs/releases/0.5.1.md) for release availability
 and installation details. Before the tag exists, use the source-checkout option
-below; the Release asset URL will not resolve yet.
+below; the tag and Release asset will not resolve yet.
 
 ### Option B: Install the GitHub source distribution
 

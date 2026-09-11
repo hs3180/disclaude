@@ -1,13 +1,13 @@
 # 0.5.1 发布候选记录
 
-状态：安装修复 PR 改为预构建 Release 资产分发，待安装矩阵验收与合并；尚未创建正式标签或 GitHub Release。
+状态：#4922 要求 GitHub tag 直装，属于发布阻断项。现采用预构建 Git 发行提交方案；尚未创建正式标签或 GitHub Release。
 
 ## 分发方式
 
 - 根包版本：0.5.1；package-lock 根版本同步。
 - 根包保持 `private: true`，仅通过 GitHub 分发。
-- 正式 Release 资产发布后：`npm install -g "https://github.com/hs3180/disclaude/releases/download/v0.5.1/disclaude-0.5.1.tgz"`。
-- [Package installation 工作流模板](../package-install.workflow.yml) 从干净 checkout 打包，同一制品在 Linux/macOS、Node 20/22 验证生产安装、CLI 子命令及运行模块导入。提交用 GitHub App 无 workflows 写权限，模板尚待维护者安装，矩阵未计作通过。
+- 正式发行标签发布后：`npm install -g "github:hs3180/disclaude#v0.5.1"`；`.tgz` 仅为补充路径。
+- 候选 SHA 与源码指纹记录在 `tests/fixtures/git-release-candidate.json`。现有 CI 的 `npm test` 执行源码一致性检查和远程 SHA 安装回归；额外 [跨平台工作流模板](../package-install.workflow.yml) 尚待维护者安装，未运行项不能计作通过。
 - Husky 仅通过开发者命令 `npm run hooks:install` 初始化，不参与用户安装。
 
 ## 历史验证（安装修复 PR 之前）
@@ -35,7 +35,7 @@
 
 已有开发工作区直接打包还会保留异常嵌套依赖布局，导致运行时无法解析 Claude SDK；全新 worktree 的 npm ci + pack 解决了该制品问题。最终分发必须采用干净构建，而不能复用开发目录产物。
 
-已通过的 .tgz 安装不等同于 GitHub-tag 安装。后续安装修复 PR 明确提议改用 Release 资产作为支持的用户入口；GitHub-tag 直装仍不支持，未宣称修复 npm 内部行为。
+已通过的 .tgz 安装不等同于 GitHub-tag 安装。#4921 的资产分发提议不能替代后续 #4922 明确的 tag 直装目标。
 
 本机日志：`/tmp/disclaude-051-release-coverage.log`、`/tmp/disclaude-051-github-install.log`、`/tmp/disclaude-051-github-install-new-npm.log`、`/tmp/disclaude-051-github-install-npm10.log`、`/tmp/disclaude-051-clean-pack.json`、`/tmp/disclaude-051-clean-tar-startup.log`。原始日志对外分享前需检查脱敏。
 
@@ -56,4 +56,4 @@
 
 1. 合并发布准备 PR，确认目标 main 提交 CI 全绿。
 2. 经确认在目标提交创建 v0.5.1 标签，并使用上级发布说明创建 GitHub Release。
-3. 在目标标签运行安装工作流，全部通过后上传该次验收的原始 .tgz 为 Release 资产，并复核公开 HTTPS 安装命令；发布准备阶段不会创建标签，也不会执行 npm publish。
+3. 按 [Git 发行流程](../git-install.md) 验证固定远程候选 SHA；经授权为已验收发行提交打标签后，复核精确的 tag 直装命令。发布准备阶段不创建正式标签、不执行 npm publish。
