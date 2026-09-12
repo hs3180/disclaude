@@ -47,7 +47,7 @@ import { readStallPolicy } from '../stall-policy.js';
 
 import { accessSync, constants, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { delimiter, join, resolve } from 'node:path';
+import { delimiter, join } from 'node:path';
 
 import { createLogger } from '../../../utils/logger.js';
 import { Config } from '../../../config/index.js';
@@ -78,11 +78,7 @@ import {
   userInputText,
   type CodexThreadEvent,
 } from './exec-adapter.js';
-import {
-  discoverBuiltinResources,
-  formatCodexBuiltinContext,
-  mergeBuiltinResources,
-} from './builtin-adapter.js';
+import { codexSkillsRegistry, type SkillsRegistry } from './skills-registry.js';
 
 const logger = createLogger('CodexAgentProvider');
 
@@ -229,6 +225,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
    * /reset, idle GC) deliberately does NOT stash — reset means reset.
    */
   private readonly threadStash = new Map<string, string>();
+  private readonly skillsRegistries = new Map<string, SkillsRegistry>();
   /** Anonymous-stream key counter (queryStream without options.sessionKey). */
   private anonSessionCounter = 0;
 
@@ -247,6 +244,16 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       maxActiveSessions: options.maxActiveSessions,
       maxConcurrentRuns: options.maxConcurrentRuns,
     });
+  }
+
+  private skillsManifestFor(cwd: string | undefined): string {
+    if (!cwd) {return '';}
+    let registry = this.skillsRegistries.get(cwd);
+    if (!registry) {
+      registry = codexSkillsRegistry(cwd, this.builtinRoot);
+      this.skillsRegistries.set(cwd, registry);
+    }
+    return registry.resolve().manifest;
   }
 
   // --------------------------------------------------------------------------
@@ -386,8 +393,9 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       );
     }
 
+    const skillsManifest = this.skillsManifestFor(options.cwd);
     if (this.transportMode === 'app-server') {
-      return this.queryAppServer(input, options, sandboxDecision.sandbox, binary);
+      return this.queryAppServer(input, options, sandboxDecision.sandbox, binary, skillsManifest);
     }
 
     const runner = new CodexExecRunner({
@@ -405,28 +413,6 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     // Captured at queryStream call time — the constructor-injected env the
     // binary was resolved from (tests: PATH fixtures; prod: process.env).
     const providerEnv = this.env;
-    // Codex has no Claude local-plugin option. Pass a compact, capability-
-    // aware builtin index in the prompt; the actual Markdown remains on disk
-    // and is read only when the model chooses a resource.
-    // Test/one-shot callers without a workspace do not have a safe base from
-    // which Codex can read the referenced files; normal agent calls always
-    // provide cwd through BaseAgent.
-    // The provider is cached across chats, so the request cwd is the source of
-    // truth for project-local skills. Include the packaged index as well; the
-    // merge keeps the common case (cwd == builtinRoot) free of duplicates.
-    const thisBuiltinContext = options.cwd
-      ? formatCodexBuiltinContext(
-          mergeBuiltinResources(
-            discoverBuiltinResources(resolve(options.cwd)),
-            // Claude Code projects conventionally keep local resources under
-            // `.claude/skills` and `.claude/agents`; treat that directory as a
-            // second workspace root while retaining the existing root-level
-            // `skills/` and `agents/` layout.
-            discoverBuiltinResources(join(resolve(options.cwd), '.claude')),
-            discoverBuiltinResources(this.builtinRoot)
-          )
-        )
-      : '';
     // Instance-level quota sink (S5, #4632): the bridge closures below are
     // `this: void`, so they aggregate through this captured reference.
     const quotaSink = this.quota;
@@ -765,8 +751,8 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         touchStallWatchdog();
         const { promise, handle } = runner.run(
           {
-            prompt: thisBuiltinContext
-              ? `${thisBuiltinContext}\n\nUser request:\n${prompt}`
+            prompt: skillsManifest
+              ? `${skillsManifest}\n\nUser request:\n${prompt}`
               : prompt,
             correlation,
             resumeSessionId: resumeTarget,
@@ -1064,6 +1050,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     options: AgentQueryOptions,
     sandbox: CodexSandboxLevel,
     binary: string,
+    skillsManifest: string,
   ): StreamQueryResult {
     let lifecycle: CodexAppServerLifecycle | undefined;
     const sessionKey = options.sessionKey ?? `anon-app-${++this.anonSessionCounter}`;
@@ -1214,11 +1201,16 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             this.appServerRoutes.set(threadId, onNotification);
             deliveredItems.clear();
             this.governor.touchSession(sessionKey);
-            activeTurnId = await lifecycle.startTurn(sessionKey, userInputText(next.value), {
+            const userInput = userInputText(next.value);
+            activeTurnId = await lifecycle.startTurn(
+              sessionKey,
+              skillsManifest ? `${skillsManifest}\n\nUser request:\n${userInput}` : userInput,
+              {
               sandbox,
               networkAccess: this.networkAccess,
               cwd: options.cwd,
-            });
+              }
+            );
             logger.debug({ sessionKey, threadId, turnId: activeTurnId }, 'Codex turn started');
             // Keep the lifecycle anchor available to control/steer consumers,
             // but provide no user-facing content for this internal status.
