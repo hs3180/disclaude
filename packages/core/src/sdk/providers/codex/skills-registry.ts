@@ -130,3 +130,13 @@ export function formatSkillManifest(skills: readonly ResolvedSkill[]): string {
     ...skills.map((skill) => `- skill [${skill.name}](${skill.reference})${skill.description ? `: ${skill.description}` : ''}`),
   ].join('\n');
 }
+
+/** Shared Codex source layout; transports must not implement their own scan. */
+export function codexSkillsRegistry(workspaceRoot: string, builtinRoot: string): SkillsRegistry {
+  const workspace = resolve(workspaceRoot);
+  return new SkillsRegistry([
+    { kind: 'project', root: workspace },
+    { kind: 'project', root: join(workspace, '.claude') },
+    { kind: 'builtin', root: builtinRoot },
+  ]);
+}

@@ -36,6 +36,33 @@ afterEach(() => {
 });
 
 describe('CodexAgentProvider app-server transport', () => {
+  it('uses the same registry manifest as exec for app-server turns', async () => {
+    const { provider, dir } = providerFixture('exit 0');
+    const workspace = mkdtempSync(join(tmpdir(), 'codex-app-skills-'));
+    dirs.push(workspace);
+    mkdirSync(join(workspace, 'skills', 'demo'), { recursive: true });
+    writeFileSync(join(workspace, 'skills', 'demo', 'SKILL.md'), '---\ndescription: Demo skill\n---');
+    writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
+const fs = require('node:fs');
+require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
+  const request = JSON.parse(line); if (!request.id) return;
+  let result = {}; if (request.method === 'thread/start') result = {thread:{id:'skills-thread'}};
+  if (request.method === 'turn/start') { fs.writeFileSync(process.env.CODEX_HOME + '/turn-input', request.params.input[0].text); result={turn:{id:'skills-turn'}}; }
+  console.log(JSON.stringify({id:request.id,result}));
+  if (request.method === 'turn/start') console.log(JSON.stringify({method:'turn/completed',params:{threadId:'skills-thread',turn:{id:'skills-turn',status:'completed'}}}));
+});`);
+    const stream = provider.queryStream((async function* () { yield { role: 'user', content: 'hello' } as UserInput; })(), {
+      sessionKey: 'skills', cwd: workspace, settingSources: [],
+    } as AgentQueryOptions);
+    for await (const _message of stream.iterator) { /* drain */ }
+    const prompt = readFileSync(join(dir, 'home', 'turn-input'), 'utf8');
+    expect(prompt).toContain('Disclaude skills:');
+    expect(prompt).toContain('skills/demo/SKILL.md');
+    expect(prompt).toContain('User request:\nhello');
+    expect(prompt).not.toContain(workspace);
+    provider.dispose();
+  });
+
   it('reclaims tool children over 100 turns while resuming one thread', async () => {
     const { provider, dir } = providerFixture('exit 0');
     const binary = join(dir, 'bin', 'codex');

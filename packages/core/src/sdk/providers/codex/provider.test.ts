@@ -236,9 +236,10 @@ describe('CodexAgentProvider (Issues #4629 + #4630)', () => {
         const prompt = readFileSync(join(fixtures.codexHome, 'prompt'), 'utf8');
         expect(prompt).toContain('demo');
         expect(prompt).toContain('Demo project skill');
-        expect(prompt).toContain(join(workspace, 'skills', 'demo', 'SKILL.md'));
+        expect(prompt).toContain('skills/demo/SKILL.md');
+        expect(prompt).not.toContain(workspace);
         expect(prompt).toContain('Claude local skill');
-        expect(prompt).toContain(join(workspace, '.claude', 'skills', 'claude-local', 'SKILL.md'));
+        expect(prompt).toContain('skills/claude-local/SKILL.md');
         expect(prompt).toContain('User request:\nhi');
       } finally {
         rmSync(workspace, { recursive: true, force: true });
