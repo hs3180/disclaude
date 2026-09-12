@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -33,5 +33,28 @@ describe('SkillsRegistry', () => {
     expect(registry.resolve()).toBe(first);
     skill(root, 'demo', 'second');
     expect(registry.resolve()).not.toBe(first);
+  });
+
+  it('rejects a symlink escape without exposing its absolute target', () => {
+    const root = makeRoot(), outside = makeRoot();
+    skill(outside, 'escape');
+    mkdirSync(join(root, 'skills'), { recursive: true });
+    symlinkSync(join(outside, 'skills', 'escape'), join(root, 'skills', 'escape'));
+    const resolution = new SkillsRegistry([{ kind: 'project', root }]).resolve();
+    expect(resolution.skills).toEqual([]);
+    expect(resolution.diagnostics).toContainEqual(expect.objectContaining({ code: 'INVALID_SKILL', detail: expect.not.stringContaining(outside) }));
+  });
+
+  it('rejects malformed metadata and bounds manifest descriptions', () => {
+    const root = makeRoot();
+    mkdirSync(join(root, 'skills', 'unsafe'), { recursive: true });
+    writeFileSync(join(root, 'skills', 'unsafe', 'SKILL.md'), '---\ndescription: "[fake](https://bad)"\nunknown: field\n---');
+    mkdirSync(join(root, 'skills', 'long'), { recursive: true });
+    writeFileSync(join(root, 'skills', 'long', 'SKILL.md'), `---\ndescription: ${'x'.repeat(300)}\n---`);
+    const resolution = new SkillsRegistry([{ kind: 'project', root }]).resolve();
+    expect(resolution.skills.map((skill) => skill.name)).toEqual(['long']);
+    expect(resolution.manifest).not.toContain('fake');
+    expect(resolution.manifest.length).toBeLessThan(400);
+    expect(resolution.diagnostics).toContainEqual(expect.objectContaining({ name: 'unsafe', code: 'INVALID_SKILL' }));
   });
 });

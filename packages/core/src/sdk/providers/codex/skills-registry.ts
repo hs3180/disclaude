@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 
 export type SkillSourceKind = 'builtin' | 'user' | 'project';
@@ -87,6 +87,7 @@ export class SkillsRegistry {
     const root = resolve(source.root);
     const skillsRoot = join(root, 'skills');
     if (!existsSync(skillsRoot)) {return [];}
+    const approvedRoot = realpathSync(root);
     let entries: string[];
     try { entries = readdirSync(skillsRoot).sort(); } catch { return []; }
     const candidates: Candidate[] = [];
@@ -94,8 +95,13 @@ export class SkillsRegistry {
       const path = join(skillsRoot, name, 'SKILL.md');
       try {
         if (!statSync(path).isFile()) {continue;}
+        const realPath = realpathSync(path);
+        if (!realPath.startsWith(`${approvedRoot}/`) && realPath !== approvedRoot) {
+          diagnostics.push({ code: 'INVALID_SKILL', name, source: source.kind, detail: 'skill resolves outside its approved root' });
+          continue;
+        }
         const content = readFileSync(path, 'utf8');
-        const description = descriptionFromFrontmatter(content);
+        const metadata = metadataFromFrontmatter(content, name);
         const reference = relative(root, path).split('\\').join('/');
         if (!reference || reference.startsWith('../')) {
           diagnostics.push({ code: 'INVALID_SKILL', source: source.kind, detail: 'skill reference is outside its source root' });
@@ -105,7 +111,7 @@ export class SkillsRegistry {
           name,
           source: source.kind,
           reference,
-          description,
+          description: metadata.description,
           priority: PRIORITY[source.kind],
           fingerprint: `${source.kind}:${reference}:${createHash('sha256').update(content).digest('hex')}`,
         });
@@ -117,9 +123,31 @@ export class SkillsRegistry {
   }
 }
 
-function descriptionFromFrontmatter(source: string): string | undefined {
-  const match = source.match(/^---\s*\n[\s\S]*?^description:\s*(.+?)\s*$[\s\S]*?^---\s*$/m);
-  return match?.[1]?.trim().replace(/^['"]|['"]$/g, '');
+function metadataFromFrontmatter(source: string, directoryName: string): { description?: string } {
+  const match = source.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  if (!match) {throw new Error('missing strict frontmatter');}
+  const fields = new Map<string, string>();
+  for (const line of match[1].split(/\r?\n/)) {
+    const field = line.match(/^([a-z][a-z0-9_-]*):[ \t]*(.*?)\s*$/i);
+    if (!field || !['name', 'description'].includes(field[1])) {throw new Error('invalid frontmatter field');}
+    if (fields.has(field[1]) || !field[2]) {throw new Error('invalid frontmatter value');}
+    fields.set(field[1], field[2].replace(/^['"]|['"]$/g, ''));
+  }
+  const declaredName = fields.get('name');
+  if (declaredName && declaredName !== directoryName) {throw new Error('frontmatter name does not match skill directory');}
+  const description = fields.get('description');
+  return description ? { description: sanitizeDescription(description) } : {};
+}
+
+function sanitizeDescription(description: string): string {
+  // Strip controls and Markdown link delimiters so one metadata field cannot
+  // add manifest rows, forge links, or create an oversized model prompt.
+  return description
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/[\[\]()`<>]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 240);
 }
 
 /** Compact, stable model-facing index. No absolute filesystem paths are emitted. */
