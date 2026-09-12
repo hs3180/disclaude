@@ -246,6 +246,24 @@ describe('CodexAgentProvider (Issues #4629 + #4630)', () => {
       }
     }, 15_000);
 
+    it('discovers skills from projectRoot when the runtime cwd is a separate workspace', async () => {
+      const project = mkdtempSync(join(tmpdir(), 'codex-project-root-'));
+      const workspace = mkdtempSync(join(tmpdir(), 'codex-runtime-workspace-'));
+      try {
+        mkdirSync(join(project, 'skills', 'project-only'), { recursive: true });
+        writeFileSync(join(project, 'skills', 'project-only', 'SKILL.md'), '---\ndescription: Project-only skill\n---');
+        fixtures = makeFixtures({ withBinary: true, withAuth: true, body: `printf '%s' "$*" > "$CODEX_HOME/prompt"\n${HAPPY_BODY}` });
+        await drainStream(makeProvider(fixtures), ['hi'], { cwd: workspace, projectRoot: project });
+        const prompt = readFileSync(join(fixtures.codexHome, 'prompt'), 'utf8');
+        expect(prompt).toContain('skills/project-only/SKILL.md');
+        expect(prompt).not.toContain(project);
+        expect(prompt).not.toContain(workspace);
+      } finally {
+        rmSync(project, { recursive: true, force: true });
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    }, 15_000);
+
     it('bridges a happy-path run: text + result, thread_id → sessionId', async () => {
       fixtures = makeFixtures({ withBinary: true, withAuth: true, body: HAPPY_BODY });
       const { messages, sessionId } = await drainStream(makeProvider(fixtures), ['hi']);

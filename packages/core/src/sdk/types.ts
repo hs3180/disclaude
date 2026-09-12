@@ -297,6 +297,11 @@ export interface ToolsPreset {
 export interface AgentQueryOptions {
   /** 工作目录 */
   cwd?: string;
+  /**
+   * Stable project root used for project-owned resources. It is intentionally
+   * separate from cwd: chat runtime state may execute in a shared workspace.
+   */
+  projectRoot?: string;
   /** 使用的模型 */
   model?: string;
   /** 权限模式 */

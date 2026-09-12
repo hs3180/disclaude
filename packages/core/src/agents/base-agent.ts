@@ -50,6 +50,8 @@ export interface SdkOptionsExtra {
   mcpServers?: Record<string, unknown>;
   /** Custom working directory */
   cwd?: string;
+  /** Project root for resource discovery when it differs from the runtime cwd. */
+  projectRoot?: string;
   /** Session identity key (Issue #4634, S7) — ChatAgent passes chatId */
   sessionKey?: string;
 }
@@ -204,6 +206,7 @@ export abstract class BaseAgent implements Disposable {
 
     const options: AgentQueryOptions = {
       cwd: effectiveCwd,
+      ...(extra.projectRoot ? { projectRoot: extra.projectRoot } : {}),
       permissionMode: this.permissionMode,
       ...(extra.sessionKey !== undefined ? { sessionKey: extra.sessionKey } : {}),
       settingSources: ['user', 'project', 'local'],
