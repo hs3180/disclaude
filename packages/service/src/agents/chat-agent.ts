@@ -2468,11 +2468,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Iterator ended without explicit close - determine error message for restart logic
     const errorMessage = iteratorError?.message ?? 'Unknown error';
-    // Issue #4192 (L0): classify the restart-triggering error so operators can
-    // see whether it is transient (restart likely helps: network/timeout/api)
-    // or persistent (restart won't fix it: validation/permission). Pure
-    // observability — the restart decision itself is unchanged here;
-    // transient-aware shouldRestart (L4) is a separate, larger change.
+    // Classify the restart-triggering error before touching RestartManager.
+    // Persistent configuration, validation, and permission errors already have
+    // a user-visible diagnostic from the iterator catch above. They are a
+    // terminal outcome for this session: a retry cannot repair them and must
+    // neither consume restart state nor turn that diagnostic into a misleading
+    // circuit-breaker or reconnect message.
     // Classify once via tagErrorCategory (returns {category, transient} from a
     // single pass + tags the error for downstream L1/L2 layers) rather than
     // calling classifyError() + isTransient() separately, which would classify
@@ -2489,6 +2490,20 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         },
         'Agent loop ended unexpectedly; classified error for restart decision (Issue #4192 L0)'
       );
+      // Keep the bounded recovery contract for opaque and operational
+      // categories with ambiguous retry semantics. Only errors whose category
+      // is explicitly a user-correctable, persistent failure are terminal.
+      const terminalRuntimeCategory =
+        category === 'CONFIGURATION' ||
+        category === 'VALIDATION' ||
+        category === 'PERMISSION';
+      if (!transient && terminalRuntimeCategory) {
+        this.logger.info(
+          { chatId, errorCategory: category, errorMessage },
+          'Non-transient runtime error: terminating session without restart (Issue #4989)'
+        );
+        return;
+      }
     }
     // Issue #4314 (L2): pass the original (L0-tagged) error so RestartManager
     // reads the authoritative transient verdict from the tag instead of
