@@ -1142,6 +1142,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     const sdkOptions = this.createSdkOptions({
       cwd: projectCwd,
+      // Keep resource discovery bound to the selected project even when a
+      // provider uses a separate workspace as its execution cwd.
+      projectRoot: resolution?.boundWorkingDir,
       // Issue #4181: the built-in (session-only) cron/loop tools are disallowed
       // by default; set DISCLAUDE_ALLOW_BUILTIN_CRON=1 to restore them.
       // Disallowing alone blocks the calls; rerouting recurring work to the

@@ -393,7 +393,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       );
     }
 
-    const skillsManifest = this.skillsManifestFor(options.cwd);
+    const skillsManifest = this.skillsManifestFor(options.projectRoot ?? options.cwd);
     if (this.transportMode === 'app-server') {
       return this.queryAppServer(input, options, sandboxDecision.sandbox, binary, skillsManifest);
     }
