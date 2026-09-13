@@ -453,3 +453,28 @@ describe('detectMarkdownTableWarnings', () => {
     expect(detectMarkdownTableWarnings(card)).toEqual([]);
   });
 });
+
+
+describe('Card JSON 2.0 envelope', () => {
+  it.each([
+    { schema: '2.0', body: { elements: [] } },
+    { schema: '2.0', config: {}, header: { title: 'Report' }, body: { elements: [{ tag: 'markdown', content: 'Finding' }] } },
+  ])('accepts optional config/header without mutating the card', card => {
+    const before = JSON.stringify(card);
+    expect(isValidFeishuCard(card)).toBe(true);
+    expect(JSON.stringify(card)).toBe(before);
+  });
+
+  it.each([
+    [{ schema: '2.0', config: [] , body: { elements: [] } }, 'config'],
+    [{ schema: '2.0', header: [], body: { elements: [] } }, 'header'],
+    [{ schema: '2.0', header: {}, body: { elements: [] } }, 'header.title'],
+    [{ schema: '2.0', elements: [] }, 'body'],
+    [{ schema: '2.0', body: [] }, 'body'],
+    [{ schema: '2.0', body: { elements: null } }, 'body.elements'],
+    [{ schema: '3.0', config: {}, header: { title: 'T' }, elements: [] }, 'unsupported card schema'],
+  ] as const)('rejects malformed or unknown envelopes: %j', (card, error) => {
+    expect(isValidFeishuCard(card)).toBe(false);
+    expect(getCardValidationError(card)).toContain(error);
+  });
+});
