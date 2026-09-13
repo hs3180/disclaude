@@ -17,6 +17,7 @@ import {
   Scheduler,
   CommandCancelledError,
   TaskTimeoutError,
+  defaultCommandRunner,
   type SchedulerCallbacks,
   type CommandRunner,
 } from './scheduler.js';
@@ -172,6 +173,34 @@ describe('Scheduler', () => {
   });
 
   describe('direct command execution (Issue #4798)', () => {
+    it('passes the live managed channel endpoint to a real child process on every tick', async () => {
+      const outputDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'scheduler-managed-env-'));
+      const output = path.join(outputDir, 'child.json');
+      const scheduler = new Scheduler({
+        scheduleManager: mockScheduleManager, callbacks: mockCallbacks,
+        inputMessageRouter: mockRouter, commandRunner: defaultCommandRunner, jobFactory: testJobFactory,
+      });
+      const task = createTask({ id: 'managed-env', prompt: undefined, command: `node -e "require('fs').writeFileSync('${output}', JSON.stringify({url:process.env.DISCLAUDE_API_BASE_URL,token:process.env.DISCLAUDE_API_TOKEN||null}))"` });
+      const previousUrl = process.env.DISCLAUDE_API_BASE_URL;
+      const previousToken = process.env.DISCLAUDE_API_TOKEN;
+      try {
+        process.env.DISCLAUDE_API_BASE_URL = 'http://127.0.0.1:43123';
+        process.env.DISCLAUDE_API_TOKEN = 'managed-token';
+        scheduler.addTask(task);
+        void scheduler.getActiveJobs()[0].job.fireOnTick();
+        await vi.waitFor(async () => expect(JSON.parse(await fsPromises.readFile(output, 'utf8'))).toEqual({ url: 'http://127.0.0.1:43123', token: 'managed-token' }));
+        process.env.DISCLAUDE_API_BASE_URL = 'http://127.0.0.1:43124';
+        delete process.env.DISCLAUDE_API_TOKEN;
+        void scheduler.getActiveJobs()[0].job.fireOnTick();
+        await vi.waitFor(async () => expect(JSON.parse(await fsPromises.readFile(output, 'utf8'))).toEqual({ url: 'http://127.0.0.1:43124', token: null }));
+      } finally {
+        await scheduler.stop(0);
+        if (previousUrl === undefined) { delete process.env.DISCLAUDE_API_BASE_URL; } else { process.env.DISCLAUDE_API_BASE_URL = previousUrl; }
+        if (previousToken === undefined) { delete process.env.DISCLAUDE_API_TOKEN; } else { process.env.DISCLAUDE_API_TOKEN = previousToken; }
+        await fsPromises.rm(outputDir, { recursive: true, force: true });
+      }
+    });
+
     it('reads current environment per tick, overrides task identity, and leaves the parent unchanged', async () => {
       const commandRunner = vi.fn<CommandRunner>().mockResolvedValue({
         stdout: '', stderr: '', stdoutTruncated: false, stderrTruncated: false,
