@@ -42,6 +42,14 @@ describe('CodexAgentProvider app-server transport', () => {
     dirs.push(workspace);
     mkdirSync(join(workspace, 'skills', 'demo'), { recursive: true });
     writeFileSync(join(workspace, 'skills', 'demo', 'SKILL.md'), '---\ndescription: Demo skill\n---');
+    for (const [directory, name, description] of [
+      ['.disclaude', 'shared-local', 'Shared local skill'],
+      ['.claude', 'claude-local', 'Claude local skill'],
+    ]) {
+      const root = join(workspace, directory, 'skills', name);
+      mkdirSync(root, { recursive: true });
+      writeFileSync(join(root, 'SKILL.md'), `---\ndescription: ${description}\n---`);
+    }
     writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
 const fs = require('node:fs');
 require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
@@ -58,6 +66,10 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     const prompt = readFileSync(join(dir, 'home', 'turn-input'), 'utf8');
     expect(prompt).toContain('Disclaude skills:');
     expect(prompt).toContain('skills/demo/SKILL.md');
+    expect(prompt).toContain('skills/shared-local/SKILL.md');
+    expect(prompt).toContain('Shared local skill');
+    expect(prompt).not.toContain('claude-local');
+    expect(prompt).not.toContain('Claude local skill');
     expect(prompt).toContain('User request:\nhello');
     expect(prompt).not.toContain(workspace);
     provider.dispose();
