@@ -214,11 +214,12 @@ describe('CodexAgentProvider (Issues #4629 + #4630)', () => {
   // --------------------------------------------------------------------------
 
   describe('queryStream (exec bridge, Issue #4630)', () => {
-    it('injects project-local builtin resource discovery into the Codex prompt', async () => {
+    it('discovers shared project skills from .disclaude without scanning .claude', async () => {
       const workspace = mkdtempSync(join(tmpdir(), 'codex-project-workspace-'));
       try {
         mkdirSync(join(workspace, 'skills', 'demo'), { recursive: true });
         mkdirSync(join(workspace, '.claude', 'skills', 'claude-local'), { recursive: true });
+        mkdirSync(join(workspace, '.disclaude', 'skills', 'shared-local'), { recursive: true });
         writeFileSync(
           join(workspace, 'skills', 'demo', 'SKILL.md'),
           '---\ndescription: Demo project skill\n---\nUse the demo workflow.',
@@ -226,6 +227,10 @@ describe('CodexAgentProvider (Issues #4629 + #4630)', () => {
         writeFileSync(
           join(workspace, '.claude', 'skills', 'claude-local', 'SKILL.md'),
           '---\ndescription: Claude local skill\n---\nUse the Claude local workflow.',
+        );
+        writeFileSync(
+          join(workspace, '.disclaude', 'skills', 'shared-local', 'SKILL.md'),
+          '---\ndescription: Shared local skill\n---\nUse the shared workflow.',
         );
         fixtures = makeFixtures({
           withBinary: true,
@@ -238,8 +243,10 @@ describe('CodexAgentProvider (Issues #4629 + #4630)', () => {
         expect(prompt).toContain('Demo project skill');
         expect(prompt).toContain('skills/demo/SKILL.md');
         expect(prompt).not.toContain(workspace);
-        expect(prompt).toContain('Claude local skill');
-        expect(prompt).toContain('skills/claude-local/SKILL.md');
+        expect(prompt).toContain('Shared local skill');
+        expect(prompt).toContain('skills/shared-local/SKILL.md');
+        expect(prompt).not.toContain('Claude local skill');
+        expect(prompt).not.toContain('claude-local');
         expect(prompt).toContain('User request:\nhi');
       } finally {
         rmSync(workspace, { recursive: true, force: true });
