@@ -373,3 +373,13 @@ export {
 export { createPrivateProcessAction, type PrivateProcessActionOptions } from './security/private-process-action.js';
 export { ActionBoundInput } from './security/action-bound-input.js';
 export type { PrivateAction, PrivateActionAudit, PrivateActionOutcome, PrivateSubmission } from './security/action-bound-input.js';
+
+// Harness-neutral skill discovery, precedence, and manifest contract.
+export { SkillsRegistry, formatSkillManifest } from './skills/index.js';
+export type {
+  SkillSourceKind,
+  SkillSource,
+  ResolvedSkill,
+  SkillDiagnostic,
+  SkillsRegistryResolution,
+} from './skills/index.js';

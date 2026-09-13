@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { SkillsRegistry } from './skills-registry.js';
+import { SkillsRegistry } from './index.js';
 
 describe('SkillsRegistry', () => {
   const roots: string[] = [];
