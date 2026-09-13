@@ -41,10 +41,11 @@
 
 import { execSync, execFileSync } from 'node:child_process';
 import { writeFileSync, existsSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
-import { realpathSync } from 'node:fs';
+import { realpathSync, accessSync, constants, statSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { chromiumConfigPath, loadChromiumConfig, saveChromiumConfig } from './chromium-config.mjs';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -427,9 +428,7 @@ function loadDotEnv(file) {
   }
 }
 
-// Load project-root `.env` (if any) so chromium-cdp service knobs can be set
-// there without a real env injection. Must run before the dispatch below.
-loadDotEnv(resolve(PROJECT_ROOT, '.env'));
+// Configuration is loaded only at command dispatch, never on module import.
 
 // ---- chromium-cdp service constants -------------------------------------
 // Issue #4807: a launchd-hosted Chromium that exposes a STABLE CDP endpoint
@@ -529,8 +528,12 @@ export function resolveChromiumHeadless() {
 export function resolveChromiumBinary() {
   const fromEnv = process.env.CHROMIUM_CDP_BINARY;
   if (fromEnv) {
-    if (existsSync(fromEnv)) return fromEnv;
-    console.warn(`Warning: CHROMIUM_CDP_BINARY set but not found: ${fromEnv}`);
+    try {
+      accessSync(fromEnv, constants.X_OK);
+      if (statSync(fromEnv).isFile()) return fromEnv;
+    } catch { /* Diagnose the configured path without falling back. */ }
+    console.warn('Configured CHROMIUM_CDP_BINARY was not found or is not executable; select a valid executable.');
+    return null; // Never silently switch to the operator's daily browser.
   }
   const candidates = [
     '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
@@ -695,11 +698,11 @@ ${programArgs.map((a) => `    <string>${xmlEscape(a)}</string>`).join('\n')}
     <key>BU_CDP_URL</key>
     <string>${buildCdpUrl}</string>
     <key>CHROMIUM_CDP_PROFILE_DIR</key>
-    <string>${profileDir}</string>
+    <string>${xmlEscape(profileDir)}</string>
     <key>CHROMIUM_CDP_PORT</key>
     <string>${String(port)}</string>
     <key>CHROMIUM_CDP_ADDRESS</key>
-    <string>${address}</string>
+    <string>${xmlEscape(address)}</string>
   </dict>
 </dict>
 </plist>
@@ -707,6 +710,15 @@ ${programArgs.map((a) => `    <string>${xmlEscape(a)}</string>`).join('\n')}
 
   ensureLaunchAgentsDir();
   ensureLogDir();
+  // Save the resolved selection (not the entire environment) outside the package.
+  // A write failure occurs before replacing the plist or unloading the service.
+  saveChromiumConfig({
+    CHROMIUM_CDP_BINARY: chromeBin,
+    CHROMIUM_CDP_PROFILE_DIR: profileDir,
+    CHROMIUM_CDP_PORT: String(port),
+    CHROMIUM_CDP_ADDRESS: address,
+    CHROMIUM_CDP_HEADED: headless ? '0' : '1',
+  });
   writeFileSync(CR_PLIST_PATH, plist, 'utf-8');
   console.log(`Plist generated: ${CR_PLIST_PATH}`);
   console.log(`  Chrome: ${chromeBin}`);
@@ -732,13 +744,14 @@ function loadPlistAt(plistPath, label) {
     console.error('Run "generate" or "install" first.');
     process.exit(1);
   }
-  run(`launchctl load ${plistPath}`);
+  execFileSync('launchctl', ['load', plistPath], { stdio: 'inherit' });
   console.log(`Service loaded (${label}).`);
 }
 
 function unloadPlistAt(plistPath, label) {
   if (!existsSync(plistPath)) return;
-  run(`launchctl unload ${plistPath}`, { allowFail: true, silent: true });
+  try { execFileSync('launchctl', ['unload', plistPath], { stdio: 'pipe' }); }
+  catch { /* Preserve idempotent stop/restart when the service is already unloaded. */ }
   console.log(`Service unloaded (${label}).`);
 }
 
@@ -774,8 +787,8 @@ function cmdChromiumStop() {
 }
 
 function cmdChromiumRestart() {
-  unloadPlistAt(CR_PLIST_PATH, LABEL_CHROMIUM);
   generateChromiumPlist();
+  unloadPlistAt(CR_PLIST_PATH, LABEL_CHROMIUM);
   loadPlistAt(CR_PLIST_PATH, LABEL_CHROMIUM);
   console.log('\nChromium CDP service restarted.');
 }
@@ -798,7 +811,8 @@ function cmdChromiumStatus() {
   if (result) {
     console.log(result.trim());
     console.log(`\nPlist: ${CR_PLIST_PATH}`);
-    console.log(`Profile: ${resolveChromiumProfileDir()}`);
+    console.log(`Configured profile (may differ from loaded service): ${resolveChromiumProfileDir()}`);
+    console.log(`Configuration: ${chromiumConfigPath()}`);
     console.log(`Stdout: ${CR_STDOUT_LOG}`);
     console.log(`Stderr: ${CR_STDERR_LOG}`);
   } else {
@@ -975,7 +989,7 @@ Commands:
   uninstall   Unload + remove plist
   start       Generate + load
   stop        Unload (keep plist)
-  restart     Unload + generate + load
+  restart     Generate + unload + load (preserves saved selection)
   logs        Tail log files [--lines=N]
   status      Show service status
 `);
@@ -1000,5 +1014,11 @@ absolute state directory. Missing settings fail closed before launchctl runs.
     process.exit(1);
   }
 
+  // Explicit environment > persistent user configuration > legacy package .env.
+  // stop/uninstall/logs must remain usable even when configuration is corrupt.
+  if (IS_CHROMIUM && ['generate', 'install', 'start', 'restart', 'status'].includes(command)) {
+    loadChromiumConfig();
+  }
+  loadDotEnv(resolve(PROJECT_ROOT, '.env'));
   table[command]();
 }
