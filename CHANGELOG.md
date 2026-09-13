@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.5.3] - Unreleased
+## [0.5.3] - 2026-09-13
 
 ### Added
 
@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Remove standalone `✅ Complete` summaries. Reaction failures are bounded and do not create extra fallback messages.
 - Finalize streaming replies at each turn boundary and release stream state even when the last content update fails.
 
-See [0.5.3 release scope](docs/releases/0.5.3.md). This candidate entry does not imply a final tag or release.
+See [0.5.3 release notes](docs/releases/0.5.3.md) and the [published release](https://github.com/hs3180/disclaude/releases/tag/v0.5.3).
 
 ## [0.5.2] - Unreleased
 
