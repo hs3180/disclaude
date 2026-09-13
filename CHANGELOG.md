@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3] - Unreleased
+
+### Added
+
+- Shared SkillsRegistry with deterministic precedence, trust checks, diagnostics, and one resolved Codex exec/app-server manifest.
+
+### Fixed
+
+- Keep project skill discovery separate from transient chat workspaces; reject unsafe resource names and refresh cached rejection diagnostics.
+- Terminate persistent runtime errors without misleading reconnect/backoff behavior.
+- Pass the current managed API address and authentication context to scheduled commands.
+- Attach completion feedback to the actual delivered reply, including finalized streaming cards and fallback messages. Failed, cancelled, and receipt-less turns do not receive a completion reaction.
+
+### Changed
+
+- Remove standalone `✅ Complete` summaries. Reaction failures are bounded and do not create extra fallback messages.
+- Finalize streaming replies at each turn boundary and release stream state even when the last content update fails.
+
+See [0.5.3 release scope](docs/releases/0.5.3.md). This candidate entry does not imply a final tag or release.
+
 ## [0.5.2] - Unreleased
 
 ### Added
