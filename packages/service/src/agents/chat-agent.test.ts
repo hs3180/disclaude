@@ -1209,7 +1209,7 @@ describe('ChatAgent (service)', () => {
       }).call(agent);
       async function* throwingIterator() {
         yield* scripted.iterator;
-        throw new Error('upstream exploded');
+        throw new Error('upstream ECONNRESET');
       }
       (agent as any).createQueryStream = () => ({
         handle: { close: vi.fn(), cancel: vi.fn() },
@@ -3630,6 +3630,48 @@ describe('ChatAgent (service)', () => {
         },
         { timeout: 1000, interval: 20 }
       );
+    });
+
+    it('Issue #4989: persistent runtime errors terminate without restart accounting or a reconnect notice', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_persistent_runtime_error',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      async function* yieldThenThrowIterator() {
+        yield { parsed: { type: 'text', content: 'partial reply' }, raw: {} };
+        throw new Error('invalid provider configuration');
+      }
+
+      const createQueryStream = vi.fn(() => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: yieldThenThrowIterator(),
+      }));
+      (agent as any).createQueryStream = createQueryStream;
+      (agent as any).isAgentTeamsEnabled = () => false;
+
+      void agent.processMessage({
+        chatId: 'oc_persistent_runtime_error',
+        payload: 'hi',
+        messageId: 'msg_1',
+      });
+
+      await vi.waitFor(() => {
+        const messages = localCallbacks.sendMessage.mock.calls.map((call: unknown[]) => String(call[1]));
+        expect(messages.some((message: string) => message.includes('本次请求中断'))).toBe(true);
+      });
+
+      const { restartManager } = agent as any;
+      expect(restartManager.shouldRestart).not.toHaveBeenCalled();
+      expect(createQueryStream).toHaveBeenCalledTimes(1);
+      const messages = localCallbacks.sendMessage.mock.calls.map((call: unknown[]) => String(call[1]));
+      expect(messages.some((message: string) => message.includes('正在重新连接'))).toBe(false);
+      expect(messages.some((message: string) => message.includes('会话已暂停'))).toBe(false);
+      expect(agent.hasActiveSession()).toBe(false);
     });
 
     it('Issue #4258 (part 2 / ③): should record failure (not success) on an empty turn', async () => {

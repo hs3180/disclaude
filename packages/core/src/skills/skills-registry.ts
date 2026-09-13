@@ -165,4 +165,3 @@ export function formatSkillManifest(skills: readonly ResolvedSkill[]): string {
     ...skills.map((skill) => `- skill [${skill.name}](${skill.reference})${skill.description ? `: ${skill.description}` : ''}`),
   ].join('\n');
 }
-
