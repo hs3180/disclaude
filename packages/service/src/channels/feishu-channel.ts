@@ -232,6 +232,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   // / reused values are rejected with business code 300317). createCard itself
   // carries no sequence, so the first PUT starts at 1.
   private streamingCardKitClient?: FeishuCardKitClient;
+  private readonly streamingMessageIds = new Map<string, string>();
   private readonly streamingSequences = new Map<string, number>();
   private readonly deliveryHealth: DeliveryHealth = {
     status: 'unknown',
@@ -992,6 +993,16 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     }
   }
 
+  /** A repeated request uses the same message and emoji; never creates a text fallback. */
+  async addReaction(messageId: string, emoji: string): Promise<boolean> {
+    if (!this.client) { return false; }
+    const result = await this.client.im.messageReaction.create({
+      path: { message_id: messageId },
+      data: { reaction_type: { emoji_type: emoji } },
+    });
+    return result.code === 0;
+  }
+
   /**
    * Begin a streaming reply: create a streaming card and send it to the chat.
    * Returns the card_id handle for subsequent streamText/finalizeStreaming
@@ -1030,17 +1041,22 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         return null;
       }
       // Step 2: send the created card to the conversation by card_id. The same
-      // app that created the card entity must send it. `root_id` keeps the card
-      // inside a topic thread when present (mirrors sendMessage's create path).
-      await larkClient.im.message.create({
-        params: { receive_id_type: 'chat_id' },
-        data: {
-          receive_id: chatId,
-          msg_type: 'interactive',
-          content: JSON.stringify({ type: 'card', data: { card_id: cardId } }),
-          ...(parentMessageId ? { root_id: parentMessageId } : {}),
-        },
-      });
+      // app that created the card entity must send it. Reply through the IM
+      // reply endpoint when a parent message anchors this turn.
+      const content = JSON.stringify({ type: 'card', data: { card_id: cardId } });
+      const sent = parentMessageId
+        ? await larkClient.im.message.reply({
+            path: { message_id: parentMessageId },
+            data: { msg_type: 'interactive', content, reply_in_thread: true },
+          })
+        : await larkClient.im.message.create({
+            params: { receive_id_type: 'chat_id' },
+            data: { receive_id: chatId, msg_type: 'interactive', content },
+          });
+      if (sent.code !== undefined && sent.code !== 0) {
+        throw new Error(`Streaming card delivery failed: ${sent.code}`);
+      }
+      if (sent.data?.message_id) { this.streamingMessageIds.set(cardId, sent.data.message_id); }
       // createCard carries no sequence; the first PUT/PATCH uses sequence 1.
       this.streamingSequences.set(cardId, 0);
       logger.info(
@@ -1089,7 +1105,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
    * Freeze the in-flight card (turn the breathing cursor off) and drop its
    * sequence state. Idempotent — safe on every turn-exit path.
    */
-  async finalizeStreaming(id: string): Promise<void> {
+  async finalizeStreaming(id: string): Promise<string | void> {
     if (!this.streamingSequences.has(id)) {
       return;
     }
@@ -1097,12 +1113,12 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     const sequence = (this.streamingSequences.get(id) ?? 0) + 1;
     this.streamingSequences.set(id, sequence);
     try {
-      if (client) {
-        await client.updateElementContent(id, STREAMING_THINKING_ELEMENT_ID, '本次回复已结束', sequence);
-        this.streamingSequences.set(id, sequence + 1);
-        await client.finalizeStreaming(id, sequence + 1);
-      }
+      if (!client) { throw new Error('Streaming client unavailable during finalization'); }
+      await client.updateElementContent(id, STREAMING_THINKING_ELEMENT_ID, '本次回复已结束', sequence);
+      this.streamingSequences.set(id, sequence + 1);
+      await client.finalizeStreaming(id, sequence + 1);
       logger.info({ cardId: id, sequence }, 'finalizeStreaming: streaming card frozen');
+      return this.streamingMessageIds.get(id);
     } catch (err) {
       // A failed freeze degrades (driver sendMessage-flushes the full buffer);
       // still clean up so the per-card counter does not leak.
@@ -1110,6 +1126,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       throw err;
     } finally {
       this.streamingSequences.delete(id);
+      this.streamingMessageIds.delete(id);
     }
   }
 

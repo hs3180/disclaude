@@ -53,7 +53,7 @@ export interface StreamingReplyDriverOptions {
   /** Patch the in-flight card with the latest accumulated text (replace-semantics). */
   streamText: (id: string, text: string) => Promise<void>;
   /** Freeze the in-flight card; no further streamText calls for this id. */
-  finalizeStreaming: (id: string) => Promise<void>;
+  finalizeStreaming: (id: string) => Promise<string | void>;
   /** Fallback delivery used on degrade (reply never lost). */
   sendMessage: (chatId: string, content: string, threadRoot?: string) => Promise<void>;
   /** Min ms between PATCHes, forwarded to StreamingThrottle. Default 200. */
@@ -150,18 +150,28 @@ export class StreamingReplyDriver {
       // final flush below. Closes the narrow leading-vs-flush race noted in
       // the #4438 review (drain() uses allSettled, never throws).
       await this.throttle?.drain();
+      let finishFailed = false;
       try {
         if (this.buffer) {
           // Direct (awaited) final PATCH — guarantees the card holds the full
           // reply before we freeze it, regardless of what the throttle dropped.
           await this.options.streamText(id, this.buffer);
         }
+      } catch (err) {
+        finishFailed = true;
+        this.logger.warn({ err, chatId: this.options.chatId }, 'streaming final flush failed');
+      }
+      // Always close the stream, even when its last content PATCH failed.
+      try {
         await this.options.finalizeStreaming(id);
       } catch (err) {
+        finishFailed = true;
         this.logger.warn(
           { err, chatId: this.options.chatId },
           'streaming finish failed — falling back to sendMessage',
         );
+      }
+      if (finishFailed) {
         // Final delivery guarantee: send the whole reply via sendMessage.
         if (this.buffer) {
           await this.safeSend(this.buffer, threadRoot);

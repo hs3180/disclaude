@@ -115,6 +115,9 @@ export function createChannelCallbacksFactory(
   options?: ChannelCallbacksOptions
 ): (chatId: string) => ChatAgentCallbacks {
   return (_chatId: string): ChatAgentCallbacks => ({
+    ...(channel.addReaction ? {
+      addReaction: channel.addReaction.bind(channel),
+    } : {}),
     sendMessage: async (chatId: string, text: string, parentMessageId?: string) => {
       return await channel.sendMessage({
         chatId,

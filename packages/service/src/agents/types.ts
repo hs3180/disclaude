@@ -29,6 +29,8 @@ export interface ChatAgentCallbacks {
    * @param parentMessageId - Optional parent message ID for thread replies
    */
   sendMessage: (chatId: string, text: string, parentMessageId?: string) => Promise<string | void>;
+  /** Completion feedback on an actual delivered message. */
+  addReaction?: (messageId: string, emoji: string) => Promise<boolean>;
 
   /**
    * Send an interactive card to the user.
@@ -109,9 +111,10 @@ export interface ChatAgentCallbacks {
 
   /**
    * Finalize (freeze) the in-flight stream identified by `id`. No further
-   * streamText calls will be made for this id.
+   * streamText calls will be made for this id. Return its platform message ID
+   * when available (not the stream/card handle).
    */
-  finalizeStreaming?: (id: string) => Promise<void>;
+  finalizeStreaming?: (id: string) => Promise<string | void>;
 }
 
 // ============================================================================

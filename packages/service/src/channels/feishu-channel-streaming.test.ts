@@ -104,7 +104,7 @@ vi.mock('../platforms/feishu/feishu-cardkit-client.js', () => ({
 function createMockLarkClient() {
   const createMock = vi.fn().mockResolvedValue({ data: { message_id: 'msg_001' } });
   return {
-    client: { im: { message: { create: createMock } } } as any,
+    client: { im: { message: { create: createMock, reply: createMock } } } as any,
     createMock,
   };
 }
@@ -189,12 +189,11 @@ describe('FeishuChannel.startStreaming — Issue #4400', () => {
     expect(createdCard.config.streaming_mode).toBe(true);
     // Step 2: IM-send the card by card_id (msg_type "interactive").
     expect(createMock).toHaveBeenCalledWith({
-      params: { receive_id_type: 'chat_id' },
+      path: { message_id: 'om_parent' },
       data: {
-        receive_id: 'oc_chat1',
         msg_type: 'interactive',
         content: JSON.stringify({ type: 'card', data: { card_id: 'card_123' } }),
-        root_id: 'om_parent',
+        reply_in_thread: true,
       },
     });
   });
@@ -253,7 +252,7 @@ describe('FeishuChannel.streamText / finalizeStreaming — Issue #4400', () => {
   it('finalizeStreaming freezes the card and the next sequence continues to increment', async () => {
     const { channel, id } = await startedChannel();
     await channel.streamText(id, 'partial');
-    await channel.finalizeStreaming(id);
+    await expect(channel.finalizeStreaming(id)).resolves.toBe('msg_001');
 
     expect(mockCardKit.finalizeStreaming).toHaveBeenCalledTimes(1);
     // Reply seq 1 → terminal label seq 2 → freeze seq 3.
@@ -303,5 +302,27 @@ describe('FeishuChannel.streamText / finalizeStreaming — Issue #4400', () => {
     mockCardKit.updateElementContent.mockClear();
     await channel.streamText(id, 'late');
     expect(mockCardKit.updateElementContent).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('completion reaction transport', () => {
+  it('targets the IM message and returns the API success status', async () => {
+    const create = vi.fn().mockResolvedValueOnce({ code: 0 }).mockResolvedValueOnce({ code: 999 });
+    const channel = createTestChannel({ client: { im: { messageReaction: { create } } } });
+    await expect(channel.addReaction('om-final', 'DONE')).resolves.toBe(true);
+    expect(create).toHaveBeenCalledWith({ path: { message_id: 'om-final' }, data: { reaction_type: { emoji_type: 'DONE' } } });
+    await expect(channel.addReaction('om-final', 'DONE')).resolves.toBe(false);
+  });
+  it('does not report success without a client', async () => {
+    await expect(createTestChannel().addReaction('om-final', 'DONE')).resolves.toBe(false);
+  });
+  it('declines a rejected IM card send without retaining a handle', async () => {
+    const { client, createMock } = createMockLarkClient();
+    createMock.mockResolvedValue({ code: 999, data: { message_id: 'om-rejected' } });
+    const channel = createTestChannel({ streamingCard: true, client });
+    await expect(channel.startStreaming('oc_chat')).resolves.toBeNull();
+    await expect(channel.finalizeStreaming('card_123')).resolves.toBeUndefined();
+    expect(mockCardKit.finalizeStreaming).not.toHaveBeenCalled();
   });
 });
