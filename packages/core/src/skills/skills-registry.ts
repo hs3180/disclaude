@@ -55,6 +55,7 @@ export class SkillsRegistry {
     const fingerprint = createHash('sha256')
       .update(candidates.map((candidate) => candidate.fingerprint).sort().join('\n'))
       .update(this.sources.map((source) => `${source.kind}:${resolve(source.root)}`).sort().join('\n'))
+      .update(JSON.stringify(diagnostics))
       .digest('hex');
     if (this.cached && this.cachedFingerprint === fingerprint) {return this.cached;}
 
@@ -92,6 +93,12 @@ export class SkillsRegistry {
     try { entries = readdirSync(skillsRoot).sort(); } catch { return []; }
     const candidates: Candidate[] = [];
     for (const name of entries) {
+      // Directory names become both Markdown labels and relative link targets.
+      // Accept only portable identifiers, never metadata-controlled markup.
+      if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(name)) {
+        diagnostics.push({ code: 'INVALID_SKILL', source: source.kind, detail: 'skill directory must use a 1-64 character alphanumeric, hyphen, or underscore identifier' });
+        continue;
+      }
       const path = join(skillsRoot, name, 'SKILL.md');
       try {
         if (!statSync(path).isFile()) {continue;}

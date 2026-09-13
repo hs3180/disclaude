@@ -57,4 +57,32 @@ describe('SkillsRegistry', () => {
     expect(resolution.manifest.length).toBeLessThan(400);
     expect(resolution.diagnostics).toContainEqual(expect.objectContaining({ name: 'unsafe', code: 'INVALID_SKILL' }));
   });
+
+  it('refreshes diagnostics when an invalid resource appears or disappears', () => {
+    const root = makeRoot();
+    skill(root, 'valid');
+    const registry = new SkillsRegistry([{ kind: 'project', root }]);
+    const initial = registry.resolve();
+    mkdirSync(join(root, 'skills', 'invalid'));
+    writeFileSync(join(root, 'skills', 'invalid', 'SKILL.md'), 'missing frontmatter');
+    const invalid = registry.resolve();
+    expect(invalid).not.toBe(initial);
+    expect(invalid.diagnostics).toContainEqual(expect.objectContaining({ name: 'invalid' }));
+    expect(registry.resolve()).toBe(invalid);
+    rmSync(join(root, 'skills', 'invalid'), { recursive: true });
+    expect(registry.resolve().diagnostics).toEqual([]);
+  });
+
+  it('rejects names that could forge model-facing manifest rows or links', () => {
+    const root = makeRoot();
+    skill(root, 'valid');
+    for (const name of ['fake]link', 'fake\nrow', 'fake%20link']) {
+      skill(root, name);
+    }
+    const result = new SkillsRegistry([{ kind: 'project', root }]).resolve();
+    expect(result.skills.map((entry) => entry.name)).toEqual(['valid']);
+    expect(result.diagnostics).toHaveLength(3);
+    expect(result.manifest.split('\n')).toHaveLength(2);
+  });
+
 });
