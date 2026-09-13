@@ -257,8 +257,8 @@ describe('CodexAgentProvider (Issues #4629 + #4630)', () => {
       const project = mkdtempSync(join(tmpdir(), 'codex-project-root-'));
       const workspace = mkdtempSync(join(tmpdir(), 'codex-runtime-workspace-'));
       try {
-        mkdirSync(join(project, 'skills', 'project-only'), { recursive: true });
-        writeFileSync(join(project, 'skills', 'project-only', 'SKILL.md'), '---\ndescription: Project-only skill\n---');
+        mkdirSync(join(project, '.disclaude', 'skills', 'project-only'), { recursive: true });
+        writeFileSync(join(project, '.disclaude', 'skills', 'project-only', 'SKILL.md'), '---\ndescription: Project-only skill\n---');
         fixtures = makeFixtures({ withBinary: true, withAuth: true, body: `printf '%s' "$*" > "$CODEX_HOME/prompt"\n${HAPPY_BODY}` });
         await drainStream(makeProvider(fixtures), ['hi'], { cwd: workspace, projectRoot: project });
         const prompt = readFileSync(join(fixtures.codexHome, 'prompt'), 'utf8');
