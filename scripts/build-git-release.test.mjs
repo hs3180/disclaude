@@ -47,6 +47,8 @@ test('generates a standalone manifest and excludes untracked resources', () => {
   write('skills/example/SKILL.md', 'tracked skill');
   write('.claude-plugin/plugin.json', '{"name":"builtins"}');
   write('agents/example.md', 'builtin agent');
+  write('docker/start-chromium.sh', '#!/bin/bash\nexit 0');
+  write('docker-compose.yml', 'services: {}');
   for (const name of ['core', 'service', 'channel-cli']) {
     write(
       `packages/${name}/package.json`,
@@ -88,6 +90,9 @@ test('generates a standalone manifest and excludes untracked resources', () => {
   assert(existsSync(join(output, '.claude-plugin/plugin.json')));
   assert(existsSync(join(output, 'agents/example.md')));
   assert(!existsSync(join(output, 'packages/core/dist/index.test.js')));
+  assert(existsSync(join(output, 'docker/start-chromium.sh')));
+  assert(existsSync(join(output, 'docker-compose.yml')));
+  assert(manifest.files.includes('docker/'));
   assert(!existsSync(join(output, 'packages/core/package.json')));
   assert.match(
     readFileSync(join(output, 'packages/service/dist/index.js'), 'utf8'),
