@@ -78,7 +78,8 @@ import {
   userInputText,
   type CodexThreadEvent,
 } from './exec-adapter.js';
-import { codexSkillsRegistry, type SkillsRegistry } from './skills-registry.js';
+import type { SkillsRegistry } from '../../../skills/index.js';
+import { codexSkillsRegistry } from './skill-sources.js';
 
 const logger = createLogger('CodexAgentProvider');
 
