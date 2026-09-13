@@ -126,3 +126,30 @@ jobs:
           name: coverage-report
           path: coverage/
           retention-days: 7
+
+  # Browser changes get real Linux/amd64 runtime evidence, not only YAML tests.
+  chromium-container:
+    name: Chromium Container Acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Detect browser container changes
+        id: changes
+        shell: bash
+        run: |
+          if git diff --name-only HEAD^ HEAD | grep -Eq '^(docker/|docker-compose\.yml$|scripts/test-chromium-container\.mjs$|\.github/workflows/ci\.yml$)'; then
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-node@v4
+        if: steps.changes.outputs.run == 'true'
+        with:
+          node-version: '22'
+      - name: Build browser image
+        if: steps.changes.outputs.run == 'true'
+        run: docker build -t disclaude-chromium:060-test -f docker/Dockerfile.chromium docker
+      - name: Test CDP, display, persistence and failure lifecycle
+        if: steps.changes.outputs.run == 'true'
+        run: node scripts/test-chromium-container.mjs disclaude-chromium:060-test

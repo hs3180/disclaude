@@ -62,5 +62,6 @@ containers and that volume. No real account or production profile is used.
 
 On 2026-09-14 this passed on a Linux/aarch64 Docker engine hosted on macOS, using
 the pinned image's Chromium 151.0.7922.34, in both headed/Xvfb and headless modes.
-This proves the tested Docker path; native Linux host service management,
-Linux/amd64 and real-site login/anti-bot behavior still need separate evidence.
+This proves the tested Docker path. The Chromium Container Acceptance CI job
+validates Linux/amd64 when browser container inputs change. Native Linux host
+service management and real-site login/anti-bot behavior need separate evidence.
