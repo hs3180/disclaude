@@ -1,0 +1,322 @@
+# =============================================================================
+# Disclaude Configuration File
+# =============================================================================
+#
+# This is an example configuration file for Disclaude.
+# Copy this file to `~/.disclaude/disclaude.config.yaml` and customize it.
+#
+# IMPORTANT: Security Best Practices
+# - Keep the real file under ~/.disclaude and restrict its filesystem permissions
+# - This example file (disclaude.config.example.yaml) is committed to git
+# - DO NOT commit your actual disclaude.config.yaml with real API keys
+#
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Workspace Configuration
+# -----------------------------------------------------------------------------
+workspace:
+  # Working directory for file operations.
+  # Docker: use /data/workspace (separates runtime data from app source at /app)
+  # Local dev: use "./workspace" (relative to config file)
+  # Default: current working directory
+  dir: "./workspace"
+
+# -----------------------------------------------------------------------------
+# Agent/AI Configuration
+# -----------------------------------------------------------------------------
+agent:
+  # API provider preference
+  # Options: anthropic (API protocol); glm is accepted for legacy configurations
+  provider: "anthropic"
+
+  # Required agent runtime. Startup fails rather than silently switching.
+  # Options: claude, pi, codex, deepseek
+  # - claude/pi: orthogonal to `provider` above — backend selects the agent
+  #   runtime, `provider` selects the LLM API; they compose (e.g. pi + GLM).
+  # - codex: runs the official Codex CLI in exec mode, powered by your
+  #   ChatGPT subscription quota instead of an API key. NOT composable with
+  #   glm/anthropic config (the login governs the model) — see
+  #   docs/codex-backend.md and #4637. Requires: npm install -g @openai/codex
+  #   + one-time interactive `codex login`.
+  agentBackend: "claude"
+
+  # Codex exec sandbox level (for the active agent backend, Issue #4631).
+  # Options: read-only, workspace-write, danger-full-access
+  # The clear full-access switch for Codex. Keep it unset/false for the
+  # normal workspace-write sandbox; disallowedTools mutation entries still
+  # cap the effective sandbox at read-only.
+  # codexSandbox: "workspace-write"
+  # Explicit opt-in for unrestricted commands and workspace mutations.
+  # fullAccess: true
+  # Codex workspace network access (default: true for disclaude network-backed workflows).
+  # codexNetworkAccess: true
+
+  # Codex backend concurrency governance (for the active agent backend,
+  # Issue #4634). Per-process caps: at most N alive codex sessions and N
+  # simultaneously-executing codex exec children; excess turns queue FIFO
+  # with a backpressure notice. At the session cap the idlest session is
+  # evicted (LRU) — the evicted chat resumes its conversation on its next
+  # message; only a user /reset truly starts fresh.
+  # codex:
+  #   maxActiveSessions: 3    # Default: 3
+  #   maxConcurrentRuns: 2    # Default: 2
+  #   execTimeoutMs: 0        # Default: 0; 0 disables the per-run wall-clock cap
+
+  # Model to use for AI operations (fallback default)
+  # Default: claude-3-5-sonnet-20241022 (Anthropic) or glm-4.7 (GLM)
+  model: "glm-4.7"
+
+  # Three-level model configuration (Issue #3059)
+  # Allows different agent scenarios to use models with appropriate capability/cost trade-offs.
+  # Model resolution priority: options.model > tier-specific model > default model
+  # highModel: "glm-5.1"           # Evaluators, complex analysis
+  # lowModel: "glm-4-flash"        # Scheduled tasks, simple operations
+  # multimodalModel: "glm-4v"      # Main dialogue, multimodal processing
+
+  # Permission mode for SDK tools
+  # Options: default (ask user), bypassPermissions (auto-approve)
+  # Default: default for CLI, bypassPermissions for bot
+  # permissionMode: "default"
+
+  # Maximum number of concurrent long-running tasks
+  # Default: 1
+  maxConcurrentTasks: 1
+
+  # Enable Claude Code Agent Teams mode
+  # When enabled, the agent can spawn and coordinate multiple teammate sessions
+  # for parallel work on complex tasks.
+  # @see https://code.claude.com/docs/en/agent-teams
+  # Default: false
+  # enableAgentTeams: true
+
+  # Explicit auto-compaction threshold for the Claude backend (all models).
+  # Omit to query the provider's model API and use 80% of its context limit.
+  # If the API omits the limit (e.g. DeepSeek /models), a warning asks you to
+  # configure this value; no fixed fallback is injected. SDK behavior remains
+  # unchanged in that case. Set to 0 to disable automatic compaction.
+  # autoCompactWindow: 80000
+
+# Optional named runtime presets. An explicit default (reserved name `default`
+# or `default: true`) wins; otherwise the first declared preset is selected.
+# Preset names must not be purely numeric (use e.g. agent-1, not "1").
+# Use `/agent list`, `/agent`, and `/agent use <name>` to inspect or switch the
+# current chat. Switching starts a fresh native session without moving context;
+# the per-chat choice lasts until the service restarts. If omitted, the legacy
+# single `agent:` configuration above remains active unchanged.
+# agents:
+#   default:
+#     agentBackend: claude
+#     model: "glm-4.7"
+#     provider: glm
+#   codex-fast:
+#     agentBackend: codex
+#     model: "gpt-5.6-sol"
+#   pi-fast:
+#     agentBackend: pi
+#     model: "glm-4.7"
+#     provider: glm
+
+# -----------------------------------------------------------------------------
+# Feishu/Lark Platform Configuration
+# -----------------------------------------------------------------------------
+feishu:
+  # Feishu App ID and Secret
+  appId: "your_feishu_app_id_here"
+  appSecret: "your_feishu_app_secret_here"
+
+  # CLI chat ID for testing (optional)
+  cliChatId: ""
+
+  # Native streaming replies (Card Kit typewriter + breathing cursor).
+  # Issue #4400 / #4208: gray-rollout flag. Default false — when off, the
+  # channel reports supportsStreaming=false and the agent uses sendMessage.
+  # Issue #4510: p2p-first is built-in, not configured — when on, streaming
+  # applies to single chats only; groups/topics always keep per-chunk
+  # sendMessage.
+  # streamingCard: false
+
+  # Message deduplication settings
+  deduplication:
+    # Maximum number of message IDs to keep in memory
+    # Default: 1000
+    maxIds: 1000
+
+    # Maximum message age in milliseconds
+    # Default: 60000 (1 minute)
+    maxAgeMs: 60000
+
+  # Topic group message push notification (Issue #4031)
+  # When enabled, topic group messages trigger real-time notifications
+  # to connected clients via SSE (GET /api/topic-stream on the HTTP API server).
+  # Requires --api-port to be configured for SSE endpoint to be available.
+  # Default: disabled
+  # topicNotify:
+  #   enabled: true
+
+# -----------------------------------------------------------------------------
+# Ruliu (如流) Platform Configuration
+# -----------------------------------------------------------------------------
+# Ruliu is Baidu's enterprise instant messaging platform.
+# Enable this section to integrate with Ruliu bots.
+ruliu:
+  # Enable/disable Ruliu integration
+  # Default: false
+  enabled: false
+
+  # API host (usually no need to change)
+  apiHost: "https://apiin.im.baidu.com"
+
+  # Verification token from Ruliu bot settings
+  checkToken: "your_ruliu_check_token_here"
+
+  # Message encryption key (Base64 encoded, 43 characters)
+  encodingAESKey: "your_ruliu_encoding_aes_key_here"
+
+  # Application credentials from Ruliu bot settings
+  appKey: "your_ruliu_app_key_here"
+  appSecret: "your_ruliu_app_secret_here"
+
+  # Robot name for @mention detection
+  robotName: "MyBot"
+
+  # Reply mode
+  # Options: ignore, record, mention-only, mention-and-watch, proactive
+  # Default: mention-and-watch
+  replyMode: "mention-and-watch"
+
+  # Follow-up mode settings
+  followUp: true
+  followUpWindow: 300  # seconds
+
+  # Webhook path for receiving messages
+  # Default: /webhook/ruliu
+  webhookPath: "/webhook/ruliu"
+
+# -----------------------------------------------------------------------------
+# Anthropic Messages API Service (including compatible providers)
+# -----------------------------------------------------------------------------
+anthropic:
+  # API key supplied by your Anthropic-compatible service
+  apiKey: "your_api_key_here"
+
+  # Model exposed by your proxy
+  model: "glm-4.7"
+
+  # Your service endpoint; omit apiBaseUrl when using Anthropic directly.
+  # No endpoint is assumed by default; verify this URL with your provider/operator.
+  apiBaseUrl: "https://your-anthropic-compatible-proxy.example"
+
+  # Three-level model configuration (Issue #3059)
+  # highModel: "glm-5.1"
+  # lowModel: "glm-4-flash"
+  # multimodalModel: "glm-4v"
+
+# -----------------------------------------------------------------------------
+# Logging Configuration
+# -----------------------------------------------------------------------------
+logging:
+  # Log level
+  # Options: trace, debug, info, warn, error, fatal
+  # Default: info
+  level: "info"
+
+  # Log file path (optional)
+  # If not specified, logs go to stdout/stderr only
+  # file: "./logs/disclaude.log"
+
+  # Enable pretty printing in console
+  # Default: true
+  pretty: true
+
+  # Enable log rotation
+  # Default: false
+  rotate: false
+
+# -----------------------------------------------------------------------------
+# Channels Configuration (Communication Channels)
+# -----------------------------------------------------------------------------
+# Channels are communication pathways between users and the agent.
+# Multiple channels can be enabled simultaneously.
+channels:
+  # REST API Channel
+  # Provides a RESTful API for direct agent interaction
+  rest:
+    # Server port for REST API (required)
+    port: 3000
+
+    # Server host (required)
+    host: "0.0.0.0"
+
+    # File storage directory for file upload/download (required)
+    fileStorageDir: "./data/rest-files"
+
+  # Feishu/Lark Channel
+  # Uses the feishu configuration below for credentials
+  # (enabled automatically if feishu.appId and feishu.appSecret are set)
+  feishu:
+    # Enable/disable Feishu channel
+    # Default: true (if credentials are configured)
+    enabled: true
+
+  # WeChat Channel
+  # WeChat only supports dynamic registration (programmatic API), not config.yaml.
+  # To use WeChat, register via the dynamic channel API at runtime.
+  # @see https://github.com/hs3180/disclaude/issues/1638
+
+# -----------------------------------------------------------------------------
+# Tools Configuration
+# -----------------------------------------------------------------------------
+tools:
+  # List of disabled tools (optional)
+  # If empty, all tools are enabled
+  # Example: ['WebSearch', 'WebFetch']
+  disabled: []
+
+  # NOTE (#4459 Scope 4): external MCP servers (tools.mcpServers) were REMOVED.
+  # The stdio loader no longer exists — entries here are ignored.
+  # Migrate external tools to a CLI Skill (docs/skill-format-spec.md).
+  # Browser automation lives in the browser-use Skill (skills/browser-use/SKILL.md, #4460),
+  # pointing it at the shared CDP endpoint via BU_CDP_URL (see docs/cdp-endpoint.md).
+
+# -----------------------------------------------------------------------------
+# Session Restoration Configuration (Issue #1213)
+# -----------------------------------------------------------------------------
+# Controls how chat history is loaded when agent starts or resets.
+sessionRestore:
+  # Number of days to look back for chat history
+  # Default: 7
+  historyDays: 7
+
+  # Maximum characters for restored session context
+  # Default: 4000
+  maxContextLength: 4000
+
+# -----------------------------------------------------------------------------
+# Global Environment Variables
+# -----------------------------------------------------------------------------
+# Environment variables defined here will be passed to all agent processes.
+# Useful for API keys, feature flags, or other configuration.
+env:
+  # Example: Custom API key
+  # CUSTOM_API_KEY: "your_key_here"
+
+  # Example: Enable debug mode
+  # DEBUG: "false"
+
+# =============================================================================
+# Notes
+# =============================================================================
+#
+# Setup:
+#   1. mkdir -p ~/.disclaude && copy this file there as disclaude.config.yaml
+#   2. Replace placeholder values with your actual configuration
+#   3. Run: npm run build
+#   4. Run: npm run launchd:restart (macOS) or docker compose up -d (Docker)
+#
+# Bash Environment Initialization:
+#   For conda environment activation and other shell-specific setup,
+#   use the .disclauderc file (bash script, not YAML).
+#   See .disclauderc.example for details.
+#
+# =============================================================================
