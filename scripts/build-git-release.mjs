@@ -38,6 +38,7 @@ export function sourceFingerprint(root) {
       'scripts/build-git-release.mjs',
       'scripts/prune-build-artifacts.mjs',
       'scripts/launchd.mjs',
+      'scripts/chromium-config.mjs',
     ],
     { cwd: root, encoding: 'utf8' }
   )
@@ -133,6 +134,7 @@ export function generateRelease(root, output) {
     'LICENSE',
     'disclaude.config.example.yaml',
     'scripts/launchd.mjs',
+      'scripts/chromium-config.mjs',
   ]) {
     if (!existsSync(join(root, path))) continue;
     mkdirSync(dirname(join(output, path)), { recursive: true });
