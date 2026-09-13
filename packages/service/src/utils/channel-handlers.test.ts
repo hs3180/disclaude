@@ -1020,3 +1020,25 @@ describe('createChannelApiHandlers', () => {
     );
   });
 });
+
+
+describe('completion delivery callback contract', () => {
+  it('preserves the channel receiver and delivered stream receipt', async () => {
+    const channel = createMockChannel();
+    channel.addReaction = vi.fn(function (this: IChannel, messageId: string, emoji: string) {
+      expect(this).toBe(channel);
+      expect([messageId, emoji]).toEqual(['om-final', 'DONE']);
+      return Promise.resolve(true);
+    });
+    channel.startStreaming = vi.fn().mockResolvedValue('card-handle');
+    channel.streamText = vi.fn().mockResolvedValue(undefined);
+    channel.finalizeStreaming = vi.fn().mockResolvedValue('om-final');
+    const cb = createChannelCallbacksFactory(channel, mockLogger)('oc_chat');
+    const receipt = await cb.finalizeStreaming?.('card-handle');
+    expect(receipt).toBe('om-final');
+    await expect(cb.addReaction?.(receipt as string, 'DONE')).resolves.toBe(true);
+  });
+  it('leaves reaction capability absent for unsupported channels', () => {
+    expect(createChannelCallbacksFactory(createMockChannel(), mockLogger)('oc_chat').addReaction).toBeUndefined();
+  });
+});

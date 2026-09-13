@@ -35,6 +35,7 @@
  * Agents live with the service that owns their lifecycle.
  */
 
+import { addCompletionReaction } from './completion-reaction.js';
 import {
   BaseAgent,
   MessageBuilder,
@@ -46,6 +47,7 @@ import {
   isStartupFailure,
   tagErrorCategory,
   StreamingReplyDriver,
+  REACTIONS,
   TurnSupersededError,
   type StreamingUserMessage,
   type QueryHandle,
@@ -1287,7 +1289,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   private async deliverUserVisible(
     chatId: string,
     content: string,
-    threadRoot?: string
+    threadRoot?: string,
+    receipt?: (messageId: string | undefined) => void,
   ): Promise<boolean> {
     const context = this.activeLifecycleContext ?? {
       traceId: `${chatId}:unknown`,
@@ -1318,6 +1321,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     try {
       const sentMessageId = await this.callbacks.sendMessage(chatId, content, threadRoot);
       const messageId = typeof sentMessageId === 'string' ? sentMessageId : undefined;
+      receipt?.(messageId);
       this.consecutiveSendFailures = 0;
       recordDeliveryEvent('delivery_final', {
         state: 'final',
@@ -1475,6 +1479,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     let turnAnchorConsumed = false;
     let currentTurnAnchor: string | undefined;
     let currentTurnMessageId: string | undefined;
+    let finalDeliveryId: string | undefined;
+    let turnDeliveryFailed = false;
+    let turnHadError = false;
     const consumeTurnAnchor = (): string | undefined => {
       if (!turnAnchorConsumed && this.pendingTurnMessageIds.length > 0) {
         turnAnchorConsumed = true;
@@ -1482,6 +1489,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         currentTurnMessageId = this.pendingTurnMessageIds.shift();
         this.activeLifecycleContext = this.pendingLifecycleContexts.shift();
         this.didDeliverUserVisibleThisTurn = false;
+        finalDeliveryId = undefined;
+        turnDeliveryFailed = false;
+        turnHadError = false;
         this.activeTurnMessageId = currentTurnMessageId;
       }
       return currentTurnAnchor;
@@ -1504,20 +1514,25 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // normalization), so an unset value degrades to non-streaming
     // (fail-safe: unknown type → no card).
     const streamCapabilities = this.callbacks.getCapabilities?.(chatId);
+    const { startStreaming, finalizeStreaming } = this.callbacks;
     const streamDriver =
       !!streamCapabilities?.supportsStreaming &&
       this.chatType === 'p2p' &&
-      !!this.callbacks.startStreaming &&
+      !!startStreaming &&
       !!this.callbacks.streamText &&
-      !!this.callbacks.finalizeStreaming
+      !!finalizeStreaming
         ? new StreamingReplyDriver({
             chatId,
             parentMessageId: resolveReplyThreadRoot() ?? undefined,
-            startStreaming: this.callbacks.startStreaming,
+            startStreaming: (cid) => startStreaming(cid, resolveReplyThreadRoot()),
             streamText: this.callbacks.streamText,
-            finalizeStreaming: this.callbacks.finalizeStreaming,
+            finalizeStreaming: async (id) => {
+              const receipt = await finalizeStreaming(id);
+              finalDeliveryId = typeof receipt === 'string' ? receipt : undefined;
+            },
             sendMessage: async (cid, content, threadRoot) => {
-              await this.callbacks.sendMessage(cid, content, threadRoot);
+              const receipt = await this.callbacks.sendMessage(cid, content, threadRoot);
+              finalDeliveryId = typeof receipt === 'string' ? receipt : undefined;
             },
             logger: this.logger,
           })
@@ -1544,6 +1559,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         // a second anchor mid-turn.
         consumeTurnAnchor();
 
+        if (parsed.type === 'error') { turnHadError = true; }
         messageCount++;
 
         // Issue #3003: Track Time-To-First-Token (TTFT)
@@ -1618,7 +1634,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             // changes whether the reply is delivered — only whether it streams.
             // (type === 'text' is exclusively assistant reply text — status /
             // thinking messages are type 'status', tool events are tool_use/….)
-            const isAssistantReplyText = parsed.type === 'text';
+            const isAssistantReplyText = parsed.type === 'text' && !parsed.metadata?.systemSubtype;
             // 2026-09-08: proxy mid-stream 中断恢复正文自带 MIDSTREAM_MARKER。识别后:
             // (a) 只把 marker 之前的真实正文投给用户 —— marker+英文提示是跨层识别用的
             //     机器标记,不下发;
@@ -1642,24 +1658,28 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                   '(turn did not complete; auto-continue or ❌ follows)'
               );
             }
+            if (parsed.type === 'result' && visibleContent.startsWith('✅ Complete')) {
+              toDeliver = '';
+            }
+            let delivered = false;
             if (toDeliver) {
               if (streamDriver && isAssistantReplyText) {
-                await streamDriver.pushText(toDeliver, threadRoot);
+                delivered = await streamDriver.pushText(toDeliver, threadRoot);
               } else {
                 // Issue #4626: route through the isolation wrapper — a channel
                 // failure here must degrade delivery, never kill the loop. (The
                 // streaming driver above already swallows its own fallback
                 // failures; this path had no such protection.)
-                await this.deliverUserVisible(chatId, toDeliver, threadRoot);
+                delivered = await this.deliverUserVisible(chatId, toDeliver, threadRoot,
+                  isAssistantReplyText ? (id) => { finalDeliveryId = id; } : undefined);
+              }
+              if (isAssistantReplyText && !delivered) {
+                finalDeliveryId = undefined;
+                turnDeliveryFailed = true;
               }
             }
-            // Issue #4194: the ✅ Complete result marker is sent as the result
-            // message itself — exclude it so empty turns (no real reply) are
-            // detectable at completion. Match by content (the codebase-wide
-            // idiom — output-adapter.ts / messaging.ts treat
-            // content.startsWith('✅ Complete') as the internal completion
-            // marker) rather than by parsed.type, so error-result content
-            // (which IS user-visible) is still counted.
+            // Preserve attempted-output accounting for empty-turn recovery;
+            // delivery failures independently prevent a completion reaction.
             if (toDeliver && !visibleContent.startsWith('✅ Complete')) {
               userVisibleOutputCount++;
             }
@@ -1668,6 +1688,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
         // Check for completion
         if (parsed.type === 'result') {
+          if (streamDriver && !(await streamDriver.finish(resolveReplyThreadRoot()))) {
+            turnDeliveryFailed = true;
+            finalDeliveryId = undefined;
+            this.logger.error(
+              { chatId, turnMessageId: currentTurnMessageId, ...this.activeLifecycleContext },
+              'Streaming terminal delivery failed after fallback'
+            );
+          }
           // Codex can emit an empty synthetic result after a failed process.
           // Handle this before the normal success/empty-turn accounting so it
           // always has a user-visible terminal outcome.
@@ -2194,6 +2222,19 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             // 2026-09-08: 真成功 = 健康间隙复位 → 重新武装 mid-stream 自动续跑预算
             // (语义「每个健康间隙续一次」)。
             this.midstreamAutoRetryAvailable = true;
+          }
+
+          const { addReaction } = this.callbacks;
+          if (!isEmptyTurn && !upstreamApiError && !midstreamInterrupted &&
+              !parsed.terminatedReason && !turnHadError && !turnDeliveryFailed &&
+              finalDeliveryId && addReaction) {
+            const messageId = finalDeliveryId;
+            finalDeliveryId = undefined;
+            const outcome = await addCompletionReaction(
+              () => addReaction(messageId, REACTIONS.COMPLETE),
+              () => this.sessionGeneration === myGeneration && !this.abortController?.signal.aborted,
+            );
+            this.logger.debug({ chatId, messageId, outcome }, 'Completion reaction outcome');
           }
 
           this.logger.info({

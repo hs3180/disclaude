@@ -128,8 +128,8 @@ describe('StreamingReplyDriver — streaming path', () => {
     // Final-delivery guarantee: the complete buffer reached the user via
     // sendMessage even though streaming was broken.
     expect(cb.sendMessage).toHaveBeenCalledWith('oc_test', 'a\nb', 'om_root');
-    // finalizeStreaming was skipped because the flush threw before it.
-    expect(cb.finalizeStreaming).not.toHaveBeenCalled();
+    // Finalization still releases channel state when the final flush fails.
+    expect(cb.finalizeStreaming).toHaveBeenCalledWith('card-1');
   });
 
   it('swallows a mid-stream streamText rejection without an unhandled rejection', async () => {

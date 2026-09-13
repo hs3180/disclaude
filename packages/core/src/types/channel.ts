@@ -312,6 +312,9 @@ export interface IChannel {
    */
   sendMessage(message: OutgoingMessage): Promise<string | void>;
 
+  /** Best-effort reaction on a delivered platform message, not a stream handle. */
+  addReaction?(messageId: string, emoji: string): Promise<boolean>;
+
   /**
    * Start the channel.
    * Should initialize connections, start listeners, etc.
@@ -387,9 +390,10 @@ export interface IChannel {
 
   /**
    * Finalize (freeze) the in-flight stream identified by `id`. No further
-   * streamText calls will be made for this id.
+   * streamText calls will be made for this id. Return the delivered message ID
+   * when available; it may differ from the stream/card handle.
    */
-  finalizeStreaming?(id: string): Promise<void>;
+  finalizeStreaming?(id: string): Promise<string | void>;
 }
 
 /**

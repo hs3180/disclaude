@@ -65,6 +65,7 @@ vi.mock('@disclaude/core', async (importOriginal) => {
     // setTurnPending and the tests below assert instanceof on the exact
     // class the production import resolves to.
     TurnSupersededError: actual.TurnSupersededError,
+    REACTIONS: actual.REACTIONS,
     // Issue #4391: real policy — the reset+replay bounding under test.
     EmptyTurnRetryPolicy: actual.EmptyTurnRetryPolicy,
     MessageBuilder: vi.fn().mockImplementation(() => ({
@@ -1148,7 +1149,7 @@ describe('ChatAgent (service)', () => {
       }, { timeout: 1000, interval: 20 });
 
       const send = localCallbacks.sendMessage as ReturnType<typeof vi.fn>;
-      // All three scripted user-visible sends attempted (no circuit opened).
+      // Both assistant sends attempted; the standalone completion marker is suppressed.
       // (A 4th send may follow: the test generator just ends, which routes
       // into the unexpected-end path's 🚫 circuit-breaker notice — a mock
       // artifact, the persistent-session generator in production does not
@@ -1156,7 +1157,7 @@ describe('ChatAgent (service)', () => {
       const scripted = send.mock.calls.filter((c: any[]) =>
         ['attempt 1', 'attempt 2', '✅ Complete (test)'].includes(c[1])
       );
-      expect(scripted).toHaveLength(3);
+      expect(scripted).toHaveLength(2);
       expect((agent as any).sendCircuitOpen).toBe(false);
       expect((agent as any).consecutiveSendFailures).toBe(0);
       const errorLogs = (agent as any).logger.error.mock.calls.map((c: any[]) =>
@@ -3882,8 +3883,8 @@ describe('ChatAgent (service)', () => {
         .filter((s: unknown): s is string => typeof s === 'string');
       expect(sentTexts).not.toContain('Hello');
       expect(sentTexts).not.toContain('world');
-      // The ✅ Complete result marker is NOT assistant text — it still goes via sendMessage.
-      expect(sentTexts.some((s) => s.startsWith('✅ Complete'))).toBe(true);
+      // Completion feedback must not create a standalone message.
+      expect(sentTexts.some((s) => s.startsWith('✅ Complete'))).toBe(false);
     });
 
     it('degrades to sendMessage (streaming callbacks unused) when supportsStreaming is false', async () => {
@@ -4014,9 +4015,7 @@ describe('ChatAgent (service)', () => {
 
       void agent.processMessage({ chatId: 'oc_scope', payload: 'hi', messageId: 'msg_1', chatType });
       await vi.waitFor(() => {
-        expect(localCallbacks.sendMessage.mock.calls.some(
-          (c: any[]) => typeof c[1] === 'string' && c[1].startsWith('✅ Complete')
-        )).toBe(true);
+        expect(localCallbacks.onDone).toHaveBeenCalled();
       }, { timeout: 1000, interval: 20 });
       return localCallbacks;
     }
@@ -4253,3 +4252,124 @@ describe('ChatAgent (service)', () => {
       expect(agent.turnCompleteFor('msg_1')).toBeDefined();
     });
   });
+
+
+describe('Issue #4907: completion feedback belongs to delivered output', () => {
+  async function runDelivery(opts: {
+    streaming?: boolean; receipt?: string; failSend?: boolean; chatType?: 'p2p' | 'group' | 'topic';
+    failFinalize?: boolean; failedTurn?: boolean; errorEvent?: boolean; statusOnly?: boolean;
+  } = {}) {
+    const callbacks = {
+      ...createMockCallbacks(),
+      sendMessage: opts.failSend ? vi.fn().mockRejectedValue(new Error('send failed'))
+        : vi.fn().mockResolvedValue(opts.receipt),
+      addReaction: vi.fn().mockResolvedValue(true),
+      getCapabilities: vi.fn(() => ({ supportsStreaming: !!opts.streaming, supportsCard: true, supportsThread: true, supportsFile: true, supportsMarkdown: true, supportsMention: true, supportsUpdate: true })),
+      startStreaming: vi.fn().mockResolvedValue('card-handle'),
+      streamText: vi.fn().mockResolvedValue(undefined),
+      finalizeStreaming: opts.failFinalize ? vi.fn().mockRejectedValue(new Error('freeze failed'))
+        : vi.fn().mockResolvedValue('om-streamed-reply'),
+    };
+    const agent = new ChatAgent({ chatId: 'oc_delivery', callbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+    async function* events() {
+      yield { parsed: { type: opts.statusOnly ? 'status' : 'text', content: 'final answer' }, raw: {} };
+      if (opts.errorEvent) { yield { parsed: { type: 'error', content: 'upstream error' }, raw: {} }; }
+      yield { parsed: { type: 'result', content: '✅ Complete', ...(opts.failedTurn ? { terminatedReason: 'turn_failed' } : {}) }, raw: {} };
+    }
+    (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: events() });
+    (agent as any).isAgentTeamsEnabled = () => false;
+    await agent.processMessage({ chatId: 'oc_delivery', payload: 'hi', messageId: 'om-user-request', chatType: opts.chatType ?? 'p2p' });
+    await vi.waitFor(() => expect(callbacks.onDone).toHaveBeenCalled());
+    expect(callbacks.sendMessage.mock.calls.some((call) => call[1] === '✅ Complete')).toBe(false);
+    return callbacks;
+  }
+
+  it.each(['p2p', 'group', 'topic'] as const)('marks the returned %s IM reply ID, never the incoming request', async (chatType) => {
+    const cb = await runDelivery({ receipt: 'om-delivered-reply', chatType });
+    expect(cb.addReaction).toHaveBeenCalledExactlyOnceWith('om-delivered-reply', 'DONE');
+    expect(cb.addReaction.mock.invocationCallOrder[0]).toBeLessThan((cb.onDone as any).mock.invocationCallOrder[0]);
+  });
+
+  it('marks the stream IM message only after freezing, never the card handle', async () => {
+    const cb = await runDelivery({ streaming: true });
+    expect(cb.addReaction).toHaveBeenCalledExactlyOnceWith('om-streamed-reply', 'DONE');
+    expect(cb.finalizeStreaming.mock.invocationCallOrder[0]).toBeLessThan(cb.addReaction.mock.invocationCallOrder[0]);
+  });
+
+  it('uses the fallback receipt when a streaming freeze fails', async () => {
+    const cb = await runDelivery({ streaming: true, failFinalize: true, receipt: 'om-fallback' });
+    expect(cb.addReaction).toHaveBeenCalledExactlyOnceWith('om-fallback', 'DONE');
+  });
+
+  it.each([
+    {}, { failSend: true }, { receipt: 'om-status', statusOnly: true }, { receipt: 'om-partial', failedTurn: true },
+    { receipt: 'om-partial', errorEvent: true },
+    { streaming: true, failFinalize: true, failSend: true },
+  ])('does not mark missing/failed delivery or a failed turn: %j', async (opts) => {
+    const cb = await runDelivery(opts);
+    expect(cb.addReaction).not.toHaveBeenCalled();
+  });
+
+  it('keeps receipt and stream parent separate for queued turns', async () => {
+    const cb = {
+      ...createMockCallbacks(),
+      addReaction: vi.fn().mockResolvedValue(true),
+      getCapabilities: vi.fn(() => ({ supportsStreaming: true, supportsCard: true, supportsThread: true, supportsFile: true, supportsMarkdown: true, supportsMention: true, supportsUpdate: true })),
+      startStreaming: vi.fn().mockResolvedValueOnce('card-1').mockResolvedValueOnce('card-2'),
+      streamText: vi.fn().mockResolvedValue(undefined),
+      finalizeStreaming: vi.fn().mockResolvedValueOnce('om-answer-1').mockResolvedValueOnce('om-answer-2'),
+    };
+    const agent = new ChatAgent({ chatId: 'oc_queue', callbacks: cb, apiKey: 'key', model: 'model', provider: 'anthropic' });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    async function* events() {
+      await gate;
+      for (const content of ['first answer', 'second answer']) {
+        yield { parsed: { type: 'text', content }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete' }, raw: {} };
+      }
+    }
+    (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: events() });
+    (agent as any).isAgentTeamsEnabled = () => false;
+    await Promise.all(['om-user-1', 'om-user-2'].map((messageId) => agent.processMessage({
+      chatId: 'oc_queue', payload: 'hi', messageId, threadRootId: messageId, chatType: 'p2p',
+    })));
+    release();
+    await agent.turnCompleteFor('om-user-2');
+    expect(cb.startStreaming.mock.calls).toEqual([['oc_queue', 'om-user-1'], ['oc_queue', 'om-user-2']]);
+    expect(cb.finalizeStreaming.mock.calls).toEqual([['card-1'], ['card-2']]);
+    expect(cb.addReaction.mock.calls).toEqual([['om-answer-1', 'DONE'], ['om-answer-2', 'DONE']]);
+  });
+});
+
+
+describe('completion after asynchronous streaming delivery', () => {
+  it.each([false, true])('waits for finalization and suppresses feedback if cancelled=%s', async (cancelled) => {
+    let release!: (id: string) => void;
+    const finalDelivery = new Promise<string>((resolve) => { release = resolve; });
+    const cb = {
+      ...createMockCallbacks(),
+      addReaction: vi.fn().mockResolvedValue(true),
+      getCapabilities: vi.fn(() => ({ supportsStreaming: true, supportsCard: true, supportsThread: true, supportsFile: true, supportsMarkdown: true, supportsMention: true, supportsUpdate: true })),
+      startStreaming: vi.fn().mockResolvedValue('card-pending'),
+      streamText: vi.fn().mockResolvedValue(undefined),
+      finalizeStreaming: vi.fn(() => finalDelivery),
+    };
+    const agent = new ChatAgent({ chatId: 'oc_async', callbacks: cb, apiKey: 'key', model: 'model', provider: 'anthropic' });
+    async function* events() {
+      yield { parsed: { type: 'text', content: 'answer' }, raw: {} };
+      yield { parsed: { type: 'result', content: '✅ Complete' }, raw: {} };
+    }
+    (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: events() });
+    (agent as any).isAgentTeamsEnabled = () => false;
+    await agent.processMessage({ chatId: 'oc_async', payload: 'hi', messageId: 'om-request', chatType: 'p2p' });
+    await vi.waitFor(() => expect(cb.finalizeStreaming).toHaveBeenCalled());
+    expect(cb.addReaction).not.toHaveBeenCalled();
+    expect(cb.onDone).not.toHaveBeenCalled();
+    if (cancelled) { (agent as any).abortController.abort(); }
+    release('om-delivered');
+    await vi.waitFor(() => expect(cb.onDone).toHaveBeenCalled());
+    if (cancelled) { expect(cb.addReaction).not.toHaveBeenCalled(); }
+    else { expect(cb.addReaction).toHaveBeenCalledExactlyOnceWith('om-delivered', 'DONE'); }
+  });
+});
