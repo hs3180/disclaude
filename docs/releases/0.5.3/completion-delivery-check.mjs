@@ -126,6 +126,7 @@ try {
       console.log('INSTALLED_COMPLETION_OK', JSON.stringify(scenario));
     } finally {
       await agent.shutdown();
+      await channel.stop();
     }
   }
   console.log('INSTALLED_COMPLETION_MATRIX_OK');
