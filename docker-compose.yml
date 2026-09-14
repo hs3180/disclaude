@@ -180,7 +180,7 @@ services:
   # ===========================================================================
   # CDP Chromium endpoint (optional)
   # ===========================================================================
-  # Headless Chromium exposing a CDP endpoint for browser automation. Its primary
+  # Chromium with Xvfb (headed by default) and a persistent automation profile. Its primary
   # consumer is the browser-use Skill (#4460); any CDP driver may attach (see
   # docs/cdp-endpoint.md, #4496). Chromium ships via the official Playwright
   # image — the name is the distribution channel, not a tooling statement.
@@ -213,79 +213,17 @@ services:
   #   chromium.connectOverCDP("http://disclaude-chromium:9222")   # Playwright library (external driver, "may also" tier)
   # Contract: docs/cdp-endpoint.md (#4496)
   chromium:
-    # Chromium distributed via the official Playwright image (mcr.microsoft.com/playwright);
-    # the tag names the image, not the driver. Pinned to the version the #4496 Scope-6
-    # smoke matrix was executed against (Playwright 1.62.0 / chromium-1234 /
-    # Chromium 151.0.7922.34) so compose-fronted runs match the driver-side matrix.
-    # Override via CHROMIUM_IMAGE_TAG if needed (#4528).
-    image: mcr.microsoft.com/playwright:${CHROMIUM_IMAGE_TAG:-v1.62.0-noble}
+    # Build runtime dependencies once, rather than apt-installing at every boot.
+    build:
+      context: ./docker
+      dockerfile: Dockerfile.chromium
+      args:
+        CHROMIUM_IMAGE_TAG: ${CHROMIUM_IMAGE_TAG:-v1.62.0-noble}
+    stop_grace_period: 15s
+    image: disclaude-chromium:${CHROMIUM_IMAGE_TAG:-v1.62.0-noble}
     container_name: disclaude-chromium
+    init: true
     restart: unless-stopped
-
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        set -e
-        CDP_PORT=$${CDP_PORT:-9222}
-        CDP_INTERNAL_PORT=$${CDP_INTERNAL_PORT:-9221}
-        if [ "$$CDP_PORT" = "$$CDP_INTERNAL_PORT" ]; then
-          echo "FATAL: CDP_PORT ($$CDP_PORT) must differ from CDP_INTERNAL_PORT" >&2
-          exit 1
-        fi
-        # nginx is not bundled in the Playwright image; install on first boot.
-        command -v nginx >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq --no-install-recommends nginx)
-        # Resolve this container's IPv4 on the Docker bridge network. Chrome embeds the
-        # Host header into the webSocketDebuggerUrl it returns, so the IP must be one
-        # other containers can reach (NOT 127.0.0.1, NOT an IPv6 — the latter would
-        # produce a ws URL like ws://[::1]:... that the MCP client cannot route to).
-        # `hostname -i` may list loopback/IPv6 first; grep for the first dotted-quad.
-        CDP_HOST=$$(hostname -i | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$$' | grep -v '^127\.' | head -n1)
-        if [ -z "$$CDP_HOST" ]; then
-          echo "FATAL: could not determine a bridge-network IPv4 for CDP_HOST" >&2
-          exit 1
-        fi
-        # Resolve the Docker bridge gateway IP. A request arriving from the host
-        # (via the published loopback port) is SNAT'd through this gateway, so nginx
-        # sees it as $remote_addr == gateway. The nginx map uses this to detect
-        # host-originated requests and embed 127.0.0.1 into their webSocketDebuggerUrl
-        # (instead of CDP_HOST), so the host MCP connects back over loopback. See
-        # docker/chromium-cdp-nginx.conf header comment.
-        GATEWAY=$$(ip route 2>/dev/null | awk '/^default/{print $3; exit}')
-        if [ -z "$$GATEWAY" ]; then
-          GATEWAY=$$(route -n 2>/dev/null | awk '$$1=="0.0.0.0"{print $$2; exit}')
-        fi
-        if [ -z "$$GATEWAY" ]; then
-          echo "FATAL: could not determine the bridge gateway IP" >&2
-          exit 1
-        fi
-        # Substitute the placeholders in the mounted nginx config (see
-        # docker/chromium-cdp-nginx.conf), then start nginx. nginx cannot read env
-        # vars for `map`/`listen`/`proxy_pass`/headers at runtime, so we template
-        # them here.
-        sed "s/__CDP_HOST__/$$CDP_HOST/g; s/__GATEWAY__/$$GATEWAY/g; s/__CDP_PORT__/$$CDP_PORT/g; s/__CDP_INTERNAL_PORT__/$$CDP_INTERNAL_PORT/g" \
-            /etc/nginx/cdp-proxy.conf.template > /tmp/cdp-nginx.conf
-        nginx -c /tmp/cdp-nginx.conf
-        exec /ms-playwright/chromium-*/chrome-linux64/chrome \
-          --headless=new \
-          --no-sandbox \
-          --disable-setuid-sandbox \
-          --disable-dev-shm-usage \
-          --disable-gpu \
-          --disable-software-rasterizer \
-          --disable-background-networking \
-          --disable-default-apps \
-          --disable-extensions \
-          --disable-sync \
-          --disable-translate \
-          --hide-scrollbars \
-          --metrics-recording-only \
-          --mute-audio \
-          --no-first-run \
-          --safebrowsing-disable-auto-update \
-          --disable-features=site-per-process \
-          --remote-debugging-port=$$CDP_INTERNAL_PORT \
-          --user-data-dir=/tmp/chrome-cdp \
-          about:blank
 
     networks:
       - disclaude-net
@@ -309,18 +247,24 @@ services:
       # nginx reverse-proxy config (templated with port placeholders). See the
       # header comment above and docker/chromium-cdp-nginx.conf for why it's needed.
       - ./docker/chromium-cdp-nginx.conf:/etc/nginx/cdp-proxy.conf.template:ro
+      - chromium_profile:/data/chrome-profile
 
     environment:
       # External port other containers connect to (nginx listens here).
       - CDP_PORT=${CDP_PORT:-9222}
       # Chrome's internal loopback-only CDP port. Must differ from CDP_PORT.
       - CDP_INTERNAL_PORT=${CDP_INTERNAL_PORT:-9221}
+      - CHROMIUM_HEADLESS=${CHROMIUM_HEADLESS:-0}
+      - TZ=${TZ:-Asia/Shanghai}
+      - LANG=${CHROMIUM_LANG:-C.UTF-8}
+
+    shm_size: ${CHROMIUM_SHM_SIZE:-2gb}
 
     deploy:
       resources:
         limits:
           cpus: '1'
-          memory: 2G
+          memory: ${CHROMIUM_MEMORY:-4G}
         reservations:
           cpus: '0.25'
           memory: 256M
@@ -397,6 +341,7 @@ services:
       - logging
 
 volumes:
+  chromium_profile:
   log_data:
   filebeat_data:
   codex_data:

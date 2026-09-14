@@ -116,6 +116,7 @@
     "vitest.config.ts",
     "eslint.config.*",
     "Dockerfile*",
+    "docker/",
     "docker-compose.yml"
   ]
 }
