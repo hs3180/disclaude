@@ -83,7 +83,14 @@ async function probe(info, write, headless) {
     const png = Buffer.from(screenshot.data, 'base64');
     assert(png.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])));
     await call('Target.closeTarget', { targetId: target });
-    assert(!(await call('Target.getTargets')).targetInfos.some(item => item.targetId === target));
+    // closeTarget acknowledges the request before destruction completes.
+    let targetPresent = true;
+    for (let attempt = 0; attempt < 50; attempt++) {
+      targetPresent = (await call('Target.getTargets')).targetInfos.some(item => item.targetId === target);
+      if (!targetPresent) break;
+      await delay(100);
+    }
+    assert.equal(targetPresent, false, 'target remained present after close timeout');
     target = null;
     const processes = docker('exec', name, 'ps', '-eo', 'args');
     assert.equal(/^Xvfb /m.test(processes), !headless);
