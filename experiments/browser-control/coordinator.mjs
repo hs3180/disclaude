@@ -1,0 +1,125 @@
+import { fork } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
+
+/** Cooperative single-process lab coordinator, NOT a production security boundary. */
+export class Coordinator {
+  constructor({ url, target, event = () => {}, verifyReclaimed = async () => {}, ttlMs = 1000, hardMs = 10000 }) {
+    Object.assign(this, { url, target, event, verifyReclaimed, ttlMs, hardMs });
+    this.boot = randomUUID(); this.epoch = 0; this.queue = []; this.holder = null; this.busy = false; this.closed = false;
+    this.monitor = setInterval(() => {
+      const h = this.holder;
+      if (h && h.state === 'held' && performance.now() >= h.deadline) void this.revoke(h, 'expired');
+    }, 20);
+  }
+  log(type, fields = {}) { this.event({ type, ms: performance.now(), ...fields }); }
+  acquire(actor, { waitMs = 5000 } = {}) {
+    const ticket = { actor, id: randomUUID(), enqueued: performance.now() };
+    const promise = new Promise((resolve, reject) => Object.assign(ticket, { resolve, reject }));
+    if (this.closed) { ticket.reject(new Error('Coordinator unavailable')); return { promise, cancel() {} }; }
+    ticket.timer = setTimeout(() => this.cancel(ticket, 'wait timeout'), waitMs);
+    this.queue.push(ticket); this.log('queued', { actor, ticket: ticket.id }); void this.pump();
+    return { promise, cancel: () => this.cancel(ticket, 'cancelled') };
+  }
+  cancel(ticket, reason) {
+    const index = this.queue.indexOf(ticket);
+    if (index < 0) return false;
+    this.queue.splice(index, 1); clearTimeout(ticket.timer); ticket.reject(new Error(reason));
+    this.log('waiter-removed', { actor: ticket.actor, reason }); return true;
+  }
+  async pump() {
+    if (this.busy || this.holder || this.closed || !this.queue.length) return;
+    this.busy = true;
+    const ticket = this.queue.shift(); clearTimeout(ticket.timer);
+    const h = { actor: ticket.actor, epoch: ++this.epoch, token: randomUUID(), state: 'allocating', pending: new Map(), serial: Promise.resolve(), seq: 0 };
+    this.holder = h;
+    try {
+      h.child = fork(new URL('./worker.mjs', import.meta.url), [], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+      h.exited = new Promise(resolve => h.child.once('exit', (code, signal) => {
+        this.log('worker-exit', { epoch: h.epoch, pid: h.child.pid, code, signal });
+        for (const p of h.pending.values()) p.reject(new Error('Worker exited; outcome unknown'));
+        h.pending.clear(); resolve();
+        if (h.state === 'held') void this.revoke(h, 'worker-exit');
+      }));
+      h.child.on('error', () => {});
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('Worker startup timeout')), 5000);
+        h.child.once('exit', () => { clearTimeout(timer); reject(new Error('Worker startup exit')); });
+        h.child.on('message', message => {
+          if (message.kind === 'ready') { clearTimeout(timer); resolve(); }
+          else if (message.kind === 'init-error') { clearTimeout(timer); reject(new Error(message.error)); }
+          else if (message.kind === 'result') {
+            const item = h.pending.get(message.id); if (!item) return;
+            h.pending.delete(message.id);
+            message.error ? item.reject(new Error(message.error)) : item.resolve(message.result);
+          }
+        });
+        h.child.send({ kind: 'init', url: this.url, target: this.target });
+      });
+      if (this.closed || h.state !== 'allocating') throw new Error('Allocation cancelled');
+      h.state = 'held'; h.hardDeadline = performance.now() + this.hardMs; h.deadline = Math.min(performance.now() + this.ttlMs, h.hardDeadline);
+      this.log('granted', { actor: h.actor, epoch: h.epoch, pid: h.child.pid, waitMs: performance.now() - ticket.enqueued });
+      ticket.resolve({ actor: h.actor, epoch: h.epoch, token: h.token, boot: this.boot });
+    } catch (error) { ticket.reject(error); await this.revoke(h, 'allocation-failed'); }
+    finally { this.busy = false; void this.pump(); }
+  }
+  validate(lease) {
+    const h = this.holder;
+    if (!h || h.state !== 'held' || lease.boot !== this.boot || lease.token !== h.token || lease.actor !== h.actor || lease.epoch !== h.epoch || performance.now() >= h.deadline) throw new Error('Lease is not current');
+    return h;
+  }
+  heartbeat(lease) { const h = this.validate(lease); h.deadline = Math.min(performance.now() + this.ttlMs, h.hardDeadline); }
+  execute(lease, command, value) {
+    let h;
+    try { h = this.validate(lease); } catch (error) { return Promise.reject(error); }
+    const operation = h.serial.then(() => {
+      this.validate(lease); // fencing at actual send, not only enqueue
+      const id = ++h.seq;
+      this.log('execute', { actor: h.actor, epoch: h.epoch, id, command });
+      return new Promise((resolve, reject) => {
+        h.pending.set(id, { resolve, reject });
+        h.child.send({ kind: 'execute', id, command, value }, error => {
+          if (error) { h.pending.delete(id); reject(error); }
+        });
+      });
+    });
+    h.serial = operation.catch(() => {}); return operation;
+  }
+  async release(lease) {
+    let h; try { h = this.validate(lease); } catch { return false; }
+    await this.revoke(h, 'release'); return true;
+  }
+  revoke(h, reason) {
+    if (h.recovery) return h.recovery;
+    h.state = 'revoking'; this.log('revoking', { epoch: h.epoch, reason });
+    h.recovery = (async () => {
+      if (h.child && h.child.exitCode === null && h.child.signalCode === null) {
+        if (h.child.connected) h.child.send({ kind: 'stop' }, () => {});
+        const timer = setTimeout(() => h.child.kill('SIGKILL'), 500);
+        await h.exited; clearTimeout(timer);
+      }
+      // Also verify browser-side detachment; process exit alone is not the barrier.
+      try { await this.verifyReclaimed(); } catch (error) {
+        this.closed = true; h.state = 'quarantined';
+        this.log('quarantined', { epoch: h.epoch, reason: error.message });
+        for (const ticket of [...this.queue]) this.cancel(ticket, 'Browser unavailable: reclaim failed');
+        return;
+      }
+      this.log('reclaimed', { epoch: h.epoch });
+      if (this.holder === h) this.holder = null;
+      void this.pump();
+    })();
+    return h.recovery;
+  }
+  inject(lease, fault) {
+    const h = this.validate(lease);
+    if (fault === 'kill') h.child.kill('SIGKILL');
+    else if (fault === 'disconnect') h.child.send({ kind: 'disconnect' });
+    else throw new Error('Unknown fault');
+  }
+  async close() {
+    this.closed = true; clearInterval(this.monitor);
+    for (const ticket of [...this.queue]) this.cancel(ticket, 'Coordinator closed');
+    if (this.holder) await this.revoke(this.holder, 'shutdown');
+  }
+}
