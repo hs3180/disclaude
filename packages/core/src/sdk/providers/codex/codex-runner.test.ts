@@ -80,14 +80,14 @@ JSONL
 `;
 
 describe('CodexExecRunner (Issue #4630)', () => {
-  it.each([undefined, 'existing-thread'])('preserves shared browser CDP access with browser features disabled (resume=%s)', async resumeSessionId => {
-    const fixture = makeScriptedBinary('echo "argv:$*" >&2\necho "cdp:$BU_CDP_URL" >&2\nexit 0');
+  it.each([undefined, 'existing-thread'])('removes direct CDP and preserves coordinated socket with browser features disabled (resume=%s)', async resumeSessionId => {
+    const fixture = makeScriptedBinary('echo "argv:$*" >&2\necho "cdp:$BU_CDP_URL socket:$DISCLAUDE_BROWSER_SOCKET" >&2\nexit 0');
     try {
       const runner = new CodexExecRunner({ binary: fixture.binaryPath });
-      const result = await runner.run({ prompt: 'browser task', resumeSessionId, env: { ...process.env, BU_CDP_URL: 'http://127.0.0.1:9222' } }, () => {}).promise;
+      const result = await runner.run({ prompt: 'browser task', resumeSessionId, env: { ...process.env, BU_CDP_URL: 'http://127.0.0.1:9222', DISCLAUDE_BROWSER_SOCKET: '/tmp/browser.sock' } }, () => {}).promise;
       expect(result.exitCode).toBe(0);
       expect(result.stderrTail).toContain('--disable browser_use --disable browser_use_external --disable browser_use_full_cdp_access');
-      expect(result.stderrTail).toContain('cdp:http://127.0.0.1:9222');
+      expect(result.stderrTail).toContain('cdp: socket:/tmp/browser.sock');
     } finally { fixture.cleanup(); }
   });
 

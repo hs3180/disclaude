@@ -50,10 +50,10 @@ export interface E2ECheck {
 
 export const E2E_CHECKS: readonly E2ECheck[] = [
   { id: 'skill_discovery', label: 'agent used the browser-use skill unprompted (reply mentions the CLI call it ran)' },
-  { id: 'attach_no_self_spawn', label: 'attached via BU_CDP_URL; no self-spawned browser (agent-observed attach mode)' },
+  { id: 'attach_no_self_spawn', label: 'attached via coordinated IPC; no self-spawned browser (agent-observed attach mode)' },
   { id: 'js_round_trip', label: 'js() script injection returned the expected structured result' },
   { id: 'screenshot_artifact', label: 'screenshot artifact exists in workspace and is a non-empty PNG' },
-  { id: 'cdp_failure_explicit', label: 'CDP-unreachable path produced an explicit error, not a silent self-spawn fallback' },
+  { id: 'cdp_failure_explicit', label: 'IPC-unreachable path produced an explicit error, not a silent self-spawn fallback' },
 ] as const;
 
 /**
@@ -71,17 +71,17 @@ export const E2E_SCREENSHOT_RELATIVE_PATH = 'e2e/browser-shot.png';
  * The reply contract (final ```e2e-report block) gives the harness one stable
  * surface to assert on; without it every check would be prose-grepping.
  */
-export const AGENT_E2E_PROMPT = `Run this browser e2e checklist using whatever browser capability you have in this environment (a headless host — an external Chromium CDP endpoint is the intended path; do NOT install or launch a browser yourself):
+export const AGENT_E2E_PROMPT = `Run this browser e2e checklist using whatever browser capability you have in this environment (use the configured coordinated IPC entry point; do NOT install or launch a browser or daemon yourself):
 
-1. Attach to the external CDP endpoint configured for you (BU_CDP_URL) and open a new tab with this exact data URL:
+1. Request browser control through the configured IPC entry point and open a new tab with this exact data URL:
    data:text/html,<script>window.marker=42</script><h1 id="x">hello-agent-e2e</h1>
 2. In that tab, evaluate JavaScript that returns JSON.stringify({marker: window.marker, heading: document.getElementById('x').textContent}).
 3. Take a screenshot and save the PNG to the workspace at exactly: ${E2E_SCREENSHOT_RELATIVE_PATH} (create the parent directory first — the screenshot helper does not create it and will hang if missing).
-4. Then simulate the failure path. IMPORTANT: the browser harness daemon keeps its attach target from its FIRST start and ignores later BU_CDP_URL changes, so first re-run the CLI you used for steps 1-3 with its --reload flag to drop the pinned state, then attempt ONE additional attach with BU_CDP_URL pointing at http://127.0.0.1:1 (a port nothing listens on), and record what error you get. Do not retry it more than once. After recording the error, run the reload flag once more so the harness state is clean for later runs.
+4. Test an unavailable coordinator by overriding DISCLAUDE_BROWSER_SOCKET for ONE CLI invocation to a nonexistent socket under a fresh temporary directory. Record the explicit connection error. Do not change the normal socket setting, restart the service, or attempt a direct browser connection. The next normal invocation must still work.
 
 Finish your reply with a fenced code block tagged e2e-report containing exactly these keys, one key=value per line:
 skill_discovery=<which skill or CLI you used to drive the browser>
-attach_no_self_spawn=<true if you attached to the external endpoint without launching a local browser; otherwise false plus what happened>
+attach_no_self_spawn=<true if you used the coordinated entry point without launching a local browser; otherwise false plus what happened>
 js_round_trip=<the JSON string step 2 returned, or ERROR>
 screenshot_artifact=<the path you saved to, or ERROR>
 cdp_failure_explicit=<the error text from step 4, or EMPTY if it silently succeeded>
@@ -215,7 +215,7 @@ export function evaluateE2EReport(
         break;
       }
       case 'cdp_failure_explicit': {
-        const looksLikeError = /(refus|unreach|tim(e)?d? ?out|error|fail|closed|reset|econn)/i.test(raw);
+        const looksLikeError = /(refus|unreach|tim(e)?d? ?out|error|fail|closed|reset|econn|enoent|no such file)/i.test(raw);
         push(
           check,
           raw !== 'EMPTY' && raw.length > 0 && looksLikeError,
@@ -251,8 +251,9 @@ export interface HarnessConfig {
   chatId: string;
   /** Workspace dir — also the agent cwd and the artifact root. */
   workspaceDir: string;
-  /** CDP endpoint forwarded to the agent subprocess as BU_CDP_URL. */
-  cdpUrl: string;
+  /** Legacy operator-only endpoint; never forwarded to an agent. */
+  cdpUrl?: string;
+  browserSocket?: string;
   /** Model API key (ANTHROPIC_API_KEY or provider equivalent). */
   apiKey: string;
   /** Optional model override; otherwise Config.getAgentConfig() default. */
@@ -281,8 +282,8 @@ export function preflight(config: HarnessConfig): PreflightResult {
   if (!config.apiKey) {
     problems.push('missing model API key (set ANTHROPIC_API_KEY or pass --api-key)');
   }
-  if (!config.cdpUrl) {
-    problems.push('missing CDP endpoint (set BU_CDP_URL or pass --cdp-url)');
+  if (!config.browserSocket) {
+    problems.push('missing browser IPC socket (set DISCLAUDE_BROWSER_SOCKET)');
   }
   if (!existsSync(config.workspaceDir)) {
     problems.push(`workspace dir does not exist: ${config.workspaceDir}`);

@@ -112,9 +112,21 @@ try {
   await afterExpiry.request('release');
   check('silent holder expires and waiting IPC client successfully operates');
 
+  // Exercise the compiled PR SDK environment, with stale operator settings injected.
+  let agentEnv = { ...process.env, BU_CDP_URL: 'http://stale.invalid:9223', BU_CDP_WS: 'ws://stale.invalid', CHROMIUM_CDP_PORT: '9223', DISCLAUDE_BROWSER_SOCKET: socket };
+  if (process.env.DISCLAUDE_BROWSER_SDK_MODULE) {
+    const { buildSdkEnv } = await import(process.env.DISCLAUDE_BROWSER_SDK_MODULE);
+    const saved = process.env;
+    try { process.env = agentEnv; agentEnv = buildSdkEnv('unused-local-test'); }
+    finally { process.env = saved; }
+    for (const key of ['BU_CDP_URL', 'BU_CDP_WS', 'CHROMIUM_CDP_PORT']) assert(!(key in agentEnv), key+' leaked');
+    assert.equal(agentEnv.DISCLAUDE_BROWSER_SOCKET, socket);
+    check('compiled SDK strips stale CDP injection and preserves coordinated transport');
+  }
+  agentEnv.PATH = new URL('./bin/', import.meta.url).pathname+':'+agentEnv.PATH;
   const cliResult = await new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [new URL('./bin/browser-use', import.meta.url).pathname], {
-      env: { ...process.env, BU_CDP_URL: '', BU_CDP_WS: '', DISCLAUDE_BROWSER_SOCKET: socket     }, stdio: ['pipe','pipe','pipe'] });
+    const child = spawn('browser-use', [], {
+      env: agentEnv, stdio: ['pipe','pipe','pipe'] });
     let stdout = '', stderr = '';
     child.stdout.on('data', d => stdout += d); child.stderr.on('data', d => stderr += d);
     child.once('error', reject); child.once('exit', code => resolve({code,stdout,stderr}));
@@ -122,6 +134,16 @@ try {
   });
   assert.equal(cliResult.code,0,cliResult.stderr); assert.equal(cliResult.stdout.trim(),'B saved');
   check('stdin CLI uses socket only; heartbeat sustains a script beyond the lease TTL');
+  const unavailable = await new Promise((resolve, reject) => {
+    const child = spawn('browser-use', [], {
+      env: { ...agentEnv, DISCLAUDE_BROWSER_SOCKET: runtime+'/missing.sock' }, stdio: ['pipe','pipe','pipe'] });
+    let stderr = ''; child.stderr.on('data', d => stderr += d); child.stdout.resume();
+    child.once('error', reject); child.once('exit', code => resolve({code,stderr}));
+    child.stdin.end('print("must not run")');
+  });
+  assert.notEqual(unavailable.code,0); assert.match(unavailable.stderr,/ENOENT/);
+  check('missing coordinator fails explicitly despite stale direct endpoint configuration');
+
 
   const taskDir = resolve(output,'task-cwd'); await mkdir(taskDir,{recursive:true});
   const scoped = await acquire(); await scoped.request('wait');

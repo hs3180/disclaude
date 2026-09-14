@@ -162,3 +162,12 @@ there still fail CI. Never describe `retained: false` as persistence passing.
 Output summaries are removed before each run; required-check failures produce
 `failure.json` so a previous passing summary cannot be mistaken for new evidence.
 Optional capability limitations are recorded explicitly in the successful summary.
+
+### Agent environment regression (#5014)
+
+Build the PR (`npm ci --include=dev && npm run build`), then set
+`DISCLAUDE_BROWSER_SDK_MODULE` to the absolute file URL of
+`packages/core/dist/utils/sdk.js` when running acceptance. This additionally
+checks the compiled SDK boundary with stale CDP variables injected, followed
+by actual CLI/harness execution and a missing-socket failure. Keep the upstream
+harness home (`BH_HOME`) private and writable in the service environment.

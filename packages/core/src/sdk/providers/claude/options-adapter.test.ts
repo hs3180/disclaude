@@ -66,6 +66,14 @@ describe('adaptOptions', () => {
     expect(result.disallowedTools).toEqual(['tool3']);
   });
 
+  it('strips coordinator-private discovery at the Claude SDK boundary', () => {
+    const result = adaptOptions({ settingSources: [], env: {
+      DISCLAUDE_BROWSER_SOCKET: '/tmp/browser.sock', BU_CDP_URL: 'http://stale.invalid',
+      BU_CDP_WS: 'ws://stale.invalid', PATH: '/ipc/bin:/usr/bin',
+    } });
+    expect(result.env).toEqual({ DISCLAUDE_BROWSER_SOCKET: '/tmp/browser.sock', PATH: '/ipc/bin:/usr/bin' });
+  });
+
   it('should extract API key and base URL from env', () => {
     const result = adaptOptions({
       settingSources: ['user', 'project', 'local'],

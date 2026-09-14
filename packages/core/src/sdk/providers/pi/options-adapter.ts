@@ -1,3 +1,4 @@
+import { browserAgentEnv } from '../../../utils/browser-env.js';
 /**
  * disclaude `AgentQueryOptions` → pi-agent-core run-options adapter.
  *
@@ -124,7 +125,7 @@ export function adaptPiOptions(options: AgentQueryOptions): PiAdaptedOptions {
     systemPrompt: resolveSystemPrompt(options),
     activeToolNames: resolveActiveToolNames(options),
     model: options.model,
-    env: options.env,
+    env: options.env ? browserAgentEnv(options.env) : undefined,
   };
 }
 

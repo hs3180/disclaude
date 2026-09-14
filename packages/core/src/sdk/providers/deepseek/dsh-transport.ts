@@ -1,3 +1,4 @@
+import { browserAgentEnv } from '../../../utils/browser-env.js';
 /**
  * Minimal dsh SDK transport (Issue #4742).
  *
@@ -74,7 +75,7 @@ export class DshStdioTransport {
 
     const child = spawn(this.options.binary ?? 'dsh', this.options.args ?? ['--profile', 'sdk'], {
       cwd: this.options.cwd,
-      env: this.options.env,
+      env: browserAgentEnv(this.options.env),
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     this.child = child;
