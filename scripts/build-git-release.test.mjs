@@ -43,7 +43,8 @@ test('generates a standalone manifest and excludes untracked resources', () => {
     })
   );
   write('bin/disclaude.js', "const route = 'node_modules/@disclaude/service/dist/cli.js';");
-  write('scripts/launchd.mjs', 'export {};');
+  write('scripts/launchd.mjs', "import './chromium-config.mjs';");
+  write('scripts/chromium-config.mjs', 'export {};');
   write('skills/example/SKILL.md', 'tracked skill');
   write('.claude-plugin/plugin.json', '{"name":"builtins"}');
   write('agents/example.md', 'builtin agent');
@@ -87,6 +88,7 @@ test('generates a standalone manifest and excludes untracked resources', () => {
   assert(!existsSync(join(output, 'skills/example/private.txt')));
   assert(existsSync(join(output, '.claude-plugin/plugin.json')));
   assert(existsSync(join(output, 'agents/example.md')));
+  assert(existsSync(join(output, 'scripts/chromium-config.mjs')));
   assert(!existsSync(join(output, 'packages/core/dist/index.test.js')));
   assert(!existsSync(join(output, 'packages/core/package.json')));
   assert.match(

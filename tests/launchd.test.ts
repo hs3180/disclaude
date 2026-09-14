@@ -427,7 +427,7 @@ describe('chromium-cdp service config (Issue #4807)', () => {
     snapshotEnv();
     const dir = mkdtempSync(join(tmpdir(), 'launchd-chromium-'));
     const bin = join(dir, 'chrome');
-    writeFileSync(bin, '#!/bin/sh\n');
+    writeFileSync(bin, '#!/bin/sh\n', { mode: 0o755 });
     process.env.CHROMIUM_CDP_BINARY = bin;
     expect(resolveChromiumBinary()).toBe(bin);
   });
