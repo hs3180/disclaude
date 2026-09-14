@@ -186,6 +186,9 @@ describe('AGENT_E2E_PROMPT contract', () => {
 });
 
 describe('preflight', () => {
+  it.each(['codex', 'deepseek'] as const)('does not require Anthropic credentials for %s', agentBackend => {
+    expect(preflight(makeConfig({ apiKey: '', agentBackend })).ok).toBe(true);
+  });
   it('passes with key, IPC socket and existing workspace', () => {
     expect(preflight(makeConfig()).ok).toBe(true);
   });

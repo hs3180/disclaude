@@ -7,6 +7,7 @@
 
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
+import { Config, setDefaultProvider } from '../packages/core/src/index.js';
 import { AgentFactory } from '../packages/service/src/agents/factory.js';
 import {
   AGENT_E2E_PROMPT,
@@ -79,13 +80,14 @@ async function main(): Promise<void> {
     argv.workspaceDir ?? process.env.DISCLAUDE_WORKSPACE_DIR ?? './workspace',
   );
   if (argv.cdpUrl) throw new Error('--cdp-url is retired for agent tests; configure the browser IPC socket');
-  const apiKey = argv.apiKey ?? process.env.ANTHROPIC_API_KEY ?? '';
+  const apiKey = argv.apiKey ?? Config.getAgentConfig().apiKey;
 
   const config: HarnessConfig = {
     chatId: 'e2e-browser-use-agent',
     workspaceDir,
     browserSocket: process.env.DISCLAUDE_BROWSER_SOCKET,
     apiKey,
+    agentBackend: Config.AGENT_BACKEND,
     model: argv.model,
     provider: argv.provider,
     apiBaseUrl: argv.apiBaseUrl,
@@ -123,7 +125,12 @@ async function main(): Promise<void> {
     sendFile: async () => {},
   };
 
+  // Match production bootstrap before constructing a ChatAgent.
+  const agentBackend = Config.AGENT_BACKEND;
+  if (!agentBackend) throw new Error('No agent backend configured');
+  setDefaultProvider(agentBackend);
   const agent = AgentFactory.createAgent(config.chatId, callbacks, {
+    agentBackend,
     apiKey: config.apiKey,
     model: config.model,
     provider: config.provider,
