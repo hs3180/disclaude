@@ -14,6 +14,12 @@
     "10 repeated real harness handoffs preserve one shared page",
     "managed service shutdown flushes cookies; reopening the same profile retains them"
   ],
+  "persistence": {
+    "required": true,
+    "retained": true,
+    "scope": "browser-restart",
+    "storage": "system-default"
+  },
   "browserUse": "0.13.10",
   "browserHarness": "0.1.13"
 }

@@ -6,4 +6,6 @@ if (!binary) throw new Error('Unsupported Chromium image layout');
 process.env.DISCLAUDE_CHROMIUM_BINARY = binary;
 process.env.DISCLAUDE_BROWSER_PYTHON = '/opt/browser-env/bin/python';
 process.env.DISCLAUDE_BROWSER_MANAGED = '1';
+// Linux image explicitly promises persistent storage; keep this regression strict.
+process.env.DISCLAUDE_BROWSER_REQUIRE_PERSISTENCE ??= '1';
 await import('./harness-acceptance.mjs');

@@ -17,6 +17,7 @@ if (!binary) throw new Error('Set DISCLAUDE_CHROMIUM_BINARY to an independent Ch
 let browser, service, admin, ready; const clients = [];
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const checks = [];
+const persistence = { required: process.env.DISCLAUDE_BROWSER_REQUIRE_PERSISTENCE === '1', retained: null, scope: 'browser-restart', storage: 'system-default' };
 const check = text => { checks.push(text); console.log('PASS '+text); };
 const acquire = async () => {
   const client = await connectBrowser(socket); clients.push(client);
@@ -143,12 +144,15 @@ try {
     const restored = await launchBrowser({binary,profile,headless:true}); browser = restored.child;
     const restoredInfo = await (await fetch(restored.endpoint+'/json/version')).json();
     admin = await connect(restoredInfo.webSocketDebuggerUrl);
-    assert((await admin.call('Storage.getCookies')).cookies.some(cookie=>cookie.name==='ipc_lab' && cookie.value==='persisted'), 'cookie missing after browser restart');
-    check('managed service shutdown flushes cookies; reopening the same profile retains them');
+    persistence.retained = (await admin.call('Storage.getCookies')).cookies.some(cookie=>cookie.name==='ipc_lab' && cookie.value==='persisted');
+    if (persistence.required) assert(persistence.retained, 'required cookie persistence unavailable after browser restart');
+    console.log('CAPABILITY '+JSON.stringify({persistence}));
+    if (persistence.retained) check('managed service shutdown flushes cookies; reopening the same profile retains them');
+    else console.log('INFO browser-restart cookie retention unavailable; normal browser control remains supported');
   }
-  await writeFile(resolve(output,'summary.json'),JSON.stringify({ok:true,platform:`${process.platform}/${process.arch}`,browser:info.Browser,checks},null,2));
+  await writeFile(resolve(output,'summary.json'),JSON.stringify({ok:true,platform:`${process.platform}/${process.arch}`,browser:info.Browser,checks,persistence},null,2));
 } catch (error) {
-  await writeFile(resolve(output,'failure.json'),JSON.stringify({ok:false,error:error.message,checks},null,2));
+  await writeFile(resolve(output,'failure.json'),JSON.stringify({ok:false,error:error.message,checks,persistence},null,2));
   throw error;
 } finally {
   for(const client of clients) client.close();

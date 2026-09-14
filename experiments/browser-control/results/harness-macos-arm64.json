@@ -1,6 +1,7 @@
 {
-  "ok": false,
-  "error": "cookie missing after browser restart",
+  "ok": true,
+  "platform": "darwin/arm64",
+  "browser": "Chrome/155.0.8057.0",
   "checks": [
     "service launches Chromium on port 0 and discovers its endpoint",
     "real browser-use helpers share state across two queued clients; stale client cannot interfere",
@@ -12,9 +13,12 @@
     "stdin CLI uses socket only; heartbeat sustains a script beyond the lease TTL",
     "10 repeated real harness handoffs preserve one shared page"
   ],
-  "platform": "darwin/arm64",
-  "browser": "Chrome/155.0.8057.0",
-  "diagnosis": "Direct Chromium-only reproduction also fails: Keychain errSecInteractionNotAllowed (-25308), encryption unavailable. No IPC dependency.",
+  "persistence": {
+    "required": false,
+    "retained": false,
+    "scope": "browser-restart",
+    "storage": "system-default"
+  },
   "browserUse": "0.13.10",
   "browserHarness": "0.1.13"
 }

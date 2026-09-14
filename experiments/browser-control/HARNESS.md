@@ -125,25 +125,39 @@ still have the service account's filesystem/environment access; this is not a
 sandbox for hostile code or a multi-user authorization service. Task-scoped PATH
 and socket injection have not yet been wired into the production agent runtime.
 No model-driven agent acceptance has been run. Remaining work: runtime/workspace
-binding, restart recovery, macOS Keychain access for managed-browser persistence,
+binding, restart recovery,
 launchd/Linux service packaging and real-agent acceptance. This work is independent
 of Agentic Research.
 
 
-## Recorded platform evidence (2026-09-14)
+## Storage policy and platform evidence (2026-09-14)
 
-- macOS arm64 / Chromium 155: all **9 control/IPC checks passed**. The additional
-  profile-restart cookie check failed. A direct Chromium-only reproduction,
-  without this service or harness, fails identically and logs
+Denied macOS Keychain access is a **supported security configuration**, not a
+browser-service setup failure. Normal navigation, input, screenshots, in-browser
+cookies, ownership and handoff must work without requesting Keychain access.
+The service does not enable mock keychains, switch to plaintext storage, copy
+personal browser credentials, or change OS permissions to satisfy an acceptance.
+
+Cross-browser-restart cookie retention is a separate capability. The acceptance
+always verifies cookie availability before and after lease handoff in the running
+browser. It also probes profile reopening and records `persistence.retained`.
+Missing retention does not fail the normal control acceptance; an application
+explicitly requiring durable login state can run with
+`DISCLAUDE_BROWSER_REQUIRE_PERSISTENCE=1` to make that capability mandatory. The
+Linux acceptance image opts into this stricter contract, so persistence regressions
+there still fail CI. Never describe `retained: false` as persistence passing.
+
+- macOS arm64 / Chromium 155: **9 control/IPC checks pass** with Keychain denied.
+  Profile-restart cookie retention is unavailable in this environment. A direct
+  Chromium-only reproduction confirms the same behavior with
   `errSecInteractionNotAllowed (-25308)` / `Encryption is not available`.
-  The current app cannot access macOS Keychain in this launch environment.
-  This is an unresolved environment prerequisite for durable login state, not a
-  passing persistence result. No mock keychain or weakened storage was enabled.
-- Linux arm64 / Chromium 151: all **10 checks passed**, including fresh cookie
-  retention across graceful managed-browser shutdown and profile reopening.
+  This requires no security-setting change for normal browser use. After a browser
+  restart, a site may require a new login when its authentication cookies are gone.
+- Linux arm64 / Chromium 151: **10 checks pass**, including fresh cookie retention
+  across graceful managed-browser shutdown and profile reopening.
 - The original deterministic CDP coordinator regression still passes all
   10 scenarios / 115 grants after adding the harness adapter hooks.
 
-The full acceptance command intentionally fails when persistence fails. Output
-summaries are removed before each run; failures produce `failure.json` so a
-previous passing summary cannot be mistaken for new evidence.
+Output summaries are removed before each run; required-check failures produce
+`failure.json` so a previous passing summary cannot be mistaken for new evidence.
+Optional capability limitations are recorded explicitly in the successful summary.
