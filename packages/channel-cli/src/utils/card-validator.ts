@@ -7,18 +7,21 @@
 /**
  * Check if content is a valid Feishu interactive card structure.
  */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 export function isValidFeishuCard(content: Record<string, unknown>): boolean {
-  return (
-    typeof content === 'object' &&
-    content !== null &&
-    'config' in content &&
-    'header' in content &&
-    'elements' in content &&
-    Array.isArray(content.elements) &&
-    typeof content.header === 'object' &&
-    content.header !== null &&
-    'title' in content.header
-  );
+  if (!isRecord(content)) {return false;}
+  if (content.schema === '2.0') {
+    return (!('config' in content) || isRecord(content.config)) &&
+      (!('header' in content) || (isRecord(content.header) && 'title' in content.header)) &&
+      isRecord(content.body) && Array.isArray(content.body.elements);
+  }
+  if ('schema' in content && content.schema !== '1.0') {return false;}
+  return 'config' in content &&
+    isRecord(content.header) && 'title' in content.header &&
+    Array.isArray(content.elements);
 }
 
 /**
@@ -118,6 +121,20 @@ export function getCardValidationError(content: unknown): string {
   }
 
   const obj = content as Record<string, unknown>;
+
+  if (obj.schema === '2.0') {
+    if ('config' in obj && !isRecord(obj.config)) {return 'config must be an object';}
+    if ('header' in obj && !isRecord(obj.header)) {return 'header must be an object with title when provided';}
+    if (isRecord(obj.header) && !('title' in obj.header)) {return 'header.title is missing';}
+    if (!('body' in obj)) {return 'missing required fields: body';}
+    if (!isRecord(obj.body)) {return 'body must be an object with elements';}
+    if (!Array.isArray(obj.body.elements)) {return 'body.elements must be an array';}
+    return 'invalid Card JSON 2.0 structure';
+  }
+  if ('schema' in obj && obj.schema !== '1.0') {
+    return 'unsupported card schema - use "1.0" or "2.0", or omit schema for legacy cards';
+  }
+
   const missing: string[] = [];
   const wrongTypes: string[] = [];
 
