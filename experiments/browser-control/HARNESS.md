@@ -84,8 +84,9 @@ request. An in-flight result lost on disconnect remains unknown, without replay.
 Current limits: 5-second lease TTL, 1-second CLI heartbeat, 180-second hard hold
 limit, 120-second queue wait and script timeout. These are opt-in integration
 values, not a published service contract. Script stdout/stderr is limited to 2 MiB.
-Artifacts are written in the service's configured workspace; per-task workspace
-routing is not implemented yet. `DISCLAUDE_BROWSER_EVENTS` writes lifecycle
+The shim forwards its current working directory so relative artifact paths remain
+in the calling task. Direct IPC callers may supply an existing absolute cwd; otherwise
+the service workspace is used. This is same-user routing, not a filesystem sandbox. `DISCLAUDE_BROWSER_EVENTS` writes lifecycle
 NDJSON without script bodies or lease tokens.
 
 ## Reproduce acceptance
@@ -124,7 +125,7 @@ The socket permissions provide a same-user cooperative boundary. Python scripts
 still have the service account's filesystem/environment access; this is not a
 sandbox for hostile code or a multi-user authorization service. Task-scoped PATH
 and socket injection have not yet been wired into the production agent runtime.
-No model-driven agent acceptance has been run. Remaining work: runtime/workspace
+No model-driven agent acceptance has been run. Remaining work: production runtime
 binding, restart recovery,
 launchd/Linux service packaging and real-agent acceptance. This work is independent
 of Agentic Research.

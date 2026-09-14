@@ -3,9 +3,9 @@ import { spawn } from 'node:child_process';
 import { rmSync } from 'node:fs';
 let options, env, runtime, daemon, running, stopping = false;
 const send = message => { if (process.connected) process.send(message); };
-function cli(code, timeoutMs = 120000) {
+function cli(code, timeoutMs = 120000, cwd = options.cwd) {
   return new Promise((resolve, reject) => {
-    const child = spawn(options.python, ['-m', 'browser_use.cli'], { env, cwd: options.cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(options.python, ['-m', 'browser_use.cli'], { env, cwd, stdio: ['pipe', 'pipe', 'pipe'] });
     running = child;
     let stdout = '', stderr = '', error;
     const timer = setTimeout(() => { error = new Error('Script timeout; outcome unknown'); child.kill('SIGKILL'); }, timeoutMs);
@@ -45,8 +45,8 @@ process.on('message', async message => {
       }
       throw new Error('Harness IPC readiness timeout');
     } else if (message.kind === 'execute') {
-      if (message.command !== 'script' || typeof message.value !== 'string') throw new Error('Expected Python script');
-      const result = await cli(message.value);
+      if (message.command !== 'script' || typeof message.value?.code !== 'string') throw new Error('Expected Python script');
+      const result = await cli(message.value.code, 120000, message.value.cwd);
       send({ kind: 'result', id: message.id, result });
     } else if (message.kind === 'stop') {
       stopping = true;

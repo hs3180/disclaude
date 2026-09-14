@@ -14,6 +14,18 @@ invocations, and handles waiting/tabs for you. Your code only describes **what t
 > Replaces the Playwright MCP skill pattern (`mcp__playwright__*`) per the reduce-MCP direction.
 > Tracked in [#4460](https://github.com/hs3180/disclaude/issues/4460).
 
+## Coordinated IPC mode
+
+When `DISCLAUDE_BROWSER_SOCKET` is set and the task PATH selects the disclaude
+browser-use adapter, keep using Python scripts on stdin. One invocation is one
+operation segment: put dependent navigation, input and verification in the same
+script. The service queues control requests and owns daemon startup/recovery;
+do not call `--reload`, `--update` or start a separate browser daemon. Relative
+artifact paths use the calling task directory. Shared pages and login state may
+be visible to the next holder; this is expected. If the service is unavailable,
+report that condition instead of bypassing the coordinator with a direct CDP
+connection. Keychain access is not required for normal browser operation.
+
 ## Quick start
 
 ```bash

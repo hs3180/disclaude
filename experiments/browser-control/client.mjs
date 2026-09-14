@@ -49,7 +49,7 @@ export async function main() {
     if (initial.state === 'queued') process.stderr.write('Browser control queued\n');
     await client.request('wait');
     heartbeat = setInterval(() => { client.request('heartbeat').catch(() => client.close()); }, 1000);
-    const result = await client.request('execute', { script: code });
+    const result = await client.request('execute', { script: code, cwd: process.cwd() });
     process.stdout.write(result.stdout); process.stderr.write(result.stderr);
     process.exitCode = result.code === 0 ? 0 : 1;
     await client.request('release');

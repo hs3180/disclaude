@@ -98,7 +98,9 @@ try {
         } else if (method === 'execute') {
           if (!lease) throw new Error('No held lease');
           if (typeof message.script !== 'string' || message.script.length > 1024 * 1024) throw new Error('Invalid script');
-          reply(id, await coordinator.execute(lease, 'script', message.script));
+          const executionCwd = message.cwd === undefined ? cwd : message.cwd;
+          if (typeof executionCwd !== 'string' || !executionCwd.startsWith('/') || !statSync(executionCwd).isDirectory()) throw new Error('Execution cwd must be an existing absolute directory');
+          reply(id, await coordinator.execute(lease, 'script', { code: message.script, cwd: executionCwd }));
         } else if (method === 'release') {
           if (!lease) { ticket?.cancel(); reply(id, { released: false }); }
           else reply(id, { released: await coordinator.release(lease) });

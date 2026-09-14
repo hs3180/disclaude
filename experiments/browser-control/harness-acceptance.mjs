@@ -123,6 +123,16 @@ try {
   assert.equal(cliResult.code,0,cliResult.stderr); assert.equal(cliResult.stdout.trim(),'B saved');
   check('stdin CLI uses socket only; heartbeat sustains a script beyond the lease TTL');
 
+  const taskDir = resolve(output,'task-cwd'); await mkdir(taskDir,{recursive:true});
+  const scoped = await acquire(); await scoped.request('wait');
+  const scopedResult = await scoped.request('execute', {cwd:taskDir,script:"import pathlib\npathlib.Path('cwd-proof.txt').write_text('owned task artifact')\nprint(capture_screenshot(path='task.png'))"});
+  assert.equal(scopedResult.code,0,scopedResult.stderr);
+  assert.equal(await readFile(resolve(taskDir,'cwd-proof.txt'),'utf8'),'owned task artifact');
+  assert((await readFile(resolve(taskDir,'task.png'))).length>8);
+  await assert.rejects(scoped.request('execute',{cwd:'relative',script:'print(1)'}),/absolute directory/);
+  await scoped.request('release');
+  check('caller working directory controls task artifact paths; invalid cwd is rejected');
+
   for(let i=0;i<10;i++) {
     const client = await acquire(); await client.request('wait');
     assert.equal(await run(client,"print(js(\"document.querySelector('#result').textContent\"))"), i ? `round-${i-1}` : 'B saved');
