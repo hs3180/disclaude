@@ -6,9 +6,11 @@ import { connectBrowser } from './client.mjs';
 import { launchBrowser } from './managed-browser.mjs';
 import { connect } from './cdp.mjs';
 const output = resolve(process.argv[2] || './harness-evidence'); await mkdir(output, { recursive: true });
+await rm(resolve(output,'failure.json'),{force:true});
 const runtime = await mkdtemp('/tmp/dcbs-');
 const profile = resolve(runtime, 'profile');
 const socket = resolve(runtime, 'browser.sock');
+await rm(resolve(output,'summary.json'), {force:true});
 const journal = resolve(output, 'events.ndjson'); await writeFile(journal, '');
 const binary = process.env.DISCLAUDE_CHROMIUM_BINARY;
 if (!binary) throw new Error('Set DISCLAUDE_CHROMIUM_BINARY to an independent Chromium executable');
@@ -132,17 +134,22 @@ try {
   if (managed) {
     const persister = await acquire(); await persister.request('wait');
     await run(persister, "import time\nassert cdp('Network.setCookie',name='ipc_lab',value='persisted',url='https://lab.example.test/',expires=time.time()+3600)['success']");
+    assert((await admin.call('Storage.getCookies')).cookies.some(cookie=>cookie.name==='ipc_lab' && cookie.value==='persisted'), 'cookie missing before release');
     await persister.request('release');
+    assert((await admin.call('Storage.getCookies')).cookies.some(cookie=>cookie.name==='ipc_lab' && cookie.value==='persisted'), 'cookie missing after release');
     for (const client of clients) client.close();
     await admin.close(); admin = null;
     await stop(service); service = null; ready = null;
     const restored = await launchBrowser({binary,profile,headless:true}); browser = restored.child;
     const restoredInfo = await (await fetch(restored.endpoint+'/json/version')).json();
     admin = await connect(restoredInfo.webSocketDebuggerUrl);
-    assert((await admin.call('Storage.getCookies')).cookies.some(cookie=>cookie.name==='ipc_lab' && cookie.value==='persisted'));
+    assert((await admin.call('Storage.getCookies')).cookies.some(cookie=>cookie.name==='ipc_lab' && cookie.value==='persisted'), 'cookie missing after browser restart');
     check('managed service shutdown flushes cookies; reopening the same profile retains them');
   }
   await writeFile(resolve(output,'summary.json'),JSON.stringify({ok:true,platform:`${process.platform}/${process.arch}`,browser:info.Browser,checks},null,2));
+} catch (error) {
+  await writeFile(resolve(output,'failure.json'),JSON.stringify({ok:false,error:error.message,checks},null,2));
+  throw error;
 } finally {
   for(const client of clients) client.close();
   if (ready && admin) await admin.call('Target.closeTarget',{targetId:ready.target});

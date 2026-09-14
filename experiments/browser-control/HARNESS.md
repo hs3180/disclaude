@@ -125,6 +125,25 @@ still have the service account's filesystem/environment access; this is not a
 sandbox for hostile code or a multi-user authorization service. Task-scoped PATH
 and socket injection have not yet been wired into the production agent runtime.
 No model-driven agent acceptance has been run. Remaining work: runtime/workspace
-binding, restart recovery, graceful managed-browser persistence verification,
+binding, restart recovery, macOS Keychain access for managed-browser persistence,
 launchd/Linux service packaging and real-agent acceptance. This work is independent
 of Agentic Research.
+
+
+## Recorded platform evidence (2026-09-14)
+
+- macOS arm64 / Chromium 155: all **9 control/IPC checks passed**. The additional
+  profile-restart cookie check failed. A direct Chromium-only reproduction,
+  without this service or harness, fails identically and logs
+  `errSecInteractionNotAllowed (-25308)` / `Encryption is not available`.
+  The current app cannot access macOS Keychain in this launch environment.
+  This is an unresolved environment prerequisite for durable login state, not a
+  passing persistence result. No mock keychain or weakened storage was enabled.
+- Linux arm64 / Chromium 151: all **10 checks passed**, including fresh cookie
+  retention across graceful managed-browser shutdown and profile reopening.
+- The original deterministic CDP coordinator regression still passes all
+  10 scenarios / 115 grants after adding the harness adapter hooks.
+
+The full acceptance command intentionally fails when persistence fails. Output
+summaries are removed before each run; failures produce `failure.json` so a
+previous passing summary cannot be mistaken for new evidence.
