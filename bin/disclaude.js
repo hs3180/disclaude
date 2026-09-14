@@ -46,6 +46,7 @@ function showHelp() {
       'Commands:',
       '  start [options]    Start disclaude',
       '  channel <command>  Send channel messages through the service',
+      '  browser <cmd>      Start or inspect coordinated browser control',
       '  chromium-cdp <cmd> Manage the persistent Chromium CDP launchd service (Issue #4807)',
       '',
       'Global Options:',
@@ -64,6 +65,7 @@ function showHelp() {
 }
 
 const ROUTES = {
+  browser: { file: resolve(ROOT, 'node_modules/@disclaude/service/dist/browser-control/cli.mjs') },
   start: {
     file: resolve(ROOT, 'node_modules/@disclaude/service/dist/cli.js'),
     keepCommand: true,

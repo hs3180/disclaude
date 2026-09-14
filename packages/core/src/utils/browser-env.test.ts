@@ -34,3 +34,12 @@ describe('coordinated browser environment', () => {
     expect(browserAgentEnv(env)).toBe(env);
   });
 });
+
+it('selects the managed IPC launcher after a task overrides PATH', () => {
+  const env = browserAgentEnv({ DISCLAUDE_BROWSER_SOCKET: '/tmp/browser.sock',
+    DISCLAUDE_BROWSER_BIN: '/owned/bin', PATH: '/upstream/bin:/owned/bin:/usr/bin',
+    DISCLAUDE_BROWSER_MODE: 'coordinated', BU_CDP_URL: 'http://stale.invalid' });
+  expect(env.PATH).toBe('/owned/bin:/upstream/bin:/usr/bin');
+  expect(env).not.toHaveProperty('BU_CDP_URL');
+  expect(env).not.toHaveProperty('DISCLAUDE_BROWSER_MODE');
+});

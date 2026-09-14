@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - 'experiments/browser-control/**'
+      - 'packages/service/src/browser-control/**'
       - 'packages/core/src/utils/**'
       - 'packages/core/src/sdk/providers/**'
       - '.github/workflows/browser-harness-lab.yml'
@@ -10,6 +11,7 @@ on:
     branches: [main, master]
     paths:
       - 'experiments/browser-control/**'
+      - 'packages/service/src/browser-control/**'
       - 'packages/core/src/utils/**'
       - 'packages/core/src/sdk/providers/**'
       - '.github/workflows/browser-harness-lab.yml'
@@ -28,7 +30,7 @@ jobs:
       - name: Build PR SDK for injection regression
         run: npm ci --include=dev && npm run build
       - name: Build pinned browser-use acceptance image
-        run: docker build -t disclaude-browser-harness-lab experiments/browser-control
+        run: docker build -t disclaude-browser-harness-lab -f experiments/browser-control/Dockerfile .
       - name: Run real Chromium and harness over IPC
         run: |
           mkdir -p "$RUNNER_TEMP/browser-harness-evidence"

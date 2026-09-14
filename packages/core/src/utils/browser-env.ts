@@ -1,3 +1,4 @@
+import { delimiter } from 'node:path';
 /** Keep transport discovery private to the coordinator in coordinated mode.
  * This is cooperative routing, not a same-user security boundary.
  * Call after all provider/task environment merges, immediately before spawning.
@@ -7,6 +8,9 @@ export function browserAgentEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.Pr
     return env;
   }
   const result = { ...env };
+  if (env.DISCLAUDE_BROWSER_BIN) {
+    result.PATH = [env.DISCLAUDE_BROWSER_BIN, ...(env.PATH ?? '').split(delimiter).filter(p => p && p !== env.DISCLAUDE_BROWSER_BIN)].join(delimiter);
+  }
   for (const key of Object.keys(result)) {
     if (
       key.startsWith('BU_CDP_') ||
@@ -24,6 +28,8 @@ export function browserAgentEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.Pr
         'DISCLAUDE_BROWSER_PYTHON',
         'DISCLAUDE_BROWSER_EVENTS',
         'DISCLAUDE_BROWSER_WORKSPACE',
+        'DISCLAUDE_BROWSER_MODE',
+        'DISCLAUDE_BROWSER_SUPERVISED',
       ].includes(key)
     ) {
       delete result[key];

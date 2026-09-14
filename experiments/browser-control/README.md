@@ -1,5 +1,10 @@
 # Browser control ownership lab (#5002)
 
+The reusable coordinator and CDP transport now live in
+`packages/service/src/browser-control/`. Lab modules delegate there; the original
+results below remain historical experimental evidence. Current product entry and
+service integration are documented in [browser coordination](../../docs/browser-coordination.md).
+
 The experiment asks whether a waiting caller can acquire usable control after the
 holder releases, crashes, disconnects or expires. Both callers intentionally use
 the **same page**. Seeing the previous caller's page is expected; ordinary lease

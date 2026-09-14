@@ -17,7 +17,7 @@ try {
   const sid = (await admin.call('Target.attachToTarget', { targetId: target, flatten: true })).sessionId;
   await admin.call('Runtime.evaluate', { expression: "document.body.innerHTML='<h1>Shared control lab</h1><p id=\"value\">initial</p>'", returnByValue: true }, sid);
   await admin.call('Target.detachFromTarget', { sessionId: sid });
-  coordinator = new Coordinator({ url: info.webSocketDebuggerUrl, target, event: e => events.push(e), verifyReclaimed: async () => {
+  coordinator = new Coordinator({ workerModule: new URL('./worker.mjs', import.meta.url), url: info.webSocketDebuggerUrl, target, event: e => events.push(e), verifyReclaimed: async () => {
     for (let i = 0; i < 50; i++) {
       if (!(await admin.call('Target.getTargetInfo', { targetId: target })).targetInfo.attached) {
         events.push({ type: 'browser-detached', ms: performance.now() }); return;

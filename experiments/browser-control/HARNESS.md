@@ -98,7 +98,7 @@ DISCLAUDE_BROWSER_MANAGED=1 \
 node experiments/browser-control/harness-acceptance.mjs /absolute/path/to/evidence
 
 # Independent Linux acceptance image; no production image or service required.
-docker build -t disclaude-browser-harness-lab experiments/browser-control
+docker build -t disclaude-browser-harness-lab -f experiments/browser-control/Dockerfile .
 docker run --rm --init --shm-size=2g --memory=4g \
   -v /absolute/path/to/evidence:/evidence disclaude-browser-harness-lab
 ```
@@ -113,22 +113,20 @@ on native Linux/amd64 and uploads evidence.
 
 ## Rollout boundaries
 
-This is a working, opt-in integration under `experiments/`, not a replacement
-installed into production. Existing launchd configuration is unchanged. The new
-service has a single owner lock and refuses a second instance. Unclean service
-termination may leave a lock/profile or workers requiring operator recovery;
-automated restart reconciliation is **not implemented**. Do not configure launchd
-KeepAlive for it until that recovery and process-identity handling are completed.
-Chromium loss terminates the managed service; unknown operations are not retried.
+The runtime now lives in `packages/service/src/browser-control/` and is shipped
+with the service. These lab entry points delegate to that implementation.
+`disclaude start` can own startup/readiness/shutdown and inject the IPC launcher
+into real harness environments; `disclaude browser status` queries the live broker.
+See [service setup](../../docs/browser-coordination.md).
 
-The socket permissions provide a same-user cooperative boundary. Python scripts
-still have the service account's filesystem/environment access; this is not a
-sandbox for hostile code or a multi-user authorization service. Task-scoped PATH
-and socket injection have not yet been wired into the production agent runtime.
-No model-driven agent acceptance has been run. Remaining work: production runtime
-binding, restart recovery,
-launchd/Linux service packaging and real-agent acceptance. This work is independent
-of Agentic Research.
+Automatic recovery after an unclean broker death remains outstanding. A stale
+lock or unknown browser/worker ownership fails startup; do not remove locks or
+reuse a profile without reconciling the processes. Unknown operations are never
+replayed. Existing launchd browser profiles are not migrated automatically.
+
+The socket remains a same-user cooperative boundary, not a hostile-code sandbox.
+No model-driven acceptance is claimed by the scripted browser checks. Agentic
+Research remains an independent workstream.
 
 
 ## Storage policy and platform evidence (2026-09-14)
