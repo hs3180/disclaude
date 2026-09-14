@@ -148,10 +148,14 @@ stop_owned_daemon() {
 }
 cleanup_target() {
     [ -s "$SMOKE_TARGET_FILE" ] || return 0
-    run_bu "$SMOKE_CDP_URL" 'import os, pathlib
+    run_bu "$SMOKE_CDP_URL" 'import os, pathlib, time
 p = pathlib.Path(os.environ["SMOKE_TARGET_FILE"])
 tid = p.read_text().strip()
 close_tab(tid)
+for _ in range(50):
+    if not any(t.get("targetId") == tid for t in list_tabs()):
+        break
+    time.sleep(0.1)
 assert not any(t.get("targetId") == tid for t in list_tabs())
 p.unlink()
 print("TARGET_CLEANED")' | grep -qF 'TARGET_CLEANED'
@@ -199,6 +203,7 @@ tid = cdp("Target.createTarget", url="about:blank", background=True)["targetId"]
 pathlib.Path(os.environ["SMOKE_TARGET_FILE"]).write_text(tid)
 switch_tab(tid)
 goto_url("data:text/html,<title>bu-smoke</title><h1>hello-cdp</h1>")
+assert wait_for_element("h1"), "navigation did not produce the expected DOM"
 assert current_tab()["targetId"] == tid
 assert js("document.querySelector(\"h1\").textContent") == "hello-cdp"
 print("OWNED_TARGET_OK")') ; rc=$?
@@ -206,6 +211,7 @@ if [ "$rc" -eq 0 ]; then
     assert_contains "case 2: explicit owned attach target (not visible tab)" "OWNED_TARGET_OK" "$out"
 else
     log_fail "case 2: attach failed (exit $rc)"
+    printf '%s\n' "$out"
 fi
 
 # ── Case 2b: no self-spawned Chrome ─────────────────────────────────────────
