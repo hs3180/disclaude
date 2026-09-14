@@ -89,3 +89,6 @@ Linux amd64 or native Linux host service. The existing #5011 amd64 container CI
 is separate evidence and does not cover this coordinator experiment. Next steps
 are the browser-use adapter and real-agent handoff, then recovery across service
 and browser restarts. Agentic research is independent of this work.
+
+
+See [HARNESS.md](HARNESS.md) for the opt-in real browser-use IPC adapter and managed dynamic-port Chromium follow-up. The original deterministic results above describe the CDP-only experiment.

@@ -1,0 +1,35 @@
+name: Browser Harness IPC Lab
+on:
+  pull_request:
+    paths:
+      - 'experiments/browser-control/**'
+      - '.github/workflows/browser-harness-lab.yml'
+  push:
+    branches: [main, master]
+    paths:
+      - 'experiments/browser-control/**'
+      - '.github/workflows/browser-harness-lab.yml'
+jobs:
+  acceptance:
+    name: Real harness ownership and handoff
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build pinned browser-use acceptance image
+        run: docker build -t disclaude-browser-harness-lab experiments/browser-control
+      - name: Run real Chromium and harness over IPC
+        run: |
+          mkdir -p "$RUNNER_TEMP/browser-harness-evidence"
+          docker run --rm --init --shm-size=2g --memory=4g \
+            -v "$RUNNER_TEMP/browser-harness-evidence:/evidence" \
+            disclaude-browser-harness-lab
+      - name: Preserve acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-harness-ipc-evidence
+          path: ${{ runner.temp }}/browser-harness-evidence
+          if-no-files-found: ignore

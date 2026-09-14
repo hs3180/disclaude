@@ -4,8 +4,8 @@ import { performance } from 'node:perf_hooks';
 
 /** Cooperative single-process lab coordinator, NOT a production security boundary. */
 export class Coordinator {
-  constructor({ url, target, event = () => {}, verifyReclaimed = async () => {}, ttlMs = 1000, hardMs = 10000 }) {
-    Object.assign(this, { url, target, event, verifyReclaimed, ttlMs, hardMs });
+  constructor({ url, target, event = () => {}, verifyReclaimed = async () => {}, ttlMs = 1000, hardMs = 10000, workerModule = new URL('./worker.mjs', import.meta.url), workerOptions = {}, detachedWorker = false, startupMs = 5000, cleanupWorker = () => {} }) {
+    Object.assign(this, { url, target, event, verifyReclaimed, ttlMs, hardMs, workerModule, workerOptions, detachedWorker, startupMs, cleanupWorker });
     this.boot = randomUUID(); this.epoch = 0; this.queue = []; this.holder = null; this.busy = false; this.closed = false;
     this.monitor = setInterval(() => {
       const h = this.holder;
@@ -23,7 +23,13 @@ export class Coordinator {
   }
   cancel(ticket, reason) {
     const index = this.queue.indexOf(ticket);
-    if (index < 0) return false;
+    if (index < 0) {
+      const h = this.holder;
+      if (h?.ticket !== ticket || h.state !== 'allocating') return false;
+      clearTimeout(ticket.timer); ticket.reject(new Error(reason));
+      this.log('waiter-removed', { actor: ticket.actor, reason });
+      void this.revoke(h, 'allocation-cancelled'); return true;
+    }
     this.queue.splice(index, 1); clearTimeout(ticket.timer); ticket.reject(new Error(reason));
     this.log('waiter-removed', { actor: ticket.actor, reason }); return true;
   }
@@ -31,22 +37,25 @@ export class Coordinator {
     if (this.busy || this.holder || this.closed || !this.queue.length) return;
     this.busy = true;
     const ticket = this.queue.shift(); clearTimeout(ticket.timer);
-    const h = { actor: ticket.actor, epoch: ++this.epoch, token: randomUUID(), state: 'allocating', pending: new Map(), serial: Promise.resolve(), seq: 0 };
+    const h = { ticket, actor: ticket.actor, epoch: ++this.epoch, token: randomUUID(), state: 'allocating', pending: new Map(), serial: Promise.resolve(), seq: 0 };
     this.holder = h;
     try {
-      h.child = fork(new URL('./worker.mjs', import.meta.url), [], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+      h.workerOptions = typeof this.workerOptions === 'function' ? this.workerOptions() : this.workerOptions;
+      h.child = fork(this.workerModule, [], { detached: this.detachedWorker, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
       h.exited = new Promise(resolve => h.child.once('exit', (code, signal) => {
         this.log('worker-exit', { epoch: h.epoch, pid: h.child.pid, code, signal });
         for (const p of h.pending.values()) p.reject(new Error('Worker exited; outcome unknown'));
         h.pending.clear(); resolve();
         if (h.state === 'held') void this.revoke(h, 'worker-exit');
       }));
+      h.child.stderr.resume();
       h.child.on('error', () => {});
       await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error('Worker startup timeout')), 5000);
+        const timer = setTimeout(() => reject(new Error('Worker startup timeout')), this.startupMs);
         h.child.once('exit', () => { clearTimeout(timer); reject(new Error('Worker startup exit')); });
         h.child.on('message', message => {
-          if (message.kind === 'ready') { clearTimeout(timer); resolve(); }
+          if (message.kind === 'daemon-started') this.log('daemon-started', { epoch: h.epoch, pid: message.pid });
+          else if (message.kind === 'ready') { clearTimeout(timer); resolve(); }
           else if (message.kind === 'init-error') { clearTimeout(timer); reject(new Error(message.error)); }
           else if (message.kind === 'result') {
             const item = h.pending.get(message.id); if (!item) return;
@@ -54,7 +63,7 @@ export class Coordinator {
             message.error ? item.reject(new Error(message.error)) : item.resolve(message.result);
           }
         });
-        h.child.send({ kind: 'init', url: this.url, target: this.target });
+        h.child.send({ kind: 'init', url: this.url, target: this.target, options: h.workerOptions });
       });
       if (this.closed || h.state !== 'allocating') throw new Error('Allocation cancelled');
       h.state = 'held'; h.hardDeadline = performance.now() + this.hardMs; h.deadline = Math.min(performance.now() + this.ttlMs, h.hardDeadline);
@@ -95,9 +104,10 @@ export class Coordinator {
     h.recovery = (async () => {
       if (h.child && h.child.exitCode === null && h.child.signalCode === null) {
         if (h.child.connected) h.child.send({ kind: 'stop' }, () => {});
-        const timer = setTimeout(() => h.child.kill('SIGKILL'), 500);
+        const timer = setTimeout(() => this.killWorker(h), 500);
         await h.exited; clearTimeout(timer);
       }
+      if (this.detachedWorker && h.child) this.killWorker(h); // Includes an orphaned harness/CLI after worker death.
       // Also verify browser-side detachment; process exit alone is not the barrier.
       try { await this.verifyReclaimed(); } catch (error) {
         this.closed = true; h.state = 'quarantined';
@@ -105,11 +115,18 @@ export class Coordinator {
         for (const ticket of [...this.queue]) this.cancel(ticket, 'Browser unavailable: reclaim failed');
         return;
       }
+      this.cleanupWorker(h.workerOptions);
       this.log('reclaimed', { epoch: h.epoch });
       if (this.holder === h) this.holder = null;
       void this.pump();
     })();
     return h.recovery;
+  }
+  killWorker(h) {
+    try {
+      if (this.detachedWorker) process.kill(-h.child.pid, 'SIGKILL');
+      else h.child.kill('SIGKILL');
+    } catch (error) { if (error.code !== 'ESRCH') throw error; }
   }
   inject(lease, fault) {
     const h = this.validate(lease);
