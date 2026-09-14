@@ -4,8 +4,8 @@ import { performance } from 'node:perf_hooks';
 
 /** Cooperative single-process lab coordinator, NOT a production security boundary. */
 export class Coordinator {
-  constructor({ url, target, event = () => {}, verifyReclaimed = async () => {}, ttlMs = 1000, hardMs = 10000, workerModule = new URL('./worker.mjs', import.meta.url), workerOptions = {}, detachedWorker = false, startupMs = 5000, cleanupWorker = () => {} }) {
-    Object.assign(this, { url, target, event, verifyReclaimed, ttlMs, hardMs, workerModule, workerOptions, detachedWorker, startupMs, cleanupWorker });
+  constructor({ url, target, event = () => {}, verifyReclaimed = async () => {}, ttlMs = 1000, hardMs = 10000, workerModule = new URL('./worker.mjs', import.meta.url), workerOptions = {}, detachedWorker = false, startupMs = 5000, cleanupWorker = () => {}, onTargetChange = () => {} }) {
+    Object.assign(this, { url, target, event, verifyReclaimed, ttlMs, hardMs, workerModule, workerOptions, detachedWorker, startupMs, cleanupWorker, onTargetChange });
     this.boot = randomUUID(); this.epoch = 0; this.queue = []; this.holder = null; this.busy = false; this.closed = false;
     this.monitor = setInterval(() => {
       const h = this.holder;
@@ -60,6 +60,7 @@ export class Coordinator {
           else if (message.kind === 'result') {
             const item = h.pending.get(message.id); if (!item) return;
             h.pending.delete(message.id);
+            if (message.target && h === this.holder && h.state === 'held') { this.target = message.target; this.onTargetChange(message.target); }
             message.error ? item.reject(new Error(message.error)) : item.resolve(message.result);
           }
         });

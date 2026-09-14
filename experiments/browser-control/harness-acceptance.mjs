@@ -140,6 +140,17 @@ try {
     await client.request('release'); client.close();
   }
   check('10 repeated real harness handoffs preserve one shared page');
+  const opening = await acquire(); await opening.request('wait');
+  const opened = await run(opening,"tid=cdp('Target.createTarget',url='about:blank',background=True)['targetId']\nswitch_tab(tid)\njs(\"document.body.innerHTML='<h1>handoff new tab</h1>'\")\nprint(tid)");
+  await opening.request('release');
+  const resumed = await acquire(); await resumed.request('wait');
+  assert.equal(await run(resumed,'print(current_tab()["targetId"])'),opened);
+  await run(resumed,'close_tab(current_tab()["targetId"])');
+  await resumed.request('release');
+  const afterClose = await acquire(); await afterClose.request('wait');
+  assert.equal(await run(afterClose,'print(bool(current_tab()["targetId"]))'),'True');
+  await afterClose.request('release');
+  check('changed current tab survives handoff; closing the current tab does not strand the next caller');
   assert.equal((await admin.call('Target.getTargetInfo',{targetId:ready.target})).targetInfo.attached,false);
   const png=await readFile(resolve(output,'shared-harness.png')); assert(png.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])));
   if (managed) {

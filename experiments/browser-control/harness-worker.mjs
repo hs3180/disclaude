@@ -47,7 +47,9 @@ process.on('message', async message => {
     } else if (message.kind === 'execute') {
       if (message.command !== 'script' || typeof message.value?.code !== 'string') throw new Error('Expected Python script');
       const result = await cli(message.value.code, 120000, message.value.cwd);
-      send({ kind: 'result', id: message.id, result });
+      const current = await cli('print("COORDINATED_TARGET="+current_tab()["targetId"])', 5000, message.value.cwd);
+      const target = current.stdout.match(/^COORDINATED_TARGET=([A-Fa-f0-9-]+)$/m)?.[1];
+      send({ kind: 'result', id: message.id, result, target });
     } else if (message.kind === 'stop') {
       stopping = true;
       running?.kill('SIGKILL'); daemon?.kill('SIGTERM');

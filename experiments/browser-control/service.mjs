@@ -53,14 +53,18 @@ try {
     target = process.env.DISCLAUDE_BROWSER_TARGET;
     await admin.call('Target.getTargetInfo', { targetId: target });
   } else target = (await admin.call('Target.createTarget', { url: 'about:blank', background: true })).targetId;
-  coordinator = new Coordinator({ url: info.webSocketDebuggerUrl, target, event,
+  coordinator = new Coordinator({ url: info.webSocketDebuggerUrl, target, event, onTargetChange: value => { target = value; },
     workerModule: new URL('./harness-worker.mjs', import.meta.url), detachedWorker: true, startupMs: 30000,
     workerOptions: () => ({ python, cwd, runtime: mkdtempSync('/tmp/dcbh-') }),
     cleanupWorker: options => { if (options?.runtime) rmSync(options.runtime, { recursive: true, force: true }); },
     ttlMs: 5000, hardMs: 180000,
     verifyReclaimed: async () => {
       for (let i = 0; i < 50; i++) {
-        const { targetInfo } = await admin.call('Target.getTargetInfo', { targetId: target });
+        const targetInfo = (await admin.call('Target.getTargets')).targetInfos.find(item => item.targetId === target);
+        if (!targetInfo) {
+          target = (await admin.call('Target.createTarget', { url: 'about:blank', background: true })).targetId;
+          coordinator.target = target; return;
+        }
         if (!targetInfo.attached) return;
         await delay(20);
       }
