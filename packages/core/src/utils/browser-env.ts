@@ -5,6 +5,9 @@ import { delimiter } from 'node:path';
  */
 export function browserAgentEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   if (!env.DISCLAUDE_BROWSER_SOCKET) {
+    if (env.DISCLAUDE_BROWSER_MODE === 'coordinated' || env.DISCLAUDE_BROWSER_BIN) {
+      throw new Error('Coordinated browser environment is missing its IPC socket; refusing direct browser fallback');
+    }
     return env;
   }
   const result = { ...env };

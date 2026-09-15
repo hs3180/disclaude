@@ -9,16 +9,16 @@
  *
  *   agent auto-discovers the browser-use skill (no human naming it)
  *     → calls Bash per the SKILL.md contract (`browser-use <<'PY' … PY`)
- *     → attaches via `BU_CDP_URL` (no self-spawned Chrome)
+ *     → requests control through the configured IPC adapter (no self-spawned Chrome)
  *     → `js()` injection returns structured results
  *     → screenshot artifact lands in the workspace, non-empty
- *     → CDP-unreachable fails loudly, never silently self-spawns (#4496 Scope-3)
+ *     → IPC-unreachable fails loudly, never silently self-spawns
  *
  * This module implements that layer by instantiating a **real ChatAgent**
  * (`AgentFactory.createAgent`, the same one-shot entry the scheduler uses),
  * feeding it a prompt, and asserting on (a) the reply text the agent sends
  * back and (b) the artifacts it leaves in the workspace. A live run needs a
- * model API key and a reachable CDP endpoint, so the runner lives behind
+ * model credentials and a running coordinator, so the runner lives behind
  * `scripts/browser-use-agent-e2e.mts` for an operator shell — the same
  * tooling-first split as the Card Kit bench (#4398 / #4416 / #4454), where
  * the CI-testable half is the assertion logic itself (see
@@ -274,7 +274,7 @@ export interface PreflightResult {
 
 /**
  * Fail-fast checks an operator can act on (mirrors the bench's requiredEnv
- * style). Verifies the two live-only inputs (CDP reachability, API key) plus
+ * style). Verifies the live-only configuration (IPC socket, model credentials) plus
  * workspace sanity — so a misconfigured run dies in seconds with a precise
  * message instead of a 10-minute agent hang.
  */

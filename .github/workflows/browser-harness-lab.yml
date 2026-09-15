@@ -2,6 +2,11 @@ name: Browser Harness IPC Lab
 on:
   pull_request:
     paths:
+      - 'tests/e2e/browser-service.test.ts'
+      - 'bin/disclaude.js'
+      - 'packages/service/src/service/**'
+      - 'package*.json'
+      - 'packages/*/package.json'
       - 'experiments/browser-control/**'
       - 'packages/service/src/browser-control/**'
       - 'packages/core/src/utils/**'
@@ -10,6 +15,11 @@ on:
   push:
     branches: [main, master]
     paths:
+      - 'tests/e2e/browser-service.test.ts'
+      - 'bin/disclaude.js'
+      - 'packages/service/src/service/**'
+      - 'package*.json'
+      - 'packages/*/package.json'
       - 'experiments/browser-control/**'
       - 'packages/service/src/browser-control/**'
       - 'packages/core/src/utils/**'
@@ -39,6 +49,18 @@ jobs:
             -v "$GITHUB_WORKSPACE/packages/core/dist:/sdk:ro" \
             -v "$RUNNER_TEMP/browser-harness-evidence:/evidence" \
             disclaude-browser-harness-lab
+      - name: Run Linux product CLI lifecycle and shared-browser E2E
+        run: |
+          docker run --rm --init --shm-size=2g --memory=4g \
+            -v "$GITHUB_WORKSPACE:/product" -w /product \
+            --entrypoint /bin/bash disclaude-browser-harness-lab -lc '
+              set -euo pipefail
+              export DISCLAUDE_E2E_BROWSER_PYTHON=/opt/browser-env/bin/python
+              export DISCLAUDE_E2E_CHROMIUM="$(find /ms-playwright -path "*/chrome-linux*/chrome" -type f -print -quit)"
+              test -n "$DISCLAUDE_E2E_CHROMIUM"
+              test -x "$DISCLAUDE_E2E_CHROMIUM"
+              node node_modules/vitest/vitest.mjs run tests/e2e/browser-service.test.ts
+            '
       - name: Preserve acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4

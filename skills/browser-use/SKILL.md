@@ -36,8 +36,8 @@ PY
 ```
 
 - stdout is **whatever your Python prints** — `print()` is the result channel. Parse it directly.
-- Each invocation joins the **same persistent session** (default local daemon); state (tabs,
-  cookies, logins) survives across calls.
+- Each invocation requests control of the **shared browser**. Tabs can survive handoff,
+  but another caller may have changed the page; inspect it before continuing.
 - Empty stdin is an error — always pipe code.
 
 ## Helper reference (CLI 3.0, browser-use 0.13.7)

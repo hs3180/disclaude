@@ -64,8 +64,8 @@ describe('user starts Disclaude and shares its managed browser', () => {
         const taskEnv = browserAgentEnv({ ...env, DISCLAUDE_BROWSER_BIN: join(root, 'bin'), BU_CDP_URL: 'http://stale.invalid:9223', BU_CDP_WS: 'ws://stale.invalid' });
         expect(taskEnv.BU_CDP_URL).toBeUndefined();
         expect(taskEnv.BU_CDP_WS).toBeUndefined();
-        const run = (script: string): Promise<string> => new Promise((done, reject) => {
-          const task = spawn('browser-use', [], { env: taskEnv, cwd: root, stdio: ['pipe', 'pipe', 'pipe'] });
+        const run = (script: string, invocationEnv = taskEnv): Promise<string> => new Promise((done, reject) => {
+          const task = spawn('browser-use', [], { env: invocationEnv, cwd: root, stdio: ['pipe', 'pipe', 'pipe'] });
           let stdout = '', stderr = '';
           task.stdout.on('data', d => { stdout += d; }); task.stderr.on('data', d => { stderr += d; });
           task.on('error', reject);
@@ -80,6 +80,15 @@ describe('user starts Disclaude and shares its managed browser', () => {
         expect(results[0]).toContain('handoff');
         // Both callers receive the same real target; ordering is established by the broker.
         expect(results[1]).toMatch(/first|handoff/u);
+        expect(await run("print(js(\"document.querySelector('#value').value\"))\n")).toContain('handoff');
+        // An unavailable IPC service must not execute Python through an upstream
+        // daemon, even when one invocation carries stale direct-CDP settings.
+        const bypassMarker = join(root, 'bypass-marker');
+        await expect(run(`open(${JSON.stringify(bypassMarker)}, 'w').write('bypassed')\n`, {
+          ...taskEnv, DISCLAUDE_BROWSER_SOCKET: join(root, 'missing.sock'),
+          BU_CDP_URL: 'http://127.0.0.1:9222',
+        })).rejects.toThrow(/ENOENT|connect|socket/i);
+        await expect(access(bypassMarker)).rejects.toThrow();
         expect(await run("print(js(\"document.querySelector('#value').value\"))\n")).toContain('handoff');
         await writeFile(join(root, 'profile', 'preserve-test.txt'), 'user profile retained');
         const cdpPort = (await readFile(join(root, 'profile', 'DevToolsActivePort'), 'utf8')).split('\n')[0];

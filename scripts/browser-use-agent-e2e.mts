@@ -32,7 +32,7 @@ function usage(): void {
 browser-use agent-level e2e (Issue #4602 part 2) — one-shot ChatAgent + 5-check verdict
 
 Usage:
-  npx tsx scripts/browser-use-agent-e2e.mts --workspace <dir> --cdp-url <url>
+  npx tsx scripts/browser-use-agent-e2e.mts --workspace <dir>
 
 Options:
   --workspace <dir>    workspace dir (agent cwd + artifact root).

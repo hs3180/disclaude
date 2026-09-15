@@ -29,6 +29,12 @@ describe('coordinated browser environment', () => {
       'BU_CDP_URL'
     );
   });
+  it.each([
+    { BU_CDP_URL: 'http://stale.invalid', DISCLAUDE_BROWSER_MODE: 'coordinated', DISCLAUDE_BROWSER_SOCKET: '' },
+    { DISCLAUDE_BROWSER_BIN: '/owned/bin', BU_CDP_WS: 'ws://stale.invalid' },
+  ])('fails closed if a coordinated task loses its socket', env => {
+    expect(() => browserAgentEnv(env)).toThrow('missing its IPC socket');
+  });
   it('preserves legacy service configuration outside coordinated mode', () => {
     const env = { BU_CDP_WS: 'ws://worker-private', PATH: '/bin' };
     expect(browserAgentEnv(env)).toBe(env);
