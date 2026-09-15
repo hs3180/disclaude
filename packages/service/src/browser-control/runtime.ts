@@ -51,7 +51,7 @@ export async function startBrowserRuntime(
         const ready = value as { ready?: boolean; socket?: string } | undefined;
         if (ready?.ready === true && ready.socket === socket) { cleanup(); resolve(); }
       };
-      const timer = setTimeout(() => fail(new Error('Browser coordinator readiness timed out')), 45_000);
+      const timer = setTimeout(() => fail(new Error(`Browser coordinator readiness timed out: ${stderr || 'no coordinator diagnostics'}`)), 45_000);
       child.on('message', message); child.once('error', fail); child.once('close', closed);
     });
     if (child.exitCode !== null || child.signalCode !== null) { throw new Error('Browser coordinator exited during startup'); }

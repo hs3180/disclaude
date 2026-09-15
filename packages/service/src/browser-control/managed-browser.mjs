@@ -7,7 +7,9 @@ export async function launchBrowser({ binary, profile, headless = false, signal 
   await mkdir(profile, { recursive: true, mode: 0o700 });
   const activeFile = resolve(profile, 'DevToolsActivePort');
   let previous; try { previous = (await stat(activeFile)).mtimeMs; } catch {}
-  const child = spawn(binary, ['--remote-debugging-port=0', '--user-data-dir='+profile, '--no-first-run', '--no-default-browser-check', ...(headless ? ['--headless=new'] : []), ...(process.getuid?.() === 0 ? ['--no-sandbox'] : []), 'about:blank'], { stdio: 'ignore' });
+  const child = spawn(binary, ['--remote-debugging-port=0', '--user-data-dir='+profile, '--no-first-run', '--no-default-browser-check', ...(headless ? ['--headless=new'] : []), ...(process.getuid?.() === 0 ? ['--no-sandbox'] : []), 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
+  let stderr = '';
+  child.stderr.on('data', chunk => { stderr = (stderr + chunk.toString()).slice(-2000); });
   let startupError; child.on('error', error => startupError = error);
   const stop = async ({ graceful = false } = {}) => {
     if (graceful) {
@@ -24,7 +26,7 @@ export async function launchBrowser({ binary, profile, headless = false, signal 
     for (let i = 0; i < 150; i++) {
       if (signal?.aborted) throw new Error('Managed Chromium startup cancelled');
       if (startupError) throw startupError;
-      if (child.exitCode !== null) throw new Error('Managed Chromium exited before readiness; check profile ownership and binary');
+      if (child.exitCode !== null || child.signalCode !== null) throw new Error(`Managed Chromium exited before readiness (code=${child.exitCode}, signal=${child.signalCode}): ${stderr || 'check profile ownership and binary'}`);
       try {
         if ((await stat(activeFile)).mtimeMs !== previous) {
           const [port, browserPath] = (await readFile(activeFile,'utf8')).trim().split('\n');
@@ -38,6 +40,6 @@ export async function launchBrowser({ binary, profile, headless = false, signal 
       } catch { /* Startup may still be writing its endpoint. */ }
       await new Promise(resolve => setTimeout(resolve, 100));
     }
-    throw new Error('Managed Chromium endpoint discovery timed out');
+    throw new Error(`Managed Chromium endpoint discovery timed out: ${stderr || 'no browser diagnostics'}`);
   } catch (error) { await stop(); throw error; }
 }

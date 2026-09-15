@@ -24,7 +24,7 @@ describe('user starts Disclaude and shares its managed browser', () => {
       agent: { agentBackend: 'claude', provider: 'anthropic', model: 'claude-sonnet-4' },
       anthropic: { apiKey: 'offline-test-placeholder' },
       workspace: { dir: root }, channels: { feishu: { enabled: false }, rest: { host: '127.0.0.1', port, fileStorageDir: join(root, 'files') } },
-      logging: { level: 'silent' },
+      logging: { level: 'info' },
     }));
     const env: NodeJS.ProcessEnv = { ...process.env, DISCLAUDE_CONFIG_PATH: config, LOCKFILE_PATH: join(root, 'service.pid'),
       BU_CDP_URL: '', BU_CDP_WS: '',
@@ -56,7 +56,7 @@ describe('user starts Disclaude and shares its managed browser', () => {
         child.stderr!.on('data', d => { output += d.toString(); });
         exited = new Promise(done => child!.once('close', done));
         for (let i = 0; i < 450 && !output.includes('HTTP API server started on'); i++) {
-          if (child.exitCode !== null) { throw new Error(output); }
+          if (child.exitCode !== null || child.signalCode !== null) { throw new Error(output); }
           await delay(100);
         }
         expect(output).toContain('HTTP API server started on');
