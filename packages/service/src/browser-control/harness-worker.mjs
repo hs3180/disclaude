@@ -62,4 +62,14 @@ process.on('message', async message => {
     if (message.kind === 'init') process.exit(2);
   }
 });
-process.on('disconnect', () => { running?.kill('SIGKILL'); daemon?.kill('SIGTERM'); process.exit(3); });
+process.on('disconnect', () => {
+  stopping = true;
+  running?.kill('SIGKILL'); daemon?.kill('SIGTERM');
+  if (runtime) { try { rmSync(runtime, { recursive: true, force: true }); } catch {} }
+  // The broker can no longer reap our group. Only a coordinator-created detached
+  // worker may terminate its own group, including Python-spawned descendants.
+  if (process.env.DISCLAUDE_BROWSER_WORKER_GROUP === '1') {
+    try { process.kill(-process.pid, 'SIGKILL'); } catch {}
+  }
+  process.exit(3);
+});

@@ -67,10 +67,17 @@ keeps the profile, and removes the socket/lock. Graceful service restart reopens
 that profile. Denying macOS Keychain access is supported for normal operation;
 cross-browser-restart cookie retention is a separately detected capability.
 
-Unclean broker death is not automatically reconciled. A remaining lock causes
-startup to fail; an operator must verify old process ownership and CDP detachment
-before clearing it. Do not blindly remove a lock, replay an unknown operation or
-configure automatic broker restart until that recovery is implemented. Existing
+If a supervised broker dies while the service is alive, the supervisor terminates
+its dedicated process group, including managed Chromium. Detached harness workers
+terminate their own groups when their broker IPC disconnects, including descendant
+processes started by the running Python task. The supervisor removes only a socket
+and lock matching that broker's PID and unique startup identity. Browser calls fail
+until the service is explicitly restarted; unknown work is never replayed.
+
+This recovery requires the owning supervisor to observe the broker exit. Legacy,
+foreign or unreadable locks, a killed standalone `disclaude browser start`, and
+simultaneous loss of broker and supervisor still require operator inspection.
+Verify process ownership and CDP detachment before clearing those files. Existing
 launchd profile migration and native Linux service-manager installation remain
 separate work. Socket permissions coordinate same-user callers; this is not a
 sandbox for hostile Python or a multi-user authorization boundary.
@@ -97,7 +104,7 @@ competing browser-use callers against the same real page, then checks shutdown,
 profile retention and service restart. Without both environment variables the
 case is reported skipped. This verifies the CLI/harness/browser chain, not a model
 agent deciding how to use it. It also interrupts a running caller and verifies
-that the queued caller takes over without executing the abandoned operation.
+that the queued caller takes over without executing the abandoned operation. It then kills the broker during an active Python task, verifies that Chromium and the task's child process exit, checks socket/lock removal and profile retention, and explicitly restarts the service.
 Linux CI installs the pinned browser-use runtime and uses the runner image's
 packaged Google Chrome (logging its version), then runs this same product test. No separate test Docker image or standalone harness runner
 is required. The test layout follows #5016: core unit tests plus actual-use-case E2E.
