@@ -56,6 +56,7 @@ describe('user starts Disclaude and shares its managed browser', () => {
       expect(code, output).toBe(0);
     }
     const localHost = /^(?:127\.0\.0\.1|localhost)(?::\d+)?$/u;
+    nock.enableNetConnect(localHost);
     if (process.env.DISCLAUDE_E2E_BROWSER_PI_MODEL) {
       const api = new URL(process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com');
       const apiHostWithPort = `${api.hostname}:${api.port || (api.protocol === 'https:' ? '443' : '80')}`;
@@ -183,6 +184,9 @@ describe('user starts Disclaude and shares its managed browser', () => {
         }
         await writeFile(join(root, 'profile', 'preserve-test.txt'), 'user profile retained');
         const cdpPort = (await readFile(join(root, 'profile', 'DevToolsActivePort'), 'utf8')).split('\n')[0];
+        // Establish a real positive probe before negative stop/crash assertions;
+        // a blocked loopback request must not masquerade as browser shutdown.
+        expect((await fetch(`http://127.0.0.1:${cdpPort}/json/version`, { signal: AbortSignal.timeout(5000) })).ok).toBe(true);
         if (attempt === 0) {
           const descendantFile = join(root, 'crash-descendant.pid');
           const crashMarker = join(root, 'crash-must-not-run');
