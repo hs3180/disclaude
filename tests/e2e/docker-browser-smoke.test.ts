@@ -28,7 +28,9 @@ describe('browser-use CLI in the production service image', () => {
         await docker('run', '-d', '--init', '--name', service, '--network', network,
           '--entrypoint', 'sleep', process.env.DISCLAUDE_E2E_DOCKER_IMAGE!, '600');
         serviceCreated = true;
-        await docker('cp', resolve('scripts/browser-use-smoke.sh'), `${service}:/tmp/browser-use-smoke.sh`);
+        for (const file of ['browser-use-smoke.sh', 'browser-use-smoke-daemon.py', 'browser-use-smoke-timeout.py']) {
+          await docker('cp', resolve('scripts', file), `${service}:/tmp/${file}`);
+        }
         const runtime = JSON.parse(await docker('exec', service, 'python3', '-c',
           "import json, os, importlib.metadata as m; print(json.dumps({'uid': os.getuid(), 'browserUse': m.version('browser-use'), 'browserHarness': m.version('browser-harness')}))")) as { uid: number; browserUse: string; browserHarness: string };
         expect(runtime.uid).toBe(1001);
