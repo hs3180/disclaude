@@ -1,0 +1,58 @@
+{
+  "schema": "2.0",
+  "config": {
+    "wide_screen_mode": true
+  },
+  "header": {
+    "title": {
+      "tag": "plain_text",
+      "content": "0.6.0 静态卡片验收 · 日报示例"
+    },
+    "template": "blue"
+  },
+  "body": {
+    "elements": [
+      {
+        "tag": "markdown",
+        "content": "这是一份测试日报，用于验证 Card JSON 2.0 的标题、分栏与正文发送。"
+      },
+      {
+        "tag": "column_set",
+        "flex_mode": "none",
+        "background_style": "default",
+        "horizontal_spacing": "default",
+        "columns": [
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "markdown",
+                "content": "**浏览器协作**\n进程清理与重启用例已通过，等待 CI。"
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "markdown",
+                "content": "**研究项目**\n文档读取与成果追加用例已通过，真实交互待验收。"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "hr"
+      },
+      {
+        "tag": "markdown",
+        "content": "仅用于测试，不代表 0.6.0 已完成交付。"
+      }
+    ]
+  }
+}
