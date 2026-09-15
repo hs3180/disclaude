@@ -17,7 +17,7 @@
 
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -260,11 +260,23 @@ describe('CodexAgentProvider (Issues #4629 + #4630)', () => {
         mkdirSync(join(project, '.disclaude', 'skills', 'project-only'), { recursive: true });
         writeFileSync(join(project, '.disclaude', 'skills', 'project-only', 'SKILL.md'), '---\ndescription: Project-only skill\n---');
         fixtures = makeFixtures({ withBinary: true, withAuth: true, body: `printf '%s' "$*" > "$CODEX_HOME/prompt"\n${HAPPY_BODY}` });
-        await drainStream(makeProvider(fixtures), ['hi'], { cwd: workspace, projectRoot: project });
+        const provider = makeProvider(fixtures);
+        await drainStream(provider, ['hi'], { cwd: workspace, projectRoot: project });
         const prompt = readFileSync(join(fixtures.codexHome, 'prompt'), 'utf8');
         expect(prompt).toContain('skills/project-only/SKILL.md');
+        const reference = prompt.match(/\[project-only\]\(([^)]+)\)/)?.[1];
+        expect(reference).toBeDefined();
+        expect(readFileSync(resolve(workspace, decodeURIComponent(reference!)), 'utf8')).toContain('Project-only skill');
         expect(prompt).not.toContain(project);
         expect(prompt).not.toContain(workspace);
+        const nestedWorkspace = join(workspace, 'another-runtime');
+        mkdirSync(nestedWorkspace);
+        await drainStream(provider, ['hi'], { cwd: nestedWorkspace, projectRoot: project });
+        const nextPrompt = readFileSync(join(fixtures.codexHome, 'prompt'), 'utf8');
+        const nextReference = nextPrompt.match(/\[project-only\]\(([^)]+)\)/)?.[1];
+        expect(nextReference).toBeDefined();
+        expect(nextReference).not.toBe(reference);
+        expect(readFileSync(resolve(nestedWorkspace, decodeURIComponent(nextReference!)), 'utf8')).toContain('Project-only skill');
       } finally {
         rmSync(project, { recursive: true, force: true });
         rmSync(workspace, { recursive: true, force: true });

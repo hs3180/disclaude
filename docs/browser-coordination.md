@@ -160,6 +160,13 @@ reads the resulting page through another caller. Either backend can also be enab
 alone. These options make real model calls; default CI omits them. Model credentials
 belong in the process environment/auth configuration, never in committed fixtures.
 
+To test Codex skill discovery and use from a natural-language task, also set
+`DISCLAUDE_E2E_BROWSER_NATURAL=1`. The Codex run receives the shipped skill index
+and a request to inspect the current page, change its input and save a screenshot;
+it receives no Python command or selector. The test requires a tool result from
+reading the browser skill, the previous value, a valid PNG and independent page
+readback. Other enabled backends retain their explicit-command handoff test.
+
 This covers sequential model backends sharing a page. It does not establish
 simultaneous model arbitration, all provider backends, real-site authentication or
 Feishu interaction. The non-model portion separately tests concurrent callers and
