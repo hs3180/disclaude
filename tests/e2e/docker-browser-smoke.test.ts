@@ -6,9 +6,14 @@ import { resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const exec = promisify(execFile);
-const docker = async (...args: string[]) => (await exec('docker', args, {
-  timeout: 180_000, maxBuffer: 2 * 1024 * 1024,
-})).stdout.trim();
+const docker = async (...args: string[]) => {
+  try {
+    return (await exec('docker', args, { timeout: 180_000, maxBuffer: 2 * 1024 * 1024 })).stdout.trim();
+  } catch (error) {
+    const failure = error as Error & { stdout?: string; stderr?: string };
+    throw new Error(`${failure.message}\n${failure.stdout?.slice(-8000) || ''}\n${failure.stderr?.slice(-8000) || ''}`);
+  }
+};
 
 describe('browser-use CLI in the production service image', () => {
   it.skipIf(!process.env.DISCLAUDE_E2E_DOCKER_IMAGE || !process.env.DISCLAUDE_E2E_DOCKER_BROWSER_IMAGE)(
@@ -45,10 +50,10 @@ describe('browser-use CLI in the production service image', () => {
           }
           expect(ready).toBe(true);
           const outputDir = `/tmp/browser-smoke-${headless ? 'headless' : 'headed'}`;
-          const output = await docker('exec', service,
+          const output = await docker('exec',
             '-e', 'SMOKE_CDP_URL=http://browser:9222', '-e', 'SMOKE_PYTHON=python3',
             '-e', 'SMOKE_ASSERT_PROCESS_COUNT=1', '-e', `SMOKE_OUT_DIR=${outputDir}`,
-            'bash', '/tmp/browser-use-smoke.sh');
+            service, 'bash', '/tmp/browser-use-smoke.sh');
           expect(output).toContain('result: 8 passed, 0 failed');
           expect(output).toContain('case 2b: no self-spawned Chrome (process count 0 unchanged)');
           expect(output).toContain('owned target removed before endpoint switch');
