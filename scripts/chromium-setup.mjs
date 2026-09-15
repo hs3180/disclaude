@@ -13,7 +13,7 @@ export function parseSetupArgs(args) {
   const result = {};
   for (let i = 0; i < args.length; i++) {
     const name = args[i];
-    if (['--yes', '--dry-run', '--headless', '--headed', '--isolated'].includes(name)) {
+    if (['--yes', '--dry-run', '--headless', '--headed', '--isolated', '--autostart', '--no-autostart'].includes(name)) {
       if (name in result) throw new Error(`Repeated option: ${name}`);
       result[name] = true;
     } else if (['--binary', '--profile', '--port'].includes(name)) {
@@ -21,6 +21,7 @@ export function parseSetupArgs(args) {
       result[name] = args[++i];
     } else { throw new Error(`Unknown setup option: ${name}`); }
   }
+  if (result['--autostart'] && result['--no-autostart']) throw new Error('Choose either --autostart or --no-autostart');
   if (result['--headless'] && result['--headed']) throw new Error('Choose either --headed or --headless');
   if (result['--port'] && (!/^\d+$/.test(result['--port']) || +result['--port'] < 1 || +result['--port'] > 65535)) throw new Error('Port must be between 1 and 65535');
   for (const name of ['--binary', '--profile']) if (result[name] && !isAbsolute(result[name])) throw new Error(`${name} must be an absolute path`);
@@ -64,6 +65,7 @@ export async function collectSetupSelection(options, saved, ask) {
     : join(process.env.XDG_DATA_HOME || join(homedir(), '.local/share'), 'disclaude/chromium-cdp'));
   let port = options['--port'] || saved.CHROMIUM_CDP_PORT || '9222';
   let headed = options['--headless'] ? '0' : options['--headed'] ? '1' : saved.CHROMIUM_CDP_HEADED || '1';
+  let autostart = options['--no-autostart'] ? '0' : options['--autostart'] ? '1' : saved.CHROMIUM_CDP_AUTOSTART || '1';
   if (ask) {
     if (!options['--profile']) profile = (await ask(`Dedicated persistent profile [${profile}]: `)).trim() || profile;
     if (!options['--port']) port = (await ask(`Loopback CDP port [${port}]: `)).trim() || port;
@@ -73,15 +75,20 @@ export async function collectSetupSelection(options, saved, ask) {
       if (choice) headed = ['y', 'yes'].includes(choice) ? '1' : '0';
     }
   }
+  if (ask && !options['--autostart'] && !options['--no-autostart']) {
+    const choice = (await ask(`Start automatically at login? [${autostart === '1' ? 'Y/n' : 'y/N'}]: `)).trim().toLowerCase();
+    if (choice && !['y', 'yes', 'n', 'no'].includes(choice)) throw new Error('Answer yes or no for login autostart');
+    if (choice) autostart = ['y', 'yes'].includes(choice) ? '1' : '0';
+  }
   if (!isAbsolute(profile) || /[\r\n\0]/.test(profile)) throw new Error('Profile path must be absolute and contain no control characters');
   if (!/^\d+$/.test(port) || +port < 1 || +port > 65535) throw new Error('Port must be between 1 and 65535');
   return { CHROMIUM_CDP_BINARY: binary, CHROMIUM_CDP_PROFILE_DIR: profile,
-    CHROMIUM_CDP_PORT: port, CHROMIUM_CDP_ADDRESS: '127.0.0.1', CHROMIUM_CDP_HEADED: headed };
+    CHROMIUM_CDP_PORT: port, CHROMIUM_CDP_ADDRESS: '127.0.0.1', CHROMIUM_CDP_HEADED: headed, CHROMIUM_CDP_AUTOSTART: autostart };
 }
 
 async function main() {
   if (!['darwin', 'linux'].includes(process.platform)) throw new Error('Browser setup currently supports macOS and Linux');
-  if (process.argv.includes('--help')) { console.log('Usage: disclaude chromium-cdp setup [--binary /path] [--profile /path] [--port number] [--headed|--headless] [--yes|--dry-run]'); return; }
+  if (process.argv.includes('--help')) { console.log('Usage: disclaude chromium-cdp setup [--binary /path] [--profile /path] [--port number] [--headed|--headless] [--autostart|--no-autostart] [--yes|--dry-run]'); return; }
   const options = parseSetupArgs(process.argv.slice(4));
   if (!process.stdin.isTTY && !options['--yes'] && !options['--dry-run']) throw new Error('Setup needs a terminal; pass explicit --binary and --yes for non-interactive use');
   const rl = process.stdin.isTTY && !options['--yes'] ? createInterface({ input: process.stdin, output: process.stdout }) : undefined;
@@ -92,7 +99,7 @@ async function main() {
     catch { throw new Error('Selected executable did not report its version; current service unchanged'); }
     const summary = { executable: selection.CHROMIUM_CDP_BINARY, version, profile: selection.CHROMIUM_CDP_PROFILE_DIR,
       endpoint: `http://127.0.0.1:${selection.CHROMIUM_CDP_PORT}`, mode: selection.CHROMIUM_CDP_HEADED === '1' ? 'headed' : 'headless',
-      service: process.platform === 'darwin' ? 'launchd' : 'systemd user', configuration: chromiumConfigPath() };
+      autostart: selection.CHROMIUM_CDP_AUTOSTART === '1', service: process.platform === 'darwin' ? 'launchd' : 'systemd user', configuration: chromiumConfigPath() };
     console.log(JSON.stringify(summary, null, 2));
     if (options['--dry-run']) return;
     if (!options['--yes']) {

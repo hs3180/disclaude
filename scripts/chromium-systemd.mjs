@@ -28,7 +28,9 @@ export function resolveLinuxBrowser(env = process.env) {
   const headed = env.CHROMIUM_CDP_HEADED || '1';
   if (!['0', '1'].includes(headed)) throw new Error('CHROMIUM_CDP_HEADED must be 0 or 1');
   if (headed === '1' && !env.DISPLAY && !env.WAYLAND_DISPLAY) throw new Error('Headed browser requires a desktop display; set CHROMIUM_CDP_HEADED=0 for headless operation');
-  return { binary: realpathSync(binary), profile, port: +rawPort, address, headed };
+  const autostart = env.CHROMIUM_CDP_AUTOSTART;
+  if (autostart !== undefined && !['0', '1'].includes(autostart)) throw new Error('CHROMIUM_CDP_AUTOSTART must be 0 or 1');
+  return { binary: realpathSync(binary), profile, port: +rawPort, address, headed, autostart };
 }
 
 export function renderLinuxBrowserUnit(selection, env = process.env) {
@@ -95,7 +97,9 @@ async function main() {
       const endpoint = JSON.parse(readFileSync(paths.file, 'utf8').match(/^# disclaude-endpoint: (.+)$/m)?.[1] || 'null');
       if (endpoint) { try { await waitChromiumReady(endpoint, state, 3000); ready = true; } catch {} }
     }
-    console.log(JSON.stringify({ unit: paths.unit, ...current, cdpReady: ready }));
+    let autostart = false;
+    try { autostart = /^enabled(?:-runtime)?\s*$/.test(systemctl('is-enabled', paths.unit)); } catch {}
+    console.log(JSON.stringify({ unit: paths.unit, ...current, cdpReady: ready, autostart }));
     if (current.loaded && !ready) process.exitCode = 1;
     return;
   }
@@ -113,12 +117,16 @@ async function main() {
       return;
     }
     loadChromiumConfig();
+    let enabledBefore = false, changedEnable = false;
+    try { enabledBefore = /^enabled(?:-runtime)?\s*$/.test(systemctl('is-enabled', paths.unit)); } catch {}
     const selection = resolveLinuxBrowser();
+    selection.autostart = process.argv.includes('--no-autostart') ? '0'
+      : selection.autostart ?? (command === 'install' || enabledBefore ? '1' : '0');
     const unitText = renderLinuxBrowserUnit(selection);
     const prepare = () => {
       mkdirSync(selection.profile, { recursive: true, mode: 0o700 });
       saveChromiumConfig({ CHROMIUM_CDP_BINARY: selection.binary, CHROMIUM_CDP_PROFILE_DIR: selection.profile,
-        CHROMIUM_CDP_PORT: String(selection.port), CHROMIUM_CDP_ADDRESS: selection.address, CHROMIUM_CDP_HEADED: selection.headed });
+        CHROMIUM_CDP_PORT: String(selection.port), CHROMIUM_CDP_ADDRESS: selection.address, CHROMIUM_CDP_HEADED: selection.headed, CHROMIUM_CDP_AUTOSTART: selection.autostart });
       replaceChromiumFile(paths.file, Buffer.from(unitText));
     };
     if (command === 'generate') { prepare(); console.log(paths.file); return; }
@@ -132,15 +140,14 @@ async function main() {
       ...(selection.headed === '0' ? ['--headless'] : [])], { timeout: 90_000, maxBuffer: 1024 * 1024 });
     const diagnosis = JSON.parse(probe.stdout);
     if (!diagnosis.usable) throw new Error('Selected browser failed its temporary-profile preflight');
-    let enabledBefore = false, changedEnable = false;
-    try { enabledBefore = /^enabled(?:-runtime)?\s*$/.test(systemctl('is-enabled', paths.unit)); } catch {}
     let ready;
     try { ready = await transitionChromium({ paths: [paths.config, paths.file], wasLoaded: prior.loaded, prepare,
-      stop() { systemctl('stop', paths.unit); if (changedEnable && !enabledBefore) systemctl('disable', paths.unit); },
+      stop() { systemctl('stop', paths.unit); if (changedEnable) systemctl(enabledBefore ? 'enable' : 'disable', paths.unit); },
       start() { systemctl('daemon-reload'); try { systemctl('reset-failed', paths.unit); } catch {} systemctl('start', paths.unit); },
       async verify() {
         const result = await waitChromiumReady(selection, state);
-        if (command === 'install' && !process.argv.includes('--no-autostart')) { changedEnable = true; systemctl('enable', paths.unit); }
+        changedEnable = true;
+        systemctl(selection.autostart === '1' ? 'enable' : 'disable', paths.unit);
         return result;
       }, verifyPrevious: () => waitChromiumReady(previous, state) });
     } catch (error) {
@@ -149,7 +156,7 @@ async function main() {
       catch (reloadError) { throw new Error(`${error.message}; restored unit reload failed: ${reloadError.message}`); }
       throw error;
     }
-    console.log(JSON.stringify({ unit: paths.unit, cdpReady: true, ...ready, temporaryProfileCookiePersistence: diagnosis.cookiePersistence }));
+    console.log(JSON.stringify({ unit: paths.unit, cdpReady: true, ...ready, autostart: selection.autostart === '1', temporaryProfileCookiePersistence: diagnosis.cookiePersistence }));
   } finally { rmSync(lock, { force: true }); }
 }
 

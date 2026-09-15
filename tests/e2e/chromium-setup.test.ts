@@ -45,8 +45,33 @@ describe('browser setup product CLI', () => {
         const repeated = await exec(process.execPath, [...args, '--yes'], { env, timeout: 115_000 });
         expect(repeated.stdout).toMatch(/CDP ready:|"cdpReady":true/);
         expect(await readFile(join(profile, 'setup-marker'), 'utf8')).toBe('keep');
+        const automatic = process.platform === 'darwin' ? join(root, `LaunchAgents/${label}.plist`) : undefined;
+        const manual = process.platform === 'darwin' ? join(root, `ManualServices/${label}.plist`) : undefined;
+        const failing = join(root, 'fails-in-service');
+        const quoted = `'${env.CHROMIUM_CDP_BINARY.replace(/'/g, "'\\''")}'`;
+        await writeFile(failing, `#!/bin/sh\nfor arg in "$@"; do\n if [ "$arg" = "--version" ] || [ "$arg" = "--remote-debugging-port=0" ]; then exec ${quoted} "$@"; fi\ndone\nexit 7\n`, { mode: 0o700 });
+        const failedArgs = [...args];
+        failedArgs[failedArgs.indexOf('--binary') + 1] = failing;
+        let failure = '';
+        try { await exec(process.execPath, [...failedArgs, '--yes', '--no-autostart'], { env, timeout: 115_000 }); }
+        catch (error) { failure = String((error as { stderr?: string }).stderr ?? error); }
+        expect(failure).toContain('previous service restored and verified');
+        expect(JSON.parse(await readFile(config, 'utf8')).environment.CHROMIUM_CDP_AUTOSTART).toBe('1');
+        if (automatic && manual) { await access(automatic); await expect(access(manual)).rejects.toThrow(); }
+        else expect((await exec('systemctl', ['--user', 'is-enabled', label])).stdout.trim()).toBe('enabled');
+        await exec(process.execPath, [...args, '--yes', '--no-autostart'], { env, timeout: 115_000 });
+        expect(JSON.parse(await readFile(config, 'utf8')).environment.CHROMIUM_CDP_AUTOSTART).toBe('0');
+        if (automatic && manual) { await access(manual); await expect(access(automatic)).rejects.toThrow(); }
+        else await expect(exec('systemctl', ['--user', 'is-enabled', label])).rejects.toMatchObject({ stdout: 'disabled\n' });
+        await exec(process.execPath, [...args, '--yes'], { env, timeout: 115_000 });
+        expect(JSON.parse(await readFile(config, 'utf8')).environment.CHROMIUM_CDP_AUTOSTART).toBe('0');
+        await exec(process.execPath, [...args, '--yes', '--autostart'], { env, timeout: 115_000 });
+        expect(JSON.parse(await readFile(config, 'utf8')).environment.CHROMIUM_CDP_AUTOSTART).toBe('1');
+        if (automatic && manual) { await access(automatic); await expect(access(manual)).rejects.toThrow(); }
+        else expect((await exec('systemctl', ['--user', 'is-enabled', label])).stdout.trim()).toBe('enabled');
+        expect(await readFile(join(profile, 'setup-marker'), 'utf8')).toBe('keep');
         console.info('BROWSER_SETUP_ACCEPTANCE', JSON.stringify({ platform: process.platform, arch: process.arch,
-          preview: true, nonInteractiveMissingConfirmationRejected: true, applied: true, repeated: true, profilePreserved: true }));
+          preview: true, nonInteractiveMissingConfirmationRejected: true, applied: true, repeated: true, profilePreserved: true, autostartToggle: true, failedToggleRecovered: true }));
       } finally {
         if (applied) {
           await exec(process.execPath, [resolve('scripts', process.platform === 'darwin' ? 'launchd.mjs' : 'chromium-systemd.mjs'), 'chromium-isolated', 'uninstall'], { env, timeout: 30_000 });
