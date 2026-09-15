@@ -1590,10 +1590,17 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         // (tool_use, tool_result, tool_progress) to reduce noise.
         // Issue #3809: Forward intermediate messages to debug group.
         if (parsed.content && parsed.terminatedReason !== 'turn_failed') {
+          // 瞬态进度占位("🤔 Thinking..." / "🔄 Compacting…")同样
+          // 属于内部进度,不能当用户消息发。SDK 每个请求都发一次 requesting,
+          // 群聊没有流式卡片(见下方 streamDriver 仅在 p2p 构建),每步都会单蹦
+          // 一条 —— 一个多步任务足以把群刷屏。诊断仍可经 debug 群 / 日志获取,
+          // 语义型 status(如 Codex 的 "Please sign in again.")不设该标记,照常
+          // 投递。
           const isIntermediateMessage =
             parsed.type === 'tool_use' ||
             parsed.type === 'tool_result' ||
-            parsed.type === 'tool_progress';
+            parsed.type === 'tool_progress' ||
+            parsed.metadata?.transientStatus === true;
           // #4774: tool traces are internal for every harness and chat type.
           // Preserve debug forwarding and accounting without publishing raw
           // commands/results as ordinary user-facing progress.
