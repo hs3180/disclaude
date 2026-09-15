@@ -39,6 +39,7 @@ describe('user starts Disclaude and shares its managed browser', () => {
     delete env.DISCLAUDE_BROWSER_EVENTS;
     const executable = resolve('bin/disclaude.js');
     const callers = new Set<ReturnType<typeof spawn>>();
+    const crashDescendants = new Set<number>();
     let child: ReturnType<typeof spawn> | undefined;
     let output = '';
     let exited: Promise<number | null> | undefined;
@@ -136,6 +137,37 @@ describe('user starts Disclaude and shares its managed browser', () => {
         }
         await writeFile(join(root, 'profile', 'preserve-test.txt'), 'user profile retained');
         const cdpPort = (await readFile(join(root, 'profile', 'DevToolsActivePort'), 'utf8')).split('\n')[0];
+        if (attempt === 0) {
+          const descendantFile = join(root, 'crash-descendant.pid');
+          const crashMarker = join(root, 'crash-must-not-run');
+          const descendantCode = `import time; time.sleep(20); open(${JSON.stringify(crashMarker)}, 'w').write('must-not-run')`;
+          const active = run(`import subprocess, sys, time\np = subprocess.Popen([sys.executable, '-c', ${JSON.stringify(descendantCode)}])\nopen(${JSON.stringify(descendantFile)}, 'w').write(str(p.pid))\ntime.sleep(20)\n`).then(() => 'unexpected success', () => 'interrupted');
+          let descendantReady = false;
+          for (let i = 0; i < 100 && !descendantReady; i++) {
+            descendantReady = await access(descendantFile).then(() => true, () => false);
+            if (!descendantReady) { await delay(50); }
+          }
+          expect(descendantReady).toBe(true);
+          const descendant = Number(await readFile(descendantFile, 'utf8'));
+          crashDescendants.add(descendant);
+          const ownership = JSON.parse(await readFile(socket + '.lock', 'utf8')) as { pid: number };
+          process.kill(ownership.pid, 'SIGKILL');
+          // The live service must reclaim its broker's browser tree and owned IPC,
+          // fail subsequent calls closed, and permit an explicit clean restart.
+          let browserStopped = false;
+          for (let i = 0; i < 100 && !browserStopped; i++) {
+            browserStopped = await fetch(`http://127.0.0.1:${cdpPort}/json/version`, { signal: AbortSignal.timeout(200) }).then(() => false, () => true);
+            if (!browserStopped) { await delay(50); }
+          }
+          expect(browserStopped).toBe(true);
+          expect(await active).toBe('interrupted');
+          const descendantAlive = (): boolean => { try { process.kill(descendant, 0); return true; } catch { return false; } };
+          for (let i = 0; i < 100 && descendantAlive(); i++) { await delay(50); }
+          expect(descendantAlive()).toBe(false);
+          crashDescendants.delete(descendant);
+          await expect(access(crashMarker)).rejects.toThrow();
+          await expect(exec(process.execPath, [executable, 'browser', 'status'], { env, cwd: root, timeout: 5000 })).rejects.toThrow();
+        }
         await stop();
         await expect(access(socket)).rejects.toThrow();
         await expect(access(socket + '.lock')).rejects.toThrow();
@@ -143,6 +175,6 @@ describe('user starts Disclaude and shares its managed browser', () => {
         expect(await readFile(join(root, 'profile', 'preserve-test.txt'), 'utf8')).toBe('user profile retained');
         await expect(exec(process.execPath, [executable, 'browser', 'status'], { env, cwd: root, timeout: 5000 })).rejects.toThrow();
       }
-    } finally { for (const caller of callers) { caller.kill('SIGKILL'); } await stop(); await rm(root, { recursive: true, force: true }); }
+    } finally { for (const pid of crashDescendants) { try { process.kill(pid, 'SIGKILL'); } catch { /* Already gone. */ } } for (const caller of callers) { caller.kill('SIGKILL'); } await stop(); await rm(root, { recursive: true, force: true }); }
   }, 180_000);
 });
