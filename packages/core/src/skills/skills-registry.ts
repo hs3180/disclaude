@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 
 export type SkillSourceKind = 'builtin' | 'user' | 'project';
 
@@ -12,7 +12,7 @@ export interface SkillSource {
 export interface ResolvedSkill {
   name: string;
   source: SkillSourceKind;
-  /** Safe, source-relative reference suitable for model-facing manifests. */
+  /** Filesystem reference relative to referenceRoot, or the source root by default. */
   reference: string;
   description?: string;
 }
@@ -40,14 +40,17 @@ const PRIORITY: Record<SkillSourceKind, number> = { builtin: 0, user: 1, project
 
 /**
  * Single source of truth for skill discovery and precedence.  The public
- * result deliberately contains source-relative references only; callers that
- * need to open a skill retain the source root separately.
+ * result contains relative references only. Harnesses that expose the manifest
+ * to a model supply its execution directory as referenceRoot.
  */
 export class SkillsRegistry {
   private cached?: SkillsRegistryResolution;
   private cachedFingerprint?: string;
 
-  constructor(private readonly sources: readonly SkillSource[]) {}
+  constructor(
+    private readonly sources: readonly SkillSource[],
+    private readonly referenceRoot?: string,
+  ) {}
 
   resolve(): SkillsRegistryResolution {
     const diagnostics: SkillDiagnostic[] = [];
@@ -109,8 +112,11 @@ export class SkillsRegistry {
         }
         const content = readFileSync(path, 'utf8');
         const metadata = metadataFromFrontmatter(content, name);
-        const reference = relative(root, path).split('\\').join('/');
-        if (!reference || reference.startsWith('../')) {
+        const reference = relative(
+          this.referenceRoot ? realpathSync(this.referenceRoot) : root,
+          this.referenceRoot ? realPath : path,
+        ).split('\\').join('/');
+        if (!reference || isAbsolute(reference) || (!this.referenceRoot && reference.startsWith('../'))) {
           diagnostics.push({ code: 'INVALID_SKILL', source: source.kind, detail: 'skill reference is outside its source root' });
           continue;
         }
@@ -165,6 +171,12 @@ export function formatSkillManifest(skills: readonly ResolvedSkill[]): string {
   if (skills.length === 0) {return '';}
   return [
     'Disclaude skills:',
-    ...skills.map((skill) => `- skill [${skill.name}](${skill.reference})${skill.description ? `: ${skill.description}` : ''}`),
+    ...skills.map((skill) => `- skill [${skill.name}](${encodeReference(skill.reference)})${skill.description ? `: ${skill.description}` : ''}`),
   ].join('\n');
+}
+
+function encodeReference(reference: string): string {
+  return reference.split('/').map((part) => encodeURIComponent(part)
+    .replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`))
+    .join('/');
 }
