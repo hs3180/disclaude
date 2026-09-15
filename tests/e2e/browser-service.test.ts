@@ -144,17 +144,22 @@ describe('user starts Disclaude and shares its managed browser', () => {
             ...(process.env.DISCLAUDE_E2E_BROWSER_PI_MODEL ? ['pi'] : []),
           ];
           for (const backend of backends) {
+            const naturalTask = backend === 'codex' && process.env.DISCLAUDE_E2E_BROWSER_NATURAL === '1';
             if (backend === 'deepseek') {
               expect(process.env.DEEPSEEK_API_KEY).toBeTruthy();
               await mkdir(join(root, 'dsh-home'), { mode: 0o700 });
             }
             const provider = backend === 'deepseek'
               ? new DeepSeekHarnessProvider({ env: taskEnv, dshHome: join(root, 'dsh-home') })
-              : backend === 'codex' ? new CodexAgentProvider({ env: taskEnv, transport: 'app-server', builtinsDir: root, execTimeoutMs: 90_000 })
+              : backend === 'codex' ? new CodexAgentProvider({ env: taskEnv, transport: 'app-server', builtinsDir: naturalTask ? resolve('.') : root, execTimeoutMs: 90_000 })
                 : backend === 'claude' ? new ClaudeSDKProvider() : new PiAgentProvider();
             const marker = `${backend}-model-handoff-${Date.now()}`;
             const script = `print("PREVIOUS:" + js("document.querySelector('#value').value"))\nassert js("document.querySelector('#value').value") == ${JSON.stringify(previous)}\nfill_input('#value', ${JSON.stringify(marker)})\nprint(js("document.querySelector('#value').value"))\n`;
             async function* input() {
+              if (naturalTask) {
+                yield { role: 'user' as const, content: `Use the available browser skill to inspect the currently open shared page. Report the input's existing value, replace it with ${marker}, and save a screenshot as browser-task.png in the current workspace. Verify the new value and report it. Keep the existing page open. This is an isolated acceptance workspace; follow its configured browser access and do not access other host services or unrelated files.` };
+                return;
+              }
               const quotedScript = "'" + script.replaceAll("'", "'\\''") + "'";
               yield { role: 'user' as const, content: `Use your Bash/shell tool to run exactly this command:\nprintf '%s' ${quotedScript} | browser-use\nThen report the value. The shared page is already open. Do not invoke skills, search files, discover other tools, launch another browser, use direct CDP, delegate, or modify unrelated files.` };
             }
@@ -174,10 +179,16 @@ describe('user starts Disclaude and shares its managed browser', () => {
               expect(result?.metadata?.terminatedReason, result?.content).toBeUndefined();
               expect(messages.some(message => message.type === 'error')).toBe(false);
               expect(messages.some(message => message.type === 'tool_use'), JSON.stringify(messages.filter(message => message.type === 'text' || message.type === 'error'))).toBe(true);
-              expect(messages.some(message => message.type === 'tool_result' && message.content.includes(`PREVIOUS:${previous}`))).toBe(true);
+              if (naturalTask) {
+                expect(messages.some(message => message.type === 'tool_result' && message.content.includes('Skill: browser-use'))).toBe(true);
+                expect(messages.some(message => ['text', 'tool_result'].includes(message.type) && message.content.includes(previous))).toBe(true);
+                expect((await readFile(join(root, 'browser-task.png'))).subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a');
+              } else {
+                expect(messages.some(message => message.type === 'tool_result' && message.content.includes(`PREVIOUS:${previous}`))).toBe(true);
+              }
               if (backend === 'deepseek') { expect(result?.metadata?.stopReason).toBe('completed'); }
               expect(await run("print(js(\"document.querySelector('#value').value\"))\n")).toContain(marker);
-              console.info('BROWSER_MODEL_HANDOFF', JSON.stringify({ backend, previousStateVerified: true, independentReadback: true }));
+              console.info('BROWSER_MODEL_HANDOFF', JSON.stringify({ backend, naturalTask, previousStateVerified: true, independentReadback: true }));
               previous = marker;
             } finally { clearTimeout(deadline); stream.handle.close(); provider.dispose(); }
           }
