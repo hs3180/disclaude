@@ -148,3 +148,19 @@ and Claude owns its subprocess creation, so they do not share one spawn function
 Earlier SDK environment assembly and Pi option adaptation do not filter again.
 The shared helper contains the policy; each boundary applies it after its own
 merges. Direct worker configuration remains private to the service.
+
+
+For real model-to-model browser handoff, additionally set
+`DISCLAUDE_E2E_BROWSER_MODEL` to a configured dsh model and
+`DISCLAUDE_E2E_BROWSER_CODEX=1` with an authenticated installed Codex CLI.
+The same case then runs dsh followed by Codex through the product launcher. Each
+model reads the previous page value, asserts it, writes its own marker, and emits
+the previous value in its tool output. The test checks that output and independently
+reads the resulting page through another caller. Either backend can also be enabled
+alone. These options make real model calls; default CI omits them. Model credentials
+belong in the process environment/auth configuration, never in committed fixtures.
+
+This covers sequential model backends sharing a page. It does not establish
+simultaneous model arbitration, all provider backends, real-site authentication or
+Feishu interaction. The non-model portion separately tests concurrent callers and
+abandoned-worker recovery.

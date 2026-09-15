@@ -7,6 +7,8 @@ import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import { browserAgentEnv } from '../../packages/core/src/utils/browser-env.js';
+import { CodexAgentProvider } from '../../packages/core/src/sdk/providers/codex/provider.js';
+import type { AgentMessage } from '../../packages/core/src/sdk/types.js';
 import { DeepSeekHarnessProvider } from '../../packages/core/src/sdk/providers/deepseek/provider.js';
 
 const exec = promisify(execFile);
@@ -114,26 +116,45 @@ describe('user starts Disclaude and shares its managed browser', () => {
         expect(await abandonedResult).toBe('interrupted');
         expect(await successor).toContain('handoff');
         await expect(access(abandonedMarker)).rejects.toThrow();
-        if (attempt === 0 && process.env.DISCLAUDE_E2E_BROWSER_MODEL) {
-          // Opt-in paid model/tool path: the provider receives the product launcher
-          // and socket, while a separate caller verifies the resulting page state.
-          expect(process.env.DEEPSEEK_API_KEY).toBeTruthy();
-          await mkdir(join(root, 'dsh-home'), { mode: 0o700 });
-          const provider = new DeepSeekHarnessProvider({ env: taskEnv, dshHome: join(root, 'dsh-home') });
-          const marker = `model-handoff-${Date.now()}`;
-          async function* input() {
-            yield { role: 'user' as const, content: `Use your shell tool to execute browser-use, supplying this Python script on stdin:\nfill_input('#value', ${JSON.stringify(marker)})\nprint(js("document.querySelector('#value').value"))\nThen report the value. The shared page is already open. Do not launch another browser or use direct CDP.` };
+        if (attempt === 0) {
+          let previous = 'handoff';
+          const backends = [
+            ...(process.env.DISCLAUDE_E2E_BROWSER_MODEL ? ['deepseek'] : []),
+            ...(process.env.DISCLAUDE_E2E_BROWSER_CODEX === '1' ? ['codex'] : []),
+          ];
+          for (const backend of backends) {
+            if (backend === 'deepseek') {
+              expect(process.env.DEEPSEEK_API_KEY).toBeTruthy();
+              await mkdir(join(root, 'dsh-home'), { mode: 0o700 });
+            }
+            const provider = backend === 'deepseek'
+              ? new DeepSeekHarnessProvider({ env: taskEnv, dshHome: join(root, 'dsh-home') })
+              : new CodexAgentProvider({ env: taskEnv, transport: 'app-server', builtinsDir: root, execTimeoutMs: 90_000 });
+            const marker = `${backend}-model-handoff-${Date.now()}`;
+            const script = `print("PREVIOUS:" + js("document.querySelector('#value').value"))\nassert js("document.querySelector('#value').value") == ${JSON.stringify(previous)}\nfill_input('#value', ${JSON.stringify(marker)})\nprint(js("document.querySelector('#value').value"))\n`;
+            async function* input() {
+              yield { role: 'user' as const, content: `Use your shell tool to execute browser-use, supplying this exact Python script on stdin:\n${script}Then report the value. The shared page is already open. Do not launch another browser, use direct CDP, delegate, or modify unrelated files.` };
+            }
+            const stream = provider.queryStream(input(), { cwd: root, settingSources: [],
+              ...(backend === 'deepseek' ? { model: process.env.DISCLAUDE_E2E_BROWSER_MODEL } : {}) });
+            const messages: AgentMessage[] = [];
+            let timedOut = false;
+            const deadline = setTimeout(() => { timedOut = true; void stream.handle.cancel(); }, 90_000);
+            try {
+              for await (const message of stream.iterator) { messages.push(message); }
+              expect(timedOut).toBe(false);
+              expect(messages.some(message => message.type === 'error')).toBe(false);
+              expect(messages.some(message => message.type === 'tool_use')).toBe(true);
+              expect(messages.some(message => message.type === 'tool_result' && message.content.includes(`PREVIOUS:${previous}`))).toBe(true);
+              const result = messages.findLast(message => message.type === 'result');
+              expect(result).toBeDefined();
+              expect(result?.metadata?.terminatedReason).toBeUndefined();
+              if (backend === 'deepseek') { expect(result?.metadata?.stopReason).toBe('completed'); }
+              expect(await run("print(js(\"document.querySelector('#value').value\"))\n")).toContain(marker);
+              console.info('BROWSER_MODEL_HANDOFF', JSON.stringify({ backend, previousStateVerified: true, independentReadback: true }));
+              previous = marker;
+            } finally { clearTimeout(deadline); stream.handle.close(); provider.dispose(); }
           }
-          const stream = provider.queryStream(input(), { cwd: root, model: process.env.DISCLAUDE_E2E_BROWSER_MODEL });
-          const messages = [];
-          const deadline = setTimeout(() => { void stream.handle.cancel(); }, 90_000);
-          try {
-            for await (const message of stream.iterator) { messages.push(message); }
-            expect(messages.some(message => message.type === 'tool_use')).toBe(true);
-            expect(messages.some(message => message.type === 'tool_result')).toBe(true);
-            expect(messages.findLast(message => message.type === 'result')?.metadata?.stopReason).toBe('completed');
-            expect(await run("print(js(\"document.querySelector('#value').value\"))\n")).toContain(marker);
-          } finally { clearTimeout(deadline); stream.handle.close(); provider.dispose(); }
         }
         await writeFile(join(root, 'profile', 'preserve-test.txt'), 'user profile retained');
         const cdpPort = (await readFile(join(root, 'profile', 'DevToolsActivePort'), 'utf8')).split('\n')[0];
@@ -176,5 +197,5 @@ describe('user starts Disclaude and shares its managed browser', () => {
         await expect(exec(process.execPath, [executable, 'browser', 'status'], { env, cwd: root, timeout: 5000 })).rejects.toThrow();
       }
     } finally { for (const pid of crashDescendants) { try { process.kill(pid, 'SIGKILL'); } catch { /* Already gone. */ } } for (const caller of callers) { caller.kill('SIGKILL'); } await stop(); await rm(root, { recursive: true, force: true }); }
-  }, 180_000);
+  }, 300_000);
 });
