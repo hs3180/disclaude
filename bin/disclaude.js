@@ -47,7 +47,7 @@ function showHelp() {
       '  start [options]    Start disclaude',
       '  channel <command>  Send channel messages through the service',
       '  browser <cmd>      Start or inspect coordinated browser control',
-      '  chromium-cdp <cmd> Manage the persistent Chromium CDP launchd service (Issue #4807)',
+      '  chromium-cdp <cmd> Manage the persistent Chromium CDP service (Issue #4807)',
       '',
       'Global Options:',
       '  --version, -v      Show version number',
@@ -77,7 +77,7 @@ const ROUTES = {
   // Issue #4807: routes to scripts/launchd.mjs chromium-cdp <cmd>. The launchd
   // script reads the service selector from argv[2], so we must PRESERVE it in
   // the forwarded args (launchd.mjs "chromium-cdp" <cmd>), not drop it.
-  'chromium-cdp': { file: resolve(ROOT, 'scripts/launchd.mjs'), keepCommand: true },
+  'chromium-cdp': { file: resolve(ROOT, process.platform === 'linux' ? 'scripts/chromium-systemd.mjs' : 'scripts/launchd.mjs'), keepCommand: true },
 };
 
 if (!command || command === '--help' || command === '-h') {

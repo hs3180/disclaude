@@ -1,0 +1,52 @@
+name: Native Linux Browser Service E2E
+on:
+  pull_request:
+    paths:
+      - 'scripts/chromium-systemd.mjs'
+      - 'scripts/chromium-config.mjs'
+      - 'scripts/browser-service-state.mjs'
+      - 'tests/e2e/chromium-systemd.test.ts'
+      - 'bin/disclaude.js'
+      - 'packages/service/src/browser-control/**'
+      - 'package*.json'
+      - 'packages/*/package.json'
+      - '.github/workflows/chromium-systemd-e2e.yml'
+  push:
+    branches: [main, master]
+    paths:
+      - 'scripts/chromium-systemd.mjs'
+      - 'scripts/chromium-config.mjs'
+      - 'scripts/browser-service-state.mjs'
+      - 'tests/e2e/chromium-systemd.test.ts'
+      - 'bin/disclaude.js'
+      - 'packages/service/src/browser-control/**'
+      - 'package*.json'
+      - 'packages/*/package.json'
+      - '.github/workflows/chromium-systemd-e2e.yml'
+jobs:
+  acceptance:
+    name: Native systemd browser lifecycle and recovery
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Build product
+        run: npm ci --include=dev && npm run build
+      - name: Exercise a real Linux user manager and browser
+        run: |
+          sudo systemctl start "user@$(id -u).service"
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+          systemctl --user show-environment >/dev/null
+          systemd --version
+          node --version
+          export DISCLAUDE_E2E_CHROMIUM="$(command -v google-chrome)"
+          export DISCLAUDE_E2E_CHROMIUM_SYSTEMD=1
+          test -x "$DISCLAUDE_E2E_CHROMIUM"
+          "$DISCLAUDE_E2E_CHROMIUM" --version
+          node node_modules/vitest/vitest.mjs run tests/e2e/chromium-systemd.test.ts
