@@ -396,6 +396,7 @@ export abstract class BaseAgent implements Disposable {
             numTurns: message.metadata.numTurns,
             durationMs: message.metadata.durationMs,
             durationApiMs: message.metadata.durationApiMs,
+            transientStatus: message.metadata.transientStatus,
           }
         : undefined,
       sessionId: message.metadata?.sessionId,
