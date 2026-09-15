@@ -40,6 +40,7 @@ this feature is under development and defaults off; without it Default mode
 does not offer the tool even when the transport can answer requests. No global
 Codex configuration is changed. Older CLI versions must support this feature
 before using this integration.
+The service image pins Codex 0.154.0 to match the CLI used for the real input test.
 
 It accepts up to 10 questions with up to 30 options each. The default `exec`
 transport has no interactive request/response path and is unchanged.
