@@ -104,6 +104,7 @@ const cli = join(prefix, 'bin/disclaude');
 assert.equal(run(cli, ['--version']).trim(), `disclaude v${pkg.version}`);
 assert.match(run(cli, ['start', '--help']), /Usage:/i);
 assert.match(run(cli, ['channel', '--help']), /Usage:/i);
+assert.match(run(cli, ['chromium-cdp', 'setup', '--help']), /--download/);
 assert.match(run(join(prefix, 'bin/disclaude'), ['--help']), /Usage:/i);
 assert.deepEqual(Object.keys(pkg.bin), ['disclaude']);
 assert(!existsSync(join(installed, 'packages/primary-node')));
