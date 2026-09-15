@@ -8,6 +8,38 @@ the actual CLI lifecycle and handoff use case lives in
 
 ## Configure the service
 
+Before selecting an installed executable, run:
+
+```sh
+disclaude browser doctor --binary /absolute/path/to/chromium
+```
+
+The command defaults to a visible browser; use `--headless` on a host without a
+display. It launches the selected executable twice with one temporary profile and
+dynamic loopback CDP ports, tests navigation, input, screenshots and a fictional
+test Cookie, then removes its disposable profile. It does not attach to an
+existing browser, use an existing profile or change service configuration.
+
+JSON output separates `usable` from `cookiePersistence` (`retained` or
+`not-retained`). Normal operation can pass when a Cookie does not survive restart,
+including macOS environments that prohibit Keychain access. Only the explicit
+`--require-persistence` option makes missing persistence a failing exit status.
+Executable, startup, navigation or other functional failures always exit nonzero.
+The command never changes Keychain, browser signing or OS permissions.
+
+This tests the current invoking user's environment. It does not establish Cookie
+decryption for an existing profile, login persistence under a different service
+manager, authenticity of a downloaded application, or an existing deployment's
+migration. The reported CDP product name may say Chrome for a Chromium binary;
+the output also identifies the selected executable's resolved path.
+
+`tests/e2e/browser-doctor.test.ts` runs the actual product CLI when
+`DISCLAUDE_E2E_CHROMIUM` is set and checks capability output and temporary-state
+cleanup. Linux CI requires Cookie retention. The macOS ARM64 CLI case passed on
+2026-09-16 with Chromium 155.0.8057.0 (1.38 seconds); a separate default-headed
+invocation also passed. Both observed retention in that invoking environment.
+Earlier service-environment failures remain distinct evidence.
+
 Install the browser-use Python environment and an independent Chromium first.
 The validated harness baseline is browser-use 0.13.10 / browser-harness 0.1.13.
 Use the interpreter belonging to that environment, not an unrelated system Python.
