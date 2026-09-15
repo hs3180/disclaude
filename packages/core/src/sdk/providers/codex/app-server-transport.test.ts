@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CodexAppServerTransport } from './app-server-transport.js';
+import type { AgentInputRequest } from '../../user-input.js';
 
 const resourceLog = vi.hoisted(() => vi.fn());
 vi.mock('../../../utils/logger.js', () => ({ createLogger: (_context: string, bindings: Record<string, unknown>) => ({
@@ -27,15 +28,73 @@ afterEach(() => {
 });
 
 describe('CodexAppServerTransport', () => {
-  it('disables native browser features and removes direct CDP from coordinated subprocesses', async () => {
+  const inputParams = { threadId: 'thread-1', turnId: 'turn-1', itemId: 'item-1', isBlocking: true,
+    questions: [{ id: 'browser', header: 'Browser', question: 'Which browser?', options: [{ label: 'Chromium', description: 'Dedicated profile' }] },
+      { id: 'note', header: 'Note', question: 'Any constraints?', isOther: true }] };
+  function inputFixture(body: string): string {
+    const binary = fixture('');
+    writeFileSync(binary, `#!${process.execPath}\nimport {createInterface} from 'node:readline';\nconst send=m=>process.stdout.write(JSON.stringify(m)+'\\n');\nconst params=${JSON.stringify(inputParams)};\n${body}`);
+    return binary;
+  }
+  it('answers a string-ID multi-question server request once, without starting another turn', async () => {
+    const binary = inputFixture(`
+let starts=0;
+createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line);
+ if(m.method==='turn/start'){starts++;send({id:m.id,result:{turn:{id:'turn-1'}}});send({id:'input-1',method:'item/tool/requestUserInput',params});}
+ else if(m.id==='input-1'){send({method:'fixture/answer',params:{...m,starts}});send({id:'input-1',method:'item/tool/requestUserInput',params});}
+});`);
+    let input: AgentInputRequest | undefined;
+    const received = vi.fn();
+    const onUserInput = vi.fn((request: AgentInputRequest) => { input = request; return Promise.resolve(); });
+    const transport = new CodexAppServerTransport({ binary, onUserInput, onNotification: received });
+    try {
+      await transport.request('turn/start');
+      await vi.waitFor(() => expect(input).toBeDefined());
+      await expect(input!.respond({ browser: { answers: ['unsupported'] }, note: { answers: ['No extensions'] } })).rejects.toThrow('offered option');
+      const answers = { browser: { answers: ['Chromium'] }, note: { answers: ['No extensions'] } };
+      await input!.respond(answers);
+      await expect(input!.respond(answers)).rejects.toThrow('no longer active');
+      await vi.waitFor(() => expect(received).toHaveBeenCalledWith('fixture/answer', expect.objectContaining({ id: 'input-1', starts: 1, result: { answers } })));
+      expect(onUserInput).toHaveBeenCalledTimes(1);
+    } finally { await transport.close(); }
+  });
+  it.each(['timeout', 'resolved', 'completed', 'interrupt', 'close'])('invalidates pending input on %s without inventing an answer', async reason => {
+    const binary = inputFixture(`
+createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line);
+ if(m.method==='begin'){send({id:m.id,result:{}});send({id:90,method:'item/tool/requestUserInput',params:{...params,isBlocking:false}});}
+ else if(m.method==='invalidate'){
+  send(${JSON.stringify(reason === 'resolved' ? { method: 'serverRequest/resolved', params: { threadId: 'thread-1', requestId: 90 } }
+    : { method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1' } } })});send({id:m.id,result:{}});
+ } else if(m.id===90) send({method:'fixture/answer',params:m});
+});`);
+    let input: AgentInputRequest | undefined;
+    const received = vi.fn();
+    const transport = new CodexAppServerTransport({ binary, userInputTimeoutMs: reason === 'timeout' ? 120 : 10000,
+      onUserInput: request => { input = request; return Promise.resolve(); }, onNotification: received });
+    try {
+      await transport.request('begin');
+      await vi.waitFor(() => expect(input).toBeDefined());
+      expect(input!.isBlocking).toBe(false);
+      if (reason === 'close') { await transport.close(); }
+      else if (reason === 'interrupt') { transport.cancelUserInputs('thread-1', 'turn-1'); }
+      else if (reason !== 'timeout') { await transport.request('invalidate'); }
+      await vi.waitFor(() => expect(input!.signal.aborted).toBe(true));
+      await expect(input!.respond({ browser: { answers: ['Chromium'] }, note: { answers: ['none'] } })).rejects.toThrow('no longer active');
+      expect(received.mock.calls.filter(([method, data]) => method === 'fixture/answer' && data.result)).toHaveLength(0);
+    } finally { await transport.close(); }
+  });
+  it.each([false, true])('enables input only with a host handler and preserves browser isolation (input=%s)', async inputEnabled => {
     const binary = fixture(`printf '%s\\n' "$@" > "$(dirname "$0")/args"
 printf '%s|%s' "$BU_CDP_URL" "$DISCLAUDE_BROWSER_SOCKET" > "$(dirname "$0")/cdp"
 while read line; do :; done`);
-    const transport = new CodexAppServerTransport({ binary, env: { ...process.env, BU_CDP_URL: 'http://127.0.0.1:9222', DISCLAUDE_BROWSER_SOCKET: '/tmp/browser.sock' } });
+    const transport = new CodexAppServerTransport({ binary, onUserInput: inputEnabled ? () => Promise.resolve() : undefined, env: { ...process.env, BU_CDP_URL: 'http://127.0.0.1:9222', DISCLAUDE_BROWSER_SOCKET: '/tmp/browser.sock' } });
     try {
       await vi.waitFor(() => expect(readFileSync(join(dirname(binary), 'cdp'), 'utf8').trim()).toBe('|/tmp/browser.sock'));
       expect(readFileSync(join(dirname(binary), 'args'), 'utf8').trim().split('\n')).toEqual([
         'app-server', '--stdio', '--disable', 'browser_use', '--disable', 'browser_use_external', '--disable', 'browser_use_full_cdp_access',
+        ...(inputEnabled ? ['--enable', 'default_mode_request_user_input'] : []),
       ]);
     } finally { await transport.close(); }
   });

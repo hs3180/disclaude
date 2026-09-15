@@ -433,6 +433,7 @@ export abstract class BaseAgent implements Disposable {
         yield {
           role: 'user',
           ...(msg.correlation ? { correlation: { ...msg.correlation } } : {}),
+          ...(msg.inputContext ? { inputContext: { ...msg.inputContext } } : {}),
           content:
             typeof msg.message?.content === 'string'
               ? msg.message.content

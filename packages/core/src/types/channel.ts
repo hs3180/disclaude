@@ -10,6 +10,8 @@
  * @module types/channel
  */
 
+import type { AgentInputRequest, AgentInputContext } from '../sdk/user-input.js';
+
 /**
  * Generic message structure received from any channel.
  */
@@ -311,6 +313,7 @@ export interface IChannel {
    *          Issue #1619: Return real messageId for action prompt matching.
    */
   sendMessage(message: OutgoingMessage): Promise<string | void>;
+  requestAgentInput?(request: AgentInputRequest, context: AgentInputContext): Promise<void>;
 
   /** Best-effort reaction on a delivered platform message, not a stream handle. */
   addReaction?(messageId: string, emoji: string): Promise<boolean>;

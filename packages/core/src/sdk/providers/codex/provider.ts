@@ -69,6 +69,7 @@ import {
 import { resolveCodexSandboxPolicy, type CodexSandboxLevel } from './sandbox-policy.js';
 import { CodexSessionGovernor, type SessionRegistration } from './session-governor.js';
 import { CodexAppServerLifecycle } from './app-server-lifecycle.js';
+import type { AgentInputRequest } from '../../user-input.js';
 import {
   adaptCodexEvent,
   classifyCodexEvent,
@@ -1069,9 +1070,11 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     let activeTurnId: string | undefined;
     let turnDone: ((error?: Error) => void) | undefined;
     let stallTimer: ReturnType<typeof setTimeout> | undefined;
+    const blockingInputs = new Set<AgentInputRequest>();
     const { timeoutMs: stallTimeoutMs } = readStallPolicy(this.env);
     const armStall = (): void => {
       if (stallTimer) {clearTimeout(stallTimer);}
+      if (blockingInputs.size > 0) { return; }
       stallTimer = setTimeout(() => {
         void lifecycle?.interrupt(sessionKey).catch(() => {});
         turnDone?.(new Error(`codex app-server stalled for ${stallTimeoutMs}ms`));
@@ -1193,9 +1196,27 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             void acquisition.then((lateLease) => lateLease.release());
             break;
           }
+          let bindTurn!: (id: string | undefined) => void;
+          const turnBinding = new Promise<string | undefined>(resolve => { bindTurn = resolve; });
           try {
             if (stopped) {break;}
-            lifecycle = this.createAppServerLifecycle(binary, sessionKey, next.value.correlation);
+            lifecycle = this.createAppServerLifecycle(binary, sessionKey, next.value.correlation, options.onUserInput ? async request => {
+              const boundTurn = await turnBinding;
+              if (!boundTurn || stopped || request.signal.aborted || request.threadId !== threadId || request.turnId !== boundTurn
+                || activeTurnId !== boundTurn || !options.onUserInput) { throw new Error('Input request has no active channel turn'); }
+              if (request.isBlocking) { blockingInputs.add(request); armStall(); }
+              let finished = false;
+              const finish = (): void => {
+                if (finished) { return; }
+                finished = true;
+                blockingInputs.delete(request);
+                request.signal.removeEventListener('abort', finish);
+                if (!stopped && activeTurnId === boundTurn) { armStall(); }
+              };
+              request.signal.addEventListener('abort', finish, { once: true });
+              push({ type: 'status', role: 'system', content: request.isBlocking ? '等待你回答卡片中的问题。' : '有问题等待回答；任务仍在继续。' });
+              await options.onUserInput({ ...request, respond: async answers => { await request.respond(answers); finish(); } }, next.value.inputContext);
+            } : undefined);
             threadId = await lifecycle.ensureThread(sessionKey, { threadId, cwd: options.cwd, model: codexModelForChatGpt(options.model), sandbox });
             if (this.appServerLifecycles.get(sessionKey) === lifecycle) {this.appServerThreadIds.set(sessionKey, threadId);}
             if (stopped || this.disposed) {break;}
@@ -1212,6 +1233,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               cwd: options.cwd,
               }
             );
+            bindTurn(activeTurnId);
             logger.debug({ sessionKey, threadId, turnId: activeTurnId }, 'Codex turn started');
             // Keep the lifecycle anchor available to control/steer consumers,
             // but provide no user-facing content for this internal status.
@@ -1233,6 +1255,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             await completed;
             this.governor.touchSession(sessionKey);
           } finally {
+            bindTurn(undefined);
             await interruptFlight;
             if (threadId && this.appServerRoutes.get(threadId) === onNotification) {this.appServerRoutes.delete(threadId);}
             await lifecycle?.close();
@@ -1297,11 +1320,12 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     };
   }
 
-  private createAppServerLifecycle(binary: string, sessionKey: string, correlation?: UserInput['correlation']): CodexAppServerLifecycle {
+  private createAppServerLifecycle(binary: string, sessionKey: string, correlation?: UserInput['correlation'], onUserInput?: (request: AgentInputRequest) => Promise<void>): CodexAppServerLifecycle {
     const lifecycle = new CodexAppServerLifecycle({
       binary,
       sessionKey,
       correlation,
+      onUserInput,
       env: this.env,
       requestTimeoutMs: this.execTimeoutMs && this.execTimeoutMs > 0 ? this.execTimeoutMs : undefined,
       onNotification: (method, params) => {
