@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Config, setDefaultProvider, clearProviderCache } from '@disclaude/core';
 import { FeishuResearchController } from '../../packages/service/src/research/feishu-controller.js';
-import { createDocumentReader } from '../../packages/service/src/research/document-source.js';
+import { createDocumentReader, createDocumentAppender } from '../../packages/service/src/research/document-source.js';
 import * as lark from '@larksuiteoapi/node-sdk';
 import nock from 'nock';
 
@@ -15,9 +15,11 @@ describe('research project using supplied evidence and the configured model', ()
     nock.enableNetConnect(host => /^(open\.feishu\.cn|localhost|127\.0\.0\.1)(:\d+)?$/u.test(host));
     setDefaultProvider(Config.AGENT_BACKEND);
     const root = await mkdtemp(join(tmpdir(), 'research-doc-e2e-'));
-    const client = new lark.Client({ appId: process.env.FEISHU_APP_ID ?? '', appSecret: process.env.FEISHU_APP_SECRET ?? '', loggerLevel: lark.LoggerLevel.error });
+    const client = new lark.Client({ appId: process.env.FEISHU_APP_ID ?? '', appSecret: process.env.FEISHU_APP_SECRET ?? '',
+      logger: { error() {}, warn() {}, info() {}, debug() {}, trace() {} } });
     const controller = new FeishuResearchController(join(root, 'store'), root,
-      () => Promise.resolve('captured-doc-card'), () => Promise.resolve(), undefined, createDocumentReader(client));
+      () => Promise.resolve('captured-doc-card'), () => Promise.resolve(), undefined, createDocumentReader(client),
+      process.env.DISCLAUDE_E2E_RESEARCH_EXPORT === '1' ? createDocumentAppender(client) : undefined);
     try {
       await controller.handle({ operator: { open_id: 'test-owner' }, context: { open_chat_id: 'test-chat', open_message_id: 'doc-form' }, action: {
         name: `research:${JSON.stringify({ action: 'create', nonce: 'doc-project' })}`,
@@ -35,6 +37,22 @@ describe('research project using supplied evidence and the configured model', ()
       expect(finished.summary).toContain('12');
       expect(finished.summary).toMatch(/\bB\b/u);
       console.info('DOCUMENT_RESEARCH_CONCLUSION', finished.summary);
+      if (process.env.DISCLAUDE_E2E_RESEARCH_EXPORT === '1') {
+        await controller.handle({ operator: { open_id: 'test-owner' }, context: { open_chat_id: 'test-chat', open_message_id: finished.cardId },
+          action: { value: { research: true, action: 'export', project: finished.id, revision: finished.revision } } });
+        let exported = controller.manager.get(project.id, 'test-owner', 'test-chat');
+        // An ambiguous response is reconciled by reading only; never replay the append.
+        if (exported.document?.export?.status === 'unknown') {
+          await controller.manager.act(project.id, 'test-owner', 'test-chat', exported.revision, 'export');
+          exported = controller.manager.get(project.id, 'test-owner', 'test-chat');
+        }
+        expect(exported.document?.export?.status, exported.document?.export?.error ?? exported.history.at(-1)?.text).toBe('saved');
+        expect(exported.summary).toBe(finished.summary);
+        expect(exported.document?.snapshot?.body).toBe(finished.document?.snapshot?.body);
+        const fragment = exported.document?.export?.fragment ?? '';
+        expect(fragment.replace(/\s/gu, '')).toContain(finished.summary.replace(/\s/gu, ''));
+        expect(exported.document?.snapshot?.rawBody?.split(fragment)).toHaveLength(2);
+      }
     } finally {
       nock.enableNetConnect(host => /^(localhost|127\.0\.0\.1)(:\d+)?$/u.test(host));
       controller.dispose(); clearProviderCache(); await rm(root, { recursive: true, force: true });

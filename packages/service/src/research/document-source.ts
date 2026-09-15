@@ -5,11 +5,13 @@ export interface DocumentSnapshot {
   token: string;
   revision: number;
   body: string;
+  rawBody?: string;
   comments: Array<{ id: string; text: string }>;
   fingerprint: string;
   syncedAt: string;
 }
-export type DocumentReader = (token: string) => Promise<DocumentSnapshot>;
+export type DocumentReader = (token: string, publishedFragments?: readonly string[]) => Promise<DocumentSnapshot>;
+export type DocumentAppender = (token: string, operation: { id: string; revision: number; paragraphs: string[] }) => Promise<void>;
 const fingerprint = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const fail = (): never => { throw new Error('研究文档未同步：请检查访问权限、文档大小或并发修改后恢复。已有成果保留。'); };
 
@@ -25,12 +27,12 @@ export function documentToken(url: string): string | undefined {
 
 /** Complete text/comment pagination; never substitute empty feedback after a failed read. */
 export function createDocumentReader(client: Client): DocumentReader {
-  return async token => {
+  return async (token, publishedFragments = []) => {
     const before = await client.docx.document.get({ path: { document_id: token } });
     const revision = before.data?.document?.revision_id;
     if (before.code !== 0 || !Number.isSafeInteger(revision)) { return fail(); }
     const raw = await client.docx.document.rawContent({ path: { document_id: token } });
-    if (raw.code !== 0 || typeof raw.data?.content !== 'string' || raw.data.content.length > 48_000) { return fail(); }
+    if (raw.code !== 0 || typeof raw.data?.content !== 'string' || raw.data.content.length > 256_000) { return fail(); }
     const comments: DocumentSnapshot['comments'] = [];
     const pages = new Set<string>();
     let pageToken: string | undefined;
@@ -75,9 +77,33 @@ export function createDocumentReader(client: Client): DocumentReader {
     const after = await client.docx.document.get({ path: { document_id: token } });
     if (after.code !== 0 || after.data?.document?.revision_id !== revision) { return fail(); }
     comments.sort((a, b) => a.id.localeCompare(b.id));
-    if (JSON.stringify({ body: raw.data.content, comments }).length > 64_000) { return fail(); }
-    return { token, revision: revision as number, body: raw.data.content, comments,
-      fingerprint: fingerprint({ body: raw.data.content, comments }), syncedAt: new Date().toISOString() };
+    let body = raw.data.content;
+    // Only an exact, unique published fragment is excluded from new source
+    // material. User edits or duplicates remain visible as changed material.
+    for (const fragment of publishedFragments) {
+      const start = body.indexOf(fragment);
+      const end = start + fragment.length;
+      if (start >= 0 && body.indexOf(fragment, end) < 0 && (start === 0 || body[start - 1] === '\n')
+        && (end === body.length || body[end] === '\n')) {
+        body = body.slice(0, start) + body.slice(end + (body[end] === '\n' ? 1 : 0));
+      }
+    }
+    if (body.length > 48_000 || JSON.stringify({ body, comments }).length > 64_000) { return fail(); }
+    return { token, revision: revision as number, body, rawBody: raw.data.content, comments,
+      fingerprint: fingerprint({ body, comments }), syncedAt: new Date().toISOString() };
+  };
+}
+
+/** Append only: no existing block is edited or deleted, even on a stale base. */
+export function createDocumentAppender(client: Client): DocumentAppender {
+  return async (token, operation) => {
+    const result = await client.docx.documentBlockChildren.create({ path: { document_id: token, block_id: token },
+      params: { document_revision_id: operation.revision, client_token: operation.id },
+      data: { index: -1, children: operation.paragraphs.map(content => ({ block_type: 2, text: { elements: content.split('\n').flatMap((line, index) => [
+        ...(index ? [{ text_run: { content: '\n' } }] : []),
+        { text_run: { content: line, ...(/^https?:\/\/\S+$/u.test(line) ? { text_element_style: { link: { url: line } } } : {}) } },
+      ]) } })) } });
+    if (result.code !== 0 || result.data?.children?.length !== operation.paragraphs.length) { throw new Error('Document append could not be confirmed'); }
   };
 }
 

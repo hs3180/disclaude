@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { ProjectStore, type ResearchProject, type ResearchStep, type StepResult } from './project.js';
-import { changedDocumentFeedback, documentToken, type DocumentReader } from './document-source.js';
+import { changedDocumentFeedback, documentToken, type DocumentReader, type DocumentAppender } from './document-source.js';
+import { documentDeadline, resultParagraphs } from './document-export.js';
 
 export type StepRunner = (project: ResearchProject, step: ResearchStep, signal: AbortSignal) => Promise<StepResult>;
 export type ProjectPublisher = (project: ResearchProject) => Promise<string>;
-export type ProjectAction = 'pause' | 'resume' | 'cancel' | 'feedback' | 'stop-direction' | 'archive' | 'unarchive';
+export type ProjectAction = 'pause' | 'resume' | 'cancel' | 'feedback' | 'stop-direction' | 'archive' | 'unarchive' | 'export';
 
 /** Project state owns execution; message turns and cards are adapters, never the source of truth. */
 export class ResearchManager {
@@ -13,7 +14,9 @@ export class ResearchManager {
   private readonly publishing = new Map<string, Promise<void>>();
   private loaded = false;
   private disposed = false;
-  constructor(private readonly store: ProjectStore, private readonly runner: StepRunner, private readonly publish: ProjectPublisher, private readonly readDocument?: DocumentReader) {}
+  private readonly exporting = new Set<string>();
+  constructor(private readonly store: ProjectStore, private readonly runner: StepRunner, private readonly publish: ProjectPublisher,
+    private readonly readDocument?: DocumentReader, private readonly appendDocument?: DocumentAppender) {}
 
   private load(): void {
     if (this.disposed) { throw new Error('研究服务已停止。'); }
@@ -56,7 +59,8 @@ export class ResearchManager {
     const token = documentToken(input.documentUrl ?? '');
     if (token && !this.readDocument) { throw new Error('当前研究服务未配置文档读取能力。'); }
     const p: ResearchProject = { ...input, id: randomUUID(), status: 'paused', revision: 0, createdAt: now, updatedAt: now,
-      document: token ? { url: input.documentUrl ?? '', token, previous: [], generation: 0 } : undefined,
+      document: token ? { url: input.documentUrl ?? '', token, previous: [], generation: 0,
+        publishedFragments: parent?.document?.token === token ? [...(parent.document.publishedFragments ?? [])] : [] } : undefined,
       directions: [], summary: '', questions: [], history: [], feedback: [], stepCount: 0,
       priorResults: parent ? { summary: parent.summary, findings: parent.directions.flatMap(d => d.findings).slice(-16) } : undefined };
     this.record(p, '项目已建立。开始后会持续研究，无需逐轮发送消息。');
@@ -79,6 +83,7 @@ export class ResearchManager {
     this.get(id, owner, chat);
     const p = this.project(id);
     if (revision !== p.revision) { throw new Error('项目已更新，请刷新后操作。'); }
+    if (action === 'export') { await this.exportResult(p); return; }
     if (action === 'archive' || action === 'unarchive') {
       if (!['completed', 'cancelled'].includes(p.status)) { throw new Error('请先结束研究，再归档项目。'); }
       p.archivedAt = action === 'archive' ? new Date().toISOString() : undefined;
@@ -122,6 +127,74 @@ export class ResearchManager {
     p.history.push({ at: p.updatedAt, text });
     this.store.save(p);
   }
+
+  private async exportResult(p: ResearchProject): Promise<void> {
+    const { document } = p;
+    if (p.status !== 'completed' || !p.summary || !document?.snapshot || !this.readDocument || !this.appendDocument) {
+      throw new Error('请先完成关联文档的研究，再追加成果。');
+    }
+    if (this.exporting.has(p.id)) { throw new Error('正在核对文档，请稍候。'); }
+    if (document.export?.status === 'saved' || (document.export && document.publishedFragments?.includes(document.export.fragment))) {
+      await this.display(p); return;
+    }
+    this.exporting.add(p.id);
+    try {
+      const previous = document.export;
+      const reconcile = previous && ['writing', 'unknown'].includes(previous.status);
+      const at = new Date().toISOString();
+      const paragraphs = reconcile ? previous.fragment.split('\n') : resultParagraphs(p, at);
+      const operation = reconcile ? previous : { id: randomUUID(), fragment: paragraphs.join('\n'), status: 'checking' as const,
+        baseFingerprint: document.snapshot.fingerprint, at };
+      document.export = operation;
+      this.record(p, reconcile ? '正在核对上次文档追加，不重复发送写入。' : '正在检查文档是否有新意见，再追加成果快照。');
+      await this.display(p);
+      if (this.disposed) { return; }
+      const fragments = document.publishedFragments ?? [];
+      let latest = await documentDeadline(this.readDocument(document.token, reconcile ? [...fragments, operation.fragment] : fragments));
+      if (this.disposed) { return; }
+      if (latest.token !== document.token) { throw new Error('Document binding mismatch'); }
+      if (!reconcile) {
+        if (latest.fingerprint !== operation.baseFingerprint) {
+          operation.status = 'conflict'; operation.error = '文档已有新修改，本次未追加成果。原成果和文档均保留，请从成果继续研究以处理新意见。';
+          this.record(p, operation.error); return;
+        }
+        operation.status = 'writing';
+        this.record(p, '正在追加成果快照，保留文档已有内容。');
+        await documentDeadline(this.appendDocument(document.token, { id: operation.id, revision: latest.revision, paragraphs }));
+        if (this.disposed) { return; }
+        latest = await documentDeadline(this.readDocument(document.token, [...fragments, operation.fragment]));
+        if (this.disposed) { return; }
+        if (latest.token !== document.token) { throw new Error('Document binding mismatch'); }
+      }
+      const raw = latest.rawBody ?? latest.body;
+      const index = raw.indexOf(operation.fragment);
+      if (index < 0 || raw.indexOf(operation.fragment, index + operation.fragment.length) >= 0) {
+        operation.status = 'unknown'; operation.error = '尚无法确认上次写入；本次没有重复追加。请检查文档，稍后再次核对，项目成果始终保留。';
+      } else {
+        document.publishedFragments = [...fragments, operation.fragment];
+        if (latest.fingerprint !== operation.baseFingerprint) {
+          operation.status = 'conflict'; operation.error = '成果快照已追加，但检测到并发修改。双方内容均保留，请从成果继续研究以处理新意见。';
+        } else {
+          operation.status = 'saved'; operation.error = undefined;
+          document.snapshot = latest;
+        }
+      }
+      this.record(p, operation.error ?? '成果快照已追加到关联文档，结论、证据和意见处理记录已核对。');
+    } catch (error) {
+      if (!this.disposed && document.export) {
+        const operation = document.export;
+        if (operation.status === 'writing') { operation.status = 'unknown'; }
+        operation.error = operation.status === 'unknown' ? '写入结果尚未确认；再次操作只核对文档，不盲目重复追加。'
+          : '文档核对未完成，未开始写入；请检查权限或网络后重试。';
+        this.record(p, operation.error);
+      } else if (!this.disposed) {
+        this.record(p, error instanceof Error && /^[\p{Script=Han}]/u.test(error.message) ? error.message : '文档操作未完成，项目成果保留。');
+      }
+    } finally {
+      this.exporting.delete(p.id);
+      if (!this.disposed) { await this.display(p); }
+    }
+  }
   private display(p: ResearchProject): Promise<void> {
     const previous = this.publishing.get(p.id) ?? Promise.resolve();
     const next = previous.then(async () => {
@@ -150,7 +223,7 @@ export class ResearchManager {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       if (!this.readDocument) { throw new Error('Document reader unavailable'); }
-      const snapshot = await Promise.race([this.readDocument(document.token), new Promise<never>((_resolve, reject) => {
+      const snapshot = await Promise.race([this.readDocument(document.token, document.publishedFragments), new Promise<never>((_resolve, reject) => {
         timer = setTimeout(() => reject(new Error('Document read timed out')), 30_000);
       })]);
       if (this.disposed) { return; }

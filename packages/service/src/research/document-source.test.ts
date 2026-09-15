@@ -62,6 +62,16 @@ describe('research document feedback reads', () => {
     expect(changes.some(c => c.text.includes('已删除'))).toBe(true);
     expect(changedDocumentFeedback(next, next)).toEqual([]);
   });
+  it('excludes only an unchanged published fragment and preserves later user edits', async () => {
+    const f = fixture();
+    const fragment = 'Research result\nA costs 15, B costs 12';
+    f.rawContent.mockResolvedValue({ code: 0, data: { content: `Original source\n${fragment}\n` } });
+    const read = await f.read('token', [fragment]);
+    expect(read.body).toBe('Original source\n');
+    expect(read.rawBody).toContain(fragment);
+    f.rawContent.mockResolvedValue({ code: 0, data: { content: 'Original source\nResearch result\nUser correction: A costs 16\n' } });
+    expect((await f.read('token', [fragment])).body).toContain('User correction: A costs 16');
+  });
   it('extracts only a docx token and never follows arbitrary resource URLs', () => {
     expect(documentToken('https://example.feishu.cn/docx/ABC123?from=test')).toBe('ABC123');
     expect(documentToken('')).toBeUndefined();

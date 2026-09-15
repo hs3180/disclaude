@@ -21,6 +21,10 @@ export function projectCard(p: ResearchProject): Record<string, unknown> {
   if (['paused', 'failed', 'interrupted', 'waiting-user'].includes(p.status)) { actions.push(researchButton(p.directions.length ? '恢复研究' : '开始研究', { ...value, action: 'resume' }, true)); }
   if (!['completed', 'cancelled', 'cancelling'].includes(p.status)) { actions.push(researchButton('取消研究', { ...value, action: 'cancel' })); }
   const visible = p.directions.slice(-8);
+  if (p.status === 'completed' && p.document && p.summary && p.document.export?.status !== 'saved'
+    && !(p.document.export && p.document.publishedFragments?.includes(p.document.export.fragment))) {
+    actions.push(researchButton(['writing', 'unknown'].includes(p.document.export?.status ?? '') ? '核对文档写入' : '将成果追加到关联文档', { ...value, action: 'export' }));
+  }
   const elements: unknown[] = [
     ...(p.archivedAt ? [text('已归档 · 成果和研究记录保留')] : []),
     text(`${labels[p.status]}\n${p.scope || '范围：围绕研究问题展开'}\n最近更新：${p.updatedAt}`),
@@ -29,6 +33,7 @@ export function projectCard(p: ResearchProject): Record<string, unknown> {
     ...(p.clarification ? [text(`需要你补充\n${p.clarification}`)] : []),
     ...(p.error ? [text(p.error)] : []),
     ...(p.deliveryError ? [text(p.deliveryError)] : []),
+    ...(p.document?.export ? [text(p.document.export.error ?? (p.document.export.status === 'saved' ? '成果已追加到关联文档，原文保留。' : '正在核对文档成果。'))] : []),
     ...(p.document ? [text(`关联文档\n${p.document.url}\n${p.document.error ?? (p.document.snapshot ? `最近同步：${p.document.snapshot.syncedAt}（阶段边界读取，非实时）` : '尚未同步，开始研究前将读取正文与评论。')}`)] : []),
     ...actions,
     { tag: 'hr' }, text('研究方向与证据'),
@@ -85,7 +90,7 @@ export function historyCard(p: ResearchProject, offset: number): Record<string, 
 export function indexCard(projects: ResearchProject[], nonce: string, offset = 0, archived = false): Record<string, unknown> {
   return researchCard(archived ? '归档的研究项目' : '我的研究项目', [
     group([text('研究围绕项目持续推进。可以随时重返、查看证据、调整方向或暂停。项目控制由创建者操作。'),
-      { tag: 'div', text: { ...plain('可关联一份新版飞书文档，在阶段边界同步文字正文与评论。未关联的链接不会自动同步；目前不向文档写回成果。'), text_size: 'notation', text_color: 'grey' } }]),
+      { tag: 'div', text: { ...plain('可关联一份新版飞书文档，在阶段边界同步文字正文与评论。研究完成后可选择追加成果；未关联的链接不会自动同步。'), text_size: 'notation', text_color: 'grey' } }]),
     group([
     researchButton(archived ? '返回项目列表' : '查看归档项目', { action: 'index', archived: !archived }),
     ...projects.slice(offset, offset + 6).flatMap(p => [text(`${p.title} · ${labels[p.status]}`), researchButton('打开项目', { project: p.id, action: 'open' })]),

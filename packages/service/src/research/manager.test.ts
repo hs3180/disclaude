@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ProjectStore, type ResearchStep, type StepResult, parseStepResult } from './project.js';
-import type { DocumentReader } from './document-source.js';
+import type { DocumentReader, DocumentAppender } from './document-source.js';
 import { ResearchManager, type StepRunner } from './manager.js';
 
 const managers: ResearchManager[] = [], directories: string[] = [];
@@ -15,14 +15,89 @@ const result = (step: ResearchStep): StepResult => step.type === 'plan' ? { dire
 function fixture(runner: StepRunner = (p, step) => Promise.resolve(step.type === 'plan' ? {
   directions: ['Compare costs'], feedbackDecisions: p.feedback.flatMap((f, feedbackIndex) =>
     f.status === 'pending' || f.status === 'needs-clarification' ? [{ feedbackIndex, status: 'applied' as const, reason: 'Compare the requested evidence in the cost direction.', directionIndexes: [0] }] : []),
-} : result(step)), publish = vi.fn(() => Promise.resolve('card-1')), directory?: string, readDocument?: DocumentReader) {
+} : result(step)), publish = vi.fn(() => Promise.resolve('card-1')), directory?: string, readDocument?: DocumentReader, appendDocument?: DocumentAppender) {
   const dir = directory ?? mkdtempSync(join(tmpdir(), 'research-state-')); if (!directory) { directories.push(dir); }
-  const manager = new ResearchManager(new ProjectStore(dir), runner, publish, readDocument); managers.push(manager);
+  const manager = new ResearchManager(new ProjectStore(dir), runner, publish, readDocument, appendDocument); managers.push(manager);
   return { manager, dir, publish };
 }
 function deferred<T>() { let resolve!: (v: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 
 describe('persistent research lifecycle', () => {
+  function exportFixture() {
+    const remote = { body: 'Supplied source\n', loseResponse: false, rejectWrite: false, concurrentEdit: false };
+    const read: DocumentReader = (token, fragments = []) => {
+      let { body } = remote;
+      for (const fragment of fragments) { body = body.replace(`${fragment}\n`, ''); }
+      return Promise.resolve({ token, revision: 3, body, rawBody: remote.body, comments: [], fingerprint: body, syncedAt: new Date().toISOString() });
+    };
+    const append = vi.fn<DocumentAppender>((_token, operation) => {
+      if (remote.rejectWrite) { return Promise.reject(new Error('Connection lost before response')); }
+      if (remote.concurrentEdit) { remote.body += 'User correction: include tax\n'; }
+      remote.body += `${operation.paragraphs.join('\n')}\n`;
+      return remote.loseResponse ? Promise.reject(new Error('Response lost after commit')) : Promise.resolve();
+    });
+    return { ...fixture(undefined, undefined, undefined, read, append), read, append, remote };
+  }
+  async function completedExportProject(f: ReturnType<typeof exportFixture>) {
+    const p = await f.manager.create({ ...input, documentUrl: 'https://example.feishu.cn/docx/token' });
+    await f.manager.act(p.id, 'alice', 'chat-a', p.revision, 'resume');
+    await f.manager.idle(p.id);
+    return f.manager.get(p.id, 'alice', 'chat-a');
+  }
+  it('appends a completed result once and reconciles a lost response after restart', async () => {
+    const f = exportFixture(); const p = await completedExportProject(f);
+    f.remote.loseResponse = true;
+    await f.manager.act(p.id, 'alice', 'chat-a', p.revision, 'export');
+    const uncertain = f.manager.get(p.id, 'alice', 'chat-a');
+    expect(uncertain.document?.export?.status).toBe('unknown');
+    expect(uncertain.summary).toBe(p.summary);
+    expect(f.remote.body).toContain('Supplied source');
+    f.manager.dispose();
+    const reopened = fixture(undefined, undefined, f.dir, f.read, f.append).manager;
+    await reopened.act(p.id, 'alice', 'chat-a', uncertain.revision, 'export');
+    const saved = reopened.get(p.id, 'alice', 'chat-a');
+    expect(saved.document?.export?.status).toBe('saved');
+    expect(saved.document?.snapshot?.body).toBe('Supplied source\n');
+    await reopened.act(p.id, 'alice', 'chat-a', saved.revision, 'export');
+    expect(f.append).toHaveBeenCalledTimes(1);
+    expect(saved.stepCount).toBe(p.stepCount);
+  });
+  it('refuses to append over new feedback and retains the completed result', async () => {
+    const f = exportFixture(); const p = await completedExportProject(f);
+    f.remote.body += 'New user scope\n';
+    await f.manager.act(p.id, 'alice', 'chat-a', p.revision, 'export');
+    expect(f.append).not.toHaveBeenCalled();
+    const conflict = f.manager.get(p.id, 'alice', 'chat-a');
+    expect(conflict.document?.export?.status).toBe('conflict');
+    expect(conflict.summary).toBe(p.summary);
+    expect(f.remote.body).toBe('Supplied source\nNew user scope\n');
+  });
+  it('preserves concurrent edits and carries them into a follow-up without self-feedback', async () => {
+    const f = exportFixture(); const p = await completedExportProject(f);
+    f.remote.concurrentEdit = true;
+    await f.manager.act(p.id, 'alice', 'chat-a', p.revision, 'export');
+    const conflict = f.manager.get(p.id, 'alice', 'chat-a');
+    expect(conflict.document?.export?.status).toBe('conflict');
+    expect(conflict.document?.publishedFragments).toHaveLength(1);
+    expect(f.remote.body).toContain('User correction: include tax');
+    await f.manager.act(p.id, 'alice', 'chat-a', conflict.revision, 'export');
+    expect(f.append).toHaveBeenCalledTimes(1);
+    const next = await f.manager.create({ ...input, source: 'follow-up', parent: p.id, documentUrl: 'https://example.feishu.cn/docx/token' });
+    await f.manager.act(next.id, 'alice', 'chat-a', next.revision, 'resume'); await f.manager.idle(next.id);
+    const body = f.manager.get(next.id, 'alice', 'chat-a').document?.snapshot?.body;
+    expect(body).toContain('User correction: include tax');
+    expect(body).not.toContain('研究成果快照');
+  });
+  it('does not repeat an ambiguous write when reconciliation cannot find its fragment', async () => {
+    const f = exportFixture(); const p = await completedExportProject(f);
+    f.remote.rejectWrite = true;
+    await f.manager.act(p.id, 'alice', 'chat-a', p.revision, 'export');
+    const uncertain = f.manager.get(p.id, 'alice', 'chat-a');
+    await f.manager.act(p.id, 'alice', 'chat-a', uncertain.revision, 'export');
+    expect(f.append).toHaveBeenCalledTimes(1);
+    expect(f.manager.get(p.id, 'alice', 'chat-a').document?.export?.status).toBe('unknown');
+    expect(f.remote.body).toBe('Supplied source\n');
+  });
   it('creates one project for a repeated form and preserves its identity after restart', async () => {
     const { manager, dir } = fixture();
     const p = await manager.create(input);

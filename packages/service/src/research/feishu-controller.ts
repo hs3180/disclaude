@@ -4,7 +4,7 @@ import { ProjectStore } from './project.js';
 import { ResearchManager, type StepRunner, type ProjectAction } from './manager.js';
 import { createResearchRunner } from './runner.js';
 import { indexCard, projectCard, evidenceCard, historyCard } from './cards.js';
-import type { DocumentReader } from './document-source.js';
+import type { DocumentReader, DocumentAppender } from './document-source.js';
 
 type Sender = (message: { chatId: string; type: string; text?: string; card?: Record<string, unknown>; threadId?: string }) => Promise<string | void>;
 type Updater = (messageId: string, card: Record<string, unknown>) => Promise<void>;
@@ -23,7 +23,7 @@ function callbackValue(action: Record<string, unknown>): Record<string, unknown>
 /** A persistent project surface; ordinary conversation turns never own its state. */
 export class FeishuResearchController {
   readonly manager: ResearchManager;
-  constructor(directory: string, workspace: string, private readonly send: Sender, update: Updater, runner: StepRunner = createResearchRunner(workspace), readDocument?: DocumentReader) {
+  constructor(directory: string, workspace: string, private readonly send: Sender, update: Updater, runner: StepRunner = createResearchRunner(workspace), readDocument?: DocumentReader, appendDocument?: DocumentAppender) {
     if (!isAbsolute(directory)) { throw new Error('Research project storage must use an absolute directory'); }
     this.manager = new ResearchManager(new ProjectStore(directory), runner, async project => {
       const card = projectCard(project);
@@ -31,7 +31,7 @@ export class FeishuResearchController {
       const id = await send({ chatId: project.chat, type: 'card', card, threadId: project.thread });
       if (!id) { throw new Error('Research project card delivery returned no message ID'); }
       return id;
-    }, readDocument);
+    }, readDocument, appendDocument);
   }
   static isCallback(raw: Record<string, unknown>): boolean {
     return callbackValue(object(raw.action)).research === true;
@@ -72,7 +72,7 @@ export class FeishuResearchController {
           title: project.title, scope: project.scope, materials: project.materials, documentUrl: project.document?.url });
         return;
       }
-      const actions: ProjectAction[] = ['pause', 'resume', 'cancel', 'feedback', 'stop-direction', 'archive', 'unarchive'];
+      const actions: ProjectAction[] = ['pause', 'resume', 'cancel', 'feedback', 'stop-direction', 'archive', 'unarchive', 'export'];
       if (!actions.includes(actionName as ProjectAction) || typeof value.revision !== 'number') { throw new Error('研究操作无效，请刷新项目。'); }
       await this.manager.act(id, owner, chat, value.revision, actionName as ProjectAction,
         actionName === 'feedback' ? string(form.feedback) : string(value.direction));

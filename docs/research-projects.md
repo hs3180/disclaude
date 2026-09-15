@@ -47,13 +47,34 @@ background synchronization; a follow-up project inherits the document binding.
 
 Reads fail visibly on permissions, incomplete pagination, concurrent body changes,
 or unsupported/oversized content. The previous snapshot is retained and unread
-feedback is never marked processed. Limits are 48,000 body characters, 3,000 per
+feedback is never marked processed. Limits are 256,000 raw document characters, 48,000 source body characters, 3,000 per
 comment reply, 200 replies, and 64,000 serialized body/comment characters. This
 supports text, not Wiki references or image attachments, and checks at phase
 boundaries rather than in real time.
 
-This is not the complete #4753/#4754 acceptance. Document writeback, collaborative
-editing/conflict handling, and live Feishu UX acceptance remain outstanding.
+A completed project offers an explicit action to append its conclusion, findings,
+sources, open questions and feedback decisions to its linked document. Binding a
+document alone never authorizes automatic exports. Existing blocks are preserved.
+Before writing, the service checks that the source and comments still match the
+research snapshot. A mismatch retains both versions and asks the user to continue
+research from the results. The export is limited to 50 blocks and 48,000 characters;
+oversized results remain available in the project.
+
+The write intent is persisted before the append. If its response or readback is
+uncertain, the card offers a read-only reconciliation action; it never blindly
+repeats the write, including after restart. An exact, unique fragment confirms the
+append. If it remains absent or was edited, reconciliation stays unresolved and
+requires inspection of the document. Concurrent edits detected after an append
+retain both contents and report a conflict. This is read/append/read verification,
+not a server-side compare-and-swap or collaborative merge transaction.
+
+Confirmed, unchanged export fragments are excluded from subsequent source reads,
+including linked follow-up projects. Edited or duplicated fragments remain visible
+as new source material. This prevents the unchanged report from repeatedly becoming
+its own evidence without hiding user changes.
+
+This is not the complete #4753/#4754 acceptance. Full collaborative editing and
+live Feishu UX acceptance remain outstanding.
 Source fields are structurally checked; this is not factual
 verification or proof that a model actually consulted a source.
 
@@ -78,8 +99,11 @@ dedicated test Docx URL), `FEISHU_APP_ID` and `FEISHU_APP_SECRET`. Its fixture i
 document with A priced at USD 10 and B at USD 12, plus a comment correcting A to
 USD 15 after tax and confirming B includes tax. It reads real Feishu APIs and
 checks that the real model incorporates the comment into its retained conclusion.
-It does not modify the fixture or send cards. Keep credentials and document
-identifiers outside the repository.
+By default it does not modify the fixture or send cards. Setting
+`DISCLAUDE_E2E_RESEARCH_EXPORT=1` additionally appends a real report and verifies
+readback, preservation of the original source, and reconciliation if needed. Use
+a disposable document for that case; the report remains after the test. Keep
+credentials and document identifiers outside the repository.
 
 ```sh
 DISCLAUDE_E2E_RESEARCH=1 npx vitest run tests/e2e/research-project.test.ts

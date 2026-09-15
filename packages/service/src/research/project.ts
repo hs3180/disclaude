@@ -20,7 +20,9 @@ export interface ResearchProject {
   title: string;
   scope: string;
   materials: string;
-  document?: { url: string; token: string; snapshot?: DocumentSnapshot; previous: DocumentSnapshot[]; generation: number; error?: string };
+  document?: { url: string; token: string; snapshot?: DocumentSnapshot; previous: DocumentSnapshot[]; generation: number; error?: string;
+    publishedFragments?: string[];
+    export?: { id: string; fragment: string; status: 'checking' | 'writing' | 'saved' | 'conflict' | 'unknown'; baseFingerprint: string; at: string; error?: string } };
   status: ProjectStatus;
   revision: number;
   createdAt: string;
