@@ -134,9 +134,12 @@ function metadataFromFrontmatter(source: string, directoryName: string): { descr
   const match = source.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   if (!match) {throw new Error('missing strict frontmatter');}
   const fields = new Map<string, string>();
+  // Shipped skills retain native invocation/tool metadata. Discovery indexes
+  // only name/description; these declarations do not grant host permissions.
+  const supportedFields = new Set(['name', 'description', 'allowed-tools', 'argument-hint', 'user-invocable']);
   for (const line of match[1].split(/\r?\n/)) {
     const field = line.match(/^([a-z][a-z0-9_-]*):[ \t]*(.*?)\s*$/i);
-    if (!field || !['name', 'description'].includes(field[1])) {throw new Error('invalid frontmatter field');}
+    if (!field || !supportedFields.has(field[1])) {throw new Error('invalid frontmatter field');}
     if (fields.has(field[1]) || !field[2]) {throw new Error('invalid frontmatter value');}
     fields.set(field[1], field[2].replace(/^['"]|['"]$/g, ''));
   }
