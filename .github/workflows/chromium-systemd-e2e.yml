@@ -37,7 +37,11 @@ on:
       - '.github/workflows/chromium-systemd-e2e.yml'
 jobs:
   acceptance:
-    name: Native systemd browser lifecycle and recovery
+    name: Native systemd browser (${{ matrix.mode }})
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [headless, headed]
     runs-on: ubuntu-latest
     timeout-minutes: 12
     permissions:
@@ -62,7 +66,13 @@ jobs:
           export DISCLAUDE_E2E_BROWSER_SETUP=1
           test -x "$DISCLAUDE_E2E_CHROMIUM"
           "$DISCLAUDE_E2E_CHROMIUM" --version
-          node node_modules/vitest/vitest.mjs run tests/e2e/chromium-systemd.test.ts tests/e2e/chromium-setup.test.ts
+          if [ '${{ matrix.mode }}' = headed ]; then
+            export DISCLAUDE_E2E_BROWSER_HEADED=1
+            command -v xvfb-run
+            xvfb-run -a -s '-screen 0 1280x1024x24' node node_modules/vitest/vitest.mjs run tests/e2e/chromium-systemd.test.ts tests/e2e/chromium-setup.test.ts
+          else
+            node node_modules/vitest/vitest.mjs run tests/e2e/chromium-systemd.test.ts tests/e2e/chromium-setup.test.ts
+          fi
 
   download:
     name: Downloaded Chromium (${{ matrix.contract }})

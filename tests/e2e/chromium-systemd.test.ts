@@ -28,11 +28,12 @@ describe('Chromium native Linux user-service installation and recovery', () => {
       const profile = join(root, 'profile');
       const plist = join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'systemd/user', label);
       const binary = process.env.DISCLAUDE_E2E_CHROMIUM!;
+      const headed = process.env.DISCLAUDE_E2E_BROWSER_HEADED === '1';
       const env = { ...process.env, DISCLAUDE_SYSTEMD_ISOLATED: '1',
         DISCLAUDE_SYSTEMD_UNIT: label, DISCLAUDE_SYSTEMD_STATE_DIR: root,
         DISCLAUDE_CHROMIUM_CONFIG: config, CHROMIUM_CDP_BINARY: binary,
         CHROMIUM_CDP_PROFILE_DIR: profile, CHROMIUM_CDP_PORT: String(port),
-        CHROMIUM_CDP_ADDRESS: '127.0.0.1', CHROMIUM_CDP_HEADED: '0' };
+        CHROMIUM_CDP_ADDRESS: '127.0.0.1', CHROMIUM_CDP_HEADED: headed ? '1' : '0' };
       const command = (name: string, overrides = {}) => exec(process.execPath,
         [resolve('scripts/chromium-systemd.mjs'), 'chromium-isolated', name],
         { env: { ...env, ...overrides }, timeout: 115_000, maxBuffer: 1024 * 1024 });
@@ -41,6 +42,14 @@ describe('Chromium native Linux user-service installation and recovery', () => {
         const quoted = `'${binary.replace(/'/g, "'\\''")}'`;
         await writeFile(failing, `#!/bin/sh\nfor arg in "$@"; do\n if [ "$arg" = "--remote-debugging-port=0" ]; then exec ${quoted} "$@"; fi\ndone\nexit 7\n`, { mode: 0o700 });
       try {
+        await expect(command('install', { DBUS_SESSION_BUS_ADDRESS: `unix:path=${root}/absent-user-bus`, XDG_RUNTIME_DIR: join(root, 'absent-user-runtime') }))
+          .rejects.toThrow('User-level systemd or lsof is unavailable');
+        await expect(readFile(config, 'utf8')).rejects.toThrow();
+        await expect(readFile(plist, 'utf8')).rejects.toThrow();
+        await expect(command('install', { CHROMIUM_CDP_HEADED: '1', DISPLAY: '', WAYLAND_DISPLAY: '' }))
+          .rejects.toThrow('Headed browser requires a desktop display');
+        await expect(readFile(config, 'utf8')).rejects.toThrow();
+        await expect(readFile(plist, 'utf8')).rejects.toThrow();
         let initialFailure = '';
         try { await command('install', { CHROMIUM_CDP_BINARY: failing }); }
         catch (error) { initialFailure = String((error as { stderr?: string }).stderr ?? error); }
@@ -56,6 +65,8 @@ describe('Chromium native Linux user-service installation and recovery', () => {
         await writeFile(marker, 'preserve user profile data');
         const beforeConfig = await readFile(config, 'utf8');
         const beforePlist = await readFile(plist, 'utf8');
+        expect(beforePlist.includes('--headless=new')).toBe(!headed);
+        if (headed) expect(beforePlist).toContain('Environment="DISPLAY=');
         const version = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json();
         expect(version.webSocketDebuggerUrl).toMatch(/^ws:/);
         await expect(command('start')).rejects.toThrow();
@@ -102,7 +113,7 @@ describe('Chromium native Linux user-service installation and recovery', () => {
         expect(await readFile(marker, 'utf8')).toBe('preserve user profile data');
         expect(JSON.parse((await command('start')).stdout).cdpReady).toBe(true);
         console.info('CHROMIUM_SYSTEMD_ACCEPTANCE', JSON.stringify({ browser: recovered.Browser,
-          platform: process.platform, arch: process.arch, install: true, restart: true,
+          platform: process.platform, arch: process.arch, mode: headed ? 'headed' : 'headless', display: headed ? process.env.DISPLAY : null, unavailableManagerRejected: true, missingDisplayRejected: true, install: true, restart: true,
           invalidPathPreserved: true, portConflictPreserved: true, failedActivationRecovered: true, profilePreserved: true, recoveredInput: true, recoveredScreenshot: true, firstInstallFailureCleaned: true, stopStart: true, status: true }));
       } finally {
         // Unload only the unique label before removing its files/profile.

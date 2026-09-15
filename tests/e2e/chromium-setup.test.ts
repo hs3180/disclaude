@@ -19,19 +19,20 @@ describe('browser setup product CLI', () => {
       await new Promise<void>(resolve => listener.listen(0, '127.0.0.1', resolve));
       const port = String((listener.address() as { port: number }).port);
       await new Promise<void>(resolve => listener.close(() => resolve()));
+      const headed = process.env.DISCLAUDE_E2E_BROWSER_HEADED === '1';
       const profile = join(root, 'profile');
       const config = join(root, 'browser.json');
       const label = process.platform === 'darwin' ? `com.disclaude.test.setup.${process.pid}.${Date.now()}`
         : `disclaude-test-setup-${process.pid}-${Date.now()}.service`;
       const env = { ...process.env, CHROMIUM_CDP_BINARY: process.env.DISCLAUDE_E2E_CHROMIUM!,
-        CHROMIUM_CDP_PROFILE_DIR: profile, CHROMIUM_CDP_PORT: port, CHROMIUM_CDP_ADDRESS: '127.0.0.1', CHROMIUM_CDP_HEADED: '0',
+        CHROMIUM_CDP_PROFILE_DIR: profile, CHROMIUM_CDP_PORT: port, CHROMIUM_CDP_ADDRESS: '127.0.0.1', CHROMIUM_CDP_HEADED: headed ? '1' : '0',
       };
       Object.assign(env, { ['DISCLAUDE_CHROMIUM_CONFIG']: config }, process.platform === 'darwin' ? {
         ['DISCLAUDE_LAUNCHD_ISOLATED']: '1', ['DISCLAUDE_LAUNCHD_LABEL']: label,
         ['DISCLAUDE_LAUNCHD_STATE_DIR']: root, ['DISCLAUDE_LAUNCHD_CONFIG_PATH']: join(root, 'unused-app.yaml'),
       } : { ['DISCLAUDE_SYSTEMD_ISOLATED']: '1', ['DISCLAUDE_SYSTEMD_UNIT']: label, ['DISCLAUDE_SYSTEMD_STATE_DIR']: root });
       const args = [resolve('bin/disclaude.js'), 'chromium-cdp', 'setup', '--isolated', '--binary', env.CHROMIUM_CDP_BINARY,
-        '--profile', profile, '--port', port, '--headless'];
+        '--profile', profile, '--port', port, headed ? '--headed' : '--headless'];
       let applied = false;
       try {
         const preview = await exec(process.execPath, [...args, '--dry-run'], { env });
@@ -71,7 +72,7 @@ describe('browser setup product CLI', () => {
         expect(status.configured.executable.path).toBe(saved.CHROMIUM_CDP_BINARY);
         expect(status.configured.executable.available).toBe(true);
         expect(status.configured.profile.path).toBe(profile);
-        expect(status.configured.mode).toBe('headless');
+        expect(status.configured.mode).toBe(headed ? 'headed' : 'headless');
         // Explicit candidate overrides do not relabel the saved selection in status.
         const overridden = JSON.parse((await exec(process.execPath, statusArgs, {
           env: { ...env, CHROMIUM_CDP_BINARY: join(root, 'missing-candidate') }, timeout: 15_000,
@@ -108,7 +109,7 @@ describe('browser setup product CLI', () => {
         if (automatic && manual) { await access(automatic); await expect(access(manual)).rejects.toThrow(); }
         else expect((await exec('systemctl', ['--user', 'is-enabled', label])).stdout.trim()).toBe('enabled');
         expect(await readFile(join(profile, 'setup-marker'), 'utf8')).toBe('keep');
-        console.info('BROWSER_SETUP_ACCEPTANCE', JSON.stringify({ platform: process.platform, arch: process.arch,
+        console.info('BROWSER_SETUP_ACCEPTANCE', JSON.stringify({ platform: process.platform, arch: process.arch, mode: headed ? 'headed' : 'headless',
           preview: true, nonInteractiveMissingConfirmationRejected: true, applied: true, repeated: true, profilePreserved: true, autostartToggle: true, failedToggleRecovered: true, statusMetadata: true, statusIgnoresCandidateOverride: true, foreignProfilePreserved: true, downgradeRejected: true }));
       } finally {
         if (applied) {
