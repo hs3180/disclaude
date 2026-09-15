@@ -27,13 +27,13 @@ afterEach(() => {
 });
 
 describe('CodexAppServerTransport', () => {
-  it('disables the Codex browser while preserving shared CDP environment', async () => {
+  it('disables native browser features and removes direct CDP from coordinated subprocesses', async () => {
     const binary = fixture(`printf '%s\\n' "$@" > "$(dirname "$0")/args"
-printenv BU_CDP_URL > "$(dirname "$0")/cdp"
+printf '%s|%s' "$BU_CDP_URL" "$DISCLAUDE_BROWSER_SOCKET" > "$(dirname "$0")/cdp"
 while read line; do :; done`);
-    const transport = new CodexAppServerTransport({ binary, env: { ...process.env, BU_CDP_URL: 'http://127.0.0.1:9222' } });
+    const transport = new CodexAppServerTransport({ binary, env: { ...process.env, BU_CDP_URL: 'http://127.0.0.1:9222', DISCLAUDE_BROWSER_SOCKET: '/tmp/browser.sock' } });
     try {
-      await vi.waitFor(() => expect(readFileSync(join(dirname(binary), 'cdp'), 'utf8').trim()).toBe('http://127.0.0.1:9222'));
+      await vi.waitFor(() => expect(readFileSync(join(dirname(binary), 'cdp'), 'utf8').trim()).toBe('|/tmp/browser.sock'));
       expect(readFileSync(join(dirname(binary), 'args'), 'utf8').trim().split('\n')).toEqual([
         'app-server', '--stdio', '--disable', 'browser_use', '--disable', 'browser_use_external', '--disable', 'browser_use_full_cdp_access',
       ]);

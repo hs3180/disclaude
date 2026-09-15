@@ -1,3 +1,4 @@
+import { browserAgentEnv } from '../../../utils/browser-env.js';
 import { CODEX_BROWSER_DISABLE_ARGS } from './browser-policy.js';
 /**
  * codex exec subprocess runner — spawn / JSONL parse / lifecycle (Issue #4630, S2 of #4627).
@@ -264,7 +265,7 @@ export class CodexExecRunner {
           // stdin MUST be ignored — an open stdin makes codex exec block on
           // "Reading additional input from stdin..." (verified, 0.132.0).
           stdio: ['ignore', 'pipe', 'pipe'],
-          env: options.env,
+          env: browserAgentEnv(options.env),
         });
         logger.info(
           {

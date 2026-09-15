@@ -30,7 +30,7 @@ function makeConfig(overrides: Partial<HarnessConfig> = {}): HarnessConfig {
   return {
     chatId: 'e2e-test',
     workspaceDir: process.cwd(), // exists by definition
-    cdpUrl: 'http://127.0.0.1:9222',
+    browserSocket: '/tmp/browser.sock',
     apiKey: 'sk-test',
     turnTimeoutMs: 1000,
     ...overrides,
@@ -178,32 +178,29 @@ describe('AGENT_E2E_PROMPT contract', () => {
     expect(AGENT_E2E_PROMPT).toMatch(/create the parent directory first/i);
   });
 
-  it('makes the agent reload the harness daemon before the dead-endpoint attach (daemon-pin trap, cdp-endpoint.md)', () => {
-    // Without the reload, step 4 runs against the daemon's still-healthy
-    // pinned session and check 5 passes vacuously — the exact false-positive
-    // docs/cdp-endpoint.md warns about and smoke.sh case 6 reloads around.
-    expect(AGENT_E2E_PROMPT).toMatch(/--reload/);
-    // And the reload must be ordered BEFORE the dead-endpoint attempt.
-    const reloadAt = AGENT_E2E_PROMPT.indexOf('--reload');
-    const deadAt = AGENT_E2E_PROMPT.indexOf('http://127.0.0.1:1');
-    expect(reloadAt).toBeGreaterThan(-1);
-    expect(deadAt).toBeGreaterThan(reloadAt);
+  it('tests socket failure without injecting direct connection or daemon lifecycle instructions', () => {
+    expect(AGENT_E2E_PROMPT).toContain('DISCLAUDE_BROWSER_SOCKET');
+    expect(AGENT_E2E_PROMPT).not.toMatch(/BU_CDP_|--reload|127\.0\.0\.1:1/);
+    expect(AGENT_E2E_PROMPT).toContain('next normal invocation must still work');
   });
 });
 
 describe('preflight', () => {
-  it('passes with key, cdp url and existing workspace', () => {
+  it.each(['codex', 'deepseek'] as const)('does not require Anthropic credentials for %s', agentBackend => {
+    expect(preflight(makeConfig({ apiKey: '', agentBackend })).ok).toBe(true);
+  });
+  it('passes with key, IPC socket and existing workspace', () => {
     expect(preflight(makeConfig()).ok).toBe(true);
   });
 
   it('reports each missing input separately', () => {
     const verdict = preflight(
-      makeConfig({ apiKey: '', cdpUrl: '', workspaceDir: '/nonexistent-dir-xyz' }),
+      makeConfig({ apiKey: '', browserSocket: '', workspaceDir: '/nonexistent-dir-xyz' }),
     );
     expect(verdict.ok).toBe(false);
     expect(verdict.problems).toHaveLength(3);
     expect(verdict.problems.some((p) => p.includes('API key'))).toBe(true);
-    expect(verdict.problems.some((p) => p.includes('CDP endpoint'))).toBe(true);
+    expect(verdict.problems.some((p) => p.includes('IPC socket'))).toBe(true);
     expect(verdict.problems.some((p) => p.includes('workspace'))).toBe(true);
   });
 });

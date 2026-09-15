@@ -1,3 +1,4 @@
+import { browserAgentEnv } from '../../../utils/browser-env.js';
 import { CODEX_BROWSER_DISABLE_ARGS } from './browser-policy.js';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface, type Interface as ReadlineInterface } from 'node:readline';
@@ -62,7 +63,7 @@ export class CodexAppServerTransport {
       sessionKey: options.sessionKey, runId: randomUUID(), ...options.correlation,
     }));
     this.child = spawn(options.binary ?? 'codex', ['app-server', '--stdio', ...CODEX_BROWSER_DISABLE_ARGS], {
-      env: options.env ?? process.env,
+      env: browserAgentEnv(options.env),
       stdio: ['pipe', 'pipe', 'pipe'],
       // A dedicated POSIX process group owns ordinary tool descendants too.
       detached: process.platform !== 'win32',

@@ -7,12 +7,24 @@ allowed-tools: [Bash, Read, Write]
 
 # Skill: browser-use (browser automation via Python-in-browser CLI)
 
-Drive a real browser by piping **Python** to the `browser-use` CLI. The CLI owns the browser
-lifecycle: it starts/attaches a daemon-managed Chrome, keeps the session persistent across
-invocations, and handles waiting/tabs for you. Your code only describes **what to do in the page**.
+Drive a real browser by piping **Python** to the `browser-use` CLI. The configured coordinator owns the browser
+lifecycle and control handoff, keeps browser state across invocations, and reuses
+the upstream harness for execution. Your code only describes **what to do in the page**.
 
 > Replaces the Playwright MCP skill pattern (`mcp__playwright__*`) per the reduce-MCP direction.
 > Tracked in [#4460](https://github.com/hs3180/disclaude/issues/4460).
+
+## Coordinated IPC mode
+
+When `DISCLAUDE_BROWSER_SOCKET` is set and the task PATH selects the disclaude
+browser-use adapter, keep using Python scripts on stdin. One invocation is one
+operation segment: put dependent navigation, input and verification in the same
+script. The service queues control requests and owns daemon startup/recovery;
+do not call `--reload`, `--update` or start a separate browser daemon. Relative
+artifact paths use the calling task directory. Shared pages and login state may
+be visible to the next holder; this is expected. If the service is unavailable,
+report that condition instead of bypassing the coordinator with a direct CDP
+connection. Keychain access is not required for normal browser operation.
 
 ## Quick start
 
@@ -24,8 +36,8 @@ PY
 ```
 
 - stdout is **whatever your Python prints** — `print()` is the result channel. Parse it directly.
-- Each invocation joins the **same persistent session** (default local daemon); state (tabs,
-  cookies, logins) survives across calls.
+- Each invocation requests control of the **shared browser**. Tabs can survive handoff,
+  but another caller may have changed the page; inspect it before continuing.
 - Empty stdin is an error — always pipe code.
 
 ## Helper reference (CLI 3.0, browser-use 0.13.7)
@@ -45,7 +57,7 @@ PY
 | tab management | `list_tabs()`, `switch_tab(target)`, `close_tab(target)` |
 
 Legacy pre-3.0 subcommands (`open`/`state`/`screenshot`/`eval`/`-c`/`--session`/`--cdp-url` …)
-are **removed**; the CLI prints a migration hint if used. `--cdp-url` became the `BU_CDP_URL` env var.
+are **removed**; the CLI prints a migration hint if used. Use the configured IPC entry point.
 
 > ⚠️ **First navigation in a session is `new_tab(url)`, not `goto_url(url)`** (upstream SKILL.md is
 > emphatic about this). `goto_url` navigates an *already-open* tab; calling it before any tab exists
@@ -109,19 +121,8 @@ Then report the artifact path in your reply (or send it to the chat via the chan
 
 ## Environment
 
-- Requires Python 3.11+ and the `browser-use` package; Chromium install: `browser-use install`.
-- **First-run config dir**: `browser-harness` needs a writable home dir (default
-  `~/.config/browser-harness`). On a clean host whose parent doesn't exist — or where `~/.config`
-  isn't writable — even `browser-use --help` crashes (`ensure_private_dir` does `mkdir(parents=False)`).
-  Set `BH_HOME=<writable-dir>` (or `XDG_CONFIG_HOME`) to redirect it; on headless/CI hosts the
-  `BU_CDP_URL` path avoids this entirely.
-- **Headless hosts**: pulling Chromium directly is fragile (shared libs / sandbox). Prefer a
-  stable external CDP endpoint — set `BU_CDP_URL=<ws://host:port>` and the CLI attaches to it
-  instead of launching its own browser (Chromium container decision: #4496).
-- **Codex agent**: disclaude applies Codex's network allowance to the active sandbox profile,
-  including `read-only` (`sandbox_read_only.network_access`). This keeps the default permission
-  mode read-only while allowing the browser-use CDP connection; `agent.codexNetworkAccess: false`
-  intentionally disables it.
-- Health check: `browser-use doctor` (or `--doctor`); daemon restart: `browser-use --reload`.
-- Upstream ships its own agent skill (`browser-use skill show`) — this repo's copy adds disclaude
-  artifact/workspace conventions on top of the same CLI.
+In disclaude coordinated mode, the operator configures the IPC socket and the
+browser-use adapter on the task PATH. Use stdin scripts only. Browser startup,
+connection settings and recovery belong to the coordinator. If the socket is
+unavailable, report the error; do not start a daemon or connect directly.
+Chromium Keychain access is not required for normal browser operations.

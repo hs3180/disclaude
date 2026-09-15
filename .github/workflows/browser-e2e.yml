@@ -1,0 +1,55 @@
+name: Browser Coordination E2E
+on:
+  pull_request:
+    paths:
+      - 'tests/e2e/browser-service.test.ts'
+      - 'bin/disclaude.js'
+      - 'packages/service/src/cli-main.ts'
+      - 'packages/service/src/service.ts'
+      - 'package*.json'
+      - 'packages/*/package.json'
+      - 'packages/service/src/browser-control/**'
+      - 'packages/core/src/utils/**'
+      - 'packages/core/src/sdk/providers/**'
+      - '.github/workflows/browser-e2e.yml'
+  push:
+    branches: [main, master]
+    paths:
+      - 'tests/e2e/browser-service.test.ts'
+      - 'bin/disclaude.js'
+      - 'packages/service/src/cli-main.ts'
+      - 'packages/service/src/service.ts'
+      - 'package*.json'
+      - 'packages/*/package.json'
+      - 'packages/service/src/browser-control/**'
+      - 'packages/core/src/utils/**'
+      - 'packages/core/src/sdk/providers/**'
+      - '.github/workflows/browser-e2e.yml'
+jobs:
+  acceptance:
+    name: Product browser lifecycle and handoff
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Build product
+        run: npm ci --include=dev && npm run build
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install real browser dependencies
+        run: |
+          python -m venv "$RUNNER_TEMP/browser-env"
+          "$RUNNER_TEMP/browser-env/bin/pip" install 'browser-use==0.13.10' 'browser-harness==0.1.13'
+      - name: Run product CLI lifecycle and shared-browser E2E
+        run: |
+          export DISCLAUDE_E2E_BROWSER_PYTHON="$RUNNER_TEMP/browser-env/bin/python"
+          export DISCLAUDE_E2E_CHROMIUM="$(command -v google-chrome)"
+          test -x "$DISCLAUDE_E2E_CHROMIUM"
+          "$DISCLAUDE_E2E_CHROMIUM" --version
+          node node_modules/vitest/vitest.mjs run tests/e2e/browser-service.test.ts

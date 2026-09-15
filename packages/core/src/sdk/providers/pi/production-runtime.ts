@@ -1,3 +1,4 @@
+import { browserAgentEnv } from '../../../utils/browser-env.js';
 /** Optional pi 0.83 runtime: per-query Anthropic-compatible model and native tools. */
 import type { AgentQueryOptions } from '../../types.js';
 import { adaptPiOptions } from './options-adapter.js';
@@ -60,7 +61,7 @@ export async function loadPiProduction(options: AgentQueryOptions): Promise<{
   const context = {
     env: new node.NodeExecutionEnv({
       cwd: options.cwd,
-      shellEnv: { ...process.env, ...options.env },
+      shellEnv: browserAgentEnv({ ...process.env, ...options.env }),
     }),
   };
   const active = adaptPiOptions(options).activeToolNames;

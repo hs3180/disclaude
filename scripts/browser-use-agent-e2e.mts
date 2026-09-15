@@ -1,36 +1,13 @@
 #!/usr/bin/env node
-/**
- * Agent-level browser-use e2e runner — CLI entry (Issue #4602 part 2, option b).
- *
- * Instantiates a real one-shot ChatAgent (the same AgentFactory.createAgent
- * entry the scheduler uses), feeds it the #4602 checklist prompt, and prints
- * the pass/fail table for the 5 assertion points (skill discovery / attach
- * without self-spawn / js() round-trip / screenshot artifact / CDP failure
- * path). Assertion + orchestration logic lives in
- * `packages/service/src/testing/browser-use-e2e.ts` (unit-tested there);
- * this file is the thin operator shell.
- *
- * Run with (from the repo root, one repeatable command — the #4602 acceptance):
- *   npx tsx scripts/browser-use-agent-e2e.mts \
- *     --workspace <dir> --cdp-url http://127.0.0.1:9222
- *
- * Preconditions (cannot be met from CI — operator shell only, same split as
- * the Card Kit bench #4398/#4416):
- *   - ANTHROPIC_API_KEY (or --api-key / provider config in disclaude.config.yaml)
- *   - a reachable CDP Chromium endpoint (docker compose --profile chromium up,
- *     #4613)
- *   - `browser-use` CLI on PATH for the agent subprocess (see
- *     skills/browser-use/SKILL.md "Environment")
- *
- * BU_CDP_URL is exported for this process; base-agent's buildSdkEnv forwards
- * the full process.env to the SDK subprocess, so the agent (and the
- * browser-use CLI it spawns) inherits the attach target.
- *
- * @module scripts/browser-use-agent-e2e
+/** Agent-level browser validation using the configured coordinated IPC entry point.
+ * Set DISCLAUDE_BROWSER_SOCKET and a PATH selecting the IPC browser-use adapter,
+ * then run: npx tsx scripts/browser-use-agent-e2e.mts --workspace <dir>
+ * A model API key is required. No Chromium endpoint is forwarded to the agent.
  */
 
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
+import { Config, setDefaultProvider } from '../packages/core/src/index.js';
 import { AgentFactory } from '../packages/service/src/agents/factory.js';
 import {
   AGENT_E2E_PROMPT,
@@ -55,12 +32,12 @@ function usage(): void {
 browser-use agent-level e2e (Issue #4602 part 2) — one-shot ChatAgent + 5-check verdict
 
 Usage:
-  npx tsx scripts/browser-use-agent-e2e.mts --workspace <dir> --cdp-url <url>
+  npx tsx scripts/browser-use-agent-e2e.mts --workspace <dir>
 
 Options:
   --workspace <dir>    workspace dir (agent cwd + artifact root).
                        Default: DISCLAUDE_WORKSPACE_DIR env or ./workspace
-  --cdp-url <url>      CDP endpoint for BU_CDP_URL (default: env BU_CDP_URL)
+  --cdp-url <url>      Retired; use DISCLAUDE_BROWSER_SOCKET and the IPC adapter PATH
   --api-key <key>      model API key (default: env ANTHROPIC_API_KEY)
   --model <name>       model override (default: disclaude config)
   --provider <name>    provider override (default: disclaude config)
@@ -102,14 +79,15 @@ async function main(): Promise<void> {
   const workspaceDir = path.resolve(
     argv.workspaceDir ?? process.env.DISCLAUDE_WORKSPACE_DIR ?? './workspace',
   );
-  const cdpUrl = argv.cdpUrl ?? process.env.BU_CDP_URL ?? '';
-  const apiKey = argv.apiKey ?? process.env.ANTHROPIC_API_KEY ?? '';
+  if (argv.cdpUrl) throw new Error('--cdp-url is retired for agent tests; configure the browser IPC socket');
+  const apiKey = argv.apiKey ?? Config.getAgentConfig().apiKey;
 
   const config: HarnessConfig = {
     chatId: 'e2e-browser-use-agent',
     workspaceDir,
-    cdpUrl,
+    browserSocket: process.env.DISCLAUDE_BROWSER_SOCKET,
     apiKey,
+    agentBackend: Config.AGENT_BACKEND,
     model: argv.model,
     provider: argv.provider,
     apiBaseUrl: argv.apiBaseUrl,
@@ -123,12 +101,7 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  // Export the attach target for the agent subprocess (see file header —
-  // buildSdkEnv forwards process.env). A dead BU_CDP_URL from the environment
-  // must not silently win over the explicit flag.
-  process.env.BU_CDP_URL = cdpUrl;
-  // Keep the agent away from the self-launch path even if it ignores the
-  // prompt: headless hosts are exactly where self-launch is fragile (#4496).
+  // Agent transport settings come from the coordinated environment.
   process.env.DISCLAUDE_WORKSPACE_DIR = workspaceDir;
 
   // Artifact parent dir: pre-created here so a screenshot check failure means
@@ -152,7 +125,12 @@ async function main(): Promise<void> {
     sendFile: async () => {},
   };
 
+  // Match production bootstrap before constructing a ChatAgent.
+  const agentBackend = Config.AGENT_BACKEND;
+  if (!agentBackend) throw new Error('No agent backend configured');
+  setDefaultProvider(agentBackend);
   const agent = AgentFactory.createAgent(config.chatId, callbacks, {
+    agentBackend,
     apiKey: config.apiKey,
     model: config.model,
     provider: config.provider,
