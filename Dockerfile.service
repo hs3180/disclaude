@@ -26,7 +26,7 @@ ARG NPM_REGISTRY=https://registry.npmjs.org
 ARG PIP_INDEX_URL
 ARG GH_INSTALL_MODE=apt-repo
 ARG GH_DEB_URL=
-ARG CODEX_VERSION=0.151.0
+ARG CODEX_VERSION=0.154.0
 ARG DSH_VERSION=0.1.2-rc.1
 
 # -----------------------------------------------------------------------------
