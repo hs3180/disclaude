@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 /** Explicit browser selection before delegating to the platform service manager. */
 import { execFileSync, spawn } from 'node:child_process';
-import { accessSync, constants, realpathSync } from 'node:fs';
+import { accessSync, constants, existsSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline/promises';
 import { chromiumConfigPath, readChromiumConfig } from './chromium-config.mjs';
 import { chromiumDownloadLayout, planChromiumDownload, installChromiumCandidate } from './chromium-download.mjs';
+import { planChromiumProfileCopy, copyChromiumProfile } from './chromium-profile-copy.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export function parseSetupArgs(args) {
@@ -17,7 +18,7 @@ export function parseSetupArgs(args) {
     if (['--yes', '--dry-run', '--headless', '--headed', '--isolated', '--autostart', '--no-autostart', '--download', '--allow-unverified-signature'].includes(name)) {
       if (name in result) throw new Error(`Repeated option: ${name}`);
       result[name] = true;
-    } else if (['--binary', '--profile', '--port', '--revision', '--browser-dir'].includes(name)) {
+    } else if (['--binary', '--profile', '--port', '--revision', '--browser-dir', '--copy-profile-from'].includes(name)) {
       if (name in result || !args[i + 1] || args[i + 1].startsWith('--')) throw new Error(`Provide one value for ${name}`);
       result[name] = args[++i];
     } else { throw new Error(`Unknown setup option: ${name}`); }
@@ -26,7 +27,7 @@ export function parseSetupArgs(args) {
   if (result['--autostart'] && result['--no-autostart']) throw new Error('Choose either --autostart or --no-autostart');
   if (result['--headless'] && result['--headed']) throw new Error('Choose either --headed or --headless');
   if (result['--port'] && (!/^\d+$/.test(result['--port']) || +result['--port'] < 1 || +result['--port'] > 65535)) throw new Error('Port must be between 1 and 65535');
-  for (const name of ['--binary', '--profile', '--browser-dir']) if (result[name] && !isAbsolute(result[name])) throw new Error(`${name} must be an absolute path`);
+  for (const name of ['--binary', '--profile', '--browser-dir', '--copy-profile-from']) if (result[name] && !isAbsolute(result[name])) throw new Error(`${name} must be an absolute path`);
   return result;
 }
 
@@ -74,6 +75,14 @@ export async function collectSetupSelection(options, saved, ask, download) {
   let autostart = options['--no-autostart'] ? '0' : options['--autostart'] ? '1' : saved.CHROMIUM_CDP_AUTOSTART || '1';
   if (ask) {
     if (!options['--profile']) profile = (await ask(`Dedicated persistent profile [${profile}]: `)).trim() || profile;
+    if (!options['--copy-profile-from'] && !existsSync(profile)) {
+      const copy = (await ask('Copy an existing closed profile into this new profile? [y/N]: ')).trim().toLowerCase();
+      if (copy && !['y', 'yes', 'n', 'no'].includes(copy)) throw new Error('Answer yes or no for profile copy');
+      if (['y', 'yes'].includes(copy)) {
+        options['--copy-profile-from'] = (await ask('Absolute source profile path (browser must be closed): ')).trim();
+        if (!isAbsolute(options['--copy-profile-from'])) throw new Error('Source profile path must be absolute');
+      }
+    }
     if (!options['--port']) port = (await ask(`Loopback CDP port [${port}]: `)).trim() || port;
     if (!options['--headless'] && !options['--headed']) {
       const choice = (await ask(`Visible browser window? [${headed === '1' ? 'Y/n' : 'y/N'}]: `)).trim().toLowerCase();
@@ -94,7 +103,7 @@ export async function collectSetupSelection(options, saved, ask, download) {
 
 async function main() {
   if (!['darwin', 'linux'].includes(process.platform)) throw new Error('Browser setup currently supports macOS and Linux');
-  if (process.argv.includes('--help')) { console.log('Usage: disclaude chromium-cdp setup [--binary /path|--download] [--revision number] [--browser-dir /path] [--allow-unverified-signature] [--profile /path] [--port number] [--headed|--headless] [--autostart|--no-autostart] [--yes|--dry-run]'); return; }
+  if (process.argv.includes('--help')) { console.log('Usage: disclaude chromium-cdp setup [--binary /path|--download] [--revision number] [--browser-dir /path] [--allow-unverified-signature] [--profile /path] [--copy-profile-from /closed/profile] [--port number] [--headed|--headless] [--autostart|--no-autostart] [--yes|--dry-run]'); return; }
   const options = parseSetupArgs(process.argv.slice(4));
   if (!process.stdin.isTTY && !options['--yes'] && !options['--dry-run']) throw new Error('Setup needs a terminal; pass explicit --binary or --download, and --yes for non-interactive use');
   const controller = new AbortController();
@@ -125,8 +134,11 @@ async function main() {
     let version;
     try { version = execFileSync(selection.CHROMIUM_CDP_BINARY, ['--version'], { encoding: 'utf8', timeout: 10_000 }).trim(); }
     catch { throw new Error('Selected executable did not report its version; current service unchanged'); }
+    const profileCopy = options['--copy-profile-from']
+      ? await planChromiumProfileCopy(options['--copy-profile-from'], selection.CHROMIUM_CDP_PROFILE_DIR, version, controller.signal) : undefined;
     const summary = { executable: selection.CHROMIUM_CDP_BINARY, version, profile: selection.CHROMIUM_CDP_PROFILE_DIR,
       endpoint: `http://127.0.0.1:${selection.CHROMIUM_CDP_PORT}`, mode: selection.CHROMIUM_CDP_HEADED === '1' ? 'headed' : 'headless',
+      ...(profileCopy ? { profileCopy: { source: profileCopy.source, destination: profileCopy.destination, entries: profileCopy.entries.length, bytes: profileCopy.bytes } } : {}),
       autostart: selection.CHROMIUM_CDP_AUTOSTART === '1', service: process.platform === 'darwin' ? 'launchd' : 'systemd user', configuration: chromiumConfigPath(),
       ...(artifact ? { download: { source: artifact.url, revision: artifact.revision, archiveSha256: artifact.archiveSha256, signature: artifact.signature, reused: artifact.reused } } : {}) };
     console.log(JSON.stringify(summary, null, 2));
@@ -134,6 +146,10 @@ async function main() {
     if (!options['--yes']) {
       const answer = (await ask('Apply this browser configuration and verify startup? [y/N]: ')).trim().toLowerCase();
       if (!['y', 'yes'].includes(answer)) { console.log('Setup cancelled; no service changes'); return; }
+    }
+    if (profileCopy) {
+      const record = await copyChromiumProfile(profileCopy, controller.signal);
+      console.log(JSON.stringify({ profileCopyCompleted: record, destination: profileCopy.destination }));
     }
     const adapter = join(root, 'scripts', process.platform === 'linux' ? 'chromium-systemd.mjs' : 'launchd.mjs');
     const selector = options['--isolated'] ? 'chromium-isolated' : 'chromium-cdp';

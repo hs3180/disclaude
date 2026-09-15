@@ -54,3 +54,20 @@ Acceptance: nine archive/integrity boundary tests pass. On macOS ARM64, the actu
 `configured` reports the saved browser selection, independently of invocation-only candidate overrides: executable path/availability, known snapshot source and recorded signature/version, profile path, the profile's `Last Version` marker and whether `SingletonLock` exists. A lock marker alone does not prove that its owner is alive. Status does not open the profile, read cookies, change the service or remove locks. Snapshot attribution comes from its nearby matching verification record; `payloadRevalidatedByStatus: false` explicitly means status has not rerun the payload integrity check.
 
 The top-level endpoint comes from the service definition used for the health probe. `configurationMayDifferFromLoadedService` warns that externally edited configuration/definitions can differ from an already-loaded process; metadata is not proof that the process was restarted with those settings. The report also gives service-definition/configuration locations and, on macOS, log paths. Existing-profile migration and live login persistence remain separate work.
+
+## Copy an offline profile before switching
+
+To preserve an existing Chromium user-data directory, select a new destination profile and use `--copy-profile-from /absolute/source`. In a terminal, choosing a profile path that does not yet exist also offers an optional copy question. The source browser must be closed explicitly; setup does not stop another browser for this operation.
+
+```sh
+disclaude chromium-cdp setup --binary /absolute/path/to/browser \
+  --profile /absolute/path/to/new-profile \
+  --copy-profile-from /absolute/path/to/closed-profile \
+  --headless --yes
+```
+
+The source must contain a regular JSON `Local State` file (the user-data root, rather than its `Default` subdirectory). Preview reports canonical source/destination paths, entry count and bytes; `--dry-run` creates no copy. Existing destinations, nested paths, live/unknown profile owners and known major-version downgrades are refused. After a successful copy, repeat ordinary setup with the new profile and omit the copy option; copying again never overwrites an existing destination.
+
+The copier checks space, stages privately beside the destination, compares source metadata and content before publishing and supports cancellation. It keeps the original profile unchanged. Source file growth, changed previews and unsupported links/special files fail explicitly. Only root-level runtime markers (`SingletonLock`, `SingletonSocket`, `SingletonCookie`, `DevToolsActivePort`, `RunningChromeVersion`) and this copier's previous provenance record are omitted. Other symlinks are not followed or silently dropped. Files retain owner permission bits inside private directories. A new `.disclaude-profile-copy.json` records source, time, size and a content digest.
+
+These are offline consistency checks, not a filesystem snapshot against concurrent independent writers. The destination is reserved exclusively before publication; a changed/nonempty reservation is preserved on failure. Failed or cancelled staging is removed. A completed copy is retained if subsequent browser activation fails, and the existing service adapter handles its configuration recovery. Copying does not decrypt cookies, change Keychain/system settings, verify real-account login portability or roll back profile schema changes. Actual source/profile preservation and startup acceptance are recorded in the PR; login persistence remains a separate criterion.
