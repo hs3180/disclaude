@@ -1,4 +1,4 @@
-name: Browser Harness IPC Lab
+name: Browser Coordination E2E
 on:
   pull_request:
     paths:
@@ -8,11 +8,11 @@ on:
       - 'packages/service/src/service.ts'
       - 'package*.json'
       - 'packages/*/package.json'
-      - 'experiments/browser-control/**'
+      - 'tests/e2e/browser-control/**'
       - 'packages/service/src/browser-control/**'
       - 'packages/core/src/utils/**'
       - 'packages/core/src/sdk/providers/**'
-      - '.github/workflows/browser-harness-lab.yml'
+      - '.github/workflows/browser-e2e.yml'
   push:
     branches: [main, master]
     paths:
@@ -22,11 +22,11 @@ on:
       - 'packages/service/src/service.ts'
       - 'package*.json'
       - 'packages/*/package.json'
-      - 'experiments/browser-control/**'
+      - 'tests/e2e/browser-control/**'
       - 'packages/service/src/browser-control/**'
       - 'packages/core/src/utils/**'
       - 'packages/core/src/sdk/providers/**'
-      - '.github/workflows/browser-harness-lab.yml'
+      - '.github/workflows/browser-e2e.yml'
 jobs:
   acceptance:
     name: Real harness ownership and handoff
@@ -42,7 +42,7 @@ jobs:
       - name: Build PR SDK for injection regression
         run: npm ci --include=dev && npm run build
       - name: Build pinned browser-use acceptance image
-        run: docker build -t disclaude-browser-harness-lab -f experiments/browser-control/Dockerfile .
+        run: docker build -t disclaude-browser-e2e -f tests/e2e/browser-control/Dockerfile .
       - name: Run real Chromium and harness over IPC
         run: |
           mkdir -p "$RUNNER_TEMP/browser-harness-evidence"
@@ -50,12 +50,12 @@ jobs:
             -e DISCLAUDE_BROWSER_SDK_MODULE=file:///sdk/utils/sdk.js \
             -v "$GITHUB_WORKSPACE/packages/core/dist:/sdk:ro" \
             -v "$RUNNER_TEMP/browser-harness-evidence:/evidence" \
-            disclaude-browser-harness-lab
+            disclaude-browser-e2e
       - name: Run Linux product CLI lifecycle and shared-browser E2E
         run: |
           docker run --rm --init --shm-size=2g --memory=4g \
             -v "$GITHUB_WORKSPACE:/product" -w /product \
-            --entrypoint /bin/bash disclaude-browser-harness-lab -lc '
+            --entrypoint /bin/bash disclaude-browser-e2e -lc '
               set -euo pipefail
               export DISCLAUDE_E2E_BROWSER_PYTHON=/opt/browser-env/bin/python
               export DISCLAUDE_E2E_CHROMIUM="$(find /ms-playwright -path "*/chrome-linux*/chrome" -type f -print -quit)"

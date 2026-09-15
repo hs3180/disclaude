@@ -1,4 +1,0 @@
-#!/usr/bin/env node
-// Task-scoped PATH shim. The service invokes upstream via Python, avoiding recursion.
-import { main } from '../client.mjs';
-main().catch(error => { console.error(error.message); process.exitCode = 1; });

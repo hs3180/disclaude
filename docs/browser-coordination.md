@@ -3,8 +3,8 @@
 The browser coordinator runs as a managed child of `disclaude start`. It queues
 competing browser-use operations and reclaims the current worker before granting
 control to the next caller. The runtime is shipped in the service package;
-`experiments/browser-control` retains reproducible lab entry points that delegate
-to the same implementation.
+actual browser-use fault and handoff scenarios live under `tests/e2e/browser-control`
+and exercise this implementation directly.
 
 ## Configure the service
 
@@ -96,5 +96,17 @@ It starts the real Disclaude service, checks the public status command, executes
 competing browser-use callers against the same real page, then checks shutdown,
 profile retention and service restart. Without both environment variables the
 case is reported skipped. This verifies the CLI/harness/browser chain, not a model
-agent deciding how to use it. The historical fault-handoff runner remains useful
-while the overall test consolidation in #5016 is pending.
+agent deciding how to use it. The fault-handoff E2E suite covers caller/daemon death, expiry, stale control,
+working-directory preservation and repeated handoff against real Chromium:
+
+```sh
+DISCLAUDE_CHROMIUM_BINARY=/absolute/path/to/chromium \
+DISCLAUDE_BROWSER_PYTHON=/absolute/path/to/python \
+DISCLAUDE_BROWSER_MANAGED=1 \
+node tests/e2e/browser-control/harness-acceptance.mjs /absolute/path/to/evidence
+```
+
+Linux CI runs both E2E suites in the pinned image from
+`tests/e2e/browser-control/Dockerfile`. Results are uploaded as CI artifacts;
+generated platform snapshots and independent experiment runners are not shipped.
+The test layout follows #5016: core unit tests plus actual-use-case E2E.

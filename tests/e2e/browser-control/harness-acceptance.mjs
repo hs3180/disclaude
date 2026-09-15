@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { connectBrowser } from './client.mjs';
-import { launchBrowser } from './managed-browser.mjs';
-import { connect } from './cdp.mjs';
+import { connectBrowser } from '../../../packages/service/src/browser-control/client.mjs';
+import { launchBrowser } from '../../../packages/service/src/browser-control/managed-browser.mjs';
+import { connect } from '../../../packages/service/src/browser-control/cdp.mjs';
 const output = resolve(process.argv[2] || './harness-evidence'); await mkdir(output, { recursive: true });
 await rm(resolve(output,'failure.json'),{force:true});
 const runtime = await mkdtemp('/tmp/dcbs-');
@@ -44,7 +44,7 @@ try {
   }
   if (!managed) assert(port, 'Chromium endpoint discovery failed');
   let endpoint = managed ? '' : `http://127.0.0.1:${port}`;
-  service = spawn(process.execPath, [new URL('./service.mjs', import.meta.url).pathname], {
+  service = spawn(process.execPath, [new URL('../../../packages/service/src/browser-control/service.mjs', import.meta.url).pathname], {
     env: { ...process.env, BU_CDP_URL: endpoint, DISCLAUDE_CHROMIUM_BINARY: managed ? binary : '', DISCLAUDE_CHROMIUM_PROFILE: profile, DISCLAUDE_CHROMIUM_HEADLESS: '1', DISCLAUDE_BROWSER_SOCKET: socket,
       DISCLAUDE_BROWSER_EVENTS: journal, DISCLAUDE_BROWSER_WORKSPACE: output,
     }, stdio: ['ignore','pipe','pipe'] });
@@ -123,7 +123,9 @@ try {
     assert.equal(agentEnv.DISCLAUDE_BROWSER_SOCKET, socket);
     check('compiled SDK strips stale CDP injection and preserves coordinated transport');
   }
-  agentEnv.PATH = new URL('./bin/', import.meta.url).pathname+':'+agentEnv.PATH;
+  const clientBin = resolve(runtime, 'bin'); await mkdir(clientBin, { mode: 0o700 });
+  await writeFile(resolve(clientBin, 'browser-use'), '#!/usr/bin/env node\nimport { main } from '+JSON.stringify(new URL('../../../packages/service/src/browser-control/client.mjs', import.meta.url).href)+';\nmain().catch(e => { console.error(e.message); process.exitCode = 1; });\n', { mode: 0o700 });
+  agentEnv.PATH = clientBin+':'+agentEnv.PATH;
   const cliResult = await new Promise((resolve, reject) => {
     const child = spawn('browser-use', [], {
       env: agentEnv, stdio: ['pipe','pipe','pipe'] });
