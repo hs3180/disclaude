@@ -31,6 +31,18 @@ describe('official Chromium download through product setup', () => {
         await expect(access(browsers)).rejects.toThrow();
         await expect(access(profile)).rejects.toThrow();
         attempted = true;
+        if (process.env.DISCLAUDE_E2E_EXPECT_SANDBOX_REFUSAL === '1') {
+          // This is a separate refusal contract, not a successful browser installation.
+          expect((await readFile('/proc/sys/kernel/apparmor_restrict_unprivileged_userns', 'utf8')).trim()).toBe('1');
+          await expect(exec(process.execPath, [...args, '--yes'], { env, timeout: 420_000, maxBuffer: 1024 * 1024 }))
+            .rejects.toThrow('cannot establish its Linux sandbox');
+          await expect(access(config)).rejects.toThrow();
+          await expect(access(profile)).rejects.toThrow();
+          expect(await readdir(browsers)).toEqual([]);
+          console.info('CHROMIUM_DOWNLOAD_REFUSAL', JSON.stringify({ revision, platform: process.platform,
+            sandboxRestricted: true, candidateCleaned: true, serviceCreated: false, installed: false }));
+          return;
+        }
         const installed = await exec(process.execPath, [...args, '--yes'], { env, timeout: 420_000, maxBuffer: 1024 * 1024 });
         expect(installed.stdout).toContain('"cdpReady":true');
         const destination = join(browsers, `Linux_x64-${revision}`);

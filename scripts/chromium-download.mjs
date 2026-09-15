@@ -180,7 +180,15 @@ export async function installChromiumCandidate(plan, { headless = false, allowUn
       if (signature.status === 'failed' && !allowUnverifiedSignature && !await confirmSignature?.(signature)) throw new Error('Chromium archive integrity passed, but macOS signature verification failed; review the signature result before explicitly accepting it');
     }
     const version = (await exec(binary, ['--version'], { timeout: 10000, signal })).stdout.trim();
-    const result = await exec(process.execPath, [join(project, 'bin/disclaude.js'), 'browser', 'doctor', '--binary', binary, ...(headless ? ['--headless'] : [])], { timeout: 90000, maxBuffer: 1024 * 1024, signal });
+    let result;
+    try {
+      result = await exec(process.execPath, [join(project, 'bin/disclaude.js'), 'browser', 'doctor', '--binary', binary, ...(headless ? ['--headless'] : [])], { timeout: 90000, maxBuffer: 1024 * 1024, signal });
+    } catch (error) {
+      if (process.platform === 'linux' && /No usable sandbox!/.test(String(error.stderr))) {
+        throw new Error('Downloaded Chromium cannot establish its Linux sandbox in this environment. Candidate discarded; current service unchanged. Select a system-installed browser with working sandbox support, or ask the system administrator to review the Chromium sandbox policy. Setup does not disable the sandbox or change system security settings. Details: https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md');
+      }
+      throw error;
+    }
     const diagnosis = JSON.parse(result.stdout);
     if (!diagnosis.usable) throw new Error('Downloaded Chromium failed its temporary-profile diagnosis');
     const record = { version: 1, revision: plan.revision, platform: plan.platform, url: plan.url, generation: plan.generation,

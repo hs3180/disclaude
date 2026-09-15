@@ -61,8 +61,18 @@ jobs:
           node node_modules/vitest/vitest.mjs run tests/e2e/chromium-systemd.test.ts tests/e2e/chromium-setup.test.ts
 
   download:
-    name: Downloaded Chromium setup lifecycle
-    runs-on: ubuntu-latest
+    name: Downloaded Chromium (${{ matrix.contract }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            contract: real setup lifecycle
+            refusal: '0'
+          - os: ubuntu-24.04
+            contract: restricted sandbox refusal
+            refusal: '1'
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 12
     permissions:
       contents: read
@@ -82,4 +92,5 @@ jobs:
           systemd --version
           export DISCLAUDE_E2E_CHROMIUM_DOWNLOAD=1
           export DISCLAUDE_E2E_CHROMIUM_REVISION=1698254
+          export DISCLAUDE_E2E_EXPECT_SANDBOX_REFUSAL='${{ matrix.refusal }}'
           node node_modules/vitest/vitest.mjs run tests/e2e/chromium-download.test.ts
