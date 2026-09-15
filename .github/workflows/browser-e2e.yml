@@ -4,6 +4,8 @@ on:
     paths:
       - 'tests/e2e/browser-service.test.ts'
       - 'tests/e2e/browser-doctor.test.ts'
+      - 'tests/e2e/browser-smoke.test.ts'
+      - 'scripts/browser-use-smoke*'
       - 'bin/disclaude.js'
       - 'packages/service/src/cli-main.ts'
       - 'packages/service/src/service.ts'
@@ -18,6 +20,8 @@ on:
     paths:
       - 'tests/e2e/browser-service.test.ts'
       - 'tests/e2e/browser-doctor.test.ts'
+      - 'tests/e2e/browser-smoke.test.ts'
+      - 'scripts/browser-use-smoke*'
       - 'bin/disclaude.js'
       - 'packages/service/src/cli-main.ts'
       - 'packages/service/src/service.ts'
@@ -54,4 +58,4 @@ jobs:
           export DISCLAUDE_E2E_CHROMIUM="$(command -v google-chrome)"
           test -x "$DISCLAUDE_E2E_CHROMIUM"
           "$DISCLAUDE_E2E_CHROMIUM" --version
-          node node_modules/vitest/vitest.mjs run tests/e2e/browser-service.test.ts tests/e2e/browser-doctor.test.ts
+          node node_modules/vitest/vitest.mjs run tests/e2e/browser-service.test.ts tests/e2e/browser-doctor.test.ts tests/e2e/browser-smoke.test.ts

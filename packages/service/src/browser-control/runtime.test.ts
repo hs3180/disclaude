@@ -87,12 +87,14 @@ describe('managed browser lifecycle', () => {
     expect(JSON.parse(readFileSync(`${env.DISCLAUDE_BROWSER_SOCKET!  }.lock`, 'utf8')).instance).toBe('another-instance');
   });
   it('reports a crashed ready coordinator without silently restarting or restoring CDP access', async () => {
-    const { env, entry } = fixture('process.send({ready:true,socket:process.env.DISCLAUDE_BROWSER_SOCKET}); setTimeout(()=>process.exit(2),150);');
+    const { env, entry } = fixture('process.send({ready:true,socket:process.env.DISCLAUDE_BROWSER_SOCKET}); setTimeout(()=>{console.error("fixture broker failure");process.exit(2);},150);');
     let unavailable = '';
     const runtime = (await startBrowserRuntime(env, message => { unavailable = message; }, entry))!;
     runtimes.push(runtime);
     await new Promise(resolve => setTimeout(resolve, 300));
     expect(unavailable).toContain('coordinator exited');
+    expect(unavailable).toContain('"code":2');
+    expect(unavailable).toContain('fixture broker failure');
     expect(env.DISCLAUDE_BROWSER_BIN).toBeDefined();
   });
 });

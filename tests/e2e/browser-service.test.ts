@@ -56,11 +56,13 @@ describe('user starts Disclaude and shares its managed browser', () => {
       expect(code, output).toBe(0);
     }
     const localHost = /^(?:127\.0\.0\.1|localhost)(?::\d+)?$/u;
+    nock.enableNetConnect(localHost);
     if (process.env.DISCLAUDE_E2E_BROWSER_PI_MODEL) {
       const api = new URL(process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com');
       const apiHostWithPort = `${api.hostname}:${api.port || (api.protocol === 'https:' ? '443' : '80')}`;
       nock.enableNetConnect(host => localHost.test(host) || host === api.host || host === apiHostWithPort);
     }
+    let invocation = 0;
     try {
       for (let attempt = 0; attempt < 2; attempt++) {
         output = '';
@@ -85,6 +87,7 @@ describe('user starts Disclaude and shares its managed browser', () => {
         expect(taskEnv.BU_CDP_URL).toBeUndefined();
         expect(taskEnv.BU_CDP_WS).toBeUndefined();
         const run = (script: string, invocationEnv = taskEnv, onSpawn?: (task: ReturnType<typeof spawn>) => void): Promise<string> => new Promise((done, reject) => {
+          const invocationId = ++invocation;
           const task = spawn('browser-use', [], { env: invocationEnv, cwd: root, stdio: ['pipe', 'pipe', 'pipe'] });
           callers.add(task);
           task.once('close', () => callers.delete(task));
@@ -92,7 +95,9 @@ describe('user starts Disclaude and shares its managed browser', () => {
           let stdout = '', stderr = '';
           task.stdout.on('data', d => { stdout += d; }); task.stderr.on('data', d => { stderr += d; });
           task.on('error', reject);
-          task.on('close', code => code === 0 ? done(stdout) : reject(new Error(stderr)));
+          task.on('close', code => code === 0 ? done(stdout) : reject(new Error(
+            `Browser invocation ${invocationId} failed (exit ${code}): ${stderr}`,
+          )));
           task.stdin.end(script);
         });
         await run("goto_url('data:text/html,<h1>Shared research</h1><input id=value>')\nassert wait_for_element('#value')\nfill_input('#value','first')\n");
@@ -179,6 +184,9 @@ describe('user starts Disclaude and shares its managed browser', () => {
         }
         await writeFile(join(root, 'profile', 'preserve-test.txt'), 'user profile retained');
         const cdpPort = (await readFile(join(root, 'profile', 'DevToolsActivePort'), 'utf8')).split('\n')[0];
+        // Establish a real positive probe before negative stop/crash assertions;
+        // a blocked loopback request must not masquerade as browser shutdown.
+        expect((await fetch(`http://127.0.0.1:${cdpPort}/json/version`, { signal: AbortSignal.timeout(5000) })).ok).toBe(true);
         if (attempt === 0) {
           const descendantFile = join(root, 'crash-descendant.pid');
           const crashMarker = join(root, 'crash-must-not-run');
@@ -218,6 +226,11 @@ describe('user starts Disclaude and shares its managed browser', () => {
         await rejectUpstream();
         await expect(exec(process.execPath, [executable, 'browser', 'status'], { env, cwd: root, timeout: 5000 })).rejects.toThrow();
       }
+    } catch (error) {
+      // The isolated service uses a generated offline config. Retain its failure
+      // diagnostics instead of reducing broker failures to a client EOF alone.
+      console.error('BROWSER_SERVICE_FAILURE', output.slice(-16_000));
+      throw error;
     } finally { if (process.env.DISCLAUDE_E2E_BROWSER_PI_MODEL) { nock.enableNetConnect(localHost); } for (const pid of crashDescendants) { try { process.kill(pid, 'SIGKILL'); } catch { /* Already gone. */ } } for (const caller of callers) { caller.kill('SIGKILL'); } await stop(); await rm(root, { recursive: true, force: true }); }
   }, 480_000);
 });
