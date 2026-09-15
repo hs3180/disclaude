@@ -21,6 +21,7 @@ import {
   type ChannelApiHandlers,
   type SystemMessage,
 } from '@disclaude/core';
+import { persistentFileStorageProvider } from './rest/file-storage.js';
 import { RestChannel, type RestChannelConfig } from './rest-channel.js';
 import { FeishuChannel, type FeishuChannelConfig } from './feishu-channel.js';
 import { WeChatChannel, type WeChatChannelConfig } from './wechat/index.js';
@@ -56,7 +57,7 @@ import {
 export const REST_WIRED_DESCRIPTOR: WiredChannelDescriptor<RestChannelConfig> = {
   type: 'rest',
   name: 'REST API',
-  factory: (config) => new RestChannel(config),
+  factory: (config) => new RestChannel({ ...config, fileStorageServiceProvider: config.fileStorageServiceProvider ?? persistentFileStorageProvider }),
   defaultCapabilities: {
     supportsCard: true,
     supportsThread: false,

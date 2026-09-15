@@ -80,3 +80,7 @@ docker-compose*
 repl.history
 *.bak
 *.tmp
+
+# Local acceptance records and worktree artifacts
+.local/
+chat/
