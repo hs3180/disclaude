@@ -132,3 +132,36 @@ This covers sequential model backends sharing a page. It does not establish
 simultaneous model arbitration, all provider backends, real-site authentication or
 Feishu interaction. The non-model portion separately tests concurrent callers and
 abandoned-worker recovery.
+
+
+## Accidental upstream CLI selection
+
+In coordinated agent environments, `BH_RUNTIME_DIR` and `BH_TMP_DIR` point to the
+OS null device and `BH_REQUIRE_EXISTING_DAEMON=1`. The upstream browser-harness
+0.1.13 entry cannot treat that device as a directory and fails before discovering
+or spawning a default daemon. This guard remains effective after the coordinator
+stops. The product launcher uses IPC; the coordinator's worker sets a separate
+private runtime and continues to execute normal operations.
+
+This addresses a real model choosing an absolute upstream executable instead of
+the supplied launcher. It is cooperative routing protection, not a same-user
+security sandbox: arbitrary shell code can remove environment variables. Do not
+interpret environment filtering as protection against deliberately bypassing it.
+
+Optional `DISCLAUDE_E2E_BROWSER_CLAUDE_MODEL` and
+`DISCLAUDE_E2E_BROWSER_PI_MODEL` add Claude SDK and Pi harnesses to the existing
+sequential model test. Supply a model supported by the configured Anthropic-compatible
+API; a Codex model name does not automatically work there. Pi requires its optional
+0.83.0 packages as described in [Pi setup](pi-backend.md). Only the configured API
+host is allowed through the test network guard for this explicit opt-in. Default
+CI makes no model requests. Claude/Pi expose Bash for this controlled task, and the
+prompt supplies an exact stdin pipe command; this does not test unrestricted Skill
+selection or compare model quality.
+
+On 2026-09-16, macOS ARM64 passed the full dsh → Codex → Claude SDK → Pi sequence,
+independent readback, blocked upstream entry before/after service stop, broker-crash
+cleanup and restart in 55.65 seconds. Versions: Node 24.8.0, Chromium 155.0.8057.0,
+dsh 0.1.2-rc.1, Codex 0.154.0, Claude SDK 0.3.263, Pi 0.83.0. dsh/Claude/Pi used
+DeepSeek's `deepseek-flash` through their respective harnesses; Codex used its
+configured model. This is harness interoperability evidence, not a Claude-model
+or performance benchmark.

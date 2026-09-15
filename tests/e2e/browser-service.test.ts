@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import nock from 'nock';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdtemp, mkdir, writeFile, rm, readFile, access } from 'node:fs/promises';
@@ -7,6 +8,8 @@ import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import { browserAgentEnv } from '../../packages/core/src/utils/browser-env.js';
+import { ClaudeSDKProvider } from '../../packages/core/src/sdk/providers/claude/provider.js';
+import { PiAgentProvider } from '../../packages/core/src/sdk/providers/pi/provider.js';
 import { CodexAgentProvider } from '../../packages/core/src/sdk/providers/codex/provider.js';
 import type { AgentMessage } from '../../packages/core/src/sdk/types.js';
 import { DeepSeekHarnessProvider } from '../../packages/core/src/sdk/providers/deepseek/provider.js';
@@ -52,6 +55,12 @@ describe('user starts Disclaude and shares its managed browser', () => {
       if (code === 'timeout') { child.kill('SIGKILL'); throw new Error('Disclaude shutdown timed out'); }
       expect(code, output).toBe(0);
     }
+    const localHost = /^(?:127\.0\.0\.1|localhost)(?::\d+)?$/u;
+    if (process.env.DISCLAUDE_E2E_BROWSER_PI_MODEL) {
+      const api = new URL(process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com');
+      const apiHostWithPort = `${api.hostname}:${api.port || (api.protocol === 'https:' ? '443' : '80')}`;
+      nock.enableNetConnect(host => localHost.test(host) || host === api.host || host === apiHostWithPort);
+    }
     try {
       for (let attempt = 0; attempt < 2; attempt++) {
         output = '';
@@ -68,6 +77,11 @@ describe('user starts Disclaude and shares its managed browser', () => {
         const status = await exec(process.execPath, [executable, 'browser', 'status'], { env, cwd: root, timeout: 5000 });
         expect(JSON.parse(status.stdout).state).toBe('idle');
         const taskEnv = browserAgentEnv({ ...env, DISCLAUDE_BROWSER_BIN: join(root, 'bin'), BU_CDP_URL: 'http://stale.invalid:9223', BU_CDP_WS: 'ws://stale.invalid' });
+        // A wrong upstream executable must fail before reaching a default daemon.
+        const rejectUpstream = () => expect(exec(process.env.DISCLAUDE_E2E_BROWSER_PYTHON!,
+          ['-c', 'from browser_harness.run import main; main()'], { env: taskEnv, cwd: root, timeout: 10_000 }))
+          .rejects.toMatchObject({ stderr: expect.stringMatching(/FileExistsError|NotADirectoryError/u) });
+        await rejectUpstream();
         expect(taskEnv.BU_CDP_URL).toBeUndefined();
         expect(taskEnv.BU_CDP_WS).toBeUndefined();
         const run = (script: string, invocationEnv = taskEnv, onSpawn?: (task: ReturnType<typeof spawn>) => void): Promise<string> => new Promise((done, reject) => {
@@ -121,6 +135,8 @@ describe('user starts Disclaude and shares its managed browser', () => {
           const backends = [
             ...(process.env.DISCLAUDE_E2E_BROWSER_MODEL ? ['deepseek'] : []),
             ...(process.env.DISCLAUDE_E2E_BROWSER_CODEX === '1' ? ['codex'] : []),
+            ...(process.env.DISCLAUDE_E2E_BROWSER_CLAUDE_MODEL ? ['claude'] : []),
+            ...(process.env.DISCLAUDE_E2E_BROWSER_PI_MODEL ? ['pi'] : []),
           ];
           for (const backend of backends) {
             if (backend === 'deepseek') {
@@ -129,26 +145,31 @@ describe('user starts Disclaude and shares its managed browser', () => {
             }
             const provider = backend === 'deepseek'
               ? new DeepSeekHarnessProvider({ env: taskEnv, dshHome: join(root, 'dsh-home') })
-              : new CodexAgentProvider({ env: taskEnv, transport: 'app-server', builtinsDir: root, execTimeoutMs: 90_000 });
+              : backend === 'codex' ? new CodexAgentProvider({ env: taskEnv, transport: 'app-server', builtinsDir: root, execTimeoutMs: 90_000 })
+                : backend === 'claude' ? new ClaudeSDKProvider() : new PiAgentProvider();
             const marker = `${backend}-model-handoff-${Date.now()}`;
             const script = `print("PREVIOUS:" + js("document.querySelector('#value').value"))\nassert js("document.querySelector('#value').value") == ${JSON.stringify(previous)}\nfill_input('#value', ${JSON.stringify(marker)})\nprint(js("document.querySelector('#value').value"))\n`;
             async function* input() {
-              yield { role: 'user' as const, content: `Use your shell tool to execute browser-use, supplying this exact Python script on stdin:\n${script}Then report the value. The shared page is already open. Do not launch another browser, use direct CDP, delegate, or modify unrelated files.` };
+              const quotedScript = "'" + script.replaceAll("'", "'\\''") + "'";
+              yield { role: 'user' as const, content: `Use your Bash/shell tool to run exactly this command:\nprintf '%s' ${quotedScript} | browser-use\nThen report the value. The shared page is already open. Do not invoke skills, search files, discover other tools, launch another browser, use direct CDP, delegate, or modify unrelated files.` };
             }
-            const stream = provider.queryStream(input(), { cwd: root, settingSources: [],
-              ...(backend === 'deepseek' ? { model: process.env.DISCLAUDE_E2E_BROWSER_MODEL } : {}) });
+            const model = backend === 'deepseek' ? process.env.DISCLAUDE_E2E_BROWSER_MODEL
+              : backend === 'claude' ? process.env.DISCLAUDE_E2E_BROWSER_CLAUDE_MODEL
+                : backend === 'pi' ? process.env.DISCLAUDE_E2E_BROWSER_PI_MODEL : undefined;
+            const stream = provider.queryStream(input(), { cwd: root, settingSources: [], env: taskEnv,
+              ...(['claude', 'pi'].includes(backend) ? { tools: ['Bash'], allowedTools: ['Bash'] } : {}), ...(model ? { model } : {}) });
             const messages: AgentMessage[] = [];
             let timedOut = false;
             const deadline = setTimeout(() => { timedOut = true; void stream.handle.cancel(); }, 90_000);
             try {
               for await (const message of stream.iterator) { messages.push(message); }
               expect(timedOut).toBe(false);
-              expect(messages.some(message => message.type === 'error')).toBe(false);
-              expect(messages.some(message => message.type === 'tool_use')).toBe(true);
-              expect(messages.some(message => message.type === 'tool_result' && message.content.includes(`PREVIOUS:${previous}`))).toBe(true);
               const result = messages.findLast(message => message.type === 'result');
               expect(result).toBeDefined();
-              expect(result?.metadata?.terminatedReason).toBeUndefined();
+              expect(result?.metadata?.terminatedReason, result?.content).toBeUndefined();
+              expect(messages.some(message => message.type === 'error')).toBe(false);
+              expect(messages.some(message => message.type === 'tool_use'), JSON.stringify(messages.filter(message => message.type === 'text' || message.type === 'error'))).toBe(true);
+              expect(messages.some(message => message.type === 'tool_result' && message.content.includes(`PREVIOUS:${previous}`))).toBe(true);
               if (backend === 'deepseek') { expect(result?.metadata?.stopReason).toBe('completed'); }
               expect(await run("print(js(\"document.querySelector('#value').value\"))\n")).toContain(marker);
               console.info('BROWSER_MODEL_HANDOFF', JSON.stringify({ backend, previousStateVerified: true, independentReadback: true }));
@@ -194,8 +215,9 @@ describe('user starts Disclaude and shares its managed browser', () => {
         await expect(access(socket + '.lock')).rejects.toThrow();
         await expect(fetch(`http://127.0.0.1:${cdpPort}/json/version`, { signal: AbortSignal.timeout(1000) })).rejects.toThrow();
         expect(await readFile(join(root, 'profile', 'preserve-test.txt'), 'utf8')).toBe('user profile retained');
+        await rejectUpstream();
         await expect(exec(process.execPath, [executable, 'browser', 'status'], { env, cwd: root, timeout: 5000 })).rejects.toThrow();
       }
-    } finally { for (const pid of crashDescendants) { try { process.kill(pid, 'SIGKILL'); } catch { /* Already gone. */ } } for (const caller of callers) { caller.kill('SIGKILL'); } await stop(); await rm(root, { recursive: true, force: true }); }
-  }, 300_000);
+    } finally { if (process.env.DISCLAUDE_E2E_BROWSER_PI_MODEL) { nock.enableNetConnect(localHost); } for (const pid of crashDescendants) { try { process.kill(pid, 'SIGKILL'); } catch { /* Already gone. */ } } for (const caller of callers) { caller.kill('SIGKILL'); } await stop(); await rm(root, { recursive: true, force: true }); }
+  }, 480_000);
 });

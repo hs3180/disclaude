@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { devNull } from 'node:os';
 import { browserAgentEnv } from './browser-env.js';
 import { buildSdkEnv } from './sdk.js';
 afterEach(() => vi.unstubAllEnvs());
@@ -19,11 +20,13 @@ describe('coordinated browser environment', () => {
       'BU_CDP_WS',
       'CHROMIUM_CDP_PORT',
       'DISCLAUDE_CHROMIUM_BINARY',
-      'BH_RUNTIME_DIR',
     ]) {
       expect(env).not.toHaveProperty(key);
     }
     expect(env.NORMAL_SETTING).toBe('preserved');
+    expect(env.BH_RUNTIME_DIR).toBe(devNull);
+    expect(env.BH_TMP_DIR).toBe(devNull);
+    expect(env.BH_REQUIRE_EXISTING_DAEMON).toBe('1');
     expect(process.env.BU_CDP_URL).toBe('http://inherited.invalid:9223');
     expect(browserAgentEnv({ ...env, BU_CDP_URL: 'http://late-merge.invalid' })).not.toHaveProperty(
       'BU_CDP_URL'
