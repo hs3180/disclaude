@@ -22,6 +22,7 @@ import type { FeishuCard, ChannelCapabilities, BaseAgentConfig, MessageBuilderOp
  * (channels) provides implementations of these callbacks.
  */
 export interface ChatAgentCallbacks {
+  requestAgentInput?: import('@disclaude/core').IChannel['requestAgentInput'];
   /**
    * Send a text message to the user.
    * @param chatId - Platform-specific chat identifier
