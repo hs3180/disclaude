@@ -37,3 +37,10 @@ live Feishu auth/callbacks, paid model turns, scheduled task execution, browser
 fingerprint behavior or migration of an existing deployment. Those require their
 own actual-use-case acceptance. A skipped test or successful image build alone is
 not a runtime pass.
+
+The config-driven REST channel now supplies persistent file storage by default.
+Uploads are committed as complete objects under `fileStorageDir/objects-v1`;
+metadata is reloaded after restart and content is checked against its size/hash
+when downloaded. An interrupted unpublished object is retained without appearing
+as a completed upload. Existing files outside this namespace are preserved but
+not automatically imported; this is not an old-deployment storage migration.

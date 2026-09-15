@@ -60,7 +60,7 @@ describe('production Docker service image', () => {
             expect(initialized).toContain('INITIALIZED');
           }
           const uploaded = await request(13000, '/api/files/upload', 'POST', { fileName: 'retained.txt', content, mimeType: 'text/plain', chatId: 'docker-e2e-chat' });
-          expect(uploaded.status).toBe(200); expect(uploaded.body.success).toBe(true);
+          expect(uploaded.status, JSON.stringify(uploaded.body)).toBe(200); expect(uploaded.body.success).toBe(true);
           fileId = (uploaded.body.file as { id: string }).id;
           expect(fileId).toBeTruthy();
         }
@@ -76,6 +76,9 @@ describe('production Docker service image', () => {
         }
         console.info('DOCKER_SERVICE_ACCEPTANCE', JSON.stringify({ attempt, mode: attempt ? 'minimal' : 'standard', ...runtime, uploadRetained: true, cleanExit: true }));
       }
+    } catch (error) {
+      if (createdContainer) { console.error(await docker('logs', '--tail', '100', container).catch(() => 'Container logs unavailable')); }
+      throw error;
     } finally {
       if (createdContainer) { await docker('rm', '-f', container).catch(() => {}); }
       if (createdVolume) { await docker('volume', 'rm', volume).catch(() => {}); }
