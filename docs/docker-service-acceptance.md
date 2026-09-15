@@ -16,6 +16,10 @@ checks:
   product transport. No model prompt or real credential is supplied.
 - The REST channel's actual file upload/download, followed by graceful shutdown,
   container removal and recreation with the same volume.
+- A persisted UTC command schedule automatically executed by the service before
+  and after container recreation, with distinct boot records, schedule/chat IDs
+  and the non-root UID verified. The original schedule and execution records
+  remain on the data volume.
 - Uploaded file metadata/content, workspace and Codex data retained after
   recreation; standard then minimal configuration accepted; clean exit and
   process-lock removal.
@@ -32,8 +36,8 @@ own containers and volume, preserves the supplied image, and never prunes shared
 Docker resources. It publishes no host ports and uses no existing deployment.
 The Linux CI workflow builds a fresh production image and runs this same case.
 
-This covers the container lifecycle/storage portion of #4924. It does not prove
-live Feishu auth/callbacks, scheduled task execution, browser
+This covers container lifecycle/storage and command scheduling in #4924. It does not prove
+live Feishu auth/callbacks, model-based scheduled turns, browser
 fingerprint behavior or migration of an existing deployment. Those require their
 own actual-use-case acceptance. A skipped test or successful image build alone is
 not a runtime pass.
@@ -76,3 +80,16 @@ exit locally; the exact-head CI above supplies the successful build evidence.
 
 Neither run exercises actual Feishu card interaction or a real Codex model turn
 inside the container. Those remain separate acceptance items.
+
+
+The persisted command-schedule case passed on Linux/amd64 in
+[run 35026286855](https://github.com/hs3180/disclaude/actions/runs/35026286855)
+from `cea8848484ad8624bd1a6e51974af657d216b4e6`, in 20.30 seconds. Both
+standard and minimal startup cycles produced a new scheduled execution record;
+the second retained the first record and unchanged schedule file. Upload retention
+and clean exits also passed. No model call was made in this run.
+
+The preceding run rejected the documented `timezone: UTC` before executing any
+schedule. The parser now explicitly accepts UTC, which the Intl supported-values
+list omits despite support in the cron runtime. This is a reproduced and fixed
+loading defect, not a retry-only acceptance result.

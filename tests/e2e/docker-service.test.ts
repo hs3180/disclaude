@@ -8,7 +8,7 @@ const exec = promisify(execFile);
 const docker = async (...args: string[]) => (await exec('docker', args, { timeout: 90_000, maxBuffer: 4 * 1024 * 1024 })).stdout.trim();
 
 describe('production Docker service image', () => {
-  it.skipIf(!process.env.DISCLAUDE_E2E_DOCKER_IMAGE)('starts, initializes both dsh profiles, preserves uploaded files across recreation, and stops cleanly', async () => {
+  it.skipIf(!process.env.DISCLAUDE_E2E_DOCKER_IMAGE)('starts, runs persisted schedules, preserves uploaded files across recreation, and stops cleanly', async () => {
     const image = process.env.DISCLAUDE_E2E_DOCKER_IMAGE!;
     const withModel = process.env.DISCLAUDE_E2E_DOCKER_MODEL === '1';
     const modelEnvFile = process.env.DISCLAUDE_E2E_DOCKER_MODEL_ENV_FILE;
@@ -16,6 +16,14 @@ describe('production Docker service image', () => {
     const suffix = randomUUID().slice(0, 8);
     const container = `disclaude-e2e-${suffix}`, volume = `disclaude-e2e-data-${suffix}`;
     const token = randomUUID();
+    const schedule = ['---', 'name: Container schedule acceptance', 'cron: "*/2 * * * * *"',
+      'timezone: UTC', 'chatId: docker-e2e-chat', 'enabled: true', 'blocking: true',
+      'command: node /data/workspace/schedule-command.mjs', '---', ''].join('\n');
+    const scheduleCommand = `import fs from 'node:fs';
+const boot = fs.readFileSync('/data/workspace/schedule-boot', 'utf8');
+fs.appendFileSync('/data/workspace/schedule-runs.ndjson', JSON.stringify({boot, uid: process.getuid(),
+  taskId: process.env.DISCLAUDE_SCHEDULE_ID, chatId: process.env.DISCLAUDE_CHAT_ID}) + '\\n');`;
+
     let createdVolume = false, createdContainer = false;
     const config = {
       agent: { agentBackend: 'deepseek', provider: 'anthropic', model: 'deepseek-flash' },
@@ -35,9 +43,12 @@ describe('production Docker service image', () => {
     try {
       await docker('volume', 'create', volume); createdVolume = true;
       await dataOperation(`import fs from 'node:fs'; fs.writeFileSync('/data/config.json', ${JSON.stringify(JSON.stringify(config))}); fs.writeFileSync('/data/workspace/keep.txt', 'workspace retained'); fs.writeFileSync('/data/codex/keep.txt', 'codex retained');`);
+      await dataOperation(`import fs from 'node:fs'; fs.mkdirSync('/data/workspace/schedules/container-acceptance', {recursive:true}); fs.writeFileSync('/data/workspace/schedules/container-acceptance/SCHEDULE.md', ${JSON.stringify(schedule)}); fs.writeFileSync('/data/workspace/schedule-command.mjs', ${JSON.stringify(scheduleCommand)});`);
       let fileId = '';
       const content = Buffer.from('container recreation must preserve this uploaded file').toString('base64');
       for (let attempt = 0; attempt < 2; attempt++) {
+        const boot = `${suffix}-${attempt}`;
+        await dataOperation(`import fs from 'node:fs'; fs.writeFileSync('/data/workspace/schedule-boot', ${JSON.stringify(boot)});`);
         await docker('run', '-d', '--name', container, '--health-interval=1s', '--health-start-period=1s', '--health-retries=5',
           '-v', `${volume}:/data`, '-e', 'DISCLAUDE_CONFIG_PATH=/data/config.json', '-e', 'LOCKFILE_PATH=/data/service.pid',
           ...(withModel ? ['--env-file', modelEnvFile!] : []), image, 'disclaude', 'start', '--api-port', '19200', '--api-token', token);
@@ -51,6 +62,16 @@ describe('production Docker service image', () => {
         }
         expect(ready, await docker('logs', '--tail', '30', container)).toBe(true);
         expect((await request(13000, '/api/health')).body.status).toBe('ok');
+        const readScheduleRuns = async () => JSON.parse(await inside(`import fs from 'node:fs'; const file='/data/workspace/schedule-runs.ndjson'; console.log(JSON.stringify(fs.existsSync(file) ? fs.readFileSync(file,'utf8').trim().split('\\n').filter(Boolean).map(line=>JSON.parse(line)) : []));`)) as Array<{boot: string; uid: number; taskId: string; chatId: string}>;
+        let runs = await readScheduleRuns();
+        for (let i = 0; i < 30 && !runs.some(run => run.boot === boot); i++) {
+          await delay(500);
+          runs = await readScheduleRuns();
+        }
+        expect(runs).toContainEqual({boot, uid: 1001, taskId: 'schedule-container-acceptance', chatId: 'docker-e2e-chat'});
+        if (attempt > 0) { expect(runs.some(run => run.boot === `${suffix}-0`)).toBe(true); }
+        expect(await inside(`import fs from 'node:fs'; console.log(JSON.stringify(fs.readFileSync('/data/workspace/schedules/container-acceptance/SCHEDULE.md','utf8')));`)).toBe(JSON.stringify(schedule));
+
         expect((await request(19200, '/api/send-message', 'POST', {})).status).toBe(401);
         expect((await request(19200, '/api/send-message', 'POST', {}, true)).status).toBe(400);
         const runtime = JSON.parse(await inside(`import fs from 'node:fs'; import {execFileSync} from 'node:child_process'; const pkg=JSON.parse(fs.readFileSync('/app/package.json')); console.log(JSON.stringify({uid:process.getuid(),node:process.version,bin:Object.keys(pkg.bin),legacy:fs.existsSync('/app/packages/primary-node'),dsh:execFileSync('dsh',['--version'],{encoding:'utf8'}).trim(),codex:execFileSync('codex',['--version'],{encoding:'utf8'}).trim()}));`)) as { uid: number; node: string; bin: string[]; legacy: boolean; dsh: string; codex: string };
@@ -87,7 +108,7 @@ describe('production Docker service image', () => {
         if (attempt === 0) {
           await dataOperation(`import fs from 'node:fs'; const c=JSON.parse(fs.readFileSync('/data/config.json')); c.deepseek.mode='minimal'; fs.writeFileSync('/data/config.json',JSON.stringify(c));`);
         }
-        console.info('DOCKER_SERVICE_ACCEPTANCE', JSON.stringify({ attempt, mode: attempt ? 'minimal' : 'standard', ...runtime, uploadRetained: true, cleanExit: true, realModelToolCall: withModel }));
+        console.info('DOCKER_SERVICE_ACCEPTANCE', JSON.stringify({ attempt, mode: attempt ? 'minimal' : 'standard', ...runtime, uploadRetained: true, scheduleExecuted: true, scheduleAndHistoryRetained: true, cleanExit: true, realModelToolCall: withModel }));
       }
     } catch (error) {
       if (createdContainer) { console.error(await docker('logs', '--tail', '100', container).catch(() => 'Container logs unavailable')); }
