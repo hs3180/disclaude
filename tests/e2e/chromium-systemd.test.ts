@@ -42,7 +42,7 @@ describe('Chromium native Linux user-service installation and recovery', () => {
         const quoted = `'${binary.replace(/'/g, "'\\''")}'`;
         await writeFile(failing, `#!/bin/sh\nfor arg in "$@"; do\n if [ "$arg" = "--remote-debugging-port=0" ]; then exec ${quoted} "$@"; fi\ndone\nexit 7\n`, { mode: 0o700 });
       try {
-        await expect(command('install', { DBUS_SESSION_BUS_ADDRESS: `unix:path=${root}/absent-user-bus` }))
+        await expect(command('install', { DBUS_SESSION_BUS_ADDRESS: `unix:path=${root}/absent-user-bus`, XDG_RUNTIME_DIR: join(root, 'absent-user-runtime') }))
           .rejects.toThrow('User-level systemd or lsof is unavailable');
         await expect(readFile(config, 'utf8')).rejects.toThrow();
         await expect(readFile(plist, 'utf8')).rejects.toThrow();
