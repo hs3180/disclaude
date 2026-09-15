@@ -47,6 +47,7 @@ export function sourceFingerprint(root) {
       'scripts/chromium-config.mjs',
       'scripts/browser-service-state.mjs',
       'scripts/chromium-systemd.mjs',
+      'scripts/chromium-setup.mjs',
     ],
     { cwd: root, encoding: 'utf8' }
   )
@@ -151,6 +152,7 @@ export function generateRelease(root, output) {
       'scripts/chromium-config.mjs',
       'scripts/browser-service-state.mjs',
       'scripts/chromium-systemd.mjs',
+      'scripts/chromium-setup.mjs',
   ]) {
     if (!existsSync(join(root, path))) continue;
     mkdirSync(dirname(join(output, path)), { recursive: true });
