@@ -284,7 +284,8 @@ export class ScheduleFileScanner {
       // Issue #3860: Validate timezone against IANA database
       if (task.timezone) {
         const validTimezones = Intl.supportedValuesOf('timeZone');
-        if (!validTimezones.includes(task.timezone)) {
+        // Intl's list omits UTC even though Intl and the cron runtime accept it.
+        if (task.timezone !== 'UTC' && !validTimezones.includes(task.timezone)) {
           throw new Error(
             `Invalid timezone: "${task.timezone}". Must be a valid IANA timezone (e.g., "America/New_York", "UTC")`
           );
