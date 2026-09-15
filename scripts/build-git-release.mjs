@@ -45,6 +45,8 @@ export function sourceFingerprint(root) {
       'scripts/prune-build-artifacts.mjs',
       'scripts/launchd.mjs',
       'scripts/chromium-config.mjs',
+      'scripts/browser-service-state.mjs',
+      'scripts/chromium-systemd.mjs',
     ],
     { cwd: root, encoding: 'utf8' }
   )
@@ -147,6 +149,8 @@ export function generateRelease(root, output) {
     'disclaude.config.example.yaml',
     'scripts/launchd.mjs',
       'scripts/chromium-config.mjs',
+      'scripts/browser-service-state.mjs',
+      'scripts/chromium-systemd.mjs',
   ]) {
     if (!existsSync(join(root, path))) continue;
     mkdirSync(dirname(join(output, path)), { recursive: true });

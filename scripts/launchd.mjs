@@ -44,11 +44,11 @@ import { writeFileSync, existsSync, mkdirSync, rmSync, readFileSync } from 'node
 import { realpathSync, accessSync, constants, statSync } from 'node:fs';
 import { resolve, dirname, relative, isAbsolute } from 'node:path';
 import { promisify } from 'node:util';
-import { randomUUID } from 'node:crypto';
-import { renameSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { chromiumConfigPath, loadChromiumConfig, saveChromiumConfig } from './chromium-config.mjs';
+import { replaceChromiumFile, transitionChromium, chromiumListenerPids, isDescendant, waitChromiumReady } from './browser-service-state.mjs';
+export { transitionChromium } from './browser-service-state.mjs';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -759,93 +759,11 @@ function unloadPlistAt(plistPath, label) {
   console.log(`Service unloaded (${label}).`);
 }
 
-// Keep backups in memory for one command; a lock prevents competing CLI updates.
-function replaceChromiumFile(path, bytes, mode = 0o600) {
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const temporary = `${path}.${randomUUID()}.tmp`;
-  try {
-    writeFileSync(temporary, bytes, { flag: 'wx', mode });
-    renameSync(temporary, path);
-  } finally { rmSync(temporary, { force: true }); }
-}
-
-/** Restore configuration and the previously loaded service after failed activation. */
-export async function transitionChromium({ paths, wasLoaded, prepare, stop, start, verify, verifyPrevious }) {
-  const backups = paths.map(path => {
-    try { return { path, bytes: readFileSync(path), mode: statSync(path).mode & 0o777 }; }
-    catch (error) { if (error.code === 'ENOENT') return { path }; throw error; }
-  });
-  let touchedService = false;
-  try {
-    await prepare();
-    if (wasLoaded) { touchedService = true; await stop(); }
-    touchedService = true;
-    await start();
-    return await verify();
-  } catch (failure) {
-    const recovery = [];
-    if (touchedService) {
-      try { await stop(); } catch (error) { recovery.push(error.message); }
-    }
-    for (const backup of backups) {
-      try {
-        if (backup.bytes) replaceChromiumFile(backup.path, backup.bytes, backup.mode);
-        else rmSync(backup.path, { force: true });
-      } catch (error) { recovery.push(error.message); }
-    }
-    if (touchedService && wasLoaded && !recovery.length) {
-      try { await start(); await verifyPrevious(); }
-      catch (error) { recovery.push(error.message); }
-    }
-    throw new Error(`${failure.message}; ${recovery.length
-      ? `recovery incomplete: ${recovery.join('; ')}`
-      : touchedService && wasLoaded ? 'previous service restored and verified' : 'previous configuration preserved'}`);
-  }
-}
-
 function chromiumServicePid() {
   try {
     const output = execFileSync('launchctl', ['list', LABEL_CHROMIUM], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     return { loaded: true, pid: Number(output.match(/"PID"\s*=\s*(\d+)/)?.[1]) || undefined };
   } catch { return { loaded: false }; }
-}
-
-function chromiumListenerPids(port) {
-  try {
-    return [...new Set(execFileSync('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim().split(/\s+/).map(Number).filter(Number.isSafeInteger))];
-  } catch (error) { if (error.status === 1) return []; throw error; }
-}
-
-function isDescendant(pid, parent) {
-  for (let depth = 0; pid > 1 && depth < 32; depth++) {
-    if (pid === parent) return true;
-    try { pid = Number(execFileSync('ps', ['-o', 'ppid=', '-p', String(pid)], { encoding: 'utf8' }).trim()); }
-    catch { return false; }
-  }
-  return false;
-}
-
-async function waitChromiumReady({ address, port }, timeoutMs = 20_000) {
-  const deadline = Date.now() + timeoutMs;
-  let previous, stable = 0, last = 'service has no listener';
-  while (Date.now() < deadline) {
-    const { pid } = chromiumServicePid();
-    const listeners = chromiumListenerPids(port);
-    if (pid && listeners.length && listeners.every(listener => isDescendant(listener, pid))) {
-      try {
-        const response = await fetch(`http://${address}:${port}/json/version`, { redirect: 'error', signal: AbortSignal.timeout(1000) });
-        const version = await response.json();
-        if (!response.ok || typeof version.Browser !== 'string' || !/^ws:\/\//.test(version.webSocketDebuggerUrl)) throw new Error('invalid CDP discovery response');
-        const identity = `${pid}:${listeners.join(',')}:${version.webSocketDebuggerUrl}`;
-        stable = identity === previous ? stable + 1 : 1;
-        previous = identity;
-        if (stable >= 3) return { pid, endpoint: `http://${address}:${port}`, browser: version.Browser };
-      } catch (error) { stable = 0; last = error.message; }
-    } else { stable = 0; last = 'CDP listener does not belong to the selected launchd service'; }
-    await new Promise(resolve => setTimeout(resolve, 500));
-  }
-  throw new Error(`Chromium readiness failed: ${last}`);
 }
 
 function validateIsolatedChromium() {
@@ -894,7 +812,7 @@ async function activateChromium(restart) {
   const ready = await transitionChromium({ paths: [config, CR_PLIST_PATH], wasLoaded: prior.loaded,
     prepare: () => generateChromiumPlist(), stop,
     start: () => loadPlistAt(CR_PLIST_PATH, LABEL_CHROMIUM),
-    verify: () => waitChromiumReady(selected), verifyPrevious: () => waitChromiumReady(previous) });
+    verify: () => waitChromiumReady(selected, chromiumServicePid), verifyPrevious: () => waitChromiumReady(previous, chromiumServicePid) });
   console.log(`CDP ready: ${ready.endpoint} (${ready.browser}, service PID ${ready.pid})`);
   console.log(`Temporary-profile cookie persistence: ${diagnosis.cookiePersistence}; service-profile persistence was not tested by this command.`);
 }
