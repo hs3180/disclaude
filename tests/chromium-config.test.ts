@@ -49,7 +49,7 @@ describe('persistent Chromium configuration', () => {
     expect(() => loadChromiumConfig({}, file)).toThrow('version 1');
   }));
 
-  it('rejects an explicit missing binary on restart before touching launchd or saved config', () => sandbox(dir => {
+  it('rejects an unsupported platform or missing binary before changing the service or saved config', () => sandbox(dir => {
     const file = join(dir, 'browser.json');
     saveChromiumConfig({ CHROMIUM_CDP_BINARY: join(dir, 'missing-browser'), CHROMIUM_CDP_PORT: '9223' }, file);
     const before = readFileSync(file, 'utf8');
@@ -57,7 +57,8 @@ describe('persistent Chromium configuration', () => {
       cwd: dir, encoding: 'utf8', env: { PATH: '/usr/bin:/bin', DISCLAUDE_CHROMIUM_CONFIG: file },
     });
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain('CHROMIUM_CDP_BINARY was not found');
+    expect(result.stderr).toContain(process.platform === 'darwin'
+      ? 'CHROMIUM_CDP_BINARY was not found' : 'Chromium launchd commands require macOS');
     expect(result.stdout).not.toContain('Service unloaded');
     expect(readFileSync(file, 'utf8')).toBe(before);
   }));

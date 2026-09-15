@@ -86,7 +86,7 @@ const ENV_KEYS = [
 
 afterEach(() => {
   for (const key of ENV_KEYS) {
-    if (key in savedEnv) {
+    if (savedEnv[key] !== undefined) {
       process.env[key] = savedEnv[key];
     } else {
       delete process.env[key];
