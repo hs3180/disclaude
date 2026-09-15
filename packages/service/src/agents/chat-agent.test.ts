@@ -2074,6 +2074,74 @@ describe('ChatAgent (service)', () => {
       expect(userCalls.length).toBeGreaterThanOrEqual(1);
     });
 
+    it('filters transient progress placeholders (Thinking spam) from the user chat', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_user_chat',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      mockGetDebugGroup.mockReturnValue({ chatId: 'oc_debug_group', setAt: Date.now() });
+
+      // SDK 在多步任务的每一步都发一次 status:'requesting'，adapter 为它打上
+      // transientStatus。群聊没有流式卡片承载这个占位，不过滤就会每步单蹦一条
+      // "🤔 Thinking..." 把群刷屏 —— 一个多步任务足以刷出十几条。
+      async function* thinkingSpamIterator() {
+        yield {
+          parsed: {
+            type: 'status',
+            content: '🤔 Thinking...',
+            metadata: { transientStatus: true },
+          },
+        };
+        yield { parsed: { type: 'text', content: '先定位 v4.1 Flash 的官方权重仓。' } };
+        yield {
+          parsed: {
+            type: 'status',
+            content: '🤔 Thinking...',
+            metadata: { transientStatus: true },
+          },
+        };
+        yield { parsed: { type: 'result', content: 'Done' } };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: thinkingSpamIterator(),
+      });
+
+      void agent.processMessage({
+        chatId: 'oc_user_chat',
+        payload: '在 bos 上准备好 DeepSeek v4.1 flash 的完整权重',
+        messageId: 'msg_thinking_1',
+      });
+      await vi.waitFor(
+        () => {
+          expect(
+            (agent as any).logger.info.mock.calls.some(
+              (c: any[]) => c[1] === 'Result received, turn complete'
+            )
+          ).toBe(true);
+        },
+        { timeout: 1000, interval: 20 }
+      );
+
+      const userMessages = localCallbacks.sendMessage.mock.calls
+        .filter((call: any[]) => call[0] === 'oc_user_chat')
+        .map((call: any[]) => call[1]);
+      expect(userMessages).not.toContain('🤔 Thinking...');
+      expect(userMessages).toContain('先定位 v4.1 Flash 的官方权重仓。');
+
+      // 诊断信息不丢：仍转发到 debug 群
+      const debugMessages = localCallbacks.sendMessage.mock.calls
+        .filter((call: any[]) => call[0] === 'oc_debug_group')
+        .map((call: any[]) => call[1]);
+      expect(debugMessages).toEqual(['[status] 🤔 Thinking...', '[status] 🤔 Thinking...']);
+    });
+
     it.each(['claude', 'codex', 'pi', 'deepseek'])('hides %s tool traces while preserving debug and final delivery', async (backend) => {
       const localCallbacks = createMockCallbacks();
       const agent = new ChatAgent({

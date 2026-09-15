@@ -689,6 +689,8 @@ describe('adaptSDKMessage', () => {
       expect(result.type).toBe('status');
       expect(result.content).toContain('Compacting');
       expect(result.role).toBe('system');
+      // 瞬态进度占位:ChatAgent 据此过滤,不再单蹦一条消息刷屏
+      expect(result.metadata?.transientStatus).toBe(true);
     });
 
     it('should ignore non-status system messages', () => {
@@ -777,6 +779,8 @@ describe('adaptSDKMessage', () => {
       expect(result.content).toContain('fallback');
       expect(result.content).toContain('claude-sonnet-4-6');
       expect(result.role).toBe('system');
+      // 语义型 status 不是进度占位 —— 必须照常投递给用户
+      expect(result.metadata?.transientStatus).toBeUndefined();
     });
   });
 

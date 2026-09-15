@@ -12,6 +12,7 @@ import {
 import { setRuntimeContext, clearRuntimeContext, type BaseAgentConfig } from './types.js';
 import type { AgentMessage, StreamingUserMessage, QueryHandle } from '../sdk/index.js';
 import { Config } from '../config/index.js';
+import { adaptSDKMessage } from '../sdk/providers/claude/message-adapter.js';
 
 // Unit tests must not load developer credentials or workspace settings.
 vi.mock('../config/loader.js', async (importOriginal) => ({
@@ -534,6 +535,29 @@ describe('BaseAgent', () => {
       expect(messages[0].parsed.metadata?.tokens).toBe(300);
       expect(messages[0].parsed.metadata?.toolName).toBe('Bash');
       expect(messages[0].parsed.sessionId).toBe('tool-session');
+    });
+
+    it('preserves transient and semantic statuses through the actual adapter and stream conversion', async () => {
+      const rawMessages = [
+        { type: 'system', subtype: 'status', status: 'requesting' },
+        { type: 'system', subtype: 'status', status: 'compacting' },
+        { type: 'system', subtype: 'model_refusal_fallback', fallback_model: 'claude-sonnet-4-6' },
+      ];
+      mockSdkProvider.queryStream.mockImplementation(() => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          for (const raw of rawMessages) {
+            yield adaptSDKMessage(raw as Parameters<typeof adaptSDKMessage>[0]);
+          }
+        })(),
+      }));
+      const messages: IteratorYieldResult[] = [];
+      for await (const item of agent.testCreateQueryStream(createMockInput([]), defaultOptions).iterator) {
+        messages.push(item);
+      }
+      expect(messages.map(item => item.parsed.metadata?.transientStatus)).toEqual([true, true, undefined]);
+      expect(messages.map(item => item.parsed.type)).toEqual(['status', 'status', 'status']);
+      expect(messages[2].parsed.content).toContain('claude-sonnet-4-6');
     });
 
     it('should propagate stopReason through convertToLegacyFormat (Issue #4320, Gap C)', async () => {
