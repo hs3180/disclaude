@@ -43,10 +43,16 @@ test('generates a standalone manifest and excludes untracked resources', () => {
     })
   );
   write('bin/disclaude.js', "const route = 'node_modules/@disclaude/service/dist/cli.js';");
-  write('scripts/launchd.mjs', 'export {};');
+  write('scripts/launchd.mjs', "import './chromium-config.mjs';");
+  write('scripts/chromium-config.mjs', 'export {};');
   write('skills/example/SKILL.md', 'tracked skill');
+  write('scripts/browser-use-smoke.sh', '#!/bin/bash\nexit 0');
+  write('scripts/browser-use-smoke-daemon.py', 'pass');
+  write('scripts/browser-use-smoke-timeout.py', 'pass');
   write('.claude-plugin/plugin.json', '{"name":"builtins"}');
   write('agents/example.md', 'builtin agent');
+  write('docker/start-chromium.sh', '#!/bin/bash\nexit 0');
+  write('docker-compose.yml', 'services: {}');
   for (const name of ['core', 'service', 'channel-cli']) {
     write(
       `packages/${name}/package.json`,
@@ -86,8 +92,15 @@ test('generates a standalone manifest and excludes untracked resources', () => {
   assert.deepEqual(manifest.dependencies, { 'js-yaml': '^4.1.0' });
   assert(!existsSync(join(output, 'skills/example/private.txt')));
   assert(existsSync(join(output, '.claude-plugin/plugin.json')));
+  for (const file of ['browser-use-smoke.sh', 'browser-use-smoke-daemon.py', 'browser-use-smoke-timeout.py']) {
+    assert(existsSync(join(output, 'scripts', file)));
+  }
   assert(existsSync(join(output, 'agents/example.md')));
+  assert(existsSync(join(output, 'scripts/chromium-config.mjs')));
   assert(!existsSync(join(output, 'packages/core/dist/index.test.js')));
+  assert(existsSync(join(output, 'docker/start-chromium.sh')));
+  assert(existsSync(join(output, 'docker-compose.yml')));
+  assert(manifest.files.includes('docker/'));
   assert(!existsSync(join(output, 'packages/core/package.json')));
   assert.match(
     readFileSync(join(output, 'packages/service/dist/index.js'), 'utf8'),

@@ -278,3 +278,37 @@ pinned session — the same guard `smoke.sh` case 6 has.
 - #4151 nginx CDP proxy · #4164 host-scope CDP · #4099 healthcheck
 - Implementation files: `docker-compose.yml` (`chromium` service),
   `docker/chromium-cdp-nginx.conf`, `.env.example`
+
+### Smoke isolation and failure validity (0.6.0)
+
+Each `scripts/browser-use-smoke.sh` run creates a private daemon namespace and
+runtime directory, ignoring inherited `BU_NAME`/`BH_*` paths. It creates its own
+target explicitly: `new_tab(url)` can reuse a pre-existing blank tab, and the
+horse title marker identifies an attached target, not the visible tab. DOM and
+screenshot checks reattach to the recorded target ID; cleanup verifies that
+only this target disappeared before switching endpoints.
+
+Case 6 requires successful reload **and** a read-only IPC/PID-file assertion
+that the daemon is stopped. The same assertion runs after the dead-endpoint
+probe. Timeout/command/signal exits (124 and above), a zero exit, or execution
+of the success marker fail the test. Healthy checks also require exit zero;
+printing a marker before a crash no longer passes.
+
+Set `SMOKE_PYTHON` to the interpreter that imports `browser_harness` when it is
+not the default `python3`. GNU `timeout`/`gtimeout` is used when available;
+otherwise the bundled POSIX Python wrapper bounds commands and cleans up their
+process group. Failed daemon cleanup retains its private runtime directory for
+diagnosis. `SMOKE_OUT_DIR` may contain spaces/quotes; screenshot paths are passed
+through the environment rather than embedded in Python code.
+
+Whole-host Chrome process counts are not browser ownership evidence on a
+normal desktop. Case 2b is opt-in via `SMOKE_ASSERT_PROCESS_COUNT=1` for isolated
+service containers only. Discovery does not prove an intended browser/profile;
+record the service identity and version separately for release acceptance.
+
+Local macOS validation on 2026-09-14 used a dedicated temporary Chromium
+155.0.8057.0 process/profile and the installed harness reporting 0.1.13. The
+matrix passed seven assertions, with desktop process counting explicitly
+skipped; PNG, target removal, and daemon shutdown passed. Linux/Docker real
+runtime evidence remains required under #4625/#4800; local fake-process tests
+verify failure classification and are not cross-platform browser evidence.
