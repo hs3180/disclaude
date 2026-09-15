@@ -37,6 +37,7 @@ describe('user starts Disclaude and shares its managed browser', () => {
     delete env.DISCLAUDE_BROWSER_TARGET;
     delete env.DISCLAUDE_BROWSER_EVENTS;
     const executable = resolve('bin/disclaude.js');
+    const callers = new Set<ReturnType<typeof spawn>>();
     let child: ReturnType<typeof spawn> | undefined;
     let output = '';
     let exited: Promise<number | null> | undefined;
@@ -64,8 +65,11 @@ describe('user starts Disclaude and shares its managed browser', () => {
         const taskEnv = browserAgentEnv({ ...env, DISCLAUDE_BROWSER_BIN: join(root, 'bin'), BU_CDP_URL: 'http://stale.invalid:9223', BU_CDP_WS: 'ws://stale.invalid' });
         expect(taskEnv.BU_CDP_URL).toBeUndefined();
         expect(taskEnv.BU_CDP_WS).toBeUndefined();
-        const run = (script: string, invocationEnv = taskEnv): Promise<string> => new Promise((done, reject) => {
+        const run = (script: string, invocationEnv = taskEnv, onSpawn?: (task: ReturnType<typeof spawn>) => void): Promise<string> => new Promise((done, reject) => {
           const task = spawn('browser-use', [], { env: invocationEnv, cwd: root, stdio: ['pipe', 'pipe', 'pipe'] });
+          callers.add(task);
+          task.once('close', () => callers.delete(task));
+          onSpawn?.(task);
           let stdout = '', stderr = '';
           task.stdout.on('data', d => { stdout += d; }); task.stderr.on('data', d => { stderr += d; });
           task.on('error', reject);
@@ -90,6 +94,23 @@ describe('user starts Disclaude and shares its managed browser', () => {
         })).rejects.toThrow(/ENOENT|connect|socket/i);
         await expect(access(bypassMarker)).rejects.toThrow();
         expect(await run("print(js(\"document.querySelector('#value').value\"))\n")).toContain('handoff');
+        // A real caller dies after its script starts; its queued successor must
+        // acquire control only after reclamation, without replaying unknown work.
+        const startedMarker = join(root, `started-${attempt}`);
+        const abandonedMarker = join(root, `abandoned-${attempt}`);
+        let abandoned: ReturnType<typeof spawn> | undefined;
+        const abandonedResult = run(`import time\nopen(${JSON.stringify(startedMarker)}, 'w').write('started')\ntime.sleep(20)\nopen(${JSON.stringify(abandonedMarker)}, 'w').write('must-not-run')\n`, taskEnv, task => { abandoned = task; }).then(() => 'unexpected success', () => 'interrupted');
+        let started = false;
+        for (let i = 0; i < 200 && !started; i++) {
+          started = await access(startedMarker).then(() => true, () => false);
+          if (!started) { await delay(100); }
+        }
+        expect(started).toBe(true);
+        const successor = run("print(js(\"document.querySelector('#value').value\"))\n");
+        abandoned?.kill('SIGKILL');
+        expect(await abandonedResult).toBe('interrupted');
+        expect(await successor).toContain('handoff');
+        await expect(access(abandonedMarker)).rejects.toThrow();
         await writeFile(join(root, 'profile', 'preserve-test.txt'), 'user profile retained');
         const cdpPort = (await readFile(join(root, 'profile', 'DevToolsActivePort'), 'utf8')).split('\n')[0];
         await stop();
@@ -99,6 +120,6 @@ describe('user starts Disclaude and shares its managed browser', () => {
         expect(await readFile(join(root, 'profile', 'preserve-test.txt'), 'utf8')).toBe('user profile retained');
         await expect(exec(process.execPath, [executable, 'browser', 'status'], { env, cwd: root, timeout: 5000 })).rejects.toThrow();
       }
-    } finally { await stop(); await rm(root, { recursive: true, force: true }); }
+    } finally { for (const caller of callers) { caller.kill('SIGKILL'); } await stop(); await rm(root, { recursive: true, force: true }); }
   }, 180_000);
 });

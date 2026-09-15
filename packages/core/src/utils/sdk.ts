@@ -1,4 +1,3 @@
-import { browserAgentEnv } from './browser-env.js';
 /**
  * Shared utilities for Agent SDK integration.
  */
@@ -119,5 +118,5 @@ export function buildSdkEnv(
     env.ANTHROPIC_TIMEOUT = String(effectiveTimeoutMs);
   }
 
-  return browserAgentEnv(env);
+  return env;
 }

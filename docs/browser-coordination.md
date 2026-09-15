@@ -3,8 +3,8 @@
 The browser coordinator runs as a managed child of `disclaude start`. It queues
 competing browser-use operations and reclaims the current worker before granting
 control to the next caller. The runtime is shipped in the service package;
-actual browser-use fault and handoff scenarios live under `tests/e2e/browser-control`
-and exercise this implementation directly.
+the actual CLI lifecycle and handoff use case lives in
+`tests/e2e/browser-service.test.ts`.
 
 ## Configure the service
 
@@ -96,17 +96,16 @@ It starts the real Disclaude service, checks the public status command, executes
 competing browser-use callers against the same real page, then checks shutdown,
 profile retention and service restart. Without both environment variables the
 case is reported skipped. This verifies the CLI/harness/browser chain, not a model
-agent deciding how to use it. The fault-handoff E2E suite covers caller/daemon death, expiry, stale control,
-working-directory preservation and repeated handoff against real Chromium:
+agent deciding how to use it. It also interrupts a running caller and verifies
+that the queued caller takes over without executing the abandoned operation.
+Linux CI installs the pinned browser-use runtime and Chromium, then runs this
+same product test. No separate test Docker image or standalone harness runner
+is required. The test layout follows #5016: core unit tests plus actual-use-case E2E.
 
-```sh
-DISCLAUDE_CHROMIUM_BINARY=/absolute/path/to/chromium \
-DISCLAUDE_BROWSER_PYTHON=/absolute/path/to/python \
-DISCLAUDE_BROWSER_MANAGED=1 \
-node tests/e2e/browser-control/harness-acceptance.mjs /absolute/path/to/evidence
-```
-
-Linux CI runs both E2E suites in the pinned image from
-`tests/e2e/browser-control/Dockerfile`. Results are uploaded as CI artifacts;
-generated platform snapshots and independent experiment runners are not shipped.
-The test layout follows #5016: core unit tests plus actual-use-case E2E.
+Environment filtering happens only where an execution environment is finalized:
+Claude SDK options, Codex exec/app-server subprocesses, the dsh subprocess, and
+Pi's NodeExecutionEnv. These are distinct execution paths; Pi runs in-process
+and Claude owns its subprocess creation, so they do not share one spawn function.
+Earlier SDK environment assembly and Pi option adaptation do not filter again.
+The shared helper contains the policy; each boundary applies it after its own
+merges. Direct worker configuration remains private to the service.

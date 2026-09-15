@@ -5,14 +5,14 @@ afterEach(() => vi.unstubAllEnvs());
 describe('coordinated browser environment', () => {
   it('removes both inherited and configured discovery after merging without mutating the service environment', () => {
     vi.stubEnv('BU_CDP_URL', 'http://inherited.invalid:9223');
-    const env = buildSdkEnv('test', undefined, {
+    const env = browserAgentEnv(buildSdkEnv('test', undefined, {
       DISCLAUDE_BROWSER_SOCKET: '/tmp/browser.sock',
       BU_CDP_WS: 'ws://configured.invalid',
       CHROMIUM_CDP_PORT: '9223',
       DISCLAUDE_CHROMIUM_BINARY: '/private/chromium',
       BH_RUNTIME_DIR: '/private/worker',
       NORMAL_SETTING: 'preserved',
-    });
+    }));
     expect(env.DISCLAUDE_BROWSER_SOCKET).toBe('/tmp/browser.sock');
     for (const key of [
       'BU_CDP_URL',

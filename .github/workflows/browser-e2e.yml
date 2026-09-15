@@ -8,7 +8,6 @@ on:
       - 'packages/service/src/service.ts'
       - 'package*.json'
       - 'packages/*/package.json'
-      - 'tests/e2e/browser-control/**'
       - 'packages/service/src/browser-control/**'
       - 'packages/core/src/utils/**'
       - 'packages/core/src/sdk/providers/**'
@@ -22,14 +21,13 @@ on:
       - 'packages/service/src/service.ts'
       - 'package*.json'
       - 'packages/*/package.json'
-      - 'tests/e2e/browser-control/**'
       - 'packages/service/src/browser-control/**'
       - 'packages/core/src/utils/**'
       - 'packages/core/src/sdk/providers/**'
       - '.github/workflows/browser-e2e.yml'
 jobs:
   acceptance:
-    name: Real harness ownership and handoff
+    name: Product browser lifecycle and handoff
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -39,34 +37,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: Build PR SDK for injection regression
+      - name: Build product
         run: npm ci --include=dev && npm run build
-      - name: Build pinned browser-use acceptance image
-        run: docker build -t disclaude-browser-e2e -f tests/e2e/browser-control/Dockerfile .
-      - name: Run real Chromium and harness over IPC
-        run: |
-          mkdir -p "$RUNNER_TEMP/browser-harness-evidence"
-          docker run --rm --init --shm-size=2g --memory=4g \
-            -e DISCLAUDE_BROWSER_SDK_MODULE=file:///sdk/utils/sdk.js \
-            -v "$GITHUB_WORKSPACE/packages/core/dist:/sdk:ro" \
-            -v "$RUNNER_TEMP/browser-harness-evidence:/evidence" \
-            disclaude-browser-e2e
-      - name: Run Linux product CLI lifecycle and shared-browser E2E
-        run: |
-          docker run --rm --init --shm-size=2g --memory=4g \
-            -v "$GITHUB_WORKSPACE:/product" -w /product \
-            --entrypoint /bin/bash disclaude-browser-e2e -lc '
-              set -euo pipefail
-              export DISCLAUDE_E2E_BROWSER_PYTHON=/opt/browser-env/bin/python
-              export DISCLAUDE_E2E_CHROMIUM="$(find /ms-playwright -path "*/chrome-linux*/chrome" -type f -print -quit)"
-              test -n "$DISCLAUDE_E2E_CHROMIUM"
-              test -x "$DISCLAUDE_E2E_CHROMIUM"
-              node node_modules/vitest/vitest.mjs run tests/e2e/browser-service.test.ts
-            '
-      - name: Preserve acceptance evidence
-        if: always()
-        uses: actions/upload-artifact@v4
+      - uses: actions/setup-python@v5
         with:
-          name: browser-harness-ipc-evidence
-          path: ${{ runner.temp }}/browser-harness-evidence
-          if-no-files-found: ignore
+          python-version: '3.12'
+      - name: Install real browser dependencies
+        run: |
+          python -m venv "$RUNNER_TEMP/browser-env"
+          "$RUNNER_TEMP/browser-env/bin/pip" install 'browser-use==0.13.10' 'browser-harness==0.1.13'
+          npx --yes playwright@1.62.0 install --with-deps chromium
+      - name: Run product CLI lifecycle and shared-browser E2E
+        run: |
+          export DISCLAUDE_E2E_BROWSER_PYTHON="$RUNNER_TEMP/browser-env/bin/python"
+          export DISCLAUDE_E2E_CHROMIUM="$(find "$HOME/.cache/ms-playwright" -path '*/chrome-linux*/chrome' -type f -print -quit)"
+          test -x "$DISCLAUDE_E2E_CHROMIUM"
+          node node_modules/vitest/vitest.mjs run tests/e2e/browser-service.test.ts
