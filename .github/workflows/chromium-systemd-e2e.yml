@@ -3,9 +3,11 @@ on:
   pull_request:
     paths:
       - 'scripts/chromium-systemd.mjs'
+      - 'scripts/chromium-setup.mjs'
       - 'scripts/chromium-config.mjs'
       - 'scripts/browser-service-state.mjs'
       - 'tests/e2e/chromium-systemd.test.ts'
+      - 'tests/e2e/chromium-setup.test.ts'
       - 'bin/disclaude.js'
       - 'packages/service/src/browser-control/**'
       - 'package*.json'
@@ -15,9 +17,11 @@ on:
     branches: [main, master]
     paths:
       - 'scripts/chromium-systemd.mjs'
+      - 'scripts/chromium-setup.mjs'
       - 'scripts/chromium-config.mjs'
       - 'scripts/browser-service-state.mjs'
       - 'tests/e2e/chromium-systemd.test.ts'
+      - 'tests/e2e/chromium-setup.test.ts'
       - 'bin/disclaude.js'
       - 'packages/service/src/browser-control/**'
       - 'package*.json'
@@ -47,6 +51,7 @@ jobs:
           node --version
           export DISCLAUDE_E2E_CHROMIUM="$(command -v google-chrome)"
           export DISCLAUDE_E2E_CHROMIUM_SYSTEMD=1
+          export DISCLAUDE_E2E_BROWSER_SETUP=1
           test -x "$DISCLAUDE_E2E_CHROMIUM"
           "$DISCLAUDE_E2E_CHROMIUM" --version
-          node node_modules/vitest/vitest.mjs run tests/e2e/chromium-systemd.test.ts
+          node node_modules/vitest/vitest.mjs run tests/e2e/chromium-systemd.test.ts tests/e2e/chromium-setup.test.ts

@@ -77,7 +77,7 @@ const ROUTES = {
   // Issue #4807: routes to scripts/launchd.mjs chromium-cdp <cmd>. The launchd
   // script reads the service selector from argv[2], so we must PRESERVE it in
   // the forwarded args (launchd.mjs "chromium-cdp" <cmd>), not drop it.
-  'chromium-cdp': { file: resolve(ROOT, process.platform === 'linux' ? 'scripts/chromium-systemd.mjs' : 'scripts/launchd.mjs'), keepCommand: true },
+  'chromium-cdp': { file: resolve(ROOT, args[1] === 'setup' ? 'scripts/chromium-setup.mjs' : process.platform === 'linux' ? 'scripts/chromium-systemd.mjs' : 'scripts/launchd.mjs'), keepCommand: true },
 };
 
 if (!command || command === '--help' || command === '-h') {
