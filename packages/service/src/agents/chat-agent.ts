@@ -958,6 +958,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const userMessage: StreamingUserMessage = {
       type: 'user',
       correlation: lifecycleContext,
+      ...(senderOpenId ? { inputContext: { actorId: senderOpenId, chatId, sourceMessageId: messageId,
+        threadRootId: threadRootId ?? this.conversationOrchestrator.getThreadRoot(chatId) } } : {}),
       message: {
         role: 'user',
         content: enhancedContent,
@@ -1158,6 +1160,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       sessionKey: this.sdkSessionKey,
     });
 
+    if (this.callbacks.requestAgentInput) { sdkOptions.onUserInput = async (request, context) => {
+      if (!context || context.chatId !== chatId || !this.callbacks.requestAgentInput) { throw new Error('This channel cannot answer SDK input requests'); }
+      await this.callbacks.requestAgentInput(request, context);
+    }; }
     this.logger.info({ chatId }, 'Starting SDK query with message channel');
 
     // Issue #2926: Create fresh AbortController for this agent loop

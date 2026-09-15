@@ -6,6 +6,7 @@
  */
 
 import type { ZodSchema } from 'zod';
+import type { AgentInputContext, AgentInputRequest } from './user-input.js';
 
 // ============================================================================
 // 内容块类型
@@ -37,6 +38,7 @@ export interface UserInput {
   content: string | ContentBlock[];
   /** Host-only identifiers; adapters must not append these to model content. */
   correlation?: { runId: string; chatId: string; sourceMessageId: string; traceId: string };
+  inputContext?: AgentInputContext;
 }
 
 /** API 消息格式（用于流式输入） */
@@ -56,6 +58,7 @@ export interface StreamingUserMessage {
   parent_tool_use_id: string | null;
   session_id: string;
   correlation?: UserInput['correlation'];
+  inputContext?: AgentInputContext;
 }
 
 // ============================================================================
@@ -295,6 +298,8 @@ export interface ToolsPreset {
 
 /** 查询选项（Provider 无关） */
 export interface AgentQueryOptions {
+  /** Host interaction callback; never serialized into model input or tool traces. */
+  onUserInput?: (request: AgentInputRequest, context: AgentInputContext | undefined) => Promise<void>;
   /** 工作目录 */
   cwd?: string;
   /**
