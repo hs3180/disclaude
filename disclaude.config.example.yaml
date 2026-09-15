@@ -320,3 +320,11 @@ env:
 #   See .disclauderc.example for details.
 #
 # =============================================================================
+
+# DeepSeek harness backend (agent.agentBackend: deepseek).
+# Restart the service after changing mode; existing turns are not switched in place.
+# standard -> official sdk profile; minimal -> official sdk-minimal profile.
+# Minimal requires a dsh release that ships sdk-minimal; it does not fall back to sdk.
+deepseek:
+  mode: standard
+  # dshHome: /absolute/path/to/isolated-dsh-home

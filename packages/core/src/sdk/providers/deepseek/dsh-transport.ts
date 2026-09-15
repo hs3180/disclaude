@@ -78,6 +78,9 @@ export class DshStdioTransport {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     this.child = child;
+    // Drain diagnostics even when no consumer is attached, so startup cannot
+    // deadlock on a full stderr pipe (for example, an unsupported SDK profile).
+    child.stderr?.resume();
     if (!child.stdout) {
       throw new Error('dsh transport stdout is unavailable');
     }

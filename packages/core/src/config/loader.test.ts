@@ -599,3 +599,11 @@ describe('setLoadedConfig / getPreloadedConfig', () => {
     expect(result?.workspace?.dir).toBe('/ws');
   });
 });
+
+// A misspelled mode must not become an unnoticed standard-mode deployment.
+it('validates the optional DeepSeek harness mode', () => {
+  expect(validateConfig({ deepseek: {} })).toBe(true);
+  expect(validateConfig({ deepseek: { mode: 'standard' } })).toBe(true);
+  expect(validateConfig({ deepseek: { mode: 'minimal' } })).toBe(true);
+  expect(validateConfig({ deepseek: { mode: 'typo' as never } })).toBe(false);
+});

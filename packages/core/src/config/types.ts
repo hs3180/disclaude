@@ -241,6 +241,8 @@ export interface GlmConfig {
 
 /** DeepSeek harness configuration (developer preview; Issue #4741). */
 export interface DeepSeekConfig {
+  /** Harness composition. Changes apply after service restart. Default: standard. */
+  mode?: 'minimal' | 'standard';
   /** API key consumed by dsh (overrides DEEPSEEK_API_KEY). */
   apiKey?: string;
   /** Optional isolated dsh home directory (overrides DSH_HOME). */

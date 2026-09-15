@@ -207,6 +207,7 @@ export class Config {
   // DeepSeek harness configuration (Issue #4741).
   static readonly DEEPSEEK_API_KEY =
     fileConfigOnly.deepseek?.apiKey || process.env.DEEPSEEK_API_KEY || '';
+  static readonly DSH_MODE = fileConfigOnly.deepseek?.mode ?? 'standard';
   static readonly DSH_HOME = fileConfigOnly.deepseek?.dshHome || process.env.DSH_HOME || '';
 
   // Anthropic Messages API service; file credentials take precedence over env.

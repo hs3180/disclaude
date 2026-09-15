@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -10,6 +10,7 @@ async function sdkFixture(): Promise<{ dir: string; binary: string }> {
   await writeFile(
     binary,
     `#!/usr/bin/env node
+require('node:fs').writeFileSync(require('node:path').join(${JSON.stringify(dir)}, 'argv.json'), JSON.stringify(process.argv.slice(2)));
 const rl = require('node:readline').createInterface({ input: process.stdin });
 const reply = (id, result) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id, result }) + '\\n');
 const notify = (method, params) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method, params }) + '\\n');
@@ -44,6 +45,29 @@ async function* oneInput() {
 }
 
 describe('DeepSeekHarnessProvider (Issue #4741)', () => {
+  it.each([undefined, 'standard', 'minimal'] as const)('selects the SDK profile for mode %s without changing the RPC flow', async mode => {
+    const fixture = await sdkFixture();
+    const provider = new DeepSeekHarnessProvider({ binary: fixture.binary, mode });
+    try {
+      const events = [];
+      for await (const event of provider.queryStream(oneInput(), { settingSources: [] }).iterator) { events.push(event); }
+      expect(JSON.parse(await readFile(join(fixture.dir, 'argv.json'), 'utf8'))).toEqual(['--profile', mode === 'minimal' ? 'sdk-minimal' : 'sdk']);
+      expect(events.at(-1)?.type).toBe('result');
+    } finally { provider.dispose(); await rm(fixture.dir, { recursive: true, force: true }); }
+  });
+  it('reports an unavailable minimal profile without retrying the standard profile', async () => {
+    const fixture = await sdkFixture();
+    await writeFile(fixture.binary, `#!/usr/bin/env node\nrequire('node:fs').appendFileSync(${JSON.stringify(join(fixture.dir, 'attempts'))}, JSON.stringify(process.argv.slice(2))+'\\n');\nprocess.exit(2);\n`, { mode: 0o755 });
+    const provider = new DeepSeekHarnessProvider({ binary: fixture.binary, mode: 'minimal' });
+    try {
+      await expect(provider.queryStream(oneInput(), { settingSources: [] }).iterator.next()).rejects.toThrow(/profile sdk-minimal.*no mode fallback/);
+      expect((await readFile(join(fixture.dir, 'attempts'), 'utf8')).trim().split('\n')).toEqual([JSON.stringify(['--profile', 'sdk-minimal'])]);
+    } finally { provider.dispose(); await rm(fixture.dir, { recursive: true, force: true }); }
+  });
+  it('rejects invalid modes and custom arguments that could override the selected mode', () => {
+    expect(() => new DeepSeekHarnessProvider({ mode: 'typo' as never })).toThrow('deepseek.mode');
+    expect(() => new DeepSeekHarnessProvider({ mode: 'minimal', args: ['--profile', 'sdk'] })).toThrow('custom process args');
+  });
   it('allows dsh to resolve credentials from its own credential service', () => {
     const provider = new DeepSeekHarnessProvider({ env: {} });
 

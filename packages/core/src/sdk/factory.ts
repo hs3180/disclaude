@@ -44,6 +44,7 @@ const providerRegistry = new Map<ProviderType, ProviderFactory>([
   ['deepseek', () => new DeepSeekHarnessProvider({
     apiKey: Config.DEEPSEEK_API_KEY,
     dshHome: Config.DSH_HOME,
+    mode: Config.DSH_MODE,
   })],
 ]);
 
