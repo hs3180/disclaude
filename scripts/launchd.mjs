@@ -442,7 +442,24 @@ function loadDotEnv(file) {
 const LABEL_CHROMIUM = process.argv[2] === 'chromium-isolated'
   ? APP_SERVICE.label : 'com.disclaude.chromium-cdp';
 const PLIST_FILENAME_CHROMIUM = `${LABEL_CHROMIUM}.plist`;
-const CR_PLIST_PATH = resolve(LAUNCHAGENTS_DIR, PLIST_FILENAME_CHROMIUM);
+const CR_AUTO_PLIST_PATH = resolve(LAUNCHAGENTS_DIR, PLIST_FILENAME_CHROMIUM);
+const CR_MANUAL_PLIST_PATH = resolve(process.argv[2] === 'chromium-isolated'
+  ? resolve(LAUNCHAGENTS_DIR, '..', 'ManualServices')
+  : resolve(homedir(), 'Library/Application Support/disclaude/services'), PLIST_FILENAME_CHROMIUM);
+let CR_PLIST_PATH = CR_AUTO_PLIST_PATH;
+let CR_PREVIOUS_PLIST_PATH = CR_AUTO_PLIST_PATH;
+
+function selectChromiumPlistPath() {
+  const existing = [CR_AUTO_PLIST_PATH, CR_MANUAL_PLIST_PATH].filter(path => existsSync(path));
+  if (existing.length > 1) throw new Error('Both automatic and manual Chromium definitions exist; resolve the duplicate before changing services');
+  const changing = ['generate', 'install', 'start', 'restart'].includes(command);
+  const autostart = changing ? process.env.CHROMIUM_CDP_AUTOSTART : undefined;
+  if (autostart && !['0', '1'].includes(autostart)) throw new Error('CHROMIUM_CDP_AUTOSTART must be 0 or 1');
+  CR_PREVIOUS_PLIST_PATH = existing[0] || CR_AUTO_PLIST_PATH;
+  CR_PLIST_PATH = autostart === undefined && existing.length ? existing[0]
+    : autostart === '0' ? CR_MANUAL_PLIST_PATH : CR_AUTO_PLIST_PATH;
+  if (command === 'generate' && existing.length && CR_PLIST_PATH !== CR_PREVIOUS_PLIST_PATH) throw new Error('Use install or restart to change autostart with verified recovery');
+}
 const CR_STDERR_LOG = resolve(LOG_DIR, 'chromium-cdp-stderr.log');
 const CR_STDOUT_LOG = resolve(LOG_DIR, 'chromium-cdp-stdout.log');
 
@@ -722,6 +739,7 @@ ${programArgs.map((a) => `    <string>${xmlEscape(a)}</string>`).join('\n')}
     CHROMIUM_CDP_PORT: String(port),
     CHROMIUM_CDP_ADDRESS: address,
     CHROMIUM_CDP_HEADED: headless ? '0' : '1',
+    CHROMIUM_CDP_AUTOSTART: CR_PLIST_PATH === CR_AUTO_PLIST_PATH ? '1' : '0',
   });
   replaceChromiumFile(CR_PLIST_PATH, Buffer.from(plist));
   console.log(`Plist generated: ${CR_PLIST_PATH}`);
@@ -734,7 +752,7 @@ ${programArgs.map((a) => `    <string>${xmlEscape(a)}</string>`).join('\n')}
   console.log(
     `  Caffeinate: ${caffeinatePath ? `enabled (${caffeinatePath} -s)` : 'not available'}`
   );
-  console.log(`  KeepAlive: auto-relaunch on crash; RunAtLoad on boot`);
+  console.log(`  Crash recovery: enabled; login autostart: ${CR_PLIST_PATH === CR_AUTO_PLIST_PATH ? 'enabled' : 'disabled (manual service definition)'}`);
   console.log(`  Stdout: ${CR_STDOUT_LOG}`);
   console.log(`  Stderr: ${CR_STDERR_LOG}`);
   console.log(
@@ -788,11 +806,11 @@ async function activateChromium(restart) {
   const config = chromiumConfigPath();
   const prior = chromiumServicePid();
   if (prior.loaded && !restart) throw new Error('Chromium service is already loaded; use restart to change its configuration');
-  if (prior.loaded && !existsSync(CR_PLIST_PATH)) throw new Error('Loaded service has no saved plist; cannot provide rollback');
+  if (prior.loaded && !existsSync(CR_PREVIOUS_PLIST_PATH)) throw new Error('Loaded service has no saved plist; cannot provide rollback');
   const selected = { address: resolveChromiumAddress(), port: resolveChromiumPort() };
   let previous;
   if (prior.loaded) {
-    const plist = JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', CR_PLIST_PATH], { encoding: 'utf8' }));
+    const plist = JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', CR_PREVIOUS_PLIST_PATH], { encoding: 'utf8' }));
     const environment = plist.EnvironmentVariables;
     previous = { address: environment.CHROMIUM_CDP_ADDRESS, port: Number(environment.CHROMIUM_CDP_PORT) };
     if (!previous.address || !Number.isSafeInteger(previous.port) || previous.port < 1 || previous.port > 65535) throw new Error('Previous plist has no usable CDP configuration for rollback');
@@ -806,19 +824,23 @@ async function activateChromium(restart) {
   if (!diagnosis.usable) throw new Error('Selected browser failed its temporary-profile preflight');
   const stop = async () => {
     if (!chromiumServicePid().loaded) return;
-    execFileSync('launchctl', ['unload', CR_PLIST_PATH], { stdio: 'pipe' });
+    execFileSync('launchctl', ['unload', existsSync(CR_PLIST_PATH) ? CR_PLIST_PATH : CR_PREVIOUS_PLIST_PATH], { stdio: 'pipe' });
     if (chromiumServicePid().loaded) throw new Error('launchd service remained loaded after stop');
   };
-  const ready = await transitionChromium({ paths: [config, CR_PLIST_PATH], wasLoaded: prior.loaded,
+  const ready = await transitionChromium({ paths: [config, CR_AUTO_PLIST_PATH, CR_MANUAL_PLIST_PATH], wasLoaded: prior.loaded,
     prepare: () => generateChromiumPlist(), stop,
-    start: () => loadPlistAt(CR_PLIST_PATH, LABEL_CHROMIUM),
-    verify: () => waitChromiumReady(selected, chromiumServicePid), verifyPrevious: () => waitChromiumReady(previous, chromiumServicePid) });
+    start: () => loadPlistAt(existsSync(CR_PLIST_PATH) ? CR_PLIST_PATH : CR_PREVIOUS_PLIST_PATH, LABEL_CHROMIUM),
+    verify: async () => {
+      const result = await waitChromiumReady(selected, chromiumServicePid);
+      if (CR_PREVIOUS_PLIST_PATH !== CR_PLIST_PATH) rmSync(CR_PREVIOUS_PLIST_PATH, { force: true });
+      return result;
+    }, verifyPrevious: () => waitChromiumReady(previous, chromiumServicePid) });
   console.log(`CDP ready: ${ready.endpoint} (${ready.browser}, service PID ${ready.pid})`);
   console.log(`Temporary-profile cookie persistence: ${diagnosis.cookiePersistence}; service-profile persistence was not tested by this command.`);
 }
 
 async function withChromiumActivationLock(action) {
-  const lock = `${CR_PLIST_PATH}.activation.lock`;
+  const lock = `${CR_AUTO_PLIST_PATH}.activation.lock`;
   mkdirSync(dirname(lock), { recursive: true, mode: 0o700 });
   try { writeFileSync(lock, `${process.pid}\n`, { flag: 'wx', mode: 0o600 }); }
   catch (error) { if (error.code === 'EEXIST') throw new Error(`Another activation owns ${lock}; check its recorded PID before removing a stale lock`); throw error; }
@@ -881,6 +903,7 @@ function cmdChromiumStatus() {
     console.log(`\nPlist: ${CR_PLIST_PATH}`);
     console.log(`Configured profile (may differ from loaded service): ${resolveChromiumProfileDir()}`);
     console.log(`Configuration: ${chromiumConfigPath()}`);
+    console.log(`Configured login autostart: ${CR_PLIST_PATH === CR_AUTO_PLIST_PATH ? 'enabled' : 'disabled'}`);
     console.log(`Stdout: ${CR_STDOUT_LOG}`);
     console.log(`Stderr: ${CR_STDERR_LOG}`);
   } else {
@@ -1089,6 +1112,7 @@ absolute state directory. Missing settings fail closed before launchctl runs.
   }
   if (FIRST_ARG === 'chromium-isolated') validateIsolatedChromium();
   else loadDotEnv(resolve(PROJECT_ROOT, '.env'));
+  if (IS_CHROMIUM) selectChromiumPlistPath();
   try {
     if (IS_CHROMIUM && !['status', 'logs'].includes(command)) await withChromiumActivationLock(table[command]);
     else await table[command]();

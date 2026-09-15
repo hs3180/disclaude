@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 
 export const CHROMIUM_CONFIG_KEYS = [
   'CHROMIUM_CDP_BINARY', 'CHROMIUM_CDP_PROFILE_DIR', 'CHROMIUM_CDP_PORT',
-  'CHROMIUM_CDP_ADDRESS', 'CHROMIUM_CDP_HEADED',
+  'CHROMIUM_CDP_ADDRESS', 'CHROMIUM_CDP_HEADED', 'CHROMIUM_CDP_AUTOSTART',
 ];
 
 export function chromiumConfigPath(env = process.env, home = homedir()) {
@@ -31,8 +31,8 @@ function validate(config) {
     if (key === 'CHROMIUM_CDP_PORT' && (!/^\d+$/.test(value) || +value < 1 || +value > 65535)) {
       throw new Error('CHROMIUM_CDP_PORT must be an integer between 1 and 65535');
     }
-    if (key === 'CHROMIUM_CDP_HEADED' && !['0', '1'].includes(value)) {
-      throw new Error('CHROMIUM_CDP_HEADED must be 0 or 1 in saved configuration');
+    if (['CHROMIUM_CDP_HEADED', 'CHROMIUM_CDP_AUTOSTART'].includes(key) && !['0', '1'].includes(value)) {
+      throw new Error(`${key} must be 0 or 1 in saved configuration`);
     }
   }
   return config.environment;
