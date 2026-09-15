@@ -9,6 +9,9 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ActionBoundInput } from '@disclaude/core';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 // ---------------------------------------------------------------------------
 // Shared mock state (hoisted so vi.mock factories can reference it)
@@ -217,6 +220,34 @@ function cardActionEvent(overrides: Record<string, unknown> = {}) {
 // ===========================================================================
 
 describe('MessageHandler', () => {
+  it('routes the research entry and creation form to a persistent project instead of an ordinary chat turn', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'research-routing-'));
+    vi.stubEnv('DISCLAUDE_RESEARCH_PROJECTS_DIR', directory);
+    const send = vi.fn().mockResolvedValue('om_project');
+    const { handler } = createHandler({ callbacks: { emitMessage: mockState.emitMessage, emitControl: mockState.emitControl, sendMessage: send } });
+    try {
+      handler.initialize({ im: { message: { patch: vi.fn().mockResolvedValue({ code: 0 }) } } } as any);
+      await handler.handleMessageReceive(textEvent('/research'));
+      const {card} = firstCallArg(send);
+      expect(card.header.title.content).toBe('我的研究项目');
+      const form = card.body.elements.find((element: any) => element.tag === 'form');
+      const submit = form.elements.find((element: any) => element.form_action_type === 'submit');
+      await handler.handleCardAction(cardActionEvent({ action: { name: submit.name, form_value: { question: 'Compare reports', scope: 'Costs', materials: 'A: 10; B: 12' } } }));
+      await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+      const file = readdirSync(directory).find(name => name.endsWith('.json'));
+      expect(file).toBeDefined();
+      await vi.waitFor(() => expect(JSON.parse(readFileSync(join(directory, file ?? ''), 'utf8')).cardId).toBe('om_project'));
+      const project = JSON.parse(readFileSync(join(directory, file ?? ''), 'utf8'));
+      expect(project.owner).toBe('user_001'); expect(project.chat).toBe('chat_001'); expect(project.status).toBe('paused');
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+      const persisted = readFileSync(join(directory, file ?? ''), 'utf8');
+      await handler.handleCardAction(cardActionEvent({ operator: { open_id: 'another-user' }, action: { value: { research: true, action: 'resume', project: project.id, revision: project.revision } } }));
+      await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(3));
+      expect(readFileSync(join(directory, file ?? ''), 'utf8')).toBe(persisted);
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    } finally { handler.clearClient(); vi.unstubAllEnvs(); rmSync(directory, { recursive: true, force: true }); }
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockState.isRunning = true;

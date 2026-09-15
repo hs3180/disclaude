@@ -56,6 +56,10 @@ export interface ChatAgentCallbacks {
    */
   onDone?: (chatId: string, parentMessageId?: string) => Promise<void>;
 
+  /** Internal consumers receive bounded assistant text after the last tool call and the actual turn outcome,
+   * without mixing user notifications, tool traces or SDK progress into results. */
+  onTurnResult?: (result: { success: boolean; text: string; truncated: boolean }) => Promise<void>;
+
   /**
    * Get the capabilities of the channel for a specific chat.
    * Used for capability-aware prompt generation (Issue #582).

@@ -1464,6 +1464,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Issue #4194: count substantive user-visible output sent this turn
     // (excludes the ✅ Complete result marker) so empty turns are detectable.
     let userVisibleOutputCount = 0;
+    let turnResultText = '';
+    let turnResultTruncated = false;
     // 2026-09-08: 本轮是否收到 proxy 的 mid-stream 中断标记(带 MIDSTREAM_MARKER 的
     // assistant 正文)。turn 收尾 accounting 用;与其它 per-turn 计数一起清零。
     let sawMidstreamInterrupt = false;
@@ -1492,6 +1494,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         finalDeliveryId = undefined;
         turnDeliveryFailed = false;
         turnHadError = false;
+        turnResultText = '';
+        turnResultTruncated = false;
         this.activeTurnMessageId = currentTurnMessageId;
       }
       return currentTurnAnchor;
@@ -1573,6 +1577,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
         // Issue #3003: Track tool call timing
         if (parsed.type === 'tool_use') {
+          // Text preceding another tool call is intermediate commentary, not
+          // the terminal answer consumed by structured internal workflows.
+          turnResultText = '';
+          turnResultTruncated = false;
           toolCallCount++;
           const now = Date.now();
           const sinceLastTool = lastToolCallMs ? now - lastToolCallMs : undefined;
@@ -1660,6 +1668,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             }
             if (parsed.type === 'result' && visibleContent.startsWith('✅ Complete')) {
               toDeliver = '';
+            }
+            if (this.callbacks.onTurnResult && isAssistantReplyText && toDeliver) {
+              const nextText = turnResultText + toDeliver;
+              turnResultTruncated ||= nextText.length > 65_536;
+              turnResultText = nextText.slice(0, 65_536);
             }
             let delivered = false;
             if (toDeliver) {
@@ -2249,6 +2262,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // Issue #4063: Resolve per-turn completion promise (works in persistent mode)
           this.resolveTurn(currentTurnMessageId);
 
+          if (this.callbacks.onTurnResult) {
+            await this.callbacks.onTurnResult({
+              success: !isEmptyTurn && !upstreamApiError && !midstreamInterrupted &&
+                !parsed.terminatedReason && !turnHadError && !turnDeliveryFailed && !turnResultTruncated,
+              text: turnResultText,
+              truncated: turnResultTruncated,
+            });
+          }
           if (this.callbacks.onDone) {
             const threadRoot = resolveReplyThreadRoot();
             await this.callbacks.onDone(chatId, threadRoot);
