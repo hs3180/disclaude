@@ -3,7 +3,7 @@ import { ProjectStore, type ResearchProject, type ResearchStep, type StepResult 
 
 export type StepRunner = (project: ResearchProject, step: ResearchStep, signal: AbortSignal) => Promise<StepResult>;
 export type ProjectPublisher = (project: ResearchProject) => Promise<string>;
-export type ProjectAction = 'pause' | 'resume' | 'cancel' | 'feedback' | 'stop-direction';
+export type ProjectAction = 'pause' | 'resume' | 'cancel' | 'feedback' | 'stop-direction' | 'archive' | 'unarchive';
 
 /** Project state owns execution; message turns and cards are adapters, never the source of truth. */
 export class ResearchManager {
@@ -37,9 +37,9 @@ export class ResearchManager {
     if (!p || p.owner !== owner || p.chat !== chat) { throw new Error('研究项目不存在或不属于当前用户和会话。'); }
     return structuredClone(p);
   }
-  list(owner: string, chat: string): ResearchProject[] {
+  list(owner: string, chat: string, archived = false): ResearchProject[] {
     this.load();
-    return [...this.projects.values()].filter(p => p.owner === owner && p.chat === chat)
+    return [...this.projects.values()].filter(p => p.owner === owner && p.chat === chat && Boolean(p.archivedAt) === archived)
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map(p => structuredClone(p));
   }
   async create(input: { owner: string; chat: string; thread?: string; source: string; title: string; scope: string; materials: string; parent?: string }): Promise<ResearchProject> {
@@ -75,6 +75,13 @@ export class ResearchManager {
     this.get(id, owner, chat);
     const p = this.project(id);
     if (revision !== p.revision) { throw new Error('项目已更新，请刷新后操作。'); }
+    if (action === 'archive' || action === 'unarchive') {
+      if (!['completed', 'cancelled'].includes(p.status)) { throw new Error('请先结束研究，再归档项目。'); }
+      p.archivedAt = action === 'archive' ? new Date().toISOString() : undefined;
+      this.record(p, action === 'archive' ? '项目已归档，成果保留，可从归档项目列表重返。' : '项目已移回研究项目列表。');
+      await this.display(p);
+      return;
+    }
     if (['completed', 'cancelled'].includes(p.status)) { throw new Error('项目已结束，可从成果创建后续研究。'); }
     if (action === 'pause') {
       if (p.status !== 'running') { throw new Error('当前项目未在执行。'); }

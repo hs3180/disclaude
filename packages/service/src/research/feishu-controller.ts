@@ -39,7 +39,7 @@ export class FeishuResearchController {
       const value = object(action.value), form = object(action.form_value);
       const actionName = string(value.action), id = string(value.project);
       if (actionName === 'index') {
-        await this.send({ chatId: chat, type: 'card', threadId: message, card: indexCard(this.manager.list(owner, chat), randomUUID(), page(value.offset)) });
+        await this.send({ chatId: chat, type: 'card', threadId: message, card: indexCard(this.manager.list(owner, chat, value.archived === true), randomUUID(), page(value.offset), value.archived === true) });
         return;
       }
       if (actionName === 'create') {
@@ -63,7 +63,7 @@ export class FeishuResearchController {
           title: project.title, scope: project.scope, materials: project.materials });
         return;
       }
-      const actions: ProjectAction[] = ['pause', 'resume', 'cancel', 'feedback', 'stop-direction'];
+      const actions: ProjectAction[] = ['pause', 'resume', 'cancel', 'feedback', 'stop-direction', 'archive', 'unarchive'];
       if (!actions.includes(actionName as ProjectAction) || typeof value.revision !== 'number') { throw new Error('研究操作无效，请刷新项目。'); }
       await this.manager.act(id, owner, chat, value.revision, actionName as ProjectAction,
         actionName === 'feedback' ? string(form.feedback) : string(value.direction));

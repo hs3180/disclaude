@@ -17,6 +17,7 @@ export function projectCard(p: ResearchProject): Record<string, unknown> {
   if (!['completed', 'cancelled', 'cancelling'].includes(p.status)) { actions.push(researchButton('取消研究', { ...value, action: 'cancel' })); }
   const visible = p.directions.slice(-8);
   const elements: unknown[] = [
+    ...(p.archivedAt ? [text('已归档 · 成果和研究记录保留')] : []),
     text(`${labels[p.status]}\n${p.scope || '范围：围绕研究问题展开'}\n最近更新：${p.updatedAt}`),
     ...(p.parent ? [text('从已有成果继续的研究'), researchButton('查看原项目', { project: p.parent, action: 'open' })] : []),
     text(p.history.at(-1)?.text ?? ''),
@@ -41,6 +42,9 @@ export function projectCard(p: ResearchProject): Record<string, unknown> {
     ] });
   } else {
     elements.push(researchButton('基于成果继续研究', { ...value, action: 'continue' }, true));
+    if (['completed', 'cancelled'].includes(p.status)) {
+      elements.push(researchButton(p.archivedAt ? '移回项目列表' : '归档项目', { ...value, action: p.archivedAt ? 'unarchive' : 'archive' }));
+    }
   }
   return researchCard(p.title, elements);
 }
@@ -68,12 +72,13 @@ export function historyCard(p: ResearchProject, offset: number): Record<string, 
     researchButton('返回项目', { project: p.id, action: 'open' }),
   ]);
 }
-export function indexCard(projects: ResearchProject[], nonce: string, offset = 0): Record<string, unknown> {
-  return researchCard('我的研究项目', [
+export function indexCard(projects: ResearchProject[], nonce: string, offset = 0, archived = false): Record<string, unknown> {
+  return researchCard(archived ? '归档的研究项目' : '我的研究项目', [
+    researchButton(archived ? '返回项目列表' : '查看归档项目', { action: 'index', archived: !archived }),
     text('研究围绕项目持续推进。可以随时重返、查看证据、调整方向或暂停。项目控制由创建者操作。'),
     text('材料与意见请在项目内提交；外部文档中的改动不会自动同步。'),
     ...projects.slice(offset, offset + 6).flatMap(p => [text(`${p.title} · ${labels[p.status]}`), researchButton('打开项目', { project: p.id, action: 'open' })]),
-    ...(projects.length > offset + 6 ? [researchButton('更多项目', { action: 'index', offset: offset + 6 })] : []),
+    ...(projects.length > offset + 6 ? [researchButton('更多项目', { action: 'index', offset: offset + 6, archived })] : []),
     { tag: 'form', name: 'research_create', elements: [
       { tag: 'input', name: 'question', required: true, placeholder: plain('想研究什么？（180 字以内）') },
       { tag: 'input', name: 'scope', placeholder: plain('研究范围、约束与希望得到的成果') },

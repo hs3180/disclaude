@@ -23,6 +23,7 @@ export interface ResearchProject {
   revision: number;
   createdAt: string;
   updatedAt: string;
+  archivedAt?: string;
   directions: Direction[];
   summary: string;
   questions: string[];

@@ -116,6 +116,23 @@ describe('persistent research lifecycle', () => {
     expect(done.status).toBe('completed'); expect(done.directions[0].status).toBe('stopped');
     expect(done.directions[0].findings).toEqual([]); expect(done.directions[1].status).toBe('done');
   });
+  it('archives only finished projects and restores their identity and evidence after restart', async () => {
+    const { manager, dir } = fixture(); const p = await manager.create(input);
+    await expect(manager.act(p.id, 'alice', 'chat-a', p.revision, 'archive')).rejects.toThrow('先结束');
+    await manager.act(p.id, 'alice', 'chat-a', p.revision, 'resume'); await manager.idle(p.id);
+    const completed = manager.get(p.id, 'alice', 'chat-a');
+    await manager.act(p.id, 'alice', 'chat-a', completed.revision, 'archive');
+    expect(manager.list('alice', 'chat-a')).toEqual([]);
+    expect(manager.list('alice', 'chat-a', true).map(p => p.id)).toEqual([p.id]);
+    expect(manager.list('bob', 'chat-a', true)).toEqual([]);
+    manager.dispose();
+    const reopened = fixture(undefined, undefined, dir).manager;
+    const archived = reopened.get(p.id, 'alice', 'chat-a');
+    expect(archived.summary).toBe(completed.summary); expect(archived.directions).toEqual(completed.directions);
+    await reopened.act(p.id, 'alice', 'chat-a', archived.revision, 'unarchive');
+    expect(reopened.list('alice', 'chat-a').map(p => p.id)).toEqual([p.id]);
+    expect(reopened.list('alice', 'chat-a', true)).toEqual([]);
+  });
   it('does not let a second live owner overwrite the same project store', async () => {
     const { manager, dir } = fixture(); await manager.create(input);
     const second = new ProjectStore(dir);

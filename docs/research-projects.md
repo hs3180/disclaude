@@ -14,7 +14,9 @@ or provision a Feishu application automatically.
 
 Users can reopen `/research` to find existing projects, open findings and sources,
 submit adjustments, stop a direction, pause after the current phase, cancel, or
-resume an interrupted/failed project. Completion and cancellation preserve results.
+resume an interrupted/failed project. Completion and cancellation preserve results. Finished projects may be archived
+from their card, reopened from the archive index, and moved back without deleting
+results or changing project identity.
 Continuing from results creates a new linked project, with a snapshot of the
 previous summary and findings available to its runner. The original remains final.
 When a stage needs a user decision or missing material, the project displays its
@@ -37,8 +39,7 @@ project results and do not re-run completed research; reopening retries delivery
 
 This is not the complete #4753/#4754 acceptance. Materials and feedback currently
 come from the project forms. External document edits/comments are not synchronized,
-and the UI states this limitation. Archival,
-collaborative document editing/conflict handling, and live Feishu UX acceptance
+and the UI states this limitation. Collaborative document editing/conflict handling, and live Feishu UX acceptance
 remain outstanding. Source fields are structurally checked; this is not factual
 verification or proof that a model actually consulted a source.
 
