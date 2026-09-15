@@ -2021,8 +2021,11 @@ describe('ChatAgent (service)', () => {
       const agent = new ChatAgent({ chatId: 'research-result', callbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
       async function* output() {
         yield { parsed: { type: 'status', content: '🤔 Thinking...' } };
+        yield { parsed: { type: 'text', content: 'I will check the supplied report first.' } };
         yield { parsed: { type: 'tool_use', content: 'read supplied report' } };
-        yield { parsed: { type: 'text', content: '{"directions":["costs"]}' } };
+        yield { parsed: { type: 'tool_result', content: 'The report describes costs.' } };
+        yield { parsed: { type: 'text', content: '{"directions":' } };
+        yield { parsed: { type: 'text', content: '["costs"]}' } };
         yield { parsed: { type: 'result', content: '✅ Complete', terminatedReason: reason } };
       }
       (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: output() });

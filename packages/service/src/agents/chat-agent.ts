@@ -1577,6 +1577,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
         // Issue #3003: Track tool call timing
         if (parsed.type === 'tool_use') {
+          // Text preceding another tool call is intermediate commentary, not
+          // the terminal answer consumed by structured internal workflows.
+          turnResultText = '';
+          turnResultTruncated = false;
           toolCallCount++;
           const now = Date.now();
           const sinceLastTool = lastToolCallMs ? now - lastToolCallMs : undefined;

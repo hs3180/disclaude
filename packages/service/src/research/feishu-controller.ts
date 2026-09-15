@@ -4,6 +4,7 @@ import { ProjectStore } from './project.js';
 import { ResearchManager, type StepRunner, type ProjectAction } from './manager.js';
 import { createResearchRunner } from './runner.js';
 import { indexCard, projectCard, evidenceCard, historyCard } from './cards.js';
+import type { DocumentReader } from './document-source.js';
 
 type Sender = (message: { chatId: string; type: string; text?: string; card?: Record<string, unknown>; threadId?: string }) => Promise<string | void>;
 type Updater = (messageId: string, card: Record<string, unknown>) => Promise<void>;
@@ -22,7 +23,7 @@ function callbackValue(action: Record<string, unknown>): Record<string, unknown>
 /** A persistent project surface; ordinary conversation turns never own its state. */
 export class FeishuResearchController {
   readonly manager: ResearchManager;
-  constructor(directory: string, workspace: string, private readonly send: Sender, update: Updater, runner: StepRunner = createResearchRunner(workspace)) {
+  constructor(directory: string, workspace: string, private readonly send: Sender, update: Updater, runner: StepRunner = createResearchRunner(workspace), readDocument?: DocumentReader) {
     if (!isAbsolute(directory)) { throw new Error('Research project storage must use an absolute directory'); }
     this.manager = new ResearchManager(new ProjectStore(directory), runner, async project => {
       const card = projectCard(project);
@@ -30,7 +31,7 @@ export class FeishuResearchController {
       const id = await send({ chatId: project.chat, type: 'card', card, threadId: project.thread });
       if (!id) { throw new Error('Research project card delivery returned no message ID'); }
       return id;
-    });
+    }, readDocument);
   }
   static isCallback(raw: Record<string, unknown>): boolean {
     return callbackValue(object(raw.action)).research === true;
@@ -53,7 +54,7 @@ export class FeishuResearchController {
       if (actionName === 'create') {
         const nonce = string(value.nonce);
         if (!nonce || nonce.length > 100) { throw new Error('创建表单已失效，请重新打开研究项目。'); }
-        await this.manager.create({ owner, chat, thread: message, source: `${message}:${nonce}`, title: string(form.question), scope: string(form.scope), materials: string(form.materials) });
+        await this.manager.create({ owner, chat, thread: message, source: `${message}:${nonce}`, title: string(form.question), scope: string(form.scope), materials: string(form.materials), documentUrl: string(form.document_url) });
         return;
       }
       const project = this.manager.get(id, owner, chat);
@@ -68,7 +69,7 @@ export class FeishuResearchController {
         if (!['completed', 'cancelled'].includes(project.status)) { throw new Error('请先结束当前研究，再从成果建立后续项目。'); }
         // Retrying the same result-card action returns the existing successor.
         await this.manager.create({ owner, chat, thread: project.thread, source: `${message}:continue:${id}`, parent: id,
-          title: project.title, scope: project.scope, materials: project.materials });
+          title: project.title, scope: project.scope, materials: project.materials, documentUrl: project.document?.url });
         return;
       }
       const actions: ProjectAction[] = ['pause', 'resume', 'cancel', 'feedback', 'stop-direction', 'archive', 'unarchive'];

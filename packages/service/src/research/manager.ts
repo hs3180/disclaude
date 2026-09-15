@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { ProjectStore, type ResearchProject, type ResearchStep, type StepResult } from './project.js';
+import { changedDocumentFeedback, documentToken, type DocumentReader } from './document-source.js';
 
 export type StepRunner = (project: ResearchProject, step: ResearchStep, signal: AbortSignal) => Promise<StepResult>;
 export type ProjectPublisher = (project: ResearchProject) => Promise<string>;
@@ -12,7 +13,7 @@ export class ResearchManager {
   private readonly publishing = new Map<string, Promise<void>>();
   private loaded = false;
   private disposed = false;
-  constructor(private readonly store: ProjectStore, private readonly runner: StepRunner, private readonly publish: ProjectPublisher) {}
+  constructor(private readonly store: ProjectStore, private readonly runner: StepRunner, private readonly publish: ProjectPublisher, private readonly readDocument?: DocumentReader) {}
 
   private load(): void {
     if (this.disposed) { throw new Error('研究服务已停止。'); }
@@ -42,7 +43,7 @@ export class ResearchManager {
     return [...this.projects.values()].filter(p => p.owner === owner && p.chat === chat && Boolean(p.archivedAt) === archived)
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map(p => structuredClone(p));
   }
-  async create(input: { owner: string; chat: string; thread?: string; source: string; title: string; scope: string; materials: string; parent?: string }): Promise<ResearchProject> {
+  async create(input: { owner: string; chat: string; thread?: string; source: string; title: string; scope: string; materials: string; parent?: string; documentUrl?: string }): Promise<ResearchProject> {
     this.load();
     if (!input.owner || !input.chat || !input.source || !input.title.trim() || input.title.length > 180 || input.scope.length > 3000 || input.materials.length > 12000) {
       throw new Error('请填写研究问题（180 字以内）、范围（3000 字以内）和材料（12000 字以内）。');
@@ -52,7 +53,10 @@ export class ResearchManager {
     const parent = input.parent ? this.get(input.parent, input.owner, input.chat) : undefined;
     if (parent && !['completed', 'cancelled'].includes(parent.status)) { throw new Error('请先结束原项目，再从成果继续研究。'); }
     const now = new Date().toISOString();
+    const token = documentToken(input.documentUrl ?? '');
+    if (token && !this.readDocument) { throw new Error('当前研究服务未配置文档读取能力。'); }
     const p: ResearchProject = { ...input, id: randomUUID(), status: 'paused', revision: 0, createdAt: now, updatedAt: now,
+      document: token ? { url: input.documentUrl ?? '', token, previous: [], generation: 0 } : undefined,
       directions: [], summary: '', questions: [], history: [], feedback: [], stepCount: 0,
       priorResults: parent ? { summary: parent.summary, findings: parent.directions.flatMap(d => d.findings).slice(-16) } : undefined };
     this.record(p, '项目已建立。开始后会持续研究，无需逐轮发送消息。');
@@ -140,9 +144,39 @@ export class ResearchManager {
     // Storage failures must not become unhandled rejections or trigger a second run.
     void done.catch(() => {});
   }
+  private async syncDocument(p: ResearchProject): Promise<void> {
+    const { document } = p;
+    if (!document) { return; }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      if (!this.readDocument) { throw new Error('Document reader unavailable'); }
+      const snapshot = await Promise.race([this.readDocument(document.token), new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('Document read timed out')), 30_000);
+      })]);
+      if (this.disposed) { return; }
+      if (snapshot.token !== document.token) { throw new Error('Document binding mismatch'); }
+      const changes = changedDocumentFeedback(document.snapshot, snapshot);
+      if (changes.length) {
+        if (document.snapshot) { document.previous.push(document.snapshot); }
+        document.generation++;
+        p.feedback.push(...changes.map(change => ({ text: change.text, status: 'pending' as const, at: snapshot.syncedAt,
+          sourceKey: `${document.token}:${document.generation}:${change.key}` })));
+      }
+      document.snapshot = snapshot;
+      document.error = undefined;
+      this.record(p, changes.length ? '已同步文档正文与评论；新增或修改的意见等待处理，旧版本保留。' : '已核对文档最新正文与评论。');
+    } catch {
+      if (this.disposed) { return; }
+      document.error = '文档未同步。请检查权限、内容大小或并发修改后恢复；已有成果保留，尚未读取的意见不会标为已处理。';
+      this.record(p, document.error);
+      throw new Error('Document sync failed');
+    } finally { clearTimeout(timer); }
+  }
   private async execute(p: ResearchProject, signal: AbortSignal): Promise<void> {
     try {
       while (!this.disposed && p.status === 'running') {
+        await this.syncDocument(p);
+        if (this.disposed || p.status !== 'running') { break; }
         if (p.stepCount >= 12) {
           p.status = 'paused';
           this.record(p, '本轮已执行 12 个阶段，已暂停。请检查进展后决定是否继续。');
@@ -157,6 +191,8 @@ export class ResearchManager {
         await this.display(p);
         if (this.disposed || p.status !== 'running') { break; }
         const result = await this.runner(structuredClone(p), step, signal);
+        if (this.disposed || signal.aborted) { return; }
+        if (p.status as string !== 'cancelling') { await this.syncDocument(p); }
         if (this.disposed || signal.aborted) { return; }
         p.stepCount++;
         if (p.status as string === 'cancelling') {

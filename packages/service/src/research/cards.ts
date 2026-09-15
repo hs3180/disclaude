@@ -29,6 +29,7 @@ export function projectCard(p: ResearchProject): Record<string, unknown> {
     ...(p.clarification ? [text(`需要你补充\n${p.clarification}`)] : []),
     ...(p.error ? [text(p.error)] : []),
     ...(p.deliveryError ? [text(p.deliveryError)] : []),
+    ...(p.document ? [text(`关联文档\n${p.document.url}\n${p.document.error ?? (p.document.snapshot ? `最近同步：${p.document.snapshot.syncedAt}（阶段边界读取，非实时）` : '尚未同步，开始研究前将读取正文与评论。')}`)] : []),
     ...actions,
     { tag: 'hr' }, text('研究方向与证据'),
     ...visible.flatMap(d => [
@@ -84,7 +85,7 @@ export function historyCard(p: ResearchProject, offset: number): Record<string, 
 export function indexCard(projects: ResearchProject[], nonce: string, offset = 0, archived = false): Record<string, unknown> {
   return researchCard(archived ? '归档的研究项目' : '我的研究项目', [
     group([text('研究围绕项目持续推进。可以随时重返、查看证据、调整方向或暂停。项目控制由创建者操作。'),
-      { tag: 'div', text: { ...plain('材料与意见请在项目内提交；外部文档中的改动不会自动同步。'), text_size: 'notation', text_color: 'grey' } }]),
+      { tag: 'div', text: { ...plain('可关联一份新版飞书文档，在阶段边界同步文字正文与评论。未关联的链接不会自动同步；目前不向文档写回成果。'), text_size: 'notation', text_color: 'grey' } }]),
     group([
     researchButton(archived ? '返回项目列表' : '查看归档项目', { action: 'index', archived: !archived }),
     ...projects.slice(offset, offset + 6).flatMap(p => [text(`${p.title} · ${labels[p.status]}`), researchButton('打开项目', { project: p.id, action: 'open' })]),
@@ -94,6 +95,7 @@ export function indexCard(projects: ResearchProject[], nonce: string, offset = 0
       { tag: 'input', name: 'question', required: true, placeholder: plain('想研究什么？（180 字以内）') },
       { tag: 'input', name: 'scope', placeholder: plain('研究范围、约束与希望得到的成果') },
       { tag: 'input', name: 'materials', placeholder: plain('已有材料、来源链接或摘录') },
+      { tag: 'input', name: 'document_url', placeholder: plain('可选：关联的飞书 /docx/ 文档链接（需应用有读取权限）') },
       submitButton('建立研究项目', { action: 'create', nonce }),
     ] },
   ]);

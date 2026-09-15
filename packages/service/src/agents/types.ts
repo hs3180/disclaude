@@ -56,7 +56,7 @@ export interface ChatAgentCallbacks {
    */
   onDone?: (chatId: string, parentMessageId?: string) => Promise<void>;
 
-  /** Internal consumers receive bounded assistant text and the actual turn outcome,
+  /** Internal consumers receive bounded assistant text after the last tool call and the actual turn outcome,
    * without mixing user notifications, tool traces or SDK progress into results. */
   onTurnResult?: (result: { success: boolean; text: string; truncated: boolean }) => Promise<void>;
 

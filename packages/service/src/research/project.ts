@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, rmSync, openSync, closeSync } from 'node:fs';
 import path from 'node:path';
+import type { DocumentSnapshot } from './document-source.js';
 
 export type ProjectStatus = 'running' | 'waiting-user' | 'pausing' | 'paused' | 'cancelling' | 'cancelled' | 'failed' | 'completed' | 'interrupted';
 export interface Finding {
@@ -19,6 +20,7 @@ export interface ResearchProject {
   title: string;
   scope: string;
   materials: string;
+  document?: { url: string; token: string; snapshot?: DocumentSnapshot; previous: DocumentSnapshot[]; generation: number; error?: string };
   status: ProjectStatus;
   revision: number;
   createdAt: string;
@@ -28,7 +30,7 @@ export interface ResearchProject {
   summary: string;
   questions: string[];
   history: Array<{ at: string; text: string }>;
-  feedback: Array<{ text: string; status: 'pending' | 'applied' | 'rejected' | 'needs-clarification'; at: string; reason?: string; directionIds?: string[] }>;
+  feedback: Array<{ text: string; status: 'pending' | 'applied' | 'rejected' | 'needs-clarification'; at: string; reason?: string; directionIds?: string[]; sourceKey?: string }>;
   cardId?: string;
   deliveryError?: string;
   error?: string;

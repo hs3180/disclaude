@@ -37,10 +37,24 @@ during a phase remains pending for replanning, and feedback during synthesis
 prevents final completion until it has been processed. Each pending adjustment requires an explicit acceptance/rejection reason; accepted adjustments link to actual new directions. Missing or duplicated receipts fail the phase without marking feedback applied. Clarification preserves the question on the affected feedback. A plan change remains distinct from a verified conclusion. Card update failures retain
 project results and do not re-run completed research; reopening retries delivery.
 
-This is not the complete #4753/#4754 acceptance. Materials and feedback currently
-come from the project forms. External document edits/comments are not synchronized,
-and the UI states this limitation. Collaborative document editing/conflict handling, and live Feishu UX acceptance
-remain outstanding. Source fields are structurally checked; this is not factual
+Projects may bind one Feishu `/docx/` document from the creation form. The app must
+have access to its document text and comments. The service reads both before and
+after each research phase, including paginated comment replies. Changed text and
+comments become pending adjustments that require a disposition in the next plan.
+Previous snapshots and findings are retained. Changes received during synthesis
+prevent completion until processed. Reopening a finished project does not start
+background synchronization; a follow-up project inherits the document binding.
+
+Reads fail visibly on permissions, incomplete pagination, concurrent body changes,
+or unsupported/oversized content. The previous snapshot is retained and unread
+feedback is never marked processed. Limits are 48,000 body characters, 3,000 per
+comment reply, 200 replies, and 64,000 serialized body/comment characters. This
+supports text, not Wiki references or image attachments, and checks at phase
+boundaries rather than in real time.
+
+This is not the complete #4753/#4754 acceptance. Document writeback, collaborative
+editing/conflict handling, and live Feishu UX acceptance remain outstanding.
+Source fields are structurally checked; this is not factual
 verification or proof that a model actually consulted a source.
 
 Local checks cover the core lifecycle and actual message-handler/card-action route
@@ -57,7 +71,15 @@ runner, with a captured card transport. It creates a project from the actual for
 callback, compares two supplied proposals, submits a price-comparison adjustment, checks its linked investigation and retained sources plus a completed
 summary, and reopens the persisted result. It makes model API calls; use an isolated
 configuration/workspace and test credentials. It does not send Feishu messages or
-exercise external source retrieval.
+exercise external source retrieval unless the document case is enabled.
+
+The document case additionally requires `DISCLAUDE_E2E_RESEARCH_DOCUMENT` (a
+dedicated test Docx URL), `FEISHU_APP_ID` and `FEISHU_APP_SECRET`. Its fixture is a
+document with A priced at USD 10 and B at USD 12, plus a comment correcting A to
+USD 15 after tax and confirming B includes tax. It reads real Feishu APIs and
+checks that the real model incorporates the comment into its retained conclusion.
+It does not modify the fixture or send cards. Keep credentials and document
+identifiers outside the repository.
 
 ```sh
 DISCLAUDE_E2E_RESEARCH=1 npx vitest run tests/e2e/research-project.test.ts

@@ -4,10 +4,42 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Config, setDefaultProvider, clearProviderCache } from '@disclaude/core';
 import { FeishuResearchController } from '../../packages/service/src/research/feishu-controller.js';
+import { createDocumentReader } from '../../packages/service/src/research/document-source.js';
+import * as lark from '@larksuiteoapi/node-sdk';
+import nock from 'nock';
 
 // Real model/runner/project lifecycle; transport is captured, not sent to Feishu.
 // This does not claim live Feishu rendering or interactive user acceptance.
 describe('research project using supplied evidence and the configured model', () => {
+  it.skipIf(process.env.DISCLAUDE_E2E_RESEARCH !== '1' || !process.env.DISCLAUDE_E2E_RESEARCH_DOCUMENT)('uses a real document body and tax correction comment in its retained conclusion', async () => {
+    nock.enableNetConnect(host => /^(open\.feishu\.cn|localhost|127\.0\.0\.1)(:\d+)?$/u.test(host));
+    setDefaultProvider(Config.AGENT_BACKEND);
+    const root = await mkdtemp(join(tmpdir(), 'research-doc-e2e-'));
+    const client = new lark.Client({ appId: process.env.FEISHU_APP_ID ?? '', appSecret: process.env.FEISHU_APP_SECRET ?? '', loggerLevel: lark.LoggerLevel.error });
+    const controller = new FeishuResearchController(join(root, 'store'), root,
+      () => Promise.resolve('captured-doc-card'), () => Promise.resolve(), undefined, createDocumentReader(client));
+    try {
+      await controller.handle({ operator: { open_id: 'test-owner' }, context: { open_chat_id: 'test-chat', open_message_id: 'doc-form' }, action: {
+        name: `research:${JSON.stringify({ action: 'create', nonce: 'doc-project' })}`,
+        form_value: { question: 'Compare the actual total cost of proposals A and B.', scope: 'Use only the linked document and its comments. Include the tax correction. Return a short English conclusion with the two actual total costs.', document_url: process.env.DISCLAUDE_E2E_RESEARCH_DOCUMENT },
+      } });
+      const project = controller.manager.list('test-owner', 'test-chat')[0];
+      expect(project).toBeDefined();
+      await controller.manager.act(project.id, 'test-owner', 'test-chat', project.revision, 'resume');
+      await controller.manager.idle(project.id);
+      const finished = controller.manager.get(project.id, 'test-owner', 'test-chat');
+      expect(finished.status, finished.document?.error ?? finished.error).toBe('completed');
+      expect(finished.document?.snapshot?.comments.some(c => c.text.includes('5'))).toBe(true);
+      expect(finished.feedback.some(f => f.sourceKey?.includes(':comment:') && f.status === 'applied')).toBe(true);
+      expect(finished.summary).toContain('15');
+      expect(finished.summary).toContain('12');
+      expect(finished.summary).toMatch(/\bB\b/u);
+      console.info('DOCUMENT_RESEARCH_CONCLUSION', finished.summary);
+    } finally {
+      nock.enableNetConnect(host => /^(localhost|127\.0\.0\.1)(:\d+)?$/u.test(host));
+      controller.dispose(); clearProviderCache(); await rm(root, { recursive: true, force: true });
+    }
+  }, 240_000);
   it.skipIf(process.env.DISCLAUDE_E2E_RESEARCH !== '1')('continues from a project form to retained findings without more chat turns', async () => {
     // Match the backend initialization performed by DisclaudeService.start().
     setDefaultProvider(Config.AGENT_BACKEND);

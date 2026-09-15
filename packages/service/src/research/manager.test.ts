@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ProjectStore, type ResearchStep, type StepResult, parseStepResult } from './project.js';
+import type { DocumentReader } from './document-source.js';
 import { ResearchManager, type StepRunner } from './manager.js';
 
 const managers: ResearchManager[] = [], directories: string[] = [];
@@ -14,9 +15,9 @@ const result = (step: ResearchStep): StepResult => step.type === 'plan' ? { dire
 function fixture(runner: StepRunner = (p, step) => Promise.resolve(step.type === 'plan' ? {
   directions: ['Compare costs'], feedbackDecisions: p.feedback.flatMap((f, feedbackIndex) =>
     f.status === 'pending' || f.status === 'needs-clarification' ? [{ feedbackIndex, status: 'applied' as const, reason: 'Compare the requested evidence in the cost direction.', directionIndexes: [0] }] : []),
-} : result(step)), publish = vi.fn(() => Promise.resolve('card-1')), directory?: string) {
+} : result(step)), publish = vi.fn(() => Promise.resolve('card-1')), directory?: string, readDocument?: DocumentReader) {
   const dir = directory ?? mkdtempSync(join(tmpdir(), 'research-state-')); if (!directory) { directories.push(dir); }
-  const manager = new ResearchManager(new ProjectStore(dir), runner, publish); managers.push(manager);
+  const manager = new ResearchManager(new ProjectStore(dir), runner, publish, readDocument); managers.push(manager);
   return { manager, dir, publish };
 }
 function deferred<T>() { let resolve!: (v: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
@@ -97,6 +98,48 @@ describe('persistent research lifecycle', () => {
     expect(done.feedback[1]).toMatchObject({ status: 'rejected', directionIds: [], reason: 'Weather is outside the price comparison scope.' });
     manager.dispose();
     expect(fixture(undefined, undefined, dir).manager.get(p.id, 'alice', 'chat-a').feedback).toEqual(done.feedback);
+  });
+
+  it('retains the last document snapshot and pending feedback when a phase-boundary read fails', async () => {
+    const snapshot = { token: 'ABC123', revision: 1, body: 'Include taxes', comments: [], fingerprint: 'one', syncedAt: new Date().toISOString() };
+    const readDocument = vi.fn().mockResolvedValue(snapshot);
+    readDocument.mockResolvedValueOnce(snapshot).mockRejectedValueOnce(new Error('comment page unavailable'));
+    const { manager } = fixture(undefined, undefined, undefined, readDocument);
+    const p = await manager.create({ ...input, documentUrl: 'https://example.feishu.cn/docx/ABC123' });
+    await manager.act(p.id, 'alice', 'chat-a', p.revision, 'resume'); await manager.idle(p.id);
+    const failed = manager.get(p.id, 'alice', 'chat-a');
+    expect(failed.status).toBe('failed');
+    expect(failed.document?.snapshot?.body).toBe('Include taxes');
+    expect(failed.document?.error).toContain('未同步');
+    expect(failed.feedback[0].status).toBe('pending');
+    expect(failed.directions).toEqual([]);
+    await manager.act(p.id, 'alice', 'chat-a', failed.revision, 'resume'); await manager.idle(p.id);
+    const done = manager.get(p.id, 'alice', 'chat-a');
+    expect(done.status).toBe('completed');
+    expect(done.document?.error).toBeUndefined();
+    expect(done.feedback).toHaveLength(1);
+    expect(done.feedback[0].status).toBe('applied');
+  });
+  it('replans when the document changes during synthesis and retains the earlier body', async () => {
+    let snapshot = { token: 'ABC123', revision: 1, body: 'Compare prices', comments: [], fingerprint: 'one', syncedAt: new Date().toISOString() };
+    let syntheses = 0;
+    const runner: StepRunner = (p, step) => {
+      if (step.type === 'plan') {
+        return Promise.resolve({ directions: ['Compare costs'], feedbackDecisions: p.feedback.flatMap((f, feedbackIndex) => f.status === 'pending'
+          ? [{ feedbackIndex, status: 'applied' as const, reason: 'Use the latest document scope.', directionIndexes: [0] }] : []) });
+      }
+      if (step.type === 'synthesize' && syntheses++ === 0) { snapshot = { ...snapshot, revision: 2, body: 'Include taxes', fingerprint: 'two' }; }
+      return Promise.resolve(result(step));
+    };
+    const { manager } = fixture(runner, undefined, undefined, () => Promise.resolve(snapshot));
+    const p = await manager.create({ ...input, documentUrl: 'https://example.feishu.cn/docx/ABC123' });
+    await manager.act(p.id, 'alice', 'chat-a', p.revision, 'resume'); await manager.idle(p.id);
+    const done = manager.get(p.id, 'alice', 'chat-a');
+    expect(syntheses).toBe(2); expect(done.status).toBe('completed');
+    expect(done.document?.previous.map(s => s.body)).toEqual(['Compare prices']);
+    expect(done.document?.snapshot?.body).toBe('Include taxes');
+    expect(done.feedback).toHaveLength(2);
+    expect(done.feedback.every(f => f.status === 'applied')).toBe(true);
   });
 
   it('keeps results when notification fails and refreshes without repeating research', async () => {

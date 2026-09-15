@@ -45,6 +45,7 @@ import { FeishuPrivateInput } from './private-input.js';
 import { FeishuPrivateWorkflows, type PrivateWorkflowRequest } from './private-workflows.js';
 import { tryHandleSlashCommand } from './command-router.js';
 import { FeishuResearchController } from '../../research/feishu-controller.js';
+import { createDocumentReader } from '../../research/document-source.js';
 import {
   extractOpenId,
   parsePostContent,
@@ -243,7 +244,7 @@ export class MessageHandler {
       this.research = new FeishuResearchController(researchDirectory, Config.getWorkspaceDir(), this.callbacks.sendMessage, async (messageId, card) => {
         const result = await client.im.message.patch({ path: { message_id: messageId }, data: { content: JSON.stringify(card) } });
         if (result.code !== 0) { throw new Error('研究卡片更新失败，已有进度保留。'); }
-      });
+      }, undefined, createDocumentReader(client));
     }
     this.controlHandler = this.getHasControlHandler();
     logger.debug({ controlHandler: this.controlHandler }, 'MessageHandler initialized');
