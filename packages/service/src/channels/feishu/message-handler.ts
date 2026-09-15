@@ -45,6 +45,7 @@ import { FeishuPrivateInput } from './private-input.js';
 import { FeishuAgentInput } from './agent-input.js';
 import { FeishuPrivateWorkflows, type PrivateWorkflowRequest } from './private-workflows.js';
 import { tryHandleSlashCommand } from './command-router.js';
+import { FeishuResearchController } from '../../research/feishu-controller.js';
 import {
   extractOpenId,
   parsePostContent,
@@ -203,6 +204,7 @@ export class MessageHandler {
     await this.agentInput.request(request, context);
   }
   private readonly privateWorkflows: FeishuPrivateWorkflows;
+  private research?: FeishuResearchController;
 
   requestPrivateWorkflow(request: PrivateWorkflowRequest): Promise<{ actionId: string }> {
     return this.privateWorkflows.request(request);
@@ -246,6 +248,13 @@ export class MessageHandler {
     this.client = client;
     this.agentInput?.close();
     this.agentInput = new FeishuAgentInput(client);
+    const researchDirectory = process.env.DISCLAUDE_RESEARCH_PROJECTS_DIR;
+    if (researchDirectory && !this.research) {
+      this.research = new FeishuResearchController(researchDirectory, Config.getWorkspaceDir(), this.callbacks.sendMessage, async (messageId, card) => {
+        const result = await client.im.message.patch({ path: { message_id: messageId }, data: { content: JSON.stringify(card) } });
+        if (result.code !== 0) { throw new Error('研究卡片更新失败，已有进度保留。'); }
+      });
+    }
     this.controlHandler = this.getHasControlHandler();
     logger.debug({ controlHandler: this.controlHandler }, 'MessageHandler initialized');
   }
@@ -417,6 +426,8 @@ export class MessageHandler {
     this.agentInput = undefined;
     this.privateInput?.revoke();
     this.privateWorkflows.revoke();
+    this.research?.dispose();
+    this.research = undefined;
     this.client = undefined;
   }
 
@@ -1296,6 +1307,15 @@ export class MessageHandler {
       return;
     }
 
+    if (/^\/research(?:\s|$)/u.test(textWithoutMentions.trim())) {
+      if (!this.research) {
+        await this.callbacks.sendMessage({ chatId: chat_id, type: 'text', text: '研究项目功能尚未启用，请联系服务管理员。' });
+      } else if (sender?.sender_type === 'user') {
+        await this.research.open(extractOpenId(sender) ?? '', chat_id, chat_type === 'topic' ? parent_id ?? message_id : undefined);
+      }
+      return;
+    }
+
     // Add typing reaction
     await this.addTypingReaction(message_id);
 
@@ -1440,6 +1460,11 @@ export class MessageHandler {
     const rawData = data as Record<string, unknown>;
     if (FeishuAgentInput.isCallback(rawData)) {
       void this.agentInput?.submit(rawData).catch(() => logger.warn('Agent input callback could not be handled'));
+      return;
+    }
+    if (FeishuResearchController.isCallback(rawData)) {
+      // Acknowledge the card event promptly; project execution is managed separately.
+      void this.research?.handle(rawData).catch(() => logger.warn('Research project action could not be delivered'));
       return;
     }
     if (FeishuPrivateInput.isPrivateCallback(rawData)) {
