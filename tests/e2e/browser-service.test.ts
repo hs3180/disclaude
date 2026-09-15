@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, writeFile, rm, readFile, access } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, readFile, access } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import { browserAgentEnv } from '../../packages/core/src/utils/browser-env.js';
+import { DeepSeekHarnessProvider } from '../../packages/core/src/sdk/providers/deepseek/provider.js';
 
 const exec = promisify(execFile);
 const enabled = Boolean(process.env.DISCLAUDE_E2E_CHROMIUM && process.env.DISCLAUDE_E2E_BROWSER_PYTHON);
@@ -112,6 +113,27 @@ describe('user starts Disclaude and shares its managed browser', () => {
         expect(await abandonedResult).toBe('interrupted');
         expect(await successor).toContain('handoff');
         await expect(access(abandonedMarker)).rejects.toThrow();
+        if (attempt === 0 && process.env.DISCLAUDE_E2E_BROWSER_MODEL) {
+          // Opt-in paid model/tool path: the provider receives the product launcher
+          // and socket, while a separate caller verifies the resulting page state.
+          expect(process.env.DEEPSEEK_API_KEY).toBeTruthy();
+          await mkdir(join(root, 'dsh-home'), { mode: 0o700 });
+          const provider = new DeepSeekHarnessProvider({ env: taskEnv, dshHome: join(root, 'dsh-home') });
+          const marker = `model-handoff-${Date.now()}`;
+          async function* input() {
+            yield { role: 'user' as const, content: `Use your shell tool to execute browser-use, supplying this Python script on stdin:\nfill_input('#value', ${JSON.stringify(marker)})\nprint(js("document.querySelector('#value').value"))\nThen report the value. The shared page is already open. Do not launch another browser or use direct CDP.` };
+          }
+          const stream = provider.queryStream(input(), { cwd: root, model: process.env.DISCLAUDE_E2E_BROWSER_MODEL });
+          const messages = [];
+          const deadline = setTimeout(() => { void stream.handle.cancel(); }, 90_000);
+          try {
+            for await (const message of stream.iterator) { messages.push(message); }
+            expect(messages.some(message => message.type === 'tool_use')).toBe(true);
+            expect(messages.some(message => message.type === 'tool_result')).toBe(true);
+            expect(messages.findLast(message => message.type === 'result')?.metadata?.stopReason).toBe('completed');
+            expect(await run("print(js(\"document.querySelector('#value').value\"))\n")).toContain(marker);
+          } finally { clearTimeout(deadline); stream.handle.close(); provider.dispose(); }
+        }
         await writeFile(join(root, 'profile', 'preserve-test.txt'), 'user profile retained');
         const cdpPort = (await readFile(join(root, 'profile', 'DevToolsActivePort'), 'utf8')).split('\n')[0];
         await stop();
