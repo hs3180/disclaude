@@ -73,3 +73,32 @@ The copier checks space, stages privately beside the destination, compares sourc
 These are offline consistency checks, not a filesystem snapshot against concurrent independent writers. The destination is reserved exclusively before publication; a changed/nonempty reservation is preserved on failure. Failed or cancelled staging is removed. A completed copy is retained if subsequent browser activation fails, and the existing service adapter handles its configuration recovery. Copying does not decrypt cookies, change Keychain/system settings, verify real-account login portability or roll back profile schema changes. Actual source/profile preservation and startup acceptance are recorded in the PR; login persistence remains a separate criterion.
 
 Observed on macOS ARM64 with Chromium 155.0.8057.0: the copy/setup lifecycle passed in 58.22 seconds on source 364f70e1, preserving the original marker/version, starting from the copied profile and rejecting a live source and existing destination. An installed distribution loaded the updated setup command and passed offline start/stop/restart in 26.89 seconds. A separate real terminal session selected copying and supplied the source path; dry-run displayed the plan without creating the destination. These observations cover source/profile preservation and startup, not real-account login transfer. Native Linux copy acceptance is recorded separately when available.
+
+
+### Import an old browser configuration
+
+Use `disclaude chromium-cdp setup --import-config /absolute/path/to/old.env --dry-run`
+to inspect a legacy deployment before changing services. The source may be a
+literal `.env` file or a version-1 Chromium configuration JSON file. Only the six
+`CHROMIUM_CDP_*` browser settings are imported; unrelated application credentials
+are neither copied nor displayed. Shell expansion and commands are never executed.
+Duplicate browser assignments, invalid values, non-loopback addresses and files
+larger than 64 KiB are refused. Use literal absolute browser/profile paths.
+
+Remove `--dry-run` to review and confirm interactively, or use `--yes` after
+reviewing the preview. Explicit selection flags override imported fields;
+imported fields override the current saved defaults. The source binary is used
+unless `--binary` or `--download` explicitly replaces it. The preview lists the
+source path, digest, imported field names and final effective selection. A changed
+source after confirmation is refused. The active configuration destination cannot
+also be the import source.
+
+The source file remains intact. The verified platform activation writes the new
+configuration outside the installation directory and keeps its existing failure
+recovery behavior. Existing profiles are reused only after ownership/version
+checks; `--copy-profile-from` can instead prepare a new profile explicitly.
+An independently managed live browser must first be stopped through its original
+manager by its operator. Import does not stop arbitrary services, rewrite an
+unmanaged systemd unit, remove legacy managers or prove account-login migration.
+Keep the old service definition/configuration until the new endpoint is verified;
+this import is not automatic adoption of every historical deployment format.
