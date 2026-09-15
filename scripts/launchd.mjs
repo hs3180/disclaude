@@ -865,6 +865,8 @@ function validateIsolatedChromium() {
 
 async function activateChromium(restart) {
   if (process.platform !== 'darwin') throw new Error('Chromium launchd commands require macOS; no service was changed');
+  const binary = resolveChromiumBinary();
+  if (!binary) throw new Error('Selected browser is unavailable; existing service preserved');
   const config = chromiumConfigPath();
   const prior = chromiumServicePid();
   if (prior.loaded && !restart) throw new Error('Chromium service is already loaded; use restart to change its configuration');
@@ -879,8 +881,6 @@ async function activateChromium(restart) {
   }
   const conflicts = chromiumListenerPids(selected.port).filter(pid => !prior.pid || !isDescendant(pid, prior.pid));
   if (conflicts.length) throw new Error(`CDP port ${selected.port} is held by another process; existing service preserved`);
-  const binary = resolveChromiumBinary();
-  if (!binary) throw new Error('Selected browser is unavailable; existing service preserved');
   // The candidate uses disposable state before any persistent configuration changes.
   const probe = await promisify(execFile)(process.execPath, [resolve(PROJECT_ROOT, 'bin/disclaude.js'), 'browser', 'doctor', '--binary', binary,
     ...(resolveChromiumHeadless() ? ['--headless'] : [])], { timeout: 90_000, maxBuffer: 1024 * 1024 });
