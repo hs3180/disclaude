@@ -44,3 +44,11 @@ metadata is reloaded after restart and content is checked against its size/hash
 when downloaded. An interrupted unpublished object is retained without appearing
 as a completed upload. Existing files outside this namespace are preserved but
 not automatically imported; this is not an old-deployment storage migration.
+
+An additional opt-in sets `DISCLAUDE_E2E_DOCKER_MODEL=1` and
+`DISCLAUDE_E2E_DOCKER_MODEL_ENV_FILE` to a private Docker env file containing
+`DEEPSEEK_API_KEY` and, if required, `DEEPSEEK_BASE_URL`. It sends a real REST chat
+request in each configured mode, asks the model to create a unique workspace
+file through its shell tool, and independently verifies that file. This makes
+paid model calls. Default CI omits this option. The env file stays outside the
+repository and is passed by path; do not publish it or container metadata.

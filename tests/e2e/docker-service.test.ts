@@ -10,6 +10,9 @@ const docker = async (...args: string[]) => (await exec('docker', args, { timeou
 describe('production Docker service image', () => {
   it.skipIf(!process.env.DISCLAUDE_E2E_DOCKER_IMAGE)('starts, initializes both dsh profiles, preserves uploaded files across recreation, and stops cleanly', async () => {
     const image = process.env.DISCLAUDE_E2E_DOCKER_IMAGE!;
+    const withModel = process.env.DISCLAUDE_E2E_DOCKER_MODEL === '1';
+    const modelEnvFile = process.env.DISCLAUDE_E2E_DOCKER_MODEL_ENV_FILE;
+    if (withModel) { expect(modelEnvFile, 'Supply a private Docker env file for the real model case').toBeTruthy(); }
     const suffix = randomUUID().slice(0, 8);
     const container = `disclaude-e2e-${suffix}`, volume = `disclaude-e2e-data-${suffix}`;
     const token = randomUUID();
@@ -21,6 +24,7 @@ describe('production Docker service image', () => {
       channels: { feishu: { enabled: false }, rest: { enabled: true, host: '127.0.0.1', port: 13000, fileStorageDir: '/data/workspace/files' } },
       logging: { level: 'info' },
     };
+    if (withModel) { delete (config.deepseek as { apiKey?: string }).apiKey; }
     const inside = (code: string) => docker('exec', container, 'node', '--input-type=module', '-e', code);
     const dataOperation = (code: string) => docker('run', '--rm', '--entrypoint', 'node', '-v', `${volume}:/data`, image, '--input-type=module', '-e', code);
     const request = async (port: number, path: string, method = 'GET', body?: unknown, authenticated = false) => {
@@ -36,7 +40,7 @@ describe('production Docker service image', () => {
       for (let attempt = 0; attempt < 2; attempt++) {
         await docker('run', '-d', '--name', container, '--health-interval=1s', '--health-start-period=1s', '--health-retries=5',
           '-v', `${volume}:/data`, '-e', 'DISCLAUDE_CONFIG_PATH=/data/config.json', '-e', 'LOCKFILE_PATH=/data/service.pid',
-          image, 'disclaude', 'start', '--api-port', '19200', '--api-token', token);
+          ...(withModel ? ['--env-file', modelEnvFile!] : []), image, 'disclaude', 'start', '--api-port', '19200', '--api-token', token);
         createdContainer = true;
         let ready = false;
         for (let i = 0; i < 80 && !ready; i++) {
@@ -67,6 +71,15 @@ describe('production Docker service image', () => {
         const downloaded = await request(13000, `/api/files/${fileId}/download`);
         expect(downloaded.status).toBe(200); expect(downloaded.body.content).toBe(content);
         expect(await inside(`import fs from 'node:fs'; console.log(fs.readFileSync('/data/workspace/keep.txt','utf8')+' / '+fs.readFileSync('/data/codex/keep.txt','utf8'));`)).toBe('workspace retained / codex retained');
+        if (withModel) {
+          const marker = `docker-model-${attempt}-${suffix}`;
+          const target = `/data/workspace/${marker}.txt`;
+          const answer = await request(13000, '/api/chat/sync', 'POST', { chatId: `docker-model-${attempt}`,
+            message: `Use your shell tool to write the exact text ${marker} into ${target}, then reply with that exact text.` });
+          expect(answer.status, JSON.stringify(answer.body)).toBe(200);
+          expect(JSON.stringify(answer.body)).toContain(marker);
+          expect(await inside(`import fs from 'node:fs'; console.log(fs.readFileSync(${JSON.stringify(target)},'utf8').trim());`)).toBe(marker);
+        }
         await docker('stop', '--time', '20', container);
         expect(Number(await docker('inspect', '--format', '{{.State.ExitCode}}', container))).toBe(0);
         await docker('rm', container); createdContainer = false;
@@ -74,7 +87,7 @@ describe('production Docker service image', () => {
         if (attempt === 0) {
           await dataOperation(`import fs from 'node:fs'; const c=JSON.parse(fs.readFileSync('/data/config.json')); c.deepseek.mode='minimal'; fs.writeFileSync('/data/config.json',JSON.stringify(c));`);
         }
-        console.info('DOCKER_SERVICE_ACCEPTANCE', JSON.stringify({ attempt, mode: attempt ? 'minimal' : 'standard', ...runtime, uploadRetained: true, cleanExit: true }));
+        console.info('DOCKER_SERVICE_ACCEPTANCE', JSON.stringify({ attempt, mode: attempt ? 'minimal' : 'standard', ...runtime, uploadRetained: true, cleanExit: true, realModelToolCall: withModel }));
       }
     } catch (error) {
       if (createdContainer) { console.error(await docker('logs', '--tail', '100', container).catch(() => 'Container logs unavailable')); }
