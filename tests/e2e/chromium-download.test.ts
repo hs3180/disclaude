@@ -54,6 +54,12 @@ describe('official Chromium download through product setup', () => {
         const saved = JSON.parse(await readFile(config, 'utf8')).environment;
         expect(saved.CHROMIUM_CDP_BINARY).toBe(join(destination, 'payload/chrome-linux/chrome'));
         expect(saved.CHROMIUM_CDP_AUTOSTART).toBe('0');
+        const status = JSON.parse((await exec(process.execPath, [resolve('scripts/chromium-systemd.mjs'), 'chromium-isolated', 'status'], { env })).stdout);
+        expect(status.cdpReady).toBe(true);
+        expect(status.configured.executable.source.kind).toBe('chromium-snapshot');
+        expect(status.configured.executable.source.revision).toBe(revision);
+        expect(status.configured.executable.source.payloadRevalidatedByStatus).toBe(false);
+
         await writeFile(join(profile, 'keep'), 'persistent profile');
         const reused = await exec(process.execPath, [...args, '--yes'], { env, timeout: 115_000, maxBuffer: 1024 * 1024 });
         expect(reused.stdout).toContain('"reused": true');

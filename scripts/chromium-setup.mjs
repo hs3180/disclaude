@@ -142,10 +142,10 @@ async function main() {
     let status;
     try { status = execFileSync(process.execPath, [adapter, selector, 'status'], { env, encoding: 'utf8', timeout: 15_000 }); }
     catch (error) {
-      if (process.platform === 'linux' && error.status === 1 && String(error.stdout).trim().startsWith('{')) status = String(error.stdout);
+      if (error.status === 1 && String(error.stdout).trim().startsWith('{')) status = String(error.stdout);
       else throw error;
     }
-    loaded = process.platform === 'linux' ? JSON.parse(status).loaded : !status.includes('service is NOT loaded');
+    loaded = JSON.parse(status).loaded;
     const child = spawn(process.execPath, [adapter, selector, loaded ? 'restart' : 'install'], { env, stdio: 'inherit' });
     const forwardInterrupt = () => child.kill('SIGINT');
     const forwardTerminate = () => child.kill('SIGTERM');

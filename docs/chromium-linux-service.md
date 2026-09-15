@@ -19,7 +19,7 @@ The unit is `disclaude-chromium-cdp.service` in the user's systemd unit director
 
 Activation first runs the product doctor against disposable state. It rejects unrelated port listeners before replacing a running service, then requires stable CDP discovery and listener ancestry under the unit's MainPID. The same file-preservation and caught-failure rollback mechanism is shared with macOS. A rollback rechecks the old endpoint and reports incomplete recovery explicitly. The per-unit activation lock is not a durable transaction across process or machine termination; inspect a stale lock's recorded PID before removing it.
 
-Temporary-profile Cookie persistence is reported separately. It is not service-profile login persistence, credential migration, an browser download facility or migration tool. Existing externally changed unit/configuration state needs explicit reconciliation.
+Temporary-profile Cookie persistence is reported separately. It is not service-profile login persistence, credential migration, a migration tool. Independent download support is documented in [browser setup](chromium-setup.md). Existing externally changed unit/configuration state needs explicit reconciliation.
 
 ## Actual native Linux acceptance
 

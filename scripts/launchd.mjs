@@ -46,8 +46,9 @@ import { resolve, dirname, relative, isAbsolute } from 'node:path';
 import { promisify } from 'node:util';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { chromiumConfigPath, loadChromiumConfig, saveChromiumConfig } from './chromium-config.mjs';
+import { chromiumConfigPath, loadChromiumConfig, saveChromiumConfig, readChromiumConfig } from './chromium-config.mjs';
 import { replaceChromiumFile, transitionChromium, chromiumListenerPids, isDescendant, waitChromiumReady } from './browser-service-state.mjs';
+import { describeChromiumSelection } from './chromium-status.mjs';
 export { transitionChromium } from './browser-service-state.mjs';
 
 // ---------------------------------------------------------------------------
@@ -896,20 +897,26 @@ function cmdChromiumLogs() {
   } catch {}
 }
 
-function cmdChromiumStatus() {
-  const result = run(`launchctl list | grep ${LABEL_CHROMIUM}`, { allowFail: true, silent: true });
-  if (result) {
-    console.log(result.trim());
-    console.log(`\nPlist: ${CR_PLIST_PATH}`);
-    console.log(`Configured profile (may differ from loaded service): ${resolveChromiumProfileDir()}`);
-    console.log(`Configuration: ${chromiumConfigPath()}`);
-    console.log(`Configured login autostart: ${CR_PLIST_PATH === CR_AUTO_PLIST_PATH ? 'enabled' : 'disabled'}`);
-    console.log(`Stdout: ${CR_STDOUT_LOG}`);
-    console.log(`Stderr: ${CR_STDERR_LOG}`);
-  } else {
-    console.log('Chromium CDP service is NOT loaded.');
-    console.log(`Plist: ${CR_PLIST_PATH} (${existsSync(CR_PLIST_PATH) ? 'exists' : 'not found'})`);
+async function cmdChromiumStatus() {
+  const current = chromiumServicePid();
+  let ready = false, endpoint, healthError;
+  if (current.loaded && existsSync(CR_PLIST_PATH)) {
+    try {
+      const plist = JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', CR_PLIST_PATH], { encoding: 'utf8' }));
+      const environment = plist.EnvironmentVariables || {};
+      const address = environment.CHROMIUM_CDP_ADDRESS, port = Number(environment.CHROMIUM_CDP_PORT);
+      if (address !== '127.0.0.1' || !Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Service definition has no valid loopback CDP endpoint');
+      endpoint = `http://${address}:${port}`;
+      await waitChromiumReady({ address, port }, chromiumServicePid, 3000);
+      ready = true;
+    } catch (error) { healthError = error.message; }
   }
+  console.log(JSON.stringify({ service: LABEL_CHROMIUM, ...current, cdpReady: ready, endpoint, healthError,
+    definition: CR_PLIST_PATH, configuration: chromiumConfigPath(),
+    autostart: existsSync(CR_AUTO_PLIST_PATH),
+    configured: describeChromiumSelection(readChromiumConfig(chromiumConfigPath())),
+    configurationMayDifferFromLoadedService: true, logs: { stdout: CR_STDOUT_LOG, stderr: CR_STDERR_LOG } }));
+  if (current.loaded && !ready) process.exitCode = 1;
 }
 
 // ---------------------------------------------------------------------------

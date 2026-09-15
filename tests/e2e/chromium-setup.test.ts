@@ -41,6 +41,22 @@ describe('browser setup product CLI', () => {
         const saved = JSON.parse(await readFile(config, 'utf8')).environment;
         expect(saved.CHROMIUM_CDP_PROFILE_DIR).toBe(profile);
         expect(saved.CHROMIUM_CDP_PORT).toBe(port);
+        const statusArgs = [resolve('scripts', process.platform === 'darwin' ? 'launchd.mjs' : 'chromium-systemd.mjs'), 'chromium-isolated', 'status'];
+        const status = JSON.parse((await exec(process.execPath, statusArgs, { env, timeout: 15_000 })).stdout);
+        expect(status.loaded).toBe(true);
+        expect(status.cdpReady).toBe(true);
+        expect(status.endpoint).toBe(`http://127.0.0.1:${port}`);
+        expect(status.configured.executable.path).toBe(saved.CHROMIUM_CDP_BINARY);
+        expect(status.configured.executable.available).toBe(true);
+        expect(status.configured.profile.path).toBe(profile);
+        expect(status.configured.mode).toBe('headless');
+        // Explicit candidate overrides do not relabel the saved selection in status.
+        const overridden = JSON.parse((await exec(process.execPath, statusArgs, {
+          env: { ...env, CHROMIUM_CDP_BINARY: join(root, 'missing-candidate') }, timeout: 15_000,
+        })).stdout);
+        expect(overridden.configured.executable.path).toBe(saved.CHROMIUM_CDP_BINARY);
+        expect(overridden.cdpReady).toBe(true);
+
         await writeFile(join(profile, 'setup-marker'), 'keep');
         const repeated = await exec(process.execPath, [...args, '--yes'], { env, timeout: 115_000 });
         expect(repeated.stdout).toMatch(/CDP ready:|"cdpReady":true/);
@@ -71,7 +87,7 @@ describe('browser setup product CLI', () => {
         else expect((await exec('systemctl', ['--user', 'is-enabled', label])).stdout.trim()).toBe('enabled');
         expect(await readFile(join(profile, 'setup-marker'), 'utf8')).toBe('keep');
         console.info('BROWSER_SETUP_ACCEPTANCE', JSON.stringify({ platform: process.platform, arch: process.arch,
-          preview: true, nonInteractiveMissingConfirmationRejected: true, applied: true, repeated: true, profilePreserved: true, autostartToggle: true, failedToggleRecovered: true }));
+          preview: true, nonInteractiveMissingConfirmationRejected: true, applied: true, repeated: true, profilePreserved: true, autostartToggle: true, failedToggleRecovered: true, statusMetadata: true, statusIgnoresCandidateOverride: true }));
       } finally {
         if (applied) {
           await exec(process.execPath, [resolve('scripts', process.platform === 'darwin' ? 'launchd.mjs' : 'chromium-systemd.mjs'), 'chromium-isolated', 'uninstall'], { env, timeout: 30_000 });

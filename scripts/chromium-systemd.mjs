@@ -6,8 +6,10 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { chromiumConfigPath, loadChromiumConfig, saveChromiumConfig } from './chromium-config.mjs';
+import { chromiumConfigPath, loadChromiumConfig, saveChromiumConfig, readChromiumConfig } from './chromium-config.mjs';
 import { replaceChromiumFile, transitionChromium, chromiumListenerPids, isDescendant, waitChromiumReady } from './browser-service-state.mjs';
+
+import { describeChromiumSelection } from './chromium-status.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export function systemdQuote(value, command = false) {
@@ -92,14 +94,20 @@ async function main() {
   if (command === 'logs') { process.stdout.write(execFileSync('journalctl', ['--user', '-u', paths.unit, '-n', '100', '--no-pager'], { encoding: 'utf8' })); return; }
   if (command === 'status') {
     const current = state();
-    let ready = false;
+    let ready = false, endpoint, healthError;
     if (current.loaded && existsSync(paths.file)) {
-      const endpoint = JSON.parse(readFileSync(paths.file, 'utf8').match(/^# disclaude-endpoint: (.+)$/m)?.[1] || 'null');
-      if (endpoint) { try { await waitChromiumReady(endpoint, state, 3000); ready = true; } catch {} }
+      try {
+        const target = JSON.parse(readFileSync(paths.file, 'utf8').match(/^# disclaude-endpoint: (.+)$/m)?.[1] || 'null');
+        if (!target || target.address !== '127.0.0.1' || !Number.isInteger(target.port) || target.port < 1 || target.port > 65535) throw new Error('Service definition has no valid loopback CDP endpoint');
+        endpoint = `http://${target.address}:${target.port}`;
+        await waitChromiumReady(target, state, 3000); ready = true;
+      } catch (error) { healthError = error.message; }
     }
     let autostart = false;
     try { autostart = /^enabled(?:-runtime)?\s*$/.test(systemctl('is-enabled', paths.unit)); } catch {}
-    console.log(JSON.stringify({ unit: paths.unit, ...current, cdpReady: ready, autostart }));
+    const configured = describeChromiumSelection(readChromiumConfig(paths.config));
+    console.log(JSON.stringify({ unit: paths.unit, definition: paths.file, configuration: paths.config,
+      ...current, cdpReady: ready, endpoint, healthError, autostart, configured, configurationMayDifferFromLoadedService: true }));
     if (current.loaded && !ready) process.exitCode = 1;
     return;
   }
