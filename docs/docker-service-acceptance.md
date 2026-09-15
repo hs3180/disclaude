@@ -93,3 +93,21 @@ The preceding run rejected the documented `timezone: UTC` before executing any
 schedule. The parser now explicitly accepts UTC, which the Intl supported-values
 list omits despite support in the cron runtime. This is a reproduced and fixed
 loading defect, not a retry-only acceptance result.
+
+
+## Browser CLI across separate containers
+
+`tests/e2e/docker-browser-smoke.test.ts` runs the installed browser-use CLI in
+the actual service image against the actual Chromium image, in both Xvfb and
+headless modes. It enables all eight diagnostic smoke assertions, including
+zero Chrome processes in the service container, explicit target cleanup, cold
+dead-endpoint refusal and PNG validation. This is the standalone CLI diagnostic;
+product coordinator lifecycle is exercised separately by browser-service.test.ts.
+
+Supply both `DISCLAUDE_E2E_DOCKER_IMAGE` and
+`DISCLAUDE_E2E_DOCKER_BROWSER_IMAGE` after building the two production images,
+then run `npx vitest run tests/e2e/docker-browser-smoke.test.ts`. Without both
+image variables, the case skips. The Docker Service E2E workflow builds both
+images and enables the case. It uses a dedicated network and disposable
+containers, publishes no host ports, and supplies no account credentials.
+The service container runs the diagnostic rather than starting message channels.
