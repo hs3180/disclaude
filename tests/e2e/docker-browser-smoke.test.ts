@@ -68,7 +68,9 @@ describe('browser-use CLI in the production service image', () => {
             serviceChromeProcesses: 0, targetCleanup: true, daemonCleanup: true, png: true,
           }));
           await docker('stop', '--time', '15', browser);
-          expect(await docker('inspect', '-f', '{{.State.ExitCode}}', browser)).toBe('0');
+          // The browser supervisor explicitly preserves SIGTERM as exit 143.
+          const stopped = JSON.parse(await docker('inspect', '-f', '{{json .State}}', browser)) as { Running: boolean; ExitCode: number; OOMKilled: boolean };
+          expect(stopped).toMatchObject({ Running: false, ExitCode: 143, OOMKilled: false });
           await docker('rm', browser); browserCreated = false;
         }
       } catch (error) {
