@@ -4,7 +4,8 @@ on:
     paths:
       - 'tests/e2e/browser-service.test.ts'
       - 'bin/disclaude.js'
-      - 'packages/service/src/service/**'
+      - 'packages/service/src/cli-main.ts'
+      - 'packages/service/src/service.ts'
       - 'package*.json'
       - 'packages/*/package.json'
       - 'experiments/browser-control/**'
@@ -17,7 +18,8 @@ on:
     paths:
       - 'tests/e2e/browser-service.test.ts'
       - 'bin/disclaude.js'
-      - 'packages/service/src/service/**'
+      - 'packages/service/src/cli-main.ts'
+      - 'packages/service/src/service.ts'
       - 'package*.json'
       - 'packages/*/package.json'
       - 'experiments/browser-control/**'
