@@ -24,6 +24,7 @@ const logger = createLogger('DeepSeekHarnessProvider');
 export interface DeepSeekHarnessProviderOptions {
   env?: Record<string, string | undefined>;
   apiKey?: string;
+  mode?: 'minimal' | 'standard';
   dshHome?: string;
   binary?: string;
   args?: string[];
@@ -36,6 +37,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
   private readonly env: Record<string, string | undefined>;
   private readonly apiKey?: string;
   private readonly dshHome?: string;
+  private readonly profile: 'sdk' | 'sdk-minimal';
   private disposed = false;
   private readonly sessionKeys = new Map<string, string>();
   private readonly queues = new Map<
@@ -50,12 +52,16 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
   private readonly pool: DshSessionPool;
 
   constructor(options: DeepSeekHarnessProviderOptions = {}) {
+    const mode = options.mode ?? 'standard';
+    if (mode !== 'minimal' && mode !== 'standard') { throw new Error('deepseek.mode must be minimal or standard'); }
+    if (options.mode !== undefined && options.args !== undefined) { throw new Error('Explicit dsh mode cannot be combined with custom process args'); }
+    this.profile = mode === 'minimal' ? 'sdk-minimal' : 'sdk';
     this.env = options.env ?? process.env;
     this.apiKey = options.apiKey ?? this.env.DEEPSEEK_API_KEY;
     this.dshHome = options.dshHome ?? this.env.DSH_HOME;
     const transportOptions: DshTransportOptions = {
       binary: options.binary,
-      args: options.args,
+      args: options.args ?? ['--profile', this.profile],
       requestTimeoutMs: options.requestTimeoutMs,
       env: { ...process.env, ...this.env, DEEPSEEK_API_KEY: this.apiKey, DSH_HOME: this.dshHome },
       onNotification: (notification) => this.onNotification(notification),
@@ -135,7 +141,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
       } catch (error) {
         if (!signal.aborted) {
           const detail = error instanceof Error ? error.message : String(error);
-          failure = new Error(`dsh SDK process failed during initialize/prompt: ${detail}`);
+          failure = new Error(`dsh SDK profile ${this.profile} failed during initialize/prompt: ${detail}. Verify that the installed dsh supports this SDK profile and that its configuration is available; no mode fallback was attempted.`);
         }
       } finally {
         inputDone = true;

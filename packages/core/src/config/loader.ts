@@ -184,6 +184,11 @@ export function validateConfig(config: DisclaudeConfig): boolean {
     return false;
   }
 
+  if (config.deepseek?.mode !== undefined && !['minimal', 'standard'].includes(config.deepseek.mode)) {
+    logger.error('deepseek.mode must be minimal or standard');
+    return false;
+  }
+
   // Validate workspace config if present
   if (config.workspace?.dir && typeof config.workspace.dir !== 'string') {
     logger.error('workspace.dir must be a string');
