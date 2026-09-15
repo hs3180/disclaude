@@ -231,8 +231,8 @@ describe('MessageHandler', () => {
       const {card} = firstCallArg(send);
       expect(card.header.title.content).toBe('我的研究项目');
       const form = card.body.elements.find((element: any) => element.tag === 'form');
-      const submit = form.elements.find((element: any) => element.action_type === 'form_submit');
-      await handler.handleCardAction(cardActionEvent({ action: { value: submit.behaviors[0].value, form_value: { question: 'Compare reports', scope: 'Costs', materials: 'A: 10; B: 12' } } }));
+      const submit = form.elements.find((element: any) => element.form_action_type === 'submit');
+      await handler.handleCardAction(cardActionEvent({ action: { name: submit.name, form_value: { question: 'Compare reports', scope: 'Costs', materials: 'A: 10; B: 12' } } }));
       await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2));
       const file = readdirSync(directory).find(name => name.endsWith('.json'));
       expect(file).toBeDefined();

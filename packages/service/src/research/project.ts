@@ -28,7 +28,7 @@ export interface ResearchProject {
   summary: string;
   questions: string[];
   history: Array<{ at: string; text: string }>;
-  feedback: Array<{ text: string; status: 'pending' | 'applied'; at: string }>;
+  feedback: Array<{ text: string; status: 'pending' | 'applied' | 'rejected' | 'needs-clarification'; at: string; reason?: string; directionIds?: string[] }>;
   cardId?: string;
   deliveryError?: string;
   error?: string;
@@ -39,7 +39,8 @@ export interface ResearchProject {
   stepCount: number;
 }
 export type ResearchStep = { type: 'plan' } | { type: 'investigate'; directionId: string } | { type: 'synthesize' };
-export type StepResult = { clarification: string } | { directions: string[] } | { findings: Finding[] } | { summary: string; questions: string[] };
+export interface FeedbackDecision { feedbackIndex: number; status: 'applied' | 'rejected'; reason: string; directionIndexes: number[] }
+export type StepResult = { clarification: string } | { directions: string[]; feedbackDecisions?: FeedbackDecision[] } | { findings: Finding[] } | { summary: string; questions: string[] };
 
 /** Validate output shape and required source fields; this does not verify source truth. */
 export function parseStepResult(text: string, step: ResearchStep): StepResult {
@@ -57,11 +58,22 @@ export function parseStepResult(text: string, step: ResearchStep): StepResult {
     return v;
   };
   const r = object(value);
-  if (r.clarification !== undefined) { return { clarification: str(r.clarification, 1000) }; }
+  if (r.clarification !== undefined && r.clarification !== null) { return { clarification: str(r.clarification, 1000) }; }
   if (step.type === 'plan') {
     const directions = list(r.directions, 4).map(v => str(v, 180));
     if (!directions.length) { throw new Error('研究计划为空。'); }
-    return { directions };
+    const feedbackDecisions = list(r.feedbackDecisions ?? [], 24).map(v => {
+      const decision = object(v);
+      if (!Number.isSafeInteger(decision.feedbackIndex) || Number(decision.feedbackIndex) < 0
+        || !['applied', 'rejected'].includes(String(decision.status))) { throw new Error('意见处理结果无效。'); }
+      const directionIndexes = list(decision.directionIndexes, 4).map(index => {
+        if (!Number.isSafeInteger(index) || Number(index) < 0 || Number(index) >= directions.length) { throw new Error('意见引用了不存在的研究方向。'); }
+        return Number(index);
+      });
+      if ((decision.status === 'applied') !== (directionIndexes.length > 0)) { throw new Error('已采纳意见需要关联实际计划，未采纳意见不得关联计划。'); }
+      return { feedbackIndex: Number(decision.feedbackIndex), status: decision.status as FeedbackDecision['status'], reason: str(decision.reason, 700), directionIndexes };
+    });
+    return { directions, feedbackDecisions };
   }
   if (step.type === 'synthesize') {
     return { summary: str(r.summary, 3000), questions: list(r.questions, 6).map(v => str(v, 300)) };

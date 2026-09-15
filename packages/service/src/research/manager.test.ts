@@ -11,7 +11,10 @@ afterEach(() => { managers.splice(0).forEach(m => m.dispose()); directories.spli
 const input = { owner: 'alice', chat: 'chat-a', source: 'form-1', title: 'Compare the supplied reports', scope: 'Limit claims to the evidence', materials: 'Report A: cost 10; report B: cost 12.' };
 const finding = { claim: 'Report A costs less', kind: 'fact' as const, sources: [{ title: 'Supplied reports', location: 'materials', excerpt: 'A: cost 10; B: cost 12' }], caveat: 'Costs may change' };
 const result = (step: ResearchStep): StepResult => step.type === 'plan' ? { directions: ['Compare costs'] } : step.type === 'investigate' ? { findings: [finding] } : { summary: 'A costs less according to the supplied reports.', questions: ['Will costs change?'] };
-function fixture(runner: StepRunner = (_p, step) => Promise.resolve(result(step)), publish = vi.fn(() => Promise.resolve('card-1')), directory?: string) {
+function fixture(runner: StepRunner = (p, step) => Promise.resolve(step.type === 'plan' ? {
+  directions: ['Compare costs'], feedbackDecisions: p.feedback.flatMap((f, feedbackIndex) =>
+    f.status === 'pending' || f.status === 'needs-clarification' ? [{ feedbackIndex, status: 'applied' as const, reason: 'Compare the requested evidence in the cost direction.', directionIndexes: [0] }] : []),
+} : result(step)), publish = vi.fn(() => Promise.resolve('card-1')), directory?: string) {
   const dir = directory ?? mkdtempSync(join(tmpdir(), 'research-state-')); if (!directory) { directories.push(dir); }
   const manager = new ResearchManager(new ProjectStore(dir), runner, publish); managers.push(manager);
   return { manager, dir, publish };
@@ -71,6 +74,31 @@ describe('persistent research lifecycle', () => {
     await reopened.act(p.id, 'alice', 'chat-a', recovered.revision, 'resume'); await reopened.idle(p.id);
     expect(reopened.get(p.id, 'alice', 'chat-a').feedback[0].status).toBe('applied');
   });
+  it('requires explicit feedback decisions and retains actual plan links across restart', async () => {
+    let complete = false;
+    const { manager, dir } = fixture((_p, step) => Promise.resolve(step.type === 'plan' ? {
+      directions: ['Compare taxes'], feedbackDecisions: complete ? [
+        { feedbackIndex: 0, status: 'applied', reason: 'Tax changes the comparable total.', directionIndexes: [0] },
+        { feedbackIndex: 1, status: 'rejected', reason: 'Weather is outside the price comparison scope.', directionIndexes: [] },
+      ] : [],
+    } : result(step)));
+    const p = await manager.create(input);
+    for (const feedback of ['Include taxes', 'Predict the weather']) {
+      await manager.act(p.id, 'alice', 'chat-a', manager.get(p.id, 'alice', 'chat-a').revision, 'feedback', feedback);
+    }
+    await manager.act(p.id, 'alice', 'chat-a', manager.get(p.id, 'alice', 'chat-a').revision, 'resume'); await manager.idle(p.id);
+    const failed = manager.get(p.id, 'alice', 'chat-a');
+    expect(failed.status).toBe('failed'); expect(failed.directions).toEqual([]);
+    expect(failed.feedback.map(f => f.status)).toEqual(['pending', 'pending']);
+    complete = true;
+    await manager.act(p.id, 'alice', 'chat-a', failed.revision, 'resume'); await manager.idle(p.id);
+    const done = manager.get(p.id, 'alice', 'chat-a');
+    expect(done.feedback[0].directionIds).toEqual([done.directions[0].id]);
+    expect(done.feedback[1]).toMatchObject({ status: 'rejected', directionIds: [], reason: 'Weather is outside the price comparison scope.' });
+    manager.dispose();
+    expect(fixture(undefined, undefined, dir).manager.get(p.id, 'alice', 'chat-a').feedback).toEqual(done.feedback);
+  });
+
   it('keeps results when notification fails and refreshes without repeating research', async () => {
     let offline = false; const runner = vi.fn((_p, step: ResearchStep) => Promise.resolve(result(step)));
     const { manager } = fixture(runner, vi.fn(() => offline ? Promise.reject(new Error('offline')) : Promise.resolve('card-1')));
@@ -89,6 +117,8 @@ describe('persistent research lifecycle', () => {
     await manager.act(p.id, 'alice', 'chat-a', manager.get(p.id, 'alice', 'chat-a').revision, 'resume');
     await manager.idle(p.id);
     const waiting = manager.get(p.id, 'alice', 'chat-a');
+    expect(waiting.feedback[0].status).toBe('needs-clarification');
+    expect(waiting.feedback[0].reason).toContain('reporting period');
     expect(waiting.status).toBe('waiting-user'); expect(runner).toHaveBeenCalledTimes(1);
     manager.dispose();
     const reopened = fixture(undefined, undefined, dir).manager;
@@ -153,5 +183,17 @@ describe('persistent research lifecycle', () => {
   });
   it('rejects facts with missing source fields', () => {
     expect(() => parseStepResult(JSON.stringify({ findings: [{ ...finding, sources: [] }] }), { type: 'investigate', directionId: 'd' })).toThrow('缺少来源');
+  });
+  it('accepts an explicit null clarification alongside valid findings without entering a waiting state', () => {
+    expect(parseStepResult(JSON.stringify({ findings: [finding], clarification: null }), { type: 'investigate', directionId: 'd' })).toEqual({ findings: [finding] });
+    expect(() => parseStepResult('{"clarification":null}', { type: 'plan' })).toThrow();
+  });
+  it('rejects feedback receipts without an actual plan reference or rejection reason', () => {
+    const decision = { feedbackIndex: 0, status: 'applied', reason: 'Compare after-tax totals.', directionIndexes: [0] };
+    const parse = (receipt: Record<string, unknown>) => parseStepResult(JSON.stringify({ directions: ['Tax-inclusive cost'], feedbackDecisions: [receipt] }), { type: 'plan' });
+    expect(() => parse({ ...decision, directionIndexes: [] })).toThrow('关联实际计划');
+    expect(() => parse({ ...decision, directionIndexes: [1] })).toThrow('不存在');
+    expect(() => parse({ ...decision, status: 'rejected', directionIndexes: [], reason: '' })).toThrow('字段无效');
+    expect(parse(decision)).toMatchObject({ feedbackDecisions: [decision] });
   });
 });

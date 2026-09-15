@@ -148,7 +148,7 @@ export class ResearchManager {
           this.record(p, '本轮已执行 12 个阶段，已暂停。请检查进展后决定是否继续。');
           break;
         }
-        const pending = p.feedback.filter(f => f.status === 'pending');
+        const pending = p.feedback.filter(f => f.status === 'pending' || f.status === 'needs-clarification').slice(0, 24);
         const direction = p.directions.find(d => d.status === 'pending');
         const step: ResearchStep = pending.length || !p.directions.length ? { type: 'plan' }
           : direction ? { type: 'investigate', directionId: direction.id } : { type: 'synthesize' };
@@ -165,15 +165,26 @@ export class ResearchManager {
           break;
         }
         if ('clarification' in result) {
+          pending.forEach(f => { f.status = 'needs-clarification'; f.reason = result.clarification; });
           p.status = 'waiting-user';
           p.clarification = result.clarification;
           p.clarificationFeedbackCount = feedbackCount;
           this.record(p, '研究需要补充信息，已停止自动推进。请在项目中提交回答后继续。');
         } else if (step.type === 'plan' && 'directions' in result) {
+          const decisions = result.feedbackDecisions ?? [];
+          const expected = pending.map(f => p.feedback.indexOf(f));
+          if (decisions.length !== expected.length || new Set(decisions.map(d => d.feedbackIndex)).size !== decisions.length
+            || decisions.some(d => !expected.includes(d.feedbackIndex))) { throw new Error('计划尚未逐条说明待处理意见。'); }
           // Preserve previous findings/directions rather than overwrite research history.
           for (const d of p.directions) { if (d.status === 'pending') { d.status = 'stopped'; } }
-          p.directions.push(...result.directions.map(title => ({ id: randomUUID(), title, status: 'pending' as const, findings: [] })));
-          p.feedback.slice(0, feedbackCount).forEach(f => { f.status = 'applied'; });
+          const additions = result.directions.map(title => ({ id: randomUUID(), title, status: 'pending' as const, findings: [] }));
+          p.directions.push(...additions);
+          for (const decision of decisions) {
+            const feedback = p.feedback[decision.feedbackIndex];
+            feedback.status = decision.status;
+            feedback.reason = decision.reason;
+            feedback.directionIds = decision.directionIndexes.map(index => additions[index].id);
+          }
           this.record(p, '研究计划已更新；已处理意见可在记录中查看，实质结论待后续研究验证。');
         } else if (step.type === 'investigate' && 'findings' in result) {
           const target = p.directions.find(d => d.id === step.directionId);

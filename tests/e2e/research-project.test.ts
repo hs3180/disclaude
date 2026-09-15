@@ -23,13 +23,20 @@ describe('research project using supplied evidence and the configured model', ()
       const project = controller.manager.list('test-owner', 'test-chat')[0];
       expect(project).toBeDefined();
       await controller.handle({ operator: { open_id: 'test-owner' }, context: { open_chat_id: 'test-chat', open_message_id: project.cardId }, action: {
-        value: { research: true, action: 'resume', project: project.id, revision: project.revision },
+        value: { research: true, action: 'feedback', project: project.id, revision: project.revision },
+        form_value: { feedback: 'Include the absolute savings in USD in the price comparison.' },
+      } });
+      const adjusted = controller.manager.get(project.id, 'test-owner', 'test-chat');
+      await controller.handle({ operator: { open_id: 'test-owner' }, context: { open_chat_id: 'test-chat', open_message_id: project.cardId }, action: {
+        value: { research: true, action: 'resume', project: project.id, revision: adjusted.revision },
       } });
       await controller.manager.idle(project.id);
       const finished = controller.manager.get(project.id, 'test-owner', 'test-chat');
       expect(finished.status, finished.error).toBe('completed');
       expect(finished.directions.some(direction => direction.findings.some(finding => finding.sources.length > 0))).toBe(true);
       expect(finished.summary).toMatch(/proposal\s*a|\bA\b/i);
+      expect(finished.feedback[0]).toMatchObject({ status: 'applied', reason: expect.any(String) });
+      expect(finished.feedback[0].directionIds?.some(id => finished.directions.some(d => d.id === id && d.findings.length > 0))).toBe(true);
       controller.dispose();
       const reopened = new FeishuResearchController(join(root, 'store'), root, () => Promise.resolve('reopened-card'), () => Promise.resolve());
       try { expect(reopened.manager.get(project.id, 'test-owner', 'test-chat').summary).toBe(finished.summary); }

@@ -3,11 +3,16 @@ import type { ResearchProject, ProjectStatus } from './project.js';
 const labels: Record<ProjectStatus, string> = { running: '研究中', 'waiting-user': '等待你补充信息', pausing: '正在暂停 · 等待当前阶段收尾', paused: '已暂停', cancelling: '正在取消 · 等待当前阶段结束', cancelled: '已取消', failed: '需要恢复', completed: '研究完成', interrupted: '执行曾中断 · 可恢复' };
 const plain = (content: string) => ({ tag: 'plain_text', content });
 const text = (content: string) => ({ tag: 'div', text: plain(content) });
+const group = (elements: unknown[]) => ({ tag: 'column_set', flex_mode: 'none', columns: [{ tag: 'column', width: 'weighted', weight: 1, padding: '12px', background_style: 'grey-50', elements }] });
 export const researchButton = (label: string, value: Record<string, unknown>, primary = false) => ({
   tag: 'button', text: plain(label), type: primary ? 'primary' : 'default', behaviors: [{ type: 'callback', value: { research: true, ...value } }],
 });
+const submitButton = (label: string, value: Record<string, unknown>) => ({
+  tag: 'button', text: plain(label), type: 'primary_filled', form_action_type: 'submit',
+  name: `research:${JSON.stringify(value)}`,
+});
 export function researchCard(title: string, elements: unknown[]): Record<string, unknown> {
-  return { schema: '2.0', config: { enable_forward: false, update_multi: true }, header: { title: plain(title), template: 'blue' }, body: { elements } };
+  return { schema: '2.0', config: { enable_forward: false, update_multi: true, width_mode: 'default' }, header: { title: plain(title), template: 'blue' }, body: { vertical_spacing: '12px', elements } };
 }
 export function projectCard(p: ResearchProject): Record<string, unknown> {
   const value = { project: p.id, revision: p.revision };
@@ -38,7 +43,7 @@ export function projectCard(p: ResearchProject): Record<string, unknown> {
   if (!['completed', 'cancelled', 'cancelling'].includes(p.status)) {
     elements.push({ tag: 'form', name: 'research_adjustment', elements: [
       { tag: 'input', name: 'feedback', required: true, placeholder: plain('修改范围、补充材料或指出证据不足（3000 字以内）') },
-      { ...researchButton('提交研究调整', { ...value, action: 'feedback' }, true), name: 'submit_feedback', action_type: 'form_submit' },
+      submitButton('提交研究调整', { ...value, action: 'feedback' }),
     ] });
   } else {
     elements.push(researchButton('基于成果继续研究', { ...value, action: 'continue' }, true));
@@ -63,7 +68,11 @@ export function evidenceCard(p: ResearchProject, directionId: string, index: num
 export function historyCard(p: ResearchProject, offset: number): Record<string, unknown> {
   const entries = [
     ...p.history.map(h => `${h.at}\n${h.text}`),
-    ...p.feedback.map(f => `${f.at} · ${f.status === 'pending' ? '待处理意见' : '已用于调整计划'}\n${f.text}`),
+    ...p.feedback.map(f => {
+      const status = { pending: '待处理意见', applied: '已采纳至计划（结论待验证）', rejected: '未采纳', 'needs-clarification': '待澄清' }[f.status];
+      const directions = f.directionIds?.map(id => p.directions.find(d => d.id === id)?.title ?? '历史方向').join('、');
+      return `${f.at} · ${status}\n${f.text}\n${f.reason ?? '未记录处理理由'}${directions ? `\n关联方向：${directions}` : ''}`;
+    }),
   ].sort().reverse();
   return researchCard('研究记录', [
     ...entries.slice(offset, offset + 6).map(text),
@@ -74,16 +83,18 @@ export function historyCard(p: ResearchProject, offset: number): Record<string, 
 }
 export function indexCard(projects: ResearchProject[], nonce: string, offset = 0, archived = false): Record<string, unknown> {
   return researchCard(archived ? '归档的研究项目' : '我的研究项目', [
+    group([text('研究围绕项目持续推进。可以随时重返、查看证据、调整方向或暂停。项目控制由创建者操作。'),
+      { tag: 'div', text: { ...plain('材料与意见请在项目内提交；外部文档中的改动不会自动同步。'), text_size: 'notation', text_color: 'grey' } }]),
+    group([
     researchButton(archived ? '返回项目列表' : '查看归档项目', { action: 'index', archived: !archived }),
-    text('研究围绕项目持续推进。可以随时重返、查看证据、调整方向或暂停。项目控制由创建者操作。'),
-    text('材料与意见请在项目内提交；外部文档中的改动不会自动同步。'),
     ...projects.slice(offset, offset + 6).flatMap(p => [text(`${p.title} · ${labels[p.status]}`), researchButton('打开项目', { project: p.id, action: 'open' })]),
     ...(projects.length > offset + 6 ? [researchButton('更多项目', { action: 'index', offset: offset + 6, archived })] : []),
+    ]),
     { tag: 'form', name: 'research_create', elements: [
       { tag: 'input', name: 'question', required: true, placeholder: plain('想研究什么？（180 字以内）') },
       { tag: 'input', name: 'scope', placeholder: plain('研究范围、约束与希望得到的成果') },
       { tag: 'input', name: 'materials', placeholder: plain('已有材料、来源链接或摘录') },
-      { ...researchButton('建立研究项目', { action: 'create', nonce }, true), name: 'create_research', action_type: 'form_submit' },
+      submitButton('建立研究项目', { action: 'create', nonce }),
     ] },
   ]);
 }

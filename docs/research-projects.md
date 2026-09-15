@@ -34,7 +34,7 @@ Pause and cancel wait for an in-flight phase (bounded by the runner timeout).
 Pause retains that phase's result and starts no next phase; cancel discards its
 result. A stopped direction's in-flight result is discarded. Feedback arriving
 during a phase remains pending for replanning, and feedback during synthesis
-prevents final completion until it has been processed. Card update failures retain
+prevents final completion until it has been processed. Each pending adjustment requires an explicit acceptance/rejection reason; accepted adjustments link to actual new directions. Missing or duplicated receipts fail the phase without marking feedback applied. Clarification preserves the question on the affected feedback. A plan change remains distinct from a verified conclusion. Card update failures retain
 project results and do not re-run completed research; reopening retries delivery.
 
 This is not the complete #4753/#4754 acceptance. Materials and feedback currently
@@ -54,7 +54,7 @@ npx vitest run packages/service/src/research/manager.test.ts packages/service/sr
 
 The opt-in model integration test uses the configured backend and real research
 runner, with a captured card transport. It creates a project from the actual form
-callback, compares two supplied proposals, checks retained sources and a completed
+callback, compares two supplied proposals, submits a price-comparison adjustment, checks its linked investigation and retained sources plus a completed
 summary, and reopens the persisted result. It makes model API calls; use an isolated
 configuration/workspace and test credentials. It does not send Feishu messages or
 exercise external source retrieval.

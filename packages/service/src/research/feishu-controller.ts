@@ -10,6 +10,14 @@ type Updater = (messageId: string, card: Record<string, unknown>) => Promise<voi
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const string = (value: unknown): string => typeof value === 'string' ? value : '';
 const page = (value: unknown): number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0;
+function callbackValue(action: Record<string, unknown>): Record<string, unknown> {
+  if (object(action.value).research === true) { return object(action.value); }
+  const name = string(action.name);
+  if (name.startsWith('research:') && name.length <= 500) {
+    try { return { ...object(JSON.parse(name.slice(9))), research: true }; } catch { /* Invalid form identity. */ }
+  }
+  return {};
+}
 
 /** A persistent project surface; ordinary conversation turns never own its state. */
 export class FeishuResearchController {
@@ -25,7 +33,7 @@ export class FeishuResearchController {
     });
   }
   static isCallback(raw: Record<string, unknown>): boolean {
-    return object(object(raw.action).value).research === true;
+    return callbackValue(object(raw.action)).research === true;
   }
   async open(owner: string, chat: string, thread?: string): Promise<void> {
     if (!owner || !chat) { throw new Error('无法确认研究项目的用户和会话。'); }
@@ -36,7 +44,7 @@ export class FeishuResearchController {
     const owner = string(operator.open_id), chat = string(context.open_chat_id), message = string(context.open_message_id);
     if (!owner || !chat || !message) { return; }
     try {
-      const value = object(action.value), form = object(action.form_value);
+      const value = callbackValue(action), form = object(action.form_value);
       const actionName = string(value.action), id = string(value.project);
       if (actionName === 'index') {
         await this.send({ chatId: chat, type: 'card', threadId: message, card: indexCard(this.manager.list(owner, chat, value.archived === true), randomUUID(), page(value.offset), value.archived === true) });
