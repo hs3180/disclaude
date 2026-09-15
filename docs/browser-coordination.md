@@ -98,8 +98,8 @@ profile retention and service restart. Without both environment variables the
 case is reported skipped. This verifies the CLI/harness/browser chain, not a model
 agent deciding how to use it. It also interrupts a running caller and verifies
 that the queued caller takes over without executing the abandoned operation.
-Linux CI installs the pinned browser-use runtime and Chromium, then runs this
-same product test. No separate test Docker image or standalone harness runner
+Linux CI installs the pinned browser-use runtime and uses the runner image's
+packaged Google Chrome (logging its version), then runs this same product test. No separate test Docker image or standalone harness runner
 is required. The test layout follows #5016: core unit tests plus actual-use-case E2E.
 
 Environment filtering happens only where an execution environment is finalized:

@@ -9,7 +9,7 @@ export async function launchBrowser({ binary, profile, headless = false, signal 
   let previous; try { previous = (await stat(activeFile)).mtimeMs; } catch {}
   const child = spawn(binary, ['--remote-debugging-port=0', '--user-data-dir='+profile, '--no-first-run', '--no-default-browser-check', ...(headless ? ['--headless=new'] : []), ...(process.getuid?.() === 0 ? ['--no-sandbox'] : []), 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
   let stderr = '';
-  child.stderr.on('data', chunk => { stderr = (stderr + chunk.toString()).slice(-2000); });
+  child.stderr.on('data', chunk => { stderr = (stderr + chunk.toString()).slice(0, 4000); });
   let startupError; child.on('error', error => startupError = error);
   const stop = async ({ graceful = false } = {}) => {
     if (graceful) {

@@ -27,7 +27,7 @@ export async function startBrowserRuntime(
   let stderr = '';
   const exited = new Promise<void>(resolve => child.once('close', () => resolve()));
   child.stdout?.resume();
-  child.stderr?.on('data', (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(-2000); });
+  child.stderr?.on('data', (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(0, 4000); });
   child.on('error', () => {});
   child.on('close', () => {
     if (!stopping && !startup) { onUnavailable('Browser coordinator exited; browser requests will fail until the service is restarted.'); }

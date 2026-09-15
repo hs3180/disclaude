@@ -46,10 +46,10 @@ jobs:
         run: |
           python -m venv "$RUNNER_TEMP/browser-env"
           "$RUNNER_TEMP/browser-env/bin/pip" install 'browser-use==0.13.10' 'browser-harness==0.1.13'
-          npx --yes playwright@1.62.0 install --with-deps chromium
       - name: Run product CLI lifecycle and shared-browser E2E
         run: |
           export DISCLAUDE_E2E_BROWSER_PYTHON="$RUNNER_TEMP/browser-env/bin/python"
-          export DISCLAUDE_E2E_CHROMIUM="$(find "$HOME/.cache/ms-playwright" -path '*/chrome-linux*/chrome' -type f -print -quit)"
+          export DISCLAUDE_E2E_CHROMIUM="$(command -v google-chrome)"
           test -x "$DISCLAUDE_E2E_CHROMIUM"
+          "$DISCLAUDE_E2E_CHROMIUM" --version
           node node_modules/vitest/vitest.mjs run tests/e2e/browser-service.test.ts
