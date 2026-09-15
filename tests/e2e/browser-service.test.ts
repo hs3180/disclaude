@@ -55,7 +55,8 @@ describe('user starts Disclaude and shares its managed browser', () => {
         child.stdout!.on('data', d => { output += d.toString(); });
         child.stderr!.on('data', d => { output += d.toString(); });
         exited = new Promise(done => child!.once('close', done));
-        for (let i = 0; i < 450 && !output.includes('HTTP API server started on'); i++) {
+        // Allow the service's 45-second readiness deadline to report its own failure.
+        for (let i = 0; i < 600 && !output.includes('HTTP API server started on'); i++) {
           if (child.exitCode !== null || child.signalCode !== null) { throw new Error(output); }
           await delay(100);
         }
