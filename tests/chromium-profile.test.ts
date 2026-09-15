@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { mkdtemp, symlink, writeFile, rm } from 'node:fs/promises';
+import { describe, it, expect, vi } from 'vitest';
+import { mkdtemp, symlink, writeFile, readlink, rm } from 'node:fs/promises';
 import { tmpdir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { assertChromiumProfileAvailable, assertChromiumProfileVersion } from '../scripts/chromium-profile.mjs';
@@ -21,6 +21,15 @@ describe('profile compatibility before service activation', () => {
     await symlink(`${hostname()}-${process.pid}`, join(path, 'SingletonLock'));
     expect(() => assertChromiumProfileAvailable(path)).toThrow('in use by another process');
     expect(() => assertChromiumProfileAvailable(path, process.pid)).not.toThrow();
+  }));
+  it('allows the browser to reclaim a proven dead local owner without deleting its marker', () => profile(async path => {
+    const lock = join(path, 'SingletonLock'); const target = `${hostname()}-12345`;
+    await symlink(target, lock);
+    const probe = vi.spyOn(process, 'kill').mockImplementation(() => { throw Object.assign(new Error('no process'), { code: 'ESRCH' }); });
+    try {
+      expect(() => assertChromiumProfileAvailable(path)).not.toThrow();
+      expect(await readlink(lock)).toBe(target);
+    } finally { probe.mockRestore(); }
   }));
   it('preserves unknown and remote-host ownership', () => profile(async path => {
     const lock = join(path, 'SingletonLock');

@@ -15,7 +15,9 @@ export function assertChromiumProfileAvailable(profile, ownerPid) {
   if (!match || match[1] !== hostname() || !Number.isSafeInteger(pid) || pid <= 1) throw new Error('Browser profile lock belongs to another host or has unknown ownership; profile preserved');
   let alive = true;
   try { process.kill(pid, 0); } catch (error) { if (error.code === 'ESRCH') alive = false; else throw new Error('Browser profile lock owner cannot be verified; profile preserved'); }
-  if (!alive) throw new Error('Browser profile has a stale lock marker; inspect it before retrying. No lock was removed');
+  // A normal stop/crash can leave this marker. Chromium may reclaim a proven
+  // dead local owner itself; the CLI never deletes the marker or signals it.
+  if (!alive) return;
   if (!ownerPid || !isDescendant(pid, ownerPid)) throw new Error(`Browser profile is in use by another process (${pid}); stop that browser explicitly before selecting this profile`);
 }
 
