@@ -1,16 +1,20 @@
 import { describe, it, expect } from 'vitest';
+import nock from 'nock';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, readFile, writeFile, rm, access } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createServer } from 'node:net';
+
+import { launchBrowser } from '../../packages/service/src/browser-control/managed-browser.mjs';
 
 const exec = promisify(execFile);
 describe('browser setup product CLI', () => {
   it.skipIf(process.env.DISCLAUDE_E2E_BROWSER_SETUP !== '1' || !process.env.DISCLAUDE_E2E_CHROMIUM)(
     'previews without writes, applies the selection and repeats setup with its persistent profile', async () => {
       const root = await mkdtemp(join(tmpdir(), 'dc-browser-setup-'));
+      nock.enableNetConnect(host => /^(127\.0\.0\.1|localhost)(:|$)/.test(host));
       const listener = createServer();
       await new Promise<void>(resolve => listener.listen(0, '127.0.0.1', resolve));
       const port = String((listener.address() as { port: number }).port);
@@ -36,6 +40,24 @@ describe('browser setup product CLI', () => {
         await expect(access(profile)).rejects.toThrow();
         await expect(access(config)).rejects.toThrow();
         await expect(exec(process.execPath, args, { env, timeout: 2000 })).rejects.toThrow('Setup needs a terminal');
+        // An independent real browser owns a different profile, even though its
+        // CDP port does not conflict with the candidate service port.
+        const foreignProfile = join(root, 'foreign-profile');
+        const foreign = await launchBrowser({ binary: env.CHROMIUM_CDP_BINARY, profile: foreignProfile, headless: true });
+        try {
+          const busyArgs = [...args]; busyArgs[busyArgs.indexOf('--profile') + 1] = foreignProfile;
+          await expect(exec(process.execPath, [...busyArgs, '--yes'], { env, timeout: 30_000 }))
+            .rejects.toThrow('profile is in use by another process');
+          await expect(access(config)).rejects.toThrow();
+          expect((await fetch(`${foreign.endpoint}/json/version`)).ok).toBe(true);
+        } finally { await foreign.stop({ graceful: true }); }
+        await mkdir(profile, { recursive: true });
+        await writeFile(join(profile, 'Last Version'), '999.0.0.0');
+        await expect(exec(process.execPath, [...args, '--yes'], { env, timeout: 90_000 }))
+          .rejects.toThrow('major-version downgrade');
+        expect(await readFile(join(profile, 'Last Version'), 'utf8')).toBe('999.0.0.0');
+        await expect(access(config)).rejects.toThrow();
+        await rm(join(profile, 'Last Version'));
         applied = true;
         const installed = await exec(process.execPath, [...args, '--yes'], { env, timeout: 115_000 });
         expect(installed.stdout).toMatch(/CDP ready:|"cdpReady":true/);
@@ -88,7 +110,7 @@ describe('browser setup product CLI', () => {
         else expect((await exec('systemctl', ['--user', 'is-enabled', label])).stdout.trim()).toBe('enabled');
         expect(await readFile(join(profile, 'setup-marker'), 'utf8')).toBe('keep');
         console.info('BROWSER_SETUP_ACCEPTANCE', JSON.stringify({ platform: process.platform, arch: process.arch, mode: headed ? 'headed' : 'headless',
-          preview: true, nonInteractiveMissingConfirmationRejected: true, applied: true, repeated: true, profilePreserved: true, autostartToggle: true, failedToggleRecovered: true, statusMetadata: true, statusIgnoresCandidateOverride: true }));
+          preview: true, nonInteractiveMissingConfirmationRejected: true, applied: true, repeated: true, profilePreserved: true, autostartToggle: true, failedToggleRecovered: true, statusMetadata: true, statusIgnoresCandidateOverride: true, foreignProfilePreserved: true, downgradeRejected: true }));
       } finally {
         if (applied) {
           await exec(process.execPath, [resolve('scripts', process.platform === 'darwin' ? 'launchd.mjs' : 'chromium-systemd.mjs'), 'chromium-isolated', 'uninstall'], { env, timeout: 30_000 });
@@ -96,6 +118,7 @@ describe('browser setup product CLI', () => {
           else await expect(exec('systemctl', ['--user', 'is-active', label])).rejects.toThrow();
         }
         await rm(root, { recursive: true, force: true });
+        nock.enableNetConnect('localhost');
       }
     }, 240_000);
 });

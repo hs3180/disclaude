@@ -49,6 +49,7 @@ import { fileURLToPath } from 'node:url';
 import { chromiumConfigPath, loadChromiumConfig, saveChromiumConfig, readChromiumConfig } from './chromium-config.mjs';
 import { replaceChromiumFile, transitionChromium, chromiumListenerPids, isDescendant, waitChromiumReady } from './browser-service-state.mjs';
 import { describeChromiumSelection } from './chromium-status.mjs';
+import { assertChromiumProfileAvailable, assertChromiumProfileVersion } from './chromium-profile.mjs';
 export { transitionChromium } from './browser-service-state.mjs';
 
 // ---------------------------------------------------------------------------
@@ -816,6 +817,7 @@ async function activateChromium(restart) {
     previous = { address: environment.CHROMIUM_CDP_ADDRESS, port: Number(environment.CHROMIUM_CDP_PORT) };
     if (!previous.address || !Number.isSafeInteger(previous.port) || previous.port < 1 || previous.port > 65535) throw new Error('Previous plist has no usable CDP configuration for rollback');
   }
+  assertChromiumProfileAvailable(resolveChromiumProfileDir(), prior.pid);
   const conflicts = chromiumListenerPids(selected.port).filter(pid => !prior.pid || !isDescendant(pid, prior.pid));
   if (conflicts.length) throw new Error(`CDP port ${selected.port} is held by another process; existing service preserved`);
   // The candidate uses disposable state before any persistent configuration changes.
@@ -823,6 +825,8 @@ async function activateChromium(restart) {
     ...(resolveChromiumHeadless() ? ['--headless'] : [])], { timeout: 90_000, maxBuffer: 1024 * 1024 });
   const diagnosis = JSON.parse(probe.stdout);
   if (!diagnosis.usable) throw new Error('Selected browser failed its temporary-profile preflight');
+  assertChromiumProfileAvailable(resolveChromiumProfileDir(), prior.pid);
+  assertChromiumProfileVersion(resolveChromiumProfileDir(), diagnosis.cycles?.[0]?.browser);
   const stop = async () => {
     if (!chromiumServicePid().loaded) return;
     execFileSync('launchctl', ['unload', existsSync(CR_PLIST_PATH) ? CR_PLIST_PATH : CR_PREVIOUS_PLIST_PATH], { stdio: 'pipe' });

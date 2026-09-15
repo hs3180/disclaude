@@ -10,6 +10,7 @@ import { chromiumConfigPath, loadChromiumConfig, saveChromiumConfig, readChromiu
 import { replaceChromiumFile, transitionChromium, chromiumListenerPids, isDescendant, waitChromiumReady } from './browser-service-state.mjs';
 
 import { describeChromiumSelection } from './chromium-status.mjs';
+import { assertChromiumProfileAvailable, assertChromiumProfileVersion } from './chromium-profile.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export function systemdQuote(value, command = false) {
@@ -144,10 +145,13 @@ async function main() {
     const previous = JSON.parse(priorText.match(/^# disclaude-endpoint: (.+)$/m)?.[1] || 'null');
     if (prior.loaded && !previous) throw new Error('Previous endpoint is missing; cannot provide verified rollback');
     if (chromiumListenerPids(selection.port).some(pid => !prior.pid || !isDescendant(pid, prior.pid))) throw new Error(`CDP port ${selection.port} belongs to another process; existing service preserved`);
+    assertChromiumProfileAvailable(selection.profile, prior.pid);
     const probe = await promisify(execFile)(process.execPath, [join(root, 'bin/disclaude.js'), 'browser', 'doctor', '--binary', selection.binary,
       ...(selection.headed === '0' ? ['--headless'] : [])], { timeout: 90_000, maxBuffer: 1024 * 1024 });
     const diagnosis = JSON.parse(probe.stdout);
     if (!diagnosis.usable) throw new Error('Selected browser failed its temporary-profile preflight');
+    assertChromiumProfileAvailable(selection.profile, prior.pid);
+    assertChromiumProfileVersion(selection.profile, diagnosis.cycles?.[0]?.browser);
     let ready;
     try { ready = await transitionChromium({ paths: [paths.config, paths.file], wasLoaded: prior.loaded, prepare,
       stop() { systemctl('stop', paths.unit); if (changedEnable) systemctl(enabledBefore ? 'enable' : 'disable', paths.unit); },
