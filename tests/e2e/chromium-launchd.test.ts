@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import nock from 'nock';
+import { verifyNativeBrowserPage } from './helpers/native-browser-page.js';
 import { connect } from '../../packages/service/src/browser-control/cdp.mjs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -38,6 +39,8 @@ describe('Chromium launchd installation and recovery', () => {
         [resolve('scripts/launchd.mjs'), 'chromium-isolated', name],
         { env: { ...env, ...overrides }, timeout: 115_000, maxBuffer: 1024 * 1024 });
       const marker = join(profile, 'acceptance-marker');
+      const clients: Array<Awaited<ReturnType<typeof connect>>> = [];
+      const open = async (url: string) => { const client = await connect(url); clients.push(client); return client; };
       try {
         const installed = await command('install');
         expect(installed.stdout).toContain('CDP ready:');
@@ -46,6 +49,8 @@ describe('Chromium launchd installation and recovery', () => {
         const beforePlist = await readFile(plist, 'utf8');
         const version = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json();
         expect(version.webSocketDebuggerUrl).toMatch(/^ws:/);
+        const initialClient = await open(version.webSocketDebuggerUrl);
+        const initialPid = await verifyNativeBrowserPage(initialClient, profile, port);
         await expect(command('start')).rejects.toThrow();
         await expect(command('restart', { CHROMIUM_CDP_BINARY: join(root, 'missing') })).rejects.toThrow();
         expect(await readFile(config, 'utf8')).toBe(beforeConfig);
@@ -57,6 +62,14 @@ describe('Chromium launchd installation and recovery', () => {
         } finally { await new Promise<void>(resolve => conflict.close(() => resolve())); }
         expect(await readFile(config, 'utf8')).toBe(beforeConfig);
         expect((await command('restart')).stdout).toContain('CDP ready:');
+        expect(initialClient.ws.readyState).toBe(initialClient.ws.CLOSED);
+        await expect(initialClient.call('Browser.getVersion')).rejects.toThrow();
+        await expect(open(version.webSocketDebuggerUrl)).rejects.toThrow();
+        const restarted = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json();
+        expect(restarted.webSocketDebuggerUrl).not.toBe(version.webSocketDebuggerUrl);
+        const restartedClient = await open(restarted.webSocketDebuggerUrl);
+        const restartedPid = await verifyNativeBrowserPage(restartedClient, profile, port);
+        expect(restartedPid).not.toBe(initialPid);
         // The real browser passes the disposable-profile preflight, but the
         // selected executable exits when launchd uses the persistent port.
         const failing = join(root, 'browser-fails-in-service');
@@ -72,25 +85,13 @@ describe('Chromium launchd installation and recovery', () => {
         const recovered = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json();
         expect(recovered.Browser).toBe(version.Browser);
         expect(recovered.webSocketDebuggerUrl).not.toBe(version.webSocketDebuggerUrl);
-        const client = await connect(recovered.webSocketDebuggerUrl);
-        let targetId: string | undefined;
-        try {
-          ({ targetId } = await client.call('Target.createTarget', { url: 'about:blank' }));
-          const { sessionId } = await client.call('Target.attachToTarget', { targetId, flatten: true });
-          const result = await client.call('Runtime.evaluate', {
-            expression: `document.body.innerHTML='<input id="acceptance">'; document.querySelector('#acceptance').value='recovered'; document.querySelector('#acceptance').value`, returnByValue: true,
-          }, sessionId);
-          expect(result.result.value).toBe('recovered');
-          const shot = await client.call('Page.captureScreenshot', { format: 'png' }, sessionId);
-          expect(Buffer.from(shot.data, 'base64').subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
-        } finally {
-          try { if (targetId) await client.call('Target.closeTarget', { targetId }); }
-          finally { await client.close(); }
-        }
+        const client = await open(recovered.webSocketDebuggerUrl);
+        await verifyNativeBrowserPage(client, profile, port);
         console.info('CHROMIUM_LAUNCHD_ACCEPTANCE', JSON.stringify({ browser: recovered.Browser,
-          platform: process.platform, arch: process.arch, install: true, restart: true,
+          platform: process.platform, arch: process.arch, install: true, restart: true, oldConnectionRejected: true, oldEndpointRejected: true, freshPageVerified: true, processProfileMatched: true, targetCleanup: true,
           invalidPathPreserved: true, portConflictPreserved: true, failedActivationRecovered: true, profilePreserved: true, recoveredInput: true, recoveredScreenshot: true }));
       } finally {
+        await Promise.allSettled(clients.map(client => client.close()));
         // Unload only the unique label before removing its files/profile.
         try {
           await command('uninstall');
