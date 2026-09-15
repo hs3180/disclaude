@@ -45,9 +45,20 @@ verification or proof that a model actually consulted a source.
 
 Local checks cover the core lifecycle and actual message-handler/card-action route
 using isolated storage and a messaging fixture. They do not claim successful real
-Feishu rendering, model-agent research or the full research user journey:
+Feishu rendering or the full research user journey:
 
 ```sh
 npm run build
 npx vitest run packages/service/src/research/manager.test.ts packages/service/src/channels/feishu/message-handler.test.ts
+```
+
+The opt-in model integration test uses the configured backend and real research
+runner, with a captured card transport. It creates a project from the actual form
+callback, compares two supplied proposals, checks retained sources and a completed
+summary, and reopens the persisted result. It makes model API calls; use an isolated
+configuration/workspace and test credentials. It does not send Feishu messages or
+exercise external source retrieval.
+
+```sh
+DISCLAUDE_E2E_RESEARCH=1 npx vitest run tests/e2e/research-project.test.ts
 ```
