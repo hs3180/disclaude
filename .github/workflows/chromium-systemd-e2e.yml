@@ -4,10 +4,12 @@ on:
     paths:
       - 'scripts/chromium-systemd.mjs'
       - 'scripts/chromium-setup.mjs'
+      - 'scripts/chromium-download.mjs'
       - 'scripts/chromium-config.mjs'
       - 'scripts/browser-service-state.mjs'
       - 'tests/e2e/chromium-systemd.test.ts'
       - 'tests/e2e/chromium-setup.test.ts'
+      - 'tests/e2e/chromium-download.test.ts'
       - 'bin/disclaude.js'
       - 'packages/service/src/browser-control/**'
       - 'package*.json'
@@ -18,10 +20,12 @@ on:
     paths:
       - 'scripts/chromium-systemd.mjs'
       - 'scripts/chromium-setup.mjs'
+      - 'scripts/chromium-download.mjs'
       - 'scripts/chromium-config.mjs'
       - 'scripts/browser-service-state.mjs'
       - 'tests/e2e/chromium-systemd.test.ts'
       - 'tests/e2e/chromium-setup.test.ts'
+      - 'tests/e2e/chromium-download.test.ts'
       - 'bin/disclaude.js'
       - 'packages/service/src/browser-control/**'
       - 'package*.json'
@@ -55,3 +59,38 @@ jobs:
           test -x "$DISCLAUDE_E2E_CHROMIUM"
           "$DISCLAUDE_E2E_CHROMIUM" --version
           node node_modules/vitest/vitest.mjs run tests/e2e/chromium-systemd.test.ts tests/e2e/chromium-setup.test.ts
+
+  download:
+    name: Downloaded Chromium (${{ matrix.contract }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            contract: real setup lifecycle
+            refusal: '0'
+          - os: ubuntu-24.04
+            contract: restricted sandbox refusal
+            refusal: '1'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Build product
+        run: npm ci --include=dev && npm run build
+      - name: Verify an official snapshot through product setup
+        run: |
+          sudo systemctl start "user@$(id -u).service"
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+          systemctl --user show-environment >/dev/null
+          systemd --version
+          export DISCLAUDE_E2E_CHROMIUM_DOWNLOAD=1
+          export DISCLAUDE_E2E_CHROMIUM_REVISION=1698254
+          export DISCLAUDE_E2E_EXPECT_SANDBOX_REFUSAL='${{ matrix.refusal }}'
+          node node_modules/vitest/vitest.mjs run tests/e2e/chromium-download.test.ts
