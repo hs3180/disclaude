@@ -75,6 +75,7 @@ async function main() {
   if (!['chromium-cdp', 'chromium-isolated'].includes(selector) || !['generate', 'install', 'start', 'restart', 'stop', 'uninstall', 'status', 'logs'].includes(command)) {
     throw new Error('Usage: disclaude chromium-cdp <generate|install|start|restart|stop|uninstall|status|logs> [--no-autostart]');
   }
+  if (process.argv.slice(4).some(arg => arg !== '--no-autostart' || command !== 'install')) throw new Error('Only install accepts --no-autostart; no other flags are supported');
   if (process.platform !== 'linux' || process.getuid?.() === 0) throw new Error('Native browser service requires a non-root Linux user with a running user-level systemd manager');
   try { systemctl('show-environment'); execFileSync('lsof', ['-v'], { stdio: 'ignore' }); }
   catch { throw new Error('User-level systemd or lsof is unavailable. Run within an active Linux user session with systemd and lsof installed; no service was changed.'); }
@@ -133,7 +134,8 @@ async function main() {
     if (!diagnosis.usable) throw new Error('Selected browser failed its temporary-profile preflight');
     let enabledBefore = false, changedEnable = false;
     try { enabledBefore = /^enabled(?:-runtime)?\s*$/.test(systemctl('is-enabled', paths.unit)); } catch {}
-    const ready = await transitionChromium({ paths: [paths.config, paths.file], wasLoaded: prior.loaded, prepare,
+    let ready;
+    try { ready = await transitionChromium({ paths: [paths.config, paths.file], wasLoaded: prior.loaded, prepare,
       stop() { systemctl('stop', paths.unit); if (changedEnable && !enabledBefore) systemctl('disable', paths.unit); },
       start() { systemctl('daemon-reload'); try { systemctl('reset-failed', paths.unit); } catch {} systemctl('start', paths.unit); },
       async verify() {
@@ -141,6 +143,12 @@ async function main() {
         if (command === 'install' && !process.argv.includes('--no-autostart')) { changedEnable = true; systemctl('enable', paths.unit); }
         return result;
       }, verifyPrevious: () => waitChromiumReady(previous, state) });
+    } catch (error) {
+      // Also forget a failed first-install unit after its absent file is restored.
+      try { systemctl('daemon-reload'); }
+      catch (reloadError) { throw new Error(`${error.message}; restored unit reload failed: ${reloadError.message}`); }
+      throw error;
+    }
     console.log(JSON.stringify({ unit: paths.unit, cdpReady: true, ...ready, temporaryProfileCookiePersistence: diagnosis.cookiePersistence }));
   } finally { rmSync(lock, { force: true }); }
 }

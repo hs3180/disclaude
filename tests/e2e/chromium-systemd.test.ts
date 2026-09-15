@@ -37,7 +37,18 @@ describe('Chromium native Linux user-service installation and recovery', () => {
         [resolve('scripts/chromium-systemd.mjs'), 'chromium-isolated', name],
         { env: { ...env, ...overrides }, timeout: 115_000, maxBuffer: 1024 * 1024 });
       const marker = join(profile, 'acceptance-marker');
+        const failing = join(root, 'browser-fails-in-service');
+        const quoted = `'${binary.replace(/'/g, "'\\''")}'`;
+        await writeFile(failing, `#!/bin/sh\nfor arg in "$@"; do\n if [ "$arg" = "--remote-debugging-port=0" ]; then exec ${quoted} "$@"; fi\ndone\nexit 7\n`, { mode: 0o700 });
       try {
+        let initialFailure = '';
+        try { await command('install', { CHROMIUM_CDP_BINARY: failing }); }
+        catch (error) { initialFailure = String((error as { stderr?: string }).stderr ?? error); }
+        expect(initialFailure).toContain('previous configuration preserved');
+        await expect(readFile(config, 'utf8')).rejects.toThrow();
+        await expect(readFile(plist, 'utf8')).rejects.toThrow();
+        const initialState = await command('status');
+        expect(JSON.parse(initialState.stdout).loaded).toBe(false);
         const installed = await command('install');
         expect(JSON.parse(installed.stdout).cdpReady).toBe(true);
         expect((await exec('systemctl', ['--user', 'is-enabled', label])).stdout.trim()).toBe('enabled');
@@ -60,9 +71,6 @@ describe('Chromium native Linux user-service installation and recovery', () => {
         expect(JSON.parse((await command('restart')).stdout).cdpReady).toBe(true);
         // The real browser passes the disposable-profile preflight, but the
         // selected executable exits when systemd uses the persistent port.
-        const failing = join(root, 'browser-fails-in-service');
-        const quoted = `'${binary.replace(/'/g, "'\\''")}'`;
-        await writeFile(failing, `#!/bin/sh\nfor arg in "$@"; do\n if [ "$arg" = "--remote-debugging-port=0" ]; then exec ${quoted} "$@"; fi\ndone\nexit 7\n`, { mode: 0o700 });
         let failure = '';
         try { await command('restart', { CHROMIUM_CDP_BINARY: failing }); }
         catch (error) { failure = String((error as { stderr?: string }).stderr ?? error); }
@@ -88,9 +96,14 @@ describe('Chromium native Linux user-service installation and recovery', () => {
           try { if (targetId) await client.call('Target.closeTarget', { targetId }); }
           finally { await client.close(); }
         }
+        expect(JSON.parse((await command('status')).stdout).cdpReady).toBe(true);
+        await command('stop');
+        expect(JSON.parse((await command('status')).stdout).loaded).toBe(false);
+        expect(await readFile(marker, 'utf8')).toBe('preserve user profile data');
+        expect(JSON.parse((await command('start')).stdout).cdpReady).toBe(true);
         console.info('CHROMIUM_SYSTEMD_ACCEPTANCE', JSON.stringify({ browser: recovered.Browser,
           platform: process.platform, arch: process.arch, install: true, restart: true,
-          invalidPathPreserved: true, portConflictPreserved: true, failedActivationRecovered: true, profilePreserved: true, recoveredInput: true, recoveredScreenshot: true }));
+          invalidPathPreserved: true, portConflictPreserved: true, failedActivationRecovered: true, profilePreserved: true, recoveredInput: true, recoveredScreenshot: true, firstInstallFailureCleaned: true, stopStart: true, status: true }));
       } finally {
         // Unload only the unique label before removing its files/profile.
         try {

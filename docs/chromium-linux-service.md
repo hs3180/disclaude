@@ -33,6 +33,6 @@ DISCLAUDE_E2E_CHROMIUM_SYSTEMD=1 \
 npx vitest run tests/e2e/chromium-systemd.test.ts
 ```
 
-This needs a working native user systemd manager. It is skipped on macOS and in ordinary tests. CI results are pending; source implementation and macOS unit tests are not native Linux acceptance evidence.
+This needs a working native user systemd manager. It is skipped on macOS and in ordinary tests. The initial native Linux run passed on 2026-09-16: Ubuntu x64, systemd 255 (255.4-1ubuntu8.17), Node 24, and Chrome 152.0.7977.82, in 36.83 seconds (Actions run 35005999891). This covered install, enablement, restart, invalid path, port conflict, replacement rollback, recovered input/screenshot and cleanup. Additional first-install failure cleanup, status and stop/start checks are pending in the final CI run; local tests do not substitute for that native acceptance.
 
 The service semantics follow upstream [systemd.service documentation](https://github.com/systemd/systemd/blob/main/man/systemd.service.xml). The adapter still checks application readiness after the service manager accepts startup.
