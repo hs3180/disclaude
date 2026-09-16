@@ -137,9 +137,14 @@ describe('operator-assisted manual browser migration', () => {
         expect(await readFile(join(newProfile, 'migration-sentinel'), 'utf8')).toBe('original data');
         await expect(access(newConfig)).rejects.toThrow(); await expect(access(candidateUnit)).rejects.toThrow();
         // Explicit operator rollback uses the original definition and original profile.
-        await moveOwnedDefinition(archivedUnit, oldUnit); await ctl('daemon-reload'); await ctl('reset-failed', unit); await ctl('start', unit);
+        console.info('MANUAL_BROWSER_MIGRATION_PHASE failed-candidate-original-files-preserved');
+        await moveOwnedDefinition(archivedUnit, oldUnit); await ctl('daemon-reload');
+        expect(await ctl('show', unit, '--property=FragmentPath', '--value')).toBe(oldUnit);
+        if (await ctl('show', unit, '--property=ActiveState', '--value') === 'failed') { await ctl('reset-failed', unit); }
+        await ctl('start', unit);
         const recovered = await open(); await verifyNativeBrowserPage(recovered, oldProfile, port);
         expect(await hasNativeBrowserCookie(recovered, cookie)).toBe(true);
+        console.info('MANUAL_BROWSER_MIGRATION_PHASE original-deployment-restored-and-healthy');
         await retireOld(recovered);
         const beforeSuccess = await digestTree(oldProfile);
         // The copy is deliberately retained after failed activation; do not copy over it.
