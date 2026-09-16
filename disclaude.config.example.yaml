@@ -15,12 +15,11 @@
 # -----------------------------------------------------------------------------
 # Workspace Configuration
 # -----------------------------------------------------------------------------
-workspace:
-  # Working directory for file operations.
-  # Docker: use /data/workspace (separates runtime data from app source at /app)
-  # Local dev: use "./workspace" (relative to config file)
-  # Default: current working directory
-  dir: "./workspace"
+# First terminal start asks for a workspace (default: $HOME/disclaude-workspace).
+# For unattended startup, create a directory and set its absolute path explicitly:
+# workspace:
+#   dir: "/absolute/path/to/disclaude-workspace"
+# Docker deployments should explicitly use /data/workspace.
 
 # -----------------------------------------------------------------------------
 # Agent/AI Configuration

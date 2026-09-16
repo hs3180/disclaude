@@ -112,6 +112,7 @@ export function generateRelease(root, output) {
   const targets = Object.fromEntries(
     names.map((name) => [`@disclaude/${name}`, join(output, 'packages', name, 'dist/index.js')])
   );
+  targets['@disclaude/core/config-discovery'] = join(output, 'packages/core/dist/config/discovery.js');
   const dependencies = {};
   for (const manifest of [
     pkg,
