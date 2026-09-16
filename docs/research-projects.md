@@ -158,7 +158,13 @@ the form callback, the test switches the directory resolver, submits an adjustme
 and runs research. It checks the original prices and savings in the conclusion,
 linked investigation and sources, then reopens with a different default directory
 and verifies the original binding and findings remain intact. Temporary directories
-are removed in `finally`.
+are removed in `finally` after completed execution (including subsequent assertion
+failures), or when setup fails before execution starts. Teardown failure or an
+unconfirmed model shutdown retains the directory and prints its path. Synchronous
+`dispose()` alone is not proof that the harness has exited. After diagnosis, confirm
+all processes owned by that test have stopped before removing the reported root;
+never remove another run or a production workspace. Signal/orphan recovery remains
+tracked in #5049.
 
 On 2026-09-16 this case passed in 39.0 seconds: A=722, B=729, savings=7 from the
 original file, despite the other directory containing A=9000/B=1000. The runtime

@@ -9,6 +9,24 @@ import { createDocumentReader, createDocumentAppender } from '../../packages/ser
 import * as lark from '@larksuiteoapi/node-sdk';
 import nock from 'nock';
 
+// dispose() requests cancellation synchronously; it does not join the harness.
+// Only delete after a completed model run, or before any run was started.
+async function cleanupResearchTest(root: string, controller: FeishuResearchController | undefined, mayBeRunning: boolean): Promise<void> {
+  try { controller?.dispose(); clearProviderCache(); }
+  catch (error) {
+    console.error(`Research test files retained at ${root}: teardown failed; confirm all owned processes have stopped before removing.`);
+    throw error;
+  }
+  if (mayBeRunning) {
+    console.error(`Research test files retained at ${root}: model termination unconfirmed; confirm all owned processes have stopped before removing.`);
+    return;
+  }
+  try { await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); }
+  catch (error) {
+    throw new Error(`Research test cleanup failed; inspect residual files at ${root}`, { cause: error });
+  }
+}
+
 // Real model/runner/project lifecycle; transport is captured, not sent to Feishu.
 // This does not claim live Feishu rendering or interactive user acceptance.
 describe('research project using supplied evidence and the configured model', () => {
@@ -16,21 +34,25 @@ describe('research project using supplied evidence and the configured model', ()
     nock.enableNetConnect(host => /^(open\.feishu\.cn|localhost|127\.0\.0\.1)(:\d+)?$/u.test(host));
     setDefaultProvider(Config.AGENT_BACKEND);
     const root = await mkdtemp(join(tmpdir(), 'research-doc-e2e-'));
-    const client = new lark.Client({ appId: process.env.FEISHU_APP_ID ?? '', appSecret: process.env.FEISHU_APP_SECRET ?? '',
-      logger: { error() {}, warn() {}, info() {}, debug() {}, trace() {} } });
-    const controller = new FeishuResearchController(join(root, 'store'), root,
-      () => Promise.resolve('captured-doc-card'), () => Promise.resolve(), undefined, createDocumentReader(client),
-      process.env.DISCLAUDE_E2E_RESEARCH_EXPORT === '1' ? createDocumentAppender(client) : undefined);
+    let controller: FeishuResearchController | undefined;
+    let mayBeRunning = false;
     try {
+      const client = new lark.Client({ appId: process.env.FEISHU_APP_ID ?? '', appSecret: process.env.FEISHU_APP_SECRET ?? '',
+        logger: { error() {}, warn() {}, info() {}, debug() {}, trace() {} } });
+      controller = new FeishuResearchController(join(root, 'store'), root,
+        () => Promise.resolve('captured-doc-card'), () => Promise.resolve(), undefined, createDocumentReader(client),
+        process.env.DISCLAUDE_E2E_RESEARCH_EXPORT === '1' ? createDocumentAppender(client) : undefined);
       await controller.handle({ operator: { open_id: 'test-owner' }, context: { open_chat_id: 'test-chat', open_message_id: 'doc-form' }, action: {
         name: `research:${JSON.stringify({ action: 'create', nonce: 'doc-project' })}`,
         form_value: { question: 'Compare the actual total cost of proposals A and B.', scope: 'Use only the linked document and its comments. Include the tax correction. Return a short English conclusion with the two actual total costs.', document_url: process.env.DISCLAUDE_E2E_RESEARCH_DOCUMENT },
       } });
       const project = controller.manager.list('test-owner', 'test-chat')[0];
       expect(project).toBeDefined();
+      mayBeRunning = true;
       await controller.manager.act(project.id, 'test-owner', 'test-chat', project.revision, 'resume');
       await controller.manager.idle(project.id);
       const finished = controller.manager.get(project.id, 'test-owner', 'test-chat');
+      mayBeRunning = finished.status !== 'completed';
       expect(finished.status, finished.document?.error ?? finished.error).toBe('completed');
       expect(finished.document?.snapshot?.comments.some(c => c.text.includes('5'))).toBe(true);
       expect(finished.feedback.some(f => f.sourceKey?.includes(':comment:') && f.status === 'applied')).toBe(true);
@@ -56,7 +78,7 @@ describe('research project using supplied evidence and the configured model', ()
       }
     } finally {
       nock.enableNetConnect(host => /^(localhost|127\.0\.0\.1)(:\d+)?$/u.test(host));
-      controller.dispose(); clearProviderCache(); await rm(root, { recursive: true, force: true });
+      await cleanupResearchTest(root, controller, mayBeRunning);
     }
   }, 240_000);
   it.skipIf(process.env.DISCLAUDE_E2E_RESEARCH !== '1')('reads the original project files after a directory switch and retains findings after restart', async () => {
@@ -67,6 +89,7 @@ describe('research project using supplied evidence and the configured model', ()
     const priceA = randomInt(100, 800), priceB = priceA + 7;
     let currentDir = originalDir;
     let cards = 0;
+    let mayBeRunning = false;
     let controller: FeishuResearchController | undefined;
     try {
       controller = new FeishuResearchController(join(root, 'store'), root,
@@ -87,11 +110,13 @@ describe('research project using supplied evidence and the configured model', ()
         form_value: { feedback: 'Include the absolute savings in USD in the price comparison.' },
       } });
       const adjusted = controller.manager.get(project.id, 'test-owner', 'test-chat');
+      mayBeRunning = true;
       await controller.handle({ operator: { open_id: 'test-owner' }, context: { open_chat_id: 'test-chat', open_message_id: project.cardId }, action: {
         value: { research: true, action: 'resume', project: project.id, revision: adjusted.revision },
       } });
       await controller.manager.idle(project.id);
       const finished = controller.manager.get(project.id, 'test-owner', 'test-chat');
+      mayBeRunning = finished.status !== 'completed';
       expect(finished.status, finished.error).toBe('completed');
       expect(finished.directions.some(direction => direction.findings.some(finding => finding.sources.length > 0))).toBe(true);
       expect(finished.summary).toMatch(/proposal\s*a|\bA\b/i);
@@ -113,8 +138,7 @@ describe('research project using supplied evidence and the configured model', ()
       }
       finally { reopened.dispose(); }
     } finally {
-      try { controller?.dispose(); clearProviderCache(); }
-      finally { await rm(root, { recursive: true, force: true }); }
+      await cleanupResearchTest(root, controller, mayBeRunning);
     }
   }, 240_000);
 });
