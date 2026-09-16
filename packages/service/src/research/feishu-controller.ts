@@ -65,10 +65,12 @@ export class FeishuResearchController {
       if (actionName === 'history') {
         await this.send({ chatId: chat, type: 'card', threadId: project.thread, card: historyCard(project, page(value.offset)) }); return;
       }
-      if (actionName === 'continue') {
+      if (actionName === 'continue' || actionName === 'continue-finding') {
         if (!['completed', 'cancelled'].includes(project.status)) { throw new Error('请先结束当前研究，再从成果建立后续项目。'); }
         // Retrying the same result-card action returns the existing successor.
-        await this.manager.create({ owner, chat, thread: project.thread, source: `${message}:continue:${id}`, parent: id,
+        const parentFinding = actionName === 'continue-finding' ? { directionId: string(value.direction), index: typeof value.index === 'number' ? value.index : -1 } : undefined;
+        const source = parentFinding ? `${message}:continue:${id}:${JSON.stringify(parentFinding)}` : `${message}:continue:${id}`;
+        await this.manager.create({ owner, chat, thread: project.thread, source, parent: id, parentFinding,
           title: project.title, scope: project.scope, materials: project.materials, documentUrl: project.document?.url });
         return;
       }

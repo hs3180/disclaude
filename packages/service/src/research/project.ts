@@ -39,6 +39,7 @@ export interface ResearchProject {
   clarification?: string;
   clarificationFeedbackCount?: number;
   parent?: string;
+  parentFinding?: { directionId: string; index: number };
   priorResults?: { summary: string; findings: Finding[] };
   stepCount: number;
 }

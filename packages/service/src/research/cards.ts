@@ -29,6 +29,7 @@ export function projectCard(p: ResearchProject): Record<string, unknown> {
     ...(p.archivedAt ? [text('已归档 · 成果和研究记录保留')] : []),
     text(`${labels[p.status]}\n${p.scope || '范围：围绕研究问题展开'}\n最近更新：${p.updatedAt}`),
     ...(p.parent ? [text('从已有成果继续的研究'), researchButton('查看原项目', { project: p.parent, action: 'open' })] : []),
+    ...(p.parentFinding && p.priorResults?.findings[0] ? [text(`本次继续研究的发现\n${p.priorResults.findings[0].claim}`), researchButton('查看原发现与来源', { project: p.parent, action: 'evidence', direction: p.parentFinding.directionId, index: p.parentFinding.index })] : []),
     text(p.history.at(-1)?.text ?? ''),
     ...(p.clarification ? [text(`需要你补充\n${p.clarification}`)] : []),
     ...(p.error ? [text(p.error)] : []),
@@ -68,6 +69,7 @@ export function evidenceCard(p: ResearchProject, directionId: string, index: num
     ...f.sources.map(s => text(`${s.title}\n${s.location}\n${s.excerpt}`)),
     text(`分歧与限制\n${f.caveat || '未记录额外说明；仍需结合来源判断。'}`),
     ...(index + 1 < d.findings.length ? [researchButton('下一项发现', { project: p.id, action: 'evidence', direction: d.id, index: index + 1 })] : []),
+    ...(['completed', 'cancelled'].includes(p.status) ? [researchButton('基于这项发现继续研究', { project: p.id, action: 'continue-finding', direction: d.id, index }, true)] : []),
     researchButton('返回项目', { project: p.id, action: 'open' }),
   ]);
 }
