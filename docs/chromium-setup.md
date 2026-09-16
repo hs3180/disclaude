@@ -19,6 +19,22 @@ Applying setup uses the existing platform adapter: install when inactive, restar
 
 Setup supports existing executables and verified independent Chromium downloads. Existing deployment/profile migration remains in #4828. `--autostart` / `--no-autostart` select login autostart; the interactive question and saved `CHROMIUM_CDP_AUTOSTART=1|0` provide the same choice. Repeated setup/restart uses the saved preference. macOS places manual-only definitions outside LaunchAgents while retaining crash restart behavior for a manually started service; Linux enables/disables the user unit. Neither platform logs the user out or enables lingering. It does not claim service-profile login persistence from temporary-profile doctor results.
 
+The native service E2Es separately report `NATIVE_SERVICE_COOKIE_PERSISTENCE`.
+They create an expiring synthetic cookie in the owned service's default profile,
+verify it while running, then query the newly started browser after restart and
+failed replacement recovery. Linux requires retention; macOS reports the result
+without treating restricted credential storage as failure of ordinary navigation,
+input or screenshots. Neither test verifies a real account login or old encrypted
+credential migration, and it never changes Keychain settings.
+
+Observed on macOS ARM64, Chromium 155.0.8057.0, runtime source `d5025315`:
+the service cookie existed before restart but was absent after both restart and
+failed replacement recovery (30.86-second full launchd case). File/profile markers,
+health, input and screenshots passed; the isolated service/profile were removed.
+This records non-retention without establishing its cause. A passing temporary
+doctor profile must not be substituted for this service-profile result. Linux
+headed/headless evidence for the new persistent-cookie assertions is pending.
+
 ## Acceptance
 
 The opt-in `tests/e2e/chromium-setup.test.ts` invokes the actual `bin/disclaude.js` entry, previews, rejects a missing non-interactive confirmation, applies and repeats setup, verifies saved configuration/profile preservation and removes its unique test service. It uses the guarded `--isolated` selector with explicit test service labels/configuration/profile/ports. The ordinary command cannot override production service labels without the adapter's isolation settings.
