@@ -20,7 +20,7 @@ export async function verifyDockerModelSchedule(inside: Inside, docker: Docker,
 const at = new Date(Date.now() + 30000);
 const cron = [at.getUTCSeconds(),at.getUTCMinutes(),at.getUTCHours(),at.getUTCDate(),at.getUTCMonth()+1,'*'].join(' ');
 const schedule = ['---','name: Container model schedule acceptance','cron: '+JSON.stringify(cron),'timezone: UTC',
-'chatId: ${name}','enabled: true','blocking: true','freshSession: true','skipHistory: true','timeoutMs: 90000','---',${JSON.stringify(prompt)}].join('\\n');
+'chatId: rest-${name}','enabled: true','blocking: true','freshSession: true','skipHistory: true','timeoutMs: 90000','---',${JSON.stringify(prompt)}].join('\\n');
 fs.mkdirSync(${JSON.stringify(directory)},{recursive:true});
 fs.writeFileSync(${JSON.stringify(`${directory}/SCHEDULE.md`)},schedule);
 console.log(JSON.stringify({schedule,scheduledAt:at.toISOString()}));`)) as { schedule: string; scheduledAt: string };
