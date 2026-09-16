@@ -182,9 +182,16 @@ manager and autostart entry, and confirm that its processes and listener have
 exited. Archive conflicting definitions outside the manager's search paths;
 retain them for recovery. The CLI does not perform these operator steps.
 
-Use `chromium-cdp setup --import-config /absolute/old.env --profile
-/absolute/new-profile --copy-profile-from /absolute/closed-old-profile --dry-run`
-to inspect the plan. Choose display/autostart/port overrides explicitly when the
+Inspect the plan using absolute paths appropriate to the old deployment:
+
+```sh
+disclaude chromium-cdp setup \
+  --import-config /absolute/old.env \
+  --profile /absolute/new-profile \
+  --copy-profile-from /absolute/closed-old-profile \
+  --dry-run
+```
+ Choose display/autostart/port overrides explicitly when the
 old settings are unsuitable. After reviewing it, replace `--dry-run` with `--yes`
 to apply. Verify the service's actual profile, endpoint and page interaction;
 process startup alone is insufficient. The original config/profile remain the
@@ -203,6 +210,21 @@ owned unmarked runtime unit, real Chromium and a synthetic cookie. It tests a
 candidate that passes preflight but fails as a service, restores the original
 unit/profile and verifies page operation, then activates the retained profile
 copy and checks the original directory digest and configuration. Actual run
-evidence is required before marking this scenario passed. This rehearsal does
+evidence is recorded below. This rehearsal does
 not migrate a user's production deployment, validate real account credentials,
 or exercise physical desktop login/autostart; macOS handover remains separate.
+
+
+**Linux migration acceptance — 2026-09-17:** exact test source
+`d8f5e0d6af1cfe141e9b7c1909ba5223b5186b80`,
+[run 35156698813](https://github.com/hs3180/disclaude/actions/runs/35156698813).
+The headed/Xvfb job104997739866 passed the migration case in29.964s and the
+headless job104997740102 in29.247s. Both jobs passed all five tests in four files.
+The case verified refusal of implicit takeover, explicit retirement of the old
+manager, original definition/config/profile preservation after candidate failure,
+healthy operator rollback with actual input/screenshot, successful activation of
+the retained copy and synthetic-cookie retention. Original profile digests stayed
+unchanged during candidate execution. Both emitted the owned-resource cleanup
+marker. Earlier failed runs exposed fixture cross-filesystem archival and
+reset-failed handling errors; they are retained in the PR and do not count as
+passes. These results retain all platform, account and production limits above.
