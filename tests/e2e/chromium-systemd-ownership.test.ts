@@ -28,6 +28,7 @@ describe('native systemd external definition preservation', () => {
         CHROMIUM_CDP_PORT: '19222', CHROMIUM_CDP_ADDRESS: '127.0.0.1', CHROMIUM_CDP_HEADED: '0' };
       const command = (name: string) => exec(process.execPath,
         [resolve('scripts/chromium-systemd.mjs'), 'chromium-isolated', name], { env, timeout: 15000 });
+      let needsStop = false;
       try {
         await mkdir(runtimeDir, { recursive: true });
         await mkdir(unitDir, { recursive: true });
@@ -42,6 +43,7 @@ describe('native systemd external definition preservation', () => {
             await writeFile(dropFile, '[Service]\nEnvironment=MANUAL_DEPLOYMENT=preserve\n');
           }
           await systemctl('daemon-reload');
+          needsStop = true;
           await systemctl('start', unit);
           const pid = await systemctl('show', unit, '--property=MainPID', '--value');
           expect(Number(pid)).toBeGreaterThan(0);
@@ -57,6 +59,7 @@ describe('native systemd external definition preservation', () => {
             else {expect(await readFile(dropFile, 'utf8')).toContain('MANUAL_DEPLOYMENT=preserve');}
           }
           await systemctl('stop', unit);
+          needsStop = false;
           await rm(runtimeFile, { force: true });
           await rm(file, { force: true });
           await rm(dropDir, { recursive: true, force: true });
@@ -66,13 +69,12 @@ describe('native systemd external definition preservation', () => {
       } finally {
         // The unit name and every file are unique to this test; never disable
         // or remove another manager's service while recovering a failed test.
-        try { await systemctl('stop', unit); } finally {
-          await rm(runtimeFile, { force: true });
-          await rm(file, { force: true });
-          await rm(dropDir, { recursive: true, force: true });
-          await systemctl('daemon-reload');
-          await rm(root, { recursive: true, force: true });
-        }
+        if (needsStop) { await systemctl('stop', unit); }
+        await rm(runtimeFile, { force: true });
+        await rm(file, { force: true });
+        await rm(dropDir, { recursive: true, force: true });
+        await systemctl('daemon-reload');
+        await rm(root, { recursive: true, force: true });
         console.info('SYSTEMD_EXTERNAL_OWNERSHIP_CLEANUP_OK');
       }
     }, 120000);
