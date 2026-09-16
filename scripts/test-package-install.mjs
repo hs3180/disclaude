@@ -57,9 +57,9 @@ async function verifyPackage() {
       encoding: 'utf8',
       timeout: 180_000,
     });
-    // A timed-out command may leave descendants; do not erase their working
+    // A signaled or timed-out command may leave descendants; do not erase their working
     // directory without confirmed termination. Report the retained root below.
-    if (result.error && ['ETIMEDOUT', 'ENOBUFS'].includes(result.error.code)) cleanupSafe = false;
+    if (result.signal || (result.error && ['ETIMEDOUT', 'ENOBUFS'].includes(result.error.code))) cleanupSafe = false;
     assert.equal(
       result.status,
       0,
