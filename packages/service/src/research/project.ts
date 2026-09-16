@@ -40,7 +40,7 @@ export interface ResearchProject {
   clarificationFeedbackCount?: number;
   parent?: string;
   parentFinding?: { directionId: string; index: number };
-  priorResults?: { summary: string; findings: Finding[] };
+  priorResults?: { summary: string; findings: Finding[]; scope?: string };
   stepCount: number;
 }
 export type ResearchStep = { type: 'plan' } | { type: 'investigate'; directionId: string } | { type: 'synthesize' };
