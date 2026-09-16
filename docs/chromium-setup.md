@@ -31,9 +31,28 @@ Observed on macOS ARM64, Chromium 155.0.8057.0, runtime source `d5025315`:
 the service cookie existed before restart but was absent after both restart and
 failed replacement recovery (30.86-second full launchd case). File/profile markers,
 health, input and screenshots passed; the isolated service/profile were removed.
-This records non-retention without establishing its cause. A passing temporary
-doctor profile must not be substituted for this service-profile result. Linux
-headed/headless evidence for the new persistent-cookie assertions is pending.
+This initial observation alone did not establish its cause. Linux headed and
+headless both subsequently failed the same post-restart assertion (Actions run
+35147489967). A passing temporary doctor profile must not be substituted for
+these service-profile results.
+
+The follow-up shutdown probe found no test cookie row after SIGTERM, whereas
+`Browser.close` saved an encrypted row and a fresh browser read it successfully.
+The service adapters now request normal browser shutdown before invoking the
+service manager. They first verify loopback discovery and listener ancestry under
+the selected service PID, recheck ownership and wait for the original listener
+processes to exit. Recovery uses the endpoint of the service actually started,
+including when the failed candidate selected a different port. Unavailable or
+unhealthy CDP produces a warning and the normal manager stop still proceeds;
+that fallback does not promise persistence. No Keychain settings are changed.
+
+With this fix, macOS ARM64/Chromium155.0.8057.0 retained newly written synthetic
+cookies across restart, failed replacement on another port, and explicit
+stop/start; the complete native service case passed in 34.02 seconds and removed
+its service/profile. Foreign listeners, mismatched websocket endpoints and changed
+service owners are rejected without sending a browser command. Fixed Linux
+headed/headless acceptance is pending. Real-account login and credential migration
+remain unverified.
 
 ## Acceptance
 

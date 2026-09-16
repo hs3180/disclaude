@@ -2,6 +2,51 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, statSync, writeFileSync, renameSync, rmSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import WebSocket from 'ws';
+
+/** Give only the selected service's browser a chance to flush persistent state.
+ * Service-manager stop still follows, including on unavailable/unhealthy CDP.
+ */
+export async function closeChromiumGracefully(target, serviceState) {
+  const owner = serviceState().pid;
+  if (!owner) return false;
+  try {
+    if (!target || target.address !== '127.0.0.1' || !Number.isInteger(target.port) || target.port < 1 || target.port > 65535) {
+      throw new Error('no verified loopback endpoint');
+    }
+    const listeners = chromiumListenerPids(target.port);
+    if (!listeners.length || listeners.some(pid => !isDescendant(pid, owner))) throw new Error('listener does not belong to the selected service');
+    const response = await fetch(`http://127.0.0.1:${target.port}/json/version`, { redirect: 'error', signal: AbortSignal.timeout(1000) });
+    const info = await response.json();
+    const url = new URL(info.webSocketDebuggerUrl);
+    if (!response.ok || url.protocol !== 'ws:' || url.hostname !== '127.0.0.1' || Number(url.port) !== target.port ||
+        url.username || url.password || !url.pathname.startsWith('/devtools/browser/')) throw new Error('invalid private browser endpoint');
+    if (serviceState().pid !== owner || chromiumListenerPids(target.port).some(pid => !listeners.includes(pid))) {
+      throw new Error('service identity changed before shutdown');
+    }
+    await new Promise((resolve, reject) => {
+      const socket = new WebSocket(url);
+      const timer = setTimeout(() => { socket.terminate(); reject(new Error('browser close timed out')); }, 5000);
+      socket.once('error', error => { clearTimeout(timer); reject(error); });
+      socket.once('open', () => socket.send(JSON.stringify({ id: 1, method: 'Browser.close' })));
+      socket.once('close', () => { clearTimeout(timer); resolve(); });
+    });
+    // A closed websocket is not proof that disk writes have finished. Wait for
+    // the original listener processes; KeepAlive may already have another PID.
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const alive = listeners.some(pid => {
+        try { process.kill(pid, 0); return true; }
+        catch (error) { return error.code !== 'ESRCH'; }
+      });
+      if (!alive) return true;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    throw new Error('browser process exit was not confirmed');
+  } catch (error) {
+    console.warn(`Graceful browser shutdown unavailable; service stop will continue without a persistence guarantee: ${error.message}`);
+    return false;
+  }
+}
 
 // Keep backups in memory for one command; a lock prevents competing CLI updates.
 export function replaceChromiumFile(path, bytes, mode = 0o600) {
@@ -84,4 +129,3 @@ export async function waitChromiumReady({ address, port }, serviceState, timeout
   }
   throw new Error(`Chromium readiness failed: ${last}`);
 }
-
