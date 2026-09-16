@@ -65,13 +65,15 @@ async function digestTree(root: string): Promise<string> {
 }
 
 describe('operator-assisted manual browser migration', () => {
-  it.skipIf(process.platform !== 'linux' || process.env.DISCLAUDE_E2E_CHROMIUM_SYSTEMD !== '1' || !process.env.DISCLAUDE_E2E_CHROMIUM)(
+  it.skipIf(!(['linux', 'darwin'].includes(process.platform)) || (process.platform === 'linux' ? process.env.DISCLAUDE_E2E_CHROMIUM_SYSTEMD : process.env.DISCLAUDE_E2E_CHROMIUM_LAUNCHD) !== '1' || !process.env.DISCLAUDE_E2E_CHROMIUM)(
     'preserves an old deployment, restores it after candidate failure, then migrates a copied profile', async () => {
       const root = await mkdtemp(join(tmpdir(), 'dc-browser-migration-'));
-      const unit = `disclaude-test-migration-${randomUUID()}.service`;
-      const runtimeDir = join(process.env.XDG_RUNTIME_DIR!, 'systemd/user');
-      const oldUnit = join(runtimeDir, unit), archivedUnit = join(root, 'old-unit.saved');
-      const candidateUnit = join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'systemd/user', unit);
+      const linux = process.platform === 'linux';
+      const unit = linux ? `disclaude-test-migration-${randomUUID()}.service` : `com.disclaude.test.migration.${randomUUID()}`;
+      const runtimeDir = linux ? join(process.env.XDG_RUNTIME_DIR!, 'systemd/user') : join(root, 'LaunchAgents');
+      const oldUnit = join(runtimeDir, linux ? unit : `${unit}.plist`), archivedUnit = join(root, 'old-unit.saved');
+      const candidateUnit = linux ? join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'systemd/user', unit)
+        : join(root, 'ManualServices', `${unit}.plist`);
       const oldProfile = join(root, 'old-profile'), newProfile = join(root, 'new-profile');
       const oldConfig = join(root, 'old.env'), newConfig = join(root, 'candidate.json');
       const binary = process.env.DISCLAUDE_E2E_CHROMIUM!;
@@ -85,11 +87,41 @@ describe('operator-assisted manual browser migration', () => {
       const display = ['DISPLAY', 'WAYLAND_DISPLAY', 'XAUTHORITY', 'XDG_RUNTIME_DIR'].filter(key => process.env[key])
         .map(key => `Environment=${systemdQuote(`${key}=${process.env[key]}`)}`).join('\n');
       // An actual unmarked user-maintained unit, outside the CLI definition path.
-      const definition = `[Unit]\nDescription=Owned manual migration fixture\n[Service]\nType=exec\nExecStart=${args.map(arg => systemdQuote(arg, true)).join(' ')}\nRestart=on-failure\nKillMode=control-group\n${display}\n`;
+      const linuxDefinition = `[Unit]\nDescription=Owned manual migration fixture\n[Service]\nType=exec\nExecStart=${args.map(arg => systemdQuote(arg, true)).join(' ')}\nRestart=on-failure\nKillMode=control-group\n${display}\n`;
+      const xml = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const definition = linux ? linuxDefinition : `<?xml version="1.0"?><plist version="1.0"><dict><key>Label</key><string>${xml(unit)}</string><key>ProgramArguments</key><array>${args.map(arg => `<string>${xml(arg)}</string>`).join('')}</array><key>RunAtLoad</key><true/></dict></plist>`;
+      const launch = async (...args: string[]) => (await exec('launchctl', args, { timeout: 15000 })).stdout;
+      const launchEntry = async () => (await launch('list')).split('\n').find(line => line.trim().split(/\s+/).at(-1) === unit);
+      const pid = async () => linux ? Number(await ctl('show', unit, '--property=MainPID', '--value'))
+        : Number((await launchEntry())?.trim().split(/\s+/)[0]) || 0;
+      const reload = async () => { if (linux) { await ctl('daemon-reload'); } };
+      const startOriginal = async () => {
+        if (linux) {
+          expect(await ctl('show', unit, '--property=FragmentPath', '--value')).toBe(oldUnit);
+          if (await ctl('show', unit, '--property=ActiveState', '--value') === 'failed') { await ctl('reset-failed', unit); }
+          await ctl('start', unit);
+        } else { await launch('load', oldUnit); }
+      };
+      const stopOwned = async () => {
+        if (linux) {
+          try { await ctl('stop', unit); } catch (error) {
+            if (await ctl('show', unit, '--property=LoadState', '--value') !== 'not-found') { throw error; }
+          }
+        } else {
+          const originalPid = await pid();
+          if (await launchEntry()) { await launch('remove', unit); }
+          const alive = () => { if (!originalPid) { return false; } try { process.kill(originalPid, 0); return true; } catch { return false; } };
+          for (let i = 0; i < 100 && alive(); i++) { await delay(50); }
+          expect(alive(), 'Owned launchd browser must exit before profile cleanup').toBe(false);
+          expect(await launchEntry()).toBeUndefined();
+        }
+      };
       const configBytes = `CHROMIUM_CDP_BINARY='${binary}'\nCHROMIUM_CDP_PROFILE_DIR='${oldProfile}'\nCHROMIUM_CDP_PORT=${port}\nCHROMIUM_CDP_HEADED=${headed ? '1' : '0'}\nCHROMIUM_CDP_AUTOSTART=0\n`;
       const env = { ...process.env,
-        ['DISCLAUDE_SYSTEMD_ISOLATED']: '1', ['DISCLAUDE_SYSTEMD_UNIT']: unit,
-        ['DISCLAUDE_SYSTEMD_STATE_DIR']: root, ['DISCLAUDE_CHROMIUM_CONFIG']: newConfig,
+        ...(linux ? { ['DISCLAUDE_SYSTEMD_ISOLATED']: '1', ['DISCLAUDE_SYSTEMD_UNIT']: unit, ['DISCLAUDE_SYSTEMD_STATE_DIR']: root }
+          : { ['DISCLAUDE_LAUNCHD_ISOLATED']: '1', ['DISCLAUDE_LAUNCHD_LABEL']: unit, ['DISCLAUDE_LAUNCHD_STATE_DIR']: root,
+            ['DISCLAUDE_LAUNCHD_CONFIG_PATH']: join(root, 'unused-service.yaml') }),
+        ['DISCLAUDE_CHROMIUM_CONFIG']: newConfig,
         CHROMIUM_CDP_PROFILE_DIR: newProfile, CHROMIUM_CDP_PORT: String(port) };
       const setupArgs = [resolve('bin/disclaude.js'), 'chromium-cdp', 'setup', '--isolated', '--import-config', oldConfig, '--profile', newProfile, '--no-autostart'];
       const setup = (extra: string[]) => exec(process.execPath, [...setupArgs, ...extra], { env, timeout: 115000, maxBuffer: 1024 * 1024 });
@@ -107,16 +139,16 @@ describe('operator-assisted manual browser migration', () => {
       const retireOld = async (client: Awaited<ReturnType<typeof connect>>) => {
         // A successful Browser.close flushes the old profile before retiring its manager.
         await client.call('Browser.close').catch(() => undefined);
-        for (let i = 0; i < 100 && await ctl('show', unit, '--property=MainPID', '--value') !== '0'; i++) { await delay(100); }
-        expect(await ctl('show', unit, '--property=MainPID', '--value')).toBe('0');
-        await ctl('stop', unit);
+        for (let i = 0; i < 100 && await pid() !== 0; i++) { await delay(100); }
+        expect(await pid()).toBe(0);
+        await stopOwned();
         await moveOwnedDefinition(oldUnit, archivedUnit);
-        await ctl('daemon-reload');
+        await reload();
       };
       try {
         await mkdir(runtimeDir, { recursive: true }); await mkdir(oldProfile);
         await writeFile(oldUnit, definition, { flag: 'wx' }); await writeFile(oldConfig, configBytes, { mode: 0o600 });
-        await ctl('daemon-reload'); await ctl('start', unit);
+        await reload(); await startOriginal();
         const original = await open();
         await verifyNativeBrowserPage(original, oldProfile, port);
         const cookie = await seedNativeBrowserCookie(original);
@@ -138,36 +170,34 @@ describe('operator-assisted manual browser migration', () => {
         await expect(access(newConfig)).rejects.toThrow(); await expect(access(candidateUnit)).rejects.toThrow();
         // Explicit operator rollback uses the original definition and original profile.
         console.info('MANUAL_BROWSER_MIGRATION_PHASE failed-candidate-original-files-preserved');
-        await moveOwnedDefinition(archivedUnit, oldUnit); await ctl('daemon-reload');
-        expect(await ctl('show', unit, '--property=FragmentPath', '--value')).toBe(oldUnit);
-        if (await ctl('show', unit, '--property=ActiveState', '--value') === 'failed') { await ctl('reset-failed', unit); }
-        await ctl('start', unit);
+        await moveOwnedDefinition(archivedUnit, oldUnit); await reload(); await startOriginal();
         const recovered = await open(); await verifyNativeBrowserPage(recovered, oldProfile, port);
-        expect(await hasNativeBrowserCookie(recovered, cookie)).toBe(true);
+        const cookieAfterRecovery = await hasNativeBrowserCookie(recovered, cookie);
+        if (linux) { expect(cookieAfterRecovery).toBe(true); }
         console.info('MANUAL_BROWSER_MIGRATION_PHASE original-deployment-restored-and-healthy');
         await retireOld(recovered);
         const beforeSuccess = await digestTree(oldProfile);
         // The copy is deliberately retained after failed activation; do not copy over it.
         await setup(['--yes']);
         const migrated = await open(); await verifyNativeBrowserPage(migrated, newProfile, port);
-        expect(await hasNativeBrowserCookie(migrated, cookie)).toBe(true);
+        const cookieAfterCopy = await hasNativeBrowserCookie(migrated, cookie);
+        if (linux) { expect(cookieAfterCopy).toBe(true); }
         expect(await digestTree(oldProfile)).toBe(beforeSuccess);
         expect(await readFile(oldConfig, 'utf8')).toBe(configBytes);
         expect(await readFile(archivedUnit, 'utf8')).toBe(definition);
-        expect(await ctl('show', unit, '--property=FragmentPath', '--value')).toBe(candidateUnit);
+        if (linux) { expect(await ctl('show', unit, '--property=FragmentPath', '--value')).toBe(candidateUnit); }
+        else { expect(await launchEntry()).toBeTruthy(); await access(candidateUnit); }
         console.info('MANUAL_BROWSER_MIGRATION_ACCEPTANCE', JSON.stringify({ platform: process.platform, arch: process.arch, headed,
           externalTakeoverRefused: true, operatorRetiredOldManager: true, failedCandidatePreservedSource: true,
-          operatorRollbackHealthy: true, copiedProfileActive: true, syntheticCookieRetained: true,
+          operatorRollbackHealthy: true, copiedProfileActive: true, syntheticCookieRetained: cookieAfterRecovery && cookieAfterCopy, cookieAfterRecovery, cookieAfterCopy,
           oldDefinitionAndConfigPreserved: true, oldProfileDigestPreserved: true, realAccountLogin: false }));
       } finally {
         for (const client of clients) { client.ws.close(); }
-        try { await ctl('stop', unit); } catch (error) {
-          if (await ctl('show', unit, '--property=LoadState', '--value') !== 'not-found') { throw error; }
-        }
+        await stopOwned();
         await rm(oldUnit, { force: true }); await rm(candidateUnit, { force: true });
-        await ctl('daemon-reload'); await rm(root, { recursive: true, force: true });
+        await reload(); await rm(root, { recursive: true, force: true });
         nock.enableNetConnect('localhost');
-        console.info('MANUAL_BROWSER_MIGRATION_CLEANUP_OK');
+        console.info('MANUAL_BROWSER_MIGRATION_CLEANUP_OK', JSON.stringify({ root, unit }));
       }
     }, 240000);
 });
