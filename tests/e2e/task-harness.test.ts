@@ -1,6 +1,8 @@
 import { expect, it } from 'vitest';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Config, setDefaultProvider, clearProviderCache } from '@disclaude/core';
@@ -88,3 +90,56 @@ it.skipIf(process.env.DISCLAUDE_E2E_TASK_HARNESS !== '1')('resumes a non-researc
     }
   }
 }, 180_000);
+
+// Observe the real model's shell child before cancelling: a completed command
+// cannot provide evidence that cancellation reclaimed its independent group.
+it.skipIf(process.env.DISCLAUDE_E2E_TASK_HARNESS !== '1' || Config.AGENT_BACKEND !== 'codex' || process.platform === 'win32')('reclaims real Codex tool groups after cancelling a task', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'task-real-cancel-'));
+  const controller = new AbortController();
+  const groups = new Set<number>();
+  const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+  const snapshot = async () => {
+    const { stdout } = await promisify(execFile)('ps', ['-axo', 'pid=,ppid=,pgid=,comm='], { timeout: 2000, maxBuffer: 2 * 1024 * 1024 });
+    return stdout.split('\n').flatMap(line => {
+      const row = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+)$/.exec(line);
+      return row ? [{ pid: Number(row[1]), parent: Number(row[2]), group: Number(row[3]), name: row[4].split('/').pop() }] : [];
+    });
+  };
+  let reclaimed = false;
+  try {
+    setDefaultProvider(Config.AGENT_BACKEND);
+    const turn = runTaskTurn({ identity: `task:cancel:${randomUUID()}`, owner: 'test-owner', workingDir: root,
+      signal: controller.signal, timeoutMs: 90_000,
+      prompt: 'For this local interruption acceptance, execute exactly sleep 30 in the shell, then reply done. Do not read or change files, send messages, access network or launch agents. The parent will interrupt you during sleep.'
+    }).then(text => ({ text, error: '' }), error => ({ text: '', error: String(error) }));
+    let sawSleep = false;
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      const rows = await snapshot(), owned = new Set([process.pid]);
+      let previous = 0;
+      while (previous !== owned.size) {
+        previous = owned.size;
+        for (const row of rows) { if (owned.has(row.parent)) { owned.add(row.pid); } }
+      }
+      const children = rows.filter(row => row.pid !== process.pid && owned.has(row.pid) && row.name !== 'ps');
+      for (const child of children) { if (child.pid === child.group) { groups.add(child.group); } }
+      if (children.some(row => row.name === 'sleep')) { sawSleep = true; break; }
+      await pause(200);
+    }
+    controller.abort();
+    const result = await turn;
+    expect(sawSleep).toBe(true);
+    expect(groups.size).toBeGreaterThan(0);
+    expect(result.error).toContain('Task turn interrupted');
+    // Do not clear the shared provider before observing per-agent teardown.
+    for (let i = 0; i < 50; i++) {
+      if (!(await snapshot()).some(row => groups.has(row.group))) { reclaimed = true; break; }
+      await pause(200);
+    }
+    expect(reclaimed, `Owned groups still present: ${[...groups].join(',')}`).toBe(true);
+  } finally {
+    controller.abort(); clearProviderCache();
+    if (reclaimed) { await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); }
+    else { console.error(`Task cancellation files retained at ${root}: owned process exit unconfirmed`); }
+  }
+}, 90_000);
