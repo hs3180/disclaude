@@ -33,6 +33,15 @@ Commands:
     --workflow-file <path> | --workflow <json> | workflow JSON on stdin
     Workflow fields: title, description, command, args?, cwd?, env?, timeoutMs?.
     Requires service API authentication; never put the private input in this command.
+  project_task     Operate a persistent task in the current project.
+    --context <message-context> --request-file <path> | --request <json> | JSON on stdin
+    create: {action:"create",requestId,title,scope?,materials?,documentUrl?}
+    list: {action:"list",archived?,offset?,limit?}; get: {action:"get",taskId}
+    control: {action:"control",taskId,revision,control,value?}
+    Controls: resume/pause/cancel/feedback/stop-direction/archive/unarchive/export.
+    Creation is paused; resume using its returned revision to start authorized work.
+    Requires a service-issued context from the current message and API authentication.
+    No --chat/--actor/--parent: identity and directory are resolved by the service.
   help             Show this help message.
 
 Common options:

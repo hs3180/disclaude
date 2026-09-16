@@ -116,6 +116,7 @@ vi.mock('../../utils/message-logger.js', () => ({
 // ---------------------------------------------------------------------------
 // Import SUT after mocks
 // ---------------------------------------------------------------------------
+import { projectTaskGateway } from '../../harness/project-task-gateway.js';
 import { MessageHandler } from './message-handler.js';
 import { TriggerModeManager } from './passive-mode.js';
 import { MentionDetector } from './mention-detector.js';
@@ -274,6 +275,31 @@ describe('MessageHandler', () => {
       if (previousStat) { statMock.mockImplementation(previousStat); }
       vi.unstubAllEnvs(); rmSync(workspace, { recursive: true, force: true });
     }
+  });
+
+  it('issues task context from the received actor and revokes it when the channel stops', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'task-context-route-'));
+    vi.stubEnv('DISCLAUDE_RESEARCH_PROJECTS_DIR', workspace);
+    const send = vi.fn().mockResolvedValue('task-card');
+    const control = vi.fn().mockResolvedValue({ success: true, projectContext: { workingDir: workspace, available: true } });
+    const realFs = await vi.importActual<typeof import('fs/promises')>('fs/promises');
+    vi.mocked((await import('fs/promises')).stat).mockImplementationOnce(realFs.stat);
+    const { handler } = createHandler({ callbacks: { emitMessage: mockState.emitMessage, emitControl: control, sendMessage: send } });
+    try {
+      handler.initialize({ im: { message: { reaction: { create: vi.fn().mockResolvedValue({ code: 0 }) } } } } as any);
+      await handler.handleMessageReceive(textEvent('Keep investigating these logs in this project'));
+      const incoming = firstCallArg(mockState.emitMessage);
+      const context = incoming.metadata.projectTaskContext;
+      expect(context).toMatch(/^[a-f0-9-]{36}$/u);
+      const created = await projectTaskGateway.execute(context, { action: 'create', requestId: 'logs', title: 'Inspect logs' }) as { task: { id: string; owner: string; chat: string; workingDir: string } };
+      expect(created.task).toMatchObject({ owner: 'user_001', chat: 'chat_001', workingDir: workspace });
+      const retry = await projectTaskGateway.execute(context, { action: 'create', requestId: 'logs', title: 'Inspect logs' }) as typeof created;
+      expect(retry.task.id).toBe(created.task.id);
+      expect(control).toHaveBeenCalledTimes(1);
+      await expect(projectTaskGateway.execute(context, { action: 'get', taskId: created.task.id, owner: 'another-user' })).rejects.toThrow('fields');
+      handler.clearClient();
+      await expect(projectTaskGateway.execute(context, { action: 'list' })).rejects.toThrow('unavailable');
+    } finally { handler.clearClient(); vi.unstubAllEnvs(); rmSync(workspace, { recursive: true, force: true }); }
   });
 
   it('does not interpret /research as a product command or create task state', async () => {

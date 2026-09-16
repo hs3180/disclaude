@@ -6,15 +6,29 @@ research mode, or research enablement step. `/project info/use/reset` retain the
 working-directory control behavior. Unrecognized slash text, including `/research`,
 follows the ordinary message route; it does not open a second product surface.
 
-Open `/project`, describe the goal, scope and materials in the task form, then
-review the saved directory and scope before starting. A task may investigate a
-question or perform another bounded project job. The agent decides the useful
-work; the service does not require planning, investigation and synthesis turns.
+Ask the ordinary agent to carry out persistent work in the current project. Its
+message context advertises the shared project-task capability; the agent can create,
+inspect and control a task through the managed channel CLI. There is no keyword
+classifier, research-specific prompt route, skill invocation or mode selection.
+Short answers do not need to become tasks. `/project` remains the stable place to
+reopen tasks, inspect evidence, add feedback and use controls. Its goal/scope/material
+form is also available, but is not required for agent-initiated work.
 
-This draft still needs integration of natural-language task initiation through the
-ordinary agent's capabilities. The form and task cards are the currently implemented
-entry, not proof that conversational initiation or the full project UX is complete.
-See the [architecture and acceptance gates](proposals/project-research-convergence.md).
+The task API takes a service-issued message context plus an operation, not an
+actor/chat/directory chosen by the model. Contexts supplement API authentication,
+expire after 30 minutes, and are revoked when the channel stops. They are bounded
+in memory and do not survive a service restart; task records do survive. A fresh
+user message provides fresh task access. Existing-task operations still validate
+creator/chat, and control calls reject stale revisions. Repeated creation with the
+same request ID and received message reopens its original task.
+
+The CLI supports create, paginated list (including archive), get and lifecycle
+controls. Create saves a paused task and publishes its card; an agent may resume
+it using the returned revision when the user requested execution. This is an
+execution boundary, not an extra user confirmation requirement. The service
+resolves the current project directory and preserves it thereafter. Publishing or
+appending results remains an explicit operation. See the
+[architecture and acceptance gates](proposals/project-research-convergence.md).
 
 ## Storage and compatibility
 
@@ -88,6 +102,11 @@ applied the choice and completed. The latter uses actual model calls and durable
 state, but a store restart is not an OS crash test. Captured card transport does not
 establish live Feishu clicks.
 
+The natural-language model integration test uses the normal agent prompt context,
+real CLI and authenticated HTTP API to create/start a task. A separate real model
+turn executes that task against a randomized project file. This captures card
+transport and does not claim real Feishu UI acceptance.
+
 Routing tests cover creation without a research setting, app namespace isolation,
 same-app reopening, removal of the dedicated command, retained `info/use/reset`
 behavior, legacy callbacks and owner/chat restrictions. Current real UI acceptance
@@ -99,6 +118,7 @@ does not prove the changed entry or execution path.
 npm run build
 npx vitest run packages/service/src/research packages/service/src/harness packages/service/src/channels/feishu/message-handler.test.ts
 DISCLAUDE_E2E_TASK_HARNESS=1 npx vitest run tests/e2e/task-harness.test.ts
+DISCLAUDE_E2E_TASK_HARNESS=1 npx vitest run tests/e2e/project-task-cli.test.ts
 DISCLAUDE_E2E_RESEARCH=1 npx vitest run tests/e2e/research-project.test.ts
 ```
 

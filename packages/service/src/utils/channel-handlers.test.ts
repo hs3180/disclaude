@@ -625,13 +625,14 @@ describe('createDefaultMessageHandler with InputMessageRouter', () => {
       channelName: 'Feishu channel',
     });
     const message = createMockMessage({
-      metadata: { threadContext: 'thread-abc123' },
+      metadata: { threadContext: 'thread-abc123', projectTaskContext: '11111111-1111-1111-1111-111111111111' },
     });
     await handler(message);
 
     expect(mockRouter.route).toHaveBeenCalledWith(
       expect.objectContaining({
         threadContext: 'thread-abc123',
+        projectTaskContext: '11111111-1111-1111-1111-111111111111',
       }),
     );
   });

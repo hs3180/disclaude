@@ -44,6 +44,7 @@ import { evaluateMessageFilters } from './message-filters.js';
 import { FeishuPrivateInput } from './private-input.js';
 import { FeishuPrivateWorkflows, type PrivateWorkflowRequest } from './private-workflows.js';
 import { tryHandleSlashCommand } from './command-router.js';
+import { projectTaskGateway } from '../../harness/project-task-gateway.js';
 import { FeishuResearchController } from '../../research/feishu-controller.js';
 import { createDocumentReader, createDocumentAppender } from '../../research/document-source.js';
 import {
@@ -199,6 +200,20 @@ export class MessageHandler {
   private readonly privateWorkflows: FeishuPrivateWorkflows;
   private research?: FeishuResearchController;
   private readonly projectTaskAppId: string;
+  private readonly projectTaskGrantNamespace = crypto.randomUUID();
+
+  private taskContext(owner: string | undefined, chat: string, source: string, thread?: string): string | undefined {
+    const controller = this.research;
+    if (!controller || !owner) { return undefined; }
+    try {
+      return projectTaskGateway.issue(this.projectTaskGrantNamespace,
+        operation => controller.executeTask({ owner, chat, source, thread }, operation));
+    } catch {
+      // Capacity/availability must not drop the user's ordinary message.
+      logger.warn('Project task context unavailable for this message');
+      return undefined;
+    }
+  }
 
   requestPrivateWorkflow(request: PrivateWorkflowRequest): Promise<{ actionId: string }> {
     return this.privateWorkflows.request(request);
@@ -432,6 +447,7 @@ export class MessageHandler {
   clearClient(): void {
     this.privateInput?.revoke();
     this.privateWorkflows.revoke();
+    projectTaskGateway.revoke(this.projectTaskGrantNamespace);
     this.research?.dispose();
     this.research = undefined;
     this.client = undefined;
@@ -1180,6 +1196,10 @@ export class MessageHandler {
         }
       }
 
+      if (sender?.sender_type === 'user') {
+        const context = this.taskContext(extractOpenId(sender), chat_id, message_id, fileMetadata.threadRootId as string | undefined);
+        if (context) { fileMetadata.projectTaskContext = context; }
+      }
       await this.callbacks.emitMessage({
         messageId: `${message_id}-${message_type === 'audio' ? 'audio' : 'file'}`,
         chatId: chat_id,
@@ -1429,6 +1449,11 @@ export class MessageHandler {
       metadata.threadRootId = threadRootId;
     }
 
+    if (sender?.sender_type === 'user') {
+      const context = this.taskContext(extractOpenId(sender), chat_id, message_id, threadRootId ?? threadId);
+      if (context) { metadata.projectTaskContext = context; }
+    }
+
     // Build attachments from quoted message if available
     const quotedAttachments = quotedMessageResult?.attachment
       ? [quotedMessageResult.attachment]
@@ -1586,6 +1611,7 @@ export class MessageHandler {
     // Card actions use the same local agent pipeline as text messages.
     let emitFailed = false;
     const cardActionMessageId = `card_action_${message_id}_${eventId ?? crypto.randomUUID()}`;
+    const projectTaskContext = this.taskContext(user?.sender_id?.open_id, chat_id, cardActionMessageId, message_id);
     try {
       logger.debug(
         { messageId: cardActionMessageId, cardMessageId: message_id, chatId: chat_id, actionValue: action.value },
@@ -1602,6 +1628,7 @@ export class MessageHandler {
         timestamp: Date.now(),
         metadata: {
           cardAction: action,
+          ...(projectTaskContext ? { projectTaskContext } : {}),
           cardMessageId: message_id,
           // Preserve the actual Feishu card as the reply thread anchor.
           threadRootId: message_id,
