@@ -107,6 +107,13 @@ real CLI and authenticated HTTP API to create/start a task. A separate real mode
 turn executes that task against a randomized project file. This captures card
 transport and does not claim real Feishu UI acceptance.
 
+A real Codex cancellation test waits until a shell sleep is active, interrupts the
+task, and observes all captured owned process groups exit before the command
+would finish naturally. Shutdown captures independent descendant groups while
+ancestry remains available and rechecks leader identity before signaling. This
+does not cover descendants already reparented after a crash, nor prove synchronous
+process exit when the task reports interruption.
+
 Routing tests cover creation without a research setting, app namespace isolation,
 same-app reopening, removal of the dedicated command, retained `info/use/reset`
 behavior, legacy callbacks and owner/chat restrictions. Current real UI acceptance

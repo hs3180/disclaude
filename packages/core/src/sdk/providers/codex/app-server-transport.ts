@@ -6,6 +6,7 @@ import type { UserInput } from '../../types.js';
 import { createLogger } from '../../../utils/logger.js';
 
 import { readProcessGroupResources } from './process-resources.js';
+import { captureDescendantGroups, signalDescendantGroups, type OwnedDescendantGroup } from './owned-descendants.js';
 
 type JsonRpcId = number;
 
@@ -132,15 +133,24 @@ export class CodexAppServerTransport {
     this.acceptingRequests = false;
     this.lines.close();
     this.failAll(new Error('codex app-server transport closed'));
-    const signalled = this.signalOwnedGroup('SIGTERM');
     this.cleanup = (async () => {
-      if (signalled) {
+      let descendants: OwnedDescendantGroup[] = [];
+      try { descendants = await captureDescendantGroups(this.child.pid ?? 0); }
+      catch { this.logger.warn('Could not inspect app-server descendant groups before shutdown'); }
+      const signalDescendants = async (signal: NodeJS.Signals): Promise<void> => {
+        try { await signalDescendantGroups(descendants, signal); }
+        catch { this.logger.warn({ signal }, 'Could not signal verified app-server descendant groups'); }
+      };
+      await signalDescendants('SIGTERM');
+      const signalled = this.signalOwnedGroup('SIGTERM');
+      if (signalled || descendants.length) {
         // Parent exit is not proof that its children exited. Await the grace
         // period before escalating the owned group, even after parent close.
         const deadline = Date.now() + (this.options.killGraceMs ?? 1_000);
-        while (this.groupAlive() && Date.now() < deadline) {
+        while ((this.groupAlive() || descendants.length > 0) && Date.now() < deadline) {
           await new Promise(resolve => setTimeout(resolve, 25));
         }
+        await signalDescendants('SIGKILL');
         if (this.groupAlive()) {this.signalOwnedGroup('SIGKILL');}
       }
       const exit = await this.exitPromise;
