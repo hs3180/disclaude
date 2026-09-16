@@ -1,0 +1,492 @@
+---
+name: schedule
+description: "Schedule management specialist for RECURRING/SCHEDULED tasks. Use when user wants to create, view, modify, or delete scheduled/cron jobs, timers, reminders, or periodic executions. Triggered by keywords: \"schedule\", \"timer\", \"cron\", \"定时任务\", \"提醒\", \"定期\", \"周期\", \"每天\", \"每周\", \"recurring\", \"periodic\"."
+allowed-tools: Read, Write, Edit, Bash, Glob, Grep
+user-invocable: false
+---
+
+# Schedule Manager
+
+Manage schedules with full CRUD operations.
+
+## When to Use This Skill
+
+**Use this skill for:**
+- Creating scheduled/recurring tasks
+- Setting up cron jobs
+- Managing timers and reminders
+- Periodic executions (daily, weekly, monthly, etc.)
+- Viewing or modifying existing schedules
+
+**DO NOT use this skill for:**
+- One-time code changes → Ask the agent directly
+- Bug fixes or feature implementations → Ask the agent directly
+- Single execution operations → Ask the agent directly
+
+**Keywords that trigger this skill**: "定时任务", "schedule", "cron", "timer", "reminder", "每天", "每周", "定期", "周期性", "recurring", "periodic"
+
+## Core Principle
+
+**ALWAYS send feedback to the user via the channel CLI `send_text` after EVERY operation.**
+
+This is mandatory. Users must receive confirmation of operation results.
+
+## Context Variables
+
+When invoked, you receive:
+- **Chat ID**: Feishu chat ID (from "**Chat ID:** xxx")
+- **Message ID**: Message ID (from "**Message ID:** xxx")
+- **Sender Open ID**: Sender's open ID (from "**Sender Open ID:** xxx")
+
+**IMPORTANT**: Use `chatId` as schedule scope to ensure schedules only execute in the correct chat.
+
+## Schedule File Location
+
+Files stored in `workspace/schedules/` using **subdirectory layout** (mirroring the skills/ convention).
+
+Each schedule lives in its own subdirectory:
+
+```
+workspace/schedules/<slug>/SCHEDULE.md
+```
+
+- `<slug>`: A short, descriptive, filesystem-safe name (lowercase, hyphens instead of spaces, no special characters)
+- The file must be named exactly `SCHEDULE.md` (uppercase)
+
+**IMPORTANT (Issue #3803)**: Schedule files MUST live in the **workspace** `schedules/` directory, NOT the current working directory's `schedules/`. When in project mode, the agent's cwd is the project directory, but schedules must still be written to the workspace directory.
+
+To determine the workspace schedules directory, use:
+```bash
+echo "${DISCLAUDE_WORKSPACE_DIR:-$(pwd)}/schedules"
+```
+
+- If `DISCLAUDE_WORKSPACE_DIR` is set → use `$DISCLAUDE_WORKSPACE_DIR/schedules/`
+- If not set → use `schedules/` relative to current directory
+
+**Examples:**
+- `$DISCLAUDE_WORKSPACE_DIR/schedules/daily-report/SCHEDULE.md`
+- `$DISCLAUDE_WORKSPACE_DIR/schedules/daily-report/SCHEDULE.md`
+- `$DISCLAUDE_WORKSPACE_DIR/schedules/weekly-summary/SCHEDULE.md`
+
+---
+
+## CRUD Operations
+
+### 1. Create Schedule
+
+**Steps:**
+1. Collect schedule info:
+   - Name (short description)
+   - Slug (filesystem-safe directory name, lowercase with hyphens)
+   - Cron expression (cron format or natural language)
+   - Content (prompt to execute)
+
+2. Create directory and file:
+   ```
+   $DISCLAUDE_WORKSPACE_DIR/schedules/<slug>/SCHEDULE.md
+   ```
+   (Use `$DISCLAUDE_WORKSPACE_DIR` to ensure schedules go to workspace, not project dir.)
+
+3. Create file with `Write` tool
+
+4. **SEND FEEDBACK** confirming creation
+
+**File Format:**
+```markdown
+---
+name: Schedule Name
+cron: "0 9 * * *"
+enabled: true
+blocking: true
+chatId: oc_xxx
+createdAt: 2024-01-01T00:00:00.000Z
+---
+
+Schedule content prompt here
+```
+
+**Field Reference:**
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `name` | Yes | - | Schedule display name |
+| `cron` | Yes | - | Cron expression for timing |
+| `enabled` | No | `true` | Whether schedule is active |
+| `blocking` | No | `true` | Skip execution if previous run still in progress |
+| `chatId` | Yes | - | Chat ID for execution context |
+| `createdAt` | No | - | Creation timestamp |
+| `model` | No | - | Model to use for execution (e.g., "sonnet", "opus") |
+| `timezone` | No | `Asia/Shanghai` | IANA timezone for cron scheduling (e.g., `"UTC"`, `"America/New_York"`). Validated against the IANA database (Issue #3860). |
+| `timeoutMs` | No | `7200000` (2 h) | For prompt schedules, max wait for the agent turn: not a kill switch, and the turn may continue in the background (#3894/#4648/#4649). For direct `command` schedules, this is a hard process-group timeout: the scheduler sends TERM and escalates to KILL after a bounded grace. |
+| `cooldownPeriod` | No | - | Cooldown in ms; prevents re-execution for this duration after a run completes (Issue #869). |
+| `command` | No | - | Execute a shell command directly, without an agent turn. Mutually exclusive with the markdown body prompt; exactly one must be provided (Issue #4798). The process receives `DISCLAUDE_SCHEDULE_ID`, `DISCLAUDE_SCHEDULE_NAME`, and `DISCLAUDE_CHAT_ID`. |
+| `freshSession` | No | `true` | Use an isolated agent/native session for each tick; preserve the user's live chat and project/delivery identity. Explicit `false` reuses the live chat and can accumulate context. |
+| `skipHistory` | No | `false` | Suppress the bounded history snapshot in an isolated session. Requires `freshSession: true`. |
+| `clearContext` | No | unset | Legacy alias: `true` means fresh session + no history; explicit `false` retains legacy live-chat reuse unless `freshSession` is set. It no longer resets the user's agent. |
+
+Migration examples (0.5.0): omit all three fields for fresh session + history;
+use `freshSession: true` and `skipHistory: true` for a blank session; retain
+`freshSession: false` only when live conversation reuse is explicitly required.
+Existing `clearContext: true` remains blank but leaves the user's live agent intact.
+Conflicting/non-boolean options are rejected. Per-task model overrides require
+fresh sessions; they are never silently applied to a running user session. On a
+wait timeout, an isolated turn may continue; blocking ownership remains until that
+turn settles, and cleanup disposes only its own agent/provider session.
+
+---
+
+### 2. Delete Schedule (Disable)
+
+**IMPORTANT**: Do NOT delete the schedule file. Instead, disable it by setting `enabled: false`.
+
+This preserves the configuration for potential future reactivation and maintains an audit trail.
+
+**Steps:**
+1. Find schedule files with `Glob`: `$DISCLAUDE_WORKSPACE_DIR/schedules/*/SCHEDULE.md` (or `schedules/*/SCHEDULE.md` if env var not set)
+2. Read files with `Read`
+3. Filter by current `chatId`
+4. Confirm schedule to disable
+5. Verify schedule belongs to current `chatId`
+6. **Disable with `Edit` tool**: Change `enabled: true` to `enabled: false`
+7. **SEND FEEDBACK** confirming the schedule is now disabled
+
+**Example:**
+```yaml
+# Before
+enabled: true
+
+# After
+enabled: false
+```
+
+**Error Handling:**
+- Schedule not found → send feedback with available schedules
+- chatId mismatch → reject and explain
+- Already disabled → inform user it's already disabled
+
+**Why disable instead of delete?**
+- Preserves configuration for future reactivation
+- Maintains audit trail of past schedules
+- Allows reviewing disabled schedules
+- User can permanently delete manually if needed
+
+---
+
+### 3. Update Schedule
+
+**Modifiable Properties:**
+- `cron`: Execution time
+- `name`: Schedule name
+- `enabled`: Enable/disable
+- `blocking`: Blocking mode
+- `model`: Model selection
+- `timezone`: Cron timezone (IANA)
+- `timeoutMs`: Turn-wait timeout (ms; default 2 h — set higher for long-running tasks)
+- `cooldownPeriod`: Post-run cooldown (ms)
+- `freshSession`: Isolate each execution from the user's persistent session (default true)
+- `skipHistory`: Omit the initial history snapshot (requires a fresh session)
+- `clearContext`: Legacy alias; never resets the user's persistent agent (see Field Reference)
+- Content (body text)
+
+**Steps:**
+1. Find schedule file via `Glob`: `$DISCLAUDE_WORKSPACE_DIR/schedules/*/SCHEDULE.md` (or `schedules/*/SCHEDULE.md` if env var not set)
+2. Verify `chatId` ownership
+3. Confirm changes
+4. Modify with `Edit` tool
+5. **SEND FEEDBACK** showing before/after
+
+---
+
+### 4. List Schedules
+
+**Steps:**
+1. Find all schedule files with `Glob`: `$DISCLAUDE_WORKSPACE_DIR/schedules/*/SCHEDULE.md` (or `schedules/*/SCHEDULE.md` if env var not set)
+2. Read each file
+3. Filter by current `chatId`
+4. Format and display
+5. **SEND FEEDBACK** (even if no schedules found)
+
+**Output Format:**
+```
+Schedules:
+
+| Name | Cron | Status |
+|------|------|--------|
+| Daily Report | Daily 9:00 | Enabled |
+| Weekly Summary | Fri 14:00 | Disabled |
+```
+
+**No Schedules:**
+```
+No schedules found.
+Would you like to create one?
+```
+
+---
+
+## Cron Format
+
+```
+minute hour day month weekday
+```
+
+**Examples:**
+- `"0 9 * * *"` - Daily at 9:00
+- `"30 14 * * 5"` - Friday 14:30
+- `"0 10 1 * *"` - 1st of month 10:00
+- `"*/15 * * * *"` - Every 15 minutes
+- `"0 * * * *"` - Hourly
+- `"0 0 * * *"` - Daily at midnight
+
+---
+
+## Schedule Prompt Guidelines
+
+**CRITICAL**: Well-written prompts ensure efficient execution. Follow these guidelines:
+
+### 1. Be Self-Contained
+
+**Bad**: "Continue the task from yesterday"
+**Good**: "Check the disclaude repository for new issues and create a PR if applicable"
+
+The prompt must contain all required task state. By default each tick has a fresh
+native session and may receive a bounded recent-history snapshot; persistent live
+memory is available only through explicit legacy reuse. Store cross-tick state in
+bounded files instead of relying on the SDK conversation.
+
+### 2. Direct Command Schedules (Issue #4798)
+
+The old `script` field is replaced by `command`. `modelTier` is removed; use an explicit `model` instead. Old fields are rejected with migration errors.
+
+Use `command` in frontmatter when a task should run a shell command directly, without consuming an agent turn:
+
+```markdown
+---
+name: Refresh cache
+cron: "*/5 * * * *"
+enabled: true
+blocking: true
+chatId: oc_xxx
+command: "node scripts/refresh-cache.js"
+---
+```
+
+The markdown body is omitted for command schedules. `prompt` (the body) and `command` are mutually exclusive, and exactly one is required. The command receives `DISCLAUDE_SCHEDULE_ID`, `DISCLAUDE_SCHEDULE_NAME`, and `DISCLAUDE_CHAT_ID`; non-zero exit status and `timeoutMs` expiry are recorded as failed runs and participate in cooldown/blocking/failure-streak handling. Scheduler shutdown cancels an active command and waits for bounded process-group cleanup. Stdout and stderr are diagnostics only (not automatically sent to the chat), and each retained stream is limited to 64 KiB with an explicit truncation marker in structured logs. A command that intentionally daemonizes into another session/process group is outside this cleanup guarantee and must manage its own lifecycle.
+
+### 2. Avoid Creating New Schedules
+
+**Bad**: "Create a daily reminder to check emails"
+**Good**: "Check emails and report new important messages"
+
+Scheduled tasks cannot create other scheduled tasks (anti-recursion protection). If periodic behavior is needed, report to user instead.
+
+### 3. Specify Clear Success Criteria
+
+**Bad**: "Do something with the database"
+**Good**: "Run database backup and verify the backup file exists in /backups/"
+
+Define what "done" looks like. Include verification steps when possible.
+
+### 4. Include Error Handling Instructions
+
+**Bad**: "Send a report"
+**Good**: "Send a report. If the API is unavailable, retry once after 5 minutes, then report failure."
+
+Specify what to do when things go wrong.
+
+### 5. Limit Scope and Dependencies
+
+**Bad**: "Fix all bugs in the system"
+**Good**: "Check issue #123 and report its current status"
+
+Avoid broad or unbounded tasks. Each execution should have clear boundaries.
+
+### 6. Provide Resource References
+
+**Bad**: "Check the config file"
+**Good**: "Check the config file at `/app/workspace/config.yaml`"
+
+Include full paths, URLs, or identifiers. Don't assume the executor knows where things are.
+
+### 7. Consider Execution Time
+
+**Bad**: "Analyze the entire codebase and refactor"
+**Good**: "Run the test suite for the schedule module"
+
+Scheduled tasks should complete within reasonable time. Break large tasks into smaller scheduled checks.
+
+### Prompt Template
+
+For recurring work with a progress ledger, define retention in the schedule itself:
+keep permanent constraints before round history, keep at most five recent rounds
+and a 12 KiB active file, and archive older rounds before loading the active state.
+Use `## Round N` (or `## 第 N 轮`) markers with increasing unique numbers; use `###`
+for round subsections. Migrate older custom headings explicitly before using the
+compactor; it refuses unrecognized or ambiguous layouts.
+
+Resolve the installed disclaude root first, then run its absolute script path:
+
+```bash
+node /absolute/disclaude/scripts/compact-loop-ledger.mjs --file /absolute/task/STATE.md --keep-rounds 5 --max-bytes 12288 --dry-run
+# After verifying the proposed retained/archived round numbers:
+node /absolute/disclaude/scripts/compact-loop-ledger.mjs --file /absolute/task/STATE.md --keep-rounds 5 --max-bytes 12288 --apply
+```
+
+The script writes exact older blocks to `STATE.md.archive/` before replacing the
+active file; repeat execution does not duplicate archives. Do not append while
+`STATE.md.compact.lock` exists. A stale lock after a process crash requires checking
+that its writer has stopped before removing that specific lock. If current state
+plus the newest round exceeds the budget, explicitly summarize it without dropping
+constraints; compaction fails instead of silently truncating it. Read only the active
+ledger on normal ticks; consult specific archived rounds on demand. This bounds the
+file, not the SDK's live session: configure session/history behavior separately.
+
+```markdown
+## Objective
+[What should be accomplished]
+
+## Context
+[Any necessary background information]
+
+## Steps
+1. [First step]
+2. [Second step]
+...
+
+## Success Criteria
+[How to verify the task completed successfully]
+
+## Error Handling
+[What to do if something fails]
+```
+
+---
+
+## Checklist
+
+After each operation, verify:
+- [ ] Used correct `chatId`?
+- [ ] Verified schedule ownership?
+- [ ] **Sent feedback to user?** (CRITICAL)
+
+---
+
+## DO NOT
+
+- Create schedules without confirmation
+- Modify schedules from other chats
+- Delete schedule files (disable instead with `enabled: false`)
+- Complete operation without sending feedback
+- Assume directory exists (check first)
+- Execute unrelated operations
+- Create new schedules from within a scheduled task execution
+- Write prompts that depend on previous conversation context
+
+---
+
+## Example: Daily Soul Question (Issue #719)
+
+This example demonstrates how to create a schedule for the 0.4.2 MVP use case: daily analysis of chat/work records with open-ended "soul questions" to trigger discussions in topic groups.
+
+### Prerequisites
+
+1. **Topic Group**: First mark a group as a topic group using `/topic-group mark <chatId>`
+2. **Chat Logs**: The message logging system automatically records chat content to `workspace/logs/chat-messages/`
+
+### Schedule File
+
+Create `$DISCLAUDE_WORKSPACE_DIR/schedules/daily-soul-question/SCHEDULE.md`:
+
+```markdown
+---
+name: 每日灵魂拷问
+cron: "0 21 * * *"
+enabled: true
+blocking: true
+# Replace with your topic group's chatId
+chatId: oc_your_topic_group_chat_id
+createdAt: 2026-03-06T00:00:00.000Z
+---
+
+# 每日灵魂拷问
+
+## 背景
+
+0.4.2 的 MVP 用例：每日分析聊天/工作记录，发出开放式的灵魂拷问，引发话题群讨论。
+
+## 核心特点
+
+- **类 BBS 模式**: 不预期用户一定有响应
+- **开放式讨论**: 引发思考,而非等待决策
+- **主动推送**: 发送到话题群
+
+## 执行步骤
+
+### 步骤 1: 获取话题群
+
+读取 `workspace/groups.json` 文件,获取所有 `isTopicGroup: true` 的群。
+
+如果没有话题群,输出以下消息并结束:
+```
+📋 每日灵魂拷问: 暂无话题群
+
+请先使用 /topic-group mark <chatId> 命令标记一个群为话题群。
+```
+
+### 步骤 2: 读取今日聊天记录
+
+读取 `workspace/logs/chat-messages/` 目录下今天的日期文件夹中的所有 `.md` 文件。
+
+今天的日期格式为 YYYY-MM-DD (如 2026-03-06)。
+
+如果没有聊天记录,输出以下消息并发送到话题群:
+```
+📋 每日灵魂拷问: 今日暂无聊天记录
+
+今天还没有聊天记录,无法生成灵魂拷问。明天再试试吧!
+```
+
+### 步骤 3: 分析并生成灵魂拷问
+
+分析聊天记录,识别以下类型的话题:
+- 有趣的决策或讨论
+- 潜在的改进点
+- 值得反思的问题
+- 有趣的技术讨论
+
+生成 1-3 个开放式的灵魂拷问问题,格式示例:
+```
+🤔 今日灵魂拷问
+
+分析今天的聊天记录,发现一个有趣的问题:
+
+「在处理 xxx 时,我们选择了方案 A 而非方案 B。
+这个决策是否正确?有没有更好的选择?」
+
+欢迎在群里讨论 👇
+```
+
+### 步骤 4: 发送到话题群
+
+使用 channel CLI 的 `send_text` 命令发送灵魂拷问到第一个话题群。
+
+参数设置:
+- content: 灵魂拷问内容
+- format: "text"
+- chatId: 第一个话题群的 chatId
+
+## 重要提示
+
+1. **不要创建新的定时任务** - 这是定时任务执行环境的规则
+2. **不要修改现有的定时任务**
+3. **只执行上述步骤,完成后结束**
+4. **使用 channel CLI 发送消息时，确保 `--chat` 是话题群的 ID**
+
+## 验收标准
+
+- [ ] 能获取话题群列表
+- [ ] 能读取今日聊天记录
+- [ ] 能生成灵魂拷问内容
+- [ ] 能发送到话题群
+```
+
+Scheduled prompts use the ordinary Agent pool and message processing path. A fresh execution supplies a scoped session with the selected model/history options; its slot is released only after the actual turn settles. There is no separate scheduler Agent type or pool.
