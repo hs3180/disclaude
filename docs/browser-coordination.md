@@ -206,6 +206,30 @@ configured model. This is harness interoperability evidence, not a Claude-model
 or performance benchmark.
 
 
+### Two real agents competing for the browser
+
+Set `DISCLAUDE_E2E_BROWSER_CONTENTION_MODEL` to an accessible Anthropic-compatible
+model when running `tests/e2e/browser-service.test.ts`, with the same Chromium,
+Python and credential prerequisites as the Claude SDK model path above. The flag
+opts into two independent Claude SDK queries; no model calls are added to default
+CI. The test supplies explicit commands, so it measures arbitration rather than
+open-ended planning or model quality.
+
+Agent A writes a local page draft and holds its lease. Only after observing that
+hold does the test start agent B. Coordinator events must show B queued while A
+still owns control, and B's execution marker must remain absent. The host releases
+A; its reclamation event must precede B's grant. B verifies A's text, changes it,
+and an independent caller reads the final value. Both model streams must contain
+tool calls/results and finish successfully. Diagnostic logs report the observed
+queue wait, not a throughput benchmark.
+
+On macOS ARM64, Node 24.8.0 and Chromium 155.0.8057.0, two Claude SDK queries using
+`deepseek-flash` passed this scenario and the surrounding real product lifecycle
+test in 29.40 seconds (2026-09-17). B's observed queue wait was 722 ms. The service,
+callers and crash-fixture descendants closed; the private browser root and external
+model-config fixture were removed. This is one provider/platform and a controlled
+draft task, not simultaneous access to the browser or a Feishu interaction test.
+
 ### Test-resource cleanup
 
 The product browser E2E waits for its service and caller processes to close and
