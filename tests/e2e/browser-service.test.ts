@@ -41,7 +41,7 @@ describe('user starts Disclaude and shares its managed browser', () => {
       DISCLAUDE_BROWSER_WORKSPACE: root,
     };
     delete env.DISCLAUDE_BROWSER_TARGET;
-    delete env.DISCLAUDE_BROWSER_EVENTS;
+    env.DISCLAUDE_BROWSER_EVENTS = join(root, 'browser-events.ndjson');
     const executable = resolve('bin/disclaude.js');
     const callers = new Set<ReturnType<typeof spawn>>();
     const crashDescendants = new Set<number>();
@@ -240,7 +240,13 @@ describe('user starts Disclaude and shares its managed browser', () => {
     } catch (error) {
       // The isolated service uses a generated offline config. Retain its failure
       // diagnostics instead of reducing broker failures to a client EOF alone.
+      // Client EOF can precede the supervisor's process-exit diagnostic.
+      // Give that callback a bounded opportunity to flush before deleting the
+      // isolated run directory; do not retain whole browser profiles for logs.
+      await delay(500);
       console.error('BROWSER_SERVICE_FAILURE', output.slice(-16_000));
+      const events = await readFile(env.DISCLAUDE_BROWSER_EVENTS!, 'utf8').catch(() => 'No coordinator events written');
+      console.error('BROWSER_COORDINATOR_EVENTS', events.slice(-16_000));
       throw error;
     } finally { if (process.env.DISCLAUDE_E2E_BROWSER_PI_MODEL) { nock.enableNetConnect(localHost); } for (const pid of crashDescendants) { try { process.kill(pid, 'SIGKILL'); } catch { /* Already gone. */ } } for (const caller of callers) { caller.kill('SIGKILL'); } await stop(); await rm(root, { recursive: true, force: true }); }
   }, 480_000);
