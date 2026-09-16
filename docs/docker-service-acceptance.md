@@ -206,5 +206,18 @@ after outgoing text/completion messages. This case covers an established polling
 client only, not unsolicited notifications to a new ID, persistent notification
 storage across service restarts, or Feishu delivery. A real-HTTP channel probe on
 `c6d9f76e` reproduced both behaviors using controlled outgoing messages; that
-probe is not model/scheduler end-to-end evidence. The expanded model case still
-requires an actual run before its new receipt assertion can be called passed.
+probe is not model/scheduler end-to-end evidence. The expanded real-model result is recorded below.
+
+
+**Actual REST receipt — 2026-09-17:** the official Dockerfile.service built from
+`075cded8e892109113b1ad746df3397b9574ab46`, image
+`sha256:ba4d8b5e16436c535f6018ceb725bae008b87816281d0232e696b39e888ce6ce`,
+passed the expanded model schedule case in 88.47 seconds on Linux ARM64.
+Both standard and recreated minimal modes returned the unique scheduled marker
+through the actual REST polling endpoint, in addition to the completed-agent-turn
+log and independent marker/boot/UID1001 artifact checks. Earlier output and uploaded
+data survived recreation; schedules stayed unchanged and exits were clean.
+Runtime: Node22.23.2, dsh0.1.2-rc.1, deepseek-flash; Codex CLI0.154.0 was installed
+but was not the executing model backend. Owned containers/volume were independently
+absent after teardown; dedicated builder and image were removed. Production was
+unchanged. This does not extend the established-session scope described above.
