@@ -1,0 +1,6 @@
+{
+  "sourceCommit": "c6d9f76e5a32a30ebc3d564b2e79b8c5d117be4b",
+  "sourceFingerprint": "c293a632b1a585dc7ef52f11b5378cd981472f452f9fd8373c760c9fa51a25f6",
+  "version": "0.5.3",
+  "generator": "scripts/build-git-release.mjs"
+}

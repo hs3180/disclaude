@@ -1,0 +1,445 @@
+/**
+ * Enhanced Error Handling Module
+ *
+ * Provides utilities for consistent error handling, classification, and logging:
+ * - Error categorization (operational vs programming)
+ * - Error context enrichment
+ * - Retry/transient error detection
+ * - Standardized error logging with Pino
+ *
+ * @module utils/error-handler
+ */
+import { createLogger } from './logger.js';
+/**
+ * Error categories for classification and handling
+ */
+export var ErrorCategory;
+(function (ErrorCategory) {
+    /** Configuration errors (missing/invalid config) */
+    ErrorCategory["CONFIGURATION"] = "CONFIGURATION";
+    /** Network errors (timeouts, connection failures) */
+    ErrorCategory["NETWORK"] = "NETWORK";
+    /** API errors (HTTP errors, rate limits) */
+    ErrorCategory["API"] = "API";
+    /** Validation errors (invalid input) */
+    ErrorCategory["VALIDATION"] = "VALIDATION";
+    /** Permission errors (access denied) */
+    ErrorCategory["PERMISSION"] = "PERMISSION";
+    /** Timeout errors */
+    ErrorCategory["TIMEOUT"] = "TIMEOUT";
+    /** File system errors */
+    ErrorCategory["FILESYSTEM"] = "FILESYSTEM";
+    /** WebSocket errors */
+    ErrorCategory["WEBSOCKET"] = "WEBSOCKET";
+    /** SDK errors */
+    ErrorCategory["SDK"] = "SDK";
+    /** Unknown/unclassified errors */
+    ErrorCategory["UNKNOWN"] = "UNKNOWN";
+})(ErrorCategory || (ErrorCategory = {}));
+/**
+ * Error severity levels
+ */
+export var ErrorSeverity;
+(function (ErrorSeverity) {
+    /** Fatal - process should exit */
+    ErrorSeverity["FATAL"] = "fatal";
+    /** Error - operation failed but system can continue */
+    ErrorSeverity["ERROR"] = "error";
+    /** Warning - operation succeeded with issues */
+    ErrorSeverity["WARN"] = "warn";
+})(ErrorSeverity || (ErrorSeverity = {}));
+/**
+ * Enriched Error class with additional metadata
+ */
+export class AppError extends Error {
+    category;
+    severity;
+    retryable;
+    transient;
+    userMessage;
+    errorId;
+    context;
+    originalError;
+    constructor(message, category = ErrorCategory.UNKNOWN, severity = ErrorSeverity.ERROR, options = {}) {
+        super(message, { cause: options.cause });
+        this.name = 'AppError';
+        this.category = category;
+        this.severity = severity;
+        this.retryable = options.retryable ?? false;
+        this.transient = options.transient ?? false;
+        this.userMessage = options.userMessage;
+        this.context = options.context;
+        this.originalError = options.cause;
+        this.errorId = this.generateErrorId();
+        // Ensure proper stack trace
+        if (Error.captureStackTrace) {
+            Error.captureStackTrace(this, AppError);
+        }
+    }
+    generateErrorId() {
+        return `err_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    }
+    toJSON() {
+        return {
+            errorId: this.errorId,
+            name: this.name,
+            message: this.message,
+            category: this.category,
+            severity: this.severity,
+            retryable: this.retryable,
+            transient: this.transient,
+            userMessage: this.userMessage,
+            context: this.context,
+            stack: this.stack,
+            originalError: this.originalError ? {
+                name: this.originalError.name,
+                message: this.originalError.message,
+                stack: this.originalError.stack
+            } : undefined
+        };
+    }
+}
+/**
+ * Logger instance for error handler
+ */
+let errorLogger;
+/**
+ * Initialize error handler logger
+ */
+function getErrorHandlerLogger() {
+    if (!errorLogger) {
+        errorLogger = createLogger('ErrorHandler');
+    }
+    return errorLogger;
+}
+/**
+ * Classify an error based on its type and message
+ */
+export function classifyError(error) {
+    // If it's already an AppError, return its category
+    if (error instanceof AppError) {
+        return error.category;
+    }
+    if (!(error instanceof Error)) {
+        return ErrorCategory.UNKNOWN;
+    }
+    const message = error.message.toLowerCase();
+    const name = error.constructor.name.toLowerCase();
+    // WebSocket errors (check before network to prioritize)
+    if (name.includes('websocket') ||
+        message.includes('websocket')) {
+        return ErrorCategory.WEBSOCKET;
+    }
+    // Network errors
+    if (name.includes('network') ||
+        message.includes('network') ||
+        message.includes('connection') ||
+        name.includes('timeout') ||
+        message.includes('etimedout') ||
+        message.includes('enotfound') ||
+        message.includes('econnrefused') ||
+        message.includes('econnreset')) {
+        return ErrorCategory.NETWORK;
+    }
+    // Timeout errors
+    if (message.includes('timeout') ||
+        name.includes('timeout')) {
+        return ErrorCategory.TIMEOUT;
+    }
+    // API/HTTP errors
+    if (name.includes('http') ||
+        name.includes('api') ||
+        message.includes('rate limit') ||
+        message.includes('429') ||
+        message.includes('500')) {
+        return ErrorCategory.API;
+    }
+    // Validation errors
+    if (name.includes('validation') ||
+        message.includes('invalid') ||
+        message.includes('required') ||
+        message.includes('missing')) {
+        return ErrorCategory.VALIDATION;
+    }
+    // Permission errors
+    if (message.includes('unauthorized') ||
+        message.includes('forbidden') ||
+        message.includes('permission') ||
+        message.includes('access denied')) {
+        return ErrorCategory.PERMISSION;
+    }
+    // File system errors
+    if (name.includes('enoent') ||
+        name.includes('eacces') ||
+        message.includes('no such file') ||
+        message.includes('permission denied')) {
+        return ErrorCategory.FILESYSTEM;
+    }
+    return ErrorCategory.UNKNOWN;
+}
+/**
+ * Determine if an error is retryable
+ */
+export function isRetryable(error) {
+    if (error instanceof AppError) {
+        return error.retryable;
+    }
+    if (!(error instanceof Error)) {
+        return false;
+    }
+    const category = classifyError(error);
+    // Network and timeout errors are typically retryable
+    const retryableCategories = [
+        ErrorCategory.NETWORK,
+        ErrorCategory.TIMEOUT,
+        ErrorCategory.API
+    ];
+    // Check for specific retryable error patterns
+    const message = error.message.toLowerCase();
+    const isRetryablePattern = message.includes('timeout') ||
+        message.includes('etimedout') ||
+        message.includes('econnreset') ||
+        message.includes('rate limit') ||
+        message.includes('503') ||
+        message.includes('502');
+    return retryableCategories.includes(category) || isRetryablePattern;
+}
+/**
+ * Derive the transient flag from an already-computed {@link ErrorCategory} and
+ * lowercased message. Single source of truth shared by {@link isTransient} and
+ * {@link tagErrorCategory}, so an error is classified at most once per tag.
+ *
+ * Only covers plain-`Error` classification; {@link AppError} short-circuits in
+ * the callers via its stored `transient` field.
+ */
+function isTransientFor(category, message) {
+    // Network and timeout errors are typically transient.
+    if (category === ErrorCategory.NETWORK || category === ErrorCategory.TIMEOUT) {
+        return true;
+    }
+    // Rate-limit / overload API errors are transient — they clear on backoff.
+    // Issue #4442: `classifyError` already buckets "429" / "rate limit" into
+    // ErrorCategory.API and `isRetryable` already treats them (plus 503/502) as
+    // retryable, but this transient predicate only matched the literal "rate
+    // limit" wording. So a thrown 429 surfacing as "429" / "Too Many Requests" /
+    // "rate_limit_error" (e.g. litellm account-quota 1308 → HTTP 429) was
+    // classified transient=false, and the Claude provider's L1 in-request retry
+    // (provider.ts, which keys off `tagErrorCategory().transient`) silently did
+    // NOT fire — exactly the "0 retries" symptom in #4442. Align this predicate
+    // with classifyError/isRetryable so the existing exponential-backoff retry
+    // actually engages for rate-limit / overload responses.
+    return (message.includes('timeout') ||
+        message.includes('etimedout') ||
+        message.includes('econnreset') ||
+        message.includes('rate limit') ||
+        message.includes('rate_limit') || // rate_limit_error / RateLimitError-ish
+        message.includes('429') || // HTTP 429
+        message.includes('too many requests') || // HTTP 429 reason phrase
+        message.includes('503') || // service unavailable (overloaded)
+        message.includes('502') // bad gateway (transient upstream)
+    );
+}
+/**
+ * Determine if an error is transient (temporary)
+ */
+export function isTransient(error) {
+    if (error instanceof AppError) {
+        return error.transient;
+    }
+    if (!(error instanceof Error)) {
+        return false;
+    }
+    return isTransientFor(classifyError(error), error.message.toLowerCase());
+}
+/**
+ * Symbol under which {@link tagErrorCategory} attaches its classification so
+ * downstream handlers can branch on it without re-classifying. Issue #4192 (L0).
+ */
+const ERROR_CATEGORY_SYMBOL = Symbol('errorCategory');
+/**
+ * Classify an error and attach the result to it (mirrors the `STDERR_SYMBOL`
+ * pattern in the Claude provider). Returns the classification so the caller
+ * can also log it inline. Idempotent — safe to call on an already-tagged error.
+ *
+ * Issue #4192 (L0): wires `classifyError`/`isTransient` into the error path so
+ * the category is available both in structured logs and to later recovery
+ * layers (L1 in-request retry, L2 turn replay).
+ */
+export function tagErrorCategory(error) {
+    // Classify once and derive `transient` from the same category (Issue #4192
+    // review nit #1) — avoids the previous double `classifyError` via `isTransient`.
+    const category = classifyError(error);
+    const transient = error instanceof AppError
+        ? error.transient
+        : isTransientFor(category, error instanceof Error ? error.message.toLowerCase() : '');
+    if (error instanceof Error) {
+        error[ERROR_CATEGORY_SYMBOL] = { category, transient };
+    }
+    return { category, transient };
+}
+/**
+ * Read a previously-attached {@link ErrorCategoryTag}. Returns `undefined` if
+ * the error was never tagged or is not an Error. Issue #4192 (L0).
+ *
+ * Caveat (Issue #4192, L1/L2): the tag lives on one specific `Error` object.
+ * If a downstream layer re-wraps the error (`new Error(...)`, or throws a fresh
+ * error carrying only `.cause`), this returns `undefined` — re-tag the new
+ * error, or read the original via `cause`, instead of relying on the tag here.
+ */
+export function getErrorCategoryTag(error) {
+    if (error instanceof Error) {
+        return error[ERROR_CATEGORY_SYMBOL];
+    }
+    return undefined;
+}
+/**
+ * Determine the severity level for an error
+ */
+export function getSeverity(error) {
+    if (error instanceof AppError) {
+        return error.severity;
+    }
+    const category = classifyError(error);
+    // Configuration errors are fatal
+    if (category === ErrorCategory.CONFIGURATION) {
+        return ErrorSeverity.FATAL;
+    }
+    // Permission errors are typically fatal (need admin intervention)
+    if (category === ErrorCategory.PERMISSION) {
+        return ErrorSeverity.FATAL;
+    }
+    // Default to error level
+    return ErrorSeverity.ERROR;
+}
+/**
+ * Create a user-friendly error message
+ */
+export function createUserMessage(error) {
+    if (error instanceof AppError) {
+        return error.userMessage || error.message;
+    }
+    if (!(error instanceof Error)) {
+        return 'An unknown error occurred';
+    }
+    const category = classifyError(error);
+    switch (category) {
+        case ErrorCategory.NETWORK:
+            return 'Network error. Please check your connection and try again.';
+        case ErrorCategory.TIMEOUT:
+            return 'Operation timed out. Please try again.';
+        case ErrorCategory.API:
+            return 'Service unavailable. Please try again later.';
+        case ErrorCategory.VALIDATION:
+            return 'Invalid input. Please check your request and try again.';
+        case ErrorCategory.PERMISSION:
+            return 'You do not have permission to perform this action.';
+        case ErrorCategory.CONFIGURATION:
+            return 'Configuration error. Please contact support.';
+        case ErrorCategory.FILESYSTEM:
+            return 'File system error. Please check file permissions.';
+        case ErrorCategory.WEBSOCKET:
+            return 'Connection error. Reconnecting...';
+        default:
+            return 'An unexpected error occurred. Please try again.';
+    }
+}
+/**
+ * Enrich error with additional context
+ */
+export function enrichError(error, context = {}) {
+    // If it's already an AppError, merge context
+    if (error instanceof AppError) {
+        return new AppError(error.message, error.category, error.severity, {
+            ...error.context,
+            ...context,
+            cause: error.originalError || error
+        });
+    }
+    // Convert unknown error to Error
+    const errorObj = error instanceof Error ? error : new Error(String(error));
+    // Classify the error
+    const category = context.category || classifyError(errorObj);
+    const severity = context.errorId ? ErrorSeverity.FATAL : getSeverity(errorObj);
+    const retryable = context.retryable ?? isRetryable(errorObj);
+    const transient = context.transient ?? isTransient(errorObj);
+    const userMessage = context.userMessage || createUserMessage(errorObj);
+    return new AppError(errorObj.message, category, severity, {
+        retryable,
+        transient,
+        userMessage,
+        context,
+        cause: errorObj
+    });
+}
+/**
+ * Log an error with full context using Pino
+ */
+export function logError(error, context = {}, customLogger) {
+    const logger = customLogger || getErrorHandlerLogger();
+    const enriched = enrichError(error, context);
+    const { severity } = enriched;
+    const logData = {
+        err: error instanceof Error ? error : undefined,
+        errorId: enriched.errorId,
+        category: enriched.category,
+        retryable: enriched.retryable,
+        transient: enriched.transient,
+        userMessage: enriched.userMessage,
+        ...context
+    };
+    // Log at appropriate level
+    switch (severity) {
+        case ErrorSeverity.FATAL:
+            logger.fatal(logData, enriched.message);
+            break;
+        case ErrorSeverity.ERROR:
+            logger.error(logData, enriched.message);
+            break;
+        case ErrorSeverity.WARN:
+            logger.warn(logData, enriched.message);
+            break;
+    }
+}
+/**
+ * Handle an error with logging and optional user notification
+ */
+export function handleError(error, context = {}, options = {}) {
+    const { log = true, throwOnError = false, userNotifier, customLogger } = options;
+    const enriched = enrichError(error, context);
+    // Log the error
+    if (log) {
+        logError(error, context, customLogger);
+    }
+    // Notify user if notifier provided
+    if (userNotifier) {
+        const userMessage = enriched.userMessage || enriched.message;
+        void userNotifier(userMessage);
+    }
+    // Throw if requested
+    if (throwOnError) {
+        throw enriched;
+    }
+    return enriched;
+}
+/**
+ * Format an error for logging.
+ *
+ * @param error - Error to format
+ * @returns Formatted error object suitable for logging
+ */
+export function formatError(error) {
+    if (error instanceof AppError) {
+        return error.toJSON();
+    }
+    if (error instanceof Error) {
+        return {
+            name: error.name,
+            message: error.message,
+            stack: error.stack,
+        };
+    }
+    return {
+        name: 'UnknownError',
+        message: String(error),
+    };
+}

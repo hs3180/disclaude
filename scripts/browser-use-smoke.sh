@@ -1,0 +1,307 @@
+#!/usr/bin/env bash
+# =============================================================================
+# browser-use CLI smoke matrix — repeatable assertion script (Issue #4602, option c)
+# =============================================================================
+#
+# Encodes the #4496 Scope-6 driver-side matrix (docs/cdp-endpoint.md) as a
+# one-command, repeatable run. This is the CLI-level half of #4602: it locks
+# the deployment-regression safety net (image rebuilds, playwright container
+# upgrades, skill changes) while the agent-level injection channel (#4602
+# Scope-1 options a/b — HTTP API push or direct ChatAgent instantiation)
+# remains a separate decision.
+#
+# Manual checklist this script replaces (run inside the service container or
+# any host with the browser-use CLI + a reachable CDP endpoint):
+#   [x] 1. CDP front reachable         — GET /json/version answers
+#   [x] 2. BU_CDP_URL attach            — new_tab + js() title round-trip
+#   [x] 2b. no self-spawned Chrome      — chrome process count unchanged (best
+#           effort: only checked when pgrep exists; only meaningful on a host
+#           that runs no Chrome of its own, e.g. the service container)
+#   [x] 3. js() structured round-trip   — JSON.stringify(...) parsed back
+#   [x] 4. page_info / list_tabs        — session + tab introspection answer
+#   [x] 5. screenshot artifact          — PNG (magic bytes) in workspace, non-empty
+#   [x] 6. dead endpoint fails hard     — no silent self-launch fallback (#4496 Scope-3)
+#
+# Environment:
+#   SMOKE_CDP_URL    CDP endpoint to attach to (required — e.g.
+#                    http://disclaude-chromium:9222 inside the compose
+#                    network, http://localhost:9222 from the host)
+#   SMOKE_PYTHON     Python interpreter that imports browser_harness (default python3)
+#   SMOKE_ASSERT_PROCESS_COUNT  Set 1 only in an isolated service container
+#   SMOKE_OUT_DIR    screenshot artifact dir (default: ./browser-use-smoke
+#                    under the current directory)
+#
+# Usage:
+#   SMOKE_CDP_URL=http://localhost:9222 ./scripts/browser-use-smoke.sh
+#
+# Prerequisites: browser-use >= 0.13.7, curl, Python with browser_harness, and a running CDP
+# endpoint (docker compose --profile chromium up -d brings one up).
+#
+# ⚠️ Daemon-pin trap (docs/cdp-endpoint.md, 2026-08-25 note): the long-lived
+# browser-harness daemon reads BU_CDP_URL once at first start. Case 6 must run
+# `browser-use --reload` before flipping to a dead endpoint — otherwise it
+# passes vacuously against the still-healthy session — and again after, to
+# drop the dead state for any subsequent runs.
+#
+# =============================================================================
+
+set -uo pipefail
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SMOKE_PYTHON="${SMOKE_PYTHON:-python3}"
+smoke_timeout() {
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$@"
+    elif command -v gtimeout >/dev/null 2>&1; then
+        gtimeout "$@"
+    else
+        "$SMOKE_PYTHON" "$SCRIPT_DIR/browser-use-smoke-timeout.py" "$@"
+    fi
+}
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+SMOKE_CDP_URL="${SMOKE_CDP_URL:-}"
+SMOKE_OUT_DIR="${SMOKE_OUT_DIR:-$PWD/browser-use-smoke}"
+# A port that is near-certainly closed on loopback (tcpmux, rarely deployed).
+DEAD_CDP_URL="http://127.0.0.1:9"
+
+PASS=0
+FAIL=0
+FAILED_CASES=()
+
+log_info()    { echo -e "${GREEN}[SMOKE][INFO]${NC} $*"; }
+log_pass()    { echo -e "${GREEN}[SMOKE][PASS]${NC} $*"; PASS=$((PASS + 1)); }
+log_fail()    { echo -e "${RED}[SMOKE][FAIL]${NC} $*"; FAIL=$((FAIL + 1)); FAILED_CASES+=("$1"); }
+log_warn()    { echo -e "${YELLOW}[SMOKE][WARN]${NC} $*"; }
+
+# assert_contains <case> <needle> <haystack> — grep -F, machine markers only.
+assert_contains() {
+    local case="$1" needle="$2" haystack="$3"
+    if grep -qF -- "$needle" <<<"$haystack"; then
+        log_pass "$case"
+    else
+        log_fail "$case"
+        echo "    expected output to contain: $needle"
+        echo "    got: ${haystack:0:400}"
+    fi
+}
+
+# run_bu <env-url> <python...> — pipe Python to browser-use under BU_CDP_URL,
+# 90s ceiling (attach retries alone take up to 30s; #4496 case 5 evidence).
+run_bu() {
+    local url="$1"; shift
+    printf '%s\n' "$*" | smoke_timeout "${SMOKE_COMMAND_TIMEOUT:-90}" env BU_CDP_URL="$url" browser-use 2>&1
+}
+
+chrome_process_count() {
+    # Best effort: pgrep is absent on some minimal hosts → report "unknown".
+    if command -v pgrep >/dev/null 2>&1; then
+        pgrep -i -f 'chrom(e|ium)' 2>/dev/null | wc -l | tr -d ' '
+    else
+        echo "unknown"
+    fi
+}
+
+# ── Case 0: preflight ───────────────────────────────────────────────────────
+usage() {
+    cat <<'EOF'
+Usage: SMOKE_CDP_URL=<cdp-url> [SMOKE_OUT_DIR=<dir>] ./scripts/browser-use-smoke.sh
+
+Environment:
+  SMOKE_CDP_URL    CDP endpoint to attach to (required — e.g.
+                   http://disclaude-chromium:9222 inside the compose
+                   network, http://localhost:9222 from the host)
+  SMOKE_OUT_DIR    screenshot artifact dir (default: ./browser-use-smoke)
+
+Prerequisites: browser-use >= 0.13.7, curl, Python with browser_harness, and a running CDP
+endpoint (docker compose --profile chromium up -d brings one up).
+EOF
+}
+case "${1:-}" in
+    -h|--help) usage; exit 0 ;;
+esac
+if [ -z "$SMOKE_CDP_URL" ]; then
+    echo "Error: SMOKE_CDP_URL is required (e.g. SMOKE_CDP_URL=http://localhost:9222)" >&2
+    usage >&2
+    exit 2
+fi
+if ! command -v browser-use >/dev/null 2>&1; then
+    echo "Error: browser-use CLI not found on PATH." >&2
+    exit 2
+fi
+# Each run owns a fresh namespace and runtime directory. Inherited BH_* paths
+# must not collapse BU_NAME isolation or stop an unrelated daemon.
+SMOKE_RUNTIME=$(mktemp -d /tmp/busmoke.XXXXXX) || exit 2
+export BU_NAME="smoke_${$}_${RANDOM}"
+export BH_RUNTIME_DIR="$SMOKE_RUNTIME" BH_TMP_DIR="$SMOKE_RUNTIME"
+export BH_RUNTIME_DIR_SHARED=0 BH_TMP_DIR_SHARED=0
+export SMOKE_TARGET_FILE="$SMOKE_RUNTIME/target"
+
+assert_stopped() {
+    smoke_timeout 10 "$SMOKE_PYTHON" "$SCRIPT_DIR/browser-use-smoke-daemon.py"
+}
+stop_owned_daemon() {
+    smoke_timeout 15 browser-use --reload && assert_stopped
+}
+cleanup_target() {
+    [ -s "$SMOKE_TARGET_FILE" ] || return 0
+    run_bu "$SMOKE_CDP_URL" 'import os, pathlib, time
+p = pathlib.Path(os.environ["SMOKE_TARGET_FILE"])
+tid = p.read_text().strip()
+close_tab(tid)
+for _ in range(50):
+    if not any(t.get("targetId") == tid for t in list_tabs()):
+        break
+    time.sleep(0.1)
+assert not any(t.get("targetId") == tid for t in list_tabs())
+p.unlink()
+print("TARGET_CLEANED")' | grep -qF 'TARGET_CLEANED'
+}
+cleanup() {
+    local status=$?
+    trap - EXIT
+    # Do not spawn a healthy daemon just for cleanup after it was already stopped.
+    if [ -s "$SMOKE_TARGET_FILE" ]; then
+        cleanup_target || { log_fail "cleanup: owned target could not be removed"; status=1; }
+    fi
+    if stop_owned_daemon; then
+        rm -rf -- "$SMOKE_RUNTIME"
+    else
+        log_fail "cleanup: daemon stop not confirmed (evidence: $SMOKE_RUNTIME)"
+        status=1
+    fi
+    exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+if ! assert_stopped; then
+    echo "Error: cannot prove a cold daemon; SMOKE_PYTHON must import browser_harness." >&2
+    exit 2
+fi
+
+log_info "endpoint: $SMOKE_CDP_URL · artifacts: $SMOKE_OUT_DIR"
+
+version_line=$(browser-use --version 2>&1 || true)
+log_info "browser-use version: ${version_line:-unknown}"
+
+# ── Case 1: CDP front reachable ─────────────────────────────────────────────
+if curl -sf --max-time 10 "$SMOKE_CDP_URL/json/version" >/dev/null 2>&1; then
+    log_pass "case 1: GET /json/version reachable through the front"
+else
+    log_fail "case 1: GET /json/version unreachable at $SMOKE_CDP_URL — is the endpoint up?"
+fi
+
+# ── Case 2: attach + js() title round-trip (data: URL — no network needed) ─
+CHROME_BEFORE=$(chrome_process_count)
+out=$(run_bu "$SMOKE_CDP_URL" 'import os, pathlib
+# new_tab(url) may reuse an existing blank tab: explicitly create our own target.
+tid = cdp("Target.createTarget", url="about:blank", background=True)["targetId"]
+pathlib.Path(os.environ["SMOKE_TARGET_FILE"]).write_text(tid)
+switch_tab(tid)
+goto_url("data:text/html,<title>bu-smoke</title><h1>hello-cdp</h1>")
+assert wait_for_element("h1"), "navigation did not produce the expected DOM"
+assert current_tab()["targetId"] == tid
+assert js("document.querySelector(\"h1\").textContent") == "hello-cdp"
+print("OWNED_TARGET_OK")') ; rc=$?
+if [ "$rc" -eq 0 ]; then
+    assert_contains "case 2: explicit owned attach target (not visible tab)" "OWNED_TARGET_OK" "$out"
+else
+    log_fail "case 2: attach failed (exit $rc)"
+    printf '%s\n' "$out"
+fi
+
+# ── Case 2b: no self-spawned Chrome ─────────────────────────────────────────
+CHROME_AFTER=$(chrome_process_count)
+if [ "${SMOKE_ASSERT_PROCESS_COUNT:-0}" != "1" ]; then
+    log_warn "case 2b skipped — process count is only meaningful in an isolated service container; set SMOKE_ASSERT_PROCESS_COUNT=1 there"
+elif [ "$CHROME_BEFORE" = "unknown" ] || [ "$CHROME_AFTER" = "unknown" ]; then
+    log_warn "case 2b skipped — pgrep unavailable; self-spawn not asserted here"
+elif [ "$CHROME_BEFORE" = "$CHROME_AFTER" ]; then
+    log_pass "case 2b: no self-spawned Chrome (process count $CHROME_BEFORE unchanged)"
+else
+    log_fail "case 2b: chrome process count changed $CHROME_BEFORE → $CHROME_AFTER — attach may have self-launched a browser"
+fi
+
+# ── Case 3: js() structured round-trip ──────────────────────────────────────
+out=$(run_bu "$SMOKE_CDP_URL" 'import os, pathlib, json
+tid = pathlib.Path(os.environ["SMOKE_TARGET_FILE"]).read_text().strip()
+switch_tab(tid)
+assert current_tab()["targetId"] == tid
+value = json.loads(js("JSON.stringify({text: document.querySelector(\"h1\").textContent, n: document.querySelectorAll(\"h1\").length})"))
+assert value == {"text": "hello-cdp", "n": 1}
+print("STRUCTURED_OK")') ; rc=$?
+if [ "$rc" -eq 0 ] && grep -qF 'STRUCTURED_OK' <<<"$out"; then
+    log_pass "case 3: structured result from the explicit attach target"
+else
+    log_fail "case 3: structured result failed (exit $rc)"
+fi
+
+# ── Case 4: page_info / list_tabs ───────────────────────────────────────────
+out=$(run_bu "$SMOKE_CDP_URL" 'import json, os, pathlib
+switch_tab(pathlib.Path(os.environ["SMOKE_TARGET_FILE"]).read_text().strip())
+info = page_info()
+tabs = list_tabs()
+print(json.dumps({"has_title": bool(info.get("title")), "tab_count": len(tabs) if isinstance(tabs, list) else -1}))') ; rc=$?
+if [ "$rc" -eq 0 ] && grep -qE '"has_title": ?true' <<<"$out" && grep -qE '"tab_count": ?[0-9]+' <<<"$out"; then
+    log_pass "case 4: page_info() + list_tabs() answer with session state"
+else
+    log_fail "case 4: page_info() + list_tabs() answer with session state"
+    echo "    got: ${out:0:400}"
+fi
+
+# ── Case 5: screenshot artifact in workspace, non-empty PNG ─────────────────
+# mkdir first — capture_screenshot does NOT create parents (#4600).
+mkdir -p "$SMOKE_OUT_DIR"
+shot="$SMOKE_OUT_DIR/smoke-shot.png"
+rm -f "$shot"
+export SMOKE_SHOT="$shot"
+out=$(run_bu "$SMOKE_CDP_URL" 'import os, pathlib
+switch_tab(pathlib.Path(os.environ["SMOKE_TARGET_FILE"]).read_text().strip())
+dst = os.environ["SMOKE_SHOT"]
+pathlib.Path(dst).parent.mkdir(parents=True, exist_ok=True)
+print("SAVED=" + str(capture_screenshot(path=dst)))') ; rc=$?
+
+if [ "$rc" -eq 0 ] && [ -s "$shot" ] && [ "$(head -c 4 "$shot" | od -An -tx1 | tr -d ' \n')" = "89504e47" ]; then
+    log_pass "case 5: screenshot artifact is a non-empty PNG at $shot ($(wc -c <"$shot" | tr -d ' ') bytes)"
+else
+    log_fail "case 5: screenshot artifact missing/empty/not a PNG at $shot"
+    echo "    browser-use said: ${out:0:300}"
+fi
+
+# ── Case 6: dead endpoint fails hard (no silent self-launch fallback) ───────
+if cleanup_target; then
+    log_pass "owned target removed before endpoint switch"
+else
+    log_fail "owned target cleanup failed"
+    exit 1
+fi
+# A nonzero reload/stop probe is a failed precondition, not permission to run
+# the dead-endpoint case against an unknown, possibly healthy, pinned daemon.
+if stop_owned_daemon; then
+    out=$(SMOKE_COMMAND_TIMEOUT=45 run_bu "$DEAD_CDP_URL" 'print("SHOULD_NOT_PRINT")') ; rc=$?
+    # timeout and command/signal failures are not evidence of a quick CDP fatal.
+    if [ "$rc" -gt 0 ] && [ "$rc" -lt 124 ] && ! grep -qF "SHOULD_NOT_PRINT" <<<"$out"; then
+        log_pass "case 6: dead BU_CDP_URL fails hard (exit $rc), no fallback session"
+    else
+        log_fail "case 6: no verified prompt failure (exit $rc)"
+        echo "    got: ${out:0:300}"
+    fi
+else
+    log_fail "case 6: cold-start precondition failed; dead-endpoint probe skipped"
+fi
+if ! stop_owned_daemon; then
+    log_fail "case 6: final daemon shutdown not confirmed"
+fi
+
+# ── Summary ─────────────────────────────────────────────────────────────────
+echo
+log_info "result: $PASS passed, $FAIL failed"
+if [ "$FAIL" -gt 0 ]; then
+    printf 'failed: %s\n' "${FAILED_CASES[*]}"
+    exit 1
+fi
+exit 0
