@@ -374,6 +374,53 @@ describe('persistent research lifecycle', () => {
     expect(reopened.get(p.id, 'alice', 'chat-a').status).toBe('completed');
     expect(reopened.get(p.id, 'alice', 'chat-a').clarification).toBeUndefined();
   });
+  it('syncs a document answer before resuming a waiting task after restart', async () => {
+    const snapshot = { token: 'ABC123', revision: 1, body: 'Compare costs', comments: [] as Array<{ id: string; text: string }>, fingerprint: 'one', syncedAt: new Date().toISOString() };
+    const readDocument = vi.fn().mockResolvedValue(snapshot);
+    const waitingRunner = vi.fn(() => Promise.resolve({ clarification: 'Which reporting period?' }));
+    const { manager, dir } = fixture(waitingRunner, undefined, undefined, readDocument);
+    const p = await manager.create({ ...input, documentUrl: 'https://example.feishu.cn/docx/ABC123' });
+    await manager.act(p.id, 'alice', 'chat-a', p.revision, 'resume'); await manager.idle(p.id);
+    manager.dispose();
+    const { manager: reopened, publish } = fixture(undefined, undefined, dir, readDocument);
+    const waiting = reopened.get(p.id, 'alice', 'chat-a');
+    await expect(reopened.act(p.id, 'alice', 'chat-a', waiting.revision, 'resume')).rejects.toThrow('补充信息');
+    expect(reopened.get(p.id, 'alice', 'chat-a').status).toBe('waiting-user');
+    const unchanged = reopened.get(p.id, 'alice', 'chat-a');
+    expect(publish).toHaveBeenLastCalledWith(expect.objectContaining({ revision: unchanged.revision, status: 'waiting-user' }));
+    readDocument.mockRejectedValueOnce(new Error('Comment service unavailable'));
+    await expect(reopened.act(p.id, 'alice', 'chat-a', unchanged.revision, 'resume')).rejects.toThrow('Document sync failed');
+    expect(reopened.get(p.id, 'alice', 'chat-a')).toMatchObject({ status: 'waiting-user', document: { error: expect.stringContaining('未同步') } });
+    readDocument.mockResolvedValue({ ...snapshot, revision: 2, fingerprint: 'two', comments: [{ id: 'answer', text: 'Use fiscal year 2025' }] });
+    const current = reopened.get(p.id, 'alice', 'chat-a');
+    await reopened.act(p.id, 'alice', 'chat-a', current.revision, 'resume'); await reopened.idle(p.id);
+    const completed = reopened.get(p.id, 'alice', 'chat-a');
+    expect(publish).toHaveBeenCalled();
+    expect(completed.status).toBe('completed');
+    expect(completed.feedback.find(f => f.sourceKey?.includes(':comment:answer:'))).toMatchObject({ status: 'applied', text: 'Use fiscal year 2025' });
+  });
+
+  it.each(['cancel', 'dispose'] as const)('does not resume after %s while syncing a document answer', async action => {
+    const snapshot = { token: 'ABC123', revision: 1, body: 'Compare costs', comments: [] as Array<{ id: string; text: string }>, fingerprint: 'one', syncedAt: new Date().toISOString() };
+    const readDocument = vi.fn().mockResolvedValue(snapshot);
+    const runner = vi.fn(() => Promise.resolve({ clarification: 'Which reporting period?' }));
+    const { manager } = fixture(runner, undefined, undefined, readDocument);
+    const p = await manager.create({ ...input, documentUrl: 'https://example.feishu.cn/docx/ABC123' });
+    await manager.act(p.id, 'alice', 'chat-a', p.revision, 'resume'); await manager.idle(p.id);
+    const gate = deferred<typeof snapshot>(), entered = deferred<void>();
+    readDocument.mockImplementationOnce(() => { entered.resolve(); return gate.promise; });
+    const waiting = manager.get(p.id, 'alice', 'chat-a');
+    const resuming = manager.act(p.id, 'alice', 'chat-a', waiting.revision, 'resume');
+    const rejected = expect(resuming).rejects.toThrow();
+    await entered.promise;
+    if (action === 'cancel') { await manager.act(p.id, 'alice', 'chat-a', waiting.revision, 'cancel'); }
+    else { manager.dispose(); }
+    gate.resolve({ ...snapshot, revision: 2, fingerprint: 'two', comments: [{ id: 'answer', text: 'Use fiscal year 2025' }] });
+    await rejected;
+    expect(runner).toHaveBeenCalledTimes(1);
+    if (action === 'cancel') { expect(manager.get(p.id, 'alice', 'chat-a').status).toBe('cancelled'); }
+  });
+
   it('discards a stopped direction while letting the other direction finish', async () => {
     const entered = deferred<void>(), gate = deferred<StepResult>(); let calls = 0;
     const { manager } = fixture((_p, step) => {

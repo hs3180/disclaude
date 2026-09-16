@@ -149,6 +149,15 @@ export class ResearchManager {
       p.status = this.running.has(id) ? 'cancelling' : 'cancelled';
       this.record(p, '已请求取消：等待当前回合结束，保留此前成果，不接纳在途结果。');
     } else if (action === 'resume') {
+      // An answer can arrive in the linked document while the task is waiting.
+      // Read it before deciding whether the user supplied any new information.
+      if (p.status === 'waiting-user' && p.document && p.feedback.length <= (p.clarificationFeedbackCount ?? p.feedback.length)) {
+        try { await this.syncDocument(p); }
+        finally { if (!this.disposed) { await this.display(p); } }
+        if (this.disposed) { throw new Error('任务服务已停止。'); }
+      }
+      // Document reads/card delivery can yield to cancellation or another resume.
+      // Recheck state before scheduling any work.
       if (!['paused', 'failed', 'interrupted', 'waiting-user'].includes(p.status) || this.running.has(id)) { throw new Error('请等待当前回合收尾后再恢复。'); }
       if (p.status === 'waiting-user' && p.feedback.length <= (p.clarificationFeedbackCount ?? p.feedback.length)) { throw new Error('请先提交任务所需的补充信息，再继续。'); }
       p.status = 'running';

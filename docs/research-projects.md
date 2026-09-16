@@ -78,6 +78,13 @@ is processed on the next turn. At 12 turns the run pauses for review; a resumed 
 receives a fresh budget. Timeout or failure preserves previously committed state.
 Disposal requests cancellation; it is not evidence that OS descendants exited.
 
+When a task waits for clarification, you can answer through its feedback form or
+by editing its linked document or adding a comment, then resume. Resume checks the
+linked document for new information before rejecting a missing answer. An unchanged
+document keeps the task waiting; a read failure preserves the question and shows
+the synchronization error for retry. New information lets the agent evaluate the
+answer; it does not guarantee that an unrelated edit resolves the question.
+
 Tasks persist independently of chat history. Reopening after an unclean exit marks
 unfinished work interrupted; recovery requires checking fresh materials/feedback.
 Only one process may own a store. An unfinished storage recovery fails closed and
