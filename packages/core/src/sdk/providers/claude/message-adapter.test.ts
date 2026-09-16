@@ -32,6 +32,40 @@ describe('adaptSDKMessage', () => {
       expect(result.metadata?.sessionId).toBe('session-123');
     });
 
+    it('should strip a leading newline from assistant text (blank first line regression)', () => {
+      // claude-agent-sdk 0.3.263+ 的 assistant 文本块自带前导换行,飞书正文顶部就多出
+      // 一个空行。源头(文本块装配)去掉前导空白,行尾的 Markdown 硬换行保留。
+      const message = {
+        type: 'assistant' as const,
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: '\n分支名对上了。  ' },
+          ],
+        },
+      };
+
+      const result = adaptSDKMessage(asMsg(message));
+      expect(result.type).toBe('text');
+      expect(result.content).toBe('分支名对上了。  ');
+    });
+
+    it('should normalize a whitespace-only text block to empty content', () => {
+      const message = {
+        type: 'assistant' as const,
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: '   \n' },
+          ],
+        },
+      };
+
+      const result = adaptSDKMessage(asMsg(message));
+      expect(result.type).toBe('text');
+      expect(result.content).toBe('');
+    });
+
     it('should handle tool_use content', () => {
       const message = {
         type: 'assistant' as const,
