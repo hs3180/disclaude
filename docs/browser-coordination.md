@@ -223,6 +223,16 @@ broker crash, restart and cleanup, passed in 89.73 seconds; its private root was
 removed. These are observations from one run, not latency guarantees. This loop
 does not itself prove queue contention; the separate two-agent case covers that.
 
+Linux CI also passed the 100-caller case on source `c5628c2a`: Ubuntu 24.04.5,
+Node 24.20.0 and Google Chrome 152.0.7977.82. The loop took 79.78 seconds;
+grant wait was p50=436ms, p95=454ms, max=507ms. The log confirms all previous
+states, reclamation ordering, independent readback and root removal. All three
+browser product cases passed in 140.96 seconds. See
+[run 35138008609](https://github.com/hs3180/disclaude/actions/runs/35138008609),
+[job 104935142242](https://github.com/hs3180/disclaude/actions/runs/35138008609/job/104935142242).
+This runner evidence does not replace Docker/native service installation,
+authenticated-site login or actual deployment-machine acceptance.
+
 ### Two real agents competing for the browser
 
 Set `DISCLAUDE_E2E_BROWSER_CONTENTION_MODEL` to an accessible Anthropic-compatible
