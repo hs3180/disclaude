@@ -48,6 +48,8 @@ export interface UserMessageParams {
   chatType?: string;
   /** Optional thread context for topic groups. Issue #3641. */
   threadContext?: string;
+  /** Service-issued, actor-scoped project task capability context. */
+  projectTaskContext?: string;
   /**
    * Optional root message ID of the topic-group thread this message belongs
    * to. The stable per-thread identity — part 2 of #4587 keys agent sessions
@@ -208,6 +210,7 @@ export class MessageRouter {
       chatHistoryContext: message.chatHistoryContext,
       chatType: message.chatType,
       threadContext: message.threadContext,
+      projectTaskContext: message.projectTaskContext,
       threadRootId: message.threadRootId,
       ...(message.agentSession ? { agentSession: message.agentSession } : {}),
     });

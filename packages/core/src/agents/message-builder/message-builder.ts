@@ -107,6 +107,9 @@ export class MessageBuilder {
       `**Chat ID:** ${chatId}`,
       `**Message ID:** ${msg.messageId}`,
     ];
+    if (msg.projectTaskContext && /^[a-f0-9-]{36}$/u.test(msg.projectTaskContext)) {
+      metadataParts.push(`**Project task context (internal):** ${msg.projectTaskContext}. For persistent work requested in this project, use disclaude channel project_task --context ${msg.projectTaskContext} --request-file <json-file>. Operations: create {action,requestId,title,scope?,materials?,documentUrl?}; list {action,archived?,offset?,limit?}; get {action,taskId}; control {action,taskId,revision,control,value?}. Create saves a paused task; use its returned revision with control=resume to execute an authorized request. Controls also include pause/cancel/feedback/stop-direction/archive/unarchive/export. Reuse requestId when retrying the same creation. Actor, chat and directory are supplied by the service; never add them to operation JSON. No research mode or form is required. Use tasks when durable work is useful, not for every short answer. This context expires; do not expose it in user replies.`);
+    }
     if (msg.senderOpenId) {
       metadataParts.push(`**Sender Open ID:** ${msg.senderOpenId}`);
     }
@@ -146,6 +149,9 @@ export class MessageBuilder {
       `**Chat ID:** ${chatId}`,
       `**Message ID:** ${msg.messageId}`,
     ];
+    if (msg.projectTaskContext && /^[a-f0-9-]{36}$/u.test(msg.projectTaskContext)) {
+      metadataParts.push(`**Project task context (internal):** ${msg.projectTaskContext}. For persistent work requested in this project, use disclaude channel project_task --context ${msg.projectTaskContext} --request-file <json-file>. Operations: create {action,requestId,title,scope?,materials?,documentUrl?}; list {action,archived?,offset?,limit?}; get {action,taskId}; control {action,taskId,revision,control,value?}. Create saves a paused task; use its returned revision with control=resume to execute an authorized request. Controls also include pause/cancel/feedback/stop-direction/archive/unarchive/export. Reuse requestId when retrying the same creation. Actor, chat and directory are supplied by the service; never add them to operation JSON. No research mode or form is required. Use tasks when durable work is useful, not for every short answer. This context expires; do not expose it in user replies.`);
+    }
     if (msg.senderOpenId) {
       metadataParts.push(`**Sender Open ID:** ${msg.senderOpenId}`);
     }

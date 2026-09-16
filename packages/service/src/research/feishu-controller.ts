@@ -1,3 +1,4 @@
+import type { TaskOperation, TaskActorContext } from '../harness/project-task-gateway.js';
 import { randomUUID } from 'node:crypto';
 import { isAbsolute } from 'node:path';
 import { ProjectStore } from './project.js';
@@ -32,6 +33,34 @@ export class FeishuResearchController {
       if (!id) { throw new Error('Research project card delivery returned no message ID'); }
       return id;
     }, readDocument, appendDocument);
+  }
+  /** Actor identity comes only from the receiving channel, never operation JSON. */
+  async executeTask(context: TaskActorContext, operation: TaskOperation): Promise<unknown> {
+    const { owner, chat, source, thread } = context;
+    if (!owner || !chat || !source) { throw new Error('Task actor context unavailable'); }
+    if (operation.action === 'list') {
+      const all = this.manager.list(owner, chat, operation.archived ?? false);
+      const offset = operation.offset ?? 0, end = offset + (operation.limit ?? 20);
+      return { tasks: all.slice(offset, end).map(p => ({ id: p.id, title: p.title, status: p.status, revision: p.revision, workingDir: p.workingDir })),
+        total: all.length, nextOffset: end < all.length ? end : undefined };
+    }
+    if (operation.action === 'create') {
+      const creationSource = `${source}:agent:${operation.requestId}`;
+      const existing = [...this.manager.list(owner, chat), ...this.manager.list(owner, chat, true)].find(p => p.source === creationSource);
+      if (existing) { return { task: existing }; }
+      if (!this.resolveWorkingDir) { throw new Error('Project directory resolver unavailable'); }
+      const task = await this.manager.create({ owner, chat, source: creationSource, thread,
+        workingDir: await this.resolveWorkingDir(chat), title: operation.title, scope: operation.scope ?? '',
+        materials: operation.materials ?? '', documentUrl: operation.documentUrl });
+      return { task };
+    }
+    // get/act both preserve the original creator and chat boundary.
+    if (operation.action === 'control') {
+      const current = this.manager.get(operation.taskId, owner, chat);
+      if (current.revision !== operation.revision) { throw new Error('Task revision changed; read current state before retrying'); }
+      await this.manager.act(operation.taskId, owner, chat, operation.revision, operation.control, operation.value ?? '');
+    }
+    return { task: this.manager.get(operation.taskId, owner, chat) };
   }
   static isCallback(raw: Record<string, unknown>): boolean {
     return callbackValue(object(raw.action)).research === true;
