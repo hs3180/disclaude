@@ -90,3 +90,13 @@ diagnostic instead of deleting files that a process may still use. Signal handli
 and recovery after forced termination are not yet covered by this script's
 `finally` cleanup; these remain tracked in #5049. Do not use broad temporary-path
 globs to clean concurrent test runs or user workspaces.
+
+
+The Node/npm matrix helper `scripts/test-git-node22.mjs` also removes its isolated
+Node/npm tooling and download cache on success or ordinary assertion failure.
+It reports `MATRIX_TOOLING_CLEANUP_OK`; `--keep-temp` explicitly retains that
+helper directory. If a subprocess times out or exceeds the captured-output bound,
+it reports `MATRIX_TOOLING_RETAINED` instead because termination is unconfirmed.
+Inspect the reported directory and process state before manual cleanup. This does
+not add signal/forced-termination recovery, and nested installation tests retain
+their own cleanup diagnostics.
