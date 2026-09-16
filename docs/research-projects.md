@@ -22,7 +22,10 @@ previous summary and findings available to its runner. The original remains fina
 The finding detail of a completed or cancelled project also offers a continuation
 from that specific finding. The new project starts paused, identifies the selected
 claim, and preserves its sources and caveats alongside the parent summary. It links
-back to both the original project and the selected evidence. Repeating the same
+back to both the original project and the selected evidence. Its scope focuses on
+that finding rather than repeating the parent plan; parent source/tool restrictions
+remain applicable. The original scope is retained as background, and the user can
+change the new scope through the adjustment form. Repeating the same
 card action returns the same successor; it does not create another project.
 When a stage needs a user decision or missing material, the project displays its
 question and waits without starting further stages. Submit the answer through the

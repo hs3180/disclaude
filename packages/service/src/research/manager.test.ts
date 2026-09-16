@@ -129,6 +129,8 @@ describe('persistent research lifecycle', () => {
     const request = { ...input, source: 'selected-finding', parent: p.id, parentFinding };
     const next = await manager.create(request);
     expect(next.status).toBe('paused'); expect(next.title).toContain(second.claim);
+    expect(next.scope).toContain(second.claim); expect(next.scope).not.toBe(original.scope);
+    expect(next.priorResults?.scope).toBe(original.scope);
     expect(next.priorResults?.findings).toEqual([second]);
     expect(next.parentFinding).toEqual(parentFinding);
     expect(manager.get(p.id, 'alice', 'chat-a')).toEqual(original);

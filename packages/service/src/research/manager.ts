@@ -65,10 +65,11 @@ export class ResearchManager {
     if (token && !this.readDocument) { throw new Error('当前研究服务未配置文档读取能力。'); }
     const p: ResearchProject = { ...input, id: randomUUID(), status: 'paused', revision: 0, createdAt: now, updatedAt: now,
       title: finding ? `发现追问：${finding.claim.slice(0, 160)}` : input.title,
+      scope: finding ? `仅围绕所选发现核验依据、补充证据并处理分歧与未知，不重新开展原项目的其他研究方向。原项目的来源和工具限制仍适用。\n所选发现：${finding.claim}` : input.scope,
       document: token ? { url: input.documentUrl ?? '', token, previous: [], generation: 0,
         publishedFragments: parent?.document?.token === token ? [...(parent.document.publishedFragments ?? [])] : [] } : undefined,
       directions: [], summary: '', questions: [], history: [], feedback: [], stepCount: 0,
-      priorResults: parent ? { summary: parent.summary, findings: structuredClone(finding ? [finding] : parent.directions.flatMap(d => d.findings).slice(-16)) } : undefined };
+      priorResults: parent ? { summary: parent.summary, scope: parent.scope, findings: structuredClone(finding ? [finding] : parent.directions.flatMap(d => d.findings).slice(-16)) } : undefined };
     this.record(p, '项目已建立。开始后会持续研究，无需逐轮发送消息。');
     this.projects.set(p.id, p);
     await this.display(p);
