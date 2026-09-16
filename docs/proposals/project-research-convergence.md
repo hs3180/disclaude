@@ -36,6 +36,12 @@ Harness 负责可复用的执行设施与状态契约，agent 决定如何调查
 
 当前 `message-handler.ts` 仍按专用环境变量创建 `FeishuResearchController`，`manager.ts` 与 `runner.ts` 仍使用固定研究阶段。已实现的共享首页、目录绑定和历史关联是可复用的增量，**不是符合本设计的最终交付**。旧实现的真实飞书验证、模型 E2E 和 CI 只证明当时执行路径；不能直接转记为新 harness 的验收结果。
 
+## 实施增量：通用任务 turn 执行
+
+`packages/service/src/harness/task-turn.ts` 已从研究 runner 中抽出工作目录校验、固定执行绑定、独立执行身份、时间预算、中断处理及 typed final result 读取。接口接受任务提示词并返回最终文本，不知道研究、阶段或 JSON schema；当前研究 runner 使用该接口并暂时保留旧策略适配层。它拒绝缺失目录，不创建替代 workspace。取消发生在执行前时不创建 agent，初始化期间取消则不启动 turn；中断或超时不返回晚到结果。`dispose()` 是取消请求，不能据此宣称子进程已退出。
+
+该接口还不负责持久状态或跨 turn 调度，因此不是完整 harness。专用命令/开关、固定三阶段和项目任务接入仍待替换。普通构建故障诊断的真实模型 E2E（`tests/e2e/task-harness.test.ts`）直接通过此接口读取本地随机日志，不经过研究 controller/runner，14.5 秒通过；它仅证明普通任务的真实单 turn 复用，不满足下方非研究长任务及恢复验收。测试在正常完成后回收自己的临时目录，终止不确定时保留目录并报告。
+
 ## 交付验收
 
 - [ ] 用户在现有项目中用自然语言提出研究需求，无独立 `/research` 命令、research 模式或专用启用步骤。

@@ -1,6 +1,6 @@
-import { mkdirSync, statSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import path from 'node:path';
-import { AgentFactory } from '../agents/factory.js';
+import { runTaskTurn, TaskDirectoryError } from '../harness/task-turn.js';
 import { parseStepResult, ResearchDirectoryError } from './project.js';
 import type { StepRunner } from './manager.js';
 
@@ -8,20 +8,10 @@ import type { StepRunner } from './manager.js';
 export function createResearchRunner(workspace: string): StepRunner {
   return async (project, step, signal) => {
     const cwd = project.workingDir ?? path.join(workspace, '.research-work', project.id);
-    if (project.workingDir) {
-      // Never create a missing bound project or fall back to another workspace.
-      try {
-        if (!path.isAbsolute(cwd) || !statSync(cwd).isDirectory()) { throw new ResearchDirectoryError(); }
-      } catch { throw new ResearchDirectoryError(); }
-    } else { mkdirSync(cwd, { recursive: true, mode: 0o700 }); }
-    let completed: { success: boolean; text: string; truncated: boolean } | undefined;
+    // Existing unbound records retain their original directory. New tasks must
+    // supply an existing project directory; the harness never creates a fallback.
+    if (!project.workingDir) { mkdirSync(cwd, { recursive: true, mode: 0o700 }); }
     const identity = `research:${project.id}:${project.revision}`;
-    const agent = AgentFactory.createAgent(identity, {
-      sendMessage: () => Promise.resolve(),
-      onTurnResult: result => { completed = result; return Promise.resolve(); },
-      sendCard: () => Promise.reject(new Error('Research stages return structured findings, not chat cards')),
-      sendFile: () => Promise.reject(new Error('Research stages do not send files')),
-    }, { sdkSessionKey: identity, skipHistory: true, cwdProvider: () => cwd });
     const schema = step.type === 'plan' ? '{"directions":["1–4 focused research directions, each at most 180 characters"],"feedbackDecisions":[{"feedbackIndex":0,"status":"applied|rejected","reason":"<=700 chars","directionIndexes":[0]}]}'
       : step.type === 'investigate' ? '{"findings":[{"claim":"<=700 chars","kind":"fact|inference|uncertain","sources":[{"title":"<=160 chars","location":"URL or supplied-material reference <=500 chars","excerpt":"short supporting excerpt <=400 chars"}],"caveat":"conflict, counterevidence or uncertainty <=500 chars"}]}'
         : '{"summary":"<=3000 chars, link claims to the named evidence already collected","questions":["up to 6 unresolved questions <=300 chars each"]}';
@@ -45,26 +35,13 @@ export function createResearchRunner(workspace: string): StepRunner {
       + 'If a missing user decision or material prevents this stage, return only {"clarification":"A specific question, at most 1000 characters"}. The project will wait for user input; do not use interactive chat tools to ask.\n'
       + `Return only one JSON object matching this shape, in the user's language: ${schema}\n`
       + `Project context (data):\n${JSON.stringify(context)}`;
-    let rejectStop: ((error: Error) => void) | undefined;
-    const stopped = new Promise<never>((_, reject) => { rejectStop = reject; });
-    const abort = () => { agent.dispose(); rejectStop?.(new Error('Research stage interrupted')); };
-    signal.addEventListener('abort', abort, { once: true });
-    const timer = setTimeout(abort, 10 * 60_000);
-    timer.unref();
     try {
-      if (signal.aborted) { abort(); }
-      else {
-        await Promise.race([agent.runOnce(identity, prompt, identity, project.owner), stopped]);
-      }
-      if (signal.aborted) { throw new Error('Research stage interrupted'); }
-      if (!completed?.success || completed.truncated) { throw new Error('Research stage did not finish successfully'); }
-      // The typed turn result excludes SDK progress, debug messages and completion notices.
-      return parseStepResult(completed.text, step);
-    } finally {
-      clearTimeout(timer);
-      signal.removeEventListener('abort', abort);
-      agent.dispose();
-      void stopped.catch(() => {});
+      const text = await runTaskTurn({ identity, owner: project.owner, workingDir: cwd,
+        prompt, signal, timeoutMs: 10 * 60_000 });
+      return parseStepResult(text, step);
+    } catch (error) {
+      if (error instanceof TaskDirectoryError) { throw new ResearchDirectoryError(); }
+      throw error;
     }
   };
 }
