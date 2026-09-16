@@ -43,7 +43,13 @@ export async function setupWorkspaceOnFirstRun(): Promise<void> {
   if (found.path && !found.exists) {throw new Error(`Configuration file does not exist: ${found.path}`);}
   const configPath = found.path || join(homedir(), '.disclaude', 'disclaude.config.yaml');
   const original = found.exists ? await readFile(configPath, 'utf8') : undefined;
-  const parsed: unknown = original === undefined ? {} : yaml.load(original);
+  let parsed: unknown;
+  try {
+    parsed = original === undefined ? {} : yaml.load(original);
+  } catch {
+    // YAML exception snippets may contain credentials from the source config.
+    throw new Error(`Cannot parse configuration: ${configPath}. Fix the YAML before workspace setup.`);
+  }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error(`Configuration must be a YAML mapping: ${configPath}`);
   }

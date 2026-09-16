@@ -86,6 +86,11 @@ with tempfile.TemporaryDirectory(prefix='disclaude-workspace-e2e-') as tmp:
                 if child.poll() is None:os.killpg(child.pid,signal.SIGTERM)
                 child.wait(timeout=20)
             assert child.returncode==0,output.read_text()
+    # Malformed YAML diagnostics must not quote secrets from the configuration.
+    config.write_text('apiKey: [private-sentinel\n')
+    result=run()
+    assert result.returncode!=0 and 'Cannot parse configuration' in result.stderr
+    assert 'private-sentinel' not in result.stdout+result.stderr
     # No automatic creation for explicit production paths.
     payload['workspace']['dir']=str(home/'missing-explicit')
     config.write_text(json.dumps(payload));result=run()
