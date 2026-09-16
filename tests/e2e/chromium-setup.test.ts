@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import nock from 'nock';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, mkdir, realpath, readFile, writeFile, rm, access } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, readFile, writeFile, rm, access, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createServer } from 'node:net';
@@ -11,6 +11,48 @@ import { launchBrowser } from '../../packages/service/src/browser-control/manage
 
 const exec = promisify(execFile);
 describe('browser setup product CLI', () => {
+  it.skipIf(!process.env.DISCLAUDE_E2E_CHROMIUM)(
+    'keeps saved configuration when unattended selection is missing or explicitly invalid', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'dc-browser-selection-'));
+      const config = join(root, 'browser.json');
+      const profile = join(root, 'profile');
+      const binary = process.env.DISCLAUDE_E2E_CHROMIUM!;
+      const saved = JSON.stringify({ version: 1, environment: {
+        CHROMIUM_CDP_BINARY: binary, CHROMIUM_CDP_PROFILE_DIR: profile,
+        CHROMIUM_CDP_PORT: '19433', CHROMIUM_CDP_HEADED: '0', CHROMIUM_CDP_AUTOSTART: '0',
+      } });
+      const env = { ...process.env, ['DISCLAUDE_CHROMIUM_CONFIG']: config };
+      const args = [resolve('bin/disclaude.js'), 'chromium-cdp', 'setup', '--isolated'];
+      try {
+        await writeFile(config, saved, { mode: 0o600 });
+        await expect(exec(process.execPath, [...args, '--dry-run'], { env, timeout: 5000 }))
+          .rejects.toThrow('Non-interactive setup requires --binary');
+        const missing = join(root, 'missing-browser');
+        await expect(exec(process.execPath, [...args, '--binary', missing, '--dry-run'], { env, timeout: 5000 }))
+          .rejects.toThrow(missing);
+        // An invalid explicit choice must not fall back to the working saved browser.
+        // Repeated real-version previews retain the saved defaults without activation.
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const result = await exec(process.execPath, [...args, '--binary', binary, '--dry-run'], { env, timeout: 15_000 });
+          expect(JSON.parse(result.stdout)).toMatchObject({
+            executable: await realpath(binary), source: 'existing-local-executable',
+            profile, endpoint: 'http://127.0.0.1:19433', mode: 'headless', autostart: false,
+          });
+          expect(JSON.parse(result.stdout).version).toMatch(/\d+\./);
+        }
+        expect(await readFile(config, 'utf8')).toBe(saved);
+        expect((await stat(config)).mode & 0o777).toBe(0o600);
+        await expect(access(profile)).rejects.toThrow();
+        console.info('BROWSER_SELECTION_ACCEPTANCE', JSON.stringify({
+          missingUnattendedSelectionRejected: true, invalidExplicitPathRejected: true,
+          savedBytesAndModePreserved: true, repeatedPreview: true, profileNotCreated: true,
+        }));
+      } finally {
+        await rm(root, { recursive: true, force: true });
+        console.info('BROWSER_SELECTION_CLEANUP', JSON.stringify({ rootRemoved: true }));
+      }
+    }, 45_000);
+
   it.skipIf(process.env.DISCLAUDE_E2E_BROWSER_SETUP !== '1' || !process.env.DISCLAUDE_E2E_CHROMIUM)(
     'previews without writes, applies the selection and repeats setup with its persistent profile', async () => {
       const root = await mkdtemp(join(tmpdir(), 'dc-browser-setup-'));
