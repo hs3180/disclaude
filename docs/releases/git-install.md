@@ -100,3 +100,48 @@ or an inner package test reports retained files, it reports `MATRIX_TOOLING_RETA
 Inspect the reported directory and process state before manual cleanup. This does
 not add signal/forced-termination recovery, and nested installation tests retain
 their own cleanup diagnostics.
+
+The pinned upgrade/rollback helper also removes its isolated prefix, cache and
+workspace after ordinary failures, after waiting for an owned CLI to close.
+It reports `UPGRADE_TEST_CLEANUP_OK`. `--keep-temp`, a signaled/timed-out install,
+or unconfirmed CLI shutdown instead reports the retained root; verify that all
+owned processes have stopped before deleting it. These guards do not implement
+whole-runner signal handling or stale-resource recovery (#5049).
+
+
+## Foreground test ownership and recovery
+
+`npm run test:install -- /absolute/path/package.tgz` now runs the installer under
+`scripts/run-isolated-test.mjs`. Use the same wrapper for the foreground Node/npm
+matrix and upgrade/rollback helpers:
+
+```sh
+node scripts/run-isolated-test.mjs -- node scripts/test-git-node22.mjs /absolute/path/package.tgz
+node scripts/run-isolated-test.mjs -- node scripts/test-upgrade-rollback.mjs github:hs3180/disclaude#BASE_SHA github:hs3180/disclaude#CANDIDATE_SHA FINGERPRINT
+```
+
+On macOS/Linux the wrapper supplies a private per-run TMPDIR/TMP/TEMP and starts
+a separate process group. Before releasing the test, it records owner PID, group
+ID and directory identity in a mode-0700 registry under the invoking TMPDIR.
+SIGINT/SIGTERM requests group shutdown and waits at most 15 seconds before retaining
+live files with a diagnostic. Successful and ordinary failed runs remove their roots
+only after that group is absent. It never modifies the user's HOME or production
+workspace and never upgrades global Node/npm.
+
+The next invocation in the same TMPDIR reaps only registered roots whose owner
+and process group are both absent. It does not signal orphan groups, delete by age,
+or scan legacy temporary directory prefixes. Live peers, uncertain ownership and
+explicit `--keep-temp` are retained. PID reuse may conservatively delay cleanup.
+For explicit retention, inspect the printed root and confirm its recorded processes
+have stopped before removing it manually. An incomplete initialization marker is
+reported for manual inspection, not treated as safe to delete.
+
+This wrapper is for foreground-only tests. It must not wrap tests that install
+launchd/systemd services, create Docker resources, or detach their own process
+session. Those require resource-specific ownership/teardown. Changing TMPDIR does
+not discover the old registry, and SIGKILL does not promise to stop a running test;
+it leaves a diagnosable group that must finish before reaping. Therefore #5049 is
+still open for the remaining suites/resources. Containers need a functioning init
+(e.g. Docker `--init`) to reap orphan/zombie processes; an unreaped group is retained
+rather than treated as absent. The CI process test uses real
+signals and foreground fixtures; it does not stand in for package-release acceptance.
