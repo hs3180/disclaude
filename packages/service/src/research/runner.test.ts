@@ -19,14 +19,14 @@ describe('research execution directory', () => {
     const bound = directory(), other = directory();
     vi.mocked(AgentFactory.createAgent).mockImplementation((_id, callbacks, options) => {
       expect(options?.cwdProvider?.('chat')).toBe(bound);
-      return { runOnce: async () => { await callbacks.onTurnResult?.({ success: true, text: '{"directions":["Check evidence"]}', truncated: false } as never); }, dispose: vi.fn() } as never;
+      return { runOnce: async () => { await callbacks.onTurnResult?.({ success: true, text: '{"state":"continue","message":"Check evidence","work":[],"feedback":[],"questions":[]}', truncated: false } as never); }, dispose: vi.fn() } as never;
     });
-    await expect(createResearchRunner(other)(project(bound), { type: 'plan' }, new AbortController().signal)).resolves.toEqual({ directions: ['Check evidence'], feedbackDecisions: [] });
+    await expect(createResearchRunner(other)(project(bound), new AbortController().signal)).resolves.toMatchObject({ state: 'continue', message: 'Check evidence' });
     expect(existsSync(join(other, '.research-work'))).toBe(false);
   });
   it('does not recreate a missing bound directory or start a model in a fallback', async () => {
     const root = directory(), missing = join(root, 'removed');
-    await expect(createResearchRunner(root)(project(missing), { type: 'plan' }, new AbortController().signal)).rejects.toBeInstanceOf(ResearchDirectoryError);
+    await expect(createResearchRunner(root)(project(missing), new AbortController().signal)).rejects.toBeInstanceOf(ResearchDirectoryError);
     expect(AgentFactory.createAgent).not.toHaveBeenCalled();
     expect(existsSync(missing)).toBe(false);
     expect(existsSync(join(root, '.research-work'))).toBe(false);
