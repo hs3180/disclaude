@@ -136,3 +136,12 @@ The service-image test also supports
 service container. This should return a nonzero test result plus
 `DOCKER_TEST_CLEANUP`; verify the exact printed label has no remaining containers
 or volumes. Do not count an arbitrary failure as successful teardown.
+
+
+The separate Docker browser smoke case now uses the same exact-label helper for
+both containers and its private network. The resource E2E also attaches the peer
+to the first run's network: cleanup must report both in-use resources, leave the
+peer's data untouched, and reclaim the network only after the peer releases it.
+Docker CI runs this resource case alongside the production image tests and verifies
+the explicit post-start failure path using the already-built production image.
+A helper-only change triggers this CI job as well.

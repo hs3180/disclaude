@@ -13,18 +13,21 @@ export async function cleanupDockerTestResources(docker: (...args: string[]) => 
       catch (error) { failures.push(new Error(`Could not remove owned container ${id}`, { cause: error })); }
     }
   } catch (error) { failures.push(new Error(`Could not enumerate owned containers for ${label}`, { cause: error })); }
-  try {
-    const owned = (await docker('volume', 'ls', '-q', '--filter', `label=${label}`)).split(/\s+/u).filter(Boolean);
-    for (const name of owned) {
-      try { await docker('volume', 'rm', name); }
-      catch (error) { failures.push(new Error(`Could not remove owned volume ${name}`, { cause: error })); }
-    }
-  } catch (error) { failures.push(new Error(`Could not enumerate owned volumes for ${label}`, { cause: error })); }
+  for (const kind of ['volume', 'network']) {
+    try {
+      const owned = (await docker(kind, 'ls', '-q', '--filter', `label=${label}`)).split(/\s+/u).filter(Boolean);
+      for (const name of owned) {
+        try { await docker(kind, 'rm', name); }
+        catch (error) { failures.push(new Error(`Could not remove owned ${kind} ${name}`, { cause: error })); }
+      }
+    } catch (error) { failures.push(new Error(`Could not enumerate owned ${kind} resources for ${label}`, { cause: error })); }
+  }
   if (failures.length) {
     throw new AggregateError(failures, `Docker test resources may remain for ${label}; inspect this exact label before retrying cleanup`);
   }
   if (await docker('ps', '-aq', '--filter', `label=${label}`)
-    || await docker('volume', 'ls', '-q', '--filter', `label=${label}`)) {
+    || await docker('volume', 'ls', '-q', '--filter', `label=${label}`)
+    || await docker('network', 'ls', '-q', '--filter', `label=${label}`)) {
     throw new Error(`Docker test resources remain after cleanup for ${label}`);
   }
 }

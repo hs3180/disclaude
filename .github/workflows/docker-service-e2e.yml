@@ -12,6 +12,8 @@ on:
       - '!packages/**/*.test.ts'
       - 'tests/e2e/docker-service.test.ts'
       - 'tests/e2e/docker-browser-smoke.test.ts'
+      - 'tests/e2e/docker-cleanup.test.ts'
+      - 'tests/e2e/helpers/docker-resources.ts'
       - 'scripts/browser-use-smoke.sh'
       - 'docker/**'
       - '.github/workflows/docker-service-e2e.yml'
@@ -27,6 +29,8 @@ on:
       - '!packages/**/*.test.ts'
       - 'tests/e2e/docker-service.test.ts'
       - 'tests/e2e/docker-browser-smoke.test.ts'
+      - 'tests/e2e/docker-cleanup.test.ts'
+      - 'tests/e2e/helpers/docker-resources.ts'
       - 'scripts/browser-use-smoke.sh'
       - 'docker/**'
       - '.github/workflows/docker-service-e2e.yml'
@@ -53,4 +57,23 @@ jobs:
         env:
           DISCLAUDE_E2E_DOCKER_IMAGE: disclaude-service:e2e
           DISCLAUDE_E2E_DOCKER_BROWSER_IMAGE: disclaude-chromium:e2e
-        run: node node_modules/vitest/vitest.mjs run tests/e2e/docker-service.test.ts tests/e2e/docker-browser-smoke.test.ts
+          DISCLAUDE_E2E_DOCKER_CLEANUP_IMAGE: disclaude-service:e2e
+        run: node node_modules/vitest/vitest.mjs run tests/e2e/docker-service.test.ts tests/e2e/docker-browser-smoke.test.ts tests/e2e/docker-cleanup.test.ts
+      - name: Verify cleanup after an injected service test failure
+        env:
+          DISCLAUDE_E2E_DOCKER_IMAGE: disclaude-service:e2e
+          DISCLAUDE_E2E_DOCKER_FAIL_AFTER_START: '1'
+        run: |
+          set +e
+          node node_modules/vitest/vitest.mjs run tests/e2e/docker-service.test.ts > docker-failure-cleanup.log 2>&1
+          result=$?
+          set -e
+          cat docker-failure-cleanup.log
+          test "$result" -eq 1
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          const log = readFileSync('docker-failure-cleanup.log', 'utf8');
+          assert(log.includes('Injected Docker E2E failure after owned container start'));
+          assert(log.includes('DOCKER_TEST_CLEANUP'));
+          JS
