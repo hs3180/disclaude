@@ -60,6 +60,14 @@ Codex configuration is changed. Older CLI versions must support this feature
 before using this integration.
 The service image pins Codex 0.154.0 to match the CLI used for the real input test.
 
+Protocol support does not imply that the model can generate every field. In
+Codex 0.154.0, the model-facing `request_user_input` tool exposes only `id`,
+`header`, `question` and non-empty `options`; it does not expose `isSecret`.
+See the [upstream tool definition and normalization](https://github.com/openai/codex/blob/rust-v0.154.0/codex-rs/core/src/tools/handlers/request_user_input_spec.rs).
+The adapter handles secret requests received through the protocol, but this
+pinned model tool cannot initiate that path. Do not ask users to enter credentials
+into an ordinary non-secret question as a workaround.
+
 It accepts up to 10 questions with up to 30 options each. The default `exec`
 transport has no interactive request/response path and is unchanged.
 
@@ -73,8 +81,18 @@ and completed the same turn. A separate attempt exposed the ordinary watchdog
 cancelling a non-blocking question after three minutes; the pending-input watchdog
 fix has regression coverage and passed a real Feishu retest: after more than
 four minutes, a two-question card accepted a selected option and a separate
-free-text answer, then completed the same turn with both values. Private-input
-and remaining lifecycle acceptance are still outstanding (#5000).
+free-text answer, then completed the same turn with both values.
+
+A separate scripted protocol request with `isSecret: true` passed through the
+real production-bot Feishu channel on the same date. Its private card used a
+masked field and explicit submission; the original RPC received exactly one
+correct response, and the card changed to answered without echoing the value.
+The public topic contained only the generic notice, with neither the private
+question nor the dummy answer. A scan of service logs, that day's conversation
+logs and runtime configuration found no dummy answer. This verifies the real
+channel with a protocol fixture, not model-native secret-question generation.
+The latter remains unavailable in the pinned tool; remaining lifecycle
+acceptance is tracked in #5000.
 
 An opt-in E2E uses the installed Codex CLI and configured model credentials to
 ask a real tool question, generate the product card, explicitly submit a test
