@@ -47,7 +47,7 @@ import { promisify } from 'node:util';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { chromiumConfigPath, loadChromiumConfig, saveChromiumConfig, readChromiumConfig } from './chromium-config.mjs';
-import { replaceChromiumFile, transitionChromium, chromiumListenerPids, isDescendant, waitChromiumReady } from './browser-service-state.mjs';
+import { replaceChromiumFile, transitionChromium, chromiumListenerPids, isDescendant, waitChromiumReady, closeChromiumGracefully } from './browser-service-state.mjs';
 import { describeChromiumSelection } from './chromium-status.mjs';
 import { assertChromiumProfileAvailable, assertChromiumProfileVersion } from './chromium-profile.mjs';
 export { transitionChromium } from './browser-service-state.mjs';
@@ -786,6 +786,13 @@ function chromiumServicePid() {
   } catch { return { loaded: false }; }
 }
 
+function chromiumPlistTarget(path) {
+  try {
+    const plist = JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', path], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
+    return { address: plist.EnvironmentVariables?.CHROMIUM_CDP_ADDRESS, port: Number(plist.EnvironmentVariables?.CHROMIUM_CDP_PORT) };
+  } catch { return undefined; }
+}
+
 function validateIsolatedChromium() {
   const root = resolve(process.env.DISCLAUDE_LAUNCHD_STATE_DIR);
   const actualRoot = realpathSync(root);
@@ -827,14 +834,20 @@ async function activateChromium(restart) {
   if (!diagnosis.usable) throw new Error('Selected browser failed its temporary-profile preflight');
   assertChromiumProfileAvailable(resolveChromiumProfileDir(), prior.pid);
   assertChromiumProfileVersion(resolveChromiumProfileDir(), diagnosis.cycles?.[0]?.browser);
+  let activeTarget = previous;
   const stop = async () => {
     if (!chromiumServicePid().loaded) return;
+    await closeChromiumGracefully(activeTarget, chromiumServicePid);
     execFileSync('launchctl', ['unload', existsSync(CR_PLIST_PATH) ? CR_PLIST_PATH : CR_PREVIOUS_PLIST_PATH], { stdio: 'pipe' });
     if (chromiumServicePid().loaded) throw new Error('launchd service remained loaded after stop');
   };
   const ready = await transitionChromium({ paths: [config, CR_AUTO_PLIST_PATH, CR_MANUAL_PLIST_PATH], wasLoaded: prior.loaded,
     prepare: () => generateChromiumPlist(), stop,
-    start: () => loadPlistAt(existsSync(CR_PLIST_PATH) ? CR_PLIST_PATH : CR_PREVIOUS_PLIST_PATH, LABEL_CHROMIUM),
+    start: () => {
+      const path = existsSync(CR_PLIST_PATH) ? CR_PLIST_PATH : CR_PREVIOUS_PLIST_PATH;
+      activeTarget = chromiumPlistTarget(path);
+      loadPlistAt(path, LABEL_CHROMIUM);
+    },
     verify: async () => {
       const result = await waitChromiumReady(selected, chromiumServicePid);
       if (CR_PREVIOUS_PLIST_PATH !== CR_PLIST_PATH) rmSync(CR_PREVIOUS_PLIST_PATH, { force: true });
@@ -865,7 +878,8 @@ async function cmdChromiumInstall() {
   console.log('\nChromium CDP service installed and started.');
 }
 
-function cmdChromiumUninstall() {
+async function cmdChromiumUninstall() {
+  await closeChromiumGracefully(chromiumPlistTarget(CR_PLIST_PATH), chromiumServicePid);
   unloadPlistAt(CR_PLIST_PATH, LABEL_CHROMIUM);
   if (existsSync(CR_PLIST_PATH)) {
     rmSync(CR_PLIST_PATH);
@@ -879,7 +893,8 @@ async function cmdChromiumStart() {
   console.log('\nChromium CDP service started.');
 }
 
-function cmdChromiumStop() {
+async function cmdChromiumStop() {
+  await closeChromiumGracefully(chromiumPlistTarget(CR_PLIST_PATH), chromiumServicePid);
   unloadPlistAt(CR_PLIST_PATH, LABEL_CHROMIUM);
 }
 

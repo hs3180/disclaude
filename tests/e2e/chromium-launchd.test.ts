@@ -73,13 +73,14 @@ describe('Chromium launchd installation and recovery', () => {
         const restartedPid = await verifyNativeBrowserPage(restartedClient, profile, port);
         expect(restartedPid).not.toBe(initialPid);
         const cookieAfterRestart = await hasNativeBrowserCookie(restartedClient, cookieMarker);
+        const recoveryCookieMarker = await seedNativeBrowserCookie(restartedClient);
         // The real browser passes the disposable-profile preflight, but the
         // selected executable exits when launchd uses the persistent port.
         const failing = join(root, 'browser-fails-in-service');
         const quoted = `'${binary.replace(/'/g, "'\\''")}'`;
         await writeFile(failing, `#!/bin/sh\nfor arg in "$@"; do\n if [ "$arg" = "--remote-debugging-port=0" ]; then exec ${quoted} "$@"; fi\ndone\nexit 7\n`, { mode: 0o700 });
         let failure = '';
-        try { await command('restart', { CHROMIUM_CDP_BINARY: failing }); }
+        try { await command('restart', { CHROMIUM_CDP_BINARY: failing, CHROMIUM_CDP_PORT: String(await unusedPort()) }); }
         catch (error) { failure = String((error as { stderr?: string }).stderr ?? error); }
         expect(failure).toContain('previous service restored and verified');
         expect(await readFile(config, 'utf8')).toBe(beforeConfig);
@@ -90,12 +91,21 @@ describe('Chromium launchd installation and recovery', () => {
         expect(recovered.webSocketDebuggerUrl).not.toBe(version.webSocketDebuggerUrl);
         const client = await open(recovered.webSocketDebuggerUrl);
         await verifyNativeBrowserPage(client, profile, port);
-        const cookieAfterRecovery = await hasNativeBrowserCookie(client, cookieMarker);
+        const cookieAfterRecovery = await hasNativeBrowserCookie(client, recoveryCookieMarker);
+        const stopCookieMarker = await seedNativeBrowserCookie(client);
+        await command('stop');
+        expect(JSON.parse((await command('status')).stdout).loaded).toBe(false);
+        await command('start');
+        const started = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json();
+        const startedClient = await open(started.webSocketDebuggerUrl);
+        await verifyNativeBrowserPage(startedClient, profile, port);
+        const cookieAfterStopStart = await hasNativeBrowserCookie(startedClient, stopCookieMarker);
         // Keychain restrictions must not make ordinary browser operation fail.
         // Report service-profile persistence independently, without weakening Linux.
         console.info('NATIVE_SERVICE_COOKIE_PERSISTENCE', JSON.stringify({ platform: process.platform,
           arch: process.arch, browser: recovered.Browser, profile: 'owned-launchd-service',
           inSession: true, afterRestart: cookieAfterRestart, afterFailedReplacementRecovery: cookieAfterRecovery,
+          afterStopStart: cookieAfterStopStart,
           syntheticCookie: true, realAccountLoginVerified: false }));
         console.info('CHROMIUM_LAUNCHD_ACCEPTANCE', JSON.stringify({ browser: recovered.Browser,
           platform: process.platform, arch: process.arch, install: true, restart: true, oldConnectionRejected: true, oldEndpointRejected: true, freshPageVerified: true, processProfileMatched: true, targetCleanup: true,
