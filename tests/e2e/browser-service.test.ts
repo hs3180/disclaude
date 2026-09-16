@@ -20,18 +20,26 @@ const enabled = Boolean(process.env.DISCLAUDE_E2E_CHROMIUM && process.env.DISCLA
 describe('user starts Disclaude and shares its managed browser', () => {
   it.skipIf(!enabled)('runs the product IPC entry, hands over shared page state, then shuts down and restarts', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dc-browser-e2e-'));
+    console.info('BROWSER_SERVICE_TEST_ROOT', root);
     const socket = join(root, 'browser.sock');
     const config = join(root, 'config.json');
     const probe = createServer();
-    await new Promise<void>(done => probe.listen(0, '127.0.0.1', done));
-    const port = (probe.address() as { port: number }).port;
-    await new Promise<void>(done => probe.close(() => done()));
-    await writeFile(config, JSON.stringify({
-      agent: { agentBackend: 'claude', provider: 'anthropic', model: 'claude-sonnet-4' },
-      anthropic: { apiKey: 'offline-test-placeholder' },
-      workspace: { dir: root }, channels: { feishu: { enabled: false }, rest: { host: '127.0.0.1', port, fileStorageDir: join(root, 'files') } },
-      logging: { level: 'info' },
-    }));
+    try {
+      await new Promise<void>((done, reject) => { probe.once('error', reject); probe.listen(0, '127.0.0.1', done); });
+      const port = (probe.address() as { port: number }).port;
+      await new Promise<void>(done => probe.close(() => done()));
+      await writeFile(config, JSON.stringify({
+        agent: { agentBackend: 'claude', provider: 'anthropic', model: 'claude-sonnet-4' },
+        anthropic: { apiKey: 'offline-test-placeholder' },
+        workspace: { dir: root }, channels: { feishu: { enabled: false }, rest: { host: '127.0.0.1', port, fileStorageDir: join(root, 'files') } },
+        logging: { level: 'info' },
+      }));
+    } catch (error) {
+      if (probe.listening) { await new Promise<void>(done => probe.close(() => done())); }
+      try { await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); }
+      catch (cleanupError) { throw new AggregateError([error, cleanupError], `Browser test setup cleanup failed; inspect ${root}`); }
+      throw error;
+    }
     const env: NodeJS.ProcessEnv = { ...process.env, DISCLAUDE_CONFIG_PATH: config, LOCKFILE_PATH: join(root, 'service.pid'),
       BU_CDP_URL: '', BU_CDP_WS: '',
       DISCLAUDE_BROWSER_MODE: 'coordinated', DISCLAUDE_BROWSER_SOCKET: socket,
@@ -45,14 +53,19 @@ describe('user starts Disclaude and shares its managed browser', () => {
     const executable = resolve('bin/disclaude.js');
     const callers = new Set<ReturnType<typeof spawn>>();
     const crashDescendants = new Set<number>();
+    const callerClosures = new Map<ReturnType<typeof spawn>, Promise<void>>();
     let child: ReturnType<typeof spawn> | undefined;
     let output = '';
     let exited: Promise<number | null> | undefined;
     async function stop(): Promise<void> {
-      if (!child || child.exitCode !== null || child.signalCode !== null) { return; }
-      child.kill('SIGTERM');
-      const code = await Promise.race([exited, delay(20_000).then(() => 'timeout')]);
-      if (code === 'timeout') { child.kill('SIGKILL'); throw new Error('Disclaude shutdown timed out'); }
+      if (!child) { return; }
+      if (child.exitCode === null && child.signalCode === null) { child.kill('SIGTERM'); }
+      const code = await Promise.race([exited, delay(20_000, undefined, { ref: false }).then(() => 'timeout')]);
+      if (code === 'timeout') {
+        child.kill('SIGKILL');
+        await Promise.race([exited, delay(5000, undefined, { ref: false })]);
+        throw new Error('Disclaude shutdown timed out; browser termination must be checked before cleanup');
+      }
       expect(code, output).toBe(0);
     }
     const localHost = /^(?:127\.0\.0\.1|localhost)(?::\d+)?$/u;
@@ -90,7 +103,9 @@ describe('user starts Disclaude and shares its managed browser', () => {
           const invocationId = ++invocation;
           const task = spawn('browser-use', [], { env: invocationEnv, cwd: root, stdio: ['pipe', 'pipe', 'pipe'] });
           callers.add(task);
-          task.once('close', () => callers.delete(task));
+          callerClosures.set(task, new Promise<void>(closed => task.once('close', () => {
+            callers.delete(task); callerClosures.delete(task); closed();
+          })));
           onSpawn?.(task);
           let stdout = '', stderr = '';
           task.stdout.on('data', d => { stdout += d; }); task.stderr.on('data', d => { stderr += d; });
@@ -130,6 +145,9 @@ describe('user starts Disclaude and shares its managed browser', () => {
           if (!started) { await delay(100); }
         }
         expect(started).toBe(true);
+        if (process.env.DISCLAUDE_E2E_BROWSER_FAIL_DURING_CALL === '1') {
+          throw new Error('Injected browser E2E failure while an owned caller is active');
+        }
         const successor = run("print(js(\"document.querySelector('#value').value\"))\n");
         abandoned?.kill('SIGKILL');
         expect(await abandonedResult).toBe('interrupted');
@@ -248,6 +266,43 @@ describe('user starts Disclaude and shares its managed browser', () => {
       const events = await readFile(env.DISCLAUDE_BROWSER_EVENTS!, 'utf8').catch(() => 'No coordinator events written');
       console.error('BROWSER_COORDINATOR_EVENTS', events.slice(-16_000));
       throw error;
-    } finally { if (process.env.DISCLAUDE_E2E_BROWSER_PI_MODEL) { nock.enableNetConnect(localHost); } for (const pid of crashDescendants) { try { process.kill(pid, 'SIGKILL'); } catch { /* Already gone. */ } } for (const caller of callers) { caller.kill('SIGKILL'); } await stop(); await rm(root, { recursive: true, force: true }); }
+    } finally {
+      nock.enableNetConnect(localHost);
+      const stopCallers = async (): Promise<void> => {
+        const pending = [...callerClosures.values()];
+        for (const caller of callers) { caller.kill('SIGTERM'); }
+        const closed = await Promise.race([Promise.all(pending).then(() => true), delay(5000, undefined, { ref: false }).then(() => false)]);
+        if (!closed) {
+          for (const caller of callers) { caller.kill('SIGKILL'); }
+          const killed = await Promise.race([Promise.all(pending).then(() => true), delay(5000, undefined, { ref: false }).then(() => false)]);
+          if (!killed) { throw new Error('Browser test callers did not close'); }
+        }
+      };
+      const stopDescendants = async (): Promise<void> => {
+        for (const pid of crashDescendants) {
+          try { process.kill(pid, 'SIGKILL'); }
+          catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') { throw error; } }
+        }
+        const deadline = Date.now() + 5000;
+        while (crashDescendants.size && Date.now() < deadline) {
+          for (const pid of crashDescendants) {
+            try { process.kill(pid, 0); }
+            catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') { crashDescendants.delete(pid); } }
+          }
+          if (crashDescendants.size) { await delay(50); }
+        }
+        if (crashDescendants.size) { throw new Error('Browser crash-fixture descendants still present'); }
+      };
+      // Attempt every owned resource cleanup even if another one fails.
+      const settled = await Promise.allSettled([stopCallers(), stopDescendants(), stop()]);
+      const failures = settled.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
+      if (failures.length) {
+        throw new AggregateError(failures, `Browser test files retained at ${root}: resource termination unconfirmed; inspect owned processes before removing`);
+      }
+      try { await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); }
+      catch (error) { throw new Error(`Browser test cleanup failed; inspect residual files at ${root}`, { cause: error }); }
+      await expect(access(root)).rejects.toMatchObject({ code: 'ENOENT' });
+      console.info('BROWSER_SERVICE_CLEANUP', JSON.stringify({ rootRemoved: true, callersClosed: true, crashDescendantsGone: true }));
+    }
   }, 480_000);
 });
