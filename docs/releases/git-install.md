@@ -100,3 +100,10 @@ or an inner package test reports retained files, it reports `MATRIX_TOOLING_RETA
 Inspect the reported directory and process state before manual cleanup. This does
 not add signal/forced-termination recovery, and nested installation tests retain
 their own cleanup diagnostics.
+
+The pinned upgrade/rollback helper also removes its isolated prefix, cache and
+workspace after ordinary failures, after waiting for an owned CLI to close.
+It reports `UPGRADE_TEST_CLEANUP_OK`. `--keep-temp`, a signaled/timed-out install,
+or unconfirmed CLI shutdown instead reports the retained root; verify that all
+owned processes have stopped before deleting it. These guards do not implement
+whole-runner signal handling or stale-resource recovery (#5049).
