@@ -1,5 +1,12 @@
 # Persistent research projects (initial product slice)
 
+The current `/research` surface and `/project` directory-binding command are not
+yet integrated. Research uses its own execution directory rather than the chat's
+`/project use` binding. The [project/research convergence proposal](proposals/project-research-convergence.md)
+records the overlap, proposed ownership model, compatibility requirements and
+additional acceptance gates. It is pending work, not a description of shipped
+unified navigation. Research remains a persistent UX, not a project template.
+
 The opt-in Feishu project entry is `/research`. It opens a project index and a
 creation form; it is a product command, not a skill invocation. Creating a project
 shows its scope and controls before any research runs. The user then starts the
