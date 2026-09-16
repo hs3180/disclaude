@@ -75,3 +75,18 @@ distribution commit before running it; never silently retarget a published tag.
 Only then declare the release complete. Keep the source SHA in release notes.
 An optional `.tgz` must be packed from the same tested distribution; do not replace
 tag acceptance with an archive test. Do not rewrite a published tag.
+
+### Installation-test temporary files
+
+`test-package-install.mjs` removes its complete isolated test directory on success
+and ordinary assertion failures, including npm cache, installed package, config
+and generated workspace files. It reports `PACKAGE_TEST_CLEANUP_OK` after removal.
+Use `--keep-temp` explicitly when you need to inspect the generated files; the
+script prints the retained directory. Remove that exact directory after diagnosis
+and after confirming its test processes have stopped.
+
+A command timeout or unconfirmed CLI shutdown retains the directory with a
+diagnostic instead of deleting files that a process may still use. Signal handling
+and recovery after forced termination are not yet covered by this script's
+`finally` cleanup; these remain tracked in #5049. Do not use broad temporary-path
+globs to clean concurrent test runs or user workspaces.
