@@ -90,9 +90,21 @@ evidence, and produced three new findings. Cancelling during synthesis discarded
 the in-flight summary and retained all three findings, still accessible with their
 sources through the actual card. The archived original remained unchanged.
 
-This is not the complete #4753/#4754 acceptance. Simultaneously active projects,
-interruption recovery with new feedback, remaining collaborative editing/failure
-paths, and the newly added per-finding continuation still need real UX acceptance.
+A subsequent real finding-card continuation exposed that inheriting the parent's
+full scope restarted unrelated directions. The scope fix was retested through the
+same Feishu UI: the successor investigated only the selected B-cost finding and
+completed with B=9, retaining source limitations. A separate document-bound
+successor ran concurrently, was individually paused and resumed, then completed
+with its own A=8/B=12 evidence. Pausing it did not pause the finding successor;
+neither original project changed. The document successor also excluded the
+previous confirmed export from its source snapshot. Repeated clicks on the same
+finding card created only one successor, and its source link reopened the original
+finding.
+
+This is not the complete #4753/#4754 acceptance. Interruption recovery with new
+feedback and remaining collaborative editing/failure paths still need real UX
+acceptance. The parallel run above covers one document-bound and one supplied-
+material project; it is not evidence for every cross-document failure scenario.
 Source fields are structurally checked; this is not factual
 verification or proof that a model actually consulted a source.
 
