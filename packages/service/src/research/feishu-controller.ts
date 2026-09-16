@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { isAbsolute } from 'node:path';
 import { ProjectStore } from './project.js';
-import { ResearchManager, type StepRunner, type ProjectAction } from './manager.js';
+import { ResearchManager, type TaskRunner, type ProjectAction } from './manager.js';
 import { createResearchRunner } from './runner.js';
 import { indexCard, projectCard, evidenceCard, historyCard, projectLinkPreviewCard } from './cards.js';
 import type { DocumentReader, DocumentAppender } from './document-source.js';
@@ -23,7 +23,7 @@ function callbackValue(action: Record<string, unknown>): Record<string, unknown>
 /** A persistent project surface; ordinary conversation turns never own its state. */
 export class FeishuResearchController {
   readonly manager: ResearchManager;
-  constructor(directory: string, workspace: string, private readonly send: Sender, update: Updater, runner: StepRunner = createResearchRunner(workspace), readDocument?: DocumentReader, appendDocument?: DocumentAppender, private readonly resolveWorkingDir?: (chat: string) => Promise<string>) {
+  constructor(directory: string, workspace: string, private readonly send: Sender, update: Updater, runner: TaskRunner = createResearchRunner(workspace), readDocument?: DocumentReader, appendDocument?: DocumentAppender, private readonly resolveWorkingDir?: (chat: string) => Promise<string>) {
     if (!isAbsolute(directory)) { throw new Error('Research project storage must use an absolute directory'); }
     this.manager = new ResearchManager(new ProjectStore(directory), runner, async project => {
       const card = projectCard(project);

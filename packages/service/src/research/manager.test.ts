@@ -3,10 +3,18 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ProjectStore, type ResearchStep, type StepResult, parseStepResult } from './project.js';
+import { ProjectStore, type ResearchProject, type Finding } from './project.js';
+import { parseTaskCheckpoint, type TaskCheckpoint } from '../harness/task-checkpoint.js';
 import type { DocumentReader, DocumentAppender } from './document-source.js';
-import { ResearchManager, type StepRunner } from './manager.js';
+import { ResearchManager, type TaskRunner } from './manager.js';
 
+// Scripted test agent: this particular fixture chooses three updates. The
+// production manager no longer selects or knows these stages. Separate cases
+// below exercise direct completion and arbitrary continued work.
+type ResearchStep = { type: 'plan' } | { type: 'investigate'; directionId: string } | { type: 'synthesize' };
+type Decision = { feedbackIndex: number; status: 'applied' | 'rejected'; reason: string; directionIndexes: number[] };
+type StepResult = { clarification: string } | { directions: string[]; feedbackDecisions?: Decision[] } | { findings: Finding[] } | { summary: string; questions: string[] };
+type StepRunner = (p: ResearchProject, step: ResearchStep, signal: AbortSignal) => Promise<StepResult>;
 const managers: ResearchManager[] = [], directories: string[] = [];
 afterEach(() => { managers.splice(0).forEach(m => m.dispose()); directories.splice(0).forEach(p => rmSync(p, { recursive: true, force: true })); });
 const input = { owner: 'alice', chat: 'chat-a', source: 'form-1', title: 'Compare the supplied reports', scope: 'Limit claims to the evidence', materials: 'Report A: cost 10; report B: cost 12.' };
@@ -16,6 +24,24 @@ function fixture(runner: StepRunner = (p, step) => Promise.resolve(step.type ===
   directions: ['Compare costs'], feedbackDecisions: p.feedback.flatMap((f, feedbackIndex) =>
     f.status === 'pending' || f.status === 'needs-clarification' ? [{ feedbackIndex, status: 'applied' as const, reason: 'Compare the requested evidence in the cost direction.', directionIndexes: [0] }] : []),
 } : result(step)), publish = vi.fn(() => Promise.resolve('card-1')), directory?: string, readDocument?: DocumentReader, appendDocument?: DocumentAppender) {
+  return checkpointFixture(async (p, signal) => {
+    const direction = p.directions.find(d => d.status === 'pending');
+    const step: ResearchStep = p.feedback.some(f => f.status === 'pending' || f.status === 'needs-clarification') || !p.directions.length
+      ? { type: 'plan' } : direction ? { type: 'investigate', directionId: direction.id } : { type: 'synthesize' };
+    const response = await runner(p, step, signal);
+    const base = { message: 'Scripted task progress', work: [], feedback: [], questions: [] };
+    if ('clarification' in response) { return { ...base, state: 'waiting-user', clarification: response.clarification }; }
+    if ('directions' in response) {
+      return { ...base, state: 'continue', work: [
+        ...response.directions.map(title => ({ title, status: 'pending' as const, findings: [] })),
+        ...p.directions.filter(d => d.status === 'pending').map(d => ({ ...d, status: 'stopped' as const })),
+      ], feedback: (response.feedbackDecisions ?? []).map(d => ({ ...d, workIndexes: d.directionIndexes })) };
+    }
+    if ('findings' in response) { return { ...base, state: 'continue', work: [{ ...direction!, status: 'done', findings: response.findings }] }; }
+    return { ...base, state: 'complete', ...response };
+  }, publish, directory, readDocument, appendDocument);
+}
+function checkpointFixture(runner: TaskRunner, publish = vi.fn(() => Promise.resolve('card-1')), directory?: string, readDocument?: DocumentReader, appendDocument?: DocumentAppender) {
   const dir = directory ?? mkdtempSync(join(tmpdir(), 'research-state-')); if (!directory) { directories.push(dir); }
   const manager = new ResearchManager(new ProjectStore(dir), runner, publish, readDocument, appendDocument); managers.push(manager);
   return { manager, dir, publish };
@@ -187,6 +213,7 @@ describe('persistent research lifecycle', () => {
     await manager.act(p.id, 'alice', 'chat-a', p.revision, 'resume'); await manager.idle(p.id);
     const done = manager.get(p.id, 'alice', 'chat-a');
     expect(done.status).toBe('completed'); expect(done.directions[0].findings).toEqual([finding]);
+    expect(done.questions).toEqual(['Will costs change?']);
     const successor = await manager.create({ ...input, source: 'continue-1', parent: p.id });
     expect(successor.id).not.toBe(p.id); expect(successor.parent).toBe(p.id);
     expect(successor.priorResults?.findings).toEqual([finding]);
@@ -397,19 +424,91 @@ describe('persistent research lifecycle', () => {
     store.open(); store.close();
     expect(existsSync(join(dir, '.owner'))).toBe(false);
   });
+  it('allows evidence and completion in one turn without a mandatory plan or synthesis turn', async () => {
+    const runner = vi.fn<TaskRunner>(() => Promise.resolve({ state: 'complete', message: 'Verified supplied costs',
+      work: [{ title: 'Cost check', status: 'done', findings: [finding] }], feedback: [], summary: 'A costs less.', questions: [] }));
+    const { manager } = checkpointFixture(runner);
+    const p = await manager.create(input);
+    await manager.act(p.id, 'alice', 'chat-a', p.revision, 'resume'); await manager.idle(p.id);
+    const done = manager.get(p.id, 'alice', 'chat-a');
+    expect(runner).toHaveBeenCalledTimes(1);
+    expect(done.status).toBe('completed'); expect(done.stepCount).toBe(1);
+    expect(done.directions[0].findings).toEqual([finding]);
+  });
+
+  it('persists ordinary task work through a question, restart and new feedback without a research-stage contract', async () => {
+    let calls = 0;
+    const first = checkpointFixture(() => Promise.resolve(++calls === 1
+      ? { state: 'continue', message: 'Located missing build input', work: [{ title: 'Diagnose build', status: 'done', findings: [] }], feedback: [], questions: [] }
+      : { state: 'waiting-user', message: 'Need input location', clarification: 'Which catalog should the build use?', work: [], feedback: [], questions: [] }));
+    const p = await first.manager.create({ ...input, title: 'Diagnose and explain a build failure' });
+    await first.manager.act(p.id, 'alice', 'chat-a', p.revision, 'resume'); await first.manager.idle(p.id);
+    const waiting = first.manager.get(p.id, 'alice', 'chat-a');
+    expect(waiting.status).toBe('waiting-user'); expect(calls).toBe(2);
+    first.manager.dispose();
+    const resumed = checkpointFixture(snapshot => {
+      expect(snapshot.directions).toEqual(waiting.directions);
+      expect(snapshot.feedback[0].text).toBe('Use catalog-2026.csv');
+      return Promise.resolve({ state: 'complete', message: 'Explained required input', work: [{ title: 'Resolve build input', status: 'done', findings: [] }],
+        feedback: [{ feedbackIndex: 0, status: 'applied', reason: 'The requested catalog is named in the resolution.', workIndexes: [0] }], summary: 'Supply catalog-2026.csv to the build.', questions: [] });
+    }, undefined, first.dir).manager;
+    await resumed.act(p.id, 'alice', 'chat-a', waiting.revision, 'feedback', 'Use catalog-2026.csv');
+    await resumed.act(p.id, 'alice', 'chat-a', resumed.get(p.id, 'alice', 'chat-a').revision, 'resume'); await resumed.idle(p.id);
+    const done = resumed.get(p.id, 'alice', 'chat-a');
+    expect(done.status).toBe('completed'); expect(done.directions).toHaveLength(2);
+    expect(done.directions[0]).toEqual(waiting.directions[0]);
+    expect(done.feedback[0].directionIds).toEqual([done.directions[1].id]);
+  });
+
+  it('retains checkpoint evidence but does not complete over feedback arriving during the turn', async () => {
+    const entered = deferred<void>(), gate = deferred<TaskCheckpoint>(); let calls = 0;
+    const { manager } = checkpointFixture(snapshot => {
+      if (++calls === 1) { entered.resolve(); return gate.promise; }
+      expect(snapshot.directions[0].findings).toEqual([finding]);
+      expect(snapshot.feedback[0].status).toBe('pending');
+      return Promise.resolve({ state: 'complete', message: 'Checked correction', work: [{ title: 'Tax check', status: 'done', findings: [] }],
+        feedback: [{ feedbackIndex: 0, status: 'applied', reason: 'Correction addressed by tax check.', workIndexes: [0] }], summary: 'Corrected result', questions: [] });
+    });
+    const p = await manager.create(input); await manager.act(p.id, 'alice', 'chat-a', p.revision, 'resume'); await entered.promise;
+    await manager.act(p.id, 'alice', 'chat-a', manager.get(p.id, 'alice', 'chat-a').revision, 'feedback', 'Include tax');
+    gate.resolve({ state: 'complete', message: 'Original check', work: [{ title: 'Costs', status: 'done', findings: [finding] }], feedback: [], summary: 'Stale result', questions: [] });
+    await manager.idle(p.id);
+    const done = manager.get(p.id, 'alice', 'chat-a');
+    expect(calls).toBe(2); expect(done.summary).toBe('Corrected result');
+    expect(done.directions[0].findings).toEqual([finding]);
+  });
+
+  it('rejects a whole invalid checkpoint without partially committing work or feedback', async () => {
+    const { manager } = checkpointFixture(() => Promise.resolve({ state: 'continue', message: 'Invalid update',
+      work: [{ title: 'Valid addition', status: 'done', findings: [finding] }, { id: 'missing', title: 'Bad update', status: 'done', findings: [] }],
+      feedback: [{ feedbackIndex: 0, status: 'applied', reason: 'Applied', workIndexes: [0] }], questions: [] }));
+    const p = await manager.create(input); await manager.act(p.id, 'alice', 'chat-a', p.revision, 'feedback', 'Check costs');
+    await manager.act(p.id, 'alice', 'chat-a', manager.get(p.id, 'alice', 'chat-a').revision, 'resume'); await manager.idle(p.id);
+    const failed = manager.get(p.id, 'alice', 'chat-a');
+    expect(failed.status).toBe('failed'); expect(failed.directions).toEqual([]); expect(failed.feedback[0].status).toBe('pending');
+  });
+
+  it('pauses on the turn budget without fabricating completion or a final result', async () => {
+    const runner = vi.fn<TaskRunner>(() => Promise.resolve({ state: 'continue', message: 'Still working', work: [], feedback: [], questions: [] }));
+    const { manager } = checkpointFixture(runner);
+    const p = await manager.create(input); await manager.act(p.id, 'alice', 'chat-a', p.revision, 'resume'); await manager.idle(p.id);
+    const paused = manager.get(p.id, 'alice', 'chat-a');
+    expect(paused.status).toBe('paused'); expect(paused.summary).toBe(''); expect(runner).toHaveBeenCalledTimes(12);
+  });
+
   it('rejects facts with missing source fields', () => {
-    expect(() => parseStepResult(JSON.stringify({ findings: [{ ...finding, sources: [] }] }), { type: 'investigate', directionId: 'd' })).toThrow('缺少来源');
+    expect(() => parseTaskCheckpoint(JSON.stringify({ state: 'continue', message: 'Evidence', work: [{ title: 'Costs', status: 'done', findings: [{ ...finding, sources: [] }] }] }))).toThrow('requires sources');
   });
-  it('accepts an explicit null clarification alongside valid findings without entering a waiting state', () => {
-    expect(parseStepResult(JSON.stringify({ findings: [finding], clarification: null }), { type: 'investigate', directionId: 'd' })).toEqual({ findings: [finding] });
-    expect(() => parseStepResult('{"clarification":null}', { type: 'plan' })).toThrow();
+  it('does not treat a null clarification as waiting, but requires a question when waiting', () => {
+    expect(parseTaskCheckpoint('{"state":"continue","message":"Progress","clarification":null}').state).toBe('continue');
+    expect(() => parseTaskCheckpoint('{"state":"waiting-user","message":"Progress","clarification":null}')).toThrow('requires a question');
   });
-  it('rejects feedback receipts without an actual plan reference or rejection reason', () => {
-    const decision = { feedbackIndex: 0, status: 'applied', reason: 'Compare after-tax totals.', directionIndexes: [0] };
-    const parse = (receipt: Record<string, unknown>) => parseStepResult(JSON.stringify({ directions: ['Tax-inclusive cost'], feedbackDecisions: [receipt] }), { type: 'plan' });
-    expect(() => parse({ ...decision, directionIndexes: [] })).toThrow('关联实际计划');
-    expect(() => parse({ ...decision, directionIndexes: [1] })).toThrow('不存在');
-    expect(() => parse({ ...decision, status: 'rejected', directionIndexes: [], reason: '' })).toThrow('字段无效');
-    expect(parse(decision)).toMatchObject({ feedbackDecisions: [decision] });
+  it('rejects feedback receipts without an actual work reference or rejection reason', () => {
+    const decision = { feedbackIndex: 0, status: 'applied', reason: 'Compare after-tax totals.', workIndexes: [0] };
+    const parse = (receipt: Record<string, unknown>) => parseTaskCheckpoint(JSON.stringify({ state: 'continue', message: 'Progress', work: [{ title: 'Taxes', status: 'pending' }], feedback: [receipt] }));
+    expect(() => parse({ ...decision, workIndexes: [] })).toThrow('actual work');
+    expect(() => parse({ ...decision, workIndexes: [1] })).toThrow('reference');
+    expect(() => parse({ ...decision, status: 'rejected', workIndexes: [], reason: '' })).toThrow('text');
+    expect(parse(decision)).toMatchObject({ feedback: [decision] });
   });
 });

@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { isAbsolute } from 'node:path';
-import { ProjectStore, ResearchDirectoryError, type ResearchProject, type ResearchStep, type StepResult } from './project.js';
+import { ProjectStore, ResearchDirectoryError, type ResearchProject } from './project.js';
 import { changedDocumentFeedback, documentToken, type DocumentReader, type DocumentAppender } from './document-source.js';
+import { parseTaskCheckpoint, type TaskCheckpoint } from '../harness/task-checkpoint.js';
 import { documentDeadline, resultParagraphs } from './document-export.js';
 
-export type StepRunner = (project: ResearchProject, step: ResearchStep, signal: AbortSignal) => Promise<StepResult>;
+export type TaskRunner = (project: ResearchProject, signal: AbortSignal) => Promise<TaskCheckpoint>;
 export type ProjectPublisher = (project: ResearchProject) => Promise<string>;
 export type ProjectAction = 'pause' | 'resume' | 'cancel' | 'feedback' | 'stop-direction' | 'archive' | 'unarchive' | 'export';
 
@@ -16,7 +17,7 @@ export class ResearchManager {
   private loaded = false;
   private disposed = false;
   private readonly exporting = new Set<string>();
-  constructor(private readonly store: ProjectStore, private readonly runner: StepRunner, private readonly publish: ProjectPublisher,
+  constructor(private readonly store: ProjectStore, private readonly runner: TaskRunner, private readonly publish: ProjectPublisher,
     private readonly readDocument?: DocumentReader, private readonly appendDocument?: DocumentAppender) {}
 
   private load(): void {
@@ -81,7 +82,7 @@ export class ResearchManager {
   }
   private checkLegacyLink(p: ResearchProject): void {
     if (p.workingDir) { throw new Error('该研究已有固定项目目录，不支持通过历史关联迁移。'); }
-    if (this.running.has(p.id) || ['running', 'pausing', 'cancelling'].includes(p.status)) { throw new Error('请先暂停研究并等待当前阶段结束，再调整项目关联。'); }
+    if (this.running.has(p.id) || ['running', 'pausing', 'cancelling'].includes(p.status)) { throw new Error('请先暂停研究并等待当前回合结束，再调整项目关联。'); }
   }
   async previewProjectLink(id: string, owner: string, chat: string, revision: number, directory: string): Promise<ResearchProject> {
     this.get(id, owner, chat);
@@ -143,12 +144,12 @@ export class ResearchManager {
     if (action === 'pause') {
       if (p.status !== 'running') { throw new Error('当前项目未在执行。'); }
       p.status = this.running.has(id) ? 'pausing' : 'paused';
-      this.record(p, '已请求暂停：当前阶段收尾后停止，不再开始下一阶段。');
+      this.record(p, '已请求暂停：当前回合收尾后停止，不再开始下一回合。');
     } else if (action === 'cancel') {
       p.status = this.running.has(id) ? 'cancelling' : 'cancelled';
-      this.record(p, '已请求取消：等待当前阶段结束，保留此前成果，不接纳在途结果。');
+      this.record(p, '已请求取消：等待当前回合结束，保留此前成果，不接纳在途结果。');
     } else if (action === 'resume') {
-      if (!['paused', 'failed', 'interrupted', 'waiting-user'].includes(p.status) || this.running.has(id)) { throw new Error('请等待当前阶段收尾后再恢复。'); }
+      if (!['paused', 'failed', 'interrupted', 'waiting-user'].includes(p.status) || this.running.has(id)) { throw new Error('请等待当前回合收尾后再恢复。'); }
       if (p.status === 'waiting-user' && p.feedback.length <= (p.clarificationFeedbackCount ?? p.feedback.length)) { throw new Error('请先提交研究所需的补充信息，再继续。'); }
       p.status = 'running';
       p.clarification = undefined;
@@ -159,7 +160,7 @@ export class ResearchManager {
     } else if (action === 'feedback') {
       if (!value.trim() || value.length > 3000) { throw new Error('请填写 3000 字以内的范围调整或补充意见。'); }
       p.feedback.push({ text: value, status: 'pending', at: new Date().toISOString() });
-      this.record(p, '已收到研究调整；当前阶段结果保留供追溯，下一阶段按新意见重新规划。');
+      this.record(p, '已收到研究调整；当前回合结果保留供追溯，下一回合按新意见处理。');
     } else if (action === 'stop-direction') {
       const d = p.directions.find(d => d.id === value);
       if (!d || d.status !== 'pending') { throw new Error('该方向已结束或不存在。'); }
@@ -250,7 +251,7 @@ export class ResearchManager {
       try {
         p.cardId = await this.publish(structuredClone(p));
         p.deliveryError = undefined;
-      } catch { p.deliveryError = '项目卡片更新失败；可用 /research 重新打开，已有进度保留。'; }
+      } catch { p.deliveryError = '项目卡片更新失败；可用 /project 重新打开，已有进度保留。'; }
       if (!this.disposed) { this.store.save(p); }
     });
     this.publishing.set(p.id, next);
@@ -293,6 +294,63 @@ export class ResearchManager {
       throw new Error('Document sync failed');
     } finally { clearTimeout(timer); }
   }
+  private applyCheckpoint(p: ResearchProject, snapshot: ResearchProject, result: TaskCheckpoint,
+    pending: ResearchProject['feedback'], feedbackCount: number): void {
+    const expected = pending.map(f => p.feedback.indexOf(f));
+    if (result.state !== 'waiting-user' && (result.feedback.length !== expected.length
+      || result.feedback.some(f => !expected.includes(f.feedbackIndex)))) {
+      throw new Error('任务尚未逐条说明待处理意见。');
+    }
+    if (result.feedback.some(f => !expected.includes(f.feedbackIndex))) { throw new Error('意见不属于本次执行上下文。'); }
+    // Validate the entire candidate before changing persisted user-visible state.
+    const directions = structuredClone(p.directions);
+    const updatedIds: string[] = [];
+    for (const update of result.work) {
+      if (update.id) {
+        const prior = snapshot.directions.find(d => d.id === update.id);
+        const target = directions.find(d => d.id === update.id);
+        if (!prior || !target || prior.status !== 'pending' || target.status !== 'pending') {
+          throw new Error('不能覆盖已结束或不存在的工作。');
+        }
+        if (!prior.findings.every(f => update.findings.some(next => JSON.stringify(next) === JSON.stringify(f)))) {
+          throw new Error('工作更新不得删除已有证据。');
+        }
+        Object.assign(target, update);
+        updatedIds.push(target.id);
+      } else {
+        const id = randomUUID();
+        directions.push({ ...update, id });
+        updatedIds.push(id);
+      }
+    }
+    if (result.state === 'complete' && directions.some(d => d.status === 'pending')) {
+      throw new Error('任务仍有待处理工作，不能标记完成。');
+    }
+    p.directions = directions;
+    for (const decision of result.feedback) {
+      const feedback = p.feedback[decision.feedbackIndex];
+      feedback.status = decision.status;
+      feedback.reason = decision.reason;
+      feedback.directionIds = decision.workIndexes.map(index => updatedIds[index]);
+    }
+    this.record(p, result.message);
+    if (result.state === 'waiting-user') {
+      pending.filter(f => f.status === 'pending' || f.status === 'needs-clarification').forEach(f => {
+        f.status = 'needs-clarification'; f.reason = result.clarification;
+      });
+      p.status = 'waiting-user'; p.clarification = result.clarification;
+      p.clarificationFeedbackCount = feedbackCount;
+      this.record(p, '任务需要补充信息，已停止自动推进。请提交回答后继续。');
+    } else if (result.state === 'complete') {
+      if (p.feedback.some(f => f.status === 'pending' || f.status === 'needs-clarification')) {
+        this.record(p, '执行期间收到新意见，成果证据已保留，将处理最新反馈后再结束。');
+      } else {
+        p.summary = result.summary ?? ''; // Required by parseTaskCheckpoint for completion.
+        p.questions = result.questions;
+        p.status = 'completed'; this.record(p, '任务已完成，成果与来源保留。');
+      }
+    }
+  }
   private async execute(p: ResearchProject, signal: AbortSignal): Promise<void> {
     try {
       while (!this.disposed && p.status === 'running') {
@@ -300,18 +358,16 @@ export class ResearchManager {
         if (this.disposed || p.status !== 'running') { break; }
         if (p.stepCount >= 12) {
           p.status = 'paused';
-          this.record(p, '本轮已执行 12 个阶段，已暂停。请检查进展后决定是否继续。');
+          this.record(p, '本轮已执行 12 个执行回合，已暂停。请检查进展后决定是否继续。');
           break;
         }
-        const pending = p.feedback.filter(f => f.status === 'pending' || f.status === 'needs-clarification').slice(0, 24);
-        const direction = p.directions.find(d => d.status === 'pending');
-        const step: ResearchStep = pending.length || !p.directions.length ? { type: 'plan' }
-          : direction ? { type: 'investigate', directionId: direction.id } : { type: 'synthesize' };
-        const feedbackCount = p.feedback.length;
-        this.record(p, step.type === 'plan' ? '正在制定研究计划。' : step.type === 'investigate' ? `正在研究：${direction?.title ?? '当前方向'}` : '正在综合发现与未解决问题。');
+        this.record(p, '正在根据当前目标、材料和反馈推进任务。');
         await this.display(p);
         if (this.disposed || p.status !== 'running') { break; }
-        const result = await this.runner(structuredClone(p), step, signal);
+        const pending = p.feedback.filter(f => f.status === 'pending' || f.status === 'needs-clarification').slice(0, 24);
+        const feedbackCount = p.feedback.length;
+        const snapshot = structuredClone(p);
+        const result = parseTaskCheckpoint(JSON.stringify(await this.runner(snapshot, signal)));
         if (this.disposed || signal.aborted) { return; }
         if (p.status as string !== 'cancelling') { await this.syncDocument(p); }
         if (this.disposed || signal.aborted) { return; }
@@ -321,44 +377,16 @@ export class ResearchManager {
           this.record(p, '研究已取消，在途结果未计入成果。');
           break;
         }
-        if ('clarification' in result) {
-          pending.forEach(f => { f.status = 'needs-clarification'; f.reason = result.clarification; });
-          p.status = 'waiting-user';
-          p.clarification = result.clarification;
-          p.clarificationFeedbackCount = feedbackCount;
-          this.record(p, '研究需要补充信息，已停止自动推进。请在项目中提交回答后继续。');
-        } else if (step.type === 'plan' && 'directions' in result) {
-          const decisions = result.feedbackDecisions ?? [];
-          const expected = pending.map(f => p.feedback.indexOf(f));
-          if (decisions.length !== expected.length || new Set(decisions.map(d => d.feedbackIndex)).size !== decisions.length
-            || decisions.some(d => !expected.includes(d.feedbackIndex))) { throw new Error('计划尚未逐条说明待处理意见。'); }
-          // Preserve previous findings/directions rather than overwrite research history.
-          for (const d of p.directions) { if (d.status === 'pending') { d.status = 'stopped'; } }
-          const additions = result.directions.map(title => ({ id: randomUUID(), title, status: 'pending' as const, findings: [] }));
-          p.directions.push(...additions);
-          for (const decision of decisions) {
-            const feedback = p.feedback[decision.feedbackIndex];
-            feedback.status = decision.status;
-            feedback.reason = decision.reason;
-            feedback.directionIds = decision.directionIndexes.map(index => additions[index].id);
-          }
-          this.record(p, '研究计划已更新；已处理意见可在记录中查看，实质结论待后续研究验证。');
-        } else if (step.type === 'investigate' && 'findings' in result) {
-          const target = p.directions.find(d => d.id === step.directionId);
-          if (!target) { throw new Error('研究方向不存在，请检查项目状态。'); }
-          if (target.status !== 'stopped') { target.findings = result.findings; target.status = 'done'; }
-          this.record(p, target.status === 'stopped' ? `已丢弃停止方向的在途结果：${target.title}` : `完成方向：${target.title}`);
-        } else if (step.type === 'synthesize' && 'summary' in result) {
-          if (p.feedback.some(f => f.status === 'pending')) {
-            this.record(p, '综合期间收到新意见，将重新规划，尚未结束研究。');
-          } else {
-            p.summary = result.summary;
-            p.questions = result.questions;
-            p.status = 'completed';
-            this.record(p, '研究已完成。可查看证据与未解决问题，或创建关联的后续研究。');
-          }
-        } else { throw new Error('研究阶段返回了不匹配的结果。'); }
-        if (p.status as string === 'pausing') { p.status = 'paused'; this.record(p, '当前阶段已收尾，研究已暂停。'); }
+        // A user stop invalidates the in-flight checkpoint, including conclusions
+        // whose dependency on the stopped work cannot be established safely.
+        const stoppedDuringTurn = snapshot.directions.some(before => before.status !== 'stopped'
+          && p.directions.find(d => d.id === before.id)?.status === 'stopped');
+        if (stoppedDuringTurn) {
+          this.record(p, '已丢弃停止工作时的在途结果，将按最新控制状态继续。');
+        } else {
+          this.applyCheckpoint(p, snapshot, result, pending, feedbackCount);
+        }
+        if (p.status as string === 'pausing') { p.status = 'paused'; this.record(p, '当前回合已收尾，研究已暂停。'); }
       }
       // A control operation can arrive while the pre-step card update is in flight.
       if (p.status === 'pausing') { p.status = 'paused'; this.record(p, '研究已暂停。'); }
@@ -366,7 +394,7 @@ export class ResearchManager {
     } catch (error) {
       if (!this.disposed) {
         p.status = p.status as string === 'cancelling' ? 'cancelled' : 'failed';
-        p.error = error instanceof ResearchDirectoryError ? error.message : '当前阶段未完成，已有成果保留。可检查材料后恢复重试。';
+        p.error = error instanceof ResearchDirectoryError ? error.message : '当前回合未完成，已有成果保留。可检查材料后恢复重试。';
         this.record(p, p.error);
       }
     } finally { if (!this.disposed) { await this.display(p); } }

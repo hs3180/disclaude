@@ -4,8 +4,9 @@
 > `/research` command, research mode or research-only enablement step. Research
 > runs within the existing project using reusable harness capabilities. See the
 > [current design and acceptance gates](proposals/project-research-convergence.md).
-> The implementation described below still has a dedicated controller, opt-in
-> store and fixed planning/investigation/synthesis runner. It requires refactoring;
+> The implementation still has a dedicated controller and opt-in store. Its
+> runner now accepts agent-directed work checkpoints; the stage-based behavior
+> below is historical. Project entry and enablement still require refactoring;
 > these instructions describe the draft, not the intended 0.6.0 product contract.
 > Existing records, workspaces and callbacks must remain accessible. Historical
 > test results do not establish acceptance of the replacement harness.
