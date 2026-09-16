@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import nock from 'nock';
 import { verifyNativeBrowserPage } from './helpers/native-browser-page.js';
+import { seedNativeBrowserCookie, hasNativeBrowserCookie } from './helpers/native-browser-cookie.js';
 import { connect } from '../../packages/service/src/browser-control/cdp.mjs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -74,6 +75,7 @@ describe('Chromium native Linux user-service installation and recovery', () => {
         expect(version.webSocketDebuggerUrl).toMatch(/^ws:/);
         const initialClient = await open(version.webSocketDebuggerUrl);
         const initialPid = await verifyNativeBrowserPage(initialClient, profile, port);
+        const cookieMarker = await seedNativeBrowserCookie(initialClient);
         await expect(command('start')).rejects.toThrow();
         await expect(command('restart', { CHROMIUM_CDP_BINARY: join(root, 'missing') })).rejects.toThrow();
         expect(await readFile(config, 'utf8')).toBe(beforeConfig);
@@ -93,6 +95,8 @@ describe('Chromium native Linux user-service installation and recovery', () => {
         const restartedClient = await open(restarted.webSocketDebuggerUrl);
         const restartedPid = await verifyNativeBrowserPage(restartedClient, profile, port);
         expect(restartedPid).not.toBe(initialPid);
+        const cookieAfterRestart = await hasNativeBrowserCookie(restartedClient, cookieMarker);
+        expect(cookieAfterRestart, 'Linux service profile must retain its persistent cookie after restart').toBe(true);
         // The real browser passes the disposable-profile preflight, but the
         // selected executable exits when systemd uses the persistent port.
         let failure = '';
@@ -107,6 +111,12 @@ describe('Chromium native Linux user-service installation and recovery', () => {
         expect(recovered.webSocketDebuggerUrl).not.toBe(version.webSocketDebuggerUrl);
         const client = await open(recovered.webSocketDebuggerUrl);
         await verifyNativeBrowserPage(client, profile, port);
+        const cookieAfterRecovery = await hasNativeBrowserCookie(client, cookieMarker);
+        expect(cookieAfterRecovery, 'Linux service profile must retain its persistent cookie after recovery').toBe(true);
+        console.info('NATIVE_SERVICE_COOKIE_PERSISTENCE', JSON.stringify({ platform: process.platform,
+          arch: process.arch, browser: recovered.Browser, profile: 'owned-systemd-service', headed,
+          inSession: true, afterRestart: cookieAfterRestart, afterFailedReplacementRecovery: cookieAfterRecovery,
+          syntheticCookie: true, realAccountLoginVerified: false }));
         expect(JSON.parse((await command('status')).stdout).cdpReady).toBe(true);
         await command('stop');
         expect(JSON.parse((await command('status')).stdout).loaded).toBe(false);
