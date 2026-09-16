@@ -57,8 +57,10 @@ protection. These fixture tests do not replace real Feishu acceptance. On 2026-0
 a real card selection and submission returned Beta to the original Codex request
 and completed the same turn. A separate attempt exposed the ordinary watchdog
 cancelling a non-blocking question after three minutes; the pending-input watchdog
-fix has regression coverage, but its long-wait Feishu retest is still outstanding.
-Private-input and remaining lifecycle acceptance are also outstanding (#5000).
+fix has regression coverage and passed a real Feishu retest: after more than
+four minutes, a two-question card accepted a selected option and a separate
+free-text answer, then completed the same turn with both values. Private-input
+and remaining lifecycle acceptance are still outstanding (#5000).
 
 An opt-in E2E uses the installed Codex CLI and configured model credentials to
 ask a real tool question, generate the product card, explicitly submit a test
