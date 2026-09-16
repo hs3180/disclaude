@@ -1,6 +1,6 @@
 ---
 name: browser-use
-description: Browser automation via the browser-use CLI — pipe Python on stdin, it runs in a persistent browser session with daemon/CDP attach managed for you. First-class script injection/eval (js(), cdp()). Use for browser tasks, scraping, screenshots, form filling, and executing arbitrary JS in a live page. Keywords: 'browser', '浏览器', '网页自动化', 'browser-use', 'screenshot', '网页截图', 'inject script', '注入脚本', 'eval js', 'scrape'.
+description: "Browser tasks, scraping, screenshots and forms via browser-use. Pipe Python through the coordinator's IPC entry; it owns the persistent session and control handoff. Do not connect directly to CDP. Supports js() and cdp()."
 argument-hint: "<piped Python via stdin, e.g. browser-use <<'PY' ... PY>"
 allowed-tools: [Bash, Read, Write]
 ---
