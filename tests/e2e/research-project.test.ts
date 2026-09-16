@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { randomInt } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Config, setDefaultProvider, clearProviderCache } from '@disclaude/core';
@@ -58,20 +59,29 @@ describe('research project using supplied evidence and the configured model', ()
       controller.dispose(); clearProviderCache(); await rm(root, { recursive: true, force: true });
     }
   }, 240_000);
-  it.skipIf(process.env.DISCLAUDE_E2E_RESEARCH !== '1')('continues from a project form to retained findings without more chat turns', async () => {
+  it.skipIf(process.env.DISCLAUDE_E2E_RESEARCH !== '1')('reads the original project files after a directory switch and retains findings after restart', async () => {
     // Match the backend initialization performed by DisclaudeService.start().
     setDefaultProvider(Config.AGENT_BACKEND);
     const root = await mkdtemp(join(tmpdir(), 'research-e2e-'));
+    const originalDir = join(root, 'original-project'), otherDir = join(root, 'other-project');
+    const priceA = randomInt(100, 800), priceB = priceA + 7;
+    let currentDir = originalDir;
     let cards = 0;
-    const controller = new FeishuResearchController(join(root, 'store'), root,
-      () => Promise.resolve(`captured-card-${++cards}`), () => Promise.resolve());
+    let controller: FeishuResearchController | undefined;
     try {
+      controller = new FeishuResearchController(join(root, 'store'), root,
+        () => Promise.resolve(`captured-card-${++cards}`), () => Promise.resolve(), undefined, undefined, undefined, () => Promise.resolve(currentDir));
+      await mkdir(originalDir); await mkdir(otherDir);
+      await writeFile(join(originalDir, 'proposals.txt'), `Fictional acceptance evidence. Proposal A: total price USD ${priceA}. Proposal B: total price USD ${priceB}. Both cover exactly the same deliverables.\n`);
+      await writeFile(join(otherDir, 'proposals.txt'), 'Unrelated project. Proposal A: USD 9000. Proposal B: USD 1000.\n');
       await controller.handle({ operator: { open_id: 'test-owner' }, context: { open_chat_id: 'test-chat', open_message_id: 'test-form' }, action: {
         value: { research: true, action: 'create', nonce: 'one-project' },
-        form_value: { question: 'Which supplied proposal costs less?', scope: 'Use only the supplied material. Investigate one direction: price comparison. Do not use external sources or tools. Return a short English conclusion.', materials: 'Proposal A: total price USD 10. Proposal B: total price USD 12. Both cover exactly the same deliverables.' },
+        form_value: { question: 'Which supplied proposal costs less?', scope: 'Read only proposals.txt in the current working directory during investigation. Investigate one direction: price comparison. No external sources or other files. Return a short English conclusion stating both exact USD totals and the absolute difference.', materials: 'The authoritative proposal prices are in proposals.txt in this project. Read the file; do not infer prices.' },
       } });
       const project = controller.manager.list('test-owner', 'test-chat')[0];
       expect(project).toBeDefined();
+      expect(project.workingDir).toBe(originalDir);
+      currentDir = otherDir; // Subsequent chat binding changes must not relocate this research.
       await controller.handle({ operator: { open_id: 'test-owner' }, context: { open_chat_id: 'test-chat', open_message_id: project.cardId }, action: {
         value: { research: true, action: 'feedback', project: project.id, revision: project.revision },
         form_value: { feedback: 'Include the absolute savings in USD in the price comparison.' },
@@ -85,12 +95,26 @@ describe('research project using supplied evidence and the configured model', ()
       expect(finished.status, finished.error).toBe('completed');
       expect(finished.directions.some(direction => direction.findings.some(finding => finding.sources.length > 0))).toBe(true);
       expect(finished.summary).toMatch(/proposal\s*a|\bA\b/i);
+      expect(finished.summary).toContain(String(priceA));
+      expect(finished.summary).toContain(String(priceB));
+      expect(finished.summary).toMatch(/\b7\b/u);
+      expect(finished.summary).not.toMatch(/9000|1000/u);
+      expect(finished.workingDir).toBe(originalDir);
+      console.info('PROJECT_DIRECTORY_RESEARCH_CONCLUSION', finished.summary);
       expect(finished.feedback[0]).toMatchObject({ status: 'applied', reason: expect.any(String) });
       expect(finished.feedback[0].directionIds?.some(id => finished.directions.some(d => d.id === id && d.findings.length > 0))).toBe(true);
       controller.dispose();
-      const reopened = new FeishuResearchController(join(root, 'store'), root, () => Promise.resolve('reopened-card'), () => Promise.resolve());
-      try { expect(reopened.manager.get(project.id, 'test-owner', 'test-chat').summary).toBe(finished.summary); }
+      const reopened = new FeishuResearchController(join(root, 'store'), otherDir, () => Promise.resolve('reopened-card'), () => Promise.resolve(), undefined, undefined, undefined, () => Promise.resolve(currentDir));
+      try {
+        const retained = reopened.manager.get(project.id, 'test-owner', 'test-chat');
+        expect(retained.summary).toBe(finished.summary);
+        expect(retained.workingDir).toBe(originalDir);
+        expect(retained.directions).toEqual(finished.directions);
+      }
       finally { reopened.dispose(); }
-    } finally { controller.dispose(); clearProviderCache(); await rm(root, { recursive: true, force: true }); }
+    } finally {
+      try { controller?.dispose(); clearProviderCache(); }
+      finally { await rm(root, { recursive: true, force: true }); }
+    }
   }, 240_000);
 });

@@ -140,11 +140,24 @@ npx vitest run packages/service/src/research/manager.test.ts packages/service/sr
 ```
 
 The opt-in model integration test uses the configured backend and real research
-runner, with a captured card transport. It creates a project from the actual form
-callback, compares two supplied proposals, submits a price-comparison adjustment, checks its linked investigation and retained sources plus a completed
-summary, and reopens the persisted result. It makes model API calls; use an isolated
-configuration/workspace and test credentials. It does not send Feishu messages or
-exercise external source retrieval unless the document case is enabled.
+runner, with captured card transport. It creates two temporary project directories
+with conflicting `proposals.txt` files. The original file contains randomized
+fictional prices that are not included in the model prompt. After creation through
+the form callback, the test switches the directory resolver, submits an adjustment
+and runs research. It checks the original prices and savings in the conclusion,
+linked investigation and sources, then reopens with a different default directory
+and verifies the original binding and findings remain intact. Temporary directories
+are removed in `finally`.
+
+On 2026-09-16 this case passed in 39.0 seconds: A=722, B=729, savings=7 from the
+original file, despite the other directory containing A=9000/B=1000. The runtime
+recorded a file-reading tool call; all three model turns completed, and no temporary
+`research-e2e-*` directory remained. This is model/directory integration evidence,
+not live Feishu rendering, clicks or interruption recovery.
+
+It makes model API calls; use an isolated configuration/workspace and test
+credentials. It does not send Feishu messages or exercise external source retrieval
+unless the document case is enabled.
 
 The document case additionally requires `DISCLAUDE_E2E_RESEARCH_DOCUMENT` (a
 dedicated test Docx URL), `FEISHU_APP_ID` and `FEISHU_APP_SECRET`. Its fixture is a
