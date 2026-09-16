@@ -95,8 +95,8 @@ globs to clean concurrent test runs or user workspaces.
 The Node/npm matrix helper `scripts/test-git-node22.mjs` also removes its isolated
 Node/npm tooling and download cache on success or ordinary assertion failure.
 It reports `MATRIX_TOOLING_CLEANUP_OK`; `--keep-temp` explicitly retains that
-helper directory. If a subprocess times out or exceeds the captured-output bound,
-it reports `MATRIX_TOOLING_RETAINED` instead because termination is unconfirmed.
+helper directory. If a subprocess is signaled, times out, exceeds the captured-output bound,
+or an inner package test reports retained files, it reports `MATRIX_TOOLING_RETAINED` instead because termination is unconfirmed.
 Inspect the reported directory and process state before manual cleanup. This does
 not add signal/forced-termination recovery, and nested installation tests retain
 their own cleanup diagnostics.
