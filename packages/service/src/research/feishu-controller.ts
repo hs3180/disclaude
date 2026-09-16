@@ -38,7 +38,14 @@ export class FeishuResearchController {
   }
   async open(owner: string, chat: string, thread?: string): Promise<void> {
     if (!owner || !chat) { throw new Error('无法确认研究项目的用户和会话。'); }
-    await this.send({ chatId: chat, type: 'card', threadId: thread, card: indexCard(this.manager.list(owner, chat), randomUUID()) });
+    await this.showIndex(owner, chat, thread);
+  }
+  private async showIndex(owner: string, chat: string, thread?: string, offset = 0, archived = false): Promise<void> {
+    let workingDir: string | undefined, error: string | undefined;
+    try { workingDir = await this.resolveWorkingDir?.(chat); }
+    catch { error = '当前项目目录不可用，暂不能建立新研究。请用 /project info 检查，或用 /project use <目录> 切换。已有研究仍可打开。'; }
+    await this.send({ chatId: chat, type: 'card', threadId: thread,
+      card: indexCard(this.manager.list(owner, chat, archived), randomUUID(), offset, archived, { workingDir, error }) });
   }
   async handle(raw: Record<string, unknown>): Promise<void> {
     const context = object(raw.context), operator = object(raw.operator), action = object(raw.action);
@@ -48,7 +55,7 @@ export class FeishuResearchController {
       const value = callbackValue(action), form = object(action.form_value);
       const actionName = string(value.action), id = string(value.project);
       if (actionName === 'index') {
-        await this.send({ chatId: chat, type: 'card', threadId: message, card: indexCard(this.manager.list(owner, chat, value.archived === true), randomUUID(), page(value.offset), value.archived === true) });
+        await this.showIndex(owner, chat, message, page(value.offset), value.archived === true);
         return;
       }
       if (actionName === 'create') {

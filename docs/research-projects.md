@@ -10,12 +10,20 @@ fails visibly without recreating it or falling back to another workspace.
 Legacy research without a binding retains its original independent execution
 directory and is labeled as unassociated; it is not assigned to the current chat's
 project. The [project/research convergence proposal](proposals/project-research-convergence.md)
-records the remaining unified navigation, identity, migration and real acceptance
-work. Directory association alone does not complete that proposal. Research
+records the remaining explicit legacy association and real acceptance work.
+The existing directory binding remains the project context; there is no second
+general project registry. Directory association alone does not complete the
+proposal. Research
 remains a persistent UX, not a project template.
 
-The opt-in Feishu project entry is `/research`. It opens a project index and a
-creation form; it is a product command, not a skill invocation. Creating a project
+When research is enabled, the Feishu project home is `/project`; `/research` is
+a shortcut to the same home, records and creation form. `/project info/use/reset`
+retain their existing control behavior, and without research enabled bare
+`/project` retains its existing info behavior. The home shows the current directory
+and the bound directory of each research, including unassociated legacy records.
+A missing current directory disables creation without hiding existing research.
+Each research card links back to that home. The research entry is a product
+command, not a skill invocation. Creating a project
 shows its scope and controls before any research runs. The user then starts the
 project from its card. Planning, investigation and synthesis run independently of
 ordinary chat turns through the existing agent runtime.

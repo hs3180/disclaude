@@ -16,7 +16,7 @@ export function researchCard(title: string, elements: unknown[]): Record<string,
 }
 export function projectCard(p: ResearchProject): Record<string, unknown> {
   const value = { project: p.id, revision: p.revision };
-  const actions: unknown[] = [researchButton('刷新项目', { ...value, action: 'refresh' })];
+  const actions: unknown[] = [researchButton('刷新研究', { ...value, action: 'refresh' }), researchButton('返回项目首页', { action: 'index' })];
   if (p.status === 'running') { actions.push(researchButton('暂停研究', { ...value, action: 'pause' })); }
   if (['paused', 'failed', 'interrupted', 'waiting-user'].includes(p.status)) { actions.push(researchButton(p.directions.length ? '恢复研究' : '开始研究', { ...value, action: 'resume' }, true)); }
   if (!['completed', 'cancelled', 'cancelling'].includes(p.status)) { actions.push(researchButton('取消研究', { ...value, action: 'cancel' })); }
@@ -90,21 +90,23 @@ export function historyCard(p: ResearchProject, offset: number): Record<string, 
     researchButton('返回项目', { project: p.id, action: 'open' }),
   ]);
 }
-export function indexCard(projects: ResearchProject[], nonce: string, offset = 0, archived = false): Record<string, unknown> {
-  return researchCard(archived ? '归档的研究项目' : '我的研究项目', [
-    group([text('研究围绕项目持续推进。可以随时重返、查看证据、调整方向或暂停。项目控制由创建者操作。'),
+export function indexCard(projects: ResearchProject[], nonce: string, offset = 0, archived = false, context: { workingDir?: string; error?: string } = {}): Record<string, unknown> {
+  return researchCard(archived ? '项目 · 归档研究' : '项目 · 工作空间与研究', [
+    group([text(context.workingDir ? `当前项目工作目录\n${context.workingDir}` : context.error ?? '尚未关联项目工作目录'),
+      text('使用 /project use <目录> 切换，/project reset 返回默认目录，/project info 查看详情。切换不影响已建立的研究。')]),
+    group([text('下面是你在本会话的研究，包含其他目录及未关联的历史研究。每项研究可独立查看证据、调整方向或暂停，控制由创建者操作。'),
       { tag: 'div', text: { ...plain('可关联一份新版飞书文档，在阶段边界同步文字正文与评论。研究完成后可选择追加成果；未关联的链接不会自动同步。'), text_size: 'notation', text_color: 'grey' } }]),
     group([
-    researchButton(archived ? '返回项目列表' : '查看归档项目', { action: 'index', archived: !archived }),
-    ...projects.slice(offset, offset + 6).flatMap(p => [text(`${p.title} · ${labels[p.status]}`), researchButton('打开项目', { project: p.id, action: 'open' })]),
-    ...(projects.length > offset + 6 ? [researchButton('更多项目', { action: 'index', offset: offset + 6, archived })] : []),
+    researchButton(archived ? '返回研究列表' : '查看归档研究', { action: 'index', archived: !archived }),
+    ...projects.slice(offset, offset + 6).flatMap(p => [text(`${p.title} · ${labels[p.status]}\n${p.workingDir ? `工作目录：${p.workingDir}${p.workingDir === context.workingDir ? '（当前项目）' : ''}` : '历史研究 · 未关联项目目录'}`), researchButton('打开研究', { project: p.id, action: 'open' })]),
+    ...(projects.length > offset + 6 ? [researchButton('更多研究', { action: 'index', offset: offset + 6, archived })] : []),
     ]),
-    { tag: 'form', name: 'research_create', elements: [
+    ...(!context.error ? [text('新研究使用提交表单时的当前项目目录。建立后先展示目录与范围，点击开始才会执行。'), { tag: 'form', name: 'research_create', elements: [
       { tag: 'input', name: 'question', required: true, placeholder: plain('想研究什么？（180 字以内）') },
       { tag: 'input', name: 'scope', placeholder: plain('研究范围、约束与希望得到的成果') },
       { tag: 'input', name: 'materials', placeholder: plain('已有材料、来源链接或摘录') },
       { tag: 'input', name: 'document_url', placeholder: plain('可选：关联的飞书 /docx/ 文档链接（需应用有读取权限）') },
-      submitButton('建立研究项目', { action: 'create', nonce }),
-    ] },
+      submitButton('建立研究', { action: 'create', nonce }),
+    ] }] : []),
   ]);
 }

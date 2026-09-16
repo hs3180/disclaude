@@ -220,19 +220,20 @@ function cardActionEvent(overrides: Record<string, unknown> = {}) {
 // ===========================================================================
 
 describe('MessageHandler', () => {
-  it('routes the research entry and creation form to a persistent project instead of an ordinary chat turn', async () => {
+  it.each(['/research', '/project'])('routes %s and creation to the same persistent research surface', async command => {
     const directory = mkdtempSync(join(tmpdir(), 'research-routing-'));
     const realFs = await vi.importActual<typeof import('fs/promises')>('fs/promises');
-    vi.mocked((await import('fs/promises')).stat).mockImplementationOnce(realFs.stat);
+    vi.mocked((await import('fs/promises')).stat).mockImplementationOnce(realFs.stat).mockImplementationOnce(realFs.stat);
     vi.stubEnv('DISCLAUDE_RESEARCH_PROJECTS_DIR', directory);
     const send = vi.fn().mockResolvedValue('om_project');
     const emitControl = vi.fn().mockResolvedValue({ success: true, projectContext: { workingDir: directory, available: true } });
     const { handler } = createHandler({ callbacks: { emitMessage: mockState.emitMessage, emitControl, sendMessage: send } });
     try {
       handler.initialize({ im: { message: { patch: vi.fn().mockResolvedValue({ code: 0 }) } } } as any);
-      await handler.handleMessageReceive(textEvent('/research'));
+      await handler.handleMessageReceive(textEvent(command));
       const {card} = firstCallArg(send);
-      expect(card.header.title.content).toBe('我的研究项目');
+      expect(card.header.title.content).toBe('项目 · 工作空间与研究');
+      expect(JSON.stringify(card)).toContain(directory);
       const form = card.body.elements.find((element: any) => element.tag === 'form');
       const submit = form.elements.find((element: any) => element.form_action_type === 'submit');
       await handler.handleCardAction(cardActionEvent({ action: { name: submit.name, form_value: { question: 'Compare reports', scope: 'Costs', materials: 'A: 10; B: 12' } } }));
@@ -246,13 +247,39 @@ describe('MessageHandler', () => {
       expect(mockState.emitMessage).not.toHaveBeenCalled();
       emitControl.mockResolvedValue({ success: false });
       await handler.handleCardAction(cardActionEvent({ action: { name: submit.name, form_value: { question: 'Compare reports', scope: 'Costs', materials: 'A: 10; B: 12' } } }));
-      await vi.waitFor(() => expect(emitControl).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(emitControl).toHaveBeenCalledTimes(2));
       expect(readdirSync(directory).filter(name => name.endsWith('.json'))).toHaveLength(1);
       const persisted = readFileSync(join(directory, file ?? ''), 'utf8');
       await handler.handleCardAction(cardActionEvent({ operator: { open_id: 'another-user' }, action: { value: { research: true, action: 'resume', project: project.id, revision: project.revision } } }));
       await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(3));
       expect(readFileSync(join(directory, file ?? ''), 'utf8')).toBe(persisted);
       expect(mockState.emitMessage).not.toHaveBeenCalled();
+      await handler.handleCardAction(cardActionEvent({ action: { value: { research: true, action: 'index' } } }));
+      await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(4));
+      const home = send.mock.calls[3][0].card;
+      expect(JSON.stringify(home)).toContain(project.id);
+      expect(JSON.stringify(home)).toContain(directory);
+      expect(JSON.stringify(home)).toContain('已有研究仍可打开');
+      expect(home.body.elements.some((element: any) => element.tag === 'form')).toBe(false);
+      expect(readFileSync(join(directory, file ?? ''), 'utf8')).toBe(persisted);
+
+    } finally { handler.clearClient(); vi.unstubAllEnvs(); rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  it.each(['/project info', '/project use /tmp/project-a', '/project reset'])('keeps %s on the existing control route when research is enabled', async command => {
+    const directory = mkdtempSync(join(tmpdir(), 'research-control-'));
+    vi.stubEnv('DISCLAUDE_RESEARCH_PROJECTS_DIR', directory);
+    mockState.hasControlHandler = true;
+    const emitControl = vi.fn().mockResolvedValue({ success: true, message: 'Existing project command result' });
+    const send = vi.fn().mockResolvedValue('om_reply');
+    const { handler } = createHandler({ callbacks: { emitMessage: mockState.emitMessage, emitControl, sendMessage: send } });
+    try {
+      handler.initialize({ im: { message: { patch: vi.fn().mockResolvedValue({ code: 0 }), reaction: { create: vi.fn().mockResolvedValue({ code: 0 }) } } } } as any);
+      await handler.handleMessageReceive(textEvent(command));
+      expect(emitControl).toHaveBeenCalledWith(expect.objectContaining({ type: 'project', chatId: 'chat_001' }));
+      expect(send).toHaveBeenCalledWith(expect.objectContaining({ text: 'Existing project command result' }));
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+      expect(readdirSync(directory)).toEqual([]);
     } finally { handler.clearClient(); vi.unstubAllEnvs(); rmSync(directory, { recursive: true, force: true }); }
   });
 

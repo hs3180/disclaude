@@ -1305,7 +1305,8 @@ export class MessageHandler {
       return;
     }
 
-    if (/^\/research(?:\s|$)/u.test(textWithoutMentions.trim())) {
+    if (/^\/research(?:\s|$)/u.test(textWithoutMentions.trim())
+      || (this.research && /^\/project\s*$/iu.test(textWithoutMentions.trim()))) {
       if (!this.research) {
         await this.callbacks.sendMessage({ chatId: chat_id, type: 'text', text: '研究项目功能尚未启用，请联系服务管理员。' });
       } else if (sender?.sender_type === 'user') {
