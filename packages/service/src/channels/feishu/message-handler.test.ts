@@ -220,16 +220,20 @@ function cardActionEvent(overrides: Record<string, unknown> = {}) {
 // ===========================================================================
 
 describe('MessageHandler', () => {
-  it('routes the research entry and creation form to a persistent project instead of an ordinary chat turn', async () => {
+  it.each(['/research', '/project'])('routes %s and creation to the same persistent research surface', async command => {
     const directory = mkdtempSync(join(tmpdir(), 'research-routing-'));
+    const realFs = await vi.importActual<typeof import('fs/promises')>('fs/promises');
+    vi.mocked((await import('fs/promises')).stat).mockImplementationOnce(realFs.stat).mockImplementationOnce(realFs.stat);
     vi.stubEnv('DISCLAUDE_RESEARCH_PROJECTS_DIR', directory);
     const send = vi.fn().mockResolvedValue('om_project');
-    const { handler } = createHandler({ callbacks: { emitMessage: mockState.emitMessage, emitControl: mockState.emitControl, sendMessage: send } });
+    const emitControl = vi.fn().mockResolvedValue({ success: true, projectContext: { workingDir: directory, available: true } });
+    const { handler } = createHandler({ callbacks: { emitMessage: mockState.emitMessage, emitControl, sendMessage: send } });
     try {
       handler.initialize({ im: { message: { patch: vi.fn().mockResolvedValue({ code: 0 }) } } } as any);
-      await handler.handleMessageReceive(textEvent('/research'));
+      await handler.handleMessageReceive(textEvent(command));
       const {card} = firstCallArg(send);
-      expect(card.header.title.content).toBe('我的研究项目');
+      expect(card.header.title.content).toBe('项目 · 工作空间与研究');
+      expect(JSON.stringify(card)).toContain(directory);
       const form = card.body.elements.find((element: any) => element.tag === 'form');
       const submit = form.elements.find((element: any) => element.form_action_type === 'submit');
       await handler.handleCardAction(cardActionEvent({ action: { name: submit.name, form_value: { question: 'Compare reports', scope: 'Costs', materials: 'A: 10; B: 12' } } }));
@@ -238,12 +242,93 @@ describe('MessageHandler', () => {
       expect(file).toBeDefined();
       await vi.waitFor(() => expect(JSON.parse(readFileSync(join(directory, file ?? ''), 'utf8')).cardId).toBe('om_project'));
       const project = JSON.parse(readFileSync(join(directory, file ?? ''), 'utf8'));
+      expect(project.workingDir).toBe(directory);
       expect(project.owner).toBe('user_001'); expect(project.chat).toBe('chat_001'); expect(project.status).toBe('paused');
       expect(mockState.emitMessage).not.toHaveBeenCalled();
+      emitControl.mockResolvedValue({ success: false });
+      await handler.handleCardAction(cardActionEvent({ action: { name: submit.name, form_value: { question: 'Compare reports', scope: 'Costs', materials: 'A: 10; B: 12' } } }));
+      await vi.waitFor(() => expect(emitControl).toHaveBeenCalledTimes(2));
+      expect(readdirSync(directory).filter(name => name.endsWith('.json'))).toHaveLength(1);
       const persisted = readFileSync(join(directory, file ?? ''), 'utf8');
       await handler.handleCardAction(cardActionEvent({ operator: { open_id: 'another-user' }, action: { value: { research: true, action: 'resume', project: project.id, revision: project.revision } } }));
       await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(3));
       expect(readFileSync(join(directory, file ?? ''), 'utf8')).toBe(persisted);
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+      await handler.handleCardAction(cardActionEvent({ action: { value: { research: true, action: 'index' } } }));
+      await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(4));
+      const home = send.mock.calls[3][0].card;
+      expect(JSON.stringify(home)).toContain(project.id);
+      expect(JSON.stringify(home)).toContain(directory);
+      expect(JSON.stringify(home)).toContain('已有研究仍可打开');
+      expect(home.body.elements.some((element: any) => element.tag === 'form')).toBe(false);
+      expect(readFileSync(join(directory, file ?? ''), 'utf8')).toBe(persisted);
+
+    } finally { handler.clearClient(); vi.unstubAllEnvs(); rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  it.each(['/project info', '/project use /tmp/project-a', '/project reset'])('keeps %s on the existing control route when research is enabled', async command => {
+    const directory = mkdtempSync(join(tmpdir(), 'research-control-'));
+    vi.stubEnv('DISCLAUDE_RESEARCH_PROJECTS_DIR', directory);
+    mockState.hasControlHandler = true;
+    const emitControl = vi.fn().mockResolvedValue({ success: true, message: 'Existing project command result' });
+    const send = vi.fn().mockResolvedValue('om_reply');
+    const { handler } = createHandler({ callbacks: { emitMessage: mockState.emitMessage, emitControl, sendMessage: send } });
+    try {
+      handler.initialize({ im: { message: { patch: vi.fn().mockResolvedValue({ code: 0 }), reaction: { create: vi.fn().mockResolvedValue({ code: 0 }) } } } } as any);
+      await handler.handleMessageReceive(textEvent(command));
+      expect(emitControl).toHaveBeenCalledWith(expect.objectContaining({ type: 'project', chatId: 'chat_001' }));
+      expect(send).toHaveBeenCalledWith(expect.objectContaining({ text: 'Existing project command result' }));
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+      expect(readdirSync(directory)).toEqual([]);
+    } finally { handler.clearClient(); vi.unstubAllEnvs(); rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  it('requires an explicit legacy-link preview and confirmation through real card callback routing', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'research-link-'));
+    vi.stubEnv('DISCLAUDE_RESEARCH_PROJECTS_DIR', directory);
+    const realFs = await vi.importActual<typeof import('fs/promises')>('fs/promises');
+    vi.mocked((await import('fs/promises')).stat).mockImplementationOnce(realFs.stat).mockImplementationOnce(realFs.stat);
+    const legacy = { id: 'abcdef', owner: 'user_001', chat: 'chat_001', source: 'legacy', title: 'Preserve this research', scope: '', materials: '', status: 'completed', revision: 3, createdAt: '', updatedAt: '', directions: [], summary: 'Existing evidence', questions: [], history: [], feedback: [], stepCount: 3, cardId: 'old-card' };
+    const file = join(directory, 'abcdef.json');
+    writeFileSync(file, JSON.stringify(legacy));
+    const send = vi.fn().mockResolvedValue('preview-card');
+    const { handler } = createHandler({ callbacks: { emitMessage: mockState.emitMessage,
+      emitControl: vi.fn().mockResolvedValue({ success: true, projectContext: { workingDir: directory, available: true } }), sendMessage: send } });
+    try {
+      handler.initialize({ im: { message: { patch: vi.fn().mockResolvedValue({ code: 0 }) } } } as any);
+      await handler.handleCardAction(cardActionEvent({ action: { value: { research: true, action: 'preview-project-link', project: legacy.id, revision: legacy.revision } } }));
+      await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+      const { card } = firstCallArg(send);
+      expect(JSON.stringify(card)).toContain(directory);
+      expect(JSON.stringify(card)).toContain('不移动或复制文件');
+      expect(JSON.parse(readFileSync(file, 'utf8')).projectLink).toBeUndefined();
+      const confirm = card.body.elements.find((element: any) => element.text?.content === '确认关联').behaviors[0].value;
+      expect(confirm.directory).toBeUndefined(); // Target is resolved and checked server-side.
+      await handler.handleCardAction(cardActionEvent({ action: { value: confirm } }));
+      await vi.waitFor(() => expect(JSON.parse(readFileSync(file, 'utf8')).projectLink?.directory).toBe(directory));
+      const linked = JSON.parse(readFileSync(file, 'utf8'));
+      expect(linked.workingDir).toBeUndefined();
+      expect(linked.summary).toBe(legacy.summary);
+      expect(linked.id).toBe(legacy.id);
+      await handler.handleCardAction(cardActionEvent({ action: { value: { research: true, action: 'unlink-project', project: legacy.id, revision: linked.revision } } }));
+      await vi.waitFor(() => expect(JSON.parse(readFileSync(file, 'utf8')).projectLink).toBeUndefined());
+      expect(JSON.parse(readFileSync(file, 'utf8')).summary).toBe(legacy.summary);
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    } finally { handler.clearClient(); vi.unstubAllEnvs(); rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  it('refuses research creation when the bound project is unavailable instead of using the default workspace', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'research-unavailable-'));
+    vi.stubEnv('DISCLAUDE_RESEARCH_PROJECTS_DIR', directory);
+    const send = vi.fn().mockResolvedValue('om_project');
+    const emitControl = vi.fn().mockResolvedValue({ success: true, projectContext: { workingDir: join(directory, 'missing'), available: false } });
+    const { handler } = createHandler({ callbacks: { emitMessage: mockState.emitMessage, emitControl, sendMessage: send } });
+    try {
+      handler.initialize({ im: { message: { patch: vi.fn().mockResolvedValue({ code: 0 }) } } } as any);
+      await handler.handleCardAction(cardActionEvent({ action: { value: { research: true, action: 'create', nonce: 'form' }, form_value: { question: 'Check sources' } } }));
+      await vi.waitFor(() => expect(send).toHaveBeenCalled());
+      expect(firstCallArg(send).text).toContain('/project info');
+      expect(readdirSync(directory).filter(name => name.endsWith('.json'))).toEqual([]);
       expect(mockState.emitMessage).not.toHaveBeenCalled();
     } finally { handler.clearClient(); vi.unstubAllEnvs(); rmSync(directory, { recursive: true, force: true }); }
   });

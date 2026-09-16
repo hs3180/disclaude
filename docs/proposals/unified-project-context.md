@@ -1,6 +1,8 @@
 # Unified ProjectContext Design Proposal
 
-> **状态**: Final
+> **状态**: 历史提案，不能作为当前命令或 Research UX 的使用说明。
+> 当前 `/project` 仅提供 `info/use/reset`，管理会话与工作目录的绑定；下文的模板、`create/list` 及“切换模式 = 切换 project”不代表当前实现。
+> 0.6.0 的研究能力是持久研究体验，不是模板或 Skill。项目与研究的职责及收敛验收见 [项目与研究入口收敛](./project-research-convergence.md)。下文保留用于追溯原设计。
 > **日期**: 2026-04-06
 > **目标**: 统一的 ProjectContext 系统 — per-chatId 的 Agent 上下文切换，基于模板实例化
 > **迁移计划**: [project-context-migration.md](./project-context-migration.md)

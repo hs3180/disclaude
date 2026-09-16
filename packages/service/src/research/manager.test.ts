@@ -23,6 +23,79 @@ function fixture(runner: StepRunner = (p, step) => Promise.resolve(step.type ===
 function deferred<T>() { let resolve!: (v: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 
 describe('persistent research lifecycle', () => {
+  it('retains the original working directory across restart and continuation', async () => {
+    const f = fixture();
+    const original = await f.manager.create({ ...input, workingDir: '/projects/alpha' });
+    await f.manager.act(original.id, 'alice', 'chat-a', original.revision, 'resume');
+    await f.manager.idle(original.id);
+    const completed = f.manager.get(original.id, 'alice', 'chat-a');
+    f.manager.dispose();
+    const reopened = fixture(undefined, undefined, f.dir).manager;
+    expect(reopened.get(original.id, 'alice', 'chat-a').workingDir).toBe('/projects/alpha');
+    const retry = await reopened.create({ ...input, workingDir: '/projects/beta' });
+    expect(retry.id).toBe(original.id);
+    expect(retry.workingDir).toBe('/projects/alpha');
+    const successor = await reopened.create({ ...input, source: 'continuation', parent: original.id, workingDir: '/projects/beta' });
+    expect(successor.workingDir).toBe('/projects/alpha');
+    expect(reopened.get(original.id, 'alice', 'chat-a')).toEqual(completed);
+    const fresh = await reopened.create({ ...input, source: 'new-form', workingDir: '/projects/beta' });
+    expect(fresh.workingDir).toBe('/projects/beta');
+    await expect(reopened.create({ ...input, source: 'bad-form', workingDir: 'relative' })).rejects.toThrow('绝对路径');
+    const legacy = await reopened.create({ ...input, source: 'legacy' });
+    await reopened.act(legacy.id, 'alice', 'chat-a', legacy.revision, 'cancel');
+    const legacySuccessor = await reopened.create({ ...input, source: 'legacy-continuation', parent: legacy.id, workingDir: '/projects/beta' });
+    expect(legacySuccessor.workingDir).toBeUndefined();
+  });
+
+  it('previews and confirms a reversible legacy project association without changing execution or findings', async () => {
+    const f = fixture();
+    const original = await f.manager.create(input);
+    await f.manager.act(original.id, 'alice', 'chat-a', original.revision, 'resume');
+    await f.manager.idle(original.id);
+    const finished = f.manager.get(original.id, 'alice', 'chat-a');
+    const preview = await f.manager.previewProjectLink(original.id, 'alice', 'chat-a', finished.revision, '/projects/alpha');
+    expect(preview.projectLink).toBeUndefined();
+    expect(preview.workingDir).toBeUndefined();
+    expect(preview.directions).toEqual(finished.directions);
+    await expect(f.manager.confirmProjectLink(original.id, 'other-user', 'chat-a', preview.revision, preview.linkPreview!.token, '/projects/alpha')).rejects.toThrow('不属于');
+    await expect(f.manager.confirmProjectLink(original.id, 'alice', 'other-chat', preview.revision, preview.linkPreview!.token, '/projects/alpha')).rejects.toThrow('不属于');
+    await expect(f.manager.confirmProjectLink(original.id, 'alice', 'chat-a', preview.revision, preview.linkPreview!.token, '/projects/beta')).rejects.toThrow('已改变');
+    f.manager.dispose();
+    const reopened = fixture(undefined, undefined, f.dir).manager;
+    await reopened.confirmProjectLink(original.id, 'alice', 'chat-a', preview.revision, preview.linkPreview!.token, '/projects/alpha');
+    const linked = reopened.get(original.id, 'alice', 'chat-a');
+    expect(linked.projectLink?.directory).toBe('/projects/alpha');
+    expect(linked.workingDir).toBeUndefined();
+    expect(linked.summary).toBe(finished.summary);
+    expect(linked.directions).toEqual(finished.directions);
+    expect(linked.status).toBe('completed');
+    await reopened.confirmProjectLink(original.id, 'alice', 'chat-a', preview.revision, preview.linkPreview!.token, '/projects/beta');
+    expect(reopened.get(original.id, 'alice', 'chat-a')).toEqual(linked);
+    const successor = await reopened.create({ ...input, source: 'linked-follow-up', parent: original.id });
+    expect(successor.projectLink?.directory).toBe('/projects/alpha');
+    expect(successor.projectLink?.token).not.toBe(linked.projectLink?.token);
+    expect(successor.workingDir).toBeUndefined();
+    await reopened.unlinkProject(original.id, 'alice', 'chat-a', linked.revision);
+    const unlinked = reopened.get(original.id, 'alice', 'chat-a');
+    expect(unlinked.projectLink).toBeUndefined();
+    expect(reopened.get(successor.id, 'alice', 'chat-a').projectLink?.directory).toBe('/projects/alpha');
+    expect(unlinked.summary).toBe(finished.summary);
+    expect(unlinked.directions).toEqual(finished.directions);
+    await expect(reopened.confirmProjectLink(original.id, 'alice', 'chat-a', preview.revision, preview.linkPreview!.token, '/projects/alpha')).rejects.toThrow('已改变');
+    const fixed = await reopened.create({ ...input, source: 'fixed-directory', workingDir: '/projects/fixed' });
+    await expect(reopened.previewProjectLink(fixed.id, 'alice', 'chat-a', fixed.revision, '/projects/alpha')).rejects.toThrow('固定项目目录');
+  });
+
+  it('refuses legacy association while a research stage is in flight', async () => {
+    const pending = deferred<StepResult>();
+    const f = fixture(() => pending.promise);
+    const project = await f.manager.create(input);
+    await f.manager.act(project.id, 'alice', 'chat-a', project.revision, 'resume');
+    await expect(f.manager.previewProjectLink(project.id, 'alice', 'chat-a', f.manager.get(project.id, 'alice', 'chat-a').revision, '/projects/alpha')).rejects.toThrow('暂停研究');
+    f.manager.dispose(); pending.resolve({ directions: ['Check evidence'] });
+    await f.manager.idle(project.id);
+  });
+
   function exportFixture() {
     const remote = { body: 'Supplied source\n', loseResponse: false, rejectWrite: false, concurrentEdit: false };
     const read: DocumentReader = (token, fragments = []) => {

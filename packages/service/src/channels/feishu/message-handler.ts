@@ -251,7 +251,16 @@ export class MessageHandler {
       this.research = new FeishuResearchController(researchDirectory, Config.getWorkspaceDir(), this.callbacks.sendMessage, async (messageId, card) => {
         const result = await client.im.message.patch({ path: { message_id: messageId }, data: { content: JSON.stringify(card) } });
         if (result.code !== 0) { throw new Error('研究卡片更新失败，已有进度保留。'); }
-      }, undefined, createDocumentReader(client), createDocumentAppender(client));
+      }, undefined, createDocumentReader(client), createDocumentAppender(client), async chatId => {
+        const result = await this.callbacks.emitControl({ type: 'project', chatId, data: { subcommand: 'info' } });
+        if (!result.success || !result.projectContext?.available || !path.isAbsolute(result.projectContext.workingDir)) {
+          throw new Error('无法确认当前项目工作目录，请先用 /project info 检查目录绑定，再建立研究。');
+        }
+        try {
+          if (!(await fs.stat(result.projectContext.workingDir)).isDirectory()) { throw new Error('Not a directory'); }
+        } catch { throw new Error('当前项目工作目录不存在或不可访问，请恢复目录后再建立研究。'); }
+        return result.projectContext.workingDir;
+      });
     }
     this.agentInput?.close();
     this.agentInput = new FeishuAgentInput(client);
@@ -1307,7 +1316,8 @@ export class MessageHandler {
       return;
     }
 
-    if (/^\/research(?:\s|$)/u.test(textWithoutMentions.trim())) {
+    if (/^\/research(?:\s|$)/u.test(textWithoutMentions.trim())
+      || (this.research && /^\/project\s*$/iu.test(textWithoutMentions.trim()))) {
       if (!this.research) {
         await this.callbacks.sendMessage({ chatId: chat_id, type: 'text', text: '研究项目功能尚未启用，请联系服务管理员。' });
       } else if (sender?.sender_type === 'user') {

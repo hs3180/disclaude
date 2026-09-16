@@ -3,7 +3,7 @@ import { isAbsolute } from 'node:path';
 import { ProjectStore } from './project.js';
 import { ResearchManager, type StepRunner, type ProjectAction } from './manager.js';
 import { createResearchRunner } from './runner.js';
-import { indexCard, projectCard, evidenceCard, historyCard } from './cards.js';
+import { indexCard, projectCard, evidenceCard, historyCard, projectLinkPreviewCard } from './cards.js';
 import type { DocumentReader, DocumentAppender } from './document-source.js';
 
 type Sender = (message: { chatId: string; type: string; text?: string; card?: Record<string, unknown>; threadId?: string }) => Promise<string | void>;
@@ -23,7 +23,7 @@ function callbackValue(action: Record<string, unknown>): Record<string, unknown>
 /** A persistent project surface; ordinary conversation turns never own its state. */
 export class FeishuResearchController {
   readonly manager: ResearchManager;
-  constructor(directory: string, workspace: string, private readonly send: Sender, update: Updater, runner: StepRunner = createResearchRunner(workspace), readDocument?: DocumentReader, appendDocument?: DocumentAppender) {
+  constructor(directory: string, workspace: string, private readonly send: Sender, update: Updater, runner: StepRunner = createResearchRunner(workspace), readDocument?: DocumentReader, appendDocument?: DocumentAppender, private readonly resolveWorkingDir?: (chat: string) => Promise<string>) {
     if (!isAbsolute(directory)) { throw new Error('Research project storage must use an absolute directory'); }
     this.manager = new ResearchManager(new ProjectStore(directory), runner, async project => {
       const card = projectCard(project);
@@ -38,7 +38,14 @@ export class FeishuResearchController {
   }
   async open(owner: string, chat: string, thread?: string): Promise<void> {
     if (!owner || !chat) { throw new Error('无法确认研究项目的用户和会话。'); }
-    await this.send({ chatId: chat, type: 'card', threadId: thread, card: indexCard(this.manager.list(owner, chat), randomUUID()) });
+    await this.showIndex(owner, chat, thread);
+  }
+  private async showIndex(owner: string, chat: string, thread?: string, offset = 0, archived = false): Promise<void> {
+    let workingDir: string | undefined, error: string | undefined;
+    try { workingDir = await this.resolveWorkingDir?.(chat); }
+    catch { error = '当前项目目录不可用，暂不能建立新研究。请用 /project info 检查，或用 /project use <目录> 切换。已有研究仍可打开。'; }
+    await this.send({ chatId: chat, type: 'card', threadId: thread,
+      card: indexCard(this.manager.list(owner, chat, archived), randomUUID(), offset, archived, { workingDir, error }) });
   }
   async handle(raw: Record<string, unknown>): Promise<void> {
     const context = object(raw.context), operator = object(raw.operator), action = object(raw.action);
@@ -48,16 +55,32 @@ export class FeishuResearchController {
       const value = callbackValue(action), form = object(action.form_value);
       const actionName = string(value.action), id = string(value.project);
       if (actionName === 'index') {
-        await this.send({ chatId: chat, type: 'card', threadId: message, card: indexCard(this.manager.list(owner, chat, value.archived === true), randomUUID(), page(value.offset), value.archived === true) });
+        await this.showIndex(owner, chat, message, page(value.offset), value.archived === true);
         return;
       }
       if (actionName === 'create') {
         const nonce = string(value.nonce);
         if (!nonce || nonce.length > 100) { throw new Error('创建表单已失效，请重新打开研究项目。'); }
-        await this.manager.create({ owner, chat, thread: message, source: `${message}:${nonce}`, title: string(form.question), scope: string(form.scope), materials: string(form.materials), documentUrl: string(form.document_url) });
+        const source = `${message}:${nonce}`;
+        const existing = [...this.manager.list(owner, chat), ...this.manager.list(owner, chat, true)].find(p => p.source === source);
+        // A retry must reopen its original research even if the chat binding changed or disappeared.
+        if (existing) { await this.manager.show(existing.id, owner, chat); return; }
+        await this.manager.create({ workingDir: await this.resolveWorkingDir?.(chat), owner, chat, thread: message, source, title: string(form.question), scope: string(form.scope), materials: string(form.materials), documentUrl: string(form.document_url) });
         return;
       }
       const project = this.manager.get(id, owner, chat);
+      if (actionName === 'preview-project-link' || actionName === 'confirm-project-link') {
+        if (!this.resolveWorkingDir || typeof value.revision !== 'number') { throw new Error('当前项目目录不可用，请检查目录绑定。'); }
+        const directory = await this.resolveWorkingDir(chat);
+        if (actionName === 'preview-project-link') {
+          const preview = await this.manager.previewProjectLink(id, owner, chat, value.revision, directory);
+          await this.send({ chatId: chat, type: 'card', threadId: project.thread, card: projectLinkPreviewCard(preview) });
+        } else { await this.manager.confirmProjectLink(id, owner, chat, value.revision, string(value.token), directory); }
+        return;
+      }
+      if (actionName === 'unlink-project' && typeof value.revision === 'number') {
+        await this.manager.unlinkProject(id, owner, chat, value.revision); return;
+      }
       if (['open', 'refresh'].includes(actionName)) { await this.manager.show(id, owner, chat, actionName === 'open' ? { thread: message } : undefined); return; }
       if (actionName === 'evidence') {
         await this.send({ chatId: chat, type: 'card', threadId: project.thread, card: evidenceCard(project, string(value.direction), page(value.index)) }); return;

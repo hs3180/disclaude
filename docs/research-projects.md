@@ -1,7 +1,40 @@
 # Persistent research projects (initial product slice)
 
-The opt-in Feishu project entry is `/research`. It opens a project index and a
-creation form; it is a product command, not a skill invocation. Creating a project
+New research reads the current `/project` working-directory binding when its
+creation form is submitted and persists that directory. The paused research card
+shows the directory before the user starts execution. Later `/project use/reset`
+affects new research and ordinary chat, not existing research. Reopening, retries
+and result continuations retain the original directory. If it disappears, research
+fails visibly without recreating it or falling back to another workspace.
+
+Legacy research without a binding retains its original independent execution
+directory and is labeled as unassociated; it is not assigned to the current chat's
+project. An idle legacy research card offers an explicit association preview for
+the current project directory. Confirmation revalidates the current directory,
+research revision and persisted preview token; a changed target requires a new
+preview. The association only adds navigation metadata. It does not change the
+execution directory, move/copy files, rewrite sources or replay completed work.
+It can be undone from the research card without deleting findings or documents.
+The preview survives restart and repeating its confirmed action is idempotent.
+Active research and research already created with a fixed directory cannot use
+this operation. Linked follow-ups inherit the navigation association but retain their own
+independent execution directory. Unlinking one research does not unlink its
+successors. The [project/research convergence proposal](proposals/project-research-convergence.md)
+records the remaining real acceptance work for directory binding, navigation
+and explicit legacy association.
+The existing directory binding remains the project context; there is no second
+general project registry. Directory association alone does not complete the
+proposal. Research
+remains a persistent UX, not a project template.
+
+When research is enabled, the Feishu project home is `/project`; `/research` is
+a shortcut to the same home, records and creation form. `/project info/use/reset`
+retain their existing control behavior, and without research enabled bare
+`/project` retains its existing info behavior. The home shows the current directory
+and the bound directory of each research, including unassociated legacy records.
+A missing current directory disables creation without hiding existing research.
+Each research card links back to that home. The research entry is a product
+command, not a skill invocation. Creating a project
 shows its scope and controls before any research runs. The user then starts the
 project from its card. Planning, investigation and synthesis run independently of
 ordinary chat turns through the existing agent runtime.
@@ -118,11 +151,24 @@ npx vitest run packages/service/src/research/manager.test.ts packages/service/sr
 ```
 
 The opt-in model integration test uses the configured backend and real research
-runner, with a captured card transport. It creates a project from the actual form
-callback, compares two supplied proposals, submits a price-comparison adjustment, checks its linked investigation and retained sources plus a completed
-summary, and reopens the persisted result. It makes model API calls; use an isolated
-configuration/workspace and test credentials. It does not send Feishu messages or
-exercise external source retrieval unless the document case is enabled.
+runner, with captured card transport. It creates two temporary project directories
+with conflicting `proposals.txt` files. The original file contains randomized
+fictional prices that are not included in the model prompt. After creation through
+the form callback, the test switches the directory resolver, submits an adjustment
+and runs research. It checks the original prices and savings in the conclusion,
+linked investigation and sources, then reopens with a different default directory
+and verifies the original binding and findings remain intact. Temporary directories
+are removed in `finally`.
+
+On 2026-09-16 this case passed in 39.0 seconds: A=722, B=729, savings=7 from the
+original file, despite the other directory containing A=9000/B=1000. The runtime
+recorded a file-reading tool call; all three model turns completed, and no temporary
+`research-e2e-*` directory remained. This is model/directory integration evidence,
+not live Feishu rendering, clicks or interruption recovery.
+
+It makes model API calls; use an isolated configuration/workspace and test
+credentials. It does not send Feishu messages or exercise external source retrieval
+unless the document case is enabled.
 
 The document case additionally requires `DISCLAUDE_E2E_RESEARCH_DOCUMENT` (a
 dedicated test Docx URL), `FEISHU_APP_ID` and `FEISHU_APP_SECRET`. Its fixture is a
