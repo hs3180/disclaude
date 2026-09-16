@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import nock from 'nock';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdtemp, mkdir, writeFile, rm, readFile, access } from 'node:fs/promises';
@@ -7,6 +8,10 @@ import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import { browserAgentEnv } from '../../packages/core/src/utils/browser-env.js';
+import { ClaudeSDKProvider } from '../../packages/core/src/sdk/providers/claude/provider.js';
+import { PiAgentProvider } from '../../packages/core/src/sdk/providers/pi/provider.js';
+import { CodexAgentProvider } from '../../packages/core/src/sdk/providers/codex/provider.js';
+import type { AgentMessage } from '../../packages/core/src/sdk/types.js';
 import { DeepSeekHarnessProvider } from '../../packages/core/src/sdk/providers/deepseek/provider.js';
 
 const exec = promisify(execFile);
@@ -36,9 +41,10 @@ describe('user starts Disclaude and shares its managed browser', () => {
       DISCLAUDE_BROWSER_WORKSPACE: root,
     };
     delete env.DISCLAUDE_BROWSER_TARGET;
-    delete env.DISCLAUDE_BROWSER_EVENTS;
+    env.DISCLAUDE_BROWSER_EVENTS = join(root, 'browser-events.ndjson');
     const executable = resolve('bin/disclaude.js');
     const callers = new Set<ReturnType<typeof spawn>>();
+    const crashDescendants = new Set<number>();
     let child: ReturnType<typeof spawn> | undefined;
     let output = '';
     let exited: Promise<number | null> | undefined;
@@ -49,6 +55,14 @@ describe('user starts Disclaude and shares its managed browser', () => {
       if (code === 'timeout') { child.kill('SIGKILL'); throw new Error('Disclaude shutdown timed out'); }
       expect(code, output).toBe(0);
     }
+    const localHost = /^(?:127\.0\.0\.1|localhost)(?::\d+)?$/u;
+    nock.enableNetConnect(localHost);
+    if (process.env.DISCLAUDE_E2E_BROWSER_PI_MODEL) {
+      const api = new URL(process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com');
+      const apiHostWithPort = `${api.hostname}:${api.port || (api.protocol === 'https:' ? '443' : '80')}`;
+      nock.enableNetConnect(host => localHost.test(host) || host === api.host || host === apiHostWithPort);
+    }
+    let invocation = 0;
     try {
       for (let attempt = 0; attempt < 2; attempt++) {
         output = '';
@@ -65,9 +79,15 @@ describe('user starts Disclaude and shares its managed browser', () => {
         const status = await exec(process.execPath, [executable, 'browser', 'status'], { env, cwd: root, timeout: 5000 });
         expect(JSON.parse(status.stdout).state).toBe('idle');
         const taskEnv = browserAgentEnv({ ...env, DISCLAUDE_BROWSER_BIN: join(root, 'bin'), BU_CDP_URL: 'http://stale.invalid:9223', BU_CDP_WS: 'ws://stale.invalid' });
+        // A wrong upstream executable must fail before reaching a default daemon.
+        const rejectUpstream = () => expect(exec(process.env.DISCLAUDE_E2E_BROWSER_PYTHON!,
+          ['-c', 'from browser_harness.run import main; main()'], { env: taskEnv, cwd: root, timeout: 10_000 }))
+          .rejects.toMatchObject({ stderr: expect.stringMatching(/FileExistsError|NotADirectoryError/u) });
+        await rejectUpstream();
         expect(taskEnv.BU_CDP_URL).toBeUndefined();
         expect(taskEnv.BU_CDP_WS).toBeUndefined();
         const run = (script: string, invocationEnv = taskEnv, onSpawn?: (task: ReturnType<typeof spawn>) => void): Promise<string> => new Promise((done, reject) => {
+          const invocationId = ++invocation;
           const task = spawn('browser-use', [], { env: invocationEnv, cwd: root, stdio: ['pipe', 'pipe', 'pipe'] });
           callers.add(task);
           task.once('close', () => callers.delete(task));
@@ -75,7 +95,9 @@ describe('user starts Disclaude and shares its managed browser', () => {
           let stdout = '', stderr = '';
           task.stdout.on('data', d => { stdout += d; }); task.stderr.on('data', d => { stderr += d; });
           task.on('error', reject);
-          task.on('close', code => code === 0 ? done(stdout) : reject(new Error(stderr)));
+          task.on('close', code => code === 0 ? done(stdout) : reject(new Error(
+            `Browser invocation ${invocationId} failed (exit ${code}): ${stderr}`,
+          )));
           task.stdin.end(script);
         });
         await run("goto_url('data:text/html,<h1>Shared research</h1><input id=value>')\nassert wait_for_element('#value')\nfill_input('#value','first')\n");
@@ -113,36 +135,119 @@ describe('user starts Disclaude and shares its managed browser', () => {
         expect(await abandonedResult).toBe('interrupted');
         expect(await successor).toContain('handoff');
         await expect(access(abandonedMarker)).rejects.toThrow();
-        if (attempt === 0 && process.env.DISCLAUDE_E2E_BROWSER_MODEL) {
-          // Opt-in paid model/tool path: the provider receives the product launcher
-          // and socket, while a separate caller verifies the resulting page state.
-          expect(process.env.DEEPSEEK_API_KEY).toBeTruthy();
-          await mkdir(join(root, 'dsh-home'), { mode: 0o700 });
-          const provider = new DeepSeekHarnessProvider({ env: taskEnv, dshHome: join(root, 'dsh-home') });
-          const marker = `model-handoff-${Date.now()}`;
-          async function* input() {
-            yield { role: 'user' as const, content: `Use your shell tool to execute browser-use, supplying this Python script on stdin:\nfill_input('#value', ${JSON.stringify(marker)})\nprint(js("document.querySelector('#value').value"))\nThen report the value. The shared page is already open. Do not launch another browser or use direct CDP.` };
+        if (attempt === 0) {
+          let previous = 'handoff';
+          const backends = [
+            ...(process.env.DISCLAUDE_E2E_BROWSER_MODEL ? ['deepseek'] : []),
+            ...(process.env.DISCLAUDE_E2E_BROWSER_CODEX === '1' ? ['codex'] : []),
+            ...(process.env.DISCLAUDE_E2E_BROWSER_CLAUDE_MODEL ? ['claude'] : []),
+            ...(process.env.DISCLAUDE_E2E_BROWSER_PI_MODEL ? ['pi'] : []),
+          ];
+          for (const backend of backends) {
+            const naturalTask = backend === 'codex' && process.env.DISCLAUDE_E2E_BROWSER_NATURAL === '1';
+            if (backend === 'deepseek') {
+              expect(process.env.DEEPSEEK_API_KEY).toBeTruthy();
+              await mkdir(join(root, 'dsh-home'), { mode: 0o700 });
+            }
+            const provider = backend === 'deepseek'
+              ? new DeepSeekHarnessProvider({ env: taskEnv, dshHome: join(root, 'dsh-home') })
+              : backend === 'codex' ? new CodexAgentProvider({ env: taskEnv, transport: 'app-server', builtinsDir: naturalTask ? resolve('.') : root, execTimeoutMs: 90_000 })
+                : backend === 'claude' ? new ClaudeSDKProvider() : new PiAgentProvider();
+            const marker = `${backend}-model-handoff-${Date.now()}`;
+            const script = `print("PREVIOUS:" + js("document.querySelector('#value').value"))\nassert js("document.querySelector('#value').value") == ${JSON.stringify(previous)}\nfill_input('#value', ${JSON.stringify(marker)})\nprint(js("document.querySelector('#value').value"))\n`;
+            async function* input() {
+              if (naturalTask) {
+                yield { role: 'user' as const, content: `Use the available browser skill to inspect the currently open shared page. Report the input's existing value, replace it with ${marker}, and save a screenshot as browser-task.png in the current workspace. Verify the new value and report it. Keep the existing page open. This is an isolated acceptance workspace; follow its configured browser access and do not access other host services or unrelated files.` };
+                return;
+              }
+              const quotedScript = "'" + script.replaceAll("'", "'\\''") + "'";
+              yield { role: 'user' as const, content: `Use your Bash/shell tool to run exactly this command:\nprintf '%s' ${quotedScript} | browser-use\nThen report the value. The shared page is already open. Do not invoke skills, search files, discover other tools, launch another browser, use direct CDP, delegate, or modify unrelated files.` };
+            }
+            const model = backend === 'deepseek' ? process.env.DISCLAUDE_E2E_BROWSER_MODEL
+              : backend === 'claude' ? process.env.DISCLAUDE_E2E_BROWSER_CLAUDE_MODEL
+                : backend === 'pi' ? process.env.DISCLAUDE_E2E_BROWSER_PI_MODEL : undefined;
+            const stream = provider.queryStream(input(), { cwd: root, settingSources: [], env: taskEnv,
+              ...(['claude', 'pi'].includes(backend) ? { tools: ['Bash'], allowedTools: ['Bash'] } : {}), ...(model ? { model } : {}) });
+            const messages: AgentMessage[] = [];
+            let timedOut = false;
+            const deadline = setTimeout(() => { timedOut = true; void stream.handle.cancel(); }, 90_000);
+            try {
+              for await (const message of stream.iterator) { messages.push(message); }
+              expect(timedOut).toBe(false);
+              const result = messages.findLast(message => message.type === 'result');
+              expect(result).toBeDefined();
+              expect(result?.metadata?.terminatedReason, result?.content).toBeUndefined();
+              expect(messages.some(message => message.type === 'error')).toBe(false);
+              expect(messages.some(message => message.type === 'tool_use'), JSON.stringify(messages.filter(message => message.type === 'text' || message.type === 'error'))).toBe(true);
+              if (naturalTask) {
+                expect(messages.some(message => message.type === 'tool_result' && message.content.includes('Skill: browser-use'))).toBe(true);
+                expect(messages.some(message => ['text', 'tool_result'].includes(message.type) && message.content.includes(previous))).toBe(true);
+                expect((await readFile(join(root, 'browser-task.png'))).subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a');
+              } else {
+                expect(messages.some(message => message.type === 'tool_result' && message.content.includes(`PREVIOUS:${previous}`))).toBe(true);
+              }
+              if (backend === 'deepseek') { expect(result?.metadata?.stopReason).toBe('completed'); }
+              expect(await run("print(js(\"document.querySelector('#value').value\"))\n")).toContain(marker);
+              console.info('BROWSER_MODEL_HANDOFF', JSON.stringify({ backend, naturalTask, previousStateVerified: true, independentReadback: true }));
+              previous = marker;
+            } finally { clearTimeout(deadline); stream.handle.close(); provider.dispose(); }
           }
-          const stream = provider.queryStream(input(), { cwd: root, model: process.env.DISCLAUDE_E2E_BROWSER_MODEL });
-          const messages = [];
-          const deadline = setTimeout(() => { void stream.handle.cancel(); }, 90_000);
-          try {
-            for await (const message of stream.iterator) { messages.push(message); }
-            expect(messages.some(message => message.type === 'tool_use')).toBe(true);
-            expect(messages.some(message => message.type === 'tool_result')).toBe(true);
-            expect(messages.findLast(message => message.type === 'result')?.metadata?.stopReason).toBe('completed');
-            expect(await run("print(js(\"document.querySelector('#value').value\"))\n")).toContain(marker);
-          } finally { clearTimeout(deadline); stream.handle.close(); provider.dispose(); }
         }
         await writeFile(join(root, 'profile', 'preserve-test.txt'), 'user profile retained');
         const cdpPort = (await readFile(join(root, 'profile', 'DevToolsActivePort'), 'utf8')).split('\n')[0];
+        // Establish a real positive probe before negative stop/crash assertions;
+        // a blocked loopback request must not masquerade as browser shutdown.
+        expect((await fetch(`http://127.0.0.1:${cdpPort}/json/version`, { signal: AbortSignal.timeout(5000) })).ok).toBe(true);
+        if (attempt === 0) {
+          const descendantFile = join(root, 'crash-descendant.pid');
+          const crashMarker = join(root, 'crash-must-not-run');
+          const descendantCode = `import time; time.sleep(20); open(${JSON.stringify(crashMarker)}, 'w').write('must-not-run')`;
+          const active = run(`import subprocess, sys, time\np = subprocess.Popen([sys.executable, '-c', ${JSON.stringify(descendantCode)}])\nopen(${JSON.stringify(descendantFile)}, 'w').write(str(p.pid))\ntime.sleep(20)\n`).then(() => 'unexpected success', () => 'interrupted');
+          let descendantReady = false;
+          for (let i = 0; i < 100 && !descendantReady; i++) {
+            descendantReady = await access(descendantFile).then(() => true, () => false);
+            if (!descendantReady) { await delay(50); }
+          }
+          expect(descendantReady).toBe(true);
+          const descendant = Number(await readFile(descendantFile, 'utf8'));
+          crashDescendants.add(descendant);
+          const ownership = JSON.parse(await readFile(socket + '.lock', 'utf8')) as { pid: number };
+          process.kill(ownership.pid, 'SIGKILL');
+          // The live service must reclaim its broker's browser tree and owned IPC,
+          // fail subsequent calls closed, and permit an explicit clean restart.
+          let browserStopped = false;
+          for (let i = 0; i < 100 && !browserStopped; i++) {
+            browserStopped = await fetch(`http://127.0.0.1:${cdpPort}/json/version`, { signal: AbortSignal.timeout(200) }).then(() => false, () => true);
+            if (!browserStopped) { await delay(50); }
+          }
+          expect(browserStopped).toBe(true);
+          expect(await active).toBe('interrupted');
+          const descendantAlive = (): boolean => { try { process.kill(descendant, 0); return true; } catch { return false; } };
+          for (let i = 0; i < 100 && descendantAlive(); i++) { await delay(50); }
+          expect(descendantAlive()).toBe(false);
+          crashDescendants.delete(descendant);
+          await expect(access(crashMarker)).rejects.toThrow();
+          await expect(exec(process.execPath, [executable, 'browser', 'status'], { env, cwd: root, timeout: 5000 })).rejects.toThrow();
+        }
         await stop();
         await expect(access(socket)).rejects.toThrow();
         await expect(access(socket + '.lock')).rejects.toThrow();
         await expect(fetch(`http://127.0.0.1:${cdpPort}/json/version`, { signal: AbortSignal.timeout(1000) })).rejects.toThrow();
         expect(await readFile(join(root, 'profile', 'preserve-test.txt'), 'utf8')).toBe('user profile retained');
+        await rejectUpstream();
         await expect(exec(process.execPath, [executable, 'browser', 'status'], { env, cwd: root, timeout: 5000 })).rejects.toThrow();
       }
-    } finally { for (const caller of callers) { caller.kill('SIGKILL'); } await stop(); await rm(root, { recursive: true, force: true }); }
-  }, 180_000);
+    } catch (error) {
+      // The isolated service uses a generated offline config. Retain its failure
+      // diagnostics instead of reducing broker failures to a client EOF alone.
+      // Client EOF can precede the supervisor's process-exit diagnostic.
+      // Give that callback a bounded opportunity to flush before deleting the
+      // isolated run directory; do not retain whole browser profiles for logs.
+      await delay(500);
+      console.error('BROWSER_SERVICE_FAILURE', output.slice(-16_000));
+      const events = await readFile(env.DISCLAUDE_BROWSER_EVENTS!, 'utf8').catch(() => 'No coordinator events written');
+      console.error('BROWSER_COORDINATOR_EVENTS', events.slice(-16_000));
+      throw error;
+    } finally { if (process.env.DISCLAUDE_E2E_BROWSER_PI_MODEL) { nock.enableNetConnect(localHost); } for (const pid of crashDescendants) { try { process.kill(pid, 'SIGKILL'); } catch { /* Already gone. */ } } for (const caller of callers) { caller.kill('SIGKILL'); } await stop(); await rm(root, { recursive: true, force: true }); }
+  }, 480_000);
 });

@@ -27,6 +27,7 @@ ARG PIP_INDEX_URL
 ARG GH_INSTALL_MODE=apt-repo
 ARG GH_DEB_URL=
 ARG CODEX_VERSION=0.154.0
+ARG DSH_VERSION=0.1.2-rc.1
 
 # -----------------------------------------------------------------------------
 # Stage 1: Builder (uses bun for faster installs)
@@ -96,6 +97,7 @@ ARG PIP_INDEX_URL
 ARG GH_INSTALL_MODE
 ARG GH_DEB_URL
 ARG CODEX_VERSION
+ARG DSH_VERSION
 
 WORKDIR /app
 
@@ -163,10 +165,10 @@ RUN pip3 install --no-cache-dir --break-system-packages ${PIP_INDEX_URL:+--index
 # Image size cost: ~400 MB (browser-use + ~90 transitive deps, measured).
 RUN pip3 install --no-cache-dir --break-system-packages ${PIP_INDEX_URL:+--index-url $PIP_INDEX_URL} 'browser-use==0.13.8'
 
-# Install @larksuite/cli globally
+# Install Feishu tooling and the supported CLI backends globally
 # Issue #3888: @larksuite/cli needed by dissolve-group, lark-docs, pr-scanner skills
 RUN npm config set registry ${NPM_REGISTRY} && \
-    npm install -g "@larksuite/cli@>=1.0.0" "@openai/codex@${CODEX_VERSION}"
+    npm install -g "@larksuite/cli@>=1.0.0" "@openai/codex@${CODEX_VERSION}" "@deepseek-ai/dsh@${DSH_VERSION}"
 
 # Create non-root user for running the application
 RUN groupadd -g 1001 disclaude && \
@@ -184,7 +186,7 @@ RUN echo "Defaults:disclaude logfile=/data/logs/sudo.log" > /etc/sudoers.d/discl
     visudo -cf /etc/sudoers.d/disclaude-audit && visudo -cf /etc/sudoers.d/disclaude
 
 # Create directories for runtime with proper permissions
-RUN mkdir -p /data/workspace /data/logs /data/codex /app/.claude /app/.claude/backups /app/.claude/debug && \
+RUN mkdir -p /data/workspace /data/logs /data/codex /data/dsh /app/.claude /app/.claude/backups /app/.claude/debug && \
     echo '{}' > /app/.claude.json && \
     chown -R disclaude:disclaude /app /data
 
@@ -229,6 +231,7 @@ ENTRYPOINT ["docker-entrypoint.sh"]
 # Set environment variables
 ENV NODE_ENV=production
 ENV CODEX_HOME=/data/codex
+ENV DSH_HOME=/data/dsh
 
 # Issue #4114: Cap agent-spawned compile parallelism to prevent OOM from massive cc1plus forks.
 # MAKEFLAGS limits make-based builds; CMAKE_BUILD_PARALLEL_LEVEL limits CMake builds.

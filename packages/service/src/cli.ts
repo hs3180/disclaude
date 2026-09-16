@@ -9,6 +9,8 @@
  * @see https://github.com/hs3180/disclaude/issues/4654
  */
 
+import { setupWorkspaceOnFirstRun } from './workspace-onboarding.js';
+
 export const EXPLICIT_CONFIG_PATH_ENV = 'DISCLAUDE_CONFIG_PATH';
 
 /** Return the last explicit --config/-c value, matching the CLI parser. */
@@ -36,6 +38,10 @@ export async function bootstrap(
   const configPath = findExplicitConfigPath(args);
   if (configPath) {
     process.env[EXPLICIT_CONFIG_PATH_ENV] = configPath;
+  }
+
+  if (args[0] === 'start' && !args.includes('--help') && !args.includes('-h')) {
+    await setupWorkspaceOnFirstRun();
   }
 
   const { main } = await loadMain();

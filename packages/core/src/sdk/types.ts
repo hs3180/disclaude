@@ -156,6 +156,21 @@ export interface AgentMessageMetadata {
    * 信息,ChatAgent 在 ❌ Failed 提示里截取展示。仅在 upstreamApiError=true 时设置。
    */
   upstreamApiErrorStderr?: string;
+  /**
+   * 瞬态进度占位标记 —— 该 status 消息只是「某步正在进行中」的工具型提示，
+   * 不是给用户的内容。当前来源:Claude SDK 的 `status:'requesting'`(→
+   * "🤔 Thinking...")与 `status:'compacting'`(→ "🔄 Compacting conversation
+   * history...")。
+   *
+   * MessageAdapter 保留 content 以便 debug 群 / 日志诊断,但 ChatAgent 必须把它
+   * 当中间消息过滤掉:SDK 在**每个请求**都发一次 requesting,群聊没有流式卡片
+   * (卡片只在 p2p 启用),于是每步都单蹦一条 "🤔 Thinking..." 把群刷屏;
+   * p2p 里流式占位卡片自带 thinking 区域,独立消息同样冗余。
+   *
+   * 语义型 status(如 Codex 的 "Please sign in again."、model_refusal_fallback
+   * 提示)不设此标记,仍按可见消息投递。
+   */
+  transientStatus?: boolean;
 }
 
 /** Agent 消息类型 */

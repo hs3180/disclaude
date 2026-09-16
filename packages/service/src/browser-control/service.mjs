@@ -1,7 +1,7 @@
 /** Managed browser control service. Reuses browser-use daemon and helper IPC. */
 import { createServer } from 'node:net';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, openSync, closeSync, rmSync, statSync, chmodSync, appendFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, openSync, closeSync, writeSync, rmSync, statSync, chmodSync, appendFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { connect } from './cdp.mjs';
 import { launchBrowser } from './managed-browser.mjs';
@@ -16,7 +16,9 @@ if (endpoint && process.env.DISCLAUDE_CHROMIUM_BINARY) throw new Error('Choose a
 mkdirSync(dirname(socketPath), { recursive: true, mode: 0o700 });
 if ((statSync(dirname(socketPath)).mode & 0o077) !== 0) throw new Error('Socket parent directory must be private (0700)');
 if (!statSync(cwd).isDirectory()) throw new Error('Browser workspace must be a directory');
-const lock = openSync(socketPath + '.lock', 'wx', 0o600); closeSync(lock);
+const lock = openSync(socketPath + '.lock', 'wx', 0o600);
+writeSync(lock, JSON.stringify({ pid: process.pid, instance: process.env.DISCLAUDE_BROWSER_INSTANCE || randomUUID() }));
+closeSync(lock);
 const peers = new Set(); let managed, target, admin, coordinator, server, listening = false, stopping, browserStarting;
 const startupAbort = new AbortController();
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));

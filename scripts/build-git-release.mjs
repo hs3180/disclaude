@@ -45,6 +45,13 @@ export function sourceFingerprint(root) {
       'scripts/prune-build-artifacts.mjs',
       'scripts/launchd.mjs',
       'scripts/chromium-config.mjs',
+      'scripts/browser-service-state.mjs',
+      'scripts/chromium-systemd.mjs',
+      'scripts/chromium-setup.mjs',
+      'scripts/chromium-download.mjs',
+      'scripts/chromium-status.mjs',
+      'scripts/chromium-profile.mjs',
+      'scripts/chromium-profile-copy.mjs',
     ],
     { cwd: root, encoding: 'utf8' }
   )
@@ -105,6 +112,7 @@ export function generateRelease(root, output) {
   const targets = Object.fromEntries(
     names.map((name) => [`@disclaude/${name}`, join(output, 'packages', name, 'dist/index.js')])
   );
+  targets['@disclaude/core/config-discovery'] = join(output, 'packages/core/dist/config/discovery.js');
   const dependencies = {};
   for (const manifest of [
     pkg,
@@ -147,6 +155,13 @@ export function generateRelease(root, output) {
     'disclaude.config.example.yaml',
     'scripts/launchd.mjs',
       'scripts/chromium-config.mjs',
+      'scripts/browser-service-state.mjs',
+      'scripts/chromium-systemd.mjs',
+      'scripts/chromium-setup.mjs',
+      'scripts/chromium-download.mjs',
+      'scripts/chromium-status.mjs',
+      'scripts/chromium-profile.mjs',
+      'scripts/chromium-profile-copy.mjs',
   ]) {
     if (!existsSync(join(root, path))) continue;
     mkdirSync(dirname(join(output, path)), { recursive: true });

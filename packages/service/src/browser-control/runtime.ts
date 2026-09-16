@@ -1,5 +1,6 @@
 import { fork, type ChildProcess } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, lstatSync, rmSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { dirname, isAbsolute, join } from 'node:path';
 
 export interface BrowserRuntime {
@@ -21,22 +22,42 @@ export async function startBrowserRuntime(
   if (Boolean(env.BU_CDP_URL) === Boolean(env.DISCLAUDE_CHROMIUM_BINARY)) {
     throw new Error('Configure either an existing automation browser URL or a dedicated Chromium binary/profile');
   }
-  const child: ChildProcess = fork(entry, [], { env: { ...env, DISCLAUDE_BROWSER_SUPERVISED: '1' }, silent: true });
+  const instance = randomUUID();
+  // A separate group contains only this broker and its non-detached browser tree.
+  // Harness workers have their own groups and reclaim themselves on IPC disconnect.
+  const child: ChildProcess = fork(entry, [], { env: { ...env, DISCLAUDE_BROWSER_SUPERVISED: '1',
+    DISCLAUDE_BROWSER_INSTANCE: instance }, silent: true, detached: true });
+  child.once('exit', () => {
+    // Run on exit, not close: a descendant can keep inherited stdio open.
+    if (child.pid) { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* Group already gone. */ } }
+    try {
+      const owner = JSON.parse(readFileSync(`${socket  }.lock`, 'utf8')) as { pid?: number; instance?: string };
+      if (owner.pid !== child.pid || owner.instance !== instance) { return; }
+      try {
+        if (!lstatSync(socket).isSocket()) { return; }
+        rmSync(socket);
+      } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { return; } }
+      rmSync(`${socket  }.lock`);
+    } catch { /* Never remove missing, legacy, unreadable or foreign ownership. */ }
+  });
   let stopping = false;
   let startup = true;
   let stderr = '';
   const exited = new Promise<void>(resolve => child.once('close', () => resolve()));
   child.stdout?.resume();
-  child.stderr?.on('data', (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(0, 4000); });
+  child.stderr?.on('data', (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(-4000); });
   child.on('error', () => {});
-  child.on('close', () => {
-    if (!stopping && !startup) { onUnavailable('Browser coordinator exited; browser requests will fail until the service is restarted.'); }
+  child.on('close', (code, signal) => {
+    if (!stopping && !startup) {
+      onUnavailable(`Browser coordinator exited; browser requests will fail until the service is restarted. ${JSON.stringify({ code, signal, stderr: stderr.trim() })}`);
+    }
   });
   const runtime: BrowserRuntime = {
     get pid() { return child.pid; },
     async stop() {
       stopping = true;
-      if (child.exitCode !== null || child.signalCode !== null || !child.pid) { return; }
+      if (!child.pid) { return; }
+      if (child.exitCode !== null || child.signalCode !== null) { await exited; return; }
       child.kill('SIGTERM');
       const timer = setTimeout(() => child.kill('SIGKILL'), 15_000);
       try { await exited; } finally { clearTimeout(timer); }

@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, statSync } from 'node
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { chromiumConfigPath, loadChromiumConfig, saveChromiumConfig, readChromiumConfig } from '../scripts/chromium-config.mjs';
+import { chromiumConfigPath, loadChromiumConfig, saveChromiumConfig, readChromiumConfig, readChromiumConfigImport } from '../scripts/chromium-config.mjs';
 
 function sandbox(run: (dir: string) => void) {
   const dir = mkdtempSync(join(tmpdir(), 'chromium config '));
@@ -11,6 +11,33 @@ function sandbox(run: (dir: string) => void) {
 }
 
 describe('persistent Chromium configuration', () => {
+
+  it('imports only literal browser fields without executing or exposing unrelated settings', () => sandbox(dir => {
+    const source = join(dir, 'old.env');
+    const original = "API_TOKEN=private-fixture\nexport CHROMIUM_CDP_BINARY='/apps/Old Browser'\nCHROMIUM_CDP_PORT=9444\nCHROMIUM_CDP_HEADED=0\n";
+    writeFileSync(source, original);
+    const result = readChromiumConfigImport(source, join(dir, 'new.json'));
+    expect(result.environment).toEqual({ CHROMIUM_CDP_BINARY: '/apps/Old Browser', CHROMIUM_CDP_PORT: '9444', CHROMIUM_CDP_HEADED: '0' });
+    expect(JSON.stringify(result)).not.toContain('private-fixture');
+    expect(readFileSync(source, 'utf8')).toBe(original);
+    writeFileSync(source, original.replace('9444', '9555'));
+    expect(readChromiumConfigImport(source, join(dir, 'new.json')).sha256).not.toBe(result.sha256);
+  }));
+
+  it('rejects ambiguous imports and preserves the active configuration', () => sandbox(dir => {
+    const source = join(dir, 'old.env');
+    const destination = join(dir, 'new.json');
+    saveChromiumConfig({ CHROMIUM_CDP_PORT: '9223' }, destination);
+    for (const raw of ['CHROMIUM_CDP_PORT=1\nCHROMIUM_CDP_PORT=2', 'CHROMIUM_CDP_BINARY=$HOME/browser',
+      'CHROMIUM_CDP_PORT=99999', 'CHROMIUM_CDP_HEADED=yes', 'CHROMIUM_CDP_ADDRESS=0.0.0.0', 'API_TOKEN=only-unrelated', 'x'.repeat(65537)]) {
+      writeFileSync(source, raw);
+      expect(() => readChromiumConfigImport(source, destination)).toThrow();
+      expect(readChromiumConfig(destination)).toEqual({ CHROMIUM_CDP_PORT: '9223' });
+    }
+    expect(() => readChromiumConfigImport(destination, destination)).toThrow('active configuration');
+    expect(readChromiumConfigImport(destination, source).environment).toEqual({ CHROMIUM_CDP_PORT: '9223' });
+  }));
+
   it('resolves outside the installed package and rejects cwd-relative paths', () => {
     expect(chromiumConfigPath({}, '/operator')).toBe('/operator/.config/disclaude/chromium-cdp.json');
     expect(chromiumConfigPath({ XDG_CONFIG_HOME: '/config' })).toBe('/config/disclaude/chromium-cdp.json');
@@ -49,7 +76,7 @@ describe('persistent Chromium configuration', () => {
     expect(() => loadChromiumConfig({}, file)).toThrow('version 1');
   }));
 
-  it('rejects an explicit missing binary on restart before touching launchd or saved config', () => sandbox(dir => {
+  it('rejects an unsupported platform or missing binary before changing the service or saved config', () => sandbox(dir => {
     const file = join(dir, 'browser.json');
     saveChromiumConfig({ CHROMIUM_CDP_BINARY: join(dir, 'missing-browser'), CHROMIUM_CDP_PORT: '9223' }, file);
     const before = readFileSync(file, 'utf8');
@@ -57,7 +84,8 @@ describe('persistent Chromium configuration', () => {
       cwd: dir, encoding: 'utf8', env: { PATH: '/usr/bin:/bin', DISCLAUDE_CHROMIUM_CONFIG: file },
     });
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain('CHROMIUM_CDP_BINARY was not found');
+    expect(result.stderr).toContain(process.platform === 'darwin'
+      ? 'CHROMIUM_CDP_BINARY was not found' : 'Chromium launchd commands require macOS');
     expect(result.stdout).not.toContain('Service unloaded');
     expect(readFileSync(file, 'utf8')).toBe(before);
   }));

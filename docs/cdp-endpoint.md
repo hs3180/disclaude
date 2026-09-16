@@ -306,6 +306,18 @@ normal desktop. Case 2b is opt-in via `SMOKE_ASSERT_PROCESS_COUNT=1` for isolate
 service containers only. Discovery does not prove an intended browser/profile;
 record the service identity and version separately for release acceptance.
 
+`tests/e2e/browser-smoke.test.ts` runs this diagnostic against an independently
+launched temporary browser/profile, verifies all seven enabled assertions and
+the PNG signature, and stops the browser afterward. Set
+`DISCLAUDE_E2E_CHROMIUM` to the browser executable and
+`DISCLAUDE_E2E_BROWSER_PYTHON` to the interpreter whose adjacent `browser-use`
+CLI is installed, then run
+`node node_modules/vitest/vitest.mjs run tests/e2e/browser-smoke.test.ts`.
+The Browser Coordination E2E workflow includes it with pinned Python packages.
+This is standalone CLI compatibility evidence; the separate product service
+test covers coordinated Agent access. Whole-host process counting remains
+skipped because this fixture hosts the browser itself.
+
 Local macOS validation on 2026-09-14 used a dedicated temporary Chromium
 155.0.8057.0 process/profile and the installed harness reporting 0.1.13. The
 matrix passed seven assertions, with desktop process counting explicitly

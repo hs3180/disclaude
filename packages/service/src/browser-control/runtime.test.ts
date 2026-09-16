@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -47,13 +47,54 @@ describe('managed browser lifecycle', () => {
     await expect(startBrowserRuntime(env, undefined, entry)).rejects.toThrow('profile already owned');
     expect(env.DISCLAUDE_BROWSER_BIN).toBeUndefined();
   });
+  it('reclaims only the crashed broker process group and its matching IPC ownership', async () => {
+    const { root, env, entry } = fixture(`
+      import { spawn } from 'node:child_process';
+      import { writeFileSync } from 'node:fs';
+      import { createServer } from 'node:net';
+      const socket = process.env.DISCLAUDE_BROWSER_SOCKET;
+      const browser = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {stdio:'ignore'});
+      writeFileSync(socket + '.child', String(browser.pid));
+      writeFileSync(socket + '.lock', JSON.stringify({pid:process.pid,instance:process.env.DISCLAUDE_BROWSER_INSTANCE}));
+      createServer().listen(socket, () => process.send({ready:true,socket}));
+    `);
+    let unavailable = '';
+    const runtime = (await startBrowserRuntime(env, message => { unavailable = message; }, entry))!;
+    runtimes.push(runtime);
+    const descendant = Number(readFileSync(join(root, 'browser.sock.child'), 'utf8'));
+    const alive = (): boolean => { try { process.kill(descendant, 0); return true; } catch { return false; } };
+    try {
+      process.kill(runtime.pid!, 'SIGKILL');
+      for (let i = 0; i < 100 && (alive() || !unavailable); i++) { await new Promise(resolve => setTimeout(resolve, 20)); }
+      expect(alive()).toBe(false);
+      expect(unavailable).toContain('coordinator exited');
+      expect(existsSync(env.DISCLAUDE_BROWSER_SOCKET!)).toBe(false);
+      expect(existsSync(`${env.DISCLAUDE_BROWSER_SOCKET!  }.lock`)).toBe(false);
+    } finally { if (alive()) { process.kill(descendant, 'SIGKILL'); } }
+  });
+  it('preserves socket and lock files with a different instance identity', async () => {
+    const { env, entry } = fixture(`
+      import { writeFileSync } from 'node:fs';
+      import { createServer } from 'node:net';
+      const socket = process.env.DISCLAUDE_BROWSER_SOCKET;
+      writeFileSync(socket + '.lock', JSON.stringify({pid:process.pid,instance:'another-instance'}));
+      createServer().listen(socket, () => process.send({ready:true,socket}));
+    `);
+    const runtime = (await startBrowserRuntime(env, undefined, entry))!;
+    runtimes.push(runtime);
+    await runtime.stop();
+    expect(existsSync(env.DISCLAUDE_BROWSER_SOCKET!)).toBe(true);
+    expect(JSON.parse(readFileSync(`${env.DISCLAUDE_BROWSER_SOCKET!  }.lock`, 'utf8')).instance).toBe('another-instance');
+  });
   it('reports a crashed ready coordinator without silently restarting or restoring CDP access', async () => {
-    const { env, entry } = fixture('process.send({ready:true,socket:process.env.DISCLAUDE_BROWSER_SOCKET}); setTimeout(()=>process.exit(2),150);');
+    const { env, entry } = fixture('process.send({ready:true,socket:process.env.DISCLAUDE_BROWSER_SOCKET}); setTimeout(()=>{console.error("fixture broker failure");process.exit(2);},150);');
     let unavailable = '';
     const runtime = (await startBrowserRuntime(env, message => { unavailable = message; }, entry))!;
     runtimes.push(runtime);
     await new Promise(resolve => setTimeout(resolve, 300));
     expect(unavailable).toContain('coordinator exited');
+    expect(unavailable).toContain('"code":2');
+    expect(unavailable).toContain('fixture broker failure');
     expect(env.DISCLAUDE_BROWSER_BIN).toBeDefined();
   });
 });

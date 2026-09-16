@@ -41,7 +41,7 @@ export class Coordinator {
     this.holder = h;
     try {
       h.workerOptions = typeof this.workerOptions === 'function' ? this.workerOptions() : this.workerOptions;
-      h.child = fork(this.workerModule, [], { detached: this.detachedWorker, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+      h.child = fork(this.workerModule, [], { detached: this.detachedWorker, env: { ...process.env, DISCLAUDE_BROWSER_WORKER_GROUP: this.detachedWorker ? '1' : '0' }, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
       h.exited = new Promise(resolve => h.child.once('exit', (code, signal) => {
         this.log('worker-exit', { epoch: h.epoch, pid: h.child.pid, code, signal });
         for (const p of h.pending.values()) p.reject(new Error('Worker exited; outcome unknown'));

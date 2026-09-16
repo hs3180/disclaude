@@ -260,7 +260,11 @@ export function adaptSDKMessage(message: SDKMessage, taskRegistry?: TaskSubjectR
 
     case 'system': {
       if (message.subtype === 'status') {
+        // 瞬态进度占位:content 保留给 debug 群 / 日志,但打上 transientStatus
+        // 让 ChatAgent 当中间消息过滤 —— SDK 每个请求都发一次 requesting,不过滤
+        // 就会让群聊每步单蹦一条 "🤔 Thinking..."(流式卡片只在 p2p 启用)。
         if ('status' in message && message.status === 'compacting') {
+          metadata.transientStatus = true;
           return {
             type: 'status',
             content: '🔄 Compacting conversation history...',
@@ -271,6 +275,7 @@ export function adaptSDKMessage(message: SDKMessage, taskRegistry?: TaskSubjectR
         }
         // SDK 0.3.x: 'requesting' status indicates the model is processing
         if ('status' in message && message.status === 'requesting') {
+          metadata.transientStatus = true;
           return {
             type: 'status',
             content: '🤔 Thinking...',

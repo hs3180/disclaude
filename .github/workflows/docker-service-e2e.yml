@@ -1,0 +1,56 @@
+name: Docker Service E2E
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'Dockerfile.service'
+      - '.dockerignore'
+      - 'docker-entrypoint.sh'
+      - 'bin/**'
+      - 'package*.json'
+      - 'packages/**'
+      - '!packages/**/*.test.ts'
+      - 'tests/e2e/docker-service.test.ts'
+      - 'tests/e2e/docker-browser-smoke.test.ts'
+      - 'scripts/browser-use-smoke.sh'
+      - 'docker/**'
+      - '.github/workflows/docker-service-e2e.yml'
+  push:
+    branches: [main, master]
+    paths:
+      - 'Dockerfile.service'
+      - '.dockerignore'
+      - 'docker-entrypoint.sh'
+      - 'bin/**'
+      - 'package*.json'
+      - 'packages/**'
+      - '!packages/**/*.test.ts'
+      - 'tests/e2e/docker-service.test.ts'
+      - 'tests/e2e/docker-browser-smoke.test.ts'
+      - 'scripts/browser-use-smoke.sh'
+      - 'docker/**'
+      - '.github/workflows/docker-service-e2e.yml'
+jobs:
+  acceptance:
+    name: Service image lifecycle and persisted data
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Build the actual production service image
+        run: docker build --progress=plain -f Dockerfile.service -t disclaude-service:e2e .
+      - name: Build the actual Chromium service image
+        run: docker build --progress=plain -f docker/Dockerfile.chromium -t disclaude-chromium:e2e docker
+      - name: Install test runner
+        run: npm ci --include=dev
+      - name: Run container startup, channel storage and recreation use case
+        env:
+          DISCLAUDE_E2E_DOCKER_IMAGE: disclaude-service:e2e
+          DISCLAUDE_E2E_DOCKER_BROWSER_IMAGE: disclaude-chromium:e2e
+        run: node node_modules/vitest/vitest.mjs run tests/e2e/docker-service.test.ts tests/e2e/docker-browser-smoke.test.ts

@@ -248,12 +248,13 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     });
   }
 
-  private skillsManifestFor(cwd: string | undefined): string {
-    if (!cwd) {return '';}
-    let registry = this.skillsRegistries.get(cwd);
+  private skillsManifestFor(projectRoot: string | undefined, executionRoot = projectRoot): string {
+    if (!projectRoot || !executionRoot) {return '';}
+    const key = JSON.stringify([projectRoot, executionRoot]);
+    let registry = this.skillsRegistries.get(key);
     if (!registry) {
-      registry = codexSkillsRegistry(cwd, this.builtinRoot);
-      this.skillsRegistries.set(cwd, registry);
+      registry = codexSkillsRegistry(projectRoot, this.builtinRoot, executionRoot);
+      this.skillsRegistries.set(key, registry);
     }
     return registry.resolve().manifest;
   }
@@ -395,7 +396,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       );
     }
 
-    const skillsManifest = this.skillsManifestFor(options.projectRoot ?? options.cwd);
+    const skillsManifest = this.skillsManifestFor(options.projectRoot ?? options.cwd, options.cwd ?? process.cwd());
     if (this.transportMode === 'app-server') {
       return this.queryAppServer(input, options, sandboxDecision.sandbox, binary, skillsManifest);
     }

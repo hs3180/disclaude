@@ -1,6 +1,6 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { SkillsRegistry } from './index.js';
 
@@ -12,6 +12,33 @@ describe('SkillsRegistry', () => {
     writeFileSync(join(root, 'skills', name, 'SKILL.md'), `---\ndescription: ${description}\n---\n`);
   };
   afterEach(() => { while (roots.length) {rmSync(roots.pop()!, { recursive: true, force: true });} });
+
+  it('discovers the shipped browser skill with its native metadata', () => {
+    const root = makeRoot();
+    mkdirSync(join(root, 'skills', 'browser-use'), { recursive: true });
+    writeFileSync(join(root, 'skills', 'browser-use', 'SKILL.md'),
+      readFileSync(resolve('skills/browser-use/SKILL.md'), 'utf8'));
+    const result = new SkillsRegistry([{ kind: 'builtin', root }]).resolve();
+    expect(result.diagnostics).toEqual([]);
+    expect(result.skills).toContainEqual(expect.objectContaining({ name: 'browser-use', source: 'builtin' }));
+    expect(result.manifest).toContain('[browser-use](skills/browser-use/SKILL.md)');
+    expect(result.manifest).not.toContain('allowed-tools');
+    expect(result.manifest).not.toContain(root);
+  });
+
+  it('provides readable links from a separate execution directory without forged Markdown', () => {
+    const parent = makeRoot(), workspace = makeRoot();
+    const builtin = join(parent, 'built ins)[extra]\nrow');
+    skill(builtin, 'browser-use', 'Read the browser guide');
+    const result = new SkillsRegistry([{ kind: 'builtin', root: builtin }], workspace).resolve();
+    expect(result.diagnostics).toEqual([]);
+    expect(result.manifest.split('\n')).toHaveLength(2);
+    const link = result.manifest.match(/\[browser-use\]\(([^)]+)\)/)?.[1];
+    expect(link).toBeDefined();
+    expect(readFileSync(resolve(realpathSync(workspace), decodeURIComponent(link!)), 'utf8')).toContain('Read the browser guide');
+    expect(result.manifest).not.toContain(parent);
+    expect(result.manifest).not.toContain(workspace);
+  });
 
   it('applies project > user > builtin precedence without leaking absolute paths', () => {
     const builtin = makeRoot(), user = makeRoot(), project = makeRoot();

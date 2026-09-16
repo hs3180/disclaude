@@ -699,13 +699,13 @@ describe('ScheduleFileScanner', () => {
   });
 
   describe('parseFile - timezone support (Issue #3860)', () => {
-    it('should parse timezone field from frontmatter', async () => {
+    it.each(['America/New_York', 'UTC'])('should parse timezone %s from frontmatter', async (timezone) => {
       const content = [
         '---',
         'name: "NYC Task"',
         'cron: "0 9 * * *"',
         'chatId: "oc_nyc"',
-        'timezone: "America/New_York"',
+        `timezone: "${timezone}"`,
         '---',
         '',
         'Task in NYC timezone.',
@@ -715,7 +715,7 @@ describe('ScheduleFileScanner', () => {
 
       const task = await scanner.parseFile(`${MOCK_DIR}/nyc-task/SCHEDULE.md`);
       expect(task).not.toBeNull();
-      expect(task!.timezone).toBe('America/New_York');
+      expect(task!.timezone).toBe(timezone);
     });
 
     it('should default timezone to undefined when not specified', async () => {
