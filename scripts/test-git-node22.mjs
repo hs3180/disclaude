@@ -10,7 +10,8 @@ let cleanupSafe = true;
 const toolingEnv = { ...process.env, npm_config_cache: join(temp, 'cache'), npm_config_userconfig: join(temp, 'empty.npmrc') };
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { encoding: 'utf8', timeout: 240_000, env: toolingEnv, ...options });
-  if (result.error && ['ETIMEDOUT', 'ENOBUFS'].includes(result.error.code)) cleanupSafe = false;
+  if (result.signal || (result.error && ['ETIMEDOUT', 'ENOBUFS'].includes(result.error.code))
+    || `${result.stdout ?? ''}\n${result.stderr ?? ''}`.includes('Package test files retained at ')) cleanupSafe = false;
   assert.equal(result.status, 0, `${result.error || ''}\n${result.stdout}\n${result.stderr}`);
   return result.stdout;
 }
