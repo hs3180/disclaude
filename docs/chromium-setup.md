@@ -205,14 +205,14 @@ old browser at a copy that a newer browser has already upgraded. A completed
 profile copy is retained after activation failure; a later setup can select that
 copy without repeating `--copy-profile-from`, or use a fresh destination.
 
-The native Linux migration E2E rehearses these explicit operator steps with an
-owned unmarked runtime unit, real Chromium and a synthetic cookie. It tests a
+The native migration E2E rehearses these explicit operator steps with an
+owned unmarked Linux runtime unit or macOS plist, real Chromium and a synthetic cookie. It tests a
 candidate that passes preflight but fails as a service, restores the original
 unit/profile and verifies page operation, then activates the retained profile
 copy and checks the original directory digest and configuration. Actual run
 evidence is recorded below. This rehearsal does
 not migrate a user's production deployment, validate real account credentials,
-or exercise physical desktop login/autostart; macOS handover remains separate.
+or exercise physical desktop login/autostart.
 
 
 **Linux migration acceptance — 2026-09-17:** exact test source
@@ -228,3 +228,17 @@ unchanged during candidate execution. Both emitted the owned-resource cleanup
 marker. Earlier failed runs exposed fixture cross-filesystem archival and
 reset-failed handling errors; they are retained in the PR and do not count as
 passes. These results retain all platform, account and production limits above.
+
+
+**macOS migration acceptance — 2026-09-17:** test source `565ff834`, macOS ARM64,
+Chromium155.0.8057.0, headless launchd: the same operator-assisted scenario passed
+in27.873s. Old plist/config and the original profile digest were preserved after
+candidate failure and successful copy activation. The restored original and the
+candidate copy both passed actual page input/screenshot checks and retained the
+synthetic cookie. The uniquely owned launchd label, profile processes and temporary
+root were independently absent after cleanup. No production service or Keychain
+setting changed. macOS reports cookie recovery/copy outcomes separately because
+credential restrictions must not turn ordinary browser operation into a failure;
+Linux retains mandatory cookie assertions. This is not real-account login migration
+or physical desktop login/autostart. Linux evidence above applies to its recorded
+source; the shared adapter change requires its own Linux regression run.
