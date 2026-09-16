@@ -206,6 +206,23 @@ configured model. This is harness interoperability evidence, not a Claude-model
 or performance benchmark.
 
 
+### Repeated product handoffs
+
+Set `DISCLAUDE_E2E_BROWSER_STRESS=1` to exercise 100 sequential IPC callers against
+the same managed page. Each caller verifies the preceding value, writes its own
+and reads it back. The trace must contain 100 distinct grants, with execution,
+worker exit and reclamation in order; every previous reclamation must precede
+the next grant. An independent final caller verifies the last value. This uses
+the actual product service/browser/workers and no model credentials. Browser CI
+enables it on Linux; local runs can opt in explicitly.
+
+On macOS ARM64 with Chromium 155.0.8057.0 and Node 24.8.0 (2026-09-17), all 100
+handoffs passed in 73.87 seconds. Grant-wait observations were p50=410ms,
+p95=424ms, max=471ms. The full product lifecycle test, including interruption,
+broker crash, restart and cleanup, passed in 89.73 seconds; its private root was
+removed. These are observations from one run, not latency guarantees. This loop
+does not itself prove queue contention; the separate two-agent case covers that.
+
 ### Two real agents competing for the browser
 
 Set `DISCLAUDE_E2E_BROWSER_CONTENTION_MODEL` to an accessible Anthropic-compatible

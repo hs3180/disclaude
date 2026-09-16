@@ -14,6 +14,7 @@ import { CodexAgentProvider } from '../../packages/core/src/sdk/providers/codex/
 import type { AgentMessage } from '../../packages/core/src/sdk/types.js';
 import { DeepSeekHarnessProvider } from '../../packages/core/src/sdk/providers/deepseek/provider.js';
 import { ModelContentionCleanupError, verifyModelContention } from './helpers/browser-model-contention.js';
+import { verifyRepeatedHandoffs } from './helpers/browser-handoff-stress.js';
 
 const exec = promisify(execFile);
 const enabled = Boolean(process.env.DISCLAUDE_E2E_CHROMIUM && process.env.DISCLAUDE_E2E_BROWSER_PYTHON);
@@ -215,6 +216,9 @@ describe('user starts Disclaude and shares its managed browser', () => {
         }
         if (attempt === 0 && process.env.DISCLAUDE_E2E_BROWSER_CONTENTION_MODEL) {
           await verifyModelContention(root, taskEnv, process.env.DISCLAUDE_E2E_BROWSER_CONTENTION_MODEL, join(root, 'browser-events.ndjson'), run);
+        }
+        if (attempt === 0 && process.env.DISCLAUDE_E2E_BROWSER_STRESS === '1') {
+          await verifyRepeatedHandoffs(join(root, 'browser-events.ndjson'), run);
         }
         await writeFile(join(root, 'profile', 'preserve-test.txt'), 'user profile retained');
         const cdpPort = (await readFile(join(root, 'profile', 'DevToolsActivePort'), 'utf8')).split('\n')[0];
