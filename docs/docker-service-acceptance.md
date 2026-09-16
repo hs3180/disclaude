@@ -145,3 +145,27 @@ peer's data untouched, and reclaim the network only after the peer releases it.
 Docker CI runs this resource case alongside the production image tests and verifies
 the explicit post-start failure path using the already-built production image.
 A helper-only change triggers this CI job as well.
+
+
+## Opt-in model schedule acceptance
+
+Set `DISCLAUDE_E2E_DOCKER_MODEL_SCHEDULE=1` with the production image and private
+`DISCLAUDE_E2E_DOCKER_MODEL_ENV_FILE` described above. This option is independent
+of `DISCLAUDE_E2E_DOCKER_MODEL`, which tests direct REST chat. The new case creates
+a prompt-based SCHEDULE.md after service readiness. The service watcher loads it
+and wall-clock cron triggers it; the test does not call the scheduler or send a
+chat request to trigger that task.
+
+A calendar-specific UTC trigger is set 30 seconds ahead using the container clock,
+avoiding recurring paid calls during acceptance. The bounded check requires the
+scheduler's completed-agent-turn log for the exact task ID, independently reads
+the model-created marker/boot/UID artifact, and checks the schedule is unchanged.
+It repeats after container recreation in minimal mode and checks that the first
+artifact is preserved. Existing owned Docker-resource cleanup runs on success
+and failure. Credentials are not enabled in default CI.
+
+**Execution status:** this opt-in path has type/lint validation only; no real
+container/model pass is claimed yet. The local host lacked the free-space reserve
+for another production image build when this case was added. Default container
+CI does not establish model-schedule success. Actual model execution, cleanup and
+remaining Feishu/migration gates must still be verified before closing #4924.
