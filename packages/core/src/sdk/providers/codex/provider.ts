@@ -1071,11 +1071,11 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     let activeTurnId: string | undefined;
     let turnDone: ((error?: Error) => void) | undefined;
     let stallTimer: ReturnType<typeof setTimeout> | undefined;
-    const blockingInputs = new Set<AgentInputRequest>();
+    const pendingInputs = new Set<AgentInputRequest>();
     const { timeoutMs: stallTimeoutMs } = readStallPolicy(this.env);
     const armStall = (): void => {
       if (stallTimer) {clearTimeout(stallTimer);}
-      if (blockingInputs.size > 0) { return; }
+      if (pendingInputs.size > 0) { return; }
       stallTimer = setTimeout(() => {
         void lifecycle?.interrupt(sessionKey).catch(() => {});
         turnDone?.(new Error(`codex app-server stalled for ${stallTimeoutMs}ms`));
@@ -1205,12 +1205,15 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               const boundTurn = await turnBinding;
               if (!boundTurn || stopped || request.signal.aborted || request.threadId !== threadId || request.turnId !== boundTurn
                 || activeTurnId !== boundTurn || !options.onUserInput) { throw new Error('Input request has no active channel turn'); }
-              if (request.isBlocking) { blockingInputs.add(request); armStall(); }
+              // Even a non-blocking question can leave the model idle while the
+              // user answers. Its own bounded input deadline governs that wait.
+              pendingInputs.add(request);
+              armStall();
               let finished = false;
               const finish = (): void => {
                 if (finished) { return; }
                 finished = true;
-                blockingInputs.delete(request);
+                pendingInputs.delete(request);
                 request.signal.removeEventListener('abort', finish);
                 if (!stopped && activeTurnId === boundTurn) { armStall(); }
               };
