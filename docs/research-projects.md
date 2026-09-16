@@ -9,8 +9,19 @@ fails visibly without recreating it or falling back to another workspace.
 
 Legacy research without a binding retains its original independent execution
 directory and is labeled as unassociated; it is not assigned to the current chat's
-project. The [project/research convergence proposal](proposals/project-research-convergence.md)
-records the remaining explicit legacy association and real acceptance work.
+project. An idle legacy research card offers an explicit association preview for
+the current project directory. Confirmation revalidates the current directory,
+research revision and persisted preview token; a changed target requires a new
+preview. The association only adds navigation metadata. It does not change the
+execution directory, move/copy files, rewrite sources or replay completed work.
+It can be undone from the research card without deleting findings or documents.
+The preview survives restart and repeating its confirmed action is idempotent.
+Active research and research already created with a fixed directory cannot use
+this operation. Linked follow-ups inherit the navigation association but retain their own
+independent execution directory. Unlinking one research does not unlink its
+successors. The [project/research convergence proposal](proposals/project-research-convergence.md)
+records the remaining real acceptance work for directory binding, navigation
+and explicit legacy association.
 The existing directory binding remains the project context; there is no second
 general project registry. Directory association alone does not complete the
 proposal. Research

@@ -3,7 +3,7 @@ import { isAbsolute } from 'node:path';
 import { ProjectStore } from './project.js';
 import { ResearchManager, type StepRunner, type ProjectAction } from './manager.js';
 import { createResearchRunner } from './runner.js';
-import { indexCard, projectCard, evidenceCard, historyCard } from './cards.js';
+import { indexCard, projectCard, evidenceCard, historyCard, projectLinkPreviewCard } from './cards.js';
 import type { DocumentReader, DocumentAppender } from './document-source.js';
 
 type Sender = (message: { chatId: string; type: string; text?: string; card?: Record<string, unknown>; threadId?: string }) => Promise<string | void>;
@@ -69,6 +69,18 @@ export class FeishuResearchController {
         return;
       }
       const project = this.manager.get(id, owner, chat);
+      if (actionName === 'preview-project-link' || actionName === 'confirm-project-link') {
+        if (!this.resolveWorkingDir || typeof value.revision !== 'number') { throw new Error('当前项目目录不可用，请检查目录绑定。'); }
+        const directory = await this.resolveWorkingDir(chat);
+        if (actionName === 'preview-project-link') {
+          const preview = await this.manager.previewProjectLink(id, owner, chat, value.revision, directory);
+          await this.send({ chatId: chat, type: 'card', threadId: project.thread, card: projectLinkPreviewCard(preview) });
+        } else { await this.manager.confirmProjectLink(id, owner, chat, value.revision, string(value.token), directory); }
+        return;
+      }
+      if (actionName === 'unlink-project' && typeof value.revision === 'number') {
+        await this.manager.unlinkProject(id, owner, chat, value.revision); return;
+      }
       if (['open', 'refresh'].includes(actionName)) { await this.manager.show(id, owner, chat, actionName === 'open' ? { thread: message } : undefined); return; }
       if (actionName === 'evidence') {
         await this.send({ chatId: chat, type: 'card', threadId: project.thread, card: evidenceCard(project, string(value.direction), page(value.index)) }); return;

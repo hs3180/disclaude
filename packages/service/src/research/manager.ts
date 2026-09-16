@@ -66,7 +66,7 @@ export class ResearchManager {
     const now = new Date().toISOString();
     const token = documentToken(input.documentUrl ?? '');
     if (token && !this.readDocument) { throw new Error('当前研究服务未配置文档读取能力。'); }
-    const p: ResearchProject = { ...input, workingDir, id: randomUUID(), status: 'paused', revision: 0, createdAt: now, updatedAt: now,
+    const p: ResearchProject = { ...input, workingDir, projectLink: parent?.projectLink ? { directory: parent.projectLink.directory, token: randomUUID() } : undefined, id: randomUUID(), status: 'paused', revision: 0, createdAt: now, updatedAt: now,
       title: finding ? `发现追问：${finding.claim.slice(0, 160)}` : input.title,
       scope: finding ? `仅围绕所选发现核验依据、补充证据并处理分歧与未知，不重新开展原项目的其他研究方向。原项目的来源和工具限制仍适用。\n所选发现：${finding.claim}` : input.scope,
       document: token ? { url: input.documentUrl ?? '', token, previous: [], generation: 0,
@@ -78,6 +78,44 @@ export class ResearchManager {
     await this.display(p);
     // No invisible work if the first project card could not be delivered.
     return structuredClone(p);
+  }
+  private checkLegacyLink(p: ResearchProject): void {
+    if (p.workingDir) { throw new Error('该研究已有固定项目目录，不支持通过历史关联迁移。'); }
+    if (this.running.has(p.id) || ['running', 'pausing', 'cancelling'].includes(p.status)) { throw new Error('请先暂停研究并等待当前阶段结束，再调整项目关联。'); }
+  }
+  async previewProjectLink(id: string, owner: string, chat: string, revision: number, directory: string): Promise<ResearchProject> {
+    this.get(id, owner, chat);
+    const p = this.project(id);
+    this.checkLegacyLink(p);
+    if (p.revision !== revision) { throw new Error('研究已更新，请刷新后操作。'); }
+    if (p.projectLink) { throw new Error('该历史研究已有关联，请先撤销原关联。'); }
+    if (!isAbsolute(directory)) { throw new Error('项目关联目录必须是绝对路径。'); }
+    p.linkPreview = { directory, token: randomUUID() };
+    this.record(p, '已准备项目关联预览，尚未改变研究归属或执行目录。');
+    await this.display(p);
+    return structuredClone(p);
+  }
+  async confirmProjectLink(id: string, owner: string, chat: string, revision: number, token: string, directory: string): Promise<void> {
+    this.get(id, owner, chat);
+    const p = this.project(id);
+    if (p.projectLink?.token === token) { await this.display(p); return; }
+    this.checkLegacyLink(p);
+    if (p.revision !== revision || !p.linkPreview || p.linkPreview.token !== token || p.linkPreview.directory !== directory) {
+      throw new Error('研究或当前目录已改变，请重新预览关联目标。');
+    }
+    p.projectLink = { ...p.linkPreview };
+    p.linkPreview = undefined;
+    this.record(p, '已将历史研究关联到项目导航。执行目录、已有文件及成果保留；可撤销关联。');
+    await this.display(p);
+  }
+  async unlinkProject(id: string, owner: string, chat: string, revision: number): Promise<void> {
+    this.get(id, owner, chat);
+    const p = this.project(id);
+    this.checkLegacyLink(p);
+    if (p.revision !== revision) { throw new Error('研究已更新，请刷新后操作。'); }
+    p.projectLink = undefined; p.linkPreview = undefined;
+    this.record(p, '已撤销项目导航关联。研究身份、文件及成果保留。');
+    await this.display(p);
   }
   async show(id: string, owner: string, chat: string, reopen?: { thread: string }): Promise<void> {
     this.get(id, owner, chat);

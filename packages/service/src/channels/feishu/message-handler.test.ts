@@ -283,6 +283,40 @@ describe('MessageHandler', () => {
     } finally { handler.clearClient(); vi.unstubAllEnvs(); rmSync(directory, { recursive: true, force: true }); }
   });
 
+  it('requires an explicit legacy-link preview and confirmation through real card callback routing', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'research-link-'));
+    vi.stubEnv('DISCLAUDE_RESEARCH_PROJECTS_DIR', directory);
+    const realFs = await vi.importActual<typeof import('fs/promises')>('fs/promises');
+    vi.mocked((await import('fs/promises')).stat).mockImplementationOnce(realFs.stat).mockImplementationOnce(realFs.stat);
+    const legacy = { id: 'abcdef', owner: 'user_001', chat: 'chat_001', source: 'legacy', title: 'Preserve this research', scope: '', materials: '', status: 'completed', revision: 3, createdAt: '', updatedAt: '', directions: [], summary: 'Existing evidence', questions: [], history: [], feedback: [], stepCount: 3, cardId: 'old-card' };
+    const file = join(directory, 'abcdef.json');
+    writeFileSync(file, JSON.stringify(legacy));
+    const send = vi.fn().mockResolvedValue('preview-card');
+    const { handler } = createHandler({ callbacks: { emitMessage: mockState.emitMessage,
+      emitControl: vi.fn().mockResolvedValue({ success: true, projectContext: { workingDir: directory, available: true } }), sendMessage: send } });
+    try {
+      handler.initialize({ im: { message: { patch: vi.fn().mockResolvedValue({ code: 0 }) } } } as any);
+      await handler.handleCardAction(cardActionEvent({ action: { value: { research: true, action: 'preview-project-link', project: legacy.id, revision: legacy.revision } } }));
+      await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+      const { card } = firstCallArg(send);
+      expect(JSON.stringify(card)).toContain(directory);
+      expect(JSON.stringify(card)).toContain('不移动或复制文件');
+      expect(JSON.parse(readFileSync(file, 'utf8')).projectLink).toBeUndefined();
+      const confirm = card.body.elements.find((element: any) => element.text?.content === '确认关联').behaviors[0].value;
+      expect(confirm.directory).toBeUndefined(); // Target is resolved and checked server-side.
+      await handler.handleCardAction(cardActionEvent({ action: { value: confirm } }));
+      await vi.waitFor(() => expect(JSON.parse(readFileSync(file, 'utf8')).projectLink?.directory).toBe(directory));
+      const linked = JSON.parse(readFileSync(file, 'utf8'));
+      expect(linked.workingDir).toBeUndefined();
+      expect(linked.summary).toBe(legacy.summary);
+      expect(linked.id).toBe(legacy.id);
+      await handler.handleCardAction(cardActionEvent({ action: { value: { research: true, action: 'unlink-project', project: legacy.id, revision: linked.revision } } }));
+      await vi.waitFor(() => expect(JSON.parse(readFileSync(file, 'utf8')).projectLink).toBeUndefined());
+      expect(JSON.parse(readFileSync(file, 'utf8')).summary).toBe(legacy.summary);
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    } finally { handler.clearClient(); vi.unstubAllEnvs(); rmSync(directory, { recursive: true, force: true }); }
+  });
+
   it('refuses research creation when the bound project is unavailable instead of using the default workspace', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'research-unavailable-'));
     vi.stubEnv('DISCLAUDE_RESEARCH_PROJECTS_DIR', directory);

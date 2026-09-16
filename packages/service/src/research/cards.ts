@@ -20,6 +20,9 @@ export function projectCard(p: ResearchProject): Record<string, unknown> {
   if (p.status === 'running') { actions.push(researchButton('暂停研究', { ...value, action: 'pause' })); }
   if (['paused', 'failed', 'interrupted', 'waiting-user'].includes(p.status)) { actions.push(researchButton(p.directions.length ? '恢复研究' : '开始研究', { ...value, action: 'resume' }, true)); }
   if (!['completed', 'cancelled', 'cancelling'].includes(p.status)) { actions.push(researchButton('取消研究', { ...value, action: 'cancel' })); }
+  if (!p.workingDir && !['running', 'pausing', 'cancelling'].includes(p.status)) {
+    actions.push(researchButton(p.projectLink ? '撤销项目关联' : '关联到当前项目…', { ...value, action: p.projectLink ? 'unlink-project' : 'preview-project-link' }));
+  }
   const visible = p.directions.slice(-8);
   if (p.status === 'completed' && p.document && p.summary && p.document.export?.status !== 'saved'
     && !(p.document.export && p.document.publishedFragments?.includes(p.document.export.fragment))) {
@@ -28,7 +31,8 @@ export function projectCard(p: ResearchProject): Record<string, unknown> {
   const elements: unknown[] = [
     ...(p.archivedAt ? [text('已归档 · 成果和研究记录保留')] : []),
     text(`${labels[p.status]}\n${p.scope || '范围：围绕研究问题展开'}\n最近更新：${p.updatedAt}`),
-    text(p.workingDir ? `项目工作目录\n${p.workingDir}\n研究创建后固定使用此目录；切换对话目录不会迁移已有研究。` : '历史研究：未关联项目工作目录，继续使用原独立研究目录。'),
+    text(p.workingDir ? `项目工作目录\n${p.workingDir}\n研究创建后固定使用此目录；切换对话目录不会迁移已有研究。` : p.projectLink ? '历史研究：保留原独立研究目录。' : '历史研究：未关联项目工作目录，继续使用原独立研究目录。'),
+    ...(p.projectLink ? [text(`关联项目目录\n${p.projectLink.directory}\n仅建立导航关联；仍使用原独立研究目录，不移动或复制文件。`)] : []),
     ...(p.parent ? [text('从已有成果继续的研究'), researchButton('查看原项目', { project: p.parent, action: 'open' })] : []),
     ...(p.parentFinding && p.priorResults?.findings[0] ? [text(`本次继续研究的发现\n${p.priorResults.findings[0].claim}`), researchButton('查看原发现与来源', { project: p.parent, action: 'evidence', direction: p.parentFinding.directionId, index: p.parentFinding.index })] : []),
     text(p.history.at(-1)?.text ?? ''),
@@ -98,7 +102,7 @@ export function indexCard(projects: ResearchProject[], nonce: string, offset = 0
       { tag: 'div', text: { ...plain('可关联一份新版飞书文档，在阶段边界同步文字正文与评论。研究完成后可选择追加成果；未关联的链接不会自动同步。'), text_size: 'notation', text_color: 'grey' } }]),
     group([
     researchButton(archived ? '返回研究列表' : '查看归档研究', { action: 'index', archived: !archived }),
-    ...projects.slice(offset, offset + 6).flatMap(p => [text(`${p.title} · ${labels[p.status]}\n${p.workingDir ? `工作目录：${p.workingDir}${p.workingDir === context.workingDir ? '（当前项目）' : ''}` : '历史研究 · 未关联项目目录'}`), researchButton('打开研究', { project: p.id, action: 'open' })]),
+    ...projects.slice(offset, offset + 6).flatMap(p => [text(`${p.title} · ${labels[p.status]}\n${p.projectLink ? `关联项目：${p.projectLink.directory}（保留独立执行目录）` : p.workingDir ? `工作目录：${p.workingDir}${p.workingDir === context.workingDir ? '（当前项目）' : ''}` : '历史研究 · 未关联项目目录'}`), researchButton('打开研究', { project: p.id, action: 'open' })]),
     ...(projects.length > offset + 6 ? [researchButton('更多研究', { action: 'index', offset: offset + 6, archived })] : []),
     ]),
     ...(!context.error ? [text('新研究使用提交表单时的当前项目目录。建立后先展示目录与范围，点击开始才会执行。'), { tag: 'form', name: 'research_create', elements: [
@@ -108,5 +112,15 @@ export function indexCard(projects: ResearchProject[], nonce: string, offset = 0
       { tag: 'input', name: 'document_url', placeholder: plain('可选：关联的飞书 /docx/ 文档链接（需应用有读取权限）') },
       submitButton('建立研究', { action: 'create', nonce }),
     ] }] : []),
+  ]);
+}
+
+export function projectLinkPreviewCard(p: ResearchProject): Record<string, unknown> {
+  if (!p.linkPreview) { throw new Error('项目关联预览已失效。'); }
+  return researchCard('确认历史研究的项目关联', [
+    text(p.title), text(`目标项目目录\n${p.linkPreview.directory}`),
+    text('此次只将历史研究显示为该项目的关联研究。研究身份、已有发现、文档和独立执行目录保留，不移动或复制文件，不重跑已完成阶段。可从研究卡片撤销关联。从该成果继续的研究继承项目归属，仍使用各自的独立执行目录。'),
+    researchButton('确认关联', { project: p.id, revision: p.revision, token: p.linkPreview.token, action: 'confirm-project-link' }, true),
+    researchButton('暂不关联，返回研究', { project: p.id, action: 'open' }),
   ]);
 }

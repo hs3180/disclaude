@@ -19,6 +19,9 @@ export interface ResearchProject {
   id: string;
   /** Frozen at creation; absent in legacy research. Never inferred from the current chat. */
   workingDir?: string;
+  /** Explicit navigation-only association for legacy research; never changes execution cwd. */
+  projectLink?: { directory: string; token: string };
+  linkPreview?: { directory: string; token: string };
   owner: string;
   chat: string;
   thread?: string;
