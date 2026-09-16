@@ -9,6 +9,10 @@ import { ModelContentionCleanupError } from './browser-model-contention.js';
 /** Actual ordinary-agent launch, not a caller-prepared provider environment. */
 export async function verifyChatAgentBrowser(root: string, env: NodeJS.ProcessEnv,
   model: string, run: (script: string) => Promise<string>): Promise<void> {
+  const backend = process.env.DISCLAUDE_E2E_BROWSER_CHAT_AGENT_BACKEND ?? 'deepseek';
+  if (backend !== 'deepseek' && backend !== 'claude') {
+    throw new Error(`Unsupported browser ChatAgent acceptance backend: ${backend}`);
+  }
   expect(Config.getGlobalEnv().BU_CDP_WS).toBe('ws://configured-browser-marker.invalid');
   const injected: NodeJS.ProcessEnv = {
     BU_CDP_URL: 'http://inherited-browser-marker.invalid:9223',
@@ -41,7 +45,7 @@ export async function verifyChatAgentBrowser(root: string, env: NodeJS.ProcessEn
     sendMessage: (_chat, text) => { messages.push(text); return Promise.resolve(); },
     sendCard: () => Promise.reject(new Error('No external card delivery in browser entry acceptance')),
     sendFile: () => Promise.reject(new Error('No external file delivery in browser entry acceptance')),
-  }, { agentBackend: 'deepseek', model, skipHistory: true, cwdProvider: () => root, sdkSessionKey: id });
+  }, { agentBackend: backend, model, skipHistory: true, cwdProvider: () => root, sdkSessionKey: id });
     await Promise.race([
       agent.runOnce(id, `Use your shell tool to run exactly this command:\n${command}\nThen reply with ${marker}. This is an isolated browser acceptance task. Do not delegate, use direct CDP, launch a browser, inspect credentials, contact other services or modify unrelated files.`, id, 'acceptance-user'),
       new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error('ChatAgent browser deadline')), 120_000); }),
@@ -54,7 +58,7 @@ export async function verifyChatAgentBrowser(root: string, env: NodeJS.ProcessEn
     }
     expect(messages.some(text => text.includes(marker))).toBe(true);
     expect(await run("print(js(\"document.querySelector('#value').value\"))\n")).toContain(marker);
-    console.info('BROWSER_CHAT_AGENT_ENTRY', JSON.stringify({ backend: 'deepseek', actualChatAgent: true,
+    console.info('BROWSER_CHAT_AGENT_ENTRY', JSON.stringify({ backend, actualChatAgent: true,
       inheritedAndConfiguredCdpRemoved: true, toolChildInheritanceVerified: true, independentReadback: true }));
   } finally {
     clearTimeout(timer);
