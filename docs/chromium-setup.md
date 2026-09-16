@@ -155,3 +155,16 @@ manager by its operator. Import does not stop arbitrary services, rewrite an
 unmanaged systemd unit, remove legacy managers or prove account-login migration.
 Keep the old service definition/configuration until the new endpoint is verified;
 this import is not automatic adoption of every historical deployment format.
+
+
+### Existing Linux service definitions
+
+Before a mutating command, the CLI checks the user manager's actual FragmentPath,
+DropInPaths and transient status as well as its own definition file. Runtime or
+vendor units with the same name, linked definitions, manual drop-ins and loaded
+services without an owned file are refused. Stop and uninstall follow the same
+rule. Status and logs remain available for diagnosis. Keep original definitions,
+overrides, configuration and profiles when planning explicit migration; do not
+add a managed marker to bypass these checks. This is ownership compatibility
+checking, not a security boundary against concurrent same-user changes, and it
+does not implement automatic takeover or prove real account-login migration.
