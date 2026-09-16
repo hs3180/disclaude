@@ -113,7 +113,7 @@ async function probe(info, write, headless) {
             ready: document.readyState, article: document.querySelector('#js_content')?.innerText?.trim() ?? '',
             text: document.body?.innerText ?? '' })`, returnByValue: true }, session);
           page = result.result.value;
-          if (page?.url !== 'about:blank' && page?.ready === 'complete') break;
+          if (page?.ready === 'complete' && publicUrl(page.url)?.startsWith(`${new URL(url).origin}/`)) break;
           await delay(500);
         }
         writeFileSync(resolve(evidenceDir, `${label}-observation.json`), JSON.stringify({ requestedUrl: url, finalUrl: publicUrl(page?.url), title: page?.title, ready: page?.ready, navigationError: navigation.errorText, articleCharacters: page?.article?.length ?? 0, fingerprints: fingerprints.result.value }, null, 2), { mode: 0o600 });
