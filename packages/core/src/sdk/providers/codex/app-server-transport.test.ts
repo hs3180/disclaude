@@ -60,6 +60,26 @@ ${mode === 'crash' ? 'exit 7' : 'while :; do sleep 1; done'}
     }
   });
 
+  it.skipIf(process.platform === 'win32')('reclaims a tool that detached into its own process group', async () => {
+    const binary = fixture(`exec "${process.execPath}" -e '
+const {spawn}=require("node:child_process"), fs=require("node:fs");
+const child=spawn(process.execPath,["-e", "process.on(\\"SIGTERM\\",()=>{});process.stdout.write(\\"ready\\");setInterval(()=>{},1000)"],{detached:true,stdio:["ignore","pipe","ignore"]});
+child.stdout.once("data",()=>fs.writeFileSync(process.env.DETACHED_PID_FILE,String(child.pid)));
+setInterval(()=>{},1000);
+'`);
+    const pidFile = join(dirname(binary), 'detached-pid');
+    const transport = new CodexAppServerTransport({ binary, killGraceMs: 50, env: { ...process.env, DETACHED_PID_FILE: pidFile } });
+    let pid: number | undefined;
+    try {
+      await vi.waitFor(() => { pid = Number(readFileSync(pidFile, 'utf8')); expect(pid).toBeGreaterThan(0); });
+      await transport.close();
+      await vi.waitFor(() => expect(() => process.kill(pid as number, 0)).toThrow(), { timeout: 2000 });
+    } finally {
+      await transport.close();
+      if (pid) { try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ } }
+    }
+  });
+
   it('initializes, correlates responses, and forwards notifications', async () => {
     const binary = fixture(`
 read initialize
