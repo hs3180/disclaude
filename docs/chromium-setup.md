@@ -40,6 +40,24 @@ Omit `--revision` to resolve the platform's current `LAST_CHANGE`. `--dry-run` f
 
 Installation pins the object generation and checks the advertised size and published MD5 over HTTPS. It records a locally computed SHA-256; this is an audit identifier, not an independently published signature. Before OS extraction it bounds expanded size and rejects unsafe ZIP paths and symlink chains. Temporary downloads and their installation locks are removed after ordinary failure or cancellation; a lock left by an uncatchable termination requires inspecting its recorded owner before manual removal.
 
+### Existing macOS service definitions
+
+Browser commands preserve an existing plist that they cannot identify as managed,
+including `generate`, `stop` and `uninstall`. A matching filename or service label
+alone does not authorize replacement. New generated definitions have a managed
+comment marker; the exact previous generated shape is also accepted for upgrades
+(including the standard `/usr/bin/caffeinate -s` wrapper). An unmarked definition
+with custom keys, arguments or a different structure requires explicit migration.
+Read-only status/log commands remain available. This compatibility check is not a
+security boundary against another process running as the same user.
+
+Preserve the original definition, configuration and profile when resolving a
+manual deployment. Do not add the marker to bypass the check: first identify and
+retire its old manager, validate the candidate and plan recovery of the original
+service. `--import-config` imports browser settings only; it does not transfer
+ownership of an unmanaged service or stop another manager. Full manual-deployment
+migration and real login preservation remain separate acceptance requirements.
+
 On macOS, `codesign --verify --deep --strict` is a separate check. Failure defaults to rejection before executing the candidate. Interactive use requires an explicit choice; unattended use requires `--allow-unverified-signature` after reviewing the result. This does not change Gatekeeper, Keychain or system settings, and a successful code-signature check is not a notarization claim.
 
 A candidate is published only after its actual executable reports a version and passes headless `browser doctor` with a temporary profile. `verification.json` records the archive, signature result, diagnosis mode/time and payload digest. Reuse verifies the entire payload; changed files cause rejection while preserving the directory. Reuse retains the original diagnosis timestamp, while every setup separately checks the requested service mode and real CDP readiness. Temporary-profile cookie results do not establish login persistence in the user's service profile. Old versions are retained; this command does not automatically remove existing browsers or profiles.
