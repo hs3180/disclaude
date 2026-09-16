@@ -190,3 +190,21 @@ receipt of REST notifications (no waiting REST client was used), actual Feishu
 card interaction, other model backends, final-source installation or migration
 of existing user data. These remaining #4924 gates are still open; credential-free
 CI alone does not repeat this real-model evidence.
+
+
+## REST client receipt in the model schedule case
+
+The opt-in model schedule case now first establishes an actual asynchronous REST
+conversation for the schedule's chat ID. It waits for that initial model reply,
+then creates the schedule and, after execution, polls the same HTTP endpoint for
+the unique scheduled-result marker. Scheduler logs and the file artifact alone
+cannot satisfy this assertion. This adds one short model conversation per mode;
+it does not dispatch the scheduled prompt through the chat endpoint.
+
+An unestablished `rest-*` ID currently has no REST inbox: polling returns 204 even
+after outgoing text/completion messages. This case covers an established polling
+client only, not unsolicited notifications to a new ID, persistent notification
+storage across service restarts, or Feishu delivery. A real-HTTP channel probe on
+`c6d9f76e` reproduced both behaviors using controlled outgoing messages; that
+probe is not model/scheduler end-to-end evidence. The expanded model case still
+requires an actual run before its new receipt assertion can be called passed.
