@@ -46,7 +46,7 @@ export class ResearchManager {
     return [...this.projects.values()].filter(p => p.owner === owner && p.chat === chat && Boolean(p.archivedAt) === archived)
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map(p => structuredClone(p));
   }
-  async create(input: { owner: string; chat: string; thread?: string; source: string; title: string; scope: string; materials: string; parent?: string; documentUrl?: string }): Promise<ResearchProject> {
+  async create(input: { owner: string; chat: string; thread?: string; source: string; title: string; scope: string; materials: string; parent?: string; parentFinding?: ResearchProject['parentFinding']; documentUrl?: string }): Promise<ResearchProject> {
     this.load();
     if (!input.owner || !input.chat || !input.source || !input.title.trim() || input.title.length > 180 || input.scope.length > 3000 || input.materials.length > 12000) {
       throw new Error('请填写研究问题（180 字以内）、范围（3000 字以内）和材料（12000 字以内）。');
@@ -55,14 +55,20 @@ export class ResearchManager {
     if (existing) { await this.show(existing.id, input.owner, input.chat); return structuredClone(existing); }
     const parent = input.parent ? this.get(input.parent, input.owner, input.chat) : undefined;
     if (parent && !['completed', 'cancelled'].includes(parent.status)) { throw new Error('请先结束原项目，再从成果继续研究。'); }
+    const selected = input.parentFinding;
+    const finding = selected && parent?.directions.find(d => d.id === selected.directionId)?.findings[selected.index];
+    if (selected && (!Number.isSafeInteger(selected.index) || selected.index < 0 || !finding)) {
+      throw new Error('所选发现不存在，请重新打开原项目中的发现。');
+    }
     const now = new Date().toISOString();
     const token = documentToken(input.documentUrl ?? '');
     if (token && !this.readDocument) { throw new Error('当前研究服务未配置文档读取能力。'); }
     const p: ResearchProject = { ...input, id: randomUUID(), status: 'paused', revision: 0, createdAt: now, updatedAt: now,
+      title: finding ? `发现追问：${finding.claim.slice(0, 160)}` : input.title,
       document: token ? { url: input.documentUrl ?? '', token, previous: [], generation: 0,
         publishedFragments: parent?.document?.token === token ? [...(parent.document.publishedFragments ?? [])] : [] } : undefined,
       directions: [], summary: '', questions: [], history: [], feedback: [], stepCount: 0,
-      priorResults: parent ? { summary: parent.summary, findings: parent.directions.flatMap(d => d.findings).slice(-16) } : undefined };
+      priorResults: parent ? { summary: parent.summary, findings: structuredClone(finding ? [finding] : parent.directions.flatMap(d => d.findings).slice(-16)) } : undefined };
     this.record(p, '项目已建立。开始后会持续研究，无需逐轮发送消息。');
     this.projects.set(p.id, p);
     await this.display(p);

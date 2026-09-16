@@ -119,6 +119,29 @@ describe('persistent research lifecycle', () => {
     expect(successor.priorResults?.findings).toEqual([finding]);
     expect(manager.get(p.id, 'alice', 'chat-a').status).toBe('completed');
   });
+  it('continues a selected finding with its sources after restart without changing the original', async () => {
+    const second = { ...finding, claim: 'Report B costs 12', caveat: 'Tax is unknown' };
+    const { manager, dir } = fixture((_p, step) => Promise.resolve(step.type === 'investigate' ? { findings: [finding, second] } : result(step)));
+    const p = await manager.create(input);
+    await manager.act(p.id, 'alice', 'chat-a', p.revision, 'resume'); await manager.idle(p.id);
+    const original = manager.get(p.id, 'alice', 'chat-a');
+    const parentFinding = { directionId: original.directions[0].id, index: 1 };
+    const request = { ...input, source: 'selected-finding', parent: p.id, parentFinding };
+    const next = await manager.create(request);
+    expect(next.status).toBe('paused'); expect(next.title).toContain(second.claim);
+    expect(next.priorResults?.findings).toEqual([second]);
+    expect(next.parentFinding).toEqual(parentFinding);
+    expect(manager.get(p.id, 'alice', 'chat-a')).toEqual(original);
+    manager.dispose();
+    const reopened = fixture(undefined, undefined, dir).manager;
+    expect((await reopened.create(request)).id).toBe(next.id);
+    expect(reopened.get(next.id, 'alice', 'chat-a').priorResults?.findings).toEqual([second]);
+    for (const index of [-1, 2, 0.5]) {
+      await expect(reopened.create({ ...request, source: `invalid-${index}`, parentFinding: { ...parentFinding, index } })).rejects.toThrow('所选发现不存在');
+    }
+    await expect(reopened.create({ ...request, source: 'wrong-owner', owner: 'bob' })).rejects.toThrow('不属于');
+    expect(reopened.list('alice', 'chat-a')).toHaveLength(2);
+  });
   it('pauses at the in-flight phase boundary and resumes without repeating that phase', async () => {
     const entered = deferred<void>(), gate = deferred<StepResult>(); const steps: string[] = [];
     const { manager } = fixture((_p, step) => { steps.push(step.type); if (step.type === 'plan') { entered.resolve(); return gate.promise; } return Promise.resolve(result(step)); });

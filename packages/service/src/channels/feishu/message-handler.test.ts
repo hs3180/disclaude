@@ -9,7 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ActionBoundInput } from '@disclaude/core';
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -244,6 +244,40 @@ describe('MessageHandler', () => {
       await handler.handleCardAction(cardActionEvent({ operator: { open_id: 'another-user' }, action: { value: { research: true, action: 'resume', project: project.id, revision: project.revision } } }));
       await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(3));
       expect(readFileSync(join(directory, file ?? ''), 'utf8')).toBe(persisted);
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    } finally { handler.clearClient(); vi.unstubAllEnvs(); rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  it('routes a finding-card continuation once and preserves the chosen evidence', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'research-finding-'));
+    vi.stubEnv('DISCLAUDE_RESEARCH_PROJECTS_DIR', directory);
+    const chosen = { claim: 'B costs 9', kind: 'fact', sources: [{ title: 'Discount', location: 'materials', excerpt: '12 minus 3' }], caveat: 'Fictional prices' };
+    const original = { id: 'abcdef', owner: 'user_001', chat: 'chat_001', source: 'original-form', title: 'Compare costs', scope: 'Only supplied evidence', materials: 'A=11; B=12-3', status: 'completed', revision: 5, createdAt: '2026-09-16T00:00:00Z', updatedAt: '2026-09-16T00:00:00Z', directions: [{ id: 'cost', title: 'Costs', status: 'done', findings: [{ ...chosen, claim: 'A costs 11' }, chosen] }], summary: 'B costs less', questions: [], history: [], feedback: [], stepCount: 3 };
+    const originalPath = join(directory, 'abcdef.json');
+    writeFileSync(originalPath, JSON.stringify(original));
+    const send = vi.fn().mockResolvedValue('om_followup');
+    const { handler } = createHandler({ callbacks: { emitMessage: mockState.emitMessage, emitControl: mockState.emitControl, sendMessage: send } });
+    try {
+      handler.initialize({ im: { message: { patch: vi.fn().mockResolvedValue({ code: 0 }) } } } as any);
+      await handler.handleCardAction(cardActionEvent({ action: { value: { research: true, action: 'evidence', project: 'abcdef', direction: 'cost', index: 1 } } }));
+      await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+      const { card } = firstCallArg(send);
+      const button = card.body.elements.find((element: any) => element.text?.content === '基于这项发现继续研究');
+      expect(button).toBeDefined();
+      const event = cardActionEvent({ action: { value: button.behaviors[0].value } });
+      await handler.handleCardAction(event);
+      await vi.waitFor(() => expect(readdirSync(directory).filter(name => name.endsWith('.json'))).toHaveLength(2));
+      const file = readdirSync(directory).find(name => name.endsWith('.json') && name !== 'abcdef.json')!;
+      await vi.waitFor(() => expect(JSON.parse(readFileSync(join(directory, file), 'utf8')).cardId).toBe('om_followup'));
+      await handler.handleCardAction(event);
+      await handler.handleCardAction({ ...event, operator: { open_id: 'other-user' } });
+      await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(3));
+      const next = JSON.parse(readFileSync(join(directory, file), 'utf8'));
+      expect(next.parent).toBe('abcdef'); expect(next.status).toBe('paused');
+      expect(next.parentFinding).toEqual({ directionId: 'cost', index: 1 });
+      expect(next.priorResults.findings).toEqual([chosen]);
+      expect(readdirSync(directory).filter(name => name.endsWith('.json'))).toHaveLength(2);
+      expect(JSON.parse(readFileSync(originalPath, 'utf8'))).toEqual(original);
       expect(mockState.emitMessage).not.toHaveBeenCalled();
     } finally { handler.clearClient(); vi.unstubAllEnvs(); rmSync(directory, { recursive: true, force: true }); }
   });

@@ -19,6 +19,11 @@ from their card, reopened from the archive index, and moved back without deletin
 results or changing project identity.
 Continuing from results creates a new linked project, with a snapshot of the
 previous summary and findings available to its runner. The original remains final.
+The finding detail of a completed or cancelled project also offers a continuation
+from that specific finding. The new project starts paused, identifies the selected
+claim, and preserves its sources and caveats alongside the parent summary. It links
+back to both the original project and the selected evidence. Repeating the same
+card action returns the same successor; it does not create another project.
 When a stage needs a user decision or missing material, the project displays its
 question and waits without starting further stages. Submit the answer through the
 project adjustment form, then resume; resuming without new input is rejected.
@@ -73,8 +78,18 @@ including linked follow-up projects. Edited or duplicated fragments remain visib
 as new source material. This prevents the unchanged report from repeatedly becoming
 its own evidence without hiding user changes.
 
-This is not the complete #4753/#4754 acceptance. Full collaborative editing and
-live Feishu UX acceptance remain outstanding.
+Real Feishu acceptance on 2026-09-16 exercised creation, adjustment, pause/resume,
+stopping an in-flight direction, document body changes and explicit append with
+independent source-preservation readback. An archived result was reopened from
+the archive index and continued as a separate linked project. The successor
+inherited the original summary and four findings, accepted new fictional cost
+evidence, and produced three new findings. Cancelling during synthesis discarded
+the in-flight summary and retained all three findings, still accessible with their
+sources through the actual card. The archived original remained unchanged.
+
+This is not the complete #4753/#4754 acceptance. Simultaneously active projects,
+interruption recovery with new feedback, remaining collaborative editing/failure
+paths, and the newly added per-finding continuation still need real UX acceptance.
 Source fields are structurally checked; this is not factual
 verification or proof that a model actually consulted a source.
 
