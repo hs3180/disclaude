@@ -7,8 +7,9 @@ import type { UserInput } from '../../types.js';
 import { createLogger } from '../../../utils/logger.js';
 
 import { readProcessGroupResources } from './process-resources.js';
+import { parseAgentInputParams, validateAgentInputAnswers, type AgentInputRequest, type AgentInputParams } from '../../user-input.js';
 
-type JsonRpcId = number;
+type JsonRpcId = number | string;
 
 interface JsonRpcMessage {
   id?: JsonRpcId;
@@ -27,6 +28,8 @@ export interface CodexAppServerTransportOptions {
   onExit?: (exit: CodexAppServerExit) => void;
   requestTimeoutMs?: number;
   killGraceMs?: number;
+  onUserInput?: (request: AgentInputRequest) => Promise<void>;
+  userInputTimeoutMs?: number;
 }
 
 export interface CodexAppServerExit {
@@ -57,12 +60,17 @@ export class CodexAppServerTransport {
   private shutdownStarted = false;
   private exitReported = false;
   private cleanup?: Promise<CodexAppServerExit>;
+  private readonly inputs = new Map<JsonRpcId, {
+    params: AgentInputParams; abort: AbortController; timer: ReturnType<typeof setTimeout>; writing: boolean;
+  }>();
+  private readonly seenInputIds = new Set<JsonRpcId>();
 
   constructor(private readonly options: CodexAppServerTransportOptions = {}) {
     this.logger = createLogger('CodexAppServerTransport', Object.freeze({
       sessionKey: options.sessionKey, runId: randomUUID(), ...options.correlation,
     }));
-    this.child = spawn(options.binary ?? 'codex', ['app-server', '--stdio', ...CODEX_BROWSER_DISABLE_ARGS], {
+    this.child = spawn(options.binary ?? 'codex', ['app-server', '--stdio', ...CODEX_BROWSER_DISABLE_ARGS,
+      ...(options.onUserInput ? ['--enable', 'default_mode_request_user_input'] : [])], {
       env: browserAgentEnv(options.env),
       stdio: ['pipe', 'pipe', 'pipe'],
       // A dedicated POSIX process group owns ordinary tool descendants too.
@@ -96,7 +104,7 @@ export class CodexAppServerTransport {
   async initialize(clientName = 'disclaude', clientVersion = '0.5.0'): Promise<unknown> {
     const result = await this.request('initialize', {
       clientInfo: { name: clientName, title: 'Disclaude', version: clientVersion },
-      capabilities: null,
+      capabilities: this.options.onUserInput ? { experimentalApi: true } : null,
     });
     this.notify('initialized');
     await this.reportResources('initialized');
@@ -182,6 +190,12 @@ export class CodexAppServerTransport {
     return this.stderrTail;
   }
 
+  cancelUserInputs(threadId: string, turnId: string): void {
+    for (const [id, input] of this.inputs) {
+      if (input.params.threadId === threadId && input.params.turnId === turnId) { this.cancelInput(id, 'Turn interrupted'); }
+    }
+  }
+
   private write(message: Record<string, unknown>): void {
     this.child.stdin.write(`${JSON.stringify(message)}\n`, (error) => {
       if (error) {
@@ -203,6 +217,10 @@ export class CodexAppServerTransport {
     }
     this.logger.debug({ source: 'stdout', eventType: message.method ?? 'response', requestId: message.id }, 'Codex app-server event');
     if (message.id !== undefined && message.method) {
+      if (message.method === 'item/tool/requestUserInput' && this.options.onUserInput) {
+        this.receiveUserInput(message.id, message.params);
+        return;
+      }
       // Tool and approval requests require an explicit policy integration.
       // Rejecting is fail-closed; silently ignoring would hang the turn.
       this.write({
@@ -227,6 +245,15 @@ export class CodexAppServerTransport {
       return;
     }
     if (message.method) {
+      const event = message.params as { threadId?: string; requestId?: JsonRpcId; turn?: { id?: string } } | undefined;
+      if (message.method === 'serverRequest/resolved' && event?.requestId !== undefined) {
+        if (this.inputs.get(event.requestId)?.params.threadId === event.threadId) { this.cancelInput(event.requestId, undefined, 'resolved'); }
+      }
+      if (message.method === 'turn/completed' && event?.threadId && event.turn?.id) {
+        for (const [id, input] of this.inputs) {
+          if (input.params.threadId === event.threadId && input.params.turnId === event.turn.id) { this.cancelInput(id, undefined, 'turn-ended'); }
+        }
+      }
       try {
         this.options.onNotification?.(message.method, message.params);
       } catch (error) {
@@ -238,11 +265,68 @@ export class CodexAppServerTransport {
 
   private failAll(error: Error): void {
     this.acceptingRequests = false;
+    for (const id of this.inputs.keys()) { this.cancelInput(id, undefined, 'closed'); }
     for (const waiter of this.pending.values()) {
       clearTimeout(waiter.timer);
       waiter.reject(error);
     }
     this.pending.clear();
+  }
+
+  private cancelInput(id: JsonRpcId, replyError?: string, reason = 'cancelled'): void {
+    const input = this.inputs.get(id);
+    if (!input) { return; }
+    this.inputs.delete(id);
+    clearTimeout(input.timer);
+    input.abort.abort(reason);
+    if (replyError && this.acceptingRequests && !input.writing) {
+      this.write({ jsonrpc: '2.0', id, error: { code: -32800, message: replyError } });
+    }
+  }
+
+  private receiveUserInput(id: JsonRpcId, raw: unknown): void {
+    if (!this.acceptingRequests) { return; }
+    // A duplicated server request must not create two actionable cards or replies.
+    if (this.seenInputIds.has(id)) { return; }
+    let params: AgentInputParams;
+    try {
+      if (!(typeof id === 'string' && id.length <= 200) && !Number.isSafeInteger(id)) { throw new Error('Invalid ID'); }
+      params = parseAgentInputParams(raw);
+    } catch {
+      this.write({ jsonrpc: '2.0', id, error: { code: -32602, message: 'Unsupported user-input request shape' } });
+      return;
+    }
+    if (this.seenInputIds.size >= 1000) {
+      this.write({ jsonrpc: '2.0', id, error: { code: -32603, message: 'Too many user-input requests in this session' } });
+      return;
+    }
+    this.seenInputIds.add(id);
+    const abort = new AbortController();
+    const timer = setTimeout(() => this.cancelInput(id, 'User input expired without an answer', 'expired'), this.options.userInputTimeoutMs ?? 15 * 60_000);
+    timer.unref();
+    const pending = { params, abort, timer, writing: false };
+    this.inputs.set(id, pending);
+    const request: AgentInputRequest = { ...params, requestId: id, signal: abort.signal, respond: async value => {
+      if (this.inputs.get(id) !== pending || pending.writing || !this.acceptingRequests) { throw new Error('User-input request is no longer active'); }
+      const answers = validateAgentInputAnswers(params, value);
+      pending.writing = true;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          this.child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, result: { answers } })}\n`, error => error ? reject(new Error('User-input response delivery failed')) : resolve());
+        });
+        if (abort.signal.aborted) { throw new Error('User-input response delivery failed'); }
+        clearTimeout(timer);
+        this.inputs.delete(id);
+      } catch {
+        this.cancelInput(id, undefined, 'unavailable');
+        throw new Error('User-input response delivery failed');
+      }
+    } };
+    // Keep the JSON-RPC reader free to process turn completion and cancellation.
+    void Promise.resolve().then(() => {
+      if (!abort.signal.aborted) { return this.options.onUserInput?.(request); }
+      return undefined;
+    }).catch(() => this.cancelInput(id, 'User-input channel unavailable', 'unavailable'));
   }
 
   private reportExit(exit: CodexAppServerExit): void {

@@ -93,6 +93,9 @@ export type {
   ProviderConstructor,
 } from './sdk/index.js';
 
+export type { AgentInputRequest, AgentInputParams, AgentInputQuestion, AgentInputAnswers, AgentInputContext } from './sdk/user-input.js';
+export { validateAgentInputAnswers } from './sdk/user-input.js';
+
 // Agent Infrastructure (Issue #1040, Issue #1501: Simplified to ChatAgent-only)
 // Types and interfaces
 export {
