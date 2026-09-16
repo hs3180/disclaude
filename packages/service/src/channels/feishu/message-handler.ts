@@ -198,6 +198,7 @@ export class MessageHandler {
   private readonly privateInput?: FeishuPrivateInput;
   private readonly privateWorkflows: FeishuPrivateWorkflows;
   private research?: FeishuResearchController;
+  private readonly projectTaskAppId: string;
 
   requestPrivateWorkflow(request: PrivateWorkflowRequest): Promise<{ actionId: string }> {
     return this.privateWorkflows.request(request);
@@ -216,6 +217,8 @@ export class MessageHandler {
     isRunning: () => boolean;
     hasControlHandler: () => boolean;
     tenantAccessToken: string;
+    /** Stable application namespace for default project task storage. */
+    appId: string;
     privateInput?: ActionBoundInput;
   }) {
     this.triggerModeManager = options.triggerModeManager;
@@ -227,6 +230,7 @@ export class MessageHandler {
     this.getHasControlHandler = options.hasControlHandler;
     this.controlHandler = false;
     this.tenantAccessToken = options.tenantAccessToken;
+    this.projectTaskAppId = options.appId;
     if (options.privateInput) {this.privateInput = new FeishuPrivateInput(options.privateInput, options.callbacks.sendMessage);}
 
     if (!this.tenantAccessToken) {
@@ -239,19 +243,23 @@ export class MessageHandler {
    */
   initialize(client: lark.Client): void {
     this.client = client;
-    const researchDirectory = process.env.DISCLAUDE_RESEARCH_PROJECTS_DIR;
-    if (researchDirectory && !this.research) {
+    // Legacy path is a storage compatibility override, never a feature switch.
+    // Keep existing records in place; new installations need no research setting.
+    const researchDirectory = process.env.DISCLAUDE_RESEARCH_PROJECTS_DIR
+      || path.join(Config.getWorkspaceDir(), '.disclaude', 'project-tasks', 'feishu',
+        crypto.createHash('sha256').update(this.projectTaskAppId).digest('hex').slice(0, 24));
+    if (!this.research) {
       this.research = new FeishuResearchController(researchDirectory, Config.getWorkspaceDir(), this.callbacks.sendMessage, async (messageId, card) => {
         const result = await client.im.message.patch({ path: { message_id: messageId }, data: { content: JSON.stringify(card) } });
-        if (result.code !== 0) { throw new Error('研究卡片更新失败，已有进度保留。'); }
+        if (result.code !== 0) { throw new Error('任务卡片更新失败，已有进度保留。'); }
       }, undefined, createDocumentReader(client), createDocumentAppender(client), async chatId => {
         const result = await this.callbacks.emitControl({ type: 'project', chatId, data: { subcommand: 'info' } });
         if (!result.success || !result.projectContext?.available || !path.isAbsolute(result.projectContext.workingDir)) {
-          throw new Error('无法确认当前项目工作目录，请先用 /project info 检查目录绑定，再建立研究。');
+          throw new Error('无法确认当前项目工作目录，请先用 /project info 检查目录绑定，再建立任务。');
         }
         try {
           if (!(await fs.stat(result.projectContext.workingDir)).isDirectory()) { throw new Error('Not a directory'); }
-        } catch { throw new Error('当前项目工作目录不存在或不可访问，请恢复目录后再建立研究。'); }
+        } catch { throw new Error('当前项目工作目录不存在或不可访问，请恢复目录后再建立任务。'); }
         return result.projectContext.workingDir;
       });
     }
@@ -1305,11 +1313,8 @@ export class MessageHandler {
       return;
     }
 
-    if (/^\/research(?:\s|$)/u.test(textWithoutMentions.trim())
-      || (this.research && /^\/project\s*$/iu.test(textWithoutMentions.trim()))) {
-      if (!this.research) {
-        await this.callbacks.sendMessage({ chatId: chat_id, type: 'text', text: '研究项目功能尚未启用，请联系服务管理员。' });
-      } else if (sender?.sender_type === 'user') {
+    if (/^\/project\s*$/iu.test(textWithoutMentions.trim()) && this.research) {
+      if (sender?.sender_type === 'user') {
         await this.research.open(extractOpenId(sender) ?? '', chat_id, chat_type === 'topic' ? parent_id ?? message_id : undefined);
       }
       return;

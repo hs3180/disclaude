@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { DocumentSnapshot } from './document-source.js';
 
 export class ResearchDirectoryError extends Error {
-  constructor() { super('研究工作目录不存在或不可访问。已有成果保留，请恢复原目录后重试；不会切换到其他项目目录。'); }
+  constructor() { super('任务工作目录不存在或不可访问。已有成果保留，请恢复原目录后重试；不会切换到其他项目目录。'); }
 }
 
 export type ProjectStatus = 'running' | 'waiting-user' | 'pausing' | 'paused' | 'cancelling' | 'cancelled' | 'failed' | 'completed' | 'interrupted';
@@ -64,18 +64,18 @@ export class ProjectStore {
       const recoveryPath = path.join(this.directory, '.recovering');
       let recovery: number;
       try { recovery = openSync(recoveryPath, 'wx', 0o600); }
-      catch { throw new Error('研究存储正在恢复或恢复曾中断，请检查服务状态。'); }
+      catch { throw new Error('任务存储正在恢复或恢复曾中断，请检查服务状态。'); }
       try {
         const pid = Number(readFileSync(lockPath, 'utf8'));
-        if (!Number.isSafeInteger(pid) || pid <= 0) { throw new Error('研究存储锁无效，需要检查服务状态。'); }
+        if (!Number.isSafeInteger(pid) || pid <= 0) { throw new Error('任务存储锁无效，需要检查服务状态。'); }
         try { process.kill(pid, 0); }
         catch (probe) {
           if ((probe as NodeJS.ErrnoException).code === 'ESRCH') {
             rmSync(lockPath);
             this.lock = openSync(lockPath, 'wx', 0o600);
-          } else { throw new Error('另一个服务正在使用研究项目存储。'); }
+          } else { throw new Error('另一个服务正在使用任务存储。'); }
         }
-        if (this.lock === undefined) { throw new Error('另一个服务正在使用研究项目存储。'); }
+        if (this.lock === undefined) { throw new Error('另一个服务正在使用任务存储。'); }
       } finally { closeSync(recovery); rmSync(recoveryPath, { force: true }); }
     }
     writeFileSync(this.lock, String(process.pid));
@@ -84,7 +84,7 @@ export class ProjectStore {
     this.open();
     return readdirSync(this.directory).filter(n => /^[a-f0-9-]+\.json$/u.test(n)).map(n => {
       const p = JSON.parse(readFileSync(path.join(this.directory, n), 'utf8')) as ResearchProject;
-      if (`${p.id}.json` !== n || !Array.isArray(p.directions) || !Array.isArray(p.history)) { throw new Error('研究项目数据损坏，原文件已保留。'); }
+      if (`${p.id}.json` !== n || !Array.isArray(p.directions) || !Array.isArray(p.history)) { throw new Error('任务数据损坏，原文件已保留。'); }
       return p;
     });
   }

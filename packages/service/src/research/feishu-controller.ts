@@ -37,13 +37,13 @@ export class FeishuResearchController {
     return callbackValue(object(raw.action)).research === true;
   }
   async open(owner: string, chat: string, thread?: string): Promise<void> {
-    if (!owner || !chat) { throw new Error('无法确认研究项目的用户和会话。'); }
+    if (!owner || !chat) { throw new Error('无法确认任务的用户和会话。'); }
     await this.showIndex(owner, chat, thread);
   }
   private async showIndex(owner: string, chat: string, thread?: string, offset = 0, archived = false): Promise<void> {
     let workingDir: string | undefined, error: string | undefined;
     try { workingDir = await this.resolveWorkingDir?.(chat); }
-    catch { error = '当前项目目录不可用，暂不能建立新研究。请用 /project info 检查，或用 /project use <目录> 切换。已有研究仍可打开。'; }
+    catch { error = '当前项目目录不可用，暂不能建立新任务。请用 /project info 检查，或用 /project use <目录> 切换。已有任务仍可打开。'; }
     await this.send({ chatId: chat, type: 'card', threadId: thread,
       card: indexCard(this.manager.list(owner, chat, archived), randomUUID(), offset, archived, { workingDir, error }) });
   }
@@ -60,7 +60,7 @@ export class FeishuResearchController {
       }
       if (actionName === 'create') {
         const nonce = string(value.nonce);
-        if (!nonce || nonce.length > 100) { throw new Error('创建表单已失效，请重新打开研究项目。'); }
+        if (!nonce || nonce.length > 100) { throw new Error('创建表单已失效，请重新打开任务。'); }
         const source = `${message}:${nonce}`;
         const existing = [...this.manager.list(owner, chat), ...this.manager.list(owner, chat, true)].find(p => p.source === source);
         // A retry must reopen its original research even if the chat binding changed or disappeared.
@@ -89,7 +89,7 @@ export class FeishuResearchController {
         await this.send({ chatId: chat, type: 'card', threadId: project.thread, card: historyCard(project, page(value.offset)) }); return;
       }
       if (actionName === 'continue' || actionName === 'continue-finding') {
-        if (!['completed', 'cancelled'].includes(project.status)) { throw new Error('请先结束当前研究，再从成果建立后续项目。'); }
+        if (!['completed', 'cancelled'].includes(project.status)) { throw new Error('请先结束当前任务，再从成果建立后续任务。'); }
         // Retrying the same result-card action returns the existing successor.
         const parentFinding = actionName === 'continue-finding' ? { directionId: string(value.direction), index: typeof value.index === 'number' ? value.index : -1 } : undefined;
         const source = parentFinding ? `${message}:continue:${id}:${JSON.stringify(parentFinding)}` : `${message}:continue:${id}`;
@@ -98,11 +98,11 @@ export class FeishuResearchController {
         return;
       }
       const actions: ProjectAction[] = ['pause', 'resume', 'cancel', 'feedback', 'stop-direction', 'archive', 'unarchive', 'export'];
-      if (!actions.includes(actionName as ProjectAction) || typeof value.revision !== 'number') { throw new Error('研究操作无效，请刷新项目。'); }
+      if (!actions.includes(actionName as ProjectAction) || typeof value.revision !== 'number') { throw new Error('任务操作无效，请刷新任务。'); }
       await this.manager.act(id, owner, chat, value.revision, actionName as ProjectAction,
         actionName === 'feedback' ? string(form.feedback) : string(value.direction));
     } catch (error) {
-      await this.send({ chatId: chat, type: 'text', text: error instanceof Error && /^[\p{Script=Han}]/u.test(error.message) ? error.message : '研究操作未完成，已有项目保留。请稍后重试。' });
+      await this.send({ chatId: chat, type: 'text', text: error instanceof Error && /^[\p{Script=Han}]/u.test(error.message) ? error.message : '任务操作未完成，已有任务保留。请稍后重试。' });
     }
   }
   dispose(): void { this.manager.dispose(); }

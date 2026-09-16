@@ -13,7 +13,7 @@ export interface DocumentSnapshot {
 export type DocumentReader = (token: string, publishedFragments?: readonly string[]) => Promise<DocumentSnapshot>;
 export type DocumentAppender = (token: string, operation: { id: string; revision: number; paragraphs: string[] }) => Promise<void>;
 const fingerprint = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex');
-const fail = (): never => { throw new Error('研究文档未同步：请检查访问权限、文档大小或并发修改后恢复。已有成果保留。'); };
+const fail = (): never => { throw new Error('关联文档未同步：请检查访问权限、文档大小或并发修改后恢复。已有成果保留。'); };
 
 export function documentToken(url: string): string | undefined {
   if (!url.trim()) { return undefined; }
@@ -110,7 +110,7 @@ export function createDocumentAppender(client: Client): DocumentAppender {
 export function changedDocumentFeedback(previous: DocumentSnapshot | undefined, next: DocumentSnapshot): Array<{ key: string; text: string }> {
   const feedback: Array<{ key: string; text: string }> = [];
   if (previous?.body !== next.body) {
-    feedback.push({ key: `body:${fingerprint(next.body)}`, text: '研究文档正文已更新。请根据最新完整正文核对研究范围、材料和用户修订，并说明计划如何调整。' });
+    feedback.push({ key: `body:${fingerprint(next.body)}`, text: '关联文档正文已更新。请根据最新完整正文核对任务范围、材料和用户修订，并记录意见处理及实际工作变化。' });
   }
   for (const comment of next.comments) {
     if (previous?.comments.find(c => c.id === comment.id)?.text !== comment.text) {
