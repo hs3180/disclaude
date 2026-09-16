@@ -1,0 +1,137 @@
+/**
+ * Message router implementation for level-based message routing.
+ *
+ * Routes messages to appropriate chats based on their level:
+ * - Admin chat receives all messages (progress, debug, etc.)
+ * - User chat receives only key messages (results, errors, confirmations)
+ *
+ * @see Issue #266
+ */
+import { DEFAULT_USER_LEVELS, } from './types.js';
+/**
+ * Message router implementation.
+ *
+ * Routes messages to admin and/or user chats based on message level.
+ */
+export class MessageRouter {
+    config;
+    sender;
+    logger;
+    userLevels;
+    constructor(options) {
+        this.config = options.config;
+        this.sender = options.sender;
+        this.logger = options.logger;
+        // Initialize user-visible levels
+        const levels = options.config.userMessageLevels ?? DEFAULT_USER_LEVELS;
+        this.userLevels = new Set(levels);
+    }
+    /**
+     * Route a message to appropriate chat(s).
+     */
+    async route(message) {
+        const targets = this.getTargets(message.level);
+        const targetCount = targets.length;
+        if (targetCount === 0) {
+            this.logger?.debug('MessageRouter: No targets for message', {
+                level: message.level,
+                content: message.content.substring(0, 50),
+            });
+            return;
+        }
+        this.logger?.debug('MessageRouter: Routing message', {
+            level: message.level,
+            targets,
+            contentLength: message.content.length,
+        });
+        // Send to all targets in parallel
+        const sendPromises = targets.map(async (chatId) => {
+            try {
+                await this.sender.sendText(chatId, message.content);
+            }
+            catch (error) {
+                this.logger?.error('MessageRouter: Failed to send message', {
+                    chatId,
+                    error: error instanceof Error ? error.message : String(error),
+                });
+                // Don't throw - we want to continue sending to other targets
+            }
+        });
+        await Promise.allSettled(sendPromises);
+    }
+    /**
+     * Get the target chat IDs for a message level.
+     */
+    getTargets(level) {
+        const targets = [];
+        // Admin chat receives all messages (if configured)
+        if (this.config.adminChatId) {
+            targets.push(this.config.adminChatId);
+        }
+        // User chat receives messages based on level
+        if (this.config.userChatId && this.userLevels.has(level)) {
+            // Avoid duplicate if admin and user chat are the same
+            if (this.config.adminChatId !== this.config.userChatId) {
+                targets.push(this.config.userChatId);
+            }
+        }
+        return targets;
+    }
+    /**
+     * Check if a level is visible to users.
+     */
+    isUserVisible(level) {
+        return this.userLevels.has(level);
+    }
+    /**
+     * Check if admin chat is configured.
+     */
+    hasAdminChat() {
+        return !!this.config.adminChatId;
+    }
+    /**
+     * Get the admin chat ID.
+     */
+    getAdminChatId() {
+        return this.config.adminChatId;
+    }
+    /**
+     * Get the user chat ID.
+     */
+    getUserChatId() {
+        return this.config.userChatId;
+    }
+    /**
+     * Update the user-visible levels.
+     */
+    setUserLevels(levels) {
+        this.userLevels.clear();
+        levels.forEach((level) => this.userLevels.add(level));
+        this.logger?.info('MessageRouter: Updated user levels', { levels });
+    }
+    /**
+     * Update the admin chat ID.
+     */
+    setAdminChatId(chatId) {
+        this.config.adminChatId = chatId;
+        this.logger?.info('MessageRouter: Updated admin chat ID', { chatId });
+    }
+}
+/**
+ * Create a default message router configuration.
+ */
+export function createDefaultRouteConfig(userChatId) {
+    return {
+        userChatId,
+        userMessageLevels: [...DEFAULT_USER_LEVELS],
+        showTaskLifecycle: {
+            showStart: false,
+            showProgress: false,
+            showComplete: true,
+        },
+        errors: {
+            showStack: false,
+            showDetails: 'admin',
+        },
+    };
+}
