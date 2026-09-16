@@ -6,42 +6,54 @@ import { mkdtempSync, mkdirSync, symlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 const temp = mkdtempSync(join(tmpdir(), 'disclaude-node22-gate-'));
+let cleanupSafe = true;
+const toolingEnv = { ...process.env, npm_config_cache: join(temp, 'cache'), npm_config_userconfig: join(temp, 'empty.npmrc') };
 function run(command, args, options = {}) {
-  const result = spawnSync(command, args, { encoding: 'utf8', timeout: 240_000, ...options });
+  const result = spawnSync(command, args, { encoding: 'utf8', timeout: 240_000, env: toolingEnv, ...options });
+  if (result.error && ['ETIMEDOUT', 'ENOBUFS'].includes(result.error.code)) cleanupSafe = false;
   assert.equal(result.status, 0, `${result.error || ''}\n${result.stdout}\n${result.stderr}`);
   return result.stdout;
 }
-// Isolated tooling only: do not upgrade the runner's or user's Node/npm.
-run(
-  'npm',
-  [
-    'install',
-    '--global=false',
-    '--prefix',
-    temp,
-    '--no-audit',
-    '--no-fund',
-    'node@22.23.2',
-    'npm@11.6.0',
-  ],
-  { cwd: temp }
-);
-const bin = join(temp, 'node_modules/.bin');
-const npm10 = join(temp, 'npm10');
-run('npm', ['install', '--global=false', '--prefix', npm10, '--no-audit', '--no-fund', 'npm@10.9.9'], { cwd: temp });
-const pairs = [
-  [join(bin, 'node'), join(temp, 'node_modules/npm/bin/npm-cli.js')],
-  [process.execPath, join(temp, 'node_modules/npm/bin/npm-cli.js')],
-  [join(bin, 'node'), join(npm10, 'node_modules/npm/bin/npm-cli.js')],
-];
-for (const [index, [node, npm]] of pairs.entries()) {
-  // Select both executables explicitly; no dependence on the runner's npm symlink.
-  const selected = join(temp, `pair-${index}`);
-  mkdirSync(selected);
-  symlinkSync(node, join(selected, 'node'));
-  symlinkSync(npm, join(selected, 'npm'));
-  console.log(run(node, [resolve('scripts/test-package-install.mjs'), process.argv[2], process.argv[3], '--prefix-from-env'], {
-    env: { ...process.env, PATH: `${selected}${delimiter}${process.env.PATH}` },
-  }));
+console.log(`Isolated matrix tooling: ${temp}`);
+try {
+  // Isolated tooling only: do not upgrade the runner's or user's Node/npm.
+  run(
+    'npm',
+    [
+      'install',
+      '--global=false',
+      '--prefix',
+      temp,
+      '--no-audit',
+      '--no-fund',
+      'node@22.23.2',
+      'npm@11.6.0',
+    ],
+    { cwd: temp }
+  );
+  const bin = join(temp, 'node_modules/.bin');
+  const npm10 = join(temp, 'npm10');
+  run('npm', ['install', '--global=false', '--prefix', npm10, '--no-audit', '--no-fund', 'npm@10.9.9'], { cwd: temp });
+  const pairs = [
+    [join(bin, 'node'), join(temp, 'node_modules/npm/bin/npm-cli.js')],
+    [process.execPath, join(temp, 'node_modules/npm/bin/npm-cli.js')],
+    [join(bin, 'node'), join(npm10, 'node_modules/npm/bin/npm-cli.js')],
+  ];
+  for (const [index, [node, npm]] of pairs.entries()) {
+    // Select both executables explicitly; no dependence on the runner's npm symlink.
+    const selected = join(temp, `pair-${index}`);
+    mkdirSync(selected);
+    symlinkSync(node, join(selected, 'node'));
+    symlinkSync(npm, join(selected, 'npm'));
+    console.log(run(node, [resolve('scripts/test-package-install.mjs'), process.argv[2], process.argv[3], '--prefix-from-env'], {
+      env: { ...process.env, PATH: `${selected}${delimiter}${process.env.PATH}` },
+    }));
+  }
+} finally {
+  if (!cleanupSafe || process.argv.includes('--keep-temp')) {
+    console.error(`MATRIX_TOOLING_RETAINED ${temp}: ${cleanupSafe ? 'explicit --keep-temp' : 'subprocess termination unconfirmed'}`);
+  } else {
+    rmSync(temp, { recursive: true, force: true });
+    console.log('MATRIX_TOOLING_CLEANUP_OK');
+  }
 }
-rmSync(temp, { recursive: true });
