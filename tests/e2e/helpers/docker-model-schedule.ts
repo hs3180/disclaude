@@ -14,6 +14,34 @@ export async function verifyDockerModelSchedule(inside: Inside, docker: Docker,
   const directory = `/data/workspace/schedules/${name}`;
   const command = `node -e 'require("node:fs").writeFileSync(${JSON.stringify(target)}, JSON.stringify({marker:${JSON.stringify(marker)},boot:${JSON.stringify(boot)},uid:process.getuid()}))'`;
   const prompt = `Use your shell tool to execute exactly this command: ${command}\nThen reply with ${marker}. Do not create or modify schedules, inspect credentials, delegate work or modify unrelated files.`;
+  // Establish an actual client session before scheduling. A bare rest-* ID is
+  // routable, but the REST channel has no inbox until a client creates a session.
+  const chatId = `rest-${name}`;
+  const readyMarker = `client-ready-${boot}`;
+  const request = async (body: Record<string, string>) => JSON.parse(await inside(`
+const response = await fetch(${JSON.stringify(`http://127.0.0.1:13000/api/chat/${chatId}`)}, {
+  method: 'POST', headers: {'content-type':'application/json'}, body: ${JSON.stringify(JSON.stringify(body))},
+  signal: AbortSignal.timeout(20000)
+});
+console.log(JSON.stringify({status:response.status, body:await response.text()}));`)) as { status: number; body: string };
+  expect((await request({ message: `Reply exactly ${readyMarker}. Do not use tools or delegate work.` })).status).toBe(202);
+  const clientDeadline = Date.now() + 90_000;
+  let ready = false;
+  while (Date.now() < clientDeadline) {
+    const response = await request({});
+    if (response.status === 200) {
+      const body = JSON.parse(response.body) as { status: string; response: string };
+      expect(body.status).toBe('completed');
+      expect(body.response).toContain(readyMarker);
+      expect(body.response).not.toContain(marker);
+      ready = true;
+      break;
+    }
+    expect(response.status).toBe(202);
+    await delay(500);
+  }
+  expect(ready, 'REST client did not finish its initial model conversation').toBe(true);
+
   // Calculate from the container's clock after readiness. A single calendar
   // instant avoids repeated paid model calls while the rest of the E2E runs.
   const written = JSON.parse(await inside(`import fs from 'node:fs';
@@ -46,7 +74,15 @@ console.log(JSON.stringify({schedule,scheduledAt:at.toISOString()}));`)) as { sc
     const prior = JSON.parse(await inside(`import fs from 'node:fs'; console.log(fs.readFileSync(${JSON.stringify(`/data/workspace/model-${priorBoot}.json`)},'utf8'));`));
     expect(prior).toEqual({ marker: `scheduled-model-${priorBoot}`, boot: priorBoot, uid: 1001 });
   }
+  // Read the real channel response through HTTP, independently of scheduler
+  // logs and filesystem output. Old warm-up text alone cannot satisfy this.
+  const delivered = await request({});
+  expect(delivered.status).toBe(200);
+  const deliveredBody = JSON.parse(delivered.body) as { chatId: string; status: string; response: string };
+  expect(deliveredBody.chatId).toBe(chatId);
+  expect(deliveredBody.status).toBe('completed');
+  expect(deliveredBody.response).toContain(marker);
   console.info('DOCKER_MODEL_SCHEDULE_ACCEPTANCE', JSON.stringify({ boot, taskId,
     scheduledAt: written.scheduledAt, actualCronModelTurn: true, independentArtifactReadback: true,
-    priorResultRetained: Boolean(priorBoot), scheduleUnchanged: true, uid: 1001 }));
+    priorResultRetained: Boolean(priorBoot), scheduleUnchanged: true, restClientReceivedResult: true, uid: 1001 }));
 }
