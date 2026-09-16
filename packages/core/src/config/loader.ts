@@ -6,7 +6,6 @@
 
 import { readFileSync, existsSync } from 'fs';
 import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
 import * as yaml from 'js-yaml';
 import { createLogger } from '../utils/logger.js';
 import type {
@@ -19,62 +18,17 @@ import { resolveAgentPreset, validateAgentPresets } from './agent-presets.js';
 
 const logger = createLogger('ConfigLoader');
 
-/**
- * Config file names to search for, in priority order.
- */
-const CONFIG_FILE_NAMES = ['disclaude.config.yaml', 'disclaude.config.yml'] as const;
+// This discovery entry is also used before Config statics initialize in the CLI.
+import { discoverConfigFile, EXPLICIT_CONFIG_PATH_ENV } from './discovery.js';
+export { EXPLICIT_CONFIG_PATH_ENV } from './discovery.js';
 
-/**
- * Set by executable bootstraps before importing @disclaude/core. This avoids
- * the Config static fields observing a default config before CLI --config is
- * parsed (Issue #4654).
- */
-export const EXPLICIT_CONFIG_PATH_ENV = 'DISCLAUDE_CONFIG_PATH';
-
-/**
- * Search paths for configuration files.
- */
-const SEARCH_PATHS = [
-  process.env.HOME ? resolve(process.env.HOME, '.disclaude') : '',
-  // Legacy migration fallbacks. New installs should use ~/.disclaude or --config.
-  process.cwd(),
-  // If workspace directory is configured, also search parent directory
-  process.env.WORKSPACE_DIR ? resolve(process.env.WORKSPACE_DIR, '..') : '',
-  // Import meta URL directory (for bundled executables)
-  import.meta.url ? resolve(dirname(fileURLToPath(import.meta.url)), '..') : '',
-  import.meta.url ? resolve(dirname(fileURLToPath(import.meta.url)), '..', '..') : '',
-].filter(Boolean) as string[];
-
-/**
- * Find configuration file by searching standard locations.
- *
- * @returns ConfigFileInfo with path and existence status
- */
 export function findConfigFile(): ConfigFileInfo {
-  const explicitPath = process.env[EXPLICIT_CONFIG_PATH_ENV];
-  if (explicitPath) {
-    const filePath = resolve(explicitPath);
-    return { path: filePath, exists: existsSync(filePath) };
+  const result = discoverConfigFile();
+  if (result.exists && !process.env[EXPLICIT_CONFIG_PATH_ENV]
+      && dirname(result.path) !== resolve(process.env.HOME || '', '.disclaude')) {
+    logger.warn({ filePath: result.path }, 'Using legacy config location; move it to ~/.disclaude/disclaude.config.yaml');
   }
-
-  for (const searchPath of SEARCH_PATHS) {
-    for (const fileName of CONFIG_FILE_NAMES) {
-      const filePath = resolve(searchPath, fileName);
-      if (existsSync(filePath)) {
-        if (searchPath !== SEARCH_PATHS[0]) {
-          logger.warn(
-            { filePath, preferredDirectory: SEARCH_PATHS[0] },
-            'Using legacy config location; move it to ~/.disclaude/disclaude.config.yaml'
-          );
-        }
-        logger.debug({ filePath }, 'Found configuration file');
-        return { path: filePath, exists: true };
-      }
-    }
-  }
-
-  logger.debug('No configuration file found, using defaults');
-  return { path: '', exists: false };
+  return result;
 }
 
 /**

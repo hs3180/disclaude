@@ -45,7 +45,7 @@ describe('disclaude service CLI config bootstrap (Issue #4654)', () => {
       );
       writeFileSync(
         explicitPath,
-        'agent:\n  agentBackend: pi\n  model: explicit-model\n',
+        'workspace:\n  dir: /tmp/bootstrap-test-workspace\nagent:\n  agentBackend: pi\n  model: explicit-model\n',
       );
 
       const cliUrl = pathToFileURL(join(process.cwd(), 'packages/service/src/cli.ts')).href;

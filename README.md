@@ -105,8 +105,12 @@ Asset installation does not replace the required tag-installation acceptance.
 For a new installation, the example configuration is available at
 `$(npm root -g)/disclaude/disclaude.config.example.yaml`. Copy it to
 `~/.disclaude/disclaude.config.yaml`, configure the backend and channels, and
-create the workspace directory specified in your configuration before running
-`disclaude start`. Preserve an existing configuration when upgrading.
+run `disclaude start` in a terminal. On first run, choose where task files, downloads
+and results will be stored; the suggested directory is `~/disclaude-workspace`.
+The confirmed absolute path is saved in your configuration and reused on later starts.
+For unattended startup, create the directory and set `workspace.dir` explicitly
+(or `DISCLAUDE_WORKSPACE_DIR`). Existing workspace settings and files are preserved.
+See [workspace setup and safe migration](docs/workspace-setup.md).
 
 See the [0.5.1 release notes](docs/releases/0.5.1.md) for release availability
 and installation details. The optional Release asset URL only becomes available
