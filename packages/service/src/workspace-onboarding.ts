@@ -23,7 +23,7 @@ export async function validateWorkspaceSelection(path: string): Promise<void> {
       const stat = await lstat(parent);
       // access follows symlinks; stat target explicitly for directory validation.
       const { stat: follow } = await import('node:fs/promises');
-      if (!(stat.isDirectory() || (stat.isSymbolicLink() && (await follow(parent)).isDirectory()))) {
+      if (!(stat.isDirectory() || (stat.isSymbolicLink() && (await follow(parent).catch(() => { throw new Error(`Cannot resolve workspace symlink: ${parent}`); })).isDirectory()))) {
         throw new Error(`Not a directory: ${parent}`);
       }
       await access(parent, constants.W_OK | constants.X_OK);

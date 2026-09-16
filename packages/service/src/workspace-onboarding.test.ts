@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { workspaceSelection, validateWorkspaceSelection } from './workspace-onboarding.js';
@@ -15,6 +15,8 @@ describe('first-run workspace paths', () => {
     const root = await mkdtemp(join(tmpdir(), 'workspace-path-'));
     try {
       await writeFile(join(root, 'file'), 'preserve');
+      await symlink(join(root, 'missing'), join(root, 'broken-link'));
+      await expect(validateWorkspaceSelection(join(root, 'broken-link'))).rejects.toThrow();
       await expect(validateWorkspaceSelection(join(root, 'file'))).rejects.toThrow('Not a directory');
       await expect(validateWorkspaceSelection(join(root, 'file', 'child'))).rejects.toThrow();
       await expect(validateWorkspaceSelection(join(root, 'future', 'tasks'))).resolves.toBeUndefined();
