@@ -12,8 +12,12 @@ the bound card in its delivery chat. Missing answers, stale cards, wrong actors,
 and duplicate submissions cannot answer another request. The final card removes
 input controls and does not echo answers.
 
-Blocking requests retain the active turn and suspend its ordinary no-progress
-watchdog while awaiting input. Non-blocking requests leave the turn running.
+Outstanding input requests suspend the ordinary no-progress watchdog until they
+are answered or invalidated. This includes non-blocking requests: Codex may remain
+idle while awaiting the user even when it is allowed to continue. Non-blocking
+requests still leave the turn running; messages and turn completion are processed
+normally. The separate 15-minute input deadline bounds the wait, after which the
+ordinary watchdog resumes.
 The `serverRequest/resolved` notification, turn completion, interruption,
 transport closure and a 15-minute input timeout invalidate outstanding forms.
 Timeout never selects an answer. Unsupported approval and MCP requests remain
@@ -49,9 +53,12 @@ Core tests cover string and numeric request IDs, multiple question IDs, delayed
 answers, requests arriving before the turn-start response, cancellation and
 non-blocking expiry. Feishu adapter and actual message-handler route tests check
 explicit submission, actor/card/chat binding, no answer echo and duplicate
-protection. These fixture tests do not complete the real Feishu acceptance:
-visible card, actual user click, original Codex request receiving the answer,
-and the original turn finishing must still be demonstrated together (#5000).
+protection. These fixture tests do not replace real Feishu acceptance. On 2026-09-16,
+a real card selection and submission returned Beta to the original Codex request
+and completed the same turn. A separate attempt exposed the ordinary watchdog
+cancelling a non-blocking question after three minutes; the pending-input watchdog
+fix has regression coverage, but its long-wait Feishu retest is still outstanding.
+Private-input and remaining lifecycle acceptance are also outstanding (#5000).
 
 An opt-in E2E uses the installed Codex CLI and configured model credentials to
 ask a real tool question, generate the product card, explicitly submit a test
