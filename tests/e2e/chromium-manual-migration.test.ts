@@ -3,8 +3,9 @@ import nock from 'nock';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomUUID, createHash } from 'node:crypto';
-import { mkdtemp, mkdir, writeFile, readFile, rm, rename, readdir, lstat, readlink, access } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm, copyFile, readdir, lstat, readlink, access } from 'node:fs/promises';
 import { tmpdir, homedir } from 'node:os';
+import { constants } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createServer } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -40,6 +41,14 @@ async function verifyNativeBrowserPage(client: BrowserClient, profile: string, p
     const screenshot = await client.call('Page.captureScreenshot', { format: 'png' }, sessionId) as { data: string };
     expect(Buffer.from(screenshot.data, 'base64').subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a');
   } finally { await client.call('Target.closeTarget', { targetId }); }
+}
+// /run/user is often tmpfs while the test archive is on another filesystem.
+async function moveOwnedDefinition(source: string, destination: string) {
+  const original = await readFile(source);
+  await copyFile(source, destination, constants.COPYFILE_EXCL);
+  expect(await readFile(destination)).toEqual(original);
+  expect(await readFile(source)).toEqual(original);
+  await rm(source);
 }
 async function digestTree(root: string): Promise<string> {
   const hash = createHash('sha256');
@@ -101,7 +110,7 @@ describe('operator-assisted manual browser migration', () => {
         for (let i = 0; i < 100 && await ctl('show', unit, '--property=MainPID', '--value') !== '0'; i++) { await delay(100); }
         expect(await ctl('show', unit, '--property=MainPID', '--value')).toBe('0');
         await ctl('stop', unit);
-        await rename(oldUnit, archivedUnit);
+        await moveOwnedDefinition(oldUnit, archivedUnit);
         await ctl('daemon-reload');
       };
       try {
@@ -128,7 +137,7 @@ describe('operator-assisted manual browser migration', () => {
         expect(await readFile(join(newProfile, 'migration-sentinel'), 'utf8')).toBe('original data');
         await expect(access(newConfig)).rejects.toThrow(); await expect(access(candidateUnit)).rejects.toThrow();
         // Explicit operator rollback uses the original definition and original profile.
-        await rename(archivedUnit, oldUnit); await ctl('daemon-reload'); await ctl('reset-failed', unit); await ctl('start', unit);
+        await moveOwnedDefinition(archivedUnit, oldUnit); await ctl('daemon-reload'); await ctl('reset-failed', unit); await ctl('start', unit);
         const recovered = await open(); await verifyNativeBrowserPage(recovered, oldProfile, port);
         expect(await hasNativeBrowserCookie(recovered, cookie)).toBe(true);
         await retireOld(recovered);
