@@ -23,6 +23,30 @@ function fixture(runner: StepRunner = (p, step) => Promise.resolve(step.type ===
 function deferred<T>() { let resolve!: (v: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 
 describe('persistent research lifecycle', () => {
+  it('retains the original working directory across restart and continuation', async () => {
+    const f = fixture();
+    const original = await f.manager.create({ ...input, workingDir: '/projects/alpha' });
+    await f.manager.act(original.id, 'alice', 'chat-a', original.revision, 'resume');
+    await f.manager.idle(original.id);
+    const completed = f.manager.get(original.id, 'alice', 'chat-a');
+    f.manager.dispose();
+    const reopened = fixture(undefined, undefined, f.dir).manager;
+    expect(reopened.get(original.id, 'alice', 'chat-a').workingDir).toBe('/projects/alpha');
+    const retry = await reopened.create({ ...input, workingDir: '/projects/beta' });
+    expect(retry.id).toBe(original.id);
+    expect(retry.workingDir).toBe('/projects/alpha');
+    const successor = await reopened.create({ ...input, source: 'continuation', parent: original.id, workingDir: '/projects/beta' });
+    expect(successor.workingDir).toBe('/projects/alpha');
+    expect(reopened.get(original.id, 'alice', 'chat-a')).toEqual(completed);
+    const fresh = await reopened.create({ ...input, source: 'new-form', workingDir: '/projects/beta' });
+    expect(fresh.workingDir).toBe('/projects/beta');
+    await expect(reopened.create({ ...input, source: 'bad-form', workingDir: 'relative' })).rejects.toThrow('绝对路径');
+    const legacy = await reopened.create({ ...input, source: 'legacy' });
+    await reopened.act(legacy.id, 'alice', 'chat-a', legacy.revision, 'cancel');
+    const legacySuccessor = await reopened.create({ ...input, source: 'legacy-continuation', parent: legacy.id, workingDir: '/projects/beta' });
+    expect(legacySuccessor.workingDir).toBeUndefined();
+  });
+
   function exportFixture() {
     const remote = { body: 'Supplied source\n', loseResponse: false, rejectWrite: false, concurrentEdit: false };
     const read: DocumentReader = (token, fragments = []) => {

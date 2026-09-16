@@ -3,6 +3,10 @@ import { mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, rmSync
 import path from 'node:path';
 import type { DocumentSnapshot } from './document-source.js';
 
+export class ResearchDirectoryError extends Error {
+  constructor() { super('研究工作目录不存在或不可访问。已有成果保留，请恢复原目录后重试；不会切换到其他项目目录。'); }
+}
+
 export type ProjectStatus = 'running' | 'waiting-user' | 'pausing' | 'paused' | 'cancelling' | 'cancelled' | 'failed' | 'completed' | 'interrupted';
 export interface Finding {
   claim: string;
@@ -13,6 +17,8 @@ export interface Finding {
 export interface Direction { id: string; title: string; status: 'pending' | 'done' | 'stopped'; findings: Finding[] }
 export interface ResearchProject {
   id: string;
+  /** Frozen at creation; absent in legacy research. Never inferred from the current chat. */
+  workingDir?: string;
   owner: string;
   chat: string;
   thread?: string;

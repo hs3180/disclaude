@@ -1,11 +1,18 @@
 # Persistent research projects (initial product slice)
 
-The current `/research` surface and `/project` directory-binding command are not
-yet integrated. Research uses its own execution directory rather than the chat's
-`/project use` binding. The [project/research convergence proposal](proposals/project-research-convergence.md)
-records the overlap, proposed ownership model, compatibility requirements and
-additional acceptance gates. It is pending work, not a description of shipped
-unified navigation. Research remains a persistent UX, not a project template.
+New research reads the current `/project` working-directory binding when its
+creation form is submitted and persists that directory. The paused research card
+shows the directory before the user starts execution. Later `/project use/reset`
+affects new research and ordinary chat, not existing research. Reopening, retries
+and result continuations retain the original directory. If it disappears, research
+fails visibly without recreating it or falling back to another workspace.
+
+Legacy research without a binding retains its original independent execution
+directory and is labeled as unassociated; it is not assigned to the current chat's
+project. The [project/research convergence proposal](proposals/project-research-convergence.md)
+records the remaining unified navigation, identity, migration and real acceptance
+work. Directory association alone does not complete that proposal. Research
+remains a persistent UX, not a project template.
 
 The opt-in Feishu project entry is `/research`. It opens a project index and a
 creation form; it is a product command, not a skill invocation. Creating a project

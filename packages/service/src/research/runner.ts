@@ -1,14 +1,19 @@
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { AgentFactory } from '../agents/factory.js';
-import { parseStepResult } from './project.js';
+import { parseStepResult, ResearchDirectoryError } from './project.js';
 import type { StepRunner } from './manager.js';
 
 /** Reuses the existing ChatAgent/harness, with an isolated identity and no chat transcript. */
 export function createResearchRunner(workspace: string): StepRunner {
   return async (project, step, signal) => {
-    const cwd = path.join(workspace, '.research-work', project.id);
-    mkdirSync(cwd, { recursive: true, mode: 0o700 });
+    const cwd = project.workingDir ?? path.join(workspace, '.research-work', project.id);
+    if (project.workingDir) {
+      // Never create a missing bound project or fall back to another workspace.
+      try {
+        if (!path.isAbsolute(cwd) || !statSync(cwd).isDirectory()) { throw new ResearchDirectoryError(); }
+      } catch { throw new ResearchDirectoryError(); }
+    } else { mkdirSync(cwd, { recursive: true, mode: 0o700 }); }
     let completed: { success: boolean; text: string; truncated: boolean } | undefined;
     const identity = `research:${project.id}:${project.revision}`;
     const agent = AgentFactory.createAgent(identity, {

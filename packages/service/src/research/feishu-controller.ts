@@ -23,7 +23,7 @@ function callbackValue(action: Record<string, unknown>): Record<string, unknown>
 /** A persistent project surface; ordinary conversation turns never own its state. */
 export class FeishuResearchController {
   readonly manager: ResearchManager;
-  constructor(directory: string, workspace: string, private readonly send: Sender, update: Updater, runner: StepRunner = createResearchRunner(workspace), readDocument?: DocumentReader, appendDocument?: DocumentAppender) {
+  constructor(directory: string, workspace: string, private readonly send: Sender, update: Updater, runner: StepRunner = createResearchRunner(workspace), readDocument?: DocumentReader, appendDocument?: DocumentAppender, private readonly resolveWorkingDir?: (chat: string) => Promise<string>) {
     if (!isAbsolute(directory)) { throw new Error('Research project storage must use an absolute directory'); }
     this.manager = new ResearchManager(new ProjectStore(directory), runner, async project => {
       const card = projectCard(project);
@@ -54,7 +54,11 @@ export class FeishuResearchController {
       if (actionName === 'create') {
         const nonce = string(value.nonce);
         if (!nonce || nonce.length > 100) { throw new Error('创建表单已失效，请重新打开研究项目。'); }
-        await this.manager.create({ owner, chat, thread: message, source: `${message}:${nonce}`, title: string(form.question), scope: string(form.scope), materials: string(form.materials), documentUrl: string(form.document_url) });
+        const source = `${message}:${nonce}`;
+        const existing = [...this.manager.list(owner, chat), ...this.manager.list(owner, chat, true)].find(p => p.source === source);
+        // A retry must reopen its original research even if the chat binding changed or disappeared.
+        if (existing) { await this.manager.show(existing.id, owner, chat); return; }
+        await this.manager.create({ workingDir: await this.resolveWorkingDir?.(chat), owner, chat, thread: message, source, title: string(form.question), scope: string(form.scope), materials: string(form.materials), documentUrl: string(form.document_url) });
         return;
       }
       const project = this.manager.get(id, owner, chat);

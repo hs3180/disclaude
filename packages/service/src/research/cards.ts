@@ -28,6 +28,7 @@ export function projectCard(p: ResearchProject): Record<string, unknown> {
   const elements: unknown[] = [
     ...(p.archivedAt ? [text('已归档 · 成果和研究记录保留')] : []),
     text(`${labels[p.status]}\n${p.scope || '范围：围绕研究问题展开'}\n最近更新：${p.updatedAt}`),
+    text(p.workingDir ? `项目工作目录\n${p.workingDir}\n研究创建后固定使用此目录；切换对话目录不会迁移已有研究。` : '历史研究：未关联项目工作目录，继续使用原独立研究目录。'),
     ...(p.parent ? [text('从已有成果继续的研究'), researchButton('查看原项目', { project: p.parent, action: 'open' })] : []),
     ...(p.parentFinding && p.priorResults?.findings[0] ? [text(`本次继续研究的发现\n${p.priorResults.findings[0].claim}`), researchButton('查看原发现与来源', { project: p.parent, action: 'evidence', direction: p.parentFinding.directionId, index: p.parentFinding.index })] : []),
     text(p.history.at(-1)?.text ?? ''),

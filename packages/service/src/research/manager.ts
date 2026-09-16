@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { ProjectStore, type ResearchProject, type ResearchStep, type StepResult } from './project.js';
+import { isAbsolute } from 'node:path';
+import { ProjectStore, ResearchDirectoryError, type ResearchProject, type ResearchStep, type StepResult } from './project.js';
 import { changedDocumentFeedback, documentToken, type DocumentReader, type DocumentAppender } from './document-source.js';
 import { documentDeadline, resultParagraphs } from './document-export.js';
 
@@ -46,7 +47,7 @@ export class ResearchManager {
     return [...this.projects.values()].filter(p => p.owner === owner && p.chat === chat && Boolean(p.archivedAt) === archived)
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map(p => structuredClone(p));
   }
-  async create(input: { owner: string; chat: string; thread?: string; source: string; title: string; scope: string; materials: string; parent?: string; parentFinding?: ResearchProject['parentFinding']; documentUrl?: string }): Promise<ResearchProject> {
+  async create(input: { workingDir?: string; owner: string; chat: string; thread?: string; source: string; title: string; scope: string; materials: string; parent?: string; parentFinding?: ResearchProject['parentFinding']; documentUrl?: string }): Promise<ResearchProject> {
     this.load();
     if (!input.owner || !input.chat || !input.source || !input.title.trim() || input.title.length > 180 || input.scope.length > 3000 || input.materials.length > 12000) {
       throw new Error('请填写研究问题（180 字以内）、范围（3000 字以内）和材料（12000 字以内）。');
@@ -60,10 +61,12 @@ export class ResearchManager {
     if (selected && (!Number.isSafeInteger(selected.index) || selected.index < 0 || !finding)) {
       throw new Error('所选发现不存在，请重新打开原项目中的发现。');
     }
+    const workingDir = parent ? parent.workingDir : input.workingDir;
+    if (workingDir !== undefined && !isAbsolute(workingDir)) { throw new Error('研究工作目录必须是绝对路径。'); }
     const now = new Date().toISOString();
     const token = documentToken(input.documentUrl ?? '');
     if (token && !this.readDocument) { throw new Error('当前研究服务未配置文档读取能力。'); }
-    const p: ResearchProject = { ...input, id: randomUUID(), status: 'paused', revision: 0, createdAt: now, updatedAt: now,
+    const p: ResearchProject = { ...input, workingDir, id: randomUUID(), status: 'paused', revision: 0, createdAt: now, updatedAt: now,
       title: finding ? `发现追问：${finding.claim.slice(0, 160)}` : input.title,
       scope: finding ? `仅围绕所选发现核验依据、补充证据并处理分歧与未知，不重新开展原项目的其他研究方向。原项目的来源和工具限制仍适用。\n所选发现：${finding.claim}` : input.scope,
       document: token ? { url: input.documentUrl ?? '', token, previous: [], generation: 0,
@@ -322,10 +325,10 @@ export class ResearchManager {
       // A control operation can arrive while the pre-step card update is in flight.
       if (p.status === 'pausing') { p.status = 'paused'; this.record(p, '研究已暂停。'); }
       if (p.status === 'cancelling') { p.status = 'cancelled'; this.record(p, '研究已取消。'); }
-    } catch {
+    } catch (error) {
       if (!this.disposed) {
         p.status = p.status as string === 'cancelling' ? 'cancelled' : 'failed';
-        p.error = '当前阶段未完成，已有成果保留。可检查材料后恢复重试。';
+        p.error = error instanceof ResearchDirectoryError ? error.message : '当前阶段未完成，已有成果保留。可检查材料后恢复重试。';
         this.record(p, p.error);
       }
     } finally { if (!this.disposed) { await this.display(p); } }
