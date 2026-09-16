@@ -1649,14 +1649,21 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             // (c) 本 turn 的「✅ Complete」假成功摘要在同层整条吞掉 —— turn 并未完成。
             // marker 是 proxy 补发的独立 text 块,随 assistant 正文原样到达、不横跨两条
             // 消息,故单条 content.includes 判定稳定。
-            let toDeliver = visibleContent;
+            // 投递前去掉前导空白:assistant 文本块可能以换行开头(9/15 把
+            // claude-agent-sdk 升到 0.3.263 后实测群里的进度消息每条都多出一个
+            // 空首行),而前导空白在一条聊天消息里没有任何语义,只会在飞书正文
+            // 顶部渲染成空行。只去前导 —— 行尾两个空格是 Markdown 硬换行,不能动。
+            // 「✅ Complete」相关判定同样改用去空白后的文本,否则前导换行会让这些
+            // 判定静默失效(把假成功摘要投出去)。
+            const deliverableContent = visibleContent.replace(/^\s+/, '');
+            let toDeliver = deliverableContent;
             if (visibleContent.includes(MIDSTREAM_MARKER)) {
               sawMidstreamInterrupt = true;
               const markerIdx = visibleContent.indexOf(MIDSTREAM_MARKER);
               toDeliver = visibleContent.slice(0, markerIdx).trim();
             }
             const suppressFakeComplete =
-              visibleContent.startsWith('✅ Complete') && sawMidstreamInterrupt;
+              deliverableContent.startsWith('✅ Complete') && sawMidstreamInterrupt;
             if (suppressFakeComplete) {
               toDeliver = '';
               this.logger.info(
@@ -1665,7 +1672,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                   '(turn did not complete; auto-continue or ❌ follows)'
               );
             }
-            if (parsed.type === 'result' && visibleContent.startsWith('✅ Complete')) {
+            if (parsed.type === 'result' && deliverableContent.startsWith('✅ Complete')) {
               toDeliver = '';
             }
             let delivered = false;
@@ -1687,7 +1694,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             }
             // Preserve attempted-output accounting for empty-turn recovery;
             // delivery failures independently prevent a completion reaction.
-            if (toDeliver && !visibleContent.startsWith('✅ Complete')) {
+            if (toDeliver && !deliverableContent.startsWith('✅ Complete')) {
               userVisibleOutputCount++;
             }
           }

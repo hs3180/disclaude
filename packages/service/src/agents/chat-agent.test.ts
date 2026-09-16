@@ -2142,6 +2142,54 @@ describe('ChatAgent (service)', () => {
       expect(debugMessages).toEqual(['[status] 🤔 Thinking...', '[status] 🤔 Thinking...']);
     });
 
+    it('strips a leading newline from delivered text (blank first line regression)', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_user_chat',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      // claude-agent-sdk 0.3.263 之后 assistant 文本块会带前导换行，飞书正文
+      // 顶部就多出一个空行；纯空白内容更不该投递成一条空消息。
+      async function* leadingNewlineIterator() {
+        yield { parsed: { type: 'text', content: '\n分支名对上了，我再核对一下。' } };
+        yield { parsed: { type: 'text', content: '   ' } };
+        yield { parsed: { type: 'result', content: 'Done' } };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: leadingNewlineIterator(),
+      });
+
+      void agent.processMessage({
+        chatId: 'oc_user_chat',
+        payload: 'hi',
+        messageId: 'msg_leading_newline',
+      });
+      await vi.waitFor(
+        () => {
+          expect(
+            (agent as any).logger.info.mock.calls.some(
+              (c: any[]) => c[1] === 'Result received, turn complete'
+            )
+          ).toBe(true);
+        },
+        { timeout: 1000, interval: 20 }
+      );
+
+      const userMessages = localCallbacks.sendMessage.mock.calls
+        .filter((call: any[]) => call[0] === 'oc_user_chat')
+        .map((call: any[]) => call[1]);
+      expect(userMessages).toContain('分支名对上了，我再核对一下。');
+      expect(userMessages).not.toContain('\n分支名对上了，我再核对一下。');
+      // 纯空白内容不再投递成一条空消息
+      expect(userMessages.every((m: string) => m.trim().length > 0)).toBe(true);
+    });
+
     it.each(['claude', 'codex', 'pi', 'deepseek'])('hides %s tool traces while preserving debug and final delivery', async (backend) => {
       const localCallbacks = createMockCallbacks();
       const agent = new ChatAgent({
