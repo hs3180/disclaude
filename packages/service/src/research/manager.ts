@@ -21,7 +21,7 @@ export class ResearchManager {
     private readonly readDocument?: DocumentReader, private readonly appendDocument?: DocumentAppender) {}
 
   private load(): void {
-    if (this.disposed) { throw new Error('研究服务已停止。'); }
+    if (this.disposed) { throw new Error('任务服务已停止。'); }
     if (this.loaded) { return; }
     for (const p of this.store.readAll()) {
       if (['running', 'pausing', 'cancelling'].includes(p.status)) {
@@ -34,13 +34,13 @@ export class ResearchManager {
   }
   private project(id: string): ResearchProject {
     const project = this.projects.get(id);
-    if (!project) { throw new Error('研究项目不存在或不属于当前用户和会话。'); }
+    if (!project) { throw new Error('任务不存在或不属于当前用户和会话。'); }
     return project;
   }
   get(id: string, owner: string, chat: string): ResearchProject {
     this.load();
     const p = this.projects.get(id);
-    if (!p || p.owner !== owner || p.chat !== chat) { throw new Error('研究项目不存在或不属于当前用户和会话。'); }
+    if (!p || p.owner !== owner || p.chat !== chat) { throw new Error('任务不存在或不属于当前用户和会话。'); }
     return structuredClone(p);
   }
   list(owner: string, chat: string, archived = false): ResearchProject[] {
@@ -51,48 +51,48 @@ export class ResearchManager {
   async create(input: { workingDir?: string; owner: string; chat: string; thread?: string; source: string; title: string; scope: string; materials: string; parent?: string; parentFinding?: ResearchProject['parentFinding']; documentUrl?: string }): Promise<ResearchProject> {
     this.load();
     if (!input.owner || !input.chat || !input.source || !input.title.trim() || input.title.length > 180 || input.scope.length > 3000 || input.materials.length > 12000) {
-      throw new Error('请填写研究问题（180 字以内）、范围（3000 字以内）和材料（12000 字以内）。');
+      throw new Error('请填写任务问题（180 字以内）、范围（3000 字以内）和材料（12000 字以内）。');
     }
     const existing = [...this.projects.values()].find(p => p.owner === input.owner && p.chat === input.chat && p.source === input.source);
     if (existing) { await this.show(existing.id, input.owner, input.chat); return structuredClone(existing); }
     const parent = input.parent ? this.get(input.parent, input.owner, input.chat) : undefined;
-    if (parent && !['completed', 'cancelled'].includes(parent.status)) { throw new Error('请先结束原项目，再从成果继续研究。'); }
+    if (parent && !['completed', 'cancelled'].includes(parent.status)) { throw new Error('请先结束原任务，再从成果继续任务。'); }
     const selected = input.parentFinding;
     const finding = selected && parent?.directions.find(d => d.id === selected.directionId)?.findings[selected.index];
     if (selected && (!Number.isSafeInteger(selected.index) || selected.index < 0 || !finding)) {
-      throw new Error('所选发现不存在，请重新打开原项目中的发现。');
+      throw new Error('所选发现不存在，请重新打开原任务中的发现。');
     }
     const workingDir = parent ? parent.workingDir : input.workingDir;
-    if (workingDir !== undefined && !isAbsolute(workingDir)) { throw new Error('研究工作目录必须是绝对路径。'); }
+    if (workingDir !== undefined && !isAbsolute(workingDir)) { throw new Error('任务工作目录必须是绝对路径。'); }
     const now = new Date().toISOString();
     const token = documentToken(input.documentUrl ?? '');
-    if (token && !this.readDocument) { throw new Error('当前研究服务未配置文档读取能力。'); }
+    if (token && !this.readDocument) { throw new Error('当前任务服务未配置文档读取能力。'); }
     const p: ResearchProject = { ...input, workingDir, projectLink: parent?.projectLink ? { directory: parent.projectLink.directory, token: randomUUID() } : undefined, id: randomUUID(), status: 'paused', revision: 0, createdAt: now, updatedAt: now,
       title: finding ? `发现追问：${finding.claim.slice(0, 160)}` : input.title,
-      scope: finding ? `仅围绕所选发现核验依据、补充证据并处理分歧与未知，不重新开展原项目的其他研究方向。原项目的来源和工具限制仍适用。\n所选发现：${finding.claim}` : input.scope,
+      scope: finding ? `仅围绕所选发现核验依据、补充证据并处理分歧与未知，不重新开展原任务的其他任务方向。原任务的来源和工具限制仍适用。\n所选发现：${finding.claim}` : input.scope,
       document: token ? { url: input.documentUrl ?? '', token, previous: [], generation: 0,
         publishedFragments: parent?.document?.token === token ? [...(parent.document.publishedFragments ?? [])] : [] } : undefined,
       directions: [], summary: '', questions: [], history: [], feedback: [], stepCount: 0,
       priorResults: parent ? { summary: parent.summary, scope: parent.scope, findings: structuredClone(finding ? [finding] : parent.directions.flatMap(d => d.findings).slice(-16)) } : undefined };
-    this.record(p, '项目已建立。开始后会持续研究，无需逐轮发送消息。');
+    this.record(p, '任务已建立。开始后会持续推进，无需逐轮发送消息。');
     this.projects.set(p.id, p);
     await this.display(p);
     // No invisible work if the first project card could not be delivered.
     return structuredClone(p);
   }
   private checkLegacyLink(p: ResearchProject): void {
-    if (p.workingDir) { throw new Error('该研究已有固定项目目录，不支持通过历史关联迁移。'); }
-    if (this.running.has(p.id) || ['running', 'pausing', 'cancelling'].includes(p.status)) { throw new Error('请先暂停研究并等待当前回合结束，再调整项目关联。'); }
+    if (p.workingDir) { throw new Error('该任务已有固定项目目录，不支持通过历史关联迁移。'); }
+    if (this.running.has(p.id) || ['running', 'pausing', 'cancelling'].includes(p.status)) { throw new Error('请先暂停任务并等待当前回合结束，再调整项目关联。'); }
   }
   async previewProjectLink(id: string, owner: string, chat: string, revision: number, directory: string): Promise<ResearchProject> {
     this.get(id, owner, chat);
     const p = this.project(id);
     this.checkLegacyLink(p);
-    if (p.revision !== revision) { throw new Error('研究已更新，请刷新后操作。'); }
-    if (p.projectLink) { throw new Error('该历史研究已有关联，请先撤销原关联。'); }
+    if (p.revision !== revision) { throw new Error('任务已更新，请刷新后操作。'); }
+    if (p.projectLink) { throw new Error('该历史任务已有关联，请先撤销原关联。'); }
     if (!isAbsolute(directory)) { throw new Error('项目关联目录必须是绝对路径。'); }
     p.linkPreview = { directory, token: randomUUID() };
-    this.record(p, '已准备项目关联预览，尚未改变研究归属或执行目录。');
+    this.record(p, '已准备项目关联预览，尚未改变任务归属或执行目录。');
     await this.display(p);
     return structuredClone(p);
   }
@@ -102,20 +102,20 @@ export class ResearchManager {
     if (p.projectLink?.token === token) { await this.display(p); return; }
     this.checkLegacyLink(p);
     if (p.revision !== revision || !p.linkPreview || p.linkPreview.token !== token || p.linkPreview.directory !== directory) {
-      throw new Error('研究或当前目录已改变，请重新预览关联目标。');
+      throw new Error('任务或当前目录已改变，请重新预览关联目标。');
     }
     p.projectLink = { ...p.linkPreview };
     p.linkPreview = undefined;
-    this.record(p, '已将历史研究关联到项目导航。执行目录、已有文件及成果保留；可撤销关联。');
+    this.record(p, '已将历史任务关联到项目导航。执行目录、已有文件及成果保留；可撤销关联。');
     await this.display(p);
   }
   async unlinkProject(id: string, owner: string, chat: string, revision: number): Promise<void> {
     this.get(id, owner, chat);
     const p = this.project(id);
     this.checkLegacyLink(p);
-    if (p.revision !== revision) { throw new Error('研究已更新，请刷新后操作。'); }
+    if (p.revision !== revision) { throw new Error('任务已更新，请刷新后操作。'); }
     p.projectLink = undefined; p.linkPreview = undefined;
-    this.record(p, '已撤销项目导航关联。研究身份、文件及成果保留。');
+    this.record(p, '已撤销项目导航关联。任务身份、文件及成果保留。');
     await this.display(p);
   }
   async show(id: string, owner: string, chat: string, reopen?: { thread: string }): Promise<void> {
@@ -134,15 +134,15 @@ export class ResearchManager {
     if (revision !== p.revision) { throw new Error('项目已更新，请刷新后操作。'); }
     if (action === 'export') { await this.exportResult(p); return; }
     if (action === 'archive' || action === 'unarchive') {
-      if (!['completed', 'cancelled'].includes(p.status)) { throw new Error('请先结束研究，再归档项目。'); }
+      if (!['completed', 'cancelled'].includes(p.status)) { throw new Error('请先结束任务，再归档任务。'); }
       p.archivedAt = action === 'archive' ? new Date().toISOString() : undefined;
-      this.record(p, action === 'archive' ? '项目已归档，成果保留，可从归档项目列表重返。' : '项目已移回研究项目列表。');
+      this.record(p, action === 'archive' ? '任务已归档，成果保留，可从归档任务列表重返。' : '任务已移回任务列表。');
       await this.display(p);
       return;
     }
-    if (['completed', 'cancelled'].includes(p.status)) { throw new Error('项目已结束，可从成果创建后续研究。'); }
+    if (['completed', 'cancelled'].includes(p.status)) { throw new Error('任务已结束，可从成果创建后续任务。'); }
     if (action === 'pause') {
-      if (p.status !== 'running') { throw new Error('当前项目未在执行。'); }
+      if (p.status !== 'running') { throw new Error('当前任务未在执行。'); }
       p.status = this.running.has(id) ? 'pausing' : 'paused';
       this.record(p, '已请求暂停：当前回合收尾后停止，不再开始下一回合。');
     } else if (action === 'cancel') {
@@ -150,17 +150,17 @@ export class ResearchManager {
       this.record(p, '已请求取消：等待当前回合结束，保留此前成果，不接纳在途结果。');
     } else if (action === 'resume') {
       if (!['paused', 'failed', 'interrupted', 'waiting-user'].includes(p.status) || this.running.has(id)) { throw new Error('请等待当前回合收尾后再恢复。'); }
-      if (p.status === 'waiting-user' && p.feedback.length <= (p.clarificationFeedbackCount ?? p.feedback.length)) { throw new Error('请先提交研究所需的补充信息，再继续。'); }
+      if (p.status === 'waiting-user' && p.feedback.length <= (p.clarificationFeedbackCount ?? p.feedback.length)) { throw new Error('请先提交任务所需的补充信息，再继续。'); }
       p.status = 'running';
       p.clarification = undefined;
       p.clarificationFeedbackCount = undefined;
       p.error = undefined;
       p.stepCount = 0;
-      this.record(p, '研究已开始，将按当前范围和待处理意见推进。');
+      this.record(p, '任务已开始，将按当前范围和待处理意见推进。');
     } else if (action === 'feedback') {
       if (!value.trim() || value.length > 3000) { throw new Error('请填写 3000 字以内的范围调整或补充意见。'); }
       p.feedback.push({ text: value, status: 'pending', at: new Date().toISOString() });
-      this.record(p, '已收到研究调整；当前回合结果保留供追溯，下一回合按新意见处理。');
+      this.record(p, '已收到任务调整；当前回合结果保留供追溯，下一回合按新意见处理。');
     } else if (action === 'stop-direction') {
       const d = p.directions.find(d => d.id === value);
       if (!d || d.status !== 'pending') { throw new Error('该方向已结束或不存在。'); }
@@ -180,7 +180,7 @@ export class ResearchManager {
   private async exportResult(p: ResearchProject): Promise<void> {
     const { document } = p;
     if (p.status !== 'completed' || !p.summary || !document?.snapshot || !this.readDocument || !this.appendDocument) {
-      throw new Error('请先完成关联文档的研究，再追加成果。');
+      throw new Error('请先完成关联文档的任务，再追加成果。');
     }
     if (this.exporting.has(p.id)) { throw new Error('正在核对文档，请稍候。'); }
     if (document.export?.status === 'saved' || (document.export && document.publishedFragments?.includes(document.export.fragment))) {
@@ -204,7 +204,7 @@ export class ResearchManager {
       if (latest.token !== document.token) { throw new Error('Document binding mismatch'); }
       if (!reconcile) {
         if (latest.fingerprint !== operation.baseFingerprint) {
-          operation.status = 'conflict'; operation.error = '文档已有新修改，本次未追加成果。原成果和文档均保留，请从成果继续研究以处理新意见。';
+          operation.status = 'conflict'; operation.error = '文档已有新修改，本次未追加成果。原成果和文档均保留，请从成果继续任务以处理新意见。';
           this.record(p, operation.error); return;
         }
         operation.status = 'writing';
@@ -222,7 +222,7 @@ export class ResearchManager {
       } else {
         document.publishedFragments = [...fragments, operation.fragment];
         if (latest.fingerprint !== operation.baseFingerprint) {
-          operation.status = 'conflict'; operation.error = '成果快照已追加，但检测到并发修改。双方内容均保留，请从成果继续研究以处理新意见。';
+          operation.status = 'conflict'; operation.error = '成果快照已追加，但检测到并发修改。双方内容均保留，请从成果继续任务以处理新意见。';
         } else {
           operation.status = 'saved'; operation.error = undefined;
           document.snapshot = latest;
@@ -374,7 +374,7 @@ export class ResearchManager {
         p.stepCount++;
         if (p.status as string === 'cancelling') {
           p.status = 'cancelled';
-          this.record(p, '研究已取消，在途结果未计入成果。');
+          this.record(p, '任务已取消，在途结果未计入成果。');
           break;
         }
         // A user stop invalidates the in-flight checkpoint, including conclusions
@@ -386,11 +386,11 @@ export class ResearchManager {
         } else {
           this.applyCheckpoint(p, snapshot, result, pending, feedbackCount);
         }
-        if (p.status as string === 'pausing') { p.status = 'paused'; this.record(p, '当前回合已收尾，研究已暂停。'); }
+        if (p.status as string === 'pausing') { p.status = 'paused'; this.record(p, '当前回合已收尾，任务已暂停。'); }
       }
       // A control operation can arrive while the pre-step card update is in flight.
-      if (p.status === 'pausing') { p.status = 'paused'; this.record(p, '研究已暂停。'); }
-      if (p.status === 'cancelling') { p.status = 'cancelled'; this.record(p, '研究已取消。'); }
+      if (p.status === 'pausing') { p.status = 'paused'; this.record(p, '任务已暂停。'); }
+      if (p.status === 'cancelling') { p.status = 'cancelled'; this.record(p, '任务已取消。'); }
     } catch (error) {
       if (!this.disposed) {
         p.status = p.status as string === 'cancelling' ? 'cancelled' : 'failed';

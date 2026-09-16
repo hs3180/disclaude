@@ -311,6 +311,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     };
 
     this.feishuMessageHandler = new FeishuMessageHandler({
+      appId: this.appId,
       triggerModeManager: this.triggerModeManager,
       mentionDetector: this.mentionDetector,
       interactionManager: this.interactionManager,

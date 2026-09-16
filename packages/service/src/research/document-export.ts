@@ -1,8 +1,8 @@
 import type { ResearchProject } from './project.js';
 
 export function resultParagraphs(project: ResearchProject, at: string): string[] {
-  const kinds = { fact: '来源事实', inference: '研究推断', uncertain: '尚不确定' };
-  const lines = [`研究成果快照 · ${project.title}`, `生成时间：${at}`, '结论', project.summary, '发现与证据'];
+  const kinds = { fact: '来源事实', inference: '推断', uncertain: '尚不确定' };
+  const lines = [`任务成果快照 · ${project.title}`, `生成时间：${at}`, '结论', project.summary, '发现与证据'];
   for (const direction of project.directions) {
     if (!direction.findings.length) { continue; }
     lines.push(direction.title);

@@ -117,7 +117,7 @@ describe('persistent research lifecycle', () => {
     const f = fixture(() => pending.promise);
     const project = await f.manager.create(input);
     await f.manager.act(project.id, 'alice', 'chat-a', project.revision, 'resume');
-    await expect(f.manager.previewProjectLink(project.id, 'alice', 'chat-a', f.manager.get(project.id, 'alice', 'chat-a').revision, '/projects/alpha')).rejects.toThrow('暂停研究');
+    await expect(f.manager.previewProjectLink(project.id, 'alice', 'chat-a', f.manager.get(project.id, 'alice', 'chat-a').revision, '/projects/alpha')).rejects.toThrow('暂停任务');
     f.manager.dispose(); pending.resolve({ directions: ['Check evidence'] });
     await f.manager.idle(project.id);
   });
@@ -185,7 +185,7 @@ describe('persistent research lifecycle', () => {
     await f.manager.act(next.id, 'alice', 'chat-a', next.revision, 'resume'); await f.manager.idle(next.id);
     const body = f.manager.get(next.id, 'alice', 'chat-a').document?.snapshot?.body;
     expect(body).toContain('User correction: include tax');
-    expect(body).not.toContain('研究成果快照');
+    expect(body).not.toContain('任务成果快照');
   });
   it('does not repeat an ambiguous write when reconciliation cannot find its fragment', async () => {
     const f = exportFixture(); const p = await completedExportProject(f);
