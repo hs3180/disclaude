@@ -77,9 +77,38 @@ describe('document feedback checkpoints', () => {
     expect(recovered.feedback.every(item => item.status === 'pending')).toBe(true);
   });
 
+  it('preserves a verifiable pending operation instead of reconciling it into new feedback', () => {
+    const root = mkdtempSync(join(tmpdir(), 'research-observed-write-'));
+    const file = join(root, 'state.json');
+    try {
+      const pending = prepare();
+      const original = JSON.stringify(pending);
+      writeFileSync(file, original);
+      const input = { operationId: pending.pendingWrite.id,
+        snapshot: { ...snapshot(pending.documentBody + pending.pendingWrite.fragment), revision: 'r2' } };
+      expect(() => apply(file, 'reconcile', pending.version, input)).toThrow('write_already_observed_use_ack');
+      expect(readFileSync(file, 'utf8')).toBe(original);
+      const confirmed = apply(file, 'ack', pending.version, input);
+      expect(confirmed.pendingWrite).toBeNull();
+      expect(confirmed.feedback).toHaveLength(pending.feedback.length);
+      expect(confirmed.feedback.every(item => item.operationId === input.operationId)).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('does not acknowledge a comment edited during write-back', () => {
     const pending = prepare();
     expect(() => ack(pending, { comments: [{ id: 'c1', body: 'Actually use another scope' }] })).toThrow('comment_changed_during_write');
+  });
+
+  it.each(['missing receipt', 'changed comment'])('still reconciles a %s without claiming acknowledgement', kind => {
+    const pending = prepare();
+    const remote = kind === 'missing receipt' ? snapshot(pending.documentBody) :
+      snapshot(pending.documentBody + pending.pendingWrite.fragment, [{ id: 'c1', body: 'Changed scope' }]);
+    const recovered = transition(pending, 'reconcile', { operationId: pending.pendingWrite.id, snapshot: remote });
+    expect(recovered.pendingWrite).toBeNull();
+    expect(recovered.feedback.every(item => item.status === 'pending')).toBe(true);
   });
 
   it('keeps newly discovered comments pending after a successful receipt', () => {

@@ -105,6 +105,13 @@ complete snapshot records the latest document, keeps decisions pending and
 clears the ambiguous operation. Inspect any existing receipt before preparing
 new decisions; reconciliation does not undo external writes.
 
+Attempt `ack` before `reconcile` when a pending operation exists. A read-back
+that already proves the original receipt must confirm that operation, not turn
+its receipt into a new body-feedback item. `reconcile` rejects this case with
+`write_already_observed_use_ack` and leaves the checkpoint unchanged; use `ack`
+with the same operation ID, version and complete snapshot. Actual missing
+receipts, body conflicts and changed comments still permit reconciliation.
+
 Once the user clarifies an item, `reopen` with `{"key":"…"}` returns its
 `needs_clarification` record to pending; prepare a new decision with the answer
 and rationale. `phase` with `{"phase":"synthesis"}` and `finish` with `{}`
