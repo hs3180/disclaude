@@ -90,3 +90,45 @@ PR CI checks on `cecf6902` passed.
 One computer-use call, zero screenshots. Original production service restored
 with matching configuration/plist hashes and independent health after 29 seconds.
 Owned candidate workspace archived with hashes and removed after process checks.
+
+## Service-crash and feedback settlement retest: scoped pass
+
+Integrated candidate `20e58617` (including PR head `55fce301`) ran actual
+`gpt-5.6-luna` with the clean R5 checkpoint. A native request started a foreground
+120-second Python read. After observing its PID and start marker, SIGKILL was
+sent to the service process. All nine observed processes exited in approximately
+0.26 seconds, without descendant cleanup. The checkpoint stayed byte-identical
+and the completion marker was absent.
+
+The same workspace restarted under a new service instance. A second native
+request asked to resume the original research and settle unrecorded feedback,
+without repeating the simulated read or the already-completed R6 conclusion.
+Luna read the research protocol, full document and both comment/reply pages,
+used the raw-response converter, then performed sync, prepare, append and ack.
+The final checkpoint is version 16, document revision 34, active, with no pending
+feedback or unknown write. Task/document identities and every old feedback object
+are unchanged, and its saved body matches both its hash and independent remote
+readback. The entire previous document is preserved with exactly one new receipt.
+Chat reports the correct 3,250 total, remaining unknown costs and a stable document
+link; the interrupted tool was not rerun.
+
+Two retries remain part of the evidence: the first append was rejected locally
+for an absolute `--content @` path before any remote mutation; stdin succeeded.
+A wildcard temporary-file cleanup was blocked by automatic review; the model
+used new readback filenames and completed safely. No repeated append occurred.
+The model's auxiliary task record reports an unsupported 12-minute duration;
+measured resume duration was about 171 seconds. That record is preserved, not
+used as timing evidence.
+
+This passes in-flight service-crash recovery and settlement of the existing
+body/comment deltas on this candidate. Those deltas predated this interruption;
+the distinct requirement to add both body and comment feedback during the new
+downtime remains unverified. Unknown remote-write recovery, concurrent projects
+and the other release gates also remain open.
+
+Two computer-use calls, zero screenshots. The original production service was
+restored with matching configuration/plist hashes and independent healthy status
+after 23 seconds. Workspace and 16 tool-created temporary files were archived
+with verified hashes before removing owned temporary resources. The research
+document and historical failed artifacts remain available for review. All six CI
+checks passed on `55fce301`; no PR was merged by the agent.
