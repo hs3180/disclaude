@@ -27,16 +27,19 @@ describe('user starts Disclaude and shares its managed browser', () => {
     const socket = join(root, 'browser.sock');
     const config = join(root, 'config.json');
     const probe = createServer();
+    let serviceUrl = '';
+    const contentionModel = process.env.DISCLAUDE_E2E_BROWSER_CONTENTION_MODEL;
     try {
       await new Promise<void>((done, reject) => { probe.once('error', reject); probe.listen(0, '127.0.0.1', done); });
       const port = (probe.address() as { port: number }).port;
       await new Promise<void>(done => probe.close(() => done()));
+      serviceUrl = `http://127.0.0.1:${port}`;
       await writeFile(config, JSON.stringify({
-        agent: { agentBackend: 'claude', provider: 'anthropic', model: 'claude-sonnet-4' },
-        anthropic: { apiKey: 'offline-test-placeholder' },
+        agent: { agentBackend: 'claude', provider: 'anthropic', model: contentionModel || 'claude-sonnet-4' },
+        ...(contentionModel ? {} : { anthropic: { apiKey: 'offline-test-placeholder' } }),
         workspace: { dir: root }, channels: { feishu: { enabled: false }, rest: { host: '127.0.0.1', port, fileStorageDir: join(root, 'files') } },
         logging: { level: 'info' },
-      }));
+      }), { mode: 0o600 });
     } catch (error) {
       if (probe.listening) { await new Promise<void>(done => probe.close(() => done())); }
       try { await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); }
@@ -216,7 +219,7 @@ describe('user starts Disclaude and shares its managed browser', () => {
           }
         }
         if (attempt === 0 && process.env.DISCLAUDE_E2E_BROWSER_CONTENTION_MODEL) {
-          await verifyModelContention(root, taskEnv, process.env.DISCLAUDE_E2E_BROWSER_CONTENTION_MODEL, join(root, 'browser-events.ndjson'), run);
+          await verifyModelContention(root, taskEnv, serviceUrl, join(root, 'browser-events.ndjson'));
         }
         if (attempt === 0 && process.env.DISCLAUDE_E2E_BROWSER_STRESS === '1') {
           await verifyRepeatedHandoffs(join(root, 'browser-events.ndjson'), run);

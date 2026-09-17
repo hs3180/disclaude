@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - 'tests/e2e/browser-service.test.ts'
+      - 'scripts/test-browser-contention.mjs'
       - 'tests/e2e/helpers/browser-*.ts'
       - 'tests/e2e/browser-doctor.test.ts'
       - 'tests/e2e/browser-smoke.test.ts'
@@ -20,6 +21,7 @@ on:
     branches: [main, master]
     paths:
       - 'tests/e2e/browser-service.test.ts'
+      - 'scripts/test-browser-contention.mjs'
       - 'tests/e2e/helpers/browser-*.ts'
       - 'tests/e2e/browser-doctor.test.ts'
       - 'tests/e2e/browser-smoke.test.ts'
