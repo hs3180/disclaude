@@ -111,3 +111,37 @@ image variables, the case skips. The Docker Service E2E workflow builds both
 images and enables the case. It uses a dedicated network and disposable
 containers, publishes no host ports, and supplies no account credentials.
 The service container runs the diagnostic rather than starting message channels.
+
+## Test-resource ownership and failure cleanup
+
+The service E2E labels its service container, short-lived data-operation containers
+and data volume with one full UUID in `io.disclaude.e2e-run`. Its teardown enumerates
+only that exact label, removes owned containers before volumes, and reports any
+remaining resource or Docker error. It does not silently ignore removal failures
+or infer ownership from a common name prefix. If Docker is unavailable, inspect
+the printed `DOCKER_TEST_RESOURCES` label once access returns; do not run a global
+prune. A killed test runner still needs explicit recovery of its recorded Docker
+label; the foreground process supervisor cannot reclaim Docker resources (#5049).
+
+`tests/e2e/docker-cleanup.test.ts` exercises actual container/volume cleanup using
+an already installed Node-capable image selected by
+`DISCLAUDE_E2E_DOCKER_CLEANUP_IMAGE`. It intentionally holds one run's volume from a
+second run's container: cleanup must report the in-use volume, preserve the second
+container and its sentinel, then succeed after that owner releases it. The test
+requires the image to exist and does not pull or build it. This resource test is
+not production service-image acceptance.
+
+The service-image test also supports
+`DISCLAUDE_E2E_DOCKER_FAIL_AFTER_START=1` to deliberately fail after creating the
+service container. This should return a nonzero test result plus
+`DOCKER_TEST_CLEANUP`; verify the exact printed label has no remaining containers
+or volumes. Do not count an arbitrary failure as successful teardown.
+
+
+The separate Docker browser smoke case now uses the same exact-label helper for
+both containers and its private network. The resource E2E also attaches the peer
+to the first run's network: cleanup must report both in-use resources, leave the
+peer's data untouched, and reclaim the network only after the peer releases it.
+Docker CI runs this resource case alongside the production image tests and verifies
+the explicit post-start failure path using the already-built production image.
+A helper-only change triggers this CI job as well.

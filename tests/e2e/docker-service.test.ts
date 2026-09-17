@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
+import { cleanupDockerTestResources } from './helpers/docker-resources.js';
 
 const exec = promisify(execFile);
 const docker = async (...args: string[]) => (await exec('docker', args, { timeout: 90_000, maxBuffer: 4 * 1024 * 1024 })).stdout.trim();
@@ -13,8 +14,10 @@ describe('production Docker service image', () => {
     const withModel = process.env.DISCLAUDE_E2E_DOCKER_MODEL === '1';
     const modelEnvFile = process.env.DISCLAUDE_E2E_DOCKER_MODEL_ENV_FILE;
     if (withModel) { expect(modelEnvFile, 'Supply a private Docker env file for the real model case').toBeTruthy(); }
-    const suffix = randomUUID().slice(0, 8);
+    const suffix = randomUUID();
     const container = `disclaude-e2e-${suffix}`, volume = `disclaude-e2e-data-${suffix}`;
+    const label = `io.disclaude.e2e-run=${suffix}`;
+    console.info('DOCKER_TEST_RESOURCES', JSON.stringify({ container, volume, label }));
     const token = randomUUID();
     const schedule = ['---', 'name: Container schedule acceptance', 'cron: "*/2 * * * * *"',
       'timezone: UTC', 'chatId: docker-e2e-chat', 'enabled: true', 'blocking: true',
@@ -24,7 +27,7 @@ const boot = fs.readFileSync('/data/workspace/schedule-boot', 'utf8');
 fs.appendFileSync('/data/workspace/schedule-runs.ndjson', JSON.stringify({boot, uid: process.getuid(),
   taskId: process.env.DISCLAUDE_SCHEDULE_ID, chatId: process.env.DISCLAUDE_CHAT_ID}) + '\\n');`;
 
-    let createdVolume = false, createdContainer = false;
+    let createdContainer = false;
     const config = {
       agent: { agentBackend: 'deepseek', provider: 'anthropic', model: 'deepseek-flash' },
       deepseek: { apiKey: 'offline-container-test-placeholder', mode: 'standard' },
@@ -34,14 +37,14 @@ fs.appendFileSync('/data/workspace/schedule-runs.ndjson', JSON.stringify({boot, 
     };
     if (withModel) { delete (config.deepseek as { apiKey?: string }).apiKey; }
     const inside = (code: string) => docker('exec', container, 'node', '--input-type=module', '-e', code);
-    const dataOperation = (code: string) => docker('run', '--rm', '--entrypoint', 'node', '-v', `${volume}:/data`, image, '--input-type=module', '-e', code);
+    const dataOperation = (code: string) => docker('run', '--rm', '--label', label, '--entrypoint', 'node', '-v', `${volume}:/data`, image, '--input-type=module', '-e', code);
     const request = async (port: number, path: string, method = 'GET', body?: unknown, authenticated = false) => {
       const options = { method, headers: { 'content-type': 'application/json', ...(authenticated ? { authorization: `Bearer ${token}` } : {}) },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }) };
       return JSON.parse(await inside(`const r = await fetch(${JSON.stringify(`http://127.0.0.1:${port}${path}`)}, ${JSON.stringify(options)}); console.log(JSON.stringify({status:r.status,body:await r.json()}));`)) as { status: number; body: Record<string, unknown> };
     };
     try {
-      await docker('volume', 'create', volume); createdVolume = true;
+      await docker('volume', 'create', '--label', label, volume);
       await dataOperation(`import fs from 'node:fs'; fs.writeFileSync('/data/config.json', ${JSON.stringify(JSON.stringify(config))}); fs.writeFileSync('/data/workspace/keep.txt', 'workspace retained'); fs.writeFileSync('/data/codex/keep.txt', 'codex retained');`);
       await dataOperation(`import fs from 'node:fs'; fs.mkdirSync('/data/workspace/schedules/container-acceptance', {recursive:true}); fs.writeFileSync('/data/workspace/schedules/container-acceptance/SCHEDULE.md', ${JSON.stringify(schedule)}); fs.writeFileSync('/data/workspace/schedule-command.mjs', ${JSON.stringify(scheduleCommand)});`);
       let fileId = '';
@@ -49,10 +52,13 @@ fs.appendFileSync('/data/workspace/schedule-runs.ndjson', JSON.stringify({boot, 
       for (let attempt = 0; attempt < 2; attempt++) {
         const boot = `${suffix}-${attempt}`;
         await dataOperation(`import fs from 'node:fs'; fs.writeFileSync('/data/workspace/schedule-boot', ${JSON.stringify(boot)});`);
-        await docker('run', '-d', '--name', container, '--health-interval=1s', '--health-start-period=1s', '--health-retries=5',
+        await docker('run', '-d', '--label', label, '--name', container, '--health-interval=1s', '--health-start-period=1s', '--health-retries=5',
           '-v', `${volume}:/data`, '-e', 'DISCLAUDE_CONFIG_PATH=/data/config.json', '-e', 'LOCKFILE_PATH=/data/service.pid',
           ...(withModel ? ['--env-file', modelEnvFile!] : []), image, 'disclaude', 'start', '--api-port', '19200', '--api-token', token);
         createdContainer = true;
+        if (process.env.DISCLAUDE_E2E_DOCKER_FAIL_AFTER_START === '1') {
+          throw new Error('Injected Docker E2E failure after owned container start');
+        }
         let ready = false;
         for (let i = 0; i < 80 && !ready; i++) {
           const state = JSON.parse(await docker('inspect', '--format', '{{json .State}}', container)) as { Running: boolean; Health?: { Status: string } };
@@ -114,8 +120,8 @@ fs.appendFileSync('/data/workspace/schedule-runs.ndjson', JSON.stringify({boot, 
       if (createdContainer) { console.error(await docker('logs', '--tail', '100', container).catch(() => 'Container logs unavailable')); }
       throw error;
     } finally {
-      if (createdContainer) { await docker('rm', '-f', container).catch(() => {}); }
-      if (createdVolume) { await docker('volume', 'rm', volume).catch(() => {}); }
+      await cleanupDockerTestResources(docker, label);
+      console.info('DOCKER_TEST_CLEANUP', JSON.stringify({ label, containersRemoved: true, volumesRemoved: true }));
     }
   }, 240_000);
 });

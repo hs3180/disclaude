@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { cleanupDockerTestResources } from './helpers/docker-resources.js';
 
 const exec = promisify(execFile);
 const docker = async (...args: string[]) => {
@@ -18,16 +19,17 @@ const docker = async (...args: string[]) => {
 describe('browser-use CLI in the production service image', () => {
   it.skipIf(!process.env.DISCLAUDE_E2E_DOCKER_IMAGE || !process.env.DISCLAUDE_E2E_DOCKER_BROWSER_IMAGE)(
     'uses a separate Chromium container without starting Chrome in the service container', async () => {
-      const suffix = randomUUID().slice(0, 8);
+      const suffix = randomUUID();
+      const label = `io.disclaude.e2e-run=${suffix}`;
+      console.info('DOCKER_BROWSER_TEST_LABEL', label);
       const network = `dc-smoke-net-${suffix}`, service = `dc-smoke-app-${suffix}`, browser = `dc-smoke-browser-${suffix}`;
-      let networkCreated = false, serviceCreated = false, browserCreated = false;
+      let browserCreated = false;
       try {
-        await docker('network', 'create', network); networkCreated = true;
+        await docker('network', 'create', '--label', label, network);
         // The production filesystem/runtime is used; this CLI diagnostic does
         // not start channels or connect an application to any external account.
-        await docker('run', '-d', '--init', '--name', service, '--network', network,
+        await docker('run', '-d', '--init', '--label', label, '--name', service, '--network', network,
           '--entrypoint', 'sleep', process.env.DISCLAUDE_E2E_DOCKER_IMAGE!, '600');
-        serviceCreated = true;
         for (const file of ['browser-use-smoke.sh', 'browser-use-smoke-daemon.py', 'browser-use-smoke-timeout.py']) {
           await docker('cp', resolve('scripts', file), `${service}:/tmp/${file}`);
         }
@@ -35,7 +37,7 @@ describe('browser-use CLI in the production service image', () => {
           "import json, os, importlib.metadata as m; print(json.dumps({'uid': os.getuid(), 'browserUse': m.version('browser-use'), 'browserHarness': m.version('browser-harness')}))")) as { uid: number; browserUse: string; browserHarness: string };
         expect(runtime.uid).toBe(1001);
         for (const headless of [false, true]) {
-          await docker('run', '-d', '--init', '--name', browser, '--network', network,
+          await docker('run', '-d', '--init', '--label', label, '--name', browser, '--network', network,
             '--network-alias', 'browser', '--shm-size=2g', '--memory=4g',
             '-e', `CHROMIUM_HEADLESS=${headless ? 1 : 0}`,
             process.env.DISCLAUDE_E2E_DOCKER_BROWSER_IMAGE!);
@@ -77,9 +79,8 @@ describe('browser-use CLI in the production service image', () => {
         if (browserCreated) { console.error(await docker('logs', '--tail', '80', browser).catch(() => 'Browser logs unavailable')); }
         throw error;
       } finally {
-        if (browserCreated) { await docker('rm', '-f', browser).catch(() => {}); }
-        if (serviceCreated) { await docker('rm', '-f', service).catch(() => {}); }
-        if (networkCreated) { await docker('network', 'rm', network).catch(() => {}); }
+        await cleanupDockerTestResources(docker, label);
+        console.info('DOCKER_BROWSER_TEST_CLEANUP', JSON.stringify({ label, containersRemoved: true, networkRemoved: true }));
       }
     }, 360_000,
   );
