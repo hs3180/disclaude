@@ -79,6 +79,12 @@ ask a real tool question, generate the product card, explicitly submit a test
 choice, and complete the original turn. Feishu HTTP delivery and the human
 submission are simulated; this test sends no Feishu messages. Run it with
 `DISCLAUDE_E2E_CODEX_INPUT=1 npx vitest run tests/e2e/codex-user-input.test.ts`.
+On checkouts with the separated E2E runner (`test:e2e` in package.json), use
+`DISCLAUDE_E2E_CODEX_INPUT=1 npm run test:e2e -- tests/e2e/codex-user-input.test.ts`
+instead: the default unit configuration excludes `tests/e2e/**`. Verify that the
+output reports one executed, passing RPC test; skipped or undiscovered tests
+are not validation.
+
 This test explicitly uses `gpt-5.6-luna`. The RPC case is the default; setting
 `DISCLAUDE_E2E_CODEX_ASYNC_INPUT=1` also enables the optional async capability
 probe. The observed Luna session reported that async tool unavailable, so that
