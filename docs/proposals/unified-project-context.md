@@ -1,10 +1,12 @@
 # Unified ProjectContext Design Proposal
 
-> **状态**: Final
+> **状态**: 历史方案，已被 0.6.0 的[项目任务 Harness 交付约定](../releases/0.6.0/project-harness.md)取代；本文不再作为实现或验收依据。
 > **日期**: 2026-04-06
-> **目标**: 统一的 ProjectContext 系统 — per-chatId 的 Agent 上下文切换，基于模板实例化
-> **迁移计划**: [project-context-migration.md](./project-context-migration.md)
+> **原目标**: 统一的 ProjectContext 系统 — per-chatId 的 Agent 上下文切换，基于模板实例化
+> **迁移说明**: 原文引用的 `project-context-migration.md` 未落入仓库，不是可执行迁移计划。保留本文仅供历史设计追溯；不得据此搬移现有工作目录。
 > **Agent 集成设计**: 详见 [§5 Agent 生命周期与 Project 切换](#5-agent-生命周期与-project-切换)
+
+0.6.0 不提供独立 `/research` 命令或 research 模式。本文下方关于研究模板、模式切换和模板实例化的描述属于旧设计。现有项目承载工作目录，持久任务承载执行、证据、人工介入和恢复；Skill 或模板不能代替这些产品能力。最新需求以 [#4753](https://github.com/hs3180/disclaude/issues/4753)、[#4754](https://github.com/hs3180/disclaude/issues/4754) 和维护者后续决定为准。
 
 ---
 
