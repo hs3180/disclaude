@@ -1,10 +1,11 @@
 # Research service crash: partial result and snapshot defect
 
-Latest status: controlled crash/downtime-feedback recovery and the malformed-receipt
-reconciliation path have scoped real-Luna evidence. The observed-receipt guard has
-regression/captured-response evidence, but its normal-receipt model retest remains
-open. The new exact receipt exporter also needs model use verification. Historical
-failures and duplicate explanations remain preserved below.
+Latest status: controlled crash/downtime-feedback and malformed-receipt recovery
+have scoped real-Luna evidence. Candidate `ef1a110b` also passes normal pending
+receipt confirmation, exact receipt export for new feedback, and linked reporting.
+The guard's rejection branch has regression/captured-response coverage. Historical
+failures and duplicate explanations remain preserved below. None of these results
+establishes all release gates or a final 0.6.0 candidate.
 
 Candidate `298f40e5` used actual `gpt-5.6-luna` and a preserved research workspace.
 A controlled foreground Python read was observed running with a start marker and
@@ -288,3 +289,35 @@ matched and independent health passed. Owned workspace archived and removed;
 this round created no external temporary files. Measured model duration was
 about 241 seconds; its auxiliary record's approximately ten-minute claim is not
 used as timing evidence. No PR was merged.
+
+## Normal pending receipt plus exact exporter: scoped real-model pass
+
+Candidate `ef1a110b` used the stored prepare response for pending checkpoint 28.
+Preflight compared the entire body, receipt and comment versions against remote
+revision 45: acknowledgement exactly reproduced verified checkpoint 29, and
+erroneous reconciliation was rejected without mutation. The checkpoint was
+reconstructed from this actual saved prepare response; the research directory
+retained later readback artifacts. This was not a fresh service-crash run.
+
+A new R9 comment requested preserving history and unresolved costs without
+changing the existing recommendation. One native request asked actual Luna to
+recover and process new feedback, without prescribing helper commands. Its
+mutation/export sequence was `ack → prepare → receipt → ack`: it confirmed the
+existing operation, prepared R9, invoked the exact exporter and acknowledged
+one new append. No premature sync, reconciliation or repeat append occurred.
+
+Independent readback is exactly the prior body plus the one exported R9 fragment
+with the known Feishu append boundary. The old operation and new operation each
+appear once; every previously handled feedback object is unchanged. Final
+checkpoint 31 / document 46 is active, with no pending feedback or write, and
+its body/hash matches remote content. Final chat gives the document link, confirms
+recovery and preserves unknown costs using user-facing language. A local reporting
+script initially read the acknowledgement envelope incorrectly; the model inspected
+the saved result instead of repeating the operation.
+
+One computer-use call, zero screenshots. Original service config/plist hashes
+matched and independent health passed. Owned workspace and two temporary body
+comparison files were archived/hash-verified and removed. Measured model duration
+was about 188 seconds; the auxiliary record's approximately twelve-minute claim
+is not used as timing evidence. All six CI checks passed on `4d4d2ac2`; the
+20 branch/22 integrated tests remain the latest code validation. No PR was merged.
