@@ -261,6 +261,11 @@ describe('user starts Disclaude and shares its managed browser', () => {
           await expect(exec(process.execPath, [executable, 'browser', 'status'], { env, cwd: root, timeout: 5000 })).rejects.toThrow();
         }
         await stop();
+        if (attempt === 1) {
+          const shutdownEvents = (await readFile(env.DISCLAUDE_BROWSER_EVENTS!, 'utf8')).trim().split('\n')
+            .map(line => JSON.parse(line) as { type: string; reason?: string });
+          expect(shutdownEvents).toContainEqual(expect.objectContaining({ type: 'shutdown-started', reason: 'SIGTERM' }));
+        }
         await expect(access(socket)).rejects.toThrow();
         await expect(access(socket + '.lock')).rejects.toThrow();
         await expect(fetch(`http://127.0.0.1:${cdpPort}/json/version`, { signal: AbortSignal.timeout(1000) })).rejects.toThrow();
