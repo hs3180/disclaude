@@ -1,5 +1,11 @@
 # Research service crash: partial result and snapshot defect
 
+Latest status: controlled crash/downtime-feedback recovery and the malformed-receipt
+reconciliation path have scoped real-Luna evidence. The observed-receipt guard has
+regression/captured-response evidence, but its normal-receipt model retest remains
+open. The new exact receipt exporter also needs model use verification. Historical
+failures and duplicate explanations remain preserved below.
+
 Candidate `298f40e5` used actual `gpt-5.6-luna` and a preserved research workspace.
 A controlled foreground Python read was observed running with a start marker and
 no completion marker. Candidate launchd auto-restart was disabled. SIGKILL was sent
@@ -247,3 +253,38 @@ Original service config/plist hashes matched and independent health passed after
 50 seconds. The owned workspace was archived and removed; ten tool-created
 temporary files were hash-verified, archived and removed. No remote failure
 evidence was deleted or silently repaired, and no PR was merged.
+
+## Retest from the failed checkpoint: malformed receipt recovery
+
+Candidate `5bcf1622` copied the complete failed-run research archive with pending
+checkpoint 26. Independent preflight found its operation ID once in remote
+revision 44, but the receipt was not byte-identical: the prior model's manually
+written document-feedback key had an extra `e`. Operation-ID presence alone did
+not establish an acknowledgeable receipt. This changes the scope of this retest;
+it cannot prove the normal observed-receipt guard path.
+
+Actual Luna attempted acknowledgement first; `write_not_observed` correctly
+rejected the mismatched text. Reconciliation was therefore permitted. The model
+retained the entire old body and added a new confirmation receipt, then read it
+back and acknowledged it. Final version 29 / document 45 is active with no pending
+feedback or write; original identity and all previously handled feedback remain,
+and the body/hash matches independent remote readback. The final chat includes
+the document link, unresolved costs and ongoing status without internal commands.
+This is a scoped pass for malformed-receipt reconciliation and linked reporting.
+The historical duplicate explanations were not removed.
+
+A read-only `state.mjs receipt` command now exports the saved pending fragment
+verbatim so the model need not transcribe long keys. It validates the expected
+checkpoint version, active state and saved body hash, preserves whitespace, and
+has no remote effect or state mutation. Skill/protocol guidance uses the exported
+file for append. The regression failed before the command existed; 20 branch and
+22 integrated tests pass, including exact Unicode/trailing-newline output, stale
+version, cancelled state and missing receipt rejection. Export of the real saved
+checkpoint is byte-identical and leaves it unchanged. Model use of this new command
+and the normal observed-receipt guard still require a separate retest.
+
+One computer-use call, zero screenshots. Original service configuration hashes
+matched and independent health passed. Owned workspace archived and removed;
+this round created no external temporary files. Measured model duration was
+about 241 seconds; its auxiliary record's approximately ten-minute claim is not
+used as timing evidence. No PR was merged.
