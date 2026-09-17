@@ -45,6 +45,8 @@ const logger = createLogger('DisclaudeService');
 export interface ServiceOptions {
   /** Diagnostic identity for this running service instance, not a routing role. */
   instanceId?: string;
+  /** Private, single-writer callback metadata path; omitted for ephemeral services. */
+  interactiveContextFile?: string;
 }
 
 /**
@@ -107,7 +109,7 @@ export class DisclaudeService extends EventEmitter {
   constructor(config: ServiceOptions = {}) {
     super();
     for (const key of Object.keys(config)) {
-      if (key !== 'instanceId') {throw new Error(`Unsupported service option: ${key}. Configure channels and HTTP through the unified CLI/configuration file.`);}
+      if (key !== 'instanceId' && key !== 'interactiveContextFile') {throw new Error(`Unsupported service option: ${key}. Configure channels and HTTP through the unified CLI/configuration file.`);}
     }
     this.instanceId = config.instanceId || `service-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -119,7 +121,7 @@ export class DisclaudeService extends EventEmitter {
     this.channelManager = new ChannelManager();
 
     // Initialize InteractiveContextStore (Issue #1572)
-    this.interactiveContextStore = new InteractiveContextStore();
+    this.interactiveContextStore = new InteractiveContextStore(undefined, undefined, config.interactiveContextFile);
 
     logger.info({
       instanceId: this.instanceId,
@@ -565,7 +567,8 @@ export class DisclaudeService extends EventEmitter {
     const resolvedPrompts = (result as { actionPrompts?: Record<string, string> }).actionPrompts
       ?? params.actionPrompts;
     if (resolvedPrompts && result.messageId) {
-      this.interactiveContextStore.register(result.messageId, chatId, resolvedPrompts);
+      this.interactiveContextStore.register(result.messageId, chatId, resolvedPrompts,
+        Object.fromEntries(params.options.map(option => [option.value, option.text])));
     }
     // success mirrors the REST API handler, which returns success: true whenever the
     // channel handler resolves without throwing.

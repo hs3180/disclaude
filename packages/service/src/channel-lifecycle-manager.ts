@@ -44,6 +44,7 @@ import { ChannelManager } from './channel-manager.js';
  */
 export interface IDisclaudeServiceForSetup {
   getInteractiveContextStore(): {
+    getActionText?(messageId: string, chatId: string, actionValue: string): string | undefined;
     generatePrompt(
       messageId: string,
       chatId: string,

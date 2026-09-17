@@ -207,6 +207,7 @@ export interface FeishuChannelConfig {
     actionValue: string,
     actionText?: string
   ) => string | undefined;
+  resolveActionText?: (messageId: string, chatId: string, actionValue: string) => string | undefined;
 }
 
 /**
@@ -299,7 +300,10 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       }) => {
         return await this.sendMessage(message as OutgoingMessage);
       },
-      resolveActionPrompt: config.resolveActionPrompt,
+      // Descriptor setup installs the resolver after this constructor returns.
+      // Read it at callback time instead of capturing the initial undefined value.
+      resolveActionPrompt: (...args) => config.resolveActionPrompt?.(...args),
+      resolveActionText: (...args) => config.resolveActionText?.(...args),
       // Issue #4031: Emit topic message events through InternalEventBus
       onTopicMessage: (event) => {
         eventBus.emit('feishu.topic.message', event);

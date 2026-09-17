@@ -8,6 +8,92 @@
 
 import { describe, it, beforeEach, afterEach, expect, vi } from 'vitest';
 import { InteractiveContextStore } from './interactive-context.js';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+describe('durable interactive contexts', () => {
+  let directory: string;
+  let file: string;
+  beforeEach(() => { directory = mkdtempSync(join(tmpdir(), 'interactive-context-')); file = join(directory, 'contexts.json'); });
+  afterEach(() => { vi.useRealTimers(); rmSync(directory, { recursive: true, force: true }); });
+
+  it('restores exact card prompts after reconstruction without crossing chats', () => {
+    const first = new InteractiveContextStore(undefined, undefined, file);
+    first.register('card', 'chat', { inventory: 'Inspect inventory read-only' }, { inventory: 'Inventory report' });
+    const restored = new InteractiveContextStore(undefined, undefined, file);
+    expect(restored.generatePrompt('card', 'chat', '"inventory"')).toBe('Inspect inventory read-only');
+    expect(restored.generatePrompt('card', 'other', 'inventory')).toBeUndefined();
+    expect(restored.generatePrompt('other', 'chat', 'inventory')).toBeUndefined();
+    expect(restored.getActionText('card', 'chat', '"inventory"')).toBe('Inventory report');
+    expect(restored.getActionText('card', 'other', 'inventory')).toBeUndefined();
+    expect(restored.getActionText('other', 'chat', 'inventory')).toBeUndefined();
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(readdirSync(directory)).toEqual(['contexts.json']);
+  });
+
+  it('does not renew expiration during restore or execute expired entries', () => {
+    vi.useFakeTimers(); vi.setSystemTime(1000);
+    const first = new InteractiveContextStore(100, 10, file);
+    first.register('card', 'chat', { a: 'A' });
+    vi.setSystemTime(1090);
+    const restored = new InteractiveContextStore(100, 10, file);
+    expect(restored.generatePrompt('card', 'chat', 'a')).toBe('A');
+    vi.setSystemTime(1101);
+    expect(restored.generatePrompt('card', 'chat', 'a')).toBeUndefined();
+    expect(new InteractiveContextStore(100, 10, file).size).toBe(0);
+  });
+
+  it('persists eviction, unregister and clear across restarts', () => {
+    const first = new InteractiveContextStore(undefined, 1, file);
+    first.register('old', 'chat', { a: 'Old' });
+    first.register('new', 'chat', { a: 'New' });
+    const restored = new InteractiveContextStore(undefined, 1, file);
+    expect(restored.generatePrompt('old', 'chat', 'a')).toBeUndefined();
+    expect(restored.generatePrompt('new', 'chat', 'a')).toBe('New');
+    restored.unregister('new');
+    expect(new InteractiveContextStore(undefined, 1, file).size).toBe(0);
+    restored.register('next', 'chat', { a: 'Next' });
+    restored.clear();
+    expect(new InteractiveContextStore(undefined, 1, file).size).toBe(0);
+  });
+
+  it('preserves refreshed registration order when restoring with a lower retention cap', () => {
+    const first = new InteractiveContextStore(undefined, 3, file);
+    first.register('a', 'chat', { a: 'A' });
+    first.register('b', 'chat', { a: 'B' });
+    first.register('a', 'chat', { a: 'Refreshed A' });
+    const restored = new InteractiveContextStore(undefined, 1, file);
+    expect(restored.generatePrompt('a', 'chat', 'a')).toBe('Refreshed A');
+    expect(restored.generatePrompt('b', 'chat', 'a')).toBeUndefined();
+  });
+
+  it('preserves corrupt data and fails explicitly instead of starting an empty store', () => {
+    const corrupt = '{"version":1,"contexts":[{"messageId":"card"}]}';
+    writeFileSync(file, corrupt);
+    expect(() => new InteractiveContextStore(undefined, undefined, file)).toThrow('Invalid interactive context entry');
+    expect(readFileSync(file, 'utf8')).toBe(corrupt);
+  });
+
+  it('rejects malformed runtime input before it can damage a durable store', () => {
+    const first = new InteractiveContextStore(undefined, undefined, file);
+    first.register('old', 'chat', { a: 'Old' });
+    const original = readFileSync(file, 'utf8');
+    expect(() => first.register('new', 'chat', { a: 42 } as never)).toThrow('Invalid interactive context registration');
+    expect(readFileSync(file, 'utf8')).toBe(original);
+    expect(new InteractiveContextStore(undefined, undefined, file).generatePrompt('old', 'chat', 'a')).toBe('Old');
+  });
+
+  it('rolls back memory when atomic publication fails and cleans temporary files', () => {
+    const first = new InteractiveContextStore(undefined, undefined, file);
+    first.register('old', 'chat', { a: 'Old' });
+    rmSync(file); mkdirSync(file);
+    expect(() => first.register('new', 'chat', { a: 'New' })).toThrow();
+    expect(first.generatePrompt('old', 'chat', 'a')).toBe('Old');
+    expect(first.generatePrompt('new', 'chat', 'a')).toBeUndefined();
+    expect(readdirSync(directory)).toEqual(['contexts.json']);
+  });
+});
 
 describe('InteractiveContextStore', () => {
   let store: InteractiveContextStore;
@@ -261,6 +347,29 @@ describe('InteractiveContextStore', () => {
   });
 
   describe('generatePrompt', () => {
+    it('binds action semantics to the exact card and chat (#5073)', () => {
+      store.register('first', 'chat', { shared: 'First operation' });
+      store.register('second', 'chat', { shared: 'Second operation', other: 'Other operation' });
+      expect(store.generatePrompt('missing', 'chat', 'shared')).toBeUndefined();
+      expect(store.generatePrompt('first', 'different-chat', 'shared')).toBeUndefined();
+      expect(store.generatePrompt('first', 'chat', 'other')).toBeUndefined();
+      expect(store.generatePrompt('first', 'chat', 'shared')).toBe('First operation');
+    });
+
+    it('resolves a serialized scalar only within its original card (#5073)', () => {
+      store.register('card', 'chat', { capacity: 'Inspect capacity: {{actionValue}}' });
+      expect(store.generatePrompt('card', 'chat', '"capacity"')).toBe('Inspect capacity: capacity');
+      expect(store.generatePrompt('card', 'chat', '{"value":"capacity"}')).toBeUndefined();
+      expect(store.generatePrompt('card', 'chat', '["capacity"]')).toBeUndefined();
+      expect(store.generatePrompt('card', 'chat', '"capacity')).toBeUndefined();
+      expect(store.generatePrompt('card', 'chat', 'toString')).toBeUndefined();
+    });
+
+    it('preserves explicitly registered quoted action values', () => {
+      store.register('card', 'chat', { capacity: 'Plain', '"capacity"': 'Quoted' });
+      expect(store.generatePrompt('card', 'chat', '"capacity"')).toBe('Quoted');
+    });
+
     beforeEach(() => {
       store.register('msg-1', 'chat-1', {
         confirm: '[用户操作] 用户选择了「{{actionText}}」',
@@ -275,10 +384,10 @@ describe('InteractiveContextStore', () => {
       expect(prompt).toBe('[用户操作] 用户选择了「确认」');
     });
 
-    it('should fall back to chatId-based lookup when messageId does not match', () => {
-      // Simulate Feishu callback with real messageId that differs from synthetic
+    it('does not guess a prompt when a synthetic ID cannot identify the original card', () => {
+      // A synthetic send ID is not an alias for an arbitrary real card.
       const prompt = store.generatePrompt('real_feishu_msg_id', 'chat-1', 'confirm', '确认');
-      expect(prompt).toBe('[用户操作] 用户选择了「确认」');
+      expect(prompt).toBeUndefined();
     });
 
     it('should replace {{actionValue}} placeholder', () => {
@@ -320,7 +429,7 @@ describe('InteractiveContextStore', () => {
       expect(prompt).toBe('[用户操作] 选择了action');
     });
 
-    it('should find actionValue across multiple cards in the same chat (#1625)', () => {
+    it('keeps exact card lookup independent of newer cards in the same chat', () => {
       // Simulate the exact scenario from the bug report:
       // 1. REST API script sends Card A with AI-related buttons
       store.register('card-a', 'chat-group', {
@@ -334,9 +443,9 @@ describe('InteractiveContextStore', () => {
         no: '[用户操作] 用户拒绝了',
       });
 
-      // User clicks Card A's button, but Feishu sends a different messageId
+      // The original card ID remains authoritative after a newer card is sent.
       const prompt = store.generatePrompt(
-        'feishu_real_msg_id', // unknown to store
+        'card-a',
         'chat-group',
         'explain_ai', // belongs to Card A, not Card B
         'AI解释'
@@ -354,7 +463,7 @@ describe('InteractiveContextStore', () => {
       expect(prompt).toBeUndefined();
     });
 
-    it('should find actionValue across multiple cards with formData (#1625 review)', () => {
+    it('resolves formData for its exact card after newer cards are registered', () => {
       // Card A with form action
       store.register('card-form', 'chat-1', {
         submit_feedback: '用户提交了反馈: {{form.rating}}/5 - {{form.comment}}',
@@ -366,7 +475,7 @@ describe('InteractiveContextStore', () => {
 
       // User clicks Card A's submit button with form data
       const prompt = store.generatePrompt(
-        'unknown-msg-id',
+        'card-form',
         'chat-1',
         'submit_feedback',
         undefined,
@@ -377,7 +486,7 @@ describe('InteractiveContextStore', () => {
       expect(prompt).toBe('用户提交了反馈: 4/5 - 很好用');
     });
 
-    it('should handle cross-card search with actionType placeholder (#1625 review)', () => {
+    it('resolves actionType for its exact card after newer cards are registered', () => {
       store.register('card-old', 'chat-1', {
         select_option: '用户选择了 {{actionType}}: {{actionText}}',
       });
@@ -386,7 +495,7 @@ describe('InteractiveContextStore', () => {
       });
 
       const prompt = store.generatePrompt(
-        'unknown-msg-id',
+        'card-old',
         'chat-1',
         'select_option',
         '选项A',
