@@ -178,14 +178,29 @@ export function apply(file, command, expectedVersion, input) {
   }
 }
 
+function receipt(file, expectedVersion) {
+  const state = JSON.parse(readFileSync(file, 'utf8'));
+  requireValue(state?.schema === 1, 'invalid_state');
+  requireValue(state.version === expectedVersion, 'stale_checkpoint');
+  requireValue(!['completed', 'cancelled'].includes(state.status), 'terminal_task');
+  requireValue(state.pendingWrite && text(state.pendingWrite.fragment), 'no_pending_write');
+  requireValue(typeof state.documentBody === 'string' && digest(state.documentBody) === state.documentHash,
+    'checkpoint_body_hash_mismatch');
+  return state.pendingWrite.fragment;
+}
+
 const main = process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
 if (main) {
   try {
     const [command, file, version] = process.argv.slice(2);
-    requireValue(command && file, 'usage: state.mjs <init|sync|prepare|ack|reconcile|reopen|phase|finish|cancel|status> <state-file> <expected-version>; JSON input on stdin');
-    const result = command === 'status' ? JSON.parse(readFileSync(resolve(file), 'utf8')) :
-      apply(resolve(file), command, Number(version), JSON.parse(readFileSync(0, 'utf8')));
-    console.log(JSON.stringify({ ok: true, state: result }));
+    requireValue(command && file, 'usage: state.mjs <init|sync|prepare|receipt|ack|reconcile|reopen|phase|finish|cancel|status> <state-file> <expected-version>; mutations read JSON on stdin; receipt emits exact Markdown');
+    if (command === 'receipt') {
+      process.stdout.write(receipt(resolve(file), Number(version)));
+    } else {
+      const result = command === 'status' ? JSON.parse(readFileSync(resolve(file), 'utf8')) :
+        apply(resolve(file), command, Number(version), JSON.parse(readFileSync(0, 'utf8')));
+      console.log(JSON.stringify({ ok: true, state: result }));
+    }
   } catch (error) {
     console.log(JSON.stringify({ ok: false, error: error.message }));
     process.exitCode = 1;

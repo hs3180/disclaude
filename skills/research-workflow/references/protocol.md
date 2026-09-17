@@ -3,7 +3,8 @@
 Use one state file per research task. Resolve `scripts/state.mjs` relative to this
 skill, not the task cwd. State contains document/comment content; keep its
 private directory out of source control and channel logs. Commands return one
-JSON object and nonzero on failure. Supply JSON on stdin (prefer an input file
+JSON object and nonzero on failure, except successful `receipt` export emits exact
+Markdown. Supply JSON on stdin for mutations (prefer an input file
 and shell redirection), never interpolate comment text into shell code.
 
 ```sh
@@ -100,6 +101,19 @@ reason. The resulting `pendingWrite` has an operation ID, base revision/hash,
 and an exact Markdown fragment. Refresh the body and compare to the base before
 appending that fragment once. It is a feedback receipt; it does not execute the
 research or prove that substantive changes were completed.
+
+Export the prepared fragment without transcription or string reconstruction:
+
+```sh
+node /path/to/research-workflow/scripts/state.mjs receipt ./research/state.json 2 > ./receipt.md
+```
+
+Use the version returned by `prepare`, not the example's number. This read-only
+command emits the saved fragment byte-for-byte, including trailing newlines, and
+does not call Feishu or mutate the checkpoint. Check its exit status before
+appending the file with the document CLI; never send an error response as content.
+Use a relative file path from the CLI cwd, or stdin. Never retype feedback keys,
+operation IDs or receipt text: a one-character change prevents acknowledgement.
 
 `ack` input is `{"operationId":"…","snapshot":{…}}` from a complete read-back.
 It requires the exact receipt content, the original body outside it, and unchanged

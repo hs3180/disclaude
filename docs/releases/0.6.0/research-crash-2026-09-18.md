@@ -209,3 +209,41 @@ shell configuration were removed after archiving evidence; the single tool-creat
 temporary file was hash-verified before removal. This controlled response-loss
 path does not establish concurrent-edit, permission, notification or multi-project
 isolation acceptance. No PR was merged.
+
+## Guidance retest: reconciliation reopened an observed receipt (failed)
+
+Candidate `3b15e435` used actual Luna and the byte-identical interrupted version
+24 checkpoint with its still-pending R8 operation; remote revision 43 already
+contained that receipt. The copied research directory also retained artifacts
+from the later successful recovery. This reconstructs the interrupted checkpoint,
+not a byte-identical snapshot of the entire directory at interruption.
+
+Luna read the complete live snapshot but chose `reconcile` without first trying
+`ack`. After correcting a local JSON-shape error, reconciliation cleared the
+original operation and classified its existing receipt as new body feedback.
+It prepared the R8 comment again plus this spurious body item, then appended a
+second explanation at remote revision 44. The verifier stopped the candidate
+and restored the original service before another round could proceed. Final
+checkpoint 26 retains the new pending write; the duplicate explanation and all
+failed artifacts are preserved. This round failed; no final-link behavior was
+verified because the run was interrupted. One UI call, zero screenshots.
+
+The follow-up makes `reconcile` reject `write_already_observed_use_ack` when
+ordinary acknowledgement can already verify the receipt, base body and comment
+versions. The pending operation and file stay unchanged so the original operation
+can be confirmed. Actual missing receipts, concurrent body changes and changed
+comments retain the existing reconciliation behavior. Skill guidance now attempts
+acknowledgement first rather than offering the two operations as equal choices.
+
+The regression failed before the guard. All 19 branch tests and 21 integrated
+checkpoint/converter tests pass. Captured normalized Feishu readback replay on
+integrated `5bcf1622` rejects the erroneous reconciliation without changing state;
+acknowledging the original operation exactly reproduces the previously verified
+version 25 checkpoint. Feishu append normalization is supplied by #5105 in the
+integration. Syntax, skill validation and diff checks pass. The new guard still
+requires a real-model retest; replay is not a substitute.
+
+Original service config/plist hashes matched and independent health passed after
+50 seconds. The owned workspace was archived and removed; ten tool-created
+temporary files were hash-verified, archived and removed. No remote failure
+evidence was deleted or silently repaired, and no PR was merged.
