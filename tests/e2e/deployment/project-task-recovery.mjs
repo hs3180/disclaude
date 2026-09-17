@@ -1,6 +1,6 @@
 /** External, two-phase recovery acceptance. The operator owns deployment restart. */
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 if (process.argv.includes('--help')) {
   console.log('JSON stdin: {baseUrl,apiToken,context,phase:"prepare"|"resume",checkpoint?,timeoutMs?,documentUrl?,commentMarker?}. Prepare leaves one task running and emits a checkpoint. Optional document fixture uses A41/B48; operator changes body A58 and comments B rebate14 before resume, passing commentMarker. Resume uses a fresh real-message context and archives the task. This client never kills/starts services or edits documents.');
@@ -106,7 +106,15 @@ try {
       assert(done.document.previous.some(s => s.rawBody === prior.document.rawBody));
       const comment = done.feedback.find(f => f.text.includes(config.commentMarker) && f.sourceKey?.includes(':comment:'));
       assert(comment?.status === 'applied' && comment.directionIds.length);
-      assert(done.feedback.some(f => f.status === 'applied' && f.sourceKey?.includes(':body') && f.text.includes('58')));
+      // Body notifications contain generic instructions; the current snapshot and
+      // its source-key digest identify the actual revision that was applied.
+      const bodyDigest = createHash('sha256').update(JSON.stringify(done.document.snapshot.body)).digest('hex');
+      const bodyFeedback = done.feedback.find(f => f.status === 'applied'
+        && f.sourceKey?.startsWith(`${prior.document.token}:`)
+        && f.sourceKey.endsWith(`:body:${bodyDigest}`));
+      assert(bodyFeedback?.directionIds?.some(id => done.directions.some(d => d.id === id
+        && d.findings.some(f => f.sources.some(s => s.excerpt.includes('Proposal A costs USD 58.'))))),
+      'Applied current-body feedback must link to work citing the revised price');
       pass('latest-document-body-and-comment-applied');
     }
     pass(phase);
