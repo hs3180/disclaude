@@ -41,11 +41,12 @@ function buildFeishuMentionSection(ctx: MessageBuilderContext): string {
 
 To notify the user in your FINAL response, use:
 \`\`\`
-<at user_id="${msg.senderOpenId}">@用户</at>
+<at user_id="${msg.senderOpenId}">@用户</at> Your answer goes here.
 \`\`\`
 
 **Rules:**
 - Use @ ONLY in your **final/complete response**, NOT in intermediate messages
+- Put the answer outside the closing </at> tag. The tag contains only the mention label: Feishu replaces its content with the account name, so answer text inside it is not displayed.
 - This triggers a Feishu notification to the user`;
 }
 
