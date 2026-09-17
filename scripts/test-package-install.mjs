@@ -122,8 +122,9 @@ async function verifyPackage() {
     '--input-type=module',
     '-e',
     `
-    import { join } from 'node:path';
-    import { realpathSync } from 'node:fs';
+    import assert from 'node:assert/strict';
+    import { join, resolve } from 'node:path';
+    import { readFileSync, realpathSync } from 'node:fs';
     import { pathToFileURL } from 'node:url';
     const installed = ${JSON.stringify(installed)};
     const modulesRoot = ${JSON.stringify(isPrebuilt ? 'packages' : 'node_modules/@disclaude')};
@@ -134,6 +135,18 @@ async function verifyPackage() {
     const { DisclaudeService } = await load('service', 'service.js');
     const { Config } = await load('core');
     if (${isPrebuilt} && realpathSync(Config.getBuiltinsDir()) !== realpathSync(installed)) throw new Error('Builtins do not resolve to installed release');
+    // Exercise the installed Codex discovery path from the user's execution root,
+    // not a copied skill fixture or the source checkout.
+    const { codexSkillsRegistry } = await load('core', 'sdk/providers/codex/skill-sources.js');
+    const workspace = realpathSync(process.cwd());
+    const skills = codexSkillsRegistry(workspace, Config.getBuiltinsDir()).resolve();
+    assert.deepEqual(skills.diagnostics, [], 'Installed built-in skills must parse successfully');
+    const browserLink = skills.manifest.match(/\\[browser-use\\]\\(([^)]+)\\)/)?.[1];
+    assert(browserLink, 'Installed Codex manifest must expose browser-use');
+    const browserPath = realpathSync(resolve(workspace, decodeURIComponent(browserLink)));
+    assert.equal(browserPath, realpathSync(join(installed, 'skills/browser-use/SKILL.md')),
+      'Manifest link must resolve to the installed skill from the execution workspace');
+    assert.match(readFileSync(browserPath, 'utf8'), /name: browser-use/);
     const service = new DisclaudeService();
     await service.start({ deferScheduler: true });
     if (!service.isRunning()) throw new Error('DisclaudeService did not start');
