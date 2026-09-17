@@ -155,3 +155,90 @@ manager by its operator. Import does not stop arbitrary services, rewrite an
 unmanaged systemd unit, remove legacy managers or prove account-login migration.
 Keep the old service definition/configuration until the new endpoint is verified;
 this import is not automatic adoption of every historical deployment format.
+
+
+### Existing Linux service definitions
+
+Before a mutating command, the CLI checks the user manager's actual FragmentPath,
+DropInPaths and transient status as well as its own definition file. Runtime or
+vendor units with the same name, linked definitions, manual drop-ins and loaded
+services without an owned file are refused. Stop and uninstall follow the same
+rule. Status and logs remain available for diagnosis. Keep original definitions,
+overrides, configuration and profiles when planning explicit migration; do not
+add a managed marker to bypass these checks. This is ownership compatibility
+checking, not a security boundary against concurrent same-user changes, and it
+does not implement automatic takeover or prove real account-login migration.
+
+
+### Operator-assisted migration and recovery
+
+Automatic takeover of an unmarked definition is intentionally refused. Identify
+the original manager, its actual definition/drop-ins, executable, profile, port,
+and autostart settings first. Preserve the original files and settings. Do not
+copy a live profile or remove its locks to make copying proceed.
+
+For a deliberate handover, close the original browser cleanly, retire its old
+manager and autostart entry, and confirm that its processes and listener have
+exited. Archive conflicting definitions outside the manager's search paths;
+retain them for recovery. The CLI does not perform these operator steps.
+
+Inspect the plan using absolute paths appropriate to the old deployment:
+
+```sh
+disclaude chromium-cdp setup \
+  --import-config /absolute/old.env \
+  --profile /absolute/new-profile \
+  --copy-profile-from /absolute/closed-old-profile \
+  --dry-run
+```
+ Choose display/autostart/port overrides explicitly when the
+old settings are unsuitable. After reviewing it, replace `--dry-run` with `--yes`
+to apply. Verify the service's actual profile, endpoint and page interaction;
+process startup alone is insufficient. The original config/profile remain the
+recovery source. Copying does not establish real account-login portability.
+
+If candidate activation fails, inspect the reported recovery outcome and stop
+any candidate manager still running before restoring the original definition,
+manager and autostart settings. Restore the old executable with its untouched
+original profile, then verify actual health and page operation. Never point the
+old browser at a copy that a newer browser has already upgraded. A completed
+profile copy is retained after activation failure; a later setup can select that
+copy without repeating `--copy-profile-from`, or use a fresh destination.
+
+The native migration E2E rehearses these explicit operator steps with an
+owned unmarked Linux runtime unit or macOS plist, real Chromium and a synthetic cookie. It tests a
+candidate that passes preflight but fails as a service, restores the original
+unit/profile and verifies page operation, then activates the retained profile
+copy and checks the original directory digest and configuration. Actual run
+evidence is recorded below. This rehearsal does
+not migrate a user's production deployment, validate real account credentials,
+or exercise physical desktop login/autostart.
+
+
+**Linux migration acceptance — 2026-09-17:** exact test source
+`d8f5e0d6af1cfe141e9b7c1909ba5223b5186b80`,
+[run 35156698813](https://github.com/hs3180/disclaude/actions/runs/35156698813).
+The headed/Xvfb job104997739866 passed the migration case in29.964s and the
+headless job104997740102 in29.247s. Both jobs passed all five tests in four files.
+The case verified refusal of implicit takeover, explicit retirement of the old
+manager, original definition/config/profile preservation after candidate failure,
+healthy operator rollback with actual input/screenshot, successful activation of
+the retained copy and synthetic-cookie retention. Original profile digests stayed
+unchanged during candidate execution. Both emitted the owned-resource cleanup
+marker. Earlier failed runs exposed fixture cross-filesystem archival and
+reset-failed handling errors; they are retained in the PR and do not count as
+passes. These results retain all platform, account and production limits above.
+
+
+**macOS migration acceptance — 2026-09-17:** test source `565ff834`, macOS ARM64,
+Chromium155.0.8057.0, headless launchd: the same operator-assisted scenario passed
+in27.873s. Old plist/config and the original profile digest were preserved after
+candidate failure and successful copy activation. The restored original and the
+candidate copy both passed actual page input/screenshot checks and retained the
+synthetic cookie. The uniquely owned launchd label, profile processes and temporary
+root were independently absent after cleanup. No production service or Keychain
+setting changed. macOS reports cookie recovery/copy outcomes separately because
+credential restrictions must not turn ordinary browser operation into a failure;
+Linux retains mandatory cookie assertions. This is not real-account login migration
+or physical desktop login/autostart. Linux evidence above applies to its recorded
+source; the shared adapter change requires its own Linux regression run.

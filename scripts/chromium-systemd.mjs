@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /** Native Linux user-service management for the persistent Chromium browser. */
 import { execFileSync, execFile } from 'node:child_process';
-import { accessSync, constants, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -47,6 +47,30 @@ export function renderLinuxBrowserUnit(selection, env = process.env) {
 
 function systemctl(...args) {
   return execFileSync('systemctl', ['--user', ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 });
+}
+
+function assertManagedUnit(paths) {
+  const refuse = () => { throw new Error('Existing unit is not managed by this CLI; preserve it and resolve migration before replacement'); };
+  // A matching unit name does not establish ownership: the manager may have
+  // loaded a vendor/runtime unit, a linked definition or user drop-in overrides.
+  let output;
+  try { output = systemctl('show', paths.unit, '--property=LoadState,ActiveState,FragmentPath,DropInPaths,Transient'); }
+  catch (error) {
+    if (String(error.stdout).includes('LoadState=not-found')) output = String(error.stdout);
+    else throw error;
+  }
+  const fields = Object.fromEntries(output.trim().split('\n').map(line => {
+    const at = line.indexOf('='); return [line.slice(0, at), line.slice(at + 1)];
+  }));
+  if (fields.DropInPaths || fields.Transient === 'yes') refuse();
+  if (fields.FragmentPath && resolve(fields.FragmentPath) !== resolve(paths.file)) refuse();
+  let file;
+  try { file = lstatSync(paths.file); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  if (!file) {
+    if (fields.LoadState !== 'not-found' || ['active', 'activating', 'reloading'].includes(fields.ActiveState)) refuse();
+    return;
+  }
+  if (!file.isFile() || !readFileSync(paths.file, 'utf8').startsWith('# disclaude-managed-chromium-v1\n')) refuse();
 }
 
 function pathsForService(isolated) {
@@ -117,7 +141,7 @@ async function main() {
   try { writeFileSync(lock, `${process.pid}\n`, { flag: 'wx', mode: 0o600 }); }
   catch (error) { if (error.code === 'EEXIST') throw new Error(`Activation lock exists at ${lock}; check its recorded PID before removing a stale lock`); throw error; }
   try {
-    if (existsSync(paths.file) && !readFileSync(paths.file, 'utf8').startsWith('# disclaude-managed-chromium-v1\n')) throw new Error('Existing unit is not managed by this CLI; preserve it and resolve migration before replacement');
+    assertManagedUnit(paths);
     if (command === 'stop' || command === 'uninstall') {
       if (!existsSync(paths.file) && !state().loaded) { console.log('Chromium service is not installed; profile preserved'); return; }
       let target;

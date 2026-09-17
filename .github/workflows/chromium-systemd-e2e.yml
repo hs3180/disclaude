@@ -11,6 +11,8 @@ on:
       - 'scripts/chromium-config.mjs'
       - 'scripts/browser-service-state.mjs'
       - 'tests/e2e/chromium-systemd.test.ts'
+      - 'tests/e2e/chromium-systemd-ownership.test.ts'
+      - 'tests/e2e/chromium-manual-migration.test.ts'
       - 'tests/e2e/helpers/native-browser-page.ts'
       - 'tests/e2e/helpers/native-browser-cookie.ts'
       - 'tests/e2e/chromium-setup.test.ts'
@@ -32,6 +34,8 @@ on:
       - 'scripts/chromium-config.mjs'
       - 'scripts/browser-service-state.mjs'
       - 'tests/e2e/chromium-systemd.test.ts'
+      - 'tests/e2e/chromium-systemd-ownership.test.ts'
+      - 'tests/e2e/chromium-manual-migration.test.ts'
       - 'tests/e2e/helpers/native-browser-page.ts'
       - 'tests/e2e/helpers/native-browser-cookie.ts'
       - 'tests/e2e/chromium-setup.test.ts'
@@ -75,9 +79,9 @@ jobs:
           if [ '${{ matrix.mode }}' = headed ]; then
             export DISCLAUDE_E2E_BROWSER_HEADED=1
             command -v xvfb-run
-            xvfb-run -a -s '-screen 0 1280x1024x24' node node_modules/vitest/vitest.mjs run tests/e2e/chromium-systemd.test.ts tests/e2e/chromium-setup.test.ts
+            xvfb-run -a -s '-screen 0 1280x1024x24' node node_modules/vitest/vitest.mjs run tests/e2e/chromium-systemd.test.ts tests/e2e/chromium-systemd-ownership.test.ts tests/e2e/chromium-manual-migration.test.ts tests/e2e/chromium-setup.test.ts
           else
-            node node_modules/vitest/vitest.mjs run tests/e2e/chromium-systemd.test.ts tests/e2e/chromium-setup.test.ts
+            node node_modules/vitest/vitest.mjs run tests/e2e/chromium-systemd.test.ts tests/e2e/chromium-systemd-ownership.test.ts tests/e2e/chromium-manual-migration.test.ts tests/e2e/chromium-setup.test.ts
           fi
 
   download:
