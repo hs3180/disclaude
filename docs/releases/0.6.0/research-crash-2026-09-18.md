@@ -132,3 +132,41 @@ after 23 seconds. Workspace and 16 tool-created temporary files were archived
 with verified hashes before removing owned temporary resources. The research
 document and historical failed artifacts remain available for review. All six CI
 checks passed on `55fce301`; no PR was merged by the agent.
+
+## Body and comment added during downtime: scoped pass
+
+The same candidate `20e58617` and actual `gpt-5.6-luna` resumed from the valid
+version 16 / document 34 checkpoint. A foreground Python read was observed;
+service SIGKILL reclaimed all nine observed processes in about 0.26 seconds.
+The checkpoint was unchanged and no completion marker appeared.
+
+While launchd remained stopped and all observed PIDs were absent, user API calls
+appended R7-DEPLOY-9031 (deployment 3,000) and added R7-MAINT-9142 (annual
+maintenance 500, thread `7686606429087599576`, reply `7686606429104376780`).
+Recorded times establish service exit < body write < comment write < restart.
+Both writes completed before the same workspace restarted. The native resume
+request referred to new document feedback without restating either new value.
+
+Luna fetched the full body and all three comment threads/replies, converted the
+raw responses and settled both feedback items through prepare/append/readback/ack.
+It then updated the current overview and appended the substantive R7 analysis,
+and separately acknowledged that revision after readback. Independent user API
+readback confirms revision 42, total 3,500 and delta 2,060 in the current overview
+and detailed analysis. Only four current-overview lines from the previous body
+were replaced; all other prior lines, user material and historical evidence remain.
+The user-feedback receipt and substantive-revision receipt each occur once.
+
+Final checkpoint version 22 retains the original task/document IDs and every old
+feedback object. Its body matches its hash and remote readback, with no pending
+feedback or write. Chat reports the same figures, preserves unknown costs and
+links the ongoing research. The interrupted read was not replayed. This passes
+the controlled downtime-body/comment recovery path, not open investigation,
+concurrent projects, unknown-write recovery or all release requirements.
+
+Local retries remain recorded: an incorrect receipt file path was rejected before
+writing, and an invalid JSON ack input was rejected before mutation; corrected
+commands succeeded without duplicate receipts. Resume duration was about 257
+seconds. Two computer-use calls, zero screenshots. All six PR CI checks passed
+on `9f9e9092`. Original production config/plist hashes matched, independent health
+passed after 34 seconds, and the owned workspace plus four tool-created temporary
+files were archived with verified hashes before removal. No PR was merged.
