@@ -94,6 +94,22 @@ channel with a protocol fixture, not model-native secret-question generation.
 The latter remains unavailable in the pinned tool; remaining lifecycle
 acceptance is tracked in #5000.
 
+On 2026-09-17, the branch rebased onto `baa0d9c3` passed another real native
+Feishu check (`be27c055`): the model issued a non-blocking `request_user_input`,
+and the desktop displayed the question, options, free input and explicit submit
+button. No answer was submitted. A `/stop` message in the originating chat
+aborted the original turn; the same card changed to “已取消” and removed its
+input controls. Independent API readback confirmed that state, the requested
+answer artifact was absent, and the service had no remaining Codex child.
+The daily service was restored with unchanged configuration and launchd plist
+hashes; the test card and owned temporary workspace were reclaimed.
+
+This complements the earlier submission and private-channel checks. It does not
+prove a real stale callback racing cancellation, timeout or transport-disconnect
+rendering, or model-native secret questions. Protocol and adapter fixtures cover
+those applicable lifecycle transitions separately; final deployment validation
+must preserve that distinction.
+
 An opt-in E2E uses the installed Codex CLI and configured model credentials to
 ask a real tool question, generate the product card, explicitly submit a test
 choice, and complete the original turn. Feishu HTTP delivery and the human
