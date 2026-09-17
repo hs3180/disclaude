@@ -65,3 +65,28 @@ One UI call, no screenshots. Original production service restored, configuration
 hashes matched and independent health passed. Workspace evidence was archived and
 removed after process checks; the malformed checkpoint and remote revision 33
 remain preserved. The new checks do not silently repair either artifact.
+
+## Routing and snapshot integrity retest: scoped pass
+
+Candidate `8e2e51a2` resumed a clean R5 checkpoint using actual `gpt-5.6-luna`
+and one natural-language chat request. The model located the research protocol,
+read revision 33 and both complete comment/reply pages, assembled raw response
+objects, ran `feishu-snapshot.mjs`, then called `state.mjs sync` at version 13.
+It did not directly patch the checkpoint or repeat the existing R6 document update.
+
+The checkpoint advanced to version 14 with its original task/document identities.
+Its saved body hash matches, every old feedback object is unchanged, and exactly
+two genuine new feedback entries remain pending: the changed body and R6 comment.
+Independent remote readback is identical at revision 33. Chat correctly reports
+3,250 (2,800 + 450), outstanding cost uncertainties and the ongoing research.
+
+This verifies real-model protocol routing and snapshot integrity for this resume.
+It does not acknowledge the pending feedback or repeat the complete service-crash
+sequence on this candidate; those acceptance conditions remain outstanding.
+Earlier failed runs and malformed artifacts remain preserved. The integrated
+checkpoint/converter suite has 18 passing tests and the build passes; all six
+PR CI checks on `cecf6902` passed.
+
+One computer-use call, zero screenshots. Original production service restored
+with matching configuration/plist hashes and independent health after 29 seconds.
+Owned candidate workspace archived with hashes and removed after process checks.
