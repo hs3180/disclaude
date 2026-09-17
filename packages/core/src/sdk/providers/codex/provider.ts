@@ -1102,6 +1102,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       }
       if (stopped) {return;}
       const event = params as {
+        agentInputHandled?: boolean;
         turnId?: string;
         item?: { id?: string; type?: string; text?: string; phase?: string | null; command?: string; aggregatedOutput?: string };
         turn?: { id?: string; status?: string; error?: { message?: string } };
@@ -1125,7 +1126,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           role: 'assistant',
           metadata: { messageId: event.item.id, toolName: 'commandExecution' },
         });
-      } else if (method === 'item/completed' && event.item?.type === 'agentMessage' && event.item.text) {
+      } else if (method === 'item/completed' && event.item?.type === 'agentMessage' && event.item.text && !event.agentInputHandled) {
         push({
           type: 'text',
           content: event.item.text,
