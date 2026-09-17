@@ -27,16 +27,24 @@ describe('user starts Disclaude and shares its managed browser', () => {
     const socket = join(root, 'browser.sock');
     const config = join(root, 'config.json');
     const probe = createServer();
+    let serviceUrl = '';
+    const chatModel = process.env.DISCLAUDE_E2E_BROWSER_CHAT_AGENT_MODEL;
+    const chatBackend = process.env.DISCLAUDE_E2E_BROWSER_CHAT_AGENT_BACKEND ?? 'deepseek';
     try {
       await new Promise<void>((done, reject) => { probe.once('error', reject); probe.listen(0, '127.0.0.1', done); });
       const port = (probe.address() as { port: number }).port;
       await new Promise<void>(done => probe.close(() => done()));
+      serviceUrl = `http://127.0.0.1:${port}`;
+      if (chatModel && !['claude', 'deepseek'].includes(chatBackend)) {
+        throw new Error(`Unsupported browser chat backend: ${chatBackend}`);
+      }
       await writeFile(config, JSON.stringify({
-        agent: { agentBackend: 'claude', provider: 'anthropic', model: 'claude-sonnet-4' },
-        anthropic: { apiKey: 'offline-test-placeholder' },
+        agent: { agentBackend: chatModel ? chatBackend : 'claude', provider: chatModel && chatBackend === 'deepseek' ? 'deepseek' : 'anthropic', model: chatModel || 'claude-sonnet-4' },
+        ...(chatModel ? {} : { anthropic: { apiKey: 'offline-test-placeholder' } }),
+        ...(chatModel ? { env: { BU_CDP_URL: 'http://configured-browser-marker.invalid:9223', BU_CDP_WS: 'ws://configured-browser-marker.invalid' } } : {}),
         workspace: { dir: root }, channels: { feishu: { enabled: false }, rest: { host: '127.0.0.1', port, fileStorageDir: join(root, 'files') } },
         logging: { level: 'info' },
-      }));
+      }), { mode: 0o600 });
     } catch (error) {
       if (probe.listening) { await new Promise<void>(done => probe.close(() => done())); }
       try { await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); }
@@ -44,7 +52,7 @@ describe('user starts Disclaude and shares its managed browser', () => {
       throw error;
     }
     const env: NodeJS.ProcessEnv = { ...process.env, DISCLAUDE_CONFIG_PATH: config, LOCKFILE_PATH: join(root, 'service.pid'),
-      BU_CDP_URL: '', BU_CDP_WS: '',
+      BU_CDP_URL: '', BU_CDP_WS: '', CHROMIUM_CDP_PORT: chatModel ? '9223' : '',
       DISCLAUDE_BROWSER_MODE: 'coordinated', DISCLAUDE_BROWSER_SOCKET: socket,
       DISCLAUDE_BROWSER_PYTHON: process.env.DISCLAUDE_E2E_BROWSER_PYTHON,
       DISCLAUDE_CHROMIUM_BINARY: process.env.DISCLAUDE_E2E_CHROMIUM,
@@ -222,7 +230,7 @@ describe('user starts Disclaude and shares its managed browser', () => {
           await verifyRepeatedHandoffs(join(root, 'browser-events.ndjson'), run);
         }
         if (attempt === 0 && process.env.DISCLAUDE_E2E_BROWSER_CHAT_AGENT_MODEL) {
-          await verifyChatAgentBrowser(root, env, process.env.DISCLAUDE_E2E_BROWSER_CHAT_AGENT_MODEL, run);
+          await verifyChatAgentBrowser(root, env, serviceUrl);
         }
         await writeFile(join(root, 'profile', 'preserve-test.txt'), 'user profile retained');
         const cdpPort = (await readFile(join(root, 'profile', 'DevToolsActivePort'), 'utf8')).split('\n')[0];

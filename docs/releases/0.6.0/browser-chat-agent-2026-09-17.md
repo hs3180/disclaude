@@ -1,62 +1,79 @@
-# Ordinary ChatAgent browser entry — 2026-09-17
+# Browser chat acceptance through an external client — 2026-09-17
 
-The opt-in browser service E2E now enters through `AgentFactory.createAgent`
-and `ChatAgent.runOnce`, using the real dsh backend with `deepseek-flash`.
-It does not pre-scrub the provider environment in the test caller.
+The ordinary-agent case now runs `scripts/test-browser-chat-agent.mjs` as a
+separate Node process against a running Disclaude deployment. It sends a unique
+chat to `POST /api/chat/sync`; it does not import `AgentFactory`, `ChatAgent`,
+providers, or configuration singletons, and supplies no fake delivery adapter.
+The deployment owns its normal message routing, agent creation, model execution,
+and REST response. This replaces the earlier in-process evidence for this case.
 
-The macOS run passed in 27.32 seconds (28.18 seconds including test startup).
-It injected `BU_CDP_URL` and `CHROMIUM_CDP_PORT` into the parent process and
-`BU_CDP_WS=ws://configured-browser-marker.invalid` into the isolated config.
-A model-invoked shell probe observed all three absent, and the expected
-service-owned browser socket/bin present, both in its Node process and an
-ordinary inherited-environment Node child. The real model changed the managed
-page through `browser-use`; a separate caller read back its unique marker.
+The enclosing lifecycle fixture starts the actual CLI with Feishu disabled and a
+loopback REST port, an isolated workspace/profile, and the selected model backend.
+It injects `BU_CDP_URL` and `BU_CDP_WS` markers through service configuration and
+`CHROMIUM_CDP_PORT=9223` through the service environment. Managed-browser startup
+has empty direct-CDP environment settings, because a managed binary and an
+external CDP endpoint are mutually exclusive. This case therefore proves removal
+of configured CDP URLs and an inherited port, not an inherited direct-CDP URL.
 
-`BROWSER_CHAT_AGENT_ENTRY` reported all assertions true. The enclosing test also
-passed browser crash/restart checks and reported root removal, caller closure
-and disappearance of its tracked crash descendants. The wrapper removed the
-isolated config/DSH directory after success. No production bot connection or
-production configuration changed.
+The model executes a shell probe and writes a unique marker through `browser-use`.
+The probe records only five non-secret browser fields in the real tool process
+and an ordinary Node child. All three stale CDP fields must be absent and the
+service-owned IPC socket/bin must match. The external client checks the actual
+REST reply, then independently invokes the deployment's `browser-use` executable
+to read the marker back from the shared page.
 
-## Reproduction and evidence boundary
+## Actual validation
 
-Use the browser E2E Chromium/Python prerequisites and set
-`DISCLAUDE_E2E_BROWSER_CHAT_AGENT_MODEL=deepseek-flash`. Supply model credentials
-outside the repository and point `DISCLAUDE_CONFIG_PATH` to an isolated config
-with the marked `env.BU_CDP_WS` above. Use an isolated `DSH_HOME`. Run
-`node node_modules/vitest/vitest.mjs run tests/e2e/browser-service.test.ts`.
-The marker precondition deliberately fails if config injection is missing.
-This opt-in path is not enabled in credential-free CI.
+macOS ARM64, `deepseek-flash`, actual model credentials and managed Chromium:
 
-This proves a real ordinary ChatAgent/provider/tool entry, with an explicit
-command prompt. It is not a natural-language planning benchmark, a model-created
-subagent test, Feishu/router delivery, all-provider/platform validation, or a
-hostile-agent sandbox. Successful turn completion is not a generic proof that
-arbitrary model descendants have exited. An incomplete turn or teardown failure
-retains the owned test root for inspection instead of claiming cleanup success.
-Issue #5014 remains open for its other launch and deployment requirements.
+| Deployment backend | External REST/browser case | Full browser lifecycle |
+| --- | --- | --- |
+| Claude SDK | Passed, 10.482 s | Passed, 27.002 s |
+| dsh (`deepseek`) | Passed, 8.242 s | Passed, 22.823 s |
 
-## Claude SDK ordinary-agent entry
+Both runs verified crash recovery, service stop/restart, caller termination,
+tracked descendant termination, and owned-root removal. Private model-config
+roots were also removed. Production Feishu service/configuration was untouched.
+Build and focused TypeScript checks passed. No claim is made that these model
+cases run in credential-free CI.
 
-The same actual ChatAgent acceptance can select Claude with
-`DISCLAUDE_E2E_BROWSER_CHAT_AGENT_BACKEND=claude`; the default remains `deepseek`.
-Other values are rejected. The helper reports the selected backend so dsh and
-Claude evidence cannot be confused. Use an isolated `CLAUDE_CONFIG_DIR` as well
-as the isolated config and model credentials described above.
+## Run and report
 
-On macOS ARM64, Claude Agent SDK 0.3.263 with `deepseek-flash` passed in
-26.85 seconds (27.96 seconds including test startup), using runtime source
-`d502531522512507e4055d1d3cb585c5d4c957e1` with only this helper selection change.
-`BROWSER_CHAT_AGENT_ENTRY` reported `backend: "claude"` and all checks true:
-parent/config CDP markers absent in the model's real shell probe and ordinary
-Node child, correct IPC socket/bin, model browser write and independent readback.
-The browser lifecycle test also passed and reported root removal, caller closure
-and tracked crash descendants gone; the private model-config directory was removed.
-The helper passed TypeScript and typed ESLint checks.
+Set `DISCLAUDE_E2E_CHROMIUM`, `DISCLAUDE_E2E_BROWSER_PYTHON`, and
+`DISCLAUDE_E2E_BROWSER_CHAT_AGENT_MODEL`. Backend defaults to `deepseek`; select
+Claude with `DISCLAUDE_E2E_BROWSER_CHAT_AGENT_BACKEND=claude`. Provide credentials
+through the selected backend's environment, with isolated `DSH_HOME` and/or
+`CLAUDE_CONFIG_DIR`. The test generates its own service config and browser markers.
+Run `node node_modules/vitest/vitest.mjs run tests/e2e/browser-service.test.ts`.
 
-Inspection of the installed SDK's query/transport path found that an explicit
-environment is copied and passed to its process spawn, rather than subsequently
-merged with `process.env`. The real probe above verifies the resulting behavior
-for this version. It does not establish the environment or prompt of a
-model-created subagent. No delegation was requested or exercised, and no
-production configuration, Feishu connection or installed package was changed.
+To access an already prepared test deployment directly:
+
+```sh
+node scripts/test-browser-chat-agent.mjs \
+  --service-url http://127.0.0.1:PORT \
+  --workspace /absolute/test-workspace \
+  --socket /absolute/test-workspace/browser.sock
+```
+
+This case requires the client and deployment to share the test workspace and
+executable paths. Prepare a shared page containing `<input id="value">` first.
+The standalone client does not launch or stop the deployment itself. Run it on
+the deployment host (or in the same mounted test environment), not against a
+production bot or an unrelated workspace.
+
+`BROWSER_CHAT_AGENT_ENTRY` emits a JSON result with pass/fail, entry, configured
+backend, unique chat ID, completed checks, duration and fixture-cleanup status.
+On an incomplete request it attempts the public stop command and leaves probe
+files for the deployment owner, which must stop and join the isolated service
+before removing the workspace. An HTTP stop acknowledgement alone is not proof
+that arbitrary model descendants have exited. The lifecycle fixture performs
+that service shutdown before its resource cleanup.
+
+## Remaining boundaries
+
+This is a bounded explicit-command acceptance case, not a planning benchmark,
+model-created subagent test, Feishu/card acceptance, remote-filesystem test, or
+hostile-agent sandbox. The other legacy provider/contention paths in the browser
+suite still need the separate external-process refactoring tracked by #5016 and
+#5054. This change does not claim the entire E2E suite has been converted, or close
+#5014 and the remaining 0.6.0 deployment/UX gates.
