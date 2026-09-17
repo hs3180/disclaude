@@ -59,3 +59,33 @@ This only checks the supplied paragraphs. It does not discover omitted edits,
 prove that new conclusions are correct, verify links/permissions, or lock the
 remote document. Supply actual replacement inputs and separately verify the
 current recommendation, evidence and checkpoint against the final read-back.
+
+## Historical snapshot audit
+
+Use this path when asked to check or restore history, including turns that do
+not replace a current conclusion. Pass all available complete source snapshots
+and the complete current snapshot to the missing-block report:
+
+```json
+{"sources":[{"documentId":"d1","revision":"17","body":"...","complete":true}],"current":{"documentId":"d1","revision":"27","body":"...","complete":true}}
+```
+
+```sh
+node /path/to/research-workflow/scripts/compare-snapshot-history.mjs < snapshot-history.json > missing-history.json
+```
+
+Build snapshots from original responses without rewriting their text. The
+report compares blank-line-separated text blocks, groups identical missing
+blocks and lists their source revisions. It reports changed headings/status
+metadata too; it does not decide which differences are historical conclusions,
+parse Markdown semantics, or certify completeness. Read each reported block:
+keep legitimate current-state metadata changes, but restore missing conclusions
+verbatim from the indicated source, including conditions and citations. Do not
+use section titles, similar older text or model memory as a substitute.
+
+Append verified missing historical paragraphs with their source revision;
+do not overwrite the current recommendation. Read back, rerun the comparison,
+and explain any remaining metadata-only differences. Finally pass all required
+historical conclusion paragraphs to `verify-conclusion-history.mjs` against
+their original source snapshots and final read-back. A disappearance can be
+fixed without a new experiment or resuming a paused research task.
