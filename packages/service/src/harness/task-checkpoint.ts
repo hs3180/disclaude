@@ -50,7 +50,7 @@ export function parseTaskCheckpoint(text: string): TaskCheckpoint {
           return { title: str(s.title, 160), location: str(s.location, 500), excerpt: str(s.excerpt, 400) };
         });
         if (f.kind === 'fact' && !sources.length) { throw new Error('Factual evidence requires sources'); }
-        return { claim: str(f.claim, 700), kind: f.kind as Evidence['kind'], sources, caveat: str(f.caveat, 500, true) };
+        return { claim: str(f.claim, 700), kind: f.kind as Evidence['kind'], sources, caveat: f.caveat === undefined ? '' : str(f.caveat, 500, true) };
       }) };
   });
   const ids = work.flatMap(w => w.id ? [w.id] : []);

@@ -585,6 +585,19 @@ describe('persistent research lifecycle', () => {
     },
   );
 
+  it('retains source-backed evidence when the model omits an empty caveat', () => {
+    const parse = (caveat: unknown) => parseTaskCheckpoint(JSON.stringify({
+      state: 'complete', message: 'Wait completed', summary: 'Reported value 23',
+      work: [{ title: 'Bounded wait', status: 'done', findings: [{ ...finding, caveat }] }],
+    }));
+    expect(parse(undefined).work[0].findings[0]).toEqual({ ...finding, caveat: '' });
+    expect(parse('').work[0].findings[0].caveat).toBe('');
+    expect(parse('Unverified fictional value').work[0].findings[0].caveat).toBe('Unverified fictional value');
+    for (const invalid of [null, 42, {}, 'x'.repeat(501)]) {
+      expect(() => parse(invalid)).toThrow('Invalid task checkpoint text');
+    }
+  });
+
   it('pauses on the turn budget without fabricating completion or a final result', async () => {
     const runner = vi.fn<TaskRunner>(() => Promise.resolve({ state: 'continue', message: 'Still working', work: [], feedback: [], questions: [] }));
     const { manager } = checkpointFixture(runner);
