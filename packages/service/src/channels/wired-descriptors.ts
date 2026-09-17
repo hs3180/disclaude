@@ -231,10 +231,11 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         const realMessageId = await feishuChannel.sendMessage({ chatId, type: 'card', card, threadId });
         const messageId = realMessageId || `interactive_${chatId}_${Date.now()}`;
 
-        // Build action prompts: use caller-provided prompts or generate defaults
-        const resolvedActionPrompts = actionPrompts && Object.keys(actionPrompts).length > 0
-          ? actionPrompts
-          : buildActionPrompts(options);
+        // Preserve explicit instructions and fill unmapped buttons with their
+        // visible labels and the original card context, never just route IDs.
+        const resolvedActionPrompts = buildActionPrompts(options, actionPrompts, undefined, {
+          question, context: cardContext,
+        });
 
         return { messageId, actionPrompts: resolvedActionPrompts };
       },
@@ -416,4 +417,3 @@ export const BUILTIN_WIRED_DESCRIPTORS: WiredChannelDescriptor[] = [
   REST_WIRED_DESCRIPTOR,
   FEISHU_WIRED_DESCRIPTOR,
 ];
-

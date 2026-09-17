@@ -234,17 +234,22 @@ export function buildInteractiveCard(params: InteractiveMessageParams): Interact
 export function buildActionPrompts(
   options: InteractiveOption[],
   customPrompts?: ActionPromptMap,
-  template?: string
+  template?: string,
+  cardContext?: { question: string; context?: string }
 ): ActionPromptMap {
   const promptTemplate = template ?? DEFAULT_PROMPT_TEMPLATE;
   const prompts: ActionPromptMap = {};
 
   for (const opt of options) {
     // Custom prompts take precedence
-    if (customPrompts && customPrompts[opt.value]) {
+    if (customPrompts && Object.hasOwn(customPrompts, opt.value) && customPrompts[opt.value]) {
       prompts[opt.value] = customPrompts[opt.value];
     } else {
-      prompts[opt.value] = promptTemplate.replace('{text}', opt.text).replace('{value}', opt.value);
+      const selection = promptTemplate.replace(/\{text\}|\{value\}/g, placeholder => placeholder === '{text}' ? opt.text : opt.value);
+      prompts[opt.value] = [selection,
+        cardContext ? `原卡片问题：${cardContext.question}` : undefined,
+        cardContext?.context ? `原卡片上下文：${cardContext.context}` : undefined,
+      ].filter(part => part !== undefined).join('\n\n');
     }
   }
 
