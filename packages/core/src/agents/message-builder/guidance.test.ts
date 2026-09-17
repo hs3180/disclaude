@@ -313,9 +313,10 @@ describe('buildTaskRecordGuidance', () => {
     expect(result).toContain('Read existing records before estimating');
   });
 
-  it('should mention creating file if not exists', () => {
+  it('routes recording through the append-only command', () => {
     const result = buildTaskRecordGuidance();
-    expect(result).toContain('Create the file if it does not exist');
+    expect(result).toContain('disclaude record-task append');
+    expect(result).toContain('Do not use apply_patch/Add File');
   });
 });
 

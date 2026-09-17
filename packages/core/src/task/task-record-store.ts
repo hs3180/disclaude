@@ -2,10 +2,12 @@
 
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 export const TASK_RECORDS_DIR = 'task-records';
 export const LEGACY_TASK_RECORDS_DIR = path.join('.claude', TASK_RECORDS_DIR);
 export const LEGACY_TASK_RECORDS_FILE = path.join('.claude', 'task-records.md');
+export const MAX_TASK_RECORD_BYTES = 64 * 1024;
 
 export interface TaskRecordStoreOptions {
   directory?: string;
@@ -32,19 +34,46 @@ export class TaskRecordStore {
   }
 
   getMonthlyPath(month: string): string {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+      throw new Error('Month must be YYYY-MM');
+    }
     return path.join(this.workspaceDir, this.directory, `${month}.md`);
   }
 
   async append(month: string, entry: string): Promise<string> {
     const filePath = this.getMonthlyPath(month);
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-    try {
-      await fs.access(filePath);
-    } catch {
-      await fs.writeFile(filePath, '# Task Records\n', 'utf8');
+    const payload = Buffer.from(`\n${entry.trim()}\n`, 'utf8');
+    if (!entry.trim() || payload.length > MAX_TASK_RECORD_BYTES) {
+      throw new Error('Task record must be non-empty and at most 64 KiB including separators');
     }
-    const separator = entry.startsWith('\n') ? '' : '\n';
-    await fs.appendFile(filePath, `${separator}${entry.trimEnd()}\n`, 'utf8');
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    // Publish a complete header without ever opening the monthly file for
+    // truncation. access -> writeFile (even wx) leaves an initialization race
+    // with another process appending before the header has been written.
+    const temporary = `${filePath}.${randomUUID()}.tmp`;
+    try {
+      await fs.writeFile(temporary, '# Task Records\n', { flag: 'wx' });
+      try {
+        await fs.link(temporary, filePath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+          throw error;
+        }
+      }
+    } finally {
+      await fs.rm(temporary, { force: true });
+    }
+    const handle = await fs.open(filePath, 'a');
+    try {
+      // One bounded O_APPEND write: independent local processes cannot seek
+      // back over earlier entries or interleave a series of chunked writes.
+      const { bytesWritten } = await handle.write(payload);
+      if (bytesWritten !== payload.length) {
+        throw new Error('Partial task record append; inspect the file before retrying');
+      }
+    } finally {
+      await handle.close();
+    }
     return filePath;
   }
 

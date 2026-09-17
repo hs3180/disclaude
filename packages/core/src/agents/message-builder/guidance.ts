@@ -9,6 +9,7 @@
  *
  * @module agents/message-builder/guidance
  */
+import { fileURLToPath } from 'node:url';
 
 /**
  * Build the chat history section for passive mode.
@@ -301,6 +302,10 @@ export function buildTaskRecordGuidance(): string {
   const cur = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const prev = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
+  // Pin recording to this runtime; PATH may still contain an older global CLI
+  // when a service runs from a checkout or a candidate installation.
+  const appendCommand = [process.execPath, fileURLToPath(new URL('../../task/task-record-cli.js', import.meta.url)), 'append', cur]
+    .map(value => `'${value.replace(/'/g, "'\\''")}'`).join(' ');
   return `
 
 ---
@@ -326,12 +331,26 @@ workspace root from the \`DISCLAUDE_WORKSPACE_DIR\` environment variable, which
 is stable for the whole session. If your shell cwd differs from it (project-bound
 chat, or after \`cd\` into a nested repository), still write records under
 \`$DISCLAUDE_WORKSPACE_DIR/task-records/\` — never inside a project's own tree.
-Create the file if it does not exist (and create the \`task-records/\` directory
-under the workspace root if needed); when creating it for the first time, write
-a single top-level \`# Task Records\` heading on the first line so every monthly
-file has a consistent title (the example below shows this). Monthly files keep
-the active file small — **do not** write to a single ever-growing
-\`task-records.md\`.
+Use the append-only command below with one Markdown entry on stdin (maximum
+64 KiB). This is the runtime-pinned equivalent of \`disclaude record-task append YYYY-MM\`.
+It creates the directory and publishes a single \`# Task Records\`
+heading when creating it for the first time, then appends without overwriting
+other projects' entries. Do not use apply_patch/Add File, writeFile, shell
+\`>\`, or read-modify-write on the shared monthly file. If the command fails,
+report the failure; do not fall back to replacing the file. Do not retry a
+partial or unknown append until you have checked whether your entry exists.
+
+\`\`\`sh
+${appendCommand} <<'TASK_RECORD_ENTRY'
+## YYYY-MM-DD Brief task description
+
+- **Type**: research
+- **Review**: Result and remaining limitations
+TASK_RECORD_ENTRY
+\`\`\`
+
+Use the actual date and entry details. Monthly files keep the active file small;
+do not write to a single ever-growing \`task-records.md\`.
 
 Legacy: pre-existing \`.claude/task-records/YYYY-MM.md\` files and the
 single-file \`.claude/task-records.md\` archive are read-only compatibility

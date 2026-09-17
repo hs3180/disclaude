@@ -5,6 +5,23 @@ import path from 'node:path';
 import { TaskRecordStore } from './task-record-store.js';
 
 describe('TaskRecordStore', () => {
+  it('retains every entry when independent stores initialize the same month concurrently', async () => {
+    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'task-record-concurrent-'));
+    try {
+      const entries = Array.from({ length: 32 }, (_, i) => `## Project ${i}\n\n${'研究'.repeat(1000)}\nEND ${i}`);
+      await Promise.all(entries.map(entry => new TaskRecordStore(workspace).append('2026-09', entry)));
+      const body = await fs.readFile(path.join(workspace, 'task-records/2026-09.md'), 'utf8');
+      expect(body.startsWith('# Task Records\n')).toBe(true);
+      expect(body.match(/^# Task Records$/gm)).toHaveLength(1);
+      for (const entry of entries) {
+        expect(body.split(entry)).toHaveLength(2);
+      }
+      expect(await fs.readdir(path.join(workspace, 'task-records'))).toEqual(['2026-09.md']);
+    } finally {
+      await fs.rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it('creates and appends monthly records in a plain workspace', async () => {
     const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'task-record-store-'));
     try {
