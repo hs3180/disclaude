@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 
 export type SkillSourceKind = 'builtin' | 'user' | 'project';
@@ -104,6 +104,20 @@ export class SkillsRegistry {
       }
       const path = join(skillsRoot, name, 'SKILL.md');
       try {
+        try {
+          lstatSync(path);
+        } catch (error) {
+          // User/project resource directories need not define a skill, but a
+          // shipped builtin without its entrypoint is a packaging defect.
+          // lstat preserves diagnostics for a dangling SKILL.md symlink.
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+            if (source.kind === 'builtin') {
+              diagnostics.push({ code: 'INVALID_SKILL', name, source: source.kind, detail: 'builtin skill is missing SKILL.md' });
+            }
+            continue;
+          }
+          throw error;
+        }
         if (!statSync(path).isFile()) {continue;}
         const realPath = realpathSync(path);
         if (!realPath.startsWith(`${approvedRoot}/`) && realPath !== approvedRoot) {
@@ -111,7 +125,14 @@ export class SkillsRegistry {
           continue;
         }
         const content = readFileSync(path, 'utf8');
-        const metadata = metadataFromFrontmatter(content, name);
+        let metadata: { description?: string };
+        try {
+          metadata = metadataFromFrontmatter(content, name);
+        } catch {
+          // Do not expose parser exceptions or untrusted file contents.
+          diagnostics.push({ code: 'INVALID_SKILL', name, source: source.kind, detail: 'skill metadata could not be parsed' });
+          continue;
+        }
         const reference = relative(
           this.referenceRoot ? realpathSync(this.referenceRoot) : root,
           this.referenceRoot ? realPath : path,

@@ -100,6 +100,42 @@ describe('SkillsRegistry', () => {
     expect(registry.resolve().diagnostics).toEqual([]);
   });
 
+  it('distinguishes unreadable files from invalid metadata without exposing contents or paths', () => {
+    const root = makeRoot();
+    mkdirSync(join(root, 'skills', 'missing'), { recursive: true });
+    symlinkSync(join(root, 'absent.md'), join(root, 'skills', 'missing', 'SKILL.md'));
+    skill(root, 'invalid');
+    writeFileSync(join(root, 'skills', 'invalid', 'SKILL.md'), '---\nprivate-secret-marker: secret-value\n---');
+    const result = new SkillsRegistry([{ kind: 'project', root }]).resolve();
+    expect(result.diagnostics).toContainEqual({ code: 'INVALID_SKILL', name: 'missing', source: 'project', detail: 'skill could not be read' });
+    expect(result.diagnostics).toContainEqual({ code: 'INVALID_SKILL', name: 'invalid', source: 'project', detail: 'skill metadata could not be parsed' });
+    expect(JSON.stringify(result.diagnostics)).not.toContain(root);
+    expect(JSON.stringify(result.diagnostics)).not.toContain('secret');
+  });
+
+  it('diagnoses a missing builtin entrypoint and clears the diagnostic when repaired', () => {
+    const root = makeRoot();
+    mkdirSync(join(root, 'skills', 'channel'), { recursive: true });
+    writeFileSync(join(root, 'skills', 'channel', 'README.md'), 'CLI reference');
+    const registry = new SkillsRegistry([{ kind: 'builtin', root }]);
+    expect(registry.resolve().diagnostics).toEqual([
+      { code: 'INVALID_SKILL', name: 'channel', source: 'builtin', detail: 'builtin skill is missing SKILL.md' },
+    ]);
+    expect(registry.resolve().skills).toEqual([]);
+    skill(root, 'channel');
+    expect(registry.resolve().skills.map((entry) => entry.name)).toEqual(['channel']);
+    expect(registry.resolve().diagnostics).toEqual([]);
+  });
+
+  it.each(['user', 'project'] as const)('allows documentation-only %s resources', (kind) => {
+    const root = makeRoot();
+    mkdirSync(join(root, 'skills', 'notes'), { recursive: true });
+    writeFileSync(join(root, 'skills', 'notes', 'README.md'), 'Local notes');
+    const result = new SkillsRegistry([{ kind, root }]).resolve();
+    expect(result.diagnostics).toEqual([]);
+    expect(result.skills).toEqual([]);
+  });
+
   it('rejects names that could forge model-facing manifest rows or links', () => {
     const root = makeRoot();
     skill(root, 'valid');

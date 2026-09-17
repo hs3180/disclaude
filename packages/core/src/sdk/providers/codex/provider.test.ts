@@ -214,6 +214,36 @@ describe('CodexAgentProvider (Issues #4629 + #4630)', () => {
   // --------------------------------------------------------------------------
 
   describe('queryStream (exec bridge, Issue #4630)', () => {
+    it('reports sanitized discovery diagnostics once per revision without adding them to prompts', async () => {
+      const workspace = mkdtempSync(join(tmpdir(), 'codex-skill-diagnostics-'));
+      const written: string[] = [];
+      const spy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown): boolean => {
+        written.push(String(chunk));
+        return true;
+      });
+      try {
+        const directory = join(workspace, 'skills', 'invalid');
+        mkdirSync(directory, { recursive: true });
+        writeFileSync(join(directory, 'SKILL.md'), '---\nprivate-secret-marker: secret-value\n---');
+        fixtures = makeFixtures({ withBinary: true, withAuth: true,
+          body: `printf '%s' "$*" > "$CODEX_HOME/prompt"\n${HAPPY_BODY}` });
+        const provider = makeProvider(fixtures);
+        await drainStream(provider, ['first'], { cwd: workspace });
+        await drainStream(provider, ['second'], { cwd: workspace });
+        const diagnostics = written.filter(line => line.includes('Skill discovery diagnostics'));
+        expect(diagnostics).toHaveLength(1);
+        expect(diagnostics[0]).toContain('skill metadata could not be parsed');
+        expect(diagnostics[0]).not.toContain(workspace);
+        expect(diagnostics[0]).not.toContain('secret');
+        const prompt = readFileSync(join(fixtures.codexHome, 'prompt'), 'utf8');
+        expect(prompt).not.toContain('skill metadata could not be parsed');
+        expect(prompt).not.toContain('private-secret-marker');
+      } finally {
+        spy.mockRestore();
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    }, 15_000);
+
     it('discovers shared project skills from .disclaude without scanning .claude', async () => {
       const workspace = mkdtempSync(join(tmpdir(), 'codex-project-workspace-'));
       try {
