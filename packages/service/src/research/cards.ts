@@ -57,11 +57,9 @@ export function projectCard(p: ResearchProject): Record<string, unknown> {
       { tag: 'input', name: 'feedback', required: true, placeholder: plain('修改范围、补充材料或指出证据不足（3000 字以内）') },
       submitButton('提交任务调整', { ...value, action: 'feedback' }),
     ] });
-  } else {
+  } else if (['completed', 'cancelled'].includes(p.status)) {
     elements.push(researchButton('基于成果继续任务', { ...value, action: 'continue' }, true));
-    if (['completed', 'cancelled'].includes(p.status)) {
-      elements.push(researchButton(p.archivedAt ? '移回任务列表' : '归档任务', { ...value, action: p.archivedAt ? 'unarchive' : 'archive' }));
-    }
+    elements.push(researchButton(p.archivedAt ? '移回任务列表' : '归档任务', { ...value, action: p.archivedAt ? 'unarchive' : 'archive' }));
   }
   return researchCard(p.title, elements);
 }

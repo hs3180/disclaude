@@ -7,6 +7,7 @@ import { ProjectStore, type ResearchProject, type Finding } from './project.js';
 import { parseTaskCheckpoint, type TaskCheckpoint } from '../harness/task-checkpoint.js';
 import type { DocumentReader, DocumentAppender } from './document-source.js';
 import { ResearchManager, type TaskRunner } from './manager.js';
+import { projectCard } from './cards.js';
 
 // Scripted test agent: this particular fixture chooses three updates. The
 // production manager no longer selects or knows these stages. Separate cases
@@ -264,6 +265,27 @@ describe('persistent research lifecycle', () => {
     const cancelled = manager.get(p.id, 'alice', 'chat-a'); expect(cancelled.status).toBe('cancelled');
     expect(cancelled.directions[0].findings).toEqual([]); expect(steps).toEqual(['plan', 'investigate']);
   });
+  it('does not offer continuation during cancellation or recovery after a cancelled turn fails', async () => {
+    const entered = deferred<void>(), gate = deferred<TaskCheckpoint>();
+    const { manager } = checkpointFixture(() => { entered.resolve(); return gate.promise; });
+    const p = await manager.create(input);
+    await manager.act(p.id, 'alice', 'chat-a', p.revision, 'resume'); await entered.promise;
+    await manager.act(p.id, 'alice', 'chat-a', manager.get(p.id, 'alice', 'chat-a').revision, 'cancel');
+    const pending = manager.get(p.id, 'alice', 'chat-a');
+    const pendingCard = JSON.stringify(projectCard(pending));
+    gate.resolve({ state: 'complete', message: 'Invalid late result', work: [], feedback: [], questions: [] } as unknown as TaskCheckpoint);
+    await manager.idle(p.id);
+    const cancelled = manager.get(p.id, 'alice', 'chat-a');
+    expect(pending.status).toBe('cancelling');
+    expect(pendingCard).not.toContain('基于成果继续任务');
+    expect(cancelled.status).toBe('cancelled');
+    expect(cancelled.error).toBeUndefined();
+    expect(cancelled.history.at(-1)?.text).toContain('已取消');
+    expect(JSON.stringify(projectCard(cancelled))).not.toContain('恢复重试');
+    expect(JSON.stringify(projectCard(cancelled))).toContain('基于成果继续任务');
+    expect(cancelled.directions).toEqual([]); expect(cancelled.summary).toBe('');
+  });
+
   it('recovers interrupted state and keeps new feedback pending until a new plan accepts it', async () => {
     const entered = deferred<void>(), gate = deferred<StepResult>();
     const { manager, dir } = fixture(() => { entered.resolve(); return gate.promise; });
