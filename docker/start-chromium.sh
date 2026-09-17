@@ -5,6 +5,7 @@ CDP_PORT=${CDP_PORT:-9222}
 CDP_INTERNAL_PORT=${CDP_INTERNAL_PORT:-9221}
 CHROMIUM_PROFILE_DIR=${CHROMIUM_PROFILE_DIR:-/data/chrome-profile}
 CHROMIUM_HEADLESS=${CHROMIUM_HEADLESS:-0}
+CHROMIUM_ACCEPT_LANG=${CHROMIUM_ACCEPT_LANG:-zh-CN,zh}
 for port in "$CDP_PORT" "$CDP_INTERNAL_PORT"; do
     if [[ ! "$port" =~ ^[0-9]{1,5}$ ]] || (( 10#$port < 1 || 10#$port > 65535 )); then
         echo 'FATAL: CDP ports must be integers between 1 and 65535' >&2; exit 1
@@ -56,7 +57,7 @@ trap 'exit 130' INT
 
 args=(--no-sandbox --no-first-run --no-default-browser-check
       "--remote-debugging-port=$CDP_INTERNAL_PORT" "--user-data-dir=$CHROMIUM_PROFILE_DIR"
-      --window-size=1920,1080)
+      --window-size=1920,1080 "--accept-lang=$CHROMIUM_ACCEPT_LANG")
 if [[ "$CHROMIUM_HEADLESS" == 1 ]]; then
     args+=(--headless=new)
 else
