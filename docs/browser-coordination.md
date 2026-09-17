@@ -133,7 +133,7 @@ Actual CLI-to-browser use case (isolated profile, no external accounts/messages)
 npm run build
 DISCLAUDE_E2E_CHROMIUM=/absolute/path/to/chromium \
 DISCLAUDE_E2E_BROWSER_PYTHON=/absolute/path/to/python \
-npx vitest run tests/e2e/browser-service.test.ts
+npx vitest run --config vitest.e2e.config.ts tests/e2e/browser-service.test.ts
 ```
 
 It starts the real Disclaude service, checks the public status command, executes

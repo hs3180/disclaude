@@ -48,7 +48,7 @@ explicitly authorized test chat and app credentials outside the repository:
 ```sh
 npm run build
 # Set FEISHU_APP_ID, FEISHU_APP_SECRET externally.
-DISCLAUDE_E2E_FEISHU_CARD=1 npx vitest run tests/e2e/static-card-feishu.test.ts
+DISCLAUDE_E2E_FEISHU_CARD=1 npx vitest run --config vitest.e2e.config.ts tests/e2e/static-card-feishu.test.ts
 ```
 
 Also set `DISCLAUDE_E2E_FEISHU_CHAT` to the test group's `oc_...` ID. Without the

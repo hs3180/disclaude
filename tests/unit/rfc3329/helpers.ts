@@ -1,5 +1,5 @@
 /**
- * Test helpers for RFC #3329 integration tests.
+ * Test helpers for RFC #3329 component unit tests.
  *
  * @see Issue #3662
  */

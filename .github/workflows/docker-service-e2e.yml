@@ -3,6 +3,8 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
+      - 'vitest*.config.ts'
+      - 'tests/setup.ts'
       - 'Dockerfile.service'
       - '.dockerignore'
       - 'docker-entrypoint.sh'
@@ -21,6 +23,8 @@ on:
   push:
     branches: [main, master]
     paths:
+      - 'vitest*.config.ts'
+      - 'tests/setup.ts'
       - 'Dockerfile.service'
       - '.dockerignore'
       - 'docker-entrypoint.sh'
@@ -60,7 +64,7 @@ jobs:
           DISCLAUDE_E2E_DOCKER_IMAGE: disclaude-service:e2e
           DISCLAUDE_E2E_DOCKER_BROWSER_IMAGE: disclaude-chromium:e2e
           DISCLAUDE_E2E_DOCKER_CLEANUP_IMAGE: disclaude-service:e2e
-        run: node node_modules/vitest/vitest.mjs run tests/e2e/docker-service.test.ts tests/e2e/docker-browser-smoke.test.ts tests/e2e/docker-cleanup.test.ts
+        run: node node_modules/vitest/vitest.mjs run --config vitest.e2e.config.ts tests/e2e/docker-service.test.ts tests/e2e/docker-browser-smoke.test.ts tests/e2e/docker-cleanup.test.ts
       - name: Verify cleanup after an injected service test failure
         env:
           DISCLAUDE_E2E_DOCKER_IMAGE: disclaude-service:e2e
@@ -69,7 +73,7 @@ jobs:
           set +e
           # This subprocess must fail; only the verifier below decides the job result.
           # Avoid GitHub failure annotations for the deliberately injected error.
-          node node_modules/vitest/vitest.mjs run tests/e2e/docker-service.test.ts --reporter=default > docker-failure-cleanup.log 2>&1
+          node node_modules/vitest/vitest.mjs run --config vitest.e2e.config.ts tests/e2e/docker-service.test.ts --reporter=default > docker-failure-cleanup.log 2>&1
           result=$?
           set -e
           cat docker-failure-cleanup.log

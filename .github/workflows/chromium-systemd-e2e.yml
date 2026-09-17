@@ -2,6 +2,8 @@ name: Native Linux Browser Service E2E
 on:
   pull_request:
     paths:
+      - 'vitest*.config.ts'
+      - 'tests/setup.ts'
       - 'scripts/chromium-systemd.mjs'
       - 'scripts/chromium-setup.mjs'
       - 'scripts/chromium-download.mjs'
@@ -22,6 +24,8 @@ on:
   push:
     branches: [main, master]
     paths:
+      - 'vitest*.config.ts'
+      - 'tests/setup.ts'
       - 'scripts/chromium-systemd.mjs'
       - 'scripts/chromium-setup.mjs'
       - 'scripts/chromium-download.mjs'
@@ -73,9 +77,9 @@ jobs:
           if [ '${{ matrix.mode }}' = headed ]; then
             export DISCLAUDE_E2E_BROWSER_HEADED=1
             command -v xvfb-run
-            xvfb-run -a -s '-screen 0 1280x1024x24' node node_modules/vitest/vitest.mjs run tests/e2e/chromium-systemd.test.ts tests/e2e/chromium-setup.test.ts
+            xvfb-run -a -s '-screen 0 1280x1024x24' node node_modules/vitest/vitest.mjs run --config vitest.e2e.config.ts tests/e2e/chromium-systemd.test.ts tests/e2e/chromium-setup.test.ts
           else
-            node node_modules/vitest/vitest.mjs run tests/e2e/chromium-systemd.test.ts tests/e2e/chromium-setup.test.ts
+            node node_modules/vitest/vitest.mjs run --config vitest.e2e.config.ts tests/e2e/chromium-systemd.test.ts tests/e2e/chromium-setup.test.ts
           fi
 
   download:
@@ -111,4 +115,4 @@ jobs:
           export DISCLAUDE_E2E_CHROMIUM_DOWNLOAD=1
           export DISCLAUDE_E2E_CHROMIUM_REVISION=1698254
           export DISCLAUDE_E2E_EXPECT_SANDBOX_REFUSAL='${{ matrix.refusal }}'
-          node node_modules/vitest/vitest.mjs run tests/e2e/chromium-download.test.ts
+          node node_modules/vitest/vitest.mjs run --config vitest.e2e.config.ts tests/e2e/chromium-download.test.ts

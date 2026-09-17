@@ -30,6 +30,7 @@ export default defineConfig({
       '**/node_modules/**',
       '**/dist/**',
       '**/workspace/**',
+      'tests/e2e/**',
     ],
     env: {
       NODE_ENV: 'test',
