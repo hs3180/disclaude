@@ -32,6 +32,54 @@ describe('adaptSDKMessage', () => {
       expect(result.metadata?.sessionId).toBe('session-123');
     });
 
+    it('should strip a leading newline from assistant text (blank first line regression)', () => {
+      // Model-authored blank opening lines are removed; Markdown hard breaks remain.
+      const message = {
+        type: 'assistant' as const,
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: '\n分支名对上了。  ' },
+          ],
+        },
+      };
+
+      const result = adaptSDKMessage(asMsg(message));
+      expect(result.type).toBe('text');
+      expect(result.content).toBe('分支名对上了。  ');
+    });
+
+    it.each([
+      ['', '    const answer = 42;\n    console.log(answer);  '],
+      ['\n', '    const answer = 42;\n    console.log(answer);  '],
+      [' \t\r\n\r\n', '\tcode\r\n\tmore code'],
+    ])('preserves first content-line indentation after %j', (prefix, body) => {
+      const result = adaptSDKMessage(asMsg({
+        type: 'assistant',
+        message: { role: 'assistant', content: [
+          { type: 'text', text: prefix },
+          { type: 'text', text: body },
+        ] },
+      }));
+      expect(result.content).toBe(body);
+    });
+
+    it('should normalize a whitespace-only text block to empty content', () => {
+      const message = {
+        type: 'assistant' as const,
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: '   \n' },
+          ],
+        },
+      };
+
+      const result = adaptSDKMessage(asMsg(message));
+      expect(result.type).toBe('text');
+      expect(result.content).toBe('');
+    });
+
     it('should handle tool_use content', () => {
       const message = {
         type: 'assistant' as const,
