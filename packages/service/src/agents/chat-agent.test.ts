@@ -2016,6 +2016,53 @@ describe('ChatAgent (service)', () => {
   });
 
   describe('backend terminal interruption', () => {
+    it('admits an explicit follow-up while the stopped notice is still pending', async () => {
+      const callbacks = createMockCallbacks();
+      let finishNotice!: () => void, noticeStarted!: () => void;
+      const notice = new Promise<void>(resolve => { finishNotice = resolve; });
+      const notified = new Promise<void>(resolve => { noticeStarted = resolve; });
+      callbacks.sendMessage.mockImplementation(async (_chat, text) => {
+        if (text === '⏹️ 本轮已停止。') { noticeStarted(); await notice; }
+      });
+      const agent = new ChatAgent({ chatId: 'backend-resume', callbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+      (agent as any).isAgentTeamsEnabled = () => false;
+      let interrupt!: () => void, complete!: () => void;
+      const interrupted = new Promise<void>(resolve => { interrupt = resolve; });
+      const completed = new Promise<void>(resolve => { complete = resolve; });
+      async function* first() {
+        await interrupted;
+        yield { parsed: { type: 'result', content: '', terminatedReason: 'interrupted' } };
+      }
+      async function* second() {
+        await completed;
+        yield { parsed: { type: 'text', content: 'Explicit follow-up completed.' } };
+        yield { parsed: { type: 'result', content: '✅ Complete' } };
+      }
+      const create = vi.fn()
+        .mockReturnValueOnce({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: first() })
+        .mockReturnValueOnce({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: second() });
+      (agent as any).createQueryStream = create;
+      try {
+        await agent.processMessage({ chatId: 'backend-resume', payload: 'first', messageId: 'old' });
+        const rejected = expect(agent.turnCompleteFor('old')).rejects.toThrow('interrupted');
+        interrupt();
+        await notified;
+        await rejected;
+        expect(agent.hasActiveSession()).toBe(false);
+        expect(agent.isBusy).toBe(false);
+        await agent.processMessage({ chatId: 'backend-resume', payload: 'resume explicitly', messageId: 'new' });
+        expect(create).toHaveBeenCalledTimes(2);
+        finishNotice();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(agent.hasActiveSession()).toBe(true);
+        expect(agent.isBusy).toBe(true);
+        complete();
+        await agent.turnCompleteFor('new');
+        expect(callbacks.sendMessage.mock.calls.some(call => call[1] === 'Explicit follow-up completed.')).toBe(true);
+      } finally { finishNotice(); complete(); agent.dispose(); }
+    });
+
     it.each([{ partial: false, once: false }, { partial: true, once: false }, { partial: false, once: true }, { partial: true, once: true }])('rejects interrupted work without success or automatic replay (%j)', async ({ partial, once }) => {
       const callbacks = { ...createMockCallbacks(), onTurnResult: vi.fn().mockResolvedValue(undefined) };
       const agent = new ChatAgent({ chatId: 'backend-stop', callbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });

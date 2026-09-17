@@ -2449,13 +2449,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         this.rejectTurn(error);
         this.taskCompletionReject?.(error);
         this.clearTaskCompletion();
-        await this.deliverUserVisible(chatId, '⏹️ 本轮已停止。', threadRoot);
-        if (this.sessionGeneration !== myGeneration) { return; }
-        await this.callbacks.onDone?.(chatId, threadRoot);
-        if (this.sessionGeneration !== myGeneration) { return; }
+        // Release the stopped session before notification can yield. Explicit
+        // follow-ups must start a new query, not enter the closed old channel.
+        this.channel?.close();
         this.isSessionActive = false;
         this.isProcessingMessage = false;
         this.activeTurnMessageId = undefined;
+        await this.deliverUserVisible(chatId, '⏹️ 本轮已停止。', threadRoot);
+        if (this.sessionGeneration !== myGeneration) { return; }
+        await this.callbacks.onDone?.(chatId, threadRoot);
       }
       return;
     }
