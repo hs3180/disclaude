@@ -65,3 +65,39 @@ the pinned image's Chromium 151.0.7922.34, in both headed/Xvfb and headless mode
 This proves the tested Docker path. The Chromium Container Acceptance CI job
 validates Linux/amd64 when browser container inputs change. Native Linux host
 service management and real-site login/anti-bot behavior need separate evidence.
+
+
+For an explicit real-site observation, provide a public WeChat article and a local
+artifact directory (Node 22+). This additionally visits `bot.sannysoft.com`, saves
+viewport screenshots, records browser-reported fingerprint values and attempts to
+read the article's `#js_content`. It does not solve challenges or change browser
+fingerprint properties. Redirect query strings are omitted from evidence.
+
+```sh
+DISCLAUDE_CHROMIUM_ARTICLE_URL=https://mp.weixin.qq.com/s/ARTICLE_ID \
+DISCLAUDE_CHROMIUM_EVIDENCE_DIR=/absolute/path/to/acceptance-evidence \
+node scripts/test-chromium-container.mjs disclaude-chromium:060-test
+```
+
+A blocked or empty article returns exit 1 even when browser lifecycle assertions
+pass (`lifecycleOk: true`, `articleRetrieved: false`). Fingerprints and the scanner
+screenshot are observations requiring review; successfully retrieving an article
+does not establish that every fingerprint requirement passed. The artifact
+directory is retained intentionally; disposable containers and the profile volume
+are cleaned up. No login or production profile is used.
+
+On 2026-09-16 the existing image `13cfe36dc318` was tested on local Colima
+Linux/aarch64, Chromium 151.0.7922.34. Its entrypoint, proxy configuration and
+shutdown helper matched the repository files by SHA-256. The supplied target
+article redirected to a WeChat environment challenge and returned zero article
+characters. `navigator.webdriver` was boolean false (not undefined), languages
+were `en-US`, timezone offset was -480, and WebGL had no context. The scanner
+reported WebDriver checks passed but no WebGL context and an H.264 codec warning;
+this was not an all-green fingerprint result. Screenshots confirmed the article
+challenge. No fingerprint cause is inferred from this correlation.
+
+Headed/headless CDP, DOM, screenshots, Cookie preservation after recreation and
+proxy-failure shutdown passed. The first site attempt hit a screenshot timeout;
+viewport capture with a dedicated timeout allowed observations to complete. This
+is local evidence of the remaining #4800 gap, not acceptance on an unspecified
+remote deployment machine, and does not close that issue.
