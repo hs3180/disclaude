@@ -28,12 +28,12 @@ Retain the backup when trying a copy with a newer browser; copying profile files
 does not prove login cookies can be decrypted across browser applications.
 
 Defaults: `CHROMIUM_MEMORY=4G`, `CHROMIUM_SHM_SIZE=2gb`, `TZ=Asia/Shanghai`,
-`CHROMIUM_LANG=C.UTF-8`, `CHROMIUM_ACCEPT_LANG=zh-CN,zh`.
+`CHROMIUM_LANG=C.UTF-8`, `CHROMIUM_ACCEPT_LANG=en-US,en`.
 `CHROMIUM_LANG` sets the process locale; it does not configure browser content
 languages. `CHROMIUM_ACCEPT_LANG` is passed to Chromium
 [`--accept-lang`](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/chrome/common/chrome_switches.h),
 which controls Accept-Language and the JavaScript language properties. Set it to
-a comma-separated language list such as `en-US,en` for another deployment.
+a comma-separated language list such as `zh-CN,zh` for a Chinese-language deployment.
 Chromium may expose only the primary language in `navigator.languages`.
 This is a browser startup setting; no profile preferences are rewritten by the
 entrypoint. Override these for the deployment environment. Chromium
