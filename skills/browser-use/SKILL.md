@@ -18,6 +18,8 @@ the upstream harness for execution. Your code only describes **what to do in the
 
 Use [the launcher helper](scripts/run.sh) for the examples below, replacing
 `/absolute/path/to/this-skill` with the directory containing this SKILL.md.
+Resolve that directory from the exact manifest link you read; do not assume a
+copy under `~/.agents/skills` or search the home directory for another copy.
 It preserves Python stdin and, when `DISCLAUDE_BROWSER_SOCKET` is set, invokes
 `$DISCLAUDE_BROWSER_BIN/browser-use` by absolute path. The service sets that
 variable after coordinator readiness; externally managed coordinators must
@@ -55,6 +57,8 @@ PY
 - Each invocation requests control of the **shared browser**. Tabs can survive handoff,
   but another caller may have changed the page; inspect it before continuing.
 - Empty stdin is an error — always pipe code.
+- Read current link text and destinations before choosing a navigation selector;
+  familiar sites can change their wording. Verify the destination after navigation.
 
 ## Helper reference (CLI 3.0, browser-use 0.13.7)
 
