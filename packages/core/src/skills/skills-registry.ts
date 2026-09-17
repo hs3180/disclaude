@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 
 export type SkillSourceKind = 'builtin' | 'user' | 'project';
@@ -104,6 +104,14 @@ export class SkillsRegistry {
       }
       const path = join(skillsRoot, name, 'SKILL.md');
       try {
+        try {
+          lstatSync(path);
+        } catch (error) {
+          // Resource directories may contain documentation without defining a
+          // skill. lstat preserves diagnostics for a dangling SKILL.md symlink.
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') {continue;}
+          throw error;
+        }
         if (!statSync(path).isFile()) {continue;}
         const realPath = realpathSync(path);
         if (!realPath.startsWith(`${approvedRoot}/`) && realPath !== approvedRoot) {

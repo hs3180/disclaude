@@ -103,6 +103,7 @@ describe('SkillsRegistry', () => {
   it('distinguishes unreadable files from invalid metadata without exposing contents or paths', () => {
     const root = makeRoot();
     mkdirSync(join(root, 'skills', 'missing'), { recursive: true });
+    symlinkSync(join(root, 'absent.md'), join(root, 'skills', 'missing', 'SKILL.md'));
     skill(root, 'invalid');
     writeFileSync(join(root, 'skills', 'invalid', 'SKILL.md'), '---\nprivate-secret-marker: secret-value\n---');
     const result = new SkillsRegistry([{ kind: 'project', root }]).resolve();
@@ -110,6 +111,17 @@ describe('SkillsRegistry', () => {
     expect(result.diagnostics).toContainEqual({ code: 'INVALID_SKILL', name: 'invalid', source: 'project', detail: 'skill metadata could not be parsed' });
     expect(JSON.stringify(result.diagnostics)).not.toContain(root);
     expect(JSON.stringify(result.diagnostics)).not.toContain('secret');
+  });
+
+  it('ignores documentation-only directories until a skill is added', () => {
+    const root = makeRoot();
+    mkdirSync(join(root, 'skills', 'channel'), { recursive: true });
+    writeFileSync(join(root, 'skills', 'channel', 'README.md'), 'CLI reference');
+    const registry = new SkillsRegistry([{ kind: 'builtin', root }]);
+    expect(registry.resolve().diagnostics).toEqual([]);
+    expect(registry.resolve().skills).toEqual([]);
+    skill(root, 'channel');
+    expect(registry.resolve().skills.map((entry) => entry.name)).toEqual(['channel']);
   });
 
   it('rejects names that could forge model-facing manifest rows or links', () => {
