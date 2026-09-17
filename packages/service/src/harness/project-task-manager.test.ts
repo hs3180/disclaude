@@ -362,13 +362,23 @@ describe('persistent project task lifecycle', () => {
 
   it('keeps results when notification fails and refreshes without repeating task execution', async () => {
     let offline = false; const runner = vi.fn((_p, step: ScriptedStep) => Promise.resolve(result(step)));
-    const { manager } = fixture(runner, vi.fn(() => offline ? Promise.reject(new Error('offline')) : Promise.resolve('card-1')));
+    const publish = vi.fn<(project: ProjectTask) => Promise<string>>(() => offline ? Promise.reject(new Error('offline')) : Promise.resolve('card-1'));
+    const { manager } = fixture(runner, publish);
     const p = await manager.create(input); offline = true;
     await manager.act(p.id, 'alice', 'chat-a', p.revision, 'resume'); await manager.idle(p.id);
     expect(manager.get(p.id, 'alice', 'chat-a').status).toBe('completed');
-    expect(manager.get(p.id, 'alice', 'chat-a').deliveryError).toBeDefined(); offline = false;
+    const completed = manager.get(p.id, 'alice', 'chat-a');
+    expect(completed.deliveryError).toBeDefined();
+    await manager.show(p.id, 'alice', 'chat-a');
+    expect(manager.get(p.id, 'alice', 'chat-a').deliveryError).toBeDefined();
+    offline = false;
     await manager.show(p.id, 'alice', 'chat-a'); expect(runner).toHaveBeenCalledTimes(3);
     expect(manager.get(p.id, 'alice', 'chat-a').deliveryError).toBeUndefined();
+    const [delivered] = publish.mock.calls.at(-1)!;
+    expect(delivered.deliveryError).toBeUndefined();
+    expect(delivered.status).toBe('completed');
+    expect(delivered.summary).toBe(completed.summary);
+    expect(delivered.directions).toEqual(completed.directions);
   });
   it('waits for clarification across restart and requires a new answer before resuming', async () => {
     const runner = vi.fn(() => Promise.resolve({ clarification: 'Which reporting period should be compared?' }));
