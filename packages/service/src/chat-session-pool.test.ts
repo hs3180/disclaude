@@ -240,6 +240,24 @@ describe('ChatSessionPool', () => {
       );
     });
 
+    it('keeps the accepted delivery callbacks after a duplicate temporary session is rejected', () => {
+      const pool = new ChatSessionPool({ agentPresets: presets, validatePresetBackend: () => ({ available: true }) });
+      const accepted = createMockCallbacks();
+      const rejected = createMockCallbacks();
+      const scope = 'execution:research-a';
+      const original = pool.getOrCreateChatAgent('chat-project', accepted, undefined, { id: scope, releaseAfterTurn: true });
+      try {
+        expect(() => pool.getOrCreateChatAgent('chat-project', rejected, undefined, { id: scope, releaseAfterTurn: true }))
+          .toThrow('already owns');
+        expect(original.updateCallbacks).not.toHaveBeenCalled();
+        expect(pool.switchAgentPreset('chat-project', 'fast', scope)).toMatchObject({ ok: true });
+        const lastCall = vi.mocked(AgentFactory.createChatAgent).mock.calls.at(-1);
+        expect(lastCall?.[2]).toBe(accepted);
+      } finally {
+        pool.disposeAll();
+      }
+    });
+
     it('rejects a busy switch and preserves the old agent and selection', () => {
       const pool = new ChatSessionPool({ agentPresets: presets, validatePresetBackend: () => ({ available: true }) });
       const old = pool.getOrCreateChatAgent('chat-busy', createMockCallbacks());
