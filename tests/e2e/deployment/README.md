@@ -10,6 +10,8 @@ A JSON report on stdout names passed steps, task/request identity, timestamps an
 
 `--help` describes the input without requiring credentials. Syntax/help/invalid-input checks are not deployed acceptance. Run this independently from the default unit suite; retain the structured report for the exact deployment source tested.
 
+For a deployment with limited model concurrency, let the real-message handler write the authorized stdin settings to a new private file (mode `0600`) and finish its turn. The external test operator can then read that file into the client's stdin and remove it immediately after reading. Do not print it, commit it or pass its contents as command arguments. Waiting for the whole client inside an ordinary model turn consumes a model slot and can prevent the task under test from starting. Preserve timeout/cleanup failures as failed reports; do not increase limits during a run or call a queued task completed.
+
 ## Two-task isolation
 
 `project-task-isolation.mjs` uses the same stdin deployment settings. It creates A and B with different fictional values, observes both running, pauses only A, and checks B completes while A remains unchanged. It then submits an A-only correction, checks that feedback does not implicitly resume A, resumes it and verifies B remains byte-for-byte unchanged through the public API. Each task allows one bounded `sleep 30` tool call to make overlap observable. Completed A evidence is checked for retention when present; a pause before its first checkpoint does not prove retention of a non-existent checkpoint. This is same-actor/same-chat task isolation, not cross-user authorization proof or a crash test.
