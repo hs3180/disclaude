@@ -27,7 +27,7 @@ it.skipIf(process.env.DISCLAUDE_E2E_CODEX_INPUT !== '1').each(['rpc', 'async-mes
   const stream = provider.queryStream((async function* (): AsyncGenerator<UserInput> {
     const tool = kind === 'async-message' ? 'request_user_input_async' : 'request_user_input';
     yield { role: 'user', inputContext, content: `Interaction integration test: call the actual ${tool} tool, not the other input tool, to ask exactly one question, which browser should this test use? Offer Chromium and Chrome with short descriptions. After receiving the answer, state the selected browser and finish. Do not use shell, files, network, other tools, subagents, or send messages. Do not ask through plain text.` };
-  })(), { sessionKey: 'codex-input-e2e', cwd: root, settingSources: [], onUserInput: async (request, context) => {
+  })(), { sessionKey: 'codex-input-e2e', cwd: root, model: 'gpt-5.6-luna', settingSources: [], onUserInput: async (request, context) => {
     requests++;
     questionItems.add(request.itemId);
     expect(request.kind ?? 'rpc').toBe(kind);
