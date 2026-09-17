@@ -279,13 +279,12 @@ export class InteractiveContextStore {
   /**
    * Generate a prompt from an interaction using the registered template.
    *
-   * Lookup strategy:
-   * 1. Exact messageId match
-   * 2. Most recent context for the chatId (fast fallback)
-   * 3. Search all contexts for the chatId containing the actionValue (#1625)
+   * Resolve only the registered card in its original chat. A shared action
+   * value is not proof that another card represents the same user choice.
+   * JSON-encoded strings are accepted only when no exact literal key exists.
    *
    * @param messageId - The card message ID (from Feishu callback)
-   * @param chatId - The chat ID (for fallback lookup)
+   * @param chatId - The chat ID that must match the registered card
    * @param actionValue - The action value from the button/menu
    * @param actionText - The display text of the action (optional)
    * @param actionType - The type of action (button, select_static, etc.)
@@ -300,28 +299,18 @@ export class InteractiveContextStore {
     actionType?: string,
     formData?: Record<string, unknown>
   ): string | undefined {
-    // 1. Try exact messageId lookup first
-    let prompts = this.getActionPrompts(messageId);
-
-    // 2. Fallback to most recent context for the chatId
-    if (!prompts) {
-      prompts = this.getActionPromptsByChatId(chatId);
+    const context = this.contexts.get(messageId);
+    if (!context || context.chatId !== chatId) {return undefined;}
+    const prompts = context.actionPrompts;
+    let resolvedActionValue = actionValue;
+    if (!Object.hasOwn(prompts, resolvedActionValue)) {
+      try {
+        const decoded: unknown = JSON.parse(actionValue);
+        if (typeof decoded === 'string') {resolvedActionValue = decoded;}
+      } catch { /* Plain action values need no decoding. */ }
     }
-
-    // 3. If the most recent context doesn't contain this actionValue,
-    //    search through all contexts for this chatId (#1625)
-    if (prompts && !prompts[actionValue]) {
-      const matchingPrompts = this.findActionPromptsByChatId(chatId, actionValue);
-      if (matchingPrompts) {
-        prompts = matchingPrompts;
-      }
-    }
-
-    if (!prompts) {
-      return undefined;
-    }
-
-    const template = prompts[actionValue];
+    // Never resolve inherited object properties as executable prompt templates.
+    const template = Object.hasOwn(prompts, resolvedActionValue) ? prompts[resolvedActionValue] : undefined;
     if (!template) {
       logger.debug(
         { messageId, chatId, actionValue, availableActions: Object.keys(prompts) },
@@ -338,7 +327,7 @@ export class InteractiveContextStore {
     // Escape template placeholders in user-supplied values to prevent injection (#2247).
     prompt = prompt.replace(/\{\{actionText\}\}/g, escapeTemplatePlaceholders(actionText ?? ''));
 
-    prompt = prompt.replace(/\{\{actionValue\}\}/g, escapeTemplatePlaceholders(actionValue));
+    prompt = prompt.replace(/\{\{actionValue\}\}/g, escapeTemplatePlaceholders(resolvedActionValue));
 
     // Replace {{actionType}} with provided type, or empty string if not provided
     prompt = prompt.replace(/\{\{actionType\}\}/g, escapeTemplatePlaceholders(actionType ?? ''));

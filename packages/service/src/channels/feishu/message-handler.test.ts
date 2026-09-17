@@ -9,6 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ActionBoundInput } from '@disclaude/core';
+import { InteractiveContextStore } from '../../interactive-context.js';
 
 // ---------------------------------------------------------------------------
 // Shared mock state (hoisted so vi.mock factories can reference it)
@@ -985,6 +986,34 @@ describe('MessageHandler', () => {
 
       const msg = firstCallArg(mockState.emitMessage);
       expect(msg.content).toBe('Resolved prompt text');
+    });
+
+    it('delivers the original full prompt for a serialized callback value (#5073)', async () => {
+      const store = new InteractiveContextStore();
+      store.register('card_msg', 'chat_001', { capacity: 'Inspect inventory read-only; do not create resources.' });
+      store.register('newer_card', 'chat_001', { capacity: 'An unrelated operation' });
+      mockState.resolveActionPrompt.mockImplementation((...args: Parameters<InteractiveContextStore['generatePrompt']>) => store.generatePrompt(...args));
+      const { handler } = createHandler();
+      await handler.handleCardAction({
+        context: { open_message_id: 'card_msg', open_chat_id: 'chat_001' },
+        operator: { open_id: 'user_001' },
+        action: { tag: 'button', value: '"capacity"', text: 'Inspect inventory' },
+      });
+      expect(firstCallArg(mockState.emitMessage).content).toBe('Inspect inventory read-only; do not create resources.');
+    });
+
+    it('does not deliver another card operation when the original mapping is missing (#5073)', async () => {
+      const store = new InteractiveContextStore();
+      store.register('newer_card', 'chat_001', { capacity: 'An unrelated operation' });
+      mockState.resolveActionPrompt.mockImplementation((...args: Parameters<InteractiveContextStore['generatePrompt']>) => store.generatePrompt(...args));
+      const { handler } = createHandler();
+      await handler.handleCardAction({
+        context: { open_message_id: 'missing_card', open_chat_id: 'chat_001' },
+        operator: { open_id: 'user_001' },
+        action: { tag: 'button', value: 'capacity', text: 'Inspect inventory' },
+      });
+      expect(firstCallArg(mockState.emitMessage).content).not.toContain('An unrelated operation');
+      expect(firstCallArg(mockState.emitMessage).content).toContain('Inspect inventory');
     });
 
     it('should fall back to default message when no prompt template', async () => {
