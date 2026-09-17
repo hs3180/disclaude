@@ -70,11 +70,14 @@ export function adaptSDKMessage(message: SDKMessage, taskRegistry?: TaskSubjectR
         contentParts.push(formatToolInput(block.name, block.input as Record<string, unknown>, taskRegistry));
       }
 
-      // 处理文本
-      const textParts = textBlocks.map((block) => block.text);
+      // Model output can include blank opening lines; this is not SDK-added text.
+      // Remove only complete blank lines, preserving Markdown indentation and hard breaks.
+      // Whitespace-only messages still become empty so downstream delivery skips them.
+      const rawText = textBlocks.map((block) => block.text).join('');
+      const assistantText = rawText.trim().length === 0 ? '' : rawText.replace(/^(?:[^\S\r\n]*\r?\n)+/, '');
 
-      if (textParts.length > 0) {
-        contentParts.push(textParts.join(''));
+      if (assistantText.length > 0) {
+        contentParts.push(assistantText);
       }
 
       return {
