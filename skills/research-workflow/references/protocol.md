@@ -134,9 +134,11 @@ require no pending write, pending feedback, or unanswered clarification.
 
 ## End-of-turn synchronization
 
-Every research turn needs a final complete fetch and `sync`, including a turn
-that keeps the research active. A successful receipt `ack` records the body at
-that moment; substantive changes made afterwards leave that checkpoint stale.
+Every research turn needs its checkpoint synchronized to a final complete
+read-back, including a turn that keeps the research active. A successful receipt
+`ack` already records that full snapshot: if no document writes follow it, use
+that snapshot for the closing check without an extra fetch/sync. Substantive
+changes made afterwards leave the checkpoint stale and require fetch/sync.
 Compare the saved body/revision with the final read-back. A local `status` read
 alone cannot establish that the remote document is current.
 
@@ -152,7 +154,8 @@ Prefer this order within a turn:
 4. Prepare decisions for the reviewed pending items, export/append the receipt,
    and acknowledge its complete read-back. Do not interleave substantive edits
    between prepare and ack; doing so invalidates the receipt's base body.
-5. Fetch/sync once more and inspect pendingWrite and unresolved feedback. If
+5. Inspect pendingWrite and unresolved feedback against the final full snapshot
+   saved by ack, or fetch/sync if changes followed it. If
    another edit/comment arrived, either handle it or retain it as pending and
    tell the user what remains. Do not repeatedly rewrite findings just to clear
    a body-feedback item, and do not claim that all feedback is settled when it
