@@ -70,12 +70,11 @@ export function adaptSDKMessage(message: SDKMessage, taskRegistry?: TaskSubjectR
         contentParts.push(formatToolInput(block.name, block.input as Record<string, unknown>, taskRegistry));
       }
 
-      // 处理文本。claude-agent-sdk 0.3.263+ 起 assistant 文本块自带前导换行
-      // （9/15 升级后实测群里每条正文顶部多一个空行）。这是 SDK 文本进入管线的
-      // 唯一入口,在源头去掉前导空白,而不是在投递末端兜。前导空白在一条聊天消息里
-      // 没有任何语义;纯空白文本块归一成空串,下游按空内容跳过投递。只去前导——行尾
-      // 两个空格是 Markdown 硬换行,不能动。
-      const assistantText = textBlocks.map((block) => block.text).join('').replace(/^\s+/, '');
+      // Model output can include blank opening lines; this is not SDK-added text.
+      // Remove only complete blank lines, preserving Markdown indentation and hard breaks.
+      // Whitespace-only messages still become empty so downstream delivery skips them.
+      const rawText = textBlocks.map((block) => block.text).join('');
+      const assistantText = rawText.trim().length === 0 ? '' : rawText.replace(/^(?:[^\S\r\n]*\r?\n)+/, '');
 
       if (assistantText.length > 0) {
         contentParts.push(assistantText);

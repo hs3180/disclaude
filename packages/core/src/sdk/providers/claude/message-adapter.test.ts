@@ -33,8 +33,7 @@ describe('adaptSDKMessage', () => {
     });
 
     it('should strip a leading newline from assistant text (blank first line regression)', () => {
-      // claude-agent-sdk 0.3.263+ 的 assistant 文本块自带前导换行,飞书正文顶部就多出
-      // 一个空行。源头(文本块装配)去掉前导空白,行尾的 Markdown 硬换行保留。
+      // Model-authored blank opening lines are removed; Markdown hard breaks remain.
       const message = {
         type: 'assistant' as const,
         message: {
@@ -48,6 +47,21 @@ describe('adaptSDKMessage', () => {
       const result = adaptSDKMessage(asMsg(message));
       expect(result.type).toBe('text');
       expect(result.content).toBe('分支名对上了。  ');
+    });
+
+    it.each([
+      ['', '    const answer = 42;\n    console.log(answer);  '],
+      ['\n', '    const answer = 42;\n    console.log(answer);  '],
+      [' \t\r\n\r\n', '\tcode\r\n\tmore code'],
+    ])('preserves first content-line indentation after %j', (prefix, body) => {
+      const result = adaptSDKMessage(asMsg({
+        type: 'assistant',
+        message: { role: 'assistant', content: [
+          { type: 'text', text: prefix },
+          { type: 'text', text: body },
+        ] },
+      }));
+      expect(result.content).toBe(body);
     });
 
     it('should normalize a whitespace-only text block to empty content', () => {
