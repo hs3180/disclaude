@@ -206,6 +206,95 @@ configured model. This is harness interoperability evidence, not a Claude-model
 or performance benchmark.
 
 
+### Repeated product handoffs
+
+Set `DISCLAUDE_E2E_BROWSER_STRESS=1` to exercise 100 sequential IPC callers against
+the same managed page. Each caller verifies the preceding value, writes its own
+and reads it back. The trace must contain 100 distinct grants, with execution,
+worker exit and reclamation in order; every previous reclamation must precede
+the next grant. An independent final caller verifies the last value. This uses
+the actual product service/browser/workers and no model credentials. Browser CI
+enables it on Linux; local runs can opt in explicitly.
+
+On macOS ARM64 with Chromium 155.0.8057.0 and Node 24.8.0 (2026-09-17), all 100
+handoffs passed in 73.87 seconds. Grant-wait observations were p50=410ms,
+p95=424ms, max=471ms. The full product lifecycle test, including interruption,
+broker crash, restart and cleanup, passed in 89.73 seconds; its private root was
+removed. These are observations from one run, not latency guarantees. This loop
+does not itself prove queue contention; the separate two-agent case covers that.
+
+Linux CI also passed the 100-caller case on source `c5628c2a`: Ubuntu 24.04.5,
+Node 24.20.0 and Google Chrome 152.0.7977.82. The loop took 79.78 seconds;
+grant wait was p50=436ms, p95=454ms, max=507ms. The log confirms all previous
+states, reclamation ordering, independent readback and root removal. All three
+browser product cases passed in 140.96 seconds. See
+[run 35138008609](https://github.com/hs3180/disclaude/actions/runs/35138008609),
+[job 104935142242](https://github.com/hs3180/disclaude/actions/runs/35138008609/job/104935142242).
+This runner evidence does not replace Docker/native service installation,
+authenticated-site login or actual deployment-machine acceptance.
+
+### Two real agents competing for the browser
+
+Set `DISCLAUDE_E2E_BROWSER_CONTENTION_MODEL` to an accessible Anthropic-compatible
+model when running `tests/e2e/browser-service.test.ts`, with the Chromium/Python
+prerequisites above, model credentials supplied through environment variables,
+and an isolated `CLAUDE_CONFIG_DIR`. No model calls are added to credential-free
+CI. The deployment fixture selects the real Claude backend and model.
+
+The standalone `scripts/test-browser-contention.mjs` process sends two independent
+chats to the running deployment's `POST /api/chat/sync`. It imports no providers
+or agent implementation and supplies no fake delivery adapter. Explicit commands
+isolate arbitration from open-ended planning or model quality. The service owns
+normal message routing, agent creation, model execution and response delivery.
+
+Agent A writes a local page draft and holds its lease. Only after observing that
+hold does the client start B. Coordinator events must show B queued while A still
+owns control, and B's execution marker must remain absent. The client releases A;
+its reclamation event must precede B's grant. B verifies A's text and updates it.
+The client checks both real REST responses, B's execution marker, and the final
+value through an independent browser-use invocation. An early-ending model request
+fails promptly rather than waiting for a browser marker that cannot arrive.
+
+The JSON `BROWSER_MODEL_CONTENTION` report includes pass/fail, two chat IDs,
+completed checks, observed queue wait, duration and fixture-cleanup status. On
+failure the client releases its gate and attempts the public stop command for
+both chats. The deployment owner must still stop/join its service before deleting
+the workspace; a stop acknowledgement is not an OS-descendant exit guarantee.
+
+For an already prepared test deployment on the same host/shared filesystem:
+
+```sh
+node scripts/test-browser-contention.mjs \
+  --service-url http://127.0.0.1:PORT \
+  --workspace /absolute/test-workspace \
+  --socket /absolute/test-workspace/browser.sock \
+  --events /absolute/test-workspace/browser-events.ndjson
+```
+
+The managed page must already contain `<input id="value">`. The client does not
+start/stop the deployment itself. Use an isolated test workspace and model config.
+
+On macOS ARM64/Node24.8.0, the external REST case with two real Claude-backend
+`deepseek-flash` tasks passed in27.523s; the enclosing lifecycle/crash/restart
+case passed in41.980s. B queued for703.55ms. Service/browser callers and tracked
+crash descendants closed; test and private model-config roots were removed.
+The first attempt had an early model failure before A acquired the browser;
+isolating Claude configuration and rebuilding the exact branch preceded the
+successful run. The failed attempt was not counted as acceptance, and its retained
+private config was removed after confirming no process referenced it.
+
+This replaces the earlier direct-provider evidence for the two-agent case.
+It remains a controlled draft task on one provider/platform, not simultaneous
+browser access, a natural-language benchmark, model-created subagents, or Feishu
+interaction. The ordinary-agent external REST case is maintained separately in
+#5059; it is not duplicated in this change. Other legacy provider cases need
+separate externalization (#5016).
+
+An unavailable-deployment failure probe also exited1 in142ms with a structured
+failed report; its owned fixture was removed. After synchronizing main, build and
+focused TypeScript/lint checks passed; product runtime packages were unchanged
+from the successful external model run.
+
 ### Test-resource cleanup
 
 The product browser E2E waits for its service and caller processes to close and
