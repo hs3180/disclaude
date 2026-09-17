@@ -2,6 +2,8 @@ name: Browser Coordination E2E
 on:
   pull_request:
     paths:
+      - 'vitest*.config.ts'
+      - 'tests/setup.ts'
       - 'tests/e2e/browser-service.test.ts'
       - 'scripts/test-browser-contention.mjs'
       - 'tests/e2e/helpers/browser-*.ts'
@@ -20,6 +22,8 @@ on:
   push:
     branches: [main, master]
     paths:
+      - 'vitest*.config.ts'
+      - 'tests/setup.ts'
       - 'tests/e2e/browser-service.test.ts'
       - 'scripts/test-browser-contention.mjs'
       - 'tests/e2e/helpers/browser-*.ts'
@@ -64,4 +68,4 @@ jobs:
           export DISCLAUDE_E2E_CHROMIUM="$(command -v google-chrome)"
           test -x "$DISCLAUDE_E2E_CHROMIUM"
           "$DISCLAUDE_E2E_CHROMIUM" --version
-          node node_modules/vitest/vitest.mjs run tests/e2e/browser-service.test.ts tests/e2e/browser-doctor.test.ts tests/e2e/browser-smoke.test.ts
+          node node_modules/vitest/vitest.mjs run --config vitest.e2e.config.ts tests/e2e/browser-service.test.ts tests/e2e/browser-doctor.test.ts tests/e2e/browser-smoke.test.ts

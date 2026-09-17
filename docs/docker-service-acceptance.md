@@ -28,7 +28,7 @@ checks:
 docker build -f Dockerfile.service -t disclaude-service:e2e .
 npm ci --include=dev
 DISCLAUDE_E2E_DOCKER_IMAGE=disclaude-service:e2e \
-  npx vitest run tests/e2e/docker-service.test.ts
+  npx vitest run --config vitest.e2e.config.ts tests/e2e/docker-service.test.ts
 ```
 
 Without the image environment variable, the case is skipped. The test removes its
@@ -106,7 +106,7 @@ product coordinator lifecycle is exercised separately by browser-service.test.ts
 
 Supply both `DISCLAUDE_E2E_DOCKER_IMAGE` and
 `DISCLAUDE_E2E_DOCKER_BROWSER_IMAGE` after building the two production images,
-then run `npx vitest run tests/e2e/docker-browser-smoke.test.ts`. Without both
+then run `npx vitest run --config vitest.e2e.config.ts tests/e2e/docker-browser-smoke.test.ts`. Without both
 image variables, the case skips. The Docker Service E2E workflow builds both
 images and enables the case. It uses a dedicated network and disposable
 containers, publishes no host ports, and supplies no account credentials.

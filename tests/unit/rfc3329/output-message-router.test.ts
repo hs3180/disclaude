@@ -1,5 +1,5 @@
 /**
- * Integration test: Output MessageRouter cross-channel routing.
+ * Component unit test: Output MessageRouter cross-channel routing.
  *
  * Tests the level-based output message routing:
  *   MessageRouter.route(RoutedMessage) → sendText(adminChat, ...) and/or sendText(userChat, ...)

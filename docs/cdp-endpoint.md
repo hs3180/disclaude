@@ -312,7 +312,7 @@ the PNG signature, and stops the browser afterward. Set
 `DISCLAUDE_E2E_CHROMIUM` to the browser executable and
 `DISCLAUDE_E2E_BROWSER_PYTHON` to the interpreter whose adjacent `browser-use`
 CLI is installed, then run
-`node node_modules/vitest/vitest.mjs run tests/e2e/browser-smoke.test.ts`.
+`node node_modules/vitest/vitest.mjs run --config vitest.e2e.config.ts tests/e2e/browser-smoke.test.ts`.
 The Browser Coordination E2E workflow includes it with pinned Python packages.
 This is standalone CLI compatibility evidence; the separate product service
 test covers coordinated Agent access. Whole-host process counting remains

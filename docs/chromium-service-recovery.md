@@ -17,7 +17,7 @@ Run only with an explicitly selected browser and opt-in:
 ```sh
 DISCLAUDE_E2E_CHROMIUM=/absolute/path/to/Chromium \
 DISCLAUDE_E2E_CHROMIUM_LAUNCHD=1 \
-npx vitest run tests/e2e/chromium-launchd.test.ts
+npx vitest run --config vitest.e2e.config.ts tests/e2e/chromium-launchd.test.ts
 ```
 
 The test uses `scripts/launchd.mjs chromium-isolated` with an explicit isolation flag, a unique `com.disclaude.test.*` label, state directory, loopback port, configuration and profile. Configuration/profile paths must stay inside the test state directory, including through existing symlink ancestors. It skips package `.env` loading and refuses incomplete isolation settings. It never selects the production service label.

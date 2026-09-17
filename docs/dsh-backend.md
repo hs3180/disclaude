@@ -46,7 +46,7 @@ Run the actual use case with an already configured credential/endpoint:
 
 ```sh
 DISCLAUDE_E2E_DSH=1 DISCLAUDE_E2E_DSH_MODEL=deepseek-flash \
-npx vitest run tests/e2e/deepseek-mode.test.ts
+npx vitest run --config vitest.e2e.config.ts tests/e2e/deepseek-mode.test.ts
 ```
 
 Set `DEEPSEEK_API_KEY` and, for a custom endpoint, `DEEPSEEK_BASE_URL` privately.

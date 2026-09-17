@@ -33,7 +33,7 @@
     "test:integration:multimodal": "./tests/integration/multimodal-test.sh",
     "test:integration:fast": "./tests/integration/run-all-tests.sh --tag fast",
     "test:integration:ai": "./tests/integration/run-all-tests.sh --tag ai",
-    "test:rfc3329": "./tests/e2e/rfc3329-test.sh",
+    "test:rfc3329": "vitest --run tests/unit/rfc3329",
     "launchd:generate": "node scripts/launchd.mjs generate",
     "launchd:install": "node scripts/launchd.mjs install",
     "launchd:uninstall": "node scripts/launchd.mjs uninstall",
@@ -52,7 +52,8 @@
     "launchd:chromium:status": "node scripts/launchd.mjs chromium-cdp status",
     "hooks:install": "husky",
     "test:install": "node scripts/run-isolated-test.mjs -- node scripts/test-package-install.mjs",
-    "test:install:checkout": "node scripts/run-isolated-test.mjs -- node scripts/test-checkout-install.mjs"
+    "test:install:checkout": "node scripts/run-isolated-test.mjs -- node scripts/test-checkout-install.mjs",
+    "test:e2e": "npm run build && vitest --run --config vitest.e2e.config.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
@@ -115,6 +116,7 @@
     "disclaude.config.example.yaml",
     "tsconfig*.json",
     "vitest.config.ts",
+    "vitest.e2e.config.ts",
     "eslint.config.*",
     "Dockerfile*",
     "docker/",
