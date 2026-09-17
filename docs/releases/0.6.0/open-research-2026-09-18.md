@@ -81,13 +81,40 @@ introduce TASK.md/schema/indexing conventions.
 
 Five regression tests pass. Replaying the saved real revisions detects both
 losses and accepts the first paragraph that was actually restored in revision
-11. Skill validation passes. Actual Luna use of this additional check and a
-successful preservation of the newest replaced recommendation remain pending;
-the PR stays draft. The document's missing second recommendation remains a
-known failure, not silently repaired evidence.
+11. Skill validation passes. All six CI checks passed on implementation
+`c92411e7`.
+
+## Actual Luna verifier follow-up
+
+Integration `f1d52db021eaf99b8638df1a3fae16238eacf7c8` continued the same task and
+document through a REST-only `gpt-5.6-luna` instance. It compared the three
+original complete reports, restored the missing second recommendation, and
+saved the third recommendation before replacing the current text. Revision 12
+read-back confirmed that history existed before replacement. The model actually
+ran the verifier on the latest replaced paragraph and the complete before/after
+snapshots; it passed at revision 13.
+
+Independent final revision 14 matches checkpoint version 16 byte-for-byte, with
+active status and no pending write or unresolved feedback. All three original
+recommendation paragraphs occur exactly once; previous receipt IDs also remain
+exactly once. The complete SQL block and local SQL file are unchanged. The new
+current recommendation explicitly leaves Unicode normalization boundaries,
+index-update completeness and real-scale performance unverified. Final chat
+links the original document. A local acknowledgement-input error was corrected
+without repeating the remote append.
+
+The verifier proves retention of supplied paragraphs only. Independent audit of
+all three original recommendations supplies the broader history check for this
+round; the tool cannot discover omitted replacement inputs or certify new
+findings. This repair passes the scoped history-preservation acceptance and
+does not erase either previous failure or certify complete open-research UX.
+
+This round used zero computer-use calls/screenshots and did not interrupt the
+daily service. The candidate exited cleanly with no open files; independent
+health confirmed the original daily service instance remained healthy.
 
 Local evidence: `.local/060-poll/open-research-*`,
-`luna-open-research-*`, `research-history-*`, and
-`conclusion-history-replay.json`. The next acceptance must preserve the failed
-artifacts, restore only from verified originals, and prove that the latest
-replaced paragraph is retained before claiming complete history preservation.
+`luna-open-research-*`, `research-history-*`, `conclusion-history-replay.json`,
+and `history-verifier-*`. Native in-flight cancellation, broader document
+feedback/failure UX and final integrated release acceptance remain separate
+uncompleted gates.
