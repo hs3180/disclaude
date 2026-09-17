@@ -8,6 +8,89 @@
 
 import { describe, it, beforeEach, afterEach, expect, vi } from 'vitest';
 import { InteractiveContextStore } from './interactive-context.js';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+describe('durable interactive contexts', () => {
+  let directory: string;
+  let file: string;
+  beforeEach(() => { directory = mkdtempSync(join(tmpdir(), 'interactive-context-')); file = join(directory, 'contexts.json'); });
+  afterEach(() => { vi.useRealTimers(); rmSync(directory, { recursive: true, force: true }); });
+
+  it('restores exact card prompts after reconstruction without crossing chats', () => {
+    const first = new InteractiveContextStore(undefined, undefined, file);
+    first.register('card', 'chat', { inventory: 'Inspect inventory read-only' });
+    const restored = new InteractiveContextStore(undefined, undefined, file);
+    expect(restored.generatePrompt('card', 'chat', '"inventory"')).toBe('Inspect inventory read-only');
+    expect(restored.generatePrompt('card', 'other', 'inventory')).toBeUndefined();
+    expect(restored.generatePrompt('other', 'chat', 'inventory')).toBeUndefined();
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(readdirSync(directory)).toEqual(['contexts.json']);
+  });
+
+  it('does not renew expiration during restore or execute expired entries', () => {
+    vi.useFakeTimers(); vi.setSystemTime(1000);
+    const first = new InteractiveContextStore(100, 10, file);
+    first.register('card', 'chat', { a: 'A' });
+    vi.setSystemTime(1090);
+    const restored = new InteractiveContextStore(100, 10, file);
+    expect(restored.generatePrompt('card', 'chat', 'a')).toBe('A');
+    vi.setSystemTime(1101);
+    expect(restored.generatePrompt('card', 'chat', 'a')).toBeUndefined();
+    expect(new InteractiveContextStore(100, 10, file).size).toBe(0);
+  });
+
+  it('persists eviction, unregister and clear across restarts', () => {
+    const first = new InteractiveContextStore(undefined, 1, file);
+    first.register('old', 'chat', { a: 'Old' });
+    first.register('new', 'chat', { a: 'New' });
+    const restored = new InteractiveContextStore(undefined, 1, file);
+    expect(restored.generatePrompt('old', 'chat', 'a')).toBeUndefined();
+    expect(restored.generatePrompt('new', 'chat', 'a')).toBe('New');
+    restored.unregister('new');
+    expect(new InteractiveContextStore(undefined, 1, file).size).toBe(0);
+    restored.register('next', 'chat', { a: 'Next' });
+    restored.clear();
+    expect(new InteractiveContextStore(undefined, 1, file).size).toBe(0);
+  });
+
+  it('preserves refreshed registration order when restoring with a lower retention cap', () => {
+    const first = new InteractiveContextStore(undefined, 3, file);
+    first.register('a', 'chat', { a: 'A' });
+    first.register('b', 'chat', { a: 'B' });
+    first.register('a', 'chat', { a: 'Refreshed A' });
+    const restored = new InteractiveContextStore(undefined, 1, file);
+    expect(restored.generatePrompt('a', 'chat', 'a')).toBe('Refreshed A');
+    expect(restored.generatePrompt('b', 'chat', 'a')).toBeUndefined();
+  });
+
+  it('preserves corrupt data and fails explicitly instead of starting an empty store', () => {
+    const corrupt = '{"version":1,"contexts":[{"messageId":"card"}]}';
+    writeFileSync(file, corrupt);
+    expect(() => new InteractiveContextStore(undefined, undefined, file)).toThrow('Invalid interactive context entry');
+    expect(readFileSync(file, 'utf8')).toBe(corrupt);
+  });
+
+  it('rejects malformed runtime input before it can damage a durable store', () => {
+    const first = new InteractiveContextStore(undefined, undefined, file);
+    first.register('old', 'chat', { a: 'Old' });
+    const original = readFileSync(file, 'utf8');
+    expect(() => first.register('new', 'chat', { a: 42 } as never)).toThrow('Invalid interactive context registration');
+    expect(readFileSync(file, 'utf8')).toBe(original);
+    expect(new InteractiveContextStore(undefined, undefined, file).generatePrompt('old', 'chat', 'a')).toBe('Old');
+  });
+
+  it('rolls back memory when atomic publication fails and cleans temporary files', () => {
+    const first = new InteractiveContextStore(undefined, undefined, file);
+    first.register('old', 'chat', { a: 'Old' });
+    rmSync(file); mkdirSync(file);
+    expect(() => first.register('new', 'chat', { a: 'New' })).toThrow();
+    expect(first.generatePrompt('old', 'chat', 'a')).toBe('Old');
+    expect(first.generatePrompt('new', 'chat', 'a')).toBeUndefined();
+    expect(readdirSync(directory)).toEqual(['contexts.json']);
+  });
+});
 
 describe('InteractiveContextStore', () => {
   let store: InteractiveContextStore;

@@ -12,6 +12,9 @@
  */
 
 import { createLogger } from '@disclaude/core';
+import { readFileSync, mkdirSync, writeFileSync, renameSync, rmSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 const logger = createLogger('InteractiveContextStore');
 
@@ -92,10 +95,67 @@ export class InteractiveContextStore {
 
   /** Maximum number of contexts to retain per chatId */
   private readonly maxEntriesPerChat: number;
+  private restoring = false;
 
-  constructor(maxAge?: number, maxEntriesPerChat?: number) {
+  constructor(maxAge?: number, maxEntriesPerChat?: number, private readonly persistenceFile?: string) {
     this.maxAge = maxAge ?? 24 * 60 * 60 * 1000;
     this.maxEntriesPerChat = maxEntriesPerChat ?? DEFAULT_MAX_ENTRIES_PER_CHAT;
+    if (persistenceFile) {
+      let serialized: string;
+      try { serialized = readFileSync(persistenceFile, 'utf8'); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {return;}
+        throw error;
+      }
+      const stored: unknown = JSON.parse(serialized);
+      if (!stored || typeof stored !== 'object' || !('version' in stored) || stored.version !== 1
+        || !('contexts' in stored) || !Array.isArray(stored.contexts)) {
+        throw new Error('Invalid interactive context store; original file preserved');
+      }
+      const ids = new Set<string>();
+      for (const entry of stored.contexts) {
+        if (!entry || typeof entry !== 'object' || typeof entry.messageId !== 'string' || !entry.messageId
+          || typeof entry.chatId !== 'string' || !entry.chatId || ids.has(entry.messageId)
+          || !Number.isFinite(entry.createdAt) || entry.createdAt < 0
+          || !entry.actionPrompts || typeof entry.actionPrompts !== 'object' || Array.isArray(entry.actionPrompts)
+          || Object.values(entry.actionPrompts).some(value => typeof value !== 'string' || !value)) {
+          throw new Error('Invalid interactive context entry; original file preserved');
+        }
+        ids.add(entry.messageId);
+      }
+      this.restore(stored.contexts as InteractiveContext[]);
+    }
+  }
+
+  private restore(entries: InteractiveContext[]): void {
+    this.restoring = true;
+    try {
+      this.clear();
+      for (const entry of entries) {
+        if (Date.now() - entry.createdAt > this.maxAge) {continue;}
+        this.register(entry.messageId, entry.chatId, entry.actionPrompts);
+        const restored = this.contexts.get(entry.messageId);
+        if (restored) {restored.createdAt = entry.createdAt;}
+      }
+    } finally { this.restoring = false; }
+  }
+
+  private snapshot(): InteractiveContext[] {
+    return this.persistenceFile && !this.restoring ? structuredClone([...this.contexts.values()]) : [];
+  }
+
+  /** Single service writer; publish a complete snapshot atomically, or restore memory. */
+  private persist(previous: InteractiveContext[]): void {
+    if (!this.persistenceFile || this.restoring) {return;}
+    const temporary = `${this.persistenceFile}.${randomUUID()}.tmp`;
+    try {
+      mkdirSync(dirname(this.persistenceFile), { recursive: true, mode: 0o700 });
+      writeFileSync(temporary, JSON.stringify({ version: 1, contexts: [...this.contexts.values()] }), { flag: 'wx', mode: 0o600 });
+      renameSync(temporary, this.persistenceFile);
+    } catch (error) {
+      this.restore(previous);
+      throw error;
+    } finally { rmSync(temporary, { force: true }); }
   }
 
   /**
@@ -109,10 +169,18 @@ export class InteractiveContextStore {
    * @param actionPrompts - Map of action values to prompt templates
    */
   register(messageId: string, chatId: string, actionPrompts: ActionPromptMap): void {
+    if (typeof messageId !== 'string' || !messageId || typeof chatId !== 'string' || !chatId
+      || !actionPrompts || typeof actionPrompts !== 'object' || Array.isArray(actionPrompts)
+      || Object.values(actionPrompts).some(value => typeof value !== 'string' || !value)) {
+      throw new Error('Invalid interactive context registration');
+    }
+    const previous = this.snapshot();
+    // Preserve registration order in persisted snapshots as well as chat indexes.
+    this.contexts.delete(messageId);
     this.contexts.set(messageId, {
       messageId,
       chatId,
-      actionPrompts,
+      actionPrompts: { ...actionPrompts },
       createdAt: Date.now(),
     });
 
@@ -151,6 +219,7 @@ export class InteractiveContextStore {
       avMap.set(actionValue, avFiltered);
     }
 
+    this.persist(previous);
     logger.debug(
       { messageId, chatId, actions: Object.keys(actionPrompts), totalForChat: chatFiltered.length },
       'Action prompts registered'
@@ -300,7 +369,7 @@ export class InteractiveContextStore {
     formData?: Record<string, unknown>
   ): string | undefined {
     const context = this.contexts.get(messageId);
-    if (!context || context.chatId !== chatId) {return undefined;}
+    if (!context || context.chatId !== chatId || Date.now() - context.createdAt > this.maxAge) {return undefined;}
     const prompts = context.actionPrompts;
     let resolvedActionValue = actionValue;
     if (!Object.hasOwn(prompts, resolvedActionValue)) {
@@ -349,6 +418,7 @@ export class InteractiveContextStore {
    * @returns True if the context was found and removed
    */
   unregister(messageId: string): boolean {
+    const previous = this.snapshot();
     const context = this.contexts.get(messageId);
     const removed = this.contexts.delete(messageId);
     if (removed && context) {
@@ -366,6 +436,7 @@ export class InteractiveContextStore {
       this.removeFromActionValueIndex(context.chatId, messageId, context.actionPrompts);
       logger.debug({ messageId }, 'Action prompts unregistered');
     }
+    if (removed) {this.persist(previous);}
     return removed;
   }
 
@@ -375,6 +446,7 @@ export class InteractiveContextStore {
    * @returns Number of contexts cleaned up
    */
   cleanupExpired(): number {
+    const previous = this.snapshot();
     const now = Date.now();
     let cleaned = 0;
     const expiredChatEntries = new Map<string, string[]>();
@@ -420,6 +492,7 @@ export class InteractiveContextStore {
     }
 
     if (cleaned > 0) {
+      this.persist(previous);
       logger.debug({ count: cleaned }, 'Cleaned up expired interactive contexts');
     }
 
@@ -437,8 +510,10 @@ export class InteractiveContextStore {
    * Clear all contexts and indexes.
    */
   clear(): void {
+    const previous = this.snapshot();
     this.contexts.clear();
     this.chatIdIndex.clear();
     this.actionValueIndex.clear();
+    this.persist(previous);
   }
 }
