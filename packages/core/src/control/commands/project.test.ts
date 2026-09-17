@@ -118,7 +118,7 @@ describe('handleProject', () => {
       const workspace = ctx.projectManager!.getWorkspaceDir();
       const project = join(workspace, 'bound-work');
       mkdirSync(join(project, 'tasks', 'check'), { recursive: true });
-      writeFileSync(join(project, 'tasks', 'check', 'TASK.md'), '# Check evidence\nhttps://tenant.feishu.cn/docx/abc');
+      writeFileSync(join(project, 'tasks', 'check', 'TASK.md'), '# Check evidence\nDocument: https://tenant.feishu.cn/docx/abc');
       mkdirSync(join(workspace, 'tasks', 'other'), { recursive: true });
       writeFileSync(join(workspace, 'tasks', 'other', 'TASK.md'), '# Unbound private record');
       ctx.projectManager!.use('chat-1', project);

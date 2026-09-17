@@ -30,12 +30,17 @@ export function projectWorkIndex(projectDir: string): string[] {
         const source = buffer.subarray(0, readSync(fd, buffer, 0, buffer.length, 0)).toString('utf8');
         const heading = source.match(/^#\s+(.+)$/m)?.[1] ?? name;
         const title = heading.replace(/[\[\]<>`*_\\]/g, '').trim().slice(0, 100);
-        const rawLink = source.match(/https:\/\/[^\s<>"'()]+\/(?:docx|wiki)\/[a-zA-Z0-9]+/)?.[0];
+        // A source citation is not necessarily the task's collaborative document.
+        const documentLine = source.match(/^(?:文档|Document)\s*[:：]\s*(.+)$/mi)?.[1];
+        const rawLink = documentLine?.trim();
         let link = '';
         if (rawLink && rawLink.length <= 512) {
           try {
             const url = new URL(rawLink);
-            if (!url.username && !url.password && /(^|\.)(feishu\.cn|larksuite\.com)$/.test(url.hostname)) {
+            if (url.protocol === 'https:' && !url.username && !url.password && !url.port
+              && /(^|\.)(feishu\.cn|larksuite\.com)$/.test(url.hostname)
+              && /^\/(?:docx|wiki)\/[a-zA-Z0-9]+\/?$/.test(url.pathname)) {
+              url.search = ''; url.hash = '';
               link = ` · [文档](${url.href})`;
             }
           } catch { /* Malformed content is not a navigation target. */ }
