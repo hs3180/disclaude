@@ -111,7 +111,14 @@ export class SkillsRegistry {
           continue;
         }
         const content = readFileSync(path, 'utf8');
-        const metadata = metadataFromFrontmatter(content, name);
+        let metadata: { description?: string };
+        try {
+          metadata = metadataFromFrontmatter(content, name);
+        } catch {
+          // Do not expose parser exceptions or untrusted file contents.
+          diagnostics.push({ code: 'INVALID_SKILL', name, source: source.kind, detail: 'skill metadata could not be parsed' });
+          continue;
+        }
         const reference = relative(
           this.referenceRoot ? realpathSync(this.referenceRoot) : root,
           this.referenceRoot ? realPath : path,

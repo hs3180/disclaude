@@ -100,6 +100,18 @@ describe('SkillsRegistry', () => {
     expect(registry.resolve().diagnostics).toEqual([]);
   });
 
+  it('distinguishes unreadable files from invalid metadata without exposing contents or paths', () => {
+    const root = makeRoot();
+    mkdirSync(join(root, 'skills', 'missing'), { recursive: true });
+    skill(root, 'invalid');
+    writeFileSync(join(root, 'skills', 'invalid', 'SKILL.md'), '---\nprivate-secret-marker: secret-value\n---');
+    const result = new SkillsRegistry([{ kind: 'project', root }]).resolve();
+    expect(result.diagnostics).toContainEqual({ code: 'INVALID_SKILL', name: 'missing', source: 'project', detail: 'skill could not be read' });
+    expect(result.diagnostics).toContainEqual({ code: 'INVALID_SKILL', name: 'invalid', source: 'project', detail: 'skill metadata could not be parsed' });
+    expect(JSON.stringify(result.diagnostics)).not.toContain(root);
+    expect(JSON.stringify(result.diagnostics)).not.toContain('secret');
+  });
+
   it('rejects names that could forge model-facing manifest rows or links', () => {
     const root = makeRoot();
     skill(root, 'valid');
