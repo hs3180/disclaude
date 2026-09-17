@@ -170,3 +170,42 @@ seconds. Two computer-use calls, zero screenshots. All six PR CI checks passed
 on `9f9e9092`. Original production config/plist hashes matched, independent health
 passed after 34 seconds, and the owned workspace plus four tool-created temporary
 files were archived with verified hashes before removal. No PR was merged.
+
+## Unknown successful write interrupted before response: core path passed
+
+Candidate `579e393d` used actual `gpt-5.6-luna`, checkpoint 22 / document 42,
+and a new R8 comment clarifying that 3,500 is a nominal material-based cost, not
+a complete procurement quote. An owned candidate-only CLI shim delegated to the
+real Feishu CLI. For the first append to this test document only, it captured a
+successful remote response and withheld all output/exit status for 120 seconds.
+Other CLI calls passed through; a persisted marker made the injection one-shot.
+The daily CLI installation and original service configuration were not modified.
+
+The external watcher observed remote success and a pending checkpoint operation,
+then killed the service before output was released. All ten observed processes
+exited in about 0.26 seconds; the checkpoint remained byte-identical. Independent
+readback while stopped found exactly one receipt at revision 43. Checkpoint 24
+still referred to base revision 42 and the caller output file was empty. This
+establishes a real remote mutation whose result the model did not receive.
+
+After same-workspace restart and a second native request, Luna read all four
+comment threads/replies and the remote receipt. Its premature sync attempt was
+rejected by the pending-write guard without mutation. It then acknowledged the
+original operation: checkpoint 25 / document 43, no pending feedback or write,
+original identity and all prior feedback retained. The saved body/hash matches
+independent remote readback. Remote content and revision are unchanged from the
+post-interruption readback; the receipt still occurs exactly once.
+
+Core unknown-write recovery passed, but chat omitted the document link and exposed
+the internal `ack` term. The skill follow-up checks pending writes before normal
+sync and asks for a clickable document link plus user-facing recovery results.
+Skill validation passes; this follow-up wording has not yet been model-retested.
+The auxiliary task record claimed 15 minutes; measured resume duration was about
+129 seconds. That record is retained and is not used as timing evidence.
+
+Two computer-use calls, zero screenshots. Original service restored with matching
+config/plist hashes and independently healthy status. Owned workspace, shim and
+shell configuration were removed after archiving evidence; the single tool-created
+temporary file was hash-verified before removal. This controlled response-loss
+path does not establish concurrent-edit, permission, notification or multi-project
+isolation acceptance. No PR was merged.
