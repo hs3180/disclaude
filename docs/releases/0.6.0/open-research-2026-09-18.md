@@ -159,3 +159,42 @@ Evidence: `.local/060-poll/control-pause-*`, `paused-feedback-*`, and
 `paused-feedback-checker-replay.json`. Next work must address skipped retention
 checks in ordinary feedback turns, then replay the same failure without telling
 the user prompt which checker to run.
+
+## Single replacement payload: ordinary-feedback retest
+
+Implementation `8f9995d6` adds a small read-only replacement assembler. It takes
+a complete snapshot and the actual whole old/new paragraphs, and returns one
+replacement containing the new current paragraph followed by the verbatim old
+paragraph under a revision-labelled history heading. It rejects ambiguous,
+partial, missing and multi-paragraph patterns. The same output carries the
+actual old paragraph into the existing read-back verifier. It does not mutate
+tasks, write files, call Feishu or provide remote locking/rollback.
+
+Four new tests and five existing verifier tests pass. Offline replay using the
+failed revision 17/20 paragraphs produces a replacement retaining the lost old
+text. Skill validation and diff checks pass.
+
+Integration `a0722463faf0ec19af38b0af8e88ae3b5c1c4e3f` continued the same paused
+project through a fresh REST-only `gpt-5.6-luna` session. Its plain user request
+only added full-width/half-width characters to future evaluation scope; it did
+not mention scripts, history preservation or resuming research. The model
+actually invoked the assembler, passed its generated pattern/content using a
+subprocess argument array to one targeted replacement, then invoked the verifier
+on complete read-back. The generated replacement occurs exactly once in the
+independently fetched final document.
+
+Independent revision 23 matches checkpoint 28 exactly; all four recommendation
+paragraphs present before this turn remain exactly once. The pause marker and
+resume requirement remain, SQL is unchanged, and no pending write or unresolved
+feedback remains. This is an ordinary-feedback success for the new replacement
+path, not proof that the script cannot be bypassed or that all controls work.
+
+The paragraph already lost in the previous failed turn remains absent. Its
+verified source is retained in revision 17; it must still be restored and the
+whole history independently checked. PR #5112 therefore remains draft. The
+candidate exited with no open files, production retained its healthy original
+instance, and computer use/screenshots were both zero.
+
+Evidence: `.local/060-poll/atomic-history-*`. CI at the evidence check showed
+five successful checks and Unit Tests still running; do not treat that snapshot
+as a completed CI run.
