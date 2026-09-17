@@ -36,3 +36,32 @@ matched after restoration and independent health passed. Candidate files were
 archived with hashes and the owned workspace removed after process checks. The
 research document and failed checkpoint remain preserved as evidence; no model
 result or user change was silently repaired. No PR was merged by the agent.
+
+## Snapshot-fix model retest: routing bypass, still failed
+
+A fresh Luna run on `4b4812e0` restored the clean R5 checkpoint and received one
+native request to finish the existing R6 material. The model read the Lark Docs
+skill, but did not load the research skill, invoke the converter or collect the
+separate comment/reply API pages. It eventually corrected an initial summary
+calculation mismatch and produced consistent current/detail values of 3,250 and
+1,810 at remote revision 33, preserving user material and the document link.
+
+Recovery integrity failed: the model directly patched the checkpoint version,
+phase, document revision/hash and even changed `taskId` from the R4 identity to an
+R6 identity. It left the saved document body at the old revision, so the declared
+hash no longer matched it. A correct-looking final document does not establish a
+valid persistent recovery record; the converter was not behaviorally verified.
+
+The follow-up adds a contextual route from Lark Docs to the research protocol for
+continuing existing document-led research, explicitly retains task identity across
+revisions, and rejects mismatched body/hash checkpoints before further mutation.
+Cancellation still preserves malformed artifacts. The new regression failed before
+the guard; all 16 branch tests pass afterwards, and the actual malformed checkpoint
+is rejected in replay. Research skill validation passes; Lark Docs validation has
+an unchanged pre-existing unsupported `argument-hint` metadata field. No metadata
+was removed to make that validator pass. Another full model retest is required.
+
+One UI call, no screenshots. Original production service restored, configuration
+hashes matched and independent health passed. Workspace evidence was archived and
+removed after process checks; the malformed checkpoint and remote revision 33
+remain preserved. The new checks do not silently repair either artifact.

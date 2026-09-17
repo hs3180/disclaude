@@ -23,6 +23,13 @@ history after a parsing mistake. Preserve the faulty snapshot and checkpoint,
 report the synchronization problem, and leave dependent work paused until the
 snapshot mapping can be reconciled without discarding feedback history.
 
+A continuing research revision keeps the existing `taskId` and document binding;
+do not rename the task for R5/R6 or patch individual state fields. `state.mjs`
+mutations require the saved body to match its hash. A mismatch is a corrupted
+checkpoint, not a fresh snapshot: preserve it, report that synchronization cannot
+continue, and do not overwrite it with guessed values. Cancellation remains
+available to preserve artifacts while stopping further work.
+
 ## Snapshot adapter
 
 ```json
