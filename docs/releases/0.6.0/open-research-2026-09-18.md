@@ -198,3 +198,57 @@ instance, and computer use/screenshots were both zero.
 Evidence: `.local/060-poll/atomic-history-*`. CI at the evidence check showed
 five successful checks and Unit Tests still running; do not treat that snapshot
 as a completed CI run.
+
+## Full historical audit: title-only check failed, missing-block report recovered
+
+Integration `35e5f4c947ad2557e953b9de7f5a625176b58360` received a request to
+review all six saved original snapshots, restore verified missing paragraphs,
+and clarify the paused overview. Actual Luna claimed every recommendation was
+present without restoring the known missing revision-17 paragraph. Independent
+revision 27/checkpoint 34 matched, but the paragraph was still absent. Matching
+history titles and checkpoint state did not establish full-text completeness.
+
+Implementation `515ec189` adds a read-only historical-snapshot comparison. It
+reports every blank-line-separated source text block missing from the current
+body, with exact text, hash and source revisions. It groups duplicates but does
+not infer which blocks are conclusions or certify semantic completeness.
+Replaying all six real source snapshots identifies three differences: the old
+running-status heading, the superseded original goal paragraph, and the missing
+recommendation from revision 17. Five new tests plus the previous nine tests
+pass; skill validation passes. All six CI checks passed on this implementation.
+
+The identical user request on integration
+`057573576e7c2c3529dacde0d0be4f6ea9eae5de` led actual `gpt-5.6-luna` to run the
+comparison, identify the missing fourth-round recommendation, and append it
+verbatim from the saved original. It reran the comparison after writing and
+correctly distinguished the two remaining metadata changes. An initial attempt
+to normalize the wrong JSON shape was corrected before the successful audit;
+complete flags alone do not establish valid source extraction.
+
+Independent final revision 32/checkpoint 37 matches byte-for-byte. Each of the
+six original recommendation paragraphs occurs exactly once. The current
+recommendation, complete SQL block/file and all prior receipt IDs are unchanged;
+research remains paused, with no pending write or unresolved feedback. Six
+independent paragraph-verifier calls pass. The model itself ran the broader
+missing-block comparison before and after repair, but did not invoke the
+separate paragraph verifier in this turn. This proves the observed restoration
+outcome, not universal adherence to every tool instruction.
+
+The run also exposed a separate metadata-write error: unescaped shell backticks
+removed `ß`/`ss` from a new scope summary. Luna disclosed the error, reread and
+repaired the exact text using a quoted heredoc, and saved the final correct
+snapshot. The failed write remains in the rollout. The overview now displays
+`2026-09-18 07:35:51 +0800`, but that value was generated at the display update,
+not tied to completion of all collection steps. The accurate-last-sync-time
+requirement therefore remains unproven; no broad UX pass is claimed.
+
+Both REST-only instances exited, left production untouched and independently
+healthy, and used zero computer-use calls/screenshots. Three owned external
+temporary files from the successful run were archived, hash-verified and
+removed; no candidate files remained open. Failed artifacts remain retained.
+PR #5112 can be reviewed for its scoped replacement/audit/restoration changes;
+metadata-write robustness, precise synchronization time, native in-flight
+controls and final integrated release gates remain separate work.
+
+Evidence: `.local/060-poll/history-restoration-*`, `history-audit-*`, and
+`history-audit-replay.json`.
