@@ -451,6 +451,48 @@ const CR_MANUAL_PLIST_PATH = resolve(process.argv[2] === 'chromium-isolated'
 let CR_PLIST_PATH = CR_AUTO_PLIST_PATH;
 let CR_PREVIOUS_PLIST_PATH = CR_AUTO_PLIST_PATH;
 
+const CHROMIUM_MANAGED_MARKER = '<!-- disclaude-managed-chromium-v1 -->';
+
+// Recognize the exact old generated shape so pre-marker installations keep
+// working. A matching filename/Label alone is not permission to replace a
+// manually maintained service. This is compatibility detection, not a sandbox.
+export function isLegacyChromiumDefinition(plist, label) {
+  const keys = (value, expected) => value && typeof value === 'object' && !Array.isArray(value) &&
+    Object.keys(value).sort().join(',') === expected.split(',').sort().join(',');
+  if (!keys(plist, 'Label,ProgramArguments,RunAtLoad,KeepAlive,ThrottleInterval,StandardErrorPath,StandardOutPath,EnvironmentVariables') ||
+      plist.Label !== label || plist.RunAtLoad !== true || plist.KeepAlive !== true || plist.ThrottleInterval !== 5) return false;
+  const env = plist.EnvironmentVariables;
+  if (!keys(env, 'PATH,HOME,BU_CDP_URL,CHROMIUM_CDP_PROFILE_DIR,CHROMIUM_CDP_PORT,CHROMIUM_CDP_ADDRESS') ||
+      Object.values(env).some(value => typeof value !== 'string') ||
+      !env.HOME.startsWith('/') || !env.CHROMIUM_CDP_PROFILE_DIR.startsWith('/') ||
+      !/^\d+$/.test(env.CHROMIUM_CDP_PORT) || +env.CHROMIUM_CDP_PORT < 1 || +env.CHROMIUM_CDP_PORT > 65535 ||
+      env.BU_CDP_URL !== `http://${env.CHROMIUM_CDP_ADDRESS}:${env.CHROMIUM_CDP_PORT}` ||
+      ![plist.StandardErrorPath, plist.StandardOutPath].every(value => typeof value === 'string' && value.startsWith('/'))) return false;
+  const args = plist.ProgramArguments;
+  if (!Array.isArray(args) || args.some(value => typeof value !== 'string')) return false;
+  const offset = args[0] === '/usr/bin/caffeinate' && args[1] === '-s' ? 2 : 0;
+  if (!args[offset]?.startsWith('/')) return false;
+  const expected = [`--remote-debugging-port=${env.CHROMIUM_CDP_PORT}`,
+    `--remote-debugging-address=${env.CHROMIUM_CDP_ADDRESS}`, `--user-data-dir=${env.CHROMIUM_CDP_PROFILE_DIR}`,
+    '--no-first-run', '--no-default-browser-check', '--disable-blink-features=AutomationControlled',
+    '--disable-background-networking', '--disable-default-apps', '--disable-sync', 'about:blank'];
+  const actual = args.slice(offset + 1);
+  return actual.length === expected.length + 1 && expected.every((value, i) => actual[i] === value) &&
+    ['--headless=new', '--start-maximized'].includes(actual.at(-1));
+}
+
+function assertChromiumDefinitionManaged() {
+  for (const path of [CR_AUTO_PLIST_PATH, CR_MANUAL_PLIST_PATH]) {
+    if (!existsSync(path)) continue;
+    const raw = readFileSync(path, 'utf8');
+    let plist;
+    try { plist = JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', path], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })); }
+    catch { /* An unreadable definition must also be preserved. */ }
+    if (plist?.Label === LABEL_CHROMIUM && (raw.includes(CHROMIUM_MANAGED_MARKER) || isLegacyChromiumDefinition(plist, LABEL_CHROMIUM))) continue;
+    throw new Error(`Existing Chromium plist is not managed by this CLI; preserve it and resolve migration before replacement: ${path}`);
+  }
+}
+
 function selectChromiumPlistPath() {
   const existing = [CR_AUTO_PLIST_PATH, CR_MANUAL_PLIST_PATH].filter(path => existsSync(path));
   if (existing.length > 1) throw new Error('Both automatic and manual Chromium definitions exist; resolve the duplicate before changing services');
@@ -687,6 +729,7 @@ function generateChromiumPlist() {
 
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+${CHROMIUM_MANAGED_MARKER}
 <plist version="1.0">
 <dict>
   <key>Label</key>
@@ -863,6 +906,7 @@ async function withChromiumActivationLock(action) {
   try { writeFileSync(lock, `${process.pid}\n`, { flag: 'wx', mode: 0o600 }); }
   catch (error) { if (error.code === 'EEXIST') throw new Error(`Another activation owns ${lock}; check its recorded PID before removing a stale lock`); throw error; }
   try {
+    assertChromiumDefinitionManaged();
     return await action();
   } finally { rmSync(lock, { force: true }); }
 }
