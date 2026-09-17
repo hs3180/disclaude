@@ -82,9 +82,15 @@ export function transition(previous, command, input) {
     case 'ack': {
       requireValue(state.pendingWrite && input?.operationId === state.pendingWrite.id, 'operation_mismatch');
       const snapshot = snapshotFor(state, input.snapshot);
-      requireValue(snapshot.body.includes(state.pendingWrite.fragment), 'write_not_observed');
+      const fragment = state.pendingWrite.fragment;
+      // Feishu Markdown readback adds a heading separator and drops the final
+      // newline. Match the entire append, preserving every byte of the base
+      // and receipt content; never trim user content or ignore other edits.
+      const normalizedAppend = state.documentBody + '\n\n' + fragment.slice(1, -1);
+      const matchesAppendBoundary = snapshot.body === normalizedAppend;
+      requireValue(matchesAppendBoundary || snapshot.body.includes(fragment), 'write_not_observed');
       // Any concurrent body change needs reconciliation, not a false "feedback handled" result.
-      const priorBody = snapshot.body.replace(state.pendingWrite.fragment, '');
+      const priorBody = matchesAppendBoundary ? state.documentBody : snapshot.body.replace(fragment, '');
       requireValue(digest(priorBody) === state.pendingWrite.baseHash, 'concurrent_document_edit');
       for (const decision of state.pendingWrite.decisions) {
         const item = state.feedback.find(item => item.key === decision.key);

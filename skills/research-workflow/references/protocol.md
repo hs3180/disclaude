@@ -60,8 +60,11 @@ appending that fragment once. It is a feedback receipt; it does not execute the
 research or prove that substantive changes were completed.
 
 `ack` input is `{"operationId":"…","snapshot":{…}}` from a complete read-back.
-It requires the exact fragment, the original body outside it, and unchanged
-comment versions for the decisions. Only then are decisions committed. Other
+It requires the exact receipt content, the original body outside it, and unchanged
+comment versions for the decisions. For an append at the end only, it also accepts
+Feishu Markdown readback adding one separator newline before the heading and
+removing the receipt’s final newline. This matches the entire expected document;
+it does not trim user content, ignore internal changes or accept duplicate receipts. Only then are decisions committed. Other
 new comments discovered in the read-back become pending. Document tools that
 normalize Markdown differently may fail this conservative check; use reconcile
 rather than declaring success or repeatedly appending.
