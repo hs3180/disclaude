@@ -152,6 +152,36 @@ and rationale. `phase` with `{"phase":"synthesis"}` and `finish` with `{}`
 require no pending write, pending feedback, or unanswered clarification.
 `cancel` with `{}` keeps feedback and any unknown-write record for inspection.
 
+## End-of-turn synchronization
+
+Every research turn needs a final complete fetch and `sync`, including a turn
+that keeps the research active. A successful receipt `ack` records the body at
+that moment; substantive changes made afterwards leave that checkpoint stale.
+Compare the saved body/revision with the final read-back. A local `status` read
+alone cannot establish that the remote document is current.
+
+Prefer this order within a turn:
+
+1. Recover an existing pending receipt first, then fetch/sync user feedback.
+2. Apply the substantive incremental research edits supported by that feedback.
+3. Fetch the full body/comments and sync the resulting document. Inspect changes
+   against the prior snapshot and this turn's actual writes. The helper records
+   own substantive body changes as pending too; explain that verified update in
+   its decision, rather than treating it as a new user request or blindly
+   declaring every new body version to be your own write.
+4. Prepare decisions for the reviewed pending items, export/append the receipt,
+   and acknowledge its complete read-back. Do not interleave substantive edits
+   between prepare and ack; doing so invalidates the receipt's base body.
+5. Fetch/sync once more and inspect pendingWrite and unresolved feedback. If
+   another edit/comment arrived, either handle it or retain it as pending and
+   tell the user what remains. Do not repeatedly rewrite findings just to clear
+   a body-feedback item, and do not claim that all feedback is settled when it
+   is not. Preserve an unanswered clarification until the user answers.
+
+A final sync of the unchanged acknowledged body adds no new body feedback.
+Updating the checkpoint does not itself require another document edit. There is
+no need for a self-perpetuating cycle of research edits and receipts.
+
 Before changing phase or finishing, fetch/sync again; the local helper cannot
 detect external changes without a supplied fresh snapshot. No group creation,
 background scheduling, remote transaction rollback or automatic task restart

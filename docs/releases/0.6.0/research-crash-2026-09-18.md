@@ -1,5 +1,12 @@
 # Research service crash: partial result and snapshot defect
 
+Latest status: controlled crash/downtime-feedback and malformed-receipt recovery
+have scoped real-Luna evidence. Candidate `ef1a110b` also passes normal pending
+receipt confirmation, exact receipt export for new feedback, and linked reporting.
+The guard's rejection branch has regression/captured-response coverage. Historical
+failures and duplicate explanations remain preserved below. None of these results
+establishes all release gates or a final 0.6.0 candidate.
+
 Candidate `298f40e5` used actual `gpt-5.6-luna` and a preserved research workspace.
 A controlled foreground Python read was observed running with a start marker and
 no completion marker. Candidate launchd auto-restart was disabled. SIGKILL was sent
@@ -247,3 +254,70 @@ Original service config/plist hashes matched and independent health passed after
 50 seconds. The owned workspace was archived and removed; ten tool-created
 temporary files were hash-verified, archived and removed. No remote failure
 evidence was deleted or silently repaired, and no PR was merged.
+
+## Retest from the failed checkpoint: malformed receipt recovery
+
+Candidate `5bcf1622` copied the complete failed-run research archive with pending
+checkpoint 26. Independent preflight found its operation ID once in remote
+revision 44, but the receipt was not byte-identical: the prior model's manually
+written document-feedback key had an extra `e`. Operation-ID presence alone did
+not establish an acknowledgeable receipt. This changes the scope of this retest;
+it cannot prove the normal observed-receipt guard path.
+
+Actual Luna attempted acknowledgement first; `write_not_observed` correctly
+rejected the mismatched text. Reconciliation was therefore permitted. The model
+retained the entire old body and added a new confirmation receipt, then read it
+back and acknowledged it. Final version 29 / document 45 is active with no pending
+feedback or write; original identity and all previously handled feedback remain,
+and the body/hash matches independent remote readback. The final chat includes
+the document link, unresolved costs and ongoing status without internal commands.
+This is a scoped pass for malformed-receipt reconciliation and linked reporting.
+The historical duplicate explanations were not removed.
+
+A read-only `state.mjs receipt` command now exports the saved pending fragment
+verbatim so the model need not transcribe long keys. It validates the expected
+checkpoint version, active state and saved body hash, preserves whitespace, and
+has no remote effect or state mutation. Skill/protocol guidance uses the exported
+file for append. The regression failed before the command existed; 20 branch and
+22 integrated tests pass, including exact Unicode/trailing-newline output, stale
+version, cancelled state and missing receipt rejection. Export of the real saved
+checkpoint is byte-identical and leaves it unchanged. Model use of this new command
+and the normal observed-receipt guard still require a separate retest.
+
+One computer-use call, zero screenshots. Original service configuration hashes
+matched and independent health passed. Owned workspace archived and removed;
+this round created no external temporary files. Measured model duration was
+about 241 seconds; its auxiliary record's approximately ten-minute claim is not
+used as timing evidence. No PR was merged.
+
+## Normal pending receipt plus exact exporter: scoped real-model pass
+
+Candidate `ef1a110b` used the stored prepare response for pending checkpoint 28.
+Preflight compared the entire body, receipt and comment versions against remote
+revision 45: acknowledgement exactly reproduced verified checkpoint 29, and
+erroneous reconciliation was rejected without mutation. The checkpoint was
+reconstructed from this actual saved prepare response; the research directory
+retained later readback artifacts. This was not a fresh service-crash run.
+
+A new R9 comment requested preserving history and unresolved costs without
+changing the existing recommendation. One native request asked actual Luna to
+recover and process new feedback, without prescribing helper commands. Its
+mutation/export sequence was `ack → prepare → receipt → ack`: it confirmed the
+existing operation, prepared R9, invoked the exact exporter and acknowledged
+one new append. No premature sync, reconciliation or repeat append occurred.
+
+Independent readback is exactly the prior body plus the one exported R9 fragment
+with the known Feishu append boundary. The old operation and new operation each
+appear once; every previously handled feedback object is unchanged. Final
+checkpoint 31 / document 46 is active, with no pending feedback or write, and
+its body/hash matches remote content. Final chat gives the document link, confirms
+recovery and preserves unknown costs using user-facing language. A local reporting
+script initially read the acknowledgement envelope incorrectly; the model inspected
+the saved result instead of repeating the operation.
+
+One computer-use call, zero screenshots. Original service config/plist hashes
+matched and independent health passed. Owned workspace and two temporary body
+comparison files were archived/hash-verified and removed. Measured model duration
+was about 188 seconds; the auxiliary record's approximately twelve-minute claim
+is not used as timing evidence. All six CI checks passed on `4d4d2ac2`; the
+20 branch/22 integrated tests remain the latest code validation. No PR was merged.
