@@ -1,6 +1,6 @@
 # Browser selection and setup
 
-`disclaude chromium-cdp setup` offers terminal selection of an installed Chromium/Chrome or an absolute custom executable. Installed independent Chromium is listed first. The wizard asks for a dedicated persistent profile, loopback CDP port, visible/headless mode and login autostart, displays the selected executable and its actual version, and requires confirmation before delegating to the platform service manager.
+`disclaude chromium-cdp setup` offers terminal selection of an installed Chromium/Chrome or an absolute custom executable. Installed independent Chromium is listed first. Each discovered candidate shows its path, actual version and existing-local-executable source before selection. A failed or timed-out version probe is shown as unavailable; selecting that candidate still requires the strict version check. The confirmation/JSON summary distinguishes an existing local executable from a verified download; local discovery is not a signature or provenance verification. The wizard asks for a dedicated persistent profile, loopback CDP port, visible/headless mode and login autostart, displays the selected executable and its actual version, and requires confirmation before delegating to the platform service manager.
 
 On a fresh configuration, visible mode is the default. Existing saved profile/port/mode are offered as defaults; explicit flags take precedence. A Linux headless server can select `--headless`. The selected program is reused with the dedicated automation profile.
 

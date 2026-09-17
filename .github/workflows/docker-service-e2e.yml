@@ -14,6 +14,7 @@ on:
       - 'tests/e2e/docker-browser-smoke.test.ts'
       - 'tests/e2e/docker-cleanup.test.ts'
       - 'tests/e2e/helpers/docker-resources.ts'
+      - 'tests/e2e/helpers/docker-model-schedule.ts'
       - 'scripts/browser-use-smoke.sh'
       - 'docker/**'
       - '.github/workflows/docker-service-e2e.yml'
@@ -31,6 +32,7 @@ on:
       - 'tests/e2e/docker-browser-smoke.test.ts'
       - 'tests/e2e/docker-cleanup.test.ts'
       - 'tests/e2e/helpers/docker-resources.ts'
+      - 'tests/e2e/helpers/docker-model-schedule.ts'
       - 'scripts/browser-use-smoke.sh'
       - 'docker/**'
       - '.github/workflows/docker-service-e2e.yml'
@@ -65,7 +67,9 @@ jobs:
           DISCLAUDE_E2E_DOCKER_FAIL_AFTER_START: '1'
         run: |
           set +e
-          node node_modules/vitest/vitest.mjs run tests/e2e/docker-service.test.ts > docker-failure-cleanup.log 2>&1
+          # This subprocess must fail; only the verifier below decides the job result.
+          # Avoid GitHub failure annotations for the deliberately injected error.
+          node node_modules/vitest/vitest.mjs run tests/e2e/docker-service.test.ts --reporter=default > docker-failure-cleanup.log 2>&1
           result=$?
           set -e
           cat docker-failure-cleanup.log
@@ -76,4 +80,5 @@ jobs:
           const log = readFileSync('docker-failure-cleanup.log', 'utf8');
           assert(log.includes('Injected Docker E2E failure after owned container start'));
           assert(log.includes('DOCKER_TEST_CLEANUP'));
+          console.log('PASS: injected failure returned exit 1 and owned Docker resources were cleaned.');
           JS

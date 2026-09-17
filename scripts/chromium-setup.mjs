@@ -44,7 +44,14 @@ export function discoverSetupBrowsers(platform = process.platform) {
       const executable = realpathSync(path);
       if (seen.has(executable)) return [];
       seen.add(executable);
-      return [{ path: executable, kind: /chromium/i.test(path) ? 'Chromium' : 'Chrome' }];
+      let version = 'unavailable (will be checked when selected)';
+      try {
+        version = execFileSync(executable, ['--version'], {
+          encoding: 'utf8', timeout: 3000, maxBuffer: 64 * 1024,
+          stdio: ['ignore', 'pipe', 'ignore'],
+        }).trim().split(/[\r\n]/)[0] || version;
+      } catch { /* Keep the candidate visible; selection performs the strict check. */ }
+      return [{ path: executable, kind: /chromium/i.test(path) ? 'Chromium' : 'Chrome', version }];
     } catch { return []; }
   });
 }
@@ -55,7 +62,7 @@ export async function collectSetupSelection(options, saved, ask, download) {
   if (!binary) {
     if (!ask) throw new Error('Non-interactive setup requires --binary /absolute/path or --download, plus --yes (or --dry-run)');
     const browsers = discoverSetupBrowsers();
-    const choices = browsers.map((browser, index) => `${index + 1}. ${browser.kind}: ${browser.path}`).join('\n');
+    const choices = browsers.map((browser, index) => `${index + 1}. ${browser.kind} (existing local executable)\n   Path: ${browser.path}\n   Version: ${browser.version}`).join('\n');
     const preferred = browsers.findIndex(browser => browser.kind === 'Chromium');
     const defaultChoice = preferred >= 0 ? preferred + 1 : download ? browsers.length + 2 : 1;
     const answer = (await ask(`${choices}${choices ? '\n' : ''}${browsers.length + 1}. Custom executable path${download ? `\n${browsers.length + 2}. Download independent Chromium` : ''}\nChoose browser [${defaultChoice}]: `)).trim() || String(defaultChoice);
@@ -141,7 +148,7 @@ async function main() {
     catch { throw new Error('Selected executable did not report its version; current service unchanged'); }
     const profileCopy = options['--copy-profile-from']
       ? await planChromiumProfileCopy(options['--copy-profile-from'], selection.CHROMIUM_CDP_PROFILE_DIR, version, controller.signal) : undefined;
-    const summary = { ...(imported ? { importedConfiguration: { source: imported.source, sha256: imported.sha256, fields: Object.keys(imported.environment) } } : {}), executable: selection.CHROMIUM_CDP_BINARY, version, profile: selection.CHROMIUM_CDP_PROFILE_DIR,
+    const summary = { ...(imported ? { importedConfiguration: { source: imported.source, sha256: imported.sha256, fields: Object.keys(imported.environment) } } : {}), executable: selection.CHROMIUM_CDP_BINARY, version, source: artifact ? 'verified-download' : 'existing-local-executable', profile: selection.CHROMIUM_CDP_PROFILE_DIR,
       endpoint: `http://127.0.0.1:${selection.CHROMIUM_CDP_PORT}`, mode: selection.CHROMIUM_CDP_HEADED === '1' ? 'headed' : 'headless',
       ...(profileCopy ? { profileCopy: { source: profileCopy.source, destination: profileCopy.destination, entries: profileCopy.entries.length, bytes: profileCopy.bytes } } : {}),
       autostart: selection.CHROMIUM_CDP_AUTOSTART === '1', service: process.platform === 'darwin' ? 'launchd' : 'systemd user', configuration: chromiumConfigPath(),
