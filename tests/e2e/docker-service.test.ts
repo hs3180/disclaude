@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
+import { verifyDockerModelSchedule } from './helpers/docker-model-schedule.js';
 import { cleanupDockerTestResources } from './helpers/docker-resources.js';
 
 const exec = promisify(execFile);
@@ -11,7 +12,9 @@ const docker = async (...args: string[]) => (await exec('docker', args, { timeou
 describe('production Docker service image', () => {
   it.skipIf(!process.env.DISCLAUDE_E2E_DOCKER_IMAGE)('starts, runs persisted schedules, preserves uploaded files across recreation, and stops cleanly', async () => {
     const image = process.env.DISCLAUDE_E2E_DOCKER_IMAGE!;
-    const withModel = process.env.DISCLAUDE_E2E_DOCKER_MODEL === '1';
+    const withChatModel = process.env.DISCLAUDE_E2E_DOCKER_MODEL === '1';
+    const withScheduledModel = process.env.DISCLAUDE_E2E_DOCKER_MODEL_SCHEDULE === '1';
+    const withModel = withChatModel || withScheduledModel;
     const modelEnvFile = process.env.DISCLAUDE_E2E_DOCKER_MODEL_ENV_FILE;
     if (withModel) { expect(modelEnvFile, 'Supply a private Docker env file for the real model case').toBeTruthy(); }
     const suffix = randomUUID();
@@ -98,7 +101,7 @@ fs.appendFileSync('/data/workspace/schedule-runs.ndjson', JSON.stringify({boot, 
         const downloaded = await request(13000, `/api/files/${fileId}/download`);
         expect(downloaded.status).toBe(200); expect(downloaded.body.content).toBe(content);
         expect(await inside(`import fs from 'node:fs'; console.log(fs.readFileSync('/data/workspace/keep.txt','utf8')+' / '+fs.readFileSync('/data/codex/keep.txt','utf8'));`)).toBe('workspace retained / codex retained');
-        if (withModel) {
+        if (withChatModel) {
           const marker = `docker-model-${attempt}-${suffix}`;
           const target = `/data/workspace/${marker}.txt`;
           const answer = await request(13000, '/api/chat/sync', 'POST', { chatId: `docker-model-${attempt}`,
@@ -107,6 +110,9 @@ fs.appendFileSync('/data/workspace/schedule-runs.ndjson', JSON.stringify({boot, 
           expect(JSON.stringify(answer.body)).toContain(marker);
           expect(await inside(`import fs from 'node:fs'; console.log(fs.readFileSync(${JSON.stringify(target)},'utf8').trim());`)).toBe(marker);
         }
+        if (withScheduledModel) {
+          await verifyDockerModelSchedule(inside, docker, container, boot, attempt > 0 ? `${suffix}-0` : undefined);
+        }
         await docker('stop', '--time', '20', container);
         expect(Number(await docker('inspect', '--format', '{{.State.ExitCode}}', container))).toBe(0);
         await docker('rm', container); createdContainer = false;
@@ -114,7 +120,7 @@ fs.appendFileSync('/data/workspace/schedule-runs.ndjson', JSON.stringify({boot, 
         if (attempt === 0) {
           await dataOperation(`import fs from 'node:fs'; const c=JSON.parse(fs.readFileSync('/data/config.json')); c.deepseek.mode='minimal'; fs.writeFileSync('/data/config.json',JSON.stringify(c));`);
         }
-        console.info('DOCKER_SERVICE_ACCEPTANCE', JSON.stringify({ attempt, mode: attempt ? 'minimal' : 'standard', ...runtime, uploadRetained: true, scheduleExecuted: true, scheduleAndHistoryRetained: true, cleanExit: true, realModelToolCall: withModel }));
+        console.info('DOCKER_SERVICE_ACCEPTANCE', JSON.stringify({ attempt, mode: attempt ? 'minimal' : 'standard', ...runtime, uploadRetained: true, scheduleExecuted: true, scheduleAndHistoryRetained: true, cleanExit: true, realModelToolCall: withChatModel, realScheduledModelTurn: withScheduledModel }));
       }
     } catch (error) {
       if (createdContainer) { console.error(await docker('logs', '--tail', '100', container).catch(() => 'Container logs unavailable')); }
@@ -123,5 +129,5 @@ fs.appendFileSync('/data/workspace/schedule-runs.ndjson', JSON.stringify({boot, 
       await cleanupDockerTestResources(docker, label);
       console.info('DOCKER_TEST_CLEANUP', JSON.stringify({ label, containersRemoved: true, volumesRemoved: true }));
     }
-  }, 240_000);
+  }, 480_000);
 });

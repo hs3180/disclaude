@@ -145,3 +145,48 @@ peer's data untouched, and reclaim the network only after the peer releases it.
 Docker CI runs this resource case alongside the production image tests and verifies
 the explicit post-start failure path using the already-built production image.
 A helper-only change triggers this CI job as well.
+
+
+## Opt-in model schedule acceptance
+
+Set `DISCLAUDE_E2E_DOCKER_MODEL_SCHEDULE=1` with the production image and private
+`DISCLAUDE_E2E_DOCKER_MODEL_ENV_FILE` described above. This option is independent
+of `DISCLAUDE_E2E_DOCKER_MODEL`, which tests direct REST chat. The new case creates
+a prompt-based SCHEDULE.md after service readiness. The service watcher loads it
+and wall-clock cron triggers it; the test does not call the scheduler or send a
+chat request to trigger that task.
+
+A calendar-specific UTC trigger is set 30 seconds ahead using the container clock,
+avoiding recurring paid calls during acceptance. The bounded check requires the
+scheduler's completed-agent-turn log for the exact task ID, independently reads
+the model-created marker/boot/UID artifact, and checks the schedule is unchanged.
+It repeats after container recreation in minimal mode and checks that the first
+artifact is preserved. Existing owned Docker-resource cleanup runs on success
+and failure. Credentials are not enabled in default CI.
+
+**Actual execution — 2026-09-17:** the production Dockerfile built successfully
+from `e369b3e8de44085fa1ffa272898df2992b42a089` on Linux ARM64. Image digest:
+`sha256:b9390634069953443ddde67b60119c481c55a5852448a40b2a652965c55d2349`.
+Runtime: Node 22.23.2, dsh 0.1.2-rc.1, model deepseek-flash, UID 1001.
+
+The first run failed in 38.01 seconds before starting a model: the fixture's
+`model-…` chat ID was not recognized by any channel. The REST channel explicitly
+owns `rest-…` or UUID IDs. After correcting only this fixture to `rest-model-…`,
+the same image passed in 86.40 seconds. Both standard and minimal boots recorded
+the exact scheduler completed-agent-turn event and independently verified their
+model-created marker/boot/UID artifacts. The second boot retained the first result;
+both schedule files remained unchanged, uploaded data persisted, and both exits
+were clean. Direct REST model-chat opt-in was disabled in this run.
+
+Both the failed and successful run's labelled containers and volumes were
+independently confirmed absent. The private model-env directory, owned buildx
+builder and candidate image were removed. Disk space recovered from older test
+images and freed VM blocks allowed the build to proceed without relaxing its
+space reserve.
+
+This proves actual service watcher/cron/router/dsh/model/tool execution on one
+Linux ARM64 image, using explicit tool instructions. It does not establish user
+receipt of REST notifications (no waiting REST client was used), actual Feishu
+card interaction, other model backends, final-source installation or migration
+of existing user data. These remaining #4924 gates are still open; credential-free
+CI alone does not repeat this real-model evidence.
