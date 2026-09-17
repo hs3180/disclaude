@@ -52,6 +52,11 @@ export function transition(previous, command, input) {
       documentBody: '', comments: [], feedback: [], pendingWrite: null };
   }
   requireValue(previous?.schema === 1, 'invalid_state');
+  if (command !== 'cancel') {
+    requireValue((previous.documentHash === null && previous.documentRevision === null && previous.documentBody === '') ||
+      (typeof previous.documentBody === 'string' && digest(previous.documentBody) === previous.documentHash),
+    'checkpoint_body_hash_mismatch');
+  }
   requireValue(!['completed', 'cancelled'].includes(previous.status), 'terminal_task');
   const state = structuredClone(previous);
   switch (command) {

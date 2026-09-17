@@ -18,6 +18,22 @@ function ack(state, extra = {}) {
 }
 
 describe('document feedback checkpoints', () => {
+  it('rejects a hand-edited body/hash mismatch without rewriting the checkpoint', () => {
+    const root = mkdtempSync(join(tmpdir(), 'research-integrity-'));
+    const file = join(root, 'state.json');
+    try {
+      const state = synced();
+      state.documentHash = '0'.repeat(64);
+      const original = JSON.stringify(state);
+      writeFileSync(file, original);
+      expect(() => apply(file, 'sync', state.version, snapshot())).toThrow('checkpoint_body_hash_mismatch');
+      expect(readFileSync(file, 'utf8')).toBe(original);
+      expect(transition(state, 'cancel', {}).status).toBe('cancelled');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('commits feedback only after observing the receipt and allows completion', () => {
     const pending = prepare();
     expect(pending.feedback.every(item => item.status === 'pending')).toBe(true);
