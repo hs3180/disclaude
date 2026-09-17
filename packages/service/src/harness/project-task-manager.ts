@@ -258,7 +258,11 @@ export class ProjectTaskManager {
     const next = previous.then(async () => {
       if (this.disposed) { return; }
       try {
-        p.cardId = await this.publish(structuredClone(p));
+        const displayed = structuredClone(p);
+        // A successfully delivered retry must not display its prior failure.
+        // Keep the stored error until delivery succeeds so failed retries retain it.
+        displayed.deliveryError = undefined;
+        p.cardId = await this.publish(displayed);
         p.deliveryError = undefined;
       } catch { p.deliveryError = '项目卡片更新失败；可用 /project 重新打开，已有进度保留。'; }
       if (!this.disposed) { this.store.save(p); }
