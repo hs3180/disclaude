@@ -1,5 +1,5 @@
 /**
- * Integration test: Project Binding + CwdProvider + CLAUDE_CONFIG_DIR end-to-end.
+ * Component unit test: Project Binding + CwdProvider + CLAUDE_CONFIG_DIR component behavior.
  *
  * Tests the cross-component flow:
  *   ProjectManager.use() → persist() → createCwdProvider() → CwdProvider(chatId) → workingDir
@@ -17,7 +17,7 @@ import { join, basename } from 'node:path';
 import { ProjectManager } from '@disclaude/core';
 import { createTestWorkspace } from './helpers.js';
 
-describe('Project Binding + CwdProvider end-to-end (RFC #3329)', () => {
+describe('Project Binding + CwdProvider component behavior (RFC #3329)', () => {
   let workspaceDir: string;
   let cleanup: () => void;
   let pm: ProjectManager;
@@ -33,9 +33,9 @@ describe('Project Binding + CwdProvider end-to-end (RFC #3329)', () => {
     cleanup();
   });
 
-  // ─── Category 1: Project Binding end-to-end ───
+  // ─── Category 1: Project Binding component behavior ───
 
-  describe('Project Binding end-to-end', () => {
+  describe('Project Binding component behavior', () => {
     it('should return default context when no binding exists', () => {
       const cwdProvider = pm.createCwdProvider();
       const result = cwdProvider('oc_unbound_chat');
@@ -138,9 +138,9 @@ describe('Project Binding + CwdProvider end-to-end (RFC #3329)', () => {
     });
   });
 
-  // ─── Category 3: CLAUDE_CONFIG_DIR end-to-end ───
+  // ─── Category 3: CLAUDE_CONFIG_DIR component behavior ───
 
-  describe('CLAUDE_CONFIG_DIR implication end-to-end', () => {
+  describe('CLAUDE_CONFIG_DIR implication component behavior', () => {
     it('should produce cwd for project-bound agent (implies CLAUDE_CONFIG_DIR injection)', () => {
       const projectDir = join(workspaceDir, 'bound-project');
       mkdirSync(projectDir, { recursive: true });

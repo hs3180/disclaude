@@ -1,5 +1,5 @@
 /**
- * Integration test: Scheduler → InputMessageRouter → Handler chain.
+ * Component unit test: Scheduler → InputMessageRouter → Handler chain.
  *
  * Tests the cross-component flow:
  *   Scheduler.executeTask() → SystemMessage → InputMessageRouter.route() → IAgentMessageHandler

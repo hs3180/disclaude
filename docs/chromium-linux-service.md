@@ -30,7 +30,7 @@ Opt-in test entry:
 ```sh
 DISCLAUDE_E2E_CHROMIUM=/absolute/path/to/browser \
 DISCLAUDE_E2E_CHROMIUM_SYSTEMD=1 \
-npx vitest run tests/e2e/chromium-systemd.test.ts
+npx vitest run --config vitest.e2e.config.ts tests/e2e/chromium-systemd.test.ts
 ```
 
 This needs a working native user systemd manager. It is skipped on macOS and in ordinary tests. The initial native Linux run passed on 2026-09-16: Ubuntu x64, systemd 255 (255.4-1ubuntu8.17), Node 24, and Chrome 152.0.7977.82, in 36.83 seconds (Actions run 35005999891). This covered install, enablement, restart, invalid path, port conflict, replacement rollback, recovered input/screenshot and cleanup. The expanded native run also passed (source 4c451fb3, Actions run 35006329212): 59.47 seconds, including first-install failure cleanup, status and stop/start. The shared-helper macOS launchd regression passed separately in 33.09 seconds. These are actual platform service cases; ordinary local unit tests are not counted as native Linux acceptance.
