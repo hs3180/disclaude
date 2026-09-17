@@ -16,6 +16,7 @@
 import type { ControlCommand, ControlResponse } from '../../types/channel.js';
 import type { ControlHandlerContext, CommandHandler } from '../types.js';
 import { readProjectState } from '../../project/project-state.js';
+import { projectWorkIndex } from '../../project/work-index.js';
 import { basename } from 'node:path';
 
 /** Typed command for /project handlers */
@@ -80,6 +81,7 @@ function handleInfo(command: ProjectCommand, context: ControlHandlerContext): Co
   const issueCount = state ? Object.keys(state.issues).length : 0;
   const prCount = state ? Object.keys(state.prs).length : 0;
   const lastSync = state?.sync?.issues ?? '从不';
+  const work = projectWorkIndex(boundDir);
 
   return {
     success: true,
@@ -92,6 +94,8 @@ function handleInfo(command: ProjectCommand, context: ControlHandlerContext): Co
       `- Issues: ${issueCount} 个已追踪`,
       `- PRs: ${prCount} 个已追踪`,
       `- 上次同步: ${lastSync}`,
+      ...(work.length ? ['', '**持久任务记录**（文件摘要，不表示进程运行状态）:', ...work,
+        '可在聊天中指定任务名称或 ID 继续工作。'] : []),
     ].join('\n'),
   };
 }

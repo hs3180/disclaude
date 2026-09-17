@@ -113,6 +113,22 @@ describe('handleProject', () => {
   });
 
   describe('/project info', () => {
+    it('shows file tasks only for the explicitly bound project', async () => {
+      const ctx = createTestContext();
+      const workspace = ctx.projectManager!.getWorkspaceDir();
+      const project = join(workspace, 'bound-work');
+      mkdirSync(join(project, 'tasks', 'check'), { recursive: true });
+      writeFileSync(join(project, 'tasks', 'check', 'TASK.md'), '# Check evidence\nDocument: https://tenant.feishu.cn/docx/abc');
+      mkdirSync(join(workspace, 'tasks', 'other'), { recursive: true });
+      writeFileSync(join(workspace, 'tasks', 'other', 'TASK.md'), '# Unbound private record');
+      ctx.projectManager!.use('chat-1', project);
+      const result = await invoke(makeCommand('chat-1', 'info'), ctx);
+      expect(result.message).toContain('Check evidence');
+      expect(result.message).toContain('https://tenant.feishu.cn/docx/abc');
+      expect(result.message).not.toContain('Unbound private record');
+      expect((await invoke(makeCommand('chat-2', 'info'), ctx)).message).not.toContain('private record');
+    });
+
     it('should show default project when no binding', async () => {
       const ctx = createTestContext();
       const result = await invoke(makeCommand('chat-1', 'info'), ctx);
