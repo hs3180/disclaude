@@ -146,3 +146,29 @@ ask a real tool question, generate the product card, explicitly submit a test
 choice, and complete the original turn. Feishu HTTP delivery and the human
 submission are simulated; this test sends no Feishu messages. Run it with
 `DISCLAUDE_E2E_CODEX_INPUT=1 npx vitest run tests/e2e/codex-user-input.test.ts`.
+
+### Integrated retest: asynchronous question path not handled
+
+On 2026-09-18, candidate `360330e4` combined main `d0cb71bb`, submission-latency
+fix `2d6e2d87`, the TASK.md removal and contextual feedback guidance. Build and
+69 adapter/project/skill tests passed. A fresh production-bot workspace was used
+for a native Feishu request to ask Alpha/Beta and write `answer.txt` only after
+explicit submission. This retest did **not** produce an input card.
+
+The actual Codex 0.154.0 rollout recorded `request_user_input_async`, whose
+arguments contained question titles and option strings, followed immediately by
+`{"accepted":true}`. Feishu received a text question; the model then waited in
+sleep calls. No answer was submitted and no answer file was created. A native
+`/stop` ended the test. The original service was restored, configuration and
+plist hashes matched, independent health checks passed, and the owned workspace
+was archived and removed. There was no card to recall.
+
+The experimental schema generated from that installed CLI includes
+`AsyncUserInputQuestion` under `agentMessage.questions`, with `title` and optional
+string options. This is distinct from the server-initiated
+`item/tool/requestUserInput` request supported by this adapter. The observed
+async tool result is already complete; do not invent a pending JSON-RPC ID or
+treat a later chat message as its original response. The notification path and
+its supported answer mechanism need explicit integration and verification.
+Earlier real request/response card successes remain scoped evidence; they do
+not make this integrated retest a pass.
