@@ -2,9 +2,20 @@
 
 With `agent.agentBackend: codex` and `agent.codex.transport: app-server`,
 an active Codex turn can ask questions through a Feishu card. The user chooses
-or enters answers and explicitly submits the form. Each answer returns under
-its original question ID in the original JSON-RPC response; no new turn or
-steering message is created.
+or enters answers and explicitly submits the form. Server-request questions
+return answers under their original question IDs in the original JSON-RPC
+response; that path never creates a new turn or steering message.
+
+Codex 0.154.0 also exposes `request_user_input_async`. Its questions arrive in
+`agentMessage.questions` after the tool has already returned `accepted:true`.
+These notifications use the same explicit card UI, preserving full question
+and option strings and allowing free-text answers. They have no pending RPC.
+Submission instead sends one ordinary user message with `turn/steer` and the
+originating `expectedTurnId`. It cannot start a new turn or answer a later one.
+The question's duplicate text delivery is suppressed when a card handles it.
+Async questions are non-blocking and non-secret; their answers can appear in
+Codex's normal user-message history. Secret input remains exclusive to the
+separate RPC protocol path described below.
 
 The requesting message's actor, chat, source and topic are carried as host-only
 context. They are not appended to the model prompt. Only that actor can submit
@@ -18,8 +29,9 @@ idle while awaiting the user even when it is allowed to continue. Non-blocking
 requests still leave the turn running; messages and turn completion are processed
 normally. The separate 15-minute input deadline bounds the wait, after which the
 ordinary watchdog resumes.
-The `serverRequest/resolved` notification, turn completion, interruption,
-transport closure and a 15-minute input timeout invalidate outstanding forms.
+Turn completion, interruption, transport closure and a 15-minute input timeout
+invalidate outstanding forms. `serverRequest/resolved` additionally invalidates
+the matching RPC form.
 Timeout never selects an answer. Unsupported approval and MCP requests remain
 independently rejected.
 
@@ -67,3 +79,36 @@ ask a real tool question, generate the product card, explicitly submit a test
 choice, and complete the original turn. Feishu HTTP delivery and the human
 submission are simulated; this test sends no Feishu messages. Run it with
 `DISCLAUDE_E2E_CODEX_INPUT=1 npx vitest run tests/e2e/codex-user-input.test.ts`.
+
+### Integrated retest: asynchronous question path not handled
+
+On 2026-09-18, candidate `360330e4` combined main `d0cb71bb`, submission-latency
+fix `2d6e2d87`, the TASK.md removal and contextual feedback guidance. Build and
+69 adapter/project/skill tests passed. A fresh production-bot workspace was used
+for a native Feishu request to ask Alpha/Beta and write `answer.txt` only after
+explicit submission. This retest did **not** produce an input card.
+
+The actual Codex 0.154.0 rollout recorded `request_user_input_async`, whose
+arguments contained question titles and option strings, followed immediately by
+`{"accepted":true}`. Feishu received a text question; the model then waited in
+sleep calls. No answer was submitted and no answer file was created. A native
+`/stop` ended the test. The original service was restored, configuration and
+plist hashes matched, independent health checks passed, and the owned workspace
+was archived and removed. There was no card to recall.
+
+The experimental schema generated from that installed CLI includes
+`AsyncUserInputQuestion` under `agentMessage.questions`, with `title` and optional
+string options. This is distinct from the server-initiated
+`item/tool/requestUserInput` request supported by this adapter. The observed
+async tool result is already complete; do not invent a pending JSON-RPC ID or
+treat a later chat message as its original response. The notification path
+requires its own integration and verification.
+Earlier real request/response card successes remain scoped evidence; they do
+not make this integrated retest a pass.
+
+The subsequent fix handles those notifications separately. A real CLI probe
+confirmed that a submitted Beta message via `turn/steer` returned the same turn
+ID and that turn completed with the expected marker. The product model test
+then exercised actual async questions, the Feishu card renderer, simulated
+explicit submission and same-turn completion. This is model plus adapter
+evidence, not a successful repeat of the failed native Feishu test above.
