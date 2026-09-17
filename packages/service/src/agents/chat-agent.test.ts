@@ -2024,6 +2024,7 @@ describe('ChatAgent (service)', () => {
         yield { parsed: { type: 'text', content: 'I will check the supplied report first.' } };
         yield { parsed: { type: 'tool_use', content: 'read supplied report' } };
         yield { parsed: { type: 'tool_result', content: 'The report describes costs.' } };
+        yield { parsed: { type: 'text', content: 'Still waiting for the tool.', metadata: { phase: 'commentary' } } };
         yield { parsed: { type: 'text', content: '{"directions":' } };
         yield { parsed: { type: 'text', content: '["costs"]}' } };
         yield { parsed: { type: 'result', content: '✅ Complete', terminatedReason: reason } };
@@ -2032,6 +2033,7 @@ describe('ChatAgent (service)', () => {
       try {
         await agent.runOnce('research-result', 'Plan the research');
         expect(callbacks.onTurnResult).toHaveBeenCalledWith({ success: !reason, text: '{"directions":["costs"]}', truncated: false });
+        expect(callbacks.sendMessage.mock.calls.some(call => call[1] === 'Still waiting for the tool.')).toBe(true);
       } finally { agent.dispose(); }
     });
   });
