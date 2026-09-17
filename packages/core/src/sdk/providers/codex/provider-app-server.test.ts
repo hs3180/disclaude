@@ -284,13 +284,13 @@ exit 7
     provider.dispose();
   });
 
-  it('does not report an interrupted turn as complete', async () => {
+  it.each(['interrupted', 'cancelled'])('marks backend %s as an interrupted outcome', async status => {
     const { provider } = providerFixture(`
 read initialize; echo '{"id":1,"result":{}}'
 read initialized
 read thread; echo '{"id":2,"result":{"thread":{"id":"thread-1"}}}'
 read start; echo '{"id":3,"result":{"turn":{"id":"turn-1"}}}'
-echo '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"interrupted"}}}'
+echo '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"${status}"}}}'
 `);
     const result = provider.queryStream((async function* () {
       yield { role: 'user', content: 'first' } as UserInput;
@@ -300,7 +300,7 @@ echo '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"t
       messages.push(message);
     }
     expect(messages).toContainEqual(expect.objectContaining({
-      type: 'result', content: '⏹️ Codex turn interrupted',
+      type: 'result', content: '⏹️ Codex turn interrupted', metadata: { terminatedReason: 'interrupted' },
     }));
     expect(messages.some((message) => message.content === '✅ Complete')).toBe(false);
     provider.dispose();
