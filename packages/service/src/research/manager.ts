@@ -415,6 +415,9 @@ export class ResearchManager {
     for (const [id, run] of this.running) {
       run.abort.abort();
       const p = this.project(id);
+      // The run remains registered while its final card is being delivered.
+      // Preserve any committed settled state; only unfinished execution is interrupted.
+      if (!['running', 'pausing', 'cancelling'].includes(p.status)) { continue; }
       p.status = p.status === 'cancelling' ? 'cancelled' : 'interrupted';
       this.record(p, '服务已停止。已有成果保留，下次打开可恢复。');
     }

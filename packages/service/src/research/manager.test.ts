@@ -23,7 +23,7 @@ const result = (step: ResearchStep): StepResult => step.type === 'plan' ? { dire
 function fixture(runner: StepRunner = (p, step) => Promise.resolve(step.type === 'plan' ? {
   directions: ['Compare costs'], feedbackDecisions: p.feedback.flatMap((f, feedbackIndex) =>
     f.status === 'pending' || f.status === 'needs-clarification' ? [{ feedbackIndex, status: 'applied' as const, reason: 'Compare the requested evidence in the cost direction.', directionIndexes: [0] }] : []),
-} : result(step)), publish = vi.fn(() => Promise.resolve('card-1')), directory?: string, readDocument?: DocumentReader, appendDocument?: DocumentAppender) {
+} : result(step)), publish = vi.fn<(project: ResearchProject) => Promise<string>>(() => Promise.resolve('card-1')), directory?: string, readDocument?: DocumentReader, appendDocument?: DocumentAppender) {
   return checkpointFixture(async (p, signal) => {
     const direction = p.directions.find(d => d.status === 'pending');
     const step: ResearchStep = p.feedback.some(f => f.status === 'pending' || f.status === 'needs-clarification') || !p.directions.length
@@ -41,7 +41,7 @@ function fixture(runner: StepRunner = (p, step) => Promise.resolve(step.type ===
     return { ...base, state: 'complete', ...response };
   }, publish, directory, readDocument, appendDocument);
 }
-function checkpointFixture(runner: TaskRunner, publish = vi.fn(() => Promise.resolve('card-1')), directory?: string, readDocument?: DocumentReader, appendDocument?: DocumentAppender) {
+function checkpointFixture(runner: TaskRunner, publish = vi.fn<(project: ResearchProject) => Promise<string>>(() => Promise.resolve('card-1')), directory?: string, readDocument?: DocumentReader, appendDocument?: DocumentAppender) {
   const dir = directory ?? mkdtempSync(join(tmpdir(), 'research-state-')); if (!directory) { directories.push(dir); }
   const manager = new ResearchManager(new ProjectStore(dir), runner, publish, readDocument, appendDocument); managers.push(manager);
   return { manager, dir, publish };
@@ -534,6 +534,34 @@ describe('persistent research lifecycle', () => {
     const failed = manager.get(p.id, 'alice', 'chat-a');
     expect(failed.status).toBe('failed'); expect(failed.directions).toEqual([]); expect(failed.feedback[0].status).toBe('pending');
   });
+
+  it.each(['completed', 'waiting-user', 'failed', 'paused'] as const)(
+    'preserves committed %s state when shutdown races final card delivery', async status => {
+      const entered = deferred<void>(), delivery = deferred<string>();
+      let started = false;
+      const publish = vi.fn((project: ResearchProject) => {
+        if (started && project.status === status) { entered.resolve(); return delivery.promise; }
+        return Promise.resolve('card-1');
+      });
+      const runner: TaskRunner = () => {
+        if (status === 'failed') { return Promise.reject(new Error('Task failed')); }
+        return Promise.resolve({ state: status === 'completed' ? 'complete' : status === 'waiting-user' ? 'waiting-user' : 'continue',
+          message: 'Progress retained', work: [], feedback: [], questions: [],
+          ...(status === 'completed' ? { summary: 'Completed result' } : {}),
+          ...(status === 'waiting-user' ? { clarification: 'Choose A or B' } : {}),
+        });
+      };
+      const { manager, dir } = checkpointFixture(runner, publish);
+      const p = await manager.create(input); started = true;
+      await manager.act(p.id, 'alice', 'chat-a', p.revision, 'resume');
+      await entered.promise;
+      const committed = manager.get(p.id, 'alice', 'chat-a');
+      manager.dispose();
+      delivery.resolve('late-card'); await manager.idle(p.id);
+      const reopened = checkpointFixture(runner, undefined, dir).manager;
+      expect(reopened.get(p.id, 'alice', 'chat-a')).toEqual(committed);
+    },
+  );
 
   it('pauses on the turn budget without fabricating completion or a final result', async () => {
     const runner = vi.fn<TaskRunner>(() => Promise.resolve({ state: 'continue', message: 'Still working', work: [], feedback: [], questions: [] }));
