@@ -177,19 +177,21 @@ export function buildNextStepGuidance(supportsCards?: boolean): string {
 
 ## Next Steps After Response
 
-At the end of your response, proactively suggest 2-3 relevant next steps the user might want to take, presented as an **interactive card** with clickable options.
+Use an **interactive card** when a concrete question needs user feedback, such as clarification, a choice, or confirmation. Optional follow-up questions should be grounded in the actual findings and unresolved evidence. Do not add a card merely because a response ended.
 
-### Sending the next-steps card (send_interactive)
+For research, keep findings, current conclusions and revision history in the document, and provide its link in chat. Cards collect specific feedback; they do not provide research navigation or a generic next-step menu. Do not turn viewing results, local files or history into button choices, and do not start optional work without a user response.
+
+### Sending a feedback card (send_interactive)
 
 Invoke the \`send_interactive\` channel command shown in the Tools section — it is a **command line**, not a JSON payload. Passing a card JSON blob on stdin does not work: it is consumed as the \`--question\` text and rendered verbatim into the card.
 
 \`\`\`bash
 <channel-cli> send_interactive --chat <chat-id> \\
   --parent <trigger-message-id> \\
-  --title "接下来您可以..." \\
-  --question "选择下一步操作：" \\
-  --options '[{"text":"选项1","value":"action1","type":"primary"},{"text":"选项2","value":"action2"},{"text":"选项3","value":"action3"}]' \\
-  --action-prompts '{"action1":"[用户操作] 用户选择了选项1","action2":"[用户操作] 用户选择了选项2","action3":"[用户操作] 用户选择了选项3"}'
+  --title "确认交付格式" \\
+  --question "报告需要哪种格式？" \\
+  --options '[{"text":"Markdown","value":"action1","type":"primary"},{"text":"PDF","value":"action2"}]' \\
+  --action-prompts '{"action1":"[用户操作] 用户选择了Markdown","action2":"[用户操作] 用户选择了PDF"}'
 \`\`\`
 
 Flags:
@@ -199,20 +201,20 @@ Flags:
 - \`--question\` — the prompt text shown above the buttons (or \`--question-file <path>\`, or piped on stdin).
 - \`--options\` — JSON array of buttons; each an object with a button \`text\`, a \`value\`, and an optional \`type\` of \`primary\`/\`default\`/\`danger\`.
 - \`--action-prompts\` — JSON object mapping each button \`value\` to a short user-action description.
-- \`--title\` — card header text (optional; defaults to a generic header). Use \`"接下来您可以..."\` here.
+- \`--title\` — card header text (optional; defaults to a generic header). Choose a title that identifies the specific question.
 - \`--context\` — optional one-line subtitle under the header.
 
 Do **NOT** paste raw card fields such as \`content\`/\`format\`/\`elements\` — the card body is built by the channel.
 
 ### Guidelines
 
-- Suggest 2-3 relevant next steps based on the conversation context
+- Offer only the choices relevant to the specific question; allow the user to answer freely in chat
 - Make suggestions specific and actionable
 - Use \`"type": "primary"\` for the most recommended option
 - **CRITICAL**: Always include \`actionPrompts\` that maps each option's \`value\` to a user message
 - **CRITICAL**: Reply to the triggering prompt with \`--parent <trigger-message-id>\`; this applies to non-topic groups and private chats too
 - The action prompt format: \`"[用户操作] 用户选择了..."\` describes what the user did
-- Always include a suggestions card, even for simple questions (e.g., "Want to know more about X?", "Try this related feature")`;
+- If there is no concrete feedback to obtain, finish with the answer and relevant artifact links; no card is needed`;
   }
 
   // Fallback for channels without card support
@@ -222,14 +224,14 @@ Do **NOT** paste raw card fields such as \`content\`/\`format\`/\`elements\` —
 
 ## Next Steps After Response
 
-At the end of your response, proactively suggest 2-3 relevant next steps the user might want to take.
+When further action would help, suggest relevant next steps or ask a concrete question in chat.
 
 ### Guidelines
 
 - Suggest 2-3 relevant next steps based on the conversation context
 - Make suggestions specific and actionable
 - Format as a simple list
-- Always include suggestions, even for simple questions (e.g., "Want to know more about X?", "Try this related feature")`;
+- Do not append suggestions to a complete answer unless they help the user`;
 }
 
 /**
