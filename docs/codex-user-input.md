@@ -33,8 +33,10 @@ Codex subsequently uses the answer or independently produced model/tool output.
 Cards show waiting, submitting, answered, expired or delivery-failure states.
 Invalid/incomplete input can be corrected while the request is live. An uncertain
 RPC write is not retried, because the first write may have reached Codex. A failed
-card repaint never causes a second answer. Repainting is serialized so a delayed
-waiting update cannot overwrite the final state.
+card repaint never causes a second answer. Answer delivery does not wait for
+the submitting card or any earlier repaint to finish, so channel update latency
+cannot hold a timely submission past the input deadline. Repainting is serialized
+so a delayed waiting update cannot overwrite the final state.
 
 The implementation follows the locally generated experimental schema from
 `codex-cli 0.154.0` and opts into experimental API fields during initialization.

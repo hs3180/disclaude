@@ -82,4 +82,41 @@ describe('Feishu native agent input', () => {
     await f.controller.submit(f.callback());
     expect(f.respond).toHaveBeenCalledTimes(1);
   });
+  it('delivers a timely answer while a prior card repaint is still pending', async () => {
+    const f = fixture();
+    let releasePatch!: () => void;
+    f.patch.mockImplementationOnce(() => new Promise(resolve => {
+      releasePatch = () => resolve({ code: 0 });
+    }));
+    await f.controller.request(f.request, f.context);
+    const callback = f.callback();
+    const invalid = f.controller.submit({ ...callback, action: { name: callback.action.name, form_value: {} } });
+    await vi.waitFor(() => expect(f.patch).toHaveBeenCalledTimes(1));
+    const first = f.controller.submit(callback);
+    const duplicate = f.controller.submit(callback);
+    try {
+      await vi.waitFor(() => expect(f.respond).toHaveBeenCalledExactlyOnceWith({ browser: { answers: ['Chromium'] }, note: { answers: ['No extensions'] } }));
+    } finally {
+      releasePatch();
+      await Promise.all([invalid, first, duplicate]);
+    }
+    expect(JSON.stringify(f.patch.mock.calls.at(-1))).toContain('已回答');
+    expect(JSON.stringify(f.patch.mock.calls.at(-1))).not.toContain('请回答每个问题');
+  });
+  it('keeps an invalidated in-flight response expired and never retries it', async () => {
+    const f = fixture();
+    let rejectResponse!: (error: Error) => void;
+    f.respond.mockImplementation(() => new Promise<void>((_resolve, reject) => { rejectResponse = reject; }));
+    await f.controller.request(f.request, f.context);
+    const first = f.controller.submit(f.callback());
+    await vi.waitFor(() => expect(f.respond).toHaveBeenCalledTimes(1));
+    f.abort.abort('expired');
+    rejectResponse(new Error('User-input response delivery failed'));
+    await first;
+    await f.controller.submit(f.callback());
+    expect(f.respond).toHaveBeenCalledTimes(1);
+    const finalCard = JSON.stringify(f.patch.mock.calls.at(-1));
+    expect(finalCard).toContain('回答已过期');
+    expect(finalCard).not.toContain('已回答');
+  });
 });

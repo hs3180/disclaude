@@ -109,8 +109,9 @@ export class FeishuAgentInput {
       answers = validateAgentInputAnswers(p.request, values);
     } catch { p.error = '请回答每个问题后提交。'; await this.update(token, p).catch(() => {}); return; }
     p.state = 'submitting'; p.error = undefined;
-    // Failure to repaint the card must not turn an explicit answer into a retry.
-    await this.update(token, p).catch(() => {});
+    // A slow repaint must not delay a timely answer past the input deadline.
+    // Updates remain serialized; duplicate callbacks already see submitting.
+    void this.update(token, p).catch(() => {});
     try { await p.request.respond(answers); p.state = 'answered'; }
     catch { p.state = p.request.signal.aborted ? 'expired' : 'failed'; }
     await this.update(token, p).catch(() => {});
