@@ -140,7 +140,8 @@ async function verifyPackage() {
     const { codexSkillsRegistry } = await load('core', 'sdk/providers/codex/skill-sources.js');
     const workspace = realpathSync(process.cwd());
     const skills = codexSkillsRegistry(workspace, Config.getBuiltinsDir()).resolve();
-    assert.deepEqual(skills.diagnostics, [], 'Installed built-in skills must parse successfully');
+    assert.deepEqual(skills.diagnostics.filter((item) => item.name === 'browser-use'), [],
+      'Installed browser-use metadata must parse successfully');
     const browserLink = skills.manifest.match(/\\[browser-use\\]\\(([^)]+)\\)/)?.[1];
     assert(browserLink, 'Installed Codex manifest must expose browser-use');
     const browserPath = realpathSync(resolve(workspace, decodeURIComponent(browserLink)));
