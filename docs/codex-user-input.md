@@ -79,6 +79,10 @@ ask a real tool question, generate the product card, explicitly submit a test
 choice, and complete the original turn. Feishu HTTP delivery and the human
 submission are simulated; this test sends no Feishu messages. Run it with
 `DISCLAUDE_E2E_CODEX_INPUT=1 npx vitest run tests/e2e/codex-user-input.test.ts`.
+This test explicitly uses `gpt-5.6-luna`. The RPC case is the default; setting
+`DISCLAUDE_E2E_CODEX_ASYNC_INPUT=1` also enables the optional async capability
+probe. The observed Luna session reported that async tool unavailable, so that
+case is not counted as a Luna pass. Neither invocation falls back to Astra.
 
 ### Integrated retest: asynchronous question path not handled
 
@@ -112,3 +116,29 @@ ID and that turn completed with the expected marker. The product model test
 then exercised actual async questions, the Feishu card renderer, simulated
 explicit submission and same-turn completion. This is model plus adapter
 evidence, not a successful repeat of the failed native Feishu test above.
+
+### Luna native Feishu retest
+
+The user subsequently required `gpt-5.6-luna` for all disclaude runs and tests.
+The earlier successful async model probes used Astra before that requirement;
+they do not establish Luna's tool availability. A Luna RPC model/adapter test
+passed, while its async probe produced no request and reported the tool missing.
+
+On 2026-09-18, integrated candidate `f833147e` included main `a568158e`, the
+input fixes and contextual feedback guidance, with TASK.md functionality removed.
+Both default and Codex-preset configuration selected Luna, independently confirmed
+by the actual rollout. The model issued native `request_user_input` in a fresh
+production-bot workspace. Its Feishu card offered Alpha/Beta and free input.
+The native form was filled with `Beta` and explicitly submitted once.
+
+The original call received `{"answers":{"choice":{"answers":["Beta"]}}}`,
+`answer.txt` contained `Beta` with a trailing newline, and the same turn completed.
+Independent card API readback showed “已回答” with no controls. This proves the
+native submission loop on Luna; terminal desktop repaint was not re-inspected
+and remains outside this result. Computer use was limited to the necessary
+interaction and one screenshot; API, rollout and files supplied result checks.
+
+The original daily service was restored, configuration/plist hashes matched and
+an independent health check passed. Candidate processes exited, owned workspace
+files were archived with hashes, the temporary root was removed and the test
+card was recalled. No PR was merged by the agent.
