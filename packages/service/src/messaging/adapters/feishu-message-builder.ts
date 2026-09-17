@@ -88,7 +88,9 @@ function buildFeishuToolsSection(ctx: MessageBuilderContext): string {
   }
 
   if (messagingTools.length > 0) {
-    parts.push(`To send messages to this chat, use the appropriate tool:
+    parts.push(`Answer ordinary questions directly; ChatAgent delivers your reply automatically. No channel CLI lookup or delivery call is needed for a normal answer.
+
+For an explicit additional delivery, these tools are available:
 ${messagingTools.join('\n')}
 
 - Chat ID: \`${chatId}\`
