@@ -73,6 +73,13 @@ complete snapshot records the latest document, keeps decisions pending and
 clears the ambiguous operation. Inspect any existing receipt before preparing
 new decisions; reconciliation does not undo external writes.
 
+Keep receipt acknowledgement separate from substantive edits: `ack` checks the
+original body outside its receipt, so settle or reconcile that receipt before
+changing the current summary. After substantive changes, refresh the document
+and verify its opening status/recommendation agrees with the latest findings.
+Retain historical conclusions as history; an appended revision alone does not
+make a stale opening summary current.
+
 Once the user clarifies an item, `reopen` with `{"key":"…"}` returns its
 `needs_clarification` record to pending; prepare a new decision with the answer
 and rationale. `phase` with `{"phase":"synthesis"}` and `finish` with `{}`
