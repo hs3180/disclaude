@@ -137,7 +137,8 @@ read initialized
 read thread; echo '{"id":2,"result":{"thread":{"id":"thread-1"}}}'
 read start; echo '{"id":3,"result":{"turn":{"id":"turn-1"}}}'
 read steer; echo '{"id":4,"result":{"turnId":"turn-1"}}'
-echo '{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","item":{"id":"item-1","type":"agentMessage","text":"hello"}}}'
+echo '{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","item":{"id":"progress","type":"agentMessage","text":"Still waiting","phase":"commentary"}}}'
+echo '{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","item":{"id":"item-1","type":"agentMessage","text":"hello","phase":"final_answer"}}}'
 echo '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed"}}}'
 `);
     let releaseInput!: () => void;
@@ -163,7 +164,8 @@ echo '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"t
     await vi.waitFor(() => expect(messages.some((message) => message.type === 'result')).toBe(true));
     releaseInput();
     await collecting;
-    expect(messages).toContainEqual(expect.objectContaining({ type: 'text', content: 'hello' }));
+    expect(messages).toContainEqual(expect.objectContaining({ type: 'text', content: 'hello', metadata: expect.objectContaining({ phase: 'final_answer' }) }));
+    expect(messages).toContainEqual(expect.objectContaining({ type: 'text', content: 'Still waiting', metadata: expect.objectContaining({ phase: 'commentary' }) }));
     expect(messages.some(message => message.content === 'Codex turn started')).toBe(false);
     expect(result.handle.sessionId).toBe('thread-1');
     provider.dispose();

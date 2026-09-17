@@ -560,6 +560,20 @@ describe('BaseAgent', () => {
       expect(messages[2].parsed.content).toContain('claude-sonnet-4-6');
     });
 
+    it.each(['commentary', 'final_answer'] as const)('preserves assistant phase %s across the query bridge', async phase => {
+      mockSdkProvider.queryStream.mockImplementation(() => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          yield createMockSdkMessage({ type: 'text', content: 'assistant text', metadata: { phase } });
+        })(),
+      }));
+      const messages: IteratorYieldResult[] = [];
+      for await (const item of agent.testCreateQueryStream(createMockInput([]), defaultOptions).iterator) {
+        messages.push(item);
+      }
+      expect(messages[0].parsed.metadata?.phase).toBe(phase);
+    });
+
     it('should propagate stopReason through convertToLegacyFormat (Issue #4320, Gap C)', async () => {
       const mockHandle: QueryHandle = { close: vi.fn(), cancel: vi.fn() };
 
