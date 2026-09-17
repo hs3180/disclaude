@@ -9,6 +9,9 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ActionBoundInput } from '@disclaude/core';
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 // ---------------------------------------------------------------------------
 // Shared mock state (hoisted so vi.mock factories can reference it)
@@ -113,6 +116,7 @@ vi.mock('../../utils/message-logger.js', () => ({
 // ---------------------------------------------------------------------------
 // Import SUT after mocks
 // ---------------------------------------------------------------------------
+import { projectTaskGateway } from '../../harness/project-task-gateway.js';
 import { MessageHandler } from './message-handler.js';
 import { TriggerModeManager } from './passive-mode.js';
 import { MentionDetector } from './mention-detector.js';
@@ -136,6 +140,7 @@ function createHandler(overrides: Record<string, unknown> = {}) {
   vi.spyOn(mentionDetector, 'isBotMentioned').mockImplementation(() => mockState.isBotMentioned);
 
   const handler = new MessageHandler({
+    appId: 'test-app',
     triggerModeManager,
     mentionDetector,
     interactionManager: { handleAction: mockState.interactionHandleAction } as any,
@@ -217,6 +222,247 @@ function cardActionEvent(overrides: Record<string, unknown> = {}) {
 // ===========================================================================
 
 describe('MessageHandler', () => {
+  it('provides project tasks without a research setting and isolates applications in the same workspace', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'project-task-default-'));
+    const oldWorkspace = mockState.workspaceDir;
+    mockState.workspaceDir = workspace;
+    vi.stubEnv('DISCLAUDE_RESEARCH_PROJECTS_DIR', '');
+    const realFs = await vi.importActual<typeof import('fs/promises')>('fs/promises');
+    const statMock = vi.mocked((await import('fs/promises')).stat);
+    const previousStat = statMock.getMockImplementation();
+    statMock.mockImplementation(realFs.stat);
+    const handlers: MessageHandler[] = [];
+    const make = (appId: string) => {
+      const send = vi.fn().mockResolvedValue('om_task');
+      const emitControl = vi.fn().mockResolvedValue({ success: true, projectContext: { workingDir: workspace, available: true } });
+      const { handler } = createHandler({ appId, callbacks: { emitMessage: mockState.emitMessage, emitControl, sendMessage: send } });
+      handlers.push(handler);
+      handler.initialize({ im: { message: { patch: vi.fn().mockResolvedValue({ code: 0 }) } } } as any);
+      return { handler, send };
+    };
+    try {
+      const first = make('app-one');
+      await first.handler.handleMessageReceive(textEvent('/project'));
+      const { card } = firstCallArg(first.send);
+      expect(card.header.title.content).toBe('项目 · 工作空间与任务');
+      const form = card.body.elements.find((e: any) => e.tag === 'form');
+      const submit = form.elements.find((e: any) => e.form_action_type === 'submit');
+      await first.handler.handleCardAction(cardActionEvent({ action: { name: submit.name, form_value: { question: 'Diagnose the failed build' } } }));
+      await vi.waitFor(() => expect(first.send).toHaveBeenCalledTimes(2));
+      const parent = join(workspace, '.disclaude', 'project-tasks', 'feishu');
+      const firstStore = join(parent, readdirSync(parent)[0]);
+      const filename = readdirSync(firstStore).find(name => name.endsWith('.json')) ?? '';
+      expect(filename).not.toBe('');
+      await vi.waitFor(() => expect(JSON.parse(readFileSync(join(firstStore, filename), 'utf8')).cardId).toBe('om_task'));
+      const record = JSON.parse(readFileSync(join(firstStore, filename), 'utf8'));
+      expect(record.workingDir).toBe(workspace);
+      expect(record.status).toBe('paused');
+      expect(record.title).toBe('Diagnose the failed build');
+      const second = make('app-two');
+      await second.handler.handleMessageReceive(textEvent('/project'));
+      expect(JSON.stringify(firstCallArg(second.send).card)).not.toContain(record.id);
+      expect(readdirSync(parent)).toHaveLength(2);
+      first.handler.clearClient();
+      const reopened = make('app-one');
+      await reopened.handler.handleMessageReceive(textEvent('/project'));
+      expect(JSON.stringify(firstCallArg(reopened.send).card)).toContain(record.id);
+      expect(JSON.parse(readFileSync(join(firstStore, filename), 'utf8')).title).toBe(record.title);
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    } finally {
+      handlers.forEach(handler => handler.clearClient());
+      mockState.workspaceDir = oldWorkspace;
+      statMock.mockReset();
+      if (previousStat) { statMock.mockImplementation(previousStat); }
+      vi.unstubAllEnvs(); rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it('issues task context from the received actor and revokes it when the channel stops', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'task-context-route-'));
+    vi.stubEnv('DISCLAUDE_RESEARCH_PROJECTS_DIR', workspace);
+    const send = vi.fn().mockResolvedValue('task-card');
+    const control = vi.fn().mockResolvedValue({ success: true, projectContext: { workingDir: workspace, available: true } });
+    const realFs = await vi.importActual<typeof import('fs/promises')>('fs/promises');
+    vi.mocked((await import('fs/promises')).stat).mockImplementationOnce(realFs.stat);
+    const { handler } = createHandler({ callbacks: { emitMessage: mockState.emitMessage, emitControl: control, sendMessage: send } });
+    try {
+      handler.initialize({ im: { message: { reaction: { create: vi.fn().mockResolvedValue({ code: 0 }) } } } } as any);
+      await handler.handleMessageReceive(textEvent('Keep investigating these logs in this project'));
+      const incoming = firstCallArg(mockState.emitMessage);
+      const context = incoming.metadata.projectTaskContext;
+      expect(context).toMatch(/^[a-f0-9-]{36}$/u);
+      const created = await projectTaskGateway.execute(context, { action: 'create', requestId: 'logs', title: 'Inspect logs' }) as { task: { id: string; owner: string; chat: string; workingDir: string } };
+      expect(created.task).toMatchObject({ owner: 'user_001', chat: 'chat_001', workingDir: workspace });
+      const retry = await projectTaskGateway.execute(context, { action: 'create', requestId: 'logs', title: 'Inspect logs' }) as typeof created;
+      expect(retry.task.id).toBe(created.task.id);
+      expect(control).toHaveBeenCalledTimes(1);
+      await expect(projectTaskGateway.execute(context, { action: 'get', taskId: created.task.id, owner: 'another-user' })).rejects.toThrow('fields');
+      handler.clearClient();
+      await expect(projectTaskGateway.execute(context, { action: 'list' })).rejects.toThrow('unavailable');
+    } finally { handler.clearClient(); vi.unstubAllEnvs(); rmSync(workspace, { recursive: true, force: true }); }
+  });
+
+  it('does not interpret /research as a product command or create task state', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'removed-research-command-'));
+    const oldWorkspace = mockState.workspaceDir; mockState.workspaceDir = workspace;
+    vi.stubEnv('DISCLAUDE_RESEARCH_PROJECTS_DIR', '');
+    const { handler } = createHandler({ appId: 'app-command-test' });
+    try {
+      handler.initialize({ im: { message: { reaction: { create: vi.fn().mockResolvedValue({ code: 0 }) } } } } as any);
+      await handler.handleMessageReceive(textEvent('/research'));
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      expect(readdirSync(workspace)).toEqual([]);
+      expect(mockState.sendMessage).not.toHaveBeenCalled();
+    } finally { handler.clearClient(); mockState.workspaceDir = oldWorkspace; vi.unstubAllEnvs(); rmSync(workspace, { recursive: true, force: true }); }
+  });
+
+  it.each(['/project'])('routes %s and creation to persistent project tasks', async command => {
+    const directory = mkdtempSync(join(tmpdir(), 'research-routing-'));
+    const realFs = await vi.importActual<typeof import('fs/promises')>('fs/promises');
+    vi.mocked((await import('fs/promises')).stat).mockImplementationOnce(realFs.stat).mockImplementationOnce(realFs.stat);
+    vi.stubEnv('DISCLAUDE_RESEARCH_PROJECTS_DIR', directory);
+    const send = vi.fn().mockResolvedValue('om_project');
+    const emitControl = vi.fn().mockResolvedValue({ success: true, projectContext: { workingDir: directory, available: true } });
+    const { handler } = createHandler({ callbacks: { emitMessage: mockState.emitMessage, emitControl, sendMessage: send } });
+    try {
+      handler.initialize({ im: { message: { patch: vi.fn().mockResolvedValue({ code: 0 }) } } } as any);
+      await handler.handleMessageReceive(textEvent(command));
+      const {card} = firstCallArg(send);
+      expect(card.header.title.content).toBe('项目 · 工作空间与任务');
+      expect(JSON.stringify(card)).toContain(directory);
+      const form = card.body.elements.find((element: any) => element.tag === 'form');
+      const submit = form.elements.find((element: any) => element.form_action_type === 'submit');
+      await handler.handleCardAction(cardActionEvent({ action: { name: submit.name, form_value: { question: 'Compare reports', scope: 'Costs', materials: 'A: 10; B: 12' } } }));
+      await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+      const file = readdirSync(directory).find(name => name.endsWith('.json'));
+      expect(file).toBeDefined();
+      await vi.waitFor(() => expect(JSON.parse(readFileSync(join(directory, file ?? ''), 'utf8')).cardId).toBe('om_project'));
+      const project = JSON.parse(readFileSync(join(directory, file ?? ''), 'utf8'));
+      expect(project.workingDir).toBe(directory);
+      expect(project.owner).toBe('user_001'); expect(project.chat).toBe('chat_001'); expect(project.status).toBe('paused');
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+      emitControl.mockResolvedValue({ success: false });
+      await handler.handleCardAction(cardActionEvent({ action: { name: submit.name, form_value: { question: 'Compare reports', scope: 'Costs', materials: 'A: 10; B: 12' } } }));
+      await vi.waitFor(() => expect(emitControl).toHaveBeenCalledTimes(2));
+      expect(readdirSync(directory).filter(name => name.endsWith('.json'))).toHaveLength(1);
+      const persisted = readFileSync(join(directory, file ?? ''), 'utf8');
+      await handler.handleCardAction(cardActionEvent({ operator: { open_id: 'another-user' }, action: { value: { research: true, action: 'resume', project: project.id, revision: project.revision } } }));
+      await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(3));
+      expect(readFileSync(join(directory, file ?? ''), 'utf8')).toBe(persisted);
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+      await handler.handleCardAction(cardActionEvent({ action: { value: { research: true, action: 'index' } } }));
+      await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(4));
+      const home = send.mock.calls[3][0].card;
+      expect(JSON.stringify(home)).toContain(project.id);
+      expect(JSON.stringify(home)).toContain(directory);
+      expect(JSON.stringify(home)).toContain('已有任务仍可打开');
+      expect(home.body.elements.some((element: any) => element.tag === 'form')).toBe(false);
+      expect(readFileSync(join(directory, file ?? ''), 'utf8')).toBe(persisted);
+
+    } finally { handler.clearClient(); vi.unstubAllEnvs(); rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  it.each(['/project info', '/project use /tmp/project-a', '/project reset'])('keeps %s on the existing control route with project task storage available', async command => {
+    const directory = mkdtempSync(join(tmpdir(), 'research-control-'));
+    vi.stubEnv('DISCLAUDE_RESEARCH_PROJECTS_DIR', directory);
+    mockState.hasControlHandler = true;
+    const emitControl = vi.fn().mockResolvedValue({ success: true, message: 'Existing project command result' });
+    const send = vi.fn().mockResolvedValue('om_reply');
+    const { handler } = createHandler({ callbacks: { emitMessage: mockState.emitMessage, emitControl, sendMessage: send } });
+    try {
+      handler.initialize({ im: { message: { patch: vi.fn().mockResolvedValue({ code: 0 }), reaction: { create: vi.fn().mockResolvedValue({ code: 0 }) } } } } as any);
+      await handler.handleMessageReceive(textEvent(command));
+      expect(emitControl).toHaveBeenCalledWith(expect.objectContaining({ type: 'project', chatId: 'chat_001' }));
+      expect(send).toHaveBeenCalledWith(expect.objectContaining({ text: 'Existing project command result' }));
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+      expect(readdirSync(directory)).toEqual([]);
+    } finally { handler.clearClient(); vi.unstubAllEnvs(); rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  it('requires an explicit legacy-link preview and confirmation through real card callback routing', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'research-link-'));
+    vi.stubEnv('DISCLAUDE_RESEARCH_PROJECTS_DIR', directory);
+    const realFs = await vi.importActual<typeof import('fs/promises')>('fs/promises');
+    vi.mocked((await import('fs/promises')).stat).mockImplementationOnce(realFs.stat).mockImplementationOnce(realFs.stat);
+    const legacy = { id: 'abcdef', owner: 'user_001', chat: 'chat_001', source: 'legacy', title: 'Preserve this research', scope: '', materials: '', status: 'completed', revision: 3, createdAt: '', updatedAt: '', directions: [], summary: 'Existing evidence', questions: [], history: [], feedback: [], stepCount: 3, cardId: 'old-card' };
+    const file = join(directory, 'abcdef.json');
+    writeFileSync(file, JSON.stringify(legacy));
+    const send = vi.fn().mockResolvedValue('preview-card');
+    const { handler } = createHandler({ callbacks: { emitMessage: mockState.emitMessage,
+      emitControl: vi.fn().mockResolvedValue({ success: true, projectContext: { workingDir: directory, available: true } }), sendMessage: send } });
+    try {
+      handler.initialize({ im: { message: { patch: vi.fn().mockResolvedValue({ code: 0 }) } } } as any);
+      await handler.handleCardAction(cardActionEvent({ action: { value: { research: true, action: 'preview-project-link', project: legacy.id, revision: legacy.revision } } }));
+      await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+      const { card } = firstCallArg(send);
+      expect(JSON.stringify(card)).toContain(directory);
+      expect(JSON.stringify(card)).toContain('不移动或复制文件');
+      expect(JSON.parse(readFileSync(file, 'utf8')).projectLink).toBeUndefined();
+      const confirm = card.body.elements.find((element: any) => element.text?.content === '确认关联').behaviors[0].value;
+      expect(confirm.directory).toBeUndefined(); // Target is resolved and checked server-side.
+      await handler.handleCardAction(cardActionEvent({ action: { value: confirm } }));
+      await vi.waitFor(() => expect(JSON.parse(readFileSync(file, 'utf8')).projectLink?.directory).toBe(directory));
+      const linked = JSON.parse(readFileSync(file, 'utf8'));
+      expect(linked.workingDir).toBeUndefined();
+      expect(linked.summary).toBe(legacy.summary);
+      expect(linked.id).toBe(legacy.id);
+      await handler.handleCardAction(cardActionEvent({ action: { value: { research: true, action: 'unlink-project', project: legacy.id, revision: linked.revision } } }));
+      await vi.waitFor(() => expect(JSON.parse(readFileSync(file, 'utf8')).projectLink).toBeUndefined());
+      expect(JSON.parse(readFileSync(file, 'utf8')).summary).toBe(legacy.summary);
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    } finally { handler.clearClient(); vi.unstubAllEnvs(); rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  it('refuses research creation when the bound project is unavailable instead of using the default workspace', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'research-unavailable-'));
+    vi.stubEnv('DISCLAUDE_RESEARCH_PROJECTS_DIR', directory);
+    const send = vi.fn().mockResolvedValue('om_project');
+    const emitControl = vi.fn().mockResolvedValue({ success: true, projectContext: { workingDir: join(directory, 'missing'), available: false } });
+    const { handler } = createHandler({ callbacks: { emitMessage: mockState.emitMessage, emitControl, sendMessage: send } });
+    try {
+      handler.initialize({ im: { message: { patch: vi.fn().mockResolvedValue({ code: 0 }) } } } as any);
+      await handler.handleCardAction(cardActionEvent({ action: { value: { research: true, action: 'create', nonce: 'form' }, form_value: { question: 'Check sources' } } }));
+      await vi.waitFor(() => expect(send).toHaveBeenCalled());
+      expect(firstCallArg(send).text).toContain('/project info');
+      expect(readdirSync(directory).filter(name => name.endsWith('.json'))).toEqual([]);
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    } finally { handler.clearClient(); vi.unstubAllEnvs(); rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  it('routes a finding-card continuation once and preserves the chosen evidence', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'research-finding-'));
+    vi.stubEnv('DISCLAUDE_RESEARCH_PROJECTS_DIR', directory);
+    const chosen = { claim: 'B costs 9', kind: 'fact', sources: [{ title: 'Discount', location: 'materials', excerpt: '12 minus 3' }], caveat: 'Fictional prices' };
+    const original = { id: 'abcdef', owner: 'user_001', chat: 'chat_001', source: 'original-form', title: 'Compare costs', scope: 'Only supplied evidence', materials: 'A=11; B=12-3', status: 'completed', revision: 5, createdAt: '2026-09-16T00:00:00Z', updatedAt: '2026-09-16T00:00:00Z', directions: [{ id: 'cost', title: 'Costs', status: 'done', findings: [{ ...chosen, claim: 'A costs 11' }, chosen] }], summary: 'B costs less', questions: [], history: [], feedback: [], stepCount: 3 };
+    const originalPath = join(directory, 'abcdef.json');
+    writeFileSync(originalPath, JSON.stringify(original));
+    const send = vi.fn().mockResolvedValue('om_followup');
+    const { handler } = createHandler({ callbacks: { emitMessage: mockState.emitMessage, emitControl: mockState.emitControl, sendMessage: send } });
+    try {
+      handler.initialize({ im: { message: { patch: vi.fn().mockResolvedValue({ code: 0 }) } } } as any);
+      await handler.handleCardAction(cardActionEvent({ action: { value: { research: true, action: 'evidence', project: 'abcdef', direction: 'cost', index: 1 } } }));
+      await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+      const { card } = firstCallArg(send);
+      const button = card.body.elements.find((element: any) => element.text?.content === '基于这项发现继续任务');
+      expect(button).toBeDefined();
+      const event = cardActionEvent({ action: { value: button.behaviors[0].value } });
+      await handler.handleCardAction(event);
+      await vi.waitFor(() => expect(readdirSync(directory).filter(name => name.endsWith('.json'))).toHaveLength(2));
+      const file = readdirSync(directory).find(name => name.endsWith('.json') && name !== 'abcdef.json')!;
+      await vi.waitFor(() => expect(JSON.parse(readFileSync(join(directory, file), 'utf8')).cardId).toBe('om_followup'));
+      await handler.handleCardAction(event);
+      await handler.handleCardAction({ ...event, operator: { open_id: 'other-user' } });
+      await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(3));
+      const next = JSON.parse(readFileSync(join(directory, file), 'utf8'));
+      expect(next.parent).toBe('abcdef'); expect(next.status).toBe('paused');
+      expect(next.parentFinding).toEqual({ directionId: 'cost', index: 1 });
+      expect(next.priorResults.findings).toEqual([chosen]);
+      expect(readdirSync(directory).filter(name => name.endsWith('.json'))).toHaveLength(2);
+      expect(JSON.parse(readFileSync(originalPath, 'utf8'))).toEqual(original);
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    } finally { handler.clearClient(); vi.unstubAllEnvs(); rmSync(directory, { recursive: true, force: true }); }
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockState.isRunning = true;

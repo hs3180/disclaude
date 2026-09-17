@@ -47,6 +47,7 @@ function handleInfo(command: ProjectCommand, context: ControlHandlerContext): Co
   if (resolution.reason === 'unbound') {
     return {
       success: true,
+      projectContext: { workingDir: pm.getWorkspaceDir(), available: true },
       message: `📂 **当前项目**: default（工作空间根目录）\n\`${pm.getWorkspaceDir()}\``,
     };
   }
@@ -61,6 +62,7 @@ function handleInfo(command: ProjectCommand, context: ControlHandlerContext): Co
     // router only relays `message` to the user.
     return {
       success: true,
+      projectContext: { workingDir: boundDir, available: false },
       message: [
         `⚠️ **绑定目录不存在**: \`${boundDir}\``,
         '',
@@ -83,6 +85,7 @@ function handleInfo(command: ProjectCommand, context: ControlHandlerContext): Co
 
   return {
     success: true,
+    projectContext: { workingDir: boundDir, available: true },
     message: [
       `📂 **当前项目**: ${basename(boundDir)}`,
       `**工作目录**: \`${boundDir}\``,
