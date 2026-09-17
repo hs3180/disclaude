@@ -303,6 +303,16 @@ export class Config {
             existsSync(path.join(ancestor, dirName))) {
           return path.join(ancestor, dirName);
         }
+        // npm archives bundle core under node_modules/@disclaude/core, while
+        // shared resources belong to the enclosing disclaude package.
+        if (path.basename(ancestor) === 'node_modules') {
+          const packageRoot = path.dirname(ancestor);
+          if (path.basename(packageRoot) === 'disclaude' &&
+              existsSync(path.join(packageRoot, 'bin', 'disclaude.js')) &&
+              existsSync(path.join(packageRoot, dirName))) {
+            return path.join(packageRoot, dirName);
+          }
+        }
         ancestor = path.dirname(ancestor);
       }
       const cwdDir = path.resolve(process.cwd(), dirName);
