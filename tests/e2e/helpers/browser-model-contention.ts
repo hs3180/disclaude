@@ -13,6 +13,9 @@ export async function verifyModelContention(root: string, env: NodeJS.ProcessEnv
   const result = await promisify(execFile)(process.execPath, [
     resolve('scripts/test-browser-contention.mjs'), '--service-url', serviceUrl,
     '--workspace', root, '--socket', socket, '--events', eventFile,
-  ], { env, timeout: 240_000, maxBuffer: 1024 * 1024 });
+  ], { env, timeout: 240_000, maxBuffer: 1024 * 1024 }).catch((error: Error & { stdout?: string }) => {
+    if (error.stdout) { console.error(error.stdout.trim()); }
+    throw error;
+  });
   console.info(result.stdout.trim());
 }

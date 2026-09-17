@@ -236,26 +236,57 @@ authenticated-site login or actual deployment-machine acceptance.
 ### Two real agents competing for the browser
 
 Set `DISCLAUDE_E2E_BROWSER_CONTENTION_MODEL` to an accessible Anthropic-compatible
-model when running `tests/e2e/browser-service.test.ts`, with the same Chromium,
-Python and credential prerequisites as the Claude SDK model path above. The flag
-opts into two independent Claude SDK queries; no model calls are added to default
-CI. The test supplies explicit commands, so it measures arbitration rather than
-open-ended planning or model quality.
+model when running `tests/e2e/browser-service.test.ts`, with the Chromium/Python
+prerequisites above, model credentials supplied through environment variables,
+and an isolated `CLAUDE_CONFIG_DIR`. No model calls are added to credential-free
+CI. The deployment fixture selects the real Claude backend and model.
+
+The standalone `scripts/test-browser-contention.mjs` process sends two independent
+chats to the running deployment's `POST /api/chat/sync`. It imports no providers
+or agent implementation and supplies no fake delivery adapter. Explicit commands
+isolate arbitration from open-ended planning or model quality. The service owns
+normal message routing, agent creation, model execution and response delivery.
 
 Agent A writes a local page draft and holds its lease. Only after observing that
-hold does the test start agent B. Coordinator events must show B queued while A
-still owns control, and B's execution marker must remain absent. The host releases
-A; its reclamation event must precede B's grant. B verifies A's text, changes it,
-and an independent caller reads the final value. Both model streams must contain
-tool calls/results and finish successfully. Diagnostic logs report the observed
-queue wait, not a throughput benchmark.
+hold does the client start B. Coordinator events must show B queued while A still
+owns control, and B's execution marker must remain absent. The client releases A;
+its reclamation event must precede B's grant. B verifies A's text and updates it.
+The client checks both real REST responses, B's execution marker, and the final
+value through an independent browser-use invocation. An early-ending model request
+fails promptly rather than waiting for a browser marker that cannot arrive.
 
-On macOS ARM64, Node 24.8.0 and Chromium 155.0.8057.0, two Claude SDK queries using
-`deepseek-flash` passed this scenario and the surrounding real product lifecycle
-test in 29.40 seconds (2026-09-17). B's observed queue wait was 722 ms. The service,
-callers and crash-fixture descendants closed; the private browser root and external
-model-config fixture were removed. This is one provider/platform and a controlled
-draft task, not simultaneous access to the browser or a Feishu interaction test.
+The JSON `BROWSER_MODEL_CONTENTION` report includes pass/fail, two chat IDs,
+completed checks, observed queue wait, duration and fixture-cleanup status. On
+failure the client releases its gate and attempts the public stop command for
+both chats. The deployment owner must still stop/join its service before deleting
+the workspace; a stop acknowledgement is not an OS-descendant exit guarantee.
+
+For an already prepared test deployment on the same host/shared filesystem:
+
+```sh
+node scripts/test-browser-contention.mjs \
+  --service-url http://127.0.0.1:PORT \
+  --workspace /absolute/test-workspace \
+  --socket /absolute/test-workspace/browser.sock \
+  --events /absolute/test-workspace/browser-events.ndjson
+```
+
+The managed page must already contain `<input id="value">`. The client does not
+start/stop the deployment itself. Use an isolated test workspace and model config.
+
+On macOS ARM64/Node24.8.0, the external REST case with two real Claude-backend
+`deepseek-flash` tasks passed in27.523s; the enclosing lifecycle/crash/restart
+case passed in41.980s. B queued for703.55ms. Service/browser callers and tracked
+crash descendants closed; test and private model-config roots were removed.
+The first attempt had an early model failure before A acquired the browser;
+isolating Claude configuration and rebuilding the exact branch preceded the
+successful run. The failed attempt was not counted as acceptance, and its retained
+private config was removed after confirming no process referenced it.
+
+This replaces the earlier direct-provider evidence for the two-agent case.
+It remains a controlled draft task on one provider/platform, not simultaneous
+browser access, a natural-language benchmark, model-created subagents, or Feishu
+interaction. Other legacy provider cases need separate externalization (#5016).
 
 ### Test-resource cleanup
 

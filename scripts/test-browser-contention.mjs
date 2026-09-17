@@ -19,6 +19,7 @@ const held = join(root, `agent-a-held-${id}`), release = join(root, `agent-a-rel
 const secondRan = join(root, `agent-b-ran-${id}`);
 const firstValue = `draft-a-${id}`, finalValue = `reviewed-b-${id}`;
 const chats = [], requests = [], checks = [];
+const settledChats = new Map();
 const started = Date.now();
 let failed = false, completed = false, queueWaitMs;
 const exists = file => access(file).then(() => true, error => {
@@ -29,7 +30,14 @@ const events = async () => (await readFile(values.events, 'utf8')).split('\n').f
   .flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } });
 async function waitFor(check, description) {
   const deadline = Date.now() + 90_000;
-  while (Date.now() < deadline) { if (await check()) { return; } await delay(100); }
+  while (Date.now() < deadline) {
+    if (await check()) { return; }
+    if (settledChats.size) {
+      const [chatId, outcome] = settledChats.entries().next().value;
+      throw new Error(`${description}: ${chatId} ended before the expected browser action (${outcome})`);
+    }
+    await delay(100);
+  }
   throw new Error(`Contention deadline: ${description}`);
 }
 async function post(path, body, timeout = 200_000) {
@@ -50,7 +58,11 @@ function start(script, label) {
     message: `Run exactly this shell command with your shell tool, then report its output verbatim:\nprintf '%s' ${quoted} | browser-use\nThis is a shared local draft acceptance fixture. Do not change the script, run extra tools, launch another browser, use direct CDP, delegate, or touch unrelated files.`,
   }).then(result => { assert.equal(result.chatId, chatId); return result.response; });
   // Observe both rejections even while checking the other chat's browser lease.
-  void promise.catch(() => {});
+  void promise.then(response => {
+    // Include only a diagnostic category and length, never raw model text.
+    const category = /auth|api.key|unauthoriz|401|403/i.test(response ?? '') ? 'authentication response' : 'unexpected early response';
+    settledChats.set(chatId, `${category}, ${response?.length ?? 0} characters`);
+  }, error => { settledChats.set(chatId, error.name); });
   requests.push(promise);
   return promise;
 }
