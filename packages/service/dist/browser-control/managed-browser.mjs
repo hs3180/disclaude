@@ -14,7 +14,7 @@ export async function launchBrowser({ binary, profile, headless = false, signal 
     catch { }
     const child = spawn(binary, ['--remote-debugging-port=0', '--user-data-dir=' + profile, '--no-first-run', '--no-default-browser-check', ...(headless ? ['--headless=new'] : []), ...(process.getuid?.() === 0 ? ['--no-sandbox'] : []), 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
     let stderr = '';
-    child.stderr.on('data', chunk => { stderr = (stderr + chunk.toString()).slice(0, 4000); });
+    child.stderr.on('data', chunk => { stderr = (stderr + chunk.toString()).slice(-4000); });
     let startupError;
     child.on('error', error => startupError = error);
     const stop = async ({ graceful = false } = {}) => {
@@ -47,7 +47,7 @@ export async function launchBrowser({ binary, profile, headless = false, signal 
                         const response = await fetch(endpoint + '/json/version', { signal: AbortSignal.timeout(1000) });
                         const info = await response.json();
                         if (response.ok && new URL(info.webSocketDebuggerUrl).pathname === browserPath)
-                            return { endpoint, child, stop };
+                            return { endpoint, child, stop, get stderr() { return stderr; } };
                     }
                 }
             }

@@ -257,7 +257,7 @@ services:
       - CHROMIUM_HEADLESS=${CHROMIUM_HEADLESS:-0}
       - TZ=${TZ:-Asia/Shanghai}
       - LANG=${CHROMIUM_LANG:-C.UTF-8}
-      - CHROMIUM_ACCEPT_LANG=${CHROMIUM_ACCEPT_LANG:-zh-CN,zh}
+      - CHROMIUM_ACCEPT_LANG=${CHROMIUM_ACCEPT_LANG:-en-US,en}
 
     shm_size: ${CHROMIUM_SHM_SIZE:-2gb}
 

@@ -31,9 +31,10 @@ const event = record => {
     if (process.env.DISCLAUDE_BROWSER_EVENTS)
         appendFileSync(process.env.DISCLAUDE_BROWSER_EVENTS, line, { mode: 0o600 });
 };
-async function shutdown() {
+async function shutdown(reason, details = {}) {
     if (stopping)
         return stopping;
+    event({ type: 'shutdown-started', reason, ...details });
     stopping = (async () => {
         startupAbort.abort();
         if (browserStarting)
@@ -58,17 +59,19 @@ async function shutdown() {
     })();
     return stopping;
 }
-process.on('SIGTERM', () => void shutdown().then(() => process.exit(0)));
-process.on('SIGINT', () => void shutdown().then(() => process.exit(0)));
+process.on('SIGTERM', () => void shutdown('SIGTERM').then(() => process.exit(0)));
+process.on('SIGINT', () => void shutdown('SIGINT').then(() => process.exit(0)));
 if (process.env.DISCLAUDE_BROWSER_SUPERVISED === '1')
-    process.on('disconnect', () => void shutdown().then(() => process.exit(0)));
+    process.on('disconnect', () => void shutdown('supervisor-disconnected').then(() => process.exit(0)));
 try {
     if (!endpoint) {
         browserStarting = launchBrowser({ binary: process.env.DISCLAUDE_CHROMIUM_BINARY, profile: process.env.DISCLAUDE_CHROMIUM_PROFILE, headless: process.env.DISCLAUDE_CHROMIUM_HEADLESS === '1', signal: startupAbort.signal });
         managed = await browserStarting;
         endpoint = managed.endpoint;
-        managed.child.once('exit', () => { if (!stopping)
-            void shutdown().then(() => process.exit(1)); });
+        managed.child.once('exit', (code, signal) => {
+            if (!stopping)
+                void shutdown('managed-browser-exited', { code, signal, stderr: managed.stderr }).then(() => process.exit(1));
+        });
     }
     const info = await (await fetch(`${endpoint}/json/version`, { signal: AbortSignal.timeout(5000) })).json();
     admin = await connect(info.webSocketDebuggerUrl);
@@ -204,7 +207,7 @@ try {
         process.send(ready);
 }
 catch (error) {
-    await shutdown();
+    await shutdown('startup-failed', { message: error.message });
     console.error(error.message);
     process.exitCode = 1;
 }

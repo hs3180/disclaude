@@ -10,5 +10,6 @@ export function launchBrowser({ binary, profile, headless, signal }: {
     stop: ({ graceful }?: {
         graceful?: boolean | undefined;
     }) => Promise<void>;
+    readonly stderr: string;
 }>;
 //# sourceMappingURL=managed-browser.d.mts.map

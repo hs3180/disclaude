@@ -5,7 +5,7 @@ CDP_PORT=${CDP_PORT:-9222}
 CDP_INTERNAL_PORT=${CDP_INTERNAL_PORT:-9221}
 CHROMIUM_PROFILE_DIR=${CHROMIUM_PROFILE_DIR:-/data/chrome-profile}
 CHROMIUM_HEADLESS=${CHROMIUM_HEADLESS:-0}
-CHROMIUM_ACCEPT_LANG=${CHROMIUM_ACCEPT_LANG:-zh-CN,zh}
+CHROMIUM_ACCEPT_LANG=${CHROMIUM_ACCEPT_LANG:-en-US,en}
 for port in "$CDP_PORT" "$CDP_INTERNAL_PORT"; do
     if [[ ! "$port" =~ ^[0-9]{1,5}$ ]] || (( 10#$port < 1 || 10#$port > 65535 )); then
         echo 'FATAL: CDP ports must be integers between 1 and 65535' >&2; exit 1

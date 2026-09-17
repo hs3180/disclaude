@@ -22,7 +22,7 @@ const endpoint = `http://127.0.0.1:${port}`;
 const evidence = [];
 // Explicit opt-in: public-site observations are independent of lifecycle assertions.
 const articleUrl = process.env.DISCLAUDE_CHROMIUM_ARTICLE_URL;
-const acceptLanguages = process.env.CHROMIUM_ACCEPT_LANG || 'zh-CN,zh';
+const acceptLanguages = process.env.CHROMIUM_ACCEPT_LANG || 'en-US,en';
 const publicUrl = value => { try { const url = new URL(value); return `${url.origin}${url.pathname}`; } catch { return undefined; } };
 const evidenceDir = process.env.DISCLAUDE_CHROMIUM_EVIDENCE_DIR;
 if (articleUrl) {
@@ -39,7 +39,8 @@ let volumeCreated = false;
 async function start(headless) {
   docker('run', '-d', '--init', '--name', name, '--shm-size=2g', '--memory=4g',
     '-e', `CDP_PORT=${port}`, '-e', `CDP_INTERNAL_PORT=${internalPort}`,
-    '-e', `CHROMIUM_HEADLESS=${headless ? 1 : 0}`, '-e', `CHROMIUM_ACCEPT_LANG=${acceptLanguages}`, '-e', `TZ=${process.env.TZ || 'Asia/Shanghai'}`, '-v', `${volume}:/data/chrome-profile`,
+    '-e', `CHROMIUM_HEADLESS=${headless ? 1 : 0}`,
+    ...(process.env.CHROMIUM_ACCEPT_LANG ? ['-e', `CHROMIUM_ACCEPT_LANG=${acceptLanguages}`] : []), '-e', `TZ=${process.env.TZ || 'Asia/Shanghai'}`, '-v', `${volume}:/data/chrome-profile`,
     '-p', `127.0.0.1:${port}:${port}`, image);
   created = true;
   let last;
