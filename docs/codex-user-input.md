@@ -104,11 +104,34 @@ answer artifact was absent, and the service had no remaining Codex child.
 The daily service was restored with unchanged configuration and launchd plist
 hashes; the test card and owned temporary workspace were reclaimed.
 
-This complements the earlier submission and private-channel checks. It does not
-prove a real stale callback racing cancellation, timeout or transport-disconnect
-rendering, or model-native secret questions. Protocol and adapter fixtures cover
-those applicable lifecycle transitions separately; final deployment validation
-must preserve that distinction.
+This complements the earlier submission and private-channel checks. A later
+real disconnect test on `afef74bc` invalidated the card and allowed a new request
+in the same chat; the default-timeout check below adds separate evidence.
+A callback concurrent with invalidation and model-native secret questions remain
+unverified by these real-channel checks.
+
+On 2026-09-18, combined candidate `fab3e926` with Codex CLI 0.154.0
+exercised the unmodified 15-minute deadline through the real Feishu bot. The
+model asked a native non-blocking question; Alpha was selected in the desktop
+form but never submitted before expiry. The same request remained live beyond
+14 minutes. After the deadline, the server card read "回答已过期，未自动选择答案",
+the original turn reported that no answer was received, and `answer.txt` was
+absent. The user had not selected a default or submitted an answer through chat.
+
+The desktop retained the editing form and its old submit button after the
+server update. This is an observed display limitation, not an automatic repaint
+pass. Clicking that stale submit button after expiry did not accept the selected
+answer or create the file; the desktop then refreshed to the expired card with
+no input controls. A subsequent ordinary request in the same chat completed
+normally. This verifies stale submission *after* expiry, not a callback racing
+the expiry transition.
+
+The original daily service was restored with two health/configuration checks;
+all candidate processes were stopped and the temporary workspace and card were
+reclaimed. Other conversations recorded during the test were archived back to
+the daily workspace without overwriting their histories. Automatic repaint of
+an actively edited form remains to investigate before claiming complete input
+lifecycle UX acceptance.
 
 An opt-in E2E uses the installed Codex CLI and configured model credentials to
 ask a real tool question, generate the product card, explicitly submit a test
