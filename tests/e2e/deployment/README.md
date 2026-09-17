@@ -9,3 +9,9 @@ The client checks authentication, forged actor/context rejection, paused task cr
 A JSON report on stdout names passed steps, task/request identity, timestamps and cleanup status without response bodies or credentials. Nonzero exit means failure, including failed cleanup. The client creates no local files or child processes. Its own task is cancelled if necessary and archived; the task record remains as explicit acceptance evidence. If creation has an uncertain outcome or context expires before cleanup, the report says `needs-inspection`; it never claims deletion or process termination it cannot observe. Resolve that named task/request in the test chat before a retry.
 
 `--help` describes the input without requiring credentials. Syntax/help/invalid-input checks are not deployed acceptance. Run this independently from the default unit suite; retain the structured report for the exact deployment source tested.
+
+## Two-task isolation
+
+`project-task-isolation.mjs` uses the same stdin deployment settings. It creates A and B with different fictional values, observes both running, pauses only A, and checks B completes while A remains unchanged. It then submits an A-only correction, checks that feedback does not implicitly resume A, resumes it and verifies B remains byte-for-byte unchanged through the public API. Each task allows one bounded `sleep 30` tool call to make overlap observable. Completed A evidence is checked for retention when present; a pause before its first checkpoint does not prove retention of a non-existent checkpoint. This is same-actor/same-chat task isolation, not cross-user authorization proof or a crash test.
+
+Both owned tasks are cancelled if needed and archived in cleanup. Unknown creation/cleanup fails the report and retains task/request identity for inspection. Syntax/help checks alone do not establish that the scenario passed a deployed system.
