@@ -1,9 +1,11 @@
 ---
 name: channel
-description: Send messages, files or specific-feedback cards through the running disclaude service, or push an instruction to an authorized chat. Use for disclaude channel delivery; document editing uses the document tools.
+description: Explicitly deliver files, cards or additional messages through the running disclaude service, or push an instruction to an authorized chat. Use when the task needs a delivery operation beyond the normal conversation reply. Ordinary answers are delivered automatically; document editing uses the document tools.
 ---
 
 # Channel delivery
+
+In a Disclaude conversation, ChatAgent delivers your final response to the current chat automatically. Answer ordinary questions directly; do not call `send_text` to send the same answer first. Use this skill for an explicit additional delivery, such as an artifact, a feedback card, or an authorized message to another chat. If a delivery tool has already sent content, keep the final reply to any remaining information instead of repeating that content.
 
 Use the channel CLI supplied by the runtime; otherwise run `disclaude channel help`. Read its current help for command options instead of invoking a repository-relative script. The CLI connects to the existing service over its REST API; it does not start a service.
 
