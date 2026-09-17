@@ -2015,6 +2015,51 @@ describe('ChatAgent (service)', () => {
     });
   });
 
+  describe('structured internal turn results', () => {
+    it.each([false, true])('bounds terminal output and resets the bound at a tool call (tool=%s)', async tool => {
+      const callbacks = { ...createMockCallbacks(), onTurnResult: vi.fn().mockResolvedValue(undefined) };
+      const agent = new ChatAgent({ chatId: 'bounded-result', callbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+      (agent as any).isAgentTeamsEnabled = () => false;
+      async function* output() {
+        yield { parsed: { type: 'text', content: 'x'.repeat(65_537) } };
+        if (tool) {
+          yield { parsed: { type: 'tool_use', content: 'check evidence' } };
+          yield { parsed: { type: 'tool_result', content: 'evidence' } };
+          yield { parsed: { type: 'text', content: 'Final answer' } };
+        }
+        yield { parsed: { type: 'result', content: '✅ Complete' } };
+      }
+      (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: output() });
+      try {
+        await agent.runOnce('bounded-result', 'Check the supplied evidence');
+        expect(callbacks.onTurnResult).toHaveBeenCalledWith({
+          success: tool, text: tool ? 'Final answer' : 'x'.repeat(65_536), truncated: !tool,
+        });
+      } finally { agent.dispose(); }
+    });
+
+    it.each([undefined, 'turn_failed'])('separates assistant output from progress and preserves failure (reason=%s)', async reason => {
+      const callbacks = { ...createMockCallbacks(), onTurnResult: vi.fn().mockResolvedValue(undefined) };
+      const agent = new ChatAgent({ chatId: 'research-result', callbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+      async function* output() {
+        yield { parsed: { type: 'status', content: '🤔 Thinking...' } };
+        yield { parsed: { type: 'text', content: 'I will check the supplied report first.' } };
+        yield { parsed: { type: 'tool_use', content: 'read supplied report' } };
+        yield { parsed: { type: 'tool_result', content: 'The report describes costs.' } };
+        yield { parsed: { type: 'text', content: 'Still waiting for the tool.', metadata: { phase: 'commentary' } } };
+        yield { parsed: { type: 'text', content: '{"directions":' } };
+        yield { parsed: { type: 'text', content: '["costs"]}' } };
+        yield { parsed: { type: 'result', content: '✅ Complete', terminatedReason: reason } };
+      }
+      (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: output() });
+      try {
+        await agent.runOnce('research-result', 'Plan the research');
+        expect(callbacks.onTurnResult).toHaveBeenCalledWith({ success: !reason, text: '{"directions":["costs"]}', truncated: false });
+        expect(callbacks.sendMessage.mock.calls.some(call => call[1] === 'Still waiting for the tool.')).toBe(true);
+      } finally { agent.dispose(); }
+    });
+  });
+
   describe('Issue #3809: debug group forwarding', () => {
     it('should forward tool_use messages to debug group', async () => {
       const localCallbacks = createMockCallbacks();
