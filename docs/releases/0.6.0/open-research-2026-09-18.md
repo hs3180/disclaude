@@ -1,6 +1,6 @@
 # Open research and conclusion preservation — incomplete
 
-This records new evidence and two actual failures. It does not certify full
+This records new evidence and repeated actual history-preservation failures. It does not certify full
 Agentic Research UX or 0.6.0 delivery.
 
 ## Native Feishu investigation
@@ -118,3 +118,44 @@ Local evidence: `.local/060-poll/open-research-*`,
 and `history-verifier-*`. Native in-flight cancellation, broader document
 feedback/failure UX and final integrated release acceptance remain separate
 uncompleted gates.
+
+## Ordinary feedback after pausing exposed another history loss
+
+The same integration `f1d52db0` then received a natural-language pause request
+through an isolated REST-only Luna session. Independent document revision 17
+matched checkpoint version 20. The document's opening state and pause record
+said research was paused until the user explicitly continued. Existing
+conclusions and SQL were unchanged, with no pending write/feedback. The local
+protocol status remained `active / planning`; pause was represented in the
+saved document, not as a distinct execution state.
+
+A fresh Luna session received only an additional scope opinion about German
+`ß/ss` and Unicode combining accents, without a resume instruction or a reminder
+to run history verification. It read the current skill and document, recorded
+these as future evaluation items, kept the pause marker and did not run new
+experiments. The final reply also said research remained paused. Independent
+revision 20 matched checkpoint 24, with unchanged SQL and no pending write or
+unresolved feedback.
+
+However, updating the current recommendation removed the immediately previous
+paragraph that had been preserved successfully through the pause turn. The
+three older paragraphs remained exactly once. The model had announced it would
+preserve the latest recommendation, but neither saved that paragraph nor invoked
+`verify-conclusion-history.mjs`. Replaying the complete revision 17/20 snapshots
+through the checker correctly returns `conclusion_missing_from_readback:0`.
+Thus the checker works when called, but the ordinary feedback path can skip it;
+the earlier explicit verification round is not evidence of reliable general
+history preservation. PR #5112 returns to draft pending this gap.
+
+This is partial evidence for receiving feedback without resuming experiments,
+not native in-flight pause/cancellation acceptance. The document still lacks an
+explicit last-synchronization time. Both REST instances exited with no open
+files, used `gpt-5.6-luna`, zero computer-use calls/screenshots and no production
+service switch; independent health confirmed the original daily instance.
+The missing paragraph remains in the saved revision 17 evidence; revision 20 is
+retained as the failed result, not silently repaired.
+
+Evidence: `.local/060-poll/control-pause-*`, `paused-feedback-*`, and
+`paused-feedback-checker-replay.json`. Next work must address skipped retention
+checks in ordinary feedback turns, then replay the same failure without telling
+the user prompt which checker to run.
