@@ -285,7 +285,12 @@ export async function main(): Promise<void> {
   logger.info({ channels: channelEntries.map((e) => e.type) }, 'Starting disclaude service');
 
   // Create DisclaudeService
-  const service = new DisclaudeService();
+  const appIds = channelEntries.filter(entry => entry.type === 'feishu')
+    .map(entry => String((entry.config as { appId?: string }).appId ?? '')).sort();
+  const callbackNamespace = crypto.createHash('sha256').update(JSON.stringify(appIds)).digest('hex').slice(0, 24);
+  const service = new DisclaudeService({
+    interactiveContextFile: path.join(Config.getWorkspaceDir(), '.disclaude', 'interactive-context', `${callbackNamespace}.json`),
+  });
 
   // Get ChannelManager from DisclaudeService (Issue #1594)
   const channelManager = service.getChannelManager();

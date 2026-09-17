@@ -227,6 +227,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
    */
   private readonly threadStash = new Map<string, string>();
   private readonly skillsRegistries = new Map<string, SkillsRegistry>();
+  private readonly reportedSkillRevisions = new WeakMap<SkillsRegistry, string>();
   /** Anonymous-stream key counter (queryStream without options.sessionKey). */
   private anonSessionCounter = 0;
 
@@ -255,7 +256,14 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       registry = codexSkillsRegistry(projectRoot, this.builtinRoot, executionRoot);
       this.skillsRegistries.set(key, registry);
     }
-    return registry.resolve().manifest;
+    const resolution = registry.resolve();
+    if (this.reportedSkillRevisions.get(registry) !== resolution.revision) {
+      this.reportedSkillRevisions.set(registry, resolution.revision);
+      if (resolution.diagnostics.length) {
+        logger.warn({ diagnostics: resolution.diagnostics }, 'Skill discovery diagnostics');
+      }
+    }
+    return resolution.manifest;
   }
 
   // --------------------------------------------------------------------------

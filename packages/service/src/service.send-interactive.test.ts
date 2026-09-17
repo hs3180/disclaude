@@ -64,7 +64,7 @@ describe('DisclaudeService.sendInteractive (Issue #4279 — registration path)',
     expect(sendInteractive).toHaveBeenCalledTimes(1);
     expect(sendInteractive).toHaveBeenCalledWith(TEST_CHAT, BASE_PARAMS);
     expect(registerSpy).toHaveBeenCalledTimes(1);
-    expect(registerSpy).toHaveBeenCalledWith('om_card_1', TEST_CHAT, resolvedPrompts);
+    expect(registerSpy).toHaveBeenCalledWith('om_card_1', TEST_CHAT, resolvedPrompts, Object.fromEntries(BASE_PARAMS.options.map(option => [option.value, option.text])));
     // Mirrors the REST API handler: success is true whenever the channel resolves.
     expect(res).toEqual({ success: true, messageId: 'om_card_1' });
   });
@@ -77,7 +77,7 @@ describe('DisclaudeService.sendInteractive (Issue #4279 — registration path)',
 
     await node.sendInteractive(TEST_CHAT, { ...BASE_PARAMS, actionPrompts: paramsPrompts });
 
-    expect(registerSpy).toHaveBeenCalledWith('om_card_2', TEST_CHAT, paramsPrompts);
+    expect(registerSpy).toHaveBeenCalledWith('om_card_2', TEST_CHAT, paramsPrompts, Object.fromEntries(BASE_PARAMS.options.map(option => [option.value, option.text])));
   });
 
   it('does not register when neither result nor params carry action prompts', async () => {

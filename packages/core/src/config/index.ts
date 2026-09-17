@@ -7,7 +7,7 @@
  * All configuration is read from the config file.
  */
 import path from 'path';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { createLogger } from '../utils/logger.js';
 import {
@@ -302,6 +302,17 @@ export class Config {
         if (existsSync(path.join(ancestor, 'release-source.json')) &&
             existsSync(path.join(ancestor, dirName))) {
           return path.join(ancestor, dirName);
+        }
+        // Both npm's bundled core and a source checkout keep shared resources
+        // at the enclosing disclaude package, independent of execution cwd.
+        if (existsSync(path.join(ancestor, 'bin', 'disclaude.js')) &&
+            existsSync(path.join(ancestor, dirName))) {
+          try {
+            const manifest = JSON.parse(readFileSync(path.join(ancestor, 'package.json'), 'utf8'));
+            if (manifest.name === 'disclaude') {return path.join(ancestor, dirName);}
+          } catch {
+            // An unrelated or malformed ancestor is not an installation root.
+          }
         }
         ancestor = path.dirname(ancestor);
       }

@@ -176,6 +176,7 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
       actionValue: string,
       actionText?: string
     ) => contextStore.generatePrompt(messageId, chatId, actionValue, actionText);
+    config.resolveActionText = (messageId, chatId, actionValue) => contextStore.getActionText?.(messageId, chatId, actionValue);
 
     // 2. Set up trigger mode adapter (Issue #2291: enum-based interface, #3345: 'auto' mode)
     // Adapter delegates to TriggerModeManager's native enum-based getMode/setMode.

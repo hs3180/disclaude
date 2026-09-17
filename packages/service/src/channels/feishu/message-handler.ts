@@ -94,6 +94,7 @@ export interface MessageCallbacks {
     actionValue: string,
     actionText?: string,
   ) => string | undefined;
+  resolveActionText?: (messageId: string, chatId: string, actionValue: string) => string | undefined;
   /**
    * Called when a topic group message is received.
    * Issue #4031: Topic group message push notification.
@@ -1480,7 +1481,7 @@ export class MessageHandler {
     );
 
     // Send user-visible confirmation message
-    const buttonText = action.text || action.value;
+    const buttonText = this.callbacks.resolveActionText?.(message_id, chat_id, action.value) || action.text || action.value;
 
     if (buttonText) {
       try {
@@ -1506,7 +1507,7 @@ export class MessageHandler {
           message_id,
           chat_id,
           action.value,
-          action.text,
+          buttonText,
         );
         messageContent = promptFromTemplate || defaultMessage;
       } else {

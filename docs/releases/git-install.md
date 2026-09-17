@@ -43,10 +43,16 @@ deleted; failures are retained for diagnosis. `--prefix-from-env` additionally
 tests ordinary `npm install -g` with the destination configured via environment
 instead of a command-line prefix (without touching the user's installation).
 
-CI `npm test` generates a distribution from the current checkout, packs it into a
-temporary archive and exercises installation on Node 20/22 × npm 10/11. It needs
-no candidate branch, committed SHA or repository write permission. Locally opt in
-with `DISCLAUDE_TEST_PACKAGE_INSTALL=1 npm test -- tests/git-release-install.test.ts`.
+The dedicated Package Installation Acceptance CI job generates a distribution
+from the committed checkout, packs a temporary archive, and exercises installation
+on Node 20/22 × npm 10/11 through external processes. It needs no candidate branch
+or repository write permission. After `npm run build`, run
+`npm run test:install:checkout` locally, or add `-- --matrix` for the runtime matrix.
+Unit tests and coverage no longer install packages or run this acceptance matrix.
+The job uploads its log with a final `PACKAGE_ACCEPTANCE_REPORT` recording source
+provenance, passed checks, overall status and cleanup status. The owned-process
+runner controls process-group cleanup; interrupted child processes do not cause
+the archive directory to be deleted while it may still be in use.
 This verifies packaging and installed runtime behavior; actual remote Git/tag
 installation remains an explicit release check using the command above.
 The additional cross-platform workflow template requires maintainer installation;

@@ -12,6 +12,9 @@
  */
 
 import { createLogger } from '@disclaude/core';
+import { readFileSync, mkdirSync, writeFileSync, renameSync, rmSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 const logger = createLogger('InteractiveContextStore');
 
@@ -40,6 +43,8 @@ export interface InteractiveContext {
   chatId: string;
   /** Map of action values to prompt templates */
   actionPrompts: ActionPromptMap;
+  /** Labels captured from the original card, never inferred from another card. */
+  actionLabels?: Record<string, string>;
   /** Timestamp when the context was created */
   createdAt: number;
 }
@@ -92,10 +97,71 @@ export class InteractiveContextStore {
 
   /** Maximum number of contexts to retain per chatId */
   private readonly maxEntriesPerChat: number;
+  private restoring = false;
 
-  constructor(maxAge?: number, maxEntriesPerChat?: number) {
+  constructor(maxAge?: number, maxEntriesPerChat?: number, private readonly persistenceFile?: string) {
     this.maxAge = maxAge ?? 24 * 60 * 60 * 1000;
     this.maxEntriesPerChat = maxEntriesPerChat ?? DEFAULT_MAX_ENTRIES_PER_CHAT;
+    if (persistenceFile) {
+      let serialized: string;
+      try { serialized = readFileSync(persistenceFile, 'utf8'); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {return;}
+        throw error;
+      }
+      const stored: unknown = JSON.parse(serialized);
+      if (!stored || typeof stored !== 'object' || !('version' in stored) || stored.version !== 1
+        || !('contexts' in stored) || !Array.isArray(stored.contexts)) {
+        throw new Error('Invalid interactive context store; original file preserved');
+      }
+      const ids = new Set<string>();
+      for (const entry of stored.contexts) {
+        if (!entry || typeof entry !== 'object' || typeof entry.messageId !== 'string' || !entry.messageId
+          || typeof entry.chatId !== 'string' || !entry.chatId || ids.has(entry.messageId)
+          || !Number.isFinite(entry.createdAt) || entry.createdAt < 0
+          || !entry.actionPrompts || typeof entry.actionPrompts !== 'object' || Array.isArray(entry.actionPrompts)
+          || Object.values(entry.actionPrompts).some(value => typeof value !== 'string' || !value)) {
+          throw new Error('Invalid interactive context entry; original file preserved');
+        }
+        if (entry.actionLabels !== undefined && (!entry.actionLabels || typeof entry.actionLabels !== 'object'
+          || Array.isArray(entry.actionLabels) || Object.values(entry.actionLabels).some(value => typeof value !== 'string' || !value))) {
+          throw new Error('Invalid interactive context labels; original file preserved');
+        }
+        ids.add(entry.messageId);
+      }
+      this.restore(stored.contexts as InteractiveContext[]);
+    }
+  }
+
+  private restore(entries: InteractiveContext[]): void {
+    this.restoring = true;
+    try {
+      this.clear();
+      for (const entry of entries) {
+        if (Date.now() - entry.createdAt > this.maxAge) {continue;}
+        this.register(entry.messageId, entry.chatId, entry.actionPrompts, entry.actionLabels);
+        const restored = this.contexts.get(entry.messageId);
+        if (restored) {restored.createdAt = entry.createdAt;}
+      }
+    } finally { this.restoring = false; }
+  }
+
+  private snapshot(): InteractiveContext[] {
+    return this.persistenceFile && !this.restoring ? structuredClone([...this.contexts.values()]) : [];
+  }
+
+  /** Single service writer; publish a complete snapshot atomically, or restore memory. */
+  private persist(previous: InteractiveContext[]): void {
+    if (!this.persistenceFile || this.restoring) {return;}
+    const temporary = `${this.persistenceFile}.${randomUUID()}.tmp`;
+    try {
+      mkdirSync(dirname(this.persistenceFile), { recursive: true, mode: 0o700 });
+      writeFileSync(temporary, JSON.stringify({ version: 1, contexts: [...this.contexts.values()] }), { flag: 'wx', mode: 0o600 });
+      renameSync(temporary, this.persistenceFile);
+    } catch (error) {
+      this.restore(previous);
+      throw error;
+    } finally { rmSync(temporary, { force: true }); }
   }
 
   /**
@@ -108,11 +174,24 @@ export class InteractiveContextStore {
    * @param chatId - Chat ID where the card was sent
    * @param actionPrompts - Map of action values to prompt templates
    */
-  register(messageId: string, chatId: string, actionPrompts: ActionPromptMap): void {
+  register(messageId: string, chatId: string, actionPrompts: ActionPromptMap, actionLabels?: Record<string, string>): void {
+    if (typeof messageId !== 'string' || !messageId || typeof chatId !== 'string' || !chatId
+      || !actionPrompts || typeof actionPrompts !== 'object' || Array.isArray(actionPrompts)
+      || Object.values(actionPrompts).some(value => typeof value !== 'string' || !value)) {
+      throw new Error('Invalid interactive context registration');
+    }
+    if (actionLabels !== undefined && (!actionLabels || typeof actionLabels !== 'object'
+      || Array.isArray(actionLabels) || Object.values(actionLabels).some(value => typeof value !== 'string' || !value))) {
+      throw new Error('Invalid interactive context labels');
+    }
+    const previous = this.snapshot();
+    // Preserve registration order in persisted snapshots as well as chat indexes.
+    this.contexts.delete(messageId);
     this.contexts.set(messageId, {
       messageId,
       chatId,
-      actionPrompts,
+      actionPrompts: { ...actionPrompts },
+      ...(actionLabels ? { actionLabels: { ...actionLabels } } : {}),
       createdAt: Date.now(),
     });
 
@@ -151,6 +230,7 @@ export class InteractiveContextStore {
       avMap.set(actionValue, avFiltered);
     }
 
+    this.persist(previous);
     logger.debug(
       { messageId, chatId, actions: Object.keys(actionPrompts), totalForChat: chatFiltered.length },
       'Action prompts registered'
@@ -191,6 +271,19 @@ export class InteractiveContextStore {
   getActionPrompts(messageId: string): ActionPromptMap | undefined {
     const context = this.contexts.get(messageId);
     return context?.actionPrompts;
+  }
+
+  getActionText(messageId: string, chatId: string, actionValue: string): string | undefined {
+    const context = this.contexts.get(messageId);
+    if (!context || context.chatId !== chatId || Date.now() - context.createdAt > this.maxAge) {return undefined;}
+    const labels = context.actionLabels;
+    if (!labels) {return undefined;}
+    let key = actionValue;
+    if (!Object.hasOwn(labels, key)) {
+      try { const parsed: unknown = JSON.parse(key); if (typeof parsed === 'string') {key = parsed;} }
+      catch { /* A plain action value needs no decoding. */ }
+    }
+    return Object.hasOwn(labels, key) ? labels[key] : undefined;
   }
 
   /**
@@ -279,13 +372,12 @@ export class InteractiveContextStore {
   /**
    * Generate a prompt from an interaction using the registered template.
    *
-   * Lookup strategy:
-   * 1. Exact messageId match
-   * 2. Most recent context for the chatId (fast fallback)
-   * 3. Search all contexts for the chatId containing the actionValue (#1625)
+   * Resolve only the registered card in its original chat. A shared action
+   * value is not proof that another card represents the same user choice.
+   * JSON-encoded strings are accepted only when no exact literal key exists.
    *
    * @param messageId - The card message ID (from Feishu callback)
-   * @param chatId - The chat ID (for fallback lookup)
+   * @param chatId - The chat ID that must match the registered card
    * @param actionValue - The action value from the button/menu
    * @param actionText - The display text of the action (optional)
    * @param actionType - The type of action (button, select_static, etc.)
@@ -300,28 +392,18 @@ export class InteractiveContextStore {
     actionType?: string,
     formData?: Record<string, unknown>
   ): string | undefined {
-    // 1. Try exact messageId lookup first
-    let prompts = this.getActionPrompts(messageId);
-
-    // 2. Fallback to most recent context for the chatId
-    if (!prompts) {
-      prompts = this.getActionPromptsByChatId(chatId);
+    const context = this.contexts.get(messageId);
+    if (!context || context.chatId !== chatId || Date.now() - context.createdAt > this.maxAge) {return undefined;}
+    const prompts = context.actionPrompts;
+    let resolvedActionValue = actionValue;
+    if (!Object.hasOwn(prompts, resolvedActionValue)) {
+      try {
+        const decoded: unknown = JSON.parse(actionValue);
+        if (typeof decoded === 'string') {resolvedActionValue = decoded;}
+      } catch { /* Plain action values need no decoding. */ }
     }
-
-    // 3. If the most recent context doesn't contain this actionValue,
-    //    search through all contexts for this chatId (#1625)
-    if (prompts && !prompts[actionValue]) {
-      const matchingPrompts = this.findActionPromptsByChatId(chatId, actionValue);
-      if (matchingPrompts) {
-        prompts = matchingPrompts;
-      }
-    }
-
-    if (!prompts) {
-      return undefined;
-    }
-
-    const template = prompts[actionValue];
+    // Never resolve inherited object properties as executable prompt templates.
+    const template = Object.hasOwn(prompts, resolvedActionValue) ? prompts[resolvedActionValue] : undefined;
     if (!template) {
       logger.debug(
         { messageId, chatId, actionValue, availableActions: Object.keys(prompts) },
@@ -338,7 +420,7 @@ export class InteractiveContextStore {
     // Escape template placeholders in user-supplied values to prevent injection (#2247).
     prompt = prompt.replace(/\{\{actionText\}\}/g, escapeTemplatePlaceholders(actionText ?? ''));
 
-    prompt = prompt.replace(/\{\{actionValue\}\}/g, escapeTemplatePlaceholders(actionValue));
+    prompt = prompt.replace(/\{\{actionValue\}\}/g, escapeTemplatePlaceholders(resolvedActionValue));
 
     // Replace {{actionType}} with provided type, or empty string if not provided
     prompt = prompt.replace(/\{\{actionType\}\}/g, escapeTemplatePlaceholders(actionType ?? ''));
@@ -360,6 +442,7 @@ export class InteractiveContextStore {
    * @returns True if the context was found and removed
    */
   unregister(messageId: string): boolean {
+    const previous = this.snapshot();
     const context = this.contexts.get(messageId);
     const removed = this.contexts.delete(messageId);
     if (removed && context) {
@@ -377,6 +460,7 @@ export class InteractiveContextStore {
       this.removeFromActionValueIndex(context.chatId, messageId, context.actionPrompts);
       logger.debug({ messageId }, 'Action prompts unregistered');
     }
+    if (removed) {this.persist(previous);}
     return removed;
   }
 
@@ -386,6 +470,7 @@ export class InteractiveContextStore {
    * @returns Number of contexts cleaned up
    */
   cleanupExpired(): number {
+    const previous = this.snapshot();
     const now = Date.now();
     let cleaned = 0;
     const expiredChatEntries = new Map<string, string[]>();
@@ -431,6 +516,7 @@ export class InteractiveContextStore {
     }
 
     if (cleaned > 0) {
+      this.persist(previous);
       logger.debug({ count: cleaned }, 'Cleaned up expired interactive contexts');
     }
 
@@ -448,8 +534,10 @@ export class InteractiveContextStore {
    * Clear all contexts and indexes.
    */
   clear(): void {
+    const previous = this.snapshot();
     this.contexts.clear();
     this.chatIdIndex.clear();
     this.actionValueIndex.clear();
+    this.persist(previous);
   }
 }

@@ -391,7 +391,13 @@ export function buildRuntimeEnvironmentGuidance(): string {
 
 You own its contents and credential lifecycle. Before changing it, read the current file, preserve unrelated entries, and coordinate concurrent writers; replacing it from a stale snapshot can destroy another agent's changes. Do not store task-private credentials there unless sharing them with other workspace agents is intended and authorized. Keep private material out of replies and logs, and keep the file owner-only and out of version control.
 
-Disclaude reads this file when preparing an execution environment. Already-running processes retain their earlier environment snapshot; writing the file does not update those processes. Decide when to refresh or remove credentials according to the provider and task, without assuming disclaude expires them for you.`;
+Disclaude reads this file when preparing an execution environment. Already-running processes retain their earlier environment snapshot; writing the file does not update those processes. Decide when to refresh or remove credentials according to the provider and task, without assuming disclaude expires them for you.
+
+### Running commands to completion
+
+When a tool returns a running session, job or cell handle, retain its status and handle, not just its output text. Poll the same handle until the underlying operation reports a terminal result. A wait returning, an empty output chunk, or an outer orchestration cell completing does not mean its child command has exited. An observation timeout is not permission to restart the work.
+
+If a script wraps command tools, inspect and preserve each command's session and exit status through subsequent waits. Before claiming success, check the terminal result and the requested outcome or artifact. Do not end a turn that was asked to await completion while its command is still running: temporary session cleanup can terminate unfinished children. If completion cannot be verified, report the unresolved state rather than success.`;
 }
 
 /**

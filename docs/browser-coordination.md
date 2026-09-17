@@ -64,8 +64,13 @@ external browser.
 
 `disclaude start --config ...` waits for browser readiness before starting agents.
 After readiness it creates a private `browser-use` launcher next to the socket.
-Harness environment construction puts that launcher first in PATH, after task
-and provider merges, and removes direct CDP/daemon configuration. No manual agent
+Harness environment construction exposes its absolute directory as
+`DISCLAUDE_BROWSER_BIN`, puts it first in PATH after task/provider merges, and
+removes direct CDP/daemon configuration. The browser-use skill launcher helper
+uses the absolute directory so a tool shell cannot select an upstream CLI by
+rewriting PATH. For an externally managed coordinator, configure both the IPC
+socket and `DISCLAUDE_BROWSER_BIN` pointing to its existing launcher directory.
+Do not point it to the upstream Python CLI or remove the null-runtime guards. No manual agent
 PATH modification or experiment command is needed. If the broker exits, browser
 calls fail explicitly and the service logs the failure; they do not fall back to
 direct CDP or spawn an independent daemon.
