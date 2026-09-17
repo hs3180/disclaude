@@ -1686,7 +1686,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             if (parsed.type === 'result' && visibleContent.startsWith('✅ Complete')) {
               toDeliver = '';
             }
-            if (this.callbacks.onTurnResult && isAssistantReplyText && toDeliver) {
+            // Keep progress visible in chat, but never concatenate it into a structured result.
+            if (this.callbacks.onTurnResult && isAssistantReplyText && toDeliver && parsed.metadata?.phase !== 'commentary') {
               const nextText = turnResultText + toDeliver;
               turnResultTruncated ||= nextText.length > 65_536;
               turnResultText = nextText.slice(0, 65_536);

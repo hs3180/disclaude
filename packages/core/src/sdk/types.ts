@@ -70,6 +70,8 @@ export type MessageRole = 'user' | 'assistant' | 'system';
 
 /** Agent 消息元数据 */
 export interface AgentMessageMetadata {
+  /** Provider-declared assistant phase; commentary is visible progress, not a final result. */
+  phase?: 'commentary' | 'final_answer';
   /** 工具名称 */
   toolName?: string;
   /** 工具输入参数 */
