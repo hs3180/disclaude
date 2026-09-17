@@ -139,6 +139,8 @@ export interface AgentMessageMetadata {
      * (recordFailure),不被合成 error 的 user-visible 文本误记为成功。
      */
     | 'turn_failed'
+    /** Backend-confirmed interruption; neutral control outcome, never success. */
+    | 'interrupted'
     /**
      * codex 后端 (Issue #4634, S7): 会话因并发上限被 LRU 驱逐。治理行为
      * 而非失败——ChatAgent 干净收尾且不自动重启;受害 chat 的下一条消息

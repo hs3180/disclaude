@@ -1460,6 +1460,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const myGeneration = this.sessionGeneration;
     const diagnosticId = crypto.randomUUID();
     let iteratorError: Error | null = null;
+    let backendInterrupted = false;
     let messageCount = 0;
     const startTime = Date.now(); // Issue #2920: 追踪启动时间
 
@@ -1598,6 +1599,16 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         }
 
         this.logger.debug({ chatId, messageCount, type: parsed.type }, 'SDK message received');
+
+        // A backend-confirmed interruption is a control outcome. Reuse the
+        // explicit-stop settlement path, before result text or success/retry
+        // accounting can turn partial output into a completed task.
+        if (parsed.type === 'result' && parsed.terminatedReason === 'interrupted') {
+          backendInterrupted = true;
+          this.stoppedQueryGenerations.add(myGeneration);
+          if (this.sessionGeneration === myGeneration) { this.queryHandle?.close(); }
+          break;
+        }
 
         // Send message content to callback
         // Issue #3641: In topic group threads, filter intermediate messages
@@ -2434,23 +2445,25 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       }
     }
 
-    // A user stop is a terminal outcome, not an unknown upstream failure.
+    // A user stop or backend interruption is terminal, not an unknown failure.
     // Keep the generation check so late teardown cannot finish a replacement
     // session's REST request or turn-completion promises.
     if (this.stoppedQueryGenerations.delete(myGeneration)) {
       if (this.sessionGeneration === myGeneration) {
         const threadRoot = resolveReplyThreadRoot();
-        const error = new Error('Agent turn cancelled by stop');
+        const error = new Error(backendInterrupted ? 'Agent turn interrupted by backend' : 'Agent turn cancelled by stop');
         this.rejectTurn(error);
         this.taskCompletionReject?.(error);
         this.clearTaskCompletion();
-        await this.deliverUserVisible(chatId, '⏹️ 本轮已停止。', threadRoot);
-        if (this.sessionGeneration !== myGeneration) { return; }
-        await this.callbacks.onDone?.(chatId, threadRoot);
-        if (this.sessionGeneration !== myGeneration) { return; }
+        // Release the stopped session before notification can yield. Explicit
+        // follow-ups must start a new query, not enter the closed old channel.
+        this.channel?.close();
         this.isSessionActive = false;
         this.isProcessingMessage = false;
         this.activeTurnMessageId = undefined;
+        await this.deliverUserVisible(chatId, '⏹️ 本轮已停止。', threadRoot);
+        if (this.sessionGeneration !== myGeneration) { return; }
+        await this.callbacks.onDone?.(chatId, threadRoot);
       }
       return;
     }

@@ -80,6 +80,7 @@ export interface IteratorYieldResult {
       | 'max_budget_usd'
       | 'max_structured_output_retries'
       | 'turn_failed'
+      | 'interrupted'
       | 'evicted';
     /**
      * provider 据本轮 stderr 标记:SDK 在上游 overloaded_error / 5xx 重试耗尽后仍发
