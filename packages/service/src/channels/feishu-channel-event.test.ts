@@ -18,7 +18,8 @@
 
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { FeishuChannel, extractChatIdFromEvent } from './feishu-channel.js';
+import { FeishuChannel, extractChatIdFromEvent, type FeishuChannelConfig } from './feishu-channel.js';
+import { MessageHandler } from './feishu/index.js';
 
 // ─── Mock Logger ────────────────────────────────────────────────────────────
 
@@ -110,6 +111,16 @@ vi.mock('./feishu/index.js', () => ({
 }));
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
+
+it('uses the action resolver installed by setup after channel construction (#5073)', () => {
+  const config: FeishuChannelConfig = { appId: 'test-app', appSecret: 'test-secret' };
+  new FeishuChannel(config);
+  const callbacks = vi.mocked(MessageHandler).mock.calls.at(-1)?.[0].callbacks;
+  expect(callbacks?.resolveActionPrompt?.('card', 'chat', 'capacity')).toBeUndefined();
+  config.resolveActionPrompt = vi.fn().mockReturnValue('Original card instruction');
+  expect(callbacks?.resolveActionPrompt?.('card', 'chat', 'capacity', 'Inventory')).toBe('Original card instruction');
+  expect(config.resolveActionPrompt).toHaveBeenCalledWith('card', 'chat', 'capacity', 'Inventory');
+});
 
 function createTestChannel(mockClient: ReturnType<typeof createMockClient>['client']) {
   const channel = new FeishuChannel({ appId: 'test-app', appSecret: 'test-secret' });
