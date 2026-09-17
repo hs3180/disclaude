@@ -14,6 +14,9 @@
  * 8. disposeAll() on empty pool is safe
  */
 
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { CwdProvider } from '@disclaude/core';
 
@@ -75,7 +78,7 @@ vi.mock('./agents/factory.js', () => ({
   },
 }));
 
-import { AgentFactory } from './agents/factory.js';
+import { AgentFactory, type AgentCreateOptions } from './agents/factory.js';
 import { ChatSessionPool, chatIdOfSessionKey } from './chat-session-pool.js';
 
 // Helper to create mock ChatAgentCallbacks
@@ -87,6 +90,47 @@ const createMockCallbacks = () => ({
 });
 
 describe('ChatSessionPool', () => {
+  it.each(['resolver', 'provider'] as const)('pins isolated execution to its original directory (%s)', mode => {
+    const root = mkdtempSync(join(tmpdir(), 'isolated-directory-'));
+    const first = join(root, 'first'), second = join(root, 'second');
+    mkdirSync(first); mkdirSync(second);
+    let active = first;
+    const cwdProvider = () => active;
+    const pool = new ChatSessionPool({ cwdProvider, ...(mode === 'resolver' ? {
+      cwdResolver: () => ({ effectiveCwd: active, boundWorkingDir: active, reason: 'bound' as const }),
+    } : {}) });
+    try {
+      const callbacks = createMockCallbacks();
+      pool.getOrCreateChatAgent('directory-chat', callbacks);
+      const userOptions = vi.mocked(AgentFactory.createChatAgent).mock.calls.at(-1)![3] as AgentCreateOptions;
+      pool.getOrCreateChatAgent('directory-chat', callbacks, undefined, { id: 'execution:fixed', releaseAfterTurn: true });
+      const taskOptions = vi.mocked(AgentFactory.createChatAgent).mock.calls.at(-1)![3] as AgentCreateOptions;
+      active = second;
+      expect(userOptions.cwdProvider?.('directory-chat')).toBe(second);
+      expect(taskOptions.cwdProvider?.('directory-chat')).toBe(first);
+      expect(taskOptions.cwdResolver?.('directory-chat')).toEqual({ effectiveCwd: first, boundWorkingDir: first, reason: 'bound' });
+      rmSync(first, { recursive: true });
+      expect(taskOptions.cwdResolver?.('directory-chat')).toEqual({ effectiveCwd: first, boundWorkingDir: first, reason: 'bound-missing' });
+      mkdirSync(first);
+      expect(taskOptions.cwdResolver?.('directory-chat')?.reason).toBe('bound');
+    } finally { pool.disposeAll(); rmSync(root, { recursive: true, force: true }); }
+  });
+
+
+  it('does not pin a workspace fallback when the original binding is already missing', () => {
+    const root = mkdtempSync(join(tmpdir(), 'isolated-missing-'));
+    const missing = join(root, 'missing');
+    const pool = new ChatSessionPool({ cwdResolver: () => ({
+      effectiveCwd: root, boundWorkingDir: missing, reason: 'bound-missing',
+    }) });
+    try {
+      pool.getOrCreateChatAgent('missing-chat', createMockCallbacks(), undefined, { id: 'execution:missing' });
+      const options = vi.mocked(AgentFactory.createChatAgent).mock.calls.at(-1)![3] as AgentCreateOptions;
+      expect(options.cwdProvider?.('missing-chat')).toBe(missing);
+      expect(options.cwdResolver?.('missing-chat')).toEqual({ effectiveCwd: missing, boundWorkingDir: missing, reason: 'bound-missing' });
+    } finally { pool.disposeAll(); rmSync(root, { recursive: true, force: true }); }
+  });
+
   it('isolates repeated scheduled ticks and preserves the user agent and delivery chat (#4812)', () => {
     const pool = new ChatSessionPool();
     const callbacks = createMockCallbacks();
