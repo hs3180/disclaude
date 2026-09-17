@@ -1,0 +1,352 @@
+# =============================================================================
+# Disclaude Docker Compose Configuration
+# =============================================================================
+#
+# Architecture: Single-node application
+# - disclaude service: Handles Feishu WebSocket connections + Agent execution + MCP
+#
+# Note: MCP functionality is built into disclaude service, no separate deployment needed.
+# For multi-instance scaling, deploy multiple independent application instances.
+#
+# Usage:
+#   cp disclaude.config.example.yaml disclaude.config.yaml
+#   # Edit disclaude.config.yaml with your API keys and settings
+#   # (Optional) Configure source mirrors for faster downloads:
+#   # Uncomment desired mirrors in .env, then:
+#   # docker compose up -d --build
+#   docker compose up -d
+#
+#   # View logs
+#   docker compose logs -f
+#
+#   # Stop
+#   docker compose down
+#
+# =============================================================================
+
+services:
+  # ===========================================================================
+  # Disclaude application service
+  # ===========================================================================
+  # Channels, sessions and scheduled work run in one service.
+  service:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+      args:
+        APT_MIRROR: ${APT_MIRROR:-}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+        DOCKER_IMAGE_PREFIX: ${DOCKER_IMAGE_PREFIX:-}
+        GH_INSTALL_MODE: ${GH_INSTALL_MODE:-apt-repo}
+        GH_DEB_URL: ${GH_DEB_URL:-}
+        CODEX_VERSION: ${CODEX_VERSION:-0.151.0}
+    image: disclaude:service
+    container_name: disclaude
+    restart: unless-stopped
+
+    # Command: run disclaude service directly
+    # Docker restart policy handles process management
+    # --api-port starts the HttpApiServer (REST API). Since #4168 Phase 3
+    # removed the Unix-socket transport, REST is the ONLY REST API path: channel
+    # MCP tools (send_interactive_message, upload_file, send-card, ...) reach
+    # DisclaudeService via DISCLAUDE_API_BASE_URL, whose default matches this
+    # port (http://localhost:19200). Port is not published to the host.
+    command: ["disclaude", "start", "--api-port", "19200"]
+
+    # Uses bridge network (disclaude-net) for container-to-container communication
+    # (e.g., CDP endpoint from chromium service). Re-add `network_mode: host`
+    # if the service needs to access other host-local services.
+    networks:
+      - disclaude-net
+
+    environment:
+      - NODE_ENV=production
+      - TZ=Asia/Shanghai
+      - HOST=0.0.0.0
+      - DISCLAUDE_WORKSPACE_DIR=/data/workspace
+      # #4608: pin the REST API client to IPv4 loopback, matching the
+      # HttpApiServer bind (cli.ts pins 127.0.0.1). Avoids the localhost
+      # ::1-vs-127.0.0.1 resolution split between server bind and undici fetch
+      # (docs/channel-skill-rest-live-verification.md). Propagates to the
+      # in-container channel CLI (`disclaude channel`) via env inheritance.
+      - DISCLAUDE_API_BASE_URL=http://127.0.0.1:19200
+      # Issue #4181: re-enable Claude Code's built-in (session-only) cron/loop
+      # tools (CronCreate/CronList/CronDelete/ScheduleWakeup), disallowed for
+      # chat agents by default. Set DISCLAUDE_ALLOW_BUILTIN_CRON=1 in .env to
+      # use the built-in /loop dynamic mode; leave unset to keep the persistent
+      # `schedule` skill as the only scheduling mechanism.
+      - DISCLAUDE_ALLOW_BUILTIN_CRON=${DISCLAUDE_ALLOW_BUILTIN_CRON:-}
+      # Docker restart policy handles singleton enforcement; disable PID lockfile
+      # to prevent stale lockfile from blocking startup after container restart.
+      - LOCKFILE_PATH=
+      # Enable file logging (set LOG_TO_FILE=true in .env when using Filebeat)
+      - LOG_TO_FILE=${LOG_TO_FILE:-false}
+      - LOG_DIR=/data/logs
+      # Issue #4777: rotate the file log by size/count within the app (pino-roll)
+      # so /data/logs/disclaude-combined.log cannot grow unbounded (was 49GB).
+      # Docker containers have NO system logrotate, so delegating to the host
+      # (docs/log-rotation.md) never ran. Apply size-based rotation + keep a
+      # bounded number of rolled files. Override via .env:
+      #   LOG_ROTATE, LOG_ROTATE_SIZE (default 50m),
+      #   LOG_ROTATE_LIMIT (total files kept, default 3), LOG_ROTATE_FREQUENCY.
+      - LOG_ROTATE=${LOG_ROTATE:-true}
+      - LOG_ROTATE_SIZE=${LOG_ROTATE_SIZE:-50m}
+      - LOG_ROTATE_LIMIT=${LOG_ROTATE_LIMIT:-3}
+      # Issue #4786: mirror the file log to stdout so `docker logs` and the
+      # json-file driver below (max-size 10m / max-file 3) can collect the app
+      # log even with LOG_TO_FILE=true — otherwise docker logs only shows
+      # entrypoint text. The file copy is unaffected (still fully persisted).
+      - LOG_MIRROR_STDOUT=${LOG_MIRROR_STDOUT:-true}
+      # Issue #4114: Cap compile parallelism for agent-spawned builds.
+      # Override to increase/decrease based on available memory.
+      - MAKEFLAGS=${MAKEFLAGS:--j2}
+      - CMAKE_BUILD_PARALLEL_LEVEL=${CMAKE_BUILD_PARALLEL_LEVEL:-2}
+      # Issue #4285 (part 1): GPU env vars consumed by the nvidia runtime. The
+      # nvidia runtime reads these from the CONTAINER environment (not the host
+      # shell), so they must be interpolated here — exporting them in the shell
+      # alone has no effect. Defaults are no-ops on the CPU path (runtime: runc
+      # ignores them); on the GPU path they expose all GPUs with compute+utility
+      # capabilities out of the box. Override via .env or shell, e.g.
+      # NVIDIA_VISIBLE_DEVICES=0.
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+      - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
+      # Issue #4599 (part 1): BU_CDP_URL promoted into the tracked compose file
+      # so the browser-use skill works without an untracked override. Default
+      # points at the optional chromium compose service (#4496). Deliberately
+      # `${BU_CDP_URL-…}` (no colon): set BU_CDP_URL= (empty) in .env to pass an
+      # empty value through — browser-use treats empty as unset and self-launches.
+      - BU_CDP_URL=${BU_CDP_URL-http://disclaude-chromium:${CDP_PORT:-9222}}
+      # Persist Codex OAuth credentials and rollout sessions across recreation.
+      - CODEX_HOME=/data/codex
+
+    # Issue #4114: OOM protection — set host-side via the `oom_score_adj` field.
+    # cgroup v2 forbids writing a negative /proc/self/oom_score_adj from inside the
+    # container (the entrypoint approach in #4114 silently failed with EPERM), so
+    # this MUST be applied here by the Docker daemon instead. Range: -1000 (never
+    # kill) to +1000 (always kill). Default: -500.
+    oom_score_adj: ${OOM_SCORE_ADJ:--500}
+
+    volumes:
+      - ./disclaude.config.yaml:/app/disclaude.config.yaml:ro
+      # Workspace host path. Defaults to ./workspace; set WORKSPACE_DIR in .env to
+      # relocate it (e.g. to a larger/SSD volume). The container runs as uid 1001
+      # (disclaude), so the host directory must be owned by 1001:1001 — otherwise
+      # message handling fails with EACCES when it tries to write chat logs here.
+      # NOTE: if WORKSPACE_DIR points at a path that doesn't yet exist, docker
+      # creates it as root:root — mkdir + chown 1001:1001 it yourself first.
+      - ${WORKSPACE_DIR:-./workspace}:/data/workspace
+      - log_data:/data/logs
+      - codex_data:/data/codex
+
+    # Issue #4285 (part 1): opt-in GPU runtime via env (approach b — Debian
+    # `node:22-trixie-slim` base unchanged, GPU exposed through `runtime: nvidia`;
+    # torch/conda bundle their own CUDA runtime, so no Dockerfile change is
+    # needed). All defaults below preserve CPU-only behavior exactly:
+    #   DOCKER_RUNTIME unset → "runc" (Docker's default runtime, a no-op);
+    #   SHM_SIZE unset       → 64m (the container's default /dev/shm);
+    #   WORKER_MEMORY unset  → 16G (the current limit).
+    # To enable GPU on a host with nvidia-container-toolkit installed, e.g.:
+    #   DOCKER_RUNTIME=nvidia SHM_SIZE=4G WORKER_MEMORY=40G \
+    #     NVIDIA_VISIBLE_DEVICES=all docker compose up -d
+    # See docs/gpu-setup.md for prerequisites and the #4285 open questions
+    # deferred from this PR (Dockerfile base-image decision, obsolete deployment-role
+    # scope, shm_size default sizing).
+    runtime: ${DOCKER_RUNTIME:-runc}
+    shm_size: ${SHM_SIZE:-64m}
+    deploy:
+      resources:
+        limits:
+          memory: ${WORKER_MEMORY:-16G}
+        reservations:
+          memory: 512M
+
+    # Logging: json-file with rotation (default).
+    # To forward to Elasticsearch/Loki, change driver to "fluentd" or "syslog".
+    # See docs/log-forwarding.md for Fluentd/Filebeat setup examples.
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "[n]ode_modules/@disclaude/service/dist/cli.js"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ===========================================================================
+  # CDP Chromium endpoint (optional)
+  # ===========================================================================
+  # Chromium with Xvfb (headed by default) and a persistent automation profile. Its primary
+  # consumer is the browser-use Skill (#4460); any CDP driver may attach (see
+  # docs/cdp-endpoint.md, #4496). Chromium ships via the official Playwright
+  # image — the name is the distribution channel, not a tooling statement.
+  # Identifiers renamed playwright → chromium (#4613); the image reference stays
+  # on the Playwright registry path.
+  # Start with: docker compose --profile chromium up -d
+  #
+  # The CDP endpoint is available at http://disclaude-chromium:${CDP_PORT:-9222}
+  # within the Docker network (internal only, not exposed to host).
+  #
+  # IMPORTANT — why an nginx reverse proxy fronts Chrome's CDP listener:
+  # Two quirks of the official Playwright image's Chromium (Chrome 148+, `--headless=new`)
+  # prevent other containers from reaching CDP over the bridge network:
+  #   1. `--remote-debugging-address=0.0.0.0` is IGNORED — CDP binds to 127.0.0.1 only.
+  #   2. Its HTTP/WS endpoints enforce a DNS-rebinding check and reject any request whose
+  #      `Host` header is neither an IP nor `localhost` (HTTP 500: "Host header is
+  #      specified and is not an IP address or localhost"). A plain TCP forwarder (socat)
+  #      passes the container hostname through as Host and is rejected.
+  # An nginx reverse proxy solves both: it listens on 0.0.0.0:$CDP_PORT, forwards to
+  # Chrome's loopback listener ($CDP_INTERNAL_PORT), rewrites `Host` to this container's
+  # bridge-network IP (so Chrome embeds a reachable IP into the webSocketDebuggerUrl),
+  # and upgrades HTTP->WebSocket for the CDP socket. The two ports MUST differ (otherwise
+  # nginx cannot bind 0.0.0.0:$CDP_PORT — it would collide with Chrome's 127.0.0.1
+  # listener on the same port). See docker/chromium-cdp-nginx.conf for the full rationale.
+  #
+  # Consumed by the browser-use skill — the primary driver (the Playwright MCP
+  # server is removed, #4460; browser-use is the only browser surface): attach
+  # via BU_CDP_URL=http://disclaude-chromium:9222 (external tools.mcpServers
+  # config was removed in #4459 Scope 4). Other CDP drivers may attach too:
+  #   chromium.connectOverCDP("http://disclaude-chromium:9222")   # Playwright library (external driver, "may also" tier)
+  # Contract: docs/cdp-endpoint.md (#4496)
+  chromium:
+    # Build runtime dependencies once, rather than apt-installing at every boot.
+    build:
+      context: ./docker
+      dockerfile: Dockerfile.chromium
+      args:
+        CHROMIUM_IMAGE_TAG: ${CHROMIUM_IMAGE_TAG:-v1.62.0-noble}
+    stop_grace_period: 15s
+    image: disclaude-chromium:${CHROMIUM_IMAGE_TAG:-v1.62.0-noble}
+    container_name: disclaude-chromium
+    init: true
+    restart: unless-stopped
+
+    networks:
+      - disclaude-net
+
+    # Publish the nginx-fronted CDP endpoint to the host so MCP clients running
+    # on the host (user-scope ~/.claude.json) can reach it at localhost:${CDP_PORT}.
+    # This is more stable than pinning the container's bridge IP (which can change
+    # when the network is recreated). nginx already listens on 0.0.0.0:${CDP_PORT},
+    # so we publish that same port on both sides — the container-side port MUST equal
+    # ${CDP_PORT}, which is where nginx listens (NOT a fixed 9222; a fixed value would
+    # break the host-scope MCP whenever CDP_PORT is overridden).
+    #
+    # Bind to the loopback interface only (127.0.0.1), NOT 0.0.0.0. Chrome's CDP
+    # exposes the live browser session (pages, JS context, network) unauthenticated,
+    # so binding to all interfaces would let any host on the LAN drive the browser.
+    # The MCP client runs on this same host, so loopback is sufficient.
+    ports:
+      - "127.0.0.1:${CDP_PORT:-9222}:${CDP_PORT:-9222}"
+
+    volumes:
+      # nginx reverse-proxy config (templated with port placeholders). See the
+      # header comment above and docker/chromium-cdp-nginx.conf for why it's needed.
+      - ./docker/chromium-cdp-nginx.conf:/etc/nginx/cdp-proxy.conf.template:ro
+      - chromium_profile:/data/chrome-profile
+
+    environment:
+      # External port other containers connect to (nginx listens here).
+      - CDP_PORT=${CDP_PORT:-9222}
+      # Chrome's internal loopback-only CDP port. Must differ from CDP_PORT.
+      - CDP_INTERNAL_PORT=${CDP_INTERNAL_PORT:-9221}
+      - CHROMIUM_HEADLESS=${CHROMIUM_HEADLESS:-0}
+      - TZ=${TZ:-Asia/Shanghai}
+      - LANG=${CHROMIUM_LANG:-C.UTF-8}
+      - CHROMIUM_ACCEPT_LANG=${CHROMIUM_ACCEPT_LANG:-zh-CN,zh}
+
+    shm_size: ${CHROMIUM_SHM_SIZE:-2gb}
+
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: ${CHROMIUM_MEMORY:-4G}
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # Probe the endpoint through nginx (not Chrome directly), so the healthcheck
+    # catches Chrome dying AND the nginx proxy failing. The previous localhost-only
+    # probe hit Chrome's loopback listener directly and stayed green even when CDP was
+    # unreachable from other containers. CMD-SHELL so the shell expands $CDP_PORT at
+    # runtime (the exec-form "CMD" does not run a shell, so $${CDP_PORT:-9222} would
+    # be passed to curl literally and never expand).
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:$${CDP_PORT:-9222}/json/version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    profiles:
+      - chromium
+
+  # ===========================================================================
+  # Filebeat Log Forwarder (optional)
+  # ===========================================================================
+  # Forwards Pino JSON logs from service container to Elasticsearch.
+  # Reads from shared Docker volume (log_data), connects to ES via host network.
+  # Configure ES connection in .env (ES_HOST, ES_PORT, ES_USERNAME, ES_PASSWORD).
+  # Start with: docker compose --profile logging up -d
+  filebeat:
+    image: elastic/filebeat:${FILEBEAT_VERSION:-8.18.0}
+    container_name: disclaude-filebeat
+    restart: unless-stopped
+
+    network_mode: host
+
+    depends_on:
+      service:
+        condition: service_started
+
+    volumes:
+      - ./filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - log_data:/data/logs:ro
+      - filebeat_data:/usr/share/filebeat/data
+
+    environment:
+      - ELASTICSEARCH_HOST=${ES_HOST:-localhost}
+      - ELASTICSEARCH_PORT=${ES_PORT:-9200}
+      # ES auth credentials (from .env: ES_USERNAME, ES_PASSWORD).
+      # Enabled by default. Set credentials in .env for secured ES.
+      # For unsecured ES, comment out these two lines (and the matching
+      # username/password in filebeat.yml) to avoid HTTP 401 from empty values.
+      - ELASTICSEARCH_USERNAME=${ES_USERNAME:-}
+      - ELASTICSEARCH_PASSWORD=${ES_PASSWORD:-}
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:5066/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+    profiles:
+      - logging
+
+volumes:
+  chromium_profile:
+  log_data:
+  filebeat_data:
+  codex_data:
+
+networks:
+  disclaude-net:
+    driver: bridge
