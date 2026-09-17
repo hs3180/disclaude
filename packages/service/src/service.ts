@@ -567,7 +567,8 @@ export class DisclaudeService extends EventEmitter {
     const resolvedPrompts = (result as { actionPrompts?: Record<string, string> }).actionPrompts
       ?? params.actionPrompts;
     if (resolvedPrompts && result.messageId) {
-      this.interactiveContextStore.register(result.messageId, chatId, resolvedPrompts);
+      this.interactiveContextStore.register(result.messageId, chatId, resolvedPrompts,
+        Object.fromEntries(params.options.map(option => [option.value, option.text])));
     }
     // success mirrors the REST API handler, which returns success: true whenever the
     // channel handler resolves without throwing.

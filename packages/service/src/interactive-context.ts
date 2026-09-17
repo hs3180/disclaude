@@ -43,6 +43,8 @@ export interface InteractiveContext {
   chatId: string;
   /** Map of action values to prompt templates */
   actionPrompts: ActionPromptMap;
+  /** Labels captured from the original card, never inferred from another card. */
+  actionLabels?: Record<string, string>;
   /** Timestamp when the context was created */
   createdAt: number;
 }
@@ -121,6 +123,10 @@ export class InteractiveContextStore {
           || Object.values(entry.actionPrompts).some(value => typeof value !== 'string' || !value)) {
           throw new Error('Invalid interactive context entry; original file preserved');
         }
+        if (entry.actionLabels !== undefined && (!entry.actionLabels || typeof entry.actionLabels !== 'object'
+          || Array.isArray(entry.actionLabels) || Object.values(entry.actionLabels).some(value => typeof value !== 'string' || !value))) {
+          throw new Error('Invalid interactive context labels; original file preserved');
+        }
         ids.add(entry.messageId);
       }
       this.restore(stored.contexts as InteractiveContext[]);
@@ -133,7 +139,7 @@ export class InteractiveContextStore {
       this.clear();
       for (const entry of entries) {
         if (Date.now() - entry.createdAt > this.maxAge) {continue;}
-        this.register(entry.messageId, entry.chatId, entry.actionPrompts);
+        this.register(entry.messageId, entry.chatId, entry.actionPrompts, entry.actionLabels);
         const restored = this.contexts.get(entry.messageId);
         if (restored) {restored.createdAt = entry.createdAt;}
       }
@@ -168,11 +174,15 @@ export class InteractiveContextStore {
    * @param chatId - Chat ID where the card was sent
    * @param actionPrompts - Map of action values to prompt templates
    */
-  register(messageId: string, chatId: string, actionPrompts: ActionPromptMap): void {
+  register(messageId: string, chatId: string, actionPrompts: ActionPromptMap, actionLabels?: Record<string, string>): void {
     if (typeof messageId !== 'string' || !messageId || typeof chatId !== 'string' || !chatId
       || !actionPrompts || typeof actionPrompts !== 'object' || Array.isArray(actionPrompts)
       || Object.values(actionPrompts).some(value => typeof value !== 'string' || !value)) {
       throw new Error('Invalid interactive context registration');
+    }
+    if (actionLabels !== undefined && (!actionLabels || typeof actionLabels !== 'object'
+      || Array.isArray(actionLabels) || Object.values(actionLabels).some(value => typeof value !== 'string' || !value))) {
+      throw new Error('Invalid interactive context labels');
     }
     const previous = this.snapshot();
     // Preserve registration order in persisted snapshots as well as chat indexes.
@@ -181,6 +191,7 @@ export class InteractiveContextStore {
       messageId,
       chatId,
       actionPrompts: { ...actionPrompts },
+      ...(actionLabels ? { actionLabels: { ...actionLabels } } : {}),
       createdAt: Date.now(),
     });
 
@@ -260,6 +271,19 @@ export class InteractiveContextStore {
   getActionPrompts(messageId: string): ActionPromptMap | undefined {
     const context = this.contexts.get(messageId);
     return context?.actionPrompts;
+  }
+
+  getActionText(messageId: string, chatId: string, actionValue: string): string | undefined {
+    const context = this.contexts.get(messageId);
+    if (!context || context.chatId !== chatId || Date.now() - context.createdAt > this.maxAge) {return undefined;}
+    const labels = context.actionLabels;
+    if (!labels) {return undefined;}
+    let key = actionValue;
+    if (!Object.hasOwn(labels, key)) {
+      try { const parsed: unknown = JSON.parse(key); if (typeof parsed === 'string') {key = parsed;} }
+      catch { /* A plain action value needs no decoding. */ }
+    }
+    return Object.hasOwn(labels, key) ? labels[key] : undefined;
   }
 
   /**

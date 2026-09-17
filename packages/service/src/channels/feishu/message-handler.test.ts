@@ -21,6 +21,7 @@ const mockState = vi.hoisted(() => ({
   emitControl: vi.fn<() => Promise<{ success: boolean; message?: string }>>().mockResolvedValue({ success: false }),
   sendMessage: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
   resolveActionPrompt: vi.fn().mockReturnValue(undefined),
+  resolveActionText: vi.fn().mockReturnValue(undefined),
   isMessageProcessed: false,
   claimMessage: vi.fn<(id: string) => boolean>(() => false),
   releaseMessage: vi.fn(),
@@ -145,6 +146,7 @@ function createHandler(overrides: Record<string, unknown> = {}) {
       emitControl: mockState.emitControl,
       sendMessage: mockState.sendMessage,
       resolveActionPrompt: mockState.resolveActionPrompt,
+      resolveActionText: mockState.resolveActionText,
       onTopicMessage: mockState.onTopicMessage,
     },
     isRunning: () => mockState.isRunning,
@@ -952,6 +954,18 @@ describe('MessageHandler', () => {
           text: expect.stringContaining('Click me'),
         }),
       );
+    });
+
+    it('confirms the persisted readable label when the callback omits text (#5073)', async () => {
+      mockState.resolveActionText.mockReturnValueOnce('Inventory report');
+      const { handler } = createHandler();
+      await handler.handleCardAction({
+        context: { open_message_id: 'card_msg', open_chat_id: 'chat_001' },
+        operator: { open_id: 'user_001' },
+        action: { tag: 'button', value: '"capacity"' },
+      });
+      expect(mockState.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining('Inventory report') }));
+      expect(mockState.resolveActionPrompt).toHaveBeenCalledWith('card_msg', 'chat_001', '"capacity"', 'Inventory report');
     });
 
     it('should use action.value as fallback for button text', async () => {

@@ -20,11 +20,14 @@ describe('durable interactive contexts', () => {
 
   it('restores exact card prompts after reconstruction without crossing chats', () => {
     const first = new InteractiveContextStore(undefined, undefined, file);
-    first.register('card', 'chat', { inventory: 'Inspect inventory read-only' });
+    first.register('card', 'chat', { inventory: 'Inspect inventory read-only' }, { inventory: 'Inventory report' });
     const restored = new InteractiveContextStore(undefined, undefined, file);
     expect(restored.generatePrompt('card', 'chat', '"inventory"')).toBe('Inspect inventory read-only');
     expect(restored.generatePrompt('card', 'other', 'inventory')).toBeUndefined();
     expect(restored.generatePrompt('other', 'chat', 'inventory')).toBeUndefined();
+    expect(restored.getActionText('card', 'chat', '"inventory"')).toBe('Inventory report');
+    expect(restored.getActionText('card', 'other', 'inventory')).toBeUndefined();
+    expect(restored.getActionText('other', 'chat', 'inventory')).toBeUndefined();
     expect(statSync(file).mode & 0o777).toBe(0o600);
     expect(readdirSync(directory)).toEqual(['contexts.json']);
   });
