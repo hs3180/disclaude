@@ -39,3 +39,29 @@ configuration/plist hashes matched and independent health passed. Candidate
 processes exited; workspace files were archived with hashes and the owned root
 was removed. The single test document is retained for review and follow-up
 validation. No PR was merged by the agent.
+
+## Current-overview retest
+
+Integrated candidate `8954ab8b` included the overview guidance. A new full-document
+comment corrected Birch's deployment cost to 2,600 while retaining offline
+read/write and Cedar-stop requirements. A native chat message asked only to read
+the latest document/comments and revise, without naming the stale overview or
+repeating the corrected value. Actual rollout metadata confirmed Luna.
+
+Document revision 10 begins with the R3 current state: Birch, 2,600, the 1,160
+difference from Atlas, the comment marker and next steps. Detailed R3 findings
+agree; the old 2,200 values, original sources and R2 user paragraph remain as
+history. The final chat reply links the same document and reports those changes.
+This supplies a scoped real behavior pass for the current-overview fix and a
+nonempty comment, not a complete Research/lifecycle or visual-rendering pass.
+
+The run also exposed a separate receipt problem: Feishu inserts a blank line
+before an appended Markdown heading and removes its terminal newline. Strict
+receipt matching rejected it; the agent reconciled then appended a second
+receipt before continuing. Preserve this failure, including the redundant
+receipt, rather than count feedback acknowledgement as cleanly passed.
+
+Two UI calls, no screenshots. The original service was restored and independently
+healthy; configuration/plist hashes matched. Owned workspace and model-created
+temporary files were archived with hashes then removed after ownership and
+process checks. The one research document remains available for follow-up.
