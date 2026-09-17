@@ -9,7 +9,10 @@ import { FeishuAgentInput } from '../../packages/service/src/channels/feishu/age
 
 // Real Codex model/app-server and product card adapter. Feishu HTTP delivery and
 // the human submission are captured/simulated; live-channel acceptance is separate.
-it.skipIf(process.env.DISCLAUDE_E2E_CODEX_INPUT !== '1').each(['rpc', 'async-message'] as const)('answers a real Codex %s question through its native card and completes the original turn', async kind => {
+// Luna currently exposes the RPC tool. Async is a separate capability probe,
+// explicitly enabled only when checking that optional model/tool combination.
+const questionKinds = process.env.DISCLAUDE_E2E_CODEX_ASYNC_INPUT === '1' ? ['rpc', 'async-message'] as const : ['rpc'] as const;
+it.skipIf(process.env.DISCLAUDE_E2E_CODEX_INPUT !== '1').each(questionKinds)('answers a real Codex %s question through its native card and completes the original turn', async kind => {
   const root = await mkdtemp(join(tmpdir(), 'codex-input-e2e-'));
   const provider = new CodexAgentProvider({ transport: 'app-server', builtinsDir: root, env: { ...process.env }, execTimeoutMs: 120_000 });
   let card: { body: { elements: Array<{ tag: string; elements?: Array<{ name: string }> }> } } | undefined;
