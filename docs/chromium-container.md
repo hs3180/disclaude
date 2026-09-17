@@ -34,6 +34,7 @@ languages. `CHROMIUM_ACCEPT_LANG` is passed to Chromium
 [`--accept-lang`](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/chrome/common/chrome_switches.h),
 which controls Accept-Language and the JavaScript language properties. Set it to
 a comma-separated language list such as `en-US,en` for another deployment.
+Chromium may expose only the primary language in `navigator.languages`.
 This is a browser startup setting; no profile preferences are rewritten by the
 entrypoint. Override these for the deployment environment. Chromium
 still runs as root with `--no-sandbox` inside this image, matching the prior

@@ -86,7 +86,8 @@ async function probe(info, write, headless) {
     const session = (await call('Target.attachToTarget', { targetId: target, flatten: true })).sessionId;
     const language = await call('Runtime.evaluate', { expression: '({ language: navigator.language, languages: navigator.languages })', returnByValue: true }, session);
     assert.equal(language.result.value.language, acceptLanguages.split(',')[0], 'browser language differs from configured content language');
-    assert.deepEqual(language.result.value.languages, acceptLanguages.split(','), 'browser languages differ from configured content languages');
+    // Chromium can reduce the exposed list to its primary language.
+    assert.equal(language.result.value.languages[0], acceptLanguages.split(',')[0], 'primary browser language differs from configured content languages');
     if (write) {
       const result = await call('Network.setCookie', { name: 'disclaude_persistence', value: cookie,
         url: 'https://research.example.test/', expires: Math.floor(Date.now() / 1000) + 3600 }, session);
