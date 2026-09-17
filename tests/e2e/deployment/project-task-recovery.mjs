@@ -1,9 +1,9 @@
 /** External, two-phase recovery acceptance. The operator owns deployment restart. */
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 if (process.argv.includes('--help')) {
-  console.log('JSON stdin: {baseUrl,apiToken,context,phase:"prepare"|"resume",checkpoint?,timeoutMs?}. Prepare leaves one task running and emits a checkpoint. After an independently verified deployment crash/restart, resume uses that checkpoint and a fresh real-message context, then archives the task. This client never kills or starts services.');
+  console.log('JSON stdin: {baseUrl,apiToken,context,phase:"prepare"|"resume",checkpoint?,timeoutMs?,documentUrl?,commentMarker?}. Prepare leaves one task running and emits a checkpoint. Optional document fixture uses A41/B48; operator changes body A58 and comments B rebate14 before resume, passing commentMarker. Resume uses a fresh real-message context and archives the task. This client never kills/starts services or edits documents.');
   process.exit(0);
 }
 const report = { suite: 'deployed-task-recovery', startedAt: new Date().toISOString(), status: 'failed', steps: [], cleanup: [] };
@@ -18,6 +18,7 @@ try {
   assert(typeof config.apiToken === 'string' && config.apiToken.length > 0);
   assert(typeof config.context === 'string' && /^[a-f0-9-]{36}$/u.test(config.context));
   assert(['prepare', 'resume'].includes(config.phase));
+  if (config.documentUrl !== undefined) { assert(typeof config.documentUrl === 'string' && /^https:\/\/[^/]+\/docx\/[a-zA-Z0-9]+$/u.test(config.documentUrl)); }
   config.baseUrl = url.origin;
   config.timeoutMs ??= 180_000;
   assert(Number.isSafeInteger(config.timeoutMs) && config.timeoutMs >= 1000 && config.timeoutMs <= 600_000);
@@ -27,8 +28,13 @@ try {
     requestId = `RECOVERY_${randomUUID()}`;
     report.requestId = requestId;
     const { task } = await call({ action: 'create', requestId, title: requestId,
-      scope: 'Controlled recovery acceptance. First turn: use no tools; record supplied fictional baseline 41 as completed source-backed work, create a separate pending final-report item, and return continue. Second turn: use the shell execution tool to start exactly /bin/sleep 120 as a real operating-system child process once before doing any further work. Do not substitute a clock/sleep tool, JavaScript timer or simulated wait: the operator must observe the OS sleep process and interrupt its service owner. If shell execution is unavailable, return waiting-user and explain that limitation. After restart, when correction feedback is present, do not sleep or use tools: preserve previously completed baseline work, apply the correction and complete the pending final report. No files, network, messages, schedules or other side effects.',
-      materials: 'Fictional recovery fixture: baseline value 41. This is not a real-world claim.' });
+      scope: 'Controlled recovery acceptance. First turn: use no tools; '
+        + (config.documentUrl ? 'read the supplied linked-document snapshot and record BOTH original proposal prices as completed source-backed work, ' : 'record supplied fictional baseline 41 as completed source-backed work, ')
+        + 'create a separate pending final-report item, and return continue. Second turn: use the shell execution tool to start exactly /bin/sleep 120 as a real operating-system child process once before doing any further work. Do not substitute a clock/sleep tool, JavaScript timer or simulated wait: the operator must observe the OS sleep process and interrupt its service owner. If shell execution is unavailable, return waiting-user and explain that limitation. After restart, when correction feedback is present, do not sleep or use tools: preserve previously completed baseline work, apply the correction and complete the pending final report. '
+        + (config.documentUrl ? 'Use the latest linked-document body and comments, report both current proposal totals and their numerical difference. Do not refetch the document yourself; the harness supplies its snapshot. ' : '')
+        + 'No files, network, messages, schedules or other side effects.',
+      materials: config.documentUrl ? 'Use the linked document as the source of the fictional proposal prices and subsequent corrections. These are not real-world quotes.' : 'Fictional recovery fixture: baseline value 41. This is not a real-world claim.',
+      ...(config.documentUrl ? { documentUrl: config.documentUrl } : {}) });
     taskId = task.id; report.taskId = taskId;
     assert.equal(task.status, 'paused'); assert(task.workingDir);
     await control(task, 'resume');
@@ -38,6 +44,12 @@ try {
       && p.directions.some(d => d.status === 'pending'));
     report.checkpoint = { id: checkpoint.id, title: checkpoint.title, workingDir: checkpoint.workingDir,
       directions: checkpoint.directions, stepCount: checkpoint.stepCount, revision: checkpoint.revision };
+    if (config.documentUrl) {
+      assert(checkpoint.document?.snapshot?.rawBody.includes('Proposal A costs USD 41.'));
+      assert(checkpoint.document.snapshot.rawBody.includes('Proposal B costs USD 48.'));
+      assert(checkpoint.directions.some(d => d.status === 'done' && d.findings.some(f => f.sources.some(s => /48/.test(s.excerpt)))));
+      report.checkpoint.document = checkpoint.document.snapshot;
+    }
     pass(phase);
     prepared = true;
     report.status = 'prepared';
@@ -49,6 +61,7 @@ try {
     assert(typeof prior.title === 'string' && /^RECOVERY_[a-f0-9-]{36}$/u.test(prior.title));
     assert(typeof prior.workingDir === 'string' && Array.isArray(prior.directions));
     assert(prior.directions.some(d => d.status === 'done' && d.findings.length));
+    if (prior.document) { assert(typeof config.commentMarker === 'string' && /^[a-zA-Z0-9_-]{8,100}$/u.test(config.commentMarker)); }
     // Do not acquire cleanup ownership until the context-authorized read matches the fixture.
     const reopened = (await call({ action: 'get', taskId: prior.id })).task;
     assert.equal(reopened.title, prior.title);
@@ -59,14 +72,24 @@ try {
     assert.deepEqual(reopened.directions, prior.directions);
     assert.equal(reopened.stepCount, prior.stepCount);
     pass(phase);
-    phase = 'feedback-before-explicit-resume';
-    await control(reopened, 'feedback', 'Recovery correction: the current fictional value is 58 instead of baseline 41. Keep the already completed baseline evidence unchanged. The previous wait was interrupted: do not wait again or use any tools. Complete the pending report using 58 after explicit resume.');
-    const adjusted = await get();
-    assert.equal(adjusted.status, 'interrupted');
-    assert.deepEqual(adjusted.directions, prior.directions);
-    assert(adjusted.feedback.some(f => f.status === 'pending'));
-    pass(phase);
-    await control(adjusted, 'resume');
+    if (prior.document) {
+      phase = 'document-checkpoint-before-resume';
+      assert.equal(reopened.document?.token, prior.document.token);
+      assert.equal(reopened.document.snapshot.rawBody, prior.document.rawBody);
+      assert(!reopened.feedback.some(f => f.text.includes(config.commentMarker)));
+      pass(phase);
+      // No direct feedback injection: the harness must discover real document edits.
+      await control(reopened, 'resume');
+    } else {
+      phase = 'feedback-before-explicit-resume';
+      await control(reopened, 'feedback', 'Recovery correction: the current fictional value is 58 instead of baseline 41. Keep the already completed baseline evidence unchanged. The previous wait was interrupted: do not wait again or use any tools. Complete the pending report using 58 after explicit resume.');
+      const adjusted = await get();
+      assert.equal(adjusted.status, 'interrupted');
+      assert.deepEqual(adjusted.directions, prior.directions);
+      assert(adjusted.feedback.some(f => f.status === 'pending'));
+      pass(phase);
+      await control(adjusted, 'resume');
+    }
     phase = 'recovered-completion';
     const done = await wait(p => p.status === 'completed');
     assert.equal(done.workingDir, prior.workingDir);
@@ -76,6 +99,24 @@ try {
       assert.deepEqual(done.directions.find(d => d.id === item.id), item);
     }
     assert(done.directions.some(d => d.findings.some(f => f.sources.some(s => /58/.test(s.excerpt)))));
+    if (prior.document) {
+      assert.match(done.summary, /(^|\D)34(?!\d)/u); assert.match(done.summary, /(^|\D)24(?!\d)/u);
+      assert(done.document.snapshot.rawBody.includes('Proposal A costs USD 58.'));
+      assert(done.document.snapshot.comments.some(c => c.text.includes(config.commentMarker)));
+      assert(done.document.previous.some(s => s.rawBody === prior.document.rawBody));
+      const comment = done.feedback.find(f => f.text.includes(config.commentMarker) && f.sourceKey?.includes(':comment:'));
+      assert(comment?.status === 'applied' && comment.directionIds.length);
+      // Body notifications contain generic instructions; the current snapshot and
+      // its source-key digest identify the actual revision that was applied.
+      const bodyDigest = createHash('sha256').update(JSON.stringify(done.document.snapshot.body)).digest('hex');
+      const bodyFeedback = done.feedback.find(f => f.status === 'applied'
+        && f.sourceKey?.startsWith(`${prior.document.token}:`)
+        && f.sourceKey.endsWith(`:body:${bodyDigest}`));
+      assert(bodyFeedback?.directionIds?.some(id => done.directions.some(d => d.id === id
+        && d.findings.some(f => f.sources.some(s => s.excerpt.includes('Proposal A costs USD 58.'))))),
+      'Applied current-body feedback must link to work citing the revised price');
+      pass('latest-document-body-and-comment-applied');
+    }
     pass(phase);
     report.status = 'passed';
   }
