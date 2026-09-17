@@ -1,5 +1,7 @@
 import { expect, it } from 'vitest';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, execFile, type ChildProcess } from 'node:child_process';
+import { promisify } from 'node:util';
+import { Config } from '@disclaude/core';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -96,3 +98,37 @@ if (phase === 'first') {
     await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
 }, 30_000);
+
+// Requires current compiled packages and actual configured model credentials.
+// Captured card transport: no production service or chat connection is started.
+it.skipIf(
+  process.env.DISCLAUDE_E2E_TASK_HARNESS !== '1' ||
+    Config.AGENT_BACKEND !== 'codex' ||
+    process.platform === 'win32'
+)(
+  'recovers a real model task after owner SIGKILL and reads updated material',
+  async () => {
+    const { stdout } = await promisify(execFile)(
+      process.execPath,
+      ['tests/e2e/helpers/task-crash-acceptance.mjs'],
+      {
+        cwd: resolve('.'),
+        timeout: 250_000,
+        maxBuffer: 2 * 1024 * 1024,
+      }
+    );
+    const line = stdout.split('\n').find((line) => line.startsWith('REAL_CRASH_RESUME_RESULT '));
+    expect(line, stdout).toBeTruthy();
+    const evidence = JSON.parse(line!.slice('REAL_CRASH_RESUME_RESULT '.length));
+    expect(evidence.remainingAfterCrash).toEqual([]);
+    expect(evidence.manualRemediation).toBe(false);
+    expect(evidence.resumed).toMatchObject({
+      id: evidence.taskId,
+      status: 'completed',
+      feedback: 'applied',
+    });
+    expect(stdout).toContain('ROOT_RECLAIMED');
+    console.info(line);
+  },
+  270_000
+);
