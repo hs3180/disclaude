@@ -402,9 +402,15 @@ export class ResearchManager {
       if (p.status === 'cancelling') { p.status = 'cancelled'; this.record(p, '任务已取消。'); }
     } catch (error) {
       if (!this.disposed) {
-        p.status = p.status as string === 'cancelling' ? 'cancelled' : 'failed';
-        p.error = error instanceof ResearchDirectoryError ? error.message : '当前回合未完成，已有成果保留。可检查材料后恢复重试。';
-        this.record(p, p.error);
+        if (p.status as string === 'cancelling') {
+          p.status = 'cancelled';
+          p.error = undefined;
+          this.record(p, '任务已取消，在途回合未完成且结果未计入成果。');
+        } else {
+          p.status = 'failed';
+          p.error = error instanceof ResearchDirectoryError ? error.message : '当前回合未完成，已有成果保留。可检查材料后恢复重试。';
+          this.record(p, p.error);
+        }
       }
     } finally { if (!this.disposed) { await this.display(p); } }
   }
