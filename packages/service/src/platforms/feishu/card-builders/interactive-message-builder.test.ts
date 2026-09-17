@@ -167,6 +167,24 @@ describe('Interactive Message Builder', () => {
   });
 
   describe('buildActionPrompts', () => {
+    it('fills partially mapped buttons with their original question and visible context', () => {
+      const prompts = buildActionPrompts([
+        { text: 'Read inventory', value: 'capacity' },
+        { text: 'Show storage', value: 'storage' },
+      ], { capacity: 'Run the authorized inventory query.' }, undefined, {
+        question: 'Which report should be shown?', context: 'Read-only reports for cluster A.',
+      });
+      expect(prompts.capacity).toBe('Run the authorized inventory query.');
+      expect(prompts.storage).toContain('Show storage');
+      expect(prompts.storage).toContain('Which report should be shown?');
+      expect(prompts.storage).toContain('Read-only reports for cluster A.');
+    });
+
+    it('preserves literal label contents instead of treating them as replacement syntax', () => {
+      expect(buildActionPrompts([{ text: '$& {value}', value: 'internal' }]).internal)
+        .toContain('$& {value}');
+    });
+
     const defaultOptions = [
       { text: '✅ Approve', value: 'approve' },
       { text: '❌ Reject', value: 'reject' },
