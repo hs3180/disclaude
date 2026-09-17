@@ -28,6 +28,31 @@ describe('document feedback checkpoints', () => {
     expect(transition(handled, 'finish', {}).status).toBe('completed');
   });
 
+  it('acknowledges Feishu append boundaries without repeating a receipt', () => {
+    const pending = prepare();
+    const remote = pending.documentBody + '\n\n' + pending.pendingWrite.fragment.slice(1, -1);
+    const handled = ack(pending, { body: remote });
+    expect(handled.pendingWrite).toBeNull();
+    expect(handled.feedback.every(item => item.status === 'accepted')).toBe(true);
+    expect(handled.documentBody).toBe(remote);
+  });
+
+  it('does not normalize edits, duplicates or extra content around a receipt', () => {
+    const pending = prepare();
+    const receipt = pending.pendingWrite.fragment.slice(1, -1);
+    for (const body of [
+      pending.documentBody + ' ' + '\n\n' + receipt,
+      pending.documentBody + '\n\n' + receipt.replace('counterexample', 'different'),
+      pending.documentBody + '\n\n' + receipt + '\nUser added a constraint',
+      pending.documentBody + '\n\n' + receipt + '\n\n' + receipt,
+    ]) {
+      expect(() => ack(pending, { body })).toThrow();
+    }
+    expect(() => ack(pending, { body: pending.documentBody + '\n\n' + receipt,
+      comments: [{ id: 'c1', body: 'A concurrently changed requirement' }] })).toThrow('comment_changed_during_write');
+    expect(pending.feedback.every(item => item.status === 'pending')).toBe(true);
+  });
+
   it('deduplicates repeated snapshots but retains edited comments as new feedback', () => {
     const state = synced();
     expect(transition(state, 'sync', snapshot()).feedback).toEqual(state.feedback);
