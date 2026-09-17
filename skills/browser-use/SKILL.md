@@ -1,7 +1,7 @@
 ---
 name: browser-use
 description: "Browser tasks, scraping, screenshots and forms via browser-use. Pipe Python through the coordinator's IPC entry; it owns the persistent session and control handoff. Do not connect directly to CDP. Supports js() and cdp()."
-argument-hint: "<piped Python via stdin, e.g. browser-use <<'PY' ... PY>"
+argument-hint: "<piped Python via stdin, e.g. sh /absolute/path/to/this-skill/scripts/run.sh <<'PY' ... PY>"
 allowed-tools: [Bash, Read, Write]
 ---
 
@@ -16,8 +16,24 @@ the upstream harness for execution. Your code only describes **what to do in the
 
 ## Coordinated IPC mode
 
-When `DISCLAUDE_BROWSER_SOCKET` is set and the task PATH selects the disclaude
-browser-use adapter, keep using Python scripts on stdin. One invocation is one
+Use [the launcher helper](scripts/run.sh) for the examples below, replacing
+`/absolute/path/to/this-skill` with the directory containing this SKILL.md.
+It preserves Python stdin and, when `DISCLAUDE_BROWSER_SOCKET` is set, invokes
+`$DISCLAUDE_BROWSER_BIN/browser-use` by absolute path. The service sets that
+variable after coordinator readiness; externally managed coordinators must
+configure it explicitly. Shell/tool PATH changes cannot select an upstream
+same-named CLI through this helper. Without a coordinator, it uses the ordinary
+browser-use command.
+
+A missing/non-executable managed launcher is a configuration failure. Report it;
+do not search release directories, install another CLI or guess an alternate
+socket. `BH_RUNTIME_DIR=/dev/null` and `BH_TMP_DIR=/dev/null` deliberately block
+accidental upstream daemon access: do not override or unset them to retry.
+A failure of this channel does not establish that all browser or desktop tools
+are unavailable. Computer Use remains available for an appropriate authorized
+alternative, without concurrently controlling the shared browser.
+
+Keep using Python scripts on stdin. One invocation is one
 operation segment: put dependent navigation, input and verification in the same
 script. The service queues control requests and owns daemon startup/recovery;
 do not call `--reload`, `--update` or start a separate browser daemon. Relative
@@ -29,7 +45,7 @@ connection. Keychain access is not required for normal browser operation.
 ## Quick start
 
 ```bash
-browser-use <<'PY'
+sh /absolute/path/to/this-skill/scripts/run.sh <<'PY'
 new_tab("https://news.ycombinator.com")
 print(page_info())
 PY
@@ -68,7 +84,7 @@ are **removed**; the CLI prints a migration hint if used. Use the configured IPC
 ### Script injection / eval (first-class)
 
 ```bash
-browser-use <<'PY'
+sh /absolute/path/to/this-skill/scripts/run.sh <<'PY'
 new_tab("https://example.com")
 print(js("document.title"))
 print(js("JSON.stringify({links: document.querySelectorAll('a').length})"))
@@ -81,7 +97,7 @@ Anything the page can do in JS, `js()` can do. For protocol-level control use `c
 ### Extract → structured output
 
 ```bash
-browser-use <<'PY'
+sh /absolute/path/to/this-skill/scripts/run.sh <<'PY'
 import json
 new_tab("https://example.com")
 print(json.dumps({"title": js("document.title"), "url": js("location.href")}))
@@ -95,7 +111,7 @@ Prefer printing **one JSON blob** per invocation — it is the easiest contract 
 Save screenshots to the task workspace (never `/tmp` scratch that gets lost):
 
 ```bash
-browser-use <<'PY'
+sh /absolute/path/to/this-skill/scripts/run.sh <<'PY'
 import pathlib
 dst = "workspace/shot-home.png"
 pathlib.Path(dst).parent.mkdir(parents=True, exist_ok=True)
