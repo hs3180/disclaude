@@ -1,5 +1,11 @@
 # channel Skill CLI — REST live end-to-end verification (#4532, part 2)
 
+> **Historical evidence for PR #4533 (`f207ba04`).** Commands, package paths and
+> error messages below describe that earlier build and are not current deployment
+> instructions. For the supported service entry and upgrade steps, use the
+> [service migration guide](migrations/0.5.1-service.md). The old run disabled its
+> instance lock; do not copy that setup to start a competing production bot.
+
 > **Status:** Live verification record — part 2 of
 > [#4532](https://github.com/hs3180/disclaude/issues/4532) (scope 5), stacking
 > on the transport switch shipped in part 1

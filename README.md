@@ -25,16 +25,16 @@ A multi-platform AI agent bot connecting Feishu/Lark and REST channels to Claude
 - **Persistent conversations** - Per-user session management (in-memory)
 - **Slash commands** - `/reset`, `/status`, `/help` for quick actions
 - **Multiple agent backends** - Named Claude, Codex, pi, and DeepSeek presets with in-chat selection.
-- **Browser automation** - browser-use Skill (CLI + shared CDP endpoint; the Playwright MCP server is retired)
+- **Browser automation** - browser-use CLI through the shared browser coordinator; see [browser setup and control](docs/browser-coordination.md)
 - **Custom skills** - Extensible workflow system (`.claude/skills/`)
 - **Message deduplication** - Prevents duplicate responses in WebSocket mode
 - **Background service** - Docker and macOS launchd deployment with log management
 
 ## Version
 
-The current release is **0.5.0**. See the [release plan and acceptance record](docs/releases/0.5.0.md) and [GitHub milestone](https://github.com/hs3180/disclaude/milestone/9).
+The latest published release is [**0.5.3**](https://github.com/hs3180/disclaude/releases/tag/v0.5.3). Development toward [0.6.0](https://github.com/hs3180/disclaude/milestone/14) is ongoing; changes on the development branch are not a declaration that 0.6.0 has shipped.
 
-For the upcoming **0.5.1**, service startup is unified under `disclaude start`; the old Primary Node executable, package and role settings are removed. Read the [migration guide](docs/migrations/0.5.1-service.md) before upgrading launchd or Docker deployments. Existing configuration data, workspaces, sessions and schedules do not need to be deleted.
+Service startup uses `disclaude start`. Legacy service executables, packages and role settings were removed in 0.5.1. Read the [migration guide](docs/migrations/0.5.1-service.md) before upgrading launchd or Docker deployments. Existing configuration data, workspaces, sessions and schedules do not need to be deleted.
 
 ### Implementation Status
 
@@ -43,7 +43,7 @@ For the upcoming **0.5.1**, service startup is unified under `disclaude start`; 
 | Code reading/editing/writing | ✅ Full support via chat |
 | Bash command execution | ✅ Real-time feedback |
 | File system operations | ✅ Glob, grep, read, write |
-| Browser automation | ✅ browser-use Skill (CDP attach, script injection) |
+| Browser automation | ✅ browser-use CLI (coordinated control, script injection) |
 | Custom skills | ✅ `implement-feature`, `deep-search` |
 | Session management | ✅ In-memory per user |
 | Message deduplication | ✅ WebSocket event handling |
