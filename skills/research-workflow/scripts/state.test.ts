@@ -155,4 +155,35 @@ describe('document feedback checkpoints', () => {
       expect(JSON.parse(run.stdout).state.feedback).toHaveLength(2);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
+
+  it('exports the saved receipt verbatim without modifying the checkpoint', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'research receipt '));
+    const file = join(dir, 'state.json');
+    try {
+      const state = prepare();
+      state.pendingWrite.fragment += '原文：报价、`字段`、空格  \n\n';
+      const original = JSON.stringify(state);
+      writeFileSync(file, original);
+      const script = new URL('./state.mjs', import.meta.url).pathname;
+      const run = (version: number) => spawnSync(process.execPath, [script, 'receipt', file, String(version)], { encoding: 'utf8' });
+      const exported = run(state.version);
+      expect(exported.status).toBe(0);
+      expect(exported.stdout).toBe(state.pendingWrite.fragment);
+      expect(readFileSync(file, 'utf8')).toBe(original);
+      const stale = run(state.version - 1);
+      expect(stale.status).toBe(1);
+      expect(JSON.parse(stale.stdout).error).toBe('stale_checkpoint');
+      state.status = 'cancelled';
+      writeFileSync(file, JSON.stringify(state));
+      const cancelled = run(state.version);
+      expect(cancelled.status).toBe(1);
+      expect(JSON.parse(cancelled.stdout).error).toBe('terminal_task');
+      state.status = 'active';
+      state.pendingWrite = null;
+      writeFileSync(file, JSON.stringify(state));
+      const absent = run(state.version);
+      expect(absent.status).toBe(1);
+      expect(JSON.parse(absent.stdout).error).toBe('no_pending_write');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
 });
