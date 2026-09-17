@@ -1100,7 +1100,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       if (stopped) {return;}
       const event = params as {
         turnId?: string;
-        item?: { id?: string; type?: string; text?: string; command?: string; aggregatedOutput?: string };
+        item?: { id?: string; type?: string; text?: string; phase?: string | null; command?: string; aggregatedOutput?: string };
         turn?: { id?: string; status?: string; error?: { message?: string } };
       };
       const eventTurnId = event.turnId ?? event.turn?.id;
@@ -1127,7 +1127,11 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           type: 'text',
           content: event.item.text,
           role: 'assistant',
-          metadata: { messageId: event.item.id },
+          metadata: {
+            messageId: event.item.id,
+            ...(event.item.phase === 'commentary' || event.item.phase === 'final_answer'
+              ? { phase: event.item.phase } : {}),
+          },
         });
       } else if (method === 'item/completed' && event.item?.type === 'commandExecution') {
         push({
