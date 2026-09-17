@@ -2015,6 +2015,42 @@ describe('ChatAgent (service)', () => {
     });
   });
 
+  describe('backend terminal interruption', () => {
+    it.each([{ partial: false, once: false }, { partial: true, once: false }, { partial: false, once: true }, { partial: true, once: true }])('rejects interrupted work without success or automatic replay (%j)', async ({ partial, once }) => {
+      const callbacks = { ...createMockCallbacks(), onTurnResult: vi.fn().mockResolvedValue(undefined) };
+      const agent = new ChatAgent({ chatId: 'backend-stop', callbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+      (agent as any).isAgentTeamsEnabled = () => false;
+      const close = vi.fn();
+      let publish!: () => void;
+      const ready = new Promise<void>(resolve => { publish = resolve; });
+      async function* output() {
+        await ready;
+        if (partial) { yield { parsed: { type: 'text', content: 'Partial findings retained.' } }; }
+        yield { parsed: { type: 'result', content: '⏹️ Codex turn interrupted', terminatedReason: 'interrupted' } };
+        yield { parsed: { type: 'text', content: 'Late output must not be published.' } };
+      }
+      const create = vi.fn(() => ({ handle: { close, cancel: vi.fn() }, iterator: output() }));
+      (agent as any).createQueryStream = create;
+      try {
+        const run = once ? agent.runOnce('backend-stop', 'Continue the task', 'interrupt-msg')
+          : agent.processMessage({ chatId: 'backend-stop', payload: 'Continue the task', messageId: 'interrupt-msg' });
+        await vi.waitFor(() => expect(agent.turnCompleteFor('interrupt-msg')).toBeDefined());
+        const rejected = expect(once ? run : agent.turnCompleteFor('interrupt-msg')).rejects.toThrow('interrupted');
+        publish();
+        await rejected;
+        await vi.waitFor(() => expect(agent.hasActiveSession()).toBe(false));
+        expect(agent.isBusy).toBe(false);
+        expect(close).toHaveBeenCalled();
+        expect(create).toHaveBeenCalledTimes(1);
+        expect(callbacks.onTurnResult).not.toHaveBeenCalledWith(expect.objectContaining({ success: true }));
+        expect((agent as any).restartManager.recordSuccess).not.toHaveBeenCalled();
+        expect((agent as any).restartManager.recordFailure).not.toHaveBeenCalled();
+        expect(callbacks.sendMessage.mock.calls.some(call => call[1] === '⏹️ 本轮已停止。')).toBe(true);
+        expect(callbacks.sendMessage.mock.calls.some(call => String(call[1]).includes('Late output'))).toBe(false);
+      } finally { agent.dispose(); }
+    });
+  });
+
   describe('structured internal turn results', () => {
     it.each([false, true])('bounds terminal output and resets the bound at a tool call (tool=%s)', async tool => {
       const callbacks = { ...createMockCallbacks(), onTurnResult: vi.fn().mockResolvedValue(undefined) };
