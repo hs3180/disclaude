@@ -32,6 +32,9 @@ jobs:
       - name: Run TypeScript type check
         run: npm run type-check
 
+      - name: Verify isolated test cleanup and interruption
+        run: node --test scripts/run-isolated-test.test.mjs
+
   # =============================================================================
   # Unit Tests
   # =============================================================================

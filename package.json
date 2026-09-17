@@ -51,7 +51,7 @@
     "launchd:chromium:logs": "node scripts/launchd.mjs chromium-cdp logs",
     "launchd:chromium:status": "node scripts/launchd.mjs chromium-cdp status",
     "hooks:install": "husky",
-    "test:install": "node scripts/test-package-install.mjs"
+    "test:install": "node scripts/run-isolated-test.mjs -- node scripts/test-package-install.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",

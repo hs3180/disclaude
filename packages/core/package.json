@@ -9,6 +9,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./config-discovery": {
+      "import": "./dist/config/discovery.js",
+      "types": "./dist/config/discovery.d.ts"
     }
   },
   "scripts": {

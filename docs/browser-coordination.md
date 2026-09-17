@@ -204,3 +204,21 @@ dsh 0.1.2-rc.1, Codex 0.154.0, Claude SDK 0.3.263, Pi 0.83.0. dsh/Claude/Pi used
 DeepSeek's `deepseek-flash` through their respective harnesses; Codex used its
 configured model. This is harness interoperability evidence, not a Claude-model
 or performance benchmark.
+
+
+### Test-resource cleanup
+
+The product browser E2E waits for its service and caller processes to close and
+for explicitly tracked crash-fixture descendants to disappear before removing its
+private profile/workspace. Cleanup attempts all three resource groups even if one
+fails; an unconfirmed exit retains the root with a diagnostic. Ordinary directory
+contention gets bounded retries. Setup failures before starting the service also
+remove the owned root.
+
+To exercise teardown while a real browser invocation is active, run the existing
+case with `DISCLAUDE_E2E_BROWSER_FAIL_DURING_CALL=1` and the same Chromium/Python
+paths. This deliberately fails the test: require the injected-failure diagnostic,
+`BROWSER_SERVICE_CLEANUP`, and independent confirmation that the printed
+`BROWSER_SERVICE_TEST_ROOT` is absent. A nonzero exit by itself is not successful
+cleanup evidence. This does not test killing the entire Vitest process or reclaiming
+external launchd/systemd/Docker resources (#5049).
