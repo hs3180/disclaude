@@ -90,3 +90,83 @@ PR CI checks on `cecf6902` passed.
 One computer-use call, zero screenshots. Original production service restored
 with matching configuration/plist hashes and independent health after 29 seconds.
 Owned candidate workspace archived with hashes and removed after process checks.
+
+## Service-crash and feedback settlement retest: scoped pass
+
+Integrated candidate `20e58617` (including PR head `55fce301`) ran actual
+`gpt-5.6-luna` with the clean R5 checkpoint. A native request started a foreground
+120-second Python read. After observing its PID and start marker, SIGKILL was
+sent to the service process. All nine observed processes exited in approximately
+0.26 seconds, without descendant cleanup. The checkpoint stayed byte-identical
+and the completion marker was absent.
+
+The same workspace restarted under a new service instance. A second native
+request asked to resume the original research and settle unrecorded feedback,
+without repeating the simulated read or the already-completed R6 conclusion.
+Luna read the research protocol, full document and both comment/reply pages,
+used the raw-response converter, then performed sync, prepare, append and ack.
+The final checkpoint is version 16, document revision 34, active, with no pending
+feedback or unknown write. Task/document identities and every old feedback object
+are unchanged, and its saved body matches both its hash and independent remote
+readback. The entire previous document is preserved with exactly one new receipt.
+Chat reports the correct 3,250 total, remaining unknown costs and a stable document
+link; the interrupted tool was not rerun.
+
+Two retries remain part of the evidence: the first append was rejected locally
+for an absolute `--content @` path before any remote mutation; stdin succeeded.
+A wildcard temporary-file cleanup was blocked by automatic review; the model
+used new readback filenames and completed safely. No repeated append occurred.
+The model's auxiliary task record reports an unsupported 12-minute duration;
+measured resume duration was about 171 seconds. That record is preserved, not
+used as timing evidence.
+
+This passes in-flight service-crash recovery and settlement of the existing
+body/comment deltas on this candidate. Those deltas predated this interruption;
+the distinct requirement to add both body and comment feedback during the new
+downtime remains unverified. Unknown remote-write recovery, concurrent projects
+and the other release gates also remain open.
+
+Two computer-use calls, zero screenshots. The original production service was
+restored with matching configuration/plist hashes and independent healthy status
+after 23 seconds. Workspace and 16 tool-created temporary files were archived
+with verified hashes before removing owned temporary resources. The research
+document and historical failed artifacts remain available for review. All six CI
+checks passed on `55fce301`; no PR was merged by the agent.
+
+## Body and comment added during downtime: scoped pass
+
+The same candidate `20e58617` and actual `gpt-5.6-luna` resumed from the valid
+version 16 / document 34 checkpoint. A foreground Python read was observed;
+service SIGKILL reclaimed all nine observed processes in about 0.26 seconds.
+The checkpoint was unchanged and no completion marker appeared.
+
+While launchd remained stopped and all observed PIDs were absent, user API calls
+appended R7-DEPLOY-9031 (deployment 3,000) and added R7-MAINT-9142 (annual
+maintenance 500, thread `7686606429087599576`, reply `7686606429104376780`).
+Recorded times establish service exit < body write < comment write < restart.
+Both writes completed before the same workspace restarted. The native resume
+request referred to new document feedback without restating either new value.
+
+Luna fetched the full body and all three comment threads/replies, converted the
+raw responses and settled both feedback items through prepare/append/readback/ack.
+It then updated the current overview and appended the substantive R7 analysis,
+and separately acknowledged that revision after readback. Independent user API
+readback confirms revision 42, total 3,500 and delta 2,060 in the current overview
+and detailed analysis. Only four current-overview lines from the previous body
+were replaced; all other prior lines, user material and historical evidence remain.
+The user-feedback receipt and substantive-revision receipt each occur once.
+
+Final checkpoint version 22 retains the original task/document IDs and every old
+feedback object. Its body matches its hash and remote readback, with no pending
+feedback or write. Chat reports the same figures, preserves unknown costs and
+links the ongoing research. The interrupted read was not replayed. This passes
+the controlled downtime-body/comment recovery path, not open investigation,
+concurrent projects, unknown-write recovery or all release requirements.
+
+Local retries remain recorded: an incorrect receipt file path was rejected before
+writing, and an invalid JSON ack input was rejected before mutation; corrected
+commands succeeded without duplicate receipts. Resume duration was about 257
+seconds. Two computer-use calls, zero screenshots. All six PR CI checks passed
+on `9f9e9092`. Original production config/plist hashes matched, independent health
+passed after 34 seconds, and the owned workspace plus four tool-created temporary
+files were archived with verified hashes before removal. No PR was merged.
