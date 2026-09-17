@@ -118,6 +118,13 @@ complete snapshot records the latest document, keeps decisions pending and
 clears the ambiguous operation. Inspect any existing receipt before preparing
 new decisions; reconciliation does not undo external writes.
 
+Attempt `ack` before `reconcile` when a pending operation exists. A read-back
+that already proves the original receipt must confirm that operation, not turn
+its receipt into a new body-feedback item. `reconcile` rejects this case with
+`write_already_observed_use_ack` and leaves the checkpoint unchanged; use `ack`
+with the same operation ID, version and complete snapshot. Actual missing
+receipts, body conflicts and changed comments still permit reconciliation.
+
 Keep receipt acknowledgement separate from substantive edits: `ack` checks the
 original body outside its receipt, so settle or reconcile that receipt before
 changing the current summary. After substantive changes, refresh the document

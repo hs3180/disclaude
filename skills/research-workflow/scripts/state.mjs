@@ -116,6 +116,15 @@ export function transition(previous, command, input) {
       requireValue(state.pendingWrite && input?.operationId === state.pendingWrite.id, 'operation_mismatch');
       // Explicit recovery after an unknown write: refresh all feedback without claiming it handled.
       const snapshot = snapshotFor(state, input.snapshot);
+      // Do not discard an operation that can already be confirmed: observing its
+      // receipt as a new body edit would reopen feedback and invite another append.
+      let canAcknowledge = true;
+      try { transition(previous, 'ack', input); }
+      catch (error) {
+        if (!['write_not_observed', 'concurrent_document_edit', 'comment_changed_during_write'].includes(error.message)) throw error;
+        canAcknowledge = false;
+      }
+      requireValue(!canAcknowledge, 'write_already_observed_use_ack');
       state.pendingWrite = null;
       observe(state, snapshot);
       break;
