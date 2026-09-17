@@ -1,5 +1,11 @@
 # Feedback checkpoint protocol
 
+Compatibility protocol for tasks that already use this state format, or an
+explicit request to maintain the old protocol. Do not initialize it merely
+because a new task uses a research document. New project work keeps content in
+its existing file convention and uses document tools directly. The `init`
+example below documents the retained API; it is not the default starting step.
+
 Use one state file per research task. Resolve `scripts/state.mjs` relative to this
 skill, not the task cwd. State contains document/comment content; keep its
 private directory out of source control and channel logs. Commands return one
@@ -64,7 +70,9 @@ It requires the exact fragment, the original body outside it, and unchanged
 comment versions for the decisions. Only then are decisions committed. Other
 new comments discovered in the read-back become pending. Document tools that
 normalize Markdown differently may fail this conservative check; use reconcile
-rather than declaring success or repeatedly appending.
+rather than declaring success or repeatedly appending. If normalization still
+prevents confirmation, retain the unresolved state and stop receipt writes;
+report the synchronization limitation instead of generating another receipt.
 
 If the append timed out or execution stopped, first inspect the pending write
 and read the remote document. Do not blindly repeat it. If `ack` fails because
