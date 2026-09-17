@@ -17,7 +17,11 @@ The last argument is the version returned by the previous command. Stale
 versions fail without writing. The lock is fail-fast; after a worker crash,
 verify no owner is alive before manually removing a stale `.lock`. Never steal
 an active lock. A cancelled/completed task cannot resume via another mutation;
-start a new explicit task if more work is required.
+start a new explicit task if more work is required. Mutate checkpoint state only
+through this helper; do not patch its JSON to remove pending feedback or rewrite
+history after a parsing mistake. Preserve the faulty snapshot and checkpoint,
+report the synchronization problem, and leave dependent work paused until the
+snapshot mapping can be reconciled without discarding feedback history.
 
 ## Snapshot adapter
 
@@ -32,8 +36,14 @@ start a new explicit task if more work is required.
 ```
 
 Fetch body and all comment/reply pages using the installed document/drive CLI.
-Do not treat a compact/truncated comment summary as complete. Each comment or
-reply has a stable provider ID; edited text changes its fingerprint. Use one
+Do not treat a compact/truncated comment summary as complete. For Feishu, collect comment threads and replies through the comment API, not the
+body fetch's inline comment references. Flatten each reply to
+`{"id":"<comment_id>:<reply_id>","body":"<full reply text>"}`; include the thread's
+initial reply as well. Follow both thread and reply pagination before setting
+`complete: true`. Reuse this ID mapping after restart: the thread ID alone and
+the thread/reply pair identify different checkpoint entries even when text matches.
+Compare the mapping with saved comment IDs before calling `sync`; a parser change
+is not new user feedback. Edited text changes its fingerprint. Use one
 consistent body representation across reads. `complete` attests successful
 collection, not just HTTP 200; no fallback to an empty comment list on error.
 If no provider revision is available, use a hash of the complete body and
