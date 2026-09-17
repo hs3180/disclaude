@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { chromiumConfigPath, loadChromiumConfig, saveChromiumConfig, readChromiumConfig } from './chromium-config.mjs';
-import { replaceChromiumFile, transitionChromium, chromiumListenerPids, isDescendant, waitChromiumReady } from './browser-service-state.mjs';
+import { replaceChromiumFile, transitionChromium, chromiumListenerPids, isDescendant, waitChromiumReady, closeChromiumGracefully } from './browser-service-state.mjs';
 
 import { describeChromiumSelection } from './chromium-status.mjs';
 import { assertChromiumProfileAvailable, assertChromiumProfileVersion } from './chromium-profile.mjs';
@@ -120,6 +120,9 @@ async function main() {
     if (existsSync(paths.file) && !readFileSync(paths.file, 'utf8').startsWith('# disclaude-managed-chromium-v1\n')) throw new Error('Existing unit is not managed by this CLI; preserve it and resolve migration before replacement');
     if (command === 'stop' || command === 'uninstall') {
       if (!existsSync(paths.file) && !state().loaded) { console.log('Chromium service is not installed; profile preserved'); return; }
+      let target;
+      try { target = JSON.parse(readFileSync(paths.file, 'utf8').match(/^# disclaude-endpoint: (.+)$/m)?.[1] || 'null'); } catch {}
+      await closeChromiumGracefully(target, state);
       systemctl('stop', paths.unit);
       if (command === 'uninstall') { systemctl('disable', paths.unit); rmSync(paths.file, { force: true }); systemctl('daemon-reload'); }
       console.log(`Chromium service ${command === 'stop' ? 'stopped' : 'uninstalled'}; profile preserved`);
@@ -152,10 +155,13 @@ async function main() {
     if (!diagnosis.usable) throw new Error('Selected browser failed its temporary-profile preflight');
     assertChromiumProfileAvailable(selection.profile, prior.pid);
     assertChromiumProfileVersion(selection.profile, diagnosis.cycles?.[0]?.browser);
-    let ready;
+    let ready, activeTarget = previous;
     try { ready = await transitionChromium({ paths: [paths.config, paths.file], wasLoaded: prior.loaded, prepare,
-      stop() { systemctl('stop', paths.unit); if (changedEnable) systemctl(enabledBefore ? 'enable' : 'disable', paths.unit); },
-      start() { systemctl('daemon-reload'); try { systemctl('reset-failed', paths.unit); } catch {} systemctl('start', paths.unit); },
+      async stop() { await closeChromiumGracefully(activeTarget, state); systemctl('stop', paths.unit); if (changedEnable) systemctl(enabledBefore ? 'enable' : 'disable', paths.unit); },
+      start() {
+        activeTarget = JSON.parse(readFileSync(paths.file, 'utf8').match(/^# disclaude-endpoint: (.+)$/m)?.[1] || 'null');
+        systemctl('daemon-reload'); try { systemctl('reset-failed', paths.unit); } catch {} systemctl('start', paths.unit);
+      },
       async verify() {
         const result = await waitChromiumReady(selection, state);
         changedEnable = true;

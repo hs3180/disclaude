@@ -19,6 +19,41 @@ Applying setup uses the existing platform adapter: install when inactive, restar
 
 Setup supports existing executables and verified independent Chromium downloads. Existing deployment/profile migration remains in #4828. `--autostart` / `--no-autostart` select login autostart; the interactive question and saved `CHROMIUM_CDP_AUTOSTART=1|0` provide the same choice. Repeated setup/restart uses the saved preference. macOS places manual-only definitions outside LaunchAgents while retaining crash restart behavior for a manually started service; Linux enables/disables the user unit. Neither platform logs the user out or enables lingering. It does not claim service-profile login persistence from temporary-profile doctor results.
 
+The native service E2Es separately report `NATIVE_SERVICE_COOKIE_PERSISTENCE`.
+They create an expiring synthetic cookie in the owned service's default profile,
+verify it while running, then query the newly started browser after restart and
+failed replacement recovery. Linux requires retention; macOS reports the result
+without treating restricted credential storage as failure of ordinary navigation,
+input or screenshots. Neither test verifies a real account login or old encrypted
+credential migration, and it never changes Keychain settings.
+
+Observed on macOS ARM64, Chromium 155.0.8057.0, runtime source `d5025315`:
+the service cookie existed before restart but was absent after both restart and
+failed replacement recovery (30.86-second full launchd case). File/profile markers,
+health, input and screenshots passed; the isolated service/profile were removed.
+This initial observation alone did not establish its cause. Linux headed and
+headless both subsequently failed the same post-restart assertion (Actions run
+35147489967). A passing temporary doctor profile must not be substituted for
+these service-profile results.
+
+The follow-up shutdown probe found no test cookie row after SIGTERM, whereas
+`Browser.close` saved an encrypted row and a fresh browser read it successfully.
+The service adapters now request normal browser shutdown before invoking the
+service manager. They first verify loopback discovery and listener ancestry under
+the selected service PID, recheck ownership and wait for the original listener
+processes to exit. Recovery uses the endpoint of the service actually started,
+including when the failed candidate selected a different port. Unavailable or
+unhealthy CDP produces a warning and the normal manager stop still proceeds;
+that fallback does not promise persistence. No Keychain settings are changed.
+
+With this fix, macOS ARM64/Chromium155.0.8057.0 retained newly written synthetic
+cookies across restart, failed replacement on another port, and explicit
+stop/start; the complete native service case passed in 34.02 seconds and removed
+its service/profile. Foreign listeners, mismatched websocket endpoints and changed
+service owners are rejected without sending a browser command. Fixed Linux
+headed/headless acceptance is pending. Real-account login and credential migration
+remain unverified.
+
 ## Acceptance
 
 The opt-in `tests/e2e/chromium-setup.test.ts` invokes the actual `bin/disclaude.js` entry, previews, rejects a missing non-interactive confirmation, applies and repeats setup, verifies saved configuration/profile preservation and removes its unique test service. It uses the guarded `--isolated` selector with explicit test service labels/configuration/profile/ports. The ordinary command cannot override production service labels without the adapter's isolation settings.
