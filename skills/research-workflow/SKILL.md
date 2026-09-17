@@ -34,3 +34,5 @@ description: "以研究文档组织人与 AI 的持续协作：同步正文编�
 本轮结束时，在聊天中给出当前研究文档的可点击链接，简述已确认的变化、未解决信息及研究是否仍在进行。用“已确认反馈记录”等用户可理解的结果描述恢复；`ack`、`sync`、检查点版本和内部操作 ID 留在本地记录，不作为用户的操作入口。 本地检查点路径也不作为飞书中的用户入口。
 
 仅本地检查点通过不能宣称真实飞书协作通过。交付时分别记录代码/fixture 测试和真实用户文档反馈的证据。
+
+更新入口状态、范围或时间等文字时，用 `scripts/write-feishu-text.mjs` 从 JSON stdin 接收原文并调用 CLI，避免 shell 解释反引号、`$()` 或换行。读取与安全写入示例见[采集时间与文字写入](references/protocol.md#collection-time-and-literal-writes)。显示时间引用成功快照的 `collection.completedAt` 和对应正文版本；不要把写入时间当作采集时间。最终回复使用最终检查点的 `documentCollection.completedAt`，无采集时间时明确未知，不制造时间。

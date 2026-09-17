@@ -19,6 +19,12 @@ function snapshotFor(state, snapshot) {
   }
   // The adapter must fetch all pages; a partial/failed read cannot advance the checkpoint.
   requireValue(snapshot.complete === true, 'incomplete_snapshot');
+  if (snapshot.collection !== undefined) {
+    const { startedAt, completedAt } = snapshot.collection ?? {};
+    requireValue(typeof startedAt === 'string' && typeof completedAt === 'string' &&
+      Number.isFinite(Date.parse(startedAt)) && Number.isFinite(Date.parse(completedAt)) &&
+      Date.parse(startedAt) <= Date.parse(completedAt), 'invalid_collection_time');
+  }
   return snapshot;
 }
 
@@ -41,6 +47,8 @@ function observe(state, snapshot, ownWrite = false) {
   state.documentHash = bodyHash;
   state.documentBody = snapshot.body;
   state.comments = snapshot.comments;
+  // Never attribute an earlier collection time to a new untimed snapshot.
+  state.documentCollection = snapshot.collection ? { ...snapshot.collection } : null;
 }
 
 export function transition(previous, command, input) {

@@ -198,3 +198,56 @@ plan and receipt, stop/restart the worker and show no duplicate handling. Also
 inject an unreadable comment page and a concurrent body edit; neither may
 produce a false synced/handled result. Keep this evidence separate from local
 fixture tests and preserve the document for review.
+
+## Collection time and literal writes
+
+For a live read, collect all body/comment/reply pages without shell text
+interpolation:
+
+```sh
+node /path/to/research-workflow/scripts/collect-feishu-snapshot.mjs DOC_TOKEN bot > collected.json
+node /path/to/research-workflow/scripts/state.mjs sync ./research/state.json VERSION < collected.json
+```
+
+Use the already-authorized identity (`user` or `bot`), explicitly. The output is
+a complete snapshot with original `responses` plus `collection.startedAt` and
+`collection.completedAt`. Completion is measured after all pages have been read
+and validated; any failed/unsupported/incomplete page fails the collection.
+The interval is sequential collection, not an atomic remote snapshot. Saved
+response conversion does not manufacture a timestamp. Keep the snapshot file
+private: it contains the complete document and comments.
+
+State records `documentCollection` from each successful snapshot. An untimed
+legacy snapshot clears that field rather than reusing an unrelated older time.
+The helper validates timestamp ordering, not the truth of manually supplied
+metadata. Use collector output directly, not a hand-written time.
+
+When publishing the overview, identify the actual collection interval/completion
+and source revision, e.g. `本轮意见采集完成：<completedAt>（UTC）；正文版本
+<revision>，评论/回复 <count> 条；检查点同步，非实时。` This records the collection
+that informed the update, not when the metadata was written. Do not repeatedly
+rewrite the document just to chase the timestamp produced by its own read-back.
+In the final chat reply show the final confirmed checkpoint's
+`documentCollection.completedAt` as the last synchronization time. If a read
+fails, retain the prior successful time and display the failure; never advance
+it from `date` or the failed request time. An untimed checkpoint has an unknown
+time, not today's time.
+
+Use JSON input for targeted overview writes and receipt appends:
+
+```json
+{"documentId":"DOC_TOKEN","identity":"bot","command":"str_replace","pattern":"exact prior overview text","content":"new overview with literal `ß`/`ss` and actual newlines","revision":"32"}
+```
+
+```sh
+node /path/to/research-workflow/scripts/write-feishu-text.mjs < write-input.json
+```
+
+Build JSON from files/objects using a quoted heredoc or a structured file tool,
+not by substituting document text into shell code. `append` omits `pattern`;
+`revision` is optional and forwarded unchanged to the provider. The writer uses
+an argument array with no shell, does not overwrite whole documents, and never
+retries. On any unknown result read back before deciding whether a retry is
+needed. The wrapper does not provide a transaction, remote rollback or guarantee
+against concurrent edits. Use the normal complete read-back/ack protocol and
+preserve user changes.
