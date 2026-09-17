@@ -4,7 +4,9 @@ import {
   type CodexAppServerTransportOptions,
 } from './app-server-transport.js';
 
-export type CodexAppServerSessionState = 'idle' | 'active' | 'uncertain';
+import type { AgentInputRequest } from '../../user-input.js';
+import { CodexAsyncUserInput } from './async-user-input.js';
+export type CodexAppServerSessionState = 'idle' | 'active' | 'waiting-user' | 'uncertain';
 
 export interface CodexAppServerSessionSnapshot {
   sessionKey: string;
@@ -33,16 +35,34 @@ export class CodexAppServerLifecycle {
   private readonly interruptTimeoutMs: number;
   private initialized = false;
   private initializeFlight?: Promise<void>;
+  private readonly pendingInputs = new Set<AgentInputRequest>();
+  private readonly asyncInputs: CodexAsyncUserInput;
 
   constructor(options: CodexAppServerTransportOptions = {}) {
     this.interruptTimeoutMs = options.requestTimeoutMs ?? 10000;
+    const onUserInput = options.onUserInput ? async (request: AgentInputRequest): Promise<void> => {
+      this.pendingInputs.add(request);
+      request.signal.addEventListener('abort', () => this.pendingInputs.delete(request), { once: true });
+      await options.onUserInput?.({ ...request, respond: async answers => {
+        await request.respond(answers);
+        this.pendingInputs.delete(request);
+      } });
+    } : undefined;
+    this.asyncInputs = new CodexAsyncUserInput(onUserInput, async (threadId, turnId, text) => {
+      const response = await this.transport.request('turn/steer', {
+        threadId, expectedTurnId: turnId, input: [{ type: 'text', text }],
+      }) as TurnResponse;
+      if (response.turnId !== turnId) { throw new Error('Async answer did not match its originating turn'); }
+    }, options.userInputTimeoutMs);
     this.transport = new CodexAppServerTransport({
-      ...options,
+      ...options, onUserInput,
       onNotification: (method, params) => {
         this.receive(method, params);
-        options.onNotification?.(method, params);
+        const handled = method === 'item/completed' && this.asyncInputs.receive(params);
+        options.onNotification?.(method, handled ? { ...(params as Record<string, unknown>), agentInputHandled: true } : params);
       },
       onExit: (exit) => {
+        this.asyncInputs.close();
         for (const waiter of this.turnWaiters.values()) {
           waiter.reject(new Error('codex app-server exited before interruption completed'));
         }
@@ -186,6 +206,8 @@ export class CodexAppServerLifecycle {
   private async interruptTurn(sessionKey: string): Promise<void> {
     const session = this.requireActive(sessionKey);
     const turnId = session.activeTurnId;
+    this.asyncInputs.cancel('cancelled', session.threadId, turnId);
+    this.transport.cancelUserInputs(session.threadId as string, turnId as string);
     const key = `${session.threadId}:${turnId}`;
     // The RPC ACK only accepts the interrupt. Keep the stream busy until the
     // matching terminal notification makes it safe to start another turn.
@@ -224,15 +246,19 @@ export class CodexAppServerLifecycle {
 
   snapshot(sessionKey: string): CodexAppServerSessionSnapshot | undefined {
     const session = this.sessions.get(sessionKey);
-    return session ? { ...session } : undefined;
+    return session ? { ...session, state: session.state === 'active' && [...this.pendingInputs].some(input => input.isBlocking
+      && input.threadId === session.threadId && input.turnId === session.activeTurnId) ? 'waiting-user' : session.state } : undefined;
   }
 
   forgetSession(sessionKey: string): void {
+    const session = this.sessions.get(sessionKey);
+    if (session?.threadId) { this.asyncInputs.cancel('closed', session.threadId); }
     this.sessions.delete(sessionKey);
     this.threadFlights.delete(sessionKey);
   }
 
   close(): Promise<CodexAppServerExit> {
+    this.asyncInputs.close();
     return this.transport.close();
   }
 
@@ -244,6 +270,7 @@ export class CodexAppServerLifecycle {
     const { threadId } = event;
     const turnId = event.turn?.id;
     if (threadId && turnId) {
+      this.asyncInputs.cancel('turn-ended', threadId, turnId);
       this.completedTurns.add(`${threadId}:${turnId}`);
       this.turnWaiters.get(`${threadId}:${turnId}`)?.resolve();
     }

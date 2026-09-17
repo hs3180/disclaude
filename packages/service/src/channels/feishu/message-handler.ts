@@ -42,6 +42,7 @@ import type { TriggerModeManager } from './passive-mode.js';
 import type { MentionDetector } from './mention-detector.js';
 import { evaluateMessageFilters } from './message-filters.js';
 import { FeishuPrivateInput } from './private-input.js';
+import { FeishuAgentInput } from './agent-input.js';
 import { FeishuPrivateWorkflows, type PrivateWorkflowRequest } from './private-workflows.js';
 import { tryHandleSlashCommand } from './command-router.js';
 import {
@@ -195,6 +196,12 @@ export class MessageHandler {
   private getHasControlHandler: () => boolean;
   private tenantAccessToken: string;
   private readonly privateInput?: FeishuPrivateInput;
+  private agentInput?: FeishuAgentInput;
+
+  async requestAgentInput(request: import('@disclaude/core').AgentInputRequest, context: import('@disclaude/core').AgentInputContext): Promise<void> {
+    if (!this.agentInput) { throw new Error('Feishu input channel is unavailable'); }
+    await this.agentInput.request(request, context);
+  }
   private readonly privateWorkflows: FeishuPrivateWorkflows;
 
   requestPrivateWorkflow(request: PrivateWorkflowRequest): Promise<{ actionId: string }> {
@@ -237,6 +244,8 @@ export class MessageHandler {
    */
   initialize(client: lark.Client): void {
     this.client = client;
+    this.agentInput?.close();
+    this.agentInput = new FeishuAgentInput(client);
     this.controlHandler = this.getHasControlHandler();
     logger.debug({ controlHandler: this.controlHandler }, 'MessageHandler initialized');
   }
@@ -404,6 +413,8 @@ export class MessageHandler {
    * Clear the client (on stop).
    */
   clearClient(): void {
+    this.agentInput?.close();
+    this.agentInput = undefined;
     this.privateInput?.revoke();
     this.privateWorkflows.revoke();
     this.client = undefined;
@@ -1427,6 +1438,10 @@ export class MessageHandler {
 
     // Parse actual Feishu event structure
     const rawData = data as Record<string, unknown>;
+    if (FeishuAgentInput.isCallback(rawData)) {
+      void this.agentInput?.submit(rawData).catch(() => logger.warn('Agent input callback could not be handled'));
+      return;
+    }
     if (FeishuPrivateInput.isPrivateCallback(rawData)) {
       // Acknowledge promptly; the one-shot handoff consumes before awaiting.
       // Consumer failures never enter ordinary logs or the agent channel.
