@@ -37,3 +37,29 @@ with hashes and removed after ownership/process checks. The research document is
 retained. No PR was merged by the agent. Abrupt crash/unknown-write recovery,
 concurrent projects/edits, permission failures and complete release acceptance
 remain unproven.
+
+## Comment-identity fix retest
+
+Candidate `1e15e959` includes the stable comment-ID guidance. The previous run's
+original pre-restart checkpoint was recovered from its recorded helper output;
+its serialized bytes matched the hash captured before restart. Only its research
+directory was restored into a new owned workspace. The later manually patched
+checkpoint was not used as the starting state.
+
+A fresh native chat request asked Luna to recover the same research and read the
+latest document/comments, without mentioning the parser defect. The actual rollout
+confirmed `gpt-5.6-luna`. It read the comment API and the separate replies API, both
+without further pages, and used the same thread/reply ID as the saved checkpoint.
+The only checkpoint change was version 6 to 7 through `sync`: all other fields,
+including feedback and pending-write state, remained exactly equal. It did not
+patch checkpoint JSON or write to the remote document; independent before/after
+reads had identical content and revision 18. The final response gave the correct
+2,900 conclusion, outstanding costs, ongoing status and original document link,
+without a local checkpoint link.
+
+This is a scoped pass for restoring this saved project with unchanged remote
+feedback. It does not establish abrupt-crash recovery, changed/offline/concurrent
+feedback handling or multi-project isolation. One UI call, no screenshots. The
+original daily service was restored and independently healthy, configuration hashes
+matched, and owned workspace plus four temporary response files were archived with
+hashes and removed after process/ownership checks.
