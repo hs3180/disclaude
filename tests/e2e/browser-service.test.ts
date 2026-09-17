@@ -13,9 +13,8 @@ import { PiAgentProvider } from '../../packages/core/src/sdk/providers/pi/provid
 import { CodexAgentProvider } from '../../packages/core/src/sdk/providers/codex/provider.js';
 import type { AgentMessage } from '../../packages/core/src/sdk/types.js';
 import { DeepSeekHarnessProvider } from '../../packages/core/src/sdk/providers/deepseek/provider.js';
-import { ModelContentionCleanupError, verifyModelContention } from './helpers/browser-model-contention.js';
+import { verifyModelContention } from './helpers/browser-model-contention.js';
 import { verifyRepeatedHandoffs } from './helpers/browser-handoff-stress.js';
-import { verifyChatAgentBrowser } from './helpers/browser-chat-agent.js';
 
 const exec = promisify(execFile);
 const enabled = Boolean(process.env.DISCLAUDE_E2E_CHROMIUM && process.env.DISCLAUDE_E2E_BROWSER_PYTHON);
@@ -62,7 +61,6 @@ describe('user starts Disclaude and shares its managed browser', () => {
     const callerClosures = new Map<ReturnType<typeof spawn>, Promise<void>>();
     let child: ReturnType<typeof spawn> | undefined;
     let output = '';
-    let modelCleanupError: ModelContentionCleanupError | undefined;
     let exited: Promise<number | null> | undefined;
     async function stop(): Promise<void> {
       if (!child) { return; }
@@ -224,9 +222,6 @@ describe('user starts Disclaude and shares its managed browser', () => {
         if (attempt === 0 && process.env.DISCLAUDE_E2E_BROWSER_STRESS === '1') {
           await verifyRepeatedHandoffs(join(root, 'browser-events.ndjson'), run);
         }
-        if (attempt === 0 && process.env.DISCLAUDE_E2E_BROWSER_CHAT_AGENT_MODEL) {
-          await verifyChatAgentBrowser(root, env, process.env.DISCLAUDE_E2E_BROWSER_CHAT_AGENT_MODEL, run);
-        }
         await writeFile(join(root, 'profile', 'preserve-test.txt'), 'user profile retained');
         const cdpPort = (await readFile(join(root, 'profile', 'DevToolsActivePort'), 'utf8')).split('\n')[0];
         // Establish a real positive probe before negative stop/crash assertions;
@@ -272,7 +267,6 @@ describe('user starts Disclaude and shares its managed browser', () => {
         await expect(exec(process.execPath, [executable, 'browser', 'status'], { env, cwd: root, timeout: 5000 })).rejects.toThrow();
       }
     } catch (error) {
-      if (error instanceof ModelContentionCleanupError) { modelCleanupError = error; }
       // The isolated service uses a generated offline config. Retain its failure
       // diagnostics instead of reducing broker failures to a client EOF alone.
       // Client EOF can precede the supervisor's process-exit diagnostic.
@@ -313,7 +307,6 @@ describe('user starts Disclaude and shares its managed browser', () => {
       // Attempt every owned resource cleanup even if another one fails.
       const settled = await Promise.allSettled([stopCallers(), stopDescendants(), stop()]);
       const failures = settled.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
-      if (modelCleanupError) { failures.push(modelCleanupError); }
       if (failures.length) {
         throw new AggregateError(failures, `Browser test files retained at ${root}: resource termination unconfirmed; inspect owned processes before removing`);
       }

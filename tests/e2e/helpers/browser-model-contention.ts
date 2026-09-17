@@ -2,9 +2,6 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { resolve } from 'node:path';
 
-// Retained for the legacy ordinary-agent case until its separate PR is applied.
-export class ModelContentionCleanupError extends Error {}
-
 /** Concurrent real chats enter the deployment from an independent process. */
 export async function verifyModelContention(root: string, env: NodeJS.ProcessEnv,
   serviceUrl: string, eventFile: string): Promise<void> {

@@ -286,7 +286,14 @@ private config was removed after confirming no process referenced it.
 This replaces the earlier direct-provider evidence for the two-agent case.
 It remains a controlled draft task on one provider/platform, not simultaneous
 browser access, a natural-language benchmark, model-created subagents, or Feishu
-interaction. Other legacy provider cases need separate externalization (#5016).
+interaction. The ordinary-agent external REST case is maintained separately in
+#5059; it is not duplicated in this change. Other legacy provider cases need
+separate externalization (#5016).
+
+An unavailable-deployment failure probe also exited1 in142ms with a structured
+failed report; its owned fixture was removed. After synchronizing main, build and
+focused TypeScript/lint checks passed; product runtime packages were unchanged
+from the successful external model run.
 
 ### Test-resource cleanup
 
