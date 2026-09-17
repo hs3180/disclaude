@@ -55,6 +55,31 @@ and each new/edited comment as a separate pending item. It retains earlier
 versions for audit; a deleted or superseded comment needs explicit reasoning,
 not silent removal. `documentBody` and `comments` retain the latest snapshot.
 
+## Feishu response conversion
+
+Use `scripts/feishu-snapshot.mjs` before `sync` and `ack`. Feed it saved successful
+CLI JSON responses, not `jq -r` text piped through `--rawfile`: that path adds a
+newline and can fabricate an edit to an unchanged comment. Preserve intentional
+newlines too; do not trim user text to compensate.
+
+Input on stdin has `document` (the `docs +fetch --doc-format markdown` response),
+`commentPages` (all `drive +list-comments --comment-scope all --solved-status all`
+response pages in order), and `replyPages` (one `{commentId, pages}` group per
+thread, containing all `drive +list-replies` responses in order). Parse each saved
+file with `JSON.parse`, put the resulting objects in this input, and serialize
+with `JSON.stringify`; do not extract and retype their body strings.
+
+```sh
+node /path/to/research-workflow/scripts/feishu-snapshot.mjs < responses.json > snapshot.json
+```
+
+The converter retains the provider document body and reply text byte-for-byte,
+uses `comment_id:reply_id`, and rejects missing/failed pages, mismatched document
+or thread IDs and duplicate replies. It supports text replies; unsupported rich
+content fails explicitly rather than disappearing from a supposedly complete
+snapshot. On failure keep the old checkpoint and report what cannot be synced.
+It has no remote effects and does not repair already-corrupted checkpoint history.
+
 ## Handling and writing back
 
 `prepare` input:
