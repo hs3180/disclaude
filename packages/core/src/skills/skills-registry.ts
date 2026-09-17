@@ -107,9 +107,15 @@ export class SkillsRegistry {
         try {
           lstatSync(path);
         } catch (error) {
-          // Resource directories may contain documentation without defining a
-          // skill. lstat preserves diagnostics for a dangling SKILL.md symlink.
-          if ((error as NodeJS.ErrnoException).code === 'ENOENT') {continue;}
+          // User/project resource directories need not define a skill, but a
+          // shipped builtin without its entrypoint is a packaging defect.
+          // lstat preserves diagnostics for a dangling SKILL.md symlink.
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+            if (source.kind === 'builtin') {
+              diagnostics.push({ code: 'INVALID_SKILL', name, source: source.kind, detail: 'builtin skill is missing SKILL.md' });
+            }
+            continue;
+          }
           throw error;
         }
         if (!statSync(path).isFile()) {continue;}

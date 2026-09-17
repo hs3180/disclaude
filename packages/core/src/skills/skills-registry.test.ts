@@ -113,15 +113,27 @@ describe('SkillsRegistry', () => {
     expect(JSON.stringify(result.diagnostics)).not.toContain('secret');
   });
 
-  it('ignores documentation-only directories until a skill is added', () => {
+  it('diagnoses a missing builtin entrypoint and clears the diagnostic when repaired', () => {
     const root = makeRoot();
     mkdirSync(join(root, 'skills', 'channel'), { recursive: true });
     writeFileSync(join(root, 'skills', 'channel', 'README.md'), 'CLI reference');
     const registry = new SkillsRegistry([{ kind: 'builtin', root }]);
-    expect(registry.resolve().diagnostics).toEqual([]);
+    expect(registry.resolve().diagnostics).toEqual([
+      { code: 'INVALID_SKILL', name: 'channel', source: 'builtin', detail: 'builtin skill is missing SKILL.md' },
+    ]);
     expect(registry.resolve().skills).toEqual([]);
     skill(root, 'channel');
     expect(registry.resolve().skills.map((entry) => entry.name)).toEqual(['channel']);
+    expect(registry.resolve().diagnostics).toEqual([]);
+  });
+
+  it.each(['user', 'project'] as const)('allows documentation-only %s resources', (kind) => {
+    const root = makeRoot();
+    mkdirSync(join(root, 'skills', 'notes'), { recursive: true });
+    writeFileSync(join(root, 'skills', 'notes', 'README.md'), 'Local notes');
+    const result = new SkillsRegistry([{ kind, root }]).resolve();
+    expect(result.diagnostics).toEqual([]);
+    expect(result.skills).toEqual([]);
   });
 
   it('rejects names that could forge model-facing manifest rows or links', () => {

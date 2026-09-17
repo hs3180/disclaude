@@ -1,17 +1,20 @@
 # channel Skill — Channel CLI
 
+The discoverable agent entrypoint is [SKILL.md](./SKILL.md). The executable is
+`disclaude channel`, implemented in `packages/channel-cli`; use
+`disclaude channel help` for the current command and authentication contract.
+This README retains migration background and examples; the historical
+README-only CLI-skill format does not replace the registry's `SKILL.md` entrypoint.
+
 > **Transport switch ([#4532](https://github.com/hs3180/disclaude/issues/4532)
 > part 1, owner ruling 2026-08-18):** the CLI now reaches the DisclaudeService over
 > the **REST API** (HttpApiServer `/api/send-message`, `/api/send-card`,
 > `/api/upload-file`, `/api/send-interactive`, `/api/push`) — it no longer opens
 > a Unix socket, and there is **no REST API fallback** on the CLI path. REST is the
 > only transport (unconditional — `DISCLAUDE_REST_IPC_ENABLED` is ignored).
-> Base URL: `--base-url` > `DISCLAUDE_API_BASE_URL` >
-> `http://localhost:19200`. **The CLI does not authenticate yet:** it attaches
-> no bearer header, so a service started with `--api-token` 401s every channel
-> write while `GET /api/ping` (token-exempt) keeps the availability probe green
-> — [#4804](https://github.com/hs3180/disclaude/pull/4804) adds the `--api-token`
-> flag and `DISCLAUDE_API_TOKEN` wiring (#4801). When the REST face
+> Base URL comes from `--base-url` or the managed `DISCLAUDE_API_BASE_URL`.
+> The CLI supports `--api-token` and managed `DISCLAUDE_API_TOKEN` bearer
+> authentication ([#4804](https://github.com/hs3180/disclaude/pull/4804)). When the REST face
 > is unreachable, the CLI emits an actionable "start the main service" hint
 > instead of a raw `fetch` ECONNREFUSED (#4532 scope 3). The #4521 chatId
 > pre-check substance was re-landed on the REST CLI by part 11 (see §Parity).
@@ -47,9 +50,8 @@ exposes the 5 first-party channel tools (`send_text`, `send_card`,
 `Bash` instead of the runtime dispatching an in-process MCP tool — see
 [`docs/skill-format-spec.md`](../../docs/skill-format-spec.md) for the contract.
 
-This is a **CLI Skill** (the agent shells out to `disclaude channel ...`),
-distinct from the existing `SKILL.md` agent-skills. The two coexist; an
-agent-skill may shell out to this CLI as one of its tools.
+The agent discovers `SKILL.md` and shells out to `disclaude channel ...`.
+The CLI implements delivery; the skill explains when and how to use it.
 
 ## Quick start
 
