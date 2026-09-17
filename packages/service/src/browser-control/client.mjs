@@ -43,16 +43,30 @@ export async function main() {
   let code = ''; for await (const chunk of process.stdin) { code += chunk; if (code.length > 1024 * 1024) throw new Error('Script too large'); }
   if (!code.trim()) throw new Error('Pipe a Python browser-use script on stdin');
   const client = await connectBrowser(process.env.DISCLAUDE_BROWSER_SOCKET);
-  let heartbeat;
-  try {
-    const initial = await client.request('acquire');
-    if (initial.state === 'queued') process.stderr.write('Browser control queued\n');
-    await client.request('wait');
-    heartbeat = setInterval(() => { client.request('heartbeat').catch(() => client.close()); }, 1000);
+  await withBrowserLease(client, async () => {
     const result = await client.request('execute', { script: code, cwd: process.cwd() });
     process.stdout.write(result.stdout); process.stderr.write(result.stderr);
     process.exitCode = result.code === 0 ? 0 : 1;
-    await client.request('release');
-  } finally { clearInterval(heartbeat); client.close(); }
+  }, () => process.stderr.write('Browser control queued\n'));
 }
+/** Maintain heartbeats only while owning/executing the segment, not while releasing it. */
+export async function withBrowserLease(client, execute, onQueued = () => {}) {
+  let heartbeat;
+  let releasing = false;
+  try {
+    const initial = await client.request('acquire');
+    if (initial.state === 'queued') onQueued();
+    await client.request('wait');
+    heartbeat = setInterval(() => {
+      client.request('heartbeat').catch(() => { if (!releasing) client.close(); });
+    }, 1000);
+    await execute();
+    // Reclamation can outlast a heartbeat interval. A late heartbeat rejection
+    // no longer describes execution ownership and must not abort the release ack.
+    releasing = true;
+    clearInterval(heartbeat);
+    await client.request('release');
+  } finally { releasing = true; clearInterval(heartbeat); client.close(); }
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(error => { console.error(error.message); process.exitCode = 1; });
