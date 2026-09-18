@@ -46,7 +46,6 @@ function showHelp() {
       'Commands:',
       '  start [options]    Start disclaude',
       '  channel <command>  Send channel messages through the service',
-      '  record-task append YYYY-MM  Append an execution record from stdin',
       '  browser <cmd>      Start or inspect coordinated browser control',
       '  chromium-cdp <cmd> Manage the persistent Chromium CDP service (Issue #4807)',
       '',
@@ -66,7 +65,6 @@ function showHelp() {
 }
 
 const ROUTES = {
-  'record-task': { file: resolve(ROOT, 'node_modules/@disclaude/core/dist/task/task-record-cli.js') },
   browser: { file: resolve(ROOT, 'node_modules/@disclaude/service/dist/browser-control/cli.mjs') },
   start: {
     file: resolve(ROOT, 'node_modules/@disclaude/service/dist/cli.js'),

@@ -9,7 +9,6 @@
  *
  * @module agents/message-builder/guidance
  */
-import { fileURLToPath } from 'node:url';
 
 /**
  * Build the chat history section for passive mode.
@@ -300,10 +299,6 @@ export function buildTaskRecordGuidance(): string {
   const cur = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const prev = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
-  // Pin recording to this runtime; PATH may still contain an older global CLI
-  // when a service runs from a checkout or a candidate installation.
-  const appendCommand = [process.execPath, fileURLToPath(new URL('../../task/task-record-cli.js', import.meta.url)), 'append', cur]
-    .map(value => `'${value.replace(/'/g, "'\\''")}'`).join(' ');
   return `
 
 ---
@@ -329,22 +324,17 @@ workspace root from the \`DISCLAUDE_WORKSPACE_DIR\` environment variable, which
 is stable for the whole session. If your shell cwd differs from it (project-bound
 chat, or after \`cd\` into a nested repository), still write records under
 \`$DISCLAUDE_WORKSPACE_DIR/task-records/\` — never inside a project's own tree.
-Use the append-only command below with one Markdown entry on stdin (maximum
-64 KiB). This is the runtime-pinned equivalent of \`disclaude record-task append YYYY-MM\`.
-It creates the directory and publishes a single \`# Task Records\`
-heading when creating it for the first time, then appends without overwriting
-other projects' entries. Do not use apply_patch/Add File, writeFile, shell
-\`>\`, or read-modify-write on the shared monthly file. If the command fails,
-report the failure; do not fall back to replacing the file. Do not retry a
-partial or unknown append until you have checked whether your entry exists.
+Append one Markdown entry to the monthly file. When multiple tasks finish at
+the same time, each entry must be appended as one atomic operation so entries
+from other projects cannot be truncated or interleaved. Do not overwrite the
+file or fall back to a read-modify-write sequence. If an append is uncertain,
+read the file first and ensure the entry is not already present before retrying.
 
-\`\`\`sh
-${appendCommand} <<'TASK_RECORD_ENTRY'
+\`\`\`text
 ## YYYY-MM-DD Brief task description
 
 - **Type**: research
 - **Review**: Result and remaining limitations
-TASK_RECORD_ENTRY
 \`\`\`
 
 Use the actual date and entry details. Monthly files keep the active file small;
