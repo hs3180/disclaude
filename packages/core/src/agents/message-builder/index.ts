@@ -24,7 +24,6 @@ export {
   buildPersistedHistorySection,
   buildNextStepGuidance,
   buildOutputFormatGuidance,
-  buildTaskRecordGuidance,
   buildLocationAwarenessGuidance,
 } from './guidance.js';
 
