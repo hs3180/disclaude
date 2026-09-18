@@ -18,3 +18,25 @@ Actual package installation remains the separate `npm run test:install:checkout 
 This is the current separation of the Vitest suites, not completion of repository-wide test consolidation (#5016). Historical shell/deployment runners, opt-in model checks within packages, and the bounded provider/channel fixtures above still need review against real product entry points. Retain useful assertions while correcting their evidence labels; do not delete coverage solely because a test uses mocks. Historical release reports describe the candidates and paths used at the time and are not current execution instructions.
 
 The fixed 0.5.0 acceptance inventory is archived under `docs/releases/0.5.0/acceptance.json`. Its dedicated validator and fixture suite are retired; current unit or E2E runs do not treat those 44 historical IDs as a release contract.
+
+## Upgrade and rollback
+
+Run the foreground-only installation check through the owned-resource runner:
+
+```sh
+npm run test:install:checkout -- --matrix
+```
+
+Use the 64-character source fingerprints from the independently verified
+`release-source.json` files. Both fingerprints are required with local archives.
+Pinned `github:hs3180/disclaude#<40-character-distribution-SHA>` inputs remain
+supported; the candidate fingerprint is required and the baseline fingerprint
+is optional for that transport. Do not pass moving branch names.
+
+The runner installs baseline → candidate → baseline into one isolated prefix,
+starts/stops each installed CLI, verifies candidate provenance and exact baseline
+provenance after rollback, and checks file contents plus private modes for config,
+runtime environment and user/research fixtures. It uses the Luna configuration
+without issuing model requests and disables Feishu. This is an external installation
+check, not a unit test or proof of live Research/schema migration. Local archives
+do not establish the public Git/tag transport path.

@@ -324,12 +324,21 @@ workspace root from the \`DISCLAUDE_WORKSPACE_DIR\` environment variable, which
 is stable for the whole session. If your shell cwd differs from it (project-bound
 chat, or after \`cd\` into a nested repository), still write records under
 \`$DISCLAUDE_WORKSPACE_DIR/task-records/\` — never inside a project's own tree.
-Create the file if it does not exist (and create the \`task-records/\` directory
-under the workspace root if needed); when creating it for the first time, write
-a single top-level \`# Task Records\` heading on the first line so every monthly
-file has a consistent title (the example below shows this). Monthly files keep
-the active file small — **do not** write to a single ever-growing
-\`task-records.md\`.
+Append one Markdown entry to the monthly file. When multiple tasks finish at
+the same time, each entry must be appended as one atomic operation so entries
+from other projects cannot be truncated or interleaved. Do not overwrite the
+file or fall back to a read-modify-write sequence. If an append is uncertain,
+read the file first and ensure the entry is not already present before retrying.
+
+\`\`\`text
+## YYYY-MM-DD Brief task description
+
+- **Type**: research
+- **Review**: Result and remaining limitations
+\`\`\`
+
+Use the actual date and entry details. Monthly files keep the active file small;
+do not write to a single ever-growing \`task-records.md\`.
 
 Legacy: pre-existing \`.claude/task-records/YYYY-MM.md\` files and the
 single-file \`.claude/task-records.md\` archive are read-only compatibility

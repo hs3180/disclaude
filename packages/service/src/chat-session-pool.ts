@@ -449,7 +449,6 @@ export class ChatSessionPool {
       throw new Error('Agent session must have a nonempty, unambiguous scope');
     }
     const sessionKey = this.sessionKeyOf(chatId, session?.id ?? threadRootId);
-    this.callbacksBySession.set(sessionKey, callbacks);
     let agent = this.agents.get(sessionKey);
     if (agent && session?.releaseAfterTurn) {
       throw new Error('Temporary session already owns an agent');
@@ -479,6 +478,8 @@ export class ChatSessionPool {
       // is deferred until the current query completes.
       agent.updateCallbacks(callbacks);
     }
+    // Rejected requests must not replace the delivery owner used by preset switches.
+    this.callbacksBySession.set(sessionKey, callbacks);
     // Issue #4169: Track usage for idle eviction.
     this.lastUsedAt.set(sessionKey, Date.now());
     // Issue #4256: Track peak concurrent agents for leak diagnostics. Each
