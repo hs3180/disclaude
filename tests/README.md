@@ -24,7 +24,7 @@ The fixed 0.5.0 acceptance inventory is archived under `docs/releases/0.5.0/acce
 Run the foreground-only installation check through the owned-resource runner:
 
 ```sh
-node scripts/run-isolated-test.mjs -- node scripts/test-upgrade-rollback.mjs ./baseline.tgz ./candidate.tgz CANDIDATE_SOURCE_FINGERPRINT BASELINE_SOURCE_FINGERPRINT
+npm run test:install:checkout -- --matrix
 ```
 
 Use the 64-character source fingerprints from the independently verified
