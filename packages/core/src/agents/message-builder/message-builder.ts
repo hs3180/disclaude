@@ -19,7 +19,7 @@
  *   │   ├── buildPostHistory() - @ mention section
  *   │   ├── buildToolsSection() - MCP tools
  *   │   └── buildAttachmentExtra() - Image analyzer hints
- *   ├── Guidance sections (next-step, output format, task record, location awareness)
+ *   ├── Guidance sections (next-step, output format, location awareness)
  *   └── User message + attachments
  * ```
  *
@@ -36,7 +36,6 @@ import {
   buildThreadSelfServiceGuidance,
   buildNextStepGuidance,
   buildOutputFormatGuidance,
-  buildTaskRecordGuidance,
   buildLocationAwarenessGuidance,
   buildRuntimeEnvironmentGuidance,
 } from './guidance.js';
@@ -51,7 +50,6 @@ import {
  * - Chat history context
  * - Next-step guidance (Issue #893)
  * - Output format guidance (Issue #962)
- * - Task record guidance (Issue #1234)
  * - Location awareness guidance (Issue #1198)
  *
  * Channel-specific content is injected via the options callbacks.
@@ -173,7 +171,6 @@ export class MessageBuilder {
       (capabilities?.supportedMcpTools === undefined || capabilities.supportedMcpTools.includes('send_interactive'));
     const nextStepGuidance = isTopicThread ? '' : buildNextStepGuidance(supportsInteractiveCards);
     const outputFormatGuidance = buildOutputFormatGuidance();
-    const taskRecordGuidance = buildTaskRecordGuidance();
     const locationAwarenessGuidance = buildLocationAwarenessGuidance();
 
     // Compose all sections
@@ -186,7 +183,7 @@ export class MessageBuilder {
     if (stableToolsSection) {
       sections.push({ kind: 'tools', stability: 'stable', content: `\n---\n\n## Tools\n${stableToolsSection}` });
     }
-    for (const guidance of [nextStepGuidance, outputFormatGuidance, taskRecordGuidance, locationAwarenessGuidance, buildRuntimeEnvironmentGuidance()]) {
+    for (const guidance of [nextStepGuidance, outputFormatGuidance, locationAwarenessGuidance, buildRuntimeEnvironmentGuidance()]) {
       if (guidance) {
         sections.push({ kind: 'guidance', stability: 'stable', content: guidance });
       }

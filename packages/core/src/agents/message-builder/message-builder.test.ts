@@ -622,17 +622,6 @@ describe('MessageBuilder', () => {
       expect(result).toContain('data.csv');
       expect(result).toContain('Skill-specific context info');
     });
-
-    it('should include task record guidance for regular messages', () => {
-      const result = messageBuilder.buildEnhancedContent({
-        text: 'Hello',
-        messageId: 'msg-123',
-      }, 'chat-456');
-
-      expect(result).toContain('Task Execution Recording');
-      // Issue #4261: rolling monthly files under task-records/YYYY-MM.md
-      expect(result).toContain('task-records/');
-    });
   });
 
   describe('buildEnhancedContent - thread context (Issue #3641)', () => {
@@ -770,7 +759,6 @@ describe('MessageBuilder', () => {
       expect(result).not.toContain('Next Steps After Response');
       // But other guidance should still be present
       expect(result).toContain('Output Format Requirements');
-      expect(result).toContain('Task Execution Recording');
       expect(result).toContain('Location Awareness');
       // Thread context should be present
       expect(result).toContain('Thread Context');
