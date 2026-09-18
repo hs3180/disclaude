@@ -148,3 +148,21 @@ The original daily service was restored, configuration/plist hashes matched and
 an independent health check passed. Candidate processes exited, owned workspace
 files were archived with hashes, the temporary root was removed and the test
 card was recalled. No PR was merged by the agent.
+
+### Codex 0.155 Luna non-blocking protocol probe
+
+Codex 0.155 exposes the non-blocking capability to the model through its
+`request_user_input` surface; the app-server request is distinguished by
+`isBlocking: false`. When a host input callback is installed, disclaude passes
+the scoped override `-c tools.experimental_request_user_input={enabled=true}`
+alongside `--enable default_mode_request_user_input`. This is applied only to
+the owned app-server child and does not modify the user's global Codex config.
+
+The opt-in E2E therefore asks for the non-blocking protocol rather than naming
+the removed `request_user_input_async` model tool. On 2026-09-19 with
+`gpt-5.6-luna`, the provider emitted `item/tool/requestUserInput` with
+`isBlocking: false`, the simulated Feishu card was answered once, and the same
+turn completed. The blocking RPC case also passed separately. Both checks use
+the product provider and card adapter; Feishu HTTP delivery and human input are
+simulated, and no Computer Use call is made. The stale desktop idle-card repaint
+finding above remains a separate visual limitation.
