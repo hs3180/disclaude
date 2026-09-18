@@ -10,9 +10,13 @@ lark-cli drive +list-replies --token TOKEN --type docx --comment-id COMMENT_ID -
 
 根据 `has_more` 和 `page_token` 读取每一页；不要把摘要当作完整评论，也不要把失败页替换为空列表。
 
+需要脚本化采集时使用 `scripts/collect-feishu-snapshot.mjs <TOKEN> <user|bot>`；它只有在正文、每条评论及全部回复页通过文档 token、线程 ID、分页和时间校验后才返回 `complete: true`。原始响应只保存到本轮私有目录，错误输出不包含正文或评论内容。
+
 结合正文上下文处理用户意见。实质修改采用增量写入并立即完整读回，确认用户原文、来源和新内容都保留。反馈无法在本轮处理时在文档或本地工作记录中明确标为待处理；不能把等待或本地检查当作已处理。
 
 直接用 Lark CLI 的文档更新命令进行 targeted `str_replace` 或 `append`，把原文、替换文本和可选正文版本作为结构化参数传入，避免 shell 解释反引号、`$()` 和换行。写入结果不明确时先完整读回再决定是否重试；不要盲目重复追加，也不要整篇覆盖文档。
+
+需要封装一次写入时使用 `scripts/write-feishu-text.mjs`，它通过参数数组传递正文，不执行 shell，并可带 `--revision-id`。命令结果不明确时脚本只报告需要读回核对，不自动重试；`scripts/prepare-conclusion-replacement.mjs` 和 `scripts/verify-conclusion-history.mjs` 只接受完整同文档快照，`scripts/compare-snapshot-history.mjs` 只报告当前正文缺失的原文块，不替用户判断结论是否应恢复。
 
 实时读回的完成时间只能在所有正文、评论和回复页成功校验后记录；它表示本次采集完成，不是原子远端快照，也不是写入时间。最终回复给出文档链接、已确认变化、未解决意见和研究是否仍在进行；没有成功采集时间时明确未知，不制造时间。
 
