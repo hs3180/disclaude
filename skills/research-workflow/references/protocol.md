@@ -1,94 +1,19 @@
-# Feedback checkpoint protocol
+# 文档协作读写约定
 
-Use one state file per research task. Resolve `scripts/state.mjs` relative to this
-skill, not the task cwd. State contains document/comment content; keep its
-private directory out of source control and channel logs. Commands return one
-JSON object and nonzero on failure. Supply JSON on stdin (prefer an input file
-and shell redirection), never interpolate comment text into shell code.
+研究文档正文和评论是协作状态。每轮开始和结束都用 Lark CLI 完整读取正文、全部评论及回复，并把成功的原始响应保存到任务私有目录；读取失败或分页不完整时保留上一次成功读回并明确说明。
 
 ```sh
-node /path/to/research-workflow/scripts/state.mjs init ./research/state.json -1 < binding.json
-node /path/to/research-workflow/scripts/state.mjs status ./research/state.json
-node /path/to/research-workflow/scripts/state.mjs sync ./research/state.json 0 < snapshot.json
+lark-cli docs +fetch --doc TOKEN --doc-format markdown --scope full --as user
+lark-cli drive +list-comments --token TOKEN --type docx --comment-scope all --solved-status all --as user --page-size 100
+lark-cli drive +list-replies --token TOKEN --type docx --comment-id COMMENT_ID --as user --page-size 100
 ```
 
-`binding.json`: `{"taskId":"research-unique-id","documentId":"doc-token"}`.
-The last argument is the version returned by the previous command. Stale
-versions fail without writing. The lock is fail-fast; after a worker crash,
-verify no owner is alive before manually removing a stale `.lock`. Never steal
-an active lock. A cancelled/completed task cannot resume via another mutation;
-start a new explicit task if more work is required.
+根据 `has_more` 和 `page_token` 读取每一页；不要把摘要当作完整评论，也不要把失败页替换为空列表。`scripts/feishu-snapshot.mjs` 只把已保存的成功 CLI 响应转换为统一快照，不访问远端。
 
-## Snapshot adapter
+结合正文上下文处理用户意见。实质修改采用增量写入并立即完整读回，确认用户原文、来源和新内容都保留。反馈无法在本轮处理时在文档或本地工作记录中明确标为待处理；不能把等待或本地检查当作已处理。
 
-```json
-{
-  "documentId": "doc-token",
-  "revision": "observed-provider-revision-or-content-hash",
-  "body": "complete latest markdown representation",
-  "comments": [{ "id": "comment-id/reply-id", "body": "user feedback" }],
-  "complete": true
-}
-```
+使用 `scripts/write-feishu-text.mjs` 进行 targeted `str_replace` 或 `append`，从 JSON stdin 传入原文和可选正文版本，避免 shell 解释反引号、`$()` 和换行。写入结果不明确时先完整读回再决定是否重试；不要盲目重复追加，也不要整篇覆盖文档。
 
-Fetch body and all comment/reply pages using the installed document/drive CLI.
-Do not treat a compact/truncated comment summary as complete. Each comment or
-reply has a stable provider ID; edited text changes its fingerprint. Use one
-consistent body representation across reads. `complete` attests successful
-collection, not just HTTP 200; no fallback to an empty comment list on error.
-If no provider revision is available, use a hash of the complete body and
-recheck content immediately before writing. This is not a server-side CAS:
-concurrent edits can still happen; use append or targeted updates and read-back.
+实时读回的完成时间只能在所有正文、评论和回复页成功校验后记录；它表示本次采集完成，不是原子远端快照，也不是写入时间。最终回复给出文档链接、已确认变化、未解决意见和研究是否仍在进行；没有成功采集时间时明确未知，不制造时间。
 
-`sync` records changed body as pending feedback (including the initial body),
-and each new/edited comment as a separate pending item. It retains earlier
-versions for audit; a deleted or superseded comment needs explicit reasoning,
-not silent removal. `documentBody` and `comments` retain the latest snapshot.
-
-## Handling and writing back
-
-`prepare` input:
-
-```json
-{"decisions":[{"key":"key returned by sync","status":"accepted","reason":"How the plan will change, and why"}]}
-```
-
-Other statuses: `needs_clarification`, `not_adopted`. Every decision requires a
-reason. The resulting `pendingWrite` has an operation ID, base revision/hash,
-and an exact Markdown fragment. Refresh the body and compare to the base before
-appending that fragment once. It is a feedback receipt; it does not execute the
-research or prove that substantive changes were completed.
-
-`ack` input is `{"operationId":"…","snapshot":{…}}` from a complete read-back.
-It requires the exact fragment, the original body outside it, and unchanged
-comment versions for the decisions. Only then are decisions committed. Other
-new comments discovered in the read-back become pending. Document tools that
-normalize Markdown differently may fail this conservative check; use reconcile
-rather than declaring success or repeatedly appending.
-
-If the append timed out or execution stopped, first inspect the pending write
-and read the remote document. Do not blindly repeat it. If `ack` fails because
-of edits or normalization, `reconcile` with the same operation ID and a fresh
-complete snapshot records the latest document, keeps decisions pending and
-clears the ambiguous operation. Inspect any existing receipt before preparing
-new decisions; reconciliation does not undo external writes.
-
-Once the user clarifies an item, `reopen` with `{"key":"…"}` returns its
-`needs_clarification` record to pending; prepare a new decision with the answer
-and rationale. `phase` with `{"phase":"synthesis"}` and `finish` with `{}`
-require no pending write, pending feedback, or unanswered clarification.
-`cancel` with `{}` keeps feedback and any unknown-write record for inspection.
-
-Before changing phase or finishing, fetch/sync again; the local helper cannot
-detect external changes without a supplied fresh snapshot. No group creation,
-background scheduling, remote transaction rollback or automatic task restart
-is implemented by this helper.
-
-## Real integration acceptance (still required)
-
-Use an authorized disposable research document and preset source material.
-Have a user edit the scope and comment on one finding; record the AI's revised
-plan and receipt, stop/restart the worker and show no duplicate handling. Also
-inject an unreadable comment page and a concurrent body edit; neither may
-produce a false synced/handled result. Keep this evidence separate from local
-fixture tests and preserve the document for review.
+本约定不创建任务管理器、调度器、文件索引或后台执行机制；本地目录只保存完成本轮读写所需的原始响应和研究产物。
