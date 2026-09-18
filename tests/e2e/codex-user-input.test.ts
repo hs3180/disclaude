@@ -11,13 +11,22 @@ import { FeishuAgentInput } from '../../packages/service/src/channels/feishu/age
 // the human submission are captured/simulated; live-channel acceptance is separate.
 // Luna currently exposes the RPC tool. Async is a separate capability probe,
 // explicitly enabled only when checking that optional model/tool combination.
-const questionKinds = process.env.DISCLAUDE_E2E_CODEX_ASYNC_INPUT === '1' ? ['rpc', 'async-message'] as const : ['rpc'] as const;
-it.skipIf(process.env.DISCLAUDE_E2E_CODEX_INPUT !== '1').each(questionKinds)('answers a real Codex %s question through its native card and completes the original turn', async kind => {
+// Codex 0.155 can represent the async tool as either the older
+// `item/completed`/agentMessage.questions notification or a non-blocking
+// item/tool/requestUserInput RPC. The latter still answers through the
+// original JSON-RPC request and must not be mislabeled as a steer-based
+// notification.
+const questionTools = process.env.DISCLAUDE_E2E_CODEX_ASYNC_INPUT === '1'
+  ? ['request_user_input', 'request_user_input_async'] as const
+  : ['request_user_input'] as const;
+it.skipIf(process.env.DISCLAUDE_E2E_CODEX_INPUT !== '1').each(questionTools)('answers a real Codex %s question through its native card and completes the original turn', async tool => {
+  const asyncTool = tool === 'request_user_input_async';
   const root = await mkdtemp(join(tmpdir(), 'codex-input-e2e-'));
   const provider = new CodexAgentProvider({ transport: 'app-server', builtinsDir: root, env: { ...process.env }, execTimeoutMs: 120_000 });
   let card: { body: { elements: Array<{ tag: string; elements?: Array<{ name: string }> }> } } | undefined;
   let requests = 0;
   let answers = 0;
+  let sawAsyncNotification = false;
   const questionItems = new Set<string>();
   const client = { im: { message: {
     reply: (data: { data: { content: string } }) => {
@@ -28,12 +37,18 @@ it.skipIf(process.env.DISCLAUDE_E2E_CODEX_INPUT !== '1').each(questionKinds)('an
   const ui = new FeishuAgentInput(client);
   const inputContext = { actorId: 'test-actor', chatId: 'test-chat', sourceMessageId: 'test-source' };
   const stream = provider.queryStream((async function* (): AsyncGenerator<UserInput> {
-    const tool = kind === 'async-message' ? 'request_user_input_async' : 'request_user_input';
     yield { role: 'user', inputContext, content: `Interaction integration test: call the actual ${tool} tool, not the other input tool, to ask exactly one question, which browser should this test use? Offer Chromium and Chrome with short descriptions. After receiving the answer, state the selected browser and finish. Do not use shell, files, network, other tools, subagents, or send messages. Do not ask through plain text.` };
   })(), { sessionKey: 'codex-input-e2e', cwd: root, model: 'gpt-5.6-luna', settingSources: [], onUserInput: async (request, context) => {
     requests++;
     questionItems.add(request.itemId);
-    expect(request.kind ?? 'rpc').toBe(kind);
+    if (asyncTool) {
+      expect(request.isBlocking).toBe(false);
+      const kind = request.kind ?? 'rpc';
+      expect(['rpc', 'async-message']).toContain(kind);
+      sawAsyncNotification ||= kind === 'async-message';
+    } else {
+      expect(request.kind ?? 'rpc').toBe('rpc');
+    }
     expect(request.questions).toHaveLength(1);
     expect(request.questions[0].isSecret).toBe(false);
     expect(context).toEqual(inputContext);
@@ -53,7 +68,7 @@ it.skipIf(process.env.DISCLAUDE_E2E_CODEX_INPUT !== '1').each(questionKinds)('an
     expect(requests).toBe(1);
     expect(answers).toBe(1);
     expect(events.some(event => event.type === 'error')).toBe(false);
-    if (kind === 'async-message') {
+    if (sawAsyncNotification) {
       expect(events.some(event => event.type === 'text' && questionItems.has(event.metadata?.messageId ?? ''))).toBe(false);
     }
     expect(events.some(event => event.type === 'text' && /chromium/i.test(event.content))).toBe(true);
