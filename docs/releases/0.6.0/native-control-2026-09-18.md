@@ -181,3 +181,29 @@ the restored daily service independently healthy. No external temporary files
 remained. Evidence: `.local/060-poll/pause-resume-*`,
 `luna-pause-resume-runtime.json`, `luna-pause-resume-restoration.json`, and
 `luna-pause-resume-evidence/`.
+
+## Reconstructed candidate continuation
+
+The paused workspace was rebuilt from the archived evidence using source
+`a177094400e5b826c16a3eed808153bc23f30975`, Luna-only configuration and an
+isolated launchd label. The candidate received one explicit native
+continuation request and resumed the same Unicode study. It preserved the
+first NFC/NFKC batch and the cancelled predecessor, then recorded real
+CPython 3.13.9 / Unicode 15.1.0 results: `Straße.lower()` is `straße`,
+`STRASSE.lower()` is `strasse` (not equal), while both `casefold()` to
+`strasse`. The study remained active and documented that this does not decide
+SQLite, product or performance semantics.
+
+The document advanced from revision 11 to 14 with `pendingWrite: null` in the
+archived state. Feedback entries for revisions 12–14 remain pending in the
+trace, so this is scoped resume evidence rather than proof that all feedback
+was processed. Unrelated queued messages from the restoration boundary are
+retained in the archive and excluded from the acceptance conclusion.
+
+This round used three Computer Use calls (one failed stale-input lookup, one
+filtered relocalization and one send), with zero screenshots. The candidate
+was stopped afterward; original config/plist hashes were verified and the
+daily service was restored and independently healthy. Evidence:
+`.local/060-poll/luna-pause-resume-resumed-evidence/`,
+`.local/060-poll/luna-pause-resume-final.json`, and
+`.local/060-poll/luna-paused-resume-restart.json`.
