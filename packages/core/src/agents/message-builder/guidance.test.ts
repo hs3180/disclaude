@@ -273,7 +273,7 @@ describe('buildTaskRecordGuidance', () => {
     // tell the agent to write that heading on first creation — otherwise new
     // monthly files lack the top-level title the example implies.
     expect(result).toContain('# Task Records');
-    expect(result).toMatch(/when creating it for the first time/i);
+    expect(result).toMatch(/atomic operation/i);
   });
 
   it('should bound the legacy tail-read to a concrete line limit', () => {
@@ -313,10 +313,9 @@ describe('buildTaskRecordGuidance', () => {
     expect(result).toContain('Read existing records before estimating');
   });
 
-  it('routes recording through the append-only command', () => {
+  it('should require an atomic append for concurrent records', () => {
     const result = buildTaskRecordGuidance();
-    expect(result).toContain('disclaude record-task append');
-    expect(result).toContain('Do not use apply_patch/Add File');
+    expect(result).toMatch(/atomic operation/i);
   });
 });
 
