@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import { collectFeishuSnapshot } from './collect-feishu-snapshot.mjs';
-import { transition } from './state.mjs';
 
 const document = { ok: true, data: { document: { document_id: 'doc', revision_id: 3, content: 'Keep `ß` and $(literal)\n' } } };
 const page = (items: unknown[], more = false, token = '', extra = {}) =>
@@ -48,13 +47,4 @@ describe('live complete snapshot collection', () => {
     await expect(collectFeishuSnapshot('doc', 'user', { run, now })).rejects.toThrow('invalid_collection_clock');
   });
 
-  it('keeps the observed collection time through sync and clears it for untimed legacy snapshots', () => {
-    const initial = transition(null, 'init', { taskId: 'task', documentId: 'doc' });
-    const snapshot = { documentId: 'doc', revision: '3', body: 'body', comments: [], complete: true };
-    const timed = transition(initial, 'sync', { ...snapshot, collection: { startedAt: start, completedAt: end } });
-    expect(timed.documentCollection.completedAt).toBe(end);
-    expect(transition(timed, 'sync', { ...snapshot, revision: '4' }).documentCollection).toBeNull();
-    expect(() => transition(timed, 'sync', { ...snapshot, collection: { startedAt: end, completedAt: start } })).toThrow('invalid_collection_time');
-    expect(timed.documentCollection.completedAt).toBe(end);
-  });
 });

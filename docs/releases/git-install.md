@@ -107,12 +107,8 @@ Inspect the reported directory and process state before manual cleanup. This doe
 not add signal/forced-termination recovery, and nested installation tests retain
 their own cleanup diagnostics.
 
-The pinned upgrade/rollback helper also removes its isolated prefix, cache and
-workspace after ordinary failures, after waiting for an owned CLI to close.
-It reports `UPGRADE_TEST_CLEANUP_OK`. `--keep-temp`, a signaled/timed-out install,
-or unconfirmed CLI shutdown instead reports the retained root; verify that all
-owned processes have stopped before deleting it. These guards do not implement
-whole-runner signal handling or stale-resource recovery (#5049).
+Upgrade and rollback checks use the existing shell/CI installation workflow;
+experimental reports and one-off runners remain outside the repository.
 
 
 ## Foreground test ownership and recovery
@@ -123,7 +119,7 @@ matrix and upgrade/rollback helpers:
 
 ```sh
 node scripts/run-isolated-test.mjs -- node scripts/test-git-node22.mjs /absolute/path/package.tgz
-node scripts/run-isolated-test.mjs -- node scripts/test-upgrade-rollback.mjs github:hs3180/disclaude#BASE_SHA github:hs3180/disclaude#CANDIDATE_SHA FINGERPRINT
+npm run test:install:checkout -- --matrix
 ```
 
 On macOS/Linux the wrapper supplies a private per-run TMPDIR/TMP/TEMP and starts
