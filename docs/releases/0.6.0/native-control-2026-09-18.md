@@ -137,3 +137,47 @@ Evidence: `.local/060-poll/cancel-late-*`, `from-findings-*`,
 `luna-cancel-late-runtime.json`, `luna-cancel-late-restoration.json`, and
 `luna-cancel-late-evidence/`. The earlier round's narrower limits and failures
 remain recorded above rather than being retroactively relabelled.
+
+## Ordinary native pause after current-turn completion
+
+Integration `a177094400e5b826c16a3eed808153bc23f30975` continued the distinct
+Unicode study through native chat, retaining the cancelled source task. The
+first request ran a small real Python NFC/NFKC sample with a controlled waiting
+point. Independent observation saw PID 10794 waiting; the model itself released
+and completed the batch at `2026-09-18T00:24:51.893735Z`.
+
+The ordinary pause message arrived at `2026-09-18T00:24:55.261Z`, after the Python
+process finished but while the model was still writing/confirming that turn.
+Feishu explicitly acknowledged the message as queued. The first model turn
+finished at `00:28:01.252Z`; the queued pause turn finished at `00:30:00.051Z`.
+The observed request-to-completion interval was 304.790 seconds. This verifies
+cooperative pause after current-turn completion, not preemption of the Python
+process or immediate natural-language control.
+
+Independent document 11/checkpoint 11 match, with no pending write or unresolved
+feedback. The overview says paused and requires explicit continuation. The
+recorded observations preserve that NFC leaves `ｶﾞ` unchanged while NFKC yields
+`ガ`, and both normalize the specific decomposed-accent sample to `é`, under
+Unicode data 15.1.0. The document limits these findings to Python samples and
+keeps SQLite/product/performance questions open. The old cancelled checkpoint
+and original source document remain unchanged.
+
+The planned third UI call could not locate the acceptance chat input, so no
+continuation message was sent. The round stopped at its three-call budget
+(two successful sends, one failed before sending), with no screenshots or full
+accessibility-tree output. Explicit native continuation from this paused state
+therefore remains pending. The exact paused artifact is retained for that next
+check; it is not labelled resumed or complete.
+
+This round also left the raw experiment script/result referenced only by local
+paths in the document. The observations and conditions are visible, but the
+complete user-accessible source artifact requirement is not established by
+those paths. Retain this as an open artifact-publication gap.
+
+Production interval: `2026-09-18T00:23:00.993463Z` to restoration at
+`2026-09-18T00:31:34.795079Z`. Original config/plist hashes were verified,
+workspace evidence/unknown conversation data archived, owned root removed and
+the restored daily service independently healthy. No external temporary files
+remained. Evidence: `.local/060-poll/pause-resume-*`,
+`luna-pause-resume-runtime.json`, `luna-pause-resume-restoration.json`, and
+`luna-pause-resume-evidence/`.
