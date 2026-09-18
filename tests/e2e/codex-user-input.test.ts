@@ -37,7 +37,14 @@ it.skipIf(process.env.DISCLAUDE_E2E_CODEX_INPUT !== '1').each(questionTools)('an
   const ui = new FeishuAgentInput(client);
   const inputContext = { actorId: 'test-actor', chatId: 'test-chat', sourceMessageId: 'test-source' };
   const stream = provider.queryStream((async function* (): AsyncGenerator<UserInput> {
-    yield { role: 'user', inputContext, content: `Interaction integration test: call the actual ${tool} tool, not the other input tool, to ask exactly one question, which browser should this test use? Offer Chromium and Chrome with short descriptions. After receiving the answer, state the selected browser and finish. Do not use shell, files, network, other tools, subagents, or send messages. Do not ask through plain text.` };
+    const instruction = asyncTool
+      // Codex 0.155 exposes this capability to the model as request_user_input
+      // while the app-server marks the resulting request non-blocking. Keep
+      // the acceptance prompt semantic so it does not depend on a removed
+      // request_user_input_async tool name in the model's tool namespace.
+      ? 'Use the non-blocking user-input capability (the app-server request must have isBlocking=false)'
+      : 'Call the actual request_user_input tool';
+    yield { role: 'user', inputContext, content: `Interaction integration test: ${instruction} to ask exactly one question, which browser should this test use? Offer Chromium and Chrome with short descriptions. After receiving the answer, state the selected browser and finish. Do not use shell, files, network, other tools, subagents, or send messages. Do not ask through plain text.` };
   })(), { sessionKey: 'codex-input-e2e', cwd: root, model: 'gpt-5.6-luna', settingSources: [], onUserInput: async (request, context) => {
     requests++;
     questionItems.add(request.itemId);
