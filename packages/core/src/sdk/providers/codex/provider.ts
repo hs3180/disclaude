@@ -1156,7 +1156,8 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           type: 'result',
           content: failed ? `❌ Codex turn failed: ${event.turn?.error?.message ?? 'unknown error'}` : interrupted ? '⏹️ Codex turn interrupted' : '✅ Complete',
           role: 'assistant',
-          ...(failed ? { metadata: { terminatedReason: 'turn_failed' as const } } : {}),
+          ...(failed ? { metadata: { terminatedReason: 'turn_failed' as const } }
+            : interrupted ? { metadata: { terminatedReason: 'interrupted' as const } } : {}),
         });
         turnDone?.();
         if (stallTimer) {clearTimeout(stallTimer);}
