@@ -1,7 +1,8 @@
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { AgentInputRequest } from '../../user-input.js';
 import { CodexAppServerLifecycle } from './app-server-lifecycle.js';
 
 const dirs: string[] = [];
@@ -20,6 +21,33 @@ afterEach(() => {
 });
 
 describe('CodexAppServerLifecycle', () => {
+  it('routes async questions to the host and steers only their existing turn', async () => {
+    const binary = fixture(`
+read initialize; echo '{"id":1,"result":{}}'
+read initialized
+read thread; echo '{"id":2,"result":{"thread":{"id":"thread-1"}}}'
+read start; echo '{"id":3,"result":{"turn":{"id":"turn-1"}}}'
+echo '{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","item":{"id":"question","type":"agentMessage","text":"Choose","questions":[{"title":"Choose","options":["Alpha","Beta"]}]}}}'
+IFS= read -r steer; printf '%s' "$steer" > "$(dirname "$0")/steer"; echo '{"id":4,"result":{"turnId":"turn-1"}}'
+read hold
+`);
+    const onUserInput = vi.fn<(request: AgentInputRequest) => Promise<void>>().mockResolvedValue();
+    const onNotification = vi.fn();
+    const lifecycle = new CodexAppServerLifecycle({ binary, onUserInput, onNotification });
+    try {
+      await lifecycle.ensureThread('chat-1'); await lifecycle.startTurn('chat-1', 'ask');
+      await vi.waitFor(() => expect(onUserInput).toHaveBeenCalledTimes(1));
+      const [[request]] = onUserInput.mock.calls;
+      expect(request.kind).toBe('async-message');
+      expect(onNotification).toHaveBeenCalledWith('item/completed', expect.objectContaining({ agentInputHandled: true }));
+      await request.respond({ 'question-1': { answers: ['Beta'] } });
+      const message = JSON.parse(readFileSync(join(dirname(binary), 'steer'), 'utf8'));
+      expect(message.method).toBe('turn/steer');
+      expect(message.params).toMatchObject({ threadId: 'thread-1', expectedTurnId: 'turn-1' });
+      expect(message.params.input[0].text).toContain('Beta');
+      expect(lifecycle.snapshot('chat-1')?.activeTurnId).toBe('turn-1');
+    } finally { await lifecycle.close(); }
+  });
   it('owns thread/turn identity and sends real steer + interrupt preconditions', async () => {
     const binary = fixture(`
 read initialize; echo '{"id":1,"result":{}}'
