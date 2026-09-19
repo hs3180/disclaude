@@ -12,6 +12,7 @@
  */
 
 import { type MessageBuilderOptions, type CwdProvider, type CwdResolution, type AgentPreset, type AgentSessionOptions, type AgentPresets, buildSessionKey, chatIdOfSessionKey, createLogger, getProvider, Config, resolveAgentPreset } from '@disclaude/core';
+import { statSync } from 'node:fs';
 import { AgentFactory } from './agents/factory.js';
 import type { ChatAgentCallbacks } from './agents/types.js';
 import type { ChatAgent } from './agents/chat-agent.js';
@@ -357,11 +358,27 @@ export class ChatSessionPool {
     skipHistory = false,
     sdkSessionKey = chatId,
     modelOverride?: string,
+    freezeDirectory = false,
   ): ChatAgent {
+    let { cwdProvider, cwdResolver } = this.options;
+    if (freezeDirectory) {
+      const initial = cwdResolver?.(chatId);
+      // Preserve an unavailable bound target too: taking effectiveCwd alone
+      // would silently adopt the workspace fallback instead of rejecting it.
+      const directory = initial?.boundWorkingDir ?? initial?.effectiveCwd ?? cwdProvider?.(chatId);
+      if (directory !== undefined) {
+        cwdProvider = () => directory;
+        cwdResolver = () => {
+          let available = false;
+          try { available = statSync(directory).isDirectory(); } catch { /* fail closed */ }
+          return { effectiveCwd: directory, boundWorkingDir: directory, reason: available ? 'bound' : 'bound-missing' };
+        };
+      }
+    }
     return AgentFactory.createChatAgent('pilot', chatId, callbacks, {
       messageBuilderOptions: this.options.messageBuilderOptions,
-      cwdProvider: this.options.cwdProvider,
-      cwdResolver: this.options.cwdResolver,
+      cwdProvider,
+      cwdResolver,
       skipHistory,
       sdkSessionKey,
       ...(preset ? {
@@ -464,7 +481,8 @@ export class ChatSessionPool {
         selected?.ok ? selected.preset : undefined,
         skipHistory,
         sessionKey,
-        session?.model
+        session?.model,
+        session !== undefined
       );
       this.agents.set(sessionKey, agent);
       // Issue #3696: clear skip-history flag after agent creation
