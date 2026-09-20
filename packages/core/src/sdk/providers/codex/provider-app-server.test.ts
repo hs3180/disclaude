@@ -4,11 +4,13 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentMessage, AgentQueryOptions, UserInput } from '../../types.js';
 import { CodexAgentProvider } from './provider.js';
+import type { AgentInputRequest, AgentInputContext } from '../../user-input.js';
 
 const dirs: string[] = [];
 function providerFixture(
   body: string,
   transport: 'exec' | 'app-server' | undefined = 'app-server',
+  extraEnv: Record<string, string> = {},
 ): { provider: CodexAgentProvider; dir: string } {
   const dir = mkdtempSync(join(tmpdir(), 'codex-app-provider-'));
   dirs.push(dir);
@@ -24,7 +26,7 @@ function providerFixture(
     dir,
     provider: new CodexAgentProvider({
       ...(transport ? { transport } : {}),
-      env: { PATH: bin, CODEX_HOME: home },
+      env: { PATH: bin, CODEX_HOME: home, ...extraEnv },
       builtinsDir: dir,
     }),
   };
@@ -36,6 +38,45 @@ afterEach(() => {
 });
 
 describe('CodexAgentProvider app-server transport', () => {
+  it.each([true, false])('returns host answers to the original turn (blocking=%s)', async isBlocking => {
+    const { provider, dir } = providerFixture('exit 0', 'app-server', isBlocking ? { DISCLAUDE_STALL_TIMEOUT_MS: '50' } : {});
+    writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
+const fs=require('node:fs'); const send=m=>console.log(JSON.stringify(m)); let starts=0;
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line); if(m.method==='initialized')return;
+ if(m.method==='initialize')send({id:m.id,result:{}});
+ else if(m.method==='thread/start')send({id:m.id,result:{thread:{id:'input-thread'}}});
+ else if(m.method==='turn/start'){
+  starts++;fs.writeFileSync(process.env.CODEX_HOME+'/prompt',m.params.input[0].text);
+  send({id:'question-rpc',method:'item/tool/requestUserInput',params:{threadId:'input-thread',turnId:'input-turn',itemId:'input-item',isBlocking:${JSON.stringify(isBlocking)},questions:[{id:'choice',header:'Choice',question:'Which browser?',options:[{label:'Chromium',description:'Separate profile'}]}]}});
+  send({id:m.id,result:{turn:{id:'input-turn'}}});
+ } else if(m.id==='question-rpc'){
+  fs.writeFileSync(process.env.CODEX_HOME+'/answer',JSON.stringify({...m,starts}));
+  send({method:'item/completed',params:{threadId:'input-thread',turnId:'input-turn',item:{id:'final',type:'agentMessage',text:'Continued original turn'}}});
+  send({method:'turn/completed',params:{threadId:'input-thread',turn:{id:'input-turn',status:'completed'}}});
+ } else {fs.writeFileSync(process.env.CODEX_HOME+'/unexpected',m.method||'unknown');}
+});`);
+    const context = { actorId: 'original-actor', chatId: 'original-chat', sourceMessageId: 'original-source' };
+    const onUserInput = vi.fn(async (request: AgentInputRequest, inputContext: AgentInputContext | undefined) => {
+      expect(inputContext).toEqual(context);
+      expect(request.isBlocking).toBe(isBlocking);
+      expect(request.signal.aborted).toBe(false);
+      if (isBlocking) { await new Promise(resolve => setTimeout(resolve, 150)); }
+      await request.respond({ choice: { answers: ['Chromium'] } });
+    });
+    const stream = provider.queryStream((async function* (): AsyncGenerator<UserInput> { yield { role: 'user', content: 'Choose a browser', inputContext: context }; })(), {
+      sessionKey: 'host-input', settingSources: [], onUserInput,
+    });
+    const messages: AgentMessage[] = [];
+    try {
+      for await (const message of stream.iterator) { messages.push(message); }
+      expect(onUserInput).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(readFileSync(join(dir, 'home/answer'), 'utf8'))).toMatchObject({ id: 'question-rpc', starts: 1,
+        result: { answers: { choice: { answers: ['Chromium'] } } } });
+      expect(messages.some(m => m.type === 'text' && m.content === 'Continued original turn')).toBe(true);
+      expect(readFileSync(join(dir, 'home/prompt'), 'utf8')).not.toContain('original-actor');
+    } finally { stream.handle.close(); provider.dispose(); }
+  });
   it('uses the same registry manifest as exec for app-server turns', async () => {
     const { provider, dir } = providerFixture('exit 0');
     const workspace = mkdtempSync(join(tmpdir(), 'codex-app-skills-'));

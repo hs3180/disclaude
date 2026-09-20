@@ -8,6 +8,8 @@ Disclaude 的 Agent 运行时（agent runtime）可通过配置切换。默认�
 
 ## 目录
 
+选择 `agent.codex.transport: app-server` 时，结构化提问可通过[飞书输入卡片](codex-user-input.md)回到原 turn；其交互与验收边界见该文档。默认 exec 模式不提供此请求响应通道。
+
 - [1. 启用 codex 后端](#1-启用-codex-后端)
 - [2. 前置条件（重要）](#2-前置条件重要)
 - [3. 与 provider（模型层）的关系——不正交](#3-与-provider模型层的关系不正交)
