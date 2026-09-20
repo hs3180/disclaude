@@ -158,8 +158,9 @@ codex `exec` 是无头模式，**没有逐调用的审批钩子**（0.132.0 实�
 Disclaude-owned Codex exec, exec resume and app-server processes receive
 `--disable browser_use --disable browser_use_external --disable browser_use_full_cdp_access`.
 This keeps browser automation on the shared `browser-use` skill/CLI and its
-`BU_CDP_URL` attach path. Bash/shell execution and the standalone browser-use CLI
-remain available; the CDP environment is passed through unchanged.
+coordinator-owned IPC path. Bash/shell execution remains available, but the
+Agent subprocess receives neither the coordinator socket's implementation
+details nor any CDP URL/port environment.
 
 The flags apply only to Disclaude child processes. They do not edit
 `~/.codex/config.toml` or change the Codex desktop client. There is currently no

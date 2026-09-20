@@ -298,36 +298,29 @@ The Playwright MCP server is **removed** (#4460). Browser automation goes throug
 - Information: `print(page_info())` (a11y snapshot), `capture_screenshot()` → path
 - Advanced: `js(code)` (eval), `cdp(method, …)` (raw CDP), tab management
 
-### Browser on Headless Hosts (CDP Endpoint)
+### Browser on Headless Hosts (coordinated service)
 
 Pulling Chromium on a headless host is fragile (missing shared libs,
-sandbox/seccomp friction). The supported path is an **external CDP endpoint** —
-the containerized Chromium compose service (service name `chromium`, #4613;
-Chromium ships via the official Playwright image, #4604) that any browser driver
-attaches to over [CDP](https://chromedevtools.org/docs/chrome-devtools-protocol/).
-The primary consumer is the **browser-use Skill**; other CDP drivers (e.g. the
-Playwright library) may also attach — full contract:
-[`docs/cdp-endpoint.md`](docs/cdp-endpoint.md) (#4496).
+sandbox/seccomp friction). The supported Agent path is the managed browser
+coordinator described in [`docs/browser-coordination.md`](docs/browser-coordination.md).
+Agents receive only the private IPC launcher and socket; they must not receive
+`BU_CDP_URL`, `BU_CDP_WS`, `CHROMIUM_CDP_*`, or connect directly to CDP.
 
-**① Point drivers/skills at the endpoint:**
+**① Start the managed browser service:**
 
 ```bash
-docker compose --profile chromium up -d   # optional profile; loopback-only publish
-# from a peer container:
-http://disclaude-chromium:${CDP_PORT:-9222}
-# from the host:
-http://localhost:${CDP_PORT:-9222}
+docker compose --profile chromium up -d   # optional service-internal browser
+disclaude browser status                    # inspect the managed coordinator
 ```
 
-**② Skill CDP config + attach/fallback semantics:** set `BU_CDP_URL` (or
-`BU_CDP_WS`) — the browser-use Skill/CLI then **attaches** to the external
-Chromium instead of self-launching. With neither set, it falls back to native
-self-launch (portable default). Attach failure is a **hard error**, never a
-silent fallback to self-launch — a silent fallback would mask a dead container.
-Priority: `BU_CDP_URL` > `BU_CDP_WS` > skill config field (details in
-[`docs/cdp-endpoint.md`](docs/cdp-endpoint.md) Scope-3).
+**② Agent access:** configure the coordinator's private socket and launcher as
+described in `docs/browser-coordination.md`. The service injects neither a CDP
+URL nor a browser port into Agent processes. If the coordinator is unavailable,
+the browser operation fails explicitly; there is no direct-CDP or self-launch
+fallback.
 
-**③ Sandbox tradeoff:** Chrome runs `--no-sandbox` inside the container,
+**③ Sandbox tradeoff:** Chrome may run `--no-sandbox` inside the isolated
+container,
 compensated by loopback-only port publishing, an opt-in compose profile, and
 1 CPU / 2 GB resource ceilings — reasoning and hardening path in
 [`docs/cdp-endpoint.md`](docs/cdp-endpoint.md) Scope-4.
@@ -515,8 +508,8 @@ This architecture enables:
 | Symptom | Solution |
 |---------|----------|
 | `browser-use: command not found` | Rebuild the image (`docker compose up -d --build`) — the CLI is baked into `Dockerfile.service` (#4599). On non-Docker installs, see `skills/browser-use/README.md` → Runtime |
-| CDP attach fails | Start the endpoint (`docker compose --profile chromium up -d`) — `BU_CDP_URL` defaults to it in `docker-compose.yml` — see `docs/cdp-endpoint.md` |
-| Browser errors | Check the CDP endpoint is reachable: `curl http://disclaude-chromium:9222/json/version` |
+| Browser coordinator unavailable | Check `disclaude browser status` and the private IPC socket; do not attach directly to CDP |
+| Browser errors | Inspect the coordinator/service log and restart the managed service through its supported CLI |
 
 ## Roadmap
 
