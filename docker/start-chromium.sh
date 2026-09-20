@@ -56,6 +56,7 @@ trap 'exit 143' TERM
 trap 'exit 130' INT
 
 args=(--no-sandbox --no-first-run --no-default-browser-check
+      --disable-blink-features=AutomationControlled
       "--remote-debugging-port=$CDP_INTERNAL_PORT" "--user-data-dir=$CHROMIUM_PROFILE_DIR"
       --window-size=1920,1080 "--accept-lang=$CHROMIUM_ACCEPT_LANG")
 if [[ "$CHROMIUM_HEADLESS" == 1 ]]; then
