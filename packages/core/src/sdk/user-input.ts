@@ -16,6 +16,9 @@ export interface AgentInputParams {
 }
 export type AgentInputAnswers = Record<string, { answers: string[] }>;
 export interface AgentInputRequest extends AgentInputParams {
+  /** Async messages are answered by steering their live turn, not by an RPC result. */
+  kind?: 'rpc' | 'async-message';
+  /** RPC request ID, or the message item ID when kind is async-message. */
   requestId: string | number;
   signal: AbortSignal;
   /** Resolves when the response is written; never starts or steers a turn. */
