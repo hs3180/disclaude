@@ -15,12 +15,12 @@ describe('browser coordinator startup diagnostics', () => {
     });
 
     await expect(coordinator.acquire('fixture-caller').promise).rejects.toThrow('fixture startup failed');
+    await coordinator.close();
     expect(events.map(event => event.type)).toEqual(expect.arrayContaining([
       'worker-init-error',
       'allocation-failed',
       'revoking',
       'reclaimed',
     ]));
-    await coordinator.close();
   });
 });
