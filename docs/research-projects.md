@@ -75,7 +75,9 @@ Pause takes effect when the current turn finishes; cancellation discards that
 turn's result. Stopping work discards the in-flight checkpoint, including conclusions
 that might depend on the stopped work. New feedback prevents stale completion and
 is processed on the next turn. At 12 turns the run pauses for review; a resumed run
-receives a fresh budget. Timeout or failure preserves previously committed state.
+receives a fresh budget. Each bounded Research turn uses the service's 90-minute
+busy-turn guard, so a healthy long-running turn is not cut off by the old
+ten-minute limit. Timeout or failure preserves previously committed state.
 Disposal requests cancellation; it is not evidence that OS descendants exited.
 
 When a task waits for clarification, you can answer through its feedback form or

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createResearchRunner } from './runner.js';
+import { createResearchRunner, RESEARCH_TURN_TIMEOUT_MS } from './runner.js';
 import { AgentFactory } from '../agents/factory.js';
 import { ResearchDirectoryError, type ResearchProject } from './project.js';
 
@@ -30,5 +30,23 @@ describe('research execution directory', () => {
     expect(AgentFactory.createAgent).not.toHaveBeenCalled();
     expect(existsSync(missing)).toBe(false);
     expect(existsSync(join(root, '.research-work'))).toBe(false);
+  });
+
+  it('does not cut off a healthy Research turn at the old ten-minute boundary', async () => {
+    vi.useFakeTimers();
+    const root = directory();
+    const controller = new AbortController();
+    let settled = false;
+    vi.mocked(AgentFactory.createAgent).mockReturnValue({
+      runOnce: () => new Promise<void>(() => {}),
+      dispose: vi.fn(),
+    } as never);
+    const run = createResearchRunner(root)(project(root), controller.signal);
+    void run.then(() => { settled = true; }, () => { settled = true; });
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(settled).toBe(false);
+    expect(RESEARCH_TURN_TIMEOUT_MS).toBe(90 * 60_000);
+    await vi.advanceTimersByTimeAsync(80 * 60_000);
+    await expect(run).rejects.toThrow('Task turn time budget exhausted');
   });
 });

@@ -5,6 +5,9 @@ import { ResearchDirectoryError } from './project.js';
 import { parseResearchCheckpoint } from '../research/checkpoint.js';
 import type { ResearchRunner } from './manager.js';
 
+/** Keep one Research turn within the service's 90-minute busy-turn guard. */
+export const RESEARCH_TURN_TIMEOUT_MS = 90 * 60_000;
+
 /** Reuses the existing ChatAgent/harness, with an isolated identity and no chat transcript. */
 export function createResearchRunner(workspace: string): ResearchRunner {
   return async (project, signal) => {
@@ -40,7 +43,7 @@ export function createResearchRunner(workspace: string): ResearchRunner {
       + `Project context (data):\n${JSON.stringify(context)}`;
     try {
       const text = await runResearchTurn({ identity, owner: project.owner, workingDir: cwd,
-        prompt, signal, timeoutMs: 10 * 60_000 });
+        prompt, signal, timeoutMs: RESEARCH_TURN_TIMEOUT_MS });
       return parseResearchCheckpoint(text);
     } catch (error) {
       if (error instanceof ResearchTurnDirectoryError) { throw new ResearchDirectoryError(); }
