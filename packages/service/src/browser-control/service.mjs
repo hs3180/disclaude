@@ -46,6 +46,19 @@ async function shutdown() {
   })();
   return stopping;
 }
+let fatalShutdown;
+function reportFatal(type, reason) {
+  if (fatalShutdown) return;
+  fatalShutdown = true;
+  const error = reason instanceof Error ? reason : new Error(String(reason));
+  try { event({ type, error: error.stack || error.message }); } catch { /* Preserve the original fatal path if diagnostics cannot be written. */ }
+  void shutdown().catch(shutdownError => {
+    try { event({ type: 'service-shutdown-error', error: shutdownError.stack || shutdownError.message }); }
+    catch { /* There is no safe recovery after a fatal service error. */ }
+  }).finally(() => process.exit(1));
+}
+process.on('uncaughtException', error => reportFatal('service-uncaught-exception', error));
+process.on('unhandledRejection', reason => reportFatal('service-unhandled-rejection', reason));
 process.on('SIGTERM', () => void shutdown().then(() => process.exit(0)));
 process.on('SIGINT', () => void shutdown().then(() => process.exit(0)));
 if (process.env.DISCLAUDE_BROWSER_SUPERVISED === '1') process.on('disconnect', () => void shutdown().then(() => process.exit(0)));
