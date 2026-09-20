@@ -321,10 +321,14 @@ export class ResearchManager {
         if (!prior || !target || prior.status !== 'pending' || target.status !== 'pending') {
           throw new Error('不能覆盖已结束或不存在的工作。');
         }
-        if (!prior.findings.every(f => update.findings.some(next => JSON.stringify(next) === JSON.stringify(f)))) {
-          throw new Error('工作更新不得删除已有证据。');
+        // Checkpoints are allowed to omit prior findings, but never to delete
+        // them. Merge the durable evidence server-side so a model that only
+        // returns the new delta cannot turn a valid direction into a failure.
+        const findings = [...prior.findings];
+        for (const next of update.findings) {
+          if (!findings.some(existing => JSON.stringify(existing) === JSON.stringify(next))) { findings.push(next); }
         }
-        Object.assign(target, update);
+        Object.assign(target, update, { findings });
         updatedIds.push(target.id);
       } else {
         const id = randomUUID();

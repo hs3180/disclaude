@@ -568,6 +568,23 @@ describe('persistent research lifecycle', () => {
     expect(failed.status).toBe('failed'); expect(failed.directions).toEqual([]); expect(failed.feedback[0].status).toBe('pending');
   });
 
+  it('merges durable findings when a follow-up checkpoint only returns a delta', async () => {
+    let calls = 0;
+    const { manager } = checkpointFixture(snapshot => {
+      calls++;
+      if (calls === 1) {
+        return Promise.resolve({ state: 'continue', message: 'Initial evidence', work: [{ title: 'Costs', status: 'pending' as const, findings: [finding] }], feedback: [], questions: [] });
+      }
+      const [direction] = snapshot.directions;
+      return Promise.resolve({ state: 'complete', message: 'Completed follow-up', work: [{ id: direction.id, title: direction.title, status: 'done' as const, findings: [] }], feedback: [], summary: 'Costs checked', questions: [] });
+    });
+    const project = await manager.create(input);
+    await manager.act(project.id, 'alice', 'chat-a', project.revision, 'resume'); await manager.idle(project.id);
+    const done = manager.get(project.id, 'alice', 'chat-a');
+    expect(done.status).toBe('completed');
+    expect(done.directions[0].findings).toEqual([finding]);
+  });
+
   it.each(['completed', 'waiting-user', 'failed', 'paused'] as const)(
     'preserves committed %s state when shutdown races final card delivery', async status => {
       const entered = deferred<void>(), delivery = deferred<string>();
