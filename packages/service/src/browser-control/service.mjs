@@ -58,6 +58,7 @@ try {
   }
   const info = await (await fetch(`${endpoint}/json/version`, { signal: AbortSignal.timeout(5000) })).json();
   admin = await connect(info.webSocketDebuggerUrl);
+  void admin.closed.then(() => event({ type: 'cdp-closed', browser: info.Browser }));
   if (process.env.DISCLAUDE_BROWSER_TARGET) {
     target = process.env.DISCLAUDE_BROWSER_TARGET;
     await admin.call('Target.getTargetInfo', { targetId: target });
@@ -83,9 +84,11 @@ try {
   server = createServer(peer => {
     peers.add(peer); peer.setEncoding('utf8');
     const actor = randomUUID(); let buffer = '', ticket, ready, lease, gone = false;
+    event({ type: 'peer-connected', actor });
     const reply = (id, result, error) => { if (!peer.destroyed) peer.write(JSON.stringify({ id, ...(error ? { error } : { result }) }) + '\n'); };
-    peer.on('error', () => {});
+    peer.on('error', error => event({ type: 'peer-error', actor, error: error.message }));
     peer.on('close', () => {
+      event({ type: 'peer-closed', actor, hadTicket: Boolean(ticket), hadLease: Boolean(lease), ready: Boolean(ready) });
       gone = true; peers.delete(peer); ticket?.cancel();
       if (lease) void coordinator.release(lease);
     });
@@ -118,7 +121,10 @@ try {
           if (!lease) { ticket?.cancel(); reply(id, { released: false }); }
           else reply(id, { released: await coordinator.release(lease) });
         } else throw new Error('Unknown method');
-      } catch (error) { reply(id, undefined, error.message); }
+      } catch (error) {
+        event({ type: 'request-error', actor, id, method, error: error.message });
+        reply(id, undefined, error.message);
+      }
     }
     peer.on('data', chunk => {
       buffer += chunk;
@@ -136,4 +142,9 @@ try {
   const ready = { ready: true, socket: socketPath, target, browser: info.Browser, managed: !!managed };
   console.log(JSON.stringify(ready));
   if (process.connected) process.send(ready);
-} catch (error) { await shutdown(); console.error(error.message); process.exitCode = 1; }
+} catch (error) {
+  event({ type: 'service-error', error: error.message });
+  await shutdown();
+  console.error(error.message);
+  process.exitCode = 1;
+}
