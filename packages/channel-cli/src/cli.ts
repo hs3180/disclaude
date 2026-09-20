@@ -16,7 +16,7 @@ import { getChatIdValidationError } from './utils/chat-id-validator.js';
 const COMMON_FLAGS = ['chat', 'parent', 'base-url', 'api-token'];
 const COMMAND_FLAGS: Record<string, string[]> = {
   request_private_input: ['actor', 'source', 'workflow', 'workflow-file'],
-  project_task: ['context', 'request', 'request-file'],
+  research_workspace: ['context', 'request', 'request-file'],
   send_text: ['text', 'text-file', 'mentions'],
   send_file: ['file'],
   send_card: ['card', 'card-file'],
@@ -66,7 +66,7 @@ function arg(args: Args, key: string): string | undefined { return typeof args[k
  * Returns true when the caller should stop; the failure is already emitted.
  */
 function rejectUnknownFlags(command: string, args: Args): boolean {
-  const common = command === 'project_task' ? ['base-url', 'api-token'] : COMMON_FLAGS;
+  const common = command === 'research_workspace' ? ['base-url', 'api-token'] : COMMON_FLAGS;
   const allowed = new Set([...common, ...(COMMAND_FLAGS[command] ?? [])]);
   const unknown = Object.keys(args).filter((key) => key !== '_' && key !== 'help' && !allowed.has(key));
   if (unknown.length === 0) {return false;}
@@ -195,7 +195,7 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
   let parsedOptions: InteractiveOption[] | undefined;
   let parsedActionPrompts: ActionPromptMap | undefined;
   try {
-    if (command === 'project_task') {
+    if (command === 'research_workspace') {
       if (!arg(args, 'context')?.trim()) { emitFail(command, 'Missing --context from the current user message'); return 1; }
       const raw = readInput(args, 'request', 'request-file');
       if (!raw) { emitFail(command, 'Missing task operation JSON'); return 1; }
@@ -244,8 +244,8 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
   const parentMessageId = arg(args, 'parent');
   let result: ToolResult;
   try {
-    if (command === 'project_task') {
-      result = await withLogsRedirected(() => mod.project_task({ context: arg(args, 'context') as string, operation: taskOperation as Record<string, unknown> }));
+    if (command === 'research_workspace') {
+      result = await withLogsRedirected(() => mod.research_workspace({ context: arg(args, 'context') as string, operation: taskOperation as Record<string, unknown> }));
     } else if (command === 'send_text') {
       result = await withLogsRedirected(() => mod.send_text({ text: text as string, chatId, parentMessageId, mentions: parsedMentions }));
     } else if (command === 'send_file') {
@@ -267,7 +267,7 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
     emitFail(command, errorText, await failureHint(baseUrl, errorText));
     return 1;
   }
-  if (result.success) { emitOk({ command, ...(command === 'project_task' ? {} : { chatId }), result: command === 'project_task' ? 'Task operation completed' : result.message || 'sent', durationMs: 0, ...(result.actionId ? { actionId: result.actionId } : {}), ...(result.data !== undefined ? { data: result.data } : {}) }); return 0; }
+  if (result.success) { emitOk({ command, ...(command === 'research_workspace' ? {} : { chatId }), result: command === 'research_workspace' ? 'Task operation completed' : result.message || 'sent', durationMs: 0, ...(result.actionId ? { actionId: result.actionId } : {}), ...(result.data !== undefined ? { data: result.data } : {}) }); return 0; }
   const resultError = result.error || result.message || `${command} returned without success`;
   emitFail(command, resultError, await failureHint(baseUrl, resultError));
   return 1;
@@ -289,8 +289,8 @@ export async function run(argv: string[]): Promise<number> {
   // Before chat validation: a mistyped `--chat` shows up as an unknown flag, and
   // naming it beats the generic "Missing required option --chat" it would cause.
   if (rejectUnknownFlags(command, args)) {return 1;}
-  const chat = command === 'project_task' ? '' : validateChat(command, args);
-  if (!chat && command !== 'project_task') {return 1;}
+  const chat = command === 'research_workspace' ? '' : validateChat(command, args);
+  if (!chat && command !== 'research_workspace') {return 1;}
   let baseUrl: string;
   try {
     baseUrl = setupRest(args);

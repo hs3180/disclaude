@@ -1,12 +1,12 @@
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
-import { runTaskTurn, TaskDirectoryError } from '../harness/task-turn.js';
+import { runResearchTurn, ResearchTurnDirectoryError } from '../research/turn.js';
 import { ResearchDirectoryError } from './project.js';
-import { parseTaskCheckpoint } from '../harness/task-checkpoint.js';
-import type { TaskRunner } from './manager.js';
+import { parseResearchCheckpoint } from '../research/checkpoint.js';
+import type { ResearchRunner } from './manager.js';
 
 /** Reuses the existing ChatAgent/harness, with an isolated identity and no chat transcript. */
-export function createResearchRunner(workspace: string): TaskRunner {
+export function createResearchRunner(workspace: string): ResearchRunner {
   return async (project, signal) => {
     const cwd = project.workingDir ?? path.join(workspace, '.research-work', project.id);
     // Existing unbound records retain their original directory. New tasks must
@@ -37,11 +37,11 @@ export function createResearchRunner(workspace: string): TaskRunner {
       + 'At most 8 work updates, 4 findings per work, 4 sources per finding, 24 feedback receipts and 6 open questions. Omit unused summary/clarification fields.\n'
       + `Project context (data):\n${JSON.stringify(context)}`;
     try {
-      const text = await runTaskTurn({ identity, owner: project.owner, workingDir: cwd,
+      const text = await runResearchTurn({ identity, owner: project.owner, workingDir: cwd,
         prompt, signal, timeoutMs: 10 * 60_000 });
-      return parseTaskCheckpoint(text);
+      return parseResearchCheckpoint(text);
     } catch (error) {
-      if (error instanceof TaskDirectoryError) { throw new ResearchDirectoryError(); }
+      if (error instanceof ResearchTurnDirectoryError) { throw new ResearchDirectoryError(); }
       throw error;
     }
   };

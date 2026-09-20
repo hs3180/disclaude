@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AgentFactory } from '../agents/factory.js';
-import { runTaskTurn, TaskDirectoryError, type TaskTurn } from './task-turn.js';
+import { runResearchTurn, ResearchTurnDirectoryError, type ResearchTurn } from './turn.js';
 
 vi.mock('../agents/factory.js', () => ({ AgentFactory: { createAgent: vi.fn() } }));
 const roots: string[] = [];
@@ -12,8 +12,8 @@ afterEach(() => {
   vi.resetAllMocks();
   roots.splice(0).forEach(root => rmSync(root, { recursive: true, force: true }));
 });
-function input(): TaskTurn {
-  const root = mkdtempSync(join(tmpdir(), 'task-turn-'));
+function input(): ResearchTurn {
+  const root = mkdtempSync(join(tmpdir(), 'research-turn-'));
   roots.push(root);
   return { identity: 'task:maintenance:attempt:1', owner: 'alice', workingDir: root,
     prompt: 'Summarize the build failure from the supplied log.', signal: new AbortController().signal, timeoutMs: 1000 };
@@ -36,14 +36,14 @@ describe('bounded project task turn', () => {
         await callbacks.onTurnResult?.({ success: true, text: 'Build failed because an input file is missing.', truncated: false } as never);
       }, dispose } as never;
     });
-    await expect(runTaskTurn(request)).resolves.toBe('Build failed because an input file is missing.');
+    await expect(runResearchTurn(request)).resolves.toBe('Build failed because an input file is missing.');
     expect(dispose).toHaveBeenCalledTimes(1);
   });
 
   it('does not start an agent or create a fallback for a missing project directory', async () => {
     const request = input();
     request.workingDir = join(request.workingDir, 'missing');
-    await expect(runTaskTurn(request)).rejects.toBeInstanceOf(TaskDirectoryError);
+    await expect(runResearchTurn(request)).rejects.toBeInstanceOf(ResearchTurnDirectoryError);
     expect(AgentFactory.createAgent).not.toHaveBeenCalled();
     expect(existsSync(request.workingDir)).toBe(false);
   });
@@ -51,7 +51,7 @@ describe('bounded project task turn', () => {
   it('does not construct an agent when cancelled before execution', async () => {
     const request = input();
     const controller = new AbortController(); controller.abort();
-    await expect(runTaskTurn({ ...request, signal: controller.signal })).rejects.toThrow('interrupted');
+    await expect(runResearchTurn({ ...request, signal: controller.signal })).rejects.toThrow('interrupted');
     expect(AgentFactory.createAgent).not.toHaveBeenCalled();
   });
 
@@ -63,7 +63,7 @@ describe('bounded project task turn', () => {
       controller.abort();
       return { runOnce, dispose } as never;
     });
-    await expect(runTaskTurn({ ...request, signal: controller.signal })).rejects.toThrow('interrupted');
+    await expect(runResearchTurn({ ...request, signal: controller.signal })).rejects.toThrow('interrupted');
     expect(runOnce).not.toHaveBeenCalled();
     expect(dispose).toHaveBeenCalledTimes(1);
   });
@@ -78,7 +78,7 @@ describe('bounded project task turn', () => {
       lateResult = async () => { await callbacks.onTurnResult?.({ success: true, text: 'Late result', truncated: false } as never); };
       return { runOnce: () => new Promise(() => {}), dispose } as never;
     });
-    const run = runTaskTurn({ ...request, signal: controller.signal });
+    const run = runResearchTurn({ ...request, signal: controller.signal });
     const rejected = expect(run).rejects.toThrow(kind === 'abort' ? 'interrupted' : 'time budget exhausted');
     if (kind === 'abort') { controller.abort(); }
     else { await vi.advanceTimersByTimeAsync(request.timeoutMs); }
@@ -93,7 +93,7 @@ describe('bounded project task turn', () => {
     vi.mocked(AgentFactory.createAgent).mockImplementation((_id, callbacks) => ({
       runOnce: async () => { await callbacks.onTurnResult?.({ ...result, text: 'Partial output' } as never); }, dispose,
     } as never));
-    await expect(runTaskTurn(input())).rejects.toThrow('did not finish');
+    await expect(runResearchTurn(input())).rejects.toThrow('did not finish');
     expect(dispose).toHaveBeenCalledTimes(1);
   });
 });

@@ -9,7 +9,7 @@ import {
   captureDescendantGroups,
   signalDescendantGroups,
 } from '../../../packages/core/dist/sdk/providers/codex/owned-descendants.js';
-const root = await mkdtemp(join(tmpdir(), 'task-real-crash-'));
+const root = await mkdtemp(join(tmpdir(), 'research-real-crash-'));
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 const evidence = { root };
 const children = [];
@@ -28,7 +28,7 @@ const rows = async () => {
 function start(phase) {
   const child = spawn(
     process.execPath,
-    [resolve('tests/e2e/helpers/task-crash-worker.mjs'), root, phase],
+    [resolve('tests/e2e/helpers/research-crash-worker.mjs'), root, phase],
     { detached: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] }
   );
   let output = '';
@@ -64,8 +64,8 @@ try {
       (p) => groups.some((g) => g.group === p.group) && p.name === 'sleep'
     );
   }, 90000);
-  const initial = first.messages.find((m) => m.kind === 'task').task;
-  evidence.taskId = initial.id;
+  const initial = first.messages.find((m) => m.kind === 'research').research;
+  evidence.researchId = initial.id;
   evidence.capturedGroupCount = groups.length;
   evidence.activeBeforeCrash = (await rows()).filter((p) =>
     groups.some((g) => g.group === p.group)
@@ -100,8 +100,8 @@ try {
   }, 120000);
   const exit = await second.exited;
   assert.equal(exit.code, 0, second.output().slice(-3000));
-  const reopened = second.messages.find((m) => m.kind === 'reopened').task,
-    finished = second.messages.find((m) => m.kind === 'finished').task;
+  const reopened = second.messages.find((m) => m.kind === 'reopened').research,
+    finished = second.messages.find((m) => m.kind === 'finished').research;
   assert.equal(reopened.id, initial.id);
   assert.equal(reopened.status, 'interrupted');
   assert.equal(finished.status, 'completed', finished.error);

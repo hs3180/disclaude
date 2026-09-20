@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ProjectTaskGateway, parseTaskOperation } from './project-task-gateway.js';
+import { ResearchContextGateway, parseResearchOperation } from './context.js';
 
 describe('message-scoped task contexts', () => {
   it('routes only through the issuing channel and revokes its contexts independently', async () => {
-    const gateway = new ProjectTaskGateway();
+    const gateway = new ResearchContextGateway();
     const a = vi.fn().mockResolvedValue({ actor: 'alice' }), b = vi.fn().mockResolvedValue({ actor: 'bob' });
     const one = gateway.issue('app-a', a), two = gateway.issue('app-b', b);
     await expect(gateway.execute(one, { action: 'list' })).resolves.toEqual({ actor: 'alice' });
@@ -15,7 +15,7 @@ describe('message-scoped task contexts', () => {
   });
   it('expires contexts and bounds outstanding grants without replacing live authority', async () => {
     let now = 0;
-    const gateway = new ProjectTaskGateway(() => now, 10, 1), execute = vi.fn().mockResolvedValue({});
+    const gateway = new ResearchContextGateway(() => now, 10, 1), execute = vi.fn().mockResolvedValue({});
     const old = gateway.issue('app', execute);
     expect(() => gateway.issue('app', execute)).toThrow('capacity');
     now = 10;
@@ -26,15 +26,15 @@ describe('message-scoped task contexts', () => {
   });
   it('rejects forged identity/directory, invalid controls and oversized input before execution', () => {
     const create = { action: 'create', requestId: 'one', title: 'Investigate logs' };
-    expect(parseTaskOperation(create)).toEqual(create);
-    expect(parseTaskOperation({ action: 'list', archived: true, limit: 20, offset: 0 })).toMatchObject({ archived: true });
-    expect(() => parseTaskOperation({ action: 'list', limit: 100 })).toThrow('list options');
-    expect(() => parseTaskOperation({ action: 'constructor' })).toThrow('fields');
+    expect(parseResearchOperation(create)).toEqual(create);
+    expect(parseResearchOperation({ action: 'list', archived: true, limit: 20, offset: 0 })).toMatchObject({ archived: true });
+    expect(() => parseResearchOperation({ action: 'list', limit: 100 })).toThrow('list options');
+    expect(() => parseResearchOperation({ action: 'constructor' })).toThrow('fields');
     for (const extra of [{ owner: 'bob' }, { chat: 'other' }, { workingDir: '/other' }, { source: 'forged' }]) {
-      expect(() => parseTaskOperation({ ...create, ...extra })).toThrow('fields');
+      expect(() => parseResearchOperation({ ...create, ...extra })).toThrow('fields');
     }
-    expect(() => parseTaskOperation({ ...create, title: 'x'.repeat(181) })).toThrow('title');
-    expect(() => parseTaskOperation({ action: 'control', taskId: 'id', revision: -1, control: 'resume' })).toThrow('control');
-    expect(() => parseTaskOperation({ action: 'control', taskId: 'id', revision: 1, control: 'delete' })).toThrow('control');
+    expect(() => parseResearchOperation({ ...create, title: 'x'.repeat(181) })).toThrow('title');
+    expect(() => parseResearchOperation({ action: 'control', researchId: 'id', revision: -1, control: 'resume' })).toThrow('control');
+    expect(() => parseResearchOperation({ action: 'control', researchId: 'id', revision: 1, control: 'delete' })).toThrow('control');
   });
 });

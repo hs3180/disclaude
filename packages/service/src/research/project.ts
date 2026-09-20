@@ -8,7 +8,7 @@ export class ResearchDirectoryError extends Error {
 }
 
 export type ProjectStatus = 'running' | 'waiting-user' | 'pausing' | 'paused' | 'cancelling' | 'cancelled' | 'failed' | 'completed' | 'interrupted';
-export type Finding = import('../harness/task-checkpoint.js').Evidence;
+export type Finding = import('../research/checkpoint.js').Evidence;
 export interface Direction { id: string; title: string; status: 'pending' | 'done' | 'stopped'; findings: Finding[] }
 export interface ResearchProject {
   id: string;

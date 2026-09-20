@@ -6,12 +6,12 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Config, setDefaultProvider, clearProviderCache } from '@disclaude/core';
 import { HttpApiServer } from '../../packages/service/src/http-api-server.js';
-import { projectTaskGateway } from '../../packages/service/src/harness/project-task-gateway.js';
+import { researchContextGateway } from '../../packages/service/src/research/context.js';
 import { FeishuResearchController } from '../../packages/service/src/research/feishu-controller.js';
 import { AgentFactory } from '../../packages/service/src/agents/factory.js';
 
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), 'project-task-api-e2e-'));
+  const root = await mkdtemp(join(tmpdir(), 'research-workspace-api-e2e-'));
   const namespace = randomUUID();
   const apiToken = randomUUID();
   const server = new HttpApiServer({ host: '127.0.0.1', port: 0, apiToken });
@@ -20,19 +20,19 @@ async function fixture() {
   try { await server.start(); }
   catch (error) { controller.dispose(); await rm(root, { recursive: true, force: true }); throw error; }
   const url = `http://127.0.0.1:${server.getAddress()?.port}`;
-  const issue = (owner: string) => projectTaskGateway.issue(namespace, operation => controller.executeTask({ owner, chat: 'test-chat', source: 'test-message' }, operation));
+  const issue = (owner: string) => researchContextGateway.issue(namespace, operation => controller.executeResearch({ owner, chat: 'test-chat', source: 'test-message' }, operation));
   const context = issue('alice');
   return { root, namespace, apiToken, server, controller, url, context, issue,
     async cleanup(retain = false) {
-      projectTaskGateway.revoke(namespace);
+      researchContextGateway.revoke(namespace);
       try { controller.dispose(); await server.stop(); clearProviderCache(); }
-      catch (error) { console.error(`Task API test files retained at ${root}: teardown failed`); throw error; }
-      if (retain) { console.error(`Task API test files retained at ${root}: model termination unconfirmed`); }
+      catch (error) { console.error(`Research API test files retained at ${root}: teardown failed`); throw error; }
+      if (retain) { console.error(`Research API test files retained at ${root}: model termination unconfirmed`); }
       else { await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); }
     } };
 }
 async function cli(f: Awaited<ReturnType<typeof fixture>>, operation: unknown, context = f.context, extra: string[] = []) {
-  const child = spawn(process.execPath, [resolve('bin/disclaude.js'), 'channel', 'project_task', '--context', context, ...extra], {
+  const child = spawn(process.execPath, [resolve('bin/disclaude.js'), 'channel', 'research_workspace', '--context', context, ...extra], {
     env: { ...process.env, DISCLAUDE_API_BASE_URL: f.url, DISCLAUDE_API_TOKEN: f.apiToken }, stdio: ['pipe', 'pipe', 'pipe'],
   });
   let stdout = '', stderr = '';
@@ -50,21 +50,21 @@ it('creates and controls project tasks through the real authenticated CLI while 
     const request = { action: 'create', requestId: 'first', title: 'Inspect logs', materials: 'Supplied logs' };
     const created = await cli(f, request);
     expect(created.exitCode, created.stderr).toBe(0);
-    const task = created.result.data.task;
+    const task = created.result.data.research;
     expect(task).toMatchObject({ owner: 'alice', chat: 'test-chat', status: 'paused', workingDir: f.root });
-    expect((await cli(f, request)).result.data.task.id).toBe(task.id);
-    expect((await cli(f, { action: 'get', taskId: task.id }, f.issue('bob'))).exitCode).toBe(1);
+    expect((await cli(f, request)).result.data.research.id).toBe(task.id);
+    expect((await cli(f, { action: 'get', researchId: task.id }, f.issue('bob'))).exitCode).toBe(1);
     expect((await cli(f, { ...request, owner: 'bob' })).exitCode).toBe(1);
     expect((await cli(f, { action: 'list' }, f.context, ['--chat', 'other-chat'])).result.error).toContain('Unknown option');
-    const cancelled = await cli(f, { action: 'control', taskId: task.id, revision: task.revision, control: 'cancel' });
-    expect(cancelled.result.data.task.status).toBe('cancelled');
+    const cancelled = await cli(f, { action: 'control', researchId: task.id, revision: task.revision, control: 'cancel' });
+    expect(cancelled.result.data.research.status).toBe('cancelled');
     const listed = await cli(f, { action: 'list' });
-    expect(listed.result.data.tasks).toHaveLength(1);
-    expect((await cli(f, { action: 'control', taskId: task.id, revision: task.revision, control: 'archive' })).exitCode).toBe(1);
-    expect((await cli(f, { action: 'control', taskId: task.id, revision: cancelled.result.data.task.revision, control: 'archive' })).exitCode).toBe(0);
-    expect((await cli(f, { action: 'list' })).result.data.tasks).toHaveLength(0);
-    expect((await cli(f, { action: 'list', archived: true, limit: 1 })).result.data.tasks).toHaveLength(1);
-    projectTaskGateway.revoke(f.namespace);
+    expect(listed.result.data.researches).toHaveLength(1);
+    expect((await cli(f, { action: 'control', researchId: task.id, revision: task.revision, control: 'archive' })).exitCode).toBe(1);
+    expect((await cli(f, { action: 'control', researchId: task.id, revision: cancelled.result.data.research.revision, control: 'archive' })).exitCode).toBe(0);
+    expect((await cli(f, { action: 'list' })).result.data.researches).toHaveLength(0);
+    expect((await cli(f, { action: 'list', archived: true, limit: 1 })).result.data.researches).toHaveLength(1);
+    researchContextGateway.revoke(f.namespace);
     expect((await cli(f, { action: 'list' })).exitCode).toBe(1);
   } finally { await f.cleanup(); }
 }, 30_000);
@@ -84,7 +84,7 @@ it.skipIf(process.env.DISCLAUDE_E2E_TASK_HARNESS !== '1')('lets an ordinary mode
     agent = AgentFactory.createAgent('ordinary-task-request', { sendMessage: async () => {}, sendCard: async () => {}, sendFile: async () => {},
       onTurnResult: async result => { turnSucceeded = result.success && !result.truncated; } }, { skipHistory: true, cwdProvider: () => f.root });
     mayBeRunning = true;
-    await agent.runOnce('ordinary-task-request', `Create and start a persistent project task to read ${filename} in its project directory and report the exact inventory identifier and count. The task must only read that file; no external sources or file edits. Do not perform the inventory check yourself. Return the created task ID after starting it. Keep any temporary CLI request files inside this working directory. Test environment: use the checkout CLI via node ${JSON.stringify(resolve('bin/disclaude.js'))} channel in place of the globally installed disclaude channel executable.`, 'user-request', 'alice', { projectTaskContext: f.context });
+    await agent.runOnce('ordinary-task-request', `Create and start a persistent project task to read ${filename} in its project directory and report the exact inventory identifier and count. The task must only read that file; no external sources or file edits. Do not perform the inventory check yourself. Return the created task ID after starting it. Keep any temporary CLI request files inside this working directory. Test environment: use the checkout CLI via node ${JSON.stringify(resolve('bin/disclaude.js'))} channel in place of the globally installed disclaude channel executable.`, 'user-request', 'alice', { researchContext: f.context });
     expect(turnSucceeded).toBe(true);
     const tasks = f.controller.manager.list('alice', 'test-chat');
     expect(tasks).toHaveLength(1);

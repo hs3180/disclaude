@@ -765,7 +765,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     text: string,
     messageId?: string,
     senderOpenId?: string,
-    context?: Pick<UserMessageParams, 'projectTaskContext'>
+    context?: Pick<UserMessageParams, 'researchContext'>
   ): Promise<void> {
     // Issue #644: Verify chatId matches bound chatId
     if (chatId !== this.boundChatId) {
@@ -794,7 +794,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         payload: text,
         messageId: effectiveMessageId,
         senderOpenId,
-        projectTaskContext: context?.projectTaskContext,
+        researchContext: context?.researchContext,
       });
 
       // Wait for the task to complete via the unified streaming path
@@ -836,7 +836,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       chatHistoryContext,
       chatType,
       threadContext,
-      projectTaskContext,
+      researchContext,
       threadRootId,
     } = params;
     // Issue #644: Verify chatId matches bound chatId
@@ -953,7 +953,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         chatLogFilePaths: this.historyManager.chatLogFilePaths,
         chatType: this.chatType,
         threadContext,
-        projectTaskContext,
+        researchContext,
       },
       chatId,
       capabilities

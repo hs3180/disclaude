@@ -4,10 +4,10 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ProjectStore, type ResearchProject, type Finding } from './project.js';
-import { parseTaskCheckpoint, type TaskCheckpoint } from '../harness/task-checkpoint.js';
+import { parseResearchCheckpoint, type ResearchCheckpoint } from '../research/checkpoint.js';
 import type { DocumentReader, DocumentAppender } from './document-source.js';
-import { ResearchManager, type TaskRunner } from './manager.js';
-import { projectCard } from './cards.js';
+import { ResearchManager, type ResearchRunner } from './manager.js';
+import { researchDetailCard } from './cards.js';
 
 // Scripted test agent: this particular fixture chooses three updates. The
 // production manager no longer selects or knows these stages. Separate cases
@@ -42,7 +42,7 @@ function fixture(runner: StepRunner = (p, step) => Promise.resolve(step.type ===
     return { ...base, state: 'complete', ...response };
   }, publish, directory, readDocument, appendDocument);
 }
-function checkpointFixture(runner: TaskRunner, publish = vi.fn<(project: ResearchProject) => Promise<string>>(() => Promise.resolve('card-1')), directory?: string, readDocument?: DocumentReader, appendDocument?: DocumentAppender) {
+function checkpointFixture(runner: ResearchRunner, publish = vi.fn<(project: ResearchProject) => Promise<string>>(() => Promise.resolve('card-1')), directory?: string, readDocument?: DocumentReader, appendDocument?: DocumentAppender) {
   const dir = directory ?? mkdtempSync(join(tmpdir(), 'research-state-')); if (!directory) { directories.push(dir); }
   const manager = new ResearchManager(new ProjectStore(dir), runner, publish, readDocument, appendDocument); managers.push(manager);
   return { manager, dir, publish };
@@ -266,14 +266,14 @@ describe('persistent research lifecycle', () => {
     expect(cancelled.directions[0].findings).toEqual([]); expect(steps).toEqual(['plan', 'investigate']);
   });
   it('does not offer continuation during cancellation or recovery after a cancelled turn fails', async () => {
-    const entered = deferred<void>(), gate = deferred<TaskCheckpoint>();
+    const entered = deferred<void>(), gate = deferred<ResearchCheckpoint>();
     const { manager } = checkpointFixture(() => { entered.resolve(); return gate.promise; });
     const p = await manager.create(input);
     await manager.act(p.id, 'alice', 'chat-a', p.revision, 'resume'); await entered.promise;
     await manager.act(p.id, 'alice', 'chat-a', manager.get(p.id, 'alice', 'chat-a').revision, 'cancel');
     const pending = manager.get(p.id, 'alice', 'chat-a');
-    const pendingCard = JSON.stringify(projectCard(pending));
-    gate.resolve({ state: 'complete', message: 'Invalid late result', work: [], feedback: [], questions: [] } as unknown as TaskCheckpoint);
+    const pendingCard = JSON.stringify(researchDetailCard(pending));
+    gate.resolve({ state: 'complete', message: 'Invalid late result', work: [], feedback: [], questions: [] } as unknown as ResearchCheckpoint);
     await manager.idle(p.id);
     const cancelled = manager.get(p.id, 'alice', 'chat-a');
     expect(pending.status).toBe('cancelling');
@@ -281,8 +281,8 @@ describe('persistent research lifecycle', () => {
     expect(cancelled.status).toBe('cancelled');
     expect(cancelled.error).toBeUndefined();
     expect(cancelled.history.at(-1)?.text).toContain('已取消');
-    expect(JSON.stringify(projectCard(cancelled))).not.toContain('恢复重试');
-    expect(JSON.stringify(projectCard(cancelled))).toContain('基于成果继续任务');
+    expect(JSON.stringify(researchDetailCard(cancelled))).not.toContain('恢复重试');
+    expect(JSON.stringify(researchDetailCard(cancelled))).toContain('基于成果继续任务');
     expect(cancelled.directions).toEqual([]); expect(cancelled.summary).toBe('');
   });
 
@@ -494,7 +494,7 @@ describe('persistent research lifecycle', () => {
     expect(existsSync(join(dir, '.owner'))).toBe(false);
   });
   it('allows evidence and completion in one turn without a mandatory plan or synthesis turn', async () => {
-    const runner = vi.fn<TaskRunner>(() => Promise.resolve({ state: 'complete', message: 'Verified supplied costs',
+    const runner = vi.fn<ResearchRunner>(() => Promise.resolve({ state: 'complete', message: 'Verified supplied costs',
       work: [{ title: 'Cost check', status: 'done', findings: [finding] }], feedback: [], summary: 'A costs less.', questions: [] }));
     const { manager } = checkpointFixture(runner);
     const p = await manager.create(input);
@@ -530,7 +530,7 @@ describe('persistent research lifecycle', () => {
   });
 
   it('retains checkpoint evidence but does not complete over feedback arriving during the turn', async () => {
-    const entered = deferred<void>(), gate = deferred<TaskCheckpoint>(); let calls = 0;
+    const entered = deferred<void>(), gate = deferred<ResearchCheckpoint>(); let calls = 0;
     const { manager } = checkpointFixture(snapshot => {
       if (++calls === 1) { entered.resolve(); return gate.promise; }
       expect(snapshot.directions[0].findings).toEqual([finding]);
@@ -565,7 +565,7 @@ describe('persistent research lifecycle', () => {
         if (started && project.status === status) { entered.resolve(); return delivery.promise; }
         return Promise.resolve('card-1');
       });
-      const runner: TaskRunner = () => {
+      const runner: ResearchRunner = () => {
         if (status === 'failed') { return Promise.reject(new Error('Task failed')); }
         return Promise.resolve({ state: status === 'completed' ? 'complete' : status === 'waiting-user' ? 'waiting-user' : 'continue',
           message: 'Progress retained', work: [], feedback: [], questions: [],
@@ -586,7 +586,7 @@ describe('persistent research lifecycle', () => {
   );
 
   it('retains source-backed evidence when the model omits an empty caveat', () => {
-    const parse = (caveat: unknown) => parseTaskCheckpoint(JSON.stringify({
+    const parse = (caveat: unknown) => parseResearchCheckpoint(JSON.stringify({
       state: 'complete', message: 'Wait completed', summary: 'Reported value 23',
       work: [{ title: 'Bounded wait', status: 'done', findings: [{ ...finding, caveat }] }],
     }));
@@ -599,7 +599,7 @@ describe('persistent research lifecycle', () => {
   });
 
   it('pauses on the turn budget without fabricating completion or a final result', async () => {
-    const runner = vi.fn<TaskRunner>(() => Promise.resolve({ state: 'continue', message: 'Still working', work: [], feedback: [], questions: [] }));
+    const runner = vi.fn<ResearchRunner>(() => Promise.resolve({ state: 'continue', message: 'Still working', work: [], feedback: [], questions: [] }));
     const { manager } = checkpointFixture(runner);
     const p = await manager.create(input); await manager.act(p.id, 'alice', 'chat-a', p.revision, 'resume'); await manager.idle(p.id);
     const paused = manager.get(p.id, 'alice', 'chat-a');
@@ -607,15 +607,15 @@ describe('persistent research lifecycle', () => {
   });
 
   it('rejects facts with missing source fields', () => {
-    expect(() => parseTaskCheckpoint(JSON.stringify({ state: 'continue', message: 'Evidence', work: [{ title: 'Costs', status: 'done', findings: [{ ...finding, sources: [] }] }] }))).toThrow('requires sources');
+    expect(() => parseResearchCheckpoint(JSON.stringify({ state: 'continue', message: 'Evidence', work: [{ title: 'Costs', status: 'done', findings: [{ ...finding, sources: [] }] }] }))).toThrow('requires sources');
   });
   it('does not treat a null clarification as waiting, but requires a question when waiting', () => {
-    expect(parseTaskCheckpoint('{"state":"continue","message":"Progress","clarification":null}').state).toBe('continue');
-    expect(() => parseTaskCheckpoint('{"state":"waiting-user","message":"Progress","clarification":null}')).toThrow('requires a question');
+    expect(parseResearchCheckpoint('{"state":"continue","message":"Progress","clarification":null}').state).toBe('continue');
+    expect(() => parseResearchCheckpoint('{"state":"waiting-user","message":"Progress","clarification":null}')).toThrow('requires a question');
   });
   it('rejects feedback receipts without an actual work reference or rejection reason', () => {
     const decision = { feedbackIndex: 0, status: 'applied', reason: 'Compare after-tax totals.', workIndexes: [0] };
-    const parse = (receipt: Record<string, unknown>) => parseTaskCheckpoint(JSON.stringify({ state: 'continue', message: 'Progress', work: [{ title: 'Taxes', status: 'pending' }], feedback: [receipt] }));
+    const parse = (receipt: Record<string, unknown>) => parseResearchCheckpoint(JSON.stringify({ state: 'continue', message: 'Progress', work: [{ title: 'Taxes', status: 'pending' }], feedback: [receipt] }));
     expect(() => parse({ ...decision, workIndexes: [] })).toThrow('actual work');
     expect(() => parse({ ...decision, workIndexes: [1] })).toThrow('reference');
     expect(() => parse({ ...decision, status: 'rejected', workIndexes: [], reason: '' })).toThrow('text');

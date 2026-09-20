@@ -1,10 +1,9 @@
-import type { TaskOperation, TaskActorContext } from '../harness/project-task-gateway.js';
-import { randomUUID } from 'node:crypto';
+import type { ResearchOperation, ResearchActorContext } from '../research/context.js';
 import { isAbsolute } from 'node:path';
 import { ProjectStore } from './project.js';
-import { ResearchManager, type TaskRunner, type ProjectAction } from './manager.js';
+import { ResearchManager, type ResearchRunner, type ProjectAction } from './manager.js';
 import { createResearchRunner } from './runner.js';
-import { indexCard, projectCard, evidenceCard, historyCard, projectLinkPreviewCard } from './cards.js';
+import { evidenceCard, historyCard, projectLinkPreviewCard, researchStatusText } from './cards.js';
 import type { DocumentReader, DocumentAppender } from './document-source.js';
 
 type Sender = (message: { chatId: string; type: string; text?: string; card?: Record<string, unknown>; threadId?: string }) => Promise<string | void>;
@@ -24,57 +23,61 @@ function callbackValue(action: Record<string, unknown>): Record<string, unknown>
 /** A persistent project surface; ordinary conversation turns never own its state. */
 export class FeishuResearchController {
   readonly manager: ResearchManager;
-  constructor(directory: string, workspace: string, private readonly send: Sender, update: Updater, runner: TaskRunner = createResearchRunner(workspace), readDocument?: DocumentReader, appendDocument?: DocumentAppender, private readonly resolveWorkingDir?: (chat: string) => Promise<string>) {
+  constructor(directory: string, workspace: string, private readonly send: Sender, _update: Updater, runner: ResearchRunner = createResearchRunner(workspace), readDocument?: DocumentReader, appendDocument?: DocumentAppender, private readonly resolveWorkingDir?: (chat: string) => Promise<string>) {
     if (!isAbsolute(directory)) { throw new Error('Research project storage must use an absolute directory'); }
     this.manager = new ResearchManager(new ProjectStore(directory), runner, async project => {
-      const card = projectCard(project);
-      if (project.cardId) { await update(project.cardId, card); return project.cardId; }
-      const id = await send({ chatId: project.chat, type: 'card', card, threadId: project.thread });
-      if (!id) { throw new Error('Research project card delivery returned no message ID'); }
+      // Ordinary progress belongs in the conversation. Cards are only emitted
+      // by explicit detail/feedback actions below; they are not the workspace.
+      const id = await send({ chatId: project.chat, type: 'text', text: researchStatusText(project), threadId: project.thread });
+      if (!id) { throw new Error('Research status delivery returned no message ID'); }
       return id;
     }, readDocument, appendDocument);
   }
   /** Actor identity comes only from the receiving channel, never operation JSON. */
-  async executeTask(context: TaskActorContext, operation: TaskOperation): Promise<unknown> {
+  async executeResearch(context: ResearchActorContext, operation: ResearchOperation): Promise<unknown> {
     const { owner, chat, source, thread } = context;
-    if (!owner || !chat || !source) { throw new Error('Task actor context unavailable'); }
+    if (!owner || !chat || !source) { throw new Error('Research actor context unavailable'); }
     if (operation.action === 'list') {
       const all = this.manager.list(owner, chat, operation.archived ?? false);
       const offset = operation.offset ?? 0, end = offset + (operation.limit ?? 20);
-      return { tasks: all.slice(offset, end).map(p => ({ id: p.id, title: p.title, status: p.status, revision: p.revision, workingDir: p.workingDir })),
+      return { researches: all.slice(offset, end).map(p => ({ id: p.id, title: p.title, status: p.status, revision: p.revision, workingDir: p.workingDir })),
         total: all.length, nextOffset: end < all.length ? end : undefined };
     }
     if (operation.action === 'create') {
       const creationSource = `${source}:agent:${operation.requestId}`;
       const existing = [...this.manager.list(owner, chat), ...this.manager.list(owner, chat, true)].find(p => p.source === creationSource);
-      if (existing) { return { task: existing }; }
+      if (existing) { return { research: existing }; }
       if (!this.resolveWorkingDir) { throw new Error('Project directory resolver unavailable'); }
-      const task = await this.manager.create({ owner, chat, source: creationSource, thread,
+      const research = await this.manager.create({ owner, chat, source: creationSource, thread,
         workingDir: await this.resolveWorkingDir(chat), title: operation.title, scope: operation.scope ?? '',
         materials: operation.materials ?? '', documentUrl: operation.documentUrl });
-      return { task };
+      return { research };
     }
-    // get/act both preserve the original creator and chat boundary.
+    // get/control both preserve the original creator and chat boundary.
     if (operation.action === 'control') {
-      const current = this.manager.get(operation.taskId, owner, chat);
-      if (current.revision !== operation.revision) { throw new Error('Task revision changed; read current state before retrying'); }
-      await this.manager.act(operation.taskId, owner, chat, operation.revision, operation.control, operation.value ?? '');
+      const current = this.manager.get(operation.researchId, owner, chat);
+      if (current.revision !== operation.revision) { throw new Error('Research revision changed; read current state before retrying'); }
+      await this.manager.act(operation.researchId, owner, chat, operation.revision, operation.control, operation.value ?? '');
     }
-    return { task: this.manager.get(operation.taskId, owner, chat) };
+    return { research: this.manager.get(operation.researchId, owner, chat) };
   }
   static isCallback(raw: Record<string, unknown>): boolean {
     return callbackValue(object(raw.action)).research === true;
   }
   async open(owner: string, chat: string, thread?: string): Promise<void> {
-    if (!owner || !chat) { throw new Error('无法确认任务的用户和会话。'); }
+    if (!owner || !chat) { throw new Error('无法确认研究用户和会话。'); }
     await this.showIndex(owner, chat, thread);
   }
   private async showIndex(owner: string, chat: string, thread?: string, offset = 0, archived = false): Promise<void> {
     let workingDir: string | undefined, error: string | undefined;
     try { workingDir = await this.resolveWorkingDir?.(chat); }
-    catch { error = '当前项目目录不可用，暂不能建立新任务。请用 /project info 检查，或用 /project use <目录> 切换。已有任务仍可打开。'; }
-    await this.send({ chatId: chat, type: 'card', threadId: thread,
-      card: indexCard(this.manager.list(owner, chat, archived), randomUUID(), offset, archived, { workingDir, error }) });
+    catch { error = '当前项目目录不可用，暂不能建立研究。请用 /project info 检查，或用 /project use <目录> 切换。已有研究仍可打开。'; }
+    const projects = this.manager.list(owner, chat, archived).slice(offset, offset + 20);
+    const lines = [archived ? '归档研究' : '当前项目中的研究', workingDir ? `项目目录：${workingDir}` : error ?? '尚未关联项目目录'];
+    if (!projects.length) { lines.push('暂无研究。请在当前项目对话中直接描述要调查的问题、范围和材料。'); }
+    else { lines.push(...projects.map(p => `- ${p.title} · ${p.status} · revision ${p.revision}${p.summary ? `\n  ${p.summary}` : ''}`)); }
+    if (offset + projects.length < this.manager.list(owner, chat, archived).length) { lines.push(`还有更多研究；使用 research_workspace list offset=${offset + projects.length} 查看。`); }
+    await this.send({ chatId: chat, type: 'text', threadId: thread, text: lines.join('\n') });
   }
   async handle(raw: Record<string, unknown>): Promise<void> {
     const context = object(raw.context), operator = object(raw.operator), action = object(raw.action);

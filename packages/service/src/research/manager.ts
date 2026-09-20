@@ -2,10 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { isAbsolute } from 'node:path';
 import { ProjectStore, ResearchDirectoryError, type ResearchProject } from './project.js';
 import { changedDocumentFeedback, documentToken, type DocumentReader, type DocumentAppender } from './document-source.js';
-import { parseTaskCheckpoint, type TaskCheckpoint } from '../harness/task-checkpoint.js';
+import { parseResearchCheckpoint, type ResearchCheckpoint } from '../research/checkpoint.js';
 import { documentDeadline, resultParagraphs } from './document-export.js';
 
-export type TaskRunner = (project: ResearchProject, signal: AbortSignal) => Promise<TaskCheckpoint>;
+export type ResearchRunner = (project: ResearchProject, signal: AbortSignal) => Promise<ResearchCheckpoint>;
 export type ProjectPublisher = (project: ResearchProject) => Promise<string>;
 export type ProjectAction = 'pause' | 'resume' | 'cancel' | 'feedback' | 'stop-direction' | 'archive' | 'unarchive' | 'export';
 
@@ -17,7 +17,7 @@ export class ResearchManager {
   private loaded = false;
   private disposed = false;
   private readonly exporting = new Set<string>();
-  constructor(private readonly store: ProjectStore, private readonly runner: TaskRunner, private readonly publish: ProjectPublisher,
+  constructor(private readonly store: ProjectStore, private readonly runner: ResearchRunner, private readonly publish: ProjectPublisher,
     private readonly readDocument?: DocumentReader, private readonly appendDocument?: DocumentAppender) {}
 
   private load(): void {
@@ -260,7 +260,7 @@ export class ResearchManager {
       try {
         p.cardId = await this.publish(structuredClone(p));
         p.deliveryError = undefined;
-      } catch { p.deliveryError = '项目卡片更新失败；可用 /project 重新打开，已有进度保留。'; }
+      } catch { p.deliveryError = '研究状态消息发送失败；可用 /project 重新打开，已有进度保留。'; }
       if (!this.disposed) { this.store.save(p); }
     });
     this.publishing.set(p.id, next);
@@ -303,7 +303,7 @@ export class ResearchManager {
       throw new Error('Document sync failed');
     } finally { clearTimeout(timer); }
   }
-  private applyCheckpoint(p: ResearchProject, snapshot: ResearchProject, result: TaskCheckpoint,
+  private applyCheckpoint(p: ResearchProject, snapshot: ResearchProject, result: ResearchCheckpoint,
     pending: ResearchProject['feedback'], feedbackCount: number): void {
     const expected = pending.map(f => p.feedback.indexOf(f));
     if (result.state !== 'waiting-user' && (result.feedback.length !== expected.length
@@ -354,7 +354,7 @@ export class ResearchManager {
       if (p.feedback.some(f => f.status === 'pending' || f.status === 'needs-clarification')) {
         this.record(p, '执行期间收到新意见，成果证据已保留，将处理最新反馈后再结束。');
       } else {
-        p.summary = result.summary ?? ''; // Required by parseTaskCheckpoint for completion.
+        p.summary = result.summary ?? ''; // Required by parseResearchCheckpoint for completion.
         p.questions = result.questions;
         p.status = 'completed'; this.record(p, '任务已完成，成果与来源保留。');
       }
@@ -376,7 +376,7 @@ export class ResearchManager {
         const pending = p.feedback.filter(f => f.status === 'pending' || f.status === 'needs-clarification').slice(0, 24);
         const feedbackCount = p.feedback.length;
         const snapshot = structuredClone(p);
-        const result = parseTaskCheckpoint(JSON.stringify(await this.runner(snapshot, signal)));
+        const result = parseResearchCheckpoint(JSON.stringify(await this.runner(snapshot, signal)));
         if (this.disposed || signal.aborted) { return; }
         if (p.status as string !== 'cancelling') { await this.syncDocument(p); }
         if (this.disposed || signal.aborted) { return; }

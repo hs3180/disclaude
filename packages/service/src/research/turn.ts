@@ -2,11 +2,11 @@ import { statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { AgentFactory } from '../agents/factory.js';
 
-export class TaskDirectoryError extends Error {
+export class ResearchTurnDirectoryError extends Error {
   constructor() { super('Task working directory is missing or inaccessible'); }
 }
 
-export interface TaskTurn {
+export interface ResearchTurn {
   /** Stable task/attempt identity, independent of its delivery chat. */
   identity: string;
   owner: string;
@@ -23,7 +23,7 @@ export interface TaskTurn {
  * The caller owns persistence, publication and deciding whether to continue.
  * dispose requests cancellation; this API does not prove OS descendants exited.
  */
-export async function runTaskTurn(request: TaskTurn): Promise<string> {
+export async function runResearchTurn(request: ResearchTurn): Promise<string> {
   // Freeze bindings for this attempt even if its caller later switches projects.
   const input = { ...request };
   if (input.signal.aborted) { throw new Error('Task turn interrupted'); }
@@ -33,9 +33,9 @@ export async function runTaskTurn(request: TaskTurn): Promise<string> {
   }
   try {
     if (!isAbsolute(input.workingDir) || !statSync(input.workingDir).isDirectory()) {
-      throw new TaskDirectoryError();
+      throw new ResearchTurnDirectoryError();
     }
-  } catch { throw new TaskDirectoryError(); }
+  } catch { throw new ResearchTurnDirectoryError(); }
 
   let completed: { success: boolean; text: string; truncated: boolean } | undefined;
   const agent = AgentFactory.createAgent(input.identity, {

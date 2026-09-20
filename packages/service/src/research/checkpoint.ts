@@ -12,7 +12,7 @@ export interface WorkUpdate {
   status: 'pending' | 'done' | 'stopped';
   findings: Evidence[];
 }
-export interface TaskCheckpoint {
+export interface ResearchCheckpoint {
   state: 'continue' | 'waiting-user' | 'complete';
   message: string;
   work: WorkUpdate[];
@@ -23,7 +23,7 @@ export interface TaskCheckpoint {
 }
 
 /** Shape/size validation only: valid source fields are not verification of truth. */
-export function parseTaskCheckpoint(text: string): TaskCheckpoint {
+export function parseResearchCheckpoint(text: string): ResearchCheckpoint {
   const object = (v: unknown): Record<string, unknown> => {
     if (!v || typeof v !== 'object' || Array.isArray(v)) { throw new Error('Invalid task checkpoint object'); }
     return v as Record<string, unknown>;
@@ -72,6 +72,6 @@ export function parseTaskCheckpoint(text: string): TaskCheckpoint {
   const clarification = r.clarification === null || r.clarification === undefined ? undefined : str(r.clarification, 1000);
   if (r.state === 'complete' && !summary) { throw new Error('Completed task requires a result'); }
   if (r.state === 'waiting-user' && !clarification) { throw new Error('Waiting task requires a question'); }
-  return { state: r.state as TaskCheckpoint['state'], message: str(r.message, 1000), work, feedback, summary,
+  return { state: r.state as ResearchCheckpoint['state'], message: str(r.message, 1000), work, feedback, summary,
     questions: list(r.questions ?? [], 6).map(v => str(v, 300)), clarification };
 }

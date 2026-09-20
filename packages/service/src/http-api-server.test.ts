@@ -1,4 +1,4 @@
-import { projectTaskGateway } from './harness/project-task-gateway.js';
+import { researchContextGateway } from './research/context.js';
 /**
  * Tests for HttpApiServer.
  *
@@ -134,11 +134,11 @@ describe('HttpApiServer', () => {
     (server as unknown as { stopSseHeartbeat: () => void }).stopSseHeartbeat();
   });
 
-  describe('POST /api/project-tasks', () => {
+  describe('POST /api/research-workspaces', () => {
     it('requires API authentication plus an issued message context, rejecting identity overrides', async () => {
       const execute = vi.fn().mockResolvedValue({ tasks: [] });
-      const context = projectTaskGateway.issue('api-test', execute);
-      const options = { method: 'POST', url: '/api/project-tasks', body: JSON.stringify({ context, operation: { action: 'list' } }) };
+      const context = researchContextGateway.issue('api-test', execute);
+      const options = { method: 'POST', url: '/api/research-workspaces', body: JSON.stringify({ context, operation: { action: 'list' } }) };
       try {
         expect((await dispatch(server, options)).statusCode).toBe(503);
         server = new HttpApiServer({ port: 0, apiToken: 'task-api-token' });
@@ -148,11 +148,11 @@ describe('HttpApiServer', () => {
         expect(result.statusCode).toBe(200); expect(JSON.parse(result.body)).toEqual({ ok: true, result: { tasks: [] } });
         expect(execute).toHaveBeenCalledExactlyOnceWith({ action: 'list' });
         expect((await dispatch(server, { ...authorized, body: JSON.stringify({ context, operation: { action: 'list', owner: 'other' } }) })).statusCode).toBe(400);
-        projectTaskGateway.revoke('api-test');
+        researchContextGateway.revoke('api-test');
         const expired = await dispatch(server, authorized);
         expect(expired.statusCode).toBe(403); expect(expired.body).not.toContain(context);
         expect(execute).toHaveBeenCalledTimes(1);
-      } finally { projectTaskGateway.revoke('api-test'); }
+      } finally { researchContextGateway.revoke('api-test'); }
     });
   });
 

@@ -3,7 +3,7 @@ import type { ResearchProject, ProjectStatus } from './project.js';
 const labels: Record<ProjectStatus, string> = { running: '执行中', 'waiting-user': '等待你补充信息', pausing: '正在暂停 · 等待当前回合收尾', paused: '已暂停', cancelling: '正在取消 · 等待当前回合结束', cancelled: '已取消', failed: '需要恢复', completed: '任务完成', interrupted: '执行曾中断 · 可恢复' };
 const plain = (content: string) => ({ tag: 'plain_text', content });
 const text = (content: string) => ({ tag: 'div', text: plain(content) });
-const group = (elements: unknown[]) => ({ tag: 'column_set', flex_mode: 'none', columns: [{ tag: 'column', width: 'weighted', weight: 1, padding: '12px', background_style: 'grey-50', elements }] });
+const statusText: Record<ProjectStatus, string> = { running: '执行中', 'waiting-user': '等待补充信息', pausing: '正在收尾并暂停', paused: '已暂停', cancelling: '正在收尾并取消', cancelled: '已取消', failed: '需要恢复', completed: '已完成', interrupted: '曾中断，可恢复' };
 export const researchButton = (label: string, value: Record<string, unknown>, primary = false) => ({
   tag: 'button', text: plain(label), type: primary ? 'primary' : 'default', behaviors: [{ type: 'callback', value: { research: true, ...value } }],
 });
@@ -14,9 +14,24 @@ const submitButton = (label: string, value: Record<string, unknown>) => ({
 export function researchCard(title: string, elements: unknown[]): Record<string, unknown> {
   return { schema: '2.0', config: { enable_forward: false, update_multi: true, width_mode: 'default' }, header: { title: plain(title), template: 'blue' }, body: { vertical_spacing: '12px', elements } };
 }
-export function projectCard(p: ResearchProject): Record<string, unknown> {
+/** Plain-text status is the default Research surface; cards are reserved for explicit feedback/details. */
+export function researchStatusText(p: ResearchProject): string {
+  const lines = [`研究：${p.title}`, `状态：${statusText[p.status]} · revision ${p.revision}`];
+  if (p.scope) { lines.push(`范围：${p.scope}`); }
+  if (p.workingDir) { lines.push(`项目目录：${p.workingDir}`); }
+  if (p.document) { lines.push(`关联文档：${p.document.url}${p.document.error ? `（${p.document.error}）` : ''}`); }
+  if (p.clarification) { lines.push(`需要补充：${p.clarification}`); }
+  if (p.summary) { lines.push(`成果：${p.summary}`); }
+  if (p.directions.length) { lines.push(`工作方向：${p.directions.map(d => `${d.title}（${d.status === 'done' ? '完成' : d.status === 'stopped' ? '已停止' : '进行中'}，${d.findings.length} 项证据）`).join('；')}`); }
+  const latest = p.history.at(-1);
+  if (latest?.text) { lines.push(`最近更新：${latest.text}`); }
+  if (p.error) { lines.push(`错误：${p.error}`); }
+  if (!['completed', 'cancelled'].includes(p.status)) { lines.push('可继续用自然语言补充范围/材料，或使用 research_workspace 控制暂停、恢复和取消。'); }
+  return lines.join('\n');
+}
+export function researchDetailCard(p: ResearchProject): Record<string, unknown> {
   const value = { project: p.id, revision: p.revision };
-  const actions: unknown[] = [researchButton('刷新任务', { ...value, action: 'refresh' }), researchButton('返回项目首页', { action: 'index' })];
+  const actions: unknown[] = [researchButton('刷新研究', { ...value, action: 'refresh' }), researchButton('返回研究摘要', { action: 'index' })];
   if (p.status === 'running') { actions.push(researchButton('暂停任务', { ...value, action: 'pause' })); }
   if (['paused', 'failed', 'interrupted', 'waiting-user'].includes(p.status)) { actions.push(researchButton(p.directions.length ? '恢复任务' : '开始任务', { ...value, action: 'resume' }, true)); }
   if (!['completed', 'cancelled', 'cancelling'].includes(p.status)) { actions.push(researchButton('取消任务', { ...value, action: 'cancel' })); }
@@ -92,27 +107,6 @@ export function historyCard(p: ResearchProject, offset: number): Record<string, 
     researchButton('返回任务', { project: p.id, action: 'open' }),
   ]);
 }
-export function indexCard(projects: ResearchProject[], nonce: string, offset = 0, archived = false, context: { workingDir?: string; error?: string } = {}): Record<string, unknown> {
-  return researchCard(archived ? '项目 · 归档任务' : '项目 · 工作空间与任务', [
-    group([text(context.workingDir ? `当前项目工作目录\n${context.workingDir}` : context.error ?? '尚未关联项目工作目录'),
-      text('使用 /project use <目录> 切换，/project reset 返回默认目录，/project info 查看详情。切换不影响已建立的任务。')]),
-    group([text('下面是你在本会话的任务，包含其他目录及未关联的历史任务。每项任务可独立查看证据、调整方向或暂停，控制由创建者操作。'),
-      { tag: 'div', text: { ...plain('可关联一份新版飞书文档，在执行检查点同步文字正文与评论。任务完成后可选择追加成果；未关联的链接不会自动同步。'), text_size: 'notation', text_color: 'grey' } }]),
-    group([
-    researchButton(archived ? '返回任务列表' : '查看归档任务', { action: 'index', archived: !archived }),
-    ...projects.slice(offset, offset + 6).flatMap(p => [text(`${p.title} · ${labels[p.status]}\n${p.projectLink ? `关联项目：${p.projectLink.directory}（保留独立执行目录）` : p.workingDir ? `工作目录：${p.workingDir}${p.workingDir === context.workingDir ? '（当前项目）' : ''}` : '历史任务 · 未关联项目目录'}`), researchButton('打开任务', { project: p.id, action: 'open' })]),
-    ...(projects.length > offset + 6 ? [researchButton('更多任务', { action: 'index', offset: offset + 6, archived })] : []),
-    ]),
-    ...(!context.error ? [text('新任务使用提交表单时的当前项目目录。建立后先展示目录与范围，点击开始才会执行。'), { tag: 'form', name: 'research_create', elements: [
-      { tag: 'input', name: 'question', required: true, placeholder: plain('希望完成什么任务？（180 字以内）') },
-      { tag: 'input', name: 'scope', placeholder: plain('任务范围、约束与希望得到的成果') },
-      { tag: 'input', name: 'materials', placeholder: plain('已有材料、来源链接或摘录') },
-      { tag: 'input', name: 'document_url', placeholder: plain('可选：关联的飞书 /docx/ 文档链接（需应用有读取权限）') },
-      submitButton('建立任务', { action: 'create', nonce }),
-    ] }] : []),
-  ]);
-}
-
 export function projectLinkPreviewCard(p: ResearchProject): Record<string, unknown> {
   if (!p.linkPreview) { throw new Error('项目关联预览已失效。'); }
   return researchCard('确认历史任务的项目关联', [

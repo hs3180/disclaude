@@ -37,7 +37,7 @@ export interface MessageData {
   /** Thread context for topic groups (Issue #3641 sub-problem 1) */
   threadContext?: string;
   /** Service-issued, actor-scoped project task capability context. */
-  projectTaskContext?: string;
+  researchContext?: string;
 }
 
 /**

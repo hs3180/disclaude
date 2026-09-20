@@ -228,7 +228,7 @@ export function createDefaultMessageHandler(
       const chatHistoryContext = metadata?.chatHistoryContext as string | undefined;
       const chatType = metadata?.chatType as string | undefined;
       const threadContext = metadata?.threadContext as string | undefined;
-      const projectTaskContext = metadata?.projectTaskContext as string | undefined;
+      const researchContext = metadata?.researchContext as string | undefined;
       // Issue #4587 (part 1): thread root for topic-group session keying (part 2)
       const threadRootId = metadata?.threadRootId as string | undefined;
       const fileRefs = options.extractAttachments?.(message);
@@ -244,7 +244,7 @@ export function createDefaultMessageHandler(
         chatHistoryContext,
         chatType,
         threadContext,
-        projectTaskContext,
+        researchContext,
         threadRootId,
         createdAt: toISOStringSafe(message.timestamp),
       };
@@ -271,7 +271,7 @@ export function createDefaultMessageHandler(
     const chatHistoryContext = metadata?.chatHistoryContext as string | undefined;
     const chatType = metadata?.chatType as string | undefined;
     const threadContext = metadata?.threadContext as string | undefined;
-    const projectTaskContext = metadata?.projectTaskContext as string | undefined;
+    const researchContext = metadata?.researchContext as string | undefined;
     // Issue #4587 (part 2): thread root for per-thread session keying
     const threadRootId = metadata?.threadRootId as string | undefined;
 
@@ -282,7 +282,7 @@ export function createDefaultMessageHandler(
     const fileRefs = options.extractAttachments?.(message);
 
     try {
-      void agent.processMessage({ chatId, payload: content, messageId, senderOpenId, attachments: fileRefs, chatHistoryContext, chatType, threadContext, threadRootId, projectTaskContext });
+      void agent.processMessage({ chatId, payload: content, messageId, senderOpenId, attachments: fileRefs, chatHistoryContext, chatType, threadContext, threadRootId, researchContext });
     } catch (error) {
       context.logger.error({ err: error, chatId, messageId }, 'Failed to process message');
       const errorMsg = error instanceof Error ? error.message : String(error);

@@ -1,4 +1,4 @@
-import { projectTaskGateway, TaskContextError, parseTaskOperation } from './harness/project-task-gateway.js';
+import { researchContextGateway, ResearchContextError, parseResearchOperation } from './research/context.js';
 import { isPrivateWorkflowRequest, type PrivateWorkflowRequest } from './channels/feishu/private-workflows.js';
 /**
  * HTTP API Server for disclaude service.
@@ -544,7 +544,7 @@ export class HttpApiServer {
     this.addRoute('POST', '/api/send-message', this.handleSendMessage.bind(this));
     // Issue #4279: REST parity with REST API sendCard.
     this.addRoute('POST', '/api/private-workflows', this.handlePrivateWorkflow.bind(this));
-    this.addRoute('POST', '/api/project-tasks', this.handleProjectTask.bind(this));
+    this.addRoute('POST', '/api/research-workspaces', this.handleResearchWorkspace.bind(this));
     this.addRoute('POST', '/api/send-card', this.handleSendCard.bind(this));
     // Issue #4279: REST parity with REST API sendInteractive.
     this.addRoute('POST', '/api/send-interactive', this.handleSendInteractive.bind(this));
@@ -927,8 +927,8 @@ export class HttpApiServer {
    * aligned with ChannelApiRequestPayloads). `card` is a Feishu card JSON object.
    * Response: `{ ok: true, success: true }`.
    */
-  private async handleProjectTask(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!this.config.apiToken) { this.sendJson(res, 503, { ok: false, message: 'Project tasks require API authentication' }); return; }
+  private async handleResearchWorkspace(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.config.apiToken) { this.sendJson(res, 503, { ok: false, message: 'Research workspaces require API authentication' }); return; }
     let context: string, operation: unknown;
     try {
       const body: unknown = JSON.parse(await readBody(req));
@@ -936,13 +936,13 @@ export class HttpApiServer {
       const raw = body as Record<string, unknown>;
       if (Object.keys(raw).some(key => !['context', 'operation'].includes(key))
         || typeof raw.context !== 'string' || !/^[a-f0-9-]{36}$/u.test(raw.context)) { throw new Error('Invalid context'); }
-      ({ context } = raw as { context: string }); operation = parseTaskOperation(raw.operation);
-    } catch { this.sendJson(res, 400, { ok: false, message: 'Invalid project task request' }); return; }
-    try { this.sendJson(res, 200, { ok: true, result: await projectTaskGateway.execute(context, operation) }); }
+      ({ context } = raw as { context: string }); operation = parseResearchOperation(raw.operation);
+    } catch { this.sendJson(res, 400, { ok: false, message: 'Invalid research workspace request' }); return; }
+    try { this.sendJson(res, 200, { ok: true, result: await researchContextGateway.execute(context, operation) }); }
     catch (error) {
-      // Do not echo the opaque context or leak task state on a rejected operation.
-      this.sendJson(res, error instanceof TaskContextError ? 403 : 409,
-        { ok: false, message: error instanceof TaskContextError ? 'Project task context expired or unavailable' : 'Task operation rejected; refresh task state or project binding' });
+      // Do not echo the opaque context or leak research state on a rejected operation.
+      this.sendJson(res, error instanceof ResearchContextError ? 403 : 409,
+        { ok: false, message: error instanceof ResearchContextError ? 'Research context expired or unavailable' : 'Research operation rejected; refresh research state or project binding' });
     }
   }
 

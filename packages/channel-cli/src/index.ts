@@ -31,4 +31,4 @@ export { getChatIdValidationError } from './utils/chat-id-validator.js';
 
 export { request_private_input } from './tools/request-private-input.js';
 
-export { project_task } from './tools/project-task.js';
+export { research_workspace } from './tools/research-workspace.js';

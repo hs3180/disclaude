@@ -116,7 +116,7 @@ vi.mock('../../utils/message-logger.js', () => ({
 // ---------------------------------------------------------------------------
 // Import SUT after mocks
 // ---------------------------------------------------------------------------
-import { projectTaskGateway } from '../../harness/project-task-gateway.js';
+import { researchContextGateway } from '../../research/context.js';
 import { MessageHandler } from './message-handler.js';
 import { TriggerModeManager } from './passive-mode.js';
 import { MentionDetector } from './mention-detector.js';
@@ -223,7 +223,7 @@ function cardActionEvent(overrides: Record<string, unknown> = {}) {
 
 describe('MessageHandler', () => {
   it('provides project tasks without a research setting and isolates applications in the same workspace', async () => {
-    const workspace = mkdtempSync(join(tmpdir(), 'project-task-default-'));
+    const workspace = mkdtempSync(join(tmpdir(), 'research-workspace-default-'));
     const oldWorkspace = mockState.workspaceDir;
     mockState.workspaceDir = workspace;
     vi.stubEnv('DISCLAUDE_RESEARCH_PROJECTS_DIR', '');
@@ -243,30 +243,18 @@ describe('MessageHandler', () => {
     try {
       const first = make('app-one');
       await first.handler.handleMessageReceive(textEvent('/project'));
-      const { card } = firstCallArg(first.send);
-      expect(card.header.title.content).toBe('项目 · 工作空间与任务');
-      const form = card.body.elements.find((e: any) => e.tag === 'form');
-      const submit = form.elements.find((e: any) => e.form_action_type === 'submit');
-      await first.handler.handleCardAction(cardActionEvent({ action: { name: submit.name, form_value: { question: 'Diagnose the failed build' } } }));
-      await vi.waitFor(() => expect(first.send).toHaveBeenCalledTimes(2));
-      const parent = join(workspace, '.disclaude', 'project-tasks', 'feishu');
-      const firstStore = join(parent, readdirSync(parent)[0]);
-      const filename = readdirSync(firstStore).find(name => name.endsWith('.json')) ?? '';
-      expect(filename).not.toBe('');
-      await vi.waitFor(() => expect(JSON.parse(readFileSync(join(firstStore, filename), 'utf8')).cardId).toBe('om_task'));
-      const record = JSON.parse(readFileSync(join(firstStore, filename), 'utf8'));
-      expect(record.workingDir).toBe(workspace);
-      expect(record.status).toBe('paused');
-      expect(record.title).toBe('Diagnose the failed build');
+      expect(firstCallArg(first.send).text).toContain('当前项目中的研究');
+      expect(first.send.mock.calls.every(([message]) => !message.card)).toBe(true);
+      const parent = join(workspace, '.disclaude', 'research-workspaces', 'feishu');
       const second = make('app-two');
       await second.handler.handleMessageReceive(textEvent('/project'));
-      expect(JSON.stringify(firstCallArg(second.send).card)).not.toContain(record.id);
-      expect(readdirSync(parent)).toHaveLength(2);
+      expect(firstCallArg(second.send).text).toContain('当前项目中的研究');
+      expect(firstCallArg(second.send).text).not.toContain('app-one');
       first.handler.clearClient();
       const reopened = make('app-one');
       await reopened.handler.handleMessageReceive(textEvent('/project'));
-      expect(JSON.stringify(firstCallArg(reopened.send).card)).toContain(record.id);
-      expect(JSON.parse(readFileSync(join(firstStore, filename), 'utf8')).title).toBe(record.title);
+      expect(firstCallArg(reopened.send).text).toContain('当前项目中的研究');
+      expect(readdirSync(parent)).toHaveLength(2);
       expect(mockState.emitMessage).not.toHaveBeenCalled();
     } finally {
       handlers.forEach(handler => handler.clearClient());
@@ -289,16 +277,16 @@ describe('MessageHandler', () => {
       handler.initialize({ im: { message: { reaction: { create: vi.fn().mockResolvedValue({ code: 0 }) } } } } as any);
       await handler.handleMessageReceive(textEvent('Keep investigating these logs in this project'));
       const incoming = firstCallArg(mockState.emitMessage);
-      const context = incoming.metadata.projectTaskContext;
+      const context = incoming.metadata.researchContext;
       expect(context).toMatch(/^[a-f0-9-]{36}$/u);
-      const created = await projectTaskGateway.execute(context, { action: 'create', requestId: 'logs', title: 'Inspect logs' }) as { task: { id: string; owner: string; chat: string; workingDir: string } };
-      expect(created.task).toMatchObject({ owner: 'user_001', chat: 'chat_001', workingDir: workspace });
-      const retry = await projectTaskGateway.execute(context, { action: 'create', requestId: 'logs', title: 'Inspect logs' }) as typeof created;
-      expect(retry.task.id).toBe(created.task.id);
+      const created = await researchContextGateway.execute(context, { action: 'create', requestId: 'logs', title: 'Inspect logs' }) as { research: { id: string; owner: string; chat: string; workingDir: string } };
+      expect(created.research).toMatchObject({ owner: 'user_001', chat: 'chat_001', workingDir: workspace });
+      const retry = await researchContextGateway.execute(context, { action: 'create', requestId: 'logs', title: 'Inspect logs' }) as typeof created;
+      expect(retry.research.id).toBe(created.research.id);
       expect(control).toHaveBeenCalledTimes(1);
-      await expect(projectTaskGateway.execute(context, { action: 'get', taskId: created.task.id, owner: 'another-user' })).rejects.toThrow('fields');
+      await expect(researchContextGateway.execute(context, { action: 'get', researchId: created.research.id, owner: 'another-user' })).rejects.toThrow('fields');
       handler.clearClient();
-      await expect(projectTaskGateway.execute(context, { action: 'list' })).rejects.toThrow('unavailable');
+      await expect(researchContextGateway.execute(context, { action: 'list' })).rejects.toThrow('unavailable');
     } finally { handler.clearClient(); vi.unstubAllEnvs(); rmSync(workspace, { recursive: true, force: true }); }
   });
 
@@ -327,37 +315,13 @@ describe('MessageHandler', () => {
     try {
       handler.initialize({ im: { message: { patch: vi.fn().mockResolvedValue({ code: 0 }) } } } as any);
       await handler.handleMessageReceive(textEvent(command));
-      const {card} = firstCallArg(send);
-      expect(card.header.title.content).toBe('项目 · 工作空间与任务');
-      expect(JSON.stringify(card)).toContain(directory);
-      const form = card.body.elements.find((element: any) => element.tag === 'form');
-      const submit = form.elements.find((element: any) => element.form_action_type === 'submit');
-      await handler.handleCardAction(cardActionEvent({ action: { name: submit.name, form_value: { question: 'Compare reports', scope: 'Costs', materials: 'A: 10; B: 12' } } }));
-      await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2));
-      const file = readdirSync(directory).find(name => name.endsWith('.json'));
-      expect(file).toBeDefined();
-      await vi.waitFor(() => expect(JSON.parse(readFileSync(join(directory, file ?? ''), 'utf8')).cardId).toBe('om_project'));
-      const project = JSON.parse(readFileSync(join(directory, file ?? ''), 'utf8'));
-      expect(project.workingDir).toBe(directory);
-      expect(project.owner).toBe('user_001'); expect(project.chat).toBe('chat_001'); expect(project.status).toBe('paused');
+      expect(firstCallArg(send).text).toContain('当前项目中的研究');
+      expect(firstCallArg(send).text).toContain(directory);
+      expect(firstCallArg(send).card).toBeUndefined();
+      expect(readdirSync(directory).filter(name => name.endsWith('.json'))).toHaveLength(0);
       expect(mockState.emitMessage).not.toHaveBeenCalled();
-      emitControl.mockResolvedValue({ success: false });
-      await handler.handleCardAction(cardActionEvent({ action: { name: submit.name, form_value: { question: 'Compare reports', scope: 'Costs', materials: 'A: 10; B: 12' } } }));
-      await vi.waitFor(() => expect(emitControl).toHaveBeenCalledTimes(2));
-      expect(readdirSync(directory).filter(name => name.endsWith('.json'))).toHaveLength(1);
-      const persisted = readFileSync(join(directory, file ?? ''), 'utf8');
-      await handler.handleCardAction(cardActionEvent({ operator: { open_id: 'another-user' }, action: { value: { research: true, action: 'resume', project: project.id, revision: project.revision } } }));
-      await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(3));
-      expect(readFileSync(join(directory, file ?? ''), 'utf8')).toBe(persisted);
-      expect(mockState.emitMessage).not.toHaveBeenCalled();
-      await handler.handleCardAction(cardActionEvent({ action: { value: { research: true, action: 'index' } } }));
-      await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(4));
-      const home = send.mock.calls[3][0].card;
-      expect(JSON.stringify(home)).toContain(project.id);
-      expect(JSON.stringify(home)).toContain(directory);
-      expect(JSON.stringify(home)).toContain('已有任务仍可打开');
-      expect(home.body.elements.some((element: any) => element.tag === 'form')).toBe(false);
-      expect(readFileSync(join(directory, file ?? ''), 'utf8')).toBe(persisted);
+      await handler.handleMessageReceive(textEvent('/project'));
+      expect(send.mock.calls.every(([message]) => !message.card)).toBe(true);
 
     } finally { handler.clearClient(); vi.unstubAllEnvs(); rmSync(directory, { recursive: true, force: true }); }
   });
@@ -393,8 +357,9 @@ describe('MessageHandler', () => {
     try {
       handler.initialize({ im: { message: { patch: vi.fn().mockResolvedValue({ code: 0 }) } } } as any);
       await handler.handleCardAction(cardActionEvent({ action: { value: { research: true, action: 'preview-project-link', project: legacy.id, revision: legacy.revision } } }));
-      await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
-      const { card } = firstCallArg(send);
+      await vi.waitFor(() => expect(send.mock.calls.some(([message]) => Boolean(message.card))).toBe(true));
+      const [previewMessage] = send.mock.calls.find(([message]) => Boolean(message.card))!;
+      const { card } = previewMessage;
       expect(JSON.stringify(card)).toContain(directory);
       expect(JSON.stringify(card)).toContain('不移动或复制文件');
       expect(JSON.parse(readFileSync(file, 'utf8')).projectLink).toBeUndefined();
@@ -452,7 +417,7 @@ describe('MessageHandler', () => {
       await vi.waitFor(() => expect(JSON.parse(readFileSync(join(directory, file), 'utf8')).cardId).toBe('om_followup'));
       await handler.handleCardAction(event);
       await handler.handleCardAction({ ...event, operator: { open_id: 'other-user' } });
-      await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(3));
+      await vi.waitFor(() => expect(send.mock.calls.filter(([message]) => Boolean(message.card)).length).toBe(1));
       const next = JSON.parse(readFileSync(join(directory, file), 'utf8'));
       expect(next.parent).toBe('abcdef'); expect(next.status).toBe('paused');
       expect(next.parentFinding).toEqual({ directionId: 'cost', index: 1 });

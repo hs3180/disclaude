@@ -14,9 +14,9 @@ const manager = new ResearchManager(
   async () => 'captured-card'
 );
 try {
-  let task;
+  let research;
   if (phase === 'first')
-    task = await manager.create({
+    research = await manager.create({
       workingDir: root,
       owner: 'acceptance',
       chat: 'test-chat',
@@ -27,22 +27,22 @@ try {
       materials: 'inventory.txt is the authoritative local inventory.',
     });
   else {
-    task = manager.list('acceptance', 'test-chat')[0];
-    process.send({ kind: 'reopened', task });
+    research = manager.list('acceptance', 'test-chat')[0];
+    process.send({ kind: 'reopened', research });
     await manager.act(
-      task.id,
-      task.owner,
-      task.chat,
-      task.revision,
+      research.id,
+      research.owner,
+      research.chat,
+      research.revision,
       'feedback',
       'The previous wait was interrupted. Skip the wait: do not run sleep again. inventory.txt has changed while the service was stopped. Read its current content and report its exact identifier and count. Do not edit anything.'
     );
-    task = manager.get(task.id, task.owner, task.chat);
+    research = manager.get(research.id, research.owner, research.chat);
   }
-  process.send({ kind: 'task', task });
-  await manager.act(task.id, task.owner, task.chat, task.revision, 'resume');
-  await manager.idle(task.id);
-  process.send({ kind: 'finished', task: manager.get(task.id, task.owner, task.chat) });
+  process.send({ kind: 'research', research });
+  await manager.act(research.id, research.owner, research.chat, research.revision, 'resume');
+  await manager.idle(research.id);
+  process.send({ kind: 'finished', research: manager.get(research.id, research.owner, research.chat) });
 } finally {
   manager.dispose();
   clearProviderCache();
