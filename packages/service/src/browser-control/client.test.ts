@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { withBrowserLease } from './client.mjs';
+import { createServer } from 'node:net';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { connectBrowser, withBrowserLease } from './client.mjs';
 
 function deferred() {
   let resolve!: () => void;
@@ -10,6 +14,21 @@ function deferred() {
 afterEach(() => { vi.useRealTimers(); });
 
 describe('browser client lease heartbeat lifetime', () => {
+  it('reports the pending IPC phase when the broker closes the socket', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'browser-client-'));
+    const socketPath = join(root, 'browser.sock');
+    const server = createServer(peer => peer.on('data', () => peer.destroy()));
+    try {
+      await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(socketPath, resolve); });
+      const client = await connectBrowser(socketPath);
+      await expect(client.request('wait')).rejects.toThrow(/Browser IPC closed; in-flight outcome may be unknown \(pending=1, lastRequest=1:wait\)/u);
+      client.close();
+    } finally {
+      await new Promise<void>(resolve => server.close(() => resolve()));
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it.each([false, true])('waits for release acknowledgement without heartbeat teardown (in-flight=%s)', async inFlight => {
     vi.useFakeTimers();
     const execution = deferred(), release = deferred(), heartbeat = deferred();

@@ -49,14 +49,22 @@ export class Coordinator {
         if (h.state === 'held') void this.revoke(h, 'worker-exit');
       }));
       h.child.stderr.resume();
-      h.child.on('error', () => {});
+      h.child.on('error', error => this.log('worker-error', { epoch: h.epoch, error: error.message }));
       await new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error('Worker startup timeout')), this.startupMs);
-        h.child.once('exit', () => { clearTimeout(timer); reject(new Error('Worker startup exit')); });
+        h.child.once('exit', (code, signal) => {
+          clearTimeout(timer);
+          this.log('worker-startup-exit', { epoch: h.epoch, code, signal });
+          reject(new Error(`Worker startup exit (code=${code}, signal=${signal || 'none'})`));
+        });
         h.child.on('message', message => {
           if (message.kind === 'daemon-started') this.log('daemon-started', { epoch: h.epoch, pid: message.pid });
           else if (message.kind === 'ready') { clearTimeout(timer); resolve(); }
-          else if (message.kind === 'init-error') { clearTimeout(timer); reject(new Error(message.error)); }
+          else if (message.kind === 'init-error') {
+            clearTimeout(timer);
+            this.log('worker-init-error', { epoch: h.epoch, error: message.error });
+            reject(new Error(message.error));
+          }
           else if (message.kind === 'result') {
             const item = h.pending.get(message.id); if (!item) return;
             h.pending.delete(message.id);
@@ -64,13 +72,22 @@ export class Coordinator {
             message.error ? item.reject(new Error(message.error)) : item.resolve(message.result);
           }
         });
-        h.child.send({ kind: 'init', url: this.url, target: this.target, options: h.workerOptions });
+        h.child.send({ kind: 'init', url: this.url, target: this.target, options: h.workerOptions }, error => {
+          if (!error) return;
+          clearTimeout(timer);
+          this.log('worker-init-send-error', { epoch: h.epoch, error: error.message });
+          reject(error);
+        });
       });
       if (this.closed || h.state !== 'allocating') throw new Error('Allocation cancelled');
       h.state = 'held'; h.hardDeadline = performance.now() + this.hardMs; h.deadline = Math.min(performance.now() + this.ttlMs, h.hardDeadline);
       this.log('granted', { actor: h.actor, epoch: h.epoch, pid: h.child.pid, waitMs: performance.now() - ticket.enqueued });
       ticket.resolve({ actor: h.actor, epoch: h.epoch, token: h.token, boot: this.boot });
-    } catch (error) { ticket.reject(error); await this.revoke(h, 'allocation-failed'); }
+    } catch (error) {
+      this.log('allocation-failed', { epoch: h.epoch, error: error.message });
+      ticket.reject(error);
+      await this.revoke(h, 'allocation-failed');
+    }
     finally { this.busy = false; void this.pump(); }
   }
   validate(lease) {
