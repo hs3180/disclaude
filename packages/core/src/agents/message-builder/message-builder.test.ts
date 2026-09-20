@@ -65,6 +65,7 @@ describe('MessageBuilder', () => {
       expect(result).toContain('invoke `disclaude channel research_workspace --context 11111111-1111-1111-1111-111111111111 --request-file <json-file>` directly');
       expect(result).toContain('do not search for or substitute a `research-workflow` Skill');
       expect(result).toContain('Creation is paused');
+      expect(result).toContain('submit it with control=feedback using that revision, get again, then resume with the new revision');
     });
 
     it('does not inject research operations without a service-issued context', () => {
