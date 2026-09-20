@@ -322,6 +322,17 @@ describe('persistent research lifecycle', () => {
     expect(fixture(undefined, undefined, dir).manager.get(p.id, 'alice', 'chat-a').feedback).toEqual(done.feedback);
   });
 
+  it('surfaces a bounded execution error while preserving failed-workspace recovery', async () => {
+    const f = fixture(() => Promise.reject(new Error('checkpoint schema mismatch: '.repeat(40))));
+    const project = await f.manager.create(input);
+    await f.manager.act(project.id, 'alice', 'chat-a', project.revision, 'resume'); await f.manager.idle(project.id);
+    const failed = f.manager.get(project.id, 'alice', 'chat-a');
+    expect(failed.status).toBe('failed');
+    expect(failed.error).toContain('原因：checkpoint schema mismatch:');
+    expect(failed.error!.length).toBeLessThan(380);
+    expect(failed.directions).toEqual([]);
+  });
+
   it('retains the last document snapshot and pending feedback when a phase-boundary read fails', async () => {
     const snapshot = { token: 'ABC123', revision: 1, body: 'Include taxes', comments: [], fingerprint: 'one', syncedAt: new Date().toISOString() };
     const readDocument = vi.fn().mockResolvedValue(snapshot);

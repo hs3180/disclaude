@@ -408,7 +408,12 @@ export class ResearchManager {
           this.record(p, '任务已取消，在途回合未完成且结果未计入成果。');
         } else {
           p.status = 'failed';
-          p.error = error instanceof ResearchDirectoryError ? error.message : '当前回合未完成，已有成果保留。可检查材料后恢复重试。';
+          if (error instanceof ResearchDirectoryError) {
+            p.error = error.message;
+          } else {
+            const detail = error instanceof Error ? error.message.replace(/\s+/gu, ' ').trim().slice(0, 300) : '';
+            p.error = `当前回合未完成，已有成果保留。可检查材料后恢复重试。${detail ? ` 原因：${detail}` : ''}`;
+          }
           this.record(p, p.error);
         }
       }
