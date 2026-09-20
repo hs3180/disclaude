@@ -585,6 +585,32 @@ describe('persistent research lifecycle', () => {
     expect(done.directions[0].findings).toEqual([finding]);
   });
 
+  it('ignores an idempotent receipt for feedback already committed by an earlier checkpoint', async () => {
+    let calls = 0;
+    const { manager } = checkpointFixture(snapshot => {
+      calls++;
+      if (calls === 1) {
+        return Promise.resolve({ state: 'continue', message: 'Applied the requested adjustment',
+          work: [{ title: 'Verify adjustment', status: 'pending' as const, findings: [] }],
+          feedback: [{ feedbackIndex: 0, status: 'applied' as const, reason: 'Recorded in the first checkpoint.', workIndexes: [0] }], questions: [] });
+      }
+      const [direction] = snapshot.directions;
+      return Promise.resolve({ state: 'complete', message: 'Finished verification',
+        work: [{ id: direction.id, title: direction.title, status: 'done' as const, findings: [] }],
+        // The model repeated the already-committed receipt; it must not make
+        // the otherwise valid completion fail.
+        feedback: [{ feedbackIndex: 0, status: 'applied' as const, reason: 'Repeated receipt.', workIndexes: [0] }],
+        summary: 'Adjustment verified.', questions: [] });
+    });
+    const project = await manager.create(input);
+    await manager.act(project.id, 'alice', 'chat-a', project.revision, 'feedback', 'Check the adjustment');
+    await manager.act(project.id, 'alice', 'chat-a', manager.get(project.id, 'alice', 'chat-a').revision, 'resume');
+    await manager.idle(project.id);
+    const done = manager.get(project.id, 'alice', 'chat-a');
+    expect(done.status).toBe('completed');
+    expect(done.feedback[0].status).toBe('applied');
+  });
+
   it.each(['completed', 'waiting-user', 'failed', 'paused'] as const)(
     'preserves committed %s state when shutdown races final card delivery', async status => {
       const entered = deferred<void>(), delivery = deferred<string>();

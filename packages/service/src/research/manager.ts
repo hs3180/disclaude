@@ -306,11 +306,22 @@ export class ResearchManager {
   private applyCheckpoint(p: ResearchProject, snapshot: ResearchProject, result: ResearchCheckpoint,
     pending: ResearchProject['feedback'], feedbackCount: number): void {
     const expected = pending.map(f => p.feedback.indexOf(f));
-    if (result.state !== 'waiting-user' && (result.feedback.length !== expected.length
-      || result.feedback.some(f => !expected.includes(f.feedbackIndex)))) {
+    // A long-running turn can carry a model-generated receipt for feedback
+    // already committed by an earlier checkpoint. Treat that receipt as an
+    // idempotent no-op; only current pending feedback is required to be
+    // accounted for and is allowed to change durable state.
+    for (const receipt of result.feedback) {
+      const prior = p.feedback[receipt.feedbackIndex];
+      if (!prior || (!expected.includes(receipt.feedbackIndex)
+        && (prior.status === 'pending' || prior.status === 'needs-clarification'))) {
+        throw new Error('意见不属于本次执行上下文。');
+      }
+    }
+    const currentFeedback = result.feedback.filter(f => expected.includes(f.feedbackIndex));
+    if (result.state !== 'waiting-user' && (currentFeedback.length !== expected.length
+      || currentFeedback.some(f => !expected.includes(f.feedbackIndex)))) {
       throw new Error('任务尚未逐条说明待处理意见。');
     }
-    if (result.feedback.some(f => !expected.includes(f.feedbackIndex))) { throw new Error('意见不属于本次执行上下文。'); }
     // Validate the entire candidate before changing persisted user-visible state.
     const directions = structuredClone(p.directions);
     const updatedIds: string[] = [];
@@ -340,7 +351,7 @@ export class ResearchManager {
       throw new Error('任务仍有待处理工作，不能标记完成。');
     }
     p.directions = directions;
-    for (const decision of result.feedback) {
+    for (const decision of currentFeedback) {
       const feedback = p.feedback[decision.feedbackIndex];
       feedback.status = decision.status;
       feedback.reason = decision.reason;
