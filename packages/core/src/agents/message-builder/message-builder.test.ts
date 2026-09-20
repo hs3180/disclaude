@@ -85,6 +85,18 @@ describe('MessageBuilder', () => {
       expect(result).toContain('Location Awareness');
     });
 
+    it('can suppress generic next-step card guidance for internal runs', () => {
+      const builder = new MessageBuilder({ suppressNextStepGuidance: true });
+      const result = builder.buildEnhancedContent({
+        text: 'Advance the bounded Research checkpoint.',
+        messageId: 'research:project-id:revision',
+      }, 'research:project-id:revision');
+
+      expect(result).not.toContain('Next Steps After Response');
+      expect(result).not.toContain('send_interactive');
+      expect(result).toContain('Output Format Requirements');
+    });
+
     it('should not include guidance sections for skill commands', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: '/reset',

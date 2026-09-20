@@ -169,7 +169,9 @@ export class MessageBuilder {
     // Issue #3641: Skip next-step guidance in topic threads to reduce noise
     const supportsInteractiveCards = capabilities?.supportsCard !== false &&
       (capabilities?.supportedMcpTools === undefined || capabilities.supportedMcpTools.includes('send_interactive'));
-    const nextStepGuidance = isTopicThread ? '' : buildNextStepGuidance(supportsInteractiveCards);
+    const nextStepGuidance = isTopicThread || this.options.suppressNextStepGuidance
+      ? ''
+      : buildNextStepGuidance(supportsInteractiveCards);
     const outputFormatGuidance = buildOutputFormatGuidance();
     const locationAwarenessGuidance = buildLocationAwarenessGuidance();
 

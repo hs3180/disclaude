@@ -16,7 +16,12 @@ export function createResearchRunner(workspace: string): StepRunner {
       onTurnResult: result => { completed = result; return Promise.resolve(); },
       sendCard: () => Promise.reject(new Error('Research stages return structured findings, not chat cards')),
       sendFile: () => Promise.reject(new Error('Research stages do not send files')),
-    }, { sdkSessionKey: identity, skipHistory: true, cwdProvider: () => cwd });
+    }, {
+      sdkSessionKey: identity,
+      skipHistory: true,
+      cwdProvider: () => cwd,
+      messageBuilderOptions: { suppressNextStepGuidance: true },
+    });
     const schema = step.type === 'plan' ? '{"directions":["1–4 focused research directions, each at most 180 characters"]}'
       : step.type === 'investigate' ? '{"findings":[{"claim":"<=700 chars","kind":"fact|inference|uncertain","sources":[{"title":"<=160 chars","location":"URL or supplied-material reference <=500 chars","excerpt":"short supporting excerpt <=400 chars"}],"caveat":"conflict, counterevidence or uncertainty <=500 chars"}]}'
         : '{"summary":"<=3000 chars, link claims to the named evidence already collected","questions":["up to 6 unresolved questions <=300 chars each"]}';

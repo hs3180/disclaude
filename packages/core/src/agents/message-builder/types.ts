@@ -86,6 +86,9 @@ export interface MessageBuilderSection {
  * - Extra attachment info (e.g., image analyzer MCP hints)
  */
 export interface MessageBuilderOptions {
+  /** Omit generic chat follow-up card guidance for an internal bounded run. */
+  suppressNextStepGuidance?: boolean;
+
   /**
    * Build channel-specific header content.
    * Inserted before metadata (chatId, messageId, etc.).
