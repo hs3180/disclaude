@@ -3,7 +3,7 @@ import { pathToFileURL } from 'node:url';
 export async function connectBrowser(socketPath) {
   const socket = createConnection(socketPath);
   socket.setEncoding('utf8');
-  let counter = 0, buffer = '';
+  let counter = 0, buffer = '', lastRequest;
   const pending = new Map();
   socket.on('data', chunk => {
     buffer += chunk;
@@ -18,8 +18,8 @@ export async function connectBrowser(socketPath) {
     }
   });
   const rejectAll = error => { for (const item of pending.values()) { clearTimeout(item.timer); item.reject(error); } pending.clear(); };
-  socket.on('error', rejectAll);
-  socket.on('close', () => rejectAll(new Error('Browser IPC closed; in-flight outcome may be unknown')));
+  socket.on('error', error => rejectAll(new Error(`Browser IPC error; in-flight outcome may be unknown (pending=${pending.size}, lastRequest=${lastRequest ? `${lastRequest.id}:${lastRequest.method}` : 'none'}): ${error.message}`)));
+  socket.on('close', () => rejectAll(new Error(`Browser IPC closed; in-flight outcome may be unknown (pending=${pending.size}, lastRequest=${lastRequest ? `${lastRequest.id}:${lastRequest.method}` : 'none'})`)));
   await new Promise((resolve, reject) => { socket.once('connect', resolve); socket.once('error', reject); });
   return {
     request(method, args = {}) {
@@ -27,6 +27,7 @@ export async function connectBrowser(socketPath) {
       return new Promise((resolve, reject) => {
         const id = ++counter;
         const timer = setTimeout(() => { pending.delete(id); reject(new Error('Browser request timeout; outcome unknown')); socket.destroy(); }, 190000);
+        lastRequest = { id, method };
         pending.set(id, { resolve, reject, timer }); socket.write(JSON.stringify({ id, method, ...args }) + '\n');
       });
     },
