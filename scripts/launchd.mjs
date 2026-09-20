@@ -529,7 +529,7 @@ export function resolveChromiumProfileDir() {
 /**
  * Whether the chromium-cdp service runs headed or headless.
  *
- * Defaults to headless (matches start-chromium-cdp.sh). Set CHROMIUM_CDP_HEADED=1
+ * Defaults to headless. Set CHROMIUM_CDP_HEADED=1
  * to run a visible window (useful to confirm login state on a desktop).
  *
  * @returns {boolean} true when headless (the default)
@@ -544,7 +544,7 @@ export function resolveChromiumHeadless() {
  *
  * Priority: CHROMIUM_CDP_BINARY (env/.env) -> common macOS app paths ->
  * `google-chrome`/`chromium` on PATH -> Playwright's bundled Chromium
- * (mirrors find_chrome_binary in scripts/start-chromium-cdp.sh).
+ * The selected executable is resolved through the managed Chromium configuration.
  *
  * @returns {string | null} resolved binary path, or null if none found
  */
@@ -594,7 +594,8 @@ export function resolveChromiumBinary() {
  *
  * --remote-debugging-address defaults to 127.0.0.1 (IPv4) to fix the
  * IPv4<->IPv6 endpoint drift; --user-data-dir is the persistent profile.
- * Other flags mirror start-chromium-cdp.sh where they make sense on macOS
+ * Other flags are selected by the managed browser service where they make sense
+ * on macOS
  * (no --no-sandbox/--disable-gpu needed for a host user-run Chrome).
  *
  * @returns {string[]} Chrome argument vector
@@ -627,7 +628,7 @@ export function buildChromiumArguments() {
 /**
  * Diagnose a CDP port conflict before generating the plist (Issue #4807: "占用
  * 冲突时给出明确诊断，而非静默失败"). Keeps the manual
- * start-chromium-cdp.sh check_port spirit but never hard-fails — launchd's
+ * port check is advisory but never hard-fails — launchd's
  * KeepAlive needs the port free, so we warn loudly with the offending PID/cmd.
  *
  * @param {number} port
