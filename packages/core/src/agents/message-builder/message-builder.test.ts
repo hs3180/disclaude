@@ -54,6 +54,27 @@ describe('MessageBuilder', () => {
 
       expect(result).toContain('What is the weather today?');
     });
+
+    it('should give a durable research request a direct workspace operation', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '调查这个问题并保留可追溯结果',
+        messageId: 'msg-123',
+        researchContext: '11111111-1111-1111-1111-111111111111',
+      }, 'chat-456');
+
+      expect(result).toContain('invoke `disclaude channel research_workspace --context 11111111-1111-1111-1111-111111111111 --request-file <json-file>` directly');
+      expect(result).toContain('do not search for or substitute a `research-workflow` Skill');
+      expect(result).toContain('Creation is paused');
+    });
+
+    it('does not inject research operations without a service-issued context', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '调查这个问题',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).not.toContain('research_workspace --context');
+    });
   });
 
   describe('buildEnhancedContent - guidance sections', () => {
