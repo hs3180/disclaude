@@ -16,7 +16,8 @@ export function researchCard(title: string, elements: unknown[]): Record<string,
 }
 /** Plain-text status is the default Research surface; cards are reserved for explicit feedback/details. */
 export function researchStatusText(p: ResearchProject): string {
-  const lines = [`研究：${p.title}`, `状态：${statusText[p.status]} · revision ${p.revision}`];
+  const lines = [`研究：${p.title}`, `研究 ID：${p.id}`, `状态：${statusText[p.status]} · revision ${p.revision}`,
+    `重返：使用 research_workspace get researchId=${p.id}；控制操作需先读取当前 revision。`];
   if (p.scope) { lines.push(`范围：${p.scope}`); }
   if (p.workingDir) { lines.push(`项目目录：${p.workingDir}`); }
   if (p.document) { lines.push(`关联文档：${p.document.url}${p.document.error ? `（${p.document.error}）` : ''}`); }
