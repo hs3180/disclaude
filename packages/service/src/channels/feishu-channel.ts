@@ -265,6 +265,10 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     return this.feishuMessageHandler.requestPrivateWorkflow(request);
   }
 
+  requestAgentInput(request: import('@disclaude/core').AgentInputRequest, context: import('@disclaude/core').AgentInputContext): Promise<void> {
+    return this.feishuMessageHandler.requestAgentInput(request, context);
+  }
+
   constructor(config: FeishuChannelConfig = {}) {
     super(config, 'feishu', 'Feishu');
     // Preserve explicitly supplied empty strings so callers/tests can model
