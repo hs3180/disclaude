@@ -94,7 +94,10 @@ while read line; do :; done`);
       await vi.waitFor(() => expect(readFileSync(join(dirname(binary), 'cdp'), 'utf8').trim()).toBe('|/tmp/browser.sock'));
       expect(readFileSync(join(dirname(binary), 'args'), 'utf8').trim().split('\n')).toEqual([
         'app-server', '--stdio', '--disable', 'browser_use', '--disable', 'browser_use_external', '--disable', 'browser_use_full_cdp_access',
-        ...(inputEnabled ? ['--enable', 'default_mode_request_user_input'] : []),
+        ...(inputEnabled ? [
+          '--enable', 'default_mode_request_user_input',
+          '-c', 'tools.experimental_request_user_input={enabled=true}',
+        ] : []),
       ]);
     } finally { await transport.close(); }
   });

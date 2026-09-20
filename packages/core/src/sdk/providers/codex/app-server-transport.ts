@@ -71,7 +71,14 @@ export class CodexAppServerTransport {
       sessionKey: options.sessionKey, runId: randomUUID(), ...options.correlation,
     }));
     this.child = spawn(options.binary ?? 'codex', ['app-server', '--stdio', ...CODEX_BROWSER_DISABLE_ARGS,
-      ...(options.onUserInput ? ['--enable', 'default_mode_request_user_input'] : [])], {
+      ...(options.onUserInput ? [
+        '--enable', 'default_mode_request_user_input',
+        // The feature flag alone exposes the protocol surface. Codex 0.155
+        // also requires the experimental tool config to expose async input to
+        // the model; keep this scoped to app-server children with a host
+        // input callback instead of mutating the user's global config.
+        '-c', 'tools.experimental_request_user_input={enabled=true}',
+      ] : [])], {
       env: browserAgentEnv(options.env),
       stdio: ['pipe', 'pipe', 'pipe'],
       // A dedicated POSIX process group owns ordinary tool descendants too.
