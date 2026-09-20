@@ -4,12 +4,16 @@ import { existsSync, readFileSync } from 'node:fs';
 describe('single service public contract (#4924)', () => {
   it('exports only the unified executable and service workspace', () => {
     const root = JSON.parse(readFileSync('package.json', 'utf8'));
+    const lock = JSON.parse(readFileSync('package-lock.json', 'utf8'));
     const service = JSON.parse(readFileSync('packages/service/package.json', 'utf8'));
     expect(Object.keys(root.bin)).toEqual(['disclaude']);
     expect(root.dependencies['@disclaude/service']).toBeDefined();
     expect(service.bin).toBeUndefined();
     expect(root.dependencies['@disclaude/primary-node']).toBeUndefined();
+    expect(lock.packages['packages/primary-node']).toBeUndefined();
+    expect(lock.packages['packages/worker-node']).toBeUndefined();
     expect(existsSync('packages/primary-node')).toBe(false);
+    expect(existsSync('packages/worker-node')).toBe(false);
     expect(existsSync('bin/disclaude-primary.js')).toBe(false);
     expect(existsSync('packages/core/src/types/primary-node.ts')).toBe(false);
   });
