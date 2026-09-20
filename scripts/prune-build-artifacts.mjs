@@ -10,7 +10,17 @@ export function prunePackageArtifacts(packageDir) {
   const src = join(packageDir, 'src');
   const dist = join(packageDir, 'dist');
   if (!existsSync(src)) throw new Error(`Missing source directory: ${src}`);
-  if (!existsSync(dist)) return [];
+  if (!existsSync(dist)) {
+    // TypeScript's incremental state can outlive a manually removed dist/
+    // tree. In that state tsc -b may incorrectly skip emission, leaving
+    // package consumers unable to resolve the declared dist entrypoint.
+    const buildInfo = join(packageDir, 'tsconfig.tsbuildinfo');
+    if (existsSync(buildInfo)) {
+      unlinkSync(buildInfo);
+      return [buildInfo];
+    }
+    return [];
+  }
   if (lstatSync(src).isSymbolicLink() || lstatSync(dist).isSymbolicLink()) {
     throw new Error(`Refusing cleanup of a symlinked source/output tree: ${packageDir}`);
   }
