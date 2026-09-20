@@ -234,6 +234,25 @@ describe('MessageHandler', () => {
   // Constructor & lifecycle
   // -----------------------------------------------------------------------
   describe('constructor and lifecycle', () => {
+    it('routes a native SDK input form directly to its request without logging or enqueueing the answer', async () => {
+      const { handler } = createHandler();
+      const reply = vi.fn().mockResolvedValue({ code: 0, data: { message_id: 'input-card', chat_id: 'chat_001' } });
+      const patch = vi.fn().mockResolvedValue({ code: 0 });
+      handler.initialize({ im: { message: { reply, patch } } } as unknown as import('@larksuiteoapi/node-sdk').Client);
+      const respond = vi.fn().mockResolvedValue(undefined);
+      await handler.requestAgentInput({ requestId: 'request-1', threadId: 'thread-1', turnId: 'turn-1', itemId: 'item-1', isBlocking: true,
+        signal: new AbortController().signal, respond, questions: [{ id: 'constraint', header: 'Scope', question: 'Which scope?', isOther: true, isSecret: false, options: null }] },
+      { actorId: 'user_001', chatId: 'chat_001', sourceMessageId: 'source' });
+      const card = JSON.parse(reply.mock.calls[0][0].data.content);
+      const { name } = card.body.elements.find((e: { tag: string }) => e.tag === 'form').elements.at(-1);
+      await handler.handleCardAction(cardActionEvent({ context: { open_message_id: 'input-card', open_chat_id: 'chat_001' },
+        action: { name, form_value: { text_0: 'answer-only-in-original-rpc' } } }));
+      await vi.waitFor(() => expect(respond).toHaveBeenCalledExactlyOnceWith({ constraint: { answers: ['answer-only-in-original-rpc'] } }));
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+      expect(mockState.logCardInteraction).not.toHaveBeenCalled();
+      expect(mockState.interactionHandleAction).not.toHaveBeenCalled();
+      handler.clearClient();
+    });
     it('accepts an agent-defined workflow without a configured consumer and keeps submission out of chat', async () => {
       const { handler } = createHandler();
       mockState.sendMessage.mockResolvedValueOnce('task-card' as never);
