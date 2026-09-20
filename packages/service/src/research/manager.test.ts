@@ -598,6 +598,13 @@ describe('persistent research lifecycle', () => {
     }
   });
 
+  it('accepts a complete checkpoint followed by one stray closing wrapper', () => {
+    const checkpoint = JSON.stringify({ state: 'continue', message: 'Progress', work: [], feedback: [], questions: [] });
+    expect(parseResearchCheckpoint(`${checkpoint}]}`)).toMatchObject({ state: 'continue', message: 'Progress' });
+    expect(() => parseResearchCheckpoint(`${checkpoint}] }`)).toThrow();
+    expect(() => parseResearchCheckpoint(`${checkpoint} trailing text`)).toThrow();
+  });
+
   it('merges a bounded update into a large pending direction without deleting evidence', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'research-merge-')); directories.push(dir);
     const directionId = '11111111-1111-4111-8111-111111111111';

@@ -23,6 +23,47 @@ export interface ResearchCheckpoint {
   clarification?: string;
 }
 
+/**
+ * Decode the model response while tolerating one common JSON framing mistake:
+ * a complete object followed by a stray closing array/object pair. Nothing
+ * else is repaired; arbitrary trailing text remains a hard parse failure.
+ */
+function parseCheckpointJson(text: string): unknown {
+  const source = text.trim();
+  try {
+    return JSON.parse(source);
+  } catch (error) {
+    if (!source.startsWith('{') || !source.endsWith(']}')) { throw error; }
+    let objectDepth = 0;
+    let arrayDepth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let index = 0; index < source.length; index++) {
+      const character = source[index];
+      if (inString) {
+        if (escaped) { escaped = false; }
+        else if (character === '\\') { escaped = true; }
+        else if (character === '"') { inString = false; }
+        continue;
+      }
+      if (character === '"') { inString = true; continue; }
+      if (character === '{') { objectDepth++; continue; }
+      if (character === '[') { arrayDepth++; continue; }
+      if (character === ']') { arrayDepth--; continue; }
+      if (character === '}') {
+        objectDepth--;
+        if (objectDepth < 0 || arrayDepth < 0) { throw error; }
+        if (objectDepth === 0 && arrayDepth === 0) {
+          const remainder = source.slice(index + 1);
+          if (remainder !== ']}') { throw error; }
+          return JSON.parse(source.slice(0, index + 1));
+        }
+      }
+    }
+    throw error;
+  }
+}
+
 /** Shape/size validation only: valid source fields are not verification of truth. */
 export function parseResearchCheckpoint(text: string): ResearchCheckpoint {
   const object = (v: unknown): Record<string, unknown> => {
@@ -37,7 +78,7 @@ export function parseResearchCheckpoint(text: string): ResearchCheckpoint {
     if (!Array.isArray(v) || v.length > max) { throw new Error('Invalid task checkpoint list'); }
     return v;
   };
-  const r = object(JSON.parse(text.trim().replace(/^```(?:json)?\s*/u, '').replace(/\s*```$/u, '')));
+  const r = object(parseCheckpointJson(text.trim().replace(/^```(?:json)?\s*/u, '').replace(/\s*```$/u, '')));
   if (!['continue', 'waiting-user', 'complete'].includes(String(r.state))) { throw new Error('Invalid task checkpoint state'); }
   const work = list(r.work ?? [], 8).map(value => {
     const w = object(value);
