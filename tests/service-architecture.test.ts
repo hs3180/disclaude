@@ -22,6 +22,22 @@ describe('single service public contract (#4924)', () => {
       expect(readFileSync(file, 'utf8')).not.toMatch(/\b(NodeType|NodeCapabilities|BaseNodeConfig|PrimaryNodeConfig|enableLocalExec)\b/);
     }
   });
+  it('keeps release-facing metadata and documentation on the unified entrypoint', () => {
+    const lockText = readFileSync('package-lock.json', 'utf8');
+    expect(lockText).not.toMatch(/@disclaude\/(?:primary|worker)-node|disclaude-worker/u);
+
+    const releaseDocs = [
+      'README.md',
+      'docs/releases/0.5.3.md',
+      'docs/releases/0.5.3/release-acceptance.md',
+      'docs/releases/git-install.md',
+    ];
+    for (const file of releaseDocs) {
+      expect(readFileSync(file, 'utf8'), file).not.toMatch(
+        /(?:packages\/(?:primary|worker)-node|disclaude-(?:primary|worker))/u,
+      );
+    }
+  });
   it('starts Docker through the public CLI', () => {
     expect(readFileSync('Dockerfile.service', 'utf8')).toContain('CMD ["disclaude", "start"]');
     expect(readFileSync('docker-compose.yml', 'utf8')).toContain('command: ["disclaude", "start", "--api-port", "19200"]');
