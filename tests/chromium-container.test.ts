@@ -32,4 +32,9 @@ describe('container Chromium configuration', () => {
     expect(readFileSync(join(browser.build.context, browser.build.dockerfile), 'utf8')).toContain('COPY start-chromium.sh');
     expect(browser.ports).toEqual(['127.0.0.1:${CDP_PORT:-9222}:${CDP_PORT:-9222}']);
   });
+
+  it('keeps Chromium automation exposure disabled in the container launcher', () => {
+    const launcher = readFileSync(resolve('docker/start-chromium.sh'), 'utf8');
+    expect(launcher).toContain('--disable-blink-features=AutomationControlled');
+  });
 });
