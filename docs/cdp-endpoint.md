@@ -1,4 +1,11 @@
-# CDP Endpoint — Headless Chromium Contract
+# Docker Chromium service-internal CDP endpoint
+
+> This document describes the Docker browser service's internal wiring and
+> operator diagnostics only. It is not an Agent interface. Agent processes must
+> use the private IPC launcher described in `docs/browser-coordination.md` and
+> must not receive `BU_CDP_URL`, `BU_CDP_WS`, `CDP_PORT`, or connect directly to
+> CDP. The former Agent-level direct-CDP instructions were removed from the
+> 0.6.0 path.
 
 > Issue #4496 (part 1, docs). This page defines the **endpoint side** of the CDP
 > contract: the containerized headless Chromium that any browser driver
@@ -249,28 +256,16 @@ executed: the driver-side matrix (part 2) and the compose-fronted endpoint
 
 ## Agent-level e2e harness (#4602)
 
-The matrix above exercises the **CLI** layer. The **agent-level** chain
-(agent discovers the browser-use skill unprompted → attaches via `BU_CDP_URL`
-without self-spawning → `js()` round-trip → screenshot artifact → dead-endpoint
-error is explicit) is covered by a repeatable one-command harness:
+The Agent-level harness uses the same coordinated IPC path as production. Run
+it only with `DISCLAUDE_BROWSER_SOCKET` and the private launcher configured; it
+does not accept a CDP URL or expose a browser port to the Agent. Its failure
+case overrides one disposable IPC socket and verifies an explicit broker error.
+The assertion core is unit-tested in CI
+(`packages/service/src/testing/browser-use-e2e.test.ts`).
 
 ```bash
-npx tsx scripts/browser-use-agent-e2e.mts \
-  --workspace <workspace-dir> --cdp-url http://disclaude-chromium:9222
+npx tsx scripts/browser-use-agent-e2e.mts --workspace <workspace-dir>
 ```
-
-It instantiates a real one-shot ChatAgent (`AgentFactory.createAgent`), feeds
-it a prompt that never names the skill (so discovery is genuinely unprompted),
-and prints a PASS/FAIL table for the 5 checks. Live-only inputs (model API
-key, reachable CDP endpoint) mean the run belongs to an operator shell — the
-same tooling/live split as the Card Kit bench. The assertion core is
-unit-tested in CI (`packages/service/src/testing/browser-use-e2e.test.ts`).
-
-The dead-endpoint check inherits the daemon-pin trap above: the prompt tells
-the agent to reload the harness CLI (without naming it — discovery must stay
-unprompted) **before** flipping `BU_CDP_URL` to a dead port, and once more
-after, so check 5 can't pass vacuously against the daemon's still-healthy
-pinned session — the same guard `smoke.sh` case 6 has.
 
 ## Related
 

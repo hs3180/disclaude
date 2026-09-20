@@ -1,6 +1,6 @@
 /**
  * Agent-level browser-use e2e harness — assertion + orchestration core
- * (Issue #4602 part 2, injection channel option b).
+ * (Issue #4602 part 2, coordinated IPC channel).
  *
  * Part 1 (`scripts/browser-use-smoke.sh`, PR #4610) encoded the **CLI-level**
  * smoke matrix as a repeatable script: it pipes Python straight into the
@@ -53,7 +53,7 @@ export const E2E_CHECKS: readonly E2ECheck[] = [
   { id: 'attach_no_self_spawn', label: 'attached via coordinated IPC; no self-spawned browser (agent-observed attach mode)' },
   { id: 'js_round_trip', label: 'js() script injection returned the expected structured result' },
   { id: 'screenshot_artifact', label: 'screenshot artifact exists in workspace and is a non-empty PNG' },
-  { id: 'cdp_failure_explicit', label: 'IPC-unreachable path produced an explicit error, not a silent self-spawn fallback' },
+  { id: 'ipc_failure_explicit', label: 'IPC-unreachable path produced an explicit error, not a silent self-spawn fallback' },
 ] as const;
 
 /**
@@ -84,7 +84,7 @@ skill_discovery=<which skill or CLI you used to drive the browser>
 attach_no_self_spawn=<true if you used the coordinated entry point without launching a local browser; otherwise false plus what happened>
 js_round_trip=<the JSON string step 2 returned, or ERROR>
 screenshot_artifact=<the path you saved to, or ERROR>
-cdp_failure_explicit=<the error text from step 4, or EMPTY if it silently succeeded>
+ipc_failure_explicit=<the IPC error text from step 4, or EMPTY if it silently succeeded>
 
 The e2e-report block must be the last thing in your reply.`;
 
@@ -149,7 +149,7 @@ function clip(s: string, max = 160): string {
  *   (same shape as the CLI matrix case 2 in docs/cdp-endpoint.md).
  * - screenshot_artifact: path resolves inside workspaceDir, exists, size > 0,
  *   and starts with the PNG magic bytes.
- * - cdp_failure_explicit: value non-empty and contains an error indicator
+ * - ipc_failure_explicit: value non-empty and contains an error indicator
  *   (refused / unreachable / timeout / error-ish) — a silent success here is
  *   exactly the #4496 Scope-3 regression this check exists to catch.
  */
@@ -214,7 +214,7 @@ export function evaluateE2EReport(
         );
         break;
       }
-      case 'cdp_failure_explicit': {
+      case 'ipc_failure_explicit': {
         const looksLikeError = /(refus|unreach|tim(e)?d? ?out|error|fail|closed|reset|econn|enoent|no such file)/i.test(raw);
         push(
           check,

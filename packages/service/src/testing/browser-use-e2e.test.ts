@@ -46,7 +46,7 @@ function passingReport(shotPath: string): string {
     'attach_no_self_spawn=true',
     'js_round_trip={"marker":42,"heading":"hello-agent-e2e"}',
     `screenshot_artifact=${shotPath}`,
-    'cdp_failure_explicit=BU_CDP_URL http://127.0.0.1:1 unreachable after 30s: Connection refused',
+    'ipc_failure_explicit=DISCLAUDE_BROWSER_SOCKET /tmp/missing-browser.sock: connection refused',
     '```',
   ].join('\n');
 }
@@ -142,14 +142,14 @@ describe('evaluateE2EReport — verdicts per check', () => {
     expect(evaluateE2EReport(passingReport(shot), workspaceDir).failed).toEqual([]);
   });
 
-  it('cdp_failure_explicit fails on EMPTY (silent success on a dead endpoint — the #4496 Scope-3 regression)', () => {
+  it('ipc_failure_explicit fails on EMPTY (silent success on a dead coordinator)', () => {
     const shot = writeShot(E2E_SCREENSHOT_RELATIVE_PATH);
     const reply = passingReport(shot).replace(
-      /cdp_failure_explicit=.*/,
-      'cdp_failure_explicit=EMPTY',
+      /ipc_failure_explicit=.*/,
+      'ipc_failure_explicit=EMPTY',
     );
     const verdict = evaluateE2EReport(reply, workspaceDir);
-    expect(verdict.failed).toContain('cdp_failure_explicit');
+    expect(verdict.failed).toContain('ipc_failure_explicit');
   });
 
   it('every missing key is unevaluable and reported, not silently skipped', () => {

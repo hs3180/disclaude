@@ -19,7 +19,6 @@ import {
 
 interface Argv {
   workspaceDir?: string;
-  cdpUrl?: string;
   apiKey?: string;
   model?: string;
   provider?: string;
@@ -37,7 +36,6 @@ Usage:
 Options:
   --workspace <dir>    workspace dir (agent cwd + artifact root).
                        Default: DISCLAUDE_WORKSPACE_DIR env or ./workspace
-  --cdp-url <url>      Retired; use DISCLAUDE_BROWSER_SOCKET and the IPC adapter PATH
   --api-key <key>      model API key (default: env ANTHROPIC_API_KEY)
   --model <name>       model override (default: disclaude config)
   --provider <name>    provider override (default: disclaude config)
@@ -57,7 +55,6 @@ function parseArgs(): Argv {
     const next = (): string => args[++i] ?? '';
     switch (a) {
       case '--workspace': argv.workspaceDir = next(); break;
-      case '--cdp-url': argv.cdpUrl = next(); break;
       case '--api-key': argv.apiKey = next(); break;
       case '--model': argv.model = next(); break;
       case '--provider': argv.provider = next(); break;
@@ -79,7 +76,6 @@ async function main(): Promise<void> {
   const workspaceDir = path.resolve(
     argv.workspaceDir ?? process.env.DISCLAUDE_WORKSPACE_DIR ?? './workspace',
   );
-  if (argv.cdpUrl) throw new Error('--cdp-url is retired for agent tests; configure the browser IPC socket');
   const apiKey = argv.apiKey ?? Config.getAgentConfig().apiKey;
 
   const config: HarnessConfig = {
