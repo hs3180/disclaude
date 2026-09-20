@@ -25,7 +25,11 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: ['src/**/*.test.ts', 'packages/**/*.test.ts', 'skills/**/*.test.ts', 'tests/**/*.test.ts'],
+    include: [
+      'src/**/*.test.ts', 'src/**/*.test.mjs',
+      'packages/**/*.test.ts', 'packages/**/*.test.mjs',
+      'skills/**/*.test.ts', 'tests/**/*.test.ts',
+    ],
     exclude: [
       '**/node_modules/**',
       '**/dist/**',
