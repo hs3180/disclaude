@@ -598,6 +598,34 @@ describe('persistent research lifecycle', () => {
     }
   });
 
+  it('merges a bounded update into a large pending direction without deleting evidence', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'research-merge-')); directories.push(dir);
+    const directionId = '11111111-1111-4111-8111-111111111111';
+    const oldFindings = Array.from({ length: 27 }, (_, index) => ({ ...finding, claim: `Existing evidence ${index}` }));
+    const project: ResearchProject = {
+      id: '22222222-2222-4222-8222-222222222222', owner: 'alice', chat: 'chat-a', source: 'seed', title: input.title,
+      scope: input.scope, materials: input.materials, status: 'paused', revision: 0,
+      createdAt: '2026-09-21T00:00:00.000Z', updatedAt: '2026-09-21T00:00:00.000Z',
+      directions: [{ id: directionId, title: 'Existing direction', status: 'pending', findings: oldFindings }],
+      summary: '', questions: [], history: [], feedback: [], stepCount: 0,
+    };
+    const store = new ProjectStore(dir); store.save(project);
+    const added = { ...finding, claim: 'New evidence from the resumed check' };
+    const runner = vi.fn<ResearchRunner>(() => Promise.resolve({ state: 'complete', message: 'Completed resumed check',
+      work: [{ id: directionId, title: 'Existing direction', status: 'done', findings: [oldFindings[0], added] }],
+      feedback: [], summary: 'Completed with preserved evidence.', questions: [] }));
+    const manager = new ResearchManager(store, runner, vi.fn(() => Promise.resolve('card-1'))); managers.push(manager);
+
+    await manager.act(project.id, 'alice', 'chat-a', project.revision, 'resume'); await manager.idle(project.id);
+
+    const done = manager.get(project.id, 'alice', 'chat-a');
+    expect(done.status).toBe('completed');
+    expect(done.directions[0].findings).toHaveLength(28);
+    expect(done.directions[0].findings.slice(0, 27)).toEqual(oldFindings);
+    expect(done.directions[0].findings.at(-1)).toEqual(added);
+    expect(runner).toHaveBeenCalledTimes(1);
+  });
+
   it('pauses on the turn budget without fabricating completion or a final result', async () => {
     const runner = vi.fn<ResearchRunner>(() => Promise.resolve({ state: 'continue', message: 'Still working', work: [], feedback: [], questions: [] }));
     const { manager } = checkpointFixture(runner);

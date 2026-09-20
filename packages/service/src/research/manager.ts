@@ -321,10 +321,19 @@ export class ResearchManager {
         if (!prior || !target || prior.status !== 'pending' || target.status !== 'pending') {
           throw new Error('不能覆盖已结束或不存在的工作。');
         }
-        if (!prior.findings.every(f => update.findings.some(next => JSON.stringify(next) === JSON.stringify(f)))) {
-          throw new Error('工作更新不得删除已有证据。');
+        // Existing directions can contain more findings than one model
+        // checkpoint is allowed to return. Treat findings in an existing-id
+        // update as additions, preserving the durable evidence already stored
+        // on the direction and de-duplicating exact re-emissions. This keeps a
+        // pending direction resumable after it grows beyond the checkpoint's
+        // four-finding output bound without allowing the model to erase facts.
+        const findings = [...prior.findings];
+        for (const finding of update.findings) {
+          if (!findings.some(existing => JSON.stringify(existing) === JSON.stringify(finding))) {
+            findings.push(finding);
+          }
         }
-        Object.assign(target, update);
+        Object.assign(target, { ...update, findings });
         updatedIds.push(target.id);
       } else {
         const id = randomUUID();

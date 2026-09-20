@@ -10,6 +10,7 @@ export interface WorkUpdate {
   id?: string;
   title: string;
   status: 'pending' | 'done' | 'stopped';
+  /** For an existing id, these are additions; the service preserves prior findings. */
   findings: Evidence[];
 }
 export interface ResearchCheckpoint {
