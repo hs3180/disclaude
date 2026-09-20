@@ -36,6 +36,8 @@ export interface MessageData {
   chatType?: string;
   /** Thread context for topic groups (Issue #3641 sub-problem 1) */
   threadContext?: string;
+  /** Service-issued, actor-scoped project task capability context. */
+  researchContext?: string;
 }
 
 /**

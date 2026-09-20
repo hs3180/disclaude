@@ -85,6 +85,7 @@ const ROUTES: Readonly<Record<string, Route>> = {
   sendMessage: { method: 'POST', path: '/api/send-message' },
   sendCard: { method: 'POST', path: '/api/send-card' },
   requestPrivateInput: { method: 'POST', path: '/api/private-workflows' },
+  researchWorkspace: { method: 'POST', path: '/api/research-workspaces' },
   uploadFile: { method: 'POST', path: '/api/upload-file' },
   uploadImage: { method: 'POST', path: '/api/upload-image' },
   sendInteractive: { method: 'POST', path: '/api/send-interactive' },

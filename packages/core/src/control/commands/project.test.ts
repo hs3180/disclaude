@@ -90,6 +90,18 @@ async function invoke(
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 describe('handleProject', () => {
+  it('returns the bound directory without silently resolving a missing directory to the workspace', async () => {
+    const ctx = createTestContext();
+    const workspace = ctx.projectManager!.getWorkspaceDir();
+    expect((await handleProject(makeCommand('chat-1', 'info'), ctx)).projectContext).toEqual({ workingDir: workspace, available: true });
+    const target = join(workspace, 'bound');
+    mkdirSync(target);
+    await invoke(makeCommand('chat-1', 'use', { workingDir: target }), ctx);
+    expect((await handleProject(makeCommand('chat-1', 'info'), ctx)).projectContext).toEqual({ workingDir: target, available: true });
+    rmSync(target, { recursive: true });
+    expect((await handleProject(makeCommand('chat-1', 'info'), ctx)).projectContext).toEqual({ workingDir: target, available: false });
+  });
+
   describe('unknown subcommand', () => {
     it('should return error for unknown subcommand', async () => {
       const ctx = createTestContext();

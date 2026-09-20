@@ -16,6 +16,7 @@ import { getChatIdValidationError } from './utils/chat-id-validator.js';
 const COMMON_FLAGS = ['chat', 'parent', 'base-url', 'api-token'];
 const COMMAND_FLAGS: Record<string, string[]> = {
   request_private_input: ['actor', 'source', 'workflow', 'workflow-file'],
+  research_workspace: ['context', 'request', 'request-file'],
   send_text: ['text', 'text-file', 'mentions'],
   send_file: ['file'],
   send_card: ['card', 'card-file'],
@@ -29,7 +30,7 @@ const COMMAND_FLAGS: Record<string, string[]> = {
 export const HELP = CHANNEL_CLI_HELP;
 
 type Args = { _: string[]; [key: string]: string | string[] | undefined };
-type ToolResult = { success?: boolean; error?: string; message?: string; actionId?: string };
+type ToolResult = { success?: boolean; error?: string; message?: string; actionId?: string; data?: unknown };
 let emitted = false;
 let autoRunOutput: typeof process.stdout.write | undefined;
 
@@ -65,7 +66,8 @@ function arg(args: Args, key: string): string | undefined { return typeof args[k
  * Returns true when the caller should stop; the failure is already emitted.
  */
 function rejectUnknownFlags(command: string, args: Args): boolean {
-  const allowed = new Set([...COMMON_FLAGS, ...(COMMAND_FLAGS[command] ?? [])]);
+  const common = command === 'research_workspace' ? ['base-url', 'api-token'] : COMMON_FLAGS;
+  const allowed = new Set([...common, ...(COMMAND_FLAGS[command] ?? [])]);
   const unknown = Object.keys(args).filter((key) => key !== '_' && key !== 'help' && !allowed.has(key));
   if (unknown.length === 0) {return false;}
   const listed = unknown.map((key) => `--${key}`).join(', ');
@@ -188,11 +190,18 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
   let filePath: string | undefined;
   let card: Record<string, unknown> | undefined;
   let workflow: Record<string, unknown> | undefined;
+  let taskOperation: Record<string, unknown> | undefined;
   let parsedMentions: Array<{ openId: string; name?: string }> | undefined;
   let parsedOptions: InteractiveOption[] | undefined;
   let parsedActionPrompts: ActionPromptMap | undefined;
   try {
-    if (command === 'send_text') {
+    if (command === 'research_workspace') {
+      if (!arg(args, 'context')?.trim()) { emitFail(command, 'Missing --context from the current user message'); return 1; }
+      const raw = readInput(args, 'request', 'request-file');
+      if (!raw) { emitFail(command, 'Missing task operation JSON'); return 1; }
+      taskOperation = parseJson<Record<string, unknown>>(raw, 'request');
+      if (!taskOperation || Array.isArray(taskOperation) || typeof taskOperation !== 'object') { emitFail(command, 'Task operation must be an object'); return 1; }
+    } else if (command === 'send_text') {
       text = readInput(args, 'text', 'text-file');
       parsedMentions = parseMentions(arg(args, 'mentions'));
       if (!text) { emitFail(command, 'Missing text content', 'pass --text <string>, --text-file <path>, or pipe content on stdin'); return 1; }
@@ -235,7 +244,9 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
   const parentMessageId = arg(args, 'parent');
   let result: ToolResult;
   try {
-    if (command === 'send_text') {
+    if (command === 'research_workspace') {
+      result = await withLogsRedirected(() => mod.research_workspace({ context: arg(args, 'context') as string, operation: taskOperation as Record<string, unknown> }));
+    } else if (command === 'send_text') {
       result = await withLogsRedirected(() => mod.send_text({ text: text as string, chatId, parentMessageId, mentions: parsedMentions }));
     } else if (command === 'send_file') {
       result = await withLogsRedirected(() => mod.send_file({ filePath: filePath as string, chatId, parentMessageId }));
@@ -256,7 +267,7 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
     emitFail(command, errorText, await failureHint(baseUrl, errorText));
     return 1;
   }
-  if (result.success) { emitOk({ command, chatId, result: result.message || 'sent', durationMs: 0, ...(result.actionId ? { actionId: result.actionId } : {}) }); return 0; }
+  if (result.success) { emitOk({ command, ...(command === 'research_workspace' ? {} : { chatId }), result: command === 'research_workspace' ? 'Task operation completed' : result.message || 'sent', durationMs: 0, ...(result.actionId ? { actionId: result.actionId } : {}), ...(result.data !== undefined ? { data: result.data } : {}) }); return 0; }
   const resultError = result.error || result.message || `${command} returned without success`;
   emitFail(command, resultError, await failureHint(baseUrl, resultError));
   return 1;
@@ -278,8 +289,8 @@ export async function run(argv: string[]): Promise<number> {
   // Before chat validation: a mistyped `--chat` shows up as an unknown flag, and
   // naming it beats the generic "Missing required option --chat" it would cause.
   if (rejectUnknownFlags(command, args)) {return 1;}
-  const chat = validateChat(command, args);
-  if (!chat) {return 1;}
+  const chat = command === 'research_workspace' ? '' : validateChat(command, args);
+  if (!chat && command !== 'research_workspace') {return 1;}
   let baseUrl: string;
   try {
     baseUrl = setupRest(args);
@@ -287,7 +298,7 @@ export async function run(argv: string[]): Promise<number> {
     emitFail(command, errorMessage(error));
     return 1;
   }
-  return execute(command, args, chat, baseUrl);
+  return execute(command, args, chat ?? '', baseUrl);
 }
 
 // Only auto-run when executed as a script (the `disclaude channel` router spawns

@@ -30,3 +30,5 @@ export { resolveCardImages } from './utils/card-image-resolver.js';
 export { getChatIdValidationError } from './utils/chat-id-validator.js';
 
 export { request_private_input } from './tools/request-private-input.js';
+
+export { research_workspace } from './tools/research-workspace.js';

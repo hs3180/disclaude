@@ -105,6 +105,9 @@ export class MessageBuilder {
       `**Chat ID:** ${chatId}`,
       `**Message ID:** ${msg.messageId}`,
     ];
+    if (msg.researchContext && /^[a-f0-9-]{36}$/u.test(msg.researchContext)) {
+      metadataParts.push(`**Research context (internal):** ${msg.researchContext}. For persistent research requested in this project, use disclaude channel research_workspace --context ${msg.researchContext} --request-file <json-file>. Operations: create {action,requestId,title,scope?,materials?,documentUrl?}; list {action,archived?,offset?,limit?}; get {action,researchId}; control {action,researchId,revision,control,value?}. Create saves a paused research workspace; use its returned revision with control=resume to execute authorized research. Controls also include pause/cancel/feedback/stop-direction/archive/unarchive/export. Reuse requestId when retrying the same creation. Actor, chat and directory are supplied by the service; never add them to operation JSON. No research mode or form is required. Use the workspace when durable research is useful, not for every short answer. This context expires; do not expose it in user replies.`);
+    }
     if (msg.senderOpenId) {
       metadataParts.push(`**Sender Open ID:** ${msg.senderOpenId}`);
     }
@@ -144,6 +147,9 @@ export class MessageBuilder {
       `**Chat ID:** ${chatId}`,
       `**Message ID:** ${msg.messageId}`,
     ];
+    if (msg.researchContext && /^[a-f0-9-]{36}$/u.test(msg.researchContext)) {
+      metadataParts.push(`**Research context (internal):** ${msg.researchContext}. For persistent research requested in this project, use disclaude channel research_workspace --context ${msg.researchContext} --request-file <json-file>. Operations: create {action,requestId,title,scope?,materials?,documentUrl?}; list {action,archived?,offset?,limit?}; get {action,researchId}; control {action,researchId,revision,control,value?}. Create saves a paused research workspace; use its returned revision with control=resume to execute authorized research. Controls also include pause/cancel/feedback/stop-direction/archive/unarchive/export. Reuse requestId when retrying the same creation. Actor, chat and directory are supplied by the service; never add them to operation JSON. No research mode or form is required. Use the workspace when durable research is useful, not for every short answer. This context expires; do not expose it in user replies.`);
+    }
     if (msg.senderOpenId) {
       metadataParts.push(`**Sender Open ID:** ${msg.senderOpenId}`);
     }

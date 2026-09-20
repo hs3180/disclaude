@@ -45,6 +45,9 @@ import { FeishuPrivateInput } from './private-input.js';
 import { FeishuAgentInput } from './agent-input.js';
 import { FeishuPrivateWorkflows, type PrivateWorkflowRequest } from './private-workflows.js';
 import { tryHandleSlashCommand } from './command-router.js';
+import { researchContextGateway } from '../../research/context.js';
+import { FeishuResearchController } from '../../research/feishu-controller.js';
+import { createDocumentReader, createDocumentAppender } from '../../research/document-source.js';
 import {
   extractOpenId,
   parsePostContent,
@@ -203,6 +206,22 @@ export class MessageHandler {
     await this.agentInput.request(request, context);
   }
   private readonly privateWorkflows: FeishuPrivateWorkflows;
+  private research?: FeishuResearchController;
+  private readonly researchAppId: string;
+  private readonly researchGrantNamespace = crypto.randomUUID();
+
+  private taskContext(owner: string | undefined, chat: string, source: string, thread?: string): string | undefined {
+    const controller = this.research;
+    if (!controller || !owner) { return undefined; }
+    try {
+      return researchContextGateway.issue(this.researchGrantNamespace,
+        operation => controller.executeResearch({ owner, chat, source, thread }, operation));
+    } catch {
+      // Capacity/availability must not drop the user's ordinary message.
+      logger.warn('Research context unavailable for this message');
+      return undefined;
+    }
+  }
 
   requestPrivateWorkflow(request: PrivateWorkflowRequest): Promise<{ actionId: string }> {
     return this.privateWorkflows.request(request);
@@ -221,6 +240,8 @@ export class MessageHandler {
     isRunning: () => boolean;
     hasControlHandler: () => boolean;
     tenantAccessToken: string;
+    /** Stable application namespace for Research workspace storage. */
+    appId: string;
     privateInput?: ActionBoundInput;
   }) {
     this.triggerModeManager = options.triggerModeManager;
@@ -232,6 +253,7 @@ export class MessageHandler {
     this.getHasControlHandler = options.hasControlHandler;
     this.controlHandler = false;
     this.tenantAccessToken = options.tenantAccessToken;
+    this.researchAppId = options.appId;
     if (options.privateInput) {this.privateInput = new FeishuPrivateInput(options.privateInput, options.callbacks.sendMessage);}
 
     if (!this.tenantAccessToken) {
@@ -246,6 +268,26 @@ export class MessageHandler {
     this.client = client;
     this.agentInput?.close();
     this.agentInput = new FeishuAgentInput(client);
+    // Legacy path is a storage compatibility override, never a feature switch.
+    // Keep existing records in place; new installations need no research setting.
+    const researchDirectory = process.env.DISCLAUDE_RESEARCH_PROJECTS_DIR
+      || path.join(Config.getWorkspaceDir(), '.disclaude', 'research-workspaces', 'feishu',
+        crypto.createHash('sha256').update(this.researchAppId).digest('hex').slice(0, 24));
+    if (!this.research) {
+      this.research = new FeishuResearchController(researchDirectory, Config.getWorkspaceDir(), this.callbacks.sendMessage, async (messageId, card) => {
+        const result = await client.im.message.patch({ path: { message_id: messageId }, data: { content: JSON.stringify(card) } });
+        if (result.code !== 0) { throw new Error('任务卡片更新失败，已有进度保留。'); }
+      }, undefined, createDocumentReader(client), createDocumentAppender(client), async chatId => {
+        const result = await this.callbacks.emitControl({ type: 'project', chatId, data: { subcommand: 'info' } });
+        if (!result.success || !result.projectContext?.available || !path.isAbsolute(result.projectContext.workingDir)) {
+          throw new Error('无法确认当前项目工作目录，请先用 /project info 检查目录绑定，再建立任务。');
+        }
+        try {
+          if (!(await fs.stat(result.projectContext.workingDir)).isDirectory()) { throw new Error('Not a directory'); }
+        } catch { throw new Error('当前项目工作目录不存在或不可访问，请恢复目录后再建立任务。'); }
+        return result.projectContext.workingDir;
+      });
+    }
     this.controlHandler = this.getHasControlHandler();
     logger.debug({ controlHandler: this.controlHandler }, 'MessageHandler initialized');
   }
@@ -417,6 +459,9 @@ export class MessageHandler {
     this.agentInput = undefined;
     this.privateInput?.revoke();
     this.privateWorkflows.revoke();
+    researchContextGateway.revoke(this.researchGrantNamespace);
+    this.research?.dispose();
+    this.research = undefined;
     this.client = undefined;
   }
 
@@ -1163,6 +1208,10 @@ export class MessageHandler {
         }
       }
 
+      if (sender?.sender_type === 'user') {
+        const context = this.taskContext(extractOpenId(sender), chat_id, message_id, fileMetadata.threadRootId as string | undefined);
+        if (context) { fileMetadata.researchContext = context; }
+      }
       await this.callbacks.emitMessage({
         messageId: `${message_id}-${message_type === 'audio' ? 'audio' : 'file'}`,
         chatId: chat_id,
@@ -1296,6 +1345,13 @@ export class MessageHandler {
       return;
     }
 
+    if (/^\/project\s*$/iu.test(textWithoutMentions.trim()) && this.research) {
+      if (sender?.sender_type === 'user') {
+        await this.research.open(extractOpenId(sender) ?? '', chat_id, chat_type === 'topic' ? parent_id ?? message_id : undefined);
+      }
+      return;
+    }
+
     // Add typing reaction
     await this.addTypingReaction(message_id);
 
@@ -1405,6 +1461,10 @@ export class MessageHandler {
       metadata.threadRootId = threadRootId;
     }
 
+    if (sender?.sender_type === 'user') {
+      const context = this.taskContext(extractOpenId(sender), chat_id, message_id, threadRootId ?? threadId);
+      if (context) { metadata.researchContext = context; }
+    }
     // Build attachments from quoted message if available
     const quotedAttachments = quotedMessageResult?.attachment
       ? [quotedMessageResult.attachment]
@@ -1438,6 +1498,11 @@ export class MessageHandler {
 
     // Parse actual Feishu event structure
     const rawData = data as Record<string, unknown>;
+    if (FeishuResearchController.isCallback(rawData)) {
+      // Acknowledge the card event promptly; project execution is managed separately.
+      void this.research?.handle(rawData).catch(() => logger.warn('Research project action could not be delivered'));
+      return;
+    }
     if (FeishuAgentInput.isCallback(rawData)) {
       void this.agentInput?.submit(rawData).catch(() => logger.warn('Agent input callback could not be handled'));
       return;
@@ -1561,6 +1626,7 @@ export class MessageHandler {
     // Card actions use the same local agent pipeline as text messages.
     let emitFailed = false;
     const cardActionMessageId = `card_action_${message_id}_${eventId ?? crypto.randomUUID()}`;
+    const researchContext = this.taskContext(user?.sender_id?.open_id, chat_id, cardActionMessageId, message_id);
     try {
       logger.debug(
         { messageId: cardActionMessageId, cardMessageId: message_id, chatId: chat_id, actionValue: action.value },
@@ -1577,6 +1643,7 @@ export class MessageHandler {
         timestamp: Date.now(),
         metadata: {
           cardAction: action,
+          ...(researchContext ? { researchContext } : {}),
           cardMessageId: message_id,
           // Preserve the actual Feishu card as the reply thread anchor.
           threadRootId: message_id,

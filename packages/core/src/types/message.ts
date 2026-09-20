@@ -72,6 +72,8 @@ export interface UserMessage extends Message {
   chatType?: string;
   /** Thread context for topic groups (Issue #3641 sub-problem 1) */
   threadContext?: string;
+  /** Service-issued, actor-scoped project task capability context. */
+  researchContext?: string;
   /**
    * Root message ID of the topic-group thread this message belongs to
    * (the top ancestor of the parent_id chain, or the message itself when it
