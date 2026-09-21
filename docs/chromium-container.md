@@ -7,8 +7,9 @@ docker compose --profile chromium build chromium
 docker compose --profile chromium up -d chromium
 ```
 
-The browser image preinstalls nginx, Xvfb and network/readiness utilities, so
-starting an already built image does not run apt or require package mirrors.
+The browser image preinstalls nginx, Xvfb, optional noVNC components and
+network/readiness utilities, so starting an already built image does not run apt
+or require package mirrors.
 `CHROMIUM_IMAGE_TAG` selects the official Playwright browser distribution used
 as its base; rebuild when changing it. The service image is named
 `disclaude-chromium:<tag>`. This does not install or select a Playwright agent.
@@ -41,6 +42,52 @@ still runs as root with `--no-sandbox` inside this image, matching the prior
 container boundary; it is not a sandbox for untrusted agent code. No guarantee
 of third-party anti-bot acceptance, GPU renderer, or site login persistence is
 made by enabling headed mode.
+
+## One-time manual verification (optional)
+
+For a site that presents a visible verification page, use the tracked Compose
+override to expose a temporary, password-protected noVNC view of the same headed
+browser. The normal Compose file does not publish a VNC port and leaves this
+feature disabled.
+
+Set an exactly 8-character printable ASCII password through a secret manager or
+the environment, then start the override:
+
+```sh
+export CHROMIUM_VNC_PASSWORD='Ab3!xY7?'
+export CHROMIUM_VNC_BIND=0.0.0.0
+export CHROMIUM_VNC_HOST_PORT=6080
+docker compose -f docker-compose.yml -f docker-compose.chromium-vnc.yml \
+  --profile chromium up -d --build chromium
+```
+
+Open this URL from the same LAN, replacing `<browser-host>` with the Docker host:
+
+```text
+http://<browser-host>:6080/vnc.html?autoconnect=true&resize=scale&reconnect=true
+```
+
+Enter the password when noVNC asks for it. Navigate the existing CDP browser to
+the target site and complete only the visible human verification. Do not
+automate CAPTCHA input, record the password, or publish the CDP port. On macOS
+Docker/Colima, publish the VNC port on `0.0.0.0` rather than pinning it to a
+specific host interface if the backend rejects that interface address.
+
+After the article is readable, stop the override cleanly so Chromium flushes its
+profile:
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.chromium-vnc.yml \
+  --profile chromium stop chromium
+```
+
+The `chromium_profile` volume is intentionally retained. Reusing it can avoid a
+second verification while its cookies/session remain valid, but it is a
+single-owner profile: never start a second Chromium against the active profile,
+and stop the first browser gracefully before handing the profile to another
+process. This is an assisted bootstrap, not an automatic challenge bypass; a
+site may challenge the profile again after session expiry or a network/context
+change.
 
 Acceptance must include CDP discovery **and WebSocket operations**, a test page,
 PNG capture, actual browser/display processes and profile persistence after

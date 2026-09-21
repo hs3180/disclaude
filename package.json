@@ -120,6 +120,7 @@
     "eslint.config.*",
     "Dockerfile*",
     "docker/",
-    "docker-compose.yml"
+    "docker-compose.yml",
+    "docker-compose.chromium-vnc.yml"
   ]
 }

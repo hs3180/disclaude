@@ -11,6 +11,8 @@ describe('container Chromium configuration', () => {
     [{ CDP_PORT: '9222junk' }, 'integers'],
     [{ CDP_PORT: '09222', CDP_INTERNAL_PORT: '9222' }, 'must differ'],
     [{ CHROMIUM_HEADLESS: 'maybe' }, 'must be 0 or 1'],
+    [{ CHROMIUM_VNC_ENABLED: 'maybe' }, 'CHROMIUM_VNC_ENABLED must be 0 or 1'],
+    [{ CHROMIUM_VNC_ENABLED: '1' }, 'CHROMIUM_VNC_PASSWORD must be exactly 8 printable ASCII characters'],
     [{ CHROMIUM_PROFILE_DIR: 'relative' }, 'must be absolute'],
   ])('fails invalid inputs before launching dependencies: %j', (overrides, message) => {
     const result = spawnSync('bash', [resolve('docker/start-chromium.sh')], { encoding: 'utf8', env: {
@@ -36,5 +38,20 @@ describe('container Chromium configuration', () => {
   it('keeps Chromium automation exposure disabled in the container launcher', () => {
     const launcher = readFileSync(resolve('docker/start-chromium.sh'), 'utf8');
     expect(launcher).toContain('--disable-blink-features=AutomationControlled');
+  });
+
+  it('keeps manual verification opt-in and password protected', () => {
+    const launcher = readFileSync(resolve('docker/start-chromium.sh'), 'utf8');
+    const dockerfile = readFileSync(resolve('docker/Dockerfile.chromium'), 'utf8');
+    const override = yaml.load(readFileSync(resolve('docker-compose.chromium-vnc.yml'), 'utf8')) as any;
+    expect(launcher).toContain('CHROMIUM_VNC_ENABLED=${CHROMIUM_VNC_ENABLED:-0}');
+    expect(launcher).toContain('x11vnc');
+    expect(launcher).toContain('websockify --web=/usr/share/novnc');
+    expect(dockerfile).toContain('x11vnc novnc websockify');
+    expect(override.services.chromium.environment.CHROMIUM_VNC_ENABLED).toBe('1');
+    expect(override.services.chromium.environment.CHROMIUM_VNC_PASSWORD).toContain('?required');
+    expect(override.services.chromium.ports).toEqual([
+      '${CHROMIUM_VNC_BIND:-0.0.0.0}:${CHROMIUM_VNC_HOST_PORT:-6080}:6080',
+    ]);
   });
 });
