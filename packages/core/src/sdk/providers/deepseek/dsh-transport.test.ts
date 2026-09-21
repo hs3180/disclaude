@@ -94,7 +94,11 @@ describe('DshStdioTransport', () => {
     const transport = new DshStdioTransport({
       binary: fixture.binary,
       onProtocolError: (error) => protocolErrors.push(error.message),
-      requestTimeoutMs: 200,
+      // The fixture is a fresh Node process; under the full suite its startup
+      // can exceed the transport timeout before it handles the first request.
+      // Keep enough budget for startup while retaining the invalid-frame
+      // timeout assertion below.
+      requestTimeoutMs: 1000,
     });
     try {
       await expect(transport.request('rpc-error')).rejects.toThrow(
