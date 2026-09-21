@@ -22,5 +22,27 @@ describe('browser coordinator startup diagnostics', () => {
       'revoking',
       'reclaimed',
     ]));
+    expect(events.find(event => event.type === 'worker-init-error')).toMatchObject({ stderr: 'fixture init stderr' });
+    expect(events.find(event => event.type === 'allocation-failed')).toMatchObject({ stderr: 'fixture init stderr' });
+  });
+
+  it('retains worker stderr when startup stops after the daemon announcement', async () => {
+    const events = [];
+    const coordinator = new Coordinator({
+      url: 'ws://fixture.invalid',
+      target: 'fixture-target',
+      event: event => events.push(event),
+      workerModule: new URL('./fixtures/coordinator-startup-timeout.mjs', import.meta.url),
+      startupMs: 50,
+      hardMs: 1000,
+      ttlMs: 100,
+    });
+
+    await expect(coordinator.acquire('fixture-caller').promise).rejects.toThrow('Worker startup timeout');
+    await coordinator.close();
+    const timeout = events.find(event => event.type === 'worker-startup-timeout');
+    const failed = events.find(event => event.type === 'allocation-failed');
+    expect(timeout).toMatchObject({ startupMs: 50, stderr: 'fixture startup stderr' });
+    expect(failed).toMatchObject({ error: 'Worker startup timeout', stderr: 'fixture startup stderr' });
   });
 });
