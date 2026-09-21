@@ -81,7 +81,7 @@ function makeCommand(
 async function invoke(
   cmd: ControlCommand<'project'>,
   ctx: ControlHandlerContext
-): Promise<{ success: boolean; message?: string; error?: string }> {
+): Promise<{ success: boolean; message?: string; error?: string; projectContext?: { workingDir: string; available: boolean } }> {
   return await handleProject(cmd, ctx);
 }
 
@@ -90,6 +90,30 @@ async function invoke(
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 describe('handleProject', () => {
+  it('returns the effective project boundary without hiding a missing bound directory', async () => {
+    const ctx = createTestContext();
+    const workspace = ctx.projectManager!.getWorkspaceDir();
+
+    expect((await invoke(makeCommand('chat-1', 'info'), ctx)).projectContext).toEqual({
+      workingDir: workspace,
+      available: true,
+    });
+
+    const target = join(workspace, 'bound');
+    mkdirSync(target);
+    await invoke(makeCommand('chat-1', 'use', { workingDir: target }), ctx);
+    expect((await invoke(makeCommand('chat-1', 'info'), ctx)).projectContext).toEqual({
+      workingDir: target,
+      available: true,
+    });
+
+    rmSync(target, { recursive: true, force: true });
+    expect((await invoke(makeCommand('chat-1', 'info'), ctx)).projectContext).toEqual({
+      workingDir: target,
+      available: false,
+    });
+  });
+
   describe('unknown subcommand', () => {
     it('should return error for unknown subcommand', async () => {
       const ctx = createTestContext();
