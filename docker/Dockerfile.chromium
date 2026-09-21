@@ -3,7 +3,7 @@ ARG CHROMIUM_IMAGE_TAG=v1.62.0-noble
 FROM mcr.microsoft.com/playwright:${CHROMIUM_IMAGE_TAG}
 USER root
 RUN apt-get update -qq \
-    && apt-get install -y --no-install-recommends nginx xvfb x11-utils iproute2 curl \
+    && apt-get install -y --no-install-recommends nginx xvfb x11-utils iproute2 curl x11vnc novnc websockify \
     && rm -rf /var/lib/apt/lists/*
 COPY chromium-cdp-nginx.conf /etc/nginx/cdp-proxy.conf.template
 COPY close-chromium.mjs /usr/local/lib/disclaude/close-chromium.mjs
@@ -11,4 +11,5 @@ COPY start-chromium.sh /usr/local/bin/disclaude-chromium
 RUN chmod 755 /usr/local/bin/disclaude-chromium \
     && node -e 'if (typeof WebSocket !== "function") process.exit(1)'
 ENV CHROMIUM_HEADLESS=0 CHROMIUM_PROFILE_DIR=/data/chrome-profile LANG=C.UTF-8
+EXPOSE 6080
 ENTRYPOINT ["/usr/local/bin/disclaude-chromium"]
