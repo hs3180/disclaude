@@ -64,4 +64,21 @@ describe('browser coordinator startup diagnostics', () => {
     expect(events.find(event => event.type === 'daemon-started')).toMatchObject({ pid: 4242, python: 'fixture-python', cwd: 'fixture-cwd' });
     expect(events.find(event => event.type === 'daemon-exit')).toMatchObject({ code: 2, signal: null });
   });
+
+  it('quarantines instead of leaking a cleanup exception as an unhandled rejection', async () => {
+    const events = [];
+    const coordinator = new Coordinator({
+      url: 'ws://fixture.invalid',
+      target: 'fixture-target',
+      event: event => events.push(event),
+      workerModule: new URL('./fixtures/coordinator-ready.mjs', import.meta.url),
+      cleanupWorker: () => { throw new Error('fixture cleanup failed'); },
+    });
+
+    const lease = await coordinator.acquire('fixture-caller').promise;
+    await expect(coordinator.release(lease)).resolves.toBe(true);
+    expect(events.find(event => event.type === 'quarantined')).toMatchObject({ phase: 'cleanup-worker', reason: 'fixture cleanup failed' });
+    await expect(coordinator.acquire('later-caller').promise).rejects.toThrow('Coordinator unavailable');
+    await coordinator.close();
+  });
 });
