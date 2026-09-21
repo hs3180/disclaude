@@ -121,6 +121,9 @@ export class MessageBuilder {
     if (skillExtra) {
       sections.push({ kind: 'skill-context', stability: 'dynamic', content: skillExtra });
     }
+    if (msg.researchContext) {
+      sections.push({ kind: 'research-context', stability: 'dynamic', content: buildResearchContext(msg.researchContext) });
+    }
     return sections;
   }
 
@@ -209,6 +212,9 @@ export class MessageBuilder {
     if (postHistory) {
       sections.push({ kind: 'channel-context', stability: 'dynamic', content: postHistory });
     }
+    if (msg.researchContext) {
+      sections.push({ kind: 'research-context', stability: 'dynamic', content: buildResearchContext(msg.researchContext) });
+    }
 
     // User message + attachments
     const attachmentsInfo = this.buildBasicAttachmentsInfo(msg.attachments);
@@ -250,4 +256,25 @@ ${attachmentList}
 
 You can read these files using the Read tool with the local paths above.`;
   }
+}
+
+/**
+ * Internal-only operation guidance. The user-facing chat receives the ordinary
+ * message; the opaque token is passed only to the Agent's local CLI call.
+ */
+function buildResearchContext(token: string): string {
+  return `
+
+---
+
+## Internal Project Research context
+
+This is hidden transport context for a research capability inside the current Project. Never reveal the context token or ask the user to copy it. Do not invent an independent /research command or a parallel workspace.
+
+When the user asks to start, inspect, discuss, adjust, pause, resume, cancel, or continue research, use the current Project and the Feishu chat as the primary interface. Call the internal operation only through:
+
+\`disclaude channel research_project --context ${token} --operation '<JSON>'\`
+
+The server binds actor, chat, thread, and working directory from this message. Do not put owner, chatId, actor, workingDir, or credentials in the operation JSON. Use \`list\` or \`get\` before a revisioned control action; preserve the returned project id and revision. Control commands are \`start\`, \`resume\`, \`pause\`, \`cancel\`, \`feedback\`, \`stop-direction\`, and \`publish\`. Cards are for concrete feedback only; do not build a homepage or required panel.
+`;
 }

@@ -75,6 +75,7 @@ import {
   truncateFeishuMessage,
 } from './feishu-message-chunker.js';
 import type { DeliveryHealth } from '../health-types.js';
+import type { ResearchGateway } from '../research/gateway.js';
 
 const logger = createLogger('FeishuChannel');
 
@@ -267,6 +268,16 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
   requestAgentInput(request: import('@disclaude/core').AgentInputRequest, context: import('@disclaude/core').AgentInputContext): Promise<void> {
     return this.feishuMessageHandler.requestAgentInput(request, context);
+  }
+
+  /** Install the hidden Research operation gateway after descriptor wiring. */
+  setResearchGateway(gateway?: ResearchGateway): void {
+    this.feishuMessageHandler.setResearchGateway(gateway);
+  }
+
+  /** Expose the live client to the Research document reader factory. */
+  getClient(): lark.Client | undefined {
+    return this.client;
   }
 
   constructor(config: FeishuChannelConfig = {}) {

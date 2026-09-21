@@ -36,6 +36,8 @@ export interface MessageData {
   chatType?: string;
   /** Thread context for topic groups (Issue #3641 sub-problem 1) */
   threadContext?: string;
+  /** Opaque internal context for project-scoped Research operations. */
+  researchContext?: string;
 }
 
 /**
@@ -64,7 +66,7 @@ export interface MessageBuilderStableContext {
 export interface MessageBuilderSection {
   kind: 'channel-header' | 'tools' | 'guidance' | 'metadata' | 'persisted-history' |
     'chat-history' | 'thread-context' | 'channel-context' | 'user-message' |
-    'attachments' | 'skill-context';
+    'attachments' | 'skill-context' | 'research-context';
   stability: 'stable' | 'dynamic';
   content: string;
 }

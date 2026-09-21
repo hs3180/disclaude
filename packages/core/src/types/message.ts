@@ -80,6 +80,8 @@ export interface UserMessage extends Message {
    * Issue #4587 (part 1).
    */
   threadRootId?: string;
+  /** Opaque server-issued context for the project-scoped Research operation. */
+  researchContext?: string;
 }
 
 // ============================================================================

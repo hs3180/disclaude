@@ -54,6 +54,8 @@ export interface UserMessageParams {
    * on it. Issue #4587 (part 1).
    */
   threadRootId?: string;
+  /** Opaque server-issued context for the project-scoped Research operation. */
+  researchContext?: string;
 }
 
 // ============================================================================
@@ -209,6 +211,7 @@ export class MessageRouter {
       chatType: message.chatType,
       threadContext: message.threadContext,
       threadRootId: message.threadRootId,
+      researchContext: message.researchContext,
       ...(message.agentSession ? { agentSession: message.agentSession } : {}),
     });
   }

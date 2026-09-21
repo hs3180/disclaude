@@ -32,6 +32,7 @@ export {
   listTempChats,
   markChatResponded,
   pushToAgent,
+  researchProject,
   type ChannelApiMethodErrorType,
   type ChannelApiMethodResult,
   type ChannelApiClientLike,

@@ -118,6 +118,23 @@ export {
 // DisclaudeService main class (Issue #1040)
 export { DisclaudeService, type ServiceOptions } from './service.js';
 
+// Project-scoped Research lifecycle (no independent research mode/workspace).
+export {
+  ResearchController,
+  ResearchGateway,
+  ResearchManager,
+  ProjectResearchStore,
+  createResearchRunner,
+  parseResearchCheckpoint,
+  parseResearchOperation,
+  changedDocumentFeedback,
+  createDocumentReader,
+  createDocumentWriter,
+  documentToken,
+  type DocumentReader,
+  type DocumentWriter,
+} from './research/index.js';
+
 // Agent pool (Issue #1040)
 export { ChatSessionPool, type ChatSessionPoolOptions } from './chat-session-pool.js';
 

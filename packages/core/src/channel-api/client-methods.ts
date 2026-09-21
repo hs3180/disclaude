@@ -199,3 +199,23 @@ export async function pushToAgent(
     return { success: false, error: err.message, errorType };
   }
 }
+
+/** Execute one hidden, server-authorized Project Research operation. */
+export async function researchProject(
+  client: ChannelApiClientLike,
+  context: string,
+  operation: unknown,
+): Promise<ChannelApiMethodResult & {
+  message?: string;
+  project?: Record<string, unknown>;
+  projects?: Array<Record<string, unknown>>;
+}> {
+  try {
+    const result = await client.request('researchProject', { context, operation });
+    return { success: true, ...result };
+  } catch (error) {
+    const { err, errorType } = classifyError(error);
+    logger.error({ err: error }, 'researchProject failed');
+    return { success: false, error: err.message, errorType };
+  }
+}

@@ -92,6 +92,7 @@ const ROUTES: Readonly<Record<string, Route>> = {
   markChatResponded: { method: 'POST', path: '/api/mark-chat-responded' },
   // pushToAgent → /api/push (REST returns {ok, message}; REST API expects {success})
   pushToAgent: { method: 'POST', path: '/api/push', shape: (b) => ({ success: b.ok === true }) },
+  researchProject: { method: 'POST', path: '/api/research-project' },
 };
 
 export interface ChannelApiClientOptions {

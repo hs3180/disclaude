@@ -806,6 +806,66 @@ describe('HttpApiServer', () => {
     });
   });
 
+  describe('POST /api/research-project', () => {
+    it('delegates the opaque context and operation without adding identity fields', async () => {
+      const handler = vi.fn().mockResolvedValue({
+        ok: true,
+        message: 'Research project loaded.',
+        project: { id: 'project-1', status: 'running' },
+      });
+      server.setResearchProjectHandler(handler);
+      const operation = { action: 'get', id: 'project-1', owner: 'attacker', workingDir: '/tmp' };
+
+      const response = await dispatch(server, {
+        method: 'POST',
+        url: '/api/research-project',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ context: 'opaque-grant', operation }),
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(JSON.parse(response.body)).toEqual({
+        ok: true,
+        message: 'Research project loaded.',
+        project: { id: 'project-1', status: 'running' },
+      });
+      expect(handler).toHaveBeenCalledExactlyOnceWith('opaque-grant', operation);
+    });
+
+    it('rejects malformed requests before invoking the handler', async () => {
+      const handler = vi.fn();
+      server.setResearchProjectHandler(handler);
+
+      const missingContext = await dispatch(server, {
+        method: 'POST',
+        url: '/api/research-project',
+        body: JSON.stringify({ operation: { action: 'list' } }),
+      });
+      const invalidJson = await dispatch(server, {
+        method: 'POST',
+        url: '/api/research-project',
+        body: '{',
+      });
+
+      expect(missingContext.statusCode).toBe(400);
+      expect(invalidJson.statusCode).toBe(400);
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it('returns a controlled error when the handler rejects', async () => {
+      server.setResearchProjectHandler(vi.fn().mockRejectedValue(new Error('context expired')));
+
+      const response = await dispatch(server, {
+        method: 'POST',
+        url: '/api/research-project',
+        body: JSON.stringify({ context: 'expired-grant', operation: { action: 'list' } }),
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(JSON.parse(response.body)).toEqual({ ok: false, message: 'context expired' });
+    });
+  });
+
   describe('POST /api/push', () => {
     it('should return 503 when push handler is not configured', async () => {
       // No pushHandler set on this server.

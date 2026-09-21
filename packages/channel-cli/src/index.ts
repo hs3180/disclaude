@@ -22,6 +22,7 @@ export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
 export { push_to_agent } from './tools/push-to-agent.js';
+export { research_project } from './tools/research-project.js';
 export { send_interactive, send_interactive_message } from './tools/interactive-message.js';
 
 export { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';

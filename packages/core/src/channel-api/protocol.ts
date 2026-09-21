@@ -18,7 +18,9 @@ export type ChannelApiRequestType =
   | 'listTempChats'
   | 'markChatResponded'
   // Push instruction to a chat agent (Issue #631)
-  | 'pushToAgent';
+  | 'pushToAgent'
+  // Internal project-scoped Research operation (not a user-facing /research mode).
+  | 'researchProject';
 
 /**
  * REST API request payloads.
@@ -65,6 +67,10 @@ export interface ChannelApiRequestPayloads {
     /** If true, the response waits for the agent turn to complete before returning. */
     waitForCompletion?: boolean;
   };
+  researchProject: {
+    context: string;
+    operation: unknown;
+  };
 }
 
 /**
@@ -80,4 +86,9 @@ export interface ChannelApiResponsePayloads {
   listTempChats: { success: boolean; chats: Array<{ chatId: string; createdAt: string; expiresAt: string; creatorChatId?: string; responded: boolean }> };
   markChatResponded: { success: boolean };
   pushToAgent: { success: boolean };
+  researchProject: {
+    message: string;
+    project?: Record<string, unknown>;
+    projects?: Array<Record<string, unknown>>;
+  };
 }

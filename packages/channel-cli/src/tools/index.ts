@@ -28,6 +28,7 @@ export { send_file } from './send-file.js';
 
 // Push to Agent (Issue #631)
 export { push_to_agent } from './push-to-agent.js';
+export { research_project } from './research-project.js';
 
 // Interactive Message
 export {

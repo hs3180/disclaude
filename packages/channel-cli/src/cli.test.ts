@@ -81,6 +81,36 @@ describe('@disclaude/channel-cli', () => {
     expect(JSON.parse(writes[0])).toMatchObject({ ok: false, command: 'push_to_agent' });
   });
 
+  it('returns Research project state in the CLI JSON result', async () => {
+    const previousBaseUrl = process.env.DISCLAUDE_API_BASE_URL;
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = ((input) => {
+      const url = String(input);
+      const body = url.endsWith('/api/ping')
+        ? { pong: true }
+        : { ok: true, message: 'Research project loaded.', project: { id: 'p1', revision: 3 } };
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) } as Response);
+    }) as typeof fetch;
+    try {
+      const { code, writes } = await capture([
+        'research_project',
+        '--context', 'opaque-grant',
+        '--operation', '{"action":"get","id":"p1"}',
+        '--base-url', 'http://127.0.0.1:43123',
+      ]);
+      expect(code).toBe(0);
+      expect(JSON.parse(writes[0])).toMatchObject({
+        ok: true,
+        command: 'research_project',
+        project: { id: 'p1', revision: 3 },
+      });
+    } finally {
+      if (previousBaseUrl === undefined) { delete process.env.DISCLAUDE_API_BASE_URL; }
+      else { process.env.DISCLAUDE_API_BASE_URL = previousBaseUrl; }
+      globalThis.fetch = previousFetch;
+    }
+  });
+
   it('reports the spelling the caller typed for unknown commands', async () => {
     const writes: string[] = [];
     const errs: string[] = [];

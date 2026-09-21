@@ -41,6 +41,7 @@ import {
   buildActionPrompts,
   validateInteractiveParams,
 } from '../platforms/feishu/card-builders/index.js';
+import { createDocumentReader, createDocumentWriter } from '../research/document-source.js';
 
 // ============================================================================
 // REST Wired Descriptor
@@ -167,6 +168,18 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
    */
   setup: (channel: IChannel, config: FeishuChannelConfig, context: ChannelSetupContext) => {
     const feishuChannel = channel as FeishuChannel;
+
+    // Research uses ordinary ProjectManager bindings and a short-lived,
+    // server-issued context; it does not expose a /research mode or workspace.
+    feishuChannel.setResearchGateway?.(context.researchGateway);
+    context.researchController?.setDocumentReaderFactory(() => {
+      const client = feishuChannel.getClient();
+      return client ? createDocumentReader(client) : undefined;
+    });
+    context.researchController?.setDocumentWriterFactory(() => {
+      const client = feishuChannel.getClient();
+      return client ? createDocumentWriter(client) : undefined;
+    });
 
     // 1. Set up action prompt resolver using InteractiveContextStore
     const contextStore = context.service.getInteractiveContextStore();

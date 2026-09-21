@@ -20,6 +20,7 @@ const COMMAND_FLAGS: Record<string, string[]> = {
   send_file: ['file'],
   send_card: ['card', 'card-file'],
   push_to_agent: ['message', 'message-file'],
+  research_project: ['context', 'operation', 'operation-file'],
   send_interactive: ['question', 'question-file', 'options', 'action-prompts', 'title', 'context'],
 };
 
@@ -29,7 +30,7 @@ const COMMAND_FLAGS: Record<string, string[]> = {
 export const HELP = CHANNEL_CLI_HELP;
 
 type Args = { _: string[]; [key: string]: string | string[] | undefined };
-type ToolResult = { success?: boolean; error?: string; message?: string; actionId?: string };
+type ToolResult = { success?: boolean; error?: string; message?: string; actionId?: string; project?: Record<string, unknown>; projects?: Array<Record<string, unknown>> };
 let emitted = false;
 let autoRunOutput: typeof process.stdout.write | undefined;
 
@@ -178,7 +179,7 @@ async function failureHint(baseUrl: string, error: string): Promise<string | und
   return await restIsReachable(baseUrl) ? undefined : restHint(baseUrl);
 }
 
-async function execute(command: string, args: Args, chatId: string, baseUrl: string): Promise<number> {
+async function execute(command: string, args: Args, chatId: string | undefined, baseUrl: string): Promise<number> {
   // Parse all user-provided structured input before loading the runtime package.
   // This keeps malformed CLI input deterministic and avoids logger teardown
   // noise on fast-failure paths.
@@ -191,6 +192,7 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
   let parsedMentions: Array<{ openId: string; name?: string }> | undefined;
   let parsedOptions: InteractiveOption[] | undefined;
   let parsedActionPrompts: ActionPromptMap | undefined;
+  let researchOperation: unknown;
   try {
     if (command === 'send_text') {
       text = readInput(args, 'text', 'text-file');
@@ -218,6 +220,11 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
     } else if (command === 'push_to_agent') {
       message = readInput(args, 'message', 'message-file');
       if (!message) { emitFail(command, 'Missing message content', 'pass --message <string>, --message-file <path>, or pipe content on stdin'); return 1; }
+    } else if (command === 'research_project') {
+      const raw = readInput(args, 'operation', 'operation-file');
+      if (!arg(args, 'context')?.trim()) { emitFail(command, 'Missing required option --context <token>'); return 1; }
+      if (!raw?.trim()) { emitFail(command, 'Missing research operation', 'pass --operation <json>, --operation-file <path>, or pipe JSON on stdin'); return 1; }
+      researchOperation = parseJson<unknown>(raw, 'operation');
     } else {
       question = readInput(args, 'question', 'question-file');
       if (!question || !question.trim()) { emitFail(command, 'Missing question content', 'pass --question <string>, --question-file <path>, or pipe content on stdin'); return 1; }
@@ -233,30 +240,48 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
   try { mod = await withLogsRedirected(() => import('./index.js')); }
   catch (error) { emitFail(command, `Failed to load channel implementation: ${errorMessage(error)}`, 'run npm run build before using the packaged CLI'); return 1; }
   const parentMessageId = arg(args, 'parent');
+  const targetChatId = chatId as string;
   let result: ToolResult;
   try {
     if (command === 'send_text') {
-      result = await withLogsRedirected(() => mod.send_text({ text: text as string, chatId, parentMessageId, mentions: parsedMentions }));
+      result = await withLogsRedirected(() => mod.send_text({ text: text as string, chatId: targetChatId, parentMessageId, mentions: parsedMentions }));
     } else if (command === 'send_file') {
-      result = await withLogsRedirected(() => mod.send_file({ filePath: filePath as string, chatId, parentMessageId }));
+      result = await withLogsRedirected(() => mod.send_file({ filePath: filePath as string, chatId: targetChatId, parentMessageId }));
     } else if (command === 'send_card') {
       const transformed = mod.transformCardTables(card as Record<string, unknown>);
       const resolved = await mod.resolveCardImages(transformed);
-      result = await withLogsRedirected(() => mod.send_card({ card: resolved.card, chatId, parentMessageId }));
+      result = await withLogsRedirected(() => mod.send_card({ card: resolved.card, chatId: targetChatId, parentMessageId }));
     } else if (command === 'request_private_input') {
-      result = await withLogsRedirected(() => mod.request_private_input({ chatId, actorId: arg(args, 'actor') as string,
+      result = await withLogsRedirected(() => mod.request_private_input({ chatId: targetChatId, actorId: arg(args, 'actor') as string,
         sourceMessageId: arg(args, 'source') as string, workflow: workflow as Record<string, unknown> }));
     } else if (command === 'push_to_agent') {
-      result = await withLogsRedirected(() => mod.push_to_agent({ chatId, message: message as string }));
+      result = await withLogsRedirected(() => mod.push_to_agent({ chatId: targetChatId, message: message as string }));
+    } else if (command === 'research_project') {
+      result = await withLogsRedirected(() => mod.research_project({ context: arg(args, 'context') as string, operation: researchOperation }));
     } else {
-      result = await withLogsRedirected(() => mod.send_interactive({ question: question as string, options: parsedOptions as InteractiveOption[], title: arg(args, 'title'), context: arg(args, 'context'), actionPrompts: parsedActionPrompts, chatId, parentMessageId }));
+      result = await withLogsRedirected(() => mod.send_interactive({ question: question as string, options: parsedOptions as InteractiveOption[], title: arg(args, 'title'), context: arg(args, 'context'), actionPrompts: parsedActionPrompts, chatId: targetChatId, parentMessageId }));
     }
   } catch (error) {
     const errorText = `${command} failed: ${errorMessage(error)}`;
     emitFail(command, errorText, await failureHint(baseUrl, errorText));
     return 1;
   }
-  if (result.success) { emitOk({ command, chatId, result: result.message || 'sent', durationMs: 0, ...(result.actionId ? { actionId: result.actionId } : {}) }); return 0; }
+  if (result.success) {
+    emitOk({
+      command,
+      chatId,
+      result: result.message || 'sent',
+      durationMs: 0,
+      ...(result.actionId ? { actionId: result.actionId } : {}),
+      ...(command === 'research_project'
+        ? {
+            ...(result.project ? { project: result.project } : {}),
+            ...(result.projects ? { projects: result.projects } : {}),
+          }
+        : {}),
+    });
+    return 0;
+  }
   const resultError = result.error || result.message || `${command} returned without success`;
   emitFail(command, resultError, await failureHint(baseUrl, resultError));
   return 1;
@@ -278,8 +303,8 @@ export async function run(argv: string[]): Promise<number> {
   // Before chat validation: a mistyped `--chat` shows up as an unknown flag, and
   // naming it beats the generic "Missing required option --chat" it would cause.
   if (rejectUnknownFlags(command, args)) {return 1;}
-  const chat = validateChat(command, args);
-  if (!chat) {return 1;}
+  const chat = command === 'research_project' ? undefined : validateChat(command, args);
+  if (command !== 'research_project' && !chat) {return 1;}
   let baseUrl: string;
   try {
     baseUrl = setupRest(args);

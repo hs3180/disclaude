@@ -33,6 +33,8 @@ import type { ChatAgent } from './agents/chat-agent.js';
 import type { AgentPoolStats } from './chat-session-pool.js';
 import type { Logger } from 'pino';
 import { ChannelManager } from './channel-manager.js';
+import type { ResearchGateway } from './research/gateway.js';
+import type { ResearchController } from './research/controller.js';
 
 // ============================================================================
 // Types
@@ -89,6 +91,10 @@ export interface ChannelSetupContext {
       setMode(chatId: string, mode: 'mention' | 'always' | 'auto'): void;
     };
   };
+  /** Server-issued context bridge for project-scoped Research operations. */
+  researchGateway?: ResearchGateway;
+  /** Optional document reader hook installed by the live Feishu channel. */
+  researchController?: ResearchController;
   /** Logger instance */
   logger: Logger;
   /** DisclaudeService reference for Feishu-specific setup */

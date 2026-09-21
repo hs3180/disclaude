@@ -146,6 +146,22 @@ describe('ChannelApiClient', () => {
       expect(calls[0].url).toBe('http://localhost:19200/api/push');
     });
 
+    it('should route the hidden research operation through the authenticated REST bridge', async () => {
+      const { calls } = mockFetch([{ json: { ok: true, message: 'Research project loaded.', project: { id: 'p1' } } }]);
+      const client = new ChannelApiClient({ baseUrl: 'http://localhost:19200', apiToken: 'tok' });
+      const operation = { action: 'get', id: 'p1' };
+
+      const result = await client.requestChannel('researchProject', { context: 'opaque-grant', operation });
+
+      expect(result).toEqual({ message: 'Research project loaded.', project: { id: 'p1' } });
+      expect(calls[0].url).toBe('http://localhost:19200/api/research-project');
+      expect(calls[0].init.headers).toMatchObject({
+        'content-type': 'application/json',
+        authorization: 'Bearer tok',
+      });
+      expect(JSON.parse(calls[0].init.body as string)).toEqual({ context: 'opaque-grant', operation });
+    });
+
     it('should throw for truly unsupported methods', async () => {
       const client = new ChannelApiClient({ baseUrl: 'http://localhost:19200' });
       await expect(client.requestChannel('unknownMethod')).rejects.toThrow('unsupported method');

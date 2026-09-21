@@ -105,6 +105,7 @@ describe('MessageRouter', () => {
       const msg = createUserMessage({
         senderOpenId: 'ou_sender1',
         chatHistoryContext: 'previous messages...',
+        researchContext: 'opaque-token',
       });
 
       await router.route(msg);
@@ -116,6 +117,7 @@ describe('MessageRouter', () => {
           messageId: 'feishu-msg-1',
           senderOpenId: 'ou_sender1',
           chatHistoryContext: 'previous messages...',
+          researchContext: 'opaque-token',
         }),
       );
     });

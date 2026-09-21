@@ -825,6 +825,16 @@ describe('MessageBuilder', () => {
       expect(sections.map(section => section.kind)).toEqual(['user-message', 'metadata']);
       expect(sections.every(section => section.stability === 'dynamic')).toBe(true);
     });
+
+    it('includes the opaque Project Research context without exposing a user-facing mode', () => {
+      const rendered = messageBuilder.buildEnhancedContent({
+        text: '开始研究这个问题', messageId: 'm1', researchContext: 'opaque-token',
+      }, 'chat-a');
+      expect(rendered).toContain('research_project');
+      expect(rendered).toContain('opaque-token');
+      expect(rendered).toContain('independent /research command');
+      expect(rendered).toContain('parallel workspace');
+    });
   });
 });
 

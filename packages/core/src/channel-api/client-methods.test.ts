@@ -117,6 +117,34 @@ describe('client-methods', () => {
     });
   });
 
+  describe('researchProject', () => {
+    it('should delegate the opaque context and operation', async () => {
+      const client = createMockClient({
+        researchProject: { message: 'Research project loaded.', project: { id: 'p1' } },
+      });
+      const { researchProject } = await import('./client-methods.js');
+      const operation = { action: 'get', id: 'p1' };
+
+      const result = await researchProject(client, 'opaque-grant', operation);
+
+      expect(result).toEqual({ success: true, message: 'Research project loaded.', project: { id: 'p1' } });
+      expect(client.request).toHaveBeenCalledWith('researchProject', {
+        context: 'opaque-grant',
+        operation,
+      });
+    });
+
+    it('should classify a rejected research bridge call', async () => {
+      const client = createMockClient({ researchProject: new Error('context expired') });
+      const { researchProject } = await import('./client-methods.js');
+
+      const result = await researchProject(client, 'expired-grant', { action: 'list' });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('context expired');
+    });
+  });
+
   describe('markChatResponded', () => {
     it('should delegate with response payload', async () => {
       const client = createMockClient({ markChatResponded: { success: true } });

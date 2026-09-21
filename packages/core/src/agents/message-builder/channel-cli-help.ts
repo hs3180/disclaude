@@ -33,6 +33,9 @@ Commands:
     --workflow-file <path> | --workflow <json> | workflow JSON on stdin
     Workflow fields: title, description, command, args?, cwd?, env?, timeoutMs?.
     Requires service API authentication; never put the private input in this command.
+  research_project Internal Project-scoped Research operation (requires the hidden --context token).
+    --context <token> --operation <json> | --operation-file <path> | JSON on stdin
+    The server supplies actor, chat, thread, and working directory; never add owner/chatId/workingDir.
   help             Show this help message.
 
 Common options:

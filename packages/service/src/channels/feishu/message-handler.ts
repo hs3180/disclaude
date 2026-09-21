@@ -40,6 +40,7 @@ import { extractFullCardContent } from '../../platforms/feishu/card-builders/car
 import { messageLogger } from '../../utils/message-logger.js';
 import type { TriggerModeManager } from './passive-mode.js';
 import type { MentionDetector } from './mention-detector.js';
+import type { ResearchGateway } from '../../research/gateway.js';
 import { evaluateMessageFilters } from './message-filters.js';
 import { FeishuPrivateInput } from './private-input.js';
 import { FeishuAgentInput } from './agent-input.js';
@@ -195,6 +196,7 @@ export class MessageHandler {
   private controlHandler: boolean;
   private getHasControlHandler: () => boolean;
   private tenantAccessToken: string;
+  private researchGateway?: ResearchGateway;
   private readonly privateInput?: FeishuPrivateInput;
   private agentInput?: FeishuAgentInput;
 
@@ -222,6 +224,7 @@ export class MessageHandler {
     hasControlHandler: () => boolean;
     tenantAccessToken: string;
     privateInput?: ActionBoundInput;
+    researchGateway?: ResearchGateway;
   }) {
     this.triggerModeManager = options.triggerModeManager;
     this.mentionDetector = options.mentionDetector;
@@ -232,6 +235,7 @@ export class MessageHandler {
     this.getHasControlHandler = options.hasControlHandler;
     this.controlHandler = false;
     this.tenantAccessToken = options.tenantAccessToken;
+    this.researchGateway = options.researchGateway;
     if (options.privateInput) {this.privateInput = new FeishuPrivateInput(options.privateInput, options.callbacks.sendMessage);}
 
     if (!this.tenantAccessToken) {
@@ -257,11 +261,28 @@ export class MessageHandler {
     this.controlHandler = hasHandler;
   }
 
+  /** Install the server-side Research context issuer after channel wiring. */
+  setResearchGateway(gateway?: ResearchGateway): void {
+    this.researchGateway = gateway;
+  }
+
   /**
    * Get the client (for external use).
    */
   getClient(): lark.Client | undefined {
     return this.client;
+  }
+
+  private attachResearchContext(
+    metadata: Record<string, unknown>,
+    context: { actorId: string; chatId: string; threadId?: string; sourceMessageId: string },
+  ): void {
+    if (!this.researchGateway) {return;}
+    try {
+      metadata.researchContext = this.researchGateway.issue(context);
+    } catch (error) {
+      logger.warn({ err: error, chatId: context.chatId, messageId: context.sourceMessageId }, 'Failed to issue Research context');
+    }
   }
 
   /**
@@ -1163,6 +1184,13 @@ export class MessageHandler {
         }
       }
 
+      this.attachResearchContext(fileMetadata, {
+        actorId: extractOpenId(sender) || 'unknown',
+        chatId: chat_id,
+        threadId,
+        sourceMessageId: message_id,
+      });
+
       await this.callbacks.emitMessage({
         messageId: `${message_id}-${message_type === 'audio' ? 'audio' : 'file'}`,
         chatId: chat_id,
@@ -1404,6 +1432,12 @@ export class MessageHandler {
       // Issue #4587 (part 1): stable thread identity for session keying
       metadata.threadRootId = threadRootId;
     }
+    this.attachResearchContext(metadata, {
+      actorId: extractOpenId(sender) || 'unknown',
+      chatId: chat_id,
+      threadId,
+      sourceMessageId: message_id,
+    });
 
     // Build attachments from quoted message if available
     const quotedAttachments = quotedMessageResult?.attachment
@@ -1561,6 +1595,18 @@ export class MessageHandler {
     // Card actions use the same local agent pipeline as text messages.
     let emitFailed = false;
     const cardActionMessageId = `card_action_${message_id}_${eventId ?? crypto.randomUUID()}`;
+    const cardMetadata: Record<string, unknown> = {
+      cardAction: action,
+      cardMessageId: message_id,
+      // Preserve the actual Feishu card as the reply thread anchor.
+      threadRootId: message_id,
+    };
+    this.attachResearchContext(cardMetadata, {
+      actorId: user?.sender_id?.open_id || 'unknown',
+      chatId: chat_id,
+      threadId: message_id,
+      sourceMessageId: cardActionMessageId,
+    });
     try {
       logger.debug(
         { messageId: cardActionMessageId, cardMessageId: message_id, chatId: chat_id, actionValue: action.value },
@@ -1575,12 +1621,7 @@ export class MessageHandler {
         content: messageContent,
         messageType: 'card',
         timestamp: Date.now(),
-        metadata: {
-          cardAction: action,
-          cardMessageId: message_id,
-          // Preserve the actual Feishu card as the reply thread anchor.
-          threadRootId: message_id,
-        },
+        metadata: cardMetadata,
       });
       logger.debug(
         { messageId: cardActionMessageId, cardMessageId: message_id, chatId: chat_id },

@@ -32,6 +32,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { createLogger, type TopicGroupMessageEvent, type FeishuCard } from '@disclaude/core';
 import { SERVICE_VERSION } from './version.js';
 import type { DeliveryHealth } from './health-types.js';
+import type { ResearchOperationResult } from './research/gateway.js';
 
 const logger = createLogger('HttpApiServer');
 
@@ -84,6 +85,9 @@ export interface PushResponse {
  * Handler for push requests. Routes a message to the appropriate agent.
  */
 export type PushHandler = (chatId: string, message: string) => Promise<void>;
+
+/** Handler for the hidden, server-authorized Project Research operation. */
+export type ResearchProjectHandler = (contextToken: string, operation: unknown) => Promise<ResearchOperationResult>;
 
 /**
  * Response payload for uploadFile (mirrors REST API ChannelApiResponsePayloads).
@@ -251,6 +255,7 @@ export class HttpApiServer {
   private startTime = 0;
   private instanceId?: string;
   private pushHandler?: PushHandler;
+  private researchProjectHandler?: ResearchProjectHandler;
   private uploadFileHandler?: UploadFileHandler;
   private sendMessageHandler?: SendMessageHandler;
   private sendCardHandler?: SendCardHandler;
@@ -309,6 +314,11 @@ export class HttpApiServer {
    */
   setPushHandler(handler: PushHandler): void {
     this.pushHandler = handler;
+  }
+
+  /** Set the internal Research operation bridge. */
+  setResearchProjectHandler(handler: ResearchProjectHandler): void {
+    this.researchProjectHandler = handler;
   }
 
   /**
@@ -554,6 +564,7 @@ export class HttpApiServer {
     // Issue #4281: REST parity with REST API markChatResponded (temp-chat lifecycle).
     this.addRoute('POST', '/api/mark-chat-responded', this.handleMarkChatResponded.bind(this));
     this.addRoute('POST', '/api/push', this.handlePush.bind(this));
+    this.addRoute('POST', '/api/research-project', this.handleResearchProject.bind(this));
     // Issue #4031: SSE endpoint for topic group message notifications
     this.addRoute('GET', '/api/topic-stream', this.handleTopicStream.bind(this));
   }
@@ -756,6 +767,47 @@ export class HttpApiServer {
       logger.error({ err, chatId }, 'Push handler error');
       const msg = err instanceof Error ? err.message : 'Push failed';
       this.sendJson(res, 500, { ok: false, message: msg });
+    }
+  }
+
+  /**
+   * POST /api/research-project handler.
+   *
+   * The payload carries only an opaque context token and an operation. Actor,
+   * chat, thread, and Project directory are resolved by the server-side grant.
+   */
+  private async handleResearchProject(
+    req: IncomingMessage,
+    res: ServerResponse,
+    _params: Record<string, string>,
+  ): Promise<void> {
+    if (!this.researchProjectHandler) {
+      this.sendJson(res, 503, { ok: false, message: 'Research handler not configured' });
+      return;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await readBody(req)) as unknown;
+    } catch {
+      this.sendJson(res, 400, { ok: false, message: 'Invalid JSON body' });
+      return;
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      this.sendJson(res, 400, { ok: false, message: 'Request body must be an object' });
+      return;
+    }
+    const body = parsed as Record<string, unknown>;
+    if (typeof body.context !== 'string' || !body.context.trim() || body.operation === undefined) {
+      this.sendJson(res, 400, { ok: false, message: 'Required fields: context (string), operation (object)' });
+      return;
+    }
+    try {
+      const result = await this.researchProjectHandler(body.context, body.operation);
+      this.sendJson(res, 200, result);
+    } catch (error) {
+      logger.error({ err: error }, 'Research project handler error');
+      const message = error instanceof Error ? error.message : 'Research operation failed';
+      this.sendJson(res, 400, { ok: false, message });
     }
   }
 

@@ -835,6 +835,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       chatType,
       threadContext,
       threadRootId,
+      researchContext,
     } = params;
     // Issue #644: Verify chatId matches bound chatId
     if (chatId !== this.boundChatId) {
@@ -950,6 +951,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         chatLogFilePaths: this.historyManager.chatLogFilePaths,
         chatType: this.chatType,
         threadContext,
+        researchContext,
       },
       chatId,
       capabilities

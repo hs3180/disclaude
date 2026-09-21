@@ -45,6 +45,7 @@ import net from 'node:net';
 import path from 'node:path';
 import { homedir } from 'node:os';
 import { statSync } from 'node:fs';
+import { ResearchController, ResearchGateway, createResearchRunner } from './research/index.js';
 
 const logger = createLogger('DisclaudeServiceCLI');
 
@@ -342,6 +343,28 @@ export async function main(): Promise<void> {
   });
   logger.info({ workspaceDir }, 'ProjectManager initialized');
 
+  // Research is a capability of the active Project. The gateway is created
+  // once per service and receives identity only from Feishu message metadata;
+  // the operation payload cannot select an actor, chat, or working directory.
+  const researchController = new ResearchController({
+    resolveProject: (chatId) => projectManager.getActive(chatId),
+    runTurn: createResearchRunner(),
+    sendStatus: async (project, reason) => {
+      const pendingFeedback = project.feedback.filter((feedback) =>
+        feedback.status === 'pending' || feedback.status === 'needs-clarification').length;
+      const pendingDirections = project.directions.filter((direction) => direction.status === 'pending').length;
+      const summary = project.summary ? `\n结论：${project.summary.slice(0, 800)}` : '';
+      const clarification = project.clarification ? `\n需要你的补充：${project.clarification}` : '';
+      await service.sendMessage(
+        project.chatId,
+        `🔎 **研究状态：${project.status}**\n${reason}\n项目：${project.title}\n进展：${pendingDirections} 个待处理方向，${pendingFeedback} 条待处理意见；版本 ${project.revision}${summary}${clarification}`,
+        project.threadId,
+      );
+    },
+  });
+  const researchGateway = new ResearchGateway((context, operation) =>
+    researchController.execute(context, operation));
+
   const agentPool = new ChatSessionPool({
     agentPresets: Config.getAgentPresets(),
     messageBuilderOptions: createFeishuMessageBuilderOptions(),
@@ -419,6 +442,8 @@ export async function main(): Promise<void> {
     controlHandlerContext,
     logger,
     service,
+    researchGateway,
+    researchController,
   };
 
   // Issue #3329: Initialize InputMessageRouter for unified message routing.
@@ -480,6 +505,8 @@ export async function main(): Promise<void> {
     logger.info('Shutting down disclaude service...');
 
     try {
+      researchGateway.revokeAll();
+      researchController.dispose();
       agentPool.disposeAll();
       await browserRuntime?.stop();
       await httpApiServer?.stop();
@@ -569,6 +596,8 @@ export async function main(): Promise<void> {
         host: apiHost,
         apiToken: options.apiToken,
       });
+      httpApiServer.setResearchProjectHandler((context, operation) =>
+        researchGateway.execute(context, operation));
       httpApiServer.setInstanceId(service.getInstanceId());
       const feishuChannel = channelManager.get('feishu') as
         | { getDeliveryHealth?: () => import('./health-types.js').DeliveryHealth }
