@@ -7,12 +7,12 @@
 > CDP. The former Agent-level direct-CDP instructions were removed from the
 > 0.6.0 path.
 
-> Issue #4496 (part 1, docs). This page defines the **endpoint side** of the CDP
-> contract: the containerized headless Chromium that any browser driver
-> (browser-use CLI, Playwright, Playwright MCP) attaches to via
-> `connect_over_cdp` / `--cdp-endpoint` / CDP env config. The **skill side**
-> (how the browser-use Skill reads config and attaches) is #4460.
-> Part 2 (Scope-6 smoke acceptance results) is recorded further down this page.
+> Issue #4496 (part 1, docs). This page records the **service-internal** side of
+> the CDP contract: the containerized Chromium and its nginx front. It is not a
+> browser-use Skill or Agent configuration guide. Current Agent access is the
+> private IPC launcher described in `docs/browser-coordination.md`; the
+> historical driver evidence below is retained only for service diagnostics and
+> reproducibility.
 
 ## Decision: reuse the existing Chromium CDP service (Scope-5)
 
@@ -29,8 +29,8 @@ Rationale (all verifiable in this repo today):
 
 Starting a second, browser-use-specific container would duplicate this stack
 and reintroduce the version-drift problem #4496 was opened to avoid. The
-browser-use CLI is a **CDP client**, not a browser vendor — it attaches to the
-same endpoint like any other driver.
+coordinator may use this service as an internal browser transport; Agent
+processes do not receive this endpoint or attach to it directly.
 
 ## Endpoint contract
 
@@ -40,7 +40,7 @@ Bring-up (optional compose profile):
 docker compose --profile chromium up -d
 ```
 
-The endpoint is then reachable at:
+The endpoint is then reachable only by the configured service/operator path at:
 
 | Client location | URL | Notes |
 |---|---|---|
@@ -52,57 +52,27 @@ The endpoint is then reachable at:
   upgrade; Chrome's DNS-rebinding Host check is satisfied by the proxy's Host
   rewrite (`docker/chromium-cdp-nginx.conf` header comment documents both
   Chrome 148+ quirks and why a plain TCP forwarder like socat fails).
-- Env knobs (`.env`): `CDP_PORT` (external, default 9222), `CDP_INTERNAL_PORT`
+- Service-internal env knobs (`.env`): `CDP_PORT` (external, default 9222), `CDP_INTERNAL_PORT`
   (Chrome loopback listener, default 9221 — **must differ** from `CDP_PORT`),
   `CHROMIUM_IMAGE_TAG`.
 
-### Pointing drivers at the endpoint (Acceptance-①)
+Do not copy either URL or these port variables into an Agent environment. In
+coordinated mode the service owns the endpoint and `browserAgentEnv()` removes
+the direct-CDP variables before creating an Agent subprocess.
 
-```bash
-# Playwright (library)
-chromium.connectOverCDP("http://disclaude-chromium:9222")
+## Current Agent boundary
 
-# browser-use CLI / Skill — see config contract below
-BU_CDP_URL=http://disclaude-chromium:9222 browser-use ...
-```
+Agents use the private IPC launcher and socket from
+`docs/browser-coordination.md`. They must not receive `BU_CDP_URL`, `BU_CDP_WS`,
+`CHROMIUM_CDP_*`, `CDP_PORT`, or a direct browser endpoint. The browser-use
+Skill is intentionally written around that launcher; it does not configure or
+start an upstream daemon itself.
 
-> The Playwright MCP driver entry (`tools.mcpServers.playwright`) was **removed** in
-> #4460's final part — disclaude no longer consumes the endpoint over MCP; the
-> browser-use Skill (`BU_CDP_URL`) is the in-repo consumer. The endpoint itself is
-> unchanged and any external CDP client (Playwright library included) still attaches.
-
-## Skill ↔ CDP configuration contract (Scope-3, the #4460 interface face)
-
-The browser-use Skill must **not** hard-code a self-launched Chromium path.
-It attaches to an external CDP endpoint when one is configured, and falls back
-to native self-launch otherwise (#4460's default behavior stays available).
-
-**Configuration entry points** (checked in this priority order; at least the
-env var is required — recommended for containerized injection):
-
-1. `BU_CDP_URL` — env var. Accepts the HTTP endpoint form (`http://host:port`)
-   or a direct WebSocket debugger URL (`ws://host:port/...` — the form
-   `skills/browser-use/SKILL.md` currently shows). Preferred entry point;
-   compose/systemd can inject it without touching skill flags. Which form the
-   browser-use CLI accepts end-to-end is pinned by the Scope-6 smoke run.
-2. `BU_CDP_WS` — env var, direct WebSocket debugger URL
-   (`ws://host:port/devtools/browser/<uuid>`), for clients that already hold a
-   resolved `webSocketDebuggerUrl` from `/json/version`.
-3. Skill config field — same URL forms as above; lowest priority so env
-   injection wins in containers. The pre-3.0 `--cdp-url` CLI flag is **not**
-   a live entry point (removed upstream; it became the `BU_CDP_URL` env var —
-   see `skills/browser-use/SKILL.md`); the skill-side config field is what
-   fulfills this slot and is wired in #4460.
-
-**Behavioral semantics:**
-
-- Any of the above set → the skill **attaches** to the external Chromium and
-  must **not** spawn its own browser process.
-- None set → fall back to native self-launch (portable default, unchanged
-  from #4460).
-- Attach failure is a hard error (report the endpoint URL + `/json/version`
-  result), **not** a silent fallback to self-launch — a silent fallback would
-  mask a dead container and produce "works but wrong browser" sessions.
+An existing-browser deployment may keep `BU_CDP_URL` in the **service-only**
+configuration. That value is consumed by the coordinator and must not cross the
+Agent environment boundary. If the coordinator is unavailable, browser calls
+fail explicitly; they do not fall back to direct CDP, self-launch an upstream
+daemon, or replay an unknown operation.
 
 ## Sandbox policy (Scope-4)
 
@@ -126,9 +96,10 @@ Current, explicit tradeoff recorded here:
   + dropping `--no-sandbox`, or `--cap-add=SYS_ADMIN` as an intermediate step.
   Revisit if the endpoint is ever published beyond loopback.
 
-## Scope-6 smoke acceptance — executed (part 2)
+## Historical service-endpoint evidence — executed (part 2)
 
-The contract above was exercised end-to-end on a live headless deployment
+The service endpoint and its historical driver matrix were exercised end-to-end
+on a live headless deployment
 (2026-08-16; Debian 12 headless container, no desktop). Because that host had
 no Docker daemon, the **endpoint process** was brought up as a bare
 `--headless=new` Chromium rather than via `docker compose --profile chromium`
@@ -141,7 +112,8 @@ the driver-side matrix below is independent of that front (it binds to
 `127.0.0.1:<port>` exactly like Chrome's loopback listener does inside the
 container).
 
-Versions under test: `browser-use` CLI 0.13.7 (`browser-harness` 0.1.8),
+These are historical service/driver diagnostics, not instructions for an Agent
+or proof of the current IPC-only Agent path. Versions under test: `browser-use` CLI 0.13.7 (`browser-harness` 0.1.8),
 Playwright-bundled Chromium 151.0.7922.34 (playwright pin `chromium-1234`),
 Playwright (Python) 1.62.0.
 
@@ -165,7 +137,8 @@ Two operational notes confirmed during the run:
 
 - **`http://` vs `ws://` in `BU_CDP_URL`** — both work: the daemon resolves the
   HTTP form to a WS URL via `GET /json/version` (`browser_harness/daemon.py`,
-  `get_ws_url`). The contract in Scope-3 stands as written.
+  `get_ws_url`). This is historical service-driver evidence, not a current
+  Agent configuration contract.
 - **Fallback path** — with neither `BU_CDP_URL` nor `BU_CDP_WS` set, the CLI
   attempts native self-launch (a local profile-scoped Chrome); on this
   shared-libs-fragile host that path is exactly the fragility #4496 exists to
@@ -188,9 +161,9 @@ case stays environment-blocked):
   dead-`BU_CDP_URL` invocation against a live daemon returned `page_info()`
   from the healthy session; only after `browser-use --reload` (kills the
   daemon) did the same invocation exit 1 with
-  `BU_CDP_URL=… unreachable after 30s`. Rule: when the endpoint env changes,
-  `browser-use --reload` first (or set `BU_NAME` per endpoint so each gets its
-  own daemon socket).
+  `BU_CDP_URL=… unreachable after 30s`. For reproducing this historical service
+  test, reload the daemon when the endpoint env changes (or set `BU_NAME` per
+  endpoint so each gets its own daemon socket); this is not an Agent workflow.
 
 ### nginx-fronted compose endpoint — confirmed (2026-08-27, #4496 final box)
 
@@ -242,17 +215,15 @@ executed: the driver-side matrix (part 2) and the compose-fronted endpoint
 
 ## Acceptance status
 
-- [x] Scope-5 reuse decision — recorded above (part 1, #4506)
-- [x] Scope-2/3/4 contract + policy docs — this page (part 1, #4506)
-- [x] Scope-6 smoke acceptance — driver-side matrix above (part 2; nginx-front
+- [x] Scope-5 service reuse decision — recorded above (part 1, #4506)
+- [x] Service-internal CDP policy and diagnostics — this page (part 1, #4506)
+- [x] Historical Scope-6 service smoke evidence — driver-side matrix above (part 2; nginx-front
   confirmation run executed 2026-08-27, see the compose-endpoint section
   above — all 6 cases ✅)
 - [x] Optional: Playwright attaching to the same endpoint as a second driver
   (case 6 — cross-driver reuse confirmed, config-only as designed)
-- [x] README records the endpoint: driver/skill attach URLs (①), skill CDP
-  config entry + attach/fallback semantics (②), sandbox tradeoff (③) —
-  `README.md` → "Browser on Headless Hosts (CDP Endpoint)" (part 3), linking
-  here for the full contract
+- [x] README records the current Agent boundary and coordinator entry —
+  `README.md` → "Browser on Headless Hosts (coordinated service)" (part 3)
 
 ## Agent-level e2e harness (#4602)
 
@@ -269,7 +240,8 @@ npx tsx scripts/browser-use-agent-e2e.mts --workspace <workspace-dir>
 
 ## Related
 
-- #4496 — this contract (endpoint side); #4460 — browser-use Skill (skill side)
+- #4496 — historical service endpoint contract; #4460 — browser-use Skill
+  (current Agent access is the coordinated IPC path)
 - #4151 nginx CDP proxy · #4164 host-scope CDP · #4099 healthcheck
 - Implementation files: `docker-compose.yml` (`chromium` service),
   `docker/chromium-cdp-nginx.conf`, `.env.example`
