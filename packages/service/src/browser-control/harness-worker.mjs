@@ -2,7 +2,10 @@
 import { spawn } from 'node:child_process';
 import { rmSync } from 'node:fs';
 let options, env, runtime, daemon, running, stopping = false;
-const send = message => { if (process.connected) process.send(message); };
+const send = (message, callback) => {
+  if (!process.connected) { callback?.(); return; }
+  process.send(message, callback);
+};
 function cli(code, timeoutMs = 120000, cwd = options.cwd) {
   return new Promise((resolve, reject) => {
     const child = spawn(options.python, ['-m', 'browser_use.cli'], { env, cwd, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -33,10 +36,30 @@ process.on('message', async message => {
         BH_RUNTIME_DIR_SHARED: '0', BH_TMP_DIR_SHARED: '0', BH_REQUIRE_EXISTING_DAEMON: '1',
         BROWSER_USE_DISABLE_TELEMETRY: '1', DISCLAUDE_BROWSER_TARGET: message.target };
       // Explicitly supervise the existing daemon; CLI calls cannot silently respawn it.
-      daemon = spawn(options.python, ['-m', 'browser_harness.daemon'], { env, cwd: options.cwd, stdio: 'ignore' });
-      send({ kind: 'daemon-started', pid: daemon.pid });
-      daemon.on('error', () => process.exit(2));
-      daemon.on('exit', () => { if (!stopping) process.exit(2); });
+      // Keep the supervised daemon's stderr on the worker diagnostic pipe. The
+      // coordinator already bounds that pipe to its final 4 KiB, so a daemon
+      // bootstrap failure remains observable without changing the recovery path.
+      daemon = spawn(options.python, ['-m', 'browser_harness.daemon'], { env, cwd: options.cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+      // The coordinator bounds the worker diagnostic pipe to its final 4 KiB.
+      // Forward both streams: browser_harness has used stdout for startup
+      // diagnostics in different releases, while Python tracebacks normally
+      // go to stderr.
+      const forwardDaemonOutput = stream => {
+        stream?.setEncoding('utf8');
+        stream?.on('data', chunk => process.stderr.write(`[browser_harness.daemon] ${chunk}`));
+      };
+      forwardDaemonOutput(daemon.stdout);
+      forwardDaemonOutput(daemon.stderr);
+      send({ kind: 'daemon-started', pid: daemon.pid, python: options.python, cwd: options.cwd });
+      let daemonExitReported = false;
+      const reportDaemonFailure = (kind, details) => {
+        if (stopping || daemonExitReported) return;
+        daemonExitReported = true;
+        process.stderr.write(`[browser_harness.daemon] ${kind} ${JSON.stringify(details)}\n`);
+        send({ kind: 'daemon-exit', ...details }, () => process.exit(2));
+      };
+      daemon.on('error', error => reportDaemonFailure('error', { error: error.message }));
+      daemon.on('exit', (code, signal) => reportDaemonFailure('exit', { code, signal }));
       for (let attempt = 0; attempt < 60; attempt++) {
         const result = await cli("import os\nswitch_tab(os.environ['DISCLAUDE_BROWSER_TARGET'])\nassert current_tab()['targetId']==os.environ['DISCLAUDE_BROWSER_TARGET']\n", 5000);
         if (result.code === 0) { send({ kind: 'ready' }); return; }

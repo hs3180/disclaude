@@ -64,7 +64,8 @@ export class Coordinator {
           reject(new Error(`Worker startup exit (code=${code}, signal=${signal || 'none'})`));
         });
         h.child.on('message', message => {
-          if (message.kind === 'daemon-started') this.log('daemon-started', { epoch: h.epoch, pid: message.pid });
+          if (message.kind === 'daemon-started') this.log('daemon-started', { epoch: h.epoch, pid: message.pid, python: message.python, cwd: message.cwd });
+          else if (message.kind === 'daemon-exit') this.log('daemon-exit', { epoch: h.epoch, code: message.code, signal: message.signal, error: message.error });
           else if (message.kind === 'ready') { clearTimeout(timer); resolve(); }
           else if (message.kind === 'init-error') {
             clearTimeout(timer);
@@ -133,13 +134,20 @@ export class Coordinator {
       }
       if (this.detachedWorker && h.child) this.killWorker(h); // Includes an orphaned harness/CLI after worker death.
       // Also verify browser-side detachment; process exit alone is not the barrier.
-      try { await this.verifyReclaimed(); } catch (error) {
+      // Cleanup is part of the same barrier: a cleanup exception must quarantine
+      // the coordinator instead of becoming an unhandled rejection that drops
+      // every connected client as an unexplained IPC EOF.
+      let cleanupPhase = 'verify-reclaimed';
+      try {
+        await this.verifyReclaimed();
+        cleanupPhase = 'cleanup-worker';
+        await this.cleanupWorker(h.workerOptions);
+      } catch (error) {
         this.closed = true; h.state = 'quarantined';
-        this.log('quarantined', { epoch: h.epoch, reason: error.message });
+        this.log('quarantined', { epoch: h.epoch, phase: cleanupPhase, reason: error.message });
         for (const ticket of [...this.queue]) this.cancel(ticket, 'Browser unavailable: reclaim failed');
         return;
       }
-      this.cleanupWorker(h.workerOptions);
       this.log('reclaimed', { epoch: h.epoch });
       if (this.holder === h) this.holder = null;
       void this.pump();
