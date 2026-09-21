@@ -141,7 +141,7 @@ export class Coordinator {
       try {
         await this.verifyReclaimed();
         cleanupPhase = 'cleanup-worker';
-        this.cleanupWorker(h.workerOptions);
+        await this.cleanupWorker(h.workerOptions);
       } catch (error) {
         this.closed = true; h.state = 'quarantined';
         this.log('quarantined', { epoch: h.epoch, phase: cleanupPhase, reason: error.message });

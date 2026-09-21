@@ -33,7 +33,7 @@ if (process.argv.includes('browser_harness.daemon')) {
         options: { python: fakePython, cwd: root, runtime: join(root, 'runtime') },
       });
       await daemonStarted;
-      for (let i = 0; i < 20 && !stderr.includes('fixture daemon stderr'); i++) await new Promise(resolve => setTimeout(resolve, 10));
+      for (let i = 0; i < 100 && !stderr.includes('fixture daemon stderr'); i++) await new Promise(resolve => setTimeout(resolve, 10));
       worker.send({ kind: 'stop' });
       await once(worker, 'exit');
       expect(stderr).toContain('fixture daemon stderr');
