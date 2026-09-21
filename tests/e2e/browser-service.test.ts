@@ -18,6 +18,8 @@ import { verifyRepeatedHandoffs } from './helpers/browser-handoff-stress.js';
 
 const exec = promisify(execFile);
 const enabled = Boolean(process.env.DISCLAUDE_E2E_CHROMIUM && process.env.DISCLAUDE_E2E_BROWSER_PYTHON);
+const restartCycles = Number.parseInt(process.env.DISCLAUDE_E2E_BROWSER_RESTART_CYCLES || '3', 10);
+const configuredRestartCycles = Number.isInteger(restartCycles) && restartCycles >= 2 && restartCycles <= 5 ? restartCycles : 3;
 
 describe('user starts Disclaude and shares its managed browser', () => {
   it.skipIf(!enabled)('runs the product IPC entry, hands over shared page state, then shuts down and restarts', async () => {
@@ -82,7 +84,7 @@ describe('user starts Disclaude and shares its managed browser', () => {
     }
     let invocation = 0;
     try {
-      for (let attempt = 0; attempt < 2; attempt++) {
+      for (let attempt = 0; attempt < configuredRestartCycles; attempt++) {
         output = '';
         child = spawn(process.execPath, [executable, 'start', '--config', config, '--api-port', '0'], { env, cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
         child.stdout!.on('data', d => { output += d.toString(); });
@@ -276,6 +278,14 @@ describe('user starts Disclaude and shares its managed browser', () => {
       console.error('BROWSER_SERVICE_FAILURE', output.slice(-16_000));
       const events = await readFile(env.DISCLAUDE_BROWSER_EVENTS!, 'utf8').catch(() => 'No coordinator events written');
       console.error('BROWSER_COORDINATOR_EVENTS', events.slice(-16_000));
+      const processes = await exec('ps', ['-ww', '-axo', 'pid=,ppid=,stat=,etime=,command='])
+        .then(result => result.stdout)
+        .catch(error => `process snapshot unavailable: ${error.message}`);
+      const ownedProcesses = processes.split('\n')
+        .filter(line => line.includes(root) || line.includes('browser_harness') || line.includes('browser-use') || line.includes('Google Chrome'))
+        .slice(-200)
+        .join('\n');
+      console.error('BROWSER_PROCESS_SNAPSHOT', ownedProcesses || 'No owned browser/harness processes found');
       throw error;
     } finally {
       nock.enableNetConnect(localHost);
