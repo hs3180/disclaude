@@ -20,6 +20,11 @@ const exec = promisify(execFile);
 const enabled = Boolean(process.env.DISCLAUDE_E2E_CHROMIUM && process.env.DISCLAUDE_E2E_BROWSER_PYTHON);
 const restartCycles = Number.parseInt(process.env.DISCLAUDE_E2E_BROWSER_RESTART_CYCLES || '3', 10);
 const configuredRestartCycles = Number.isInteger(restartCycles) && restartCycles >= 2 && restartCycles <= 5 ? restartCycles : 3;
+// Real model acceptance in this repository is intentionally pinned to the
+// operator-approved model. Do not inherit a user's global Codex default: that
+// would make the evidence non-reproducible and could silently exercise another
+// model.
+const CODEX_BROWSER_ACCEPTANCE_MODEL = 'gpt-5.6-luna';
 
 describe('user starts Disclaude and shares its managed browser', () => {
   it.skipIf(!enabled)('runs the product IPC entry, hands over shared page state, then shuts down and restarts', async () => {
@@ -190,7 +195,8 @@ describe('user starts Disclaude and shares its managed browser', () => {
             }
             const model = backend === 'deepseek' ? process.env.DISCLAUDE_E2E_BROWSER_MODEL
               : backend === 'claude' ? process.env.DISCLAUDE_E2E_BROWSER_CLAUDE_MODEL
-                : backend === 'pi' ? process.env.DISCLAUDE_E2E_BROWSER_PI_MODEL : undefined;
+                : backend === 'pi' ? process.env.DISCLAUDE_E2E_BROWSER_PI_MODEL
+                  : CODEX_BROWSER_ACCEPTANCE_MODEL;
             const stream = provider.queryStream(input(), { cwd: root, settingSources: [], env: taskEnv,
               ...(['claude', 'pi'].includes(backend) ? { tools: ['Bash'], allowedTools: ['Bash'] } : {}), ...(model ? { model } : {}) });
             const messages: AgentMessage[] = [];

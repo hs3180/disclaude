@@ -166,7 +166,9 @@ merges. Direct worker configuration remains private to the service.
 For real model-to-model browser handoff, additionally set
 `DISCLAUDE_E2E_BROWSER_MODEL` to a configured dsh model and
 `DISCLAUDE_E2E_BROWSER_CODEX=1` with an authenticated installed Codex CLI.
-The same case then runs dsh followed by Codex through the product launcher. Each
+The Codex leg is explicitly pinned to `gpt-5.6-luna`; it does not inherit the
+machine's global Codex model default. The same case then runs dsh followed by
+Codex through the product launcher. Each
 model reads the previous page value, asserts it, writes its own marker, and emits
 the previous value in its tool output. The test checks that output and independently
 reads the resulting page through another caller. Either backend can also be enabled
