@@ -42,7 +42,26 @@ describe('browser coordinator startup diagnostics', () => {
     await coordinator.close();
     const timeout = events.find(event => event.type === 'worker-startup-timeout');
     const failed = events.find(event => event.type === 'allocation-failed');
+    expect(events.find(event => event.type === 'daemon-started')).toMatchObject({ python: 'fixture-python', cwd: 'fixture-cwd' });
     expect(timeout).toMatchObject({ startupMs: 50, stderr: 'fixture startup stderr' });
     expect(failed).toMatchObject({ error: 'Worker startup timeout', stderr: 'fixture startup stderr' });
+  });
+
+  it('records supervised daemon exit details before the worker exits', async () => {
+    const events = [];
+    const coordinator = new Coordinator({
+      url: 'ws://fixture.invalid',
+      target: 'fixture-target',
+      event: event => events.push(event),
+      workerModule: new URL('./fixtures/coordinator-daemon-exit.mjs', import.meta.url),
+      startupMs: 500,
+      hardMs: 1000,
+      ttlMs: 100,
+    });
+
+    await expect(coordinator.acquire('fixture-caller').promise).rejects.toThrow('Worker startup exit');
+    await coordinator.close();
+    expect(events.find(event => event.type === 'daemon-started')).toMatchObject({ pid: 4242, python: 'fixture-python', cwd: 'fixture-cwd' });
+    expect(events.find(event => event.type === 'daemon-exit')).toMatchObject({ code: 2, signal: null });
   });
 });

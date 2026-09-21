@@ -64,7 +64,8 @@ export class Coordinator {
           reject(new Error(`Worker startup exit (code=${code}, signal=${signal || 'none'})`));
         });
         h.child.on('message', message => {
-          if (message.kind === 'daemon-started') this.log('daemon-started', { epoch: h.epoch, pid: message.pid });
+          if (message.kind === 'daemon-started') this.log('daemon-started', { epoch: h.epoch, pid: message.pid, python: message.python, cwd: message.cwd });
+          else if (message.kind === 'daemon-exit') this.log('daemon-exit', { epoch: h.epoch, code: message.code, signal: message.signal, error: message.error });
           else if (message.kind === 'ready') { clearTimeout(timer); resolve(); }
           else if (message.kind === 'init-error') {
             clearTimeout(timer);
