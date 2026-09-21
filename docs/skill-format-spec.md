@@ -1,18 +1,13 @@
 # disclaude Skill Format Spec (CLI + README)
 
-> **Status:** Draft — part 2 of [#4459](https://github.com/hs3180/disclaude/issues/4459) (Retire
-> disclaude MCP server support → migrate to Skills). Implements **Scope 2 (Skill 格式定义)**.
-> The owner decision is recorded in [#4383](https://github.com/hs3180/disclaude/issues/4383)
-> (2026-08-07): **reduce MCP**; the pi backend ships **no MCP** (see
-> [docs/pi-mcp-landing-research.md](./pi-mcp-landing-research.md) §B-Q1 — zero MCP client/server
-> symbols at `@earendil-works/pi-agent-core@0.82.1–0.83.0`), so disclaude unifies both backends on
-> the **Skills (CLI + README)** model. This spec formalizes that contract so the migrations in
-> scopes 3–4 (and the sibling Playwright migration [#4460](https://github.com/hs3180/disclaude/issues/4460))
-> don't reinvent it per-tool.
+> **Status:** Current CLI Skill contract. The pi backend ships **no MCP** and
+> disclaude uses the **Skills (CLI + README)** model for the migrated surfaces.
+> This spec formalizes that contract so each Skill does not invent its own
+> invocation, output, artifact, or lifecycle rules.
 >
-> **Non-goal:** deciding which MCP surface migrates to which target. That is scope 3 (per-tool) and
-> is only sketched as context in [§5](#5-relationship-to-the-mcp-surfaces-context). The full surface
-> map lives in [docs/mcp-server-inventory.md](./mcp-server-inventory.md) (part 1, PR #4462, in flight).
+> **Non-goal:** deciding which retired MCP surface maps to which target. The
+> per-tool decisions are documented by the current Skill and implementation
+> that replaces each surface.
 
 ---
 
@@ -171,9 +166,9 @@ path.
 
 ## 5. Relationship to the MCP surfaces (context)
 
-The MCP inventory (part 1, [docs/mcp-server-inventory.md](./mcp-server-inventory.md), PR #4462)
-maps **three** MCP surfaces. This spec is the *format* every replacement must follow; **which**
-surface maps to which target is a per-tool decision (scope 3), sketched here only for orientation:
+The retired MCP surfaces are summarized here only to explain the migration
+boundary. This spec is the *format* every replacement must follow; the
+current Skill or implementation owns the per-tool behavior:
 
 | Surface | Transport | Lives in | Migration target (scope 3 decides) |
 |---|---|---|---|

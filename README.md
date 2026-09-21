@@ -6,13 +6,13 @@
 
 A multi-platform AI agent bot connecting Feishu/Lark and REST channels to Claude, Codex, and pi agent runtimes. Written in TypeScript, it supports chat-driven development, file operations, browser automation, and scheduled work.
 
-**Current release: 0.5.0 — 多后端 Agent 的统一使用与可控自动化。** This release adds backend/model selection, interaction with running agents, and low-cost reliable scheduling. See the [release goals and acceptance record](docs/releases/0.5.0.md).
+**Latest published release: 0.5.3.** The repository is continuing development toward 0.6.0; current scope and implementation boundaries are summarized in [CHANGELOG.md](CHANGELOG.md).
 
 ## 📚 Documentation
 
 | Guide | Description |
 |-------|-------------|
-| [0.5.0 发布目标](docs/releases/0.5.0.md) | 发布范围、关联 Issues、优先级和验收门槛 |
+| [当前范围与变更](CHANGELOG.md) | 当前发布范围、已交付变更和已知边界 |
 | [5 分钟接入飞书](docs/quickstart.md) | 极简快速上手指南 |
 | [飞书应用配置指南](docs/feishu-setup.md) | 完整的飞书机器人配置教程（创建应用、权限、事件订阅等） |
 | [创建外部 Skill](skills/skill-creator/SKILL.md) | 通用技能模板与外部 CLI 接入 |
@@ -80,8 +80,8 @@ claude --version
 
 Install the prebuilt `v0.5.1` distribution tag globally:
 
-> The Git tag is available. GitHub Release publication remains pending final
-> deployment acceptance; see the [installation record](docs/releases/0.5.1/npm-tag-acceptance.md).
+> The Git tag is available. Follow the [Git installation procedure](docs/releases/git-install.md)
+> for provenance, upgrade and rollback checks.
 
 ```bash
 npm install -g "github:hs3180/disclaude#v0.5.1"
@@ -112,9 +112,8 @@ For unattended startup, create the directory and set `workspace.dir` explicitly
 (or `DISCLAUDE_WORKSPACE_DIR`). Existing workspace settings and files are preserved.
 See [workspace setup and safe migration](docs/workspace-setup.md).
 
-See the [0.5.1 release notes](docs/releases/0.5.1.md) for release availability
-and installation details. The optional Release asset URL only becomes available
-when the GitHub Release is published; the Git tag does not require that asset.
+The optional Release asset URL only becomes available when the GitHub Release is
+published; the Git tag does not require that asset.
 
 ### Option B: Install the GitHub source distribution
 
@@ -135,8 +134,8 @@ node bin/disclaude.js start
 From another directory, use the absolute path to `bin/disclaude.js` and pass an
 absolute config path. For upgrades and rollback, keep the previous checkout and
 its configuration/workspace backup until the new checkout has passed health and
-backend checks. See the [candidate record](docs/releases/0.5.0/release-candidate.md)
-for validation evidence and accepted boundaries.
+backend checks. See the [Git installation procedure](docs/releases/git-install.md)
+for the current installation and rollback procedure.
 
 ### Option C: Clone for Development
 
@@ -511,21 +510,12 @@ This architecture enables:
 | Browser coordinator unavailable | Check `disclaude browser status` and the private IPC socket; do not attach directly to CDP |
 | Browser errors | Inspect the coordinator/service log and restart the managed service through its supported CLI |
 
-## Roadmap
+## Development scope
 
-### 0.5.0 — 多后端 Agent 的统一使用与可控自动化
-
-Release scope is based on the open-issue review of 2026-09-08, grouped by user impact and dependencies. The [release plan](docs/releases/0.5.0.md) is the source of truth for scope and acceptance.
-
-| Priority | Release goal | Key issues |
-|----------|--------------|------------|
-| P0 | Named backend/model presets, in-chat selection, and DeepSeek harness integration | [#4772](https://github.com/hs3180/disclaude/issues/4772), [#4724](https://github.com/hs3180/disclaude/issues/4724), [#4740](https://github.com/hs3180/disclaude/issues/4740) |
-| P0 | Interrupt, queue, and steer running agents; finish streaming-card delivery | [#4825](https://github.com/hs3180/disclaude/issues/4825), [#4208](https://github.com/hs3180/disclaude/issues/4208) |
-| P0 | Script-based polling without an LLM turn, bounded context, and correct concurrent task settlement | [#4798](https://github.com/hs3180/disclaude/issues/4798), [#4812](https://github.com/hs3180/disclaude/issues/4812), [#4808](https://github.com/hs3180/disclaude/issues/4808) |
-| Supporting | Simplify harness/CLI contracts, upgrade the SDK, and support dynamic internal ports | [#4813](https://github.com/hs3180/disclaude/issues/4813), [#4708](https://github.com/hs3180/disclaude/issues/4708), [#4824](https://github.com/hs3180/disclaude/issues/4824) |
-| P1, non-blocking | Feishu document/comment-based research workflow and isolated research chats | [#4753](https://github.com/hs3180/disclaude/issues/4753), [#4754](https://github.com/hs3180/disclaude/issues/4754) |
-
-One-day/week unattended execution, a full Notebook UI, and additional chat platforms are outside the 0.5.0 commitment. Existing partial implementations require acceptance evidence; an open parent issue does not mean its completed subtasks should be rebuilt.
+The current release status and open product scope live in [CHANGELOG.md](CHANGELOG.md)
+and the GitHub [0.6.0 milestone](https://github.com/hs3180/disclaude/milestone/14).
+Research uses the existing Project to constrain its working directory; the Feishu
+document and chat remain the primary research interface.
 
 ## License
 

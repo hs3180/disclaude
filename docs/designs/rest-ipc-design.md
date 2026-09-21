@@ -3,7 +3,7 @@
 > Issue: #4168 — 用 REST API 取代 IPC 进行内部通信（MCP ↔ DisclaudeService）
 > Sub-issue: #4279 — Phase 1+2 (endpoints + RestIpcClient)
 > Version: Phase 1+2 complete
-> Status: Implemented (pending review)
+> Status: Implemented for phases 1–3; operational acceptance is tracked separately.
 > Created: 2026-07-16
 
 ## 1. Overview

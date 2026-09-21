@@ -67,8 +67,8 @@ services:
       - DISCLAUDE_WORKSPACE_DIR=/data/workspace
       # #4608: pin the REST API client to IPv4 loopback, matching the
       # HttpApiServer bind (cli.ts pins 127.0.0.1). Avoids the localhost
-      # ::1-vs-127.0.0.1 resolution split between server bind and undici fetch
-      # (docs/channel-skill-rest-live-verification.md). Propagates to the
+      # ::1-vs-127.0.0.1 resolution split between server bind and undici fetch.
+      # Propagates to the
       # in-container channel CLI (`disclaude channel`) via env inheritance.
       - DISCLAUDE_API_BASE_URL=http://127.0.0.1:19200
       # Issue #4181: re-enable Claude Code's built-in (session-only) cron/loop

@@ -49,5 +49,5 @@ Anthropic 兼容地址（以 `/anthropic` 结尾）。请勿将真实 key 写入
 
 2026-09-10 使用用户指定的 `deepseek-v4.1-flash-expires-on-0910`，通过
 Anthropic Messages 协议跑通 pi Agent 的回复、原生文件工具与读回、多轮随机
-标记记忆、工具调用时取消、取消后新 query。最终候选 SHA 和完整测试结果以
-[0.5.0 RC 记录](releases/0.5.0/release-candidate.md) 为准。
+标记记忆、工具调用时取消、取消后新 query。该段只描述当时的 provider
+级验证，不替代当前版本的真实产品验收。

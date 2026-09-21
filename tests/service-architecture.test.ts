@@ -28,8 +28,7 @@ describe('single service public contract (#4924)', () => {
 
     const releaseDocs = [
       'README.md',
-      'docs/releases/0.5.3.md',
-      'docs/releases/0.5.3/release-acceptance.md',
+      'docs/README.md',
       'docs/releases/git-install.md',
     ];
     for (const file of releaseDocs) {
