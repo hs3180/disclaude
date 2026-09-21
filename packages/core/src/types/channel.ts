@@ -191,6 +191,9 @@ export interface ControlCommand<T extends ControlCommandType = ControlCommandTyp
  * Control response.
  */
 export interface ControlResponse {
+  /** Structured project context returned by /project info without changing sessions. */
+  projectContext?: { workingDir: string; available: boolean };
+
   /** Whether the command was executed successfully */
   success: boolean;
 
