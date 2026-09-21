@@ -69,4 +69,14 @@ describe('obsolete TypeScript build artifacts', () => {
     rmSync(join(dir, 'dist'), { recursive: true });
     expect(prunePackageArtifacts(dir)).toEqual([]);
   });
+
+  it('invalidates stale incremental state when dist is missing', () => {
+    const dir = fixture();
+    rmSync(join(dir, 'dist'), { recursive: true });
+    const buildInfo = join(dir, 'tsconfig.tsbuildinfo');
+    writeFileSync(buildInfo, '{}');
+
+    expect(prunePackageArtifacts(dir)).toEqual([buildInfo]);
+    expect(existsSync(buildInfo)).toBe(false);
+  });
 });
