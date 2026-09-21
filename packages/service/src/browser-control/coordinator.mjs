@@ -43,18 +43,24 @@ export class Coordinator {
       h.workerOptions = typeof this.workerOptions === 'function' ? this.workerOptions() : this.workerOptions;
       h.child = fork(this.workerModule, [], { detached: this.detachedWorker, env: { ...process.env, DISCLAUDE_BROWSER_WORKER_GROUP: this.detachedWorker ? '1' : '0' }, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
       h.exited = new Promise(resolve => h.child.once('exit', (code, signal) => {
-        this.log('worker-exit', { epoch: h.epoch, pid: h.child.pid, code, signal });
+        this.log('worker-exit', { epoch: h.epoch, pid: h.child.pid, code, signal, stderr: h.workerStderr?.trim() || undefined });
         for (const p of h.pending.values()) p.reject(new Error('Worker exited; outcome unknown'));
         h.pending.clear(); resolve();
         if (h.state === 'held') void this.revoke(h, 'worker-exit');
       }));
-      h.child.stderr.resume();
-      h.child.on('error', error => this.log('worker-error', { epoch: h.epoch, error: error.message }));
+      h.workerStderr = '';
+      h.child.stderr.setEncoding('utf8');
+      h.child.stderr.on('data', chunk => { h.workerStderr = (h.workerStderr + chunk).slice(-4000); });
+      h.child.on('error', error => this.log('worker-error', { epoch: h.epoch, error: error.message, stderr: h.workerStderr.trim() || undefined }));
       await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error('Worker startup timeout')), this.startupMs);
+        const timer = setTimeout(() => {
+          const error = new Error('Worker startup timeout');
+          this.log('worker-startup-timeout', { epoch: h.epoch, startupMs: this.startupMs, stderr: h.workerStderr.trim() || undefined });
+          reject(error);
+        }, this.startupMs);
         h.child.once('exit', (code, signal) => {
           clearTimeout(timer);
-          this.log('worker-startup-exit', { epoch: h.epoch, code, signal });
+          this.log('worker-startup-exit', { epoch: h.epoch, code, signal, stderr: h.workerStderr.trim() || undefined });
           reject(new Error(`Worker startup exit (code=${code}, signal=${signal || 'none'})`));
         });
         h.child.on('message', message => {
@@ -62,7 +68,7 @@ export class Coordinator {
           else if (message.kind === 'ready') { clearTimeout(timer); resolve(); }
           else if (message.kind === 'init-error') {
             clearTimeout(timer);
-            this.log('worker-init-error', { epoch: h.epoch, error: message.error });
+            this.log('worker-init-error', { epoch: h.epoch, error: message.error, stderr: h.workerStderr.trim() || undefined });
             reject(new Error(message.error));
           }
           else if (message.kind === 'result') {
@@ -75,7 +81,7 @@ export class Coordinator {
         h.child.send({ kind: 'init', url: this.url, target: this.target, options: h.workerOptions }, error => {
           if (!error) return;
           clearTimeout(timer);
-          this.log('worker-init-send-error', { epoch: h.epoch, error: error.message });
+          this.log('worker-init-send-error', { epoch: h.epoch, error: error.message, stderr: h.workerStderr.trim() || undefined });
           reject(error);
         });
       });
@@ -84,7 +90,7 @@ export class Coordinator {
       this.log('granted', { actor: h.actor, epoch: h.epoch, pid: h.child.pid, waitMs: performance.now() - ticket.enqueued });
       ticket.resolve({ actor: h.actor, epoch: h.epoch, token: h.token, boot: this.boot });
     } catch (error) {
-      this.log('allocation-failed', { epoch: h.epoch, error: error.message });
+      this.log('allocation-failed', { epoch: h.epoch, error: error.message, stderr: h.workerStderr?.trim() || undefined });
       ticket.reject(error);
       await this.revoke(h, 'allocation-failed');
     }
