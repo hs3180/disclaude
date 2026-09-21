@@ -9,14 +9,10 @@
  * (part 1, #4409) — so the options contract is locked independently of the
  * (still-unimplemented) queryStream wiring (part 3).
  *
- * Source of truth for the pi side: `@earendil-works/pi-agent-core@0.82.1` +
- * `@earendil-works/pi-ai` TypeScript declarations, as recorded in the #4384
- * spike (`docs/pi-agent-core-api-research.md`). The pi type references below
- * cite the 0.82.1 `.d.ts` line numbers; they are a STRUCTURAL description of
+ * Source of truth for the pi side: the pinned pi-agent-core/pi-ai TypeScript
+ * declarations. The pi type references below are a STRUCTURAL description of
  * what the adapter targets, NOT an import — disclaude takes no hard dependency
- * on pi-agent-core (see the PiAgentProvider skeleton, #4385). Re-verify on a
- * pi version bump (cf. #4384 §6: 0.x, pre-1.0; latest observed 0.83.0 while
- * the pin remains 0.82.1).
+ * on pi-agent-core. Re-verify on a pi version bump.
  *
  * Why pi options are split (unlike Claude's flat options object):
  * - pi's `agentLoop(prompts, context, config, signal, streamFn)`

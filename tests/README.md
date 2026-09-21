@@ -17,7 +17,9 @@ Actual package installation remains the separate `npm run test:install:checkout 
 
 This is the current separation of the Vitest suites, not completion of repository-wide test consolidation (#5016). Historical shell/deployment runners, opt-in model checks within packages, and the bounded provider/channel fixtures above still need review against real product entry points. Retain useful assertions while correcting their evidence labels; do not delete coverage solely because a test uses mocks. Historical release reports describe the candidates and paths used at the time and are not current execution instructions.
 
-The fixed 0.5.0 acceptance inventory is archived under `docs/releases/0.5.0/acceptance.json`. Its dedicated validator and fixture suite are retired; current unit or E2E runs do not treat those 44 historical IDs as a release contract.
+Release-specific acceptance inventories are not kept as current test contracts.
+Use the entry points and evidence boundaries above; a skipped or simulated case
+does not establish a release-level pass.
 
 ## Upgrade and rollback
 

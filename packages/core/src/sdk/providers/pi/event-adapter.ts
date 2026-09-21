@@ -7,12 +7,10 @@
  * fully unit-testable module so the mapping contract is locked independently
  * of the (still-unimplemented) queryStream wiring.
  *
- * Source of truth for the pi side: `@earendil-works/pi-agent-core@0.82.1` +
- * `@earendil-works/pi-ai` TypeScript declarations, as recorded in the #4384
- * spike (`docs/pi-agent-core-api-research.md`). The pi types below are a
- * STRUCTURAL MIRROR, not an import — disclaude does not take a hard dependency
- * on pi-agent-core (see the PiAgentProvider skeleton, #4385); they may drift
- * on a pi version bump and should be re-verified (cf. #4384 §6: 0.x, pre-1.0).
+ * Source of truth for the pi side: the pinned pi-agent-core/pi-ai TypeScript
+ * declarations. The pi types below are a STRUCTURAL MIRROR, not an import —
+ * disclaude does not take a hard dependency on pi-agent-core; they may drift on
+ * a pi version bump and should be re-verified.
  */
 
 import type { AgentMessage, AgentMessageMetadata, AgentMessageType } from '../../types.js';
@@ -111,7 +109,7 @@ function stringifyPayload(value: unknown): string {
  * Returns `null` for events that do not map to a user-visible message in the
  * MVP (agent/turn/message lifecycle boundaries, reasoning/thinking deltas,
  * `text_start`/`text_end` framing). The caller should filter nulls out of the
- * stream. See #4386 / docs/pi-agent-core-api-research.md §2.
+ * stream. See #4386 and the current pi backend guide.
  *
  * Mapping:
  * - `message_update` (`text_delta`)            → `text` (assistant text delta)

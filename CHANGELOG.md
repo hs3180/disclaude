@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Remove standalone `✅ Complete` summaries. Reaction failures are bounded and do not create extra fallback messages.
 - Finalize streaming replies at each turn boundary and release stream state even when the last content update fails.
 
-See [0.5.3 release notes](docs/releases/0.5.3.md) and the [published release](https://github.com/hs3180/disclaude/releases/tag/v0.5.3).
+See the [published 0.5.3 release](https://github.com/hs3180/disclaude/releases/tag/v0.5.3).
 
 ## [0.5.2] - Unreleased
 
@@ -46,7 +46,7 @@ See [0.5.3 release notes](docs/releases/0.5.3.md) and the [published release](ht
 - Keep credential lifecycle with agents and remove global security-output filtering.
 - Replace committed Git candidate fixtures with CI installation checks built from the current checkout.
 
-See [0.5.2 release notes](docs/releases/0.5.2.md) for migration, verification and limits. No final tag is implied by this unreleased entry.
+This unreleased entry does not imply a final tag; use the current migration and installation guides for supported procedures.
 
 ## [0.5.1] - Unreleased
 
@@ -64,7 +64,7 @@ See [0.5.2 release notes](docs/releases/0.5.2.md) for migration, verification an
 
 ### Documentation
 
-- Document installation from the forthcoming GitHub `v0.5.1` tag with `npm install -g "github:hs3180/disclaude#v0.5.1"`. See the [0.5.1 release notes](docs/releases/0.5.1.md); the command requires the tag to be published.
+- Document installation from the GitHub `v0.5.1` tag with `npm install -g "github:hs3180/disclaude#v0.5.1"`; the command requires the tag to be published.
 
 ### Known limitations
 
@@ -105,7 +105,7 @@ work across Claude, Codex, pi, and DeepSeek integrations.
 
 ### Verification and boundaries
 
-- Runtime validation: 217 test files / 4,638 tests pass, complete integration runner passes, and four real backend suites pass 19 checks. The [candidate record](docs/releases/0.5.0/release-candidate.md) records exact revisions, commands, artifact boundaries and remaining review status.
+- Runtime validation: 217 test files / 4,638 tests pass, complete integration runner passes, and four real backend suites pass 19 checks. These figures describe the 0.5.0 release-time candidate and are not current 0.6.0 acceptance evidence.
 - Claude and pi were tested through the user-selected DeepSeek Anthropic-compatible provider. DeepSeek native was tested through dsh; Codex used authenticated app-server access. This does not claim every provider/model combination is supported.
 - pi is an optional install with its own Node requirement. DeepSeek cancellation starts a fresh native query; cross-backend native history migration is not promised.
 - Real Feishu text/file delivery, CardKit finalization, two-instance isolation, schedule wake-up and isolated launchd install/upgrade/rollback have evidence. CardKit sampling does not measure tenant-wide saturation or live 429 recovery.

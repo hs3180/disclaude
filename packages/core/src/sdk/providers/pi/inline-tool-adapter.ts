@@ -6,11 +6,10 @@
  * TypeBox (`TSchema`) + a richer `execute(toolCallId, params, signal, onUpdate,
  * context)` signature. This adapter wraps a disclaude tool so pi can invoke it.
  *
- * Source of truth for the pi side: #4384 spike findings
- * (`docs/pi-agent-core-api-research.md` §3) against
- * @earendil-works/pi-agent-core@0.82.1. The pi types below are a STRUCTURAL
- * MIRROR (cf. event-adapter.ts, #4386) — disclaude takes no hard dependency on
- * pi-agent-core; re-verify on a pi version bump.
+ * Source of truth for the pi side: the pinned pi-agent-core declarations.
+ * The pi types below are a STRUCTURAL MIRROR (cf. event-adapter.ts, #4386) —
+ * disclaude takes no hard dependency on pi-agent-core; re-verify on a pi
+ * version bump.
  *
  * Part-1 scope: the execute wrapper (Zod param validation → handler →
  * `AgentToolResult` shaping, with abort handling).

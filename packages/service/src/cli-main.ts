@@ -553,9 +553,8 @@ export async function main(): Promise<void> {
     if (options.apiPort !== undefined) {
       // #4608: bind explicitly to IPv4 loopback, NOT 'localhost'. A 'localhost'
       // bind can resolve ::1-first and end up IPv6-only, while undici fetch
-      // (the REST API client) tries 127.0.0.1 first — the exact family split
-      // observed in docs/channel-skill-rest-live-verification.md §"loopback
-      // only". REST API is loopback-only by design, so the IPv4 pin is always
+      // (the REST API client) tries 127.0.0.1 first. REST API is loopback-only
+      // by design, so the IPv4 pin is always
       // correct; mirror it client-side via DISCLAUDE_API_BASE_URL.
       const apiHost = '127.0.0.1';
       const apiPortReady = options.apiPort === 0 || await isPortAvailable(options.apiPort, apiHost);

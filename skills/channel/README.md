@@ -43,8 +43,7 @@ README-only CLI-skill format does not replace the registry's `SKILL.md` entrypoi
 A **CLI Skill** under disclaude's "reduce MCP" direction
 ([#4383](https://github.com/hs3180/disclaude/issues/4383), owner decision
 2026-08-07). It is the Skills (CLI + README) replacement for the inline
-`channel-mcp` MCP server (surface **S1** in
-[`docs/mcp-server-inventory.md`](../../docs/mcp-server-inventory.md)), which
+`channel-mcp` MCP server (the retired S1 surface), which
 exposes the 5 first-party channel tools (`send_text`, `send_card`,
 `send_interactive`, `send_file`, `push`). The agent drives this CLI via
 `Bash` instead of the runtime dispatching an in-process MCP tool — see
@@ -268,8 +267,8 @@ exactly like `send_text`. Parameters map 1:1 via `--chat`/`--question`/
 (`packages/service/src/channels/channel-descriptors.ts`). A CLI is invoked at the
 agent's discretion, so moving to a CLI loses that per-chat capability filter
 unless it is re-imposed elsewhere. The `send_text` / `send_file` / `send_card` /
-`push` migrations do **not** re-impose it; the inventory flags this as open question 2
-(`docs/mcp-server-inventory.md`). Resolving it consistently across all 5 tools is
+`push` migrations do **not** re-impose it; the current capability table flags this
+as an open question. Resolving it consistently across all 5 tools is
 left to a later part of #4459 once the full surface is migrated.
 
 **`push` (part 6) parity** — its MCP entry handler

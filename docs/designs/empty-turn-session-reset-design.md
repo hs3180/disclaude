@@ -1,14 +1,13 @@
 # Empty-Turn Session-Reset + Replay Design Document
 
-**Status:** Draft / Proposal (for discussion — not an implementation contract)
+**Status:** Implemented design contract
 **Issue:** #4391 (`enhancement(chat-agent): auto session-reset + bounded retry on empty turn`, #4194 follow-up ②)
 **Related:** #4194 (the empty-turn symptom), #4258 (parts ①③④ landed), #4259 (sched-* reply-root), #4166 (synthetic-id registry), #4314 (transient-error in-place replay — different concern)
 
-> This document proposes the **session-lifecycle design** that #4391 / #4258
-> repeatedly deferred as the prerequisite to wiring the reset/replay mechanism.
-> The eligibility + bounding contract is already locked in
-> `EmptyTurnRetryPolicy` (`packages/core/src/agents/empty-turn-retry-policy.ts`);
-> this doc specifies how the ChatAgent consumes it.
+> This document records the current **session-lifecycle contract** for the
+> implemented reset/replay mechanism. The eligibility and bounding contract
+> lives in `EmptyTurnRetryPolicy`; `ChatAgent` owns the one-shot reset,
+> replay, and optional fresh-history re-injection.
 
 ---
 
@@ -88,21 +87,22 @@ fires (`chat-agent.ts:1294`).
 | Session reset | `callbacks.resetAgent(chatId, skipContext=true)` — declared `scheduler.ts:136`, wired `service.ts:936` → `agentPool.reset(chatId, true)` |
 | Eligibility + bounding | `EmptyTurnRetryPolicy` (`packages/core/src/agents/empty-turn-retry-policy.ts`) — `canRetry` / `markRetried` / `reset`, already exported from `packages/core/src/index.ts` |
 
-`EmptyTurnRetryPolicy` is complete and has no caller yet ("No caller wires this yet" —
-its docstring). The implementation work is: instantiate one policy per ChatAgent (or
-per chat via the agent pool), stash the original `UserMessageParams` for the in-flight
-turn, and add the branch above.
+`ChatAgent` instantiates one policy, stashes the current
+`UserMessageParams`, and schedules a guarded reset/replay. A monotonically
+increasing message sequence prevents an older replay from overtaking newer
+input. `HistoryManager` may refresh the bounded first-message history before
+the replay; failures fall back to the original message without creating a
+second retry path.
 
 ---
 
 ## 4. Design decisions
 
-1. **v1 replays only the single user message — NO history re-injection.**
-   `resetAgent(chatId, true)` yields a fresh session; the replay re-sends only the
-   original user message. Rationale: the simplest choice that removes the manual
-   resend, and the original message alone is usually sufficient for a non-empty retry.
-   Re-injecting recent history is a strictly harder problem (how much, dedup vs. the
-   message being replayed, cost) and is explicitly deferred (see §6).
+1. **Replay resets the session and reuses the original user message.**
+   `resetAgent(chatId, true)` yields a fresh session. Before the replay,
+   `HistoryManager` best-effort reloads the bounded first-message history so
+   the fresh session does not lose recent context; a reload failure falls back
+   to the original message.
 
 2. **Bounded to exactly one retry per chat per window** — via `EmptyTurnRetryPolicy`
    (the `retriedChats` set). A second consecutive empty turn gets no retry.
@@ -136,39 +136,16 @@ turn, and add the branch above.
 
 ## 6. Open questions / out of scope
 
-- **History re-injection depth** — ~~v1 does none. Follow-up: optionally re-inject the
-  last N real user messages into the fresh session so the retry does not lose context.
-  Needs a decision on N and on dedup vs. the replayed message.~~ **Delivered** (2026-08):
-  the replay's deferred callback now calls `HistoryManager.reloadFirstMessageHistory()`
-  before the teardown, re-stashing the recent chat history (via `getChatHistory`, same
-  source and truncation as the first-message load) so the replayed message — the fresh
-  session's first — consumes it through the existing consume-once path. What v1 lost was
-  not ALL context (the session-start `persistedHistoryContext` snapshot rode every
-  message, teardown included) but FRESHNESS: turns logged after that snapshot. Depth
-  decision: reuse the first-message budget rather than a new N (one knob, one truncation
-  owner); no dedup needed — the replayed message appearing in the history tail mirrors
-  what a manual user resend produces today. Best-effort: fetch failure or `--no-context`
-  (`skipHistory`) skips re-injection and the replay falls back to the v1 param (a
-  trigger-mode mention's receive-time snapshot, or context-less otherwise); guards
-  (disposed / messageSeq) are re-checked after the fetch's await. **Param precedence
-  follow-up**: `processMessage` prefers an incoming `chatHistoryContext` param over the
-  stash, and trigger-mode @mentions carry one — so on a successful re-injection the
-  replay passes a COPY of the original params with that stale param stripped (copy, not
-  mutate: the stash object is `lastTurnMessage` by reference), letting the fresh fetch
-  win and keeping the consume-once semantics (the stash can no longer leak onto a later
-  param-less message).
-- **Where to stash original `UserMessageParams`** for the in-flight turn (instance field
-  vs. threading through `processIterator`). Minor; pick whatever the codebase finds
-  least intrusive. *(Resolved in part 2: instance field `lastTurnMessage`.)*
-- **Reset/replay for non-real-user-but-non-synthetic** messages (if any exist between
-  "real user" and the `isSyntheticMessageId` set) — confirm the policy's eligibility
-  covers exactly the intended set.
-- Out of scope: in-place replay of transient API errors (#4314, done); `sched-*`
-  reply-root 400 (#4259, done); remaining empty-turn regression coverage (#4260).
+- History re-injection is bounded by the existing first-message budget; it does
+  not introduce a second history limit.
+- Replay is skipped for synthetic IDs and for a disposed agent or superseded
+  message sequence.
+- In-place replay of transient API errors remains a separate mechanism.
 
 ---
 
 ## 7. PR index
 
-- _EmptyTurnRetryPolicy (prerequisite)_ — already on main (`packages/core/src/agents/empty-turn-retry-policy.ts`).
-- _Wiring PR (reset + replay in ChatAgent)_ — TBD, to follow this design after sign-off.
+- `EmptyTurnRetryPolicy` — `packages/core/src/agents/empty-turn-retry-policy.ts`.
+- Reset/replay wiring — `packages/service/src/agents/chat-agent.ts`.
+- History refresh — `packages/service/src/agents/history-manager.ts`.
