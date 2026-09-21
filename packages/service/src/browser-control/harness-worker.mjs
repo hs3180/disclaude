@@ -33,7 +33,12 @@ process.on('message', async message => {
         BH_RUNTIME_DIR_SHARED: '0', BH_TMP_DIR_SHARED: '0', BH_REQUIRE_EXISTING_DAEMON: '1',
         BROWSER_USE_DISABLE_TELEMETRY: '1', DISCLAUDE_BROWSER_TARGET: message.target };
       // Explicitly supervise the existing daemon; CLI calls cannot silently respawn it.
-      daemon = spawn(options.python, ['-m', 'browser_harness.daemon'], { env, cwd: options.cwd, stdio: 'ignore' });
+      // Keep the supervised daemon's stderr on the worker diagnostic pipe. The
+      // coordinator already bounds that pipe to its final 4 KiB, so a daemon
+      // bootstrap failure remains observable without changing the recovery path.
+      daemon = spawn(options.python, ['-m', 'browser_harness.daemon'], { env, cwd: options.cwd, stdio: ['ignore', 'ignore', 'pipe'] });
+      daemon.stderr.setEncoding('utf8');
+      daemon.stderr.on('data', chunk => process.stderr.write(chunk));
       send({ kind: 'daemon-started', pid: daemon.pid });
       daemon.on('error', () => process.exit(2));
       daemon.on('exit', () => { if (!stopping) process.exit(2); });

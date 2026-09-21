@@ -113,9 +113,11 @@ until the service is explicitly restarted; unknown work is never replayed.
 
 When a worker announces its daemon but does not become ready, the coordinator
 records the startup phase (`worker-startup-timeout`, `worker-startup-exit`, or
-`worker-init-error`) and the last 4 KiB of worker stderr in the private event
-stream. These diagnostics identify a failed bootstrap without changing the
-recovery boundary or retrying unknown browser work.
+`worker-init-error`) and the last 4 KiB of the worker plus supervised daemon
+stderr in the private event stream. These diagnostics identify a failed
+bootstrap without changing the recovery boundary or retrying unknown browser
+work. The daemon stderr is retained only through the worker diagnostic pipe; it
+is not exposed to the Agent or persisted with page content.
 
 This recovery requires the owning supervisor to observe the broker exit. Legacy,
 foreign or unreadable locks, a killed standalone `disclaude browser start`, and
