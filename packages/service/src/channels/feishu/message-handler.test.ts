@@ -253,6 +253,30 @@ describe('MessageHandler', () => {
       expect(mockState.interactionHandleAction).not.toHaveBeenCalled();
       handler.clearClient();
     });
+    it('keeps a secret input callback out of ordinary message logging and action routing', async () => {
+      const { handler } = createHandler();
+      const secret = 'message-handler-private-secret';
+      const create = vi.fn().mockResolvedValue({ code: 0, data: { message_id: 'private-input-card', chat_id: 'private-chat' } });
+      const reply = vi.fn().mockResolvedValue({ code: 0, data: { message_id: 'public-notice', chat_id: 'group-chat' } });
+      const patch = vi.fn().mockResolvedValue({ code: 0 });
+      handler.initialize({ im: { message: { create, reply, patch } } } as unknown as import('@larksuiteoapi/node-sdk').Client);
+      const respond = vi.fn().mockResolvedValue(undefined);
+      await handler.requestAgentInput({ requestId: 'secret-request', threadId: 'thread-1', turnId: 'turn-1', itemId: 'item-1', isBlocking: true,
+        signal: new AbortController().signal, respond, questions: [{ id: 'credential', header: 'Private', question: 'Access token', isOther: false, isSecret: true, options: null }] },
+      { actorId: 'user_001', chatId: 'group-chat', sourceMessageId: 'source' });
+      const card = JSON.parse(create.mock.calls[0][0].data.content);
+      const { name } = card.body.elements.find((e: { tag: string }) => e.tag === 'form').elements.at(-1);
+      await handler.handleCardAction(cardActionEvent({ context: { open_message_id: 'private-input-card', open_chat_id: 'private-chat' },
+        action: { name, form_value: { text_0: secret } } }));
+      await vi.waitFor(() => expect(respond).toHaveBeenCalledExactlyOnceWith({ credential: { answers: [secret] } }));
+      expect(JSON.stringify(reply.mock.calls)).not.toContain(secret);
+      expect(JSON.stringify(patch.mock.calls)).not.toContain(secret);
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+      expect(mockState.logIncomingMessage).not.toHaveBeenCalled();
+      expect(mockState.logCardInteraction).not.toHaveBeenCalled();
+      expect(mockState.interactionHandleAction).not.toHaveBeenCalled();
+      handler.clearClient();
+    });
     it('accepts an agent-defined workflow without a configured consumer and keeps submission out of chat', async () => {
       const { handler } = createHandler();
       mockState.sendMessage.mockResolvedValueOnce('task-card' as never);
