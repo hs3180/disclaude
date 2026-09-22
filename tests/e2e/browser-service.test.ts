@@ -20,6 +20,11 @@ const exec = promisify(execFile);
 const enabled = Boolean(process.env.DISCLAUDE_E2E_CHROMIUM && process.env.DISCLAUDE_E2E_BROWSER_PYTHON);
 const restartCycles = Number.parseInt(process.env.DISCLAUDE_E2E_BROWSER_RESTART_CYCLES || '3', 10);
 const configuredRestartCycles = Number.isInteger(restartCycles) && restartCycles >= 2 && restartCycles <= 5 ? restartCycles : 3;
+// Real-model browser turns can be slower than the deterministic IPC path on
+// a busy operator machine. Keep CI's default bounded while allowing an
+// explicitly requested acceptance run to use a larger, still finite budget.
+const modelTimeout = Number.parseInt(process.env.DISCLAUDE_E2E_BROWSER_MODEL_TIMEOUT_MS || '90000', 10);
+const configuredModelTimeout = Number.isInteger(modelTimeout) && modelTimeout >= 30_000 && modelTimeout <= 300_000 ? modelTimeout : 90_000;
 // Real model acceptance in this repository is intentionally pinned to the
 // operator-approved model. Do not inherit a user's global Codex default: that
 // would make the evidence non-reproducible and could silently exercise another
@@ -201,7 +206,7 @@ describe('user starts Disclaude and shares its managed browser', () => {
               ...(['claude', 'pi'].includes(backend) ? { tools: ['Bash'], allowedTools: ['Bash'] } : {}), ...(model ? { model } : {}) });
             const messages: AgentMessage[] = [];
             let timedOut = false;
-            const deadline = setTimeout(() => { timedOut = true; void stream.handle.cancel(); }, 90_000);
+            const deadline = setTimeout(() => { timedOut = true; void stream.handle.cancel(); }, configuredModelTimeout);
             try {
               for await (const message of stream.iterator) { messages.push(message); }
               expect(timedOut).toBe(false);
