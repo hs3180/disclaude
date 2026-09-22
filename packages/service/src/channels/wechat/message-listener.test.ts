@@ -148,7 +148,7 @@ describe('WeChatMessageListener', () => {
 
       listener.start();
       await vi.advanceTimersByTimeAsync(50);
-      await listener.stop();
+      await stopAndFlush(listener);
 
       expect((listener as any).seenMessageIds.size).toBe(0);
     });
