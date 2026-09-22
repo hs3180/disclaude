@@ -82,6 +82,8 @@ export interface IteratorYieldResult {
       | 'turn_failed'
       | 'interrupted'
       | 'evicted';
+    /** Provider diagnostic for a non-successful terminal result. */
+    terminationDetail?: string;
     /**
      * provider 据本轮 stderr 标记:SDK 在上游 overloaded_error / 5xx 重试耗尽后仍发
      * subtype=success result,ChatAgent 据此改报 ❌ Failed + recordFailure(Issue #4322)。
@@ -403,6 +405,7 @@ export abstract class BaseAgent implements Disposable {
         : undefined,
       sessionId: message.metadata?.sessionId,
       terminatedReason: message.metadata?.terminatedReason,
+      terminationDetail: message.metadata?.terminationDetail,
       upstreamApiError: message.metadata?.upstreamApiError,
       upstreamApiErrorStderr: message.metadata?.upstreamApiErrorStderr,
     };
