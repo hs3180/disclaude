@@ -147,6 +147,8 @@ export interface AgentMessageMetadata {
      * 惰性重注册并 resume 被暂存的 thread。
      */
     | 'evicted';
+  /** Provider diagnostic for a non-successful terminal result; not user-facing content. */
+  terminationDetail?: string;
   /**
    * 上游 API 错误标记(Issue #4322)。SDK 在上游返回 overloaded_error / 5xx 并重试
    * 耗尽后,把错误只打到 stderr,却仍发一个 subtype=success 的 result —— 会让

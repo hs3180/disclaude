@@ -748,12 +748,17 @@ describe('ChatAgent (service)', () => {
         provider: 'anthropic',
       });
 
+      let releaseStall!: () => void;
+      const stallReady = new Promise<void>((resolve) => { releaseStall = resolve; });
+
       async function* stallResultIterator() {
+        await stallReady;
         yield {
           parsed: {
             type: 'result',
             content: '⚠️ 上游模型响应超时（疑似 stall），已自动取消本次响应。请稍后重试。',
             terminatedReason: 'stall',
+            terminationDetail: 'codex app-server stalled for 30ms',
           },
           raw: {},
         };
@@ -765,6 +770,12 @@ describe('ChatAgent (service)', () => {
       });
 
       void agent.processMessage({ chatId: 'oc_stall', payload: 'hello', messageId: 'msg_1' });
+
+      await vi.waitFor(
+        () => expect(agent.turnCompleteFor('msg_1')).toBeDefined(),
+        { timeout: 1000, interval: 20 }
+      );
+      releaseStall();
 
       // Notice delivered (Issue #4394: deterministic wait for the stall notice
       // instead of a fixed 150ms wall-clock setTimeout).
@@ -782,6 +793,7 @@ describe('ChatAgent (service)', () => {
       const rm = (agent as any).restartManager;
       expect(rm.recordFailure).toHaveBeenCalledWith('oc_stall', 'stall');
       expect(rm.shouldRestart).not.toHaveBeenCalled();
+      await expect(agent.turnCompleteFor('msg_1')!).rejects.toThrow('codex app-server stalled for 30ms');
       // Session inactive (restart suppressed)
       expect(agent.hasActiveSession()).toBe(false);
       // Context preserved (deleteThreadRoot NOT called)

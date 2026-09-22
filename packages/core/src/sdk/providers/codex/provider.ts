@@ -1080,17 +1080,59 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     let turnDone: ((error?: Error) => void) | undefined;
     let stallTimer: ReturnType<typeof setTimeout> | undefined;
     const pendingInputs = new Set<AgentInputRequest>();
+    let openToolItems = 0;
     const { timeoutMs: stallTimeoutMs } = readStallPolicy(this.env);
+    let interruptFlight: Promise<void> | undefined;
+    const isToolItem = (type: string | undefined): boolean =>
+      type === 'commandExecution' || type === 'mcpToolCall';
+    const fireStall = (): void => {
+      stallTimer = undefined;
+      if (stopped || !activeTurnId) { return; }
+      if (pendingInputs.size > 0 || openToolItems > 0) {
+        // Silence belongs to a user-input request or a running tool, not the
+        // transport. Mirror the exec bridge's exemption instead of killing a
+        // long-running app-server command after one quiet watchdog window.
+        stallTimer = setTimeout(fireStall, stallTimeoutMs);
+        stallTimer.unref?.();
+        return;
+      }
+
+      const stalledTurnId = activeTurnId;
+      activeTurnId = undefined;
+      openToolItems = 0;
+      stopped = true;
+      admissionAbort.abort();
+      stopInput();
+      void input.return?.(undefined);
+      push({
+        type: 'result',
+        content: STALL_TERMINATE_NOTICE,
+        role: 'system',
+        metadata: {
+          messageId: stalledTurnId,
+          terminatedReason: 'stall',
+          terminationDetail: `codex app-server stalled for ${stallTimeoutMs}ms`,
+        },
+      });
+      void lifecycle?.interrupt(sessionKey).catch((error: unknown) => {
+        // The terminal result has already been emitted. The per-turn cleanup
+        // may close the transport before the best-effort interrupt resolves;
+        // that is expected teardown, not a second provider failure.
+        logger.debug({ sessionKey, err: error }, 'Stalled app-server interrupt did not complete before teardown');
+      });
+      // Resolve the provider stream with the explicit terminal result. The
+      // ChatAgent owns the user-visible failure and scheduler completion
+      // semantics; rejecting here would tear down the whole session and turn
+      // the real cause into "Session replaced".
+      turnDone?.();
+      turnDone = undefined;
+    };
     const armStall = (): void => {
       if (stallTimer) {clearTimeout(stallTimer);}
-      if (pendingInputs.size > 0) { return; }
-      stallTimer = setTimeout(() => {
-        void lifecycle?.interrupt(sessionKey).catch(() => {});
-        turnDone?.(new Error(`codex app-server stalled for ${stallTimeoutMs}ms`));
-      }, stallTimeoutMs);
+      if (pendingInputs.size > 0 || !activeTurnId) { return; }
+      stallTimer = setTimeout(fireStall, stallTimeoutMs);
       stallTimer.unref?.();
     };
-    let interruptFlight: Promise<void> | undefined;
     const earlyEvents: Array<{ method: string; params: unknown }> = [];
     const deliveredItems = new Set<string>();
     const wake = (): void => {
@@ -1121,12 +1163,17 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         return;
       }
       if (eventTurnId !== activeTurnId) {return;}
-      armStall();
       if (method === 'item/completed' && event.item?.id) {
         const key = `${activeTurnId}:${event.item.id}`;
         if (deliveredItems.has(key)) {return;}
         deliveredItems.add(key);
       }
+      if (method === 'item/started' && isToolItem(event.item?.type)) {
+        openToolItems++;
+      } else if (method === 'item/completed' && isToolItem(event.item?.type)) {
+        openToolItems = Math.max(0, openToolItems - 1);
+      }
+      armStall();
       if (method === 'item/started' && event.item?.type === 'commandExecution') {
         push({
           type: 'tool_use',
@@ -1240,6 +1287,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             if (stopped || this.disposed) {break;}
             this.appServerRoutes.set(threadId, onNotification);
             deliveredItems.clear();
+            openToolItems = 0;
             this.governor.touchSession(sessionKey);
             const userInput = userInputText(next.value);
             activeTurnId = await lifecycle.startTurn(
@@ -1280,6 +1328,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             if (this.appServerLifecycles.get(sessionKey) === lifecycle) {this.appServerLifecycles.delete(sessionKey);}
             lifecycle = undefined;
             if (stallTimer) {clearTimeout(stallTimer);}
+            openToolItems = 0;
             lease.release();
             registration.setBusy(false);
           }

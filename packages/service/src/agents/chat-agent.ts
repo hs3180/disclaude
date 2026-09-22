@@ -463,9 +463,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   /**
    * Completion promise for ONE message's own turn (Issue #4649 review ③).
    *
-   * Resolved when that message's turn ends with a result; rejected when its
-   * turn (or the session carrying it) dies; rejected at push time when the
-   * channel refused the message. Entries stay retrievable after settling
+   * Resolved when that message's turn succeeds; rejected when its turn reports
+   * a provider failure or the session carrying it dies; rejected at push time
+   * when the channel refused the message. Entries stay retrievable after settling
    * (until evicted by the bounded registry), so a caller grabbing the promise
    * right after processMessage() resolves can never miss it — the pre-#4649
    * single-slot getter returned undefined once the turn finished, which made
@@ -533,7 +533,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    * turn end (result / stall / empty-stream / evicted terminations). Settled
    * entries stay registered for late awaiters until evicted by the bound.
    */
-  private resolveTurn(messageId: string | undefined): void {
+  private resolveTurn(messageId: string | undefined, error?: Error): void {
     if (!messageId) {
       this.logger.warn('Cannot settle turn completion without a messageId');
       return;
@@ -541,7 +541,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const entry = this.turnCompletions.get(messageId);
     if (entry && !entry.settled) {
       entry.settled = true;
-      entry.settle();
+      entry.settle(error);
     }
   }
 
@@ -1749,7 +1749,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // The generic content-send block above already delivered the notice
           // (parsed.content carries STALL_TERMINATE_NOTICE). Here we only do
           // control flow: record failure (repeated stalls trip the circuit),
-          // resolve the turn, and skip the normal recordSuccess / restart path.
+          // settle the turn as a provider failure, and skip the normal
+          // recordSuccess / restart path. The scheduler must observe the
+          // failure instead of clearing its streak as if this were success.
           if (parsed.terminatedReason === 'stall') {
             this.stalledTerminated = true;
             this.logger.warn(
@@ -1758,7 +1760,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             );
             this.restartManager.recordFailure(chatId, 'stall');
             this.isProcessingMessage = false;
-            this.resolveTurn(currentTurnMessageId);
+            const stallError = new Error(
+              parsed.terminationDetail ?? 'Provider stall watchdog terminated the turn'
+            );
+            stallError.name = 'ProviderStallError';
+            this.resolveTurn(currentTurnMessageId, stallError);
             if (this.callbacks.onDone) {
               const threadRoot = resolveReplyThreadRoot();
               await this.callbacks.onDone(chatId, threadRoot);

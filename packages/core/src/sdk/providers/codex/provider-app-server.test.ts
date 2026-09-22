@@ -80,10 +80,74 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       expect(JSON.parse(readFileSync(join(dir, 'home/answer'), 'utf8'))).toMatchObject({ id: 'question-rpc', starts: 1,
         result: { answers: { choice: { answers: ['Chromium'] } } } });
       expect(messages.some(m => m.type === 'text' && m.content === 'Continued original turn')).toBe(true);
-      expect(messages.some(m => m.type === 'error' && m.content.includes('stalled'))).toBe(!completes);
+      expect(messages.some(m => m.type === 'result' && m.metadata?.terminatedReason === 'stall')).toBe(!completes);
+      expect(messages.some(m => m.type === 'error' && m.content.includes('stalled'))).toBe(false);
       expect(readFileSync(join(dir, 'home/prompt'), 'utf8')).not.toContain('original-actor');
     } finally { stream.handle.close(); provider.dispose(); }
   });
+
+  it('does not fire the stall watchdog while an app-server tool is active', async () => {
+    const { provider, dir } = providerFixture('exit 0', 'app-server', { DISCLAUDE_STALL_TIMEOUT_MS: '40' });
+    writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
+const readline = require('node:readline');
+const send = message => console.log(JSON.stringify(message));
+readline.createInterface({ input: process.stdin }).on('line', line => {
+  const request = JSON.parse(line);
+  if (request.method === 'initialize') send({ id: request.id, result: {} });
+  else if (request.method === 'thread/start' || request.method === 'thread/resume') {
+    send({ id: request.id, result: { thread: { id: 'tool-thread' } } });
+  } else if (request.method === 'turn/start') {
+    send({ id: request.id, result: { turn: { id: 'tool-turn' } } });
+    send({ method: 'item/started', params: { threadId: 'tool-thread', turnId: 'tool-turn', item: { id: 'tool-1', type: 'commandExecution', command: 'long-running' } } });
+    setTimeout(() => {
+      send({ method: 'item/completed', params: { threadId: 'tool-thread', turnId: 'tool-turn', item: { id: 'tool-1', type: 'commandExecution', aggregatedOutput: 'done' } } });
+      send({ method: 'item/completed', params: { threadId: 'tool-thread', turnId: 'tool-turn', item: { id: 'reply-1', type: 'agentMessage', text: 'completed after the tool' } } });
+      send({ method: 'turn/completed', params: { threadId: 'tool-thread', turn: { id: 'tool-turn', status: 'completed' } } });
+    }, 120);
+  }
+});`);
+    const result = provider.queryStream((async function* (): AsyncGenerator<UserInput> {
+      yield { role: 'user', content: 'run the long tool' };
+    })(), { sessionKey: 'active-tool', settingSources: [] } as AgentQueryOptions);
+    const messages: AgentMessage[] = [];
+    try {
+      for await (const message of result.iterator) { messages.push(message); }
+      expect(messages).toContainEqual(expect.objectContaining({ type: 'text', content: 'completed after the tool' }));
+      expect(messages.some(message => message.metadata?.terminatedReason === 'stall')).toBe(false);
+      expect(messages.filter(message => message.type === 'error')).toEqual([]);
+    } finally { provider.dispose(); }
+  });
+
+  it('emits one terminal stall result instead of replacing the session', async () => {
+    const { provider, dir } = providerFixture('exit 0', 'app-server', { DISCLAUDE_STALL_TIMEOUT_MS: '30' });
+    writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
+const readline = require('node:readline');
+const send = message => console.log(JSON.stringify(message));
+readline.createInterface({ input: process.stdin }).on('line', line => {
+  const request = JSON.parse(line);
+  if (request.method === 'initialize') send({ id: request.id, result: {} });
+  else if (request.method === 'thread/start' || request.method === 'thread/resume') {
+    send({ id: request.id, result: { thread: { id: 'stall-thread' } } });
+  } else if (request.method === 'turn/start') {
+    send({ id: request.id, result: { turn: { id: 'stall-turn' } } });
+  } else if (request.method === 'turn/interrupt') {
+    send({ id: request.id, result: {} });
+  }
+});`);
+    const result = provider.queryStream((async function* (): AsyncGenerator<UserInput> {
+      yield { role: 'user', content: 'hang' };
+    })(), { sessionKey: 'true-stall', settingSources: [] } as AgentQueryOptions);
+    const messages: AgentMessage[] = [];
+    try {
+      for await (const message of result.iterator) { messages.push(message); }
+      const stallResults = messages.filter(message => message.metadata?.terminatedReason === 'stall');
+      expect(stallResults).toHaveLength(1);
+      expect(stallResults[0]?.content).toContain('疑似 stall');
+      expect(stallResults[0]?.metadata?.terminationDetail).toContain('codex app-server stalled for 30ms');
+      expect(messages.filter(message => message.type === 'error')).toEqual([]);
+    } finally { provider.dispose(); }
+  });
+
   it('uses the same registry manifest as exec for app-server turns', async () => {
     const { provider, dir } = providerFixture('exit 0');
     const workspace = mkdtempSync(join(tmpdir(), 'codex-app-skills-'));
