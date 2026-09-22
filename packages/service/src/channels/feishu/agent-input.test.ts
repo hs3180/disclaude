@@ -67,12 +67,24 @@ describe('Feishu native agent input', () => {
     const f = fixture(true);
     await f.controller.request(f.request, f.context);
     expect(f.create.mock.calls[0][0]).toMatchObject({ params: { receive_id_type: 'open_id' }, data: { receive_id: 'alice' } });
+    const privateCard = JSON.parse(f.create.mock.calls[0][0].data.content);
+    const privateInput = privateCard.body.elements.find((e: { tag: string }) => e.tag === 'form').elements.find((e: { tag: string }) => e.tag === 'input');
+    expect(privateInput.input_type).toBe('password');
+    expect(JSON.stringify(f.create.mock.calls)).toContain('Access token');
     expect(JSON.stringify(f.reply.mock.calls)).not.toContain('Access token');
+    expect(JSON.stringify(f.reply.mock.calls)).toContain('私密输入');
     await f.controller.submit({ ...f.callback(), context: { ...f.callback().context, open_chat_id: 'group' } });
     expect(f.respond).not.toHaveBeenCalled();
     await f.controller.submit(f.callback());
     expect(f.respond).toHaveBeenCalledExactlyOnceWith({ credential: { answers: ['private-test-secret'] } });
     expect(JSON.stringify([f.reply.mock.calls, f.create.mock.calls, f.patch.mock.calls])).not.toContain('private-test-secret');
+  });
+  it('fails closed when the private card cannot be delivered', async () => {
+    const f = fixture(true);
+    f.create.mockRejectedValueOnce(new Error('private chat unavailable'));
+    await expect(f.controller.request(f.request, f.context)).rejects.toThrow('Input card could not be delivered');
+    expect(f.reply).not.toHaveBeenCalled();
+    expect(f.respond).not.toHaveBeenCalled();
   });
   it('does not re-send a consumed answer when repainting the status card fails', async () => {
     const f = fixture();

@@ -6,8 +6,10 @@ import { CodexAppServerTransport } from './app-server-transport.js';
 import type { AgentInputRequest } from '../../user-input.js';
 
 const resourceLog = vi.hoisted(() => vi.fn());
+const transportLog = vi.hoisted(() => vi.fn());
 vi.mock('../../../utils/logger.js', () => ({ createLogger: (_context: string, bindings: Record<string, unknown>) => ({
-  info: (fields: Record<string, unknown>, message: string) => resourceLog({ ...bindings, ...fields }, message), warn: vi.fn(), debug: vi.fn(),
+  info: (fields: Record<string, unknown>, message: string) => resourceLog({ ...bindings, ...fields }, message), warn: vi.fn(),
+  debug: (fields: Record<string, unknown>, message: string) => transportLog({ ...bindings, ...fields }, message),
 }) }));
 
 const dirs: string[] = [];
@@ -28,12 +30,13 @@ afterEach(() => {
 });
 
 describe('CodexAppServerTransport', () => {
-  const inputParams = { threadId: 'thread-1', turnId: 'turn-1', itemId: 'item-1', isBlocking: true,
+  const inputParams: Record<string, unknown> = { threadId: 'thread-1', turnId: 'turn-1', itemId: 'item-1', isBlocking: true,
     questions: [{ id: 'browser', header: 'Browser', question: 'Which browser?', options: [{ label: 'Chromium', description: 'Dedicated profile' }] },
       { id: 'note', header: 'Note', question: 'Any constraints?', isOther: true }] };
-  function inputFixture(body: string): string {
+  const secretInputParams: Record<string, unknown> = { ...inputParams, questions: [{ id: 'credential', header: 'Private', question: 'Access token', isOther: false, isSecret: true, options: null }] };
+  function inputFixture(body: string, params: Record<string, unknown> = inputParams): string {
     const binary = fixture('');
-    writeFileSync(binary, `#!${process.execPath}\nimport {createInterface} from 'node:readline';\nconst send=m=>process.stdout.write(JSON.stringify(m)+'\\n');\nconst params=${JSON.stringify(inputParams)};\n${body}`);
+    writeFileSync(binary, `#!${process.execPath}\nimport {createInterface} from 'node:readline';\nconst send=m=>process.stdout.write(JSON.stringify(m)+'\\n');\nconst params=${JSON.stringify(params)};\n${body}`);
     return binary;
   }
   it('answers a string-ID multi-question server request once, without starting another turn', async () => {
@@ -57,6 +60,31 @@ createInterface({input:process.stdin}).on('line',line=>{
       await expect(input!.respond(answers)).rejects.toThrow('no longer active');
       await vi.waitFor(() => expect(received).toHaveBeenCalledWith('fixture/answer', expect.objectContaining({ id: 'input-1', starts: 1, result: { answers } })));
       expect(onUserInput).toHaveBeenCalledTimes(1);
+    } finally { await transport.close(); }
+  });
+  it('preserves secret metadata and delivers the answer without logging its value', async () => {
+    const secret = 'private-test-secret';
+    const binary = inputFixture(`
+createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line);
+ if(m.method==='begin'){send({id:m.id,result:{}});send({id:'secret-input',method:'item/tool/requestUserInput',params});}
+ else if(m.id==='secret-input') send({method:'fixture/answer',params:m});
+});`, secretInputParams);
+    let input: AgentInputRequest | undefined;
+    const received = vi.fn();
+    const onUserInput = vi.fn((request: AgentInputRequest) => { input = request; return Promise.resolve(); });
+    const transport = new CodexAppServerTransport({ binary, onUserInput, onNotification: received });
+    try {
+      await transport.request('begin');
+      await vi.waitFor(() => expect(input).toBeDefined());
+      expect(input!.questions).toEqual([expect.objectContaining({ id: 'credential', isSecret: true })]);
+      const answer = { credential: { answers: [secret] } };
+      await input!.respond(answer);
+      await vi.waitFor(() => expect(received).toHaveBeenCalledWith('fixture/answer', expect.objectContaining({
+        id: 'secret-input', result: { answers: answer },
+      })));
+      expect(JSON.stringify(transportLog.mock.calls)).not.toContain(secret);
+      expect(JSON.stringify(resourceLog.mock.calls)).not.toContain(secret);
     } finally { await transport.close(); }
   });
   it.each(['timeout', 'resolved', 'completed', 'interrupt', 'close'])('invalidates pending input on %s without inventing an answer', async reason => {
