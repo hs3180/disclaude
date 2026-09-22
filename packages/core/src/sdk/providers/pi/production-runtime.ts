@@ -39,6 +39,15 @@ export function resolvePiModel(options: AgentQueryOptions): {
       contextWindow: 32768,
       maxTokens: 4096,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      // pi-ai defaults this to true and then stamps `eager_input_streaming: true`
+      // on every tool (anthropic-messages.js getAnthropicCompat). Anthropic-
+      // compatible gateways that never implemented the field reject the whole
+      // request with 400 invalid_request — measured against a self-hosted
+      // gateway, where sending the *same* captured body minus this one field
+      // flips 400 to 200. The field is optional in the Messages API, so
+      // omitting it is valid against api.anthropic.com too: the cost is that
+      // tool inputs stream as one block instead of incrementally.
+      compat: { supportsEagerToolInputStreaming: false },
     },
   };
 }

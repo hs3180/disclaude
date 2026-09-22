@@ -45,4 +45,14 @@ describe('pi model and credential isolation', () => {
       })
     ).toThrow('HTTP(S)');
   });
+  it('turns off eager tool-input streaming that strict gateways reject', () => {
+    const { model } = resolvePiModel({
+      settingSources: [],
+      model: 'm',
+      env: { ANTHROPIC_API_KEY: 'k', ANTHROPIC_BASE_URL: 'https://example.com' },
+    });
+    // pi-ai stamps `eager_input_streaming: true` on every tool unless this
+    // compat flag is off; gateways that don't implement the field answer 400.
+    expect(model).toMatchObject({ compat: { supportsEagerToolInputStreaming: false } });
+  });
 });
