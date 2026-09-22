@@ -36,8 +36,26 @@ export function resolvePiModel(options: AgentQueryOptions): {
       reasoning: false,
       input: ['text'],
       // Conservative client budgets, not a claim about a custom model's limits/pricing.
+      //
+      // `maxTokens` is the per-message output cap requested as `max_tokens`.
+      // pi-ai treats it as a ceiling only — clampMaxTokensToContext
+      // (pi-ai@0.83.0 dist/api/simple-options.js:4) sends
+      // `min(maxTokens, contextWindow - estimatedInputTokens - 4096)` — so
+      // raising it cannot shrink the input budget and can never lower the
+      // effective cap. `contextWindow` alone governs how much input is allowed.
+      //
+      // At 4096 the ceiling was binding, and too low for a reasoning model:
+      // measured 2026-09-22 on `deepseek-flash`, which always emits a `thinking`
+      // block, a turn spent the entire budget on reasoning, returned stop_reason
+      // `max_tokens` with no text block, and delivered nothing. 16384 is accepted
+      // by the gateway (probed) and leaves room for thinking plus an answer; for
+      // large inputs the clamp can still land lower, which is the intended
+      // degradation.
+      //
+      // Truncation is surfaced rather than swallowed (see TRUNCATED_TURN_NOTICE),
+      // so this only reduces how often it happens — it does not depend on that fix.
       contextWindow: 32768,
-      maxTokens: 4096,
+      maxTokens: 16384,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     },
   };
