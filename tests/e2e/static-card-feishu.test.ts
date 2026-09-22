@@ -41,7 +41,7 @@ describe('static Card JSON 2.0 delivery to an authorized Feishu test chat', () =
     const fixture = resolve('tests/e2e/fixtures/static-card-2.json');
     const card = JSON.parse(await readFile(fixture, 'utf8')) as Record<string, unknown>;
     let messageId: string | void, sentCard: unknown, sends = 0;
-    const original = client.im.message.create;
+    const original = client.im.message.create.bind(client.im.message);
     client.im.message.create = async request => {
       sends++;
       sentCard = JSON.parse(request!.data.content);
