@@ -72,10 +72,13 @@ export interface IteratorYieldResult {
      *  - `'max_turns'` / `'max_budget_usd'` / `'max_structured_output_retries'`:
      *    SDK 的 `error_max_*` 上限终止,由 message-adapter 映射(Issue #4378)。
      *  - `'empty-stream'`:provider 在零消息干净结束且重试耗尽后合成(Issue #4442)。
+     *  - `'max_tokens'`:pi 后端 —— 响应被单条消息输出上限截断(pi-ai 归一化的
+     *    `'length'`),详见 AgentMessageMetadata.terminatedReason。
      */
     terminatedReason?:
       | 'stall'
       | 'empty-stream'
+      | 'max_tokens'
       | 'max_turns'
       | 'max_budget_usd'
       | 'max_structured_output_retries'

@@ -126,10 +126,17 @@ export interface AgentMessageMetadata {
    *    一样在此标记上 recordFailure(如 'max-turns')而不触发实际重启。
    *  - `'empty-stream'`:provider 在 SDK query 零消息干净结束(200-OK-zero-content)
    *    且 in-request 重试耗尽后合成此 result(Issue #4442 ask 2)。见 provider.ts。
+   *  - `'max_tokens'`:pi 后端 —— 模型响应的 stop reason 是 pi-ai 归一化后的
+   *    `'length'`(即 Anthropic 线上协议的 `max_tokens`),即单条消息被输出上限
+   *    截断。带推理的模型可能把整个预算花在 thinking 上,导致 content 只有一个
+   *    thinking block、没有任何 text block;pi 的 event-adapter 会丢弃 thinking,
+   *    于是这种 turn 到 ChatAgent 时就是一个内容为空的普通 result,被记成成功
+   *    (静默无回复)。adapter 因此改送一条可见提示 + 此标记,使该轮按失败记账。
    */
   terminatedReason?:
     | 'stall'
     | 'empty-stream'
+    | 'max_tokens'
     | 'max_turns'
     | 'max_budget_usd'
     | 'max_structured_output_retries'

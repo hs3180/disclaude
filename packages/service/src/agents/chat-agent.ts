@@ -2243,6 +2243,16 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             // trip the restart circuit. Same bounded, non-restarting contract as
             // empty-turn / stall above. Turn-level retry is #4314's follow-up.
             this.restartManager.recordFailure(chatId, 'upstream-api-error');
+          } else if (parsed.terminatedReason === 'max_tokens') {
+            // 2026-09-22 (pi): the model's response was cut off by the per-message
+            // output cap. The adapter now surfaces a ⚠️ notice, so the turn is no
+            // longer a silent success — it must not be booked as one either.
+            // Same bounded, non-restarting contract as empty-turn / stall / #4322:
+            // recordFailure only logs the label and bumps the count. The delivered
+            // notice also increments userVisibleOutputCount, so isEmptyTurn is
+            // false and the #4391 session-reset+replay (which re-runs with the
+            // original params and could re-execute side effects) stays suppressed.
+            this.restartManager.recordFailure(chatId, 'max-tokens-truncation');
           } else if (midstreamInterrupted && parsed.terminatedReason !== 'turn_failed') {
             // 2026-09-08: mid-stream 中断 turn(无论自动续跑与否)一律计入失败 —— 续跑成功
             // 会由下一 turn 的 recordSuccess 重置电路计数;中断本身不重置。与 #4322 同款

@@ -88,6 +88,41 @@ export type PiAgentEvent =
       isError: boolean;
     };
 
+/**
+ * pi-ai's `StopReason` (types.d.ts:282) — the NORMALIZED reason carried by the
+ * `AssistantMessage` objects in `agent_end.messages`.
+ *
+ * Deliberately not the Anthropic wire vocabulary: pi-ai's `mapStopReason`
+ * (api/anthropic-messages.js:1024) rewrites the API's `max_tokens` to `'length'`
+ * and `end_turn` to `'stop'`. A guard written against `'max_tokens'` would never
+ * match on this side of the adapter.
+ */
+export type PiStopReason = 'pending' | 'stop' | 'length' | 'toolUse' | 'error' | 'aborted';
+
+/** pi-ai's `StopReason` for a response cut off by the per-message output cap. */
+const TRUNCATED_STOP_REASON: PiStopReason = 'length';
+
+/**
+ * User-facing notice for a turn the model's per-message output cap cut short.
+ *
+ * A truncated response can carry no text block at all: when the model spends the
+ * whole budget on reasoning, `content` is a lone `thinking` block, which this
+ * adapter drops along with every other non-`text_delta` event. Such a turn then
+ * reaches ChatAgent as an ordinary empty `result` and is booked as a success —
+ * the user sees no reply, no error and no retry. Measured 2026-09-22 against
+ * `deepseek-flash`, which always emits a `thinking` block; the notice is what
+ * makes that outcome visible and non-success instead.
+ */
+export const TRUNCATED_TURN_NOTICE =
+  '⚠️ 本轮的回复被模型的单条消息输出上限截断，未能产出可交付正文。请把任务拆小、或要求分步回答后重试。';
+
+/** Shape of the `AssistantMessage` fields `agent_end` reads (types.d.ts:282-302). */
+interface PiAssistantMessageLike {
+  role?: string;
+  stopReason?: PiStopReason;
+  errorMessage?: string;
+}
+
 /** Utility: stringify a tool result/error payload for the AgentMessage content. */
 function stringifyPayload(value: unknown): string {
   if (typeof value === 'string') {
@@ -163,11 +198,27 @@ export function adaptPiEvent(event: PiAgentEvent): AgentMessage | null {
     }
 
     case 'agent_end': {
-      const last = event.messages.at(-1) as { role?: string; stopReason?: string; errorMessage?: string } | undefined;
-      if (last?.role === 'assistant' && last.stopReason === 'error') {
-        return makeMessage('result', last.errorMessage || 'pi model request failed', { terminatedReason: 'turn_failed' });
+      const last = event.messages.at(-1) as PiAssistantMessageLike | undefined;
+      const stopReason = last?.role === 'assistant' ? last.stopReason : undefined;
+      if (stopReason === 'error') {
+        return makeMessage('result', last?.errorMessage || 'pi model request failed', {
+          terminatedReason: 'turn_failed',
+          stopReason,
+        });
       }
-      return makeMessage('result', '', {});
+      if (stopReason === TRUNCATED_STOP_REASON) {
+        // The response was cut off by the output cap. Anything the model did emit
+        // was a dropped `thinking` block, so `content` would otherwise be empty
+        // and this turn indistinguishable from a clean, silent stop (#4194).
+        return makeMessage('result', TRUNCATED_TURN_NOTICE, {
+          terminatedReason: 'max_tokens',
+          stopReason,
+        });
+      }
+      // Propagate the reason even on the success path: without it the log line
+      // for a pi turn carries no stopReason at all, so a truncation became
+      // undiagnosable after the fact (only visible via length/usage accounting).
+      return makeMessage('result', '', stopReason ? { stopReason } : {});
     }
 
     default:

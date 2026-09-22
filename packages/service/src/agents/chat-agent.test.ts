@@ -1431,6 +1431,109 @@ describe('ChatAgent (service)', () => {
     });
   });
 
+  describe('2026-09-22: a pi turn truncated by the output cap is not a silent success', () => {
+    // Regression for the reported incident: `deepseek-flash` spent the whole
+    // maxTokens budget on a `thinking` block and produced no text block. pi's
+    // event-adapter drops thinking, so the turn reached ChatAgent as a bare
+    // empty `result` and was booked as a success — the user saw the 👀 typing
+    // reaction with no reply, no notice and no failure accounting. The adapter
+    // now tags it `terminatedReason: 'max_tokens'` and carries a ⚠️ notice.
+    it('delivers the ⚠️ notice and records max-tokens-truncation instead of success', async () => {
+      const callbacks = {
+        ...createMockCallbacks(),
+        onTurnResult: vi.fn().mockResolvedValue(undefined),
+      };
+      const agent = new ChatAgent({
+        chatId: 'oc_truncated',
+        callbacks,
+        apiKey: 'key',
+        model: 'deepseek-flash',
+        provider: 'anthropic',
+      });
+
+      // The real shape: no text message at all — only the tagged result.
+      async function* truncatedResultIterator() {
+        yield {
+          parsed: {
+            type: 'result',
+            content: '⚠️ 本轮的回复被模型的单条消息输出上限截断，未能产出可交付正文。',
+            terminatedReason: 'max_tokens',
+            metadata: { stopReason: 'length' },
+          },
+          raw: {},
+        };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: truncatedResultIterator(),
+      });
+      (agent as any).isAgentTeamsEnabled = () => false;
+
+      void agent.processMessage({ chatId: 'oc_truncated', payload: 'hi', messageId: 'msg_1' });
+      await vi.waitFor(
+        () => {
+          const rm = (agent as any).restartManager;
+          expect(rm.recordFailure).toHaveBeenCalled();
+        },
+        { timeout: 1000, interval: 20 }
+      );
+
+      // The user gets a visible reason rather than silence.
+      const notice = callbacks.sendMessage.mock.calls.find(
+        (c: unknown[]) => typeof c[1] === 'string' && (c[1] as string).includes('输出上限截断')
+      );
+      expect(notice).toBeDefined();
+      expect(notice![0]).toBe('oc_truncated');
+
+      // Booked as a failure, not a success — otherwise the restart circuit never
+      // sees chronic truncation.
+      const rm = (agent as any).restartManager;
+      expect(rm.recordFailure).toHaveBeenCalledWith('oc_truncated', 'max-tokens-truncation');
+      expect(rm.recordSuccess).not.toHaveBeenCalled();
+
+      // And reported to the pool as an unsuccessful turn.
+      expect(callbacks.onTurnResult).toHaveBeenCalledWith(
+        expect.objectContaining({ success: false })
+      );
+    });
+
+    it('a clean stop still records success (guard: only the truncation tag changes behavior)', async () => {
+      const callbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_clean',
+        callbacks,
+        apiKey: 'key',
+        model: 'deepseek-flash',
+        provider: 'anthropic',
+      });
+
+      async function* cleanResultIterator() {
+        yield { parsed: { type: 'text', role: 'assistant', content: 'done' }, raw: {} };
+        // stopReason propagated but no terminatedReason — the adapter's success path.
+        yield { parsed: { type: 'result', content: '✅ Complete', metadata: { stopReason: 'stop' } }, raw: {} };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: cleanResultIterator(),
+      });
+      (agent as any).isAgentTeamsEnabled = () => false;
+
+      void agent.processMessage({ chatId: 'oc_clean', payload: 'hi', messageId: 'msg_1' });
+      await vi.waitFor(
+        () => {
+          const rm = (agent as any).restartManager;
+          expect(rm.recordSuccess).toHaveBeenCalledWith('oc_clean');
+        },
+        { timeout: 1000, interval: 20 }
+      );
+
+      const rm = (agent as any).restartManager;
+      expect(rm.recordFailure).not.toHaveBeenCalledWith('oc_clean', 'max-tokens-truncation');
+    });
+  });
+
   describe('Issue #4320: stop_reason surfaced in turn-complete log (Gap D)', () => {
     it('should log stopReason from parsed.metadata on turn completion', async () => {
       const localCallbacks = createMockCallbacks();

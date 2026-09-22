@@ -6,7 +6,7 @@
  * real pi runtime is required — the adapter is a pure function.
  */
 import { describe, it, expect } from 'vitest';
-import { adaptPiEvent, type PiAgentEvent } from './event-adapter.js';
+import { adaptPiEvent, TRUNCATED_TURN_NOTICE, type PiAgentEvent } from './event-adapter.js';
 
 describe('adaptPiEvent (Issue #4386 / #4384)', () => {
   it('maps message_update.text_delta → text', () => {
@@ -155,4 +155,51 @@ it('does not report native API errors as successful turn completion', () => {
   expect(adaptPiEvent({ type: 'agent_end', messages: [
     { role: 'assistant', stopReason: 'error', errorMessage: 'HTTP 401' },
   ] })).toMatchObject({ type: 'result', content: 'HTTP 401', metadata: { terminatedReason: 'turn_failed' } });
+});
+
+it('propagates the pi stop reason on an ordinary result', () => {
+  const msg = adaptPiEvent({ type: 'agent_end', messages: [
+    { role: 'assistant', stopReason: 'stop' },
+  ] });
+  expect(msg).toMatchObject({ type: 'result', content: '', metadata: { stopReason: 'stop' } });
+});
+
+it('flags a length-truncated turn instead of reporting a silent success', () => {
+  // pi-ai normalizes the Anthropic wire value 'max_tokens' to 'length'
+  // (api/anthropic-messages.js mapStopReason), so 'length' is what the adapter
+  // actually receives. A reasoning-heavy model can spend the whole output budget
+  // on a `thinking` block, leaving no text block at all — the turn must surface
+  // a notice and a non-success marker rather than an empty `result`.
+  const msg = adaptPiEvent({ type: 'agent_end', messages: [
+    { role: 'assistant', stopReason: 'length' },
+  ] });
+  expect(msg).toMatchObject({
+    type: 'result',
+    content: TRUNCATED_TURN_NOTICE,
+    metadata: { terminatedReason: 'max_tokens', stopReason: 'length' },
+  });
+});
+
+it('a truncation stays distinguishable from a clean stop', () => {
+  // Regression guard for the reported incident: the two must not both collapse
+  // into an empty, unmarked result.
+  const truncated = adaptPiEvent({ type: 'agent_end', messages: [
+    { role: 'assistant', stopReason: 'length' },
+  ] });
+  const clean = adaptPiEvent({ type: 'agent_end', messages: [
+    { role: 'assistant', stopReason: 'stop' },
+  ] });
+  expect(truncated?.metadata?.terminatedReason).toBe('max_tokens');
+  expect(clean?.metadata?.terminatedReason).toBeUndefined();
+  expect(clean?.content).toBe('');
+});
+
+it('does not mistake a non-assistant tail for a truncation', () => {
+  // agent_end.messages may end on a tool result; only assistant tails carry a
+  // StopReason.
+  const msg = adaptPiEvent({ type: 'agent_end', messages: [
+    { role: 'tool', stopReason: 'length' },
+  ] });
+  expect(msg).toMatchObject({ type: 'result', content: '' });
+  expect(msg?.metadata?.stopReason).toBeUndefined();
 });
