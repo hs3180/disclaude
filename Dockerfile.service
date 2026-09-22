@@ -28,6 +28,7 @@ ARG GH_INSTALL_MODE=apt-repo
 ARG GH_DEB_URL=
 ARG CODEX_VERSION=0.154.0
 ARG DSH_VERSION=0.1.2-rc.1
+ARG PI_VERSION=0.83.0
 
 # -----------------------------------------------------------------------------
 # Stage 1: Builder (uses bun for faster installs)
@@ -37,6 +38,7 @@ FROM ${DOCKER_IMAGE_PREFIX}library/node:22-trixie-slim AS builder
 # Re-declare build args for use in this stage
 ARG APT_MIRROR
 ARG NPM_REGISTRY
+ARG PI_VERSION
 
 WORKDIR /app
 
@@ -84,6 +86,27 @@ COPY agents ./agents
 # Note: cache cleanup reduces builder layer size (no impact on final multi-stage image)
 RUN bun install --production && \
     rm -rf /root/.bun/install/cache
+
+# Install the optional pi agent runtime (#4388)
+# Unlike codex/dsh (global CLIs, installed in the production stage) pi is
+# consumed as a *library* out of the app's node_modules: PiAgentProvider
+# resolves it via require.resolve('@earendil-works/pi-agent-core/package.json')
+# and Service.start() refuses to boot when that fails. The host-side
+# `npm install --no-save` documented in docs/pi-backend.md therefore never
+# reaches a container, and `agent.agentBackend: pi` could not start in Docker
+# at all. Installed *after* the devDependency prune above so the production
+# tree keeps it; --no-save/--package-lock=false leave package.json and
+# package-lock.json untouched (both are copied from this stage below).
+# Version pinned to the one verified in docs/pi-backend.md — re-verify before
+# bumping. Image size cost: ~114 MB (36 transitive packages, measured);
+# build with --build-arg PI_VERSION= to skip installing it.
+ARG PI_VERSION
+RUN if [ -n "${PI_VERSION}" ]; then \
+      npm install --no-save --package-lock=false \
+        "@earendil-works/pi-agent-core@${PI_VERSION}" \
+        "@earendil-works/pi-ai@${PI_VERSION}" && \
+      npm cache clean --force; \
+    fi
 
 # -----------------------------------------------------------------------------
 # Stage 2: Production Image
