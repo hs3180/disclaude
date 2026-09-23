@@ -186,7 +186,11 @@ describe('user starts Disclaude and shares its managed browser', () => {
             }
             const provider = backend === 'deepseek'
               ? new DeepSeekHarnessProvider({ env: taskEnv, dshHome: join(root, 'dsh-home') })
-              : backend === 'codex' ? new CodexAgentProvider({ env: taskEnv, transport: 'app-server', builtinsDir: naturalTask ? resolve('.') : root, execTimeoutMs: 90_000 })
+              : backend === 'codex' ? new CodexAgentProvider({
+                env: taskEnv,
+                transport: 'app-server',
+                builtinsDir: naturalTask ? resolve('.') : root,
+              })
                 : backend === 'claude' ? new ClaudeSDKProvider() : new PiAgentProvider();
             const marker = `${backend}-model-handoff-${Date.now()}`;
             const script = `print("PREVIOUS:" + js("document.querySelector('#value').value"))\nassert js("document.querySelector('#value').value") == ${JSON.stringify(previous)}\nfill_input('#value', ${JSON.stringify(marker)})\nprint(js("document.querySelector('#value').value"))\n`;

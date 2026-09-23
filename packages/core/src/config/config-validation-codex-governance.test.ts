@@ -11,7 +11,7 @@ describe('validateConfig — agent.codex governance caps (Issue #4634)', () => {
   it('accepts positive caps', () => {
     expect(
       validateConfig({
-        agent: { codex: { maxActiveSessions: 5, maxConcurrentRuns: 2, execTimeoutMs: 0 } },
+        agent: { codex: { maxActiveSessions: 5, maxConcurrentRuns: 2 } },
       } as DisclaudeConfig)
     ).toBe(true);
   });
@@ -36,14 +36,5 @@ describe('validateConfig — agent.codex governance caps (Issue #4634)', () => {
         agent: { codex: { maxConcurrentRuns: Number.POSITIVE_INFINITY } },
       } as DisclaudeConfig)
     ).toBe(false);
-  });
-
-  it('rejects negative exec timeout but allows zero to disable it', () => {
-    expect(validateConfig({ agent: { codex: { execTimeoutMs: -1 } } } as DisclaudeConfig)).toBe(
-      false
-    );
-    expect(validateConfig({ agent: { codex: { execTimeoutMs: 0 } } } as DisclaudeConfig)).toBe(
-      true
-    );
   });
 });

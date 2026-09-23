@@ -258,7 +258,7 @@ export function validateConfig(config: DisclaudeConfig): boolean {
   // Issue #4634 (S7 of #4627): validate agent.codex governance caps —
   // non-positive values are rejected at load time (fail closed).
   if (config.agent?.codex !== undefined) {
-    const { maxActiveSessions, maxConcurrentRuns, execTimeoutMs } = config.agent.codex;
+    const { maxActiveSessions, maxConcurrentRuns } = config.agent.codex;
     if (
       config.agent.codex.transport !== undefined &&
       config.agent.codex.transport !== 'exec' &&
@@ -280,13 +280,6 @@ export function validateConfig(config: DisclaudeConfig): boolean {
         );
         return false;
       }
-    }
-    if (execTimeoutMs !== undefined && (!Number.isFinite(execTimeoutMs) || execTimeoutMs < 0)) {
-      logger.error(
-        `agent.codex.execTimeoutMs must be a non-negative number (got ${execTimeoutMs}). ` +
-          'Use 0 to disable the Codex runner wall-clock timeout.'
-      );
-      return false;
     }
   }
 
