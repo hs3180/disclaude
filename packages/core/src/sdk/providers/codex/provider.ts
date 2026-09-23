@@ -163,8 +163,6 @@ export interface CodexAgentProviderOptions {
   transport?: 'exec' | 'app-server';
   /** Environment used for resolution + child spawn. Default: process.env. */
   env?: Record<string, string | undefined>;
-  /** Per-run codex exec timeout; zero/undefined disables the wall-clock cap. */
-  execTimeoutMs?: number;
   /**
    * Explicit sandbox override from `agent.codexSandbox` (Issue #4631, S4).
    * Wins over permissionMode inference; the denylist mutation cap still
@@ -196,7 +194,6 @@ export class CodexAgentProvider implements IAgentSDKProvider {
   readonly version = '0.6.0-forget-session';
 
   private readonly env: Record<string, string | undefined>;
-  private readonly execTimeoutMs: number | undefined;
   private readonly sandboxOverride: CodexSandboxLevel | undefined;
   private readonly fullAccess: boolean;
   private readonly networkAccess: boolean;
@@ -236,7 +233,6 @@ export class CodexAgentProvider implements IAgentSDKProvider {
 
   constructor(options: CodexAgentProviderOptions = {}) {
     this.env = options.env ?? process.env;
-    this.execTimeoutMs = options.execTimeoutMs;
     this.sandboxOverride = options.sandboxOverride;
     this.fullAccess = options.fullAccess ?? false;
     this.networkAccess = options.networkAccess ?? true;
@@ -411,7 +407,6 @@ export class CodexAgentProvider implements IAgentSDKProvider {
 
     const runner = new CodexExecRunner({
       binary,
-      timeoutMs: this.execTimeoutMs,
       networkAccess: this.networkAccess,
     });
     const codexModel = codexModelForChatGpt(options.model);
@@ -434,10 +429,6 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     // Same capture for the S7 governor + stash (this: void closures below).
     const governorSink = this.governor;
     const stashSink = this.threadStash;
-    const timeoutLabel =
-      this.execTimeoutMs && this.execTimeoutMs > 0
-        ? `${this.execTimeoutMs}ms`
-        : 'disabled (default)';
 
     // Abort plumbing (mirrors pi: early-cancel latch + late onAbort wake).
     let currentRun: CodexExecRunHandle | null = null;
@@ -853,9 +844,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           } else if (result.timedOut) {
             pushSynthetic({
               type: 'error',
-              content:
-                `codex exec timed out after ${timeoutLabel} and was killed — ` +
-                'try a smaller task or raise the timeout.',
+              content: 'codex exec was terminated by the runner timeout policy.',
               role: 'assistant',
             });
           } else if (resumeTargetGone) {
@@ -892,8 +881,8 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           // Latch the resume anchor ONLY off a completed turn: thread.started
           // fires even on a 401-failed run (verified 0.132.0), so a failed
           // first turn must not become the conversation anchor; an already-
-          // latched conversation survives transient failures (retry after a
-          // timeout resumes where it left off). turn.completed may carry a
+          // latched conversation survives transient failures (retry resumes
+          // where it left off). turn.completed may carry a
           // NEW thread_id if codex forks the thread on resume — latching
           // latestSessionId handles both shapes.
           if (sawTurnCompleted && latestSessionId) {
@@ -1394,7 +1383,6 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       correlation,
       onUserInput,
       env: this.env,
-      requestTimeoutMs: this.execTimeoutMs && this.execTimeoutMs > 0 ? this.execTimeoutMs : undefined,
       onNotification: (method, params) => {
         const threadId = (params as { threadId?: string } | null)?.threadId;
         if (threadId) {this.appServerRoutes.get(threadId)?.(method, params);}

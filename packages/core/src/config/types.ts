@@ -48,8 +48,6 @@ export interface CodexAgentGovernanceConfig {
   maxActiveSessions?: number;
   /** Max simultaneously-executing codex exec children. Default 2. */
   maxConcurrentRuns?: number;
-  /** Optional per-run wall-clock timeout in milliseconds; 0 disables it. */
-  execTimeoutMs?: number;
 }
 
 export interface AgentConfig {

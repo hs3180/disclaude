@@ -22,7 +22,11 @@ const questionTools = process.env.DISCLAUDE_E2E_CODEX_ASYNC_INPUT === '1'
 it.skipIf(process.env.DISCLAUDE_E2E_CODEX_INPUT !== '1').each(questionTools)('answers a real Codex %s question through its native card and completes the original turn', async tool => {
   const asyncTool = tool === 'request_user_input_async';
   const root = await mkdtemp(join(tmpdir(), 'codex-input-e2e-'));
-  const provider = new CodexAgentProvider({ transport: 'app-server', builtinsDir: root, env: { ...process.env }, execTimeoutMs: 120_000 });
+  const provider = new CodexAgentProvider({
+    transport: 'app-server',
+    builtinsDir: root,
+    env: { ...process.env },
+  });
   let card: { body: { elements: Array<{ tag: string; elements?: Array<{ name: string }> }> } } | undefined;
   let requests = 0;
   let answers = 0;

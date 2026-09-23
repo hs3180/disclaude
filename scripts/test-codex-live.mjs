@@ -20,7 +20,6 @@ const provider = new CodexAgentProvider({
   transport: 'app-server',
   sandboxOverride: 'workspace-write',
   builtinsDir: cwd,
-  execTimeoutMs: 90000,
 });
 const records = [];
 for (const mode of ['tool', 'steer', 'cancel', 'resume']) {

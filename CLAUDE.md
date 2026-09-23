@@ -91,7 +91,7 @@ agent:
   model: "gpt-5.6-luna"
   agentBackend: codex                    # claude | pi | codex (agent SDK runtime, #4383)
   fullAccess: true                       # codex only → danger-full-access sandbox (#4818)
-  codex: { maxActiveSessions: 3, maxConcurrentRuns: 2, execTimeoutMs: 0 }
+  codex: { maxActiveSessions: 3, maxConcurrentRuns: 2 }
 feishu: { appId: "...", appSecret: "..." }
 logging: { level: info, pretty: true, rotate: false }
 env: { MY_VAR: "value" }

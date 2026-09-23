@@ -113,11 +113,7 @@ describe('CodexAgentProvider (Issues #4629 + #4630)', () => {
    * missing" tests to be honest on dev machines that HAVE a real codex
    * CLI installed (it would be found via the inherited PATH).
    */
-  const makeProvider = (
-    fx: Fixtures,
-    execTimeoutMs?: number,
-    isolatePath = true,
-  ) =>
+  const makeProvider = (fx: Fixtures, isolatePath = true) =>
     new CodexAgentProvider({
       // Keep the system PATH after the fixture dir: the fake `codex` wins the
       // PATH scan, while its shell body still finds cat/sleep in /bin etc.
@@ -127,7 +123,6 @@ describe('CodexAgentProvider (Issues #4629 + #4630)', () => {
           : fx.binDir,
         CODEX_HOME: fx.codexHome,
       },
-      ...(execTimeoutMs ? { execTimeoutMs } : {}),
     });
 
   // --------------------------------------------------------------------------
@@ -154,7 +149,7 @@ describe('CodexAgentProvider (Issues #4629 + #4630)', () => {
     it('returns false when the codex binary is missing from PATH', () => {
       // isolatePath: dev machines may have a real codex on the system PATH.
       fixtures = makeFixtures({ withBinary: false, withAuth: true });
-      expect(makeProvider(fixtures, undefined, false).validateConfig()).toBe(false);
+      expect(makeProvider(fixtures, false).validateConfig()).toBe(false);
     });
 
     it('returns false when a same-named file exists but is NOT executable', () => {
@@ -162,7 +157,7 @@ describe('CodexAgentProvider (Issues #4629 + #4630)', () => {
       // X_OK probe must reject non-executable files, not just absent ones.
       const bin = join(fixtures.binDir, 'codex');
       writeFileSync(bin, 'not executable', { mode: 0o644 });
-      expect(makeProvider(fixtures, undefined, false).validateConfig()).toBe(false);
+      expect(makeProvider(fixtures, false).validateConfig()).toBe(false);
     });
 
     it('returns false when auth.json is absent (OAuth not completed)', () => {
@@ -194,7 +189,7 @@ describe('CodexAgentProvider (Issues #4629 + #4630)', () => {
 
     it('reports BOTH the install hint and the login hint when nothing is set up', () => {
       fixtures = makeFixtures({ withBinary: false, withAuth: false });
-      const info = makeProvider(fixtures, undefined, false).getInfo();
+      const info = makeProvider(fixtures, false).getInfo();
       expect(info.available).toBe(false);
       expect(info.unavailableReason).toMatch(/npm install -g @openai\/codex/);
       expect(info.unavailableReason).toMatch(/codex login/);
@@ -362,7 +357,7 @@ describe('CodexAgentProvider (Issues #4629 + #4630)', () => {
       // isolatePath: dev machines may have a real codex on the system PATH —
       // the throw must be tested against a genuinely binary-less PATH.
       fixtures = makeFixtures({ withBinary: false, withAuth: true });
-      const provider = makeProvider(fixtures, undefined, false);
+      const provider = makeProvider(fixtures, false);
       expect(() => provider.queryStream(undefined as never, { settingSources: [] } as AgentQueryOptions))
         .toThrow(/codex CLI binary not found on PATH.*npm install -g @openai\/codex/s);
     });
@@ -585,9 +580,9 @@ fi
       expect(errors.join('\n')).toMatch(/新会话/); // user told about the reset
     }, 25_000);
 
-    it('keeps the conversation anchor across a transient failed resume-able run (timeout)', async () => {
-      // A mid-conversation timeout must NOT drop the anchor — the retry
-      // resumes into the same thread instead of silently restarting context.
+    it('keeps the conversation anchor across a transient failed resume-able run', async () => {
+      // A mid-conversation process failure must NOT drop the anchor — the
+      // retry resumes into the same thread instead of restarting context.
       const body = `${ARGV_RECORDER}
 if [ "$n" -eq 1 ]; then
 cat <<'JSONL'
@@ -596,20 +591,20 @@ cat <<'JSONL'
 {"type":"turn.completed"}
 JSONL
 else
-sleep 30 >/dev/null 2>&1 &
-wait $!
+echo "temporary failure" >&2
+exit 1
 fi
 `;
       fixtures = makeFixtures({ withBinary: true, withAuth: true, body });
-      const provider = makeProvider(fixtures, 1_500); // 1.5s per-run timeout
+      const provider = makeProvider(fixtures);
       const { messages } = await drainStream(provider, ['a', 'b', 'c']);
       expect(argvOf(fixtures, 2)).toContain('resume'); // after turn 1 success
-      expect(argvOf(fixtures, 3)).toContain('resume'); // anchor survived the timeout
+      expect(argvOf(fixtures, 3)).toContain('resume'); // anchor survived the failure
       const errors = (messages as Array<{ type: string; content: string }>)
         .filter((m) => m.type === 'error')
         .map((m) => m.content);
-      expect(errors.join('\n')).toMatch(/timed out/);
-    }, 30_000);
+      expect(errors.join('\n')).toMatch(/exited with code 1.*temporary failure/s);
+    }, 10_000);
   });
 
   // --------------------------------------------------------------------------

@@ -237,7 +237,6 @@ export class Config {
   // Codex concurrency governance caps (Issue #4634, S7 of #4627).
   static readonly CODEX_MAX_ACTIVE_SESSIONS = fileConfigOnly.agent?.codex?.maxActiveSessions;
   static readonly CODEX_MAX_CONCURRENT_RUNS = fileConfigOnly.agent?.codex?.maxConcurrentRuns;
-  static readonly CODEX_EXEC_TIMEOUT_MS = fileConfigOnly.agent?.codex?.execTimeoutMs;
   static readonly CODEX_TRANSPORT = fileConfigOnly.agent?.codex?.transport ?? 'exec';
 
   // Tier model configuration (Issue #3059)

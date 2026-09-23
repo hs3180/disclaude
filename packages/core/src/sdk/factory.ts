@@ -37,7 +37,6 @@ const providerRegistry = new Map<ProviderType, ProviderFactory>([
         networkAccess: Config.CODEX_NETWORK_ACCESS,
         maxActiveSessions: Config.CODEX_MAX_ACTIVE_SESSIONS,
         maxConcurrentRuns: Config.CODEX_MAX_CONCURRENT_RUNS,
-        execTimeoutMs: Config.CODEX_EXEC_TIMEOUT_MS,
         transport: Config.CODEX_TRANSPORT,
       }),
   ],
