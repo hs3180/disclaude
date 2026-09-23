@@ -57,17 +57,21 @@ ${chatHistoryContext}
  * @param chatLogFilePaths - Optional array of log file paths to include
  * @returns Formatted persisted history section, or empty string if no context
  */
-export function buildPersistedHistorySection(persistedHistoryContext?: string, chatLogFilePaths?: string[]): string {
+export function buildPersistedHistorySection(
+  persistedHistoryContext?: string,
+  chatLogFilePaths?: string[]
+): string {
   if (!persistedHistoryContext && (!chatLogFilePaths || chatLogFilePaths.length === 0)) {
     return '';
   }
 
   // Issue #3996: Build log file paths hint
-  const logPathsHint = chatLogFilePaths && chatLogFilePaths.length > 0
-    ? `\n📁 **Chat log files** (use Read tool to access full history beyond the context window):\n${
-        chatLogFilePaths.map(p => `- \`${p}\``).join('\n')
-      }\n`
-    : '';
+  const logPathsHint =
+    chatLogFilePaths && chatLogFilePaths.length > 0
+      ? `\n📁 **Chat log files** (use Read tool to access full history beyond the context window):\n${chatLogFilePaths
+          .map((p) => `- \`${p}\``)
+          .join('\n')}\n`
+      : '';
 
   if (!persistedHistoryContext) {
     // Only log paths, no history content
@@ -170,6 +174,14 @@ The \`--thread\` flag accepts any \`om_xxx\`/\`omt_xxx\` from this thread (e.g. 
  * @returns Formatted next-step guidance section
  */
 export function buildNextStepGuidance(supportsCards?: boolean): string {
+  const researchGuidance = [
+    'For research, deliver a human-readable report in the existing Project and link it in chat.',
+    'Organize the report around the research question and the evidence behind important judgments, distinguishing observed results from their interpretation.',
+    'Keep detailed source material and exploration records in the Project archive rather than turning the report into a tool log.',
+    'When the user comments, edits the document, or gives feedback in chat, connect it to the affected evidence or claim, preserve user edits, and make any substantive revision visible.',
+    'Ask a concrete follow-up when ambiguity could change the judgment; use a structured card only when it materially helps, otherwise ask in chat.',
+    'Cards are for specific feedback, not research navigation or generic next-step menus; do not begin optional work without a user request.',
+  ].join(' ');
   if (supportsCards !== false) {
     return `
 
@@ -179,7 +191,7 @@ export function buildNextStepGuidance(supportsCards?: boolean): string {
 
 Use an **interactive card** when a concrete question needs user feedback, such as clarification, a choice, or confirmation. Optional follow-up questions should be grounded in the actual findings and unresolved evidence. Do not add a card merely because a response ended.
 
-For research, keep findings, current conclusions and revision history in the document, and provide its link in chat. Cards collect specific feedback; they do not provide research navigation or a generic next-step menu. Do not turn viewing results, local files or history into button choices, and do not start optional work without a user response.
+${researchGuidance}
 
 ### Sending a feedback card (send_interactive)
 
@@ -225,6 +237,8 @@ Do **NOT** paste raw card fields such as \`content\`/\`format\`/\`elements\` —
 ## Next Steps After Response
 
 When further action would help, suggest relevant next steps or ask a concrete question in chat.
+
+${researchGuidance}
 
 ### Guidelines
 

@@ -1,6 +1,12 @@
-# 文档协作读写约定
+# 飞书研究文档读写参考
 
-研究文档正文和评论是协作状态。每轮开始和结束都用 Lark CLI 完整读取正文、全部评论及回复，并把成功的原始响应保存到任务私有目录；读取失败或分页不完整时保留上一次成功读回并明确说明。
+在处理文档反馈或修订已有报告时，使用本参考保护用户内容并确认实际同步结果。按任务需要读取和核验；不要求每轮保存完整 API 响应或重复扫描无关材料。
+
+## 读取反馈
+
+先用当前环境的 Lark CLI help 核实文档与评论命令和身份选项，再读取报告正文及与本轮研究相关的评论/回复。若评论分页，读完所有相关页面；遇到读取失败、权限不足或未完成分页，应报告反馈同步不完整，不能把未读到当成没有反馈。
+
+示例命令如下，具体参数以当前 CLI help 为准：
 
 ```sh
 lark-cli docs +fetch --doc TOKEN --doc-format markdown --scope full --as user
@@ -8,17 +14,23 @@ lark-cli drive +list-comments --token TOKEN --type docx --comment-scope all --so
 lark-cli drive +list-replies --token TOKEN --type docx --comment-id COMMENT_ID --as user --page-size 100
 ```
 
-根据 `has_more` 和 `page_token` 读取每一页；不要把摘要当作完整评论，也不要把失败页替换为空列表。
+按返回的 has_more 和 page_token 继续分页。根据评论所指段落及上下文理解意见；不能把评论单独摘出后脱离论证处理。
 
-需要脚本化采集时使用 `scripts/collect-feishu-snapshot.mjs <TOKEN> <user|bot>`；它只有在正文、每条评论及全部回复页通过文档 token、线程 ID、分页和时间校验后才返回 `complete: true`。原始响应只保存到本轮私有目录，错误输出不包含正文或评论内容。
+## 定点修改与核验
 
-结合正文上下文处理用户意见。实质修改采用增量写入并立即完整读回，确认用户原文、来源和新内容都保留。反馈无法在本轮处理时在文档或本地工作记录中明确标为待处理；不能把等待或本地检查当作已处理。
+- 写入前确认当前正文仍包含将要修改的内容；若其版本或相关段落已变化，重新理解后再编辑，不用旧快照覆盖用户新内容。
+- 优先对受影响段落做 targeted str_replace 或 append，不整篇覆盖文档，不重复追加不确定的写入。
+- 写入后读回受影响段落及必要上下文，确认用户编辑、重要来源和修订内容仍在且相互一致。若服务返回不确定，先读取远端状态再决定是否重试。
+- 不要用聊天回执、CLI 的本地成功提示或本地文件替代远端读回。未确认的内容要标为未确认/未同步。
+- 研究启动请求不自动授予额外文档分享或权限变更授权。
 
-直接用 Lark CLI 的文档更新命令进行 targeted `str_replace` 或 `append`，把原文、替换文本和可选正文版本作为结构化参数传入，避免 shell 解释反引号、`$()` 和换行。写入结果不明确时先完整读回再决定是否重试；不要盲目重复追加，也不要整篇覆盖文档。
+## 可选完整快照工具
 
-实质修改完成后，重新完整读取正文，确认开头的当前研究概览与最新发现、待处理反馈和下一步一致；历史结论和用户原文必须保留。回执确认只记录已观察到的远端写入，不能替代对概览和详细修订的核对。
-需要封装一次写入时使用 `scripts/write-feishu-text.mjs`，它通过参数数组传递正文，不执行 shell，并可带 `--revision-id`。命令结果不明确时脚本只报告需要读回核对，不自动重试；`scripts/prepare-conclusion-replacement.mjs` 和 `scripts/verify-conclusion-history.mjs` 只接受完整同文档快照，`scripts/compare-snapshot-history.mjs` 只报告当前正文缺失的原文块，不替用户判断结论是否应恢复。
+仓库脚本适用于评论很多、分页核验容易出错或需要比较大段修订的场景，不是每次研究的必经流程：
 
-实时读回的完成时间只能在所有正文、评论和回复页成功校验后记录；它表示本次采集完成，不是原子远端快照，也不是写入时间。最终回复给出文档链接、已确认变化、未解决意见和研究是否仍在进行；没有成功采集时间时明确未知，不制造时间。
+- `scripts/collect-feishu-snapshot.mjs`：完整收集正文、评论及回复分页并校验关联关系。
+- `scripts/feishu-snapshot.mjs`：把完整原始响应转换为核验用快照。
+- `scripts/write-feishu-text.mjs`：对明确选定的文本执行一次定点写入。
+- `scripts/prepare-conclusion-replacement.mjs`、`scripts/verify-conclusion-history.mjs` 和 `scripts/compare-snapshot-history.mjs`：只在需要保留并比较较长历史结论时使用。
 
-本约定不创建任务管理器、调度器、文件索引或后台执行机制；本地目录只保存完成本轮读写所需的原始响应和研究产物。
+仅在本轮确有需要时将必要读回或研究产物保存到 Project；不要为证明每次同步而留下完整调用日志。原始资料和有复用价值的探索记录与人类可读报告分开归档。
