@@ -189,6 +189,26 @@ function commandText(command: string, args: string[]): string {
   return execFileSync(command, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 
+export function parseSystemdServiceState(raw: string): {
+  activeState: string;
+  pid?: number;
+  unitFileState: string;
+} {
+  const properties = new Map<string, string>();
+  for (const line of raw.split(/\r?\n/u)) {
+    const separator = line.indexOf('=');
+    if (separator > 0) {
+      properties.set(line.slice(0, separator), line.slice(separator + 1));
+    }
+  }
+  const pid = Number(properties.get('MainPID'));
+  return {
+    activeState: properties.get('ActiveState') || '',
+    pid: Number.isSafeInteger(pid) && pid > 0 ? pid : undefined,
+    unitFileState: properties.get('UnitFileState') || '',
+  };
+}
+
 function inspectLaunchd(home: string): LegacyBrowserDefinition | undefined {
   const file = resolve(home, 'Library/LaunchAgents', `${LEGACY_LABEL}.plist`);
   if (!existsSync(file)) {return undefined;}
@@ -237,14 +257,12 @@ function inspectSystemd(home: string): LegacyBrowserDefinition | undefined {
     throw new Error(`Legacy browser IPC unit has systemd drop-ins (${dropInPaths}); move their settings into the Disclaude config before migration`);
   }
   let state: string;
-  try { state = commandText('systemctl', ['--user', 'show', LEGACY_SYSTEMD_UNIT, '--property=ActiveState', '--property=MainPID', '--property=UnitFileState', '--value']); }
+  try { state = commandText('systemctl', ['--user', 'show', LEGACY_SYSTEMD_UNIT, '--property=ActiveState', '--property=MainPID', '--property=UnitFileState']); }
   catch { throw new Error(`Cannot query the user systemd manager for ${LEGACY_SYSTEMD_UNIT}; no migration was performed`); }
-  const [activeState, pidText, unitFileState] = state.split(/\r?\n/u);
-  const pid = Number(pidText);
+  const { activeState, pid, unitFileState } = parseSystemdServiceState(state);
   return { platform: 'linux', label: LEGACY_SYSTEMD_UNIT, file, entry,
     environment: parseSystemdEnvironment(raw), loaded: ['active', 'activating', 'reloading', 'deactivating'].includes(activeState),
-    enabled: unitFileState === 'enabled' || unitFileState === 'enabled-runtime',
-    pid: Number.isSafeInteger(pid) && pid > 0 ? pid : undefined, raw };
+    enabled: unitFileState === 'enabled' || unitFileState === 'enabled-runtime', pid, raw };
 }
 
 function currentDefinition(home: string): LegacyBrowserDefinition | undefined {

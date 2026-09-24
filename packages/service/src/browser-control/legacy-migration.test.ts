@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
   loadMigratedBrowserEnv,
   parseSystemdEnvironment,
+  parseSystemdServiceState,
   prepareLegacyBrowserIpcMigration,
   type LegacyBrowserDefinition,
   type LegacyBrowserMigrationAdapter,
@@ -92,6 +93,19 @@ describe('standalone browser IPC migration', () => {
     });
     expect(() => parseSystemdEnvironment('[Service]\n  EnvironmentFile=-/tmp/browser.env'))
       .toThrow('uses EnvironmentFile');
+  });
+
+  it('parses systemd service properties by name regardless of output order', () => {
+    expect(
+      parseSystemdServiceState(
+        'UnitFileState=enabled\nMainPID=2495\nActiveState=active'
+      )
+    ).toEqual({ activeState: 'active', pid: 2495, unitFileState: 'enabled' });
+    expect(parseSystemdServiceState('MainPID=0\nActiveState=inactive')).toEqual({
+      activeState: 'inactive',
+      pid: undefined,
+      unitFileState: '',
+    });
   });
 
   it('waits for idleness, imports only browser settings, and commits under the service owner', async () => {
