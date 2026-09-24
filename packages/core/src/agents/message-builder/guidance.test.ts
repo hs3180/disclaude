@@ -15,10 +15,7 @@ import {
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
 } from './guidance.js';
-import {
-  CHANNEL_CLI_HELP,
-  buildChannelCliHelpGuidance,
-} from './channel-cli-help.js';
+import { CHANNEL_CLI_HELP, buildChannelCliHelpGuidance } from './channel-cli-help.js';
 
 describe('buildChatHistorySection', () => {
   it('should return empty string when no context is provided', () => {
@@ -147,6 +144,17 @@ describe('buildThreadSelfServiceGuidance (Issue #4402)', () => {
 });
 
 describe('buildNextStepGuidance', () => {
+  it('frames research as an evidence-led report with a real feedback loop', () => {
+    for (const supportsCards of [true, false]) {
+      const result = buildNextStepGuidance(supportsCards);
+      expect(result).toContain('human-readable report in the existing Project');
+      expect(result).toContain('distinguishing observed results from their interpretation');
+      expect(result).toContain('exploration records in the Project archive');
+      expect(result).toContain('preserve user edits');
+      expect(result).toContain('ambiguity could change the judgment');
+    }
+  });
+
   it('anchors next-step cards to the triggering prompt in every chat type', () => {
     const result = buildNextStepGuidance(true);
     expect(result).toContain('--parent <trigger-message-id>');
@@ -200,7 +208,7 @@ describe('buildLocationAwarenessGuidance', () => {
   it('should include location awareness warning', () => {
     const result = buildLocationAwarenessGuidance();
     expect(result).toContain('Location Awareness');
-    expect(result).toContain('do NOT know the user\'s physical location');
+    expect(result).toContain("do NOT know the user's physical location");
   });
 
   it('should include examples of wrong and correct approaches', () => {
