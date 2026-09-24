@@ -1,0 +1,323 @@
+/**
+ * Composable guidance builder functions for MessageBuilder.
+ *
+ * Issue #1492: Extracted from worker-node MessageBuilder as standalone
+ * pure functions for testability and reusability.
+ *
+ * Each function builds a specific guidance section for the agent prompt.
+ * These are framework-agnostic and can be used by any channel.
+ *
+ * @module agents/message-builder/guidance
+ */
+/**
+ * Build the chat history section for passive mode.
+ *
+ * Issue #517: Provides recent conversation context when the agent
+ * is @mentioned in a group chat.
+ *
+ * Issue #1856: Enhanced guidance to help agent answer the last pending
+ * question when the user sends an empty @mention (no text attached).
+ *
+ * @param chatHistoryContext - Chat history context string, or undefined to skip
+ * @returns Formatted chat history section, or empty string if no context
+ */
+export function buildChatHistorySection(chatHistoryContext) {
+    if (!chatHistoryContext) {
+        return '';
+    }
+    return `
+
+---
+
+## Recent Chat History
+
+You were @mentioned in a group chat. Here's the recent conversation context:
+
+${chatHistoryContext}
+
+**Important**:
+- If the user's message above is empty (only an @mention with no text), look at the last question or request in the chat history and proactively answer it. Do not ask the user what they need — they are @mentioning you to get an answer to the pending question.
+- **Coreference resolution**: When a user uses referring expressions like "this link", "this thread", "that message", "这篇", "那个", and the chat history contains multiple possible referents (e.g., multiple links, multiple topics), do NOT guess. Instead, ask the user to clarify which one they mean. Example: "I see several links in the recent history — which one are you referring to?"
+
+---
+`;
+}
+/**
+ * Build the persisted history section for session restoration.
+ *
+ * Issue #955: Provides conversation history from the previous session
+ * after a service restart.
+ * Issue #3996: Includes chat log file paths so the agent can Read them
+ * to access conversation history beyond the context window.
+ *
+ * @param persistedHistoryContext - Persisted history context string, or undefined to skip
+ * @param chatLogFilePaths - Optional array of log file paths to include
+ * @returns Formatted persisted history section, or empty string if no context
+ */
+export function buildPersistedHistorySection(persistedHistoryContext, chatLogFilePaths) {
+    if (!persistedHistoryContext && (!chatLogFilePaths || chatLogFilePaths.length === 0)) {
+        return '';
+    }
+    // Issue #3996: Build log file paths hint
+    const logPathsHint = chatLogFilePaths && chatLogFilePaths.length > 0
+        ? `\n📁 **Chat log files** (use Read tool to access full history beyond the context window):\n${chatLogFilePaths
+            .map((p) => `- \`${p}\``)
+            .join('\n')}\n`
+        : '';
+    if (!persistedHistoryContext) {
+        // Only log paths, no history content
+        return `
+
+---
+
+## Previous Session Context
+
+The service was recently restarted.${logPathsHint}
+---
+`;
+    }
+    return `
+
+---
+
+## Previous Session Context
+
+The service was recently restarted. Here's the conversation history from your previous session:
+
+${persistedHistoryContext}
+${logPathsHint}
+---
+`;
+}
+/**
+ * Build the thread context section for topic groups.
+ *
+ * Issue #3641 sub-problem 1: Provides thread conversation history
+ * when the user sends a message in a Feishu topic group thread.
+ *
+ * @param threadContext - Thread context string, or undefined to skip
+ * @returns Formatted thread context section, or empty string if no context
+ */
+export function buildThreadContextSection(threadContext) {
+    if (!threadContext) {
+        return '';
+    }
+    return `
+
+---
+
+## Thread Context
+
+You are responding in a topic group thread. Here is the conversation history within this thread (from oldest to newest):
+
+${threadContext}
+
+**Coreference resolution**: When a user uses referring expressions like "this link", "this thread", "that message", "这篇", "那个", and the thread history contains multiple possible referents (e.g., multiple links, multiple topics), do NOT guess. Instead, ask the user to clarify which one they mean. Example: "I see several links in this thread — which one are you referring to?"
+
+---
+`;
+}
+/**
+ * Build the lark-cli self-service guidance for topic threads.
+ *
+ * Issue #4402: extracted from `buildThreadContextSection` so it is injected
+ * based on `isTopicThread` (topic mode) — NOT gated on whether `threadContext`
+ * was pre-built. The previous embedding meant this guidance disappeared exactly
+ * when the harness failed to pre-build thread context (the case where the agent
+ * most needs to know it can self-serve via lark-cli). See #4306 / #4401.
+ *
+ * Returned only for topic threads (the caller gates on `isTopicThread`); the
+ * content is the on-demand attachment/context fetch recipe (lark-cli).
+ */
+export function buildThreadSelfServiceGuidance() {
+    return `
+
+---
+
+## Topic-thread self-service context (on-demand)
+
+You are responding in a topic group thread. The Thread Context (when present) is text-only. Ancestor messages in this thread may carry attachments (research PDFs, images, media) that are NOT auto-delivered to you. When the user refers to "this thread / this report / 这篇" but the referenced attachment is absent from your context, fetch it yourself with \`lark-cli\` before answering (Issue #4306 / #4402):
+
+- List every message in this thread AND download its attachments (recommended):
+  \`npx @larksuite/cli im +threads-messages-list --thread <message-id> --as bot --download-resources\`
+- Fetch specific messages by id (up to 50), optionally downloading their attachments too:
+  \`npx @larksuite/cli im +messages-mget --message-ids <om_xxx>,<om_yyy> --as bot --download-resources\`
+- Download one message's attachment:
+  \`npx @larksuite/cli im +messages-resources-download --message-id <om_xxx> --file-key <key> --type image|file --as bot --output ./lark-im-resources/<name>\`
+
+The \`--thread\` flag accepts any \`om_xxx\`/\`omt_xxx\` from this thread (e.g. the Message ID in the metadata above, or one quoted in the Thread Context) and auto-resolves it to the thread root. Downloaded files land under \`./lark-im-resources/\` (or your \`--output\` path) — read them with the Read tool, then answer.
+
+---
+`;
+}
+/**
+ * Build the next-step guidance section.
+ *
+ * Issue #893: Provides in-prompt guidance for suggesting next steps
+ * to the user after responding, using interactive cards when supported.
+ *
+ * @param supportsCards - Whether the channel supports interactive cards
+ * @returns Formatted next-step guidance section
+ */
+export function buildNextStepGuidance(supportsCards) {
+    const researchGuidance = [
+        'For research, deliver a human-readable report in the existing Project and link it in chat.',
+        'Organize the report around the research question and the evidence behind important judgments, distinguishing observed results from their interpretation.',
+        'Keep detailed source material and exploration records in the Project archive rather than turning the report into a tool log.',
+        'When the user comments, edits the document, or gives feedback in chat, connect it to the affected evidence or claim, preserve user edits, and make any substantive revision visible.',
+        'Ask a concrete follow-up when ambiguity could change the judgment; use a structured card only when it materially helps, otherwise ask in chat.',
+        'Cards are for specific feedback, not research navigation or generic next-step menus; do not begin optional work without a user request.',
+    ].join(' ');
+    if (supportsCards !== false) {
+        return `
+
+---
+
+## Next Steps After Response
+
+Use an **interactive card** when a concrete question needs user feedback, such as clarification, a choice, or confirmation. Optional follow-up questions should be grounded in the actual findings and unresolved evidence. Do not add a card merely because a response ended.
+
+${researchGuidance}
+
+### Sending a feedback card (send_interactive)
+
+Invoke the \`send_interactive\` channel command shown in the Tools section — it is a **command line**, not a JSON payload. Passing a card JSON blob on stdin does not work: it is consumed as the \`--question\` text and rendered verbatim into the card.
+
+\`\`\`bash
+<channel-cli> send_interactive --chat <chat-id> \\
+  --parent <trigger-message-id> \\
+  --title "确认交付格式" \\
+  --question "报告需要哪种格式？" \\
+  --options '[{"text":"Markdown","value":"action1","type":"primary"},{"text":"PDF","value":"action2"}]' \\
+  --action-prompts '{"action1":"[用户操作] 用户选择了Markdown","action2":"[用户操作] 用户选择了PDF"}'
+\`\`\`
+
+Flags:
+
+- \`--chat\` — target chat ID. Required unless \`FEISHU_CLI_CHAT_ID\` or the config \`cliChatId\` supplies it.
+- \`--parent\` — the triggering prompt's **Message ID** from the metadata below. Always pass it so the card remains visibly associated with the request in private chats, regular groups, and topic groups. Omit it only when the channel rejects reply attribution, then retry once without it.
+- \`--question\` — the prompt text shown above the buttons (or \`--question-file <path>\`, or piped on stdin).
+- \`--options\` — JSON array of buttons; each an object with a button \`text\`, a \`value\`, and an optional \`type\` of \`primary\`/\`default\`/\`danger\`.
+- \`--action-prompts\` — JSON object mapping each button \`value\` to a short user-action description.
+- \`--title\` — card header text (optional; defaults to a generic header). Choose a title that identifies the specific question.
+- \`--context\` — optional one-line subtitle under the header.
+
+Do **NOT** paste raw card fields such as \`content\`/\`format\`/\`elements\` — the card body is built by the channel.
+
+### Guidelines
+
+- Offer only the choices relevant to the specific question; allow the user to answer freely in chat
+- Make suggestions specific and actionable
+- Use \`"type": "primary"\` for the most recommended option
+- **CRITICAL**: Always include \`actionPrompts\` that maps each option's \`value\` to a user message
+- **CRITICAL**: Reply to the triggering prompt with \`--parent <trigger-message-id>\`; this applies to non-topic groups and private chats too
+- The action prompt format: \`"[用户操作] 用户选择了..."\` describes what the user did
+- If there is no concrete feedback to obtain, finish with the answer and relevant artifact links; no card is needed`;
+    }
+    // Fallback for channels without card support
+    return `
+
+---
+
+## Next Steps After Response
+
+When further action would help, suggest relevant next steps or ask a concrete question in chat.
+
+${researchGuidance}
+
+### Guidelines
+
+- Suggest 2-3 relevant next steps based on the conversation context
+- Make suggestions specific and actionable
+- Format as a simple list
+- Do not append suggestions to a complete answer unless they help the user`;
+}
+/**
+ * Build the output format guidance section.
+ *
+ * Issue #962: Prevents raw JSON objects from appearing in model output.
+ * Some models may output JSON objects directly instead of formatting
+ * them as readable Markdown.
+ *
+ * @returns Formatted output format guidance section
+ */
+export function buildOutputFormatGuidance() {
+    return `
+
+---
+
+## Output Format Requirements
+
+**IMPORTANT: Never output raw JSON objects in your response.**
+
+When you need to present structured data (status, metrics, analysis results, etc.), always format it as **readable Markdown**:
+
+### ✅ Correct Format
+\`\`\`markdown
+> **储蓄率**: ❌ 入不敷出，储蓄率为负，建议审视支出结构
+\`\`\`
+
+### ❌ Wrong Format (Never do this)
+\`\`\`markdown
+> **储蓄率**: { "status": "bad", "comment": "入不敷出..." }
+\`\`\`
+
+### Guidelines
+
+- Convert JSON objects to readable text, tables, or formatted lists
+- Use emoji and formatting (bold, italic) to highlight important information
+- If you have structured data internally, extract and present the key values
+- For complex data, use Markdown tables instead of raw JSON`;
+}
+/** Describe the agent-owned workspace environment and its sharing boundaries. */
+export function buildRuntimeEnvironmentGuidance() {
+    return `
+
+## Shared Runtime Environment
+
+\`$DISCLAUDE_WORKSPACE_DIR/.runtime-env\` is shared across sessions and agents using this workspace. It is persistent workspace state, not a private session store. Project changes and session resets do not isolate or remove it.
+
+You own its contents and credential lifecycle. Before changing it, read the current file, preserve unrelated entries, and coordinate concurrent writers; replacing it from a stale snapshot can destroy another agent's changes. Do not store task-private credentials there unless sharing them with other workspace agents is intended and authorized. Keep private material out of replies and logs, and keep the file owner-only and out of version control.
+
+Disclaude reads this file when preparing an execution environment. Already-running processes retain their earlier environment snapshot; writing the file does not update those processes. Decide when to refresh or remove credentials according to the provider and task, without assuming disclaude expires them for you.
+
+### Running commands to completion
+
+When a tool returns a running session, job or cell handle, retain its status and handle, not just its output text. Poll the same handle until the underlying operation reports a terminal result. A wait returning, an empty output chunk, or an outer orchestration cell completing does not mean its child command has exited. An observation timeout is not permission to restart the work.
+
+If a script wraps command tools, inspect and preserve each command's session and exit status through subsequent waits. Before claiming success, check the terminal result and the requested outcome or artifact. Do not end a turn that was asked to await completion while its command is still running: temporary session cleanup can terminate unfinished children. If completion cannot be verified, report the unresolved state rather than success.`;
+}
+/**
+ * Build the location awareness guidance section.
+ *
+ * Issue #1198: The agent runs on a server that is physically separate
+ * from the user's terminal. Therefore, the agent should NOT attempt to
+ * infer the user's physical location through system information.
+ *
+ * @returns Formatted location awareness guidance section
+ */
+export function buildLocationAwarenessGuidance() {
+    return `
+
+---
+
+## Location Awareness
+
+**IMPORTANT: You do NOT know the user's physical location.**
+
+You are running on a remote server that is physically separate from the user's terminal. Therefore:
+
+- You CANNOT infer the user's location from system information (timezone, Wi-Fi networks, IP address, locale settings, etc.)
+- When the user asks about location-dependent information (weather, local events, etc.), you should:
+  1. Honestly state that you don't know their location
+  2. Ask them to provide their location if needed
+  3. Do NOT attempt to guess or infer their location from any system data
+
+### Examples
+
+**❌ Wrong Approach:**
+> "Based on your timezone (Asia/Shanghai), you're probably in Shanghai..."
+
+**✅ Correct Approach:**
+> "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
+}

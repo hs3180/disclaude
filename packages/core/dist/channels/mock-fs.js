@@ -1,0 +1,153 @@
+/**
+ * Virtual filesystem mock for unit tests.
+ *
+ * Provides an in-memory Map-based filesystem that replaces all `fs` operations.
+ * Tests using this mock have zero side effects on the real filesystem.
+ *
+ * Limitations vs real `fs`:
+ * - `readFileSync` always returns a string (never a Buffer), regardless of encoding parameter.
+ *
+ * @module channels/mock-fs
+ */
+import { vi } from 'vitest';
+/** Virtual filesystem: path → content (null = directory, string = file) */
+const vfs = new Map();
+/** Normalize path: forward slashes, no trailing slash */
+function norm(p) {
+    return p.replace(/\\/g, '/').replace(/\/+$/, '');
+}
+/** Reset the virtual filesystem */
+function resetVfs() {
+    vfs.clear();
+}
+/** Helper to create a filesystem error with a code property */
+function createFsError(message, code) {
+    const err = new Error(message);
+    err.code = code;
+    return err;
+}
+const mockFs = {
+    existsSync: vi.fn((p) => vfs.has(norm(p))),
+    mkdirSync: vi.fn((p, opts) => {
+        const np = norm(p);
+        if (!opts?.recursive) {
+            if (vfs.has(np)) {
+                throw createFsError(`EEXIST: file already exists, mkdir '${p}'`, 'EEXIST');
+            }
+            // Check parent directory exists (matches real fs behavior: throws ENOENT)
+            const parent = np.substring(0, np.lastIndexOf('/'));
+            if (parent && !vfs.has(parent)) {
+                throw createFsError(`ENOENT: no such file or directory, mkdir '${p}'`, 'ENOENT');
+            }
+            vfs.set(np, null);
+            return;
+        }
+        // recursive: ensure all intermediate directories exist
+        const parts = np.split('/').filter(Boolean);
+        let cur = '';
+        for (const part of parts) {
+            cur += `/${part}`;
+            if (!vfs.has(cur)) {
+                vfs.set(cur, null);
+            }
+        }
+    }),
+    writeFileSync: vi.fn((p, content, _encoding) => {
+        const np = norm(p);
+        // Check parent directory exists (matches real fs behavior: throws ENOENT)
+        const parent = np.substring(0, np.lastIndexOf('/'));
+        if (parent && !vfs.has(parent)) {
+            throw createFsError(`ENOENT: no such file or directory, open '${p}'`, 'ENOENT');
+        }
+        vfs.set(np, String(content));
+    }),
+    readFileSync: vi.fn((p, _encoding) => {
+        const np = norm(p);
+        if (!vfs.has(np)) {
+            throw createFsError(`ENOENT: no such file or directory, open '${p}'`, 'ENOENT');
+        }
+        const val = vfs.get(np);
+        if (val === null) {
+            throw createFsError('EISDIR: illegal operation on a directory, read', 'EISDIR');
+        }
+        // At this point: vfs.has(np) is true (checked above) and val !== null,
+        // so the value must be a string.
+        return val;
+    }),
+    readdirSync: vi.fn((p, opts) => {
+        const np = norm(p);
+        if (!vfs.has(np) || vfs.get(np) !== null) {
+            throw createFsError(`ENOENT: no such file or directory, scandir '${p}'`, 'ENOENT');
+        }
+        const prefix = `${np}/`;
+        const seen = new Map();
+        for (const key of vfs.keys()) {
+            if (key.startsWith(prefix)) {
+                const rest = key.slice(prefix.length);
+                const slash = rest.indexOf('/');
+                const name = slash === -1 ? rest : rest.slice(0, slash);
+                if (name && !seen.has(name)) {
+                    seen.set(name, vfs.get(prefix + name) === null);
+                }
+            }
+        }
+        if (opts?.withFileTypes) {
+            return Array.from(seen.entries()).map(([name, isDir]) => ({
+                name,
+                isDirectory: () => isDir,
+                isFile: () => !isDir,
+            }));
+        }
+        return Array.from(seen.keys());
+    }),
+    rmSync: vi.fn((p, opts) => {
+        const np = norm(p);
+        if (!vfs.has(np)) {
+            if (opts?.force) {
+                return;
+            }
+            throw createFsError(`ENOENT: no such file or directory, rm '${p}'`, 'ENOENT');
+        }
+        if (opts?.recursive) {
+            const prefix = `${np}/`;
+            for (const key of [...vfs.keys()]) {
+                if (key === np || key.startsWith(prefix)) {
+                    vfs.delete(key);
+                }
+            }
+        }
+        else {
+            // Check if directory has children (matches real fs: throws ENOTEMPTY)
+            if (vfs.get(np) === null) {
+                const prefix = `${np}/`;
+                for (const key of vfs.keys()) {
+                    if (key.startsWith(prefix)) {
+                        throw createFsError(`ENOTEMPTY: directory not empty, rm '${p}'`, 'ENOTEMPTY');
+                    }
+                }
+            }
+            vfs.delete(np);
+        }
+    }),
+    renameSync: vi.fn((oldP, newP) => {
+        const onp = norm(oldP);
+        const nnp = norm(newP);
+        if (!vfs.has(onp)) {
+            throw createFsError('ENOENT: no such file or directory, rename', 'ENOENT');
+        }
+        vfs.set(nnp, vfs.get(onp));
+        vfs.delete(onp);
+        if (vfs.get(nnp) === null) {
+            const oldPrefix = `${onp}/`;
+            const newPrefix = `${nnp}/`;
+            for (const key of [...vfs.keys()]) {
+                if (key.startsWith(oldPrefix)) {
+                    vfs.set(newPrefix + key.slice(oldPrefix.length), vfs.get(key));
+                    vfs.delete(key);
+                }
+            }
+        }
+    }),
+    chmodSync: vi.fn(() => { }),
+};
+export { mockFs, resetVfs };
