@@ -228,7 +228,6 @@ This is a soft preference, not a strict rule. Randomness is still the priority.
 - **daily-news-inspiration**: Uses external news; this skill uses internal feature catalog
 - **daily-soul-question**: Analyzes chat history; this skill simulates user interactions
 - **bbs-topic-initiator**: Generates topics for groups; this skill tests features
-- **next-step**: Can be triggered after this skill completes to suggest follow-up actions
 
 ---
 
