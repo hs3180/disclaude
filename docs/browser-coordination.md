@@ -148,6 +148,19 @@ may set `DISCLAUDE_BROWSER_MIGRATION=skip` to avoid inspecting the current
 user's service manager. Chromium CDP services/profiles, user pages, and
 workspaces are not migrated or deleted.
 
+`tests/e2e/browser-migration.test.ts` exercises this boundary against a real
+legacy broker registered with the native service manager, a disposable Chrome
+profile and a live CDP endpoint. It first forces Disclaude startup to fail after
+the old broker has stopped and verifies that the original manager definition,
+broker, browser target and page are restored. It then performs a successful
+migration, runs the shipped `browser-use` launcher through the new service,
+restarts Disclaude from the persisted settings, and verifies the same external
+browser target and workspace remain usable. The test runs on disposable GitHub
+Actions Linux/systemd and macOS/launchd runners; it is opt-in and refuses to run
+outside that CI environment. Do not enable it against a developer or production
+host: it deliberately installs and removes the exact legacy service identity
+to exercise migration and rollback.
+
 ## Validation
 
 Core lifecycle/environment tests:
@@ -174,6 +187,25 @@ that the queued caller takes over without executing the abandoned operation. It 
 Linux CI installs the pinned browser-use runtime and uses the runner image's
 packaged Google Chrome (logging its version), then runs this same product test. No separate test Docker image or standalone harness runner
 is required. The test layout follows #5016: core unit tests plus actual-use-case E2E.
+
+The migration E2E is a separate, explicitly gated host-manager test. Its CI job
+installs the same pinned Python packages and real Chrome, then runs:
+
+```sh
+DISCLAUDE_E2E_BROWSER_MIGRATION=1 \
+DISCLAUDE_E2E_CHROMIUM=/absolute/path/to/chromium \
+DISCLAUDE_E2E_BROWSER_PYTHON=/absolute/path/to/python \
+npx vitest run --config vitest.e2e.config.ts tests/e2e/browser-migration.test.ts
+```
+
+The environment gate alone is insufficient: the test also requires GitHub
+Actions runner markers, a workspace and temporary directory under the runner's
+home, a working user systemd/launchd manager, and the real browser dependencies.
+It uses only a unique test socket/profile/workspace plus the legacy service
+identity and private migrated-settings path, refuses pre-existing fixtures,
+and removes only its own files. CI success is required before treating legacy
+manager migration as verified; ordinary browser lifecycle E2E does not cover
+this upgrade path.
 
 Environment filtering happens only where an execution environment is finalized:
 Claude SDK options, Codex exec/app-server subprocesses, the dsh subprocess, and
