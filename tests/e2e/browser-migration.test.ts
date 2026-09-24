@@ -19,7 +19,10 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { browserAgentEnv } from '../../packages/core/src/utils/browser-env.js';
-import { connectBrowser } from '../../packages/service/src/browser-control/client.mjs';
+import {
+  connectBrowser,
+  withBrowserLease,
+} from '../../packages/service/src/browser-control/client.mjs';
 
 const exec = promisify(execFile);
 const enabled = process.env.DISCLAUDE_E2E_BROWSER_MIGRATION === '1';
@@ -306,11 +309,23 @@ async function expectLegacyManagerEnabled(): Promise<void> {
 async function executeIpc(socket: string, cwd: string, script: string): Promise<string> {
   const client = await connectBrowser(socket);
   try {
-    const result = (await client.request('execute', { script, cwd })) as {
-      code: number;
-      stdout: string;
-      stderr: string;
-    };
+    let result:
+      | {
+          code: number;
+          stdout: string;
+          stderr: string;
+        }
+      | undefined;
+    await withBrowserLease(client, async () => {
+      result = (await client.request('execute', { script, cwd })) as {
+        code: number;
+        stdout: string;
+        stderr: string;
+      };
+    });
+    if (!result) {
+      throw new Error('Browser IPC lease completed without an execution result');
+    }
     expect(result.code, result.stderr).toBe(0);
     return result.stdout;
   } finally {
