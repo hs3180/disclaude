@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import nock from 'nock';
 import { randomUUID } from 'node:crypto';
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
@@ -457,6 +458,7 @@ describe('real browser IPC migration from the legacy OS service manager', () => 
     'rolls back a failed startup, migrates the live broker, and preserves browser state across restart',
     async () => {
       const { home, runnerTemp } = await validateRunner();
+      nock.enableNetConnect(/^(?:127\.0\.0\.1|localhost)(?::\d+)?$/u);
       const id = randomUUID().slice(0, 8);
       const root = join(runnerTemp, `disclaude-browser-migration-${id}`);
       const workspace = join(root, 'workspace');
