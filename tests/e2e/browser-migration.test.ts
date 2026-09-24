@@ -226,6 +226,23 @@ async function waitForOutput(
   throw new Error(`Timed out waiting for ${JSON.stringify(marker)}: ${proc.output()}`);
 }
 
+async function waitForPathToDisappear(
+  path: string,
+  proc: ManagedProcess,
+  timeoutMs: number
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (await pathEntryExists(path)) {
+    if (proc.child.exitCode !== null || proc.child.signalCode !== null) {
+      throw new Error(`Disclaude exited before migration commit: ${proc.output()}`);
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(`Timed out waiting for migration commit to remove ${path}`);
+    }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
+  }
+}
+
 async function startCandidate(
   root: string,
   config: string,
@@ -818,6 +835,7 @@ describe('real browser IPC migration from the legacy OS service manager', () => 
         const retiringLegacyPid = await brokerPid(socket);
         candidate = await startCandidate(root, config, 0, home);
         await waitForOutput(candidate, 'HTTP API server started on', 90_000);
+        await waitForPathToDisappear(definition, candidate, 15_000);
         expect(await exists(definition)).toBe(false);
         expect(pidIsAlive(retiringLegacyPid)).toBe(false);
         await expectLegacyManagerUnloaded();
