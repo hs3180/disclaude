@@ -1,6 +1,6 @@
 # Prebuilt GitHub tag distribution
 
-Issue #4922 is a 0.5.1 release gate. A successful `.tgz` install does not satisfy it.
+The versioned GitHub tag is the supported prebuilt installation target. A successful `.tgz` install alone does not replace final tag acceptance.
 
 ## Structure
 
@@ -61,11 +61,11 @@ do not count it as run until enabled.
 ## Final release
 
 Require Linux/macOS, Node 20/22 and npm 10/11 evidence and all required CI before
-the release decision. After explicit release approval, tag the tested distribution
-commit as `v0.5.1`, then recheck the exact public command:
+the release decision. After explicit release approval, tag the tested 0.6.0 distribution
+commit as `v0.6.0`, then recheck the exact public command:
 
 ```sh
-npm install -g "github:hs3180/disclaude#v0.5.1"
+npm install -g "github:hs3180/disclaude#v0.6.0"
 disclaude --version
 disclaude start --help
 disclaude channel --help
@@ -73,7 +73,7 @@ disclaude --help
 ```
 
 For isolated verification without replacing the operator's installation, use
-`node scripts/test-package-install.mjs github:hs3180/disclaude#v0.5.1 EXPECTED_SOURCE_FINGERPRINT --prefix-from-env`.
+`node scripts/test-package-install.mjs github:hs3180/disclaude#v0.6.0 EXPECTED_SOURCE_FINGERPRINT --prefix-from-env`.
 This checks CLI startup, HTTP status, graceful shutdown/restart, and package
 provenance, not merely npm's exit status. Resolve the remote tag to the reviewed
 distribution commit before running it; never silently retarget a published tag.
