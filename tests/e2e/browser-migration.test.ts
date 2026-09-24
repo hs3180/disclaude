@@ -751,6 +751,26 @@ describe('real browser IPC migration from the legacy OS service manager', () => 
         await startLegacy();
         expect(await waitForBroker(socket)).toMatchObject({ state: 'idle', queued: 0 });
         const initialLegacyPid = await brokerPid(socket);
+        if (process.platform === 'linux') {
+          const managerPid = Number(
+            await host('systemctl', [
+              '--user',
+              'show',
+              LEGACY_UNIT,
+              '--property=MainPID',
+              '--value',
+            ])
+          );
+          if (managerPid !== initialLegacyPid) {
+            const describePid = async (pid: number): Promise<string> =>
+              host('ps', ['-ww', '-p', String(pid), '-o', 'pid=,ppid=,args=']).catch(
+                () => 'process not found'
+              );
+            throw new Error(
+              `Disposable systemd fixture is not a directly owned broker: MainPID=${managerPid} (${await describePid(managerPid)}), lock PID=${initialLegacyPid} (${await describePid(initialLegacyPid)})`
+            );
+          }
+        }
         const firstValue = `before-rollback-${id}`;
         const firstUse = await executeIpc(
           socket,
