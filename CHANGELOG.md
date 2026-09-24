@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-24
+
+### Added
+
+- Agentic Research in existing Feishu Projects: investigate from ordinary project conversations, deliver readable research documents, keep detailed source records in the Project, and continue through comments, chat feedback, or structured follow-up.
+- Evidence-led report generation and revision that distinguish observations from interpretations, connect important judgments to sources, and make alternative explanations and conclusion boundaries readable.
+- Codex `requestUserInput` cards in Feishu that preserve question/answer identity and return submitted answers to the original turn.
+- Coordinated browser control and assisted Chromium setup, with shared ownership/handoff, lifecycle recovery, persistent profiles, and clearer service diagnostics on supported environments.
+
+### Changed
+
+- Keep Research within the existing Project, workspace, and agent harness; do not require a separate Research project type, runtime, task database, fixed workflow, or control panel.
+- Use generated GitHub distribution tags for installation. The source package remains private and is not published to the npm registry.
+
+### Fixed
+
+- Improve Codex execution outcome reporting, asynchronous user-input handling, project working-directory consistency, browser process cleanup, and package-install test isolation.
+- Refresh compatible runtime dependencies, including the Feishu SDK, HTTP client, YAML parser, and protobuf runtime.
+
+### Boundaries
+
+- Browser lifecycle and collaboration support does not guarantee access to every authenticated, challenged, or anti-bot-protected website.
+- Research follow-up works through ordinary chat and non-sensitive structured input; this release does not promise that every model can generate native secret (`isSecret`) questions.
+- Final package provenance and installation results are recorded against the tested distribution; this changelog entry alone is not proof that a tag has been published.
+
 ## [0.5.3] - 2026-09-13
 
 ### Added
@@ -27,7 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 See the [published 0.5.3 release](https://github.com/hs3180/disclaude/releases/tag/v0.5.3).
 
-## [0.5.2] - Unreleased
+## [0.5.2] - 2026-09-12
 
 ### Added
 
@@ -46,9 +71,9 @@ See the [published 0.5.3 release](https://github.com/hs3180/disclaude/releases/t
 - Keep credential lifecycle with agents and remove global security-output filtering.
 - Replace committed Git candidate fixtures with CI installation checks built from the current checkout.
 
-This unreleased entry does not imply a final tag; use the current migration and installation guides for supported procedures.
+See the [published 0.5.2 release](https://github.com/hs3180/disclaude/releases/tag/v0.5.2), including its same-version session-eviction update.
 
-## [0.5.1] - Unreleased
+## [0.5.1] - 2026-09-11
 
 ### Fixed
 
@@ -64,7 +89,7 @@ This unreleased entry does not imply a final tag; use the current migration and 
 
 ### Documentation
 
-- Document installation from the GitHub `v0.5.1` tag with `npm install -g "github:hs3180/disclaude#v0.5.1"`; the command requires the tag to be published.
+- Publish the prebuilt GitHub `v0.5.1` distribution tag for global installation; the root package remains private to npm.
 
 ### Known limitations
 

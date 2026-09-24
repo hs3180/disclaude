@@ -1,18 +1,19 @@
 # Disclaude
 
-[![npm version](https://badge.fury.io/js/disclaude.svg)](https://www.npmjs.com/package/disclaude)
+[![GitHub release](https://img.shields.io/github/v/release/hs3180/disclaude)](https://github.com/hs3180/disclaude/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node.js Version](https://img.shields.io/node/v/disclaude.svg)](https://nodejs.org)
+[![Node.js 20+](https://img.shields.io/badge/Node.js-20%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org)
 
-A multi-platform AI agent bot connecting Feishu/Lark and REST channels to Claude, Codex, and pi agent runtimes. Written in TypeScript, it supports chat-driven development, file operations, browser automation, and scheduled work.
+A multi-platform AI agent bot connecting Feishu/Lark and REST channels to Claude, Codex, and pi agent runtimes. Written in TypeScript, it supports chat-driven development, evidence-backed research in Feishu Projects, coordinated browser automation, file operations, and scheduled work.
 
-**Latest published release: 0.5.3.** The repository is continuing development toward 0.6.0; current scope and implementation boundaries are summarized in [CHANGELOG.md](CHANGELOG.md).
+**0.6.0 release candidate — Agentic Research in existing Feishu Projects, evidence-backed documents, and coordinated browser workflows.** See the [0.6.0 release notes](docs/releases/0.6.0.md) and [CHANGELOG](CHANGELOG.md).
 
 ## 📚 Documentation
 
 | Guide | Description |
 |-------|-------------|
-| [当前范围与变更](CHANGELOG.md) | 当前发布范围、已交付变更和已知边界 |
+| [0.6.0 发布说明](docs/releases/0.6.0.md) | Agentic Research、浏览器协作、发行范围与边界 |
+| [变更记录](CHANGELOG.md) | 版本变更历史与已知限制 |
 | [5 分钟接入飞书](docs/quickstart.md) | 极简快速上手指南 |
 | [飞书应用配置指南](docs/feishu-setup.md) | 完整的飞书机器人配置教程（创建应用、权限、事件订阅等） |
 | [创建外部 Skill](skills/skill-creator/SKILL.md) | 通用技能模板与外部 CLI 接入 |
@@ -25,6 +26,8 @@ A multi-platform AI agent bot connecting Feishu/Lark and REST channels to Claude
 - **Persistent conversations** - Per-user session management (in-memory)
 - **Slash commands** - `/reset`, `/status`, `/help` for quick actions
 - **Multiple agent backends** - Named Claude, Codex, pi, and DeepSeek presets with in-chat selection.
+- **Agentic Research** - Start from an existing Feishu Project conversation, investigate evidence, deliver a readable report with project-side source records, and continue through comments, chat, or structured follow-up.
+- **Structured user input** - Feishu cards can collect Codex answers and resume the original request turn.
 - **Browser automation** - browser-use CLI through the shared browser coordinator; see [browser setup and control](docs/browser-coordination.md)
 - **Custom skills** - Extensible workflow system (`.claude/skills/`)
 - **Message deduplication** - Prevents duplicate responses in WebSocket mode
@@ -32,7 +35,7 @@ A multi-platform AI agent bot connecting Feishu/Lark and REST channels to Claude
 
 ## Version
 
-The latest published release is [**0.5.3**](https://github.com/hs3180/disclaude/releases/tag/v0.5.3). Development toward [0.6.0](https://github.com/hs3180/disclaude/milestone/14) is ongoing; changes on the development branch are not a declaration that 0.6.0 has shipped.
+The source release candidate is **0.6.0**. The latest published installable distribution remains [**0.5.3**](https://github.com/hs3180/disclaude/releases/tag/v0.5.3) until 0.6.0 package acceptance and publication are complete. The root package remains private; releases are distributed as generated GitHub tags and optional `.tgz` assets, not through the npm registry.
 
 Service startup uses `disclaude start`. Legacy service executables, packages and role settings were removed in 0.5.1. Read the [migration guide](docs/migrations/0.5.1-service.md) before upgrading launchd or Docker deployments. Existing configuration data, workspaces, sessions and schedules do not need to be deleted.
 
@@ -78,13 +81,12 @@ claude --version
 
 ### Option A: Install a prebuilt GitHub tag
 
-Install the prebuilt `v0.5.1` distribution tag globally:
+Install the prebuilt `v0.6.0` distribution tag globally after it is published:
 
-> The Git tag is available. Follow the [Git installation procedure](docs/releases/git-install.md)
-> for provenance, upgrade and rollback checks.
+> Until the v0.6.0 tag is published, use the latest available tag, `v0.5.3`. Follow the [Git installation procedure](docs/releases/git-install.md) for provenance, upgrade and rollback checks.
 
 ```bash
-npm install -g "github:hs3180/disclaude#v0.5.1"
+npm install -g "github:hs3180/disclaude#v0.6.0"
 disclaude --version
 disclaude start --help
 ```
@@ -98,8 +100,8 @@ Release tags point to generated distribution commits, with their source commit
 recorded in `release-source.json`; `main` remains the development monorepo and
 is not a supported global-install target. See the [Git release procedure](docs/releases/git-install.md).
 
-An optional Release asset can also be installed with
-`npm install -g "https://github.com/hs3180/disclaude/releases/download/v0.5.1/disclaude-0.5.1.tgz"`.
+An optional 0.6.0 Release asset can also be installed with
+`npm install -g "https://github.com/hs3180/disclaude/releases/download/v0.6.0/disclaude-0.6.0.tgz"` after publication.
 Asset installation does not replace the required tag-installation acceptance.
 
 For a new installation, the example configuration is available at
