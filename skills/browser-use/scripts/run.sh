@@ -12,4 +12,5 @@ if [ -n "${DISCLAUDE_BROWSER_SOCKET:-}" ]; then
   fi
   exec "$browser_launcher" "$@"
 fi
-exec browser-use "$@"
+echo 'Browser IPC is not configured: start the Disclaude service and use its managed browser launcher.' >&2
+exit 1

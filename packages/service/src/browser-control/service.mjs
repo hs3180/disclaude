@@ -7,6 +7,10 @@ import { connect } from './cdp.mjs';
 import { launchBrowser } from './managed-browser.mjs';
 import { Coordinator } from './coordinator.mjs';
 
+if (process.env.DISCLAUDE_BROWSER_SUPERVISED !== '1') {
+  throw new Error('Browser IPC is an internal Disclaude service module and must be launched by disclaude start');
+}
+
 const socketPath = process.env.DISCLAUDE_BROWSER_SOCKET;
 let endpoint = process.env.BU_CDP_URL;
 const python = process.env.DISCLAUDE_BROWSER_PYTHON || 'python3';

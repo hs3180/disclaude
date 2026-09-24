@@ -26,7 +26,13 @@ const temp = mkdtempSync(join(tmpdir(), 'disclaude-package-test-'));
 let cleanupSafe = true;
 async function verifyPackage() {
   const prefix = join(temp, 'prefix');
-  const env = { ...process.env, NODE_ENV: 'production' };
+  const env = {
+    ...process.env,
+    NODE_ENV: 'production',
+    HOME: temp,
+    XDG_CONFIG_HOME: join(temp, '.config'),
+    DISCLAUDE_BROWSER_MIGRATION: 'skip',
+  };
   const config = join(temp, 'smoke.json');
   writeFileSync(
     config,

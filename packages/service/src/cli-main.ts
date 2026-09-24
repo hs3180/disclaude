@@ -33,6 +33,11 @@ import {
   eventBus,
 } from '@disclaude/core';
 import { startBrowserRuntime, type BrowserRuntime } from './browser-control/runtime.js';
+import {
+  loadMigratedBrowserEnv,
+  prepareLegacyBrowserIpcMigration,
+  type PreparedBrowserMigration,
+} from './browser-control/legacy-migration.js';
 import crypto from 'node:crypto';
 import { DisclaudeService } from './service.js';
 import { HttpApiServer } from './http-api-server.js';
@@ -472,6 +477,8 @@ export async function main(): Promise<void> {
   // Issue #3857 Phase 2: HTTP API server reference for shutdown
   let httpApiServer: HttpApiServer | undefined;
   let browserRuntime: BrowserRuntime | undefined;
+  let browserMigration: PreparedBrowserMigration | undefined;
+  let browserRuntimeUnavailable = false;
   const shutdown = async (): Promise<void> => {
     if (isShuttingDown) {
       return;
@@ -521,7 +528,14 @@ export async function main(): Promise<void> {
   });
 
   try {
-    browserRuntime = await startBrowserRuntime(process.env, message => logger.error(message));
+    // Existing standalone brokers are retired only after their configuration
+    // has been imported and the managed replacement has reached readiness.
+    loadMigratedBrowserEnv();
+    browserMigration = await prepareLegacyBrowserIpcMigration();
+    browserRuntime = await startBrowserRuntime(process.env, message => {
+      browserRuntimeUnavailable = true;
+      logger.error(message);
+    });
     // Start DisclaudeService
     await service.start({ deferScheduler: true });
 
@@ -559,9 +573,7 @@ export async function main(): Promise<void> {
       const apiHost = '127.0.0.1';
       const apiPortReady = options.apiPort === 0 || await isPortAvailable(options.apiPort, apiHost);
       if (!apiPortReady) {
-        console.error(`Error: API port ${options.apiPort} is already in use. Exiting.`);
-        processLock?.release();
-        process.exit(1);
+        throw new Error(`API port ${options.apiPort} is already in use`);
       }
       httpApiServer = new HttpApiServer({
         port: options.apiPort,
@@ -569,6 +581,9 @@ export async function main(): Promise<void> {
         apiToken: options.apiToken,
       });
       httpApiServer.setInstanceId(service.getInstanceId());
+      httpApiServer.setBrowserIpcStatusProvider(() => browserRuntime
+        ? { status: browserRuntimeUnavailable ? 'unavailable' : 'ready', pid: browserRuntime.pid }
+        : { status: 'disabled' });
       const feishuChannel = channelManager.get('feishu') as
         | { getDeliveryHealth?: () => import('./health-types.js').DeliveryHealth }
         | undefined;
@@ -672,8 +687,14 @@ export async function main(): Promise<void> {
       process.on('SIGTERM', () => void shutdownHttpApi());
       process.on('SIGINT', () => void shutdownHttpApi());
     }
+    await browserMigration?.commit();
   } catch (error) {
     await browserRuntime?.stop();
+    await httpApiServer?.stop().catch(() => {});
+    try { await browserMigration?.rollback(); }
+    catch (rollbackError) {
+      logger.error({ err: rollbackError }, 'Failed to restore standalone browser IPC after migration failure');
+    }
     logger.error({ err: error }, 'Failed to start disclaude service');
     console.error(
       'Failed to start disclaude service:',

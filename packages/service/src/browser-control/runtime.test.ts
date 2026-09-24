@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { startBrowserRuntime, type BrowserRuntime } from './runtime.js';
 
 const roots: string[] = [];
@@ -23,6 +24,21 @@ function fixture(code: string) {
   return { root, env, entry: pathToFileURL(file) };
 }
 describe('managed browser lifecycle', () => {
+  it('rejects direct standalone broker startup before creating IPC state', () => {
+    const root = mkdtempSync(join(tmpdir(), 'browser-runtime-standalone-'));
+    roots.push(root);
+    const socket = join(root, 'browser.sock');
+    const entry = fileURLToPath(new URL('./service.mjs', import.meta.url));
+    const result = spawnSync(process.execPath, [entry], {
+      env: { ...process.env, DISCLAUDE_BROWSER_SOCKET: socket },
+      encoding: 'utf8',
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('must be launched by disclaude start');
+    expect(existsSync(socket)).toBe(false);
+    expect(existsSync(`${socket}.lock`)).toBe(false);
+  });
+
   it('does not start a coordinator unless configured', async () => {
     expect(await startBrowserRuntime({})).toBeUndefined();
   });

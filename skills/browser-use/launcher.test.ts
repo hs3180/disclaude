@@ -30,9 +30,10 @@ describe('browser skill launcher', () => {
     expect(result.stdout).toBe('');
     expect(result.stderr).toMatch(/launcher/);
   });
-  it('retains standalone invocation without a coordinator', () => {
+  it('fails closed without the service-managed coordinator', () => {
     const result = fixture().run({});
-    expect(result.status).toBe(0);
-    expect(result.stdout).toBe('upstream');
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toMatch(/Browser IPC is not configured/);
   });
 });

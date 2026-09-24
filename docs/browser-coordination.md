@@ -68,18 +68,18 @@ Harness environment construction exposes its absolute directory as
 `DISCLAUDE_BROWSER_BIN`, puts it first in PATH after task/provider merges, and
 removes direct CDP/daemon configuration. The browser-use skill launcher helper
 uses the absolute directory so a tool shell cannot select an upstream CLI by
-rewriting PATH. For an externally managed coordinator, configure both the IPC
-socket and `DISCLAUDE_BROWSER_BIN` pointing to its existing launcher directory.
-Do not point it to the upstream Python CLI or remove the null-runtime guards. No manual agent
-PATH modification or experiment command is needed. If the broker exits, browser
-calls fail explicitly and the service logs the failure; they do not fall back to
-direct CDP or spawn an independent daemon.
+rewriting PATH. The browser-use skill helper requires the service-provided
+socket and absolute launcher; it fails closed when either is missing. Do not
+point it to the upstream Python CLI or remove the null-runtime guards. No manual
+agent PATH modification or experiment command is needed. If the broker exits,
+browser calls fail explicitly and the service logs the failure; they do not
+fall back to direct CDP or spawn an independent daemon.
 
-The public `disclaude browser start` command runs the configured coordinator in
-the foreground, and `disclaude browser status` queries its live state. These two
-commands read process environment; when using a configuration-file-managed service,
-set its socket path in the status command's environment. They do not create or
-change operating-system service registrations.
+`disclaude browser status [--config PATH]` queries the configured coordinator.
+`GET /api/status` also reports its `browserIpc` state (`disabled`, `ready`, or
+`unavailable`) and supervised broker PID. Starting, stopping and restarting the
+broker is exclusively part of the Disclaude service lifecycle; the browser CLI
+does not start a standalone coordinator.
 
 ## Browser operations
 
@@ -119,13 +119,34 @@ bootstrap without changing the recovery boundary or retrying unknown browser
 work. The daemon stderr is retained only through the worker diagnostic pipe; it
 is not exposed to the Agent or persisted with page content.
 
-This recovery requires the owning supervisor to observe the broker exit. Legacy,
-foreign or unreadable locks, a killed standalone `disclaude browser start`, and
-simultaneous loss of broker and supervisor still require operator inspection.
-Verify process ownership and CDP detachment before clearing those files. Existing
-launchd profile migration and native Linux service-manager installation remain
-separate work. Socket permissions coordinate same-user callers; this is not a
+This recovery requires the owning supervisor to observe the broker exit. Foreign
+or unreadable locks and simultaneous loss of broker and supervisor still require
+operator inspection. Verify process ownership and CDP detachment before clearing
+those files. Socket permissions coordinate same-user callers; this is not a
 sandbox for hostile Python or a multi-user authorization boundary.
+
+## Migrating a standalone browser IPC service
+
+When `disclaude start` finds the exact legacy `com.disclaude.browser-ipc`
+LaunchAgent or `disclaude-browser-ipc.service` user unit under the Disclaude
+release directory, it imports only the browser settings it needs. It waits up to
+30 seconds for the old coordinator to become idle, stops and disables only that
+recognized service, verifies its PID/lock ownership, and removes only its socket
+and lock. Browser settings that were not already in the main configuration are
+kept in the private `~/.disclaude/browser-ipc.json` file so they survive later
+service restarts. The file is mode 0600 and does not contain workspace data.
+
+The migration is committed only after the new broker is ready and the Disclaude
+service finishes startup. A startup failure restores the old service; an active
+queue, unrecognized release path, foreign lock, or unsafe socket path stops the
+migration before those resources are removed. Linux systemd units that depend
+on `EnvironmentFile=` or systemd drop-in overrides must first move those
+settings into the main Disclaude config; the unit is preserved and migration
+fails closed otherwise. If the main service already specifies a different IPC socket, migration also fails closed
+so one service cannot retire another instance's broker. Isolated service tests
+may set `DISCLAUDE_BROWSER_MIGRATION=skip` to avoid inspecting the current
+user's service manager. Chromium CDP services/profiles, user pages, and
+workspaces are not migrated or deleted.
 
 ## Validation
 

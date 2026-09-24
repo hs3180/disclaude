@@ -33,6 +33,7 @@ export function browserAgentEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.Pr
         'DISCLAUDE_BROWSER_EVENTS',
         'DISCLAUDE_BROWSER_WORKSPACE',
         'DISCLAUDE_BROWSER_MODE',
+        'DISCLAUDE_BROWSER_MIGRATION',
         'DISCLAUDE_BROWSER_SUPERVISED',
       ].includes(key)
     ) {

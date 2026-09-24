@@ -22,10 +22,10 @@ Resolve that directory from the exact manifest link you read; do not assume a
 copy under `~/.agents/skills` or search the home directory for another copy.
 It preserves Python stdin and, when `DISCLAUDE_BROWSER_SOCKET` is set, invokes
 `$DISCLAUDE_BROWSER_BIN/browser-use` by absolute path. The service sets that
-variable after coordinator readiness; externally managed coordinators must
-configure it explicitly. Shell/tool PATH changes cannot select an upstream
-same-named CLI through this helper. Without a coordinator, it uses the ordinary
-browser-use command.
+variable after coordinator readiness. Shell/tool PATH changes cannot select an
+upstream same-named CLI through this helper. Without the service-managed
+coordinator, the helper fails closed; it never falls back to a standalone
+browser-use daemon.
 
 A missing/non-executable managed launcher is a configuration failure. Report it;
 do not search release directories, install another CLI or guess an alternate

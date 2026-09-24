@@ -236,7 +236,7 @@ start_server() {
 
     # Start server in background (using new service CLI)
     # Note: Port and host are read from config file (channels.rest.port, channels.rest.host)
-    node packages/service/dist/cli.js start "${config_args[@]}" > "${SERVER_LOG}" 2>&1 &
+    DISCLAUDE_BROWSER_MIGRATION=skip node packages/service/dist/cli.js start "${config_args[@]}" > "${SERVER_LOG}" 2>&1 &
     SERVER_PID=$!
 
     log_debug "Server PID: ${SERVER_PID}"
