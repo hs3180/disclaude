@@ -362,28 +362,44 @@ async function runProductBrowser(
   return stdout;
 }
 
-async function waitForCdp(endpoint: string, child: ChildProcess): Promise<void> {
+async function waitForCdp(
+  profile: string,
+  child: ChildProcess,
+  output: () => string
+): Promise<string> {
+  const activeFile = join(profile, 'DevToolsActivePort');
   const deadline = Date.now() + 45_000;
+  let lastError = 'DevToolsActivePort was not created';
   while (Date.now() < deadline) {
     if (child.exitCode !== null || child.signalCode !== null) {
-      throw new Error('Disposable Chromium exited before CDP readiness');
+      throw new Error(
+        `Disposable Chromium exited before CDP readiness (code=${child.exitCode}, signal=${child.signalCode}): ${output() || 'no browser diagnostics'}`
+      );
     }
     try {
+      const [port, browserPath] = (await readFile(activeFile, 'utf8')).trim().split('\n');
+      if (!/^\d+$/.test(port) || +port < 1 || +port > 65535 || !browserPath) {
+        throw new Error('DevToolsActivePort contains an invalid endpoint');
+      }
+      const endpoint = `http://127.0.0.1:${port}`;
       const response = await fetch(`${endpoint}/json/version`, {
         signal: AbortSignal.timeout(1000),
       });
-      if (
-        response.ok &&
-        ((await response.json()) as { webSocketDebuggerUrl?: string }).webSocketDebuggerUrl
-      ) {
-        return;
+      const info = (await response.json()) as { webSocketDebuggerUrl?: string };
+      if (response.ok && info.webSocketDebuggerUrl) {
+        if (new URL(info.webSocketDebuggerUrl).pathname === browserPath) {
+          return endpoint;
+        }
+        throw new Error('DevToolsActivePort does not match the live browser endpoint');
       }
-    } catch {
-      /* Chromium may still be starting. */
+    } catch (error) {
+      lastError = String(error);
     }
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 200));
   }
-  throw new Error('Disposable Chromium CDP endpoint did not become ready');
+  throw new Error(
+    `Disposable Chromium CDP endpoint did not become ready: ${lastError}; ${output() || 'no browser diagnostics'}`
+  );
 }
 
 async function waitForCdpDown(endpoint: string, timeoutMs: number): Promise<void> {
@@ -521,12 +537,15 @@ describe('real browser IPC migration from the legacy OS service manager', () => 
 
       const browserBinary = process.env.DISCLAUDE_E2E_CHROMIUM!;
       const python = process.env.DISCLAUDE_E2E_BROWSER_PYTHON!;
-      const cdpPort = await unusedPort();
-      const endpoint = `http://127.0.0.1:${cdpPort}`;
+      await mkdir(root, { mode: 0o700 });
+      await mkdir(profile, { mode: 0o700 });
+      let endpoint = '';
+      let browserOutput = '';
+      let browserStartupError = '';
       const browser = spawn(
         browserBinary,
         [
-          `--remote-debugging-port=${cdpPort}`,
+          '--remote-debugging-port=0',
           `--user-data-dir=${profile}`,
           '--no-first-run',
           '--no-default-browser-check',
@@ -536,8 +555,14 @@ describe('real browser IPC migration from the legacy OS service manager', () => 
           ...(process.getuid?.() === 0 ? ['--no-sandbox'] : []),
           'about:blank',
         ],
-        { detached: true, stdio: 'ignore' }
+        { detached: true, stdio: ['ignore', 'ignore', 'pipe'] }
       );
+      browser.stderr?.on('data', (chunk) => {
+        browserOutput = (browserOutput + chunk.toString()).slice(-4000);
+      });
+      browser.on('error', (error) => {
+        browserStartupError = String(error);
+      });
       browser.unref();
       let legacyStarted = false;
       let browserStopped = false;
@@ -619,7 +644,7 @@ describe('real browser IPC migration from the legacy OS service manager', () => 
         await rememberAndMakeDir(releaseDir);
         await rememberAndMakeDir(managerDir);
         await writeFile(workspaceMarker, id, { flag: 'wx' });
-        await waitForCdp(endpoint, browser);
+        endpoint = await waitForCdp(profile, browser, () => browserStartupError || browserOutput);
         const targets = (await (await fetch(`${endpoint}/json/list`)).json()) as Array<{
           type?: string;
           id?: string;
@@ -825,6 +850,18 @@ describe('real browser IPC migration from the legacy OS service manager', () => 
         );
       } finally {
         let cleanupFailure: unknown;
+        if (!endpoint) {
+          try {
+            const [port] = (await readFile(join(profile, 'DevToolsActivePort'), 'utf8'))
+              .trim()
+              .split('\n');
+            if (/^\d+$/.test(port) && +port > 0 && +port < 65536) {
+              endpoint = `http://127.0.0.1:${port}`;
+            }
+          } catch {
+            /* Chromium may have failed before publishing a debugging port. */
+          }
+        }
         try {
           await stopCandidate(candidate, socket);
         } catch (error) {
