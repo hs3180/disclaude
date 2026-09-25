@@ -58,7 +58,6 @@ describe('user starts Disclaude and shares its managed browser', () => {
       throw error;
     }
     const env: NodeJS.ProcessEnv = { ...process.env, DISCLAUDE_CONFIG_PATH: config, LOCKFILE_PATH: join(root, 'service.pid'),
-      DISCLAUDE_BROWSER_MIGRATION: 'skip',
       BU_CDP_URL: '', BU_CDP_WS: '',
       DISCLAUDE_BROWSER_MODE: 'coordinated', DISCLAUDE_BROWSER_SOCKET: socket,
       DISCLAUDE_BROWSER_PYTHON: process.env.DISCLAUDE_E2E_BROWSER_PYTHON,

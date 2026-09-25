@@ -31,7 +31,6 @@ async function verifyPackage() {
     NODE_ENV: 'production',
     HOME: temp,
     XDG_CONFIG_HOME: join(temp, '.config'),
-    DISCLAUDE_BROWSER_MIGRATION: 'skip',
   };
   const config = join(temp, 'smoke.json');
   writeFileSync(

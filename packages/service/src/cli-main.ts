@@ -33,11 +33,6 @@ import {
   eventBus,
 } from '@disclaude/core';
 import { startBrowserRuntime, type BrowserRuntime } from './browser-control/runtime.js';
-import {
-  loadMigratedBrowserEnv,
-  prepareLegacyBrowserIpcMigration,
-  type PreparedBrowserMigration,
-} from './browser-control/legacy-migration.js';
 import crypto from 'node:crypto';
 import { DisclaudeService } from './service.js';
 import { HttpApiServer } from './http-api-server.js';
@@ -477,7 +472,6 @@ export async function main(): Promise<void> {
   // Issue #3857 Phase 2: HTTP API server reference for shutdown
   let httpApiServer: HttpApiServer | undefined;
   let browserRuntime: BrowserRuntime | undefined;
-  let browserMigration: PreparedBrowserMigration | undefined;
   let browserRuntimeUnavailable = false;
   const shutdown = async (): Promise<void> => {
     if (isShuttingDown) {
@@ -528,10 +522,6 @@ export async function main(): Promise<void> {
   });
 
   try {
-    // Existing standalone brokers are retired only after their configuration
-    // has been imported and the managed replacement has reached readiness.
-    loadMigratedBrowserEnv();
-    browserMigration = await prepareLegacyBrowserIpcMigration();
     browserRuntime = await startBrowserRuntime(process.env, message => {
       browserRuntimeUnavailable = true;
       logger.error(message);
@@ -687,14 +677,9 @@ export async function main(): Promise<void> {
       process.on('SIGTERM', () => void shutdownHttpApi());
       process.on('SIGINT', () => void shutdownHttpApi());
     }
-    await browserMigration?.commit();
   } catch (error) {
     await browserRuntime?.stop();
     await httpApiServer?.stop().catch(() => {});
-    try { await browserMigration?.rollback(); }
-    catch (rollbackError) {
-      logger.error({ err: rollbackError }, 'Failed to restore standalone browser IPC after migration failure');
-    }
     logger.error({ err: error }, 'Failed to start disclaude service');
     console.error(
       'Failed to start disclaude service:',

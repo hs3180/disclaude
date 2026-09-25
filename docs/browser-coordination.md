@@ -125,41 +125,14 @@ operator inspection. Verify process ownership and CDP detachment before clearing
 those files. Socket permissions coordinate same-user callers; this is not a
 sandbox for hostile Python or a multi-user authorization boundary.
 
-## Migrating a standalone browser IPC service
+## Existing standalone browser IPC services
 
-When `disclaude start` finds the exact legacy `com.disclaude.browser-ipc`
-LaunchAgent or `disclaude-browser-ipc.service` user unit under the Disclaude
-release directory, it imports only the browser settings it needs. It waits up to
-30 seconds for the old coordinator to become idle, stops and disables only that
-recognized service, verifies its PID/lock ownership, and removes only its socket
-and lock. Browser settings that were not already in the main configuration are
-kept in the private `~/.disclaude/browser-ipc.json` file so they survive later
-service restarts. The file is mode 0600 and does not contain workspace data.
-
-The migration is committed only after the new broker is ready and the Disclaude
-service finishes startup. A startup failure restores the old service; an active
-queue, unrecognized release path, foreign lock, or unsafe socket path stops the
-migration before those resources are removed. Linux systemd units that depend
-on `EnvironmentFile=` or systemd drop-in overrides must first move those
-settings into the main Disclaude config; the unit is preserved and migration
-fails closed otherwise. If the main service already specifies a different IPC socket, migration also fails closed
-so one service cannot retire another instance's broker. Isolated service tests
-may set `DISCLAUDE_BROWSER_MIGRATION=skip` to avoid inspecting the current
-user's service manager. Chromium CDP services/profiles, user pages, and
-workspaces are not migrated or deleted.
-
-`tests/e2e/browser-migration.test.ts` exercises this boundary against a real
-legacy broker registered with the native service manager, a disposable Chrome
-profile and a live CDP endpoint. It first forces Disclaude startup to fail after
-the old broker has stopped and verifies that the original manager definition,
-broker, browser target and page are restored. It then performs a successful
-migration, runs the shipped `browser-use` launcher through the new service,
-restarts Disclaude from the persisted settings, and verifies the same external
-browser target and workspace remain usable. The test runs on disposable GitHub
-Actions Linux/systemd and macOS/launchd runners; it is opt-in and refuses to run
-outside that CI environment. Do not enable it against a developer or production
-host: it deliberately installs and removes the exact legacy service identity
-to exercise migration and rollback.
+Disclaude does not discover, import settings from, stop, or remove a standalone
+browser IPC service left by an older installation. Configure the browser
+settings in the current Disclaude config and disable any old broker service
+separately before starting the service on a socket it may still hold. Startup
+does not alter Chromium CDP services or profiles, browser pages, workspaces, or
+other service-manager entries.
 
 ## Validation
 
@@ -187,25 +160,6 @@ that the queued caller takes over without executing the abandoned operation. It 
 Linux CI installs the pinned browser-use runtime and uses the runner image's
 packaged Google Chrome (logging its version), then runs this same product test. No separate test Docker image or standalone harness runner
 is required. The test layout follows #5016: core unit tests plus actual-use-case E2E.
-
-The migration E2E is a separate, explicitly gated host-manager test. Its CI job
-installs the same pinned Python packages and real Chrome, then runs:
-
-```sh
-DISCLAUDE_E2E_BROWSER_MIGRATION=1 \
-DISCLAUDE_E2E_CHROMIUM=/absolute/path/to/chromium \
-DISCLAUDE_E2E_BROWSER_PYTHON=/absolute/path/to/python \
-npx vitest run --config vitest.e2e.config.ts tests/e2e/browser-migration.test.ts
-```
-
-The environment gate alone is insufficient: the test also requires GitHub
-Actions runner markers, a workspace and temporary directory under the runner's
-home, a working user systemd/launchd manager, and the real browser dependencies.
-It uses only a unique test socket/profile/workspace plus the legacy service
-identity and private migrated-settings path, refuses pre-existing fixtures,
-and removes only its own files. CI success is required before treating legacy
-manager migration as verified; ordinary browser lifecycle E2E does not cover
-this upgrade path.
 
 Environment filtering happens only where an execution environment is finalized:
 Claude SDK options, Codex exec/app-server subprocesses, the dsh subprocess, and

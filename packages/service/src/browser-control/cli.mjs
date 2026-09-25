@@ -15,8 +15,6 @@ async function resolveBrowserEnvironment() {
   if (configPath) process.env.DISCLAUDE_CONFIG_PATH = configPath;
   const config = await import('@disclaude/core/config-discovery');
   const env = { ...config.loadConfigEnvironment(configPath), ...process.env };
-  const { loadMigratedBrowserEnv } = await import('./legacy-migration.js');
-  loadMigratedBrowserEnv(env);
   return env;
 }
 try {
