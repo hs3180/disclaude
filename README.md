@@ -301,24 +301,27 @@ The Playwright MCP server is **removed** (#4460). Browser automation goes throug
 
 ### Browser on Headless Hosts (coordinated service)
 
-Pulling Chromium on a headless host is fragile (missing shared libs,
-sandbox/seccomp friction). The supported Agent path is the managed browser
-coordinator described in [`docs/browser-coordination.md`](docs/browser-coordination.md).
-Agents receive only the private IPC launcher and socket; they must not receive
+Pulling Chromium into the agent runtime is fragile (missing shared libs,
+sandbox/seccomp friction). The supported Agent path is the in-process browser
+coordinator described in [`docs/browser-coordination.md`](docs/browser-coordination.md),
+which attaches to the separately deployed Chromium CDP service. Agents receive
+only a private IPC launcher and a service-derived local transport endpoint;
+they must not receive
 `BU_CDP_URL`, `BU_CDP_WS`, `CHROMIUM_CDP_*`, or connect directly to CDP.
 
-**① Start the managed browser service:**
+**① Start the Chromium CDP service separately, if it is not already deployed:**
 
 ```bash
-docker compose --profile chromium up -d   # optional service-internal browser
-disclaude browser status                    # inspect the managed coordinator
+docker compose --profile chromium up -d chromium
+disclaude browser status                    # inspect Disclaude's coordinator
 ```
 
-**② Agent access:** configure the coordinator's private socket and launcher as
-described in `docs/browser-coordination.md`. The service injects neither a CDP
-URL nor a browser port into Agent processes. If the coordinator is unavailable,
-the browser operation fails explicitly; there is no direct-CDP or self-launch
-fallback.
+**② Agent access:** no browser socket setting is required. Disclaude derives a
+private local endpoint from its runtime identity and supplies it internally to
+agent subprocesses. It reads the CDP endpoint from the deployed Chromium service
+configuration and injects neither a CDP URL nor a browser port into Agent
+processes. If the coordinator is unavailable, the browser operation fails
+explicitly; there is no direct-CDP or self-launch fallback.
 
 **③ Sandbox tradeoff:** Chrome may run `--no-sandbox` inside the isolated
 container,

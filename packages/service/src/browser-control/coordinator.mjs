@@ -41,7 +41,7 @@ export class Coordinator {
     this.holder = h;
     try {
       h.workerOptions = typeof this.workerOptions === 'function' ? this.workerOptions() : this.workerOptions;
-      h.child = fork(this.workerModule, [], { detached: this.detachedWorker, env: { ...process.env, DISCLAUDE_BROWSER_WORKER_GROUP: this.detachedWorker ? '1' : '0' }, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+      h.child = fork(this.workerModule, [], { detached: this.detachedWorker, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
       h.exited = new Promise(resolve => h.child.once('exit', (code, signal) => {
         this.log('worker-exit', { epoch: h.epoch, pid: h.child.pid, code, signal, stderr: h.workerStderr?.trim() || undefined });
         for (const p of h.pending.values()) p.reject(new Error('Worker exited; outcome unknown'));
@@ -79,7 +79,7 @@ export class Coordinator {
             message.error ? item.reject(new Error(message.error)) : item.resolve(message.result);
           }
         });
-        h.child.send({ kind: 'init', url: this.url, target: this.target, options: h.workerOptions }, error => {
+        h.child.send({ kind: 'init', url: this.url, target: this.target, options: h.workerOptions, detached: this.detachedWorker }, error => {
           if (!error) return;
           clearTimeout(timer);
           this.log('worker-init-send-error', { epoch: h.epoch, error: error.message, stderr: h.workerStderr.trim() || undefined });

@@ -1,7 +1,7 @@
 /** Adapter only: all browser commands use the installed browser-use harness IPC. */
 import { spawn } from 'node:child_process';
 import { rmSync } from 'node:fs';
-let options, env, runtime, daemon, running, stopping = false;
+let options, env, runtime, daemon, running, stopping = false, detachedWorker = false;
 const send = (message, callback) => {
   if (!process.connected) { callback?.(); return; }
   process.send(message, callback);
@@ -31,10 +31,11 @@ process.on('message', async message => {
     if (message.kind === 'init') {
       options = message.options;
       runtime = options.runtime;
+      detachedWorker = message.detached === true;
       env = { ...process.env, BU_NAME: `lease_${process.pid}`, BU_CDP_WS: message.url,
         BU_CDP_URL: '', BU_AUTOSPAWN: '', BH_RUNTIME_DIR: runtime, BH_TMP_DIR: runtime,
         BH_RUNTIME_DIR_SHARED: '0', BH_TMP_DIR_SHARED: '0', BH_REQUIRE_EXISTING_DAEMON: '1',
-        BROWSER_USE_DISABLE_TELEMETRY: '1', DISCLAUDE_BROWSER_TARGET: message.target };
+        BROWSER_USE_DISABLE_TELEMETRY: '1' };
       // Explicitly supervise the existing daemon; CLI calls cannot silently respawn it.
       // Keep the supervised daemon's stderr on the worker diagnostic pipe. The
       // coordinator already bounds that pipe to its final 4 KiB, so a daemon
@@ -61,7 +62,8 @@ process.on('message', async message => {
       daemon.on('error', error => reportDaemonFailure('error', { error: error.message }));
       daemon.on('exit', (code, signal) => reportDaemonFailure('exit', { code, signal }));
       for (let attempt = 0; attempt < 60; attempt++) {
-        const result = await cli("import os\nswitch_tab(os.environ['DISCLAUDE_BROWSER_TARGET'])\nassert current_tab()['targetId']==os.environ['DISCLAUDE_BROWSER_TARGET']\n", 5000);
+        const target = JSON.stringify(message.target);
+        const result = await cli(`switch_tab(${target})\nassert current_tab()['targetId'] == ${target}\n`, 5000);
         if (result.code === 0) { send({ kind: 'ready' }); return; }
         if (daemon.exitCode !== null) throw new Error('Harness exited during startup');
         await new Promise(resolve => setTimeout(resolve, 100));
@@ -91,7 +93,7 @@ process.on('disconnect', () => {
   if (runtime) { try { rmSync(runtime, { recursive: true, force: true }); } catch {} }
   // The broker can no longer reap our group. Only a coordinator-created detached
   // worker may terminate its own group, including Python-spawned descendants.
-  if (process.env.DISCLAUDE_BROWSER_WORKER_GROUP === '1') {
+  if (detachedWorker) {
     try { process.kill(-process.pid, 'SIGKILL'); } catch {}
   }
   process.exit(3);

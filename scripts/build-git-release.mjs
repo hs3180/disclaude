@@ -113,6 +113,7 @@ export function generateRelease(root, output) {
     names.map((name) => [`@disclaude/${name}`, join(output, 'packages', name, 'dist/index.js')])
   );
   targets['@disclaude/core/config-discovery'] = join(output, 'packages/core/dist/config/discovery.js');
+  targets['@disclaude/core/browser-runtime'] = join(output, 'packages/core/dist/utils/browser-env.js');
   const dependencies = {};
   for (const manifest of [
     pkg,

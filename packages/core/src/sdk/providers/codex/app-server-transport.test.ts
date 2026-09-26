@@ -2,6 +2,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { resolveBrowserSocketPath } from '../../../utils/browser-env.js';
 import { CodexAppServerTransport } from './app-server-transport.js';
 import type { AgentInputRequest } from '../../user-input.js';
 
@@ -117,9 +118,10 @@ createInterface({input:process.stdin}).on('line',line=>{
     const binary = fixture(`printf '%s\\n' "$@" > "$(dirname "$0")/args"
 printf '%s|%s' "$BU_CDP_URL" "$DISCLAUDE_BROWSER_SOCKET" > "$(dirname "$0")/cdp"
 while read line; do :; done`);
-    const transport = new CodexAppServerTransport({ binary, onUserInput: inputEnabled ? () => Promise.resolve() : undefined, env: { ...process.env, BU_CDP_URL: 'http://127.0.0.1:9222', DISCLAUDE_BROWSER_SOCKET: '/tmp/browser.sock' } });
+    const env = { ...process.env, BU_CDP_URL: 'http://127.0.0.1:9222', DISCLAUDE_BROWSER_SOCKET: '/tmp/browser.sock' };
+    const transport = new CodexAppServerTransport({ binary, onUserInput: inputEnabled ? () => Promise.resolve() : undefined, env });
     try {
-      await vi.waitFor(() => expect(readFileSync(join(dirname(binary), 'cdp'), 'utf8').trim()).toBe('|/tmp/browser.sock'));
+      await vi.waitFor(() => expect(readFileSync(join(dirname(binary), 'cdp'), 'utf8').trim()).toBe(`|${resolveBrowserSocketPath(env)}`));
       expect(readFileSync(join(dirname(binary), 'args'), 'utf8').trim().split('\n')).toEqual([
         'app-server', '--stdio', '--disable', 'browser_use', '--disable', 'browser_use_external', '--disable', 'browser_use_full_cdp_access',
         ...(inputEnabled ? [
