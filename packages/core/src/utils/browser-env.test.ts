@@ -11,7 +11,6 @@ describe('coordinated browser environment', () => {
       BU_CDP_WS: 'ws://configured.invalid',
       CHROMIUM_CDP_PORT: '9223',
       DISCLAUDE_CHROMIUM_BINARY: '/private/chromium',
-      DISCLAUDE_BROWSER_WORKSPACE: '/private/workspace',
       BH_RUNTIME_DIR: '/private/worker',
       NORMAL_SETTING: 'preserved',
     }));
@@ -28,7 +27,6 @@ describe('coordinated browser environment', () => {
     expect(env.BH_RUNTIME_DIR).toBe(devNull);
     expect(env.BH_TMP_DIR).toBe(devNull);
     expect(env.BH_REQUIRE_EXISTING_DAEMON).toBe('1');
-    expect(env).not.toHaveProperty('DISCLAUDE_BROWSER_WORKSPACE');
     expect(process.env.BU_CDP_URL).toBe('http://inherited.invalid:9223');
     expect(browserAgentEnv({ ...env, BU_CDP_URL: 'http://late-merge.invalid' })).not.toHaveProperty(
       'BU_CDP_URL'
