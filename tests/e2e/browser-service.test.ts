@@ -206,11 +206,15 @@ describe('user starts Disclaude and coordinates an already deployed browser', ()
         // An unavailable IPC service must not execute Python through an upstream
         // daemon, even when one invocation carries stale direct-CDP settings.
         const bypassMarker = join(root, 'bypass-marker');
-        const missingCoordinatorEnv = browserAgentEnv({
-          ...taskEnv,
-          DISCLAUDE_CONFIG_PATH: join(root, 'missing-config.yaml'),
-          BU_CDP_URL: 'http://127.0.0.1:9222',
-        });
+        const missingCoordinatorEnv = {
+          ...browserAgentEnv({
+            ...taskEnv,
+            BU_CDP_URL: 'http://127.0.0.1:9222',
+          }),
+          // Keep the service-provided launcher on PATH and make only this
+          // invocation's internal endpoint unavailable.
+          DISCLAUDE_BROWSER_SOCKET: join(root, 'missing-browser.sock'),
+        };
         await expect(run(`open(${JSON.stringify(bypassMarker)}, 'w').write('bypassed')\n`, {
           ...missingCoordinatorEnv,
         })).rejects.toThrow(/ENOENT|connect|socket/i);
