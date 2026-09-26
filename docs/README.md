@@ -1,24 +1,35 @@
 # 文档索引
 
-docs/ 只保留当前仍适用的设计契约、实现边界、安装迁移和运维指南。发布候选、
-一次性验收输出、已取代方案和调研过程不再作为仓库文档长期保存；需要追溯时查看
-对应的 Git 历史、Issue 或 PR。
+本目录只维护当前设计契约、安装配置和运维手册。一次性测试结果、旧方案
+比较和实现过程记录应保留在对应的 GitHub issue / PR 中，不作为常驻文档。
 
-## 当前设计与契约
+## 设计与行为契约
 
-- [Empty-turn session reset/replay](designs/empty-turn-session-reset-design.md)：当前已实现的空响应恢复边界。
-- [REST IPC](designs/rest-ipc-design.md)：当前内部 HTTP 通信契约。
-- [Skill format](skill-format-spec.md)：CLI Skill 的输入、输出、产物和生命周期契约。
-- [Browser coordination](browser-coordination.md)：Agent 使用私有 IPC 协调浏览器的边界。
-- [CardKit streaming](feishu-cardkit-rate-limit-methodology.md)：流式卡片节流的测量与参数约束。
-- [Group-management E2E](group-management-e2e.md)：默认关闭、显式启用的群聊测试设计。
+- [内部 HTTP API](designs/rest-ipc-design.md)：服务 API、鉴权和进程边界。
+- [空响应恢复](designs/empty-turn-session-reset-design.md)：何时重置会话、
+  如何限制重试。
+- [浏览器协调](browser-coordination.md)与
+  [容器 CDP endpoint](cdp-endpoint.md)：Agent 访问边界和服务内部传输。
+- [CLI Skill 格式](skill-format-spec.md)与
+  [共享 Skill 注册表](skills-registry.md)：技能接口、发现和优先级。
+- [CardKit 节流方法](feishu-cardkit-rate-limit-methodology.md)：当前测量
+  过程与参数约束。
 
-Research 沿用现有 Project 的工作目录约束；不要再创建独立的 Research workspace、
-任务数据库、固定阶段或仪表盘。Feishu 文档和聊天是研究交互的主要界面，具体反馈
-才使用卡片。
+## 用户与运维手册
 
-## 当前使用指南
+- [快速接入](quickstart.md)、[飞书应用配置](feishu-setup.md)、
+  [workspace 设置与迁移](workspace-setup.md)、
+  [运行环境变量](environment-variables.md)。
+- 后端：[Codex](codex-backend.md)、[Codex 内置资源发现](codex-builtin-support.md)、
+  [Pi](pi-backend.md)、[DeepSeek](dsh-backend.md)；交互：[Codex 输入卡片](codex-user-input.md)、
+  [静态飞书卡片](static-card-v2.md)。
+- 浏览器：[协调与安装](browser-coordination.md)、
+  [容器部署](chromium-container.md)、[Linux 部署](chromium-linux-service.md)、
+  [配置](chromium-setup.md)和[故障恢复](chromium-service-recovery.md)。
+- 其他运维：[日志轮转](log-rotation.md)、[日志转发](log-forwarding.md)、
+  [定时任务](schedules.md)、[自动压缩](auto-compaction.md)、
+  [GPU 可选配置](gpu-setup.md)和[私有流程](security/private-actions.md)。
+- [版本安装、升级与回滚](releases/git-install.md)；
+  [0.5.1 服务迁移](migrations/0.5.1-service.md)。
 
-安装、配置、浏览器服务、后端、日志、调度、环境变量和安全说明按主题分布在本目录；
-README.md 和各主题文档是入口。涉及真实验收时，文档中的测试命令只说明边界，
-不能把跳过、模拟或历史结果当作产品通过。
+当前发行版：[Disclaude 0.6.0](releases/0.6.0.md)。

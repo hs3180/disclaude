@@ -3141,7 +3141,7 @@ describe('ChatAgent (service)', () => {
   });
 
   describe('Issue #4391: empty-turn session-reset + bounded replay', () => {
-    // Shared harness for the #4391 matrix (design doc §5). createQueryStream
+    // Shared harness for the empty-turn recovery matrix. createQueryStream
     // is stubbed per-test; the mock channel (in the @disclaude/core mock) has
     // push() → true, so processMessage always accepts.
     function makeRetryAgent(chatId: string, callbacks = createMockCallbacks()) {

@@ -1,6 +1,6 @@
 # Infrastructure-Level Log Forwarding
 
-The application uses [Pino](https://getpino.io/) for structured JSON logging. Since v0.4.0, application-level Elasticsearch transport has been removed in favor of infrastructure-level log forwarding. This approach is more reliable, configurable, and requires zero application code changes.
+The application uses [Pino](https://getpino.io/) for structured JSON logging. Send those records to your log platform through the host or container logging pipeline; the service does not configure an application-level Elasticsearch transport.
 
 Pino outputs structured JSON to stdout/stderr, which can be consumed by any log shipper.
 With `LOG_TO_FILE=true`, Pino also writes to a log file that Filebeat can read directly.
@@ -232,7 +232,7 @@ Expected output format (production):
 ```json
 {
   "level": "info",
-  "time": "2024-06-06T12:00:00.000Z",
+  "time": "2026-09-26T12:00:00.000Z",
   "pid": 1,
   "hostname": "disclaude",
   "msg": "Server started",

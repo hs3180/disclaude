@@ -1,69 +1,42 @@
-# Log Rotation Configuration
+# Log rotation
 
-The application writes to `disclaude-combined.log`. Rotation can be handled
-either **in-app** (recommended for container/Docker, where no system logrotate
-exists) or by **system-level tools** on a host that has them.
+Use Disclaude's built-in size/count rotation to keep file logs bounded. The
+Docker Compose service enables rotation and stdout mirroring by default; no
+separate cleanup daemon is required.
 
-> Issue #3416 removed in-app rotation, delegating it to system tools. That left
-> Docker deployments with **no** rotation at all — `/data/logs/disclaude-combined.log`
-> grew unbounded (observed **49GB**). Issue #4777 restored opt-in in-app
-> rotation (pino-roll) so containerized setups self-limit. Issue #4786 added an
-> optional stdout mirror so `docker logs` still captures the app log.
+## Application-managed rotation
 
----
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `logging.rotate` / `LOG_ROTATE` | `false` outside the shipped Compose configuration | Enable file rotation |
+| `LOG_ROTATE_SIZE` | `50m` | Rotate after the current file reaches this size (`k`, `m`, or `g`) |
+| `LOG_ROTATE_LIMIT` | `3` | Maximum number of current and rotated files |
+| `LOG_ROTATE_FREQUENCY` | unset | Optional `daily` or `hourly` rotation |
+| `LOG_MIRROR_STDOUT` | enabled in the shipped Compose configuration | Also send application records to stdout |
 
-## Option A — In-app rotation (recommended for Docker)
+With size-based rotation, old files are removed when the configured file limit
+is reached. For example, `50m` and a limit of `3` keep approximately 150 MB
+across the active and rotated files.
 
-Set `LOG_TO_FILE=true` plus rotation env vars. Applies size/count-based rolling
-via `pino-roll`; rotated files are deleted automatically when the limit is hit,
-so the volume stays bounded even though containers have no logrotate.
+Rotated files use names such as `disclaude-combined.1.log` and
+`disclaude-combined.2.log`; a `current.log` symlink identifies the active file.
+Collectors should watch `current.log` or match `disclaude-combined.*.log` rather
+than assuming that the active file keeps the unnumbered name.
 
-| Env / config            | Default | Effect |
-|-------------------------|---------|--------|
-| `logging.rotate` / `LOG_ROTATE` | `false` | Enable rotation |
-| `LOG_ROTATE_SIZE`       | `50m`    | Roll a file once it exceeds this size (`k`/`m`/`g`) |
-| `LOG_ROTATE_LIMIT`      | `3`      | Total log files kept (current + N-1 rolled) |
-| `LOG_ROTATE_FREQUENCY`  | —        | Optional schedule: `daily` / `hourly` |
+In Docker, stdout mirroring lets `docker logs` and the configured Docker log
+driver collect application output, while the file volume remains bounded by
+application rotation:
 
-In the shipped `docker-compose.yml` the `service` service sets
-`LOG_ROTATE=true` by default (override in `.env`), so `log_data` stays bounded
-out of the box. E.g. `LOG_ROTATE_SIZE=50m LOG_ROTATE_LIMIT=3` keeps at most
-~150MB across the current file plus two rolled files.
-
-> Note: with `LOG_ROTATE_FREQUENCY` unset, rotation is purely size-based and
-> old files are removed eagerly by the size `limit` — the file set never grows.
-
-> **Filenames change when rotation is on.** pino-roll never writes the bare
-> `disclaude-combined.log`. It splits the trailing extension off and inserts
-> the sequence number *before* it, so the files on disk are
-> `disclaude-combined.1.log`, `disclaude-combined.2.log`, … — **not**
-> `disclaude-combined.log.1`. A `current.log` symlink in the same directory
-> points at the live file. Anything watching a fixed path must follow
-> `current.log` or glob `disclaude-combined.*.log`; the shipped `filebeat.yml`
-> covers both, and `scripts/launchd.mjs logs` falls back to `current.log` when
-> the bare path is absent.
-
-Manual smoke check:
-
-```bash
-npm run build
-LOG_TO_FILE=true LOG_DIR=/tmp/lrot LOG_ROTATE=true LOG_ROTATE_SIZE=1m \
-  npx tsx packages/service/src/cli.ts start --api-port 19200   # watch /tmp/lrot
-ls -la /tmp/lrot   # expect disclaude-combined.1.log/.2.log plus a current.log symlink
+```sh
+docker compose logs -f service
 ```
 
----
+## Host-managed rotation
 
-## Option B — Host system tools (Linux / macOS)
+For a host deployment that intentionally disables application rotation, use
+the host's existing log manager. For example, a Linux `logrotate` rule can be:
 
-Callers running directly on a host (not a container) can keep in-app rotation
-off (`logging.rotate: false`) and use the host's logrotate/newsyslog.
-
-### Linux: logrotate
-
-Create `/etc/logrotate.d/disclaude`:
-
-```
+```text
 /path/to/logs/disclaude-combined.log {
     daily
     rotate 30
@@ -76,69 +49,6 @@ Create `/etc/logrotate.d/disclaude`:
 }
 ```
 
-**Key options:**
-- `copytruncate`: Creates a copy then truncates the original — no file handle issues
-- `rotate 30`: Keep 30 days of logs
-- `maxsize 10M`: Rotate if file exceeds 10MB even before daily cycle
-- `compress`: Gzip old logs to save disk space
-
-### macOS: newsyslog
-
-Create `/etc/newsyslog.d/disclaude.conf`:
-
-```
-# logfilename                         [owner:group]  mode  count  size    when    flags  [/pid_file]  [sig_num]
-~/Library/Logs/disclaude/disclaude-combined.log   644   30     10240   *       ZC
-```
-
-**Key options:**
-- `30`: Keep 30 archived log files
-- `10240`: Rotate when file exceeds 10MB (in KB)
-- `Z`: Compress archived logs with gzip
-- `C`: Use copy-truncate mode (safe for open file handles)
-
-### Manual Testing
-
-```bash
-# Linux: force rotation
-logrotate -vf /etc/logrotate.d/disclaude
-
-# macOS: force rotation
-sudo newsyslog -Fv
-```
-
----
-
-## Docker logs collection (Issue #4786)
-
-With `LOG_TO_FILE=true`, all pino records go to the file, so `docker logs` (and
-Docker's `json-file` driver `max-size`/`max-file`) see nothing — only entrypoint
-text. Two options:
-
-- **Mirror to stdout** (recommended): set `LOG_MIRROR_STDOUT=true`
-  (or `LOG_TO_FILE=tee`). The app then copies every record to both the file and
-  `stdout`, so `docker logs` captures it and Docker's `max-size: 10m` /
-  `max-file: 3` bounds the stdout copy. The file copy is unaffected.
-  Enabled by default in `docker-compose.yml`.
-- **Rely on JSON-level mirroring** for warn/error only — not yet built; the
-  simple all-level mirror above covers the common case.
-
-`docker compose logs -f disclaude` then shows the full app log while
-the file in `log_data` stays bounded by Option A rotation.
-
----
-
-## Recovering an existing oversized file
-
-A file that already ballooned (e.g. 49GB) is not retroactively trimmed by
-rotation. To reclaim the disk once, either:
-
-```bash
-# compress in place (keep a compressed copy, then you can remove the original)
-du -h /path/to/logs/disclaude-combined.log
-cp /path/to/logs/disclaude-combined.log /path/to/logs/disclaude-combined.log.gz
-> /path/to/logs/disclaude-combined.log          # truncate the live file
-```
-
-or attach a fresh `log_data` volume after rotating via a one-off cleanup, then
-let in-app rotation keep future growth bounded.
+When using host rotation, make sure the rule matches the actual active log path
+and coordinate it with any application rotation settings. Avoid running a
+second Disclaude service solely to delete or truncate logs.

@@ -1,10 +1,9 @@
 /**
  * EmptyTurnRetryPolicy — eligibility + bounding for empty-turn session-reset retry.
  *
- * Issue #4391 (#4194 follow-up ②): when a real-user turn produces no output,
- * the (deferred) mechanism will reset the ChatAgent session and replay the
- * user's input **exactly once**. This module captures the two hard constraints
- * that mechanism must honor, extracted as a pure, unit-testable policy:
+ * When a real-user turn produces no output, ChatAgent may reset the session
+ * and replay the user's input exactly once. This module owns the eligibility
+ * and per-chat retry bound as a pure, unit-testable policy:
  *
  * 1. **Synthetic messages are never retried.** Scheduled-task (`sched-*`) and
  *    other synthetic messages (`push_*`, `cli-*`, `msg-*`, …) are not valid
@@ -20,9 +19,6 @@
  *    is intentionally a separate, focused policy so the empty-turn rule can be
  *    reviewed and tested in isolation.
  *
- * No caller wires this yet — the reset/replay mechanism is the larger
- * session-lifecycle follow-up (#4391, deferred as "needs design"). This policy
- * is the prerequisite: it locks the eligibility + bounding contract.
  */
 
 import { isSyntheticMessageId } from '../utils/message-id.js';
@@ -73,7 +69,7 @@ export class EmptyTurnRetryPolicy {
 
   /**
    * Whether the chat can still be retried for this empty turn: eligible AND
-   * not already retried. The single check the reset/replay mechanism calls.
+   * not already retried. ChatAgent uses this before scheduling recovery.
    */
   canRetry(chatId: string, openMessageId: string, isEmptyTurn: boolean): boolean {
     return this.isEligible(openMessageId, isEmptyTurn) && !this.hasRetried(chatId);

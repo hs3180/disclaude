@@ -10,10 +10,8 @@
 ## 第 1 步：安装
 
 ```bash
-git clone https://github.com/hs3180/disclaude.git
-cd disclaude
-npm ci --include=dev
-npm run build
+npm install -g "github:hs3180/disclaude#v0.6.0"
+disclaude --version
 ```
 
 ## 第 2 步：创建飞书应用
@@ -42,7 +40,8 @@ npm run build
 
 ```bash
 mkdir -p ~/.disclaude
-cp disclaude.config.example.yaml ~/.disclaude/disclaude.config.yaml
+cp "$(npm root -g)/disclaude/disclaude.config.example.yaml" \
+  ~/.disclaude/disclaude.config.yaml
 ```
 
 编辑 `~/.disclaude/disclaude.config.yaml`，填入飞书凭证和模型提供方配置：
@@ -66,14 +65,10 @@ agent:
 ## 第 4 步：启动
 
 ```bash
-# 本地前台运行
-mkdir -p workspace
-node bin/disclaude.js start
-
-# 生产模式（Docker 或 macOS launchd）
-docker compose up -d
-# macOS：npm run launchd:start
+disclaude start
 ```
+
+容器和后台服务部署见[服务安装文档](../README.md#documentation)及对应运维指南。
 
 ## 第 5 步：验证
 
@@ -97,7 +92,7 @@ docker compose up -d
 
 **❌ 权限不足** → 确认权限已审批生效，重新发布应用版本
 
-**❌ 连接失败** → 检查 App ID / App Secret 是否正确，查看 Docker 日志 `docker compose logs -f service`；macOS launchd 用户查看 `npm run launchd:logs`
+**❌ 连接失败** → 检查 App ID / App Secret 是否正确，查看 Docker 日志 `docker compose logs -f service`；全局安装的 macOS launchd 服务查看日志：`npm run --prefix "$(npm root -g)/disclaude" launchd:logs`
 
 ---
 

@@ -39,15 +39,3 @@ project-precedence sources, so duplicate names across them are rejected.
 project source. Move skills intended for the shared registry to
 `.disclaude/skills`; keep Claude-only skills in `.claude/skills` for Claude's
 native loader. This change does not move files or alter Claude's loader.
-
-## Consumer migration
-
-- #4908 provides this shared core and public API.
-- #4909 makes Codex exec and app-server consumers of the same core.
-- #4910 hardens validation and trust decisions in the shared core for every consumer.
-- #4911 makes Claude native plugin loading follow the same resolution decisions.
-- #4912 adds Pi/DSH adapters and operator diagnostics.
-
-Moving the registry into a shared module does not complete the consumer
-migrations. A Codex transport parity test is not evidence of cross-harness
-parity; each adapter needs its own integration coverage.
