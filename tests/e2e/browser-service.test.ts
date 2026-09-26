@@ -327,10 +327,7 @@ describe('user starts Disclaude and coordinates an already deployed browser', ()
           const descendant = Number(await readFile(descendantFile, 'utf8'));
           crashDescendants.add(descendant);
           const ownership = JSON.parse(await readFile(socket + '.lock', 'utf8')) as { pid: number };
-          const apiStatus = await fetch(new URL('/api/status', serviceUrl)).then(response => response.json()) as {
-            browserIpc?: { pid?: number };
-          };
-          expect(ownership.pid).toBe(apiStatus.browserIpc?.pid);
+          expect(ownership.pid).toBe(child?.pid);
           process.kill(ownership.pid, 'SIGKILL');
           // The coordinator shares the service PID. Its worker group must clean
           // itself up on IPC disconnect, while the separately deployed browser

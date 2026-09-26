@@ -33,6 +33,20 @@ async function cdpEndpoint(statusCode = 200) {
   return { server, port: address.port, endpoint: `http://127.0.0.1:${address.port}` };
 }
 
+function versionFetch(statusCode = 200) {
+  return vi.fn((_url: string | URL | Request, _options?: RequestInit) =>
+    Promise.resolve(
+      new Response(
+        JSON.stringify({
+          Browser: 'Chromium/test',
+          webSocketDebuggerUrl: 'ws://127.0.0.1:9222/devtools/browser/test',
+        }),
+        { status: statusCode, headers: { 'content-type': 'application/json' } },
+      ),
+    ),
+  );
+}
+
 function makeEnvironment(port: number) {
   const root = mkdtempSync(join(tmpdir(), 'browser-runtime-'));
   roots.push(root);
@@ -98,11 +112,13 @@ describe('in-process browser coordinator lifecycle', () => {
     const coordinator = mockCoordinator() as unknown as import('./coordinator.mjs').Coordinator;
     const connectBrowser = vi.fn(() => Promise.resolve(admin));
     const createCoordinator = vi.fn(() => coordinator);
+    const fetchImpl = versionFetch();
 
     try {
       expect(hasChromiumCdpConfiguration(env)).toBe(true);
-      const runtime = await startBrowserCoordinator({ env, cwd: root, connectBrowser, createCoordinator });
+      const runtime = await startBrowserCoordinator({ env, cwd: root, connectBrowser, createCoordinator, fetchImpl });
       runtimes.push(runtime);
+      expect(fetchImpl.mock.calls[0]?.[0]).toBe(`${endpoint.endpoint}/json/version`);
       expect(connectBrowser).toHaveBeenCalledOnce();
       expect(createCoordinator).toHaveBeenCalledOnce();
       await runtime.stop();
@@ -132,6 +148,7 @@ describe('in-process browser coordinator lifecycle', () => {
       expect(url).toBe('ws://127.0.0.1:9222/devtools/browser/test');
       return Promise.resolve(admin);
     });
+    const fetchImpl = versionFetch();
     let receivedOptions: Record<string, unknown> | undefined;
     const createCoordinator = vi.fn((options: Record<string, unknown>) => {
       receivedOptions = options;
@@ -139,11 +156,12 @@ describe('in-process browser coordinator lifecycle', () => {
     });
 
     try {
-      const runtime = await startBrowserCoordinator({ env, cwd: root, connectBrowser, createCoordinator });
+      const runtime = await startBrowserCoordinator({ env, cwd: root, connectBrowser, createCoordinator, fetchImpl });
       runtimes.push(runtime);
 
       expect(runtime.pid).toBe(process.pid);
       expect(runtime.unavailable).toBe(false);
+      expect(fetchImpl.mock.calls[0]?.[0]).toBe(`${endpoint.endpoint}/json/version`);
       expect(connectBrowser).toHaveBeenCalledOnce();
       expect(createCoordinator).toHaveBeenCalledOnce();
       expect(receivedOptions).toMatchObject({
@@ -196,8 +214,9 @@ describe('in-process browser coordinator lifecycle', () => {
   it('cleans its lock when the deployed CDP endpoint is unavailable at startup', async () => {
     const endpoint = await cdpEndpoint(503);
     const { socket, env } = makeEnvironment(endpoint.port);
+    const fetchImpl = versionFetch(503);
     try {
-      await expect(startBrowserCoordinator({ env })).rejects.toThrow('CDP endpoint returned HTTP 503');
+      await expect(startBrowserCoordinator({ env, fetchImpl })).rejects.toThrow('CDP endpoint returned HTTP 503');
       expect(existsSync(socket)).toBe(false);
       expect(existsSync(`${socket}.lock`)).toBe(false);
     } finally {

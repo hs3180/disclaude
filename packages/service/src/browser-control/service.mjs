@@ -107,6 +107,7 @@ export async function startBrowserCoordinator({
   cwd = process.cwd(),
   onUnavailable = /** @type {(message: string) => void} */ (() => {}),
   onEvent = /** @type {(record: Record<string, unknown>) => void} */ (() => {}),
+  fetchImpl = globalThis.fetch,
   connectBrowser = connect,
   createCoordinator = options => new Coordinator(options),
 } = {}) {
@@ -206,7 +207,7 @@ export async function startBrowserCoordinator({
   };
 
   try {
-    const response = await fetch(`${endpoint.replace(/\/+$/, '')}/json/version`, { signal: AbortSignal.timeout(5000) });
+    const response = await fetchImpl(`${endpoint.replace(/\/+$/, '')}/json/version`, { signal: AbortSignal.timeout(5000) });
     if (!response.ok) throw new Error(`Browser CDP endpoint returned HTTP ${response.status}`);
     const info = await response.json();
     if (typeof info.webSocketDebuggerUrl !== 'string') throw new Error('Browser CDP endpoint did not report a WebSocket URL');
