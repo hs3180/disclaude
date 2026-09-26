@@ -1,9 +1,10 @@
 # Browser control through Disclaude
 
-The browser coordinator runs as a managed child of `disclaude start`. It queues
+The browser coordinator runs in-process as part of `DisclaudeService`. It queues
 competing browser-use operations and reclaims the current worker before granting
-control to the next caller. The runtime is shipped in the service package;
-the actual CLI lifecycle and handoff use case lives in
+control to the next caller. It attaches to the Chromium CDP service already
+deployed on the host; it never launches or owns Chromium. The runtime is shipped
+in the service package; the actual CLI lifecycle and handoff use case lives in
 `tests/e2e/browser-service.test.ts`.
 
 ## Configure the service
@@ -40,26 +41,23 @@ cleanup. Linux CI requires Cookie retention. The macOS ARM64 CLI case passed on
 invocation also passed. Both observed retention in that invoking environment.
 Earlier service-environment failures remain distinct evidence.
 
-Install the browser-use Python environment and an independent Chromium first.
-The validated harness baseline is browser-use 0.13.10 / browser-harness 0.1.13.
-Use the interpreter belonging to that environment, not an unrelated system Python.
+Install and start the host's Chromium CDP service separately, for example with
+`disclaude chromium-cdp install`. The coordinator reads its saved CDP address and
+port from the existing Chromium configuration. Also make the validated
+browser-use 0.13.10 / browser-harness 0.1.13 Python environment available as
+`python3` in the Disclaude service's `PATH`.
 
 Add these settings to the service configuration's `env` section (absolute paths):
 
 ```yaml
 env:
   DISCLAUDE_BROWSER_SOCKET: /absolute/private/browser.sock
-  DISCLAUDE_BROWSER_PYTHON: /absolute/path/to/python
-  DISCLAUDE_CHROMIUM_BINARY: /Applications/Chromium.app/Contents/MacOS/Chromium
-  DISCLAUDE_CHROMIUM_PROFILE: /absolute/dedicated/browser-profile
 ```
 
 Create the socket parent directory with mode 0700. Unix socket paths are limited
-to 95 bytes. On Linux without a display, also set `DISCLAUDE_CHROMIUM_HEADLESS: "1"`,
-or use the supported headed/Xvfb environment. Do not reuse a profile owned by
-another browser service. In existing-browser mode, set only `BU_CDP_URL` in the
-service environment and omit the managed binary/profile; shutdown preserves that
-external browser.
+to 95 bytes. The coordinator has no Chromium binary, profile, headless, Python,
+or direct-CDP URL settings. Those belong to the independently deployed browser
+service; Disclaude reads its persisted CDP endpoint and attaches to it.
 
 `disclaude start --config ...` waits for browser readiness before starting agents.
 After readiness it creates a private `browser-use` launcher at
@@ -71,15 +69,15 @@ tool shell cannot select an upstream CLI by rewriting PATH; no separate
 launcher-path setting is needed. The helper requires the service-provided socket
 and fails closed if the service or launcher is unavailable. Do not point it to
 the upstream Python CLI or remove the null-runtime guards. No manual agent PATH
-modification or experiment command is needed. If the broker exits, browser calls
-fail explicitly and the service logs the failure; they do not fall back to
-direct CDP or spawn an independent daemon.
+modification or experiment command is needed. If the coordinator becomes
+unavailable, browser calls fail explicitly; they do not fall back to direct CDP
+or spawn an independent daemon.
 
 `disclaude browser status [--config PATH]` queries the configured coordinator.
 `GET /api/status` also reports its `browserIpc` state (`disabled`, `ready`, or
-`unavailable`) and supervised broker PID. Starting, stopping and restarting the
-broker is exclusively part of the Disclaude service lifecycle; the browser CLI
-does not start a standalone coordinator.
+`unavailable`) and the owning Disclaude service PID. Starting, stopping and
+restarting the coordinator is exclusively part of the Disclaude service
+lifecycle; the browser CLI does not start a standalone coordinator.
 
 ## Browser operations
 
@@ -99,30 +97,27 @@ such as `--reload` are rejected at this entry.
 
 ## Recovery boundaries
 
-Normal service shutdown stops its broker, active workers and owned Chromium,
-keeps the profile, and removes the socket/lock. Graceful service restart reopens
-that profile. Denying macOS Keychain access is supported for normal operation;
-cross-browser-restart cookie retention is a separately detected capability.
+Normal service shutdown stops active workers, closes its CDP connection, and
+removes the socket/lock. The separately deployed Chromium service, its profile,
+and its pages remain running and owned by that service.
 
-If a supervised broker dies while the service is alive, the supervisor terminates
-its dedicated process group, including managed Chromium. Detached harness workers
-terminate their own groups when their broker IPC disconnects, including descendant
-processes started by the running Python task. The supervisor removes only a socket
-and lock matching that broker's PID and unique startup identity. Browser calls fail
-until the service is explicitly restarted; unknown work is never replayed.
+The coordinator shares the Disclaude service process; there is no broker child or
+separate supervisor. Detached harness workers terminate their own process groups
+when their IPC disconnects, including descendants started by the running Python
+task. If the service exits unexpectedly, a later start removes only stale socket
+state whose owner PID is no longer alive. Browser calls fail closed and unknown
+work is never replayed.
 
 When a worker announces its daemon but does not become ready, the coordinator
 records the startup phase (`worker-startup-timeout`, `worker-startup-exit`, or
 `worker-init-error`) and the last 4 KiB of the worker plus supervised daemon
-stderr in the private event stream. These diagnostics identify a failed
+stderr in the Disclaude service log. These diagnostics identify a failed
 bootstrap without changing the recovery boundary or retrying unknown browser
 work. The daemon stderr is retained only through the worker diagnostic pipe; it
 is not exposed to the Agent or persisted with page content.
 
-This recovery requires the owning supervisor to observe the broker exit. Foreign
-or unreadable locks and simultaneous loss of broker and supervisor still require
-operator inspection. Verify process ownership and CDP detachment before clearing
-those files. Socket permissions coordinate same-user callers; this is not a
+Foreign or unreadable locks still require operator inspection. Socket permissions
+coordinate same-user callers; this is not a
 sandbox for hostile Python or a multi-user authorization boundary.
 
 ## Existing standalone browser IPC services
@@ -142,7 +137,7 @@ Core lifecycle/environment tests:
 npx vitest run packages/service/src/browser-control/runtime.test.ts packages/core/src/utils/browser-env.test.ts
 ```
 
-Actual CLI-to-browser use case (isolated profile, no external accounts/messages):
+Actual CLI-to-browser use case (isolated external CDP/profile, no external accounts/messages):
 
 ```sh
 npm run build
@@ -151,15 +146,20 @@ DISCLAUDE_E2E_BROWSER_PYTHON=/absolute/path/to/python \
 npx vitest run --config vitest.e2e.config.ts tests/e2e/browser-service.test.ts
 ```
 
-It starts the real Disclaude service, checks the public status command, executes
-competing browser-use callers against the same real page, then checks shutdown,
-profile retention and service restart. Without both environment variables the
-case is reported skipped. This verifies the CLI/harness/browser chain, not a model
-agent deciding how to use it. It also interrupts a running caller and verifies
-that the queued caller takes over without executing the abandoned operation. It then kills the broker during an active Python task, verifies that Chromium and the task's child process exit, checks socket/lock removal and profile retention, and explicitly restarts the service.
+The test starts an isolated Chromium CDP process first, writes its endpoint to the
+same persistent config used by `chromium-cdp`, then starts the real Disclaude
+service. It checks the public status command and competing browser-use callers on
+the shared page. Without both fixture variables the case is skipped. It also
+interrupts a running caller and verifies handoff without replaying the abandoned
+operation. Finally it kills the Disclaude process during an active Python task:
+the worker descendants must exit, while Chromium and its profile remain alive;
+the next service start reclaims stale IPC state. Graceful stop is checked to leave
+the external CDP service untouched. This verifies the CLI/harness/browser chain,
+not a model agent deciding how to use it.
 Linux CI installs the pinned browser-use runtime and uses the runner image's
-packaged Google Chrome (logging its version), then runs this same product test. No separate test Docker image or standalone harness runner
-is required. The test layout follows #5016: core unit tests plus actual-use-case E2E.
+packaged Google Chrome (logging its version), then runs this same product test.
+No separate test Docker image or standalone harness runner is required. The test
+layout follows #5016: core unit tests plus actual-use-case E2E.
 
 Environment filtering happens only where an execution environment is finalized:
 Claude SDK options, Codex exec/app-server subprocesses, the dsh subprocess, and
@@ -220,8 +220,10 @@ prompt supplies an exact stdin pipe command; this does not test unrestricted Ski
 selection or compare model quality.
 
 On 2026-09-16, macOS ARM64 passed the full dsh → Codex → Claude SDK → Pi sequence,
-independent readback, blocked upstream entry before/after service stop, broker-crash
-cleanup and restart in 55.65 seconds. Versions: Node 24.8.0, Chromium 155.0.8057.0,
+independent readback, blocked upstream entry before/after service stop, and the
+then-current coordinator-crash cleanup in 55.65 seconds. That historical run
+predates the in-process coordinator and does not validate the current crash path.
+Versions: Node 24.8.0, Chromium 155.0.8057.0,
 dsh 0.1.2-rc.1, Codex 0.154.0, Claude SDK 0.3.263, Pi 0.83.0. dsh/Claude/Pi used
 DeepSeek's `deepseek-flash` through their respective harnesses; Codex used its
 configured model. This is harness interoperability evidence, not a Claude-model
@@ -231,12 +233,10 @@ or performance benchmark.
 ### Repeated product handoffs
 
 Set `DISCLAUDE_E2E_BROWSER_STRESS=1` to exercise 100 sequential IPC callers against
-the same managed page. Each caller verifies the preceding value, writes its own
-and reads it back. The trace must contain 100 distinct grants, with execution,
-worker exit and reclamation in order; every previous reclamation must precede
-the next grant. An independent final caller verifies the last value. This uses
-the actual product service/browser/workers and no model credentials. Browser CI
-enables it on Linux; local runs can opt in explicitly.
+the same externally deployed page. Each caller verifies the preceding value,
+writes its own value, and reads it back. An independent final caller verifies
+the last value. This uses the actual product service/browser/workers and no model
+credentials. Browser CI enables it on Linux; local runs can opt in explicitly.
 
 On macOS ARM64 with Chromium 155.0.8057.0 and Node 24.8.0 (2026-09-17), all 100
 handoffs passed in 73.87 seconds. Grant-wait observations were p50=410ms,
@@ -270,9 +270,9 @@ isolate arbitration from open-ended planning or model quality. The service owns
 normal message routing, agent creation, model execution and response delivery.
 
 Agent A writes a local page draft and holds its lease. Only after observing that
-hold does the client start B. Coordinator events must show B queued while A still
-owns control, and B's execution marker must remain absent. The client releases A;
-its reclamation event must precede B's grant. B verifies A's text and updates it.
+hold does the client start B. The public browser status must report B queued while
+A still owns control, and B's execution marker must remain absent. The client
+releases A; B then verifies A's text and updates it.
 The client checks both real REST responses, B's execution marker, and the final
 value through an independent browser-use invocation. An early-ending model request
 fails promptly rather than waiting for a browser marker that cannot arrive.
@@ -289,8 +289,7 @@ For an already prepared test deployment on the same host/shared filesystem:
 node scripts/test-browser-contention.mjs \
   --service-url http://127.0.0.1:PORT \
   --workspace /absolute/test-workspace \
-  --socket /absolute/test-workspace/browser.sock \
-  --events /absolute/test-workspace/browser-events.ndjson
+  --socket /absolute/test-workspace/browser.sock
 ```
 
 The managed page must already contain `<input id="value">`. The client does not

@@ -3,7 +3,7 @@ import nock from 'nock';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdtemp, mkdir, writeFile, rm, readFile, access } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -31,12 +31,61 @@ const configuredModelTimeout = Number.isInteger(modelTimeout) && modelTimeout >=
 // model.
 const CODEX_BROWSER_ACCEPTANCE_MODEL = 'gpt-5.6-luna';
 
-describe('user starts Disclaude and shares its managed browser', () => {
+async function stopProcessGroup(child: ReturnType<typeof spawn>): Promise<void> {
+  if (!child.pid || child.exitCode !== null || child.signalCode !== null) return;
+  const exited = new Promise<void>(resolve => child.once('close', () => resolve()));
+  try {
+    if (process.platform === 'win32') child.kill('SIGTERM');
+    else process.kill(-child.pid, 'SIGTERM');
+  } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
+  if (await Promise.race([exited.then(() => true), delay(5000, false, { ref: false })])) return;
+  try {
+    if (process.platform === 'win32') child.kill('SIGKILL');
+    else process.kill(-child.pid, 'SIGKILL');
+  } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
+  await Promise.race([exited, delay(5000, undefined, { ref: false })]);
+  if (child.exitCode === null && child.signalCode === null) throw new Error('Owned Chromium process group did not exit');
+}
+
+async function startDeployedChromium(binary: string, profile: string) {
+  await mkdir(profile, { recursive: true, mode: 0o700 });
+  const child = spawn(binary, [
+    '--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1',
+    `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
+    '--headless=new', '--disable-dev-shm-usage', ...(process.getuid?.() === 0 ? ['--no-sandbox'] : []), 'about:blank',
+  ], { stdio: ['ignore', 'ignore', 'pipe'], detached: process.platform !== 'win32' });
+  let stderr = '', startupError: Error | undefined;
+  child.stderr?.on('data', chunk => { stderr = (stderr + chunk.toString()).slice(-4000); });
+  child.on('error', error => { startupError = error; });
+  try {
+    for (let attempt = 0; attempt < 150; attempt++) {
+      if (startupError) throw startupError;
+      if (child.exitCode !== null || child.signalCode !== null) {
+        throw new Error(`Deployed Chromium exited before CDP readiness: ${stderr || 'no browser diagnostics'}`);
+      }
+      const active = await readFile(join(profile, 'DevToolsActivePort'), 'utf8').catch(() => '');
+      const port = Number(active.split('\n')[0]);
+      if (Number.isInteger(port) && port > 0 && port < 65536) {
+        const response = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(500) }).catch(() => undefined);
+        if (response?.ok) return { child, port };
+      }
+      await delay(100);
+    }
+    throw new Error(`Deployed Chromium CDP startup timed out: ${stderr || 'no browser diagnostics'}`);
+  } catch (error) {
+    await stopProcessGroup(child);
+    throw error;
+  }
+}
+
+describe('user starts Disclaude and coordinates an already deployed browser', () => {
   it.skipIf(!enabled)('runs the product IPC entry, hands over shared page state, then shuts down and restarts', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dc-browser-e2e-'));
     console.info('BROWSER_SERVICE_TEST_ROOT', root);
     const socket = join(root, 'browser.sock');
     const config = join(root, 'config.json');
+    const profile = join(root, 'profile');
+    const chromiumConfig = join(root, 'chromium-cdp.json');
     const probe = createServer();
     let serviceUrl = '';
     const contentionModel = process.env.DISCLAUDE_E2E_BROWSER_CONTENTION_MODEL;
@@ -57,20 +106,20 @@ describe('user starts Disclaude and shares its managed browser', () => {
       catch (cleanupError) { throw new AggregateError([error, cleanupError], `Browser test setup cleanup failed; inspect ${root}`); }
       throw error;
     }
+    const browserPython = process.env.DISCLAUDE_E2E_BROWSER_PYTHON!;
     const env: NodeJS.ProcessEnv = { ...process.env, DISCLAUDE_CONFIG_PATH: config, LOCKFILE_PATH: join(root, 'service.pid'),
-      BU_CDP_URL: '', BU_CDP_WS: '',
+      PATH: [dirname(browserPython), process.env.PATH || ''].filter(Boolean).join(delimiter),
       DISCLAUDE_BROWSER_SOCKET: socket,
-      DISCLAUDE_BROWSER_PYTHON: process.env.DISCLAUDE_E2E_BROWSER_PYTHON,
-      DISCLAUDE_CHROMIUM_BINARY: process.env.DISCLAUDE_E2E_CHROMIUM,
-      DISCLAUDE_CHROMIUM_PROFILE: join(root, 'profile'), DISCLAUDE_CHROMIUM_HEADLESS: '1',
+      DISCLAUDE_CHROMIUM_CONFIG: chromiumConfig,
     };
-    delete env.DISCLAUDE_BROWSER_TARGET;
-    env.DISCLAUDE_BROWSER_EVENTS = join(root, 'browser-events.ndjson');
     const executable = resolve('bin/disclaude.js');
     const callers = new Set<ReturnType<typeof spawn>>();
     const crashDescendants = new Set<number>();
     const callerClosures = new Map<ReturnType<typeof spawn>, Promise<void>>();
     let child: ReturnType<typeof spawn> | undefined;
+    let chromiumProcess: ReturnType<typeof spawn> | undefined;
+    let cdpPort = 0;
+    let serviceCrashed = false;
     let output = '';
     let exited: Promise<number | null> | undefined;
     async function stop(): Promise<void> {
@@ -93,6 +142,17 @@ describe('user starts Disclaude and shares its managed browser', () => {
     }
     let invocation = 0;
     try {
+      const deployed = await startDeployedChromium(process.env.DISCLAUDE_E2E_CHROMIUM!, profile);
+      chromiumProcess = deployed.child;
+      cdpPort = deployed.port;
+      await writeFile(chromiumConfig, JSON.stringify({ version: 1, environment: {
+        CHROMIUM_CDP_BINARY: process.env.DISCLAUDE_E2E_CHROMIUM!,
+        CHROMIUM_CDP_PROFILE_DIR: profile,
+        CHROMIUM_CDP_PORT: String(cdpPort),
+        CHROMIUM_CDP_ADDRESS: '127.0.0.1',
+        CHROMIUM_CDP_HEADED: '0',
+        CHROMIUM_CDP_AUTOSTART: '0',
+      } }), { mode: 0o600 });
       for (let attempt = 0; attempt < configuredRestartCycles; attempt++) {
         output = '';
         child = spawn(process.execPath, [executable, 'start', '--config', config, '--api-port', '0'], { env, cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -233,13 +293,12 @@ describe('user starts Disclaude and shares its managed browser', () => {
           }
         }
         if (attempt === 0 && process.env.DISCLAUDE_E2E_BROWSER_CONTENTION_MODEL) {
-          await verifyModelContention(root, taskEnv, serviceUrl, join(root, 'browser-events.ndjson'));
+          await verifyModelContention(root, taskEnv, serviceUrl);
         }
         if (attempt === 0 && process.env.DISCLAUDE_E2E_BROWSER_STRESS === '1') {
-          await verifyRepeatedHandoffs(join(root, 'browser-events.ndjson'), run);
+          await verifyRepeatedHandoffs(run);
         }
-        await writeFile(join(root, 'profile', 'preserve-test.txt'), 'user profile retained');
-        const cdpPort = (await readFile(join(root, 'profile', 'DevToolsActivePort'), 'utf8')).split('\n')[0];
+        await writeFile(join(profile, 'preserve-test.txt'), 'user profile retained');
         // Establish a real positive probe before negative stop/crash assertions;
         // a blocked loopback request must not masquerade as browser shutdown.
         expect((await fetch(`http://127.0.0.1:${cdpPort}/json/version`, { signal: AbortSignal.timeout(5000) })).ok).toBe(true);
@@ -257,41 +316,42 @@ describe('user starts Disclaude and shares its managed browser', () => {
           const descendant = Number(await readFile(descendantFile, 'utf8'));
           crashDescendants.add(descendant);
           const ownership = JSON.parse(await readFile(socket + '.lock', 'utf8')) as { pid: number };
+          expect(ownership.pid).toBe(child.pid);
           process.kill(ownership.pid, 'SIGKILL');
-          // The live service must reclaim its broker's browser tree and owned IPC,
-          // fail subsequent calls closed, and permit an explicit clean restart.
-          let browserStopped = false;
-          for (let i = 0; i < 100 && !browserStopped; i++) {
-            browserStopped = await fetch(`http://127.0.0.1:${cdpPort}/json/version`, { signal: AbortSignal.timeout(200) }).then(() => false, () => true);
-            if (!browserStopped) { await delay(50); }
-          }
-          expect(browserStopped).toBe(true);
+          // The coordinator shares the service PID. Its worker group must clean
+          // itself up on IPC disconnect, while the separately deployed browser
+          // remains alive and keeps owning its profile.
+          await Promise.race([exited, delay(5000, undefined, { ref: false })]);
+          expect(child.signalCode).toBe('SIGKILL');
+          serviceCrashed = true;
           expect(await active).toBe('interrupted');
           const descendantAlive = (): boolean => { try { process.kill(descendant, 0); return true; } catch { return false; } };
           for (let i = 0; i < 100 && descendantAlive(); i++) { await delay(50); }
           expect(descendantAlive()).toBe(false);
           crashDescendants.delete(descendant);
           await expect(access(crashMarker)).rejects.toThrow();
+          expect((await fetch(`http://127.0.0.1:${cdpPort}/json/version`, { signal: AbortSignal.timeout(1000) })).ok).toBe(true);
+          expect(await readFile(join(profile, 'preserve-test.txt'), 'utf8')).toBe('user profile retained');
+          await expect(access(socket)).resolves.toBeUndefined();
+          await expect(access(socket + '.lock')).resolves.toBeUndefined();
           await expect(exec(process.execPath, [executable, 'browser', 'status'], { env, cwd: root, timeout: 5000 })).rejects.toThrow();
         }
-        await stop();
-        await expect(access(socket)).rejects.toThrow();
-        await expect(access(socket + '.lock')).rejects.toThrow();
-        await expect(fetch(`http://127.0.0.1:${cdpPort}/json/version`, { signal: AbortSignal.timeout(1000) })).rejects.toThrow();
-        expect(await readFile(join(root, 'profile', 'preserve-test.txt'), 'utf8')).toBe('user profile retained');
+        if (!serviceCrashed) {
+          await stop();
+          await expect(access(socket)).rejects.toThrow();
+          await expect(access(socket + '.lock')).rejects.toThrow();
+        }
+        expect((await fetch(`http://127.0.0.1:${cdpPort}/json/version`, { signal: AbortSignal.timeout(1000) })).ok).toBe(true);
+        expect(await readFile(join(profile, 'preserve-test.txt'), 'utf8')).toBe('user profile retained');
         await rejectUpstream();
         await expect(exec(process.execPath, [executable, 'browser', 'status'], { env, cwd: root, timeout: 5000 })).rejects.toThrow();
+        if (serviceCrashed) { child = undefined; exited = undefined; serviceCrashed = false; }
       }
     } catch (error) {
-      // The isolated service uses a generated offline config. Retain its failure
-      // diagnostics instead of reducing broker failures to a client EOF alone.
-      // Client EOF can precede the supervisor's process-exit diagnostic.
-      // Give that callback a bounded opportunity to flush before deleting the
-      // isolated run directory; do not retain whole browser profiles for logs.
+      // Retain isolated service/browser diagnostics instead of reducing failures
+      // to a client EOF alone. Do not retain whole browser profiles for logs.
       await delay(500);
       console.error('BROWSER_SERVICE_FAILURE', output.slice(-16_000));
-      const events = await readFile(env.DISCLAUDE_BROWSER_EVENTS!, 'utf8').catch(() => 'No coordinator events written');
-      console.error('BROWSER_COORDINATOR_EVENTS', events.slice(-16_000));
       const processes = await exec('ps', ['-ww', '-axo', 'pid=,ppid=,stat=,etime=,command='])
         .then(result => result.stdout)
         .catch(error => `process snapshot unavailable: ${error.message}`);
@@ -329,7 +389,8 @@ describe('user starts Disclaude and shares its managed browser', () => {
         if (crashDescendants.size) { throw new Error('Browser crash-fixture descendants still present'); }
       };
       // Attempt every owned resource cleanup even if another one fails.
-      const settled = await Promise.allSettled([stopCallers(), stopDescendants(), stop()]);
+      const stopBrowser = async (): Promise<void> => { if (chromiumProcess) await stopProcessGroup(chromiumProcess); };
+      const settled = await Promise.allSettled([stopCallers(), stopDescendants(), stop(), stopBrowser()]);
       const failures = settled.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
       if (failures.length) {
         throw new AggregateError(failures, `Browser test files retained at ${root}: resource termination unconfirmed; inspect owned processes before removing`);

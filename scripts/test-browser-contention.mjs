@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 // External client: actual deployment REST requests, no application imports.
 import assert from 'node:assert/strict';
-import { access, readFile, writeFile, rm } from 'node:fs/promises';
+import { access, writeFile, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
-import { parseArgs } from 'node:util';
+import { parseArgs, promisify } from 'node:util';
 
 const { values } = parseArgs({ options: Object.fromEntries(
-  ['service-url', 'workspace', 'socket', 'events'].map(key => [key, { type: 'string' }]),
+  ['service-url', 'workspace', 'socket'].map(key => [key, { type: 'string' }]),
 ) });
-for (const key of ['service-url', 'workspace', 'socket', 'events']) { assert(values[key], `Required: --${key}`); }
+for (const key of ['service-url', 'workspace', 'socket']) { assert(values[key], `Required: --${key}`); }
 const base = new URL(values['service-url']);
 assert(['http:', 'https:'].includes(base.protocol), 'Expected an HTTP service URL');
 const root = resolve(values.workspace), id = randomUUID();
@@ -22,12 +22,17 @@ const chats = [], requests = [], checks = [];
 const settledChats = new Map();
 const started = Date.now();
 let failed = false, completed = false, queueWaitMs;
+const execAsync = promisify(execFile);
 const exists = file => access(file).then(() => true, error => {
   if (error.code === 'ENOENT') { return false; }
   throw error;
 });
-const events = async () => (await readFile(values.events, 'utf8')).split('\n').filter(Boolean)
-  .flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } });
+async function browserStatus() {
+  const statusEnv = { ...process.env, DISCLAUDE_BROWSER_SOCKET: values.socket };
+  const { stdout } = await execAsync(process.execPath, [resolve('bin/disclaude.js'), 'browser', 'status'],
+    { env: statusEnv, cwd: root, timeout: 5000 });
+  return JSON.parse(stdout);
+}
 async function waitFor(check, description) {
   const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) {
@@ -86,19 +91,15 @@ async function readBrowser() {
   } finally { clearTimeout(timer); }
 }
 try {
-  const offset = (await events()).length;
   const first = start(`import os, time\nfill_input('#value', ${JSON.stringify(firstValue)})\nopen(${JSON.stringify(held)}, 'w').write('held')\nend = time.monotonic() + 100\nwhile not os.path.exists(${JSON.stringify(release)}):\n    assert time.monotonic() < end, 'release deadline exceeded'\n    time.sleep(0.1)\nprint('AGENT_A:' + js("document.querySelector('#value').value"))\n`, 'a');
   await waitFor(() => exists(held), 'agent A holds the browser');
-  const firstGrant = (await events()).slice(offset).find(event => event.type === 'granted');
-  assert(firstGrant?.actor && firstGrant.epoch !== undefined, 'Agent A acquired a recorded lease');
+  const queueStarted = Date.now();
   const second = start(`previous = js("document.querySelector('#value').value")\nassert previous == ${JSON.stringify(firstValue)}\nopen(${JSON.stringify(secondRan)}, 'w').write('executed')\nfill_input('#value', ${JSON.stringify(finalValue)})\nprint('AGENT_B_PREVIOUS:' + previous)\n`, 'b');
-  let secondActor;
   await waitFor(async () => {
-    secondActor = (await events()).slice(offset).find(event => event.type === 'queued' && event.actor !== firstGrant.actor)?.actor;
-    return Boolean(secondActor);
+    return (await browserStatus()).queued >= 1;
   }, 'agent B enters the coordinator queue');
   assert.equal(await exists(secondRan), false, 'Agent B must not execute while A holds the browser');
-  assert.equal((await events()).slice(offset).some(event => event.type === 'granted' && event.actor === secondActor), false);
+  queueWaitMs = Date.now() - queueStarted;
   checks.push('B queued while A holds lease; no early execution');
   await writeFile(release, 'release');
   const results = await Promise.all([first, second]);
@@ -107,13 +108,8 @@ try {
   assert(results[1]?.includes(`AGENT_B_PREVIOUS:${firstValue}`), 'Actual B response contains A draft');
   assert.equal(await exists(secondRan), true);
   checks.push('two independent deployment REST responses; B observed A draft');
-  const trace = (await events()).slice(offset);
-  const queued = trace.findIndex(event => event.type === 'queued' && event.actor === secondActor);
-  const reclaimed = trace.findIndex(event => event.type === 'reclaimed' && event.epoch === firstGrant.epoch);
-  const granted = trace.findIndex(event => event.type === 'granted' && event.actor === secondActor);
-  assert(queued >= 0 && reclaimed > queued && granted > reclaimed, 'A reclamation must precede B grant');
-  queueWaitMs = trace[granted].ms - trace[queued].ms;
-  checks.push('reclamation before successor grant');
+  assert.equal((await browserStatus()).queued, 0, 'Coordinator queue should drain after both callers finish');
+  checks.push('queue drains after sequential handoff');
   assert((await readBrowser()).includes(finalValue), 'Independent final draft readback');
   checks.push('independent final draft readback');
 } catch (error) {

@@ -108,7 +108,7 @@ describe('DisclaudeService REST-only serving (Issue #4280 part 5)', () => {
 
     await service.start();
 
-    expect(browserRuntimeMock.start).toHaveBeenCalledWith(process.env, expect.any(Function));
+    expect(browserRuntimeMock.start).toHaveBeenCalledWith(process.env, expect.any(Function), expect.any(Function));
     expect(service.getBrowserIpcStatus()).toEqual({ status: 'ready', pid: 7342 });
     const onUnavailable = browserRuntimeMock.start.mock.calls[0]?.[1] as (message: string) => void;
     onUnavailable('coordinator exited');
