@@ -1,10 +1,11 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createServer as createHttpServer } from 'node:http';
 import nock from 'nock';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { startBrowserCoordinator } from './service.mjs';
+import { dirname, join } from 'node:path';
+import { resolveBrowserSocketPath } from '@disclaude/core/browser-runtime';
+import { hasChromiumCdpConfiguration, startBrowserCoordinator } from './service.mjs';
 import { startBrowserRuntime, type BrowserRuntime } from './runtime.js';
 
 const roots: string[] = [];
@@ -39,17 +40,17 @@ function makeEnvironment(port: number) {
   writeFileSync(config, JSON.stringify({ version: 1, environment: {
     CHROMIUM_CDP_ADDRESS: '127.0.0.1', CHROMIUM_CDP_PORT: String(port),
   } }));
-  return {
-    root,
-    socket: join(root, 'browser.sock'),
-    env: {
-      ...process.env,
-      DISCLAUDE_BROWSER_SOCKET: join(root, 'browser.sock'),
-      DISCLAUDE_CHROMIUM_CONFIG: config,
-      // Legacy direct-CDP configuration must not override the deployed service config.
-      BU_CDP_URL: 'http://127.0.0.1:1',
-    } as NodeJS.ProcessEnv,
+  const env = {
+    ...process.env,
+    DISCLAUDE_CONFIG_PATH: join(root, 'disclaude.yaml'),
+    XDG_RUNTIME_DIR: root,
+    // A legacy user value must not control the service-owned transport.
+    DISCLAUDE_BROWSER_SOCKET: join(root, 'user-configured.sock'),
+    DISCLAUDE_CHROMIUM_CONFIG: config,
+    // Legacy direct-CDP configuration must not override the deployed service config.
+    BU_CDP_URL: 'http://127.0.0.1:1',
   };
+  return { root, socket: resolveBrowserSocketPath(env), env };
 }
 
 function mockCoordinator() {
@@ -63,7 +64,53 @@ function mockCoordinator() {
 
 describe('in-process browser coordinator lifecycle', () => {
   it('does nothing when coordinated browser access is not configured', async () => {
-    expect(await startBrowserRuntime({})).toBeUndefined();
+    expect(await startBrowserRuntime({ DISCLAUDE_CHROMIUM_CONFIG: '/missing/chromium-cdp.json' })).toBeUndefined();
+  });
+
+  it('ignores and clears a legacy socket value when no deployed CDP exists', async () => {
+    vi.stubEnv('DISCLAUDE_CHROMIUM_CONFIG', '/missing/chromium-cdp.json');
+    vi.stubEnv('BU_CDP_URL', '');
+    vi.stubEnv('DISCLAUDE_BROWSER_SOCKET', '/tmp/user-configured-browser.sock');
+
+    expect(await startBrowserRuntime(process.env)).toBeUndefined();
+    expect(process.env.DISCLAUDE_BROWSER_SOCKET).toBeUndefined();
+  });
+
+  it('reuses a service-provided deployed CDP endpoint when no local config is mounted', async () => {
+    const endpoint = await cdpEndpoint();
+    const root = mkdtempSync(join(tmpdir(), 'browser-runtime-deployed-endpoint-'));
+    roots.push(root);
+    const env = {
+      ...process.env,
+      DISCLAIMUDE_CONFIG_PATH: join(root, 'disclaude.yaml'),
+      DISCLAIMUDE_CHROMIUM_CONFIG: join(root, 'missing-chromium-cdp.json'),
+      XDG_RUNTIME_DIR: root,
+      BU_CDP_URL: endpoint.endpoint,
+    };
+    const admin = {
+      ws: {},
+      closed: new Promise<void>(() => {}),
+      call: vi.fn((method: string) => method === 'Target.createTarget'
+        ? Promise.resolve({ targetId: 'deployed-target' })
+        : Promise.reject(new Error(`Unexpected CDP method: ${method}`))),
+      close: vi.fn(() => Promise.resolve()),
+    };
+    const coordinator = mockCoordinator() as unknown as import('./coordinator.mjs').Coordinator;
+    const connectBrowser = vi.fn(() => Promise.resolve(admin));
+    const createCoordinator = vi.fn(() => coordinator);
+
+    try {
+      expect(hasChromiumCdpConfiguration(env)).toBe(true);
+      const runtime = await startBrowserCoordinator({ env, cwd: root, connectBrowser, createCoordinator });
+      runtimes.push(runtime);
+      expect(connectBrowser).toHaveBeenCalledOnce();
+      expect(createCoordinator).toHaveBeenCalledOnce();
+      await runtime.stop();
+      runtimes.splice(runtimes.indexOf(runtime), 1);
+      expect(admin.close).toHaveBeenCalledOnce();
+    } finally {
+      await new Promise<void>(resolve => endpoint.server.close(() => resolve()));
+    }
   });
 
   it('attaches to the installed CDP, serves the IPC socket in-process, and owns shutdown', async () => {
@@ -107,7 +154,8 @@ describe('in-process browser coordinator lifecycle', () => {
       expect(existsSync(socket)).toBe(true);
       expect(existsSync(`${socket}.lock`)).toBe(true);
 
-      const launcher = readFileSync(join(root, 'bin', 'browser-use'), 'utf8');
+      const launcherPath = join(dirname(socket), 'bin', 'browser-use');
+      const launcher = readFileSync(launcherPath, 'utf8');
       expect(launcher).toContain('/browser-control/client.mjs');
       expect(launcher).not.toContain('/experiments/');
 
@@ -122,6 +170,8 @@ describe('in-process browser coordinator lifecycle', () => {
       expect(coordinator.close).toHaveBeenCalledOnce();
       expect(existsSync(socket)).toBe(false);
       expect(existsSync(`${socket}.lock`)).toBe(false);
+      expect(existsSync(launcherPath)).toBe(false);
+      expect(existsSync(dirname(socket))).toBe(false);
       expect((await fetch(`${endpoint.endpoint}/json/version`)).ok).toBe(true);
     } finally {
       await new Promise<void>(resolve => endpoint.server.close(() => resolve()));
@@ -131,6 +181,7 @@ describe('in-process browser coordinator lifecycle', () => {
   it('does not replace an IPC lock owned by a live process', async () => {
     const endpoint = await cdpEndpoint();
     const { socket, env } = makeEnvironment(endpoint.port);
+    mkdirSync(dirname(socket), { recursive: true, mode: 0o700 });
     writeFileSync(`${socket}.lock`, JSON.stringify({ pid: process.pid, instance: 'existing' }));
 
     try {

@@ -274,8 +274,8 @@ export interface PreflightResult {
 
 /**
  * Fail-fast checks an operator can act on (mirrors the bench's requiredEnv
- * style). Verifies the live-only configuration (IPC socket, model credentials) plus
- * workspace sanity — so a misconfigured run dies in seconds with a precise
+ * style). Verifies the derived IPC endpoint, model credentials, and workspace
+ * sanity — so a misconfigured run dies in seconds with a precise
  * message instead of a 10-minute agent hang.
  */
 export function preflight(config: HarnessConfig): PreflightResult {
@@ -284,7 +284,7 @@ export function preflight(config: HarnessConfig): PreflightResult {
     problems.push('missing model API key (set ANTHROPIC_API_KEY or pass --api-key)');
   }
   if (!config.browserSocket) {
-    problems.push('missing browser IPC socket (set DISCLAUDE_BROWSER_SOCKET)');
+    problems.push('missing internal browser IPC endpoint; verify the Disclaude service runtime');
   }
   if (!existsSync(config.workspaceDir)) {
     problems.push(`workspace dir does not exist: ${config.workspaceDir}`);

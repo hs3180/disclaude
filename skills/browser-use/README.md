@@ -1,10 +1,10 @@
 # Browser automation in disclaude
 
 Agents use the `browser-use` skill and pipe Python scripts to the configured CLI.
-In coordinated mode, the task environment supplies `DISCLAUDE_BROWSER_SOCKET`;
-the IPC adapter is resolved relative to the socket and added to PATH. The
-coordinator queues callers and owns connection recovery. It reuses upstream
-browser-use helpers and harness execution.
+In coordinated mode, Disclaude derives the private IPC endpoint and supplies a
+socket-relative launcher to agent subprocesses; users do not configure either
+value. The coordinator queues callers and owns connection recovery. It reuses
+upstream browser-use helpers and harness execution.
 
 Do not inject Chromium endpoints into agent environments or tell agents to reload
 or launch daemons. An unavailable socket is an explicit failure, without a direct

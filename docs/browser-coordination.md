@@ -47,33 +47,31 @@ port from the existing Chromium configuration. Also make the validated
 browser-use 0.13.10 / browser-harness 0.1.13 Python environment available as
 `python3` in the Disclaude service's `PATH`.
 
-Add these settings to the service configuration's `env` section (absolute paths):
+No browser socket setting or socket-directory setup is required. The Disclaude
+service derives a private Unix-domain socket path from its runtime identity,
+creates its parent directory with mode 0700, and injects the endpoint only into
+its agent subprocesses. The path stays within the platform's 95-byte Unix socket
+limit.
 
-```yaml
-env:
-  DISCLAUDE_BROWSER_SOCKET: /absolute/private/browser.sock
-```
-
-Create the socket parent directory with mode 0700. Unix socket paths are limited
-to 95 bytes. The coordinator has no Chromium binary, profile, headless, Python,
-or direct-CDP URL settings. Those belong to the independently deployed browser
-service; Disclaude reads its persisted CDP endpoint and attaches to it.
+The coordinator has no Chromium binary, profile, headless, Python, or
+agent-visible direct-CDP URL settings. Those belong to the independently
+deployed browser service. Disclaude prefers its persisted CDP endpoint and can
+reuse an endpoint already supplied to the service deployment when no config
+file is mounted.
 
 `disclaude start --config ...` waits for browser readiness before starting agents.
-After readiness it creates a private `browser-use` launcher at
-`<socket-directory>/bin/browser-use`. Harness environment construction derives
-that directory from `DISCLAUDE_BROWSER_SOCKET` after task/provider merges,
-puts it first in PATH, and removes direct CDP/daemon configuration. The skill
-helper also derives and invokes the absolute socket-relative launcher, so a
-tool shell cannot select an upstream CLI by rewriting PATH; no separate
-launcher-path setting is needed. The helper requires the service-provided socket
-and fails closed if the service or launcher is unavailable. Do not point it to
-the upstream Python CLI or remove the null-runtime guards. No manual agent PATH
-modification or experiment command is needed. If the coordinator becomes
-unavailable, browser calls fail explicitly; they do not fall back to direct CDP
-or spawn an independent daemon.
+After readiness it creates a private `browser-use` launcher beside the internal
+socket. Harness environment construction derives that directory after
+task/provider merges, puts it first in PATH, and removes direct CDP/daemon
+configuration. The skill helper invokes the absolute socket-relative launcher,
+so a tool shell cannot select an upstream CLI by rewriting PATH; users do not
+configure the socket or launcher path. Do not point it to the upstream Python
+CLI or remove the null-runtime guards. No manual agent PATH modification or
+experiment command is needed. If the coordinator becomes unavailable, browser
+calls fail explicitly; they do not fall back to direct CDP or spawn an
+independent daemon.
 
-`disclaude browser status [--config PATH]` queries the configured coordinator.
+`disclaude browser status [--config PATH]` queries the service-owned coordinator.
 `GET /api/status` also reports its `browserIpc` state (`disabled`, `ready`, or
 `unavailable`) and the owning Disclaude service PID. Starting, stopping and
 restarting the coordinator is exclusively part of the Disclaude service
@@ -288,8 +286,7 @@ For an already prepared test deployment on the same host/shared filesystem:
 ```sh
 node scripts/test-browser-contention.mjs \
   --service-url http://127.0.0.1:PORT \
-  --workspace /absolute/test-workspace \
-  --socket /absolute/test-workspace/browser.sock
+  --workspace /absolute/test-workspace
 ```
 
 The managed page must already contain `<input id="value">`. The client does not

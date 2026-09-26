@@ -111,11 +111,9 @@ services:
       # NVIDIA_VISIBLE_DEVICES=0.
       - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
       - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
-      # Issue #4599 (part 1): BU_CDP_URL promoted into the tracked compose file
-      # so the browser-use skill works without an untracked override. Default
-      # points at the optional chromium compose service (#4496). Deliberately
-      # `${BU_CDP_URL-…}` (no colon): set BU_CDP_URL= (empty) in .env to pass an
-      # empty value through — browser-use treats empty as unset and self-launches.
+      # Service-only fallback for the already-deployed Chromium endpoint when
+      # no persisted Chromium config is mounted. The coordinator consumes it;
+      # browserAgentEnv strips it before any Agent process is launched.
       - BU_CDP_URL=${BU_CDP_URL-http://disclaude-chromium:${CDP_PORT:-9222}}
       # Persist Codex OAuth credentials and rollout sessions across recreation.
       - CODEX_HOME=/data/codex
@@ -206,10 +204,9 @@ services:
   # nginx cannot bind 0.0.0.0:$CDP_PORT — it would collide with Chrome's 127.0.0.1
   # listener on the same port). See docker/chromium-cdp-nginx.conf for the full rationale.
   #
-  # Consumed by the browser-use skill — the primary driver (the Playwright MCP
-  # server is removed, #4460; browser-use is the only browser surface): attach
-  # via BU_CDP_URL=http://disclaude-chromium:9222 (external tools.mcpServers
-  # config was removed in #4459 Scope 4). Other CDP drivers may attach too:
+  # The Disclaude service coordinator attaches to this existing CDP endpoint;
+  # Agents use the service-owned local IPC transport, never this URL. Other CDP
+  # drivers may also attach:
   #   chromium.connectOverCDP("http://disclaude-chromium:9222")   # Playwright library (external driver, "may also" tier)
   # Contract: docs/cdp-endpoint.md (#4496)
   chromium:

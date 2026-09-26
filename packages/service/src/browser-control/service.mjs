@@ -3,14 +3,26 @@ import { createServer } from 'node:net';
 import { randomUUID } from 'node:crypto';
 import {
   closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync,
-  readFileSync, rmSync, statSync, writeFileSync, writeSync, chmodSync,
+  readFileSync, rmSync, rmdirSync, statSync, writeFileSync, writeSync, chmodSync,
 } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import { homedir } from 'node:os';
 import { connect } from './cdp.mjs';
 import { Coordinator } from './coordinator.mjs';
+import { resolveBrowserSocketPath } from '@disclaude/core/browser-runtime';
 
 const isMissing = error => error?.code === 'ENOENT';
+
+function chromiumConfigPath(env) {
+  const path = env.DISCLAUDE_CHROMIUM_CONFIG ||
+    join(env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'disclaude', 'chromium-cdp.json');
+  if (!isAbsolute(path)) throw new Error('Chromium configuration path must be absolute');
+  return path;
+}
+
+export function hasChromiumCdpConfiguration(env = process.env) {
+  return existsSync(chromiumConfigPath(env)) || Boolean(env.BU_CDP_URL?.trim());
+}
 
 function processExists(pid) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return false;
@@ -57,13 +69,21 @@ function discardStaleSocket(socketPath) {
 }
 
 function resolveCdpEndpoint(env) {
-  const configPath = env.DISCLAUDE_CHROMIUM_CONFIG ||
-    join(env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'disclaude', 'chromium-cdp.json');
-  if (!isAbsolute(configPath)) throw new Error('Chromium configuration path must be absolute');
+  const configPath = chromiumConfigPath(env);
   let document;
   try { document = JSON.parse(readFileSync(configPath, 'utf8')); }
   catch (error) {
-    if (error?.code === 'ENOENT') document = { version: 1, environment: {} };
+    if (error?.code === 'ENOENT') {
+      const endpoint = env.BU_CDP_URL?.trim();
+      if (!endpoint) throw new Error('No installed Chromium CDP configuration or service-provided CDP endpoint is available');
+      let parsed;
+      try { parsed = new URL(endpoint); }
+      catch { throw new Error('The service-provided BU_CDP_URL is invalid'); }
+      if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname || parsed.username || parsed.password || parsed.search || parsed.hash) {
+        throw new Error('The service-provided BU_CDP_URL must be an HTTP(S) endpoint without credentials, query, or fragment');
+      }
+      return endpoint.replace(/\/+$/u, '');
+    }
     else throw new Error(`Cannot read the installed Chromium CDP configuration: ${error.message}`);
   }
   if (!document || typeof document !== 'object' || Array.isArray(document) || document.version !== 1 ||
@@ -90,9 +110,9 @@ export async function startBrowserCoordinator({
   connectBrowser = connect,
   createCoordinator = options => new Coordinator(options),
 } = {}) {
-  const socketPath = env.DISCLAUDE_BROWSER_SOCKET;
+  const socketPath = resolveBrowserSocketPath(env);
   if (!socketPath || !socketPath.startsWith('/') || Buffer.byteLength(socketPath) > 95) {
-    throw new Error('Set an absolute DISCLAUDE_BROWSER_SOCKET path (max 95 bytes)');
+    throw new Error('Browser coordinator received an invalid internal IPC path (max 95 bytes)');
   }
   const endpoint = resolveCdpEndpoint(env);
   const parsedEndpoint = new URL(endpoint);
@@ -146,7 +166,23 @@ export async function startBrowserCoordinator({
         if (!socketStat.isSocket()) throw new Error('Browser IPC path changed to a non-socket; preserving it and its ownership lock');
         rmSync(socketPath);
       } catch (error) { if (!isMissing(error)) throw error; }
+      const launcherPath = join(dirname(socketPath), 'bin', 'browser-use');
+      try {
+        const launcherStat = lstatSync(launcherPath);
+        if (!launcherStat.isFile() && !launcherStat.isSymbolicLink()) {
+          throw new Error('Browser launcher path changed to a non-file; preserving it');
+        }
+        rmSync(launcherPath);
+      } catch (error) { if (!isMissing(error)) throw error; }
       rmSync(lockPath);
+      for (const directory of [join(dirname(socketPath), 'bin'), dirname(socketPath)]) {
+        try { rmdirSync(directory); }
+        catch (error) {
+          if (!isMissing(error) && !['ENOTEMPTY', 'EEXIST'].includes(error.code)) {
+            emit({ type: 'socket-cleanup-error', error: error.message });
+          }
+        }
+      }
     } catch (error) { if (!isMissing(error)) emit({ type: 'socket-cleanup-error', error: error.message }); }
   };
 

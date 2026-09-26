@@ -37,6 +37,6 @@ describe('browser skill launcher', () => {
     const result = fixture().run({});
     expect(result.status).not.toBe(0);
     expect(result.stdout).toBe('');
-    expect(result.stderr).toMatch(/Browser IPC is not configured/);
+    expect(result.stderr).toMatch(/Browser coordinator is unavailable/);
   });
 });

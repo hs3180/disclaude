@@ -1,4 +1,5 @@
 import { connectBrowser } from './client.mjs';
+import { resolveBrowserSocketPath } from '@disclaude/core/browser-runtime';
 import { parseArgs } from 'node:util';
 const command = process.argv[2];
 function explicitConfigPath(args) {
@@ -43,8 +44,7 @@ try {
     throw new Error('Independent browser IPC startup is no longer supported; use disclaude start to own the coordinator lifecycle');
   } else if (command === 'status') {
     const env = await resolveBrowserEnvironment();
-    if (!env.DISCLAUDE_BROWSER_SOCKET) throw new Error('Browser IPC is not configured; set it in the Disclaude config or pass --config');
-    const client = await connectBrowser(env.DISCLAUDE_BROWSER_SOCKET);
+    const client = await connectBrowser(resolveBrowserSocketPath(env));
     let timer;
     try {
       const status = await Promise.race([client.request('status'), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Browser status timed out')), 3000); })]);

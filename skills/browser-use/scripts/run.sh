@@ -1,5 +1,5 @@
 #!/bin/sh
-# Keep Python on stdin; derive the host-owned launcher from the IPC socket.
+# Keep Python on stdin; derive the host-owned launcher from the service runtime.
 set -eu
 if [ -n "${DISCLAUDE_BROWSER_SOCKET:-}" ]; then
   case "$DISCLAUDE_BROWSER_SOCKET" in
@@ -16,5 +16,5 @@ if [ -n "${DISCLAUDE_BROWSER_SOCKET:-}" ]; then
   fi
   exec "$browser_launcher" "$@"
 fi
-echo 'Browser IPC is not configured: start the Disclaude service and use its managed browser launcher.' >&2
+echo 'Browser coordinator is unavailable: start Disclaude with the deployed Chromium CDP service configured.' >&2
 exit 1

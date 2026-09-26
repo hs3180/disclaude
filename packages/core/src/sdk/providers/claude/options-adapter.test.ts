@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { devNull } from 'node:os';
+import { browserAgentEnv } from '../../../utils/browser-env.js';
 import { adaptOptions, adaptInput } from './options-adapter.js';
 
 describe('adaptOptions', () => {
@@ -68,31 +68,30 @@ describe('adaptOptions', () => {
   });
 
   it('strips coordinator-private discovery at the Claude SDK boundary', () => {
-    const result = adaptOptions({ settingSources: [], env: {
+    const env = {
       DISCLAUDE_BROWSER_SOCKET: '/tmp/browser.sock', BU_CDP_URL: 'http://stale.invalid',
       BU_CDP_WS: 'ws://stale.invalid', PATH: '/ipc/bin:/usr/bin',
-    } });
-    expect(result.env).toEqual({ DISCLAUDE_BROWSER_SOCKET: '/tmp/browser.sock', PATH: '/tmp/bin:/ipc/bin:/usr/bin',
-      BH_RUNTIME_DIR: devNull, BH_TMP_DIR: devNull, BH_REQUIRE_EXISTING_DAEMON: '1' });
+    };
+    const result = adaptOptions({ settingSources: [], env });
+    expect(result.env).toEqual(browserAgentEnv(env));
+    expect(result.env).not.toHaveProperty('BU_CDP_URL');
+    expect(result.env).not.toHaveProperty('BU_CDP_WS');
   });
 
   it('should extract API key and base URL from env', () => {
+    const env = {
+      ANTHROPIC_API_KEY: 'sk-123',
+      ANTHROPIC_BASE_URL: 'https://api.example.com',
+      OTHER_VAR: 'value',
+    };
     const result = adaptOptions({
       settingSources: ['user', 'project', 'local'],
-      env: {
-        ANTHROPIC_API_KEY: 'sk-123',
-        ANTHROPIC_BASE_URL: 'https://api.example.com',
-        OTHER_VAR: 'value',
-      },
+      env,
     });
 
     expect(result.apiKey).toBe('sk-123');
     expect(result.apiBaseUrl).toBe('https://api.example.com');
-    expect(result.env).toEqual({
-      ANTHROPIC_API_KEY: 'sk-123',
-      ANTHROPIC_BASE_URL: 'https://api.example.com',
-      OTHER_VAR: 'value',
-    });
+    expect(result.env).toEqual(browserAgentEnv(env));
   });
 
   it('should pass through env without extracting when no API key', () => {

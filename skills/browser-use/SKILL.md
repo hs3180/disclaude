@@ -20,12 +20,13 @@ Use [the launcher helper](scripts/run.sh) for the examples below, replacing
 `/absolute/path/to/this-skill` with the directory containing this SKILL.md.
 Resolve that directory from the exact manifest link you read; do not assume a
 copy under `~/.agents/skills` or search the home directory for another copy.
-It preserves Python stdin and derives the absolute private launcher at
-`<socket-directory>/bin/browser-use` from `DISCLAUDE_BROWSER_SOCKET`. The service
-creates that launcher after coordinator readiness; no separate launcher-path
-setting is needed. Shell/tool PATH changes cannot select an upstream same-named
-CLI through this helper. Without the service-managed coordinator, the helper
-fails closed; it never falls back to an independent browser-use daemon.
+It preserves Python stdin and invokes the absolute private launcher supplied by
+the service runtime. Disclaude derives the IPC endpoint and launcher path
+internally; users do not configure a socket or launcher path. The service creates
+the launcher after coordinator readiness. Shell/tool PATH changes cannot select
+an upstream same-named CLI through this helper. Without the service-managed
+coordinator, the helper fails closed; it never falls back to an independent
+browser-use daemon.
 
 A missing/non-executable socket-relative launcher is a service setup failure.
 Report it; do not search release directories, install another CLI or guess an

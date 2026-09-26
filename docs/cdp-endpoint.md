@@ -66,11 +66,14 @@ Agents use the private IPC launcher and socket from
 Skill is intentionally written around that launcher; it does not configure or
 start an upstream daemon itself.
 
-An existing-browser deployment may keep `BU_CDP_URL` in the **service-only**
-configuration. That value is consumed by the coordinator and must not cross the
-Agent environment boundary. If the coordinator is unavailable, browser calls
-fail explicitly; they do not fall back to direct CDP, self-launch an upstream
-daemon, or replay an unknown operation.
+The coordinator prefers the endpoint saved by the installed Chromium service.
+For deployments that already provide `BU_CDP_URL` to the Disclaude service
+(such as the Docker Compose Chromium service), it can reuse that deployed
+endpoint when no saved config is mounted. The URL remains service-only and is
+never passed to an Agent; Agents connect through the service-derived local IPC
+endpoint. If the coordinator is unavailable, browser calls fail explicitly;
+they do not fall back to direct CDP, self-launch an upstream daemon, or replay
+an unknown operation.
 
 ## Sandbox policy (Scope-4)
 
@@ -105,11 +108,11 @@ Current, explicit tradeoff recorded here:
 
 ## Agent-level e2e harness (#4602)
 
-The Agent-level harness uses the same coordinated IPC path as production. Run
-it only with `DISCLAUDE_BROWSER_SOCKET`; the private launcher is resolved relative
-to the socket automatically. It does not accept a CDP URL or expose a browser
-port to the Agent. Its failure case overrides one disposable IPC socket and
-verifies an explicit broker error.
+The Agent-level harness uses the same service-derived IPC path as production.
+No browser socket setting is required; the private launcher is supplied by the
+service runtime. It does not accept a CDP URL or expose a browser port to the
+Agent. Its failure case overrides the service-injected internal endpoint for one
+invocation and verifies an explicit coordinator connection error.
 The assertion core is unit-tested in CI
 (`packages/service/src/testing/browser-use-e2e.test.ts`).
 

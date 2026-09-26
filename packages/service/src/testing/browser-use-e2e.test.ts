@@ -200,7 +200,7 @@ describe('preflight', () => {
     expect(verdict.ok).toBe(false);
     expect(verdict.problems).toHaveLength(3);
     expect(verdict.problems.some((p) => p.includes('API key'))).toBe(true);
-    expect(verdict.problems.some((p) => p.includes('IPC socket'))).toBe(true);
+    expect(verdict.problems.some((p) => p.includes('internal browser IPC endpoint'))).toBe(true);
     expect(verdict.problems.some((p) => p.includes('workspace'))).toBe(true);
   });
 });

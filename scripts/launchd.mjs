@@ -503,7 +503,7 @@ export function resolveChromiumPort() {
  * digest. Binding explicitly to one predictable address avoids that.
  *
  * Overflow from keeping IPv6: Chrome sometimes also binds [::1]; consumers
- * must use the single advertised address (see BU_CDP_URL in the plist).
+ * must use the single advertised address recorded in the Chromium config.
  *
  * @returns {string} address
  */
@@ -719,8 +719,6 @@ ${programArgs.map((a) => `    <string>${xmlEscape(a)}</string>`).join('\n')}
     <string>${xmlEscape(process.env.PATH ?? '')}</string>
     <key>HOME</key>
     <string>${homedir()}</string>
-    <key>BU_CDP_URL</key>
-    <string>${buildCdpUrl}</string>
     <key>CHROMIUM_CDP_PROFILE_DIR</key>
     <string>${xmlEscape(profileDir)}</string>
     <key>CHROMIUM_CDP_PORT</key>
@@ -747,7 +745,7 @@ ${programArgs.map((a) => `    <string>${xmlEscape(a)}</string>`).join('\n')}
   replaceChromiumFile(CR_PLIST_PATH, Buffer.from(plist));
   console.log(`Plist generated: ${CR_PLIST_PATH}`);
   console.log(`  Chrome: ${chromeBin}`);
-  console.log(`  CDP endpoint: ${buildCdpUrl} (BU_CDP_URL injected for browser-use skill)`);
+  console.log(`  CDP endpoint: ${buildCdpUrl} (saved to the installed Chromium config)`);
   console.log(`  Profile (persistent): ${profileDir}`);
   console.log(
     `  Mode: ${headless ? 'headless' : 'headed'} (CHROMIUM_CDP_HEADED=1 for a visible window)`

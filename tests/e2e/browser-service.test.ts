@@ -7,7 +7,7 @@ import { delimiter, dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
-import { browserAgentEnv } from '../../packages/core/src/utils/browser-env.js';
+import { browserAgentEnv, resolveBrowserSocketPath } from '../../packages/core/src/utils/browser-env.js';
 import { ClaudeSDKProvider } from '../../packages/core/src/sdk/providers/claude/provider.js';
 import { PiAgentProvider } from '../../packages/core/src/sdk/providers/pi/provider.js';
 import { CodexAgentProvider } from '../../packages/core/src/sdk/providers/codex/provider.js';
@@ -82,7 +82,7 @@ describe('user starts Disclaude and coordinates an already deployed browser', ()
   it.skipIf(!enabled)('runs the product IPC entry, hands over shared page state, then shuts down and restarts', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dc-browser-e2e-'));
     console.info('BROWSER_SERVICE_TEST_ROOT', root);
-    const socket = join(root, 'browser.sock');
+    let socket = '';
     const config = join(root, 'config.json');
     const profile = join(root, 'profile');
     const chromiumConfig = join(root, 'chromium-cdp.json');
@@ -107,11 +107,14 @@ describe('user starts Disclaude and coordinates an already deployed browser', ()
       throw error;
     }
     const browserPython = process.env.DISCLAUDE_E2E_BROWSER_PYTHON!;
+    const runtimeDirectory = join(root, 'runtime');
+    await mkdir(runtimeDirectory, { recursive: true, mode: 0o700 });
     const env: NodeJS.ProcessEnv = { ...process.env, DISCLAUDE_CONFIG_PATH: config, LOCKFILE_PATH: join(root, 'service.pid'),
       PATH: [dirname(browserPython), process.env.PATH || ''].filter(Boolean).join(delimiter),
-      DISCLAUDE_BROWSER_SOCKET: socket,
+      XDG_RUNTIME_DIR: runtimeDirectory,
       DISCLAUDE_CHROMIUM_CONFIG: chromiumConfig,
     };
+    socket = resolveBrowserSocketPath(env);
     const executable = resolve('bin/disclaude.js');
     const callers = new Set<ReturnType<typeof spawn>>();
     const crashDescendants = new Set<number>();
@@ -203,9 +206,13 @@ describe('user starts Disclaude and coordinates an already deployed browser', ()
         // An unavailable IPC service must not execute Python through an upstream
         // daemon, even when one invocation carries stale direct-CDP settings.
         const bypassMarker = join(root, 'bypass-marker');
-        await expect(run(`open(${JSON.stringify(bypassMarker)}, 'w').write('bypassed')\n`, {
-          ...taskEnv, DISCLAUDE_BROWSER_SOCKET: join(root, 'missing.sock'),
+        const missingCoordinatorEnv = browserAgentEnv({
+          ...taskEnv,
+          DISCLAUDE_CONFIG_PATH: join(root, 'missing-config.yaml'),
           BU_CDP_URL: 'http://127.0.0.1:9222',
+        });
+        await expect(run(`open(${JSON.stringify(bypassMarker)}, 'w').write('bypassed')\n`, {
+          ...missingCoordinatorEnv,
         })).rejects.toThrow(/ENOENT|connect|socket/i);
         await expect(access(bypassMarker)).rejects.toThrow();
         expect(await run("print(js(\"document.querySelector('#value').value\"))\n")).toContain('handoff');
@@ -316,13 +323,18 @@ describe('user starts Disclaude and coordinates an already deployed browser', ()
           const descendant = Number(await readFile(descendantFile, 'utf8'));
           crashDescendants.add(descendant);
           const ownership = JSON.parse(await readFile(socket + '.lock', 'utf8')) as { pid: number };
-          expect(ownership.pid).toBe(child.pid);
+          const apiStatus = await fetch(new URL('/api/status', serviceUrl)).then(response => response.json()) as {
+            browserIpc?: { pid?: number };
+          };
+          expect(ownership.pid).toBe(apiStatus.browserIpc?.pid);
           process.kill(ownership.pid, 'SIGKILL');
           // The coordinator shares the service PID. Its worker group must clean
           // itself up on IPC disconnect, while the separately deployed browser
           // remains alive and keeps owning its profile.
-          await Promise.race([exited, delay(5000, undefined, { ref: false })]);
-          expect(child.signalCode).toBe('SIGKILL');
+          const wrapperExitCode = await Promise.race([exited, delay(5000, 'timeout', { ref: false })]);
+          expect(wrapperExitCode).not.toBe('timeout');
+          expect(wrapperExitCode).not.toBeNull();
+          expect(child.exitCode).not.toBeNull();
           serviceCrashed = true;
           expect(await active).toBe('interrupted');
           const descendantAlive = (): boolean => { try { process.kill(descendant, 0); return true; } catch { return false; } };

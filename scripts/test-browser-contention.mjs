@@ -7,11 +7,12 @@ import { randomUUID } from 'node:crypto';
 import { spawn, execFile } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseArgs, promisify } from 'node:util';
+import { browserAgentEnv } from '@disclaude/core/browser-runtime';
 
 const { values } = parseArgs({ options: Object.fromEntries(
-  ['service-url', 'workspace', 'socket'].map(key => [key, { type: 'string' }]),
+  ['service-url', 'workspace'].map(key => [key, { type: 'string' }]),
 ) });
-for (const key of ['service-url', 'workspace', 'socket']) { assert(values[key], `Required: --${key}`); }
+for (const key of ['service-url', 'workspace']) { assert(values[key], `Required: --${key}`); }
 const base = new URL(values['service-url']);
 assert(['http:', 'https:'].includes(base.protocol), 'Expected an HTTP service URL');
 const root = resolve(values.workspace), id = randomUUID();
@@ -23,14 +24,14 @@ const settledChats = new Map();
 const started = Date.now();
 let failed = false, completed = false, queueWaitMs;
 const execAsync = promisify(execFile);
+const browserEnv = browserAgentEnv(process.env);
 const exists = file => access(file).then(() => true, error => {
   if (error.code === 'ENOENT') { return false; }
   throw error;
 });
 async function browserStatus() {
-  const statusEnv = { ...process.env, DISCLAUDE_BROWSER_SOCKET: values.socket };
   const { stdout } = await execAsync(process.execPath, [resolve('bin/disclaude.js'), 'browser', 'status'],
-    { env: statusEnv, cwd: root, timeout: 5000 });
+    { env: browserEnv, cwd: root, timeout: 5000 });
   return JSON.parse(stdout);
 }
 async function waitFor(check, description) {
@@ -72,7 +73,7 @@ function start(script, label) {
   return promise;
 }
 async function readBrowser() {
-  const env = { ...process.env, DISCLAUDE_BROWSER_SOCKET: values.socket };
+  const env = { ...browserEnv };
   delete env.BU_CDP_URL; delete env.BU_CDP_WS; delete env.CHROMIUM_CDP_PORT;
   const child = spawn(join(root, 'bin', 'browser-use'), [], { cwd: root, env, stdio: ['pipe', 'pipe', 'pipe'] });
   let stdout = '', stderr = '', timedOut = false;
