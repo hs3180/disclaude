@@ -43,4 +43,4 @@ The process runs only after a matching submission. Its stdout/stderr are suppres
 
 Forms expire after five minutes. Reissuing for the same actor/chat, channel shutdown or restart revokes pending requests. Another actor or chat cannot use the binding, and replay cannot rerun the workflow. Different actors/chats have independent requests. Request definitions live only in memory. Expiry or revocation of a pending form does not roll back a workflow that has already received input; the workflow must finish within its execution timeout. Process-group cleanup is resource management, not an OS sandbox.
 
-Programmatic injection through `FeishuChannelConfig.privateInput` remains supported for existing callers. It is optional and is not the mechanism agents use to define workflows. #4973's broader task-grant contract remains separate.
+Programmatic injection through `FeishuChannelConfig.privateInput` remains supported for existing callers. It is optional and is not the mechanism agents use to define workflows; broader task-grant authorization is a separate concern.

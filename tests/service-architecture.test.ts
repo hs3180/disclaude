@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 
-describe('single service public contract (#4924)', () => {
+describe('single service public contract', () => {
   it('exports only the unified executable and service workspace', () => {
     const root = JSON.parse(readFileSync('package.json', 'utf8'));
     const lock = JSON.parse(readFileSync('package-lock.json', 'utf8'));
@@ -53,9 +53,9 @@ describe('single service public contract (#4924)', () => {
   it('keeps release-facing Agent browser guidance on the IPC path', () => {
     const readme = readFileSync('README.md', 'utf8');
     const endpoint = readFileSync('docs/cdp-endpoint.md', 'utf8');
-    expect(readme).toContain('Browser on Headless Hosts (coordinated service)');
+    expect(readme).toContain('[Browser coordination](docs/browser-coordination.md)');
     expect(endpoint).toContain('## Current Agent boundary');
-    expect(endpoint).toContain('browser-use Skill or Agent configuration guide');
+    expect(endpoint).toContain('private IPC launcher');
     expect(endpoint).not.toContain('### Pointing drivers at the endpoint');
     expect(endpoint).not.toContain('## Skill ↔ CDP configuration contract');
     expect(endpoint).not.toContain('BU_CDP_URL=http://disclaude-chromium:9222 browser-use');

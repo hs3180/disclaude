@@ -33,7 +33,7 @@ Anthropic 兼容地址（以 `/anthropic` 结尾）。请勿将真实 key 写入
 
 - 原生 Bash、Read、Write、Edit 工具使用 query 的 cwd 和环境；工具名称保持
   disclaude 的现有命名。声明式工具选择控制这些原生工具的枚举。
-- inline 工具沿用现有适配器；stdio/HTTP MCP 不在 pi 的支持范围内（#4417）。
+- inline 工具沿用现有适配器；stdio/HTTP MCP 不在 pi 的支持范围内。
 - 每个 query 独立创建 Agent；同一输入流支持多轮，取消会中止该查询。
   不承诺跨进程恢复原生会话。
 - 工具调用仍经过已有的 `beforeToolCall` / `disallowedTools` 名称拒绝门。
@@ -44,10 +44,3 @@ Anthropic 兼容地址（以 `/anthropic` 结尾）。请勿将真实 key 写入
   这不是对模型实际容量的声明；零计价字段也不是免费声明，当前不提供可信费用统计。
 - Claude 的设置文件、插件和权限交互不自动迁移到 pi；本页不声称实现了
   Claude Code 的全部功能。
-
-## 真实验收
-
-2026-09-10 使用用户指定的 `deepseek-v4.1-flash-expires-on-0910`，通过
-Anthropic Messages 协议跑通 pi Agent 的回复、原生文件工具与读回、多轮随机
-标记记忆、工具调用时取消、取消后新 query。该段只描述当时的 provider
-级验证，不替代当前版本的真实产品验收。
