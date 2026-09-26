@@ -63,17 +63,18 @@ service environment and omit the managed binary/profile; shutdown preserves that
 external browser.
 
 `disclaude start --config ...` waits for browser readiness before starting agents.
-After readiness it creates a private `browser-use` launcher next to the socket.
-Harness environment construction exposes its absolute directory as
-`DISCLAUDE_BROWSER_BIN`, puts it first in PATH after task/provider merges, and
-removes direct CDP/daemon configuration. The browser-use skill launcher helper
-uses the absolute directory so a tool shell cannot select an upstream CLI by
-rewriting PATH. The browser-use skill helper requires the service-provided
-socket and absolute launcher; it fails closed when either is missing. Do not
-point it to the upstream Python CLI or remove the null-runtime guards. No manual
-agent PATH modification or experiment command is needed. If the broker exits,
-browser calls fail explicitly and the service logs the failure; they do not
-fall back to direct CDP or spawn an independent daemon.
+After readiness it creates a private `browser-use` launcher at
+`<socket-directory>/bin/browser-use`. Harness environment construction derives
+that directory from `DISCLAUDE_BROWSER_SOCKET` after task/provider merges,
+puts it first in PATH, and removes direct CDP/daemon configuration. The skill
+helper also derives and invokes the absolute socket-relative launcher, so a
+tool shell cannot select an upstream CLI by rewriting PATH; no separate
+launcher-path setting is needed. The helper requires the service-provided socket
+and fails closed if the service or launcher is unavailable. Do not point it to
+the upstream Python CLI or remove the null-runtime guards. No manual agent PATH
+modification or experiment command is needed. If the broker exits, browser calls
+fail explicitly and the service logs the failure; they do not fall back to
+direct CDP or spawn an independent daemon.
 
 `disclaude browser status [--config PATH]` queries the configured coordinator.
 `GET /api/status` also reports its `browserIpc` state (`disabled`, `ready`, or

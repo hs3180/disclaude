@@ -2,7 +2,7 @@
 import { createServer } from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, openSync, closeSync, writeSync, rmSync, statSync, chmodSync, appendFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { dirname } from 'node:path';
 import { connect } from './cdp.mjs';
 import { launchBrowser } from './managed-browser.mjs';
 import { Coordinator } from './coordinator.mjs';
@@ -14,12 +14,11 @@ if (process.env.DISCLAUDE_BROWSER_SUPERVISED !== '1') {
 const socketPath = process.env.DISCLAUDE_BROWSER_SOCKET;
 let endpoint = process.env.BU_CDP_URL;
 const python = process.env.DISCLAUDE_BROWSER_PYTHON || 'python3';
-const cwd = resolve(process.env.DISCLAUDE_BROWSER_WORKSPACE || process.cwd());
+const cwd = process.cwd();
 if (!socketPath || !socketPath.startsWith('/') || Buffer.byteLength(socketPath) > 95) throw new Error('Set an absolute DISCLAUDE_BROWSER_SOCKET path (max 95 bytes)');
 if (endpoint && process.env.DISCLAUDE_CHROMIUM_BINARY) throw new Error('Choose an existing endpoint or managed Chromium, not both');
 mkdirSync(dirname(socketPath), { recursive: true, mode: 0o700 });
 if ((statSync(dirname(socketPath)).mode & 0o077) !== 0) throw new Error('Socket parent directory must be private (0700)');
-if (!statSync(cwd).isDirectory()) throw new Error('Browser workspace must be a directory');
 const lock = openSync(socketPath + '.lock', 'wx', 0o600);
 writeSync(lock, JSON.stringify({ pid: process.pid, instance: process.env.DISCLAUDE_BROWSER_INSTANCE || randomUUID() }));
 closeSync(lock);

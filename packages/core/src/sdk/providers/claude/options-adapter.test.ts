@@ -72,7 +72,7 @@ describe('adaptOptions', () => {
       DISCLAUDE_BROWSER_SOCKET: '/tmp/browser.sock', BU_CDP_URL: 'http://stale.invalid',
       BU_CDP_WS: 'ws://stale.invalid', PATH: '/ipc/bin:/usr/bin',
     } });
-    expect(result.env).toEqual({ DISCLAUDE_BROWSER_SOCKET: '/tmp/browser.sock', PATH: '/ipc/bin:/usr/bin',
+    expect(result.env).toEqual({ DISCLAUDE_BROWSER_SOCKET: '/tmp/browser.sock', PATH: '/tmp/bin:/ipc/bin:/usr/bin',
       BH_RUNTIME_DIR: devNull, BH_TMP_DIR: devNull, BH_REQUIRE_EXISTING_DAEMON: '1' });
   });
 

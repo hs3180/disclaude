@@ -63,7 +63,6 @@ describe('user starts Disclaude and shares its managed browser', () => {
       DISCLAUDE_BROWSER_PYTHON: process.env.DISCLAUDE_E2E_BROWSER_PYTHON,
       DISCLAUDE_CHROMIUM_BINARY: process.env.DISCLAUDE_E2E_CHROMIUM,
       DISCLAUDE_CHROMIUM_PROFILE: join(root, 'profile'), DISCLAUDE_CHROMIUM_HEADLESS: '1',
-      DISCLAUDE_BROWSER_WORKSPACE: root,
     };
     delete env.DISCLAUDE_BROWSER_TARGET;
     env.DISCLAUDE_BROWSER_EVENTS = join(root, 'browser-events.ndjson');
@@ -108,7 +107,7 @@ describe('user starts Disclaude and shares its managed browser', () => {
         expect(output).toContain('HTTP API server started on');
         const status = await exec(process.execPath, [executable, 'browser', 'status'], { env, cwd: root, timeout: 5000 });
         expect(JSON.parse(status.stdout).state).toBe('idle');
-        const taskEnv = browserAgentEnv({ ...env, DISCLAUDE_BROWSER_BIN: join(root, 'bin'), BU_CDP_URL: 'http://stale.invalid:9223', BU_CDP_WS: 'ws://stale.invalid' });
+        const taskEnv = browserAgentEnv({ ...env, BU_CDP_URL: 'http://stale.invalid:9223', BU_CDP_WS: 'ws://stale.invalid' });
         // A wrong upstream executable must fail before reaching a default daemon.
         const rejectUpstream = () => expect(exec(process.env.DISCLAUDE_E2E_BROWSER_PYTHON!,
           ['-c', 'from browser_harness.run import main; main()'], { env: taskEnv, cwd: root, timeout: 10_000 }))

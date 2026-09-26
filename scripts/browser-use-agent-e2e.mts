@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /** Agent-level browser validation using the configured coordinated IPC entry point.
- * Set DISCLAUDE_BROWSER_SOCKET and a PATH selecting the IPC browser-use adapter,
+ * Set DISCLAUDE_BROWSER_SOCKET; the IPC adapter is resolved relative to it,
  * then run: npx tsx scripts/browser-use-agent-e2e.mts --workspace <dir>
  * A model API key is required. No Chromium endpoint is forwarded to the agent.
  */

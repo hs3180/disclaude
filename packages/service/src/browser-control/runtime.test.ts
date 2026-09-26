@@ -46,12 +46,14 @@ describe('managed browser lifecycle', () => {
     await expect(startBrowserRuntime({ DISCLAUDE_BROWSER_MODE: 'coordinated', DISCLAUDE_BROWSER_SOCKET: '/tmp/b.sock',
       BU_CDP_URL: 'http://127.0.0.1:1', DISCLAUDE_CHROMIUM_BINARY: '/browser' })).rejects.toThrow('either');
   });
-  it('publishes the installed client only after matching readiness and stops the owned process', async () => {
+  it('creates the socket-relative client only after matching readiness and stops the owned process', async () => {
     const { root, env, entry } = fixture('process.send({ready:true,socket:process.env.DISCLAUDE_BROWSER_SOCKET}); setInterval(()=>{},1000);');
     const pending = startBrowserRuntime(env, undefined, entry);
+    expect(existsSync(join(root, 'bin/browser-use'))).toBe(false);
     expect(env.DISCLAUDE_BROWSER_BIN).toBeUndefined();
     const runtime = (await pending)!; runtimes.push(runtime);
-    expect(env.DISCLAUDE_BROWSER_BIN).toBe(join(root, 'bin'));
+    expect(env.DISCLAUDE_BROWSER_BIN).toBeUndefined();
+    expect(existsSync(join(root, 'bin/browser-use'))).toBe(true);
     const launcher = readFileSync(join(root, 'bin/browser-use'), 'utf8');
     expect(launcher).toContain('/browser-control/client.mjs');
     expect(launcher).not.toContain('/experiments/');
@@ -111,6 +113,6 @@ describe('managed browser lifecycle', () => {
     expect(unavailable).toContain('coordinator exited');
     expect(unavailable).toContain('"code":2');
     expect(unavailable).toContain('fixture broker failure');
-    expect(env.DISCLAUDE_BROWSER_BIN).toBeDefined();
+    expect(env.DISCLAUDE_BROWSER_BIN).toBeUndefined();
   });
 });

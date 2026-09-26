@@ -1,25 +1,29 @@
-import { delimiter } from 'node:path';
+import { delimiter, dirname, isAbsolute, join } from 'node:path';
 import { devNull } from 'node:os';
 /** Keep transport discovery private to the coordinator in coordinated mode.
  * This is cooperative routing, not a same-user security boundary.
  * Call after all provider/task environment merges, immediately before spawning.
  */
 export function browserAgentEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  if (!env.DISCLAUDE_BROWSER_SOCKET) {
-    if (env.DISCLAUDE_BROWSER_MODE === 'coordinated' || env.DISCLAUDE_BROWSER_BIN) {
+  const socket = env.DISCLAUDE_BROWSER_SOCKET;
+  if (!socket) {
+    if (env.DISCLAUDE_BROWSER_MODE === 'coordinated') {
       throw new Error('Coordinated browser environment is missing its IPC socket; refusing direct browser fallback');
     }
     return env;
   }
-  const result = { ...env };
-  if (env.DISCLAUDE_BROWSER_BIN) {
-    result.PATH = [env.DISCLAUDE_BROWSER_BIN, ...(env.PATH ?? '').split(delimiter).filter(p => p && p !== env.DISCLAUDE_BROWSER_BIN)].join(delimiter);
+  if (!isAbsolute(socket)) {
+    throw new Error('Coordinated browser environment requires an absolute IPC socket; refusing direct browser fallback');
   }
+  const result = { ...env };
+  const launcherDir = join(dirname(socket), 'bin');
+  result.PATH = [launcherDir, ...(env.PATH ?? '').split(delimiter).filter(p => p && p !== launcherDir)].join(delimiter);
   for (const key of Object.keys(result)) {
     if (
       key.startsWith('BU_CDP_') ||
       key.startsWith('CHROMIUM_CDP_') ||
       key.startsWith('DISCLAUDE_CHROMIUM_') ||
+      (key.startsWith('DISCLAUDE_BROWSER_') && key !== 'DISCLAUDE_BROWSER_SOCKET') ||
       [
         'BU_AUTOSPAWN',
         'BU_NAME',
@@ -28,12 +32,6 @@ export function browserAgentEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.Pr
         'BH_RUNTIME_DIR_SHARED',
         'BH_TMP_DIR_SHARED',
         'BH_REQUIRE_EXISTING_DAEMON',
-        'DISCLAUDE_BROWSER_TARGET',
-        'DISCLAUDE_BROWSER_PYTHON',
-        'DISCLAUDE_BROWSER_EVENTS',
-        'DISCLAUDE_BROWSER_WORKSPACE',
-        'DISCLAUDE_BROWSER_MODE',
-        'DISCLAUDE_BROWSER_SUPERVISED',
       ].includes(key)
     ) {
       delete result[key];

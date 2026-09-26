@@ -11,6 +11,7 @@ describe('coordinated browser environment', () => {
       BU_CDP_WS: 'ws://configured.invalid',
       CHROMIUM_CDP_PORT: '9223',
       DISCLAUDE_CHROMIUM_BINARY: '/private/chromium',
+      DISCLAUDE_BROWSER_WORKSPACE: '/private/workspace',
       BH_RUNTIME_DIR: '/private/worker',
       NORMAL_SETTING: 'preserved',
     }));
@@ -27,6 +28,7 @@ describe('coordinated browser environment', () => {
     expect(env.BH_RUNTIME_DIR).toBe(devNull);
     expect(env.BH_TMP_DIR).toBe(devNull);
     expect(env.BH_REQUIRE_EXISTING_DAEMON).toBe('1');
+    expect(env).not.toHaveProperty('DISCLAUDE_BROWSER_WORKSPACE');
     expect(process.env.BU_CDP_URL).toBe('http://inherited.invalid:9223');
     expect(browserAgentEnv({ ...env, BU_CDP_URL: 'http://late-merge.invalid' })).not.toHaveProperty(
       'BU_CDP_URL'
@@ -34,9 +36,11 @@ describe('coordinated browser environment', () => {
   });
   it.each([
     { BU_CDP_URL: 'http://stale.invalid', DISCLAUDE_BROWSER_MODE: 'coordinated', DISCLAUDE_BROWSER_SOCKET: '' },
-    { DISCLAUDE_BROWSER_BIN: '/owned/bin', BU_CDP_WS: 'ws://stale.invalid' },
   ])('fails closed if a coordinated task loses its socket', env => {
     expect(() => browserAgentEnv(env)).toThrow('missing its IPC socket');
+  });
+  it('rejects relative IPC socket paths before deriving the launcher directory', () => {
+    expect(() => browserAgentEnv({ DISCLAUDE_BROWSER_SOCKET: 'relative/browser.sock' })).toThrow('absolute IPC socket');
   });
   it('preserves legacy service configuration outside coordinated mode', () => {
     const env = { BU_CDP_WS: 'ws://worker-private', PATH: '/bin' };
@@ -44,11 +48,11 @@ describe('coordinated browser environment', () => {
   });
 });
 
-it('selects the managed IPC launcher after a task overrides PATH', () => {
+it('prepends the socket-relative IPC launcher after a task overrides PATH', () => {
   const env = browserAgentEnv({ DISCLAUDE_BROWSER_SOCKET: '/tmp/browser.sock',
-    DISCLAUDE_BROWSER_BIN: '/owned/bin', PATH: '/upstream/bin:/owned/bin:/usr/bin',
+    DISCLAUDE_BROWSER_BIN: '/owned/bin', PATH: '/upstream/bin:/tmp/bin:/usr/bin',
     DISCLAUDE_BROWSER_MODE: 'coordinated', BU_CDP_URL: 'http://stale.invalid' });
-  expect(env.PATH).toBe('/owned/bin:/upstream/bin:/usr/bin');
+  expect(env.PATH).toBe('/tmp/bin:/upstream/bin:/usr/bin');
   expect(env).not.toHaveProperty('BU_CDP_URL');
   expect(env).not.toHaveProperty('DISCLAUDE_BROWSER_MODE');
 });

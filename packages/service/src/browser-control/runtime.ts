@@ -82,8 +82,7 @@ export async function startBrowserRuntime(
     writeFileSync(join(bin, 'browser-use'),
       `#!/usr/bin/env node\nimport(${JSON.stringify(new URL('./client.mjs', import.meta.url).href)}).then(m => m.main()).catch(e => { console.error(e.message); process.exitCode = 1; });\n`,
       { mode: 0o700 });
-    // Published only after broker readiness; every harness applies this after env merges.
-    env.DISCLAUDE_BROWSER_BIN = bin;
+    // The agent resolves this private adapter from the configured socket path.
     startup = false;
     return runtime;
   } catch (error) { await runtime.stop(); throw error; }

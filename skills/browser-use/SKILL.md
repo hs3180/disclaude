@@ -20,16 +20,16 @@ Use [the launcher helper](scripts/run.sh) for the examples below, replacing
 `/absolute/path/to/this-skill` with the directory containing this SKILL.md.
 Resolve that directory from the exact manifest link you read; do not assume a
 copy under `~/.agents/skills` or search the home directory for another copy.
-It preserves Python stdin and, when `DISCLAUDE_BROWSER_SOCKET` is set, invokes
-`$DISCLAUDE_BROWSER_BIN/browser-use` by absolute path. The service sets that
-variable after coordinator readiness. Shell/tool PATH changes cannot select an
-upstream same-named CLI through this helper. Without the service-managed
-coordinator, the helper fails closed; it never falls back to a standalone
-browser-use daemon.
+It preserves Python stdin and derives the absolute private launcher at
+`<socket-directory>/bin/browser-use` from `DISCLAUDE_BROWSER_SOCKET`. The service
+creates that launcher after coordinator readiness; no separate launcher-path
+setting is needed. Shell/tool PATH changes cannot select an upstream same-named
+CLI through this helper. Without the service-managed coordinator, the helper
+fails closed; it never falls back to an independent browser-use daemon.
 
-A missing/non-executable managed launcher is a configuration failure. Report it;
-do not search release directories, install another CLI or guess an alternate
-socket. `BH_RUNTIME_DIR=/dev/null` and `BH_TMP_DIR=/dev/null` deliberately block
+A missing/non-executable socket-relative launcher is a service setup failure.
+Report it; do not search release directories, install another CLI or guess an
+alternate socket. `BH_RUNTIME_DIR=/dev/null` and `BH_TMP_DIR=/dev/null` deliberately block
 accidental upstream daemon access: do not override or unset them to retry.
 A failure of this channel does not establish that all browser or desktop tools
 are unavailable. Computer Use remains available for an appropriate authorized

@@ -106,9 +106,10 @@ Current, explicit tradeoff recorded here:
 ## Agent-level e2e harness (#4602)
 
 The Agent-level harness uses the same coordinated IPC path as production. Run
-it only with `DISCLAUDE_BROWSER_SOCKET` and the private launcher configured; it
-does not accept a CDP URL or expose a browser port to the Agent. Its failure
-case overrides one disposable IPC socket and verifies an explicit broker error.
+it only with `DISCLAUDE_BROWSER_SOCKET`; the private launcher is resolved relative
+to the socket automatically. It does not accept a CDP URL or expose a browser
+port to the Agent. Its failure case overrides one disposable IPC socket and
+verifies an explicit broker error.
 The assertion core is unit-tested in CI
 (`packages/service/src/testing/browser-use-e2e.test.ts`).
 
