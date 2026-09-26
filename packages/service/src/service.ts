@@ -35,6 +35,7 @@ import { DebugGroupService, getDebugGroupService } from './services/debug-group-
 import { ChannelManager } from './channel-manager.js';
 import { InteractiveContextStore } from './interactive-context.js';
 import { AgentPoolMessageHandler } from './messaging/agent-pool-handler.js';
+import { startBrowserRuntime, type BrowserRuntime } from './browser-control/runtime.js';
 
 const logger = createLogger('DisclaudeService');
 
@@ -66,6 +67,8 @@ export interface ServiceOptions {
  */
 export class DisclaudeService extends EventEmitter {
   protected running = false;
+  private browserRuntime?: BrowserRuntime;
+  private browserRuntimeUnavailable = false;
 
   // Diagnostic process identity
   protected instanceId: string;
@@ -224,6 +227,15 @@ export class DisclaudeService extends EventEmitter {
     return this.channelManager.get(channelId);
   }
 
+  /** Return the status of the browser coordinator owned by this service. */
+  getBrowserIpcStatus(): { status: 'disabled' | 'ready' | 'unavailable'; pid?: number } {
+    if (!this.browserRuntime) { return { status: 'disabled' }; }
+    return {
+      status: this.browserRuntimeUnavailable ? 'unavailable' : 'ready',
+      pid: this.browserRuntime.pid,
+    };
+  }
+
   /**
    * Start the disclaude service.
    *
@@ -269,6 +281,12 @@ export class DisclaudeService extends EventEmitter {
       );
       throw error;
     }
+
+    this.browserRuntimeUnavailable = false;
+    this.browserRuntime = await startBrowserRuntime(process.env, message => {
+      this.browserRuntimeUnavailable = true;
+      logger.error(message);
+    });
 
     // Issue #4280 (part 5): no REST API server is started anymore — DisclaudeService
     // serves REST-only via the HttpApiServer wired in cli.ts (--api-port).
@@ -324,6 +342,10 @@ export class DisclaudeService extends EventEmitter {
 
     // Stop Scheduler (Issue #1377)
     await this.stopScheduler();
+
+    await this.browserRuntime?.stop();
+    this.browserRuntime = undefined;
+    this.browserRuntimeUnavailable = false;
 
     // Issue #4280 (part 5): no REST API server to stop — REST-only serving.
 

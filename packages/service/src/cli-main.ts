@@ -32,7 +32,6 @@ import {
   type SystemMessage,
   eventBus,
 } from '@disclaude/core';
-import { startBrowserRuntime, type BrowserRuntime } from './browser-control/runtime.js';
 import crypto from 'node:crypto';
 import { DisclaudeService } from './service.js';
 import { HttpApiServer } from './http-api-server.js';
@@ -471,8 +470,6 @@ export async function main(): Promise<void> {
   let isShuttingDown = false;
   // Issue #3857 Phase 2: HTTP API server reference for shutdown
   let httpApiServer: HttpApiServer | undefined;
-  let browserRuntime: BrowserRuntime | undefined;
-  let browserRuntimeUnavailable = false;
   const shutdown = async (): Promise<void> => {
     if (isShuttingDown) {
       return;
@@ -482,7 +479,6 @@ export async function main(): Promise<void> {
 
     try {
       agentPool.disposeAll();
-      await browserRuntime?.stop();
       await httpApiServer?.stop();
       await lifecycleManager.stopAll();
       await service.stop();
@@ -522,10 +518,6 @@ export async function main(): Promise<void> {
   });
 
   try {
-    browserRuntime = await startBrowserRuntime(process.env, message => {
-      browserRuntimeUnavailable = true;
-      logger.error(message);
-    });
     // Start DisclaudeService
     await service.start({ deferScheduler: true });
 
@@ -571,9 +563,7 @@ export async function main(): Promise<void> {
         apiToken: options.apiToken,
       });
       httpApiServer.setInstanceId(service.getInstanceId());
-      httpApiServer.setBrowserIpcStatusProvider(() => browserRuntime
-        ? { status: browserRuntimeUnavailable ? 'unavailable' : 'ready', pid: browserRuntime.pid }
-        : { status: 'disabled' });
+      httpApiServer.setBrowserIpcStatusProvider(() => service.getBrowserIpcStatus());
       const feishuChannel = channelManager.get('feishu') as
         | { getDeliveryHealth?: () => import('./health-types.js').DeliveryHealth }
         | undefined;
@@ -678,8 +668,8 @@ export async function main(): Promise<void> {
       process.on('SIGINT', () => void shutdownHttpApi());
     }
   } catch (error) {
-    await browserRuntime?.stop();
     await httpApiServer?.stop().catch(() => {});
+    await service.stop().catch(() => {});
     logger.error({ err: error }, 'Failed to start disclaude service');
     console.error(
       'Failed to start disclaude service:',

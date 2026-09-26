@@ -48,7 +48,6 @@ Add these settings to the service configuration's `env` section (absolute paths)
 
 ```yaml
 env:
-  DISCLAUDE_BROWSER_MODE: coordinated
   DISCLAUDE_BROWSER_SOCKET: /absolute/private/browser.sock
   DISCLAUDE_BROWSER_PYTHON: /absolute/path/to/python
   DISCLAUDE_CHROMIUM_BINARY: /Applications/Chromium.app/Contents/MacOS/Chromium

@@ -12,8 +12,8 @@ describe('loadConfigEnvironment', () => {
     const root = mkdtempSync(join(tmpdir(), 'config-env-'));
     roots.push(root);
     const file = join(root, 'config.yaml');
-    writeFileSync(file, 'workspace:\n  dir: /private/workspace\nenv:\n  DISCLAUDE_BROWSER_MODE: coordinated\n  PORT: 43\n');
-    expect(loadConfigEnvironment(file)).toEqual({ DISCLAUDE_BROWSER_MODE: 'coordinated', PORT: '43' });
+    writeFileSync(file, 'workspace:\n  dir: /private/workspace\nenv:\n  CUSTOM_RUNTIME_FLAG: enabled\n  PORT: 43\n');
+    expect(loadConfigEnvironment(file)).toEqual({ CUSTOM_RUNTIME_FLAG: 'enabled', PORT: '43' });
   });
 
   it('returns no values for a missing optional config', () => {

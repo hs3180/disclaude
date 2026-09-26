@@ -18,7 +18,7 @@ function fixture(code: string) {
   const file = join(root, 'broker.mjs');
   writeFileSync(file, code);
   const env: NodeJS.ProcessEnv = { ...process.env, BU_CDP_URL: 'http://127.0.0.1:1',
-    DISCLAUDE_CHROMIUM_BINARY: '', DISCLAUDE_BROWSER_MODE: 'coordinated',
+    DISCLAUDE_CHROMIUM_BINARY: '',
     DISCLAUDE_BROWSER_SOCKET: join(root, 'browser.sock') };
   delete env.DISCLAUDE_BROWSER_BIN;
   return { root, env, entry: pathToFileURL(file) };
@@ -43,7 +43,7 @@ describe('managed browser lifecycle', () => {
     expect(await startBrowserRuntime({})).toBeUndefined();
   });
   it('validates ambiguous browser ownership before launching a process', async () => {
-    await expect(startBrowserRuntime({ DISCLAUDE_BROWSER_MODE: 'coordinated', DISCLAUDE_BROWSER_SOCKET: '/tmp/b.sock',
+    await expect(startBrowserRuntime({ DISCLAUDE_BROWSER_SOCKET: '/tmp/b.sock',
       BU_CDP_URL: 'http://127.0.0.1:1', DISCLAUDE_CHROMIUM_BINARY: '/browser' })).rejects.toThrow('either');
   });
   it('creates the socket-relative client only after matching readiness and stops the owned process', async () => {

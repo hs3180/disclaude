@@ -14,10 +14,10 @@ export async function startBrowserRuntime(
   onUnavailable: (message: string) => void = () => {},
   entry = new URL('./service.mjs', import.meta.url),
 ): Promise<BrowserRuntime | undefined> {
-  if (env.DISCLAUDE_BROWSER_MODE !== 'coordinated') { return undefined; }
   const socket = env.DISCLAUDE_BROWSER_SOCKET;
-  if (!socket || !isAbsolute(socket) || Buffer.byteLength(socket) > 95) {
-    throw new Error('Coordinated browser mode requires an absolute DISCLAUDE_BROWSER_SOCKET (at most 95 bytes)');
+  if (!socket) { return undefined; }
+  if (!isAbsolute(socket) || Buffer.byteLength(socket) > 95) {
+    throw new Error('Browser IPC requires an absolute DISCLAUDE_BROWSER_SOCKET (at most 95 bytes)');
   }
   if (Boolean(env.BU_CDP_URL) === Boolean(env.DISCLAUDE_CHROMIUM_BINARY)) {
     throw new Error('Configure either an existing automation browser URL or a dedicated Chromium binary/profile');

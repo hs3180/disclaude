@@ -34,15 +34,10 @@ describe('coordinated browser environment', () => {
       'BU_CDP_URL'
     );
   });
-  it.each([
-    { BU_CDP_URL: 'http://stale.invalid', DISCLAUDE_BROWSER_MODE: 'coordinated', DISCLAUDE_BROWSER_SOCKET: '' },
-  ])('fails closed if a coordinated task loses its socket', env => {
-    expect(() => browserAgentEnv(env)).toThrow('missing its IPC socket');
-  });
   it('rejects relative IPC socket paths before deriving the launcher directory', () => {
     expect(() => browserAgentEnv({ DISCLAUDE_BROWSER_SOCKET: 'relative/browser.sock' })).toThrow('absolute IPC socket');
   });
-  it('preserves legacy service configuration outside coordinated mode', () => {
+  it('preserves the environment when browser IPC is not configured', () => {
     const env = { BU_CDP_WS: 'ws://worker-private', PATH: '/bin' };
     expect(browserAgentEnv(env)).toBe(env);
   });
@@ -51,8 +46,7 @@ describe('coordinated browser environment', () => {
 it('prepends the socket-relative IPC launcher after a task overrides PATH', () => {
   const env = browserAgentEnv({ DISCLAUDE_BROWSER_SOCKET: '/tmp/browser.sock',
     DISCLAUDE_BROWSER_BIN: '/owned/bin', PATH: '/upstream/bin:/tmp/bin:/usr/bin',
-    DISCLAUDE_BROWSER_MODE: 'coordinated', BU_CDP_URL: 'http://stale.invalid' });
+    BU_CDP_URL: 'http://stale.invalid' });
   expect(env.PATH).toBe('/tmp/bin:/upstream/bin:/usr/bin');
   expect(env).not.toHaveProperty('BU_CDP_URL');
-  expect(env).not.toHaveProperty('DISCLAUDE_BROWSER_MODE');
 });

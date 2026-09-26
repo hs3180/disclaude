@@ -6,12 +6,7 @@ import { devNull } from 'node:os';
  */
 export function browserAgentEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const socket = env.DISCLAUDE_BROWSER_SOCKET;
-  if (!socket) {
-    if (env.DISCLAUDE_BROWSER_MODE === 'coordinated') {
-      throw new Error('Coordinated browser environment is missing its IPC socket; refusing direct browser fallback');
-    }
-    return env;
-  }
+  if (!socket) { return env; }
   if (!isAbsolute(socket)) {
     throw new Error('Coordinated browser environment requires an absolute IPC socket; refusing direct browser fallback');
   }

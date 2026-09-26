@@ -19,7 +19,7 @@ import { Config } from '../../../config/index.js';
 export function adaptOptions(options: AgentQueryOptions): Record<string, unknown> {
   const sdkOptions: Record<string, unknown> = {};
   // Claude launches its own subprocess; this is its final environment boundary.
-  if (options.env || process.env.DISCLAUDE_BROWSER_SOCKET || process.env.DISCLAUDE_BROWSER_MODE === 'coordinated') {
+  if (options.env || process.env.DISCLAUDE_BROWSER_SOCKET) {
     sdkOptions.env = browserAgentEnv(options.env);
   }
 
