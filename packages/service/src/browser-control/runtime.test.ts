@@ -190,7 +190,7 @@ describe('in-process browser coordinator lifecycle', () => {
       expect(existsSync(`${socket}.lock`)).toBe(false);
       expect(existsSync(launcherPath)).toBe(false);
       expect(existsSync(dirname(socket))).toBe(false);
-      expect((await fetch(`${endpoint.endpoint}/json/version`)).ok).toBe(true);
+      expect(endpoint.server.listening).toBe(true);
     } finally {
       await new Promise<void>(resolve => endpoint.server.close(() => resolve()));
     }

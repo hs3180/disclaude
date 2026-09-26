@@ -327,7 +327,12 @@ describe('user starts Disclaude and coordinates an already deployed browser', ()
           const descendant = Number(await readFile(descendantFile, 'utf8'));
           crashDescendants.add(descendant);
           const ownership = JSON.parse(await readFile(socket + '.lock', 'utf8')) as { pid: number };
-          expect(ownership.pid).toBe(child?.pid);
+          const apiBase = output.match(/HTTP API server started on (http:\/\/127\.0\.0\.1:\d+)/u)?.[1];
+          if (!apiBase) { throw new Error('Disclaude did not report its HTTP API address'); }
+          const apiStatus = await fetch(new URL('/api/status', apiBase)).then(response => response.json()) as {
+            browserIpc?: { pid?: number };
+          };
+          expect(ownership.pid).toBe(apiStatus.browserIpc?.pid);
           process.kill(ownership.pid, 'SIGKILL');
           // The coordinator shares the service PID. Its worker group must clean
           // itself up on IPC disconnect, while the separately deployed browser
