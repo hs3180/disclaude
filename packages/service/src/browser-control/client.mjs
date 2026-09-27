@@ -1,80 +1,96 @@
-import { createConnection } from 'node:net';
-import { pathToFileURL } from 'node:url';
-import { resolveBrowserSocketPath } from '@disclaude/core/browser-runtime';
-export async function connectBrowser(socketPath) {
-  const socket = createConnection(socketPath);
-  socket.setEncoding('utf8');
-  let counter = 0, buffer = '', lastRequest;
-  const pending = new Map();
-  socket.on('data', chunk => {
-    buffer += chunk;
-    if (buffer.length > 3 * 1024 * 1024) { socket.destroy(new Error('IPC response too large')); return; }
-    let index;
-    while ((index = buffer.indexOf('\n')) >= 0) {
-      let message;
-      try { message = JSON.parse(buffer.slice(0, index)); } catch { socket.destroy(new Error('Invalid IPC response')); return; }
-      buffer = buffer.slice(index + 1);
-      const item = pending.get(message.id);
-      if (item) { pending.delete(message.id); clearTimeout(item.timer); message.error ? item.reject(new Error(message.error)) : item.resolve(message.result); }
-    }
-  });
-  const rejectAll = error => { for (const item of pending.values()) { clearTimeout(item.timer); item.reject(error); } pending.clear(); };
-  socket.on('error', error => rejectAll(new Error(`Browser IPC error; in-flight outcome may be unknown (pending=${pending.size}, lastRequest=${lastRequest ? `${lastRequest.id}:${lastRequest.method}` : 'none'}): ${error.message}`)));
-  socket.on('close', () => rejectAll(new Error(`Browser IPC closed; in-flight outcome may be unknown (pending=${pending.size}, lastRequest=${lastRequest ? `${lastRequest.id}:${lastRequest.method}` : 'none'})`)));
-  await new Promise((resolve, reject) => { socket.once('connect', resolve); socket.once('error', reject); });
-  return {
-    request(method, args = {}) {
-      if (socket.destroyed) return Promise.reject(new Error('Browser IPC closed'));
-      return new Promise((resolve, reject) => {
-        const id = ++counter;
-        const timer = setTimeout(() => { pending.delete(id); reject(new Error('Browser request timeout; outcome unknown')); socket.destroy(); }, 190000);
-        lastRequest = { id, method };
-        pending.set(id, { resolve, reject, timer }); socket.write(JSON.stringify({ id, method, ...args }) + '\n');
-      });
-    },
-    close() { socket.destroy(); },
+import { spawn } from 'node:child_process';
+import { closeSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { setTimeout as delay } from 'node:timers/promises';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { resolveBrowserRuntimePath } from '@disclaude/core/browser-runtime';
+import { openCommandLock, tryCommandLock, waitCommandLock } from './command-lock.mjs';
+import { processExists, readBrowserRuntime } from './service.mjs';
+
+/** One invocation, including its entire stdin script, is one exclusive unit. */
+export async function main(args = process.argv.slice(2), env = process.env) {
+  const path = env.DISCLAUDE_BROWSER_RUNTIME || resolveBrowserRuntimePath(env);
+  const runtime = readBrowserRuntime(path);
+  const fd = openCommandLock(join(runtime.directory, 'command.lock'));
+  const marker = join(runtime.directory, 'interrupted.json');
+  const waiting = new AbortController();
+  let child, interrupted, killTimer;
+  function interrupt(signal = 'SIGTERM') {
+    if (interrupted) return;
+    interrupted = signal;
+    waiting.abort();
+    const kill = how => {
+      if (child?.pid && child.exitCode === null && child.signalCode === null) {
+        try { process.kill(-child.pid, how); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+      }
+    };
+    kill(signal);
+    killTimer = setTimeout(() => kill('SIGKILL'), 2000);
+    killTimer.unref();
+  }
+  const sigint = () => interrupt('SIGINT'), sigterm = () => interrupt('SIGTERM');
+  process.on('SIGINT', sigint); process.on('SIGTERM', sigterm);
+  const verifyOwner = () => {
+    if (readBrowserRuntime(path).instance !== runtime.instance) throw new Error('Browser service restarted during this invocation');
   };
-}
-export async function main() {
-  if (process.argv.includes('--help')) {
-    console.log('Pipe a Python browser-use script on stdin. The configured IPC service queues, executes, and releases one operation segment.');
-    return;
-  }
-  if (process.argv.length > 2) throw new Error('Coordinated browser-use accepts stdin scripts only; daemon lifecycle is owned by the service');
-  let code = ''; for await (const chunk of process.stdin) { code += chunk; if (code.length > 1024 * 1024) throw new Error('Script too large'); }
-  if (!code.trim()) throw new Error('Pipe a Python browser-use script on stdin');
-  // The service computes this path before spawning the harness process and
-  // injects it after all task/provider env merges. A local re-derivation here
-  // could diverge if a provider changes HOME or XDG_RUNTIME_DIR.
-  const socketPath = process.env.DISCLAUDE_BROWSER_SOCKET || resolveBrowserSocketPath(process.env);
-  if (!socketPath.startsWith('/') || Buffer.byteLength(socketPath) > 95) {
-    throw new Error('The service supplied an invalid internal browser IPC endpoint');
-  }
-  const client = await connectBrowser(socketPath);
-  await withBrowserLease(client, async () => {
-    const result = await client.request('execute', { script: code, cwd: process.cwd() });
-    process.stdout.write(result.stdout); process.stderr.write(result.stderr);
-    process.exitCode = result.code === 0 ? 0 : 1;
-  }, () => process.stderr.write('Browser control queued\n'));
-}
-/** Maintain heartbeats only while owning/executing the segment, not while releasing it. */
-export async function withBrowserLease(client, execute, onQueued = () => {}) {
-  let heartbeat;
-  let releasing = false;
+  const ownerCheck = setInterval(() => {
+    try { verifyOwner(); } catch { interrupt(); }
+  }, 500);
+  ownerCheck.unref();
   try {
-    const initial = await client.request('acquire');
-    if (initial.state === 'queued') onQueued();
-    await client.request('wait');
-    heartbeat = setInterval(() => {
-      client.request('heartbeat').catch(() => { if (!releasing) client.close(); });
-    }, 1000);
-    await execute();
-    // Reclamation can outlast a heartbeat interval. A late heartbeat rejection
-    // no longer describes execution ownership and must not abort the release ack.
-    releasing = true;
-    clearInterval(heartbeat);
-    await client.request('release');
-  } finally { releasing = true; clearInterval(heartbeat); client.close(); }
+    if (!tryCommandLock(fd)) {
+      console.error('Waiting for another browser-use invocation to finish');
+      await waitCommandLock(fd, waiting.signal);
+    }
+    verifyOwner();
+    if (interrupted) throw new Error('Browser command cancelled before execution');
+    const reload = args.length === 1 && args[0] === '--reload';
+    if (existsSync(marker) && !reload) {
+      throw new Error('Previous browser-use invocation did not finish cleanly; its outcome may be unknown. Inspect the result, then run browser-use --reload to stop the shared daemon before continuing. Do not automatically replay the failed operation.');
+    }
+    // --reload is upstream's best-effort shutdown. Do not clear our guard if
+    // the previously recorded daemon is still alive (never signal a file PID).
+    let daemonPid;
+    if (reload) {
+      if (existsSync(marker)) daemonPid = JSON.parse(readFileSync(marker, 'utf8')).daemonPid;
+      const daemonRecord = join(runtime.directory, 'bu.pid');
+      if (existsSync(daemonRecord)) {
+        const record = JSON.parse(readFileSync(daemonRecord, 'utf8'));
+        daemonPid = record?.pid ?? record;
+        if (!Number.isSafeInteger(daemonPid) || daemonPid <= 0) throw new Error('Unrecognized upstream daemon ownership record; inspect it before recovery');
+      }
+    }
+    // An outcome guard, not a PID lock. A killed wrapper leaves it behind.
+    writeFileSync(marker, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), daemonPid }), { mode: 0o600 });
+    const cliEnv = { ...env };
+    for (const key of Object.keys(cliEnv)) {
+      if (key.startsWith('BU_CDP_') || key.startsWith('BH_') || ['BU_NAME', 'BU_AUTOSPAWN'].includes(key)) delete cliEnv[key];
+    }
+    Object.assign(cliEnv, runtime.browserEnv, { PATH: runtime.path });
+    const result = await new Promise((done, reject) => {
+      // The actual CLI inherits FD 3. No worker, shell or Python runner in between.
+      child = spawn(runtime.executable, args, { env: cliEnv, stdio: ['inherit', 'inherit', 'inherit', fd], detached: true });
+      child.once('error', reject);
+      child.once('exit', (code, signal) => done({ code, signal }));
+    });
+    if (result.code === 0 && !interrupted) {
+      if (reload && daemonPid) {
+        for (let attempt = 0; attempt < 20 && processExists(daemonPid); attempt++) await delay(100);
+        if (processExists(daemonPid)) throw new Error('Upstream daemon termination is unconfirmed; browser commands remain blocked');
+      }
+      rmSync(marker, { force: true });
+    }
+    return interrupted ? { code: null, signal: interrupted } : result;
+  } finally {
+    clearInterval(ownerCheck); clearTimeout(killTimer);
+    process.removeListener('SIGINT', sigint); process.removeListener('SIGTERM', sigterm);
+    closeSync(fd);
+  }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(error => { console.error(error.message); process.exitCode = 1; });
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().then(({ code, signal }) => {
+    if (signal) process.kill(process.pid, signal);
+    else process.exitCode = code ?? 1;
+  }).catch(error => { console.error(error.message); process.exitCode = 1; });
+}

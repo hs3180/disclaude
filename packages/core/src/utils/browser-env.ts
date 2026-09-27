@@ -2,70 +2,39 @@ import { createHash } from 'node:crypto';
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { devNull, homedir } from 'node:os';
 
-/** Resolve the service-owned IPC path; it is derived, never user-configured. */
-export function resolveBrowserSocketPath(env: NodeJS.ProcessEnv = process.env): string {
-  const configPath = env.DISCLAUDE_CONFIG_PATH
+/** Private service manifest, not a user-configurable IPC endpoint. */
+export function resolveBrowserRuntimePath(env: NodeJS.ProcessEnv = process.env): string {
+  const config = env.DISCLAUDE_CONFIG_PATH
     ? resolve(env.DISCLAUDE_CONFIG_PATH)
     : join(env.HOME || homedir(), '.disclaude', 'disclaude.config.yaml');
-  const owner = typeof process.getuid === 'function' ? String(process.getuid()) : env.USER || 'user';
-  const identity = createHash('sha256').update(`${owner}\0${configPath}`).digest('hex').slice(0, 16);
-  const runtimeRoot = env.XDG_RUNTIME_DIR && isAbsolute(env.XDG_RUNTIME_DIR) ? env.XDG_RUNTIME_DIR : '/tmp';
-  let socketPath = join(runtimeRoot, `dcb-${identity}`, 'browser.sock');
-  if (Buffer.byteLength(socketPath) > 95) { socketPath = join('/tmp', `dcb-${identity}`, 'browser.sock'); }
-  if (!isAbsolute(socketPath) || Buffer.byteLength(socketPath) > 95) {
-    throw new Error('Could not derive a valid private browser IPC path');
-  }
-  return socketPath;
+  const uid = process.getuid?.() ?? env.USER ?? 'user';
+  const id = createHash('sha256').update(`${uid}\0${config}`).digest('hex').slice(0, 16);
+  const root = env.XDG_RUNTIME_DIR && isAbsolute(env.XDG_RUNTIME_DIR) ? env.XDG_RUNTIME_DIR : '/tmp';
+  return join(root, `dcb-${id}`, 'runtime.json');
 }
 
-/** Keep transport discovery private to the coordinator in coordinated mode.
- * This is cooperative routing, not a same-user security boundary.
- * Call after all provider/task environment merges, immediately before spawning.
- * The socket environment value below is injected internally, not read as config.
- */
+/** Apply after provider/task env merges. Cooperative routing, not a sandbox. */
 export function browserAgentEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  // The service pins its endpoint before starting agents. Prefer that runtime
-  // value over HOME/XDG/config values a provider-specific env merge may change.
-  const socket = process.env.DISCLAUDE_BROWSER_SOCKET || resolveBrowserSocketPath(env);
+  const runtime = process.env.DISCLAUDE_BROWSER_RUNTIME || resolveBrowserRuntimePath(env);
+  const previous = env.DISCLAUDE_BROWSER_RUNTIME;
+  const previousBin = previous && isAbsolute(previous) ? join(dirname(previous), 'bin') : undefined;
+  const bin = join(dirname(runtime), 'bin');
   const result = { ...env };
-  const previousSocket = env.DISCLAUDE_BROWSER_SOCKET;
-  const previousLauncherDir = previousSocket && isAbsolute(previousSocket)
-    ? join(dirname(previousSocket), 'bin')
-    : undefined;
-  if (env.DISCLAUDE_CONFIG_PATH) {
-    // Agent commands run from the workspace; preserve the service's config
-    // identity if the original --config value was relative.
-    result.DISCLAUDE_CONFIG_PATH = resolve(env.DISCLAUDE_CONFIG_PATH);
-  }
-  result.DISCLAUDE_BROWSER_SOCKET = socket;
-  const launcherDir = join(dirname(socket), 'bin');
-  result.PATH = [launcherDir, ...(env.PATH ?? '').split(delimiter)
-    .filter(p => p && p !== launcherDir && p !== previousLauncherDir)].join(delimiter);
+  if (env.DISCLAUDE_CONFIG_PATH) { result.DISCLAUDE_CONFIG_PATH = resolve(env.DISCLAUDE_CONFIG_PATH); }
   for (const key of Object.keys(result)) {
-    if (
-      key.startsWith('BU_CDP_') ||
-      key.startsWith('CHROMIUM_CDP_') ||
-      key.startsWith('DISCLAUDE_CHROMIUM_') ||
-      (key.startsWith('DISCLAUDE_BROWSER_') && key !== 'DISCLAUDE_BROWSER_SOCKET') ||
-      [
-        'BU_AUTOSPAWN',
-        'BU_NAME',
-        'BH_RUNTIME_DIR',
-        'BH_TMP_DIR',
-        'BH_RUNTIME_DIR_SHARED',
-        'BH_TMP_DIR_SHARED',
-        'BH_REQUIRE_EXISTING_DAEMON',
-      ].includes(key)
-    ) {
+    if (key.startsWith('BU_CDP_') || key.startsWith('CHROMIUM_CDP_') ||
+        key.startsWith('DISCLAUDE_CHROMIUM_') || key.startsWith('DISCLAUDE_BROWSER_') ||
+        key.startsWith('BH_') || ['BU_AUTOSPAWN', 'BU_NAME'].includes(key)) {
       delete result[key];
     }
   }
-  // An accidentally selected upstream CLI must not discover the user's default
-  // daemon. The null device is never a directory, even after our broker exits;
-  // browser-harness fails before importing its runtime or auto-starting anything.
-  // The coordinator's Python harness supplies its own private runtime separately.
+  result.DISCLAUDE_BROWSER_RUNTIME = runtime;
+  // Reject accidentally selecting an absolute upstream CLI outside the wrapper.
+  // The wrapper replaces these guards with its browser-scoped upstream session.
   result.BH_RUNTIME_DIR = devNull;
   result.BH_TMP_DIR = devNull;
   result.BH_REQUIRE_EXISTING_DAEMON = '1';
+  result.PATH = [bin, ...(env.PATH ?? '').split(delimiter)
+    .filter(p => p && p !== bin && p !== previousBin)].join(delimiter);
   return result;
 }

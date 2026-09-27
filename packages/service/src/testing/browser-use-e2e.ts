@@ -1,6 +1,6 @@
 /**
  * Agent-level browser-use e2e harness — assertion + orchestration core
- * (Issue #4602 part 2, coordinated IPC channel).
+ * (Issue #4602 part 2, coordinated CLI channel).
  *
  * Part 1 (`scripts/browser-use-smoke.sh`, PR #4610) encoded the **CLI-level**
  * smoke matrix as a repeatable script: it pipes Python straight into the
@@ -9,16 +9,16 @@
  *
  *   agent auto-discovers the browser-use skill (no human naming it)
  *     → calls Bash per the SKILL.md contract (`browser-use <<'PY' … PY`)
- *     → requests control through the configured IPC adapter (no self-spawned Chrome)
+ *     → requests control through the configured CLI wrapper (no self-spawned Chrome)
  *     → `js()` injection returns structured results
  *     → screenshot artifact lands in the workspace, non-empty
- *     → IPC-unreachable fails loudly, never silently self-spawns
+ *     → runtime-unavailable fails loudly, never silently self-spawns
  *
  * This module implements that layer by instantiating a **real ChatAgent**
  * (`AgentFactory.createAgent`, the same one-shot entry the scheduler uses),
  * feeding it a prompt, and asserting on (a) the reply text the agent sends
  * back and (b) the artifacts it leaves in the workspace. A live run needs a
- * model credentials and a running coordinator, so the runner lives behind
+ * model credentials and a running Disclaude service, so the runner lives behind
  * `scripts/browser-use-agent-e2e.mts` for an operator shell — the same
  * tooling-first split as the Card Kit bench (#4398 / #4416 / #4454), where
  * the CI-testable half is the assertion logic itself (see
@@ -50,10 +50,10 @@ export interface E2ECheck {
 
 export const E2E_CHECKS: readonly E2ECheck[] = [
   { id: 'skill_discovery', label: 'agent used the browser-use skill unprompted (reply mentions the CLI call it ran)' },
-  { id: 'attach_no_self_spawn', label: 'attached via coordinated IPC; no self-spawned browser (agent-observed attach mode)' },
+  { id: 'attach_no_self_spawn', label: 'attached via coordinated CLI; no self-spawned browser (agent-observed attach mode)' },
   { id: 'js_round_trip', label: 'js() script injection returned the expected structured result' },
   { id: 'screenshot_artifact', label: 'screenshot artifact exists in workspace and is a non-empty PNG' },
-  { id: 'ipc_failure_explicit', label: 'IPC-unreachable path produced an explicit error, not a silent self-spawn fallback' },
+  { id: 'ipc_failure_explicit', label: 'runtime-unavailable path produced an explicit error, not a silent self-spawn fallback' },
 ] as const;
 
 /**
@@ -71,20 +71,20 @@ export const E2E_SCREENSHOT_RELATIVE_PATH = 'e2e/browser-shot.png';
  * The reply contract (final ```e2e-report block) gives the harness one stable
  * surface to assert on; without it every check would be prose-grepping.
  */
-export const AGENT_E2E_PROMPT = `Run this browser e2e checklist using whatever browser capability you have in this environment (use the configured coordinated IPC entry point; do NOT install or launch a browser or daemon yourself):
+export const AGENT_E2E_PROMPT = `Run this browser e2e checklist using whatever browser capability you have in this environment (use the configured coordinated CLI entry point; do NOT install or launch a browser or daemon yourself):
 
-1. Request browser control through the configured IPC entry point and open a new tab with this exact data URL:
+1. Request browser control through the configured CLI entry point and open a new tab with this exact data URL:
    data:text/html,<script>window.marker=42</script><h1 id="x">hello-agent-e2e</h1>
 2. In that tab, evaluate JavaScript that returns JSON.stringify({marker: window.marker, heading: document.getElementById('x').textContent}).
 3. Take a screenshot and save the PNG to the workspace at exactly: ${E2E_SCREENSHOT_RELATIVE_PATH} (create the parent directory first — the screenshot helper does not create it and will hang if missing).
-4. Test an unavailable coordinator by overriding DISCLAUDE_BROWSER_SOCKET for ONE CLI invocation to a nonexistent socket under a fresh temporary directory. Record the explicit connection error. Do not change the normal socket setting, restart the service, or attempt a direct browser connection. The next normal invocation must still work.
+4. Test an unavailable runtime by overriding DISCLAUDE_BROWSER_RUNTIME for ONE CLI invocation to a nonexistent manifest under a fresh temporary directory. Record the explicit runtime error. Do not change the normal runtime setting, restart the service, or attempt a direct browser connection. The next normal invocation must still work.
 
 Finish your reply with a fenced code block tagged e2e-report containing exactly these keys, one key=value per line:
 skill_discovery=<which skill or CLI you used to drive the browser>
 attach_no_self_spawn=<true if you used the coordinated entry point without launching a local browser; otherwise false plus what happened>
 js_round_trip=<the JSON string step 2 returned, or ERROR>
 screenshot_artifact=<the path you saved to, or ERROR>
-ipc_failure_explicit=<the IPC error text from step 4, or EMPTY if it silently succeeded>
+ipc_failure_explicit=<the runtime error text from step 4, or EMPTY if it silently succeeded>
 
 The e2e-report block must be the last thing in your reply.`;
 
@@ -253,7 +253,7 @@ export interface HarnessConfig {
   workspaceDir: string;
   /** Legacy operator-only endpoint; never forwarded to an agent. */
   cdpUrl?: string;
-  browserSocket?: string;
+  browserRuntimePath?: string;
   /** Model API key (ANTHROPIC_API_KEY or provider equivalent). */
   apiKey: string;
   agentBackend?: 'claude' | 'codex' | 'pi' | 'deepseek';
@@ -274,7 +274,7 @@ export interface PreflightResult {
 
 /**
  * Fail-fast checks an operator can act on (mirrors the bench's requiredEnv
- * style). Verifies the derived IPC endpoint, model credentials, and workspace
+ * style). Verifies the derived runtime manifest, model credentials, and workspace
  * sanity — so a misconfigured run dies in seconds with a precise
  * message instead of a 10-minute agent hang.
  */
@@ -283,8 +283,8 @@ export function preflight(config: HarnessConfig): PreflightResult {
   if (!config.apiKey && config.agentBackend !== 'codex' && config.agentBackend !== 'deepseek') {
     problems.push('missing model API key (set ANTHROPIC_API_KEY or pass --api-key)');
   }
-  if (!config.browserSocket) {
-    problems.push('missing internal browser IPC endpoint; verify the Disclaude service runtime');
+  if (!config.browserRuntimePath) {
+    problems.push('missing internal browser runtime manifest; verify the Disclaude service runtime');
   }
   if (!existsSync(config.workspaceDir)) {
     problems.push(`workspace dir does not exist: ${config.workspaceDir}`);

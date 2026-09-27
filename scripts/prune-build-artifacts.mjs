@@ -32,9 +32,9 @@ export function prunePackageArtifacts(packageDir) {
       if (entry.isDirectory()) {
         visit(output);
       } else if (entry.isFile()) {
-        const sourceStem = relative(dist, output).replace(/(?:\.d\.ts|\.js)(?:\.map)?$/, '');
+        const sourceStem = relative(dist, output).replace(/(?:\.d\.(?:ts|mts)|\.(?:js|mjs))(?:\.map)?$/, '');
         if (sourceStem === relative(dist, output)) continue;
-        if (['.ts', '.tsx', '.js', '.jsx'].some((ext) => existsSync(join(src, sourceStem + ext))))
+        if (['.ts', '.tsx', '.js', '.jsx', '.mjs'].some((ext) => existsSync(join(src, sourceStem + ext))))
           continue;
         unlinkSync(output);
         removed.push(output);

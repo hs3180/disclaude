@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { devNull } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { browserAgentEnv, resolveBrowserSocketPath } from './browser-env.js';
+import { browserAgentEnv, resolveBrowserRuntimePath } from './browser-env.js';
 import { buildSdkEnv } from './sdk.js';
 afterEach(() => vi.unstubAllEnvs());
 describe('coordinated browser environment', () => {
@@ -9,7 +9,7 @@ describe('coordinated browser environment', () => {
     vi.stubEnv('BU_CDP_URL', 'http://inherited.invalid:9223');
     const source = buildSdkEnv('test', undefined, {
       DISCLAUDE_CONFIG_PATH: '/tmp/disclaude-browser-env-test.yaml',
-      DISCLAUDE_BROWSER_SOCKET: '/tmp/user-configured.sock',
+      DISCLAUDE_BROWSER_RUNTIME: '/tmp/user-configured.sock',
       BU_CDP_WS: 'ws://configured.invalid',
       CHROMIUM_CDP_PORT: '9223',
       DISCLAUDE_CHROMIUM_BINARY: '/private/chromium',
@@ -17,8 +17,8 @@ describe('coordinated browser environment', () => {
       NORMAL_SETTING: 'preserved',
     });
     const env = browserAgentEnv(source);
-    expect(env.DISCLAUDE_BROWSER_SOCKET).toBe(resolveBrowserSocketPath(source));
-    expect(env.DISCLAUDE_BROWSER_SOCKET).not.toBe('/tmp/user-configured.sock');
+    expect(env.DISCLAUDE_BROWSER_RUNTIME).toBe(resolveBrowserRuntimePath(source));
+    expect(env.DISCLAUDE_BROWSER_RUNTIME).not.toBe('/tmp/user-configured.sock');
     expect(env.DISCLAUDE_CONFIG_PATH).toBe(resolve(source.DISCLAUDE_CONFIG_PATH!));
     for (const key of [
       'BU_CDP_URL',
@@ -37,46 +37,46 @@ describe('coordinated browser environment', () => {
       'BU_CDP_URL'
     );
   });
-  it('derives a private absolute IPC path even without a socket setting', () => {
+  it('derives a private absolute manifest path even without a socket setting', () => {
     const env = browserAgentEnv({ DISCLAUDE_CONFIG_PATH: '/tmp/disclaude-browser-env-relative.yaml' });
-    expect(env.DISCLAUDE_BROWSER_SOCKET).toBe(resolveBrowserSocketPath({
+    expect(env.DISCLAUDE_BROWSER_RUNTIME).toBe(resolveBrowserRuntimePath({
       DISCLAUDE_CONFIG_PATH: '/tmp/disclaude-browser-env-relative.yaml',
     }));
-    expect(env.DISCLAUDE_BROWSER_SOCKET?.startsWith('/')).toBe(true);
+    expect(env.DISCLAUDE_BROWSER_RUNTIME?.startsWith('/')).toBe(true);
   });
   it('injects the internal path and blocks direct browser discovery without user socket config', () => {
     const source = { BU_CDP_WS: 'ws://worker-private', PATH: '/bin' };
     const env = browserAgentEnv(source);
     expect(env).not.toBe(source);
-    expect(env.DISCLAUDE_BROWSER_SOCKET).toBe(resolveBrowserSocketPath(source));
+    expect(env.DISCLAUDE_BROWSER_RUNTIME).toBe(resolveBrowserRuntimePath(source));
     expect(env).not.toHaveProperty('BU_CDP_WS');
     expect(env.BH_RUNTIME_DIR).toBe(devNull);
   });
   it('keeps the service-pinned endpoint when provider env overrides runtime directories', () => {
-    vi.stubEnv('DISCLAUDE_BROWSER_SOCKET', '/tmp/service-owned-browser.sock');
+    vi.stubEnv('DISCLAUDE_BROWSER_RUNTIME', '/tmp/service-owned-runtime.json');
     const env = browserAgentEnv({
       DISCLAUDE_CONFIG_PATH: '/agent/config.yaml',
-      DISCLAUDE_BROWSER_SOCKET: '/tmp/user-configured.sock',
+      DISCLAUDE_BROWSER_RUNTIME: '/tmp/user-configured.sock',
       HOME: '/agent-home',
       XDG_RUNTIME_DIR: '/agent-runtime',
       PATH: '/usr/bin',
     });
-    expect(env.DISCLAUDE_BROWSER_SOCKET).toBe('/tmp/service-owned-browser.sock');
+    expect(env.DISCLAUDE_BROWSER_RUNTIME).toBe('/tmp/service-owned-runtime.json');
   });
 });
 
 it('prepends the automatically resolved launcher after a task overrides PATH', () => {
   const source = {
     DISCLAUDE_CONFIG_PATH: './disclaude-browser-path-test.yaml',
-    DISCLAUDE_BROWSER_SOCKET: '/tmp/user-configured.sock',
+    DISCLAUDE_BROWSER_RUNTIME: '/tmp/user-configured.sock',
     DISCLAUDE_BROWSER_BIN: '/owned/bin',
     PATH: '/upstream/bin:/tmp/bin:/usr/bin',
     BU_CDP_URL: 'http://stale.invalid',
   };
   const env = browserAgentEnv(source);
-  expect(env.PATH).toBe(`${join(dirname(resolveBrowserSocketPath(source)), 'bin')}:/upstream/bin:/usr/bin`);
+  expect(env.PATH).toBe(`${join(dirname(resolveBrowserRuntimePath(source)), 'bin')}:/upstream/bin:/usr/bin`);
   expect(env.DISCLAUDE_CONFIG_PATH).toBe(resolve(source.DISCLAUDE_CONFIG_PATH!));
-  expect(resolveBrowserSocketPath(env)).toBe(resolveBrowserSocketPath(source));
-  expect(env.DISCLAUDE_BROWSER_SOCKET).toBe(resolveBrowserSocketPath(source));
+  expect(resolveBrowserRuntimePath(env)).toBe(resolveBrowserRuntimePath(source));
+  expect(env.DISCLAUDE_BROWSER_RUNTIME).toBe(resolveBrowserRuntimePath(source));
   expect(env).not.toHaveProperty('BU_CDP_URL');
 });

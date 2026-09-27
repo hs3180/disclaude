@@ -49,7 +49,7 @@ async function verifyPackage() {
   for (const key of Object.keys(env)) {
     if (/^npm_config_/i.test(key)) delete env[key];
     if (
-      key === 'DISCLAUDE_BROWSER_SOCKET' ||
+      key === 'DISCLAUDE_BROWSER_RUNTIME' ||
       key === 'DISCLAUDE_CHROMIUM_CONFIG' ||
       key.startsWith('DISCLAUDE_CHROMIUM_') ||
       key.startsWith('CHROMIUM_CDP_') ||
@@ -129,7 +129,10 @@ async function verifyPackage() {
   assert(existsSync(join(installed, 'disclaude.config.example.yaml')));
   const cli = join(prefix, 'bin/disclaude');
   assert.equal(run(cli, ['--version']).trim(), `disclaude v${pkg.version}`);
-  assert.match(run(cli, ['browser', 'runtime', 'install', '--help']), /isolated Python environment/u);
+  assert.match(run(cli, ['browser', '--help']), /automatically serializes calls/u);
+  for (const removed of ['coordinator.mjs', 'harness-session.mjs', 'python-runtime.mjs']) {
+    assert(!existsSync(join(prefix, 'lib/node_modules/disclaude/packages/service/dist/browser-control', removed)), `Obsolete browser layer shipped: ${removed}`);
+  }
   assert.match(run(cli, ['start', '--help']), /Usage:/i);
   assert.match(run(cli, ['channel', '--help']), /Usage:/i);
   assert.match(run(cli, ['chromium-cdp', 'setup', '--help']), /--download/);

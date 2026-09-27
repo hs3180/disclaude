@@ -30,7 +30,7 @@ function makeConfig(overrides: Partial<HarnessConfig> = {}): HarnessConfig {
   return {
     chatId: 'e2e-test',
     workspaceDir: process.cwd(), // exists by definition
-    browserSocket: '/tmp/browser.sock',
+    browserRuntimePath: '/tmp/runtime.json',
     apiKey: 'sk-test',
     turnTimeoutMs: 1000,
     ...overrides,
@@ -46,7 +46,7 @@ function passingReport(shotPath: string): string {
     'attach_no_self_spawn=true',
     'js_round_trip={"marker":42,"heading":"hello-agent-e2e"}',
     `screenshot_artifact=${shotPath}`,
-    'ipc_failure_explicit=DISCLAUDE_BROWSER_SOCKET /tmp/missing-browser.sock: connection refused',
+    'ipc_failure_explicit=DISCLAUDE_BROWSER_RUNTIME /tmp/missing-runtime.json: connection refused',
     '```',
   ].join('\n');
 }
@@ -179,7 +179,7 @@ describe('AGENT_E2E_PROMPT contract', () => {
   });
 
   it('tests socket failure without injecting direct connection or daemon lifecycle instructions', () => {
-    expect(AGENT_E2E_PROMPT).toContain('DISCLAUDE_BROWSER_SOCKET');
+    expect(AGENT_E2E_PROMPT).toContain('DISCLAUDE_BROWSER_RUNTIME');
     expect(AGENT_E2E_PROMPT).not.toMatch(/BU_CDP_|--reload|127\.0\.0\.1:1/);
     expect(AGENT_E2E_PROMPT).toContain('next normal invocation must still work');
   });
@@ -195,12 +195,12 @@ describe('preflight', () => {
 
   it('reports each missing input separately', () => {
     const verdict = preflight(
-      makeConfig({ apiKey: '', browserSocket: '', workspaceDir: '/nonexistent-dir-xyz' }),
+      makeConfig({ apiKey: '', browserRuntimePath: '', workspaceDir: '/nonexistent-dir-xyz' }),
     );
     expect(verdict.ok).toBe(false);
     expect(verdict.problems).toHaveLength(3);
     expect(verdict.problems.some((p) => p.includes('API key'))).toBe(true);
-    expect(verdict.problems.some((p) => p.includes('internal browser IPC endpoint'))).toBe(true);
+    expect(verdict.problems.some((p) => p.includes('internal browser runtime manifest'))).toBe(true);
     expect(verdict.problems.some((p) => p.includes('workspace'))).toBe(true);
   });
 });

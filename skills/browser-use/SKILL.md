@@ -1,49 +1,40 @@
 ---
 name: browser-use
-description: "Browser tasks, scraping, screenshots and forms via browser-use. Pipe Python through the coordinator's IPC entry; it owns the persistent session and control handoff. Do not connect directly to CDP. Supports js() and cdp()."
+description: "Browser tasks, scraping, screenshots and forms through the coordinated browser-use CLI. One invocation is one exclusive unit on the shared browser. Supports Python helpers, js() and cdp()."
 argument-hint: "<piped Python via stdin, e.g. sh /absolute/path/to/this-skill/scripts/run.sh <<'PY' ... PY>"
 allowed-tools: [Bash, Read, Write]
 ---
 
 # Skill: browser-use (browser automation via Python-in-browser CLI)
 
-Drive a real browser by piping **Python** to the `browser-use` CLI. The configured coordinator owns the browser
-lifecycle and control handoff, keeps browser state across invocations, and reuses
-the upstream harness for execution. Your code only describes **what to do in the page**.
+Drive the deployed browser by piping **Python** to the upstream `browser-use` CLI.
+Disclaude automatically serializes calls; the upstream CLI maintains its persistent
+session. No acquire/release commands are needed.
 
-> Replaces the Playwright MCP skill pattern (`mcp__playwright__*`) per the reduce-MCP direction.
-> Tracked in [#4460](https://github.com/hs3180/disclaude/issues/4460).
+## One invocation, one exclusive unit
 
-## Coordinated IPC mode
+Use [the launcher helper](scripts/run.sh), resolving its absolute path from the
+SKILL.md you read. It preserves stdin and invokes Disclaude's wrapper even when a
+shell changes PATH. The wrapper waits for the shared browser lock, runs the original
+CLI, and releases control when that command exits. Users configure neither a
+coordinator socket nor a launcher path.
 
-Use [the launcher helper](scripts/run.sh) for the examples below, replacing
-`/absolute/path/to/this-skill` with the directory containing this SKILL.md.
-Resolve that directory from the exact manifest link you read; do not assume a
-copy under `~/.agents/skills` or search the home directory for another copy.
-It preserves Python stdin and invokes the absolute private launcher supplied by
-the service runtime. Disclaude derives the IPC endpoint and launcher path
-internally; users do not configure a socket or launcher path. The service creates
-the launcher after coordinator readiness. Shell/tool PATH changes cannot select
-an upstream same-named CLI through this helper. Without the service-managed
-coordinator, the helper fails closed; it never falls back to an independent
-browser-use daemon.
+Put dependent navigation, input and verification in **one script**. Between calls,
+another task may change the page: inspect current state before continuing.
+Tabs and login state persist; exclusivity does not roll back browser side effects.
 
-A missing/non-executable socket-relative launcher is a service setup failure.
-Report it; do not search release directories, install another CLI or guess an
-alternate socket. `BH_RUNTIME_DIR=/dev/null` and `BH_TMP_DIR=/dev/null` deliberately block
-accidental upstream daemon access: do not override or unset them to retry.
-A failure of this channel does not establish that all browser or desktop tools
-are unavailable. Computer Use remains available for an appropriate authorized
-alternative, without concurrently controlling the shared browser.
+A missing runtime/launcher is a service setup error; report it instead of bypassing
+coordination with an absolute upstream CLI or direct CDP connection. The task's
+`BH_RUNTIME_DIR=/dev/null` guard is replaced by the wrapper automatically; do not
+unset it. Computer Use can be an authorized alternative, but must not concurrently
+control this shared browser.
 
-Keep using Python scripts on stdin. One invocation is one
-operation segment: put dependent navigation, input and verification in the same
-script. The service queues control requests and owns daemon startup/recovery;
-do not call `--reload`, `--update` or start a separate browser daemon. Relative
-artifact paths use the calling task directory. Shared pages and login state may
-be visible to the next holder; this is expected. If the service is unavailable,
-report that condition instead of bypassing the coordinator with a direct CDP
-connection. Keychain access is not required for normal browser operation.
+After a failed/interrupted invocation, the outcome may be unknown. Do not
+automatically retry side effects. Inspect the error and result; when recovery is
+appropriate, the same helper accepts `--reload` to stop the upstream session under
+the same lock. Reload may close the daemon-owned tab. The next call creates a fresh
+session; no Chromium/profile reset is required. Do not start a second daemon manually.
+Relative artifact paths use the calling task directory.
 
 ## Quick start
 
@@ -55,13 +46,13 @@ PY
 ```
 
 - stdout is **whatever your Python prints** — `print()` is the result channel. Parse it directly.
-- Each invocation requests control of the **shared browser**. Tabs can survive handoff,
+- Each invocation exclusively uses the **shared browser**. Tabs can survive handoff,
   but another caller may have changed the page; inspect it before continuing.
 - Empty stdin is an error — always pipe code.
 - Read current link text and destinations before choosing a navigation selector;
   familiar sites can change their wording. Verify the destination after navigation.
 
-## Helper reference (CLI 3.0, browser-use 0.13.7)
+## Helper reference (CLI 3.0, validated with browser-use 0.13.10)
 
 | Intent | Helper |
 |---|---|
@@ -78,7 +69,7 @@ PY
 | tab management | `list_tabs()`, `switch_tab(target)`, `close_tab(target)` |
 
 Legacy pre-3.0 subcommands (`open`/`state`/`screenshot`/`eval`/`-c`/`--session`/`--cdp-url` …)
-are **removed**; the CLI prints a migration hint if used. Use the configured IPC entry point.
+are **removed**; the CLI prints a migration hint if used. Use the coordinated launcher.
 
 > ⚠️ **First navigation in a session is `new_tab(url)`, not `goto_url(url)`** (upstream SKILL.md is
 > emphatic about this). `goto_url` navigates an *already-open* tab; calling it before any tab exists
@@ -142,8 +133,6 @@ Then report the artifact path in your reply (or send it to the chat via the chan
 
 ## Environment
 
-In disclaude coordinated mode, the operator configures the IPC socket and the
-browser-use adapter on the task PATH. Use stdin scripts only. Browser startup,
-connection settings and recovery belong to the coordinator. If the socket is
-unavailable, report the error; do not start a daemon or connect directly.
-Chromium Keychain access is not required for normal browser operations.
+The service reads installed `chromium-cdp.json` first, with `BU_CDP_URL` as a
+service-side fallback, and finds the original CLI on its PATH. It does not choose
+Python, install a venv, launch Chromium, or require Keychain access.

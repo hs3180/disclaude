@@ -108,11 +108,11 @@ Current, explicit tradeoff recorded here:
 
 ## Agent-level e2e harness (#4602)
 
-The Agent-level harness uses the same service-derived IPC path as production.
-No browser socket setting is required; the private launcher is supplied by the
-service runtime. It does not accept a CDP URL or expose a browser port to the
-Agent. Its failure case overrides the service-injected internal endpoint for one
-invocation and verifies an explicit coordinator connection error.
+The Agent-level harness uses the same service-supplied CLI launcher as production.
+There is no Disclaude coordinator socket. The private manifest locates the installed
+upstream CLI and browser-scoped command lock. The failure case makes that manifest
+unavailable for one invocation and verifies an explicit error without bypassing
+coordination. See [the current contract](browser-coordination.md).
 The assertion core is unit-tested in CI
 (`packages/service/src/testing/browser-use-e2e.test.ts`).
 
@@ -123,7 +123,7 @@ npx tsx scripts/browser-use-agent-e2e.mts --workspace <workspace-dir>
 ## Related
 
 - #4496 — service endpoint contract; #4460 — browser-use Skill
-  (current Agent access is the coordinated IPC path)
+  (current Agent access is the automatically locked CLI)
 - #4151 nginx CDP proxy · #4164 host-scope CDP · #4099 healthcheck
 - Implementation files: `docker-compose.yml` (`chromium` service),
   `docker/chromium-cdp-nginx.conf`, `.env.example`

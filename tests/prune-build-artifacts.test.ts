@@ -18,6 +18,19 @@ afterEach(() => {
 });
 
 describe('obsolete TypeScript build artifacts', () => {
+  it('prunes removed browser MJS modules without packaging obsolete runtimes', () => {
+    const dir = fixture();
+    writeFileSync(join(dir, 'src/task/live.mjs'), 'export {};');
+    for (const name of ['python-runtime', 'harness-session', 'live']) {
+      for (const ext of ['.mjs', '.mjs.map', '.d.mts', '.d.mts.map']) {
+        writeFileSync(join(dir, 'dist/task', name + ext), 'generated');
+      }
+    }
+    expect(prunePackageArtifacts(dir)).toHaveLength(8);
+    expect(existsSync(join(dir, 'dist/task/live.mjs'))).toBe(true);
+    expect(existsSync(join(dir, 'dist/task/live.d.mts'))).toBe(true);
+  });
+
   it('removes deleted modules and tests while retaining live outputs and assets', () => {
     const dir = fixture();
     writeFileSync(join(dir, 'src/task/live.ts'), 'export {};');

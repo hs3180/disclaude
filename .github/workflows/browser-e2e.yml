@@ -56,20 +56,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Read pinned browser runtime versions
-        id: browser-runtime
-        run: |
-          node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"
-          import { BROWSER_PYTHON_REQUIREMENTS } from './packages/service/src/browser-control/python-runtime.mjs';
-          console.log(`browser_use=${BROWSER_PYTHON_REQUIREMENTS['browser-use']}`);
-          console.log(`browser_harness=${BROWSER_PYTHON_REQUIREMENTS['browser-harness']}`);
-          NODE
-      - name: Install real browser dependencies
+      - name: Install upstream CLI for the isolated test
         run: |
           python -m venv "$RUNNER_TEMP/browser-env"
-          "$RUNNER_TEMP/browser-env/bin/pip" install \
-            "browser-use==${{ steps.browser-runtime.outputs.browser_use }}" \
-            "browser-harness==${{ steps.browser-runtime.outputs.browser_harness }}"
+          "$RUNNER_TEMP/browser-env/bin/pip" install "browser-use==0.13.10" "browser-harness==0.1.13"
       - name: Run product CLI lifecycle and shared-browser E2E
         env:
           DISCLAUDE_E2E_BROWSER_STRESS: '1'
