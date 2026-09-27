@@ -8,8 +8,9 @@
 - [内部 HTTP API](designs/rest-ipc-design.md)：服务 API、鉴权和进程边界。
 - [空响应恢复](designs/empty-turn-session-reset-design.md)：何时重置会话、
   如何限制重试。
-- [浏览器协调](browser-coordination.md)与
-  [容器 CDP endpoint](cdp-endpoint.md)：Agent 访问边界和服务内部传输。
+- [浏览器控制](browser-coordination.md)与
+  [容器 CDP endpoint](cdp-endpoint.md)：CLI 调用互斥、Agent 访问边界和
+  服务内部传输；不需要独立 Disclaude broker/IPC 服务。
 - [CLI Skill 格式](skill-format-spec.md)与
   [共享 Skill 注册表](skills-registry.md)：技能接口、发现和优先级。
 - [CardKit 节流方法](feishu-cardkit-rate-limit-methodology.md)：当前测量

@@ -160,8 +160,10 @@ RUN pip3 install --no-cache-dir --break-system-packages ${PIP_INDEX_URL:+--index
 # System-wide (--break-system-packages) so the console scripts land in
 # /usr/local/bin (already on PATH) — no PATH patch via a compose override.
 # uvx and a Chromium binary are deliberately NOT installed: the supported
-# browser path is CDP attach (BU_CDP_URL → the chromium compose service,
-# #4496); `browser-use install` (self-launched Chromium) is not needed here.
+# browser path is the service-owned coordinator attaching to the separately
+# deployed Chromium CDP endpoint (persisted config or a service-only endpoint
+# supplied by deployment); `browser-use install` (self-launched Chromium) is not
+# needed here. The Python package is used by the coordinator's worker.
 # Image size cost: ~400 MB (browser-use + ~90 transitive deps, measured).
 RUN pip3 install --no-cache-dir --break-system-packages ${PIP_INDEX_URL:+--index-url $PIP_INDEX_URL} 'browser-use==0.13.8'
 

@@ -1,7 +1,8 @@
 // Keep this entry free of Config, logger and other runtime initialization.
-import { existsSync } from 'fs';
-import { dirname, resolve } from 'path';
-import { fileURLToPath } from 'url';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import * as yaml from 'js-yaml';
 
 export const EXPLICIT_CONFIG_PATH_ENV = 'DISCLAUDE_CONFIG_PATH';
 export function discoverConfigFile(): { path: string; exists: boolean } {
@@ -24,4 +25,17 @@ export function discoverConfigFile(): { path: string; exists: boolean } {
     }
   }
   return { path: '', exists: false };
+}
+
+/** Read only configured environment entries without initializing Config or its logger. */
+export function loadConfigEnvironment(filePath?: string): Record<string, string> {
+  const file = filePath ? resolve(filePath) : discoverConfigFile().path;
+  if (!file || !existsSync(file)) {return {};}
+  const parsed = yaml.load(readFileSync(file, 'utf8'));
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {return {};}
+  const environment = (parsed as { env?: unknown }).env;
+  if (!environment || typeof environment !== 'object' || Array.isArray(environment)) {return {};}
+  return Object.fromEntries(Object.entries(environment)
+    .filter(([, value]) => value !== undefined && value !== null)
+    .map(([key, value]) => [key, String(value)]));
 }

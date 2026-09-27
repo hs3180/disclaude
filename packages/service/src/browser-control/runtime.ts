@@ -1,90 +1,41 @@
-import { fork, type ChildProcess } from 'node:child_process';
-import { mkdirSync, writeFileSync, readFileSync, lstatSync, rmSync } from 'node:fs';
-import { randomUUID } from 'node:crypto';
-import { dirname, isAbsolute, join } from 'node:path';
+import { hasChromiumCdpConfiguration, startBrowserCoordinator } from './service.mjs';
+import { resolveBrowserSocketPath } from '@disclaude/core/browser-runtime';
 
 export interface BrowserRuntime {
   stop(): Promise<void>;
-  readonly pid: number | undefined;
+  /** The coordinator now shares the Disclaude service process. */
+  readonly pid: number;
+  readonly unavailable: boolean;
 }
 
-/** Fail startup before any agent can run if coordinated mode has no usable broker. */
+/** Start the coordinator in this process when a deployed Chromium CDP is configured. */
 export async function startBrowserRuntime(
   env: NodeJS.ProcessEnv = process.env,
   onUnavailable: (message: string) => void = () => {},
-  entry = new URL('./service.mjs', import.meta.url),
+  onEvent: (record: Record<string, unknown>) => void = () => {},
 ): Promise<BrowserRuntime | undefined> {
-  if (env.DISCLAUDE_BROWSER_MODE !== 'coordinated') { return undefined; }
-  const socket = env.DISCLAUDE_BROWSER_SOCKET;
-  if (!socket || !isAbsolute(socket) || Buffer.byteLength(socket) > 95) {
-    throw new Error('Coordinated browser mode requires an absolute DISCLAUDE_BROWSER_SOCKET (at most 95 bytes)');
+  if (!hasChromiumCdpConfiguration(env)) {
+    // Ignore legacy/user-provided socket values when the service has no CDP to coordinate.
+    if (env === process.env) { delete process.env.DISCLAUDE_BROWSER_SOCKET; }
+    return undefined;
   }
-  if (Boolean(env.BU_CDP_URL) === Boolean(env.DISCLAUDE_CHROMIUM_BINARY)) {
-    throw new Error('Configure either an existing automation browser URL or a dedicated Chromium binary/profile');
-  }
-  const instance = randomUUID();
-  // A separate group contains only this broker and its non-detached browser tree.
-  // Harness workers have their own groups and reclaim themselves on IPC disconnect.
-  const child: ChildProcess = fork(entry, [], { env: { ...env, DISCLAUDE_BROWSER_SUPERVISED: '1',
-    DISCLAUDE_BROWSER_INSTANCE: instance }, silent: true, detached: true });
-  child.once('exit', () => {
-    // Run on exit, not close: a descendant can keep inherited stdio open.
-    if (child.pid) { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* Group already gone. */ } }
-    try {
-      const owner = JSON.parse(readFileSync(`${socket  }.lock`, 'utf8')) as { pid?: number; instance?: string };
-      if (owner.pid !== child.pid || owner.instance !== instance) { return; }
-      try {
-        if (!lstatSync(socket).isSocket()) { return; }
-        rmSync(socket);
-      } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { return; } }
-      rmSync(`${socket  }.lock`);
-    } catch { /* Never remove missing, legacy, unreadable or foreign ownership. */ }
-  });
-  let stopping = false;
-  let startup = true;
-  let stderr = '';
-  const exited = new Promise<void>(resolve => child.once('close', () => resolve()));
-  child.stdout?.resume();
-  child.stderr?.on('data', (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(-4000); });
-  child.on('error', () => {});
-  child.on('close', (code, signal) => {
-    if (!stopping && !startup) {
-      onUnavailable(`Browser coordinator exited; browser requests will fail until the service is restarted. ${JSON.stringify({ code, signal, stderr: stderr.trim() })}`);
-    }
-  });
-  const runtime: BrowserRuntime = {
-    get pid() { return child.pid; },
+
+  const socketPath = resolveBrowserSocketPath(env);
+  const runtime = await startBrowserCoordinator({ env, onUnavailable, onEvent });
+  if (env !== process.env) { return runtime; }
+
+  // Internal runtime handoff for agent children; never a configuration input.
+  process.env.DISCLAUDE_BROWSER_SOCKET = socketPath;
+  return {
+    pid: runtime.pid,
+    get unavailable() { return runtime.unavailable; },
     async stop() {
-      stopping = true;
-      if (!child.pid) { return; }
-      if (child.exitCode !== null || child.signalCode !== null) { await exited; return; }
-      child.kill('SIGTERM');
-      const timer = setTimeout(() => child.kill('SIGKILL'), 15_000);
-      try { await exited; } finally { clearTimeout(timer); }
+      try { await runtime.stop(); }
+      finally {
+        if (process.env.DISCLAUDE_BROWSER_SOCKET === socketPath) {
+          delete process.env.DISCLAUDE_BROWSER_SOCKET;
+        }
+      }
     },
   };
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const cleanup = (): void => { clearTimeout(timer); child.off('message', message); child.off('error', fail); child.off('close', closed); };
-      const fail = (error: Error): void => { cleanup(); reject(error); };
-      const closed = (): void => fail(new Error(`Browser coordinator failed before readiness: ${stderr || 'process exited'}`));
-      const message = (value: unknown): void => {
-        const ready = value as { ready?: boolean; socket?: string } | undefined;
-        if (ready?.ready === true && ready.socket === socket) { cleanup(); resolve(); }
-      };
-      const timer = setTimeout(() => fail(new Error(`Browser coordinator readiness timed out: ${stderr || 'no coordinator diagnostics'}`)), 45_000);
-      child.on('message', message); child.once('error', fail); child.once('close', closed);
-    });
-    if (child.exitCode !== null || child.signalCode !== null) { throw new Error('Browser coordinator exited during startup'); }
-    // This launcher is host-owned and cannot recursively launch the upstream daemon.
-    const bin = join(dirname(socket), 'bin');
-    mkdirSync(bin, { recursive: true, mode: 0o700 });
-    writeFileSync(join(bin, 'browser-use'),
-      `#!/usr/bin/env node\nimport(${JSON.stringify(new URL('./client.mjs', import.meta.url).href)}).then(m => m.main()).catch(e => { console.error(e.message); process.exitCode = 1; });\n`,
-      { mode: 0o700 });
-    // Published only after broker readiness; every harness applies this after env merges.
-    env.DISCLAUDE_BROWSER_BIN = bin;
-    startup = false;
-    return runtime;
-  } catch (error) { await runtime.stop(); throw error; }
 }

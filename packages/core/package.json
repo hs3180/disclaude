@@ -13,6 +13,10 @@
     "./config-discovery": {
       "import": "./dist/config/discovery.js",
       "types": "./dist/config/discovery.d.ts"
+    },
+    "./browser-runtime": {
+      "import": "./dist/utils/browser-env.js",
+      "types": "./dist/utils/browser-env.d.ts"
     }
   },
   "scripts": {

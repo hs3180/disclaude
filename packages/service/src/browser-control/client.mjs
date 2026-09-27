@@ -1,5 +1,6 @@
 import { createConnection } from 'node:net';
 import { pathToFileURL } from 'node:url';
+import { resolveBrowserSocketPath } from '@disclaude/core/browser-runtime';
 export async function connectBrowser(socketPath) {
   const socket = createConnection(socketPath);
   socket.setEncoding('utf8');
@@ -40,10 +41,16 @@ export async function main() {
     return;
   }
   if (process.argv.length > 2) throw new Error('Coordinated browser-use accepts stdin scripts only; daemon lifecycle is owned by the service');
-  if (!process.env.DISCLAUDE_BROWSER_SOCKET) throw new Error('DISCLAUDE_BROWSER_SOCKET is required');
   let code = ''; for await (const chunk of process.stdin) { code += chunk; if (code.length > 1024 * 1024) throw new Error('Script too large'); }
   if (!code.trim()) throw new Error('Pipe a Python browser-use script on stdin');
-  const client = await connectBrowser(process.env.DISCLAUDE_BROWSER_SOCKET);
+  // The service computes this path before spawning the harness process and
+  // injects it after all task/provider env merges. A local re-derivation here
+  // could diverge if a provider changes HOME or XDG_RUNTIME_DIR.
+  const socketPath = process.env.DISCLAUDE_BROWSER_SOCKET || resolveBrowserSocketPath(process.env);
+  if (!socketPath.startsWith('/') || Buffer.byteLength(socketPath) > 95) {
+    throw new Error('The service supplied an invalid internal browser IPC endpoint');
+  }
+  const client = await connectBrowser(socketPath);
   await withBrowserLease(client, async () => {
     const result = await client.request('execute', { script: code, cwd: process.cwd() });
     process.stdout.write(result.stdout); process.stderr.write(result.stderr);

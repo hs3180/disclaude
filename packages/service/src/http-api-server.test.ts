@@ -177,6 +177,15 @@ describe('HttpApiServer', () => {
       expect(data.version).toBeDefined();
     });
 
+    it('includes the browser IPC lifecycle owned by the service', async () => {
+      server.setBrowserIpcStatusProvider(() => ({ status: 'ready', pid: 7342 }));
+      const { body } = await dispatch(server, { method: 'GET', url: '/api/status' });
+      expect(JSON.parse(body)).toMatchObject({ browserIpc: { status: 'ready', pid: 7342 } });
+      server.setBrowserIpcStatusProvider(() => ({ status: 'unavailable' }));
+      const failed = await dispatch(server, { method: 'GET', url: '/api/status' });
+      expect(JSON.parse(failed.body)).toMatchObject({ browserIpc: { status: 'unavailable' } });
+    });
+
     it('should return JSON content type', async () => {
       const { headers } = await dispatch(server, { method: 'GET', url: '/api/status' });
       expect(headers['content-type']).toContain('application/json');

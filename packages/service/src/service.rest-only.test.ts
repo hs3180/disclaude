@@ -27,6 +27,16 @@ const backend = vi.hoisted(() => ({
   info: vi.fn(() => ({ available: true, unavailableReason: undefined as string | undefined })),
 }));
 
+const browserRuntimeMock = vi.hoisted(() => ({
+  start: vi.fn(),
+  stop: vi.fn(),
+  pid: 7342,
+}));
+
+vi.mock('./browser-control/runtime.js', () => ({
+  startBrowserRuntime: browserRuntimeMock.start,
+}));
+
 vi.mock('@disclaude/core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@disclaude/core')>();
   return {
@@ -63,6 +73,8 @@ describe('DisclaudeService REST-only serving (Issue #4280 part 5)', () => {
     backend.selected = 'claude';
     backend.select.mockReset();
     backend.info.mockReset().mockReturnValue({ available: true, unavailableReason: undefined });
+    browserRuntimeMock.start.mockReset().mockResolvedValue(undefined);
+    browserRuntimeMock.stop.mockReset().mockResolvedValue(undefined);
     vi.resetModules();
     // initScheduler is non-fatal in start() (Issue #3361) but touches the real
     // workspace/cooldown dirs — stub it out; this test is only about the IPC
@@ -70,12 +82,14 @@ describe('DisclaudeService REST-only serving (Issue #4280 part 5)', () => {
     vi.spyOn(DisclaudeService.prototype, <never>'initScheduler').mockResolvedValue(undefined);
     rmSync(SCRATCH_DIR, { recursive: true, force: true });
     delete process.env.DISCLAUDE_WORKER_IPC_SOCKET;
+    delete process.env.DISCLAUDE_BROWSER_SOCKET;
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
     rmSync(SCRATCH_DIR, { recursive: true, force: true });
     delete process.env.DISCLAUDE_WORKER_IPC_SOCKET;
+    delete process.env.DISCLAUDE_BROWSER_SOCKET;
   });
 
   it('rejects a missing backend before starting the scheduler', async () => {
@@ -83,6 +97,27 @@ describe('DisclaudeService REST-only serving (Issue #4280 part 5)', () => {
     await expect(new DisclaudeService().start()).rejects.toThrow('No agent backend configured');
     expect(backend.select).not.toHaveBeenCalled();
     expect(backend.info).not.toHaveBeenCalled();
+  });
+
+  it('owns browser coordinator startup, status and shutdown', async () => {
+    browserRuntimeMock.start.mockImplementation(() => Promise.resolve({
+      stop: browserRuntimeMock.stop,
+      get pid() { return browserRuntimeMock.pid; },
+    }));
+    const service = new DisclaudeService();
+
+    await service.start();
+
+    expect(browserRuntimeMock.start).toHaveBeenCalledWith(process.env, expect.any(Function), expect.any(Function));
+    expect(service.getBrowserIpcStatus()).toEqual({ status: 'ready', pid: 7342 });
+    const onUnavailable = browserRuntimeMock.start.mock.calls[0]?.[1] as (message: string) => void;
+    onUnavailable('coordinator exited');
+    expect(service.getBrowserIpcStatus()).toEqual({ status: 'unavailable', pid: 7342 });
+
+    await service.stop();
+
+    expect(browserRuntimeMock.stop).toHaveBeenCalledOnce();
+    expect(service.getBrowserIpcStatus()).toEqual({ status: 'disabled' });
   });
 
   it('propagates backend selection failure without switching to Claude', async () => {

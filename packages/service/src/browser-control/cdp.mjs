@@ -1,4 +1,4 @@
-/** Private CDP transport for the managed browser service. */
+/** Private CDP transport used by the in-process browser coordinator. */
 import WebSocket from 'ws';
 export async function connect(url) {
   const ws = new WebSocket(url);

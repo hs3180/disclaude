@@ -68,6 +68,8 @@ export interface StatusResponse {
   uptime: number;
   /** Version info */
   version: string;
+  /** State of the browser IPC submodule owned by this service, when configured. */
+  browserIpc?: { status: 'disabled' | 'ready' | 'unavailable'; pid?: number };
 }
 
 /**
@@ -264,6 +266,7 @@ export class HttpApiServer {
   private uploadImageHandler?: UploadImageHandler;
   private markChatRespondedHandler?: MarkChatRespondedHandler;
   private deliveryHealthProvider?: () => DeliveryHealth;
+  private browserIpcStatusProvider?: () => NonNullable<StatusResponse['browserIpc']>;
   /** Connected SSE clients for topic notifications (Issue #4031) */
   private readonly sseClients = new Set<ServerResponse>();
   /** Heartbeat interval timer for SSE keepalive */
@@ -284,6 +287,11 @@ export class HttpApiServer {
   /** Supply channel delivery counters without making health checks send a message. */
   setDeliveryHealthProvider(provider: () => DeliveryHealth): void {
     this.deliveryHealthProvider = provider;
+  }
+
+  /** Supply local browser IPC lifecycle state without probing another service. */
+  setBrowserIpcStatusProvider(provider: () => NonNullable<StatusResponse['browserIpc']>): void {
+    this.browserIpcStatusProvider = provider;
   }
 
   /**
@@ -623,6 +631,7 @@ export class HttpApiServer {
       instanceId: this.instanceId,
       uptime: Math.floor((Date.now() - this.startTime) / 1000),
       version: SERVICE_VERSION,
+      ...(this.browserIpcStatusProvider ? { browserIpc: this.browserIpcStatusProvider() } : {}),
     };
     this.sendJson(res, 200, response);
     return Promise.resolve();

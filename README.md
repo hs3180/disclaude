@@ -8,8 +8,10 @@ Disclaude connects Feishu/Lark and REST conversations to agent harnesses for
 software development and research. It supports ongoing conversations,
 scheduled work, project-scoped skills, and coordinated browser automation.
 
-**Latest release: [v0.6.0](https://github.com/hs3180/disclaude/releases/tag/v0.6.0).**
+**Latest published release: [v0.6.0](https://github.com/hs3180/disclaude/releases/tag/v0.6.0).**
 See the [release notes](docs/releases/0.6.0.md) and [changelog](CHANGELOG.md).
+Follow-up source changes are released under a new version; the published
+`v0.6.0` tag is not moved or rewritten.
 
 ## Capabilities
 
@@ -19,8 +21,9 @@ See the [release notes](docs/releases/0.6.0.md) and [changelog](CHANGELOG.md).
   configuration presets.
 - **Feishu interaction:** streaming replies, interactive cards for Codex input,
   files, and chat-based follow-up.
-- **Browser automation:** agents and users coordinate access to a shared browser
-  through the service-owned browser coordinator.
+- **Browser automation:** a service-provided launcher serializes complete
+  upstream `browser-use` CLI calls per CDP browser; no separate Disclaude broker
+  is required.
 - **Operations:** scheduled tasks, workspace-backed files, service diagnostics,
   and Docker or macOS deployment.
 
@@ -33,7 +36,7 @@ See the [release notes](docs/releases/0.6.0.md) and [changelog](CHANGELOG.md).
 | [Workspace setup](docs/workspace-setup.md) | Choose or safely move persistent project data |
 | [Environment variables](docs/environment-variables.md) | Operator-facing runtime settings |
 | [Codex](docs/codex-backend.md), [Pi](docs/pi-backend.md), [DeepSeek](docs/dsh-backend.md) | Backend-specific configuration |
-| [Browser coordination](docs/browser-coordination.md) | Agent access and coordinator lifecycle |
+| [Browser control](docs/browser-coordination.md) | Serialized CLI calls, ownership, and recovery |
 | [GitHub installation](docs/releases/git-install.md) | Install, upgrade, and roll back a release tag |
 | [Documentation index](docs/README.md) | Current design contracts and operator guides |
 

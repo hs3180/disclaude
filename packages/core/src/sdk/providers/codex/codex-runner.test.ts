@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resolveBrowserSocketPath } from '../../../utils/browser-env.js';
 import { getRootLogger } from '../../../utils/logger.js';
 
 import { CodexExecRunner } from './codex-runner.js';
@@ -84,10 +85,11 @@ describe('CodexExecRunner (Issue #4630)', () => {
     const fixture = makeScriptedBinary('echo "argv:$*" >&2\necho "cdp:$BU_CDP_URL socket:$DISCLAUDE_BROWSER_SOCKET" >&2\nexit 0');
     try {
       const runner = new CodexExecRunner({ binary: fixture.binaryPath });
-      const result = await runner.run({ prompt: 'browser task', resumeSessionId, env: { ...process.env, BU_CDP_URL: 'http://127.0.0.1:9222', DISCLAUDE_BROWSER_SOCKET: '/tmp/browser.sock' } }, () => {}).promise;
+      const env = { ...process.env, BU_CDP_URL: 'http://127.0.0.1:9222', DISCLAUDE_BROWSER_SOCKET: '/tmp/browser.sock' };
+      const result = await runner.run({ prompt: 'browser task', resumeSessionId, env }, () => {}).promise;
       expect(result.exitCode).toBe(0);
       expect(result.stderrTail).toContain('--disable browser_use --disable browser_use_external --disable browser_use_full_cdp_access');
-      expect(result.stderrTail).toContain('cdp: socket:/tmp/browser.sock');
+      expect(result.stderrTail).toContain(`cdp: socket:${resolveBrowserSocketPath(env)}`);
     } finally { fixture.cleanup(); }
   });
 
