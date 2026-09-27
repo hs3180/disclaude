@@ -1,103 +1,161 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Coordinator } from './coordinator.mjs';
 
-describe('browser coordinator startup diagnostics', () => {
-  it('records the worker init failure before rejecting the queued caller', async () => {
+function fakeSession(options, {
+  startError,
+  startDelay,
+  stderr = 'fixture harness stderr',
+  result = { result: { stdout: 'fixture output', stderr: '', code: 0, signal: null }, target: undefined },
+  stopError,
+} = {}) {
+  const session = {
+    stderr,
+    daemon: { pid: 4242 },
+    start: vi.fn(async () => {
+      options.onEvent({ type: 'daemon-started', pid: 4242, python: options.python, cwd: options.cwd });
+      if (startDelay) await startDelay;
+      if (startError) throw new Error(startError);
+      return { pid: 4242 };
+    }),
+    execute: vi.fn(async () => result),
+    stop: vi.fn(async () => {
+      if (stopError) throw new Error(stopError);
+    }),
+    exit(details = { code: 2, signal: null }) {
+      session.daemonExitDetails = details;
+      options.onEvent({ type: 'daemon-exit', ...details });
+      options.onDaemonExit(details);
+    },
+  };
+  return session;
+}
+
+describe('in-process browser coordinator', () => {
+  it('records a Python daemon startup failure and cleans the lease runtime', async () => {
     const events = [];
+    const cleanupRuntime = vi.fn();
+    const session = {};
     const coordinator = new Coordinator({
       url: 'ws://fixture.invalid',
       target: 'fixture-target',
       event: event => events.push(event),
-      workerModule: new URL('./fixtures/coordinator-init-failure.mjs', import.meta.url),
+      sessionOptions: { python: 'fixture-python', cwd: 'fixture-cwd', runtime: 'fixture-runtime' },
+      createSession: options => Object.assign(session, fakeSession(options, { startError: 'fixture startup failed' })),
+      cleanupRuntime,
       startupMs: 500,
-      hardMs: 1000,
-      ttlMs: 100,
     });
 
     await expect(coordinator.acquire('fixture-caller').promise).rejects.toThrow('fixture startup failed');
     await coordinator.close();
     expect(events.map(event => event.type)).toEqual(expect.arrayContaining([
-      'worker-init-error',
+      'daemon-started',
       'allocation-failed',
       'revoking',
       'reclaimed',
     ]));
-    expect(events.find(event => event.type === 'worker-init-error')).toMatchObject({ stderr: 'fixture init stderr' });
-    expect(events.find(event => event.type === 'allocation-failed')).toMatchObject({ stderr: 'fixture init stderr' });
+    expect(events.find(event => event.type === 'allocation-failed')).toMatchObject({
+      stderr: 'fixture harness stderr',
+    });
+    expect(session.stop).toHaveBeenCalledOnce();
+    expect(cleanupRuntime).toHaveBeenCalledWith({
+      python: 'fixture-python',
+      cwd: 'fixture-cwd',
+      runtime: 'fixture-runtime',
+    });
   });
 
-  it('retains worker stderr when startup stops after the daemon announcement', async () => {
+  it('times out session startup, stops the session, and preserves diagnostics', async () => {
     const events = [];
+    const session = {};
     const coordinator = new Coordinator({
       url: 'ws://fixture.invalid',
       target: 'fixture-target',
       event: event => events.push(event),
-      workerModule: new URL('./fixtures/coordinator-startup-timeout.mjs', import.meta.url),
-      startupMs: 500,
-      hardMs: 1000,
-      ttlMs: 100,
+      createSession: options => Object.assign(session, fakeSession(options, { startDelay: new Promise(() => {}) })),
+      startupMs: 10,
     });
 
-    await expect(coordinator.acquire('fixture-caller').promise).rejects.toThrow('Worker startup timeout');
+    await expect(coordinator.acquire('fixture-caller').promise).rejects.toThrow('Browser harness startup timeout');
     await coordinator.close();
-    const timeout = events.find(event => event.type === 'worker-startup-timeout');
-    const failed = events.find(event => event.type === 'allocation-failed');
-    expect(events.find(event => event.type === 'daemon-started')).toMatchObject({ python: 'fixture-python', cwd: 'fixture-cwd' });
-    expect(timeout).toMatchObject({ startupMs: 500, stderr: 'fixture startup stderr' });
-    expect(failed).toMatchObject({ error: 'Worker startup timeout', stderr: 'fixture startup stderr' });
+    expect(events.find(event => event.type === 'harness-startup-timeout')).toMatchObject({
+      startupMs: 10,
+      stderr: 'fixture harness stderr',
+    });
+    expect(session.stop).toHaveBeenCalledOnce();
   });
 
-  it('records supervised daemon exit details before the worker exits', async () => {
-    const events = [];
+  it('runs scripts through the in-process session and updates the shared CDP target', async () => {
+    const sessionRef = {};
+    const onTargetChange = vi.fn();
+    const sessionResult = {
+      result: { stdout: 'script complete', stderr: '', code: 0, signal: null },
+      target: 'updated-target',
+    };
     const coordinator = new Coordinator({
       url: 'ws://fixture.invalid',
       target: 'fixture-target',
-      event: event => events.push(event),
-      workerModule: new URL('./fixtures/coordinator-daemon-exit.mjs', import.meta.url),
-      startupMs: 500,
-      hardMs: 1000,
-      ttlMs: 100,
+      createSession: options => Object.assign(sessionRef, fakeSession(options, { result: sessionResult })),
+      onTargetChange,
+      ttlMs: 5000,
+      hardMs: 10000,
     });
 
-    await expect(coordinator.acquire('fixture-caller').promise).rejects.toThrow('Worker startup exit');
+    const lease = await coordinator.acquire('fixture-caller').promise;
+    await expect(coordinator.execute(lease, 'script', { code: 'print(1)', cwd: '/tmp' })).resolves.toEqual(sessionResult.result);
+    expect(sessionRef.execute).toHaveBeenCalledWith('print(1)', '/tmp');
+    expect(onTargetChange).toHaveBeenCalledWith('updated-target');
+    expect(coordinator.target).toBe('updated-target');
+    await expect(coordinator.release(lease)).resolves.toBe(true);
     await coordinator.close();
-    expect(events.find(event => event.type === 'daemon-started')).toMatchObject({ pid: 4242, python: 'fixture-python', cwd: 'fixture-cwd' });
-    expect(events.find(event => event.type === 'daemon-exit')).toMatchObject({ code: 2, signal: null });
   });
 
-  it('quarantines when startup failure cleanup returns a rejected promise', async () => {
+  it('reclaims an exited daemon before admitting the next queued caller', async () => {
     const events = [];
+    const sessions = [];
+    const verifyReclaimed = vi.fn(async () => {});
     const coordinator = new Coordinator({
       url: 'ws://fixture.invalid',
       target: 'fixture-target',
       event: event => events.push(event),
-      workerModule: new URL('./fixtures/coordinator-daemon-exit.mjs', import.meta.url),
-      cleanupWorker: async () => { throw new Error('fixture async cleanup failed'); },
-      startupMs: 500,
-      hardMs: 1000,
-      ttlMs: 100,
+      createSession: options => {
+        const session = fakeSession(options);
+        sessions.push(session);
+        return session;
+      },
+      verifyReclaimed,
+      ttlMs: 5000,
+      hardMs: 10000,
     });
 
-    await expect(coordinator.acquire('fixture-caller').promise).rejects.toThrow('Worker startup exit');
+    const first = await coordinator.acquire('first').promise;
+    sessions[0].exit();
+    await vi.waitFor(() => expect(events.some(event => event.type === 'reclaimed')).toBe(true));
+    const second = await coordinator.acquire('second').promise;
+    expect(sessions).toHaveLength(2);
+    expect(verifyReclaimed).toHaveBeenCalledOnce();
+    await coordinator.release(second);
     await coordinator.close();
-    expect(events.find(event => event.type === 'daemon-exit')).toMatchObject({ code: 2, signal: null });
-    expect(events.find(event => event.type === 'quarantined')).toMatchObject({ phase: 'cleanup-worker', reason: 'fixture async cleanup failed' });
-    await expect(coordinator.acquire('later-caller').promise).rejects.toThrow('Coordinator unavailable');
+    await expect(coordinator.release(first)).resolves.toBe(false);
   });
 
-  it('quarantines instead of leaking a cleanup exception as an unhandled rejection', async () => {
+  it('quarantines when session shutdown or runtime cleanup cannot complete', async () => {
     const events = [];
     const coordinator = new Coordinator({
       url: 'ws://fixture.invalid',
       target: 'fixture-target',
       event: event => events.push(event),
-      workerModule: new URL('./fixtures/coordinator-ready.mjs', import.meta.url),
-      cleanupWorker: () => { throw new Error('fixture cleanup failed'); },
+      createSession: options => fakeSession(options),
+      cleanupRuntime: async () => { throw new Error('fixture runtime cleanup failed'); },
+      ttlMs: 5000,
+      hardMs: 10000,
     });
 
     const lease = await coordinator.acquire('fixture-caller').promise;
     await expect(coordinator.release(lease)).resolves.toBe(true);
-    expect(events.find(event => event.type === 'quarantined')).toMatchObject({ phase: 'cleanup-worker', reason: 'fixture cleanup failed' });
+    expect(events.find(event => event.type === 'quarantined')).toMatchObject({
+      phase: 'cleanup-runtime',
+      reason: 'fixture runtime cleanup failed',
+    });
     await expect(coordinator.acquire('later-caller').promise).rejects.toThrow('Coordinator unavailable');
     await coordinator.close();
   });

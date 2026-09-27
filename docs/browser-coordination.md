@@ -1,7 +1,7 @@
 # Browser control through Disclaude
 
 The browser coordinator runs in-process as part of `DisclaudeService`. It queues
-competing browser-use operations and reclaims the current worker before granting
+competing browser-use operations and reclaims the current lease before granting
 control to the next caller. It attaches to the Chromium CDP service already
 deployed on the host; it never launches or owns Chromium. The runtime is shipped
 in the service package; the actual CLI lifecycle and handoff use case lives in
@@ -43,15 +43,30 @@ Earlier service-environment failures remain distinct evidence.
 
 Install and start the host's Chromium CDP service separately, for example with
 `disclaude chromium-cdp install`. The coordinator reads its saved CDP address and
-port from the existing Chromium configuration. The service selects one Python
-runtime from its absolute `PATH` entries by checking Python >=3.11, the pinned
-`browser-use` and `browser-harness` versions, and both worker modules. It uses
-that same resolved executable for daemon and CLI work; an unrelated system
-`python3` earlier on launchd's `PATH` cannot shadow a later compatible runtime.
-The pinned versions come from `packages/service/src/browser-control/python-runtime.mjs`
+port from the existing Chromium configuration. Before the first service start,
+create Disclaude's isolated Python environment:
+
+```sh
+disclaude browser runtime install
+```
+
+The command installs the pinned `browser-use` and `browser-harness` packages in
+`$XDG_DATA_HOME/disclaude/browser-harness-runtime` (or
+`~/.local/share/disclaude/browser-harness-runtime`) without changing a shared
+Python installation. It validates the complete installed dependency set with
+`pip check`; an existing managed environment is validated and never overwritten.
+The service prefers this managed interpreter, then checks absolute `PATH`
+interpreters as a fallback. Every candidate must use Python >=3.11, the pinned
+package versions, both harness modules, and a clean `pip check`. The same resolved
+executable runs daemon and CLI work, so a conflicting Anaconda or system Python
+cannot be selected merely because it appears earlier on launchd's `PATH`. The
+pinned versions come from `packages/service/src/browser-control/python-runtime.mjs`
 and are shared with the browser-coordination CI setup. If no compatible runtime
-is present, startup fails with the checked interpreter paths and versions before
-the coordinator reports ready.
+is present, startup fails with the checked interpreter paths and dependency
+diagnostics before the coordinator reports ready.
+The service also removes inherited `PYTHONHOME`, `PYTHONPATH`, user-site,
+virtualenv, and Conda overrides before starting the daemon or CLI, so an active
+shell Python environment cannot redirect imports away from the validated venv.
 
 No browser socket setting or socket-directory setup is required. The Disclaude
 service derives a private Unix-domain socket path from its runtime identity,
@@ -101,24 +116,25 @@ such as `--reload` are rejected at this entry.
 
 ## Recovery boundaries
 
-Normal service shutdown stops active workers, closes its CDP connection, and
-removes the socket/lock. The separately deployed Chromium service, its profile,
-and its pages remain running and owned by that service.
+Normal service shutdown stops active Python harness processes, closes its CDP
+connection, and removes the socket/lock. The separately deployed Chromium
+service, its profile, and its pages remain running and owned by that service.
 
 The coordinator shares the Disclaude service process; there is no broker child or
-separate supervisor. Detached harness workers terminate their own process groups
-when their IPC disconnects, including descendants started by the running Python
-task. If the service exits unexpectedly, a later start removes only stale socket
-state whose owner PID is no longer alive. Browser calls fail closed and unknown
-work is never replayed.
+separate supervisor. It directly owns each lease's Python daemon and CLI child
+process groups, terminating them before verifying CDP detachment and removing the
+per-lease runtime. It does not fork a Node worker or use worker IPC. If the
+service exits unexpectedly, each supervised Python process detects its parent
+PID disappearing and terminates its own process group. A later start removes
+only stale socket state whose owner PID is no longer alive. Browser calls fail
+closed and unknown work is never replayed.
 
-When a worker announces its daemon but does not become ready, the coordinator
-records the startup phase (`worker-startup-timeout`, `worker-startup-exit`, or
-`worker-init-error`) and the last 4 KiB of the worker plus supervised daemon
-stderr in the Disclaude service log. These diagnostics identify a failed
-bootstrap without changing the recovery boundary or retrying unknown browser
-work. The daemon stderr is retained only through the worker diagnostic pipe; it
-is not exposed to the Agent or persisted with page content.
+When the daemon does not become ready, the coordinator records
+`harness-startup-timeout` or `allocation-failed` and the last 4 KiB of daemon and
+CLI diagnostics in the Disclaude service log. These diagnostics identify a
+failed bootstrap without changing the recovery boundary or retrying unknown
+browser work. The diagnostics are not exposed to the Agent or persisted with
+page content.
 
 Foreign or unreadable locks still require operator inspection. Socket permissions
 coordinate same-user callers; this is not a
@@ -156,7 +172,8 @@ service. It checks the public status command and competing browser-use callers o
 the shared page. Without both fixture variables the case is skipped. It also
 interrupts a running caller and verifies handoff without replaying the abandoned
 operation. Finally it kills the Disclaude process during an active Python task:
-the worker descendants must exit, while Chromium and its profile remain alive;
+the Python harness descendants must exit, while Chromium and its profile remain
+alive;
 the next service start reclaims stale IPC state. Graceful stop is checked to leave
 the external CDP service untouched. This verifies the CLI/harness/browser chain,
 not a model agent deciding how to use it.
@@ -171,8 +188,7 @@ Pi's NodeExecutionEnv. These are distinct execution paths; Pi runs in-process
 and Claude owns its subprocess creation, so they do not share one spawn function.
 Earlier SDK environment assembly and Pi option adaptation do not filter again.
 The shared helper contains the policy; each boundary applies it after its own
-merges. Direct worker configuration remains private to the service.
-
+merges. Direct harness configuration remains private to the service.
 
 For real model-to-model browser handoff, additionally set
 `DISCLAUDE_E2E_BROWSER_MODEL` to a configured dsh model and
@@ -196,8 +212,7 @@ readback. Other enabled backends retain their explicit-command handoff test.
 This covers sequential model backends sharing a page. It does not establish
 simultaneous model arbitration, all provider backends, real-site authentication or
 Feishu interaction. The non-model portion separately tests concurrent callers and
-abandoned-worker recovery.
-
+abandoned-lease recovery.
 
 ## Accidental upstream CLI selection
 
@@ -205,8 +220,8 @@ In coordinated agent environments, `BH_RUNTIME_DIR` and `BH_TMP_DIR` point to th
 OS null device and `BH_REQUIRE_EXISTING_DAEMON=1`. The upstream browser-harness
 0.1.13 entry cannot treat that device as a directory and fails before discovering
 or spawning a default daemon. This guard remains effective after the coordinator
-stops. The product launcher uses IPC; the coordinator's worker sets a separate
-private runtime and continues to execute normal operations.
+stops. The product launcher uses IPC; the coordinator's Python processes set a
+separate private runtime and continue to execute normal operations.
 
 This addresses a real model choosing an absolute upstream executable instead of
 the supplied launcher. It is cooperative routing protection, not a same-user
@@ -233,14 +248,14 @@ DeepSeek's `deepseek-flash` through their respective harnesses; Codex used its
 configured model. This is harness interoperability evidence, not a Claude-model
 or performance benchmark.
 
-
 ### Repeated product handoffs
 
 Set `DISCLAUDE_E2E_BROWSER_STRESS=1` to exercise 100 sequential IPC callers against
 the same externally deployed page. Each caller verifies the preceding value,
 writes its own value, and reads it back. An independent final caller verifies
-the last value. This uses the actual product service/browser/workers and no model
-credentials. Browser CI enables it on Linux; local runs can opt in explicitly.
+the last value. This uses the actual product service and Python harness
+processes, with no model credentials. Browser CI enables it on Linux; local runs
+can opt in explicitly.
 
 On macOS ARM64 with Chromium 155.0.8057.0 and Node 24.8.0 (2026-09-17), all 100
 handoffs passed in 73.87 seconds. Grant-wait observations were p50=410ms,

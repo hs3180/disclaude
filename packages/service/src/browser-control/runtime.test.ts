@@ -12,6 +12,8 @@ const fixturePythonRuntime = {
   executable: '/fixture/python3',
   pythonVersion: '3.12.7',
   packages: { 'browser-use': '0.13.10', 'browser-harness': '0.1.13' },
+  dependencyCheck: true,
+  managed: true,
 };
 const resolveFixturePythonRuntime = () => fixturePythonRuntime;
 
@@ -84,11 +86,11 @@ function mockCoordinator() {
 }
 
 function expectCoordinatorPython(options?: Record<string, unknown>) {
-  const createWorkerOptions = options?.workerOptions as (() => { python: string; runtime: string }) | undefined;
-  expect(createWorkerOptions).toBeTypeOf('function');
-  const workerOptions = createWorkerOptions!();
-  expect(workerOptions.python).toBe(fixturePythonRuntime.executable);
-  rmSync(workerOptions.runtime, { recursive: true, force: true });
+  const createSessionOptions = options?.sessionOptions as (() => { python: string; runtime: string }) | undefined;
+  expect(createSessionOptions).toBeTypeOf('function');
+  const sessionOptions = createSessionOptions!();
+  expect(sessionOptions.python).toBe(fixturePythonRuntime.executable);
+  rmSync(sessionOptions.runtime, { recursive: true, force: true });
 }
 
 describe('in-process browser coordinator lifecycle', () => {
@@ -183,8 +185,9 @@ describe('in-process browser coordinator lifecycle', () => {
       expect(receivedOptions).toMatchObject({
         url: 'ws://127.0.0.1:9222/devtools/browser/test',
         target: 'test-target',
-        detachedWorker: true,
       });
+      expect(receivedOptions).not.toHaveProperty('workerModule');
+      expect(receivedOptions).not.toHaveProperty('detachedWorker');
       expectCoordinatorPython(receivedOptions);
       expect(events).toContainEqual({ type: 'python-runtime-selected', ...fixturePythonRuntime });
       expect(existsSync(socket)).toBe(true);

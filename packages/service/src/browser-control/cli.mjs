@@ -1,5 +1,6 @@
 import { connectBrowser } from './client.mjs';
 import { resolveBrowserSocketPath } from '@disclaude/core/browser-runtime';
+import { BROWSER_PYTHON_REQUIREMENTS, installBrowserPythonRuntime } from './python-runtime.mjs';
 import { parseArgs } from 'node:util';
 const command = process.argv[2];
 function explicitConfigPath(args) {
@@ -20,7 +21,20 @@ async function resolveBrowserEnvironment() {
 }
 try {
   if (!command || ['help', '--help', '-h'].includes(command)) {
-    console.log('Usage: disclaude browser status [--config PATH]|doctor\nstatus: query the browser coordinator owned by the Disclaude service\ndoctor --binary PATH: test a browser with temporary state\nThe coordinator lifecycle belongs to disclaude start; this command does not start an independent broker.');
+    console.log('Usage: disclaude browser status [--config PATH]|doctor|runtime install\nstatus: query the browser coordinator owned by the Disclaude service\ndoctor --binary PATH: test a browser with temporary state\nruntime install: create an isolated, dependency-checked Python runtime for the browser harness\nThe coordinator lifecycle belongs to disclaude start; this command does not start an independent broker.');
+  } else if (command === 'runtime') {
+    const subcommand = process.argv[3];
+    if (['help', '--help', '-h'].includes(subcommand) || process.argv[4] === '--help') {
+      console.log('Usage: disclaude browser runtime install\nCreates an isolated Python environment under the user data directory and installs the pinned browser-use and browser-harness packages. Existing managed environments are validated and never overwritten.');
+    } else if (subcommand === 'install' && process.argv.length === 4) {
+      const runtime = installBrowserPythonRuntime(process.env);
+      const packages = Object.entries(BROWSER_PYTHON_REQUIREMENTS)
+        .map(([name, version]) => `${name}=${version}`)
+        .join(', ');
+      console.log(`Browser harness runtime ready: ${runtime.executable} (Python ${runtime.pythonVersion}; ${packages}; pip check passed)`);
+    } else {
+      throw new Error('Usage: disclaude browser runtime install');
+    }
   } else if (command === 'doctor') {
     const { values } = parseArgs({ args: process.argv.slice(3), options: {
       binary: { type: 'string' }, headless: { type: 'boolean', default: false },

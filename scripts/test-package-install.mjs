@@ -112,6 +112,7 @@ async function verifyPackage() {
   assert(existsSync(join(installed, 'disclaude.config.example.yaml')));
   const cli = join(prefix, 'bin/disclaude');
   assert.equal(run(cli, ['--version']).trim(), `disclaude v${pkg.version}`);
+  assert.match(run(cli, ['browser', 'runtime', 'install', '--help']), /isolated Python environment/u);
   assert.match(run(cli, ['start', '--help']), /Usage:/i);
   assert.match(run(cli, ['channel', '--help']), /Usage:/i);
   assert.match(run(cli, ['chromium-cdp', 'setup', '--help']), /--download/);

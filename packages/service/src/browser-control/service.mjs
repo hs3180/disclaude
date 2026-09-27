@@ -224,11 +224,9 @@ export async function startBrowserCoordinator({
       target,
       event,
       onTargetChange: value => { target = value; },
-      workerModule: new URL('./harness-worker.mjs', import.meta.url),
-      detachedWorker: true,
       startupMs: 30000,
-      workerOptions: () => ({ python: pythonRuntime.executable, cwd, runtime: mkdtempSync('/tmp/dcbh-') }),
-      cleanupWorker: options => { if (options?.runtime) rmSync(options.runtime, { recursive: true, force: true }); },
+      sessionOptions: () => ({ python: pythonRuntime.executable, cwd, runtime: mkdtempSync('/tmp/dcbh-'), env }),
+      cleanupRuntime: options => { if (options?.runtime) rmSync(options.runtime, { recursive: true, force: true }); },
       ttlMs: 5000,
       hardMs: 180000,
       verifyReclaimed: async () => {
@@ -242,7 +240,7 @@ export async function startBrowserCoordinator({
           if (!targetInfo.attached) return;
           await new Promise(resolve => setTimeout(resolve, 20));
         }
-        throw new Error('Harness CDP session still attached after worker group exit');
+        throw new Error('Harness CDP session still attached after the Python daemon process group exited');
       },
     });
 
@@ -259,7 +257,7 @@ export async function startBrowserCoordinator({
         gone = true;
         peers.delete(peer);
         ticket?.cancel();
-        if (lease) void coordinator.release(lease).catch(error => markUnavailable(`Browser worker cleanup failed: ${error.message}`));
+        if (lease) void coordinator.release(lease).catch(error => markUnavailable(`Browser harness cleanup failed: ${error.message}`));
       });
       async function handle(message) {
         const { id, method } = message;

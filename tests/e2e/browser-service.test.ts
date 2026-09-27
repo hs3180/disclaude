@@ -337,9 +337,9 @@ describe('user starts Disclaude and coordinates an already deployed browser', ()
           };
           expect(ownership.pid).toBe(apiStatus.browserIpc?.pid);
           process.kill(ownership.pid, 'SIGKILL');
-          // The coordinator shares the service PID. Its worker group must clean
-          // itself up on IPC disconnect, while the separately deployed browser
-          // remains alive and keeps owning its profile.
+          // The coordinator shares the service PID. Python harness process
+          // groups must clean themselves up when their parent disappears, while
+          // the separately deployed browser remains alive and keeps its profile.
           const wrapperExitCode = await Promise.race([exited, delay(5000, 'timeout', { ref: false })]);
           expect(wrapperExitCode).not.toBe('timeout');
           expect(wrapperExitCode).not.toBeNull();
