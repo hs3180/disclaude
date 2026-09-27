@@ -8,6 +8,13 @@ import { resolveBrowserSocketPath } from '@disclaude/core/browser-runtime';
 import { hasChromiumCdpConfiguration, startBrowserCoordinator } from './service.mjs';
 import { startBrowserRuntime, type BrowserRuntime } from './runtime.js';
 
+const fixturePythonRuntime = {
+  executable: '/fixture/python3',
+  pythonVersion: '3.12.7',
+  packages: { 'browser-use': '0.13.10', 'browser-harness': '0.1.13' },
+};
+const resolveFixturePythonRuntime = () => fixturePythonRuntime;
+
 const roots: string[] = [];
 const runtimes: BrowserRuntime[] = [];
 
@@ -76,6 +83,14 @@ function mockCoordinator() {
   };
 }
 
+function expectCoordinatorPython(options?: Record<string, unknown>) {
+  const createWorkerOptions = options?.workerOptions as (() => { python: string; runtime: string }) | undefined;
+  expect(createWorkerOptions).toBeTypeOf('function');
+  const workerOptions = createWorkerOptions!();
+  expect(workerOptions.python).toBe(fixturePythonRuntime.executable);
+  rmSync(workerOptions.runtime, { recursive: true, force: true });
+}
+
 describe('in-process browser coordinator lifecycle', () => {
   it('does nothing when coordinated browser access is not configured', async () => {
     expect(await startBrowserRuntime({ DISCLAUDE_CHROMIUM_CONFIG: '/missing/chromium-cdp.json' })).toBeUndefined();
@@ -96,7 +111,7 @@ describe('in-process browser coordinator lifecycle', () => {
     roots.push(root);
     const env = {
       ...process.env,
-      DISCLAIMUDE_CONFIG_PATH: join(root, 'disclaude.yaml'),
+      DISCLAUDE_CONFIG_PATH: join(root, 'disclaude.yaml'),
       DISCLAIMUDE_CHROMIUM_CONFIG: join(root, 'missing-chromium-cdp.json'),
       XDG_RUNTIME_DIR: root,
       BU_CDP_URL: endpoint.endpoint,
@@ -116,7 +131,7 @@ describe('in-process browser coordinator lifecycle', () => {
 
     try {
       expect(hasChromiumCdpConfiguration(env)).toBe(true);
-      const runtime = await startBrowserCoordinator({ env, cwd: root, connectBrowser, createCoordinator, fetchImpl });
+      const runtime = await startBrowserCoordinator({ env, cwd: root, connectBrowser, createCoordinator, fetchImpl, resolvePythonRuntime: resolveFixturePythonRuntime });
       runtimes.push(runtime);
       expect(fetchImpl.mock.calls[0]?.[0]).toBe(`${endpoint.endpoint}/json/version`);
       expect(connectBrowser).toHaveBeenCalledOnce();
@@ -149,6 +164,7 @@ describe('in-process browser coordinator lifecycle', () => {
       return Promise.resolve(admin);
     });
     const fetchImpl = versionFetch();
+    const events: Record<string, unknown>[] = [];
     let receivedOptions: Record<string, unknown> | undefined;
     const createCoordinator = vi.fn((options: Record<string, unknown>) => {
       receivedOptions = options;
@@ -156,7 +172,7 @@ describe('in-process browser coordinator lifecycle', () => {
     });
 
     try {
-      const runtime = await startBrowserCoordinator({ env, cwd: root, connectBrowser, createCoordinator, fetchImpl });
+      const runtime = await startBrowserCoordinator({ env, cwd: root, connectBrowser, createCoordinator, fetchImpl, resolvePythonRuntime: resolveFixturePythonRuntime, onEvent: event => events.push(event) });
       runtimes.push(runtime);
 
       expect(runtime.pid).toBe(process.pid);
@@ -169,6 +185,8 @@ describe('in-process browser coordinator lifecycle', () => {
         target: 'test-target',
         detachedWorker: true,
       });
+      expectCoordinatorPython(receivedOptions);
+      expect(events).toContainEqual({ type: 'python-runtime-selected', ...fixturePythonRuntime });
       expect(existsSync(socket)).toBe(true);
       expect(existsSync(`${socket}.lock`)).toBe(true);
 
@@ -203,7 +221,7 @@ describe('in-process browser coordinator lifecycle', () => {
     writeFileSync(`${socket}.lock`, JSON.stringify({ pid: process.pid, instance: 'existing' }));
 
     try {
-      await expect(startBrowserCoordinator({ env })).rejects.toThrow('already owned by process');
+      await expect(startBrowserCoordinator({ env, resolvePythonRuntime: resolveFixturePythonRuntime })).rejects.toThrow('already owned by process');
       expect(existsSync(socket)).toBe(false);
       expect(JSON.parse(readFileSync(`${socket}.lock`, 'utf8'))).toEqual({ pid: process.pid, instance: 'existing' });
     } finally {
@@ -216,11 +234,24 @@ describe('in-process browser coordinator lifecycle', () => {
     const { socket, env } = makeEnvironment(endpoint.port);
     const fetchImpl = versionFetch(503);
     try {
-      await expect(startBrowserCoordinator({ env, fetchImpl })).rejects.toThrow('CDP endpoint returned HTTP 503');
+      await expect(startBrowserCoordinator({ env, fetchImpl, resolvePythonRuntime: resolveFixturePythonRuntime })).rejects.toThrow('CDP endpoint returned HTTP 503');
       expect(existsSync(socket)).toBe(false);
       expect(existsSync(`${socket}.lock`)).toBe(false);
     } finally {
       await new Promise<void>(resolve => endpoint.server.close(() => resolve()));
     }
+  });
+
+  it('fails before contacting CDP when no compatible Python runtime can be selected', async () => {
+    const { socket, env } = makeEnvironment(9222);
+    const fetchImpl = versionFetch();
+
+    await expect(startBrowserCoordinator({
+      env,
+      fetchImpl,
+      resolvePythonRuntime: () => { throw new Error('No compatible browser harness Python'); },
+    })).rejects.toThrow('No compatible browser harness Python');
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(existsSync(socket)).toBe(false);
   });
 });

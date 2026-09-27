@@ -9,6 +9,7 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { homedir } from 'node:os';
 import { connect } from './cdp.mjs';
 import { Coordinator } from './coordinator.mjs';
+import { resolveBrowserPython } from './python-runtime.mjs';
 import { resolveBrowserSocketPath } from '@disclaude/core/browser-runtime';
 
 const isMissing = error => error?.code === 'ENOENT';
@@ -110,7 +111,9 @@ export async function startBrowserCoordinator({
   fetchImpl = globalThis.fetch,
   connectBrowser = connect,
   createCoordinator = options => new Coordinator(options),
+  resolvePythonRuntime = resolveBrowserPython,
 } = {}) {
+  const pythonRuntime = resolvePythonRuntime(env);
   const socketPath = resolveBrowserSocketPath(env);
   if (!socketPath || !socketPath.startsWith('/') || Buffer.byteLength(socketPath) > 95) {
     throw new Error('Browser coordinator received an invalid internal IPC path (max 95 bytes)');
@@ -147,6 +150,7 @@ export async function startBrowserCoordinator({
   const emit = record => {
     try { onEvent(record); } catch { /* Observability must not break browser control. */ }
   };
+  emit({ type: 'python-runtime-selected', ...pythonRuntime });
   const markUnavailable = message => {
     if (stopping || unavailable) return;
     unavailable = true;
@@ -223,7 +227,7 @@ export async function startBrowserCoordinator({
       workerModule: new URL('./harness-worker.mjs', import.meta.url),
       detachedWorker: true,
       startupMs: 30000,
-      workerOptions: () => ({ python: 'python3', cwd, runtime: mkdtempSync('/tmp/dcbh-') }),
+      workerOptions: () => ({ python: pythonRuntime.executable, cwd, runtime: mkdtempSync('/tmp/dcbh-') }),
       cleanupWorker: options => { if (options?.runtime) rmSync(options.runtime, { recursive: true, force: true }); },
       ttlMs: 5000,
       hardMs: 180000,

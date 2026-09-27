@@ -110,7 +110,10 @@ describe('user starts Disclaude and coordinates an already deployed browser', ()
     const runtimeDirectory = join(root, 'runtime');
     await mkdir(runtimeDirectory, { recursive: true, mode: 0o700 });
     const env: NodeJS.ProcessEnv = { ...process.env, DISCLAUDE_CONFIG_PATH: config, LOCKFILE_PATH: join(root, 'service.pid'),
-      PATH: [dirname(browserPython), process.env.PATH || ''].filter(Boolean).join(delimiter),
+      // Reproduce launchd ordering: an incompatible system python3 may appear
+      // before the dedicated browser environment. Product startup must resolve
+      // and pin the compatible interpreter itself.
+      PATH: [process.env.PATH || '', dirname(browserPython)].filter(Boolean).join(delimiter),
       XDG_RUNTIME_DIR: runtimeDirectory,
       DISCLAUDE_CHROMIUM_CONFIG: chromiumConfig,
     };

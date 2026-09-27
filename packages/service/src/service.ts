@@ -286,7 +286,13 @@ export class DisclaudeService extends EventEmitter {
     this.browserRuntime = await startBrowserRuntime(process.env, message => {
       this.browserRuntimeUnavailable = true;
       logger.error(message);
-    }, record => logger.debug({ browserIpc: record }, 'Browser IPC event'));
+    }, record => {
+      if (record.type === 'python-runtime-selected') {
+        logger.info({ browserIpc: record }, 'Browser harness runtime selected');
+      } else {
+        logger.debug({ browserIpc: record }, 'Browser IPC event');
+      }
+    });
 
     // Issue #4280 (part 5): no REST API server is started anymore — DisclaudeService
     // serves REST-only via the HttpApiServer wired in cli.ts (--api-port).

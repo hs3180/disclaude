@@ -43,9 +43,15 @@ Earlier service-environment failures remain distinct evidence.
 
 Install and start the host's Chromium CDP service separately, for example with
 `disclaude chromium-cdp install`. The coordinator reads its saved CDP address and
-port from the existing Chromium configuration. Also make the validated
-browser-use 0.13.10 / browser-harness 0.1.13 Python environment available as
-`python3` in the Disclaude service's `PATH`.
+port from the existing Chromium configuration. The service selects one Python
+runtime from its absolute `PATH` entries by checking Python >=3.11, the pinned
+`browser-use` and `browser-harness` versions, and both worker modules. It uses
+that same resolved executable for daemon and CLI work; an unrelated system
+`python3` earlier on launchd's `PATH` cannot shadow a later compatible runtime.
+The pinned versions come from `packages/service/src/browser-control/python-runtime.mjs`
+and are shared with the browser-coordination CI setup. If no compatible runtime
+is present, startup fails with the checked interpreter paths and versions before
+the coordinator reports ready.
 
 No browser socket setting or socket-directory setup is required. The Disclaude
 service derives a private Unix-domain socket path from its runtime identity,
