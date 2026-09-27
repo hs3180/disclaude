@@ -99,6 +99,8 @@ async function verifyPackage() {
     for (const script of ['build', 'prepack', 'preinstall', 'install', 'postinstall'])
       assert.equal(pkg.scripts?.[script], undefined);
     assert(existsSync(join(installed, 'release-source.json')));
+    assert(existsSync(join(installed, 'README.md')));
+    assert(existsSync(join(installed, 'CHANGELOG.md')));
     assert(existsSync(join(installed, '.claude-plugin/plugin.json')));
     assert(existsSync(join(installed, 'agents/mac-screen-control.md')));
     if (process.argv[3] && !process.argv[3].startsWith('--'))
