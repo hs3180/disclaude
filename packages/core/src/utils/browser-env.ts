@@ -63,7 +63,7 @@ export function browserAgentEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.Pr
   // An accidentally selected upstream CLI must not discover the user's default
   // daemon. The null device is never a directory, even after our broker exits;
   // browser-harness fails before importing its runtime or auto-starting anything.
-  // The coordinator's worker supplies its own private runtime separately.
+  // The coordinator's Python harness supplies its own private runtime separately.
   result.BH_RUNTIME_DIR = devNull;
   result.BH_TMP_DIR = devNull;
   result.BH_REQUIRE_EXISTING_DAEMON = '1';
