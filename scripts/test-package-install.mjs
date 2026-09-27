@@ -48,6 +48,23 @@ async function verifyPackage() {
   delete env.NODE_OPTIONS;
   for (const key of Object.keys(env)) {
     if (/^npm_config_/i.test(key)) delete env[key];
+    if (
+      key === 'DISCLAUDE_BROWSER_SOCKET' ||
+      key === 'DISCLAUDE_CHROMIUM_CONFIG' ||
+      key.startsWith('DISCLAUDE_CHROMIUM_') ||
+      key.startsWith('CHROMIUM_CDP_') ||
+      [
+        'BU_CDP_URL',
+        'BU_CDP_WS',
+        'BU_AUTOSPAWN',
+        'BU_NAME',
+        'BH_RUNTIME_DIR',
+        'BH_TMP_DIR',
+        'BH_RUNTIME_DIR_SHARED',
+        'BH_TMP_DIR_SHARED',
+        'BH_REQUIRE_EXISTING_DAEMON',
+      ].includes(key)
+    ) delete env[key];
   }
   const prefixFromEnv = process.argv.includes('--prefix-from-env');
   if (prefixFromEnv) env.npm_config_prefix = prefix;
