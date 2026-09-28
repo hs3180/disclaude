@@ -51,6 +51,11 @@ describe('Claude startup with real YAML configuration (offline)', () => {
           cwd: dir,
           env: {
             ...process.env,
+            HOME: dir,
+            XDG_CONFIG_HOME: join(dir, '.config'),
+            XDG_DATA_HOME: join(dir, '.local/share'),
+            BU_CDP_URL: '',
+            DISCLAUDE_CHROMIUM_CONFIG: join(dir, 'missing-chromium-cdp.json'),
             ANTHROPIC_API_KEY: '',
             GLM_API_KEY: '',
             DISCLAUDE_CONFIG_PATH: config,

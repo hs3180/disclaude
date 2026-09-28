@@ -22,7 +22,7 @@ export {
   ErrorSeverity,
 } from './error-handler.js';
 export type { ErrorContext } from './error-handler.js';
-export { browserAgentEnv, resolveBrowserSocketPath } from './browser-env.js';
+export { browserAgentEnv, resolveBrowserRuntimePath } from './browser-env.js';
 export {
   classifyError,
   isRetryable,

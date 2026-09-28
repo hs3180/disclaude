@@ -48,6 +48,23 @@ async function verifyPackage() {
   delete env.NODE_OPTIONS;
   for (const key of Object.keys(env)) {
     if (/^npm_config_/i.test(key)) delete env[key];
+    if (
+      key === 'DISCLAUDE_BROWSER_RUNTIME' ||
+      key === 'DISCLAUDE_CHROMIUM_CONFIG' ||
+      key.startsWith('DISCLAUDE_CHROMIUM_') ||
+      key.startsWith('CHROMIUM_CDP_') ||
+      [
+        'BU_CDP_URL',
+        'BU_CDP_WS',
+        'BU_AUTOSPAWN',
+        'BU_NAME',
+        'BH_RUNTIME_DIR',
+        'BH_TMP_DIR',
+        'BH_RUNTIME_DIR_SHARED',
+        'BH_TMP_DIR_SHARED',
+        'BH_REQUIRE_EXISTING_DAEMON',
+      ].includes(key)
+    ) delete env[key];
   }
   const prefixFromEnv = process.argv.includes('--prefix-from-env');
   if (prefixFromEnv) env.npm_config_prefix = prefix;
@@ -99,6 +116,8 @@ async function verifyPackage() {
     for (const script of ['build', 'prepack', 'preinstall', 'install', 'postinstall'])
       assert.equal(pkg.scripts?.[script], undefined);
     assert(existsSync(join(installed, 'release-source.json')));
+    assert(existsSync(join(installed, 'README.md')));
+    assert(existsSync(join(installed, 'CHANGELOG.md')));
     assert(existsSync(join(installed, '.claude-plugin/plugin.json')));
     assert(existsSync(join(installed, 'agents/mac-screen-control.md')));
     if (process.argv[3] && !process.argv[3].startsWith('--'))
@@ -112,6 +131,10 @@ async function verifyPackage() {
   assert(existsSync(join(installed, 'disclaude.config.example.yaml')));
   const cli = join(prefix, 'bin/disclaude');
   assert.equal(run(cli, ['--version']).trim(), `disclaude v${pkg.version}`);
+  assert.match(run(cli, ['browser', '--help']), /automatically serializes calls/u);
+  for (const removed of ['coordinator.mjs', 'harness-session.mjs', 'python-runtime.mjs']) {
+    assert(!existsSync(join(prefix, 'lib/node_modules/disclaude/packages/service/dist/browser-control', removed)), `Obsolete browser layer shipped: ${removed}`);
+  }
   assert.match(run(cli, ['start', '--help']), /Usage:/i);
   assert.match(run(cli, ['channel', '--help']), /Usage:/i);
   assert.match(run(cli, ['chromium-cdp', 'setup', '--help']), /--download/);

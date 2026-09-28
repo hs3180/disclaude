@@ -50,6 +50,8 @@ test('generates a standalone manifest and excludes untracked resources', () => {
       dependencies: { '@disclaude/core': '*' },
     })
   );
+  write('README.md', '# Release README');
+  write('CHANGELOG.md', '# Release changelog');
   write('bin/disclaude.js', "const route = 'node_modules/@disclaude/service/dist/cli.js';");
   write('scripts/launchd.mjs', "import './chromium-config.mjs';");
   write('scripts/chromium-config.mjs', 'export {};');
@@ -104,6 +106,10 @@ test('generates a standalone manifest and excludes untracked resources', () => {
     assert(existsSync(join(output, 'scripts', file)));
   }
   assert(existsSync(join(output, 'agents/example.md')));
+  assert.equal(readFileSync(join(output, 'README.md'), 'utf8'), '# Release README');
+  assert.equal(readFileSync(join(output, 'CHANGELOG.md'), 'utf8'), '# Release changelog');
+  assert(manifest.files.includes('README.md'));
+  assert(manifest.files.includes('CHANGELOG.md'));
   assert(existsSync(join(output, 'scripts/chromium-config.mjs')));
   assert(!existsSync(join(output, 'packages/core/dist/index.test.js')));
   assert(existsSync(join(output, 'docker/start-chromium.sh')));
@@ -121,6 +127,24 @@ test('generates a standalone manifest and excludes untracked resources', () => {
   assert.throws(() => generateRelease(root, output), /new or empty/);
   write('bin/disclaude.js', 'changed');
   assert.throws(() => generateRelease(root, join(root, 'other')), /committed source tree/);
+});
+
+test('release provenance fingerprint changes when bundled README or changelog changes', () => {
+  const root = mkdtempSync(join(tmpdir(), 'git-release-doc-fingerprint-'));
+  roots.push(root);
+  writeFileSync(join(root, 'README.md'), '# Initial README');
+  writeFileSync(join(root, 'CHANGELOG.md'), '# Initial changelog');
+  execFileSync('git', ['init', '-q'], { cwd: root });
+  execFileSync('git', ['add', 'README.md', 'CHANGELOG.md'], { cwd: root });
+
+  let fingerprint = sourceFingerprint(root);
+  writeFileSync(join(root, 'README.md'), '# Updated README');
+  const afterReadme = sourceFingerprint(root);
+  assert.notEqual(afterReadme, fingerprint);
+
+  fingerprint = afterReadme;
+  writeFileSync(join(root, 'CHANGELOG.md'), '# Updated changelog');
+  assert.notEqual(sourceFingerprint(root), fingerprint);
 });
 
 

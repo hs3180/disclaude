@@ -7,7 +7,7 @@ import { delimiter, dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
-import { browserAgentEnv, resolveBrowserSocketPath } from '../../packages/core/src/utils/browser-env.js';
+import { browserAgentEnv, resolveBrowserRuntimePath } from '../../packages/core/src/utils/browser-env.js';
 import { ClaudeSDKProvider } from '../../packages/core/src/sdk/providers/claude/provider.js';
 import { PiAgentProvider } from '../../packages/core/src/sdk/providers/pi/provider.js';
 import { CodexAgentProvider } from '../../packages/core/src/sdk/providers/codex/provider.js';
@@ -29,7 +29,7 @@ const configuredModelTimeout = Number.isInteger(modelTimeout) && modelTimeout >=
 // operator-approved model. Do not inherit a user's global Codex default: that
 // would make the evidence non-reproducible and could silently exercise another
 // model.
-const CODEX_BROWSER_ACCEPTANCE_MODEL = 'gpt-5.6-luna';
+const CODEX_BROWSER_ACCEPTANCE_MODEL = 'gpt-6-luna';
 
 async function stopProcessGroup(child: ReturnType<typeof spawn>): Promise<void> {
   if (!child.pid || child.exitCode !== null || child.signalCode !== null) return;
@@ -79,7 +79,7 @@ async function startDeployedChromium(binary: string, profile: string) {
 }
 
 describe('user starts Disclaude and coordinates an already deployed browser', () => {
-  it.skipIf(!enabled)('runs the product IPC entry, hands over shared page state, then shuts down and restarts', async () => {
+  it.skipIf(!enabled)('serializes upstream CLI calls, preserves shared state, and handles service stop/restart', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dc-browser-e2e-'));
     console.info('BROWSER_SERVICE_TEST_ROOT', root);
     let socket = '';
@@ -110,11 +110,12 @@ describe('user starts Disclaude and coordinates an already deployed browser', ()
     const runtimeDirectory = join(root, 'runtime');
     await mkdir(runtimeDirectory, { recursive: true, mode: 0o700 });
     const env: NodeJS.ProcessEnv = { ...process.env, DISCLAUDE_CONFIG_PATH: config, LOCKFILE_PATH: join(root, 'service.pid'),
+      // The installed CLI selects its own interpreter via its shebang.
       PATH: [dirname(browserPython), process.env.PATH || ''].filter(Boolean).join(delimiter),
       XDG_RUNTIME_DIR: runtimeDirectory,
       DISCLAUDE_CHROMIUM_CONFIG: chromiumConfig,
     };
-    socket = resolveBrowserSocketPath(env);
+    socket = resolveBrowserRuntimePath(env);
     const executable = resolve('bin/disclaude.js');
     const callers = new Set<ReturnType<typeof spawn>>();
     const crashDescendants = new Set<number>();
@@ -144,6 +145,9 @@ describe('user starts Disclaude and coordinates an already deployed browser', ()
       nock.enableNetConnect(host => localHost.test(host) || host === api.host || host === apiHostWithPort);
     }
     let invocation = 0;
+    let upstreamEnv: NodeJS.ProcessEnv | undefined;
+    let browserDirectory: string | undefined;
+    let previousInterrupted = false;
     try {
       const deployed = await startDeployedChromium(process.env.DISCLAUDE_E2E_CHROMIUM!, profile);
       chromiumProcess = deployed.child;
@@ -168,6 +172,14 @@ describe('user starts Disclaude and coordinates an already deployed browser', ()
           await delay(100);
         }
         expect(output).toContain('HTTP API server started on');
+        const manifest = JSON.parse(await readFile(socket, 'utf8')) as { directory: string; browserEnv: Record<string, string>; executable: string };
+        browserDirectory = manifest.directory;
+        upstreamEnv = { ...env, ...manifest.browserEnv };
+        // An interrupted command is never replayed across service restart.
+        if (previousInterrupted) {
+          await exec(join(dirname(socket), 'bin/browser-use'), ['--reload'], { env: { ...env, ...browserAgentEnv(env) }, cwd: root, timeout: 30_000 });
+          previousInterrupted = false;
+        }
         const status = await exec(process.execPath, [executable, 'browser', 'status'], { env, cwd: root, timeout: 5000 });
         expect(JSON.parse(status.stdout).state).toBe('idle');
         const taskEnv = browserAgentEnv({ ...env, BU_CDP_URL: 'http://stale.invalid:9223', BU_CDP_WS: 'ws://stale.invalid' });
@@ -178,9 +190,9 @@ describe('user starts Disclaude and coordinates an already deployed browser', ()
         await rejectUpstream();
         expect(taskEnv.BU_CDP_URL).toBeUndefined();
         expect(taskEnv.BU_CDP_WS).toBeUndefined();
-        const run = (script: string, invocationEnv = taskEnv, onSpawn?: (task: ReturnType<typeof spawn>) => void): Promise<string> => new Promise((done, reject) => {
+        const run = (script: string, invocationEnv = taskEnv, onSpawn?: (task: ReturnType<typeof spawn>) => void, args: string[] = []): Promise<string> => new Promise((done, reject) => {
           const invocationId = ++invocation;
-          const task = spawn('browser-use', [], { env: invocationEnv, cwd: root, stdio: ['pipe', 'pipe', 'pipe'] });
+          const task = spawn('browser-use', args, { env: invocationEnv, cwd: root, stdio: ['pipe', 'pipe', 'pipe'] });
           callers.add(task);
           callerClosures.set(task, new Promise<void>(closed => task.once('close', () => {
             callers.delete(task); callerClosures.delete(task); closed();
@@ -194,17 +206,21 @@ describe('user starts Disclaude and coordinates an already deployed browser', ()
           )));
           task.stdin.end(script);
         });
-        await run("goto_url('data:text/html,<h1>Shared research</h1><input id=value>')\nassert wait_for_element('#value')\nfill_input('#value','first')\n");
+        await run("new_tab('data:text/html,<h1>Shared research</h1><input id=value>')\nassert wait_for_element('#value')\nfill_input('#value','first')\ncapture_screenshot(path='shared.png')\n");
+        expect((await readFile(join(root, 'shared.png'))).subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a');
         const results = await Promise.all([
           run("import time\nfill_input('#value','handoff')\ntime.sleep(0.4)\nprint(js(\"document.querySelector('#value').value\"))\n"),
           run("print(js(\"document.querySelector('#value').value\"))\n"),
         ]);
         expect(results[0]).toContain('handoff');
-        // Both callers receive the same real target; ordering is established by the broker.
+        // Both callers share upstream's persistent daemon, and entire calls serialize.
         expect(results[1]).toMatch(/first|handoff/u);
         expect(await run("print(js(\"document.querySelector('#value').value\"))\n")).toContain('handoff');
         // An unavailable IPC service must not execute Python through an upstream
         // daemon, even when one invocation carries stale direct-CDP settings.
+        const daemonPidBefore = await readFile(join(manifest.directory, 'bu.pid'), 'utf8');
+        expect(await run("print('CLI_REUSED')\n")).toContain('CLI_REUSED');
+        expect(await readFile(join(manifest.directory, 'bu.pid'), 'utf8')).toBe(daemonPidBefore);
         const bypassMarker = join(root, 'bypass-marker');
         const missingCoordinatorEnv = {
           ...browserAgentEnv({
@@ -213,11 +229,11 @@ describe('user starts Disclaude and coordinates an already deployed browser', ()
           }),
           // Keep the service-provided launcher on PATH and make only this
           // invocation's internal endpoint unavailable.
-          DISCLAUDE_BROWSER_SOCKET: join(root, 'missing-browser.sock'),
+          DISCLAUDE_BROWSER_RUNTIME: join(root, 'missing-browser.sock'),
         };
         await expect(run(`open(${JSON.stringify(bypassMarker)}, 'w').write('bypassed')\n`, {
           ...missingCoordinatorEnv,
-        })).rejects.toThrow(/ENOENT|connect|socket/i);
+        })).rejects.toThrow(/unavailable|ENOENT|runtime/i);
         await expect(access(bypassMarker)).rejects.toThrow();
         expect(await run("print(js(\"document.querySelector('#value').value\"))\n")).toContain('handoff');
         // A real caller dies after its script starts; its queued successor must
@@ -235,10 +251,12 @@ describe('user starts Disclaude and coordinates an already deployed browser', ()
         if (process.env.DISCLAUDE_E2E_BROWSER_FAIL_DURING_CALL === '1') {
           throw new Error('Injected browser E2E failure while an owned caller is active');
         }
-        const successor = run("print(js(\"document.querySelector('#value').value\"))\n");
-        abandoned?.kill('SIGKILL');
+        const successor = run("print(js(\"document.querySelector('#value').value\"))\n").then(() => 'unexpected execution', error => error.message);
+        abandoned?.kill('SIGTERM');
         expect(await abandonedResult).toBe('interrupted');
-        expect(await successor).toContain('handoff');
+        expect(await successor).toContain('outcome may be unknown');
+        await run('', taskEnv, undefined, ['--reload']);
+        await run("new_tab('data:text/html,<h1>Shared research</h1><input id=value>')\nassert wait_for_element('#value')\nfill_input('#value','handoff')\n");
         await expect(access(abandonedMarker)).rejects.toThrow();
         if (attempt === 0) {
           let previous = 'handoff';
@@ -326,7 +344,7 @@ describe('user starts Disclaude and coordinates an already deployed browser', ()
           expect(descendantReady).toBe(true);
           const descendant = Number(await readFile(descendantFile, 'utf8'));
           crashDescendants.add(descendant);
-          const ownership = JSON.parse(await readFile(socket + '.lock', 'utf8')) as { pid: number };
+          const ownership = JSON.parse(await readFile(socket, 'utf8')) as { pid: number };
           const apiBase = output.match(/HTTP API server started on (http:\/\/127\.0\.0\.1:\d+)/u)?.[1];
           if (!apiBase) { throw new Error('Disclaude did not report its HTTP API address'); }
           const apiStatus = await fetch(new URL('/api/status', apiBase)).then(response => response.json()) as {
@@ -334,14 +352,14 @@ describe('user starts Disclaude and coordinates an already deployed browser', ()
           };
           expect(ownership.pid).toBe(apiStatus.browserIpc?.pid);
           process.kill(ownership.pid, 'SIGKILL');
-          // The coordinator shares the service PID. Its worker group must clean
-          // itself up on IPC disconnect, while the separately deployed browser
-          // remains alive and keeps owning its profile.
+          // The wrapper observes service death and cancels only its active CLI
+          // process group. Upstream's shared daemon and deployed Chrome persist.
           const wrapperExitCode = await Promise.race([exited, delay(5000, 'timeout', { ref: false })]);
           expect(wrapperExitCode).not.toBe('timeout');
           expect(wrapperExitCode).not.toBeNull();
           expect(child.exitCode).not.toBeNull();
           serviceCrashed = true;
+          previousInterrupted = true;
           expect(await active).toBe('interrupted');
           const descendantAlive = (): boolean => { try { process.kill(descendant, 0); return true; } catch { return false; } };
           for (let i = 0; i < 100 && descendantAlive(); i++) { await delay(50); }
@@ -351,13 +369,13 @@ describe('user starts Disclaude and coordinates an already deployed browser', ()
           expect((await fetch(`http://127.0.0.1:${cdpPort}/json/version`, { signal: AbortSignal.timeout(1000) })).ok).toBe(true);
           expect(await readFile(join(profile, 'preserve-test.txt'), 'utf8')).toBe('user profile retained');
           await expect(access(socket)).resolves.toBeUndefined();
-          await expect(access(socket + '.lock')).resolves.toBeUndefined();
+          await expect(access(join(manifest.directory, 'command.lock'))).resolves.toBeUndefined();
           await expect(exec(process.execPath, [executable, 'browser', 'status'], { env, cwd: root, timeout: 5000 })).rejects.toThrow();
         }
         if (!serviceCrashed) {
           await stop();
           await expect(access(socket)).rejects.toThrow();
-          await expect(access(socket + '.lock')).rejects.toThrow();
+          await expect(access(join(manifest.directory, 'command.lock'))).resolves.toBeUndefined();
         }
         expect((await fetch(`http://127.0.0.1:${cdpPort}/json/version`, { signal: AbortSignal.timeout(1000) })).ok).toBe(true);
         expect(await readFile(join(profile, 'preserve-test.txt'), 'utf8')).toBe('user profile retained');
@@ -369,12 +387,16 @@ describe('user starts Disclaude and coordinates an already deployed browser', ()
       // Retain isolated service/browser diagnostics instead of reducing failures
       // to a client EOF alone. Do not retain whole browser profiles for logs.
       await delay(500);
-      console.error('BROWSER_SERVICE_FAILURE', output.slice(-16_000));
+      console.error('BROWSER_SERVICE_FAILURE', output.slice(-4000));
+      if (browserDirectory) {
+        const daemonLog = await readFile(join(browserDirectory, 'bu.log'), 'utf8').catch(() => 'no daemon log');
+        console.error('BROWSER_UPSTREAM_FAILURE', daemonLog.slice(-4000));
+      }
       const processes = await exec('ps', ['-ww', '-axo', 'pid=,ppid=,stat=,etime=,command='])
         .then(result => result.stdout)
         .catch(error => `process snapshot unavailable: ${error.message}`);
       const ownedProcesses = processes.split('\n')
-        .filter(line => line.includes(root) || line.includes('browser_harness') || line.includes('browser-use') || line.includes('Google Chrome'))
+        .filter(line => line.includes(root) || Boolean(browserDirectory && line.includes(browserDirectory)))
         .slice(-200)
         .join('\n');
       console.error('BROWSER_PROCESS_SNAPSHOT', ownedProcesses || 'No owned browser/harness processes found');
@@ -408,7 +430,15 @@ describe('user starts Disclaude and coordinates an already deployed browser', ()
       };
       // Attempt every owned resource cleanup even if another one fails.
       const stopBrowser = async (): Promise<void> => { if (chromiumProcess) await stopProcessGroup(chromiumProcess); };
-      const settled = await Promise.allSettled([stopCallers(), stopDescendants(), stop(), stopBrowser()]);
+      const stopUpstream = async (): Promise<void> => {
+        if (upstreamEnv) {
+          await exec(join(dirname(browserPython), 'browser-use'), ['--reload'], { env: upstreamEnv, cwd: root, timeout: 30_000 });
+        }
+      };
+      // Stop callers before upstream cleanup. This CLI/environment belongs only
+      // to our isolated CDP fixture; never discover or signal a host daemon.
+      const settled = await Promise.allSettled([stopCallers(), stopDescendants(), stop()]);
+      settled.push(...await Promise.allSettled([stopUpstream(), stopBrowser()]));
       const failures = settled.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
       if (failures.length) {
         throw new AggregateError(failures, `Browser test files retained at ${root}: resource termination unconfirmed; inspect owned processes before removing`);

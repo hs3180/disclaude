@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Complete the 0.6.0 browser-coordination delivery (planned for v0.6.1):
   serialize each full upstream `browser-use` CLI invocation per CDP browser,
   removing the separate Disclaude broker/coordinator and managed Python runtime.
+- Include README and CHANGELOG in generated release packages (#5191).
+- Inspect relevant messages and replies in the active Feishu topic thread before
+  answering context-dependent follow-ups (#5190).
+- Route semantic Codex follow-up actions through Feishu interactive cards and
+  resume the originating chat/thread with retry deduplication (#5192).
+- Return actionable diagnostics when Codex control is requested without a
+  confirmed active turn (#5186).
 
 ## [0.6.0] - 2026-09-24
 

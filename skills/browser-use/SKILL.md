@@ -46,13 +46,13 @@ PY
 ```
 
 - stdout is **whatever your Python prints** — `print()` is the result channel. Parse it directly.
-- Each invocation requests control of the **shared browser**. Tabs can survive handoff,
+- Each invocation exclusively uses the **shared browser**. Tabs can survive handoff,
   but another caller may have changed the page; inspect it before continuing.
 - Empty stdin is an error — always pipe code.
 - Read current link text and destinations before choosing a navigation selector;
   familiar sites can change their wording. Verify the destination after navigation.
 
-## Helper reference (CLI 3.0, browser-use 0.13.7)
+## Helper reference (CLI 3.0, validated with browser-use 0.13.10)
 
 | Intent | Helper |
 |---|---|
