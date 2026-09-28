@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resume the originating chat/thread with retry deduplication (#5192).
 - Return actionable diagnostics when Codex control is requested without a
   confirmed active turn (#5186).
+- Treat attachment-only Feishu messages as current input and preserve the
+  correlation of a newer request queued behind them (#5181).
+- End Codex LRU session eviction without a misleading reconnect notice or
+  automatic restart (#5015).
 
 ## [0.6.0] - 2026-09-24
 
