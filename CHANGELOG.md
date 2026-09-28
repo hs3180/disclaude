@@ -7,20 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- Complete the 0.6.0 browser-coordination delivery (planned for v0.6.1):
-  serialize each full upstream `browser-use` CLI invocation per CDP browser,
-  removing the separate Disclaude broker/coordinator and managed Python runtime.
+### Changed
+
+- Serialize each complete upstream `browser-use` CLI invocation per CDP browser;
+  remove the broker IPC/coordinator and managed Python runtime (#5185, #5188).
 - Include README and CHANGELOG in generated release packages (#5191).
-- Inspect relevant messages and replies in the active Feishu topic thread before
-  answering context-dependent follow-ups (#5190).
-- Route semantic Codex follow-up actions through Feishu interactive cards and
-  resume the originating chat/thread with retry deduplication (#5192).
-- Return actionable diagnostics when Codex control is requested without a
+
+### Fixed
+
+- Return actionable diagnostics when Codex turn controls are requested without a
   confirmed active turn (#5186).
-- Treat attachment-only Feishu messages as current input and preserve the
-  correlation of a newer request queued behind them (#5181).
-- End Codex LRU session eviction without a misleading reconnect notice or
-  automatic restart (#5015).
+- Preserve Feishu thread context for follow-up cards, including Codex follow-up
+  actions and retry deduplication (#5190, #5192, #5195).
+- Preserve attachment-only input and queued-request correlation; finish Codex LRU
+  eviction without a misleading reconnect notice or automatic restart
+  (#5181, #5015, #5196).
+
+### Maintenance
+
+- Clear development-tooling npm audit findings without changing runtime
+  dependencies (#5183).
+
+### Documentation
+
+- Consolidate the README and current user/operator guides, remove superseded
+  history, and align browser guidance with the shipped CLI-lock design (#5187).
 
 ## [0.6.0] - 2026-09-24
 
