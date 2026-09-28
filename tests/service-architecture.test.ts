@@ -50,12 +50,17 @@ describe('single service public contract', () => {
       expect(source).not.toContain('"packages/service/dist/cli.js"');
     }
   });
-  it('keeps release-facing Agent browser guidance on the IPC path', () => {
+  it('keeps release-facing browser guidance on the per-call CLI lock path', () => {
     const readme = readFileSync('README.md', 'utf8');
     const endpoint = readFileSync('docs/cdp-endpoint.md', 'utf8');
-    expect(readme).toContain('[Browser coordination](docs/browser-coordination.md)');
-    expect(endpoint).toContain('## Current Agent boundary');
-    expect(endpoint).toContain('private IPC launcher');
+    const coordination = readFileSync('docs/browser-coordination.md', 'utf8');
+    expect(readme).toContain('[Browser control](docs/browser-coordination.md)');
+    expect(readme).toContain('serializes complete');
+    expect(endpoint).toContain('## Disclaude integration');
+    expect(endpoint).toContain('one CLI invocation');
+    expect(endpoint).toContain('local OS file lock');
+    expect(coordination).toContain('One `browser-use` CLI invocation is one exclusive unit');
+    expect(endpoint).not.toContain('private IPC launcher');
     expect(endpoint).not.toContain('### Pointing drivers at the endpoint');
     expect(endpoint).not.toContain('## Skill ↔ CDP configuration contract');
     expect(endpoint).not.toContain('BU_CDP_URL=http://disclaude-chromium:9222 browser-use');
