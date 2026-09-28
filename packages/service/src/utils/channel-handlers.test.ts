@@ -325,7 +325,7 @@ describe('createDefaultMessageHandler', () => {
       channelName: 'Test channel',
     });
     const message = createMockMessage({
-      metadata: { chatHistoryContext: 'Previous conversation context' },
+      metadata: { chatHistoryContext: 'Previous conversation context', pendingQuestionEligible: true },
     });
     await handler(message);
 
@@ -337,6 +337,7 @@ describe('createDefaultMessageHandler', () => {
         messageId: 'msg-001',
         senderOpenId: 'user-001',
         chatHistoryContext: 'Previous conversation context',
+        pendingQuestionEligible: true,
       }),
     );
   });
@@ -593,13 +594,14 @@ describe('createDefaultMessageHandler with InputMessageRouter', () => {
       channelName: 'REST channel',
     });
     const message = createMockMessage({
-      metadata: { chatHistoryContext: 'Previous context' },
+      metadata: { chatHistoryContext: 'Previous context', pendingQuestionEligible: true },
     });
     await handler(message);
 
     expect(mockRouter.route).toHaveBeenCalledWith(
       expect.objectContaining({
         chatHistoryContext: 'Previous context',
+        pendingQuestionEligible: true,
       }),
     );
   });

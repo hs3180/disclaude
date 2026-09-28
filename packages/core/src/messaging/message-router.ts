@@ -44,6 +44,8 @@ export interface UserMessageParams {
   attachments?: FileRef[];
   /** Optional chat history context */
   chatHistoryContext?: string;
+  /** True only for an empty text @mention that may refer to a pending request. */
+  pendingQuestionEligible?: boolean;
   /** Optional chat type (e.g., 'p2p', 'group', 'topic'). Issue #3641. */
   chatType?: string;
   /** Optional thread context for topic groups. Issue #3641. */
@@ -206,6 +208,7 @@ export class MessageRouter {
       senderOpenId: message.senderOpenId,
       attachments: message.attachments,
       chatHistoryContext: message.chatHistoryContext,
+      pendingQuestionEligible: message.pendingQuestionEligible,
       chatType: message.chatType,
       threadContext: message.threadContext,
       threadRootId: message.threadRootId,

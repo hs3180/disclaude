@@ -68,6 +68,8 @@ export interface UserMessage extends Message {
   attachments?: FileRef[];
   /** Chat history context for passive mode (Issue #517) */
   chatHistoryContext?: string;
+  /** True only for an empty text @mention that may refer to a pending request. */
+  pendingQuestionEligible?: boolean;
   /** Chat type (e.g., 'p2p', 'group', 'topic') for context-aware behavior (Issue #3641) */
   chatType?: string;
   /** Thread context for topic groups (Issue #3641 sub-problem 1) */

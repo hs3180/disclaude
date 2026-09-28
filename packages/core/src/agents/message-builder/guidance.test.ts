@@ -35,16 +35,18 @@ describe('buildChatHistorySection', () => {
     expect(result).toContain('@mentioned in a group chat');
   });
 
-  it('should include empty-mention guidance to answer pending questions', () => {
+  it('should not offer pending-question guidance for ordinary history context', () => {
     const result = buildChatHistorySection('User asked a question');
-    expect(result).toContain('empty (only an @mention with no text)');
-    expect(result).toContain('proactively answer it');
-    expect(result).toContain('pending question');
+    expect(result).not.toContain('genuine empty text @mention');
+    expect(result).not.toContain('clearly unanswered request');
   });
 
-  it('should instruct agent not to ask what user needs on empty mention', () => {
-    const result = buildChatHistorySection('context here');
-    expect(result).toContain('Do not ask the user what they need');
+  it('should include guarded pending-question guidance only for an eligible empty text mention', () => {
+    const result = buildChatHistorySection('User asked a question', true);
+    expect(result).toContain('genuine empty text @mention');
+    expect(result).toContain('clearly unanswered request');
+    expect(result).toContain('already been answered or superseded');
+    expect(result).toContain('ask what the user needs');
   });
 
   it('should include coreference resolution guidance for ambiguous references', () => {

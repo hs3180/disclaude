@@ -34,6 +34,7 @@ const mockState = vi.hoisted(() => ({
   execFileCallback: null as ((err: Error | null, result?: { stdout: string; stderr: string }) => void) | null,
   topicNotifyEnabled: false,
   onTopicMessage: vi.fn(),
+  stripLeadingMentions: vi.fn((text: string) => text),
 }));
 
 const mockExecFile = vi.hoisted(() =>
@@ -71,7 +72,7 @@ vi.mock('@disclaude/core', async () => {
       error: vi.fn(),
       warn: vi.fn(),
     }),
-    stripLeadingMentions: (text: string) => text,
+    stripLeadingMentions: mockState.stripLeadingMentions,
   };
 });
 
@@ -952,6 +953,22 @@ describe('MessageHandler', () => {
       expect(msg.content).toContain('report.pdf');
     });
 
+    it('treats a mentioned attachment as the current input, not an empty mention', async () => {
+      mockState.isBotMentioned = true;
+      mockState.getChatHistory.mockResolvedValue('An older request that was already answered');
+      const { handler } = createHandler({ tenantAccessToken: '' });
+      const event = fileEvent('image', { image_key: 'img_001' });
+      event.event.message.chat_type = 'group';
+
+      await handler.handleMessageReceive(event);
+
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.chatHistoryContext).toBe('An older request that was already answered');
+      expect(msg.metadata.pendingQuestionEligible).not.toBe(true);
+      expect(msg.content).toContain('当前消息中的附件');
+      expect(msg.content).toContain('不要根据群聊历史推断或复用旧任务');
+    });
+
     it('should emit correct message type for audio messages', async () => {
       const { handler } = createHandler();
       await handler.handleMessageReceive(fileEvent('audio', { file_key: 'audio_001' }));
@@ -1242,6 +1259,32 @@ describe('MessageHandler', () => {
       // Feishu passes its own (larger) budget through to getChatHistory instead
       // of being silently capped at the session default — see #4171 refactor.
       expect(mockState.getChatHistory).toHaveBeenCalledWith('chat_group', 10000);
+      expect(firstCallArg(mockState.emitMessage).metadata?.pendingQuestionEligible).not.toBe(true);
+    });
+
+    it('marks only a genuine empty text @mention as pending-question eligible', async () => {
+      mockState.isBotMentioned = true;
+      mockState.stripLeadingMentions.mockReturnValueOnce('');
+      mockState.getChatHistory.mockResolvedValue('Older completed task and its answer');
+      const { handler } = createHandler();
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_empty_mention',
+            chat_id: 'chat_group',
+            chat_type: 'group',
+            content: JSON.stringify({ text: '@bot' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.chatHistoryContext).toBe('Older completed task and its answer');
+      expect(msg.metadata.pendingQuestionEligible).toBe(true);
     });
 
     it('should not fetch chat history for p2p messages', async () => {

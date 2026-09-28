@@ -20,12 +20,20 @@
  * question when the user sends an empty @mention (no text attached).
  *
  * @param chatHistoryContext - Chat history context string, or undefined to skip
+ * @param pendingQuestionEligible - True only for a genuine empty text @mention
  * @returns Formatted chat history section, or empty string if no context
  */
-export function buildChatHistorySection(chatHistoryContext?: string): string {
+export function buildChatHistorySection(
+  chatHistoryContext?: string,
+  pendingQuestionEligible = false,
+): string {
   if (!chatHistoryContext) {
     return '';
   }
+
+  const pendingQuestionGuidance = pendingQuestionEligible
+    ? '- This is a genuine empty text @mention. Check this history for a clearly unanswered request in the same conversation. Answer it only if it has not already been answered or superseded; do not revive an older completed request. If nothing is clearly pending, ask what the user needs.\n'
+    : '';
 
   return `
 
@@ -38,7 +46,7 @@ You were @mentioned in a group chat. Here's the recent conversation context:
 ${chatHistoryContext}
 
 **Important**:
-- If the user's message above is empty (only an @mention with no text), look at the last question or request in the chat history and proactively answer it. Do not ask the user what they need — they are @mentioning you to get an answer to the pending question.
+${pendingQuestionGuidance}- Treat the current message as the primary request. Do not infer that an older request is still pending merely because it appears in history.
 - **Coreference resolution**: When a user uses referring expressions like "this link", "this thread", "that message", "这篇", "那个", and the chat history contains multiple possible referents (e.g., multiple links, multiple topics), do NOT guess. Instead, ask the user to clarify which one they mean. Example: "I see several links in the recent history — which one are you referring to?"
 
 ---

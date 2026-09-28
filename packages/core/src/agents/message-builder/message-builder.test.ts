@@ -144,6 +144,25 @@ describe('MessageBuilder', () => {
       expect(result).toContain('Previous conversation here...');
     });
 
+    it('only offers pending-question guidance when the inbound message is eligible', () => {
+      const ordinaryHistory = messageBuilder.buildEnhancedContent({
+        text: 'Please review this attachment',
+        messageId: 'msg-attachment',
+        chatHistoryContext: 'An older request that was already answered',
+      }, 'chat-456');
+      const emptyMention = messageBuilder.buildEnhancedContent({
+        text: '',
+        messageId: 'msg-empty-mention',
+        chatHistoryContext: 'An unanswered question',
+        pendingQuestionEligible: true,
+      }, 'chat-456');
+
+      expect(ordinaryHistory).not.toContain('genuine empty text @mention');
+      expect(ordinaryHistory).not.toContain('clearly unanswered request');
+      expect(emptyMention).toContain('genuine empty text @mention');
+      expect(emptyMention).toContain('An unanswered question');
+    });
+
     it('should not include chat history section when not provided', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',

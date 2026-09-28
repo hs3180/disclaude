@@ -271,6 +271,23 @@ describe('ChatAgent (service)', () => {
       expect(callbacks.getChatHistory).toHaveBeenCalledTimes(1);
       ChatAgent.prototype.dispose.call(chatAgent);
     });
+    it('passes pending-question eligibility to the message builder', async () => {
+      const agent = new ChatAgent({ chatId: 'eligible-mention', callbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+      await agent.processMessage({
+        chatId: 'eligible-mention',
+        payload: '',
+        messageId: 'empty-mention',
+        chatHistoryContext: 'history snapshot',
+        pendingQuestionEligible: true,
+      });
+
+      expect((agent as any).messageBuilder.buildEnhancedContent).toHaveBeenCalledWith(
+        expect.objectContaining({ pendingQuestionEligible: true }),
+        'eligible-mention',
+        undefined,
+      );
+      ChatAgent.prototype.dispose.call(agent);
+    });
     it('should ignore messages for wrong chatId', () => {
       void chatAgent.processMessage({ chatId: 'oc_wrong', payload: 'hello', messageId: 'msg_1' });
       expect(chatAgent.hasActiveSession()).toBe(false);
@@ -2107,6 +2124,75 @@ describe('ChatAgent (service)', () => {
         expect(callbacks.sendMessage.mock.calls.some(call => call[1] === '⏹️ 本轮已停止。')).toBe(true);
         expect(callbacks.sendMessage.mock.calls.some(call => String(call[1]).includes('Late output'))).toBe(false);
       } finally { agent.dispose(); }
+    });
+  });
+
+  describe('Codex LRU session eviction', () => {
+    it('settles eviction without reconnect, then starts a fresh loop for the next message', async () => {
+      const callbacks = createMockCallbacks();
+      let releaseEvictionCallback!: () => void;
+      let evictionCallbackStarted!: () => void;
+      const evictionCallback = new Promise<void>(resolve => { releaseEvictionCallback = resolve; });
+      const evictionStarted = new Promise<void>(resolve => { evictionCallbackStarted = resolve; });
+      let emitEvicted!: () => void;
+      const evictedReady = new Promise<void>(resolve => { emitEvicted = resolve; });
+      callbacks.onDone.mockImplementationOnce(async () => {
+        evictionCallbackStarted();
+        await evictionCallback;
+      });
+
+      const agent = new ChatAgent({ chatId: 'evicted-session', callbacks, apiKey: 'key', model: 'gpt-5.6-luna', agentBackend: 'codex' });
+      (agent as any).isAgentTeamsEnabled = () => false;
+      let finishFollowUp!: () => void;
+      const followUpReady = new Promise<void>(resolve => { finishFollowUp = resolve; });
+      async function* evicted() {
+        await evictedReady;
+        yield { parsed: { type: 'result', content: '', terminatedReason: 'evicted' } };
+      }
+      async function* followUp() {
+        await followUpReady;
+        yield { parsed: { type: 'text', content: 'Follow-up used the restored Codex thread.' } };
+        yield { parsed: { type: 'result', content: '✅ Complete' } };
+      }
+      const createQueryStream = vi.fn()
+        .mockReturnValueOnce({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: evicted() })
+        .mockReturnValueOnce({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: followUp() });
+      (agent as any).createQueryStream = createQueryStream;
+      const resolveTurn = vi.spyOn(agent as any, 'resolveTurn');
+      const startAgentLoop = vi.spyOn(agent as any, 'startAgentLoop');
+      const { restartManager } = agent as any;
+
+      try {
+        await agent.processMessage({ chatId: 'evicted-session', payload: 'first request', messageId: 'evicted-turn' });
+        emitEvicted();
+        await agent.turnCompleteFor('evicted-turn');
+        await evictionStarted;
+
+        expect(resolveTurn).toHaveBeenCalledTimes(1);
+        expect(callbacks.onDone).toHaveBeenCalledTimes(1);
+        expect(restartManager.shouldRestart).not.toHaveBeenCalled();
+        expect(callbacks.sendMessage.mock.calls.some(([, text]) => String(text).includes('正在重新连接'))).toBe(false);
+
+        // A new request may arrive while the evicted iterator is still
+        // finishing callbacks. It must start a replacement query rather than
+        // enter the dead session; old-generation cleanup must not close it.
+        await agent.processMessage({ chatId: 'evicted-session', payload: 'continue', messageId: 'follow-up-turn' });
+        expect(createQueryStream).toHaveBeenCalledTimes(2);
+        expect(startAgentLoop).toHaveBeenCalledTimes(2);
+        releaseEvictionCallback();
+        finishFollowUp();
+        await agent.turnCompleteFor('follow-up-turn');
+
+        expect(agent.hasActiveSession()).toBe(true);
+        expect(createQueryStream).toHaveBeenCalledTimes(2);
+        expect(resolveTurn).toHaveBeenCalledTimes(2);
+        expect(callbacks.sendMessage.mock.calls.some(([, text]) => String(text).includes('Follow-up used the restored Codex thread.'))).toBe(true);
+        expect(restartManager.shouldRestart).not.toHaveBeenCalled();
+      } finally {
+        releaseEvictionCallback();
+        finishFollowUp();
+        agent.dispose();
+      }
     });
   });
 
