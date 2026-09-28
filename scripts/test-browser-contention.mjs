@@ -18,6 +18,7 @@ assert(['http:', 'https:'].includes(base.protocol), 'Expected an HTTP service UR
 const root = resolve(values.workspace), id = randomUUID();
 const held = join(root, `agent-a-held-${id}`), release = join(root, `agent-a-release-${id}`);
 const secondRan = join(root, `agent-b-ran-${id}`);
+const secondInvoked = join(root, `agent-b-invoked-${id}`);
 const firstValue = `draft-a-${id}`, finalValue = `reviewed-b-${id}`;
 const chats = [], requests = [], checks = [];
 const settledChats = new Map();
@@ -60,10 +61,11 @@ function start(script, label) {
   const chatId = `rest-contention-${id}-${label}`;
   chats.push(chatId);
   const quoted = `'${script.replaceAll("'", "'\\''")}'`;
+  const prefix = label === 'b' ? `: > '${secondInvoked.replaceAll("'", "'\\''")}'; ` : '';
   const promise = post('/api/chat/sync', { chatId, userId: 'browser-acceptance-user',
-    message: `Run exactly this shell command with your shell tool, then report its output verbatim:\nprintf '%s' ${quoted} | browser-use\nThis is a shared local draft acceptance fixture. Do not change the script, run extra tools, launch another browser, use direct CDP, delegate, or touch unrelated files.`,
+    message: `Run exactly this shell command with your shell tool, then report its output verbatim:\n${prefix}printf '%s' ${quoted} | browser-use\nThis is a shared local draft acceptance fixture. Do not change the script, run extra tools, launch another browser, use direct CDP, delegate, or touch unrelated files.`,
   }).then(result => { assert.equal(result.chatId, chatId); return result.response; });
-  // Observe both rejections even while checking the other chat's browser lease.
+  // Observe both rejections while the other chat holds its CLI invocation.
   void promise.then(response => {
     // Include only a diagnostic category and length, never raw model text.
     const category = /auth|api.key|unauthoriz|401|403/i.test(response ?? '') ? 'authentication response' : 'unexpected early response';
@@ -96,12 +98,11 @@ try {
   await waitFor(() => exists(held), 'agent A holds the browser');
   const queueStarted = Date.now();
   const second = start(`previous = js("document.querySelector('#value').value")\nassert previous == ${JSON.stringify(firstValue)}\nopen(${JSON.stringify(secondRan)}, 'w').write('executed')\nfill_input('#value', ${JSON.stringify(finalValue)})\nprint('AGENT_B_PREVIOUS:' + previous)\n`, 'b');
-  await waitFor(async () => {
-    return (await browserStatus()).queued >= 1;
-  }, 'agent B enters the coordinator queue');
+  await waitFor(() => exists(secondInvoked), 'agent B reaches its CLI invocation');
+  assert.equal((await browserStatus()).state, 'busy');
   assert.equal(await exists(secondRan), false, 'Agent B must not execute while A holds the browser');
   queueWaitMs = Date.now() - queueStarted;
-  checks.push('B queued while A holds lease; no early execution');
+  checks.push('B reached invocation while A holds command lock; no early execution');
   await writeFile(release, 'release');
   const results = await Promise.all([first, second]);
   completed = true;
@@ -109,8 +110,8 @@ try {
   assert(results[1]?.includes(`AGENT_B_PREVIOUS:${firstValue}`), 'Actual B response contains A draft');
   assert.equal(await exists(secondRan), true);
   checks.push('two independent deployment REST responses; B observed A draft');
-  assert.equal((await browserStatus()).queued, 0, 'Coordinator queue should drain after both callers finish');
-  checks.push('queue drains after sequential handoff');
+  assert.equal((await browserStatus()).state, 'idle', 'Command lock should be free after both callers finish');
+  checks.push('command lock released after sequential handoff');
   assert((await readBrowser()).includes(finalValue), 'Independent final draft readback');
   checks.push('independent final draft readback');
 } catch (error) {
@@ -127,11 +128,11 @@ try {
     }));
     await Promise.race([Promise.allSettled(requests), delay(10_000, undefined, { ref: false })]);
   } else {
-    await Promise.all([held, release, secondRan].map(file => rm(file, { force: true })));
+    await Promise.all([held, release, secondRan, secondInvoked].map(file => rm(file, { force: true })));
   }
   console.info('BROWSER_MODEL_CONTENTION', JSON.stringify({ status: failed ? 'failed' : 'passed',
     entry: 'external-process-rest', chats, checks, queueWaitMs, durationMs: Date.now() - started,
     fixtureCleanup: completed ? 'removed' : 'deferred-to-deployment-owner',
-    ...(!completed ? { retainedFixtures: [held, release, secondRan] } : {}),
+    ...(!completed ? { retainedFixtures: [held, release, secondRan, secondInvoked] } : {}),
   }));
 }

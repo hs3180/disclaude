@@ -1,5 +1,5 @@
-import { connectBrowser } from './client.mjs';
-import { resolveBrowserSocketPath } from '@disclaude/core/browser-runtime';
+import { browserStatus } from './service.mjs';
+import { resolveBrowserRuntimePath } from '@disclaude/core/browser-runtime';
 import { parseArgs } from 'node:util';
 const command = process.argv[2];
 function explicitConfigPath(args) {
@@ -20,7 +20,7 @@ async function resolveBrowserEnvironment() {
 }
 try {
   if (!command || ['help', '--help', '-h'].includes(command)) {
-    console.log('Usage: disclaude browser status [--config PATH]|doctor\nstatus: query the browser coordinator owned by the Disclaude service\ndoctor --binary PATH: test a browser with temporary state\nThe coordinator lifecycle belongs to disclaude start; this command does not start an independent broker.');
+    console.log('Usage: disclaude browser status [--config PATH]|doctor\nstatus: report CLI coordination as idle, busy, or interrupted\ndoctor --binary PATH: test a browser with temporary state\nDisclaude automatically serializes calls to the installed browser-use CLI. No separate coordinator or Python runtime is installed.');
   } else if (command === 'doctor') {
     const { values } = parseArgs({ args: process.argv.slice(3), options: {
       binary: { type: 'string' }, headless: { type: 'boolean', default: false },
@@ -41,15 +41,11 @@ try {
       } finally { process.removeListener('SIGINT', cancel); process.removeListener('SIGTERM', cancel); }
     }
   } else if (command === 'start') {
-    throw new Error('Independent browser IPC startup is no longer supported; use disclaude start to own the coordinator lifecycle');
+    throw new Error('No separate browser coordinator is needed; use disclaude start');
   } else if (command === 'status') {
     const env = await resolveBrowserEnvironment();
-    const client = await connectBrowser(resolveBrowserSocketPath(env));
-    let timer;
-    try {
-      const status = await Promise.race([client.request('status'), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Browser status timed out')), 3000); })]);
-      console.log(JSON.stringify(status));
-      if (status.state === 'unavailable' || status.state === 'quarantined') process.exitCode = 1;
-    } finally { clearTimeout(timer); client.close(); }
+    const status = browserStatus(resolveBrowserRuntimePath(env));
+    console.log(JSON.stringify(status));
+    if (status.state === 'interrupted') process.exitCode = 1;
   } else { throw new Error(`Unknown browser command: ${command}`); }
 } catch (error) { console.error(error.message); process.exitCode = 1; }

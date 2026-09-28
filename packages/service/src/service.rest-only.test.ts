@@ -82,14 +82,14 @@ describe('DisclaudeService REST-only serving (Issue #4280 part 5)', () => {
     vi.spyOn(DisclaudeService.prototype, <never>'initScheduler').mockResolvedValue(undefined);
     rmSync(SCRATCH_DIR, { recursive: true, force: true });
     delete process.env.DISCLAUDE_WORKER_IPC_SOCKET;
-    delete process.env.DISCLAUDE_BROWSER_SOCKET;
+    delete process.env.DISCLAUDE_BROWSER_RUNTIME;
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
     rmSync(SCRATCH_DIR, { recursive: true, force: true });
     delete process.env.DISCLAUDE_WORKER_IPC_SOCKET;
-    delete process.env.DISCLAUDE_BROWSER_SOCKET;
+    delete process.env.DISCLAUDE_BROWSER_RUNTIME;
   });
 
   it('rejects a missing backend before starting the scheduler', async () => {
@@ -99,19 +99,20 @@ describe('DisclaudeService REST-only serving (Issue #4280 part 5)', () => {
     expect(backend.info).not.toHaveBeenCalled();
   });
 
-  it('owns browser coordinator startup, status and shutdown', async () => {
+  it('owns browser launcher availability and shutdown', async () => {
+    let unavailable = false;
     browserRuntimeMock.start.mockImplementation(() => Promise.resolve({
       stop: browserRuntimeMock.stop,
       get pid() { return browserRuntimeMock.pid; },
+      get unavailable() { return unavailable; },
     }));
     const service = new DisclaudeService();
 
     await service.start();
 
-    expect(browserRuntimeMock.start).toHaveBeenCalledWith(process.env, expect.any(Function), expect.any(Function));
+    expect(browserRuntimeMock.start).toHaveBeenCalledWith(process.env, expect.any(Function));
     expect(service.getBrowserIpcStatus()).toEqual({ status: 'ready', pid: 7342 });
-    const onUnavailable = browserRuntimeMock.start.mock.calls[0]?.[1] as (message: string) => void;
-    onUnavailable('coordinator exited');
+    unavailable = true;
     expect(service.getBrowserIpcStatus()).toEqual({ status: 'unavailable', pid: 7342 });
 
     await service.stop();

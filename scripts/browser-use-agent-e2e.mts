@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-/** Agent-level browser validation using the service-owned coordinated IPC entry point.
- * The private IPC path is derived from the active Disclaude configuration,
+/** Agent-level browser validation using the service-owned coordinated CLI entry point.
+ * The private manifest path is derived from the active Disclaude configuration,
  * then run: npx tsx scripts/browser-use-agent-e2e.mts --workspace <dir>
  * A model API key is required. No Chromium endpoint is forwarded to the agent.
  */
@@ -8,7 +8,7 @@
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { Config, setDefaultProvider } from '../packages/core/src/index.js';
-import { resolveBrowserSocketPath } from '../packages/core/src/utils/browser-env.js';
+import { resolveBrowserRuntimePath } from '../packages/core/src/utils/browser-env.js';
 import { AgentFactory } from '../packages/service/src/agents/factory.js';
 import {
   AGENT_E2E_PROMPT,
@@ -82,7 +82,7 @@ async function main(): Promise<void> {
   const config: HarnessConfig = {
     chatId: 'e2e-browser-use-agent',
     workspaceDir,
-    browserSocket: resolveBrowserSocketPath(process.env),
+    browserRuntimePath: resolveBrowserRuntimePath(process.env),
     apiKey,
     agentBackend: Config.AGENT_BACKEND,
     model: argv.model,

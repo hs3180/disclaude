@@ -69,7 +69,7 @@ describe('adaptOptions', () => {
 
   it('strips coordinator-private discovery at the Claude SDK boundary', () => {
     const env = {
-      DISCLAUDE_BROWSER_SOCKET: '/tmp/browser.sock', BU_CDP_URL: 'http://stale.invalid',
+      DISCLAUDE_BROWSER_RUNTIME: '/tmp/browser.sock', BU_CDP_URL: 'http://stale.invalid',
       BU_CDP_WS: 'ws://stale.invalid', PATH: '/ipc/bin:/usr/bin',
     };
     const result = adaptOptions({ settingSources: [], env });

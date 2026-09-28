@@ -15,28 +15,28 @@ function fixture() {
   const run = (env: NodeJS.ProcessEnv) => spawnSync('/bin/sh', [resolve('skills/browser-use/scripts/run.sh')], {
     env: { PATH: upstream, ...env }, input: 'python-input\n', encoding: 'utf8',
   });
-  return { root, managed, socket: join(root, 'browser.sock'), run };
+  return { root, managed, socket: join(root, 'runtime.json'), run };
 }
 describe('browser skill launcher', () => {
   it('uses the managed absolute launcher despite an upstream-only PATH and preserves stdin/guards', () => {
     const { socket, run } = fixture();
-    const result = run({ DISCLAUDE_BROWSER_SOCKET: socket, BH_TMP_DIR: '/dev/null' });
+    const result = run({ DISCLAUDE_BROWSER_RUNTIME: socket, BH_TMP_DIR: '/dev/null' });
     expect(result.status).toBe(0);
     expect(result.stdout).toBe('managed:python-input:/dev/null');
   });
-  it('rejects a non-absolute socket and a missing socket-relative launcher without upstream fallback', () => {
+  it('rejects a non-absolute manifest and a missing manifest-relative launcher without upstream fallback', () => {
     const { root, run } = fixture();
-    for (const socket of ['relative/browser.sock', join(root, 'nested/browser.sock')]) {
-      const result = run({ DISCLAUDE_BROWSER_SOCKET: socket });
+    for (const socket of ['relative/runtime.json', join(root, 'nested/runtime.json')]) {
+      const result = run({ DISCLAUDE_BROWSER_RUNTIME: socket });
       expect(result.status).not.toBe(0);
       expect(result.stdout).toBe('');
-      expect(result.stderr).toMatch(/socket|launcher/i);
+      expect(result.stderr).toMatch(/runtime|launcher/i);
     }
   });
-  it('fails closed without the service-managed coordinator', () => {
+  it('fails closed without the service-managed launcher', () => {
     const result = fixture().run({});
     expect(result.status).not.toBe(0);
     expect(result.stdout).toBe('');
-    expect(result.stderr).toMatch(/Browser coordinator is unavailable/);
+    expect(result.stderr).toMatch(/Browser runtime is unavailable/);
   });
 });

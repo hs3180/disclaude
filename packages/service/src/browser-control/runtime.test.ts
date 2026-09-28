@@ -1,226 +1,173 @@
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createServer as createHttpServer } from 'node:http';
-import nock from 'nock';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { spawn } from 'node:child_process';
+import { accessSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { resolveBrowserSocketPath } from '@disclaude/core/browser-runtime';
-import { hasChromiumCdpConfiguration, startBrowserCoordinator } from './service.mjs';
-import { startBrowserRuntime, type BrowserRuntime } from './runtime.js';
+import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
+import { browserAgentEnv, resolveBrowserRuntimePath } from '@disclaude/core/browser-runtime';
+import { browserStatus, prepareBrowserCommands, resolveBrowserUse, resolveCdpEndpoint } from './service.mjs';
 
-const roots: string[] = [];
-const runtimes: BrowserRuntime[] = [];
-
-beforeAll(() => nock.enableNetConnect(/^127\.0\.0\.1(?::\d+)?$/u));
-
+const roots = new Set<string>();
+const children = new Set<ReturnType<typeof spawn>>();
 afterEach(async () => {
-  for (const runtime of runtimes.splice(0)) { await runtime.stop(); }
-  for (const root of roots.splice(0)) { rmSync(root, { recursive: true, force: true }); }
+  await Promise.all([...children].map(child => new Promise<void>(done => {
+    child.once('close', () => done());
+    if (child.exitCode === null && child.signalCode === null) { child.kill('SIGTERM'); }
+  })));
+  children.clear();
+  for (const root of roots) { rmSync(root, { recursive: true, force: true }); }
+  roots.clear();
 });
 
-async function cdpEndpoint(statusCode = 200) {
-  const server = createHttpServer((_request, response) => {
-    response.statusCode = statusCode;
-    response.setHeader('content-type', 'application/json');
-    response.end(JSON.stringify({
-      Browser: 'Chromium/test',
-      webSocketDebuggerUrl: 'ws://127.0.0.1:9222/devtools/browser/test',
-    }));
-  });
-  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-  const address = server.address();
-  if (!address || typeof address === 'string') { throw new Error('Test CDP server did not bind a TCP port'); }
-  return { server, port: address.port, endpoint: `http://127.0.0.1:${address.port}` };
-}
-
-function versionFetch(statusCode = 200) {
-  return vi.fn((_url: string | URL | Request, _options?: RequestInit) =>
-    Promise.resolve(
-      new Response(
-        JSON.stringify({
-          Browser: 'Chromium/test',
-          webSocketDebuggerUrl: 'ws://127.0.0.1:9222/devtools/browser/test',
-        }),
-        { status: statusCode, headers: { 'content-type': 'application/json' } },
-      ),
-    ),
-  );
-}
-
-function makeEnvironment(port: number) {
-  const root = mkdtempSync(join(tmpdir(), 'browser-runtime-'));
-  roots.push(root);
-  const config = join(root, 'chromium-cdp.json');
-  writeFileSync(config, JSON.stringify({ version: 1, environment: {
-    CHROMIUM_CDP_ADDRESS: '127.0.0.1', CHROMIUM_CDP_PORT: String(port),
-  } }));
-  const env = {
-    ...process.env,
-    DISCLAUDE_CONFIG_PATH: join(root, 'disclaude.yaml'),
-    XDG_RUNTIME_DIR: root,
-    // A legacy user value must not control the service-owned transport.
-    DISCLAUDE_BROWSER_SOCKET: join(root, 'user-configured.sock'),
-    DISCLAUDE_CHROMIUM_CONFIG: config,
-    // Legacy direct-CDP configuration must not override the deployed service config.
-    BU_CDP_URL: 'http://127.0.0.1:1',
+async function fixture() {
+  const root = mkdtempSync(join(tmpdir(), 'dc-cli-lock-')); roots.add(root);
+  const bin = join(root, 'upstream'); mkdirSync(bin);
+  const executable = join(bin, 'browser-use');
+  writeFileSync(executable, `#!${process.execPath}
+import { readFileSync, writeFileSync, appendFileSync } from 'node:fs';
+if (process.argv[2] === '--reload') process.exit(0);
+const input = readFileSync(0, 'utf8');
+const op = JSON.parse(input);
+if (op.pidFile) writeFileSync(op.pidFile, String(process.pid));
+if (op.events) appendFileSync(op.events, op.name + ':start\\n');
+if (op.inspect) console.log(JSON.stringify({args: process.argv.slice(2), input, cwd: process.cwd(), endpoint: process.env.BU_CDP_WS, runtime: process.env.BH_RUNTIME_DIR}));
+setTimeout(() => {
+  if (op.events) appendFileSync(op.events, op.name + ':end\\n');
+  process.stdout.write(op.stdout || ''); process.stderr.write(op.stderr || '');
+  process.exit(op.code || 0);
+}, op.ms || 0);
+`, { mode: 0o700 });
+  const env = { ...process.env, PATH: `${bin}:/usr/bin:/bin`, XDG_RUNTIME_DIR: root,
+    BU_CDP_URL: 'http://127.0.0.1:9999',
+    DISCLAUDE_CONFIG_PATH: join(root, 'config.json'), DISCLAUDE_CHROMIUM_CONFIG: join(root, 'missing.json') };
+  const browserId = randomUUID();
+  const fetchImpl = vi.fn(() => Promise.resolve(new Response(JSON.stringify({ webSocketDebuggerUrl: `ws://127.0.0.1:9999/devtools/browser/${browserId}` }))));
+  const start = async (values = env) => {
+    const service = await prepareBrowserCommands({ env: values, fetchImpl });
+    const path = resolveBrowserRuntimePath(values);
+    const data = JSON.parse(readFileSync(path, 'utf8'));
+    roots.add(data.directory);
+    return { service, path, data, taskEnv: browserAgentEnv(values) };
   };
-  return { root, socket: resolveBrowserSocketPath(env), env };
-}
-
-function mockCoordinator() {
-  return {
-    holder: null,
-    queue: [] as unknown[],
-    closed: false,
-    close: vi.fn(() => Promise.resolve()),
+  const initial = await start();
+  const run = (op: Record<string, unknown>, args: string[] = [], taskEnv = initial.taskEnv) => {
+    const child = spawn(join(dirname(taskEnv.DISCLAUDE_BROWSER_RUNTIME!), 'bin/browser-use'), args,
+      { cwd: root, env: taskEnv, stdio: ['pipe', 'pipe', 'pipe'] });
+    children.add(child);
+    let stdout = '', stderr = '';
+    child.stdout.on('data', chunk => { stdout += chunk; }); child.stderr.on('data', chunk => { stderr += chunk; });
+    const result = new Promise<{code: number | null; signal: string | null; stdout: string; stderr: string}>((done, reject) => {
+      child.once('error', reject);
+      child.once('close', (code, signal) => { children.delete(child); done({ code, signal, stdout, stderr }); });
+    });
+    child.stdin.on('error', () => {});
+    child.stdin.end(JSON.stringify(op));
+    return { child, result };
   };
+  return { root, env, start, run, executable, ...initial };
 }
 
-describe('in-process browser coordinator lifecycle', () => {
-  it('does nothing when coordinated browser access is not configured', async () => {
-    expect(await startBrowserRuntime({ DISCLAUDE_CHROMIUM_CONFIG: '/missing/chromium-cdp.json' })).toBeUndefined();
+describe('transparent browser-use command coordination', () => {
+  it('passes arguments, stdin, cwd, output and exit code to the installed CLI', async () => {
+    const f = await fixture();
+    const op = { inspect: true, stderr: 'upstream stderr', code: 7 };
+    const result = await f.run(op, ['argument with spaces', '--flag']).result;
+    expect(result.code).toBe(7);
+    expect(result.stderr).toBe('upstream stderr');
+    expect(JSON.parse(result.stdout)).toMatchObject({ args: ['argument with spaces', '--flag'], input: JSON.stringify(op), cwd: realpathSync(f.root),
+      endpoint: f.data.browserEnv.BU_CDP_WS, runtime: f.data.directory });
+    expect(browserStatus(f.path).state).toBe('interrupted');
+    const blocked = await f.run({ stdout: 'must-not-run' }).result;
+    expect(blocked.stdout).toBe(''); expect(blocked.stderr).toContain('outcome may be unknown');
+    expect((await f.run({}, ['--reload']).result).code).toBe(0);
+    expect((await f.run({ stdout: 'recovered' }).result).stdout).toBe('recovered');
   });
 
-  it('ignores and clears a legacy socket value when no deployed CDP exists', async () => {
-    vi.stubEnv('DISCLAUDE_CHROMIUM_CONFIG', '/missing/chromium-cdp.json');
-    vi.stubEnv('BU_CDP_URL', '');
-    vi.stubEnv('DISCLAUDE_BROWSER_SOCKET', '/tmp/user-configured-browser.sock');
-
-    expect(await startBrowserRuntime(process.env)).toBeUndefined();
-    expect(process.env.DISCLAUDE_BROWSER_SOCKET).toBeUndefined();
+  it('serializes the whole invocation across projects and service configurations', async () => {
+    const f = await fixture();
+    const second = await f.start({ ...f.env, DISCLAUDE_CONFIG_PATH: join(f.root, 'other.json') });
+    expect(second.data.directory).toBe(f.data.directory);
+    const events = join(f.root, 'events'), pidFile = join(f.root, 'pid');
+    const first = f.run({ name: 'a', ms: 300, events, pidFile });
+    await vi.waitFor(() => accessSync(pidFile));
+    expect(browserStatus(f.path).state).toBe('busy');
+    const next = f.run({ name: 'b', events }, [], second.taskEnv);
+    expect((await first.result).code).toBe(0); expect((await next.result).code).toBe(0);
+    expect(readFileSync(events, 'utf8')).toBe('a:start\na:end\nb:start\nb:end\n');
+    expect(browserStatus(f.path).state).toBe('idle');
   });
 
-  it('reuses a service-provided deployed CDP endpoint when no local config is mounted', async () => {
-    const endpoint = await cdpEndpoint();
-    const root = mkdtempSync(join(tmpdir(), 'browser-runtime-deployed-endpoint-'));
-    roots.push(root);
-    const env = {
-      ...process.env,
-      DISCLAIMUDE_CONFIG_PATH: join(root, 'disclaude.yaml'),
-      DISCLAIMUDE_CHROMIUM_CONFIG: join(root, 'missing-chromium-cdp.json'),
-      XDG_RUNTIME_DIR: root,
-      BU_CDP_URL: endpoint.endpoint,
-    };
-    const admin = {
-      ws: {},
-      closed: new Promise<void>(() => {}),
-      call: vi.fn((method: string) => method === 'Target.createTarget'
-        ? Promise.resolve({ targetId: 'deployed-target' })
-        : Promise.reject(new Error(`Unexpected CDP method: ${method}`))),
-      close: vi.fn(() => Promise.resolve()),
-    };
-    const coordinator = mockCoordinator() as unknown as import('./coordinator.mjs').Coordinator;
-    const connectBrowser = vi.fn(() => Promise.resolve(admin));
-    const createCoordinator = vi.fn(() => coordinator);
-    const fetchImpl = versionFetch();
-
-    try {
-      expect(hasChromiumCdpConfiguration(env)).toBe(true);
-      const runtime = await startBrowserCoordinator({ env, cwd: root, connectBrowser, createCoordinator, fetchImpl });
-      runtimes.push(runtime);
-      expect(fetchImpl.mock.calls[0]?.[0]).toBe(`${endpoint.endpoint}/json/version`);
-      expect(connectBrowser).toHaveBeenCalledOnce();
-      expect(createCoordinator).toHaveBeenCalledOnce();
-      await runtime.stop();
-      runtimes.splice(runtimes.indexOf(runtime), 1);
-      expect(admin.close).toHaveBeenCalledOnce();
-    } finally {
-      await new Promise<void>(resolve => endpoint.server.close(() => resolve()));
-    }
+  it('keeps the lock in the actual CLI after SIGKILL of its wrapper', async () => {
+    const f = await fixture();
+    const pidFile = join(f.root, 'actual.pid'), events = join(f.root, 'events');
+    const first = f.run({ name: 'a', ms: 700, pidFile, events });
+    await vi.waitFor(() => accessSync(pidFile));
+    first.child.kill('SIGKILL');
+    await delay(50);
+    expect(browserStatus(f.path).state).toBe('busy');
+    const next = f.run({ name: 'b', events });
+    expect((await first.result).signal).toBe('SIGKILL');
+    const result = await next.result;
+    expect(result.code).not.toBe(0); expect(result.stderr).toContain('outcome may be unknown');
+    expect(readFileSync(events, 'utf8')).toBe('a:start\na:end\n');
+    expect((await f.run({}, ['--reload']).result).code).toBe(0);
+    expect((await f.run({ name: 'c', events }).result).code).toBe(0);
   });
 
-  it('attaches to the installed CDP, serves the IPC socket in-process, and owns shutdown', async () => {
-    const endpoint = await cdpEndpoint();
-    const { root, socket, env } = makeEnvironment(endpoint.port);
-    let resolveClosed!: () => void;
-    const closed = new Promise<void>(resolve => { resolveClosed = resolve; });
-    const admin = {
-      ws: {},
-      closed,
-      call: vi.fn((method: string) => {
-        if (method === 'Target.createTarget') { return Promise.resolve({ targetId: 'test-target' }); }
-        return Promise.reject(new Error(`Unexpected CDP method: ${method}`));
-      }),
-      close: vi.fn(() => { resolveClosed(); return Promise.resolve(); }),
-    };
-    const coordinator = mockCoordinator() as unknown as import('./coordinator.mjs').Coordinator;
-    const connectBrowser = vi.fn((url: string) => {
-      expect(url).toBe('ws://127.0.0.1:9222/devtools/browser/test');
-      return Promise.resolve(admin);
-    });
-    const fetchImpl = versionFetch();
-    let receivedOptions: Record<string, unknown> | undefined;
-    const createCoordinator = vi.fn((options: Record<string, unknown>) => {
-      receivedOptions = options;
-      return coordinator;
-    });
-
-    try {
-      const runtime = await startBrowserCoordinator({ env, cwd: root, connectBrowser, createCoordinator, fetchImpl });
-      runtimes.push(runtime);
-
-      expect(runtime.pid).toBe(process.pid);
-      expect(runtime.unavailable).toBe(false);
-      expect(fetchImpl.mock.calls[0]?.[0]).toBe(`${endpoint.endpoint}/json/version`);
-      expect(connectBrowser).toHaveBeenCalledOnce();
-      expect(createCoordinator).toHaveBeenCalledOnce();
-      expect(receivedOptions).toMatchObject({
-        url: 'ws://127.0.0.1:9222/devtools/browser/test',
-        target: 'test-target',
-        detachedWorker: true,
-      });
-      expect(existsSync(socket)).toBe(true);
-      expect(existsSync(`${socket}.lock`)).toBe(true);
-
-      const launcherPath = join(dirname(socket), 'bin', 'browser-use');
-      const launcher = readFileSync(launcherPath, 'utf8');
-      expect(launcher).toContain('/browser-control/client.mjs');
-      expect(launcher).not.toContain('/experiments/');
-
-      const clientModule = await import('./client.mjs');
-      const client = await clientModule.connectBrowser(socket);
-      await expect(client.request('status')).resolves.toEqual({ state: 'idle', queued: 0 });
-      client.close();
-
-      await runtime.stop();
-      runtimes.splice(runtimes.indexOf(runtime), 1);
-      expect(admin.close).toHaveBeenCalledOnce();
-      expect(coordinator.close).toHaveBeenCalledOnce();
-      expect(existsSync(socket)).toBe(false);
-      expect(existsSync(`${socket}.lock`)).toBe(false);
-      expect(existsSync(launcherPath)).toBe(false);
-      expect(existsSync(dirname(socket))).toBe(false);
-      expect(endpoint.server.listening).toBe(true);
-    } finally {
-      await new Promise<void>(resolve => endpoint.server.close(() => resolve()));
-    }
+  it('cancels a waiting invocation without executing it or disturbing the holder', async () => {
+    const f = await fixture();
+    const pidFile = join(f.root, 'pid'), events = join(f.root, 'events');
+    const holder = f.run({ name: 'a', ms: 500, pidFile, events });
+    await vi.waitFor(() => accessSync(pidFile));
+    const waiter = f.run({ name: 'b', events });
+    await delay(100); waiter.child.kill('SIGTERM');
+    expect((await waiter.result).code).not.toBe(0);
+    expect((await holder.result).code).toBe(0);
+    expect(readFileSync(events, 'utf8')).toBe('a:start\na:end\n');
+    expect(browserStatus(f.path).state).toBe('idle');
   });
 
-  it('does not replace an IPC lock owned by a live process', async () => {
-    const endpoint = await cdpEndpoint();
-    const { socket, env } = makeEnvironment(endpoint.port);
-    mkdirSync(dirname(socket), { recursive: true, mode: 0o700 });
-    writeFileSync(`${socket}.lock`, JSON.stringify({ pid: process.pid, instance: 'existing' }));
-
-    try {
-      await expect(startBrowserCoordinator({ env })).rejects.toThrow('already owned by process');
-      expect(existsSync(socket)).toBe(false);
-      expect(JSON.parse(readFileSync(`${socket}.lock`, 'utf8'))).toEqual({ pid: process.pid, instance: 'existing' });
-    } finally {
-      await new Promise<void>(resolve => endpoint.server.close(() => resolve()));
-    }
+  it('withdraws availability and cancels an active command on service stop', async () => {
+    const f = await fixture();
+    const pidFile = join(f.root, 'pid'), events = join(f.root, 'events');
+    const active = f.run({ name: 'a', ms: 3000, pidFile, events });
+    await vi.waitFor(() => accessSync(pidFile));
+    await f.service.stop();
+    expect((await active.result).signal).toBe('SIGTERM');
+    expect(readFileSync(events, 'utf8')).toBe('a:start\n');
+    expect(() => browserStatus(f.path)).toThrow(/unavailable/);
+    expect(existsSync(join(f.data.directory, 'command.lock'))).toBe(true);
+    expect(existsSync(join(f.data.directory, 'interrupted.json'))).toBe(true);
   });
 
-  it('cleans its lock when the deployed CDP endpoint is unavailable at startup', async () => {
-    const endpoint = await cdpEndpoint(503);
-    const { socket, env } = makeEnvironment(endpoint.port);
-    const fetchImpl = versionFetch(503);
-    try {
-      await expect(startBrowserCoordinator({ env, fetchImpl })).rejects.toThrow('CDP endpoint returned HTTP 503');
-      expect(existsSync(socket)).toBe(false);
-      expect(existsSync(`${socket}.lock`)).toBe(false);
-    } finally {
-      await new Promise<void>(resolve => endpoint.server.close(() => resolve()));
-    }
+  it('does not unblock after reload reports success but the recorded daemon remains alive', async () => {
+    const f = await fixture();
+    writeFileSync(join(f.data.directory, 'bu.pid'), JSON.stringify({ pid: process.pid }));
+    const reload = await f.run({}, ['--reload']).result;
+    expect(reload.code).not.toBe(0);
+    expect(reload.stderr).toContain('termination is unconfirmed');
+    expect(browserStatus(f.path).state).toBe('interrupted');
+    expect((await f.run({ stdout: 'must-not-run' }).result).stdout).toBe('');
+  });
+
+  it('ignores the generated wrapper during upstream discovery and never guesses Python', async () => {
+    const f = await fixture();
+    expect(resolveBrowserUse(f.taskEnv, '/other/bin')).toBe(f.executable);
+    expect(() => resolveBrowserUse({ PATH: '/definitely-not-installed' }, '')).toThrow(/browser-use CLI/);
+  });
+
+  it('prefers installed CDP config and does not hide invalid config behind a fallback', async () => {
+    const f = await fixture();
+    writeFileSync(f.env.DISCLAUDE_CHROMIUM_CONFIG, JSON.stringify({ version: 1, environment: { CHROMIUM_CDP_PORT: '4567' } }));
+    expect(resolveCdpEndpoint(f.env)).toBe('http://127.0.0.1:4567');
+    writeFileSync(f.env.DISCLAUDE_CHROMIUM_CONFIG, '{}');
+    expect(() => resolveCdpEndpoint(f.env)).toThrow(/invalid/);
+  });
+
+  it('fails before executing anything when its runtime manifest is unavailable', async () => {
+    const f = await fixture();
+    const result = await f.run({ stdout: 'must-not-run' }, [], { ...f.taskEnv, DISCLAUDE_BROWSER_RUNTIME: join(f.root, 'missing', 'runtime.json') }).result.catch(error => ({ code: 1, stdout: '', stderr: error.message }));
+    expect(result.code).not.toBe(0); expect(result.stdout).toBe('');
   });
 });
