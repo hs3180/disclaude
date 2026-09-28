@@ -574,6 +574,8 @@ describe('HttpApiServer', () => {
       question: 'approve?',
       options: [{ text: '✅ Approve', value: 'approve', type: 'primary' }],
       title: 'Review',
+      threadRootId: 'om_topic_root',
+      idempotencyKey: 'codex-followup:om_source',
       actionPrompts: { approve: 'approved' },
     });
 
@@ -596,6 +598,8 @@ describe('HttpApiServer', () => {
       expect(mockHandler).toHaveBeenCalledTimes(1);
       expect(mockHandler.mock.calls[0]![0]).toBe('oc_test');
       expect(mockHandler.mock.calls[0]![1].question).toBe('approve?');
+      expect(mockHandler.mock.calls[0]![1].threadRootId).toBe('om_topic_root');
+      expect(mockHandler.mock.calls[0]![1].idempotencyKey).toBe('codex-followup:om_source');
     });
 
     it('should return 503 when handler is not configured', async () => {

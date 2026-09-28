@@ -135,6 +135,8 @@ export async function sendInteractive(
     title?: string;
     context?: string;
     threadId?: string;
+    threadRootId?: string;
+    idempotencyKey?: string;
     actionPrompts?: Record<string, string>;
   }
 ): Promise<ChannelApiMethodResult & { messageId?: string }> {

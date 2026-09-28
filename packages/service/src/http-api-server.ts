@@ -148,6 +148,8 @@ export type SendInteractiveParams = {
   title?: string;
   context?: string;
   threadId?: string;
+  threadRootId?: string;
+  idempotencyKey?: string;
   actionPrompts?: Record<string, string>;
 };
 
@@ -1008,7 +1010,7 @@ export class HttpApiServer {
   /**
    * POST /api/send-interactive handler (Issue #4279).
    *
-   * Accepts `{ chatId, question, options, title?, context?, threadId?, actionPrompts? }`
+   * Accepts `{ chatId, question, options, title?, context?, threadId?, threadRootId?, idempotencyKey?, actionPrompts? }`
    * and delegates to the channel's sendInteractive capability (which builds+sends
    * the card and registers action prompts). Mirrors the REST API sendInteractive method.
    * Response: `{ ok: true, success, messageId? }`.
@@ -1061,6 +1063,8 @@ export class HttpApiServer {
       ...(typeof raw.title === 'string' ? { title: raw.title } : {}),
       ...(typeof raw.context === 'string' ? { context: raw.context } : {}),
       ...(typeof raw.threadId === 'string' ? { threadId: raw.threadId } : {}),
+      ...(typeof raw.threadRootId === 'string' && raw.threadRootId.trim() ? { threadRootId: raw.threadRootId } : {}),
+      ...(typeof raw.idempotencyKey === 'string' && raw.idempotencyKey.trim() ? { idempotencyKey: raw.idempotencyKey } : {}),
       ...(raw.actionPrompts &&
       typeof raw.actionPrompts === 'object' &&
       !Array.isArray(raw.actionPrompts)

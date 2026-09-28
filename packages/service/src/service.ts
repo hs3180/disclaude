@@ -39,6 +39,18 @@ import { startBrowserRuntime, type BrowserRuntime } from './browser-control/runt
 
 const logger = createLogger('DisclaudeService');
 
+type SendInteractiveServiceParams = {
+  question: string;
+  options: Array<{ text: string; value: string; type?: 'primary' | 'default' | 'danger' }>;
+  title?: string;
+  context?: string;
+  threadId?: string;
+  threadRootId?: string;
+  actionPrompts?: Record<string, string>;
+  idempotencyKey?: string;
+};
+type SendInteractiveServiceResult = { success: boolean; messageId?: string };
+
 /**
  * Service lifecycle options. Channels, HTTP listening and credentials are
  * configured by their own components, not by a node-role configuration.
@@ -107,6 +119,7 @@ export class DisclaudeService extends EventEmitter {
 
   // Interactive context store (Issue #1572: Phase 3 of #1568)
   protected interactiveContextStore: InteractiveContextStore;
+  private readonly interactiveSendFlights = new Map<string, Promise<SendInteractiveServiceResult>>();
 
   constructor(config: ServiceOptions = {}) {
     super();
@@ -566,15 +579,45 @@ export class DisclaudeService extends EventEmitter {
    */
   async sendInteractive(
     chatId: string,
-    params: {
-      question: string;
-      options: Array<{ text: string; value: string; type?: 'primary' | 'default' | 'danger' }>;
-      title?: string;
-      context?: string;
-      threadId?: string;
-      actionPrompts?: Record<string, string>;
-    },
-  ): Promise<{ success: boolean; messageId?: string }> {
+    params: SendInteractiveServiceParams,
+  ): Promise<SendInteractiveServiceResult> {
+    const { idempotencyKey, ...channelParams } = params;
+    if (idempotencyKey !== undefined) {
+      if (!idempotencyKey.trim()) {
+        throw new Error('idempotencyKey must be a non-empty string');
+      }
+      if (!params.actionPrompts || Object.keys(params.actionPrompts).length === 0) {
+        throw new Error('idempotencyKey requires actionPrompts so the sent card can be safely resumed');
+      }
+      if (Object.values(params.actionPrompts).some(prompt => typeof prompt !== 'string' || !prompt.trim())) {
+        throw new Error('idempotencyKey requires non-empty action prompt strings');
+      }
+      const existingMessageId = this.interactiveContextStore.getMessageIdByIdempotencyKey(chatId, idempotencyKey);
+      if (existingMessageId) {
+        return { success: true, messageId: existingMessageId };
+      }
+      const flightKey = JSON.stringify([chatId, idempotencyKey]);
+      const existingFlight = this.interactiveSendFlights.get(flightKey);
+      if (existingFlight) {return existingFlight;}
+
+      const flight = this.sendInteractiveOnce(chatId, channelParams, idempotencyKey);
+      this.interactiveSendFlights.set(flightKey, flight);
+      try {
+        return await flight;
+      } finally {
+        if (this.interactiveSendFlights.get(flightKey) === flight) {
+          this.interactiveSendFlights.delete(flightKey);
+        }
+      }
+    }
+    return this.sendInteractiveOnce(chatId, channelParams);
+  }
+
+  private async sendInteractiveOnce(
+    chatId: string,
+    params: Omit<SendInteractiveServiceParams, 'idempotencyKey'>,
+    idempotencyKey?: string,
+  ): Promise<SendInteractiveServiceResult> {
     const h = this.resolveApiHandlers(chatId);
     if (!h?.sendInteractive) {
       throw new Error('sendInteractive not supported by this channel');
@@ -585,8 +628,16 @@ export class DisclaudeService extends EventEmitter {
     const resolvedPrompts = (result as { actionPrompts?: Record<string, string> }).actionPrompts
       ?? params.actionPrompts;
     if (resolvedPrompts && result.messageId) {
-      this.interactiveContextStore.register(result.messageId, chatId, resolvedPrompts,
-        Object.fromEntries(params.options.map(option => [option.value, option.text])));
+      const labels = Object.fromEntries(params.options.map(option => [option.value, option.text]));
+      if (idempotencyKey !== undefined) {
+        this.interactiveContextStore.register(
+          result.messageId, chatId, resolvedPrompts, labels, params.threadRootId, idempotencyKey,
+        );
+      } else if (params.threadRootId) {
+        this.interactiveContextStore.register(result.messageId, chatId, resolvedPrompts, labels, params.threadRootId);
+      } else {
+        this.interactiveContextStore.register(result.messageId, chatId, resolvedPrompts, labels);
+      }
     }
     // success mirrors the REST API handler, which returns success: true whenever the
     // channel handler resolves without throwing.

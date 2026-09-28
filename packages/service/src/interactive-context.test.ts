@@ -20,7 +20,7 @@ describe('durable interactive contexts', () => {
 
   it('restores exact card prompts after reconstruction without crossing chats', () => {
     const first = new InteractiveContextStore(undefined, undefined, file);
-    first.register('card', 'chat', { inventory: 'Inspect inventory read-only' }, { inventory: 'Inventory report' });
+    first.register('card', 'chat', { inventory: 'Inspect inventory read-only' }, { inventory: 'Inventory report' }, 'topic-root', 'followup:source');
     const restored = new InteractiveContextStore(undefined, undefined, file);
     expect(restored.generatePrompt('card', 'chat', '"inventory"')).toBe('Inspect inventory read-only');
     expect(restored.generatePrompt('card', 'other', 'inventory')).toBeUndefined();
@@ -28,6 +28,10 @@ describe('durable interactive contexts', () => {
     expect(restored.getActionText('card', 'chat', '"inventory"')).toBe('Inventory report');
     expect(restored.getActionText('card', 'other', 'inventory')).toBeUndefined();
     expect(restored.getActionText('other', 'chat', 'inventory')).toBeUndefined();
+    expect(restored.getThreadRootId('card', 'chat')).toBe('topic-root');
+    expect(restored.getThreadRootId('card', 'other')).toBeUndefined();
+    expect(restored.getMessageIdByIdempotencyKey('chat', 'followup:source')).toBe('card');
+    expect(restored.getMessageIdByIdempotencyKey('other', 'followup:source')).toBeUndefined();
     expect(statSync(file).mode & 0o777).toBe(0o600);
     expect(readdirSync(directory)).toEqual(['contexts.json']);
   });
@@ -204,6 +208,30 @@ describe('InteractiveContextStore', () => {
     it('should return action prompts for registered messageId', () => {
       store.register('msg-1', 'chat-1', { ok: 'OK prompt' });
       expect(store.getActionPrompts('msg-1')).toEqual({ ok: 'OK prompt' });
+    });
+  });
+
+  describe('getThreadRootId', () => {
+    it('returns the registered topic root only for the original, unexpired card in its chat', () => {
+      store.register('topic-card', 'chat-1', { continue: 'Continue' }, undefined, 'topic-root');
+      store.register('plain-card', 'chat-1', { continue: 'Continue' });
+
+      expect(store.getThreadRootId('topic-card', 'chat-1')).toBe('topic-root');
+      expect(store.getThreadRootId('topic-card', 'chat-2')).toBeUndefined();
+      expect(store.getThreadRootId('plain-card', 'chat-1')).toBeUndefined();
+      expect(store.getThreadRootId('unknown-card', 'chat-1')).toBeUndefined();
+    });
+  });
+
+  describe('getMessageIdByIdempotencyKey', () => {
+    it('returns an existing card only for the exact key and chat', () => {
+      store.register('card-1', 'chat-1', { a: 'A' }, undefined, undefined, 'turn-1');
+      store.register('card-2', 'chat-1', { a: 'A' }, undefined, undefined, 'turn-2');
+
+      expect(store.getMessageIdByIdempotencyKey('chat-1', 'turn-1')).toBe('card-1');
+      expect(store.getMessageIdByIdempotencyKey('chat-1', 'turn-2')).toBe('card-2');
+      expect(store.getMessageIdByIdempotencyKey('chat-2', 'turn-1')).toBeUndefined();
+      expect(store.getMessageIdByIdempotencyKey('chat-1', 'unknown')).toBeUndefined();
     });
   });
 

@@ -107,20 +107,25 @@ describe('buildThreadContextSection', () => {
 });
 
 describe('buildThreadSelfServiceGuidance (Issue #4402)', () => {
-  // Issue #4306: tell the agent how to fetch thread context / attachments on
-  // demand via lark-cli (ancestor-message attachments are not auto-delivered).
-  it('should include lark-cli on-demand thread context / attachment guidance', () => {
+  // Issue #5190: the injected parent chain may omit relevant replies, so the
+  // agent must retrieve only the current thread when the user's question needs it.
+  it('should proactively resolve missing context from the current thread, including terse follow-ups', () => {
     const result = buildThreadSelfServiceGuidance();
     expect(result).toContain('lark-cli');
-    // List all thread messages + download attachments (recommended path).
+    expect(result).toContain('Thread Root ID');
+    expect(result).toContain('partial');
+    expect(result).toContain('那这个呢？');
+    expect(result).toContain('proactively retrieve');
+    expect(result).toContain('another thread');
+    expect(result).toContain('rather than guessing');
     expect(result).toContain('+threads-messages-list');
     expect(result).toContain('--download-resources');
-    // Fetch specific messages.
     expect(result).toContain('+messages-mget');
-    // Download a single message's attachment.
     expect(result).toContain('+messages-resources-download');
-    // --thread accepts any message id in the thread (auto-resolves to root).
-    expect(result).toContain('auto-resolves');
+    expect(result).toContain('--thread-root <Thread-Root-ID>');
+    expect(result).toContain('codex-followup:<current-message-id>');
+    expect(result).toContain('coalesces concurrent retries');
+    expect(result).toContain('Never substitute the card\'s own ID');
   });
 
   // Issue #4306 nit fixes: mget also advertises its own --download-resources,
@@ -139,7 +144,7 @@ describe('buildThreadSelfServiceGuidance (Issue #4402)', () => {
 
   it('always returns the guidance (caller gates on isTopicThread)', () => {
     // No threadContext parameter — injection is the caller's responsibility.
-    expect(buildThreadSelfServiceGuidance()).toContain('Topic-thread self-service');
+    expect(buildThreadSelfServiceGuidance()).toContain('Topic-thread context before replying');
   });
 });
 
@@ -167,6 +172,10 @@ describe('buildNextStepGuidance', () => {
     expect(result).toContain('Next Steps After Response');
     expect(result).toContain('actionPrompts');
     expect(result).toContain('interactive card');
+    expect(result).toContain('Codex follow-up actions');
+    expect(result).toContain('semantic judgment');
+    expect(result).toContain('not a regex');
+    expect(result).toContain('--idempotency-key');
   });
 
   it('should include simple list fallback when cards are not supported', () => {
@@ -175,6 +184,7 @@ describe('buildNextStepGuidance', () => {
     expect(result).not.toContain('actionPrompts');
     expect(result).not.toContain('interactive card');
     expect(result).toContain('simple list');
+    expect(result).not.toContain('Codex follow-up actions');
   });
 
   it('should default to card template when supportsCards is undefined', () => {

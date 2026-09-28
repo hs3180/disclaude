@@ -52,6 +52,8 @@ export interface ChannelApiRequestPayloads {
     title?: string;
     context?: string;
     threadId?: string;
+    threadRootId?: string;
+    idempotencyKey?: string;
     actionPrompts?: Record<string, string>;
   };
   listTempChats: Record<string, never>;

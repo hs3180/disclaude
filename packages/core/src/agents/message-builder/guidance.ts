@@ -147,20 +147,36 @@ export function buildThreadSelfServiceGuidance(): string {
 
 ---
 
-## Topic-thread self-service context (on-demand)
+## Topic-thread context before replying (Issue #5190)
 
-You are responding in a topic group thread. The Thread Context (when present) is text-only. Ancestor messages in this thread may carry attachments (research PDFs, images, media) that are NOT auto-delivered to you. When the user refers to "this thread / this report / 这篇" but the referenced attachment is absent from your context, fetch it yourself with \`lark-cli\` before answering (Issue #4306 / #4402):
+You are responding inside one specific topic-group thread. Use \`lark-cli\` to inspect missing conversation context. Anchor your interpretation to the supplied Thread Root ID and use only this thread—not flat group history, another thread, or unrelated persisted chat history—to resolve the current message.
 
-- List every message in this thread AND download its attachments (recommended):
-  \`npx @larksuite/cli im +threads-messages-list --thread <message-id> --as bot --download-resources\`
+The injected Thread Context may be absent, partial, or limited to the parent chain; it is not proof that every earlier reply or attachment is present. First inspect it. If the current message depends on missing earlier context (including short follow-ups such as “那这个呢？” or “继续”), proactively retrieve the current thread's messages and relevant replies before answering; the user does not need to explicitly say “look at this thread.” Do not fetch the full thread when the supplied context already contains everything needed.
+
+- List messages and replies in this exact thread; download resources only when relevant:
+  \`npx @larksuite/cli im +threads-messages-list --thread <current-message-id> --as bot --download-resources\`
 - Fetch specific messages by id (up to 50), optionally downloading their attachments too:
   \`npx @larksuite/cli im +messages-mget --message-ids <om_xxx>,<om_yyy> --as bot --download-resources\`
-- Download one message's attachment:
+- Download one relevant attachment:
   \`npx @larksuite/cli im +messages-resources-download --message-id <om_xxx> --file-key <key> --type image|file --as bot --output ./lark-im-resources/<name>\`
 
-The \`--thread\` flag accepts any \`om_xxx\`/\`omt_xxx\` from this thread (e.g. the Message ID in the metadata above, or one quoted in the Thread Context) and auto-resolves it to the thread root. Downloaded files land under \`./lark-im-resources/\` (or your \`--output\` path) — read them with the Read tool, then answer.
+The \`--thread\` flag accepts the current Message ID (or another message ID known to belong to this same thread) and resolves its thread. Read any downloaded resource before relying on it. If required context or an attachment cannot be retrieved, state what is missing and ask the user rather than guessing.
 
----
+When sending a Codex follow-up/feedback card from a topic thread, keep \`--parent <current-Message-ID>\` for reply attribution and also pass \`--thread-root <Thread-Root-ID>\` so a button click resumes the agent session for this same thread. Never substitute the card's own ID for the thread root.
+
+${buildCodexInteractiveFollowUpGuidance()}
+
+`;
+}
+
+function buildCodexInteractiveFollowUpGuidance(): string {
+  return `
+
+### Codex follow-up actions
+
+Use semantic judgment on your response, not a regex or post-response text rewrite. If your Codex response offers concrete, selectable next actions, send a \`send_interactive\` card with one button per action; preserve each action's meaning and map its button value to a concise prompt describing the user's choice and requested continuation. Bind the card to the current chat and conversation. Skip the card when there is no concrete choice/action, the response is already complete without a decision, or interactive cards are unsupported.
+
+For a follow-up card, include explicit \`--action-prompts\` and the stable key \`--idempotency-key "codex-followup:<current-message-id>"\`; reuse that same key if the send is retried. The service coalesces concurrent retries and reuses the registered card for the same chat/key.
 `;
 }
 
@@ -193,6 +209,8 @@ Use an **interactive card** when a concrete question needs user feedback, such a
 
 ${researchGuidance}
 
+${buildCodexInteractiveFollowUpGuidance()}
+
 ### Sending a feedback card (send_interactive)
 
 Invoke the \`send_interactive\` channel command shown in the Tools section — it is a **command line**, not a JSON payload. Passing a card JSON blob on stdin does not work: it is consumed as the \`--question\` text and rendered verbatim into the card.
@@ -203,7 +221,8 @@ Invoke the \`send_interactive\` channel command shown in the Tools section — i
   --title "确认交付格式" \\
   --question "报告需要哪种格式？" \\
   --options '[{"text":"Markdown","value":"action1","type":"primary"},{"text":"PDF","value":"action2"}]' \\
-  --action-prompts '{"action1":"[用户操作] 用户选择了Markdown","action2":"[用户操作] 用户选择了PDF"}'
+  --action-prompts '{"action1":"[用户操作] 用户选择了Markdown","action2":"[用户操作] 用户选择了PDF"}' \\
+  --idempotency-key "codex-followup:<trigger-message-id>"
 \`\`\`
 
 Flags:
@@ -213,6 +232,8 @@ Flags:
 - \`--question\` — the prompt text shown above the buttons (or \`--question-file <path>\`, or piped on stdin).
 - \`--options\` — JSON array of buttons; each an object with a button \`text\`, a \`value\`, and an optional \`type\` of \`primary\`/\`default\`/\`danger\`.
 - \`--action-prompts\` — JSON object mapping each button \`value\` to a short user-action description.
+- \`--thread-root\` — optional topic-thread root ID used to route button clicks back to that thread's existing agent session; when present in the current message metadata, pass it for interactive cards. Keep \`--parent\` set to the triggering Message ID.
+- \`--idempotency-key\` — stable retry key for one card and trigger message; requires \`--action-prompts\` so the existing card's button context remains registered.
 - \`--title\` — card header text (optional; defaults to a generic header). Choose a title that identifies the specific question.
 - \`--context\` — optional one-line subtitle under the header.
 

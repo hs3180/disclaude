@@ -105,6 +105,9 @@ export class MessageBuilder {
       `**Chat ID:** ${chatId}`,
       `**Message ID:** ${msg.messageId}`,
     ];
+    if (msg.threadRootId) {
+      metadataParts.push(`**Thread Root ID:** ${msg.threadRootId}`);
+    }
     if (msg.senderOpenId) {
       metadataParts.push(`**Sender Open ID:** ${msg.senderOpenId}`);
     }
@@ -144,6 +147,9 @@ export class MessageBuilder {
       `**Chat ID:** ${chatId}`,
       `**Message ID:** ${msg.messageId}`,
     ];
+    if (msg.threadRootId) {
+      metadataParts.push(`**Thread Root ID:** ${msg.threadRootId}`);
+    }
     if (msg.senderOpenId) {
       metadataParts.push(`**Sender Open ID:** ${msg.senderOpenId}`);
     }

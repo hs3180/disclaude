@@ -96,6 +96,7 @@ export interface MessageCallbacks {
     actionText?: string,
   ) => string | undefined;
   resolveActionText?: (messageId: string, chatId: string, actionValue: string) => string | undefined;
+  resolveActionThreadRoot?: (messageId: string, chatId: string) => string | undefined;
   /**
    * Called when a topic group message is received.
    * Issue #4031: Topic group message push notification.
@@ -1484,6 +1485,13 @@ export class MessageHandler {
       return;
     }
 
+    let threadRootId: string | undefined;
+    try {
+      threadRootId = this.callbacks.resolveActionThreadRoot?.(message_id, chat_id);
+    } catch (err) {
+      logger.warn({ err, messageId: message_id, chatId: chat_id }, 'Failed to resolve card thread root');
+    }
+
     logger.info(
       {
         messageId: message_id,
@@ -1578,8 +1586,9 @@ export class MessageHandler {
         metadata: {
           cardAction: action,
           cardMessageId: message_id,
-          // Preserve the actual Feishu card as the reply thread anchor.
-          threadRootId: message_id,
+          // A topic card resumes the session identified when it was created;
+          // the card's own ID is only a reply anchor, not the thread identity.
+          ...(threadRootId ? { threadRootId } : {}),
         },
       });
       logger.debug(

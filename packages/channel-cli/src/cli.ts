@@ -20,7 +20,7 @@ const COMMAND_FLAGS: Record<string, string[]> = {
   send_file: ['file'],
   send_card: ['card', 'card-file'],
   push_to_agent: ['message', 'message-file'],
-  send_interactive: ['question', 'question-file', 'options', 'action-prompts', 'title', 'context'],
+  send_interactive: ['question', 'question-file', 'options', 'action-prompts', 'title', 'context', 'thread-root', 'idempotency-key'],
 };
 
 // Issue #4705: single source of truth shared with the message builder's
@@ -229,10 +229,24 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
     emitFail(command, command === 'send_card' && messageText.startsWith('Invalid --card JSON') ? messageText.replace('Invalid --card JSON', 'Invalid card JSON') : messageText);
     return 1;
   }
+  const idempotencyKey = arg(args, 'idempotency-key');
+  if (idempotencyKey !== undefined && !idempotencyKey.trim()) {
+    emitFail(command, '--idempotency-key must be a non-empty key');
+    return 1;
+  }
+  if (idempotencyKey !== undefined && (!parsedActionPrompts || Object.keys(parsedActionPrompts).length === 0)) {
+    emitFail(command, '--idempotency-key requires --action-prompts for safe button routing');
+    return 1;
+  }
   let mod: typeof import('./index.js');
   try { mod = await withLogsRedirected(() => import('./index.js')); }
   catch (error) { emitFail(command, `Failed to load channel implementation: ${errorMessage(error)}`, 'run npm run build before using the packaged CLI'); return 1; }
   const parentMessageId = arg(args, 'parent');
+  const threadRootId = arg(args, 'thread-root');
+  if (threadRootId !== undefined && !threadRootId.trim()) {
+    emitFail(command, '--thread-root must be a non-empty thread root ID');
+    return 1;
+  }
   let result: ToolResult;
   try {
     if (command === 'send_text') {
@@ -249,7 +263,7 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
     } else if (command === 'push_to_agent') {
       result = await withLogsRedirected(() => mod.push_to_agent({ chatId, message: message as string }));
     } else {
-      result = await withLogsRedirected(() => mod.send_interactive({ question: question as string, options: parsedOptions as InteractiveOption[], title: arg(args, 'title'), context: arg(args, 'context'), actionPrompts: parsedActionPrompts, chatId, parentMessageId }));
+      result = await withLogsRedirected(() => mod.send_interactive({ question: question as string, options: parsedOptions as InteractiveOption[], title: arg(args, 'title'), context: arg(args, 'context'), actionPrompts: parsedActionPrompts, chatId, parentMessageId, threadRootId, idempotencyKey }));
     }
   } catch (error) {
     const errorText = `${command} failed: ${errorMessage(error)}`;
