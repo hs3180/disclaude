@@ -832,6 +832,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       senderOpenId,
       attachments,
       chatHistoryContext,
+      pendingQuestionEligible,
       chatType,
       threadContext,
       threadRootId,
@@ -947,6 +948,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         senderOpenId,
         attachments,
         chatHistoryContext: effectiveChatHistoryContext,
+        pendingQuestionEligible,
         chatLogFilePaths: this.historyManager.chatLogFilePaths,
         chatType: this.chatType,
         threadContext,
@@ -1462,6 +1464,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const diagnosticId = crypto.randomUUID();
     let iteratorError: Error | null = null;
     let backendInterrupted = false;
+    let evictedTerminated = false;
     let messageCount = 0;
     const startTime = Date.now(); // Issue #2920: 追踪启动时间
 
@@ -1824,19 +1827,21 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
               { chatId, messageCount },
               'Codex session evicted (concurrency cap) — ending stream without auto-restart (Issue #4634)'
             );
+            evictedTerminated = true;
+            this.isSessionActive = false;
             this.isProcessingMessage = false;
+            this.activeTurnMessageId = undefined;
             this.resolveTurn(currentTurnMessageId);
             if (this.callbacks.onDone) {
               const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
               await this.callbacks.onDone(chatId, threadRoot);
             }
-            if (this.onceMode) {
-              this.isSessionActive = false;
+            if (this.onceMode && this.sessionGeneration === myGeneration) {
               this.channel?.close();
               this.taskCompletionResolve?.();
               this.clearTaskCompletion();
             }
-            continue;
+            break;
           }
 
           // Issue #3003: Log timing summary on completion
@@ -2472,6 +2477,27 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         if (this.sessionGeneration !== myGeneration) { return; }
         await this.callbacks.onDone?.(chatId, threadRoot);
       }
+      return;
+    }
+
+    if (evictedTerminated) {
+      // LRU eviction is a terminal governance outcome, not an unexpected
+      // provider failure. Release only this generation's now-finished query;
+      // a new user message may already have started a replacement session from
+      // the stashed Codex thread while onDone/stream finalization was pending.
+      if (this.sessionGeneration === myGeneration) {
+        this.queryHandle?.close();
+        this.queryHandle = undefined;
+        this.channel?.close();
+        this.channel = undefined;
+        this.isSessionActive = false;
+        this.isProcessingMessage = false;
+        this.activeTurnMessageId = undefined;
+      }
+      this.logger.info(
+        { chatId, messageCount, myGeneration, currentGeneration: this.sessionGeneration },
+        'Codex session eviction ended cleanly; suppressing reconnect and automatic restart (Issue #5015)'
+      );
       return;
     }
 

@@ -108,6 +108,7 @@ describe('Integration: UserMessage end-to-end (Feishu → MessageRouter → Agen
 
     const userMessage = createUserMessage({
       chatHistoryContext: '## Previous conversation\nUser: Hello\nBot: Hi!',
+      pendingQuestionEligible: true,
     });
 
     await router.route(userMessage);
@@ -119,6 +120,7 @@ describe('Integration: UserMessage end-to-end (Feishu → MessageRouter → Agen
         messageId: 'feishu-msg-1',
         senderOpenId: 'ou_sender1',
         chatHistoryContext: '## Previous conversation\nUser: Hello\nBot: Hi!',
+        pendingQuestionEligible: true,
       }),
     );
   });

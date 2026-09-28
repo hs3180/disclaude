@@ -271,6 +271,23 @@ describe('ChatAgent (service)', () => {
       expect(callbacks.getChatHistory).toHaveBeenCalledTimes(1);
       ChatAgent.prototype.dispose.call(chatAgent);
     });
+    it('passes pending-question eligibility to the message builder', async () => {
+      const agent = new ChatAgent({ chatId: 'eligible-mention', callbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+      await agent.processMessage({
+        chatId: 'eligible-mention',
+        payload: '',
+        messageId: 'empty-mention',
+        chatHistoryContext: 'history snapshot',
+        pendingQuestionEligible: true,
+      });
+
+      expect((agent as any).messageBuilder.buildEnhancedContent).toHaveBeenCalledWith(
+        expect.objectContaining({ pendingQuestionEligible: true }),
+        'eligible-mention',
+        undefined,
+      );
+      ChatAgent.prototype.dispose.call(agent);
+    });
     it('should ignore messages for wrong chatId', () => {
       void chatAgent.processMessage({ chatId: 'oc_wrong', payload: 'hello', messageId: 'msg_1' });
       expect(chatAgent.hasActiveSession()).toBe(false);
@@ -2110,6 +2127,75 @@ describe('ChatAgent (service)', () => {
     });
   });
 
+  describe('Codex LRU session eviction', () => {
+    it('settles eviction without reconnect, then starts a fresh loop for the next message', async () => {
+      const callbacks = createMockCallbacks();
+      let releaseEvictionCallback!: () => void;
+      let evictionCallbackStarted!: () => void;
+      const evictionCallback = new Promise<void>(resolve => { releaseEvictionCallback = resolve; });
+      const evictionStarted = new Promise<void>(resolve => { evictionCallbackStarted = resolve; });
+      let emitEvicted!: () => void;
+      const evictedReady = new Promise<void>(resolve => { emitEvicted = resolve; });
+      callbacks.onDone.mockImplementationOnce(async () => {
+        evictionCallbackStarted();
+        await evictionCallback;
+      });
+
+      const agent = new ChatAgent({ chatId: 'evicted-session', callbacks, apiKey: 'key', model: 'gpt-5.6-luna', agentBackend: 'codex' });
+      (agent as any).isAgentTeamsEnabled = () => false;
+      let finishFollowUp!: () => void;
+      const followUpReady = new Promise<void>(resolve => { finishFollowUp = resolve; });
+      async function* evicted() {
+        await evictedReady;
+        yield { parsed: { type: 'result', content: '', terminatedReason: 'evicted' } };
+      }
+      async function* followUp() {
+        await followUpReady;
+        yield { parsed: { type: 'text', content: 'Follow-up used the restored Codex thread.' } };
+        yield { parsed: { type: 'result', content: '✅ Complete' } };
+      }
+      const createQueryStream = vi.fn()
+        .mockReturnValueOnce({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: evicted() })
+        .mockReturnValueOnce({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: followUp() });
+      (agent as any).createQueryStream = createQueryStream;
+      const resolveTurn = vi.spyOn(agent as any, 'resolveTurn');
+      const startAgentLoop = vi.spyOn(agent as any, 'startAgentLoop');
+      const { restartManager } = agent as any;
+
+      try {
+        await agent.processMessage({ chatId: 'evicted-session', payload: 'first request', messageId: 'evicted-turn' });
+        emitEvicted();
+        await agent.turnCompleteFor('evicted-turn');
+        await evictionStarted;
+
+        expect(resolveTurn).toHaveBeenCalledTimes(1);
+        expect(callbacks.onDone).toHaveBeenCalledTimes(1);
+        expect(restartManager.shouldRestart).not.toHaveBeenCalled();
+        expect(callbacks.sendMessage.mock.calls.some(([, text]) => String(text).includes('正在重新连接'))).toBe(false);
+
+        // A new request may arrive while the evicted iterator is still
+        // finishing callbacks. It must start a replacement query rather than
+        // enter the dead session; old-generation cleanup must not close it.
+        await agent.processMessage({ chatId: 'evicted-session', payload: 'continue', messageId: 'follow-up-turn' });
+        expect(createQueryStream).toHaveBeenCalledTimes(2);
+        expect(startAgentLoop).toHaveBeenCalledTimes(2);
+        releaseEvictionCallback();
+        finishFollowUp();
+        await agent.turnCompleteFor('follow-up-turn');
+
+        expect(agent.hasActiveSession()).toBe(true);
+        expect(createQueryStream).toHaveBeenCalledTimes(2);
+        expect(resolveTurn).toHaveBeenCalledTimes(2);
+        expect(callbacks.sendMessage.mock.calls.some(([, text]) => String(text).includes('Follow-up used the restored Codex thread.'))).toBe(true);
+        expect(restartManager.shouldRestart).not.toHaveBeenCalled();
+      } finally {
+        releaseEvictionCallback();
+        finishFollowUp();
+        agent.dispose();
+      }
+    });
+  });
+
   describe('structured internal turn results', () => {
     it.each([false, true])('bounds terminal output and resets the bound at a tool call (tool=%s)', async tool => {
       const callbacks = { ...createMockCallbacks(), onTurnResult: vi.fn().mockResolvedValue(undefined) };
@@ -2721,7 +2807,7 @@ describe('ChatAgent (service)', () => {
       expect(plainCall![2]).toBe('thread-root-123');
     });
 
-    it('keeps queued source metadata out of the active turn and its delivery receipts', async () => {
+    it('keeps an attachment-only turn and its queued newer request separately correlated', async () => {
       const callbacks = createMockCallbacks();
       callbacks.sendMessage.mockImplementation((_chat: string, text: string) => Promise.resolve(`receipt:${text}`));
       const agent = new ChatAgent({ chatId: 'chat', callbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
@@ -2739,11 +2825,22 @@ describe('ChatAgent (service)', () => {
           yield { parsed: { type: 'result', content: 'Done B' } };
         })(),
       });
-      await agent.processMessage({ chatId: 'chat', payload: 'question A', messageId: 'source-a' });
+      const attachmentPrompt = 'Current image attachment could not be downloaded. It has no accompanying text request; do not reuse prior tasks.';
+      await agent.processMessage({
+        chatId: 'chat',
+        payload: attachmentPrompt,
+        messageId: 'attachment-image',
+        chatHistoryContext: 'An older completed request: create three similar math problems.',
+      });
       await vi.waitFor(() => expect(callbacks.sendMessage.mock.calls.some((call: any[]) => call[1] === 'A1')).toBe(true));
-      await agent.processMessage({ chatId: 'chat', payload: 'question B', messageId: 'source-b' });
+      const newerRequest = 'Please remove the answers and corrections from the worksheet.';
+      await agent.processMessage({ chatId: 'chat', payload: newerRequest, messageId: 'cleanup-request' });
       const inputs = (agent as any).channel.push.mock.calls.map((call: any[]) => call[0]);
-      expect(inputs.map((input: any) => input.correlation.sourceMessageId)).toEqual(['source-a', 'source-b']);
+      expect(inputs.map((input: any) => input.correlation.sourceMessageId)).toEqual(['attachment-image', 'cleanup-request']);
+      expect(inputs[0].message.content).toContain(attachmentPrompt);
+      expect(inputs[0].message.content).toContain('An older completed request');
+      expect(inputs[0].message.content).not.toContain('genuine empty text @mention');
+      expect(inputs[1].message.content).toContain(newerRequest);
       expect(inputs[0].message.content).not.toContain(inputs[0].correlation.runId);
       resume();
       await vi.waitFor(() => {

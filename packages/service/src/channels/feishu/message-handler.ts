@@ -1103,8 +1103,8 @@ export class MessageHandler {
       const resourceType = mapResourceType(message_type);
       const downloadCmd = this.buildDownloadCmd(message_id, fileKey, resourceType);
       const filePrompt = localPath
-        ? `用户${message_type === 'audio' ? '发送了一段' : '上传了一个'}${typeLabel}：${fileName || fileKey}\n\n文件已下载到本地: ${localPath}\n\n请使用 Read 工具读取该文件来查看内容。${message_type === 'image' ? '这是一个图片文件，Read 工具可以直接查看图片内容。' : message_type === 'audio' ? '这是一个音频文件。你可以根据自身能力处理音频（如调用 ASR 工具转录、分析音频特征等）。' : ''}\n\n如果文件读取失败，可以使用以下命令重新下载:\n${downloadCmd}`
-        : `用户${message_type === 'audio' ? '发送了一段' : '上传了一个'}${typeLabel}：${fileName || fileKey}，但自动下载失败。\n\n你可以尝试手动下载该文件：\n- message_id: \`${message_id}\`\n- file_key: \`${fileKey}\`\n- 消息类型: ${message_type}\n- API type 参数: ${resourceType}\n\n下载命令:\n\`\`\`bash\n${downloadCmd}\n\`\`\``;
+        ? `用户${message_type === 'audio' ? '发送了一段' : '上传了一个'}${typeLabel}：${fileName || fileKey}\n\n这是当前消息中的附件，没有附带新的文字任务。请把这个附件作为当前消息处理；不要根据群聊历史复用已经完成或无关的旧任务。如果附件意图不明确，请先询问用户。\n\n文件已下载到本地: ${localPath}\n\n请使用 Read 工具读取该文件来查看内容。${message_type === 'image' ? '这是一个图片文件，Read 工具可以直接查看图片内容。' : message_type === 'audio' ? '这是一个音频文件。你可以根据自身能力处理音频（如调用 ASR 工具转录、分析音频特征等）。' : ''}\n\n如果文件读取失败，可以使用以下命令重新下载:\n${downloadCmd}`
+        : `用户${message_type === 'audio' ? '发送了一段' : '上传了一个'}${typeLabel}：${fileName || fileKey}，但自动下载失败。\n\n这是当前消息中的附件，没有附带新的文字任务。不要根据群聊历史推断或复用旧任务；如果无法获取这个附件，请明确说明并请用户重新发送或补充文字说明。\n\n你可以尝试手动下载该文件：\n- message_id: \`${message_id}\`\n- file_key: \`${fileKey}\`\n- 消息类型: ${message_type}\n- API type 参数: ${resourceType}\n\n下载命令:\n\`\`\`bash\n${downloadCmd}\n\`\`\``;
 
       // Issue #3702: Build metadata for file/image messages to pass chatType and threadContext,
       // ensuring intermediate message filtering works correctly in topic groups.
@@ -1397,6 +1397,14 @@ export class MessageHandler {
     }
     if (chatHistoryContext) {
       metadata.chatHistoryContext = chatHistoryContext;
+    }
+    if (
+      isTriggerModeMention &&
+      chat_type !== 'topic' &&
+      message_type === 'text' &&
+      textWithoutMentions.trim() === ''
+    ) {
+      metadata.pendingQuestionEligible = true;
     }
     if (threadContext) {
       metadata.threadContext = threadContext;

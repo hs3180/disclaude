@@ -28,6 +28,8 @@ export interface MessageData {
   attachments?: FileRef[];
   /** Chat history context for passive mode (Issue #517) */
   chatHistoryContext?: string;
+  /** Whether this is a genuine empty text @mention that may need pending-question context. */
+  pendingQuestionEligible?: boolean;
   /** Persisted history context for session restoration (Issue #955) */
   persistedHistoryContext?: string;
   /** Chat log file paths for accessing history beyond context window (Issue #3996) */
