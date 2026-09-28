@@ -81,6 +81,7 @@ import {
 } from './exec-adapter.js';
 import type { SkillsRegistry } from '../../../skills/index.js';
 import { codexSkillsRegistry } from './skill-sources.js';
+import { CODEX_FOLLOW_UP_DEVELOPER_INSTRUCTIONS } from './follow-up-developer-instructions.js';
 
 const logger = createLogger('CodexAgentProvider');
 
@@ -762,6 +763,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             fullAccess,
             cwd: options.cwd,
             model: codexModel,
+            developerInstructions: CODEX_FOLLOW_UP_DEVELOPER_INSTRUCTIONS,
             env: { ...providerEnv, ...options.env },
             stderr: options.stderr,
           },
@@ -1382,6 +1384,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       sessionKey,
       correlation,
       onUserInput,
+      developerInstructions: CODEX_FOLLOW_UP_DEVELOPER_INSTRUCTIONS,
       env: this.env,
       onNotification: (method, params) => {
         const threadId = (params as { threadId?: string } | null)?.threadId;

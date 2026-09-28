@@ -172,10 +172,9 @@ describe('buildNextStepGuidance', () => {
     expect(result).toContain('Next Steps After Response');
     expect(result).toContain('actionPrompts');
     expect(result).toContain('interactive card');
-    expect(result).toContain('Codex follow-up actions');
-    expect(result).toContain('semantic judgment');
-    expect(result).toContain('not a regex');
     expect(result).toContain('--idempotency-key');
+    expect(result).not.toContain('Codex follow-up actions');
+    expect(result).not.toContain('semantic judgment');
   });
 
   it('should include simple list fallback when cards are not supported', () => {

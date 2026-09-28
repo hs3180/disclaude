@@ -164,19 +164,8 @@ The \`--thread\` flag accepts the current Message ID (or another message ID know
 
 When sending a Codex follow-up/feedback card from a topic thread, keep \`--parent <current-Message-ID>\` for reply attribution and also pass \`--thread-root <Thread-Root-ID>\` so a button click resumes the agent session for this same thread. Never substitute the card's own ID for the thread root.
 
-${buildCodexInteractiveFollowUpGuidance()}
+Use \`--idempotency-key "codex-followup:<current-message-id>"\` for the card and reuse the same key if sending is retried; the service coalesces concurrent retries and reuses the registered card for the same chat/key.
 
-`;
-}
-
-function buildCodexInteractiveFollowUpGuidance(): string {
-  return `
-
-### Codex follow-up actions
-
-Use semantic judgment on your response, not a regex or post-response text rewrite. If your Codex response offers concrete, selectable next actions, send a \`send_interactive\` card with one button per action; preserve each action's meaning and map its button value to a concise prompt describing the user's choice and requested continuation. Bind the card to the current chat and conversation. Skip the card when there is no concrete choice/action, the response is already complete without a decision, or interactive cards are unsupported.
-
-For a follow-up card, include explicit \`--action-prompts\` and the stable key \`--idempotency-key "codex-followup:<current-message-id>"\`; reuse that same key if the send is retried. The service coalesces concurrent retries and reuses the registered card for the same chat/key.
 `;
 }
 
@@ -208,8 +197,6 @@ export function buildNextStepGuidance(supportsCards?: boolean): string {
 Use an **interactive card** when a concrete question needs user feedback, such as clarification, a choice, or confirmation. Optional follow-up questions should be grounded in the actual findings and unresolved evidence. Do not add a card merely because a response ended.
 
 ${researchGuidance}
-
-${buildCodexInteractiveFollowUpGuidance()}
 
 ### Sending a feedback card (send_interactive)
 

@@ -5,6 +5,7 @@ import { createInterface, type Interface as ReadlineInterface } from 'node:readl
 import { randomUUID } from 'node:crypto';
 import type { UserInput } from '../../types.js';
 import { createLogger } from '../../../utils/logger.js';
+import { codexStringConfigOverride } from './follow-up-developer-instructions.js';
 
 import { readProcessGroupResources } from './process-resources.js';
 import { captureDescendantGroups, signalDescendantGroups, type OwnedDescendantGroup } from './owned-descendants.js';
@@ -31,6 +32,7 @@ export interface CodexAppServerTransportOptions {
   killGraceMs?: number;
   onUserInput?: (request: AgentInputRequest) => Promise<void>;
   userInputTimeoutMs?: number;
+  developerInstructions?: string;
 }
 
 export interface CodexAppServerExit {
@@ -71,6 +73,13 @@ export class CodexAppServerTransport {
       sessionKey: options.sessionKey, runId: randomUUID(), ...options.correlation,
     }));
     this.child = spawn(options.binary ?? 'codex', ['app-server', '--stdio', ...CODEX_BROWSER_DISABLE_ARGS,
+      ...(options.developerInstructions === undefined ? [] : [
+        // Prefer a process-level config for both fresh and resumed threads.
+        // A request-level developerInstructions override on thread/resume can
+        // be missed for the first resumed model turn by current Codex
+        // (openai/codex#19045).
+        '-c', codexStringConfigOverride('developer_instructions', options.developerInstructions),
+      ]),
       ...(options.onUserInput ? [
         '--enable', 'default_mode_request_user_input',
         // The feature flag alone exposes the protocol surface. Codex 0.155
