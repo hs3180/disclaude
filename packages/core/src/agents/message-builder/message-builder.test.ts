@@ -27,6 +27,17 @@ describe('MessageBuilder', () => {
       expect(result).toContain('msg-123');
     });
 
+    it('should expose the stable topic root needed to route interactive-card clicks', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Continue with option A',
+        messageId: 'msg-123',
+        chatType: 'topic',
+        threadRootId: 'thread-root-1',
+      }, 'chat-456');
+
+      expect(result).toContain('**Thread Root ID:** thread-root-1');
+    });
+
     it('should include sender open ID when provided', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
@@ -657,9 +668,12 @@ describe('MessageBuilder', () => {
         // NOTE: no threadContext — the pre-build failed. Guidance must still appear.
       }, 'chat-456');
 
-      expect(result).toContain('Topic-thread self-service');
+      expect(result).toContain('Topic-thread context before replying');
       expect(result).toContain('lark-cli');
       expect(result).toContain('+threads-messages-list');
+      expect(result).toContain('Use semantic judgment');
+      expect(result).toContain('--action-prompts');
+      expect(result).not.toContain('Codex follow-up');
     });
 
     it('should NOT inject lark-cli self-service guidance for non-topic chats', () => {
@@ -669,7 +683,7 @@ describe('MessageBuilder', () => {
         chatType: 'group',
       }, 'chat-456');
 
-      expect(result).not.toContain('Topic-thread self-service');
+      expect(result).not.toContain('Topic-thread context before replying');
       expect(result).not.toContain('+threads-messages-list');
     });
 
@@ -736,6 +750,7 @@ describe('MessageBuilder', () => {
       }, 'chat-456');
 
       expect(result).toContain('Next Steps After Response');
+      expect(result).toContain('Use semantic judgment');
     });
 
     it('should include next-step guidance when chatType is undefined', () => {

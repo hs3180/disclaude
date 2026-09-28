@@ -950,6 +950,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         chatLogFilePaths: this.historyManager.chatLogFilePaths,
         chatType: this.chatType,
         threadContext,
+        threadRootId: threadRootId ?? this.conversationOrchestrator.getThreadRoot(chatId),
       },
       chatId,
       capabilities

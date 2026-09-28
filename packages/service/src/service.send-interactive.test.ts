@@ -80,6 +80,66 @@ describe('DisclaudeService.sendInteractive (Issue #4279 — registration path)',
     expect(registerSpy).toHaveBeenCalledWith('om_card_2', TEST_CHAT, paramsPrompts, Object.fromEntries(BASE_PARAMS.options.map(option => [option.value, option.text])));
   });
 
+  it('persists the topic-thread root with a card so clicks route to the same agent session', async () => {
+    const sendInteractive = vi.fn().mockResolvedValue({ messageId: 'om_topic_card' });
+    const node = makeNode(sendInteractive);
+    const registerSpy = vi.spyOn(node.getInteractiveContextStore(), 'register');
+    const actionPrompts = { continue: '[user] Continue with the selected direction.' };
+    const params = { ...BASE_PARAMS, actionPrompts, threadRootId: 'om_topic_root' };
+
+    await node.sendInteractive(TEST_CHAT, params);
+
+    expect(sendInteractive).toHaveBeenCalledWith(TEST_CHAT, params);
+    expect(registerSpy).toHaveBeenCalledWith(
+      'om_topic_card', TEST_CHAT, actionPrompts,
+      Object.fromEntries(BASE_PARAMS.options.map(option => [option.value, option.text])), 'om_topic_root',
+    );
+  });
+
+  it('coalesces concurrent card sends and reuses the registered card on retry', async () => {
+    let resolveChannel!: (value: { messageId: string }) => void;
+    const pending = new Promise<{ messageId: string }>(resolve => { resolveChannel = resolve; });
+    const sendInteractive = vi.fn().mockReturnValue(pending);
+    const node = makeNode(sendInteractive);
+    const params = {
+      ...BASE_PARAMS,
+      actionPrompts: { continue: '[user] Continue with the selected direction.' },
+      threadRootId: 'om_topic_root',
+      idempotencyKey: 'codex-followup:om_source',
+    };
+
+    const first = node.sendInteractive(TEST_CHAT, params);
+    const concurrentRetry = node.sendInteractive(TEST_CHAT, params);
+    expect(sendInteractive).toHaveBeenCalledTimes(1);
+    resolveChannel({ messageId: 'om_idempotent_card' });
+    const results = await Promise.all([first, concurrentRetry]);
+    const laterRetry = await node.sendInteractive(TEST_CHAT, params);
+
+    expect(results).toEqual([
+      { success: true, messageId: 'om_idempotent_card' },
+      { success: true, messageId: 'om_idempotent_card' },
+    ]);
+    expect(laterRetry).toEqual({ success: true, messageId: 'om_idempotent_card' });
+    expect(sendInteractive).toHaveBeenCalledTimes(1);
+    expect(node.getInteractiveContextStore().getThreadRootId('om_idempotent_card', TEST_CHAT)).toBe('om_topic_root');
+    expect(node.getInteractiveContextStore().getMessageIdByIdempotencyKey(TEST_CHAT, 'codex-followup:om_source')).toBe('om_idempotent_card');
+  });
+
+  it('persists the topic-thread root with a card so clicks route to the same agent session', async () => {
+    const sendInteractive = vi.fn().mockResolvedValue({ messageId: 'om_topic_card' });
+    const node = makeNode(sendInteractive);
+    const registerSpy = vi.spyOn(node.getInteractiveContextStore(), 'register');
+    const actionPrompts = { continue: '[user] Continue with the selected direction.' };
+
+    await node.sendInteractive(TEST_CHAT, { ...BASE_PARAMS, actionPrompts, threadRootId: 'om_topic_root' });
+
+    expect(sendInteractive).toHaveBeenCalledWith(TEST_CHAT, { ...BASE_PARAMS, actionPrompts, threadRootId: 'om_topic_root' });
+    expect(registerSpy).toHaveBeenCalledWith(
+      'om_topic_card', TEST_CHAT, actionPrompts,
+      Object.fromEntries(BASE_PARAMS.options.map(option => [option.value, option.text])), 'om_topic_root',
+    );
+  });
+
   it('does not register when neither result nor params carry action prompts', async () => {
     const sendInteractive = vi.fn().mockResolvedValue({ messageId: 'om_card_3' });
     const node = makeNode(sendInteractive);

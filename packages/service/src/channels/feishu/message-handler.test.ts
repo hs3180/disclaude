@@ -22,6 +22,7 @@ const mockState = vi.hoisted(() => ({
   sendMessage: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
   resolveActionPrompt: vi.fn().mockReturnValue(undefined),
   resolveActionText: vi.fn().mockReturnValue(undefined),
+  resolveActionThreadRoot: vi.fn().mockReturnValue(undefined),
   isMessageProcessed: false,
   claimMessage: vi.fn<(id: string) => boolean>(() => false),
   releaseMessage: vi.fn(),
@@ -147,6 +148,7 @@ function createHandler(overrides: Record<string, unknown> = {}) {
       sendMessage: mockState.sendMessage,
       resolveActionPrompt: mockState.resolveActionPrompt,
       resolveActionText: mockState.resolveActionText,
+      resolveActionThreadRoot: mockState.resolveActionThreadRoot,
       onTopicMessage: mockState.onTopicMessage,
     },
     isRunning: () => mockState.isRunning,
@@ -1109,9 +1111,20 @@ describe('MessageHandler', () => {
       expect(msg.metadata.cardAction).toBeDefined();
       expect(msg.metadata.cardAction.value).toBe('action_value');
       expect(msg.metadata.cardMessageId).toBe('card_msg_001');
-      expect(msg.metadata.threadRootId).toBe('card_msg_001');
+      expect(msg.metadata.threadRootId).toBeUndefined();
       expect(msg.messageId).toMatch(/^card_action_card_msg_001_/);
       expect(msg.messageId).not.toBe('card_msg_001');
+    });
+
+    it('routes a topic-thread card click to its registered thread root', async () => {
+      mockState.resolveActionThreadRoot.mockReturnValueOnce('thread-root-1');
+      const { handler } = createHandler();
+      await handler.handleCardAction(cardActionEvent());
+
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(mockState.resolveActionThreadRoot).toHaveBeenCalledWith('card_msg_001', 'chat_001');
+      expect(msg.metadata.cardMessageId).toBe('card_msg_001');
+      expect(msg.metadata.threadRootId).toBe('thread-root-1');
     });
 
     it('should give repeated clicks distinct agent message ids while reusing the event id when supplied', async () => {
@@ -1126,8 +1139,8 @@ describe('MessageHandler', () => {
       expect(first.messageId).toBe('card_action_card_msg_001_evt_001');
       expect(second.messageId).toBe('card_action_card_msg_001_evt_002');
       expect(first.messageId).not.toBe(second.messageId);
-      expect(first.metadata.threadRootId).toBe('card_msg_001');
-      expect(second.metadata.threadRootId).toBe('card_msg_001');
+      expect(first.metadata.threadRootId).toBeUndefined();
+      expect(second.metadata.threadRootId).toBeUndefined();
     });
 
     it('should log card click under the original message id (not a synthetic id)', async () => {

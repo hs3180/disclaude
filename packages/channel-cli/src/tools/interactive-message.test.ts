@@ -221,6 +221,8 @@ describe('send_interactive_message', () => {
         title: 'My Title',
         context: 'Some context',
         parentMessageId: 'parent_123',
+        threadRootId: 'topic_root_123',
+        idempotencyKey: 'codex-followup:parent_123',
         actionPrompts: { ok: 'User chose OK' },
       });
       expect(mockChannelApiClient.sendInteractive).toHaveBeenCalledWith('oc_test', {
@@ -229,8 +231,20 @@ describe('send_interactive_message', () => {
         title: 'My Title',
         context: 'Some context',
         threadId: 'parent_123',
+        threadRootId: 'topic_root_123',
+        idempotencyKey: 'codex-followup:parent_123',
         actionPrompts: { ok: 'User chose OK' },
       });
+    });
+
+    it('requires action prompts when an idempotency key is provided', async () => {
+      const result = await send_interactive_message({
+        question: 'Q?', options: [{ text: 'A', value: 'a' }], chatId: 'oc_test',
+        idempotencyKey: 'followup:source',
+      });
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('requires actionPrompts');
+      expect(mockChannelApiClient.sendInteractive).not.toHaveBeenCalled();
     });
   });
 

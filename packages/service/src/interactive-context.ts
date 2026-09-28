@@ -45,6 +45,10 @@ export interface InteractiveContext {
   actionPrompts: ActionPromptMap;
   /** Labels captured from the original card, never inferred from another card. */
   actionLabels?: Record<string, string>;
+  /** Topic thread root that owns the agent session to resume when a button is clicked. */
+  threadRootId?: string;
+  /** Optional caller key that makes retried card sends idempotent within a chat. */
+  idempotencyKey?: string;
   /** Timestamp when the context was created */
   createdAt: number;
 }
@@ -120,7 +124,9 @@ export class InteractiveContextStore {
           || typeof entry.chatId !== 'string' || !entry.chatId || ids.has(entry.messageId)
           || !Number.isFinite(entry.createdAt) || entry.createdAt < 0
           || !entry.actionPrompts || typeof entry.actionPrompts !== 'object' || Array.isArray(entry.actionPrompts)
-          || Object.values(entry.actionPrompts).some(value => typeof value !== 'string' || !value)) {
+          || Object.values(entry.actionPrompts).some(value => typeof value !== 'string' || !value)
+          || (entry.threadRootId !== undefined && (typeof entry.threadRootId !== 'string' || !entry.threadRootId))
+          || (entry.idempotencyKey !== undefined && (typeof entry.idempotencyKey !== 'string' || !entry.idempotencyKey))) {
           throw new Error('Invalid interactive context entry; original file preserved');
         }
         if (entry.actionLabels !== undefined && (!entry.actionLabels || typeof entry.actionLabels !== 'object'
@@ -139,7 +145,7 @@ export class InteractiveContextStore {
       this.clear();
       for (const entry of entries) {
         if (Date.now() - entry.createdAt > this.maxAge) {continue;}
-        this.register(entry.messageId, entry.chatId, entry.actionPrompts, entry.actionLabels);
+        this.register(entry.messageId, entry.chatId, entry.actionPrompts, entry.actionLabels, entry.threadRootId, entry.idempotencyKey);
         const restored = this.contexts.get(entry.messageId);
         if (restored) {restored.createdAt = entry.createdAt;}
       }
@@ -174,10 +180,19 @@ export class InteractiveContextStore {
    * @param chatId - Chat ID where the card was sent
    * @param actionPrompts - Map of action values to prompt templates
    */
-  register(messageId: string, chatId: string, actionPrompts: ActionPromptMap, actionLabels?: Record<string, string>): void {
+  register(
+    messageId: string,
+    chatId: string,
+    actionPrompts: ActionPromptMap,
+    actionLabels?: Record<string, string>,
+    threadRootId?: string,
+    idempotencyKey?: string,
+  ): void {
     if (typeof messageId !== 'string' || !messageId || typeof chatId !== 'string' || !chatId
       || !actionPrompts || typeof actionPrompts !== 'object' || Array.isArray(actionPrompts)
-      || Object.values(actionPrompts).some(value => typeof value !== 'string' || !value)) {
+      || Object.values(actionPrompts).some(value => typeof value !== 'string' || !value)
+      || (threadRootId !== undefined && (typeof threadRootId !== 'string' || !threadRootId))
+      || (idempotencyKey !== undefined && (typeof idempotencyKey !== 'string' || !idempotencyKey))) {
       throw new Error('Invalid interactive context registration');
     }
     if (actionLabels !== undefined && (!actionLabels || typeof actionLabels !== 'object'
@@ -192,6 +207,8 @@ export class InteractiveContextStore {
       chatId,
       actionPrompts: { ...actionPrompts },
       ...(actionLabels ? { actionLabels: { ...actionLabels } } : {}),
+      ...(threadRootId ? { threadRootId } : {}),
+      ...(idempotencyKey ? { idempotencyKey } : {}),
       createdAt: Date.now(),
     });
 
@@ -284,6 +301,22 @@ export class InteractiveContextStore {
       catch { /* A plain action value needs no decoding. */ }
     }
     return Object.hasOwn(labels, key) ? labels[key] : undefined;
+  }
+
+  getThreadRootId(messageId: string, chatId: string): string | undefined {
+    const context = this.contexts.get(messageId);
+    if (!context || context.chatId !== chatId || Date.now() - context.createdAt > this.maxAge) {return undefined;}
+    return context.threadRootId;
+  }
+
+  getMessageIdByIdempotencyKey(chatId: string, idempotencyKey: string): string | undefined {
+    for (const context of this.contexts.values()) {
+      if (context.chatId === chatId && context.idempotencyKey === idempotencyKey
+        && Date.now() - context.createdAt <= this.maxAge) {
+        return context.messageId;
+      }
+    }
+    return undefined;
   }
 
   /**

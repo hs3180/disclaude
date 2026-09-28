@@ -58,6 +58,10 @@ export async function send_interactive_message(params: {
   chatId: string;
   /** Optional parent message ID for thread reply */
   parentMessageId?: string;
+  /** Optional topic-thread root ID used to resume the same agent session on button click */
+  threadRootId?: string;
+  /** Optional stable key for de-duplicating retries of the same card send */
+  idempotencyKey?: string;
   /** Optional custom action prompts (overrides auto-generated defaults) */
   actionPrompts?: ActionPromptMap;
 }): Promise<SendInteractiveResult> {
@@ -90,6 +94,27 @@ export async function send_interactive_message(params: {
         success: false,
         error: 'chatId is required',
         message: '❌ chatId 参数不能为空',
+      };
+    }
+    if (params.threadRootId !== undefined && (typeof params.threadRootId !== 'string' || !params.threadRootId.trim())) {
+      return {
+        success: false,
+        error: 'threadRootId must be a non-empty string when provided',
+        message: '❌ thread-root 参数不能为空',
+      };
+    }
+    if (params.idempotencyKey !== undefined && (typeof params.idempotencyKey !== 'string' || !params.idempotencyKey.trim())) {
+      return {
+        success: false,
+        error: 'idempotencyKey must be a non-empty string when provided',
+        message: '❌ idempotency-key 参数不能为空',
+      };
+    }
+    if (params.idempotencyKey && (!params.actionPrompts || Object.keys(params.actionPrompts).length === 0)) {
+      return {
+        success: false,
+        error: 'idempotencyKey requires actionPrompts',
+        message: '❌ 使用 idempotency-key 时必须提供 action-prompts',
       };
     }
 
@@ -143,6 +168,8 @@ export async function send_interactive_message(params: {
       title: params.title,
       context: params.context,
       threadId: parentMessageId,
+      ...(params.threadRootId ? { threadRootId: params.threadRootId } : {}),
+      ...(params.idempotencyKey ? { idempotencyKey: params.idempotencyKey } : {}),
       actionPrompts: params.actionPrompts,
     });
 

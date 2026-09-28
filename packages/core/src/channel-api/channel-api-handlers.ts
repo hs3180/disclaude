@@ -33,6 +33,7 @@ export interface ChannelApiHandlers {
       title?: string;
       context?: string;
       threadId?: string;
+      threadRootId?: string;
       actionPrompts?: Record<string, string>;
     }
   ) => Promise<{ messageId?: string }>;

@@ -28,7 +28,6 @@ import { createLogger } from '../../../utils/logger.js';
 import type { CodexSandboxLevel } from './sandbox-policy.js';
 import type { CodexThreadEvent } from './exec-adapter.js';
 
-
 /** Rolling stderr tail kept for error mapping (bounded). */
 const STDERR_TAIL_BYTES = 8 * 1024;
 /** Grace between SIGTERM and SIGKILL on timeout/abort. */

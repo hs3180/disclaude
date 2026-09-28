@@ -36,6 +36,8 @@ export interface MessageData {
   chatType?: string;
   /** Thread context for topic groups (Issue #3641 sub-problem 1) */
   threadContext?: string;
+  /** Stable topic-thread root used to route interactive-card actions to the same agent session. */
+  threadRootId?: string;
 }
 
 /**

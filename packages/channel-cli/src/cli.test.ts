@@ -145,10 +145,20 @@ describe('@disclaude/channel-cli', () => {
       // unreachable REST endpoint instead — proving the whitelist is not too tight.
       const { writes } = await capture([
         'send_interactive', '--chat', CHAT, '--parent', 'om_x', '--base-url', 'http://127.0.0.1:1',
+        '--thread-root', 'om_topic_root',
+        '--idempotency-key', 'codex-followup:om_x',
         '--api-token', 't', '--question', 'q', '--options', '[{"text":"a","value":"a"}]',
         '--action-prompts', '{"a":"p"}', '--title', 'T', '--context', 'C',
       ]);
       expect(JSON.parse(writes[0]).error).not.toContain('Unknown option');
+    });
+
+    it('requires action prompts when an idempotency key is requested', async () => {
+      const { writes } = await capture([
+        'send_interactive', '--chat', CHAT, '--question', 'q', '--options', '[{"text":"a","value":"a"}]',
+        '--idempotency-key', 'codex-followup:om_x',
+      ]);
+      expect(JSON.parse(writes[0]).error).toContain('--action-prompts');
     });
 
     it('keeps --help working alongside a command', async () => {
