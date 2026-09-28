@@ -44,7 +44,7 @@ the Codex model.
 
 The default `exec` transport runs non-interactive turns. Set
 `agent.codex.transport: app-server` when using Codex's structured
-`requestUserInput` interaction; see [Codex input cards](codex-user-input.md).
+`requestUserInput` interaction; see [Feishu channel cards](feishu-channel.md#codex-input-cards).
 Concurrency limits are per service process; extra work waits rather than
 starting unlimited Codex sessions or child processes.
 

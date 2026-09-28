@@ -62,6 +62,10 @@ files were externally changed. Restart through the service adapter after an
 intentional configuration change; do not infer the loaded process's settings
 from saved files alone.
 
+If activation fails, the command reports whether the previous service was
+restored. Profiles are preserved; status and recovery do not stop another
+browser or remove an unverifiable lock.
+
 ## Copy an offline profile
 
 To preserve an existing Chromium user-data directory, select a new destination
@@ -94,6 +98,5 @@ displayed. Shell expansion is not executed. Invalid, duplicate or unsafe values
 are rejected. Review the preview before applying; the source file remains
 unchanged. Import does not discover or stop independently managed services.
 
-See [service recovery](chromium-service-recovery.md) on macOS and the
-[native Linux guide](chromium-linux-service.md) for platform-specific lifecycle
-behavior.
+See the [native Linux guide](chromium-linux-service.md) for platform-specific
+lifecycle behavior.

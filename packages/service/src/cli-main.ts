@@ -78,7 +78,7 @@ export function parseArgs(args: string[]): CliOptions {
     const arg = args[i];
 
     if (['--mode', '--node-type', '--node-id'].some((flag) => arg === flag || arg.startsWith(`${flag  }=`))) {
-      throw new Error(`Removed execution-role option: ${arg}. Use disclaude start; see docs/migrations/0.5.1-service.md.`);
+      throw new Error(`Removed execution-role option: ${arg}. Use disclaude start and remove obsolete role flags.`);
     }
 
     if (arg === 'start') {

@@ -47,7 +47,7 @@ A **CLI Skill** under disclaude's "reduce MCP" direction
 exposes the 5 first-party channel tools (`send_text`, `send_card`,
 `send_interactive`, `send_file`, `push`). The agent drives this CLI via
 `Bash` instead of the runtime dispatching an in-process MCP tool — see
-[`docs/skill-format-spec.md`](../../docs/skill-format-spec.md) for the contract.
+[`docs/skills.md`](../../docs/skills.md) for the contract.
 
 The agent discovers `SKILL.md` and shells out to `disclaude channel ...`.
 The CLI implements delivery; the skill explains when and how to use it.

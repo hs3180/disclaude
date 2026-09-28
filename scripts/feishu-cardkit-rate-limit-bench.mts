@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Card Kit streaming-update rate-limit characterization bench — CLI (#4398 / #4208 P1-c).
+ * Card Kit streaming-update rate-limit characterization bench.
  *
  * Standalone entry point for the bench implemented in
  * `packages/service/src/platforms/feishu/feishu-cardkit-rate-limit-bench.ts`.
@@ -11,7 +11,7 @@
  * Run with:
  *   npx tsx scripts/feishu-cardkit-rate-limit-bench.mts
  *
- * Preconditions (the methodology doc, `docs/feishu-cardkit-rate-limit-methodology.md`,
+ * Preconditions (`docs/feishu-channel.md`,
  * spells these out — they cannot be met from CI, only from an operator shell with a
  * live Feishu tenant):
  *   - LARKSUITE_CLI_TENANT_ACCESS_TOKEN  — a valid tenant_access_token with
@@ -39,7 +39,7 @@ function requiredEnv(name: string): string {
   if (!v) {
     console.error(`Missing required env var: ${name}`);
     console.error(
-      '\nPreconditions (see docs/feishu-cardkit-rate-limit-methodology.md):\n' +
+      '\nPreconditions (see docs/feishu-channel.md):\n' +
         '  LARKSUITE_CLI_TENANT_ACCESS_TOKEN  valid tenant token, cardkit:card:write enabled\n' +
         '  CARDKIT_BENCH_CARD_ID              id of a streaming card (streaming_mode=true)\n' +
         '  CARDKIT_BENCH_ELEMENT_ID           stable element id already sent to a chat\n'

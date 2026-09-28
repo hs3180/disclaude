@@ -28,7 +28,6 @@ describe('single service public contract', () => {
 
     const releaseDocs = [
       'README.md',
-      'docs/README.md',
       'docs/releases/git-install.md',
     ];
     for (const file of releaseDocs) {
@@ -36,6 +35,8 @@ describe('single service public contract', () => {
         /(?:packages\/(?:primary|worker)-node|disclaude-(?:primary|worker))/u,
       );
     }
+    expect(existsSync('docs/README.md')).toBe(false);
+    expect(readFileSync('README.md', 'utf8')).toContain('## Quickstart');
   });
   it('starts Docker through the public CLI', () => {
     expect(readFileSync('Dockerfile.service', 'utf8')).toContain('CMD ["disclaude", "start"]');

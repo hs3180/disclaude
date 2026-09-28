@@ -31,18 +31,22 @@ Follow-up source changes are released under a new version; the published
 
 | Guide | Purpose |
 | --- | --- |
-| [Quickstart](docs/quickstart.md) | Build and run a Feishu-connected service |
-| [Feishu setup](docs/feishu-setup.md) | Create the app, permissions, and event subscription |
+| [Feishu channel](docs/feishu-channel.md) | App setup, supported interactions, and cards |
 | [Workspace setup](docs/workspace-setup.md) | Choose or safely move persistent project data |
 | [Environment variables](docs/environment-variables.md) | Operator-facing runtime settings |
 | [Codex](docs/codex-backend.md), [Pi](docs/pi-backend.md), [DeepSeek](docs/dsh-backend.md) | Backend-specific configuration |
 | [Browser control](docs/browser-coordination.md) | Serialized CLI calls, ownership, and recovery |
+| [Skills](docs/skills.md) | Discovery, precedence, and CLI contract |
+| [Logging](docs/logging.md) | File output, rotation, and collection |
 | [GitHub installation](docs/releases/git-install.md) | Install, upgrade, and roll back a release tag |
-| [Documentation index](docs/README.md) | Current design contracts and operator guides |
 
-## Install v0.6.0
+## Quickstart
 
-Requirements: Node.js 20 or later, npm 10 or later, and Git.
+Requirements: Node.js 20 or later, npm 10 or later, and Git. Create and publish
+a Feishu/Lark app with a bot, required permissions, and a persistent event
+connection as described in the [Feishu channel guide](docs/feishu-channel.md).
+
+Install the current stable release and create a configuration file:
 
 ```sh
 npm install -g "github:hs3180/disclaude#v0.6.0"
@@ -51,14 +55,16 @@ cp "$(npm root -g)/disclaude/disclaude.config.example.yaml" \
   ~/.disclaude/disclaude.config.yaml
 ```
 
-Edit `~/.disclaude/disclaude.config.yaml` with your Feishu credentials and a
-supported backend, then start the service:
+Edit the config with the app credentials and a supported backend, then start
+the service:
 
 ```sh
 disclaude start
 ```
 
-See the [quickstart](docs/quickstart.md) for configuration and Feishu setup.
+Add the bot to a chat and send `@bot 你好` to verify it responds. See the
+[Feishu channel guide](docs/feishu-channel.md) for permissions, event
+subscriptions, cards, and interactive input details.
 The prebuilt distribution is installed from GitHub tags; the source package is
 not published to the npm registry. Preserve your configuration and workspace
 when upgrading. Use the [installation guide](docs/releases/git-install.md) for

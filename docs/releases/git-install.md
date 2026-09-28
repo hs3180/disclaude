@@ -30,8 +30,9 @@ cp "$(npm root -g)/disclaude/disclaude.config.example.yaml" \
 ```
 
 Set up the backend, channel, and workspace in the configuration. See the
-[Feishu setup](../feishu-setup.md), [workspace guide](../workspace-setup.md),
-and [quickstart](../quickstart.md).
+[Feishu channel guide](../feishu-channel.md),
+[workspace guide](../workspace-setup.md), and the
+[root README quickstart](../../README.md#quickstart).
 
 When upgrading an existing deployment:
 
