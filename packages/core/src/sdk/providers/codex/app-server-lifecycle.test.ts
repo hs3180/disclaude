@@ -162,8 +162,52 @@ while :; do sleep 1; done
     const lifecycle = new CodexAppServerLifecycle({ binary });
     try {
       await lifecycle.ensureThread('chat-1');
-      await expect(lifecycle.steer('chat-1', 'nope')).rejects.toThrow(/no steerable active turn/);
-      await expect(lifecycle.interrupt('chat-1')).rejects.toThrow(/no steerable active turn/);
+      await expect(lifecycle.steer('chat-1', 'nope')).rejects.toMatchObject({
+        name: 'CodexNoActiveTurnError',
+        code: 'CODEX_NO_ACTIVE_TURN',
+        operation: 'steer',
+        sessionState: 'idle',
+        threadId: 'thread-1',
+        activeTurnId: undefined,
+        message: expect.stringContaining('state=idle, threadId=thread-1, activeTurnId=none'),
+      });
+      await expect(lifecycle.interrupt('chat-1')).rejects.toMatchObject({
+        name: 'CodexNoActiveTurnError',
+        code: 'CODEX_NO_ACTIVE_TURN',
+        operation: 'interrupt',
+        message: expect.stringContaining('No control request was sent.'),
+      });
+    } finally {
+      await lifecycle.close();
+    }
+  });
+
+  it('reports a late control after turn completion as an actionable no-active-turn result', async () => {
+    const binary = fixture(`
+read initialize; echo '{"id":1,"result":{}}'
+read initialized
+read thread; echo '{"id":2,"result":{"thread":{"id":"thread-1"}}}'
+read start; echo '{"id":3,"result":{"turn":{"id":"turn-1"}}}'
+echo '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1"}}}'
+while :; do sleep 1; done
+`);
+    const lifecycle = new CodexAppServerLifecycle({ binary });
+    try {
+      await lifecycle.ensureThread('chat-1');
+      await lifecycle.startTurn('chat-1', 'work');
+      await vi.waitFor(() => expect(lifecycle.snapshot('chat-1')?.state).toBe('idle'));
+
+      await expect(lifecycle.steer('chat-1', 'late correction')).rejects.toMatchObject({
+        name: 'CodexNoActiveTurnError',
+        code: 'CODEX_NO_ACTIVE_TURN',
+        operation: 'steer',
+        message: expect.stringContaining('The previous turn is complete; send a new message'),
+      });
+      await expect(lifecycle.interrupt('chat-1')).rejects.toMatchObject({
+        name: 'CodexNoActiveTurnError',
+        code: 'CODEX_NO_ACTIVE_TURN',
+        operation: 'interrupt',
+      });
     } finally {
       await lifecycle.close();
     }

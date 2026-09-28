@@ -15,6 +15,35 @@ export interface CodexAppServerSessionSnapshot {
   state: CodexAppServerSessionState;
 }
 
+type CodexControlOperation = 'steer' | 'interrupt';
+
+export class CodexNoActiveTurnError extends Error {
+  readonly code = 'CODEX_NO_ACTIVE_TURN';
+  readonly sessionState: CodexAppServerSessionState;
+  readonly threadId: string | undefined;
+  readonly activeTurnId: string | undefined;
+
+  constructor(
+    readonly operation: CodexControlOperation,
+    session: CodexAppServerSessionSnapshot,
+  ) {
+    const recovery = session.state === 'idle'
+      ? 'The previous turn is complete; send a new message to start another turn.'
+      : session.state === 'uncertain'
+        ? 'The turn state is uncertain; reconcile or reset the session before retrying.'
+        : 'Wait until the active turn is confirmed, then retry.';
+    super(
+      `Cannot ${operation} Codex app-server session ${session.sessionKey}: no steerable active turn ` +
+      `(state=${session.state}, threadId=${session.threadId}, activeTurnId=${session.activeTurnId ?? 'none'}). ` +
+      `${recovery} No control request was sent.`,
+    );
+    this.name = 'CodexNoActiveTurnError';
+    this.sessionState = session.state;
+    this.threadId = session.threadId;
+    this.activeTurnId = session.activeTurnId;
+  }
+}
+
 interface ThreadResponse {
   thread?: { id?: string };
 }
@@ -204,7 +233,7 @@ export class CodexAppServerLifecycle {
   }
 
   private async interruptTurn(sessionKey: string): Promise<void> {
-    const session = this.requireActive(sessionKey);
+    const session = this.requireActive(sessionKey, 'interrupt');
     const turnId = session.activeTurnId;
     this.asyncInputs.cancel('cancelled', session.threadId, turnId);
     this.transport.cancelUserInputs(session.threadId as string, turnId as string);
@@ -235,7 +264,7 @@ export class CodexAppServerLifecycle {
   }
 
   async steer(sessionKey: string, input: string): Promise<string> {
-    const session = this.requireActive(sessionKey);
+    const session = this.requireActive(sessionKey, 'steer');
     const response = (await this.transport.request('turn/steer', {
       threadId: session.threadId,
       expectedTurnId: session.activeTurnId,
@@ -291,10 +320,10 @@ export class CodexAppServerLifecycle {
     return session;
   }
 
-  private requireActive(sessionKey: string): CodexAppServerSessionSnapshot {
+  private requireActive(sessionKey: string, operation: CodexControlOperation): CodexAppServerSessionSnapshot {
     const session = this.requireSession(sessionKey);
     if (session.state !== 'active' || !session.activeTurnId) {
-      throw new Error(`app-server session ${sessionKey} has no steerable active turn`);
+      throw new CodexNoActiveTurnError(operation, session);
     }
     return session;
   }
