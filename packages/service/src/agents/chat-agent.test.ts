@@ -2807,7 +2807,7 @@ describe('ChatAgent (service)', () => {
       expect(plainCall![2]).toBe('thread-root-123');
     });
 
-    it('keeps queued source metadata out of the active turn and its delivery receipts', async () => {
+    it('keeps an attachment-only turn and its queued newer request separately correlated', async () => {
       const callbacks = createMockCallbacks();
       callbacks.sendMessage.mockImplementation((_chat: string, text: string) => Promise.resolve(`receipt:${text}`));
       const agent = new ChatAgent({ chatId: 'chat', callbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
@@ -2825,11 +2825,22 @@ describe('ChatAgent (service)', () => {
           yield { parsed: { type: 'result', content: 'Done B' } };
         })(),
       });
-      await agent.processMessage({ chatId: 'chat', payload: 'question A', messageId: 'source-a' });
+      const attachmentPrompt = 'Current image attachment could not be downloaded. It has no accompanying text request; do not reuse prior tasks.';
+      await agent.processMessage({
+        chatId: 'chat',
+        payload: attachmentPrompt,
+        messageId: 'attachment-image',
+        chatHistoryContext: 'An older completed request: create three similar math problems.',
+      });
       await vi.waitFor(() => expect(callbacks.sendMessage.mock.calls.some((call: any[]) => call[1] === 'A1')).toBe(true));
-      await agent.processMessage({ chatId: 'chat', payload: 'question B', messageId: 'source-b' });
+      const newerRequest = 'Please remove the answers and corrections from the worksheet.';
+      await agent.processMessage({ chatId: 'chat', payload: newerRequest, messageId: 'cleanup-request' });
       const inputs = (agent as any).channel.push.mock.calls.map((call: any[]) => call[0]);
-      expect(inputs.map((input: any) => input.correlation.sourceMessageId)).toEqual(['source-a', 'source-b']);
+      expect(inputs.map((input: any) => input.correlation.sourceMessageId)).toEqual(['attachment-image', 'cleanup-request']);
+      expect(inputs[0].message.content).toContain(attachmentPrompt);
+      expect(inputs[0].message.content).toContain('An older completed request');
+      expect(inputs[0].message.content).not.toContain('genuine empty text @mention');
+      expect(inputs[1].message.content).toContain(newerRequest);
       expect(inputs[0].message.content).not.toContain(inputs[0].correlation.runId);
       resume();
       await vi.waitFor(() => {
