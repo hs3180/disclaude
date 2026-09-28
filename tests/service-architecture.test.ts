@@ -58,7 +58,7 @@ describe('single service public contract', () => {
     expect(readme).toContain('serializes complete');
     expect(endpoint).toContain('## Disclaude integration');
     expect(endpoint).toContain('one CLI invocation');
-    expect(endpoint).toContain('local OS file lock');
+    expect(endpoint).toMatch(/local OS file\s+lock/u);
     expect(coordination).toContain('One `browser-use` CLI invocation is one exclusive unit');
     expect(endpoint).not.toContain('private IPC launcher');
     expect(endpoint).not.toContain('### Pointing drivers at the endpoint');
