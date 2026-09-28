@@ -5,7 +5,7 @@
  * Issue #1617: Improves unit test coverage for welcome-handler.ts.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import type { WelcomeService } from '../../platforms/feishu/welcome-service.js';
 import type {
   FeishuChatMemberAddedEventData,
@@ -39,7 +39,7 @@ function createMockWelcomeService(): WelcomeService {
 describe('WelcomeHandler', () => {
   let handler: WelcomeHandler;
   let mockService: WelcomeService;
-  let isRunning: ReturnType<typeof vi.fn>;
+  let isRunning: Mock;
 
   beforeEach(() => {
     isRunning = vi.fn().mockReturnValue(true);

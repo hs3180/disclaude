@@ -4,8 +4,8 @@ import { defineConfig } from 'vitest/config';
  * Vitest configuration optimized for low-memory environments.
  *
  * Key optimizations to prevent OOM in containerized environments:
- * - `pool: 'forks'` with `poolOptions.forks.singleFork: true`: Runs tests in a single
- *   process instead of spawning multiple worker threads (default behavior uses workers)
+ * - `pool: 'forks'` with `maxWorkers: 1`: Runs one worker instead of spawning multiple
+ *   worker processes (the default can fan out workers in low-memory environments)
  * - This reduces memory from 500MB-2GB per worker to ~100-200MB total
  *
  * For coverage reports, use `npm run test:coverage` which enables coverage collection.
@@ -42,14 +42,10 @@ export default defineConfig({
       // See: https://github.com/hs3180/disclaude/issues/115
       PINO_DISABLE_DIAGNOSTICS: '1',
     },
-    // Use single-fork mode to prevent multiple worker processes
-    // This is critical for preventing OOM in containerized environments
+    // Use one fork to prevent worker fan-out and OOM in containers. Keep Vitest's
+    // per-file module isolation: tests rely on it to reset mocked imports.
     pool: 'forks',
-    poolOptions: {
-      forks: {
-        singleFork: true,
-      },
-    },
+    maxWorkers: 1,
     // Increased timeouts for CI to prevent "Timeout calling fetch" errors
     // during module loading (Issue #807)
     testTimeout,

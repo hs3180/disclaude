@@ -10,14 +10,14 @@
  * they stay eslint `require-await`-clean.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, type Mock } from 'vitest';
 import { StreamingReplyDriver } from './streaming-reply-driver.js';
 
 function makeCallbacks(overrides: Partial<{
-  startStreaming: ReturnType<typeof vi.fn>;
-  streamText: ReturnType<typeof vi.fn>;
-  finalizeStreaming: ReturnType<typeof vi.fn>;
-  sendMessage: ReturnType<typeof vi.fn>;
+  startStreaming: Mock;
+  streamText: Mock;
+  finalizeStreaming: Mock;
+  sendMessage: Mock;
 }> = {}) {
   const startStreaming = overrides.startStreaming ?? vi.fn(() => Promise.resolve('card-1'));
   const streamText = overrides.streamText ?? vi.fn(() => Promise.resolve());

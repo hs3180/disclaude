@@ -51,45 +51,45 @@ vi.mock('@disclaude/core', async (importOriginal) => {
 });
 
 vi.mock('../platforms/feishu/index.js', () => ({
-  InteractionManager: vi.fn().mockImplementation(() => ({ dispose: vi.fn() })),
+  InteractionManager: vi.fn(class { dispose = vi.fn(); }),
   WelcomeService: vi.fn(),
   createFeishuClient: vi.fn(),
 }));
 
 vi.mock('./feishu/index.js', () => ({
-  TriggerModeManager: vi.fn().mockImplementation(() => ({
-    isTriggerEnabled: vi.fn().mockReturnValue(false),
-    setTriggerEnabled: vi.fn(),
-    getTriggerEnabledChats: vi.fn().mockReturnValue([]),
-  })),
-  MentionDetector: vi.fn().mockImplementation(() => ({
-    setClient: vi.fn(),
-    fetchBotInfo: vi.fn().mockResolvedValue(undefined),
-    getBotInfo: vi.fn().mockReturnValue(undefined),
-  })),
-  WelcomeHandler: vi.fn().mockImplementation(() => ({
-    handleP2PChatEntered: vi.fn(),
-    handleChatMemberAdded: vi.fn(),
-    setWelcomeService: vi.fn(),
-  })),
-  MessageHandler: vi.fn().mockImplementation(() => ({
-    handleMessageReceive: vi.fn(),
-    handleCardAction: vi.fn(),
-    initialize: vi.fn(),
-    clearClient: vi.fn(),
-  })),
+  TriggerModeManager: vi.fn(class {
+    isTriggerEnabled = vi.fn().mockReturnValue(false);
+    setTriggerEnabled = vi.fn();
+    getTriggerEnabledChats = vi.fn().mockReturnValue([]);
+  }),
+  MentionDetector: vi.fn(class {
+    setClient = vi.fn();
+    fetchBotInfo = vi.fn().mockResolvedValue(undefined);
+    getBotInfo = vi.fn().mockReturnValue(undefined);
+  }),
+  WelcomeHandler: vi.fn(class {
+    handleP2PChatEntered = vi.fn();
+    handleChatMemberAdded = vi.fn();
+    setWelcomeService = vi.fn();
+  }),
+  MessageHandler: vi.fn(class {
+    handleMessageReceive = vi.fn();
+    handleCardAction = vi.fn();
+    initialize = vi.fn();
+    clearClient = vi.fn();
+  }),
   messageLogger: {
     init: vi.fn().mockResolvedValue(undefined),
     logOutgoingMessage: mockLogOutgoingMessage,
   },
-  WsConnectionManager: vi.fn().mockImplementation(() => ({
-    state: 'connected',
-    start: vi.fn().mockResolvedValue(undefined),
-    stop: vi.fn().mockResolvedValue(undefined),
-    isHealthy: vi.fn().mockReturnValue(true),
-    on: vi.fn(),
-    getMetrics: vi.fn().mockReturnValue(undefined),
-  })),
+  WsConnectionManager: vi.fn(class {
+    state = 'connected';
+    start = vi.fn().mockResolvedValue(undefined);
+    stop = vi.fn().mockResolvedValue(undefined);
+    isHealthy = vi.fn().mockReturnValue(true);
+    on = vi.fn();
+    getMetrics = vi.fn().mockReturnValue(undefined);
+  }),
   type: {},
 }));
 

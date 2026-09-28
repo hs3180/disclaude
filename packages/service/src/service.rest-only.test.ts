@@ -79,7 +79,10 @@ describe('DisclaudeService REST-only serving (Issue #4280 part 5)', () => {
     // initScheduler is non-fatal in start() (Issue #3361) but touches the real
     // workspace/cooldown dirs — stub it out; this test is only about the IPC
     // lifecycle that used to run alongside it.
-    vi.spyOn(DisclaudeService.prototype, <never>'initScheduler').mockResolvedValue(undefined);
+    vi.spyOn(
+      DisclaudeService.prototype as unknown as { initScheduler(): Promise<void> },
+      'initScheduler'
+    ).mockResolvedValue(undefined);
     rmSync(SCRATCH_DIR, { recursive: true, force: true });
     delete process.env.DISCLAUDE_WORKER_IPC_SOCKET;
     delete process.env.DISCLAUDE_BROWSER_RUNTIME;

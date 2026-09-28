@@ -83,9 +83,9 @@ vi.mock('child_process', async (importOriginal) => ({
 }));
 
 vi.mock('../../platforms/feishu/interaction-manager.js', () => ({
-  InteractionManager: vi.fn().mockImplementation(() => ({
-    handleAction: mockState.interactionHandleAction,
-  })),
+  InteractionManager: vi.fn(class {
+    handleAction = mockState.interactionHandleAction;
+  }),
 }));
 
 vi.mock('../../platforms/feishu/card-builders/card-text-extractor.js', () => ({

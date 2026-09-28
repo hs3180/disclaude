@@ -4,7 +4,7 @@
  * @see Issue #1473 - WeChat Channel MVP
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { WeChatApiClient } from './api-client.js';
 
 // Store original fetch
@@ -12,7 +12,7 @@ const originalFetch = globalThis.fetch;
 
 describe('WeChatApiClient', () => {
   let client: WeChatApiClient;
-  let mockFetch: ReturnType<typeof vi.fn>;
+  let mockFetch: Mock;
 
   beforeEach(() => {
     mockFetch = vi.fn();

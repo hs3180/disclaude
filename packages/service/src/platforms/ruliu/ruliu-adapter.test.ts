@@ -33,10 +33,10 @@ vi.mock('@disclaude/core', async (importOriginal) => {
 
 // Mock RuliuMessageSender
 vi.mock('./ruliu-message-sender.js', () => ({
-  RuliuMessageSender: vi.fn().mockImplementation((_config: unknown) => ({
-    sendText: vi.fn(),
-    sendMarkdown: vi.fn(),
-  })),
+  RuliuMessageSender: vi.fn(class {
+    sendText = vi.fn();
+    sendMarkdown = vi.fn();
+  }),
 }));
 
 import { createLogger } from '@disclaude/core';

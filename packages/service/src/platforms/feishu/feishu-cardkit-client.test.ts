@@ -10,7 +10,7 @@
  * settings finalize is PATCH (the old "#4238 says PATCH everywhere" claim
  * was wrong).
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
 import {
   FeishuCardKitClient,
   createCardKitClientFromEnv,
@@ -34,7 +34,7 @@ function fakeResponse(status: number, body: unknown = {}): Response {
 
 describe('FeishuCardKitClient (Issue #4395)', () => {
   let calls: { url: string; init: RequestInit }[];
-  let mockFetch: ReturnType<typeof vi.fn>;
+  let mockFetch: Mock;
 
   beforeEach(() => {
     calls = [];

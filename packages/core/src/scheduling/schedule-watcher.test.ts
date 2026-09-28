@@ -8,7 +8,7 @@
  * ESM namespace exports.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
 
 // Use vi.hoisted to define mock functions that can be referenced in vi.mock factory
 const { mockMkdir, mockWriteFile, mockReadFile, mockReaddir, mockStat, mockUnlink, mockAccess, mockFsWatch } = vi.hoisted(() => {
@@ -819,9 +819,9 @@ describe('ScheduleFileScanner', () => {
 
 describe('ScheduleFileWatcher', () => {
   let watcher: ScheduleFileWatcher;
-  let onFileAdded: ReturnType<typeof vi.fn>;
-  let onFileChanged: ReturnType<typeof vi.fn>;
-  let onFileRemoved: ReturnType<typeof vi.fn>;
+  let onFileAdded: Mock;
+  let onFileChanged: Mock;
+  let onFileRemoved: Mock;
 
   beforeEach(() => {
     vi.clearAllMocks();

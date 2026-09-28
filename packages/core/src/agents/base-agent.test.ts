@@ -738,7 +738,7 @@ describe('BaseAgent', () => {
   });
 
   describe('createSdkOptions - Issue #3770: model tier env vars for Task/Team agents', () => {
-    const getModelForTierSpy = vi.spyOn(Config, 'getModelForTier' as never);
+    const getModelForTierSpy = vi.spyOn(Config, 'getModelForTier');
 
     afterEach(() => {
       getModelForTierSpy.mockClear();

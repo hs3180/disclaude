@@ -68,7 +68,7 @@ vi.mock('@disclaude/core', async (importOriginal) => {
     REACTIONS: actual.REACTIONS,
     // Issue #4391: real policy — the reset+replay bounding under test.
     EmptyTurnRetryPolicy: actual.EmptyTurnRetryPolicy,
-    MessageBuilder: vi.fn().mockImplementation(() => ({
+    MessageBuilder: vi.fn(class {
       // Issue #4391 (§6 history re-injection): append the chat-history
       // context (when present) to the built content so tests can verify the
       // consume-once stash actually flowed into the pushed payload.
@@ -76,7 +76,7 @@ vi.mock('@disclaude/core', async (importOriginal) => {
       // history sections (chat history + persisted history) so tests can also
       // catch duplicated context in the pushed payload — the single-section
       // stub below rendered persistedHistoryContext invisible here.
-      buildEnhancedContent: vi.fn((input: any) => {
+      buildEnhancedContent = vi.fn((input: any) => {
         const sections = [input.text];
         if (input.persistedHistoryContext) {
           sections.push(`## Previous Session Context\n\n${input.persistedHistoryContext}`);
@@ -85,34 +85,34 @@ vi.mock('@disclaude/core', async (importOriginal) => {
           sections.push(`## Recent Chat History\n\n${input.chatHistoryContext}`);
         }
         return sections.join('\n');
-      }),
-    })),
-    MessageChannel: vi.fn().mockImplementation(() => ({
-      push: vi.fn().mockReturnValue(true),
-      close: vi.fn(),
-      generator: vi.fn(() =>
+      });
+    }),
+    MessageChannel: vi.fn(class {
+      push = vi.fn().mockReturnValue(true);
+      close = vi.fn();
+      generator = vi.fn(() =>
         (async function* () {
           /* empty */
         })()
-      ),
-    })),
-    RestartManager: vi.fn().mockImplementation(() => ({
-      recordSuccess: vi.fn(),
-      recordFailure: vi.fn(),
-      shouldRestart: vi.fn(() => ({
+      );
+    }),
+    RestartManager: vi.fn(class {
+      recordSuccess = vi.fn();
+      recordFailure = vi.fn();
+      shouldRestart = vi.fn(() => ({
         allowed: false,
         reason: 'max_restarts_exceeded',
         restartCount: 3,
-      })),
-      reset: vi.fn(),
-      clearAll: vi.fn(),
-    })),
-    ConversationOrchestrator: vi.fn().mockImplementation(() => ({
-      setThreadRoot: vi.fn(),
-      getThreadRoot: vi.fn(() => 'thread-root-123'),
-      deleteThreadRoot: vi.fn(),
-      clearAll: vi.fn(),
-    })),
+      }));
+      reset = vi.fn();
+      clearAll = vi.fn();
+    }),
+    ConversationOrchestrator: vi.fn(class {
+      setThreadRoot = vi.fn();
+      getThreadRoot = vi.fn(() => 'thread-root-123');
+      deleteThreadRoot = vi.fn();
+      clearAll = vi.fn();
+    }),
     // Issue #2920: Real implementations for startup failure detection
     isStartupFailure: (messageCount: number, elapsedMs: number) => {
       return messageCount === 0 && elapsedMs < 10_000;

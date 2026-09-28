@@ -2,7 +2,7 @@
  * Tests for Output Adapters (packages/core/src/utils/output-adapter.ts)
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
 import { CLIOutputAdapter, FeishuOutputAdapter, type FeishuOutputAdapterOptions } from './output-adapter.js';
 
 // ============================================================================
@@ -66,7 +66,7 @@ describe('CLIOutputAdapter', () => {
 // ============================================================================
 
 describe('FeishuOutputAdapter', () => {
-  let sendMessage: ReturnType<typeof vi.fn>;
+  let sendMessage: Mock;
   let options: FeishuOutputAdapterOptions;
   let adapter: FeishuOutputAdapter;
 
