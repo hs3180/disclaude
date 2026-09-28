@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Complete the 0.6.0 browser-coordination delivery (planned for v0.6.1):
+  serialize each full upstream `browser-use` CLI invocation per CDP browser,
+  removing the separate Disclaude broker/coordinator and managed Python runtime.
+
 ## [0.6.0] - 2026-09-24
 
 ### Added

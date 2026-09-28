@@ -13,6 +13,12 @@ See the [release notes](docs/releases/0.6.0.md) and [changelog](CHANGELOG.md).
 Follow-up source changes are released under a new version; the published
 `v0.6.0` tag is not moved or rewritten.
 
+The browser call-level serialization described below completes the 0.6.0
+delivery scope but is not in the published `v0.6.0` tag; it will ship in the
+`v0.6.1` correction release after #5188 is reviewed and merged. The existing
+tag and its assets will not be rewritten. See the
+[unreleased changelog entry](CHANGELOG.md#unreleased).
+
 ## Capabilities
 
 - **Agentic Research:** continue from an existing Feishu Project, investigate
