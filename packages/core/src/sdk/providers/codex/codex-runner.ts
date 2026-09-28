@@ -27,7 +27,6 @@ import { createInterface } from 'node:readline';
 import { createLogger } from '../../../utils/logger.js';
 import type { CodexSandboxLevel } from './sandbox-policy.js';
 import type { CodexThreadEvent } from './exec-adapter.js';
-import { codexStringConfigOverride } from './follow-up-developer-instructions.js';
 
 /** Rolling stderr tail kept for error mapping (bounded). */
 const STDERR_TAIL_BYTES = 8 * 1024;
@@ -81,8 +80,6 @@ export interface CodexExecRunOptions {
   fullAccess?: boolean;
   /** Explicit Codex workspace network policy. */
   networkAccess?: boolean;
-  /** Additional host policy installed as Codex developer instructions. */
-  developerInstructions?: string;
   /** Environment for the child (merged over the provider env). */
   env?: Record<string, string | undefined>;
   /** Per-call timeout override (ms); zero disables the runner wall-clock timeout. */
@@ -171,9 +168,6 @@ export class CodexExecRunner {
     // (--json / -m / --skip-git-repo-check all verified on resume's help),
     // EXCEPT sandbox: fresh exec has the dedicated -s flag, while resume only
     // accepts the config override form (codex-cli 0.151.0).
-    const developerInstructionsArgs = options.developerInstructions === undefined
-      ? []
-      : ['-c', codexStringConfigOverride('developer_instructions', options.developerInstructions)];
     const args: string[] = options.resumeSessionId
       ? [
           'exec',
@@ -190,7 +184,6 @@ export class CodexExecRunner {
                 `${networkAccessConfigKey(options.sandboxMode)}=${options.networkAccess ?? this.defaultNetworkAccess}`,
               ]
             : []),
-          ...developerInstructionsArgs,
           options.resumeSessionId,
           '--',
           options.prompt,
@@ -209,7 +202,6 @@ export class CodexExecRunner {
                 `${networkAccessConfigKey(options.sandboxMode)}=${options.networkAccess ?? this.defaultNetworkAccess}`,
               ]
             : []),
-          ...developerInstructionsArgs,
           '--',
           options.prompt,
         ];

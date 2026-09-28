@@ -118,12 +118,16 @@ describe('buildThreadSelfServiceGuidance (Issue #4402)', () => {
     expect(result).toContain('proactively retrieve');
     expect(result).toContain('another thread');
     expect(result).toContain('rather than guessing');
+    expect(result).toContain('Use semantic judgment');
+    expect(result).toContain('same chat/thread context');
+    expect(result).toContain('--action-prompts');
+    expect(result).not.toContain('Codex');
     expect(result).toContain('+threads-messages-list');
     expect(result).toContain('--download-resources');
     expect(result).toContain('+messages-mget');
     expect(result).toContain('+messages-resources-download');
     expect(result).toContain('--thread-root <Thread-Root-ID>');
-    expect(result).toContain('codex-followup:<current-message-id>');
+    expect(result).toContain('followup:<current-message-id>');
     expect(result).toContain('coalesces concurrent retries');
     expect(result).toContain('Never substitute the card\'s own ID');
   });
@@ -173,8 +177,8 @@ describe('buildNextStepGuidance', () => {
     expect(result).toContain('actionPrompts');
     expect(result).toContain('interactive card');
     expect(result).toContain('--idempotency-key');
-    expect(result).not.toContain('Codex follow-up actions');
-    expect(result).not.toContain('semantic judgment');
+    expect(result).toContain('semantic judgment');
+    expect(result).not.toContain('Codex');
   });
 
   it('should include simple list fallback when cards are not supported', () => {
@@ -183,7 +187,8 @@ describe('buildNextStepGuidance', () => {
     expect(result).not.toContain('actionPrompts');
     expect(result).not.toContain('interactive card');
     expect(result).toContain('simple list');
-    expect(result).not.toContain('Codex follow-up actions');
+    expect(result).toContain('necessary clarification');
+    expect(result).not.toContain('Codex');
   });
 
   it('should default to card template when supportsCards is undefined', () => {

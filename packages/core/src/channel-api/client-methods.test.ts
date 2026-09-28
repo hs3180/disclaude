@@ -144,7 +144,7 @@ describe('client-methods', () => {
         context: 'PR #4355',
         threadId: 'om_thread',
         threadRootId: 'om_topic_root',
-        idempotencyKey: 'codex-followup:om_source',
+        idempotencyKey: 'followup:om_source',
         actionPrompts: { yes: 'User approved', no: 'User declined' },
       };
 

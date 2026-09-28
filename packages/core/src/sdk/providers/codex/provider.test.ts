@@ -440,12 +440,9 @@ fi
       const { messages, sessionId } = await drainStream(makeProvider(fixtures), ['a', 'b']);
       expect(argvOf(fixtures, 1)).not.toContain('resume');
       // S4 (#4631): every run now carries the resolved sandbox level.
-      const resumedArgv = argvOf(fixtures, 2);
-      expect(resumedArgv).toContain(
-        'exec resume --json --skip-git-repo-check --disable browser_use --disable browser_use_external --disable browser_use_full_cdp_access -c sandbox_mode=workspace-write -c sandbox_workspace_write.network_access=true',
+      expect(argvOf(fixtures, 2)).toContain(
+        'exec resume --json --skip-git-repo-check --disable browser_use --disable browser_use_external --disable browser_use_full_cdp_access -c sandbox_mode=workspace-write -c sandbox_workspace_write.network_access=true t-abc -- b',
       );
-      expect(resumedArgv).toContain('-c developer_instructions=');
-      expect(resumedArgv).toContain('t-abc -- b');
       const texts = (messages as Array<{ type: string; content: string }>)
         .filter((m) => m.type === 'text')
         .map((m) => m.content);

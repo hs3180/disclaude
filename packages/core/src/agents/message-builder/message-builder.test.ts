@@ -671,6 +671,9 @@ describe('MessageBuilder', () => {
       expect(result).toContain('Topic-thread context before replying');
       expect(result).toContain('lark-cli');
       expect(result).toContain('+threads-messages-list');
+      expect(result).toContain('Use semantic judgment');
+      expect(result).toContain('--action-prompts');
+      expect(result).not.toContain('Codex follow-up');
     });
 
     it('should NOT inject lark-cli self-service guidance for non-topic chats', () => {
@@ -747,6 +750,7 @@ describe('MessageBuilder', () => {
       }, 'chat-456');
 
       expect(result).toContain('Next Steps After Response');
+      expect(result).toContain('Use semantic judgment');
     });
 
     it('should include next-step guidance when chatType is undefined', () => {

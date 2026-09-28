@@ -24,7 +24,6 @@ import { getRootLogger } from '../../../utils/logger.js';
 
 import { CodexExecRunner } from './codex-runner.js';
 import type { CodexThreadEvent } from './exec-adapter.js';
-import { CODEX_FOLLOW_UP_DEVELOPER_INSTRUCTIONS } from './follow-up-developer-instructions.js';
 
 interface ScriptedBinary {
   binDir: string;
@@ -268,18 +267,6 @@ echo 'diagnostic' >&2`);
     expect(result.stderrTail).toContain(
       'argv:exec --json --skip-git-repo-check --disable browser_use --disable browser_use_external --disable browser_use_full_cdp_access -- do the thing',
     );
-  });
-
-  it('passes additional developer instructions safely on fresh and resumed runs', async () => {
-    fixture.cleanup();
-    fixture = makeScriptedBinary("printf '%s\\n' \"$@\" >&2\nexit 0");
-    const runner = new CodexExecRunner({ binary: fixture.binaryPath });
-    const configValue = `developer_instructions=${JSON.stringify(CODEX_FOLLOW_UP_DEVELOPER_INSTRUCTIONS)}`;
-    const fresh = await runner.run({ prompt: 'fresh', developerInstructions: CODEX_FOLLOW_UP_DEVELOPER_INSTRUCTIONS }, () => {}).promise;
-    const resumed = await runner.run({ prompt: 'resume', resumeSessionId: 'thread-1', developerInstructions: CODEX_FOLLOW_UP_DEVELOPER_INSTRUCTIONS }, () => {}).promise;
-
-    expect(fresh.stderrTail).toContain(`\n-c\n${configValue}\n--\nfresh\n`);
-    expect(resumed.stderrTail).toContain(`\n-c\n${configValue}\nthread-1\n--\nresume\n`);
   });
 
   it('builds a resume argv: session id positional before the prompt', async () => {

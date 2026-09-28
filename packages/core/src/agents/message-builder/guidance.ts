@@ -140,7 +140,8 @@ ${threadContext}
  * most needs to know it can self-serve via lark-cli). See #4306 / #4401.
  *
  * Returned only for topic threads (the caller gates on `isTopicThread`); the
- * content is the on-demand attachment/context fetch recipe (lark-cli).
+ * content is shared topic-thread interpretation, card, and on-demand
+ * attachment/context guidance (lark-cli) for every connected agent backend.
  */
 export function buildThreadSelfServiceGuidance(): string {
   return `
@@ -153,6 +154,8 @@ You are responding inside one specific topic-group thread. Use \`lark-cli\` to i
 
 The injected Thread Context may be absent, partial, or limited to the parent chain; it is not proof that every earlier reply or attachment is present. First inspect it. If the current message depends on missing earlier context (including short follow-ups such as “那这个呢？” or “继续”), proactively retrieve the current thread's messages and relevant replies before answering; the user does not need to explicitly say “look at this thread.” Do not fetch the full thread when the supplied context already contains everything needed.
 
+Use semantic judgment to decide whether the response leaves a concrete choice, clarification, or confirmation that materially changes what should happen next. If the current Tools section exposes send_interactive, offer at most one concise card that preserves the distinct choices; otherwise ask a necessary question in chat or finish without a card. Do not rely on harness-specific rules, regex triggers, or post-response rewriting. Do not add generic next-step menus, repeat a question already answered, or begin optional work before the user chooses.
+
 - List messages and replies in this exact thread; download resources only when relevant:
   \`npx @larksuite/cli im +threads-messages-list --thread <current-message-id> --as bot --download-resources\`
 - Fetch specific messages by id (up to 50), optionally downloading their attachments too:
@@ -162,9 +165,9 @@ The injected Thread Context may be absent, partial, or limited to the parent cha
 
 The \`--thread\` flag accepts the current Message ID (or another message ID known to belong to this same thread) and resolves its thread. Read any downloaded resource before relying on it. If required context or an attachment cannot be retrieved, state what is missing and ask the user rather than guessing.
 
-When sending a Codex follow-up/feedback card from a topic thread, keep \`--parent <current-Message-ID>\` for reply attribution and also pass \`--thread-root <Thread-Root-ID>\` so a button click resumes the agent session for this same thread. Never substitute the card's own ID for the thread root.
+When sending a follow-up/feedback card from a topic thread, keep \`--parent <current-Message-ID>\` for reply attribution and also pass \`--thread-root <Thread-Root-ID>\` so a button click resumes the existing agent session for this same thread. Never substitute the card's own ID for the thread root. Supply an \`--action-prompts\` entry for every button; each should record the selected choice and continue in this same chat/thread context, not start a separate task or session.
 
-Use \`--idempotency-key "codex-followup:<current-message-id>"\` for the card and reuse the same key if sending is retried; the service coalesces concurrent retries and reuses the registered card for the same chat/key.
+Use \`--idempotency-key "followup:<current-message-id>"\` for the card and reuse the same key if sending is retried; the service coalesces concurrent retries and reuses the registered card for the same chat/key.
 
 `;
 }
@@ -194,7 +197,7 @@ export function buildNextStepGuidance(supportsCards?: boolean): string {
 
 ## Next Steps After Response
 
-Use an **interactive card** when a concrete question needs user feedback, such as clarification, a choice, or confirmation. Optional follow-up questions should be grounded in the actual findings and unresolved evidence. Do not add a card merely because a response ended.
+Use semantic judgment to decide whether the response leaves a concrete choice, clarification, or confirmation that materially changes what should happen next. If the current channel exposes send_interactive, offer at most one concise card preserving the distinct choices; otherwise ask a necessary question in chat or finish without a card. Do not rely on harness-specific rules, regex triggers, or post-response rewriting. Do not add generic next-step menus, repeat a question already answered, or begin optional work before the user chooses. Optional follow-up questions should be grounded in the actual findings and unresolved evidence.
 
 ${researchGuidance}
 
@@ -209,7 +212,7 @@ Invoke the \`send_interactive\` channel command shown in the Tools section — i
   --question "报告需要哪种格式？" \\
   --options '[{"text":"Markdown","value":"action1","type":"primary"},{"text":"PDF","value":"action2"}]' \\
   --action-prompts '{"action1":"[用户操作] 用户选择了Markdown","action2":"[用户操作] 用户选择了PDF"}' \\
-  --idempotency-key "codex-followup:<trigger-message-id>"
+  --idempotency-key "followup:<trigger-message-id>"
 \`\`\`
 
 Flags:
@@ -232,6 +235,7 @@ Do **NOT** paste raw card fields such as \`content\`/\`format\`/\`elements\` —
 - Make suggestions specific and actionable
 - Use \`"type": "primary"\` for the most recommended option
 - **CRITICAL**: Always include \`actionPrompts\` that maps each option's \`value\` to a user message
+- Each action prompt must preserve the selected choice and continue in the existing conversation context, not start a separate task or session
 - **CRITICAL**: Reply to the triggering prompt with \`--parent <trigger-message-id>\`; this applies to non-topic groups and private chats too
 - The action prompt format: \`"[用户操作] 用户选择了..."\` describes what the user did
 - If there is no concrete feedback to obtain, finish with the answer and relevant artifact links; no card is needed`;
@@ -244,7 +248,7 @@ Do **NOT** paste raw card fields such as \`content\`/\`format\`/\`elements\` —
 
 ## Next Steps After Response
 
-When further action would help, suggest relevant next steps or ask a concrete question in chat.
+When a necessary clarification or decision remains, ask one concrete question in chat; otherwise finish the response without generic next-step menus or optional work.
 
 ${researchGuidance}
 

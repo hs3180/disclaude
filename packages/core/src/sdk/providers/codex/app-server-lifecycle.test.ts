@@ -4,7 +4,6 @@ import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentInputRequest } from '../../user-input.js';
 import { CodexAppServerLifecycle } from './app-server-lifecycle.js';
-import { CODEX_FOLLOW_UP_DEVELOPER_INSTRUCTIONS } from './follow-up-developer-instructions.js';
 
 const dirs: string[] = [];
 function fixture(body: string): string {
@@ -51,7 +50,6 @@ read hold
   });
   it('owns thread/turn identity and sends real steer + interrupt preconditions', async () => {
     const binary = fixture(`
-printf '%s\\n' "$@" >&2
 read initialize; echo '{"id":1,"result":{}}'
 read initialized
 read thread; printf '%s' "$thread" > "$(dirname "$0")/thread"; echo '{"id":2,"result":{"thread":{"id":"thread-1"}}}'
@@ -60,7 +58,7 @@ read steer; printf '%s' "$steer" > "$(dirname "$0")/steer"; echo '{"id":4,"resul
 read interrupt; printf '%s' "$interrupt" > "$(dirname "$0")/interrupt"; echo '{"id":5,"result":{}}'
 echo '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1"}}}'
 `);
-    const lifecycle = new CodexAppServerLifecycle({ binary, developerInstructions: CODEX_FOLLOW_UP_DEVELOPER_INSTRUCTIONS });
+    const lifecycle = new CodexAppServerLifecycle({ binary });
     try {
       await expect(lifecycle.ensureThread('chat-1', { cwd: '/tmp/project' }))
         .resolves.toBe('thread-1');
@@ -77,8 +75,7 @@ echo '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"t
       expect(JSON.parse(readFileSync(join(dir, 'interrupt'), 'utf8')).params)
         .toEqual({ threadId: 'thread-1', turnId: 'turn-1' });
     } finally {
-      const exit = await lifecycle.close();
-      expect(exit.stderrTail).toContain(`developer_instructions=${JSON.stringify(CODEX_FOLLOW_UP_DEVELOPER_INSTRUCTIONS)}`);
+      await lifecycle.close();
     }
   });
 
