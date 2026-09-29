@@ -248,7 +248,7 @@ export class ScheduleFileScanner {
       code,
       ...(line !== undefined && { line }),
       ...(column !== undefined && { column }),
-    ...(unknownKeys && { unknownKeys }),
+      ...(unknownKeys && { unknownKeys }),
     };
     if (severity === 'error') {
       logger.error(context, message);
