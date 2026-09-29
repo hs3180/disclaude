@@ -3,7 +3,7 @@
 set -euo pipefail
 CDP_PORT=${CDP_PORT:-9222}
 CDP_INTERNAL_PORT=${CDP_INTERNAL_PORT:-9221}
-CHROMIUM_PROFILE_DIR=${CHROMIUM_PROFILE_DIR:-/data/chrome-profile}
+CHROMIUM_CDP_PROFILE_DIR=${CHROMIUM_CDP_PROFILE_DIR:-/data/chrome-profile}
 CHROMIUM_HEADLESS=${CHROMIUM_HEADLESS:-0}
 CHROMIUM_ACCEPT_LANG=${CHROMIUM_ACCEPT_LANG:-en-US,en}
 CHROMIUM_VNC_ENABLED=${CHROMIUM_VNC_ENABLED:-0}
@@ -32,7 +32,7 @@ if (( 10#$CDP_PORT == 10#$CDP_INTERNAL_PORT )); then
 fi
 case "$CHROMIUM_HEADLESS" in 0|1) ;; *) echo 'FATAL: CHROMIUM_HEADLESS must be 0 or 1' >&2; exit 1 ;; esac
 case "$CHROMIUM_VNC_ENABLED" in 0|1) ;; *) echo 'FATAL: CHROMIUM_VNC_ENABLED must be 0 or 1' >&2; exit 1 ;; esac
-case "$CHROMIUM_PROFILE_DIR" in /*) ;; *) echo 'FATAL: profile path must be absolute' >&2; exit 1 ;; esac
+case "$CHROMIUM_CDP_PROFILE_DIR" in /*) ;; *) echo 'FATAL: CHROMIUM_CDP_PROFILE_DIR must be absolute' >&2; exit 1 ;; esac
 if [[ "$CHROMIUM_VNC_ENABLED" == 1 ]]; then
     if [[ "$CHROMIUM_HEADLESS" == 1 ]]; then
         echo 'FATAL: CHROMIUM_VNC_ENABLED requires headed Chromium (CHROMIUM_HEADLESS=0)' >&2; exit 1
@@ -60,8 +60,8 @@ if [[ ! "$CDP_HOST" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ || ! "$GATEWAY" =~ ^[0-9
 fi
 sed "s/__CDP_HOST__/$CDP_HOST/g; s/__GATEWAY__/$GATEWAY/g; s/__CDP_PORT__/$CDP_PORT/g; s/__CDP_INTERNAL_PORT__/$CDP_INTERNAL_PORT/g" \
     /etc/nginx/cdp-proxy.conf.template > /tmp/cdp-nginx.conf
-mkdir -p "$CHROMIUM_PROFILE_DIR"
-chmod 700 "$CHROMIUM_PROFILE_DIR"
+mkdir -p "$CHROMIUM_CDP_PROFILE_DIR"
+chmod 700 "$CHROMIUM_CDP_PROFILE_DIR"
 children=()
 browser_pid=""
 vnc_password_file=""
@@ -89,7 +89,7 @@ trap 'exit 130' INT
 
 args=(--no-sandbox --no-first-run --no-default-browser-check
       --disable-blink-features=AutomationControlled
-      "--remote-debugging-port=$CDP_INTERNAL_PORT" "--user-data-dir=$CHROMIUM_PROFILE_DIR"
+      "--remote-debugging-port=$CDP_INTERNAL_PORT" "--user-data-dir=$CHROMIUM_CDP_PROFILE_DIR"
       --window-size=1920,1080 "--accept-lang=$CHROMIUM_ACCEPT_LANG")
 if [[ "$CHROMIUM_HEADLESS" == 1 ]]; then
     args+=(--headless=new)

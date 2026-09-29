@@ -523,7 +523,11 @@ export function resolveChromiumAddress() {
  * @returns {string} absolute profile directory
  */
 export function resolveChromiumProfileDir() {
-  return process.env.CHROMIUM_CDP_PROFILE_DIR || DEFAULT_CHROMIUM_PROFILE_DIR;
+  const profileDir = process.env.CHROMIUM_CDP_PROFILE_DIR || DEFAULT_CHROMIUM_PROFILE_DIR;
+  if (!isAbsolute(profileDir) || /[\r\n\0]/.test(profileDir)) {
+    throw new Error('CHROMIUM_CDP_PROFILE_DIR must be an absolute path without control characters');
+  }
+  return profileDir;
 }
 
 /**

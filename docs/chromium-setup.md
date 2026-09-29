@@ -48,6 +48,10 @@ verification is separate; failure requires an explicit interactive choice or
 `--allow-unverified-signature` for unattended use. A successful signature
 check is not a notarization claim. Old downloaded versions are retained.
 
+Setup uses the selected persistent profile directory directly. It does not copy
+or migrate data from another browser profile; choose the existing profile path
+only when it is already the intended profile for this service.
+
 ## Inspect the service
 
 `disclaude chromium-cdp status` returns JSON on macOS and Linux. `loaded` reports
@@ -65,29 +69,6 @@ from saved files alone.
 If activation fails, the command reports whether the previous service was
 restored. Profiles are preserved; status and recovery do not stop another
 browser or remove an unverifiable lock.
-
-## Copy an offline profile
-
-To preserve an existing Chromium user-data directory, select a new destination
-and use `--copy-profile-from`. The source browser must be stopped by its owner;
-setup does not stop another browser.
-
-```sh
-disclaude chromium-cdp setup --binary /absolute/path/to/browser \
-  --profile /absolute/path/to/new-profile \
-  --copy-profile-from /absolute/path/to/closed-profile \
-  --headless --yes
-```
-
-The source must contain a regular JSON `Local State` file at its user-data root.
-Preview reports canonical paths, entry count and bytes; `--dry-run` creates no
-copy. Existing destinations, nested paths, live/unknown owners and known major
-version downgrades are refused. The copy is staged privately, checked for
-changes, and published without modifying the source. Runtime lock/socket markers
-are omitted; other symlinks are not followed or silently dropped. A provenance
-record is written to the new profile. These are offline consistency checks, not
-a snapshot against concurrent writers or a guarantee that login cookies
-transfer. A completed copy is retained if later service activation fails.
 
 ## Import older configuration
 

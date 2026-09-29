@@ -412,6 +412,12 @@ describe('chromium-cdp service config (Issue #4807)', () => {
     expect(resolveChromiumProfileDir()).toBe('/custom/profile');
   });
 
+  it('rejects a relative configured Chromium profile path', () => {
+    snapshotEnv();
+    process.env.CHROMIUM_CDP_PROFILE_DIR = 'relative/profile';
+    expect(() => resolveChromiumProfileDir()).toThrow('must be an absolute path');
+  });
+
   it('resolveChromiumHeadless defaults to headless (true)', () => {
     snapshotEnv();
     expect(resolveChromiumHeadless()).toBe(true);

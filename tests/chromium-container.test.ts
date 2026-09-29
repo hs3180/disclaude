@@ -13,7 +13,7 @@ describe('container Chromium configuration', () => {
     [{ CHROMIUM_HEADLESS: 'maybe' }, 'must be 0 or 1'],
     [{ CHROMIUM_VNC_ENABLED: 'maybe' }, 'CHROMIUM_VNC_ENABLED must be 0 or 1'],
     [{ CHROMIUM_VNC_ENABLED: '1' }, 'CHROMIUM_VNC_PASSWORD must be exactly 8 printable ASCII characters'],
-    [{ CHROMIUM_PROFILE_DIR: 'relative' }, 'must be absolute'],
+    [{ CHROMIUM_CDP_PROFILE_DIR: 'relative' }, 'must be absolute'],
   ])('fails invalid inputs before launching dependencies: %j', (overrides, message) => {
     const result = spawnSync('bash', [resolve('docker/start-chromium.sh')], { encoding: 'utf8', env: {
       PATH: process.env.PATH, CDP_PORT: '9222', CDP_INTERNAL_PORT: '9221', ...overrides,
@@ -29,9 +29,18 @@ describe('container Chromium configuration', () => {
     const compose = yaml.load(readFileSync(resolve('docker-compose.yml'), 'utf8')) as any;
     const browser = compose.services.chromium;
     expect(browser.init).toBe(true);
-    expect(browser.volumes).toContain('chromium_profile:/data/chrome-profile');
+    expect(browser.volumes).toContainEqual({
+      type: 'volume', source: 'chromium_profile', target: '${CHROMIUM_CDP_PROFILE_DIR:-/data/chrome-profile}',
+    });
+    expect(browser.environment).toContain('CHROMIUM_CDP_PROFILE_DIR=${CHROMIUM_CDP_PROFILE_DIR:-/data/chrome-profile}');
     expect(compose.volumes).toHaveProperty('chromium_profile');
     expect(readFileSync(join(browser.build.context, browser.build.dockerfile), 'utf8')).toContain('COPY start-chromium.sh');
+    const launcher = readFileSync(resolve('docker/start-chromium.sh'), 'utf8');
+    expect(launcher).toContain('CHROMIUM_CDP_PROFILE_DIR=${CHROMIUM_CDP_PROFILE_DIR:-/data/chrome-profile}');
+    expect(launcher).toContain('"--user-data-dir=$CHROMIUM_CDP_PROFILE_DIR"');
+    const acceptance = readFileSync(resolve('scripts/test-chromium-container.mjs'), 'utf8');
+    expect(acceptance).toContain("'-v', `${volume}:${profilePath}`");
+    expect(acceptance).toContain("'-e', `CHROMIUM_CDP_PROFILE_DIR=${profilePath}`");
     expect(browser.ports).toEqual(['127.0.0.1:${CDP_PORT:-9222}:${CDP_PORT:-9222}']);
   });
 
