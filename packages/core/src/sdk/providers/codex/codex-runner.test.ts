@@ -285,6 +285,16 @@ echo 'diagnostic' >&2`);
     );
   });
 
+  it('passes explicit reasoning effort to fresh and resumed Codex CLI turns', async () => {
+    fixture.cleanup();
+    fixture = makeScriptedBinary('echo "argv:$*" >&2\nexit 0');
+    const runner = new CodexExecRunner({ binary: fixture.binaryPath });
+    const fresh = await runner.run({ prompt: 'fresh', model: 'gpt-5.6-luna', reasoningEffort: 'high' }, () => {}).promise;
+    const resumed = await runner.run({ prompt: 'resume', resumeSessionId: 't-1', model: 'gpt-5.6-luna', reasoningEffort: 'xhigh' }, () => {}).promise;
+    expect(fresh.stderrTail).toContain('-m gpt-5.6-luna -c model_reasoning_effort="high"');
+    expect(resumed.stderrTail).toContain('-m gpt-5.6-luna -c model_reasoning_effort="xhigh" t-1 -- resume');
+  });
+
   it.each([
     [true, 'sandbox_workspace_write.network_access=true'],
     [false, 'sandbox_workspace_write.network_access=false'],

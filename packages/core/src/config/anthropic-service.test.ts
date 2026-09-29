@@ -76,4 +76,58 @@ describe('Anthropic API service configuration', () => {
     const Config = await loadService(config);
     expect(Config.getAgentConfig()).toMatchObject({ apiKey: '', model: 'gpt-5.6' });
   });
+
+  it('uses one canonical Codex model across the default agent and preset while preserving legacy fallbacks', async () => {
+    const config: DisclaudeConfig = {
+      agent: {
+        agentBackend: 'codex',
+        model: 'gpt-5.4',
+        codex: { model: 'gpt-5.6-luna', reasoningEffort: 'high' },
+      },
+      agents: { default: { agentBackend: 'codex', model: 'gpt-5.5' } },
+    };
+    const Config = await loadService(config);
+    expect(Config.CODEX_MODEL).toBe('gpt-5.6-luna');
+    expect(Config.CODEX_MODEL_SOURCE).toBe('agent.codex.model');
+    expect(Config.CODEX_REASONING_EFFORT).toBe('high');
+    expect(Config.CODEX_REASONING_EFFORT_SOURCE).toBe('agent.codex.reasoningEffort');
+    expect(Config.getAgentConfig()).toMatchObject({ apiKey: '', model: 'gpt-5.6-luna' });
+    expect(Config.getAgentPresets()?.default.model).toBe('gpt-5.6-luna');
+  });
+
+  it('lets Codex environment overrides win over YAML and supplies the legacy model only as fallback', async () => {
+    vi.stubEnv('CODEX_MODEL', 'gpt-5.6-luna');
+    vi.stubEnv('CODEX_REASONING_EFFORT', 'xhigh');
+    const Config = await loadService({ agent: {
+      agentBackend: 'codex', model: 'gpt-5.4',
+      codex: { model: 'gpt-5.5', reasoningEffort: 'low' },
+    } });
+    expect(Config.getAgentConfig().model).toBe('gpt-5.6-luna');
+    expect(Config.CODEX_MODEL_SOURCE).toBe('environment');
+    expect(Config.CODEX_REASONING_EFFORT).toBe('xhigh');
+    expect(Config.CODEX_REASONING_EFFORT_SOURCE).toBe('environment');
+  });
+
+  it('falls back to configured Codex environment values when process variables are blank', async () => {
+    vi.stubEnv('CODEX_MODEL', '');
+    vi.stubEnv('CODEX_REASONING_EFFORT', '');
+    const Config = await loadService({
+      env: { CODEX_MODEL: 'gpt-5.6-luna', CODEX_REASONING_EFFORT: 'high' },
+      agent: { agentBackend: 'codex' },
+    });
+    expect(Config.CODEX_MODEL).toBe('gpt-5.6-luna');
+    expect(Config.CODEX_MODEL_SOURCE).toBe('environment');
+    expect(Config.CODEX_REASONING_EFFORT).toBe('high');
+    expect(Config.CODEX_REASONING_EFFORT_SOURCE).toBe('environment');
+  });
+
+  it('keeps legacy agent.model readable and makes it authoritative over a conflicting default Codex preset', async () => {
+    const Config = await loadService({
+      agent: { agentBackend: 'codex', model: 'gpt-5.4' },
+      agents: { default: { agentBackend: 'codex', model: 'gpt-5.5' } },
+    });
+    expect(Config.getAgentConfig().model).toBe('gpt-5.4');
+    expect(Config.CODEX_MODEL_SOURCE).toBe('agent.model');
+    expect(Config.getAgentPresets()?.default.model).toBe('gpt-5.4');
+  });
 });

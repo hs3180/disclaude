@@ -123,6 +123,9 @@ describe('CodexAgentProvider (Issues #4629 + #4630)', () => {
           : fx.binDir,
         CODEX_HOME: fx.codexHome,
       },
+      // Ignore the developer machine's ~/.disclaude model so these subprocess
+      // contract tests only exercise values passed in their own fixtures.
+      model: '',
     });
 
   // --------------------------------------------------------------------------
@@ -454,6 +457,24 @@ fi
       fixtures = makeFixtures({ withBinary: true, withAuth: true, body: `${ARGV_RECORDER}${HAPPY_BODY}` });
       await drainStream(makeProvider(fixtures), ['hello'], { model: 'gpt-5.1-codex' });
       expect(argvOf(fixtures, 1)).not.toContain('-m');
+    }, 20_000);
+
+    it('passes the resolved model and reasoning effort to the actual Codex exec process', async () => {
+      fixtures = makeFixtures({ withBinary: true, withAuth: true, body: `${ARGV_RECORDER}${HAPPY_BODY}` });
+      const provider = new CodexAgentProvider({
+        env: {
+          PATH: `${fixtures.binDir}:${process.env.PATH ?? ''}`,
+          CODEX_HOME: fixtures.codexHome,
+        },
+        model: 'gpt-5.5',
+        reasoningEffort: 'medium',
+      });
+      await drainStream(provider, ['hello'], {
+        model: 'gpt-5.6-luna',
+        reasoningEffort: 'high',
+      });
+      expect(argvOf(fixtures, 1)).toContain('-m gpt-5.6-luna');
+      expect(argvOf(fixtures, 1)).toContain('-c model_reasoning_effort="high"');
     }, 20_000);
 
     it('starts a fresh session after a completed turn reaches the resume budget', async () => {

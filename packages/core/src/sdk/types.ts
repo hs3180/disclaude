@@ -330,6 +330,8 @@ export interface AgentQueryOptions {
   projectRoot?: string;
   /** 使用的模型 */
   model?: string;
+  /** Codex-only per-turn reasoning override; otherwise provider and CLI defaults apply. */
+  reasoningEffort?: import('../config/types.js').CodexReasoningEffort;
   /** 权限模式 */
   permissionMode?: PermissionMode;
   /** 允许使用的工具列表 */

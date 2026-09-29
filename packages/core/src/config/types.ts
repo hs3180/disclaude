@@ -42,6 +42,10 @@ export type ModelTier = 'high' | 'low' | 'multimodal';
  * ChatGPT subscription or fork unbounded codex exec children.
  */
 export interface CodexAgentGovernanceConfig {
+  /** Canonical Codex GPT model. Legacy agent.model remains a fallback. */
+  model?: string;
+  /** Explicit model reasoning effort; unset defers to Codex's model-specific default. */
+  reasoningEffort?: CodexReasoningEffort;
   /** Codex process protocol. `exec` remains the compatibility default. */
   transport?: 'exec' | 'app-server';
   /** Max concurrently-alive codex sessions (queryStreams) per process. Default 3. */
@@ -49,6 +53,9 @@ export interface CodexAgentGovernanceConfig {
   /** Max simultaneously-executing codex exec children. Default 2. */
   maxConcurrentRuns?: number;
 }
+
+/** Codex CLI reasoning levels currently exposed by the model catalog. */
+export type CodexReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
 
 export interface AgentConfig {
   /** API provider preference (anthropic, glm) */
@@ -85,7 +92,7 @@ export interface AgentConfig {
   permissionMode?: 'default' | 'bypassPermissions';
   /** Maximum concurrent tasks */
   maxConcurrentTasks?: number;
-  /** Model identifier for Anthropic/Claude (only used when provider is 'anthropic') */
+  /** Anthropic model, or the legacy Codex model fallback; prefer agent.codex.model for Codex. */
   model?: string;
   /**
    * High-capability model for complex analysis (Issue #3059).

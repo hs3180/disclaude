@@ -25,6 +25,7 @@ import type {
   SessionTimeoutConfig,
 } from './types.js';
 import { resolveAgentPreset } from './agent-presets.js';
+import { resolveCodexModelSetting, resolveCodexReasoningEffort } from './codex-settings.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 
 // Re-export sub-modules
@@ -216,16 +217,35 @@ export class Config {
   private static readonly DEFAULT_AGENT_PRESET = fileConfigOnly.agents
     ? resolveAgentPreset(fileConfigOnly.agents)
     : undefined;
-  static readonly CLAUDE_MODEL =
-    (this.DEFAULT_AGENT_PRESET?.ok ? this.DEFAULT_AGENT_PRESET.preset.model : undefined) ||
-    fileConfigOnly.agent?.model || fileConfigOnly.anthropic?.model || '';
-
   // Agent SDK backend — which agent runtime boots (Issue #4388).
   // Orthogonal to the model-layer provider (GLM vs Anthropic LLM API).
   // Undefined is a startup error; DisclaudeService never silently chooses another backend.
   static readonly AGENT_BACKEND =
     (this.DEFAULT_AGENT_PRESET?.ok ? this.DEFAULT_AGENT_PRESET.preset.agentBackend : undefined) ||
     fileConfigOnly.agent?.agentBackend;
+
+  // Codex model resolution (#5136): one canonical setting with compatibility
+  // fallbacks for existing agent.model and default-preset configurations.
+  private static readonly CODEX_MODEL_SETTING = resolveCodexModelSetting({
+    environment: process.env.CODEX_MODEL?.trim() || fileConfigOnly.env?.CODEX_MODEL,
+    configured: fileConfigOnly.agent?.codex?.model,
+    legacyAgent: fileConfigOnly.agent?.model,
+    legacyPreset: this.DEFAULT_AGENT_PRESET?.ok && this.DEFAULT_AGENT_PRESET.preset.agentBackend === 'codex'
+      ? this.DEFAULT_AGENT_PRESET.preset.model : undefined,
+  });
+  static readonly CODEX_MODEL = this.CODEX_MODEL_SETTING.value ?? '';
+  static readonly CODEX_MODEL_SOURCE = this.CODEX_MODEL_SETTING.source;
+  private static readonly CODEX_REASONING_EFFORT_SETTING = resolveCodexReasoningEffort({
+    environment: process.env.CODEX_REASONING_EFFORT?.trim() || fileConfigOnly.env?.CODEX_REASONING_EFFORT,
+    configured: fileConfigOnly.agent?.codex?.reasoningEffort,
+  });
+  static readonly CODEX_REASONING_EFFORT = this.CODEX_REASONING_EFFORT_SETTING.value;
+  static readonly CODEX_REASONING_EFFORT_SOURCE = this.CODEX_REASONING_EFFORT_SETTING.source;
+
+  static readonly CLAUDE_MODEL = this.AGENT_BACKEND === 'codex'
+    ? this.CODEX_MODEL
+    : (this.DEFAULT_AGENT_PRESET?.ok ? this.DEFAULT_AGENT_PRESET.preset.model : undefined) ||
+      fileConfigOnly.agent?.model || fileConfigOnly.anthropic?.model || '';
 
   // Codex exec sandbox override (Issue #4631, S4 of #4627). Only
   // meaningful with AGENT_BACKEND === 'codex'; consumed by the
@@ -347,7 +367,17 @@ export class Config {
 
   /** Named runtime presets, when configured. Selection is managed per chat by the pool. */
   static getAgentPresets(): AgentPresets | undefined {
-    return this.getRawConfig().agents;
+    const presets = this.getRawConfig().agents;
+    if (!presets) {
+      return undefined;
+    }
+    const selected = resolveAgentPreset(presets);
+    if (!selected.ok || selected.preset.agentBackend !== 'codex' || !this.CODEX_MODEL) {
+      return presets;
+    }
+    // The selected default Codex preset is a compatibility alias for the
+    // canonical agent.codex.model. Named non-default presets remain explicit.
+    return { ...presets, [selected.name]: { ...selected.preset, model: this.CODEX_MODEL } };
   }
 
   /**
