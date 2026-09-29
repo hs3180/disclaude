@@ -46,6 +46,8 @@ export {
   ScheduleFileScanner,
   ScheduleFileWatcher,
   type ScheduleFileTask,
+  type ScheduleDiagnostic,
+  type OnScheduleDiagnostic,
   type ScheduleFileScannerOptions,
   type OnFileAdded,
   type OnFileChanged,

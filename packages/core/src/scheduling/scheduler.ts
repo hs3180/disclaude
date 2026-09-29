@@ -440,6 +440,8 @@ export class Scheduler {
   private readonly consecutiveTaskFailures = new Map<string, number>();
   /** Issue #4648 residual ⑥: optional file-backed streak store. */
   private readonly failureStore?: TaskFailureStore;
+  /** Deduplicates repeated config alerts until a valid task load or removal. */
+  private readonly reportedScheduleConfigFailures = new Map<string, string>();
 
   constructor(options: SchedulerOptions) {
     this.scheduleManager = options.scheduleManager;
@@ -548,9 +550,10 @@ export class Scheduler {
    */
   addTask(task: ScheduledTask): void {
     // Remove existing job if any
-    this.removeTask(task.id);
+    this.stopTask(task.id);
 
     if (!task.enabled) {
+      this.reportedScheduleConfigFailures.delete(task.id);
       logger.debug({ taskId: task.id }, 'Task is disabled, not scheduling');
       return;
     }
@@ -566,15 +569,29 @@ export class Scheduler {
         : new CronJob(task.cron, onTick, null, true, timezone);
 
       this.activeJobs.set(task.id, { taskId: task.id, job, task });
+      this.reportedScheduleConfigFailures.delete(task.id);
       logger.info({ taskId: task.id, cron: task.cron, name: task.name, timezone }, 'Scheduled task');
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      const isCronError = errorMsg.toLowerCase().includes('cron');
+      const code = 'invalid-cron-or-timezone';
       logger.error(
-        { err: error, taskId: task.id, cron: task.cron, timezone: task.timezone || DEFAULT_TIMEZONE },
-        isCronError ? 'Invalid cron expression' : 'Failed to schedule task (check cron expression and timezone)'
+        { taskId: task.id, code, errorName: error instanceof Error ? error.name : 'UnknownError' },
+        'Failed to register scheduled task; check cron expression and timezone'
+      );
+      this.reportScheduleConfigFailure(
+        task,
+        code,
+        'cron 表达式或 timezone 无效，或定时任务注册失败；请检查 SCHEDULE.md 中的 cron 和 timezone。',
       );
     }
+  }
+
+  private reportScheduleConfigFailure(task: ScheduledTask, code: string, message: string): void {
+    if (this.reportedScheduleConfigFailures.get(task.id) === code) { return; }
+    this.reportedScheduleConfigFailures.set(task.id, code);
+    void this.callbacks.sendMessage(task.chatId, `⚠️ 定时任务 ${task.id} 配置错误：${message}`)
+      .catch(() => {
+        logger.warn({ taskId: task.id, code }, 'Failed to deliver schedule registration diagnostic');
+      });
   }
 
   /**
@@ -608,13 +625,18 @@ export class Scheduler {
    *
    * @param taskId - Task ID to remove
    */
-  removeTask(taskId: string): void {
+  private stopTask(taskId: string): void {
     const entry = this.activeJobs.get(taskId);
     if (entry) {
       entry.job.stop();
       this.activeJobs.delete(taskId);
       logger.info({ taskId }, 'Removed scheduled task');
     }
+  }
+
+  removeTask(taskId: string): void {
+    this.stopTask(taskId);
+    this.reportedScheduleConfigFailures.delete(taskId);
   }
 
   /**

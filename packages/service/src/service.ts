@@ -25,6 +25,7 @@ import {
   // Issue #4629: fail-fast availability probe of the selected backend.
   getProvider,
   type ScheduledTask,
+  type ScheduleDiagnostic,
   type SchedulerCallbacks,
   // Issue #3582: Input MessageRouter for unified routing
   MessageRouter as InputMessageRouter,
@@ -380,6 +381,31 @@ export class DisclaudeService extends EventEmitter {
     const workspaceDir = Config.getWorkspaceDir();
     const schedulesDir = path.join(workspaceDir, 'schedules');
     const cooldownDir = path.join(schedulesDir, '.cooldown');
+    const reportedScheduleDiagnostics = new Map<string, string>();
+    const onScheduleDiagnostic = (diagnostic: ScheduleDiagnostic): void => {
+      if (diagnostic.action === 'clear') {
+        reportedScheduleDiagnostics.delete(diagnostic.filePath);
+        return;
+      }
+      const fingerprint = `${diagnostic.code}:${diagnostic.message ?? ''}`;
+      if (reportedScheduleDiagnostics.get(diagnostic.filePath) === fingerprint) { return; }
+      reportedScheduleDiagnostics.set(diagnostic.filePath, fingerprint);
+      if (reportedScheduleDiagnostics.size > 512) {
+        const oldestPath = reportedScheduleDiagnostics.keys().next().value as string | undefined;
+        if (oldestPath) { reportedScheduleDiagnostics.delete(oldestPath); }
+      }
+      if (!diagnostic.chatId || !diagnostic.message) { return; }
+      const state = diagnostic.severity === 'error' ? '未能加载' : '配置警告';
+      void this.sendMessage(
+        diagnostic.chatId,
+        `⚠️ 定时任务 ${diagnostic.taskId} ${state}：${diagnostic.message} 请检查该任务的 SCHEDULE.md。`,
+      ).catch(() => {
+        logger.warn(
+          { taskId: diagnostic.taskId, code: diagnostic.code },
+          'Failed to deliver schedule configuration diagnostic',
+        );
+      });
+    };
 
     logger.info({ schedulesDir }, 'Initializing scheduler...');
 
@@ -395,7 +421,7 @@ export class DisclaudeService extends EventEmitter {
 
     // Step 2: Initialize ScheduleManager
     logger.info('Scheduler init step 2/6: Initializing ScheduleManager');
-    this.scheduleManager = new ScheduleManager({ schedulesDir });
+    this.scheduleManager = new ScheduleManager({ schedulesDir, onDiagnostic: onScheduleDiagnostic });
     logger.info({ schedulesDir }, 'Scheduler init step 2/6: ✓ ScheduleManager ready');
 
     // Step 3: Create callbacks
@@ -420,6 +446,7 @@ export class DisclaudeService extends EventEmitter {
     // arrive during scheduler.start() will now be captured by the watcher.
     this.scheduleFileWatcher = new ScheduleFileWatcher({
       schedulesDir,
+      onDiagnostic: onScheduleDiagnostic,
       onFileAdded: (task: ScheduledTask) => {
         logger.info({ taskId: task.id, name: task.name }, 'Schedule file added, adding to scheduler');
         this.scheduler?.addTask(task);

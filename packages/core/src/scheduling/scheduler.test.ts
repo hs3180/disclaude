@@ -584,6 +584,24 @@ describe('Scheduler', () => {
       expect(() => scheduler.addTask(task)).not.toThrow();
       expect(scheduler.getActiveJobs()).toHaveLength(0);
     });
+
+    it('reports an invalid cron once until the task loads with valid configuration', () => {
+      const badTask = createTask({ cron: 'private-invalid-cron' });
+      scheduler.addTask(badTask);
+      scheduler.addTask(badTask);
+
+      expect(mockCallbacks.sendMessage).toHaveBeenCalledTimes(1);
+      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+        badTask.chatId,
+        expect.stringContaining('请检查 SCHEDULE.md'),
+      );
+      expect(JSON.stringify(vi.mocked(mockCallbacks.sendMessage).mock.calls)).not.toContain('private-invalid-cron');
+
+      scheduler.addTask(createTask({ id: badTask.id, cron: '* * * * *' }));
+      scheduler.addTask(badTask);
+
+      expect(mockCallbacks.sendMessage).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe('running task tracking', () => {

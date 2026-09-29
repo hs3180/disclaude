@@ -229,6 +229,8 @@ export {
   TaskTimeoutError,
   type ScheduledTask,
   type ScheduleFileTask,
+  type ScheduleDiagnostic,
+  type OnScheduleDiagnostic,
   type ScheduleFileScannerOptions,
   type ScheduleFileWatcherOptions,
   type ScheduleManagerOptions,

@@ -48,6 +48,19 @@ export interface ScheduleFileTask extends ScheduledTask {
   fileMtime: Date;
 }
 
+/** Safe, user-facing schedule configuration diagnostic. Values from the file are never included. */
+export interface ScheduleDiagnostic {
+  action: 'report' | 'clear';
+  code?: string;
+  filePath: string;
+  taskId: string;
+  chatId?: string;
+  severity?: 'warning' | 'error';
+  message?: string;
+}
+
+export type OnScheduleDiagnostic = (diagnostic: ScheduleDiagnostic) => void | Promise<void>;
+
 // ============================================================================
 // Shared Utility Functions
 // ============================================================================
@@ -58,30 +71,32 @@ export interface ScheduleFileTask extends ScheduledTask {
 function parseScheduleFrontmatter(content: string): {
   frontmatter: Record<string, unknown>;
   contentStart: number;
+  unknownKeys: string[];
 } {
   const frontmatterRegex = /^---\s*\n([\s\S]*?)\n---\s*\n/;
   const match = content.match(frontmatterRegex);
 
   if (!match) {
-    return { frontmatter: {}, contentStart: 0 };
+    return { frontmatter: {}, contentStart: 0, unknownKeys: [] };
   }
 
   const [, frontmatterText] = match;
   const parsed = yaml.load(frontmatterText, { schema: yaml.JSON_SCHEMA });
   if (parsed === undefined || parsed === null) {
-    return { frontmatter: {}, contentStart: match[0].length };
+    return { frontmatter: {}, contentStart: match[0].length, unknownKeys: [] };
   }
   if (typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('Schedule frontmatter must be a YAML mapping');
   }
 
   const frontmatter: Record<string, unknown> = {};
+  const unknownKeys: string[] = [];
   for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
     switch (key) {
       case 'modelTier':
-        throw new Error('Schedule modelTier has been removed; use an explicit model instead');
+        throw new ScheduleFileParseError('removed-field', 'modelTier was removed; set an explicit model field instead.');
       case 'script':
-        throw new Error('Schedule script has been renamed to command; update the frontmatter');
+        throw new ScheduleFileParseError('renamed-field', 'script was renamed to command; update the frontmatter.');
       case 'name':
       case 'cron':
       case 'chatId':
@@ -97,7 +112,10 @@ function parseScheduleFrontmatter(content: string): {
         break;
       case 'enabled':
       case 'blocking':
-        frontmatter[key] = value === true;
+        if (typeof value !== 'boolean') {
+          throw new ScheduleFileParseError('invalid-boolean', `${key} must be true or false.`);
+        }
+        frontmatter[key] = value;
         break;
       case 'clearContext':
       case 'freshSession':
@@ -106,12 +124,47 @@ function parseScheduleFrontmatter(content: string): {
         break;
       case 'cooldownPeriod':
       case 'timeoutMs':
-        frontmatter[key] = Number.parseInt(String(value), 10);
+        if ((typeof value !== 'number' && typeof value !== 'string')
+          || (typeof value === 'string' && !/^\d+$/.test(value))
+          || !Number.isSafeInteger(Number(value))) {
+          throw new ScheduleFileParseError('invalid-number', `${key} must be a non-negative integer.`);
+        }
+        frontmatter[key] = Number(value);
         break;
+      default:
+        unknownKeys.push(/^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/.test(key) ? key : '<non-standard key>');
     }
   }
 
-  return { frontmatter, contentStart: match[0].length };
+  return { frontmatter, contentStart: match[0].length, unknownKeys: unknownKeys.sort() };
+}
+
+class ScheduleFileParseError extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+    this.name = 'ScheduleFileParseError';
+  }
+}
+
+function isSafeChatId(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{2,127}$/.test(value);
+}
+
+function recoverChatId(frontmatterText: string): string | undefined {
+  const match = frontmatterText.match(/^chatId\s*:\s*(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([^\s#]+))\s*(?:#.*)?$/m);
+  const candidate = match?.[1] ?? match?.[2] ?? match?.[3];
+  return isSafeChatId(candidate) ? candidate : undefined;
+}
+
+function yamlErrorLocation(error: unknown): { line?: number; column?: number } {
+  if (typeof error !== 'object' || error === null || !('mark' in error)) { return {}; }
+  const { mark } = error as { mark?: { line?: unknown; column?: unknown } };
+  if (!mark) { return {}; }
+  return {
+    // Frontmatter starts on line 2 of SCHEDULE.md, after the opening `---`.
+    ...(typeof mark.line === 'number' && { line: mark.line + 2 }),
+    ...(typeof mark.column === 'number' && { column: mark.column + 1 }),
+  };
 }
 
 /**
@@ -136,6 +189,8 @@ function generateTaskId(filePath: string): string {
 export interface ScheduleFileScannerOptions {
   /** Directory to scan for schedule files */
   schedulesDir: string;
+  /** Optional channel/reporting hook for safe configuration diagnostics. */
+  onDiagnostic?: OnScheduleDiagnostic;
 }
 
 /**
@@ -143,10 +198,74 @@ export interface ScheduleFileScannerOptions {
  */
 export class ScheduleFileScanner {
   private schedulesDir: string;
+  private onDiagnostic?: OnScheduleDiagnostic;
+  private diagnosticFingerprints = new Map<string, string>();
 
   constructor(options: ScheduleFileScannerOptions) {
     this.schedulesDir = options.schedulesDir;
+    this.onDiagnostic = options.onDiagnostic;
     logger.info({ schedulesDir: this.schedulesDir }, 'ScheduleFileScanner initialized');
+  }
+
+  private dispatchDiagnostic(diagnostic: ScheduleDiagnostic): void {
+    if (!this.onDiagnostic) { return; }
+    try {
+      const result = this.onDiagnostic(diagnostic);
+      if (result && typeof result.then === 'function') {
+        void result.catch(() => {
+          logger.warn(
+            { filePath: diagnostic.filePath, taskId: diagnostic.taskId, code: diagnostic.code },
+            'Schedule diagnostic notification failed',
+          );
+        });
+      }
+    } catch {
+      logger.warn(
+        { filePath: diagnostic.filePath, taskId: diagnostic.taskId, code: diagnostic.code },
+        'Schedule diagnostic notification failed',
+      );
+    }
+  }
+
+  private reportDiagnostic(options: {
+    filePath: string;
+    taskId: string;
+    chatId?: string;
+    code: string;
+    severity: 'warning' | 'error';
+    message: string;
+    line?: number;
+    column?: number;
+    unknownKeys?: string[];
+  }): void {
+    const fingerprint = `${options.severity}:${options.code}:${options.message}`;
+    if (this.diagnosticFingerprints.get(options.filePath) === fingerprint) { return; }
+    this.diagnosticFingerprints.set(options.filePath, fingerprint);
+    const { filePath, taskId, chatId, code, severity, message, line, column, unknownKeys } = options;
+    const context = {
+      filePath,
+      taskId,
+      code,
+      ...(line !== undefined && { line }),
+      ...(column !== undefined && { column }),
+    ...(unknownKeys && { unknownKeys }),
+    };
+    if (severity === 'error') {
+      logger.error(context, message);
+    } else {
+      logger.warn(context, message);
+    }
+    this.dispatchDiagnostic({ action: 'report', filePath, taskId, chatId, code, severity, message });
+  }
+
+  private clearDiagnostic(filePath: string, chatId?: string): void {
+    if (!this.diagnosticFingerprints.delete(filePath)) { return; }
+    const taskId = generateTaskId(filePath);
+    this.dispatchDiagnostic({ action: 'clear', filePath, taskId, chatId });
+  }
+
+  clearDiagnosticForFile(filePath: string): void {
+    this.clearDiagnostic(filePath);
   }
 
   /**
@@ -166,6 +285,7 @@ export class ScheduleFileScanner {
     await this.ensureDir();
 
     const tasks: ScheduleFileTask[] = [];
+    const seenScheduleFiles = new Set<string>();
 
     try {
       const entries = await fsPromises.readdir(this.schedulesDir, { withFileTypes: true });
@@ -185,10 +305,15 @@ export class ScheduleFileScanner {
           continue;
         }
 
+        seenScheduleFiles.add(scheduleFile);
         const task = await this.parseFile(scheduleFile);
         if (task) {
           tasks.push(task);
         }
+      }
+
+      for (const filePath of this.diagnosticFingerprints.keys()) {
+        if (!seenScheduleFiles.has(filePath)) { this.clearDiagnostic(filePath); }
       }
 
       logger.info({ count: tasks.length }, 'Scanned schedule files');
@@ -207,25 +332,41 @@ export class ScheduleFileScanner {
    * Parse a single schedule file.
    */
   async parseFile(filePath: string): Promise<ScheduleFileTask | null> {
+    const taskId = generateTaskId(filePath);
+    let chatId: string | undefined;
+    let fileReadComplete = false;
     try {
       const content = await fsPromises.readFile(filePath, 'utf-8');
+      fileReadComplete = true;
+      const match = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n/);
+      if (match) { chatId = recoverChatId(match[1]); }
       const stats = await fsPromises.stat(filePath);
-      const { frontmatter, contentStart } = parseScheduleFrontmatter(content);
+      const { frontmatter, contentStart, unknownKeys } = parseScheduleFrontmatter(content);
+      const parsedChatId = frontmatter['chatId'];
+      if (isSafeChatId(parsedChatId)) { chatId = parsedChatId; }
 
-      if (!frontmatter['name'] || !frontmatter['cron'] || !frontmatter['chatId']) {
-        logger.warn({ filePath }, 'Schedule file missing required fields (name, cron, chatId)');
-        return null;
+      const missingRequired = ['name', 'cron', 'chatId'].filter((key) => {
+        const value = frontmatter[key];
+        return typeof value !== 'string' || value.trim().length === 0;
+      });
+      if (missingRequired.length > 0) {
+        throw new ScheduleFileParseError(
+          'missing-required-fields',
+          `Required frontmatter fields are missing: ${missingRequired.join(', ')}.`,
+        );
       }
 
       const prompt = content.slice(contentStart).trim();
       const command = frontmatter['command'] as string | undefined;
       if ((!prompt && !command) || (prompt && command)) {
-        logger.warn({ filePath }, 'Schedule file must define exactly one of prompt body or command frontmatter');
-        return null;
+        throw new ScheduleFileParseError(
+          'prompt-command-conflict',
+          'Define exactly one of a prompt body or the command field.',
+        );
       }
       for (const key of ['freshSession', 'skipHistory', 'clearContext']) {
         if (frontmatter[key] !== undefined && typeof frontmatter[key] !== 'boolean') {
-          throw new Error(`${key} must be a boolean`);
+          throw new ScheduleFileParseError('invalid-context-options', `${key} must be true or false.`);
         }
       }
       const freshSession = (frontmatter['freshSession'] as boolean | undefined)
@@ -233,11 +374,23 @@ export class ScheduleFileScanner {
       const skipHistory = (frontmatter['skipHistory'] as boolean | undefined)
         ?? frontmatter['clearContext'] === true;
       if ((!freshSession && skipHistory) || (frontmatter['clearContext'] === true && (!freshSession || !skipHistory))) {
-        throw new Error('skipHistory/clearContext:true require freshSession:true; conflicting context options');
+        throw new ScheduleFileParseError(
+          'invalid-context-options',
+          'skipHistory or clearContext:true requires freshSession:true and consistent context options.',
+        );
+      }
+      for (const key of ['cooldownPeriod', 'timeoutMs']) {
+        const value = frontmatter[key];
+        if (value !== undefined && (!Number.isSafeInteger(value) || Number(value) < 0)) {
+          throw new ScheduleFileParseError('invalid-number', `${key} must be a non-negative integer.`);
+        }
+      }
+      if (frontmatter['timeoutMs'] === 0) {
+        throw new ScheduleFileParseError('invalid-number', 'timeoutMs must be a positive integer.');
       }
 
       const task: ScheduleFileTask = {
-        id: generateTaskId(filePath),
+        id: taskId,
         name: frontmatter['name'] as string,
         cron: frontmatter['cron'] as string,
         chatId: frontmatter['chatId'] as string,
@@ -271,17 +424,52 @@ export class ScheduleFileScanner {
         const validTimezones = Intl.supportedValuesOf('timeZone');
         // Intl's list omits UTC even though Intl and the cron runtime accept it.
         if (task.timezone !== 'UTC' && !validTimezones.includes(task.timezone)) {
-          throw new Error(
-            `Invalid timezone: "${task.timezone}". Must be a valid IANA timezone (e.g., "America/New_York", "UTC")`
+          throw new ScheduleFileParseError(
+            'invalid-timezone',
+            'timezone must be a valid IANA timezone, such as America/New_York or UTC.',
           );
         }
       }
 
-      logger.debug({ taskId: task.id, name: task.name }, 'Parsed schedule file');
+      if (unknownKeys.length > 0) {
+        this.reportDiagnostic({
+          filePath,
+          taskId,
+          chatId,
+          code: 'unknown-frontmatter-fields',
+          severity: 'warning',
+          message: `Unknown frontmatter fields are ignored: ${unknownKeys.join(', ')}. Check for spelling errors.`,
+          unknownKeys,
+        });
+      } else {
+        this.clearDiagnostic(filePath, chatId);
+      }
+
+      logger.debug({ taskId, name: task.name }, 'Parsed schedule file');
       return task;
 
     } catch (error) {
-      logger.error({ err: error, filePath }, 'Failed to parse schedule file');
+      const location = yamlErrorLocation(error);
+      const systemErrorCode = (error as NodeJS.ErrnoException | undefined)?.code;
+      const code = error instanceof ScheduleFileParseError
+        ? error.code
+        : !fileReadComplete || systemErrorCode ? 'schedule-file-read-failed' : 'invalid-schedule-frontmatter';
+      const message = error instanceof ScheduleFileParseError
+        ? error.message
+        : !fileReadComplete || systemErrorCode
+          ? 'Schedule file could not be read; check the file path and permissions.'
+          : location.line !== undefined
+            ? `Invalid YAML frontmatter near line ${location.line}; check syntax, indentation, and quoting.`
+            : 'Invalid schedule configuration; check the required fields, supported keys, and value types.';
+      this.reportDiagnostic({
+        filePath,
+        taskId,
+        chatId,
+        code,
+        severity: 'error',
+        message,
+        ...location,
+      });
       return null;
     }
   }
@@ -418,6 +606,8 @@ export interface ScheduleFileWatcherOptions {
   onFileChanged: OnFileChanged;
   /** Callback when a file is removed */
   onFileRemoved: OnFileRemoved;
+  /** Optional channel/reporting hook for safe configuration diagnostics. */
+  onDiagnostic?: OnScheduleDiagnostic;
   /** Debounce interval in ms (default: 100) */
   debounceMs?: number;
   /** Periodic re-scan interval in ms (default: 300000 = 5 min). 0 to disable. */
@@ -461,7 +651,7 @@ export class ScheduleFileWatcher {
     this.rescanIntervalMs = options.rescanIntervalMs ?? 5 * 60 * 1000;
     this.renameCreateDelayMs = options.renameCreateDelayMs ?? 50;
     this.renameRemoveDelayMs = options.renameRemoveDelayMs ?? 200;
-    this.fileScanner = new ScheduleFileScanner({ schedulesDir: this.schedulesDir });
+    this.fileScanner = new ScheduleFileScanner({ schedulesDir: this.schedulesDir, onDiagnostic: options.onDiagnostic });
     logger.info({ schedulesDir: this.schedulesDir }, 'ScheduleFileWatcher initialized');
   }
 
@@ -540,7 +730,9 @@ export class ScheduleFileWatcher {
       for (const knownId of this.knownTaskIds) {
         if (!currentTaskIds.has(knownId)) {
           logger.info({ taskId: knownId }, 'Re-scan detected removed task');
-          this.onFileRemoved(knownId, this.fileScanner.getFilePath(knownId));
+          const filePath = this.fileScanner.getFilePath(knownId);
+          this.fileScanner.clearDiagnosticForFile(filePath);
+          this.onFileRemoved(knownId, filePath);
         }
       }
 
@@ -706,6 +898,7 @@ export class ScheduleFileWatcher {
             }
           } else {
             logger.info({ taskId, filePath }, 'Schedule file removed');
+            this.fileScanner.clearDiagnosticForFile(filePath);
             // Issue #3929: Sync knownTaskIds to prevent fullRescan from re-processing
             this.knownTaskIds.delete(taskId);
             this.knownTaskMtimes.delete(taskId);
