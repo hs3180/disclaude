@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserve attachment-only input and queued-request correlation; finish Codex LRU
   eviction without a misleading reconnect notice or automatic restart
   (#5181, #5015, #5196).
+- Parse schedule YAML frontmatter correctly so inline comments do not corrupt
+  cron expressions and silently stop scheduled tasks (#5201).
+- Use the configured persistent Chromium profile path for launchd and Docker;
+  remove offline profile-copy setup and migration paths (#5202).
 
 ### Maintenance
 

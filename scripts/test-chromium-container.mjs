@@ -9,6 +9,8 @@ import { resolve } from 'node:path';
 
 assert.equal(typeof WebSocket, 'function', 'Use Node >=22 for this opt-in CDP test');
 const image = process.argv[2] || 'disclaude-chromium:060-test';
+const profilePath = process.env.CHROMIUM_CDP_PROFILE_DIR || '/data/chrome-profile';
+assert(profilePath.startsWith('/'), 'CHROMIUM_CDP_PROFILE_DIR must be an absolute container path');
 const name = `disclaude-browser-test-${randomUUID().slice(0, 8)}`;
 const volume = `${name}-profile`;
 const docker = (...args) => execFileSync('docker', args, { encoding: 'utf8', timeout: 30000 }).trim();
@@ -40,7 +42,8 @@ async function start(headless) {
   docker('run', '-d', '--init', '--name', name, '--shm-size=2g', '--memory=4g',
     '-e', `CDP_PORT=${port}`, '-e', `CDP_INTERNAL_PORT=${internalPort}`,
     '-e', `CHROMIUM_HEADLESS=${headless ? 1 : 0}`,
-    ...(process.env.CHROMIUM_ACCEPT_LANG ? ['-e', `CHROMIUM_ACCEPT_LANG=${acceptLanguages}`] : []), '-e', `TZ=${process.env.TZ || 'Asia/Shanghai'}`, '-v', `${volume}:/data/chrome-profile`,
+    '-e', `CHROMIUM_CDP_PROFILE_DIR=${profilePath}`,
+    ...(process.env.CHROMIUM_ACCEPT_LANG ? ['-e', `CHROMIUM_ACCEPT_LANG=${acceptLanguages}`] : []), '-e', `TZ=${process.env.TZ || 'Asia/Shanghai'}`, '-v', `${volume}:${profilePath}`,
     '-p', `127.0.0.1:${port}:${port}`, image);
   created = true;
   let last;

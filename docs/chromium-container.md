@@ -17,13 +17,14 @@ headless mode. The process supervisor stops Chromium, the proxy and display
 together if any exits. Compose publishes the CDP endpoint on loopback only; see
 the [service-internal CDP contract](cdp-endpoint.md).
 
-The dedicated `chromium_profile` volume is mounted at `/data/chrome-profile`.
-Restarts and container recreation preserve it. Do not use `docker compose down
--v` when retaining browser state. The profile belongs to the container browser
-and is not the host's daily Chrome profile. An existing `/tmp/chrome-cdp` profile
-is not automatically migrated; stop the old browser cleanly and back up its
-profile before removing or recreating that container. A copied profile does not
-guarantee that login cookies can be decrypted across browser applications.
+The `chromium_profile` volume is mounted at `CHROMIUM_CDP_PROFILE_DIR`, which
+defaults to `/data/chrome-profile`; Chromium receives the same path as its
+`--user-data-dir`. Set an absolute container path in the Compose `.env` file to
+change it. Restarts and container recreation preserve the volume at that path.
+Do not use `docker compose down -v` when retaining browser state. The profile
+belongs to the container browser and is not the host's daily Chrome profile.
+Changing the configured path selects a different profile; setup does not copy or
+migrate profile contents.
 
 Defaults include `CHROMIUM_MEMORY=4G`, `CHROMIUM_SHM_SIZE=2gb`,
 `TZ=Asia/Shanghai`, `CHROMIUM_LANG=C.UTF-8`, and

@@ -28,6 +28,7 @@
 import * as fs from 'fs';
 import * as fsPromises from 'fs/promises';
 import * as path from 'path';
+import * as yaml from 'js-yaml';
 import { createLogger } from '../utils/logger.js';
 import type { ScheduledTask } from './scheduled-task.js';
 
@@ -52,24 +53,6 @@ export interface ScheduleFileTask extends ScheduledTask {
 // ============================================================================
 
 /**
- * Strip matched leading/trailing quotes from a value.
- * Only strips if the first and last characters are a matching quote pair.
- * This prevents incorrect stripping of nested quotes (e.g., "'glm'" → "'glm'" instead of "glm'").
- *
- * @param value - The value to strip quotes from
- * @returns The value with matched outer quotes removed, or the original value
- */
-function stripQuotes(value: string): string {
-  const [first, ...rest] = value;
-  const last = rest[rest.length - 1];
-  if ((first === '"' || first === "'") && first === last && value.length >= 2) {
-    const unquoted = value.slice(1, -1);
-    return first === '"' ? unquoted.replaceAll('\\"', '"') : unquoted;
-  }
-  return value;
-}
-
-/**
  * Parse YAML frontmatter from schedule content.
  */
 function parseScheduleFrontmatter(content: string): {
@@ -84,16 +67,16 @@ function parseScheduleFrontmatter(content: string): {
   }
 
   const [, frontmatterText] = match;
+  const parsed = yaml.load(frontmatterText, { schema: yaml.JSON_SCHEMA });
+  if (parsed === undefined || parsed === null) {
+    return { frontmatter: {}, contentStart: match[0].length };
+  }
+  if (typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Schedule frontmatter must be a YAML mapping');
+  }
+
   const frontmatter: Record<string, unknown> = {};
-
-  const lines = frontmatterText.split('\n');
-  for (const line of lines) {
-    const colonIndex = line.indexOf(':');
-    if (colonIndex === -1) { continue; }
-
-    const key = line.slice(0, colonIndex).trim();
-    const value = line.slice(colonIndex + 1).trim();
-
+  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
     switch (key) {
       case 'modelTier':
         throw new Error('Schedule modelTier has been removed; use an explicit model instead');
@@ -108,20 +91,22 @@ function parseScheduleFrontmatter(content: string): {
       case 'model':
       case 'timezone':
       case 'command':
-        frontmatter[key] = stripQuotes(value);
+        // The old line parser exposed every scalar as text. Keep that behavior
+        // for supported string fields while letting YAML remove valid comments.
+        frontmatter[key] = value === null ? '' : String(value);
         break;
       case 'enabled':
       case 'blocking':
-        frontmatter[key] = value === 'true';
+        frontmatter[key] = value === true;
         break;
       case 'clearContext':
       case 'freshSession':
       case 'skipHistory':
-        frontmatter[key] = value === 'true' ? true : value === 'false' ? false : value;
+        frontmatter[key] = value;
         break;
       case 'cooldownPeriod':
       case 'timeoutMs':
-        frontmatter[key] = parseInt(value, 10);
+        frontmatter[key] = Number.parseInt(String(value), 10);
         break;
     }
   }

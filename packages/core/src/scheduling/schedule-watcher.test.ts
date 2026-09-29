@@ -147,6 +147,28 @@ describe('ScheduleFileScanner', () => {
       expect(task!.prompt).toContain('Execute the daily report task');
     });
 
+    it.each([
+      ['"9 9 * * 1-5" # user requested a nine-minute offset', '9 9 * * 1-5'],
+      ['9 9 * * 1-5 # weekday schedule', '9 9 * * 1-5'],
+      ['5#3 * * * *', '5#3 * * * *'],
+    ])('parses YAML comments without changing cron syntax: %s', async (cronLine, expectedCron) => {
+      mockReadFile.mockResolvedValue([
+        '---',
+        'name: Daily Report',
+        `cron: ${cronLine}`,
+        'enabled: true # enabled for this schedule',
+        'chatId: oc_test123',
+        '---',
+        '',
+        'Execute the daily report task.',
+      ].join('\n'));
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/daily-report/SCHEDULE.md`);
+
+      expect(task?.cron).toBe(expectedCron);
+      expect(task?.enabled).toBe(true);
+    });
+
     it('should return null when required fields are missing (no name)', async () => {
       const content = makeScheduleContent();
       const contentNoName = content.replace(/name: ".*"\n/, '');

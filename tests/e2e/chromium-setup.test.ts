@@ -151,30 +151,6 @@ describe('browser setup product CLI', () => {
         if (automatic && manual) { await access(automatic); await expect(access(manual)).rejects.toThrow(); }
         else expect((await exec('systemctl', ['--user', 'is-enabled', label])).stdout.trim()).toBe('enabled');
         expect(await readFile(join(profile, 'setup-marker'), 'utf8')).toBe('keep');
-        const copiedProfile = join(root, 'copied-profile');
-        const copyArgs = [...args, '--copy-profile-from', profile];
-        copyArgs[copyArgs.indexOf('--profile') + 1] = copiedProfile;
-        const configBeforeCopy = await readFile(config, 'utf8');
-        await expect(exec(process.execPath, [...copyArgs, '--yes'], { env, timeout: 30_000 }))
-          .rejects.toThrow('profile is in use by another process');
-        expect(await readFile(config, 'utf8')).toBe(configBeforeCopy);
-        await expect(access(copiedProfile)).rejects.toThrow();
-        const adapter = resolve('scripts', process.platform === 'darwin' ? 'launchd.mjs' : 'chromium-systemd.mjs');
-        await exec(process.execPath, [adapter, 'chromium-isolated', 'stop'], { env, timeout: 30_000 });
-        const sourceVersion = await readFile(join(profile, 'Last Version'), 'utf8');
-        const copyPreview = JSON.parse((await exec(process.execPath, [...copyArgs, '--dry-run'], { env, timeout: 30_000 })).stdout);
-        expect(copyPreview.profileCopy.source).toBe(await realpath(profile));
-        await expect(access(copiedProfile)).rejects.toThrow();
-        const copiedResult = await exec(process.execPath, [...copyArgs, '--yes'], { env, timeout: 115_000, maxBuffer: 1024 * 1024 });
-        expect(copiedResult.stdout).toContain('profileCopyCompleted');
-        expect(await readFile(join(copiedProfile, 'setup-marker'), 'utf8')).toBe('keep');
-        expect(await readFile(join(profile, 'setup-marker'), 'utf8')).toBe('keep');
-        expect(await readFile(join(profile, 'Last Version'), 'utf8')).toBe(sourceVersion);
-        expect(JSON.parse(await readFile(config, 'utf8')).environment.CHROMIUM_CDP_PROFILE_DIR).toBe(copiedProfile);
-        await writeFile(join(copiedProfile, 'copy-only-marker'), 'new profile');
-        await expect(access(join(profile, 'copy-only-marker'))).rejects.toThrow();
-        await expect(exec(process.execPath, [...copyArgs, '--yes'], { env, timeout: 30_000 }))
-          .rejects.toThrow('destination already exists');
         const legacyConfig = join(root, 'old-deployment.env');
         const legacyBytes = `PRIVATE_UNRELATED_TOKEN=fixture-not-for-import\nCHROMIUM_CDP_BINARY='${env.CHROMIUM_CDP_BINARY}'\nCHROMIUM_CDP_PROFILE_DIR='${profile}'\nCHROMIUM_CDP_PORT=${port}\nCHROMIUM_CDP_HEADED=${headed ? '1' : '0'}\nCHROMIUM_CDP_AUTOSTART=0\n`;
         await writeFile(legacyConfig, legacyBytes);
@@ -184,15 +160,14 @@ describe('browser setup product CLI', () => {
         expect(importPreview.autostart).toBe(false);
         expect(importPreview.importedConfiguration.source).toBe(await realpath(legacyConfig));
         expect(JSON.stringify(importPreview)).not.toContain('fixture-not-for-import');
-        expect(JSON.parse(await readFile(config, 'utf8')).environment.CHROMIUM_CDP_PROFILE_DIR).toBe(copiedProfile);
+        expect(JSON.parse(await readFile(config, 'utf8')).environment.CHROMIUM_CDP_PROFILE_DIR).toBe(profile);
         const imported = await exec(process.execPath, [...importArgs, '--yes'], { env, timeout: 115_000 });
         expect(imported.stdout).toMatch(/CDP ready:|"cdpReady":true/);
         expect(JSON.parse(await readFile(config, 'utf8')).environment.CHROMIUM_CDP_PROFILE_DIR).toBe(profile);
         expect(await readFile(legacyConfig, 'utf8')).toBe(legacyBytes);
         expect(await readFile(join(profile, 'setup-marker'), 'utf8')).toBe('keep');
-        expect(await readFile(join(copiedProfile, 'copy-only-marker'), 'utf8')).toBe('new profile');
         console.info('BROWSER_SETUP_ACCEPTANCE', JSON.stringify({ platform: process.platform, arch: process.arch, mode: headed ? 'headed' : 'headless',
-          preview: true, nonInteractiveMissingConfirmationRejected: true, applied: true, repeated: true, profilePreserved: true, autostartToggle: true, failedToggleRecovered: true, statusMetadata: true, statusIgnoresCandidateOverride: true, foreignProfilePreserved: true, downgradeRejected: true, copiedClosedProfile: true, sourcePreserved: true, copyRefusesLiveSourceAndExistingDestination: true, legacyConfigurationImported: true, legacySourcePreserved: true }));
+          preview: true, nonInteractiveMissingConfirmationRejected: true, applied: true, repeated: true, profilePreserved: true, autostartToggle: true, failedToggleRecovered: true, statusMetadata: true, statusIgnoresCandidateOverride: true, foreignProfilePreserved: true, downgradeRejected: true, legacyConfigurationImported: true, legacySourcePreserved: true }));
       } finally {
         if (applied) {
           await exec(process.execPath, [resolve('scripts', process.platform === 'darwin' ? 'launchd.mjs' : 'chromium-systemd.mjs'), 'chromium-isolated', 'uninstall'], { env, timeout: 30_000 });

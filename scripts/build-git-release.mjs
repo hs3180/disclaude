@@ -53,7 +53,6 @@ export function sourceFingerprint(root) {
       'scripts/chromium-download.mjs',
       'scripts/chromium-status.mjs',
       'scripts/chromium-profile.mjs',
-      'scripts/chromium-profile-copy.mjs',
     ],
     { cwd: root, encoding: 'utf8' }
   )
@@ -165,7 +164,6 @@ export function generateRelease(root, output) {
       'scripts/chromium-download.mjs',
       'scripts/chromium-status.mjs',
       'scripts/chromium-profile.mjs',
-      'scripts/chromium-profile-copy.mjs',
   ]) {
     if (!existsSync(join(root, path))) continue;
     mkdirSync(dirname(join(output, path)), { recursive: true });
