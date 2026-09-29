@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-09-29
+
 ### Changed
 
 - Serialize each complete upstream `browser-use` CLI invocation per CDP browser;
@@ -27,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Clear development-tooling npm audit findings without changing runtime
   dependencies (#5183).
+- Remove real-Chrome access checks from required CI while keeping service
+  lifecycle and persisted-data acceptance (#5198).
 
 ### Documentation
 
