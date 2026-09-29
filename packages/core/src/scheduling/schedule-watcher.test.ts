@@ -137,6 +137,29 @@ describe('ScheduleFileScanner', () => {
       }));
     });
 
+    it('re-notifies the new task chat when the diagnostic is otherwise unchanged', async () => {
+      const onDiagnostic = vi.fn();
+      scanner = new ScheduleFileScanner({ schedulesDir: MOCK_DIR, onDiagnostic });
+      const filePath = `${MOCK_DIR}/daily-report/SCHEDULE.md`;
+      mockReadFile.mockResolvedValue(makeScheduleContent({
+        chatId: 'oc_first123',
+        accessToken: 'private-value',
+      }));
+      await scanner.parseFile(filePath);
+
+      mockReadFile.mockResolvedValue(makeScheduleContent({
+        chatId: 'oc_second123',
+        accessToken: 'private-value',
+      }));
+      await scanner.parseFile(filePath);
+
+      expect(onDiagnostic).toHaveBeenCalledTimes(2);
+      expect(onDiagnostic.mock.calls.map(([diagnostic]) => diagnostic.chatId)).toEqual([
+        'oc_first123',
+        'oc_second123',
+      ]);
+    });
+
     it('reports malformed YAML with a recovered chat and safe source location', async () => {
       const onDiagnostic = vi.fn();
       scanner = new ScheduleFileScanner({ schedulesDir: MOCK_DIR, onDiagnostic });

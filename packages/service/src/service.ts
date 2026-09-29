@@ -25,7 +25,6 @@ import {
   // Issue #4629: fail-fast availability probe of the selected backend.
   getProvider,
   type ScheduledTask,
-  type ScheduleDiagnostic,
   type SchedulerCallbacks,
   // Issue #3582: Input MessageRouter for unified routing
   MessageRouter as InputMessageRouter,
@@ -37,6 +36,7 @@ import { ChannelManager } from './channel-manager.js';
 import { InteractiveContextStore } from './interactive-context.js';
 import { AgentPoolMessageHandler } from './messaging/agent-pool-handler.js';
 import { startBrowserRuntime, type BrowserRuntime } from './browser-control/runtime.js';
+import { createScheduleDiagnosticReporter } from './scheduling/schedule-diagnostic-reporter.js';
 
 const logger = createLogger('DisclaudeService');
 
@@ -381,31 +381,15 @@ export class DisclaudeService extends EventEmitter {
     const workspaceDir = Config.getWorkspaceDir();
     const schedulesDir = path.join(workspaceDir, 'schedules');
     const cooldownDir = path.join(schedulesDir, '.cooldown');
-    const reportedScheduleDiagnostics = new Map<string, string>();
-    const onScheduleDiagnostic = (diagnostic: ScheduleDiagnostic): void => {
-      if (diagnostic.action === 'clear') {
-        reportedScheduleDiagnostics.delete(diagnostic.filePath);
-        return;
-      }
-      const fingerprint = `${diagnostic.code}:${diagnostic.message ?? ''}`;
-      if (reportedScheduleDiagnostics.get(diagnostic.filePath) === fingerprint) { return; }
-      reportedScheduleDiagnostics.set(diagnostic.filePath, fingerprint);
-      if (reportedScheduleDiagnostics.size > 512) {
-        const oldestPath = reportedScheduleDiagnostics.keys().next().value as string | undefined;
-        if (oldestPath) { reportedScheduleDiagnostics.delete(oldestPath); }
-      }
-      if (!diagnostic.chatId || !diagnostic.message) { return; }
-      const state = diagnostic.severity === 'error' ? '未能加载' : '配置警告';
-      void this.sendMessage(
-        diagnostic.chatId,
-        `⚠️ 定时任务 ${diagnostic.taskId} ${state}：${diagnostic.message} 请检查该任务的 SCHEDULE.md。`,
-      ).catch(() => {
+    const onScheduleDiagnostic = createScheduleDiagnosticReporter({
+      sendMessage: (chatId, message) => this.sendMessage(chatId, message),
+      onDeliveryFailure: (taskId, code) => {
         logger.warn(
-          { taskId: diagnostic.taskId, code: diagnostic.code },
+          { taskId, code },
           'Failed to deliver schedule configuration diagnostic',
         );
-      });
-    };
+      },
+    });
 
     logger.info({ schedulesDir }, 'Initializing scheduler...');
 

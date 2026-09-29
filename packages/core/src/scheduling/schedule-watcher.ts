@@ -238,7 +238,7 @@ export class ScheduleFileScanner {
     column?: number;
     unknownKeys?: string[];
   }): void {
-    const fingerprint = `${options.severity}:${options.code}:${options.message}`;
+    const fingerprint = JSON.stringify([options.severity, options.code, options.message, options.chatId ?? '']);
     if (this.diagnosticFingerprints.get(options.filePath) === fingerprint) { return; }
     this.diagnosticFingerprints.set(options.filePath, fingerprint);
     const { filePath, taskId, chatId, code, severity, message, line, column, unknownKeys } = options;
