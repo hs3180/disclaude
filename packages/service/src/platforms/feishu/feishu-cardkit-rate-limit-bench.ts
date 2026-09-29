@@ -1,35 +1,24 @@
 /**
- * Card Kit streaming-update rate-limit characterization bench (#4398 / #4208 P1-c).
+ * Card Kit streaming-update rate-limit characterization bench.
  *
- * #4398's deliverable is "bench script + findings note". The findings note (the
- * measurement plan + endpoint corrections) landed in #4416
- * (`docs/feishu-cardkit-rate-limit-methodology.md`); this module is the other
- * half — the **bench tooling** that implements that procedure against a live
- * streaming card.
- *
- * What this measures (per the methodology doc):
- *   1. Sustained updates/s before a throttle — drives `StreamingThrottle.minIntervalMs`.
- *   2. Throttle backoff behavior (HTTP 429 + `Retry-After`, observed cooldown) —
- *      drives `maxBackoffMs` + the backoff multiplier.
- *   3. Leading/trailing (burst) tolerance — whether short bursts are smoothed or
- *      dropped — validates the throttle's window shape (#4414).
+ * This tool runs against a live streaming card; operator preconditions are in
+ * `docs/feishu-channel.md`. It measures sustained update pacing, retry/cooldown
+ * behavior, and how short bursts are handled.
  *
  * Why a raw-HTTP caller instead of `FeishuCardKitClient`: the client is the right
  * abstraction for production streaming, but it (correctly) throws on non-2xx and
  * does not surface response *headers*. Characterizing 429 backoff needs the
  * `Retry-After` header, and Feishu frequently rate-limits as HTTP 200 + a non-zero
  * business `code` (not 429) — so the bench classifies responses itself. The
- * methodology doc explicitly sanctions "a standalone fetch loop hitting the PUT
- * endpoint directly" for exactly this reason. The caller reuses the verified PUT
- * path + body shape (`{content, sequence, uuid}`) so there is no fiction — only
+ * guide documents why the bench uses a standalone HTTP caller. The caller
+ * reuses the verified PUT path + body shape (`{content, sequence, uuid}`); only
  * the header/status handling differs from the production client.
  *
  * Testability: the sweep / capture / burst *logic* is pure and dependency-injected
  * (`caller`, `now`, `sleep`), so it is unit-tested with a mock caller + fake clock
  * — no live Feishu, no real timers. The actual measured numbers need a live tenant
  * (`LARKSUITE_CLI_TENANT_ACCESS_TOKEN` + a streaming card); the CLI in
- * `scripts/feishu-cardkit-rate-limit-bench.mts` is what an operator runs to fill
- * the methodology doc's TBD findings table.
+ * `scripts/feishu-cardkit-rate-limit-bench.mts` is the operator entry point.
  */
 
 import { createLogger } from '@disclaude/core';

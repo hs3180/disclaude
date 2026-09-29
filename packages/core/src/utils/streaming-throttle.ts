@@ -1,16 +1,6 @@
 /**
- * StreamingThrottle — per-session PATCH throttle for Card Kit streaming.
- *
- * Issue #4399 (#4208 P2-b): the streaming state machine drives `streamText`
- * PATCHes from the SDK event stream. PATCHes arrive faster than the Card Kit
- * rate limit allows, so they must be throttled per session. This is the
- * isolated, unit-testable throttle extracted from #4399 (the issue notes the
- * throttle is "intentionally isolated so the state logic + throttle are
- * reviewed independently").
- *
- * Replaces #4203's module-level thinking throttle with per-session scoping
- * (#4203 Not-in-scope item 2): one StreamingThrottle per active stream,
- * created on `startStreaming`, `finalize()`-d on `finalizeStreaming`.
+ * Per-stream throttle for Feishu CardKit streaming updates. The
+ * `StreamingReplyDriver` owns one instance per active stream.
  *
  * Semantics:
  * - **Leading + trailing**: the first `schedule()` emits immediately; rapid
@@ -20,9 +10,6 @@
  *   (capped at `maxBackoffMs`); `noteSuccess()` resets it.
  * - **finalize()**: cancels the pending trailing timer to prevent leaks at
  *   session end. No further emissions after finalize.
- *
- * No caller wires this yet (the #4399 state machine is the consumer). Pure
- * utility — no dependency on #4395/#4396.
  */
 
 export interface StreamingThrottleOptions {

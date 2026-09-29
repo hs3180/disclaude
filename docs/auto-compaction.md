@@ -31,11 +31,6 @@ The total lookup deadline is five seconds. Positive results are cached for
 five minutes, missing results for 30 seconds, scoped by endpoint/model/credential.
 Cancelling a stream during lookup prevents SDK subprocess startup.
 
-On 2026-09-11, a live DeepSeek `/models` request returned model IDs and ownership
-only, without context limits. Discovery therefore deliberately returned no
-override. Set the threshold explicitly for that API until it exposes metadata;
-do not infer a limit from an unrelated model or a static model-name table.
-
 Compaction is checked by the SDK at conversation boundaries. Neither an
 explicit nor an API-derived threshold guarantees acceptance of an arbitrarily
 large single input. Native SDK runtime limits can also be smaller than a

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 
-describe('single service public contract (#4924)', () => {
+describe('single service public contract', () => {
   it('exports only the unified executable and service workspace', () => {
     const root = JSON.parse(readFileSync('package.json', 'utf8'));
     const lock = JSON.parse(readFileSync('package-lock.json', 'utf8'));
@@ -28,7 +28,6 @@ describe('single service public contract (#4924)', () => {
 
     const releaseDocs = [
       'README.md',
-      'docs/README.md',
       'docs/releases/git-install.md',
     ];
     for (const file of releaseDocs) {
@@ -36,6 +35,8 @@ describe('single service public contract (#4924)', () => {
         /(?:packages\/(?:primary|worker)-node|disclaude-(?:primary|worker))/u,
       );
     }
+    expect(existsSync('docs/README.md')).toBe(false);
+    expect(readFileSync('README.md', 'utf8')).toContain('## Quickstart');
   });
   it('starts Docker through the public CLI', () => {
     expect(readFileSync('Dockerfile.service', 'utf8')).toContain('CMD ["disclaude", "start"]');
@@ -50,12 +51,17 @@ describe('single service public contract (#4924)', () => {
       expect(source).not.toContain('"packages/service/dist/cli.js"');
     }
   });
-  it('keeps release-facing Agent browser guidance on the IPC path', () => {
+  it('keeps release-facing browser guidance on the per-call CLI lock path', () => {
     const readme = readFileSync('README.md', 'utf8');
     const endpoint = readFileSync('docs/cdp-endpoint.md', 'utf8');
-    expect(readme).toContain('Browser on Headless Hosts (coordinated service)');
-    expect(endpoint).toContain('## Current Agent boundary');
-    expect(endpoint).toContain('browser-use Skill or Agent configuration guide');
+    const coordination = readFileSync('docs/browser-coordination.md', 'utf8');
+    expect(readme).toContain('[Browser control](docs/browser-coordination.md)');
+    expect(readme).toContain('serializes complete');
+    expect(endpoint).toContain('## Disclaude integration');
+    expect(endpoint).toContain('one CLI invocation');
+    expect(endpoint).toMatch(/local OS file\s+lock/u);
+    expect(coordination).toContain('One `browser-use` CLI invocation is one exclusive unit');
+    expect(endpoint).not.toContain('private IPC launcher');
     expect(endpoint).not.toContain('### Pointing drivers at the endpoint');
     expect(endpoint).not.toContain('## Skill ↔ CDP configuration contract');
     expect(endpoint).not.toContain('BU_CDP_URL=http://disclaude-chromium:9222 browser-use');

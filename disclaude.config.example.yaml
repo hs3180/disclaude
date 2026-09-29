@@ -273,7 +273,7 @@ tools:
 
   # NOTE (#4459 Scope 4): external MCP servers (tools.mcpServers) were REMOVED.
   # The stdio loader no longer exists — entries here are ignored.
-  # Migrate external tools to a CLI Skill (docs/skill-format-spec.md).
+  # Migrate external tools to a CLI Skill (docs/skills.md).
   # Browser automation lives in the browser-use Skill (skills/browser-use/SKILL.md, #4460)
   # and uses the service-owned coordinator with the installed Chromium endpoint;
   # see docs/browser-coordination.md.

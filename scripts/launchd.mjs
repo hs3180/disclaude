@@ -392,7 +392,7 @@ ${process.argv[2] === 'isolated' ? `    <key>LOCKFILE_PATH</key>\n    <string>${
 export function assertServiceMigrationComplete(directory) {
   const legacy = resolve(directory, 'com.disclaude.primary.plist');
   if (existsSync(legacy)) {
-    throw new Error(`Retire the legacy launchd service before installing this one: ${legacy}. See docs/migrations/0.5.1-service.md; configuration and workspace must be preserved.`);
+    throw new Error(`Retire the legacy launchd service before installing this one: ${legacy}. Preserve the existing configuration and workspace.`);
   }
 }
 

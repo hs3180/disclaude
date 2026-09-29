@@ -71,7 +71,7 @@ Feishu WS event → handleMessageReceive() [channels/feishu/message-handler.ts]
 - **Disallowed tools** — `packages/service/src/agents/disallowed-tools.ts` (`buildDisallowedTools()`). Base list always includes `EnterPlanMode` + `AskUserQuestion`; built-in cron/loop tools are also disallowed by default → persistent recurring work uses file-based `schedules/<slug>/SCHEDULE.md` + the `schedule` skill. `DISCLAUDE_ALLOW_BUILTIN_CRON=1` restores them.
 - **SDK backend** — `packages/core/src/sdk/factory.ts` selects by `agent.agentBackend` (`claude` | `pi` | `codex`); providers under `packages/core/src/sdk/providers/<name>/`.
 - **Feishu channel** — `packages/service/src/channels/feishu/{message-handler,message-filters,ws-connection-manager,command-router,mention-detector}.ts` plus the newer `feishu-channel.ts` / `messaging/adapters/feishu-adapter.ts` split. Slash commands dispatch through a control handler (`/trigger` etc.); keep the reset/status/stop fallbacks working.
-- **channel-cli tools** — `packages/channel-cli/src/tools/{send-card,send-file,send-message,interactive-message,push-to-agent}.ts`; the CLI subcommands are `send_card`, `send_file`, `send_text`, `send_interactive`, `push`. External MCP servers (`tools.mcpServers`) were **removed** (#4459) — migrate to Skills (`skills/`, `docs/skill-format-spec.md`).
+- **channel-cli tools** — `packages/channel-cli/src/tools/{send-card,send-file,send-message,interactive-message,push-to-agent}.ts`; the CLI subcommands are `send_card`, `send_file`, `send_text`, `send_interactive`, `push`. External MCP servers (`tools.mcpServers`) were **removed** (#4459) — migrate to Skills (`skills/`, `docs/skills.md`).
 
 ## Configuration
 
@@ -135,11 +135,11 @@ Vitest runs single-fork (OOM-safe), coverage via v8 with **70% thresholds** (lin
 ## Conventions
 
 - **Docs live in JSDoc/comments, not standalone files** — don't add README/FEATURE docs unless asked; update this file only for architecture-level decisions. Code examples belong in the source's JSDoc.
-- **Skills** — repo skills are `skills/<name>/SKILL.md` (capabilities; e.g. `channel`, `browser-use`, `schedule`, `diagnose-logs`). See `docs/skill-format-spec.md`.
+- **Skills** — repo skills are `skills/<name>/SKILL.md` (capabilities; e.g. `channel`, `browser-use`, `schedule`, `diagnose-logs`). See `docs/skills.md`.
 - **PRs** — keep under ~3 files / ~200 added lines (mechanical changes exempt); split large PRs (`Part 1/N of #N`); prefer `Related: #N` and use `Closes`/`Fixes` only when fully resolved; answer each review comment individually.
 - **Logging** — Pino JSON; log agent outputs in full with a `content` field (searchable retrospection), not just lengths.
 
 ## Deep-dive pointers
 
-- `docs/quickstart.md`, `docs/feishu-setup.md`, `docs/codex-backend.md`, `docs/log-forwarding.md`, `docs/log-rotation.md`, `docs/skill-format-spec.md`, `docs/cdp-endpoint.md`, `docs/environment-variables.md`
+- `README.md` quickstart, `docs/feishu-channel.md`, `docs/codex-backend.md`, `docs/logging.md`, `docs/skills.md`, `docs/cdp-endpoint.md`, `docs/environment-variables.md`
 - Debugging: `npm run launchd:logs`, `tail -f ~/Library/Logs/disclaude/disclaude-combined.log`, or Kibana/ES if a shipper is configured.

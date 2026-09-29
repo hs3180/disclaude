@@ -9,7 +9,7 @@ or managed Python environment.
 ## Setup and ownership
 
 Install the upstream [Browser Use CLI](https://github.com/browser-use/browser-use)
-on the **Disclaude service's PATH**. Its executable/shebang chooses its runtime;
+on the **Disclaude service's PATH**. Its executable/shebang selects its runtime;
 Disclaude neither searches for a Python interpreter nor installs a venv. The
 selected absolute CLI path is logged at service startup. A shell with the CLI on
 PATH does not prove that launchd/systemd has the same PATH.
@@ -127,7 +127,8 @@ when enabled, cancellation, service crash/restart and owned-resource cleanup.
 It must not attach to production CDP/profile.
 
 Default tests make no model calls or Feishu requests. Optional model handoffs
-remain available through the existing `DISCLAUDE_E2E_BROWSER_*` switches; Codex
-acceptance is explicitly pinned to the operator-selected `gpt-6-luna`.
-Deterministic CLI tests are not evidence that a model discovered the skill,
-that a real site retained login, or that production/Feishu acceptance passed.
+remain available through the existing `DISCLAUDE_E2E_BROWSER_*` switches; each
+test must use an explicitly selected model rather than inherit a machine-global
+default. Deterministic CLI tests are not evidence that a model discovered the
+skill, that a real site retained login, or that production/Feishu acceptance
+passed.
