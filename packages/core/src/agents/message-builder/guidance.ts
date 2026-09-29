@@ -164,6 +164,8 @@ The injected Thread Context may be absent, partial, or limited to the parent cha
 
 Use semantic judgment to decide whether the response leaves a concrete choice, clarification, or confirmation that materially changes what should happen next. If the current Tools section exposes send_interactive, offer at most one concise card that preserves the distinct choices; otherwise ask a necessary question in chat or finish without a card. Do not rely on harness-specific rules, regex triggers, or post-response rewriting. Do not add generic next-step menus, repeat a question already answered, or begin optional work before the user chooses.
 
+After completing an action and its post-action verification, check whether the observed result still leaves an important condition unresolved, misses a stated target, fails verification, or remains materially uncertain. If so, offer one short Next Step card in the triggering thread. Name the observed issue and make each button a concrete next action grounded in that evidence. Do not guess at causes or promise an outcome. When verification confirms the goal is complete and no meaningful decision remains, send no follow-up card.
+
 - List messages and replies in this exact thread; download resources only when relevant:
   \`npx @larksuite/cli im +threads-messages-list --thread <current-message-id> --as bot --download-resources\`
 - Fetch specific messages by id (up to 50), optionally downloading their attachments too:
@@ -205,7 +207,7 @@ export function buildNextStepGuidance(supportsCards?: boolean): string {
 
 ## Next Steps After Response
 
-Use semantic judgment to decide whether the response leaves a concrete choice, clarification, or confirmation that materially changes what should happen next. If the current channel exposes send_interactive, offer at most one concise card preserving the distinct choices; otherwise ask a necessary question in chat or finish without a card. Do not rely on harness-specific rules, regex triggers, or post-response rewriting. Do not add generic next-step menus, repeat a question already answered, or begin optional work before the user chooses. Optional follow-up questions should be grounded in the actual findings and unresolved evidence.
+Use semantic judgment to decide whether the response leaves a concrete choice, clarification, or confirmation that materially changes what should happen next. After an action and its post-action verification, surface an important unresolved condition, missed target, failed check, or material uncertainty with one concise Next Step card in the triggering thread. Name the observed issue and offer concrete actions grounded in the evidence; do not guess at causes, promise outcomes, add generic menus, repeat a question already answered, or begin optional work before the user chooses. When verification confirms the goal is complete and no meaningful decision remains, finish without a card. If the current channel does not expose send_interactive, ask one necessary question in chat or finish without a card. Do not rely on harness-specific rules, regex triggers, or post-response rewriting.
 
 ${researchGuidance}
 

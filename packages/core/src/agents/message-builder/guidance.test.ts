@@ -173,6 +173,22 @@ describe('buildNextStepGuidance', () => {
     expect(result).toContain('retry once without it');
   });
 
+  it('offers an evidence-based card only for material unresolved results after verification', () => {
+    const result = buildNextStepGuidance(true);
+    expect(result).toContain('post-action verification');
+    expect(result).toContain('important unresolved condition');
+    expect(result).toContain('grounded in the evidence');
+    expect(result).toContain('do not guess at causes');
+    expect(result).toContain('goal is complete and no meaningful decision remains');
+  });
+
+  it('keeps the same unresolved-result guard in topic-thread guidance', () => {
+    const result = buildThreadSelfServiceGuidance();
+    expect(result).toContain('post-action verification');
+    expect(result).toContain('in the triggering thread');
+    expect(result).toContain('goal is complete and no meaningful decision remains');
+  });
+
   it('should include interactive card template when cards are supported', () => {
     const result = buildNextStepGuidance(true);
     expect(result).toContain('Next Steps After Response');
