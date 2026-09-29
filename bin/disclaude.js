@@ -47,7 +47,7 @@ function showHelp() {
       '  start [options]    Start disclaude',
       '  channel <command>  Send channel messages through the service',
       '  browser <cmd>      Inspect coordinated browser control',
-      '  chromium-cdp <cmd> Manage the persistent Chromium CDP service (Issue #4807)',
+      '  chromium-cdp <cmd> Manage or diagnose the persistent Chromium CDP service (Issue #4807)',
       '',
       'Global Options:',
       '  --version, -v      Show version number',
@@ -74,10 +74,12 @@ const ROUTES = {
     file: resolve(ROOT, 'node_modules/@disclaude/channel-cli/dist/cli.js'),
     jsonOutput: !['help', '--help', '-h'].includes(args[1]),
   },
-  // Issue #4807: routes to scripts/launchd.mjs chromium-cdp <cmd>. The launchd
-  // script reads the service selector from argv[2], so we must PRESERVE it in
-  // the forwarded args (launchd.mjs "chromium-cdp" <cmd>), not drop it.
-  'chromium-cdp': { file: resolve(ROOT, args[1] === 'setup' ? 'scripts/chromium-setup.mjs' : process.platform === 'linux' ? 'scripts/chromium-systemd.mjs' : 'scripts/launchd.mjs'), keepCommand: true },
+  // Status is a cross-platform, read-only doctor. Lifecycle commands remain
+  // routed to their native managers; those scripts expect the selector in argv.
+  'chromium-cdp': { file: resolve(ROOT,
+    ['status', 'doctor'].includes(args[1]) ? 'scripts/chromium-diagnose.mjs'
+      : args[1] === 'setup' ? 'scripts/chromium-setup.mjs'
+        : process.platform === 'linux' ? 'scripts/chromium-systemd.mjs' : 'scripts/launchd.mjs'), keepCommand: true },
 };
 
 if (!command || command === '--help' || command === '-h') {
