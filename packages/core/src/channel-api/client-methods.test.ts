@@ -15,15 +15,19 @@ import type { ChannelApiClientLike } from './client-methods.js';
 function createMockClient(
   responses: Partial<Record<string, unknown>>,
 ): ChannelApiClientLike {
+  const request: ChannelApiClientLike['request'] = <T extends ChannelApiRequestType>(
+    type: T,
+    _payload: ChannelApiRequestPayloads[T],
+    _options?: { timeoutMs?: number },
+  ): Promise<ChannelApiResponsePayloads[T]> => {
+    const r = responses[type];
+    if (r instanceof Error) { return Promise.reject(r); }
+    return Promise.resolve(r as ChannelApiResponsePayloads[T]);
+  };
+  // Vitest's Mock wrapper cannot preserve a generic method signature, though
+  // the implementation itself satisfies the full ChannelApiClientLike method.
   return {
-    request: vi.fn(<T extends ChannelApiRequestType>(
-      type: T,
-      _payload: ChannelApiRequestPayloads[T],
-    ): Promise<ChannelApiResponsePayloads[T]> => {
-      const r = responses[type];
-      if (r instanceof Error) { return Promise.reject(r); }
-      return Promise.resolve(r as ChannelApiResponsePayloads[T]);
-    }),
+    request: vi.fn(request) as unknown as ChannelApiClientLike['request'],
   };
 }
 

@@ -4,7 +4,7 @@
  * @see Issue #1617 Phase 4
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import {
   ChannelMessageRouter,
   ChannelType,
@@ -14,9 +14,9 @@ import {
 } from './channel-message-router.js';
 
 describe('ChannelMessageRouter', () => {
-  let sendToFeishu: ReturnType<typeof vi.fn>;
-  let sendToCli: ReturnType<typeof vi.fn>;
-  let sendToRest: ReturnType<typeof vi.fn>;
+  let sendToFeishu: Mock;
+  let sendToCli: Mock;
+  let sendToRest: Mock;
 
   beforeEach(() => {
     sendToFeishu = vi.fn().mockResolvedValue(undefined);

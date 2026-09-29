@@ -4,7 +4,7 @@
  * @see Issue #1556 - WeChat Channel Feature Enhancement (Phase 3.1)
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 
 // Mock logger
 const mockLogger = vi.hoisted(() => ({
@@ -31,7 +31,7 @@ describe('WeChatMessageListener', () => {
     return mockProcessor.mock.calls[0][0];
   }
   let mockClient: Partial<WeChatApiClient>;
-  let mockProcessor: ReturnType<typeof vi.fn>;
+  let mockProcessor: Mock;
   let listener: WeChatMessageListener;
 
   beforeEach(() => {

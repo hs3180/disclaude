@@ -610,7 +610,13 @@ describe('RestChannel — extended coverage', () => {
       channel = new RestChannel({
         port: testPort,
         fileStorageServiceProvider: vi.fn().mockResolvedValue({
-          FileStorageService: vi.fn().mockImplementation(() => mockFileStorage),
+          FileStorageService: vi.fn(class {
+            initialize = mockFileStorage.initialize;
+            shutdown = mockFileStorage.shutdown;
+            storeFromBase64 = mockFileStorage.storeFromBase64;
+            get = mockFileStorage.get;
+            getContent = mockFileStorage.getContent;
+          }),
         }),
       });
       await channel.start();

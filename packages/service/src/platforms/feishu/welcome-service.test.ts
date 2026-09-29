@@ -4,7 +4,7 @@
  * Issue #463: 帮助消息系统 - 入群/私聊引导 + 指令注册
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
 import {
   WelcomeService,
   initWelcomeService,
@@ -14,7 +14,7 @@ import {
 
 describe('WelcomeService', () => {
   let service: WelcomeService;
-  let sendMessageMock: ReturnType<typeof vi.fn>;
+  let sendMessageMock: Mock;
 
   beforeEach(() => {
     sendMessageMock = vi.fn().mockResolvedValue(undefined);

@@ -19,27 +19,27 @@ const mockHasToken = vi.fn().mockReturnValue(true);
 const mockGetUpdates = vi.fn().mockResolvedValue([]);
 
 vi.mock('./api-client.js', () => ({
-  WeChatApiClient: vi.fn().mockImplementation(() => ({
-    sendText: mockSendText,
-    sendTyping: mockSendTyping,
-    setToken: mockSetToken,
-    hasToken: mockHasToken,
-    getUpdates: mockGetUpdates,
-  })),
+  WeChatApiClient: vi.fn(class {
+    sendText = mockSendText;
+    sendTyping = mockSendTyping;
+    setToken = mockSetToken;
+    hasToken = mockHasToken;
+    getUpdates = mockGetUpdates;
+  }),
 }));
 
 // Mock the auth module
 vi.mock('./auth.js', () => ({
-  WeChatAuth: vi.fn().mockImplementation(() => ({
-    authenticate: vi.fn().mockResolvedValue({
+  WeChatAuth: vi.fn(class {
+    authenticate = vi.fn().mockResolvedValue({
       success: true,
       token: 'mock-bot-token',
       botId: 'mock-bot-id',
       userId: 'mock-user-id',
-    }),
-    isAuthenticating: vi.fn().mockReturnValue(false),
-    abort: vi.fn(),
-  })),
+    });
+    isAuthenticating = vi.fn().mockReturnValue(false);
+    abort = vi.fn();
+  }),
 }));
 
 // Mock the message listener module
@@ -48,11 +48,11 @@ const mockStop = vi.fn().mockResolvedValue(undefined);
 const mockIsListening = vi.fn().mockReturnValue(true);
 
 vi.mock('./message-listener.js', () => ({
-  WeChatMessageListener: vi.fn().mockImplementation(() => ({
-    start: mockStart,
-    stop: mockStop,
-    isListening: mockIsListening,
-  })),
+  WeChatMessageListener: vi.fn(class {
+    start = mockStart;
+    stop = mockStop;
+    isListening = mockIsListening;
+  }),
   MessageProcessor: undefined,
 }));
 

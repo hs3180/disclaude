@@ -73,9 +73,7 @@ vi.mock('@disclaude/core', () => ({
 vi.mock('@larksuiteoapi/node-sdk', () => ({
   WSClient: vi.fn(),
   LoggerLevel: { info: 'info' },
-  EventDispatcher: vi.fn().mockImplementation(() => ({
-    register: vi.fn().mockReturnThis(),
-  })),
+  EventDispatcher: vi.fn(class { register = vi.fn().mockReturnThis(); }),
 }));
 
 // ─── Helper to create a manager with mocked WSClient ────────────────────
@@ -99,7 +97,12 @@ function createTestManager(overrides: {
   (manager as unknown as {
     larkSDK: { WSClient: ReturnType<typeof vi.fn>; LoggerLevel: { info: string } };
   }).larkSDK = {
-    WSClient: vi.fn().mockReturnValue(mockClient),
+    WSClient: vi.fn(class {
+      start = mockClient.start;
+      close = mockClient.close;
+      removeAllListeners = mockClient.removeAllListeners;
+      on = mockClient.on;
+    }),
     LoggerLevel: { info: 'info' },
   };
 
