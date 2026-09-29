@@ -90,11 +90,59 @@ describe('read-only Chromium CDP diagnostics', () => {
       profile: { path: '/data/chromium', exists: null, checkedIn: 'docker-container' },
       managedService: { manager: 'docker', state: 'external' },
       cdp: { endpoint: 'http://disclaude-chromium:9222', reachable: true, browser: 'Chrome/155.0' },
-      cdpReady: true,
+      cdpReady: null,
       configurationMayDifferFromLoadedService: true,
     });
     expect(JSON.stringify(report)).not.toContain('/json/version');
     expect(report.actions.map(action => action.code)).toContain('docker-service');
+  });
+
+  it('only reports a local managed CDP endpoint ready after service ownership is verified', async () => {
+    const root = temporaryDirectory();
+    const savedPath = join(root, 'chromium-cdp.json');
+    const profilePath = join(root, 'profile');
+    mkdirSync(profilePath);
+    writeFileSync(savedPath, JSON.stringify({ version: 1, environment: { CHROMIUM_CDP_BINARY: '/apps/chrome',
+      CHROMIUM_CDP_PROFILE_DIR: profilePath, CHROMIUM_CDP_PORT: '9223' } }));
+    const readinessProbe = vi.fn(async (target: { address: string; port: number },
+      serviceState: () => { pid?: number }, timeoutMs: number) => {
+      expect(target).toEqual({ address: '127.0.0.1', port: 9223 });
+      expect(serviceState().pid).toBe(391);
+      expect(timeoutMs).toBe(3000);
+      return { pid: 391, endpoint: 'http://127.0.0.1:9223', browser: 'Chrome/155.0' };
+    });
+    const report = await diagnoseChromiumCdp({
+      platform: 'darwin', inContainer: false,
+      env: { DISCLAUDE_CHROMIUM_CONFIG: savedPath },
+      exists: path => path === savedPath || path === profilePath,
+      executable: () => true,
+      run: () => 'PID = 391; LastExitStatus = 0;',
+      fetchImpl: vi.fn(async () => ({ ok: true, json: async () => ({ Browser: 'Chrome/155.0',
+        webSocketDebuggerUrl: 'ws://127.0.0.1:9223/devtools/browser/test' }) })) as typeof fetch,
+      readinessProbe,
+    });
+
+    expect(readinessProbe).toHaveBeenCalledOnce();
+    expect(report).toMatchObject({ managedService: { state: 'running', pid: 391 }, cdpReady: true });
+    expect(report.actions).toEqual([]);
+  });
+
+  it('does not equate a reachable CDP endpoint with managed-service readiness', async () => {
+    const root = temporaryDirectory();
+    const savedPath = join(root, 'chromium-cdp.json');
+    writeFileSync(savedPath, JSON.stringify({ version: 1, environment: { CHROMIUM_CDP_PORT: '9223' } }));
+    const report = await diagnoseChromiumCdp({
+      platform: 'linux', inContainer: false,
+      env: { DISCLAUDE_CHROMIUM_CONFIG: savedPath },
+      run: () => 'LoadState=loaded\nActiveState=active\nMainPID=501\n',
+      fetchImpl: vi.fn(async () => ({ ok: true, json: async () => ({ Browser: 'Chrome/155.0',
+        webSocketDebuggerUrl: 'ws://127.0.0.1:9223/devtools/browser/other' }) })) as typeof fetch,
+      readinessProbe: async () => { throw new Error('CDP listener is owned by another process'); },
+    });
+
+    expect(report.cdp.reachable).toBe(true);
+    expect(report.cdpReady).toBe(false);
+    expect(report.actions.map(action => action.code)).toContain('cdp-service-owner');
   });
 
   it('rejects endpoints with embedded credentials before making a request', async () => {
@@ -118,7 +166,7 @@ describe('read-only Chromium CDP diagnostics', () => {
       env: { PATH: process.env.PATH || '', HOME: root, XDG_CONFIG_HOME: root, NODE_ENV: 'test' },
       encoding: 'utf8',
     });
-    expect(result).toContain('Usage: disclaude chromium-cdp status');
+    expect(result).toContain('Usage: disclaude chromium-cdp <status|doctor>');
     expect(result).toContain('Read-only');
   });
 });

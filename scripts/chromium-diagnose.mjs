@@ -5,6 +5,7 @@ import { accessSync, constants, existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { waitChromiumReady } from './browser-service-state.mjs';
 import { chromiumConfigPath, readChromiumConfig } from './chromium-config.mjs';
 
 const PROFILE_DEFAULTS = {
@@ -126,21 +127,24 @@ async function probeCdp(config, fetchImpl = globalThis.fetch) {
   }
 }
 
-function repairHints(config, service, cdp, runtimeConfiguration) {
+function repairHints(config, service, cdp, runtimeConfiguration, cdpReady) {
   const hints = [];
+  const managedServiceReady = cdpReady === true;
   if (runtimeConfiguration?.state === 'invalid') {
     hints.push({ code: 'invalid-runtime-config', message: 'The selected disclaude.config.yaml could not be read. Correct its YAML before relying on environment-based Chromium settings.' });
   }
   if (config.configFile.state === 'invalid') {
     hints.push({ code: 'invalid-config', message: 'Chromium configuration could not be read. Review the selected chromium-cdp.json and rerun setup after correcting it.' });
   }
-  if (service.manager !== 'docker' && (!config.executable.path || !config.executable.available)) {
+  if (!managedServiceReady && service.manager !== 'docker' && (!config.executable.path || !config.executable.available)) {
     hints.push({ code: 'browser-executable', message: 'Select an executable browser with `disclaude chromium-cdp setup --binary /absolute/path/to/chrome`.' });
   }
-  if (!config.profile.path || !isAbsolute(config.profile.path)) {
-    hints.push({ code: 'profile-path', message: 'Set CHROMIUM_CDP_PROFILE_DIR to an absolute persistent Profile directory.' });
-  } else if (!config.profile.exists && service.manager !== 'docker') {
-    hints.push({ code: 'profile-missing', message: 'The selected Profile directory is absent. Review the path and use the setup command to initialize the managed service.' });
+  if (!managedServiceReady) {
+    if (!config.profile.path || !isAbsolute(config.profile.path)) {
+      hints.push({ code: 'profile-path', message: 'Set CHROMIUM_CDP_PROFILE_DIR to an absolute persistent Profile directory.' });
+    } else if (!config.profile.exists && service.manager !== 'docker') {
+      hints.push({ code: 'profile-missing', message: 'The selected Profile directory is absent. Review the path and use the setup command to initialize the managed service.' });
+    }
   }
   if (service.state === 'external') {
     hints.push({ code: 'docker-service', message: 'Inspect the managed browser container with `docker compose ps chromium` and its logs with `docker compose logs chromium`.' });
@@ -153,17 +157,34 @@ function repairHints(config, service, cdp, runtimeConfiguration) {
     hints.push({ code: 'cdp-unreachable', message: config.endpointValid
       ? 'Check the configured CDP host and port; when the service is running, inspect `disclaude chromium-cdp logs` for startup errors.'
       : 'Set a valid CHROMIUM_CDP_ADDRESS and CHROMIUM_CDP_PORT or BU_CDP_URL before checking CDP reachability.' });
+  } else if (service.state === 'running' && cdpReady === false) {
+    hints.push({ code: 'cdp-service-owner', message: 'CDP responds, but its listener could not be verified as belonging to the managed service. Inspect the configured port owner before changing the service.' });
   }
   return hints;
 }
 
 export async function diagnoseChromiumCdp({ env = process.env, home = env.HOME || homedir(), platform = process.platform,
   inContainer = detectContainer(env), exists = existsSync, executable = isExecutable, run,
-  fetchImpl = globalThis.fetch, runtimeConfiguration = { state: 'not-checked', path: null } } = {}) {
+  fetchImpl = globalThis.fetch, readinessProbe = waitChromiumReady,
+  runtimeConfiguration = { state: 'not-checked', path: null } } = {}) {
   const config = resolveChromiumStatusConfig({ env, home, platform, exists, executable });
   const service = inspectManagedService({ platform, inContainer, ...(run ? { run } : {}) });
   const cdp = await probeCdp(config, fetchImpl);
   const inDockerContext = service.manager === 'docker';
+  let cdpReady = null;
+  if (['launchd', 'systemd'].includes(service.manager) && config.endpointRequestUrl) {
+    try {
+      const endpoint = new URL(config.endpointRequestUrl);
+      if (endpoint.protocol === 'http:' && endpoint.hostname === '127.0.0.1') {
+        cdpReady = false;
+        if (service.state === 'running' && cdp.reachable) {
+          const port = Number(endpoint.port) || 80;
+          await readinessProbe({ address: endpoint.hostname, port }, () => service, 3000);
+          cdpReady = true;
+        }
+      }
+    } catch { cdpReady = false; }
+  }
   return {
     platform,
     configuration: config.configFile,
@@ -174,9 +195,9 @@ export async function diagnoseChromiumCdp({ env = process.env, home = env.HOME |
       checkedIn: inDockerContext ? 'docker-container' : 'host' },
     managedService: service,
     cdp: { endpoint: config.endpoint, ...cdp },
-    cdpReady: cdp.reachable,
+    cdpReady,
     configurationMayDifferFromLoadedService: true,
-    actions: repairHints(config, service, cdp, runtimeConfiguration),
+    actions: repairHints(config, service, cdp, runtimeConfiguration, cdpReady),
   };
 }
 
@@ -200,7 +221,7 @@ async function main() {
     ? forwardedArgs.slice(2)
     : ['status', 'doctor'].includes(forwardedArgs[0]) ? forwardedArgs.slice(1) : forwardedArgs;
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('Usage: disclaude chromium-cdp status [--config PATH]\nRead-only: reports the selected executable/Profile, managed service state, CDP reachability, and repair hints. It never starts or stops a service or edits browser state.');
+    console.log('Usage: disclaude chromium-cdp <status|doctor> [--config PATH]\nRead-only: reports the selected executable/Profile, managed service state, CDP reachability, and repair hints. On macOS/Linux hosts, cdpReady also verifies stable discovery and listener ownership. It never starts or stops a service or edits browser state.');
     return;
   }
   const options = parseArgs(args);
@@ -218,7 +239,8 @@ async function main() {
   const env = { ...configuredEnvironment, ...process.env };
   const report = await diagnoseChromiumCdp({ env, runtimeConfiguration });
   console.log(JSON.stringify(report));
-  if (report.managedService.state === 'running' && !report.cdpReady) process.exitCode = 1;
+  if ((report.managedService.state === 'running' && report.cdpReady === false) ||
+      (report.managedService.state === 'external' && !report.cdp.reachable)) process.exitCode = 1;
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

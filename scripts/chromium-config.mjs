@@ -9,9 +9,17 @@ export const CHROMIUM_CONFIG_KEYS = [
   'CHROMIUM_CDP_ADDRESS', 'CHROMIUM_CDP_HEADED', 'CHROMIUM_CDP_AUTOSTART',
 ];
 
-export function chromiumConfigPath(env = process.env, home = homedir()) {
-  const path = env.DISCLAUDE_CHROMIUM_CONFIG ||
+export function chromiumConfigPath(env = process.env, home = homedir(), platform = process.platform,
+  exists = existsSync) {
+  let path = env.DISCLAUDE_CHROMIUM_CONFIG ||
     join(env.XDG_CONFIG_HOME || join(home, '.config'), 'disclaude', 'chromium-cdp.json');
+  // Older macOS installs may already have this file in Application Support.
+  // Keep reading it on upgrades unless the user selected an explicit path or
+  // has already created the XDG file.
+  if (!env.DISCLAUDE_CHROMIUM_CONFIG && !env.XDG_CONFIG_HOME && platform === 'darwin' && !exists(path)) {
+    const legacyPath = join(home, 'Library/Application Support/disclaude/chromium-cdp.json');
+    if (exists(legacyPath)) path = legacyPath;
+  }
   if (!isAbsolute(path)) throw new Error('Chromium configuration path must be absolute');
   return path;
 }
