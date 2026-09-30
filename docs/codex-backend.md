@@ -32,7 +32,7 @@ docker compose run --rm service codex login --device-auth
 agent:
   agentBackend: codex
   codex:
-    model: gpt-5.6-luna
+    model: gpt-6-luna
     reasoningEffort: high # optional; must be supported by this model
     transport: app-server # optional; default: exec
     maxActiveSessions: 3  # optional
@@ -44,6 +44,12 @@ the legacy `agent.model` and a default Codex preset's `model` remain fallback
 sources for existing configurations. If multiple legacy and canonical values
 conflict, the selected source wins and startup warns which duplicate setting to
 remove. A named agent preset can still select its own model for that chat.
+
+The standard Codex model choice for Disclaude is `gpt-6-luna`, shown in the
+configuration above. Per-chat or per-turn selection and `CODEX_MODEL` can
+override it according to the precedence below. If no Disclaude configuration,
+selected preset, or environment value resolves a model, Codex uses the model
+from `CODEX_HOME` or its built-in default.
 
 The precedence for a run is a selected per-chat/per-turn model, then a
 per-query `CODEX_MODEL`, the process `CODEX_MODEL`, the resolved configuration
