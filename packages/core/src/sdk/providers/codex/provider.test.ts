@@ -11,7 +11,7 @@
  *   `codex` — happy-path event flow, thread_id → handle.sessionId, exit-code
  *   error mapping, actionable throw when the binary is missing, cancel()
  *   teardown, dispose() guard. Real spawn/readline/timer machinery, no mocks.
- * - createInlineTool / createMcpServer throw not-supported (#4627 open q).
+ * - createInlineTool / createMcpServer preserve inline host-tool definitions.
  * - Lifecycle: dispose() flips state, is idempotent, forces checks false.
  */
 
@@ -65,9 +65,6 @@ function makeFixtures(
     cleanup: () => rmSync(root, { recursive: true, force: true }),
   };
 }
-
-const NOT_SUPPORTED_MSG =
-  'CodexAgentProvider: tools/MCP mapping is not supported yet — tracked as an open question on #4627.';
 
 /** A scripted codex run: thread → agent_message → turn.completed (exit 0). */
 const HAPPY_BODY = `cat <<'JSONL'
@@ -832,22 +829,26 @@ fi
   });
 
   // --------------------------------------------------------------------------
-  // Tools / MCP — open question on #4627 (unchanged from S1)
+  // Inline tools / MCP host handles
   // --------------------------------------------------------------------------
 
-  describe('stubs', () => {
-    it('createInlineTool throws not-supported pointing at #4627', () => {
+  describe('inline tools', () => {
+    it('preserves inline definitions for app-server registration', () => {
       fixtures = makeFixtures({ withBinary: false, withAuth: false });
-      expect(() =>
-        makeProvider(fixtures).createInlineTool({} as never),
-      ).toThrow(NOT_SUPPORTED_MSG);
+      const provider = makeProvider(fixtures);
+      const tool = { name: 'read_notebook', description: 'Read', parameters: {}, handler: vi.fn() };
+      expect(provider.createInlineTool(tool as never)).toBe(tool);
     });
 
-    it('createMcpServer throws not-supported pointing at #4627', () => {
+    it('returns inline server handles and rejects stdio servers', () => {
       fixtures = makeFixtures({ withBinary: false, withAuth: false });
-      expect(() =>
-        makeProvider(fixtures).createMcpServer({} as never),
-      ).toThrow(NOT_SUPPORTED_MSG);
+      const provider = makeProvider(fixtures);
+      const tool = { name: 'read_notebook', description: 'Read', parameters: {}, handler: vi.fn() };
+      expect(provider.createMcpServer({
+        type: 'inline', name: 'jupyter', version: '1.0.0', tools: [tool as never],
+      })).toEqual({ name: 'jupyter', version: '1.0.0', tools: [tool] });
+      expect(() => provider.createMcpServer({ type: 'stdio', name: 'external', command: 'node' }))
+        .toThrow(/do not support stdio/);
     });
   });
 

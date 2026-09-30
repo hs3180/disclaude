@@ -1,5 +1,6 @@
 import {
   CodexAppServerTransport,
+  type CodexAppServerDynamicToolSpec,
   type CodexAppServerExit,
   type CodexAppServerTransportOptions,
 } from './app-server-transport.js';
@@ -132,6 +133,7 @@ export class CodexAppServerLifecycle {
       cwd?: string;
       model?: string;
       sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+      dynamicTools?: CodexAppServerDynamicToolSpec[];
     } = {},
   ): Promise<string> {
     await this.initialize();
@@ -159,6 +161,7 @@ export class CodexAppServerLifecycle {
       cwd?: string;
       model?: string;
       sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+      dynamicTools?: CodexAppServerDynamicToolSpec[];
     },
   ): Promise<string> {
     const sandbox = options.sandbox ?? 'read-only';
@@ -175,6 +178,7 @@ export class CodexAppServerLifecycle {
           ...(options.model ? { model: options.model } : {}),
           approvalPolicy: 'never',
           sandbox,
+          ...(options.dynamicTools?.length ? { dynamicTools: options.dynamicTools } : {}),
         });
     const threadId = (response as ThreadResponse).thread?.id;
     if (!threadId) {

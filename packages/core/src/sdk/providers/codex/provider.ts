@@ -75,6 +75,11 @@ import {
 import { resolveCodexSandboxPolicy, type CodexSandboxLevel } from './sandbox-policy.js';
 import { CodexSessionGovernor, type SessionRegistration } from './session-governor.js';
 import { CodexAppServerLifecycle } from './app-server-lifecycle.js';
+import type {
+  CodexAppServerDynamicToolCallRequest,
+  CodexAppServerDynamicToolCallResult,
+} from './app-server-transport.js';
+import { createCodexDynamicToolRegistry } from './dynamic-tools.js';
 import type { AgentInputRequest } from '../../user-input.js';
 import {
   adaptCodexEvent,
@@ -222,6 +227,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
   private readonly appServerLifecycles = new Map<string, CodexAppServerLifecycle>();
   private readonly appServerStops = new Map<string, () => void>();
   private readonly appServerThreadIds = new Map<string, string>();
+  private readonly appServerDynamicToolSignatures = new Map<string, string>();
   /** Cumulative quota counters (S5, #4632) — see CodexQuotaStats. */
   private readonly quota: CodexQuotaStats = {
     turnsCompleted: 0,
@@ -364,6 +370,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     void this.appServerLifecycles.get(sessionKey)?.close();
     this.appServerLifecycles.delete(sessionKey);
     this.appServerThreadIds.delete(sessionKey);
+    this.appServerDynamicToolSignatures.delete(sessionKey);
     const hadRegistration = this.governor.forgetSession(sessionKey);
     const hadStash = this.threadStash.delete(sessionKey);
     if (hadRegistration || hadStash) {
@@ -462,6 +469,9 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     const skillsManifest = this.skillsManifestFor(options.projectRoot ?? options.cwd, options.cwd ?? process.cwd());
     if (this.transportMode === 'app-server') {
       return this.queryAppServer(input, options, sandboxDecision.sandbox, binary, skillsManifest, codexModel, requestedEffort);
+    }
+    if (Object.keys(options.mcpServers ?? {}).length > 0) {
+      throw new Error('Codex inline tools require agent.codex.transport: app-server; codex exec cannot dispatch host tools.');
     }
 
     const runner = new CodexExecRunner({
@@ -1113,12 +1123,21 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     codexModel: string | undefined,
     reasoningEffort: CodexReasoningEffort | undefined,
   ): StreamQueryResult {
+    const dynamicToolRegistry = createCodexDynamicToolRegistry(options.mcpServers);
+    const dynamicToolSignature = JSON.stringify(dynamicToolRegistry.specs);
     let lifecycle: CodexAppServerLifecycle | undefined;
     const sessionKey = options.sessionKey ?? `anon-app-${++this.anonSessionCounter}`;
     const queue: AgentMessage[] = [];
     const wakeups: Array<() => void> = [];
-    this.appServerStops.get(sessionKey)?.();
     let threadId = this.appServerThreadIds.get(sessionKey);
+    const registeredToolSignature = this.appServerDynamicToolSignatures.get(sessionKey);
+    if (threadId && registeredToolSignature !== undefined && registeredToolSignature !== dynamicToolSignature) {
+      throw new Error('Codex app-server thread already has a different inline tool registry; reset the conversation before changing its MCP tools.');
+    }
+    if (threadId && registeredToolSignature === undefined && dynamicToolRegistry.specs.length > 0) {
+      throw new Error('Codex app-server cannot add inline tools to an existing thread; reset the conversation to register them.');
+    }
+    this.appServerStops.get(sessionKey)?.();
     let done = false;
     let stopped = false;
     let wasEvicted = false;
@@ -1134,7 +1153,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     const { timeoutMs: stallTimeoutMs } = readStallPolicy(this.env);
     let interruptFlight: Promise<void> | undefined;
     const isToolItem = (type: string | undefined): boolean =>
-      type === 'commandExecution' || type === 'mcpToolCall';
+      type === 'commandExecution' || type === 'mcpToolCall' || type === 'dynamicToolCall';
     const fireStall = (): void => {
       stallTimer = undefined;
       if (stopped || !activeTurnId) { return; }
@@ -1310,6 +1329,14 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           }
           let bindTurn!: (id: string | undefined) => void;
           const turnBinding = new Promise<string | undefined>(resolve => { bindTurn = resolve; });
+          const onDynamicToolCall = dynamicToolRegistry.specs.length > 0 ? async (request: CodexAppServerDynamicToolCallRequest) => {
+            const boundTurn = await turnBinding;
+            if (!boundTurn || stopped || request.threadId !== threadId || request.turnId !== boundTurn
+              || activeTurnId !== boundTurn) {
+              throw new Error('Host tool request has no matching active Codex turn');
+            }
+            return dynamicToolRegistry.call(request);
+          } : undefined;
           try {
             if (stopped) {break;}
             lifecycle = this.createAppServerLifecycle(binary, sessionKey, next.value.correlation, options.onUserInput ? async request => {
@@ -1331,9 +1358,18 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               request.signal.addEventListener('abort', finish, { once: true });
               push({ type: 'status', role: 'system', content: request.isBlocking ? '等待你回答卡片中的问题。' : '有问题等待回答；任务仍在继续。' });
               await options.onUserInput({ ...request, respond: async answers => { await request.respond(answers); finish(); } }, next.value.inputContext);
-            } : undefined);
-            threadId = await lifecycle.ensureThread(sessionKey, { threadId, cwd: options.cwd, model: codexModel, sandbox });
-            if (this.appServerLifecycles.get(sessionKey) === lifecycle) {this.appServerThreadIds.set(sessionKey, threadId);}
+            } : undefined, onDynamicToolCall);
+            threadId = await lifecycle.ensureThread(sessionKey, {
+              threadId,
+              cwd: options.cwd,
+              model: codexModel,
+              sandbox,
+              dynamicTools: dynamicToolRegistry.specs,
+            });
+            if (this.appServerLifecycles.get(sessionKey) === lifecycle) {
+              this.appServerThreadIds.set(sessionKey, threadId);
+              this.appServerDynamicToolSignatures.set(sessionKey, dynamicToolSignature);
+            }
             if (stopped || this.disposed) {break;}
             this.appServerRoutes.set(threadId, onNotification);
             deliveredItems.clear();
@@ -1439,12 +1475,19 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     };
   }
 
-  private createAppServerLifecycle(binary: string, sessionKey: string, correlation?: UserInput['correlation'], onUserInput?: (request: AgentInputRequest) => Promise<void>): CodexAppServerLifecycle {
+  private createAppServerLifecycle(
+    binary: string,
+    sessionKey: string,
+    correlation?: UserInput['correlation'],
+    onUserInput?: (request: AgentInputRequest) => Promise<void>,
+    onDynamicToolCall?: (request: CodexAppServerDynamicToolCallRequest) => Promise<CodexAppServerDynamicToolCallResult>,
+  ): CodexAppServerLifecycle {
     const lifecycle = new CodexAppServerLifecycle({
       binary,
       sessionKey,
       correlation,
       onUserInput,
+      onDynamicToolCall,
       env: this.env,
       onNotification: (method, params) => {
         const threadId = (params as { threadId?: string } | null)?.threadId;
@@ -1461,18 +1504,19 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     return lifecycle;
   }
 
-  createInlineTool(_definition: InlineToolDefinition): unknown {
-    // Tools/MCP mapping is an open question on #4627 (codex has its own MCP
-    // config surface) — deliberately not stubbed half-way.
-    throw new Error(
-      'CodexAgentProvider: tools/MCP mapping is not supported yet — tracked as an open question on #4627.'
-    );
+  createInlineTool(definition: InlineToolDefinition): unknown {
+    return definition;
   }
 
-  createMcpServer(_config: McpServerConfig): unknown {
-    throw new Error(
-      'CodexAgentProvider: tools/MCP mapping is not supported yet — tracked as an open question on #4627.'
-    );
+  createMcpServer(config: McpServerConfig): unknown {
+    if (config.type === 'stdio') {
+      throw new Error('Codex app-server dynamic host tools do not support stdio MCP servers.');
+    }
+    return {
+      name: config.name,
+      version: config.version,
+      tools: config.tools?.map(tool => this.createInlineTool(tool)) ?? [],
+    };
   }
 
   // --------------------------------------------------------------------------
@@ -1497,6 +1541,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     for (const lifecycle of this.appServerLifecycles.values()) {void lifecycle.close();}
     this.appServerLifecycles.clear();
     this.appServerThreadIds.clear();
+    this.appServerDynamicToolSignatures.clear();
   }
 
   // --------------------------------------------------------------------------

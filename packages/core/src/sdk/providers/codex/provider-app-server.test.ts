@@ -2,7 +2,8 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AgentMessage, AgentQueryOptions, UserInput } from '../../types.js';
+import { z } from 'zod';
+import type { AgentMessage, AgentQueryOptions, InlineToolDefinition, McpServerConfig, UserInput } from '../../types.js';
 import { CodexAgentProvider } from './provider.js';
 import type { AgentInputRequest, AgentInputContext } from '../../user-input.js';
 
@@ -38,6 +39,118 @@ afterEach(() => {
 });
 
 describe('CodexAgentProvider app-server transport', () => {
+  it('rejects host tools before starting codex exec', () => {
+    const { provider } = providerFixture('exit 0', 'exec');
+    const mcpServer = provider.createMcpServer({
+      type: 'inline', name: 'jupyter', version: '1.0.0', tools: [],
+    }) as McpServerConfig;
+    const input = (async function* (): AsyncGenerator<UserInput> {
+      yield { role: 'user', content: 'Read the notebook' };
+    })();
+    try {
+      expect(() => provider.queryStream(input, {
+        sessionKey: 'exec-host-tool', settingSources: [], mcpServers: { jupyter: mcpServer },
+      } as AgentQueryOptions)).toThrow(/require agent\.codex\.transport: app-server/);
+    } finally { provider.dispose(); }
+  });
+
+  it('registers and executes an inline host tool on the active turn', async () => {
+    const { provider, dir } = providerFixture('exit 0', 'app-server', { DISCLAUDE_STALL_TIMEOUT_MS: '40' });
+    writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
+const fs=require('node:fs');const send=m=>console.log(JSON.stringify(m));
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line);
+ if(m.method==='initialize'){fs.writeFileSync(process.env.CODEX_HOME+'/initialize',JSON.stringify(m.params));send({id:m.id,result:{}});}
+ else if(m.method==='initialized'){}
+ else if(m.method==='thread/start'){fs.writeFileSync(process.env.CODEX_HOME+'/thread',JSON.stringify(m.params));send({id:m.id,result:{thread:{id:'dynamic-thread'}}});}
+ else if(m.method==='model/list')send({id:m.id,result:{data:[{id:'gpt-6-luna',model:'gpt-6-luna',supportedReasoningEfforts:[{reasoningEffort:'max'}]}]}});
+ else if(m.method==='turn/start'){
+  send({id:m.id,result:{turn:{id:'dynamic-turn'}}});
+  send({method:'item/started',params:{threadId:'dynamic-thread',turnId:'dynamic-turn',item:{id:'host-item',type:'dynamicToolCall'}}});
+  send({id:'host-request',method:'item/tool/call',params:{callId:'host-call',threadId:'dynamic-thread',turnId:'dynamic-turn',namespace:'jupyter',tool:'read_notebook',arguments:{path:'research.ipynb'}}});
+ } else if(m.id==='host-request'){
+  fs.writeFileSync(process.env.CODEX_HOME+'/tool-result',JSON.stringify(m.result));
+  send({method:'item/completed',params:{threadId:'dynamic-thread',turnId:'dynamic-turn',item:{id:'host-item',type:'dynamicToolCall',status:'completed'}}});
+  send({method:'item/completed',params:{threadId:'dynamic-thread',turnId:'dynamic-turn',item:{id:'reply',type:'agentMessage',text:'Notebook read completed'}}});
+  send({method:'turn/completed',params:{threadId:'dynamic-thread',turn:{id:'dynamic-turn',status:'completed'}}});
+ }
+});`);
+    const handler = vi.fn(async (params: { path: string }, _progress?: unknown, context?: { signal: AbortSignal }) => {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(context?.signal.aborted).toBe(false);
+      return { path: params.path, documentId: 'doc-1' };
+    });
+    const definition: InlineToolDefinition<{ path: string }, { path: string; documentId: string }> = {
+      name: 'read_notebook',
+      description: 'Read a Jupyter notebook',
+      parameters: z.object({ path: z.string() }),
+      handler,
+    };
+    const mcpServer = provider.createMcpServer({
+      type: 'inline', name: 'jupyter', version: '1.0.0', tools: [definition],
+    }) as McpServerConfig;
+    const result = provider.queryStream((async function* (): AsyncGenerator<UserInput> {
+      yield { role: 'user', content: 'Read the notebook' };
+    })(), {
+      sessionKey: 'dynamic-tools', settingSources: [], mcpServers: { jupyter: mcpServer },
+    } as AgentQueryOptions);
+    const messages: AgentMessage[] = [];
+    try {
+      for await (const message of result.iterator) { messages.push(message); }
+      expect(JSON.parse(readFileSync(join(dir, 'home/initialize'), 'utf8')).capabilities).toEqual({ experimentalApi: true });
+      expect(JSON.parse(readFileSync(join(dir, 'home/thread'), 'utf8')).dynamicTools).toMatchObject([{
+        type: 'namespace', name: 'jupyter', tools: [{ name: 'read_notebook', inputSchema: { type: 'object' } }],
+      }]);
+      expect(JSON.parse(readFileSync(join(dir, 'home/tool-result'), 'utf8'))).toEqual({
+        success: true,
+        contentItems: [{ type: 'inputText', text: '{"path":"research.ipynb","documentId":"doc-1"}' }],
+      });
+      expect(handler).toHaveBeenCalledOnce();
+      expect(messages).toContainEqual(expect.objectContaining({ type: 'text', content: 'Notebook read completed' }));
+      expect(messages.some(message => message.metadata?.terminatedReason === 'stall')).toBe(false);
+    } finally { provider.dispose(); }
+  });
+
+  it('requires a conversation reset before changing a resumed thread tool registry', async () => {
+    const { provider, dir } = providerFixture('exit 0', 'app-server');
+    writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
+const fs=require('node:fs');const send=m=>console.log(JSON.stringify(m));
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line);
+ if(m.method==='initialize')send({id:m.id,result:{}});
+ else if(m.method==='initialized'){}
+ else if(m.method==='thread/start'||m.method==='thread/resume'){
+  fs.appendFileSync(process.env.CODEX_HOME+'/methods',m.method+'\\n');
+  fs.writeFileSync(process.env.CODEX_HOME+'/thread',JSON.stringify(m.params));
+  send({id:m.id,result:{thread:{id:'registry-thread'}}});
+ } else if(m.method==='model/list')send({id:m.id,result:{data:[{id:'gpt-6-luna',model:'gpt-6-luna',supportedReasoningEfforts:[{reasoningEffort:'max'}]}]}});
+ else if(m.method==='turn/start'){
+  send({id:m.id,result:{turn:{id:'registry-turn'}}});
+  send({method:'item/completed',params:{threadId:'registry-thread',turnId:'registry-turn',item:{id:'reply',type:'agentMessage',text:'done'}}});
+  send({method:'turn/completed',params:{threadId:'registry-thread',turn:{id:'registry-turn',status:'completed'}}});
+ }
+});`);
+    const makeServer = (name: string): McpServerConfig => provider.createMcpServer({
+      type: 'inline', name: 'jupyter', version: '1.0.0',
+      tools: [{ name, description: 'Jupyter tool', parameters: z.object({}), handler: () => Promise.resolve('ok') }],
+    }) as McpServerConfig;
+    const input = () => (async function* (): AsyncGenerator<UserInput> {
+      yield { role: 'user', content: 'Continue the notebook work' };
+    })();
+    try {
+      const first = provider.queryStream(input(), {
+        sessionKey: 'registry-change', settingSources: [], mcpServers: { jupyter: makeServer('read_notebook') },
+      } as AgentQueryOptions);
+      for await (const _message of first.iterator) { /* drain */ }
+      expect(JSON.parse(readFileSync(join(dir, 'home/thread'), 'utf8')).dynamicTools)
+        .toMatchObject([{ tools: [{ name: 'read_notebook' }] }]);
+      expect(() => provider.queryStream(input(), {
+        sessionKey: 'registry-change', settingSources: [], mcpServers: { jupyter: makeServer('execute_cell') },
+      } as AgentQueryOptions)).toThrow(/different inline tool registry/);
+      expect(readFileSync(join(dir, 'home/methods'), 'utf8').trim().split('\n')).toEqual(['thread/start']);
+    } finally { provider.dispose(); }
+  });
+
   it.each([
     { isBlocking: true, completes: true },
     { isBlocking: false, completes: true },

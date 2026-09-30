@@ -21,6 +21,26 @@ afterEach(() => {
 });
 
 describe('CodexAppServerLifecycle', () => {
+  it('registers dynamic host tools when starting a new thread', async () => {
+    const binary = fixture(`
+read initialize; echo '{"id":1,"result":{}}'
+read initialized
+read thread; printf '%s' "$thread" > "$(dirname "$0")/thread"; echo '{"id":2,"result":{"thread":{"id":"thread-1"}}}'
+while :; do sleep 1; done
+`);
+    const dynamicTools = [{
+      type: 'namespace' as const,
+      name: 'jupyter',
+      description: 'Jupyter operations',
+      tools: [{ name: 'read_notebook', description: 'Read a notebook', inputSchema: { type: 'object' } }],
+    }];
+    const lifecycle = new CodexAppServerLifecycle({ binary });
+    try {
+      await expect(lifecycle.ensureThread('chat-1', { dynamicTools })).resolves.toBe('thread-1');
+      expect(JSON.parse(readFileSync(join(dirname(binary), 'thread'), 'utf8')).params.dynamicTools).toEqual(dynamicTools);
+    } finally { await lifecycle.close(); }
+  });
+
   it('checks the selected model catalog and forwards a supported reasoning effort', async () => {
     const binary = fixture(`
 read initialize; echo '{"id":1,"result":{}}'

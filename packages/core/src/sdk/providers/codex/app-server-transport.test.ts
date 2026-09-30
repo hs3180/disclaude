@@ -3,7 +3,11 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resolveBrowserRuntimePath } from '../../../utils/browser-env.js';
-import { CodexAppServerTransport } from './app-server-transport.js';
+import {
+  CodexAppServerTransport,
+  type CodexAppServerDynamicToolCallRequest,
+  type CodexAppServerDynamicToolCallResult,
+} from './app-server-transport.js';
 import type { AgentInputRequest } from '../../user-input.js';
 
 const resourceLog = vi.hoisted(() => vi.fn());
@@ -40,6 +44,47 @@ describe('CodexAppServerTransport', () => {
     writeFileSync(binary, `#!${process.execPath}\nimport {createInterface} from 'node:readline';\nconst send=m=>process.stdout.write(JSON.stringify(m)+'\\n');\nconst params=${JSON.stringify(params)};\n${body}`);
     return binary;
   }
+  it('dispatches dynamic tool calls with experimental protocol enabled and cancels unfinished calls when the turn ends', async () => {
+    const binary = inputFixture(`
+const {writeFileSync}=await import('node:fs');
+createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line);
+ if(m.method==='initialize'){writeFileSync(new URL('./initialize.json',import.meta.url),JSON.stringify(m.params));send({id:m.id,result:{}});}
+ else if(m.method==='initialized'){}
+ else if(m.method==='begin'){
+  send({id:m.id,result:{}});
+  send({id:'host-call',method:'item/tool/call',params:{callId:'call-1',threadId:'thread-1',turnId:'turn-1',namespace:'jupyter',tool:'read_notebook',arguments:{path:'research.ipynb'}}});
+ } else if(m.method==='finish'){
+  send({method:'turn/completed',params:{threadId:'thread-1',turn:{id:'turn-1',status:'completed'}}});
+  send({id:m.id,result:{}});
+ } else if(m.id==='host-call') writeFileSync(new URL('./dynamic-response.json',import.meta.url),JSON.stringify(m));
+});`);
+    let requestSignal: AbortSignal | undefined;
+    let finishHandler!: (result: CodexAppServerDynamicToolCallResult) => void;
+    const onDynamicToolCall = vi.fn((request: CodexAppServerDynamicToolCallRequest) => {
+      requestSignal = request.signal;
+      return new Promise<CodexAppServerDynamicToolCallResult>(resolve => { finishHandler = resolve; });
+    });
+    const transport = new CodexAppServerTransport({ binary, onDynamicToolCall });
+    try {
+      await transport.initialize();
+      expect(JSON.parse(readFileSync(join(dirname(binary), 'initialize.json'), 'utf8')).capabilities).toEqual({ experimentalApi: true });
+      await transport.request('begin');
+      await vi.waitFor(() => expect(onDynamicToolCall).toHaveBeenCalledOnce());
+      expect(requestSignal?.aborted).toBe(false);
+      await transport.request('finish');
+      await vi.waitFor(() => expect(requestSignal?.aborted).toBe(true));
+      await vi.waitFor(() => expect(readFileSync(join(dirname(binary), 'dynamic-response.json'), 'utf8')).toBeTruthy());
+      expect(JSON.parse(readFileSync(join(dirname(binary), 'dynamic-response.json'), 'utf8')))
+        .toMatchObject({ id: 'host-call', result: { success: false, contentItems: [expect.objectContaining({ type: 'inputText' })] } });
+      finishHandler({ contentItems: [{ type: 'inputText', text: 'late result' }], success: true });
+      expect(onDynamicToolCall.mock.calls[0]?.[0]).toMatchObject({
+        callId: 'call-1', threadId: 'thread-1', turnId: 'turn-1', namespace: 'jupyter',
+        tool: 'read_notebook', arguments: { path: 'research.ipynb' },
+      });
+    } finally { await transport.close(); }
+  });
+
   it('answers a string-ID multi-question server request once, without starting another turn', async () => {
     const binary = inputFixture(`
 let starts=0;
