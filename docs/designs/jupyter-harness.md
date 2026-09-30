@@ -79,7 +79,7 @@ Jupyter 侧验证使用隔离 localhost 栈：Python `3.13.9`、JupyterLab `4.6.
 | --- | --- | --- |
 | Codex app-server dynamic host tools + Jupyter | 现有 Codex backend 与 host 侧认证工具 | #5226 分支实现候选并通过一次真实模型到服务端 Contents 的读取 smoke；等待 review，执行、续行、取消和产品体验仍需验收 |
 | dsh 原生插件 + Jupyter | 可组合 Agent loop、Notebook 语义工具与原生内核 | 本机 `0.1.2-rc.1` 缺少 Notebook profile/plugin 和 Codex adapter，未进入模型调用；不作为当前实现路径 |
-| 现成 Jupyter MCP/工具扩展 | cell 编辑、运行、输出、Jupyter 连接与同步 | 优先评估复用；MCP 是工具传输，不能自动解决未保存改动、后台执行、恢复和冲突 |
+| 现成 Jupyter MCP/工具扩展 | Datalayer jupyter-mcp-tools 将 JupyterLab 命令映射为 MCP 工具，并提供远程 WebSocket 模式；用户服务的 Lab 扩展 API 报告该扩展已启用。 | 可作为 JupyterLab 命令控制候选；MCP 调用认证、授权行为、输出持久化和关闭页面后的执行均未验证。[官方 README](https://github.com/datalayer/jupyter-mcp-tools) |
 | Jupyter AI | JupyterLab 的 AI 扩展生态和工具协议 | 可提供补充入口；飞书仍是本产品主要对话入口 |
 | nbclient / Papermill | 干净内核重跑、参数化验证、批量执行 | 用于复现检查和批处理，不承担实时人机协作 |
 | marimo | 响应式依赖和交互式应用体验 | 若未来接受改变主要文档/运行语义再考虑；0.6.3 先保证原生 `.ipynb` 工作方式 |
