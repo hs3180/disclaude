@@ -69,7 +69,9 @@ Jupyter 侧验证使用隔离 localhost 栈：Python `3.13.9`、JupyterLab `4.6.
 
 另一次独立 scratch 探针检查该用户服务上已注册的 `jupyter-server-nbmodel` REST 执行路由：`POST /api/kernels/{id}/execute` 接收请求（202），按响应 `Location` 轮询后返回含随机标记的 SVG MIME 输出；执行完成后，Contents API 回读的序列化 `.ipynb` 在 10 秒观察期内仍未显示该 cell 输出，探针没有手动 PUT 输出。它证明 REST 路由接受执行并在请求结果中返回 MIME，不证明输出已持久化到常规 `.ipynb`。当时没有打开 JupyterLab 页面或 RTC peer，Contents 回读也不能单独判断共享文档/YStore 中是否已有输出、浏览器是否完成 reconciliation。Datalayer 当前文档将 RTC 列为实时 UI 同步的可选推荐项，并记录了服务端写入、浏览器未能整合协作历史的恢复场景；因此这条路径还须单独核验文档持久化与页面恢复，不能把请求结果等同于 Notebook 保存。[nbmodel README](https://github.com/datalayer/jupyter-server-nbmodel)、[输出 reconciliation 说明](https://jupyter-server-nbmodel.datalayer.tech/output-reconciliation/)。
 
-临时 kernel 的 Python 环境只读检查得到 jupyter-server-nbmodel 0.1.1a4、jupyter-collaboration 4.4.1、jupyter-ydoc 3.5.0 与 pycrdt 0.13.1；同一环境运行 jupyter server extension list 时，jupyter_server_nbmodel 与 jupyter_server_ydoc 显示 enabled。该 CLI 来自 kernelspec 环境，不能单独证明 Jupyter Server 主进程实际加载的扩展集合；REST 路由探针只证明 nbmodel handler 可达。部署包是预发行版，因此当前上游文档和 main 源码不能替代对该部署版本的验证。此外，认证后的 GET /lab/api/extensions 返回 200，7 条记录中 jupyter-collaboration-extension、datalayer-jupyter-server-nbmodel 和 datalayer-jupyter-mcp-tools 均显示 enabled。它确认 Lab 扩展 API 报告这些扩展已启用，但没有打开页面，因此没有验证实时 RTC 握手、页面输出 reconciliation 或恢复。
+临时 kernel 的 Python 环境只读检查得到 jupyter-server-nbmodel 0.1.1a4、jupyter-collaboration 4.4.1、jupyter-ydoc 3.5.0 与 pycrdt 0.13.1；同一环境运行 jupyter server extension list 时，jupyter_server_nbmodel 与 jupyter_server_ydoc 显示 enabled。该 CLI 来自 kernelspec 环境，不能单独证明 Jupyter Server 主进程实际加载的扩展集合；REST 路由探针只证明 nbmodel handler 可达。部署包是预发行版，因此当前上游文档和 main 源码不能替代对该部署版本的验证。此外，认证后的 GET /lab/api/extensions 返回 200，7 条记录中 jupyter-collaboration-extension、datalayer-jupyter-server-nbmodel 和 datalayer-jupyter-mcp-tools 均显示 enabled。该清单只确认 Lab 扩展 API 报告这些扩展已启用，实时 RTC 握手、页面输出 reconciliation 与恢复由后续隔离页面探针分别核验。
+
+随后用 `.env` 中的 JupyterLab 凭据对 `datalayer-jupyter-mcp-tools` 扩展做了一次 UUID scratch 验证。未登录的 `GET /jupyter-mcp-tools/tools` 返回 302 并转到 `/login`；通过密码表单登录后，kernelspec API 与同一 tools 路由均返回 200，路由列出 228 条已启用的 JupyterLab 命令。为一个新建 scratch Notebook 打开单独的 JupyterLab 页面后，观察到 `/jupyter-mcp-tools/echo` 工具 WebSocket 和 collaboration room WebSocket。对扩展的 `POST /jupyter-mcp-tools/execute` 调用 `notebook_append-execute`，只运行 `print` 随机标记；HTTP 返回 200/success，标记出现在页面 DOM，并且 Contents API 回读的 `.ipynb` 同时包含该 cell 源码与输出。临时 session 与 Notebook 分别以 204 删除，Contents 随后返回 404，kernel/session 数量恢复到 9。该结果验证的是已认证的扩展 HTTP-to-JupyterLab WebSocket 命令桥及页面打开时的输出持久化；它没有通过 MCP JSON-RPC 客户端调用，也没有验证按 Notebook/用户授权范围、页面关闭后的执行、Agent 控制权或 Feishu 集成。没有访问既有 Notebook 或 kernel。
 
 另一次仅针对 UUID scratch Notebook 的隔离浏览器探针打开了 JupyterLab 页面，并观察到 collaboration room WebSocket。页面打开时通过 nbmodel 路由执行的请求返回 200/status=ok 和 SVG MIME，但 Playwright DOM 查询没有找到随机 stdout 标记，Contents API 回读也未找到该标记；没有手动保存输出。关闭这唯一的测试页面后，同一 scratch kernel 仍存在，第二个 nbmodel 请求在页面关闭期间返回 200/status=ok 与 stdout 标记，Contents API 回读仍未找到该标记。重新打开的尝试在 notebook panel 出现前超时，因此恢复结果未知。该部署版本证明请求可在测试页面关闭后继续执行并可从请求结果读取，但尚未证明输出会持久化到 .ipynb、经 RTC 显示或重新打开后恢复。临时 session 与 Notebook 均以 204 删除，Contents 查询 404，kernel/session 数量恢复为 9；未访问既有文档或 kernel。
 
@@ -81,7 +83,7 @@ Jupyter 侧验证使用隔离 localhost 栈：Python `3.13.9`、JupyterLab `4.6.
 | --- | --- | --- |
 | Codex app-server dynamic host tools + Jupyter | 现有 Codex backend 与 host 侧认证工具 | #5226 分支实现候选并通过一次真实模型到服务端 Contents 的读取 smoke；等待 review，执行、续行、取消和产品体验仍需验收 |
 | dsh 原生插件 + Jupyter | 可组合 Agent loop、Notebook 语义工具与原生内核 | 本机 `0.1.2-rc.1` 缺少 Notebook profile/plugin 和 Codex adapter，未进入模型调用；不作为当前实现路径 |
-| 现成 Jupyter MCP/工具扩展 | Datalayer jupyter-mcp-tools 将 JupyterLab 命令映射为 MCP 工具，并提供远程 WebSocket 模式；用户服务的 Lab 扩展 API 报告该扩展已启用。 | 可作为 JupyterLab 命令控制候选；MCP 调用认证、授权行为、输出持久化和关闭页面后的执行均未验证。[官方 README](https://github.com/datalayer/jupyter-mcp-tools) |
+| 现成 Jupyter MCP/工具扩展 | Datalayer jupyter-mcp-tools 提供命令注册和 HTTP/WebSocket 桥；用户服务实测未登录 tools 请求重定向到登录，通过密码认证后列出 228 条命令，并在打开的 UUID scratch Notebook 上执行 `append-execute`，输出已回读到 `.ipynb`。 | 可复用为 JupyterLab 页面打开时的命令桥。该探针没有通过 MCP JSON-RPC 客户端调用，亦未验证 Notebook 级授权、关闭页面后的执行或 Agent/Feishu 集成。[工具扩展 README](https://github.com/datalayer/jupyter-mcp-tools)、[MCP Server README](https://github.com/datalayer/jupyter-mcp-server) |
 | Jupyter AI | JupyterLab 的 AI 扩展生态和工具协议 | 可提供补充入口；飞书仍是本产品主要对话入口 |
 | nbclient / Papermill | 干净内核重跑、参数化验证、批量执行 | 用于复现检查和批处理，不承担实时人机协作 |
 | marimo | 响应式依赖和交互式应用体验 | 若未来接受改变主要文档/运行语义再考虑；0.6.3 先保证原生 `.ipynb` 工作方式 |
@@ -194,4 +196,4 @@ Agent 默认围绕问题、数据与证据、方法选择、结果解释和结�
 
 ## 当前交付边界
 
-本提案已记录本机 dsh adapter 缺口、Codex app-server 隔离协议探针、#5226 分支上的 provider-to-Jupyter Contents 读取 smoke、隔离栈的 RTC/执行/取消/重启实验，以及用户 Jupyter 服务上的直接 kernel WebSocket 执行、SVG MIME、interrupt/恢复与 Contents 保存 smoke。候选动态工具代码仍在未合并 PR 中；没有修改生产服务，也没有通过 Feishu 入口、人直接编辑后的接续、Agent 管理的后台执行/保存、报告导出或真实设备访问验收。下一步继续完成 #5215/#5216 的剩余验证与栈选择，再按共同契约推进 G1–G4；不能据这些实验关闭 issue。
+本提案已记录本机 dsh adapter 缺口、Codex app-server 隔离协议探针、#5226 分支上的 provider-to-Jupyter Contents 读取 smoke、隔离栈的 RTC/执行/取消/重启实验，以及用户 Jupyter 服务上的直接 kernel WebSocket、nbmodel、MCP Tools 页面命令桥、SVG MIME、interrupt/恢复与 Contents 保存证据。候选动态工具代码仍在未合并 PR 中；没有修改生产服务，也没有通过 MCP JSON-RPC 客户端、Feishu 入口、人直接编辑后的接续、Agent 管理的后台执行/保存、报告导出或真实设备访问验收。下一步继续完成 #5215/#5216 的剩余验证与栈选择，再按共同契约推进 G1–G4；不能据这些实验关闭 issue。
