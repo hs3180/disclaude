@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-09-30
+
+### Added
+
+- Add read-only Chromium CDP `status` and `doctor` diagnostics for the selected
+  executable, Profile, managed service, and CDP listener (#4828, partial).
+- Allow Codex model and reasoning effort to be configured together, with the
+  effective value and source reported for diagnosis (#5136, #5137).
+
+### Changed
+
+- Suggest one concrete, optional next step using the user's goal, conversation,
+  constraints, prior choices, findings, and artifacts (#5189).
+- Clarify when a scheduled task uses a direct command versus an agent prompt,
+  including each mode's fields and timeout behavior (#4929).
+- Document how Research guidance can notify relevant whole-document commenters
+  after a substantive edit and successful read-back (#5179).
+
+### Fixed
+
+- Let the Claude SDK own stream retries while retaining result-level failure
+  handling and completed-empty-stream behavior (#5205).
+- Report invalid schedule configuration in the task's configured chat, suppress
+  duplicate alerts, and allow a changed owner to receive a relevant warning
+  (#5201).
+
+### Boundaries
+
+- The Research notification guidance and schedule-owner alerts still need
+  real Feishu/Project acceptance. Chromium diagnostics are a read-only slice and
+  do not complete interactive installation or Profile migration. Codex citation
+  source mapping is not included because the current app-server protocol does
+  not expose verifiable answer-to-source metadata.
+
 ## [0.6.1] - 2026-09-29
 
 ### Changed
