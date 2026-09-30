@@ -5,6 +5,10 @@ This page documents the operator-side endpoint for the existing
 interface. For the Agent call path and its single-call lock, see
 [browser control](browser-coordination.md).
 
+> The Compose commands here require a full source checkout. Prebuilt release
+> packages omit Compose files; see the
+> [Docker Compose deployment guide](docker-compose-deployment.md).
+
 ## Endpoint
 
 Start the optional Chromium service with:
