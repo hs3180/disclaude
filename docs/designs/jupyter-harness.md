@@ -1,6 +1,6 @@
 # 0.6.3：以 Notebook 为第一公民的 Jupyter Harness
 
-状态：首版范围与实施顺序已确认，由[综合 issue #5214](https://github.com/hs3180/disclaude/issues/5214) 和 [0.6.3 milestone](https://github.com/hs3180/disclaude/milestone/18) 跟踪；尚未实现或通过产品验收。方案调研代码基线为 `3a446d9b`；dsh 接入选择须通过下述 G0 验证后锁定。
+状态：首版范围与实施顺序已确认，由[综合 issue #5214](https://github.com/hs3180/disclaude/issues/5214) 和 [0.6.3 milestone](https://github.com/hs3180/disclaude/milestone/18) 跟踪；尚未实现或通过产品验收。G0 的本地证据排除了当前安装的 dsh 路径，并支持继续评估 Codex app-server 动态 host tools。现有产品适配器尚未接入该协议，G0 和端到端产品验收仍未通过。
 
 ## 产品定位
 
@@ -22,12 +22,12 @@
 
 ## 架构决策
 
-优先采用 **dsh 原生插件 + Jupyter Server/JupyterLab + 共享文档与执行适配层**。Notebook 能力独立于 Agent 后端；优先复用现有 Jupyter 扩展，只有验收缺口需要自行补齐。
+按当前可复现实验证据，下一步以 **Codex app-server 动态 host tools + Jupyter Server/JupyterLab + 共享文档与执行适配层** 为实现候选。Notebook 能力独立于 Agent 后端；优先复用现有 Jupyter 扩展，只有验收缺口需要自行补齐。此项是 G0 的实现选型，不代表产品能力或 #5215/#5216 验收通过。
 
 ```mermaid
 flowchart LR
   F[飞书对话与反馈] <--> P[现有 Project 与 Agent 会话]
-  P <--> A[Agent harness：优先 dsh]
+  P <--> A[Codex app-server]
   A <--> T[Notebook 语义工具]
   T <--> J[Jupyter 共享文档与执行适配]
   H[JupyterLab 人工编辑与运行] <--> J
@@ -49,26 +49,24 @@ flowchart LR
 
 建议最小组件是 JupyterLab、Jupyter Server、`jupyter-collaboration`、Python/ipykernel；共享文档适配候选为 `jupyter_ydoc`/`pycrdt`，执行客户端复用 `jupyter_client` 或 `@jupyterlab/services`，以 `nbformat` 校验成果、`nbconvert` 导出 HTML、`nbclient` 做复现验证。G0 固定一组实际兼容的版本，不自行重写 kernel WebSocket 协议。[Jupyter REST](https://jupyter-server.readthedocs.io/en/latest/developers/rest-api.html)、[WebSocket 协议](https://jupyter-server.readthedocs.io/en/latest/developers/websocket-protocols.html)、[nbconvert](https://nbconvert.readthedocs.io/en/latest/config_options.html)
 
-### 为什么优先 dsh，但不直接沿用现有适配器
+### G0-A 结果：选择 Codex app-server 路线
 
-dsh 的 Cordis 插件架构允许组合模型、工具、Agent loop、持久会话和 hooks，适合实现理解 Notebook 的工具集；官方仍将其列为 developer preview，需要固定并验证版本。[官方架构](https://github.com/deepseek-ai/deepseek-harness/blob/639ed015397290b3745d163aafe02ffee4aa3f84/docs/architecture.md)、[项目说明](https://github.com/deepseek-ai/deepseek-harness)
+在本机固定候选 `@deepseek-ai/dsh@0.1.2-rc.1` 上，G0 探针找不到 Jupyter profile/plugin，也未注册 `openai-codex` adapter，在模型调用前以 `NO_ADAPTER` 结束。这个结果否定当前已安装组合可直接承载产品路径，不证明所有 dsh 版本都不可能扩展。
 
-本机 `@deepseek-ai/dsh@0.1.2-rc.1` 与核对的上游 `639ed015` 暴露了两层不同的能力：
+另一条候选是在 Codex app-server 中注册动态 host tool，由 disclaude host 通过认证的 Jupyter Server API 处理请求。Codex CLI `0.159.2` 的隔离协议探针在 `initialize.capabilities.experimentalApi=true` 下，以 `gpt-5.6-luna` 调用一次 `jupyter_get_notebook`；host 读取实际 Jupyter `contents` 响应中的文档 ID、cell ID 和 marker，模型在完成回复中复述了这些值。该探针没有通过产品中的 Codex provider 或飞书运行。
 
-- 底层有原生工具注册、持久 Session、Agent resume/cancel 和模型适配接口，可用于插件组合。
-- 当前上游 SDK 请求分派只有 `initialize`、`session/prompt`、`shutdown`。disclaude 当前 dsh provider 拒绝客户端 inline/MCP 工具注册、每个 query 新建随机 Session，并固定 `deepseek-official` provider；取消会释放 dsh 进程。不能据底层存在能力宣称当前接入已有恢复和中断。[上游 SDK](https://github.com/deepseek-ai/deepseek-harness/blob/639ed015397290b3745d163aafe02ffee4aa3f84/packages/sdk/server/src/server.ts)、[当前适配器](../../packages/core/src/sdk/providers/deepseek/provider.ts)
-- 当前事件适配会将工具结果转换为文字，不能承载完整 Notebook MIME 和执行身份。[事件适配器](../../packages/core/src/sdk/providers/deepseek/event-adapter.ts)
+仓库已有 `CodexAppServerTransport` 与 lifecycle 实验代码，但仍缺动态工具闭环：初始化能力目前仅由用户输入回调打开；transport 不把 `dynamicTools` 传给 `thread/start`，也不处理 `item/tool/call` host 请求。未知 server request 会被拒绝。因此须实现一个窄的、经过参数和资源身份校验的 host tool 路径，再验证请求隔离、超时/取消、事件身份与会话续行。不要直接将用户输入回调改成通用 MCP/工具注册入口。
 
-因此优先验证独立的 **notebook 插件组合/profile**，通过 dsh 原生服务加载工具与必要的控制适配；这只是 harness 配置，不增加用户可见的“研究模式”。保持现有 dsh 用途兼容，不直接替换全局 profile。dsh 内置 `run_code` 的独立 Node worker 不能替代持久 Jupyter kernel。
+Codex app-server 动态工具 API 当前标为 experimental，产品实现须固定兼容版本并明确降级行为。工具 handler 只访问已授权连接中的服务端 Notebook；不能通过本地路径或 Project `cwd` 定位，也不能把 Jupyter 管理凭据交给模型。
 
-需要新增的控制能力应尽量通过插件和受版本约束的窄接口实现，并考虑贡献上游。若必须长期 fork dsh 核心 loop，或当前环境的指定模型路由无法可靠工作，就改用现有 Codex backend，通过同一 Notebook CLI/能力接口完成 0.6.3；现有 Codex adapter 也未实现统一 inline/MCP 注册，不能把“换后端”描述成零成本开关。
+Jupyter 侧验证使用隔离 localhost 栈：Python `3.13.9`、JupyterLab `4.6.3`、Jupyter Server `2.21.1`、`jupyter-collaboration` `5.0.4`、`jupyter-server-nbmodel` `0.2.9`、ipykernel `7.4.0` 和 `httpx-ws` `0.9.0`。协议实验中，两名 RTC peer 同步了 Markdown 编辑；kernel 返回的 `42` 和输出写入并保存在 `.ipynb`；有效取消返回 204，过期取消返回 404 且未中断后续执行。服务重启后文件中的人工编辑和输出仍在，但原 kernel 消失，变量内存不可恢复。以上是隔离协议实验，不证明关闭全部 UI 后的产品后台执行、真实 Feishu 集成、远程服务、图表阅读或设备链接可用。
 
 ### 其他方案的位置
 
 | 方案 | 值得复用的部分 | 对本需求的判断 |
 | --- | --- | --- |
-| dsh 原生插件 + Jupyter | 可组合 Agent loop、Notebook 语义工具与原生内核 | 首选验证；重点验证模型、工具、取消和续行的真实路径 |
-| 现有 Codex backend + 同一 Notebook 接口 | 已有飞书交互与 Agent 运行路径 | dsh 验证不满足条件时的替代；共享文档和内核成果保留 |
+| Codex app-server dynamic host tools + Jupyter | 现有 Codex backend 与 host 侧认证工具 | 当前实现候选；协议探针成功，产品 transport/provider 仍需接入与验收 |
+| dsh 原生插件 + Jupyter | 可组合 Agent loop、Notebook 语义工具与原生内核 | 本机 `0.1.2-rc.1` 缺少 Notebook profile/plugin 和 Codex adapter，未进入模型调用；不作为当前实现路径 |
 | 现成 Jupyter MCP/工具扩展 | cell 编辑、运行、输出、Jupyter 连接与同步 | 优先评估复用；MCP 是工具传输，不能自动解决未保存改动、后台执行、恢复和冲突 |
 | Jupyter AI | JupyterLab 的 AI 扩展生态和工具协议 | 可提供补充入口；飞书仍是本产品主要对话入口 |
 | nbclient / Papermill | 干净内核重跑、参数化验证、批量执行 | 用于复现检查和批处理，不承担实时人机协作 |
@@ -149,7 +147,7 @@ Agent 默认围绕问题、数据与证据、方法选择、结果解释和结�
 
 | 阶段 | 可评审交付 | 通过条件 |
 | --- | --- | --- |
-| [G0-A dsh 接入验证 #5215](https://github.com/hs3180/disclaude/issues/5215) | 固定 dsh 版本；原生插件、模型路由与窄控制接口 | 指定模型真实调用 notebook 工具；取消可传播；会话续行与事件身份可保留；无需侵入核心 loop。此组结果决定保留 dsh 或换 Agent adapter |
+| [G0-A Agent 接入验证 #5215](https://github.com/hs3180/disclaude/issues/5215) | 已比较本机 dsh `0.1.2-rc.1` 与 Codex app-server `0.159.2`；后者动态 host tool 协议探针成功 | dsh 当前组合在模型调用前 `NO_ADAPTER`；Codex 探针由指定模型读取真实 Jupyter API 结果。产品适配、取消传递、续行和完整事件身份尚未验证，issue 未完成 |
 | [G0-B Jupyter 能力验证 #5216](https://github.com/hs3180/disclaude/issues/5216) | 与 G0-A 并行；固定 Jupyter 兼容组合、连接与认证方式；现成扩展对照 | 无 Project 目录挂载或 Notebook 本地副本也能工作；未落盘的人工编辑可读；关浏览器仍执行保存；中断、图表回读和控制权交接可核验。此组结果决定 Jupyter 扩展复用/补齐范围，不把文档或内核问题归因于 dsh |
 | [G1-A 共享文档与资源关联 #5217](https://github.com/hs3180/disclaude/issues/5217) | Jupyter 资源引用与 Project 关联、shared model、cell 定点读写、版本及控制者校验 | 人工未保存改动可读；版本冲突拒绝；跨上下文/服务的引用隔离；解除关联不删除服务端成果 |
 | [G1-B 内核执行与可靠停止 #5218](https://github.com/hs3180/disclaude/issues/5218) | kernel 生命周期、执行协调、输出关联与持久化；必要的 JupyterLab 执行入口适配 | 用真实 Jupyter/ipykernel 验证执行完成、display 更新、取消、结果未知及源码版本；与 G1-A 共用控制者身份/代次和交接契约 |
@@ -157,11 +155,11 @@ Agent 默认围绕问题、数据与证据、方法选择、结果解释和结�
 | [G3 报告与可视化 #5220](https://github.com/hs3180/disclaude/issues/5220) | 报告组织指导、图表观察、静态预览、同版本 `.ipynb`/HTML 导出 | 核验图、表、公式与结论的实际可读性；交互图表与静态降级可用；导出与来源版本一致 |
 | [G4 恢复与发行 #5221](https://github.com/hs3180/disclaude/issues/5221) | 重启与重连对账、连接/扩展 doctor、版本兼容范围、文档和发行验收 | 浏览器关闭、Agent 重启、Jupyter 断连、kernel 丢失分别处理；保全服务端成果；从支持的连接环境可重复完成真实闭环 |
 
-上述七项均为综合 issue 的子 issue，全部纳入 0.6.3 发布目标。G0-A/B 并行，分别记录通过、失败和未知，再联合跑通最小链路；G1-A/B 依赖 G0-B，按共同契约并行；G2 依赖 G0-A 的接入决策与 G1-A/B，G3 依赖 G1-A/B 并可与 G2 并行，G4 对全部成果收口。恢复所需身份与记录在 G1 即实现，不能全部延后到 G4。
+上述七项均为综合 issue 的子 issue，全部纳入 0.6.3 发布目标。G0-A 已得到局部选型证据但仍待产品路径验证，G0-B 只有隔离协议证据，两个 issue 均保持未完成；G1-A/B 依赖 G0-B，按共同契约推进；G2 依赖 Codex app-server 适配与 G1-A/B，G3 依赖 G1-A/B 并可与 G2 并行，G4 对全部成果收口。恢复所需身份与记录在 G1 即实现，不能全部延后到 G4。
 
-这些阶段是实现与 review 的分解，不是产品强制的研究流程。换 Agent backend 不能解决共享文档或内核层的失败。基础内核/协作桥和 dsh 接入在契约确定后可以并行，避免一个巨型 PR。子 issue 全部关闭不自动代表产品验收通过，综合 issue 仍以完整真实体验作为关闭条件。
+这些阶段是实现与 review 的分解，不是产品强制的研究流程。换 Agent backend 不能解决共享文档或内核层的失败。基础内核/协作桥和 Codex app-server 动态工具适配在契约确定后可以独立评审；子 issue 全部关闭不自动代表产品验收通过，综合 issue 仍以完整真实体验作为关闭条件。
 
-模型探针遵守仓库当前要求：实际加载配置、provider 路由及命令行覆盖必须显式核对为 `gpt-5.6-luna`。dsh 底层有其他模型 adapter 不等于该模型已在当前环境可运行；G0 需真实验证。此约束不是产品只支持一种模型的承诺。
+一般 Codex 默认模型为 `gpt-6-luna`。凡 #5215/#5219 验收条款明确要求的探针，仍须显式核对实际加载配置、provider 路由及命令行覆盖为 `gpt-5.6-luna`；其他开发和运行场景使用 `gpt-6-luna`，除非任务、预设或调用方有明确覆盖。探针成功只证明该项模型路由可工作，不承诺产品只支持一种模型。
 
 ## 产品验收清单
 
@@ -182,4 +180,4 @@ Agent 默认围绕问题、数据与证据、方法选择、结果解释和结�
 
 ## 当前交付边界
 
-本提案已经核对现有 Project/dsh 代码和上游能力边界；尚未安装或启动候选 Jupyter，未运行真实模型、未修改生产服务，也未证明端到端体验。下一项具体工作是 G0：验证“飞书为入口的同一本 Notebook，人可直接改、Agent 能接着算和改报告”这条链路，再确定 dsh 接入与 Jupyter 扩展的最终实现。
+本提案已记录本机 dsh adapter 缺口、Codex app-server 动态工具到真实隔离 Jupyter API 的模型探针，以及 Jupyter RTC/执行/取消/重启协议实验。产品中的 dynamic host tool 接入尚未实现；没有修改生产服务，也没有通过 Feishu 入口、人直接编辑、后台持续执行、报告导出或真实设备访问验收。下一步是提交独立 G0 设计/证据切片，再实现并测试 Codex app-server host tool adapter；之后继续完成 #5216 和 G1–G4，不能据这些实验关闭 issue。
