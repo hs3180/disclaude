@@ -1,6 +1,6 @@
 # 0.6.3：以 Notebook 为第一公民的 Jupyter Harness
 
-状态：设计提案，尚未实现或通过产品验收。目标版本 0.6.3。当前代码基线为 `3a446d9b`；dsh 接入选择须通过下述 G0 验证后锁定。
+状态：首版范围与实施顺序已确认，由[综合 issue #5214](https://github.com/hs3180/disclaude/issues/5214) 和 [0.6.3 milestone](https://github.com/hs3180/disclaude/milestone/18) 跟踪；尚未实现或通过产品验收。方案调研代码基线为 `3a446d9b`；dsh 接入选择须通过下述 G0 验证后锁定。
 
 ## 产品定位
 
@@ -149,14 +149,17 @@ Agent 默认围绕问题、数据与证据、方法选择、结果解释和结�
 
 | 阶段 | 可评审交付 | 通过条件 |
 | --- | --- | --- |
-| G0-A dsh 接入验证 | 固定 dsh 版本；原生插件、模型路由与窄控制接口 | 指定模型真实调用 notebook 工具；取消可传播；会话续行与事件身份可保留；无需侵入核心 loop。此组结果决定保留 dsh 或换 Agent adapter |
-| G0-B Jupyter 能力验证 | 与 G0-A 并行；固定 Jupyter 兼容组合、连接与认证方式；现成扩展对照 | 无 Project 目录挂载或 Notebook 本地副本也能工作；未落盘的人工编辑可读；关浏览器仍执行保存；中断、图表回读和控制权交接可核验。此组结果决定 Jupyter 扩展复用/补齐范围，不把文档或内核问题归因于 dsh |
-| G1 文档与执行基础 | Jupyter 资源引用与 Project 关联、shared model、kernel 生命周期、输出关联；必要的 JupyterLab 执行入口适配 | 用真实 Jupyter/ipykernel 验证版本冲突、执行完成、display 更新、取消、结果未知，以及跨上下文/服务的引用隔离 |
-| G2 Agent 与飞书闭环 | 工具、上下文变化、原话题入口、真实停止与续行 | 真实模型在原 Project 完成分析；用户直接修改 Notebook 后继续同一研究且改动保留 |
-| G3 报告与可视化 | 报告组织指导、图表观察、静态预览、同版本 `.ipynb`/HTML 导出 | 核验图、表、公式与结论的实际可读性；交互图表与静态降级可用；导出与来源版本一致 |
-| G4 恢复与发行 | 重启与重连对账、连接/扩展 doctor、版本兼容范围、文档和发行验收 | 浏览器关闭、Agent 重启、Jupyter 断连、kernel 丢失分别处理；保全服务端成果；从支持的连接环境可重复完成真实闭环 |
+| [G0-A dsh 接入验证 #5215](https://github.com/hs3180/disclaude/issues/5215) | 固定 dsh 版本；原生插件、模型路由与窄控制接口 | 指定模型真实调用 notebook 工具；取消可传播；会话续行与事件身份可保留；无需侵入核心 loop。此组结果决定保留 dsh 或换 Agent adapter |
+| [G0-B Jupyter 能力验证 #5216](https://github.com/hs3180/disclaude/issues/5216) | 与 G0-A 并行；固定 Jupyter 兼容组合、连接与认证方式；现成扩展对照 | 无 Project 目录挂载或 Notebook 本地副本也能工作；未落盘的人工编辑可读；关浏览器仍执行保存；中断、图表回读和控制权交接可核验。此组结果决定 Jupyter 扩展复用/补齐范围，不把文档或内核问题归因于 dsh |
+| [G1-A 共享文档与资源关联 #5217](https://github.com/hs3180/disclaude/issues/5217) | Jupyter 资源引用与 Project 关联、shared model、cell 定点读写、版本及控制者校验 | 人工未保存改动可读；版本冲突拒绝；跨上下文/服务的引用隔离；解除关联不删除服务端成果 |
+| [G1-B 内核执行与可靠停止 #5218](https://github.com/hs3180/disclaude/issues/5218) | kernel 生命周期、执行协调、输出关联与持久化；必要的 JupyterLab 执行入口适配 | 用真实 Jupyter/ipykernel 验证执行完成、display 更新、取消、结果未知及源码版本；与 G1-A 共用控制者身份/代次和交接契约 |
+| [G2 Agent 与飞书闭环 #5219](https://github.com/hs3180/disclaude/issues/5219) | 工具、上下文变化、数据上传、原话题入口、真实停止与续行 | 真实模型在原 Project 完成分析；用户直接修改 Notebook 后继续同一研究且改动保留 |
+| [G3 报告与可视化 #5220](https://github.com/hs3180/disclaude/issues/5220) | 报告组织指导、图表观察、静态预览、同版本 `.ipynb`/HTML 导出 | 核验图、表、公式与结论的实际可读性；交互图表与静态降级可用；导出与来源版本一致 |
+| [G4 恢复与发行 #5221](https://github.com/hs3180/disclaude/issues/5221) | 重启与重连对账、连接/扩展 doctor、版本兼容范围、文档和发行验收 | 浏览器关闭、Agent 重启、Jupyter 断连、kernel 丢失分别处理；保全服务端成果；从支持的连接环境可重复完成真实闭环 |
 
-这些阶段是实现与 review 的分解，不是产品强制的研究流程。G0-A/B 分别记录通过、失败和未知，再联合跑通最小链路；换 Agent backend 不能解决共享文档或内核层的失败。基础内核/协作桥和 dsh 接入在契约确定后可以并行，避免一个巨型 PR。
+上述七项均为综合 issue 的子 issue，全部纳入 0.6.3 发布目标。G0-A/B 并行，分别记录通过、失败和未知，再联合跑通最小链路；G1-A/B 依赖 G0-B，按共同契约并行；G2 依赖 G0-A 的接入决策与 G1-A/B，G3 依赖 G1-A/B 并可与 G2 并行，G4 对全部成果收口。恢复所需身份与记录在 G1 即实现，不能全部延后到 G4。
+
+这些阶段是实现与 review 的分解，不是产品强制的研究流程。换 Agent backend 不能解决共享文档或内核层的失败。基础内核/协作桥和 dsh 接入在契约确定后可以并行，避免一个巨型 PR。子 issue 全部关闭不自动代表产品验收通过，综合 issue 仍以完整真实体验作为关闭条件。
 
 模型探针遵守仓库当前要求：实际加载配置、provider 路由及命令行覆盖必须显式核对为 `gpt-5.6-luna`。dsh 底层有其他模型 adapter 不等于该模型已在当前环境可运行；G0 需真实验证。此约束不是产品只支持一种模型的承诺。
 
