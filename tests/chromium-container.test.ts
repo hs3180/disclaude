@@ -23,9 +23,9 @@ describe('container Chromium configuration', () => {
     expect(result.stderr).not.toContain('bundled Chromium executable not found');
   });
 
-  it('ships image sources and wires the persistent volume into the compose service', () => {
+  it('keeps source checkout Compose configured and excludes it from npm artifacts', () => {
     const manifest = JSON.parse(readFileSync(resolve('package.json'), 'utf8'));
-    expect(manifest.files).toContain('docker/');
+    expect(manifest.files).not.toContain('docker/');
     const compose = yaml.load(readFileSync(resolve('docker-compose.yml'), 'utf8')) as any;
     const browser = compose.services.chromium;
     expect(browser.init).toBe(true);
