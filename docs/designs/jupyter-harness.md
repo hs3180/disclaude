@@ -55,7 +55,9 @@ flowchart LR
 
 另一条候选是在 Codex app-server 中注册动态 host tool，由 disclaude host 通过认证的 Jupyter Server API 处理请求。Codex CLI `0.159.2` 的隔离协议探针在 `initialize.capabilities.experimentalApi=true` 下，以 `gpt-5.6-luna` 调用一次 `jupyter_get_notebook`；host 读取实际 Jupyter `contents` 响应中的文档 ID、cell ID 和 marker，模型在完成回复中复述了这些值。该探针没有通过产品中的 Codex provider 或飞书运行。
 
-仓库已有 `CodexAppServerTransport` 与 lifecycle 实验代码，但仍缺动态工具闭环：初始化能力目前仅由用户输入回调打开；transport 不把 `dynamicTools` 传给 `thread/start`，也不处理 `item/tool/call` host 请求。未知 server request 会被拒绝。因此须实现一个窄的、经过参数和资源身份校验的 host tool 路径，再验证请求隔离、超时/取消、事件身份与会话续行。不要直接将用户输入回调改成通用 MCP/工具注册入口。
+后续分支验证见 [PR #5226](https://github.com/hs3180/disclaude/pull/5226)：Codex provider 的 app-server 路径现可注册 namespaced dynamic function，并将 `item/tool/call` 路由给 inline host handler。一次显式指定 `gpt-5.6-luna`、`low` reasoning 的真实模型探针读取了用户提供的 Jupyter Server 2.19.0：host 通过 Contents API 创建唯一的临时 Notebook，模型调用 `read_notebook` 后收到正确路径、cell ID 和 marker 校验；host 核验身份后删除文件，Contents API 随后返回 404。没有打开、修改或执行任何既有 Notebook，也未创建 kernel。该结果验证一次 provider-to-host-to-Contents 读取链，不验证执行身份、会话续行、取消、RTC、后台运行、Feishu 或完整产品验收。
+
+当前 `main` 仍缺这条动态工具闭环；PR #5226 分支提供了实现候选。后续还须验证请求隔离、超时/取消、事件身份与会话续行。不要直接将用户输入回调改成通用 MCP/工具注册入口。
 
 Codex app-server 动态工具 API 当前标为 experimental，产品实现须固定兼容版本并明确降级行为。工具 handler 只访问已授权连接中的服务端 Notebook；不能通过本地路径或 Project `cwd` 定位，也不能把 Jupyter 管理凭据交给模型。
 
@@ -65,7 +67,7 @@ Jupyter 侧验证使用隔离 localhost 栈：Python `3.13.9`、JupyterLab `4.6.
 
 | 方案 | 值得复用的部分 | 对本需求的判断 |
 | --- | --- | --- |
-| Codex app-server dynamic host tools + Jupyter | 现有 Codex backend 与 host 侧认证工具 | 当前实现候选；协议探针成功，产品 transport/provider 仍需接入与验收 |
+| Codex app-server dynamic host tools + Jupyter | 现有 Codex backend 与 host 侧认证工具 | #5226 分支实现候选并通过一次真实模型到服务端 Contents 的读取 smoke；等待 review，执行、续行、取消和产品体验仍需验收 |
 | dsh 原生插件 + Jupyter | 可组合 Agent loop、Notebook 语义工具与原生内核 | 本机 `0.1.2-rc.1` 缺少 Notebook profile/plugin 和 Codex adapter，未进入模型调用；不作为当前实现路径 |
 | 现成 Jupyter MCP/工具扩展 | cell 编辑、运行、输出、Jupyter 连接与同步 | 优先评估复用；MCP 是工具传输，不能自动解决未保存改动、后台执行、恢复和冲突 |
 | Jupyter AI | JupyterLab 的 AI 扩展生态和工具协议 | 可提供补充入口；飞书仍是本产品主要对话入口 |
@@ -180,4 +182,4 @@ Agent 默认围绕问题、数据与证据、方法选择、结果解释和结�
 
 ## 当前交付边界
 
-本提案已记录本机 dsh adapter 缺口、Codex app-server 动态工具到真实隔离 Jupyter API 的模型探针，以及 Jupyter RTC/执行/取消/重启协议实验。产品中的 dynamic host tool 接入尚未实现；没有修改生产服务，也没有通过 Feishu 入口、人直接编辑、后台持续执行、报告导出或真实设备访问验收。下一步是提交独立 G0 设计/证据切片，再实现并测试 Codex app-server host tool adapter；之后继续完成 #5216 和 G1–G4，不能据这些实验关闭 issue。
+本提案已记录本机 dsh adapter 缺口、Codex app-server 隔离协议探针、#5226 分支上的 provider-to-Jupyter Contents 读取 smoke，以及隔离栈的 RTC/执行/取消/重启实验。候选动态工具代码仍在未合并 PR 中；没有修改生产服务，也没有通过 Feishu 入口、人直接编辑、后台持续执行、实际 cell 执行/输出、报告导出或真实设备访问验收。下一步继续完成 #5215/#5216 的剩余验证与栈选择，再按共同契约推进 G1–G4；不能据这些实验关闭 issue。
