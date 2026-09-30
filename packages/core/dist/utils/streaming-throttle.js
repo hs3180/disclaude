@@ -1,0 +1,142 @@
+/**
+ * Per-stream throttle for Feishu CardKit streaming updates. The
+ * `StreamingReplyDriver` owns one instance per active stream.
+ *
+ * Semantics:
+ * - **Leading + trailing**: the first `schedule()` emits immediately; rapid
+ *   subsequent calls within `minIntervalMs` stash the latest content and emit
+ *   it once at the trailing edge of the window (latest-wins, no queue buildup).
+ * - **429 exponential backoff**: `note429()` doubles the effective interval
+ *   (capped at `maxBackoffMs`); `noteSuccess()` resets it.
+ * - **finalize()**: cancels the pending trailing timer to prevent leaks at
+ *   session end. No further emissions after finalize.
+ */
+export class StreamingThrottle {
+    minIntervalMs;
+    maxBackoffMs;
+    emitFn;
+    now;
+    setTimeoutFn;
+    clearTimeoutFn;
+    lastEmitMs;
+    backoffMs = 0;
+    trailingTimer;
+    pendingContent;
+    finalized = false;
+    /**
+     * Promises for emissions that `emitNow` has fired but whose `emitFn` (the
+     * PATCH) has not yet settled. Tracked so `drain()` can await them before a
+     * driver's final flush — closing the race where a slow earlier fire-and-forget
+     * PATCH lands after (and thus overwrites, or hits a frozen) the direct final
+     * PATCH.
+     */
+    inFlight = new Set();
+    constructor(emitFn, options) {
+        this.emitFn = emitFn;
+        this.minIntervalMs = options?.minIntervalMs ?? 200;
+        this.maxBackoffMs = options?.maxBackoffMs ?? 8000;
+        this.now = options?.now ?? (() => Date.now());
+        this.setTimeoutFn = options?.setTimeout ?? setTimeout;
+        this.clearTimeoutFn = options?.clearTimeout ?? clearTimeout;
+        // Initialize so the very first schedule() emits immediately (leading):
+        // elapsed = now - (-minIntervalMs) >= minIntervalMs ⇒ wait <= 0 ⇒ emit.
+        this.lastEmitMs = -this.minIntervalMs;
+    }
+    /**
+     * Schedule content for emission. Leading call emits immediately; rapid
+     * subsequent calls within the window stash the latest and emit once at the
+     * trailing edge (latest-wins).
+     */
+    schedule(content) {
+        if (this.finalized) {
+            return;
+        }
+        const elapsed = this.now() - this.lastEmitMs;
+        const interval = Math.max(this.minIntervalMs, this.backoffMs);
+        const wait = interval - elapsed;
+        if (wait <= 0) {
+            this.emitNow(content);
+        }
+        else {
+            // Trailing: stash latest content, (re)arm the trailing timer for the
+            // remaining window. Only the most recent content is kept.
+            this.pendingContent = content;
+            this.clearTrailingTimer();
+            this.trailingTimer = this.setTimeoutFn(() => {
+                this.trailingTimer = undefined;
+                if (this.finalized) {
+                    this.pendingContent = undefined;
+                    return;
+                }
+                if (this.pendingContent !== undefined) {
+                    const c = this.pendingContent;
+                    this.pendingContent = undefined;
+                    this.emitNow(c);
+                }
+            }, wait);
+        }
+    }
+    /** Signal a 429 was received — exponential backoff (doubles, capped). */
+    note429() {
+        // Both the first backoff (minIntervalMs*2) and subsequent doublings must
+        // respect the cap. Without wrapping the first branch in Math.min, a config
+        // with 2*minIntervalMs > maxBackoffMs would let the first 429 back off
+        // *past* the cap (only later doublings were capped).
+        this.backoffMs = Math.min(this.backoffMs === 0 ? this.minIntervalMs * 2 : this.backoffMs * 2, this.maxBackoffMs);
+    }
+    /** Reset backoff after a successful PATCH (optional). */
+    noteSuccess() {
+        this.backoffMs = 0;
+    }
+    /** Current effective interval (for inspection / tests). */
+    get effectiveIntervalMs() {
+        return Math.max(this.minIntervalMs, this.backoffMs);
+    }
+    /**
+     * Cancel the pending trailing timer. Called on `finalizeStreaming` to
+     * prevent leaks. No further emissions occur after finalize().
+     */
+    finalize() {
+        this.finalized = true;
+        this.clearTrailingTimer();
+        this.pendingContent = undefined;
+    }
+    /**
+     * Await every emission that `emitNow` has already fired (the fire-and-forget
+     * PATCHes) to settle. Call AFTER `finalize()` — finalize cancels the trailing
+     * timer so no NEW emissions race in while drain() blocks; drain() then waits
+     * for the last already-emitted PATCH to resolve/reject, so a slow earlier
+     * emission can no longer land after (and thus overwrite, or hit a frozen)
+     * the driver's direct final flush. Never throws: uses `Promise.allSettled`.
+     *
+     * Guarantees only what was in flight at call time; emissions a caller adds
+     * concurrently (i.e. drain() invoked without finalize() first) are not
+     * awaited — the documented contract is finalize()-then-drain().
+     */
+    async drain() {
+        const snapshot = [...this.inFlight];
+        await Promise.allSettled(snapshot);
+    }
+    emitNow(content) {
+        this.lastEmitMs = this.now();
+        this.pendingContent = undefined;
+        // Fire-and-forget: the caller's emitFn (the PATCH) owns its own error
+        // handling; the throttle's contract is purely about timing. Track the
+        // in-flight promise so drain() can await it, and attach settle handlers
+        // (both branches) so the tracker never surfaces a rejected PATCH as an
+        // unhandled rejection — the .then resolves cleanly because the handlers
+        // return normally.
+        const p = Promise.resolve(this.emitFn(content));
+        this.inFlight.add(p);
+        const clear = () => {
+            this.inFlight.delete(p);
+        };
+        p.then(clear, clear);
+    }
+    clearTrailingTimer() {
+        if (this.trailingTimer !== undefined) {
+            this.clearTimeoutFn(this.trailingTimer);
+            this.trailingTimer = undefined;
+        }
+    }
+}
