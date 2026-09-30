@@ -6,14 +6,14 @@
 
 **飞书是主要交互入口，Notebook 是持续演进的研究正文、计算现场和可视化成果。人和 Agent 可以接续编辑、执行同一本 Notebook。**
 
-用户在现有 Project 中描述问题、补充材料、讨论结论、要求继续或停止；Agent 在 Project 的 Notebook 中调查、分析、制作图表并组织论证。用户可以随时打开 JupyterLab 修改代码、参数、文字或图表，再回飞书继续。Notebook 在研究过程中始终可见、可读、可编辑，无需等到最终导出。
+用户在现有 Project 中描述问题、补充材料、讨论结论、要求继续或停止；Agent 在关联的 Jupyter Notebook 中调查、分析、制作图表并组织论证。Notebook 由选定的 Jupyter 服务保存和管理，可位于本地或远程 JupyterLab/Jupyter Server 环境，无需存在于 Project 的工作目录。Project 关联研究上下文与 Notebook 引用，不决定其存储位置。用户可以随时打开 JupyterLab 修改代码、参数、文字或图表，再回飞书继续。Notebook 在研究过程中始终可见、可读、可编辑，无需等到最终导出。
 
 这里的原生支持包括文档、执行、观察和协作语义：Agent 理解 cell、当前代码对应的执行结果、人工改动、内核状态及报告结构。研究策略仍由 Agent 随问题选择，不增加固定研究阶段、独立 Research Project、任务数据库或 `/research` 模式。
 
 ## 一条完整的用户体验
 
 1. 用户在已绑定 Project 的飞书话题里提交数据：“比较两个方案，解释差异，给我图表和结论。”
-2. Agent 建立同一 Project 中的 Notebook，给出稳定入口；正文逐步形成问题、资料与方法、图表及解释、结论和限制。章节按问题调整，不强制模板。
+2. Agent 在选定的 Jupyter 服务上创建或打开 Notebook，将其引用关联到当前 Project，给出稳定入口；正文逐步形成问题、资料与方法、图表及解释、结论和限制。章节按问题调整，不强制模板。
 3. 飞书展示简短的关键进展和图表预览。Notebook 保存完整代码、表格、引用与可交互图表；探索细节可以折叠或放在其他 Notebook，主报告保持可读。
 4. 用户打开 Notebook，修改筛选参数和一段解释文字。Agent 读取共享文档中的最新改动；下一次修改或执行必须基于这个版本，并保留人工文字。
 5. 用户回飞书说“按我改的继续”。Agent 核验变化、执行必要实验、比较前后结果，修订同一份报告；说明结论改变的原因。
@@ -32,20 +32,20 @@ flowchart LR
   T <--> J[Jupyter 共享文档与执行适配]
   H[JupyterLab 人工编辑与运行] <--> J
   J <--> K[Jupyter Kernel]
-  J <--> N[Project 内的 Notebook 与产物]
+  J <--> N[Jupyter 服务端的 Notebook 与产物]
   J --> V[报告与图表投影]
   V --> F
 ```
 
 | 层次 | 职责 | 边界 |
 | --- | --- | --- |
-| Project/飞书 | 现有目录绑定、上下文、委托、追问、进展、入口 | 不新增研究项目注册表或固定研究流程 |
+| Project/飞书 | 现有上下文、委托、追问、进展，以及 Jupyter 连接与 Notebook 引用 | Project 目录绑定不限制 Notebook 存储位置；不新增研究项目注册表或固定研究流程 |
 | Agent harness | 推理、上下文管理、工具编排、模型与对话续行 | 不持有 Notebook 的唯一副本或内核唯一控制权 |
 | Notebook 适配 | 共享文档读写、版本校验、执行关联、结果提交、事件补读 | 只维护文档/计算所必需的资源记录，不扩成研究任务系统 |
-| Jupyter | 内核与会话、协议通道、Notebook 编辑和渲染 | RTC、后台执行和模型会话恢复是不同能力，须逐项验证 |
+| Jupyter | Notebook 与产物存储、内核及其执行环境、协议通道、编辑和渲染 | RTC、后台执行和模型会话恢复是不同能力，须逐项验证 |
 | 报告与交付 | 保留原生 MIME；飞书摘要/图表；同版本导出 | 导出成功、文件保存成功、飞书送达分别报告 |
 
-优先把共享文档与执行桥接放进现有 Jupyter Server 扩展及少量 JupyterLab 插件；disclaude 只持有连接、工具适配和 Project 绑定。不要预先增加常驻研究服务或自建 Notebook 编辑器。G0 先选择并固定一条发行主路径，优先验证按需启动的受管理 Jupyter；连接用户现有实例列为兼容性验证后的扩展。普通聊天安装不应强制安装 Python 科学计算环境。资源记录区分托管与外部实例，服务退出只能回收确实由自身创建且仍拥有的资源，不能关闭人的 Jupyter 或其他 kernel。
+优先把共享文档与执行桥接放进现有 Jupyter Server 扩展及少量 JupyterLab 插件；disclaude 只持有连接、工具适配和上下文关联。JupyterLab 是人的编辑入口，实际持久内容由其后端 Jupyter 服务的存储管理；不要求与 disclaude 同机、共享磁盘或挂载 Project 目录。不要预先增加常驻研究服务或自建 Notebook 编辑器。G0 先选择并固定一条发行主路径，优先验证按需启动的受管理 Jupyter；连接用户现有实例列为兼容性验证后的扩展。两种部署方式均遵循同一服务端存储契约，普通聊天安装不应强制安装 Python 科学计算环境。资源记录区分托管与外部实例，服务退出只能回收确实由自身创建且仍拥有的运行资源，不能关闭人的 Jupyter、其他 kernel 或删除已有 Notebook。
 
 建议最小组件是 JupyterLab、Jupyter Server、`jupyter-collaboration`、Python/ipykernel；共享文档适配候选为 `jupyter_ydoc`/`pycrdt`，执行客户端复用 `jupyter_client` 或 `@jupyterlab/services`，以 `nbformat` 校验成果、`nbconvert` 导出 HTML、`nbclient` 做复现验证。G0 固定一组实际兼容的版本，不自行重写 kernel WebSocket 协议。[Jupyter REST](https://jupyter-server.readthedocs.io/en/latest/developers/rest-api.html)、[WebSocket 协议](https://jupyter-server.readthedocs.io/en/latest/developers/websocket-protocols.html)、[nbconvert](https://nbconvert.readthedocs.io/en/latest/config_options.html)
 
@@ -82,8 +82,8 @@ dsh 的 Cordis 插件架构允许组合模型、工具、Agent loop、持久会�
 
 ### 文档身份与人工修改
 
-- Notebook 存在于当前 Project 的实际工作目录中。资源身份至少包含规范化 Project 根目录、Notebook 稳定 ID 和受校验路径；不能仅用聊天 ID、目录 basename 或文件名作为身份。复制 Notebook 时须识别重复 ID；改名保留身份，移动越过 Project 边界须重新绑定。
-- 活跃共享文档是在线编辑的权威状态，`.ipynb` 是持久、可移植成果。Agent 必须读到 JupyterLab 中已同步但尚未保存到文件的修改。磁盘 `read → 改 JSON → 整文件写回` 不能作为在线协作实现。
+- Notebook 存放在 JupyterLab 所连接的 Jupyter 服务或独立 Jupyter Server 管理的存储中，无需存在于当前 Project。资源引用包含 Jupyter 连接身份、服务端存储命名空间和 Notebook 文档身份/内容路径；Project 只保存关联，不能用本地根目录、聊天 ID 或文件名替代服务端资源身份。稳定 ID 的支持由适配层验证，不假设所有 Jupyter 后端都提供相同机制。改名或移动后核实并更新引用；复制须识别为独立文档，不能因同名或重复 metadata ID 误连。跨服务迁移需要显式更新关联。
+- 活跃共享文档是在线编辑的权威状态，Jupyter 服务端保存的 Notebook 是持久成果，可导出为 `.ipynb`。Agent 必须读到 JupyterLab 中已同步但尚未持久保存的修改。通过本地副本或整份 Contents 写回覆盖在线共享文档，均不能作为在线协作实现。
 - 采用稳定 cell ID 和 cell/文档版本校验进行定点修改，保留未知 metadata 和附件。不同 cell 的并发改动可以合并；同一 cell 内容已改变则拒绝旧补丁、返回最新片段，由 Agent 重新理解。CRDT 合并不等于语义上可以覆盖人工改动。
 - 版本检查与提交必须在同一受控操作中完成。外部客户端或原始文件编辑若绕过共享层，先识别并解决状态差异，不能宣称支持任意编辑器的无冲突协作。
 - 人工修改无需每敲一个字唤醒模型。把变化合并成有界通知；Agent 在下一次读取、写入或执行前刷新上下文。已有研究活跃时可在步骤边界吸收变化，空闲时等待飞书续行。
@@ -94,6 +94,7 @@ JupyterLab 的 shared model/RTC 解决实时文档协作的一部分；服务端
 
 ### 执行、结果与中断
 
+- kernel 的工作目录、依赖、数据路径和计算资源以所连接的 Jupyter 执行环境为准，不能从 disclaude 的 Project `cwd` 推断。飞书附件或本地数据需要通过明确的上传/数据访问接口提供给 Jupyter，确认服务端资源引用及数据版本后再执行；不要求同步整个 Project，服务端路径不能当成本地路径直接读取。
 - 首版使用 Python kernel，同一 Notebook 默认独占一个 kernel，按 kernel 串行调度执行。不同 Notebook 可以独立运行。人从 JupyterLab 点击 Run 和 Agent 发起执行必须使用同一协调入口；否则应检测为外部执行并使相关状态失效，不能靠模型遵守约定保证一致性。
 - 每次执行绑定 Notebook ID、cell ID、源代码 hash、kernel incarnation、请求 ID 与执行 ID。cell 被编辑、删除或重排后，旧执行结果仍可查证，但不得成为新版 cell 的有效结果。
 - 完成判断要关联相同 `parent_header.msg_id` 的 shell reply 和 IOPub 状态，正确处理 `stream`、`execute_result`、`display_data`、`update_display_data`、`clear_output` 和 `error`。收到 HTTP 响应、首条输出或任何一次 `idle` 都不足以宣告指定执行成功。命令执行完成与后续异步输出更新分开记录。[Kernel 消息协议](https://jupyter-client.readthedocs.io/en/stable/messaging.html)
@@ -107,6 +108,8 @@ JupyterLab 的 shared model/RTC 解决实时文档协作的一部分；服务端
 
 聊天会话、dsh Session、Jupyter Session、kernel 和 `.ipynb` 分别有生命周期。Project 切换、Agent reset 或换模型不隐式删除 Notebook、停止其他会话的计算或迁移内核。
 
+续行使用已记录的 Jupyter 连接与 Notebook 引用回到服务端文档。服务不可达、认证失效或资源位置不明时报告实际连接状态，保留关联；不在 Project 中自动新建副本代替原 Notebook。解除 Project 关联不删除 Jupyter 内容，也不意味着关闭用户的服务或内核。
+
 重连时核对 kernel 身份及 incarnation；无法证明仍为原内核就标记内存状态未知。Notebook 保存的代码和输出可恢复，不代表变量、打开的连接、GPU 状态或运行中的线程可恢复。研究报告可以保留历史结果，但必须标识它们对应的代码、环境和执行。
 
 Python 是任意有副作用的程序，首版不承诺自动精确依赖图。代码或参数变化后保守标记可能受影响的结果；Agent 解释重跑选择。需要宣称可复现时，用独立干净内核执行明确的复现范围，记录数据来源/版本、环境、随机种子与输出比较；外部实时数据造成的差异应说明，不能为了通过而覆盖旧证据。
@@ -117,7 +120,7 @@ Python 是任意有副作用的程序，首版不承诺自动精确依赖图。�
 
 | 能力 | 输入与输出要点 |
 | --- | --- |
-| 打开/发现 Notebook | Project 绑定、稳定身份、目录/章节概览、kernel 与同步状态 |
+| 打开/发现 Notebook | Jupyter 连接与服务端文档引用、Project 上下文关联、目录/章节概览、kernel 与同步状态 |
 | 读取/观察 | 指定 cell/章节、最新改动、结果有效性、表格摘要与按需图片 |
 | 修改 | cell ID、预期版本、插入/更新/移动/删除操作；返回实际提交版本或冲突 |
 | 运行 | 明确 cell 集合/顺序、源版本、执行 ID；长执行可异步跟进 |
@@ -133,12 +136,12 @@ Agent 默认围绕问题、数据与证据、方法选择、结果解释和结�
 
 - 正式 Notebook 支持 Markdown/公式、代码折叠、数据表、PNG/SVG、HTML 与至少一种交互图表（首选 Plotly）。普通阅读不需要先理解代码，细节可展开核验。
 - 完整 MIME 输出保留在 Notebook 和必要产物中；飞书展示选定图表的静态预览、简洁解释和回到原 Notebook 的链接。导出 HTML 的交互能力单独测试；widgets/comm 不能假设在静态 HTML、图片或飞书中仍然可用。
-- notebook 入口须从用户实际设备可达。远程部署的 localhost 链接不算交付；G0 选定可落地的既有认证入口，链接不携带可复用管理 token。首版以已有部署操作者身份访问 Notebook，飞书收到链接不自动授予编辑权限；现有 Project 没有成员 ACL，不能据目录绑定声称提供群成员权限。适配层校验文档/产物所属 Project，用户认证沿用部署入口，不顺带新建 Project 权限系统。实际设备访问是发行门槛。
+- notebook 入口须从用户实际设备可达。远程部署的 localhost 链接不算交付；G0 选定可落地的既有认证入口，链接不携带可复用管理 token。Notebook 访问权限沿用所连接 Jupyter 服务的授权，飞书收到链接或 Project 存有引用不自动授予编辑权限；现有 Project 没有成员 ACL，不能据目录绑定声称提供群成员权限。适配层校验当前上下文允许使用的连接与 Notebook/产物引用，不顺带新建 Project 权限系统。实际设备访问是发行门槛。
 - 报告和导出绑定同一文档版本及已确认执行结果；导出过程中人工继续修改时，标明所导出版本并提示有新改动。旧结果、尚未运行的代码、截断输出在阅读模式中也能辨认。
 - 飞书文档按需导出或定点更新，并记录来源 Notebook 版本。首版不承诺 Notebook 与飞书文档正文的任意双向合并；飞书的反馈通过原会话进入 Notebook 修订。
-- 继续复用现有 Project 与附件投递；附件操作使用已确认归属的绝对路径，避免当前文件投递工具按全局 workspace 解析相对路径造成错投。
+- 继续复用现有 Project 与附件投递。导出首先定位 Jupyter 服务端的具体文档版本；优先使用可访问的交付链接。现有附件工具必须接收本地文件时，按需下载至本次交付拥有的临时目录，核验后以本地绝对路径投递；该下载件只是导出/缓存，不作为编辑源，也不要求同步整本 Notebook 到 Project。
 
-`.ipynb` 的 MIME、cell ID 和 metadata 采用原生格式，运行记录只增补必要的命名空间字段或 Project 内部资源记录，不把完整凭据和模型对话嵌入 Notebook。[nbformat](https://nbformat.readthedocs.io/en/latest/format_description.html)
+`.ipynb` 的 MIME、cell ID 和 metadata 采用原生格式；文档版本、输出及执行记录由 Jupyter 侧及其适配层持久管理，Project 保留上下文关联和必要引用，不要求保有内容副本。不把完整凭据和模型对话嵌入 Notebook。[nbformat](https://nbformat.readthedocs.io/en/latest/format_description.html)
 
 ## 首版范围与实施顺序
 
@@ -147,11 +150,11 @@ Agent 默认围绕问题、数据与证据、方法选择、结果解释和结�
 | 阶段 | 可评审交付 | 通过条件 |
 | --- | --- | --- |
 | G0-A dsh 接入验证 | 固定 dsh 版本；原生插件、模型路由与窄控制接口 | 指定模型真实调用 notebook 工具；取消可传播；会话续行与事件身份可保留；无需侵入核心 loop。此组结果决定保留 dsh 或换 Agent adapter |
-| G0-B Jupyter 能力验证 | 与 G0-A 并行；固定 Jupyter 兼容组合、发行主路径、认证入口；现成扩展对照 | 未落盘的人工编辑可读；关浏览器仍执行保存；中断、图表回读和控制权交接可核验。此组结果决定 Jupyter 扩展复用/补齐范围，不把文档或内核问题归因于 dsh |
-| G1 文档与执行基础 | Project 资源绑定、shared model、kernel 生命周期、输出关联；必要的 JupyterLab 执行入口适配 | 用真实 Jupyter/ipykernel 验证版本冲突、执行完成、display 更新、取消、结果未知和跨 Project 隔离 |
+| G0-B Jupyter 能力验证 | 与 G0-A 并行；固定 Jupyter 兼容组合、连接与认证方式；现成扩展对照 | 无 Project 目录挂载或 Notebook 本地副本也能工作；未落盘的人工编辑可读；关浏览器仍执行保存；中断、图表回读和控制权交接可核验。此组结果决定 Jupyter 扩展复用/补齐范围，不把文档或内核问题归因于 dsh |
+| G1 文档与执行基础 | Jupyter 资源引用与 Project 关联、shared model、kernel 生命周期、输出关联；必要的 JupyterLab 执行入口适配 | 用真实 Jupyter/ipykernel 验证版本冲突、执行完成、display 更新、取消、结果未知，以及跨上下文/服务的引用隔离 |
 | G2 Agent 与飞书闭环 | 工具、上下文变化、原话题入口、真实停止与续行 | 真实模型在原 Project 完成分析；用户直接修改 Notebook 后继续同一研究且改动保留 |
 | G3 报告与可视化 | 报告组织指导、图表观察、静态预览、同版本 `.ipynb`/HTML 导出 | 核验图、表、公式与结论的实际可读性；交互图表与静态降级可用；导出与来源版本一致 |
-| G4 恢复与发行 | 重启对账、按需安装/doctor、版本兼容范围、文档和发行验收 | 浏览器关闭、Agent 重启、kernel 丢失分别处理；保全成果；从支持的安装环境可重复完成真实闭环 |
+| G4 恢复与发行 | 重启与重连对账、连接/扩展 doctor、版本兼容范围、文档和发行验收 | 浏览器关闭、Agent 重启、Jupyter 断连、kernel 丢失分别处理；保全服务端成果；从支持的连接环境可重复完成真实闭环 |
 
 这些阶段是实现与 review 的分解，不是产品强制的研究流程。G0-A/B 分别记录通过、失败和未知，再联合跑通最小链路；换 Agent backend 不能解决共享文档或内核层的失败。基础内核/协作桥和 dsh 接入在契约确定后可以并行，避免一个巨型 PR。
 
@@ -167,7 +170,8 @@ Agent 默认围绕问题、数据与证据、方法选择、结果解释和结�
 | 无浏览器研究 | 关闭全部 Notebook 页面后，飞书发起执行仍能完成并保存；重新打开可见正确结果 |
 | 真正停止 | 长运行 cell 在停止后有内核确认，不只聊天停止；迟到输出不导致状态变回成功；不能确认则呈现未知 |
 | 进程/网络故障 | 对账原执行、无盲目重放；Agent 重启不丢 Notebook；kernel 丢失明确报告变量已不可用 |
-| Project 隔离 | 两个 Project 的同名 Notebook 不共享数据/变量；切换 Project 不向旧 Notebook 写入；多聊天访问同一 Notebook 身份一致 |
+| Jupyter 存储与连接 | Notebook 仅存在于 Jupyter 端，无共享磁盘/Project 本地副本时仍能创建、编辑、运行和导出；重连回到同一文档；改名后引用正确更新；断连不自动生成本地替代品 |
+| 上下文与资源隔离 | 不同 Jupyter 服务上的同路径 Notebook 不误连；不同 Notebook 不误用同一 kernel；切换 Project 不沿用旧关联写入；明确关联同一服务端 Notebook 的会话共享同一资源身份和控制权规则 |
 | 可视化与交付 | 表格、图像、HTML/交互图均经过真实渲染检查；飞书静态预览可读；Notebook/HTML/摘要对应同一版本；手机或实际访问设备的链接可用 |
 | 复现 | 在清楚的数据/环境约束下以干净 kernel 重跑，关键结论可核验；不能复现时标明原因和边界 |
 
