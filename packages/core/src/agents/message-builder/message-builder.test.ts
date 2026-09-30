@@ -690,7 +690,7 @@ describe('MessageBuilder', () => {
       expect(result).toContain('Topic-thread context before replying');
       expect(result).toContain('lark-cli');
       expect(result).toContain('+threads-messages-list');
-      expect(result).toContain('Use semantic judgment');
+      expect(result).toContain('After responding in this exact thread');
       expect(result).toContain('--action-prompts');
       expect(result).not.toContain('Codex follow-up');
     });
@@ -769,7 +769,7 @@ describe('MessageBuilder', () => {
       }, 'chat-456');
 
       expect(result).toContain('Next Steps After Response');
-      expect(result).toContain('Use semantic judgment');
+      expect(result).toContain('proactively identify the most useful next step');
     });
 
     it('should include next-step guidance when chatType is undefined', () => {
