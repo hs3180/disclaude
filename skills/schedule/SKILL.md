@@ -31,6 +31,51 @@ Manage schedules with full CRUD operations.
 
 This is mandatory. Users must receive confirmation of operation results.
 
+## Choose the execution mode before create or update
+
+Before creating or changing a schedule, decide whether each tick needs an AI agent:
+
+| Mode | Choose it when | Configuration |
+|------|----------------|---------------|
+| `command` | A deterministic, non-interactive program or shell operation can do the work directly. It uses no agent turn or model. | Put one shell command in the `command` frontmatter field and leave the Markdown body empty. |
+| Prompt | The task needs language understanding, judgment, research, or a response composed by the agent. | Omit `command`; put the full instruction in the Markdown body. That body is the prompt—there is no `prompt:` frontmatter key. |
+
+Exactly one mode is required: `command` XOR a non-empty Markdown body. Never configure both or neither. For updates, read the existing file first, preserve its mode unless the user asks to change it, and validate the same rule after editing. If the requested behavior cannot be done safely in the chosen mode, clarify the desired behavior before writing the schedule.
+
+**Direct command example** (replace the absolute script path with the real program path):
+
+```markdown
+---
+name: Refresh cache
+cron: "*/15 * * * *"
+enabled: true
+blocking: true
+chatId: oc_xxx
+command: "node /absolute/workspace/scripts/refresh-cache.mjs"
+timeoutMs: 60000
+---
+```
+
+The command receives `DISCLAUDE_SCHEDULE_ID`, `DISCLAUDE_SCHEDULE_NAME`, and `DISCLAUDE_CHAT_ID`. Stdout/stderr are diagnostics only and are not automatically sent to the chat. `timeoutMs` is a hard process-group timeout for this mode.
+
+**Agent prompt example**:
+
+```markdown
+---
+name: Daily metrics review
+cron: "0 9 * * 1-5"
+enabled: true
+blocking: true
+chatId: oc_xxx
+freshSession: true
+---
+Read the latest metrics from /absolute/workspace/metrics.csv, compare them with
+the prior business day, and send a concise report of material changes. If the
+file is missing or unreadable, report that clearly without inventing values.
+```
+
+The Markdown body is passed to the agent. `timeoutMs` bounds how long the scheduler waits for an isolated prompt turn; it is not a kill switch, so a timed-out turn may continue in the background. Use a direct `command` for deterministic work that should stop at the hard process-group timeout.
+
 ## Context Variables
 
 When invoked, you receive:
@@ -79,7 +124,8 @@ echo "${DISCLAUDE_WORKSPACE_DIR:-$(pwd)}/schedules"
    - Name (short description)
    - Slug (filesystem-safe directory name, lowercase with hyphens)
    - Cron expression (cron format or natural language)
-   - Content (prompt to execute)
+   - Execution mode (`command` or agent prompt; see the mode table above)
+   - The command string or the complete prompt body, never both
 
 2. Create directory and file:
    ```
@@ -190,9 +236,10 @@ enabled: false
 **Steps:**
 1. Find schedule file via `Glob`: `$DISCLAUDE_WORKSPACE_DIR/schedules/*/SCHEDULE.md` (or `schedules/*/SCHEDULE.md` if env var not set)
 2. Verify `chatId` ownership
-3. Confirm changes
+3. Identify the current mode and the requested mode; confirm any mode change and its effect on model use and timeout behavior
 4. Modify with `Edit` tool
-5. **SEND FEEDBACK** showing before/after
+5. Verify exactly one mode remains: `command` field XOR non-empty prompt body
+6. **SEND FEEDBACK** showing before/after
 
 ---
 
