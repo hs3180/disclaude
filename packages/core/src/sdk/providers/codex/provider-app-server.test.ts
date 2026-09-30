@@ -98,9 +98,13 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     try {
       for await (const message of result.iterator) { messages.push(message); }
       expect(JSON.parse(readFileSync(join(dir, 'home/initialize'), 'utf8')).capabilities).toEqual({ experimentalApi: true });
-      expect(JSON.parse(readFileSync(join(dir, 'home/thread'), 'utf8')).dynamicTools).toMatchObject([{
-        type: 'namespace', name: 'jupyter', tools: [{ name: 'read_notebook', inputSchema: { type: 'object' } }],
-      }]);
+      expect(JSON.parse(readFileSync(join(dir, 'home/thread'), 'utf8')).dynamicTools).toMatchObject([
+        {
+          type: 'namespace',
+          name: 'jupyter',
+          tools: [{ type: 'function', name: 'read_notebook', inputSchema: { type: 'object' } }],
+        },
+      ]);
       expect(JSON.parse(readFileSync(join(dir, 'home/tool-result'), 'utf8'))).toEqual({
         success: true,
         contentItems: [{ type: 'inputText', text: '{"path":"research.ipynb","documentId":"doc-1"}' }],
@@ -143,7 +147,9 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       } as AgentQueryOptions);
       for await (const _message of first.iterator) { /* drain */ }
       expect(JSON.parse(readFileSync(join(dir, 'home/thread'), 'utf8')).dynamicTools)
-        .toMatchObject([{ tools: [{ name: 'read_notebook' }] }]);
+        .toMatchObject([
+          { type: 'namespace', tools: [{ type: 'function', name: 'read_notebook' }] },
+        ]);
       expect(() => provider.queryStream(input(), {
         sessionKey: 'registry-change', settingSources: [], mcpServers: { jupyter: makeServer('execute_cell') },
       } as AgentQueryOptions)).toThrow(/different inline tool registry/);

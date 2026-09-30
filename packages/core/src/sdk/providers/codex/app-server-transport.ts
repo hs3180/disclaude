@@ -38,7 +38,12 @@ export interface CodexAppServerDynamicToolSpec {
   type: 'namespace';
   name: string;
   description: string;
-  tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>;
+  tools: Array<{
+    type: 'function';
+    name: string;
+    description: string;
+    inputSchema: Record<string, unknown>;
+  }>;
 }
 
 export interface CodexAppServerDynamicToolCallRequest {

@@ -82,6 +82,8 @@ export function createCodexDynamicToolRegistry(
       tools: [...tools]
         .sort((left, right) => compare(left.name, right.name))
         .map((tool) => ({
+          // Namespaced dynamic tools still require the canonical function tag.
+          type: 'function' as const,
           name: tool.name,
           description: tool.description,
           inputSchema: toJsonSchema(name, tool),

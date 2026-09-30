@@ -32,7 +32,12 @@ while :; do sleep 1; done
       type: 'namespace' as const,
       name: 'jupyter',
       description: 'Jupyter operations',
-      tools: [{ name: 'read_notebook', description: 'Read a notebook', inputSchema: { type: 'object' } }],
+      tools: [{
+        type: 'function' as const,
+        name: 'read_notebook',
+        description: 'Read a notebook',
+        inputSchema: { type: 'object' },
+      }],
     }];
     const lifecycle = new CodexAppServerLifecycle({ binary });
     try {

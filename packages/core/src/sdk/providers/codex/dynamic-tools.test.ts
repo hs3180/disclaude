@@ -25,6 +25,7 @@ describe('Codex app-server dynamic tools', () => {
         description: 'Inline tools exposed by jupyter',
         tools: [
           {
+            type: 'function',
             name: 'read_notebook',
             description: 'Read a notebook by server path',
             inputSchema: expect.objectContaining({ type: 'object', required: ['path'] }),
