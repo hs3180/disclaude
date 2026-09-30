@@ -63,7 +63,9 @@ Codex app-server 动态工具 API 当前标为 experimental，产品实现须固
 
 Jupyter 侧验证使用隔离 localhost 栈：Python `3.13.9`、JupyterLab `4.6.3`、Jupyter Server `2.21.1`、`jupyter-collaboration` `5.0.4`、`jupyter-server-nbmodel` `0.2.9`、ipykernel `7.4.0` 和 `httpx-ws` `0.9.0`。协议实验中，两名 RTC peer 同步了 Markdown 编辑；kernel 返回的 `42` 和输出写入并保存在 `.ipynb`；有效取消返回 204，过期取消返回 404 且未中断后续执行。服务重启后文件中的人工编辑和输出仍在，但原 kernel 消失，变量内存不可恢复。以上是隔离协议实验，不证明关闭全部 UI 后的产品后台执行、真实 Feishu 集成、远程服务、图表阅读或设备链接可用。
 
-2026-10-01 的用户 Jupyter 服务补充了一次远程执行协议 smoke：服务报告 Jupyter Server `2.19.0`，Python kernelspec 为 `conda-base-py`；基线为 9 个 kernel/session。没有打开任何 JupyterLab 页面，也没有读取、修改或执行既有 Notebook。通过 Contents API 创建 UUID 临时 Notebook 和新 session/kernel，协商 `v1.kernel.websocket.jupyter.org` 后只执行一个 `print` 标记；同一请求收到 `execute_reply: ok`、匹配的 IOPub `idle` 与 stdout。随后由探针通过 Contents API 保存输出并回读，确认 cell ID、源码和输出一致。清理前核验了临时 cell 身份，session 和 Notebook 删除均返回 204，后续 Contents 查询返回 404；kernel/session 数量都恢复为 9。此结果证明该远程服务允许不打开 Notebook 页面时经协议执行一个新 scratch kernel，并由客户端保存、回读结果；它不证明产品 Agent 能协调执行，不证明所有浏览器页面关闭时的集成后台任务，也不证明未保存 RTC 修改、服务端自动写回、interrupt、交接、图表、导出或 Feishu 闭环。该探针没有调用模型。
+2026-10-01 的用户 Jupyter 服务补充了一次远程执行协议探针：服务报告 Jupyter Server `2.19.0`，Python kernelspec 为 `conda-base-py`；基线为 9 个 kernel/session。没有打开任何 JupyterLab 页面，也没有读取、修改或执行既有 Notebook。通过 Contents API 创建 UUID 临时 Notebook 和新 session/kernel，协商 `v1.kernel.websocket.jupyter.org` 后只执行一个 `print` 标记；同一请求收到 `execute_reply: ok`、匹配的 IOPub `idle` 与 stdout。随后由探针通过 Contents API 保存输出并回读，确认 cell ID、源码和输出一致。清理前核验了临时 cell 身份，session 和 Notebook 删除均返回 204，后续 Contents 查询返回 404；kernel/session 数量都恢复为 9。此结果证明该远程服务允许不打开 Notebook 页面时经协议执行一个新 scratch kernel，并由客户端保存、回读结果；它不证明产品 Agent 能协调执行，也不证明所有 Notebook 页面关闭时的集成后台任务、未保存 RTC 修改、服务端自动写回、控制权交接、图表渲染、导出或 Feishu 闭环。该探针没有调用模型。
+
+同一服务后续的第二个独立 scratch 探针验证了 SVG MIME、真实 kernel interrupt 和恢复：cell 输出包含带随机标记的 `image/svg+xml`，经 Contents API 保存和回读后仍可见；另一 cell 先输出 `probe-running` 再 `sleep(20)`，只在确认执行已开始后调用该临时 kernel 的 `/interrupt`，HTTP 返回 204，关联的 shell reply 为 `error/KeyboardInterrupt`，并收到同请求的 IOPub `idle`。随后同一 kernel 成功执行 `print('probe-recovered')`，且服务端 Notebook 保存/回读了 SVG 与恢复输出。session 和 Notebook 最终均以 204 删除，Contents 查询为 404，原有 9 个 kernel/session 数量恢复。它验证的是 Jupyter API/WebSocket 的底层能力，不验证 Agent 的 `/stop`、所有权/并发隔离、多个图表输出位置、绘图渲染、RTC、Feishu 体验或发行集成；没有触碰既有 Notebook，也没有调用模型。
 
 ### 其他方案的位置
 
@@ -184,4 +186,4 @@ Agent 默认围绕问题、数据与证据、方法选择、结果解释和结�
 
 ## 当前交付边界
 
-本提案已记录本机 dsh adapter 缺口、Codex app-server 隔离协议探针、#5226 分支上的 provider-to-Jupyter Contents 读取 smoke、隔离栈的 RTC/执行/取消/重启实验，以及用户 Jupyter 服务上的直接 kernel WebSocket 执行与 Contents 保存 smoke。候选动态工具代码仍在未合并 PR 中；没有修改生产服务，也没有通过 Feishu 入口、人直接编辑后的接续、Agent 管理的后台执行/保存、报告导出或真实设备访问验收。下一步继续完成 #5215/#5216 的剩余验证与栈选择，再按共同契约推进 G1–G4；不能据这些实验关闭 issue。
+本提案已记录本机 dsh adapter 缺口、Codex app-server 隔离协议探针、#5226 分支上的 provider-to-Jupyter Contents 读取 smoke、隔离栈的 RTC/执行/取消/重启实验，以及用户 Jupyter 服务上的直接 kernel WebSocket 执行、SVG MIME、interrupt/恢复与 Contents 保存 smoke。候选动态工具代码仍在未合并 PR 中；没有修改生产服务，也没有通过 Feishu 入口、人直接编辑后的接续、Agent 管理的后台执行/保存、报告导出或真实设备访问验收。下一步继续完成 #5215/#5216 的剩余验证与栈选择，再按共同契约推进 G1–G4；不能据这些实验关闭 issue。
