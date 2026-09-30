@@ -8,8 +8,8 @@ Disclaude connects Feishu/Lark and REST conversations to agent harnesses for
 software development and research. It supports ongoing conversations,
 scheduled work, project-scoped skills, and coordinated browser automation.
 
-**Latest published release: [v0.6.1](https://github.com/hs3180/disclaude/releases/tag/v0.6.1).**
-See the [release notes](https://github.com/hs3180/disclaude/releases/tag/v0.6.1)
+**Latest published release: [v0.6.2](https://github.com/hs3180/disclaude/releases/tag/v0.6.2).**
+See the [release notes](docs/releases/0.6.2.md)
 and [changelog](CHANGELOG.md). Published release tags are immutable; follow-up
 changes ship under a new version.
 
@@ -49,7 +49,7 @@ connection as described in the [Feishu channel guide](docs/feishu-channel.md).
 Install the current stable release and create a configuration file:
 
 ```sh
-npm install -g "github:hs3180/disclaude#v0.6.1"
+npm install -g "github:hs3180/disclaude#v0.6.2"
 mkdir -p ~/.disclaude
 cp "$(npm root -g)/disclaude/disclaude.config.example.yaml" \
   ~/.disclaude/disclaude.config.yaml
