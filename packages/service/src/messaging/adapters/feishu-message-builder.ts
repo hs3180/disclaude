@@ -70,6 +70,9 @@ function buildFeishuToolsSection(ctx: MessageBuilderContext): string {
       if (toolName === 'send_file') {
         return capabilities?.supportsFile !== false;
       }
+      if (toolName === 'send_card') {
+        return capabilities?.supportsCard !== false;
+      }
       // For backward compatibility with old configs, assume messaging tools are available
       return true;
     }
@@ -115,6 +118,23 @@ ${messagingTools.join('\n')}
 - Note: Thread replies are NOT supported on this channel.`);
   }
 
+  if (ctx.agentBackend === 'codex' && hasTool('send_card')) {
+    parts.push(`
+
+## Codex source citations
+
+When your answer relies on one or more cited sources, keep each citation next to the claim it supports. Use concise numbered markers such as [1] and [2] in the final answer, with the source title and direct URL; do not expose raw provider citation markers.
+
+Before returning your final answer, send one additional display-only citation card with \`${channelCli} send_card --chat ${chatId} --parent ${msg.messageId || '<message-id>'} --card-file <path>\`. Put each numbered source on its own card entry with a clickable title and URL, and include a short supporting excerpt only when the source provides one. Keep the card numbers aligned with the markers in the answer, and include only sources you actually used. Use the current chat and message IDs above. Do not send a citation card when the answer has no citations.
+
+Use this card shape, replacing the example with the cited sources:
+\`\`\`json
+{\"config\":{\"wide_screen_mode\":true},\"elements\":[{\"tag\":\"markdown\",\"content\":\"**Sources**\"},{\"tag\":\"markdown\",\"content\":\"[1] [Source title](https://example.com)\\n> Short supporting excerpt\"}]}
+\`\`\`
+
+If the current channel does not support \`send_card\`, retain the numbered Markdown links in your final answer and do not try to send a card.`);
+  }
+
   return parts.join('\n');
 }
 
@@ -123,7 +143,11 @@ function buildFeishuStableToolsSection(ctx: MessageBuilderStableContext): string
   const channelCli = 'disclaude channel';
   const supported = ctx.capabilities?.supportedMcpTools;
   const sendCommands = ['send_text', 'send_file', 'send_card', 'send_interactive']
-    .filter(command => supported === undefined || supported.includes(command));
+    .filter(command =>
+      supported === undefined
+        ? command !== 'send_card' || ctx.capabilities?.supportsCard !== false
+        : supported.includes(command),
+    );
   return `For the current channel feature list and command options, run \`${channelCli} help\`.\n${buildChannelCliHelpGuidance(channelCli, { sendCommands })}`;
 }
 

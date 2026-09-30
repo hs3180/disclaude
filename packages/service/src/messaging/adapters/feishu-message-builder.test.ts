@@ -210,6 +210,42 @@ describe('MessageBuilder with Feishu sections', () => {
       expect(result).toContain(`${channelCli} send_card`);
     });
 
+    it('should guide Codex to preserve and map citations into a display card', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Research this question',
+        messageId: 'msg-123',
+      }, 'chat-123', withTools(['send_text', 'send_card']), 'codex');
+
+      expect(result).toContain('## Codex source citations');
+      expect(result).toContain('numbered markers such as [1] and [2]');
+      expect(result).toContain('clickable title and URL');
+      expect(result).toContain('Do not send a citation card when the answer has no citations.');
+    });
+
+    it('should omit Codex citation-card guidance when the backend or channel lacks card support', () => {
+      const noCardResult = messageBuilder.buildEnhancedContent({
+        text: 'Research this question',
+        messageId: 'msg-123',
+      }, 'chat-123', withTools(['send_text']), 'codex');
+      const otherBackendResult = messageBuilder.buildEnhancedContent({
+        text: 'Research this question',
+        messageId: 'msg-123',
+      }, 'chat-123', withTools(['send_text', 'send_card']), 'claude');
+      const legacyNoCardResult = messageBuilder.buildEnhancedContent({
+        text: 'Research this question',
+        messageId: 'msg-123',
+      }, 'chat-123', {
+        ...DEFAULT_CHANNEL_CAPABILITIES,
+        supportedMcpTools: undefined,
+        supportsCard: false,
+      }, 'codex');
+
+      expect(noCardResult).not.toContain('## Codex source citations');
+      expect(otherBackendResult).not.toContain('## Codex source citations');
+      expect(legacyNoCardResult).not.toContain('## Codex source citations');
+      expect(legacyNoCardResult).not.toContain(`${channelCli} send_card`);
+    });
+
     it('should include send_interactive when available', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
