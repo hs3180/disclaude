@@ -109,6 +109,96 @@ describe('ScheduleFileScanner', () => {
   });
 
   describe('parseFile', () => {
+    it('reports unknown frontmatter fields once and clears the warning after correction', async () => {
+      const onDiagnostic = vi.fn();
+      scanner = new ScheduleFileScanner({ schedulesDir: MOCK_DIR, onDiagnostic });
+      const filePath = `${MOCK_DIR}/daily-report/SCHEDULE.md`;
+      mockReadFile.mockResolvedValue(makeScheduleContent({ accessToken: 'never-include-this-value' }));
+
+      const task = await scanner.parseFile(filePath);
+      await scanner.parseFile(filePath);
+
+      expect(task?.id).toBe('schedule-daily-report');
+      expect(onDiagnostic).toHaveBeenCalledTimes(1);
+      expect(onDiagnostic).toHaveBeenLastCalledWith(expect.objectContaining({
+        action: 'report',
+        code: 'unknown-frontmatter-fields',
+        severity: 'warning',
+        chatId: 'oc_test123',
+        message: expect.stringContaining('accessToken'),
+      }));
+      expect(JSON.stringify(onDiagnostic.mock.calls)).not.toContain('never-include-this-value');
+
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+      expect(await scanner.parseFile(filePath)).not.toBeNull();
+      expect(onDiagnostic).toHaveBeenLastCalledWith(expect.objectContaining({
+        action: 'clear',
+        filePath,
+      }));
+    });
+
+    it('re-notifies the new task chat when the diagnostic is otherwise unchanged', async () => {
+      const onDiagnostic = vi.fn();
+      scanner = new ScheduleFileScanner({ schedulesDir: MOCK_DIR, onDiagnostic });
+      const filePath = `${MOCK_DIR}/daily-report/SCHEDULE.md`;
+      mockReadFile.mockResolvedValue(makeScheduleContent({
+        chatId: 'oc_first123',
+        accessToken: 'private-value',
+      }));
+      await scanner.parseFile(filePath);
+
+      mockReadFile.mockResolvedValue(makeScheduleContent({
+        chatId: 'oc_second123',
+        accessToken: 'private-value',
+      }));
+      await scanner.parseFile(filePath);
+
+      expect(onDiagnostic).toHaveBeenCalledTimes(2);
+      expect(onDiagnostic.mock.calls.map(([diagnostic]) => diagnostic.chatId)).toEqual([
+        'oc_first123',
+        'oc_second123',
+      ]);
+    });
+
+    it('reports malformed YAML with a recovered chat and safe source location', async () => {
+      const onDiagnostic = vi.fn();
+      scanner = new ScheduleFileScanner({ schedulesDir: MOCK_DIR, onDiagnostic });
+      mockReadFile.mockResolvedValue([
+        '---',
+        'name: [private-value',
+        'cron: "0 9 * * *"',
+        'chatId: oc_yaml_owner',
+        '---',
+        '',
+        'Run report.',
+      ].join('\n'));
+
+      await expect(scanner.parseFile(`${MOCK_DIR}/yaml-error/SCHEDULE.md`)).resolves.toBeNull();
+
+      expect(onDiagnostic).toHaveBeenCalledWith(expect.objectContaining({
+        action: 'report',
+        code: 'invalid-schedule-frontmatter',
+        severity: 'error',
+        chatId: 'oc_yaml_owner',
+        message: expect.stringContaining('line'),
+      }));
+      expect(JSON.stringify(onDiagnostic.mock.calls)).not.toContain('private-value');
+    });
+
+    it.each(['abc', '15ms', '1.5'])('reports malformed numeric fields instead of truncating %s', async (timeoutMs) => {
+      const onDiagnostic = vi.fn();
+      scanner = new ScheduleFileScanner({ schedulesDir: MOCK_DIR, onDiagnostic });
+      mockReadFile.mockResolvedValue(makeScheduleContent({ timeoutMs }));
+
+      await expect(scanner.parseFile(`${MOCK_DIR}/bad-timeout/SCHEDULE.md`)).resolves.toBeNull();
+
+      expect(onDiagnostic).toHaveBeenCalledWith(expect.objectContaining({
+        code: 'invalid-number',
+        severity: 'error',
+        chatId: 'oc_test123',
+      }));
+    });
+
     it('should parse a command schedule without routing it as a prompt', async () => {
       mockReadFile.mockResolvedValue([
         '---',

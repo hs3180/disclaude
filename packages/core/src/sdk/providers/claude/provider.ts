@@ -1,4 +1,3 @@
-import { readStallPolicy } from '../stall-policy.js';
 /**
  * Claude SDK Provider 实现
  *
@@ -26,29 +25,9 @@ import { withDiscoveredCompaction } from './compaction.js';
 
 const logger = createLogger('ClaudeSDKProvider');
 
-// ============================================================================
-// GLM stall detection (Issue #3706: no-content-progress watchdog)
-// ============================================================================
-// GLM-5.2 (via LiteLLM) intermittently STALLS on agent requests: it keeps the
-// SSE stream open, sends `ping` keepalives, but produces NO `content_block_delta`
-// (no text, no thinking) and NO `message_stop` for many minutes, then bursts.
-// Detection: an in-flight request (message_start → message_stop) that yields NO
-// content_block_delta for STALL_TIMEOUT_MS → stall → interrupt + notify.
-//
-// This is zero-false-fire: legitimate reasoning streams content_block_delta
-// continuously (including thinking deltas), resetting the watchdog; only a true
-// stall (zero content_block_delta) lets it fire. The between-request gap
-// (message_stop → tool execution → next message_start) is excluded because the
-// watchdog is armed only while a request is in-flight.
-//
-// Requires `includePartialMessages: true` (set in base-agent.ts createSdkOptions)
-// so stream_event messages reach adaptIterator.
-const STALL_TERMINATE_NOTICE =
-  '⚠️ 上游模型响应超时（疑似 stall），已自动取消本次响应。请稍后重试。';
-
 // Issue #4442 (part 3): empty-stream terminal notice. Synthesized when the SDK
 // query ends cleanly with ZERO messages (200-OK-zero-content) and the in-request
-// retries (below) are exhausted. Mirrors the stall terminate notice's shape.
+// retries (below) are exhausted.
 const EMPTY_STREAM_TERMINATE_NOTICE =
   '❌ 上游返回了空响应（200 但零内容事件），本次会话未产生任何输出。请稍后重试。';
 
@@ -375,125 +354,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     };
 
     async function* adaptIterator(): AsyncGenerator<AgentMessage> {
-      // ── Issue #3706 (GLM stall): no-content-progress watchdog ──
-      // Timeout is read per-call (env DISCLAUDE_STALL_TIMEOUT_MS, default 180s) so
-      // tests can set a short value. Declared BEFORE try so catch/finally can access.
-      const { timeoutMs: STALL_TIMEOUT_MS, graceMs: STALL_FORCE_CLOSE_GRACE_MS } = readStallPolicy();
-      // Grace after interrupt() before force-closing the query, in case interrupt()
-      // alone cannot tear down a stalled upstream socket (Issue #3706 review).
-      // Declared BEFORE try so catch/finally can access them. Armed on
-      // message_start, advanced on content_block_delta (any content incl. thinking
-      // — so legit reasoning never fires), cleared on message_stop. Fires on the
-      // event loop (independent of the for-await being blocked on a stalled stream).
-      //
-      // Efficiency (review feedback): instead of clearTimeout+setTimeout on every
-      // content_block_delta, we only stamp lastProgressMs per delta and run a single
-      // timer that fires at lastProgressMs + STALL_TIMEOUT_MS (re-arming at most once
-      // per timeout window when it wakes early). The timer is unref'd so a pending
-      // watchdog can never keep the process (e.g. once-mode) from exiting.
-      let requestInFlight = false;
-      let stalled = false;
-      let partialsObserved = false; // true once any stream_event is seen (else watchdog is blind)
-      let lastProgressMs = 0;
-      let contentWatchdog: ReturnType<typeof setTimeout> | null = null;
-      let forceCloseTimer: ReturnType<typeof setTimeout> | null = null;
-      // Issue #4442 (part 4): first-message blind-window watchdog. The content
-      // watchdog above arms only on a `message_start` stream_event partial — so
-      // when the provider does not forward partials (GLM/LiteLLM, exactly the
-      // #4442 incident environment) a stall before the FIRST message hangs the
-      // for-await forever: no partial → watchdog never arms → no interrupt, and
-      // the empty-stream recovery (#4442 part 3) never runs because the stream
-      // never ends. This blind-window timer is armed per query attempt and
-      // cancelled by the arrival of ANY message (partial or complete); firing it
-      // escalates through the same stall path (interrupt + force-close → terminal
-      // 'stall' → recordFailure('stall') in ChatAgent), making the watchdog
-      // effectively resident instead of blind. For providers that do forward
-      // partials it is cancelled within milliseconds of the message_start.
-      let blindWindowTimer: ReturnType<typeof setTimeout> | null = null;
-      const clearBlindWindow = (): void => {
-        if (blindWindowTimer) { clearTimeout(blindWindowTimer); blindWindowTimer = null; }
-      };
-      const armTimer = (fn: () => void, ms: number): ReturnType<typeof setTimeout> => {
-        const t = setTimeout(fn, ms);
-        (t as unknown as { unref?: () => void }).unref?.();
-        return t;
-      };
-      const clearContentWatchdog = (): void => {
-        if (contentWatchdog) { clearTimeout(contentWatchdog); contentWatchdog = null; }
-      };
-      const clearForceClose = (): void => {
-        if (forceCloseTimer) { clearTimeout(forceCloseTimer); forceCloseTimer = null; }
-      };
-      const fireWatchdog = (): void => {
-        if (stalled) { return; }
-        // The blind window (no message at all this attempt) counts as
-        // "in-flight": nothing was received, so the request-in-flight flag from
-        // partials (which never came) would gate the watchdog off. Keep the
-        // partials-armed path gated as before via requestInFlight set at
-        // message_start; set it here so fireWatchdog's guard passes.
-        if (!requestInFlight) {
-          // Blind-window firing (Issue #4442 part 4): no partials arrived, so
-          // requestInFlight was never set. Log it distinctly — operators saw
-          // "watchdog was INACTIVE" for this exact pathology before.
-          logger.error(
-            {
-              messageCount,
-              model: options.model,
-              stallTimeoutMs: STALL_TIMEOUT_MS,
-              apiBaseUrl: options.env?.ANTHROPIC_BASE_URL,
-              partialsObserved,
-            },
-            `Issue #4442: no upstream response within ${STALL_TIMEOUT_MS}ms of query start `
-              + '(blind window — no stream_event partials and no assistant message; '
-              + 'local system/init messages do not count); '
-              + 'interrupting via the stall path (watchdog is now resident for this case)',
-          );
-        }
-        stalled = true;
-        logger.error(
-          { messageCount, model: options.model, stallTimeoutMs: STALL_TIMEOUT_MS, apiBaseUrl: options.env?.ANTHROPIC_BASE_URL },
-          `GLM stall: no content_block_delta for ${STALL_TIMEOUT_MS}ms during in-flight request; interrupting (Issue #3706)`,
-        );
-        queryResult.interrupt().catch((e: unknown) => {
-          logger.warn({ err: e }, 'stall watchdog: queryResult.interrupt() rejected');
-        });
-        // Belt-and-suspenders (review feedback): if interrupt() cannot tear down the
-        // stalled upstream socket, the for-await would never resume. Force-close the
-        // query after a grace so the stream ends instead of hanging for the socket
-        // timeout. No-op if interrupt() already ended the stream (finally clears this).
-        forceCloseTimer = armTimer(() => {
-          forceCloseTimer = null;
-          const maybeClose = (queryResult as { close?: () => void }).close;
-          if (typeof maybeClose === 'function') {
-            try {
-              maybeClose.call(queryResult);
-              logger.warn(
-                { graceMs: STALL_FORCE_CLOSE_GRACE_MS },
-                'stall watchdog: stream did not end within grace after interrupt(); force-closed query',
-              );
-            } catch (e: unknown) {
-              logger.warn({ err: e }, 'stall watchdog: queryResult.close() threw');
-            }
-          }
-        }, STALL_FORCE_CLOSE_GRACE_MS);
-      };
-      const tickWatchdog = (): void => {
-        contentWatchdog = null;
-        if (!requestInFlight || stalled) { return; }
-        // Woke before the window elapsed (content progressed since we scheduled) —
-        // re-arm for the remainder so we still fire at lastProgressMs + timeout.
-        const elapsed = Date.now() - lastProgressMs;
-        if (elapsed < STALL_TIMEOUT_MS) {
-          contentWatchdog = armTimer(tickWatchdog, STALL_TIMEOUT_MS - elapsed);
-          return;
-        }
-        fireWatchdog();
-      };
-      const armContentWatchdog = (): void => {
-        clearContentWatchdog();
-        contentWatchdog = armTimer(tickWatchdog, STALL_TIMEOUT_MS);
-      };
-
+      let partialsObserved = false;
       // Issue #4192 (L1): retry the query on a transient error that occurs
       // BEFORE any SDK message is yielded (messageCount === 0) — nothing has
       // been emitted to the consumer, so a retry can safely replay the buffered
@@ -517,9 +378,6 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         // reset here so each attempt starts clean.
         messageCount = 0;
         partialsObserved = false;
-        requestInFlight = false;
-        stalled = false;
-        lastProgressMs = 0;
         listenersCleanedUp = false;
         if (queryAttempt > 0) {
           // Issue #4322: clear stale stderr from the previous (failed) attempt
@@ -534,19 +392,6 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
             options: sdkOptions as Parameters<typeof query>[0]['options'],
           });
         }
-        // Issue #4442 (part 4): arm the blind window for this attempt. The first
-        // attempt's query was created before adaptIterator() starts (handle.close
-        // must work pre-iteration), so arming here covers every attempt uniformly.
-        // Cancelled on the first message of any kind below; the finally block and
-        // every terminal path also clear it.
-        clearBlindWindow();
-        blindWindowTimer = armTimer(() => {
-          blindWindowTimer = null;
-          // The content watchdog may already be armed (partials flow, an in-flight
-          // request then stalls) — firing here would double-report; the partials
-          // watchdog owns that window. Guarded by requestInFlight inside.
-          fireWatchdog();
-        }, STALL_TIMEOUT_MS);
       try {
         // Issue #4200 part 2: per-query registry of taskId → label, so status-only
         // TaskUpdate calls can recall a subject/activeForm seen on an earlier
@@ -575,45 +420,15 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
 
         for await (const message of queryResult) {
           if (cancelled) {return;}
-          // Issue #3706 (stall): handle stream_event (partial) messages for the
-          // watchdog ONLY — filter them (not adapted/logged/yielded to ChatAgent).
-          // Requires includePartialMessages (set in base-agent createSdkOptions).
+          // Partial stream events are provider-internal and are not user messages.
+          // Claude SDK/CLI owns stream-level retry and liveness; disclaude must not
+          // terminate a turn merely because content deltas pause during backoff.
           if (message.type === 'stream_event') {
             partialsObserved = true;
-            // Issue #4442 (part 4): partials flow → the blind window served its
-            // purpose (the stream is alive); from here the content watchdog owns
-            // stall detection.
-            clearBlindWindow();
-            const et = (message as { event?: { type?: string } }).event?.type;
-            if (et === 'message_start') {
-              requestInFlight = true;
-              lastProgressMs = Date.now();
-              armContentWatchdog();
-            } else if (et === 'content_block_delta') {
-              // Real progress (text/thinking/tool_use delta) — advance the deadline.
-              // Only a timestamp write (no timer churn); the armed timer fires at
-              // lastProgressMs + STALL_TIMEOUT_MS. Thinking deltas count too.
-              if (requestInFlight) { lastProgressMs = Date.now(); }
-            } else if (et === 'message_stop') {
-              requestInFlight = false;
-              clearContentWatchdog();
-            }
-            continue; // filter: partials don't reach ChatAgent
+            continue;
           }
           const now = Date.now();
           messageCount++;
-          // Issue #4442 (part 4): first UPSTREAM message arrived without any
-          // partials (provider doesn't forward them) — the stream is alive, so
-          // the blind window stands down for the rest of this attempt.
-          // ⚠️ assistant-only: verified against the real SDK (2026-08-22, fake
-          // 200-OK-zero-event upstream) that a query's first complete messages are
-          // `system/init` + `system/status` — emitted LOCALLY by the CLI subprocess
-          // at startup, BEFORE the upstream POST is even sent. Cancelling on the
-          // first message of ANY type would spend the blind window within ~200ms of
-          // query start and leave the actual incident pathology (upstream hangs
-          // AFTER init, e.g. litellm 200-OK-zero-content) unprotected. Only an
-          // assistant message is proof the upstream responded.
-          if (message.type === 'assistant') { clearBlindWindow(); }
           // 提前适配,使日志与检测均能复用(D1:保留 system subtype 到 metadata 供诊断)
           // Issue #4200 part 2: thread the per-query task registry so status-only
           // TaskUpdate calls can recall a label seen on an earlier update.
@@ -730,50 +545,16 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         if (cancelled) {
           return;
         }
-        // Issue #4442 (part 4): the attempt's stream ended — the blind window has
-        // no purpose past this point. Clear it NOW rather than waiting for the
-        // retry `continue`/`finally` below, so it can never fire during the retry
-        // backoff delay at an already-closed attempt (an operator combining a short
-        // DISCLAUDE_STALL_TIMEOUT_MS with retries could otherwise hit that window).
-        clearBlindWindow();
-        // Issue #3706 (review): if partials never flowed this turn, the watchdog
-        // was INACTIVE — surface it so operators know stalls won't be caught (e.g.
-        // includePartialMessages ineffective for this provider). This is the
-        // self-announcing signal for the live-validation caveat in the PR review.
-        // (Issue #4442 part 4 note: with the blind-window watchdog, a mid-stream
-        // stall after the first message is still only covered when partials flow;
-        // this line remains the honest signal for that residual gap.)
-        if (!partialsObserved && messageCount > 0) {
-          logger.error(
-            { messageCount, model: options.model, apiBaseUrl: options.env?.ANTHROPIC_BASE_URL },
-            'Issue #3706: stream_event partials never observed this turn — no-content-progress '
-              + 'watchdog was INACTIVE; GLM stalls will not be caught',
-          );
-        }
-        // Issue #3706 (stall): watchdog fired → yield a terminal result.
-        // (Covers the case where interrupt() ended the stream cleanly without throwing.)
-        if (stalled) {
-          clearContentWatchdog();
-          clearForceClose();
-          clearBlindWindow();
-          yield {
-            type: 'result',
-            content: STALL_TERMINATE_NOTICE,
-            role: 'system',
-            metadata: { terminatedReason: 'stall' },
-          };
-          return;
-        }
         // Issue #3003: log iterator completion timing
         const totalMs = Date.now() - queryStartMs;
         // Issue #4442 (part 2): empty stream — the SDK yielded zero messages, so the
         // turn produced no content at all (200-OK-zero-content / empty stream). This is
         // the "silent turn death" mode: the for-await ends cleanly and the turn completes
-        // as if successful, masked by the INFO "iterator completed" line below. Unlike the
-        // stall watchdog (#3706 — which needs stream_event partials that GLM/litellm may
-        // not forward, leaving it blind), this pathology is detectable from messageCount
-        // alone. Elevate to a structured ERROR so the failure is observable in logs
-        // instead of silent (the #4442 ask: 判错/上报 rather than 静默完成).
+        // as if successful, masked by the INFO "iterator completed" line below. A clean
+        // empty-stream completion is detectable from messageCount alone. Elevate it to a
+        // structured ERROR so the failure is observable in logs
+        // instead of silent (the #4442 ask: 判错/上报 rather than 静默完成). A stream
+        // that never ends remains the SDK/CLI's liveness responsibility.
         //
         // Issue #4442 (part 3): recovery — an empty stream is safe to retry in-request
         // for exactly the same reason a pre-first-message transient error is (the #4192
@@ -817,9 +598,6 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
               + '200-OK-zero-content) and retries are exhausted — turn produced no content; '
               + 'yielding terminal empty-stream result (silent turn death → surfaced)',
           );
-          clearContentWatchdog();
-          clearForceClose();
-          clearBlindWindow();
           yield {
             type: 'result',
             content: EMPTY_STREAM_TERMINATE_NOTICE,
@@ -835,20 +613,6 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         return; // success — exit the retry loop + generator (Issue #4192 L1)
       } catch (error) {
         if (cancelled) {return;}
-        // Issue #3706 (stall): the watchdog's interrupt() likely threw into the
-        // for-await — convert to a clean terminal result instead of propagating the error.
-        if (stalled) {
-          clearContentWatchdog();
-          clearForceClose();
-          clearBlindWindow();
-          yield {
-            type: 'result',
-            content: STALL_TERMINATE_NOTICE,
-            role: 'system',
-            metadata: { terminatedReason: 'stall' },
-          };
-          return;
-        }
         // Issue #2920: 将捕获的 stderr 附加到 error 对象
         if (stderrCapture.hasContent()) {
           attachStderrToError(error, stderrCapture.getCaptured());
@@ -896,12 +660,6 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         );
         throw error;
       } finally {
-        clearContentWatchdog();
-        clearForceClose();
-        // Issue #4442 (part 4): `continue` (retry) passes through here between
-        // attempts — clear the spent attempt's blind window before the loop top
-        // re-arms it for the next attempt; terminal paths clear it explicitly too.
-        clearBlindWindow();
         // Issue #3378: Clean up SDK-registered process listeners after query completes.
         // This prevents listener accumulation across multiple queries in long-running
         // processes (e.g., integration test server).

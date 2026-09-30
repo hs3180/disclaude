@@ -19,7 +19,7 @@
  */
 
 import { createLogger } from '../utils/logger.js';
-import { ScheduleFileScanner } from './schedule-watcher.js';
+import { ScheduleFileScanner, type OnScheduleDiagnostic } from './schedule-watcher.js';
 import type { ScheduledTask } from './scheduled-task.js';
 
 const logger = createLogger('ScheduleManager');
@@ -30,6 +30,8 @@ const logger = createLogger('ScheduleManager');
 export interface ScheduleManagerOptions {
   /** Directory for schedule files */
   schedulesDir: string;
+  /** Optional channel/reporting hook for safe configuration diagnostics. */
+  onDiagnostic?: OnScheduleDiagnostic;
 }
 
 /**
@@ -53,7 +55,7 @@ export class ScheduleManager {
   private fileScanner: ScheduleFileScanner;
 
   constructor(options: ScheduleManagerOptions) {
-    this.fileScanner = new ScheduleFileScanner({ schedulesDir: options.schedulesDir });
+    this.fileScanner = new ScheduleFileScanner({ schedulesDir: options.schedulesDir, onDiagnostic: options.onDiagnostic });
     logger.info({ schedulesDir: options.schedulesDir }, 'ScheduleManager initialized (no cache)');
   }
 

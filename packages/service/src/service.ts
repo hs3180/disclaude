@@ -36,6 +36,7 @@ import { ChannelManager } from './channel-manager.js';
 import { InteractiveContextStore } from './interactive-context.js';
 import { AgentPoolMessageHandler } from './messaging/agent-pool-handler.js';
 import { startBrowserRuntime, type BrowserRuntime } from './browser-control/runtime.js';
+import { createScheduleDiagnosticReporter } from './scheduling/schedule-diagnostic-reporter.js';
 
 const logger = createLogger('DisclaudeService');
 
@@ -380,6 +381,15 @@ export class DisclaudeService extends EventEmitter {
     const workspaceDir = Config.getWorkspaceDir();
     const schedulesDir = path.join(workspaceDir, 'schedules');
     const cooldownDir = path.join(schedulesDir, '.cooldown');
+    const onScheduleDiagnostic = createScheduleDiagnosticReporter({
+      sendMessage: (chatId, message) => this.sendMessage(chatId, message),
+      onDeliveryFailure: (taskId, code) => {
+        logger.warn(
+          { taskId, code },
+          'Failed to deliver schedule configuration diagnostic',
+        );
+      },
+    });
 
     logger.info({ schedulesDir }, 'Initializing scheduler...');
 
@@ -395,7 +405,7 @@ export class DisclaudeService extends EventEmitter {
 
     // Step 2: Initialize ScheduleManager
     logger.info('Scheduler init step 2/6: Initializing ScheduleManager');
-    this.scheduleManager = new ScheduleManager({ schedulesDir });
+    this.scheduleManager = new ScheduleManager({ schedulesDir, onDiagnostic: onScheduleDiagnostic });
     logger.info({ schedulesDir }, 'Scheduler init step 2/6: ✓ ScheduleManager ready');
 
     // Step 3: Create callbacks
@@ -420,6 +430,7 @@ export class DisclaudeService extends EventEmitter {
     // arrive during scheduler.start() will now be captured by the watcher.
     this.scheduleFileWatcher = new ScheduleFileWatcher({
       schedulesDir,
+      onDiagnostic: onScheduleDiagnostic,
       onFileAdded: (task: ScheduledTask) => {
         logger.info({ taskId: task.id, name: task.name }, 'Schedule file added, adding to scheduler');
         this.scheduler?.addTask(task);
