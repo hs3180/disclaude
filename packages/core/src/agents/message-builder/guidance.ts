@@ -162,9 +162,9 @@ You are responding inside one specific topic-group thread. Use \`lark-cli\` to i
 
 The injected Thread Context may be absent, partial, or limited to the parent chain; it is not proof that every earlier reply or attachment is present. First inspect it. If the current message depends on missing earlier context (including short follow-ups such as “那这个呢？” or “继续”), proactively retrieve the current thread's messages and relevant replies before answering; the user does not need to explicitly say “look at this thread.” Do not fetch the full thread when the supplied context already contains everything needed.
 
-Use semantic judgment to decide whether the response leaves a concrete choice, clarification, or confirmation that materially changes what should happen next. If the current Tools section exposes send_interactive, offer at most one concise card that preserves the distinct choices; otherwise ask a necessary question in chat or finish without a card. Do not rely on harness-specific rules, regex triggers, or post-response rewriting. Do not add generic next-step menus, repeat a question already answered, or begin optional work before the user chooses.
+Use a concise feedback card when it helps the user make a specific decision or give concrete feedback. This is separate from the proactive Next Step guidance below: a useful contextual follow-through can be suggested even when the current answer leaves no decision or unresolved blocker. If send_interactive is unavailable, state the optional recommendation in chat; ask a question only when a real ambiguity or decision blocks progress. Do not rely on harness-specific rules, regex triggers, or post-response rewriting. Do not add generic menus, repeat a question already answered, or begin optional work before the user chooses.
 
-After completing an action and its post-action verification, check whether the observed result still leaves an important condition unresolved, misses a stated target, fails verification, or remains materially uncertain. If so, offer one short Next Step card in the triggering thread. Name the observed issue and make each button a concrete next action grounded in that evidence. Do not guess at causes or promise an outcome. When verification confirms the goal is complete and no meaningful decision remains, send no follow-up card.
+After responding in this exact thread, proactively look for the most useful next step by considering the user's stated goal, constraints, preferences, prior decisions, and relevant messages, findings, and artifacts in this thread. When a concrete continuation would help, offer one concise Next Step card in the triggering thread—even when the immediate request is complete and nothing failed. Tie it to a specific detail from the thread and briefly explain how it advances the user's goal. Do not wait for an unresolved condition, failed verification, or uncertainty; do not import unrelated history, invent unstated goals, repeat an answered question, or begin optional work before the user chooses. If no useful contextual continuation is apparent, finish naturally.
 
 - List messages and replies in this exact thread; download resources only when relevant:
   \`npx @larksuite/cli im +threads-messages-list --thread <current-message-id> --as bot --download-resources\`
@@ -198,7 +198,8 @@ export function buildNextStepGuidance(supportsCards?: boolean): string {
     'Keep detailed source material and exploration records in the Project archive rather than turning the report into a tool log.',
     'When the user comments, edits the document, or gives feedback in chat, connect it to the affected evidence or claim, preserve user edits, and make any substantive revision visible.',
     'Ask a concrete follow-up when ambiguity could change the judgment; use a structured card only when it materially helps, otherwise ask in chat.',
-    'Cards are for specific feedback, not research navigation or generic next-step menus; do not begin optional work without a user request.',
+    'When the report or Project context points to one useful continuation related to the research question or the user’s stated plan, proactively recommend it and explain the connection; keep it optional and do not begin the work without the user’s request.',
+    'Cards can collect specific feedback or offer one contextual next step; do not use them for research navigation or generic menus.',
   ].join(' ');
   if (supportsCards !== false) {
     return `
@@ -207,7 +208,7 @@ export function buildNextStepGuidance(supportsCards?: boolean): string {
 
 ## Next Steps After Response
 
-Use semantic judgment to decide whether the response leaves a concrete choice, clarification, or confirmation that materially changes what should happen next. After an action and its post-action verification, surface an important unresolved condition, missed target, failed check, or material uncertainty with one concise Next Step card in the triggering thread. Name the observed issue and offer concrete actions grounded in the evidence; do not guess at causes, promise outcomes, add generic menus, repeat a question already answered, or begin optional work before the user chooses. When verification confirms the goal is complete and no meaningful decision remains, finish without a card. If the current channel does not expose send_interactive, ask one necessary question in chat or finish without a card. Do not rely on harness-specific rules, regex triggers, or post-response rewriting.
+At the end of a substantive answer or completed action, proactively identify the most useful next step from the user's stated goal and available context: the current request, relevant conversation or thread, constraints and preferences, prior choices, findings, and artifacts. If a natural, concrete continuation would help, offer one concise Next Step card—even when the immediate request is complete and no issue remains unresolved. Tie the recommendation to a specific contextual detail and briefly say why it advances the stated goal. Do not require a failure, missed target, or uncertainty; do not invent goals, offer generic menus, repeat an answered question, or begin optional work before the user chooses. Skip routine exchanges and finish naturally when no useful contextual next step is apparent. If the current channel does not expose send_interactive, give one concise optional recommendation in chat instead of forcing a question. Do not rely on harness-specific rules, regex triggers, or post-response rewriting.
 
 ${researchGuidance}
 
@@ -258,16 +259,16 @@ Do **NOT** paste raw card fields such as \`content\`/\`format\`/\`elements\` —
 
 ## Next Steps After Response
 
-When a necessary clarification or decision remains, ask one concrete question in chat; otherwise finish the response without generic next-step menus or optional work.
+At the end of a substantive answer or completed action, proactively identify the most useful next step from the user's stated goal, relevant conversation context, constraints, prior choices, findings, and artifacts. When a natural continuation would help, offer one concise, context-grounded recommendation in chat, even if the immediate request is complete; briefly explain why it advances the goal. Ask a question only when a real ambiguity or user decision blocks progress. Do not invent goals, repeat answered questions, add generic menus, or start optional work before the user chooses. Skip routine exchanges and finish naturally when no useful next step is apparent.
 
 ${researchGuidance}
 
 ### Guidelines
 
-- Suggest 2-3 relevant next steps based on the conversation context
-- Make suggestions specific and actionable
-- Format as a simple list
-- Do not append suggestions to a complete answer unless they help the user`;
+- Recommend one next step when it naturally advances the user’s stated goal; ground it in a specific detail from context and say briefly why it helps
+- Make the suggestion specific and actionable, and present it as optional
+- Format it as a concise bullet
+- Include it after a complete answer when the contextual follow-through would still help; skip routine exchanges or cases with no meaningful continuation`;
 }
 
 /**

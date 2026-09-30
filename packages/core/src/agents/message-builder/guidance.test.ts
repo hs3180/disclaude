@@ -120,7 +120,7 @@ describe('buildThreadSelfServiceGuidance (Issue #4402)', () => {
     expect(result).toContain('proactively retrieve');
     expect(result).toContain('another thread');
     expect(result).toContain('rather than guessing');
-    expect(result).toContain('Use semantic judgment');
+    expect(result).toContain('Use a concise feedback card');
     expect(result).toContain('same chat/thread context');
     expect(result).toContain('--action-prompts');
     expect(result).not.toContain('Codex');
@@ -173,20 +173,21 @@ describe('buildNextStepGuidance', () => {
     expect(result).toContain('retry once without it');
   });
 
-  it('offers an evidence-based card only for material unresolved results after verification', () => {
+  it('proactively recommends one contextual next step without requiring unresolved work', () => {
     const result = buildNextStepGuidance(true);
-    expect(result).toContain('post-action verification');
-    expect(result).toContain('important unresolved condition');
-    expect(result).toContain('grounded in the evidence');
-    expect(result).toContain('do not guess at causes');
-    expect(result).toContain('goal is complete and no meaningful decision remains');
+    expect(result).toContain('proactively identify the most useful next step');
+    expect(result).toContain('constraints and preferences, prior choices, findings, and artifacts');
+    expect(result).toContain('even when the immediate request is complete');
+    expect(result).toContain('Tie the recommendation to a specific contextual detail');
+    expect(result).toContain('Do not require a failure, missed target, or uncertainty');
   });
 
-  it('keeps the same unresolved-result guard in topic-thread guidance', () => {
+  it('grounds topic-thread next steps in this thread and allows useful follow-through', () => {
     const result = buildThreadSelfServiceGuidance();
-    expect(result).toContain('post-action verification');
-    expect(result).toContain('in the triggering thread');
-    expect(result).toContain('goal is complete and no meaningful decision remains');
+    expect(result).toContain('most useful next step');
+    expect(result).toContain('in this exact thread');
+    expect(result).toContain('even when the immediate request is complete and nothing failed');
+    expect(result).toContain('specific detail from the thread');
   });
 
   it('should include interactive card template when cards are supported', () => {
@@ -195,17 +196,18 @@ describe('buildNextStepGuidance', () => {
     expect(result).toContain('actionPrompts');
     expect(result).toContain('interactive card');
     expect(result).toContain('--idempotency-key');
-    expect(result).toContain('semantic judgment');
+    expect(result).toContain('proactively identify the most useful next step');
     expect(result).not.toContain('Codex');
   });
 
-  it('should include simple list fallback when cards are not supported', () => {
+  it('should include one contextual recommendation when cards are not supported', () => {
     const result = buildNextStepGuidance(false);
     expect(result).toContain('Next Steps After Response');
     expect(result).not.toContain('actionPrompts');
     expect(result).not.toContain('interactive card');
-    expect(result).toContain('simple list');
-    expect(result).toContain('necessary clarification');
+    expect(result).toContain('concise bullet');
+    expect(result).toContain('one concise, context-grounded recommendation');
+    expect(result).toContain('even if the immediate request is complete');
     expect(result).not.toContain('Codex');
   });
 
