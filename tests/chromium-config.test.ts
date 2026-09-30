@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, statSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -43,6 +43,22 @@ describe('persistent Chromium configuration', () => {
     expect(chromiumConfigPath({ XDG_CONFIG_HOME: '/config' })).toBe('/config/disclaude/chromium-cdp.json');
     expect(() => chromiumConfigPath({ DISCLAUDE_CHROMIUM_CONFIG: './browser.json' })).toThrow('absolute');
   });
+
+  it('keeps an existing macOS Application Support config on upgrade unless XDG is explicit', () => sandbox(dir => {
+    const xdgPath = join(dir, '.config/disclaude/chromium-cdp.json');
+    const legacyPath = join(dir, 'Library/Application Support/disclaude/chromium-cdp.json');
+    mkdirSync(join(dir, 'Library/Application Support/disclaude'), { recursive: true });
+    writeFileSync(legacyPath, JSON.stringify({ version: 1, environment: { CHROMIUM_CDP_PORT: '9223' } }));
+
+    expect(chromiumConfigPath({}, dir, 'darwin')).toBe(legacyPath);
+    expect(chromiumConfigPath({}, dir, 'linux')).toBe(xdgPath);
+    expect(chromiumConfigPath({ XDG_CONFIG_HOME: join(dir, 'custom-config') }, dir, 'darwin'))
+      .toBe(join(dir, 'custom-config/disclaude/chromium-cdp.json'));
+
+    mkdirSync(join(dir, '.config/disclaude'), { recursive: true });
+    writeFileSync(xdgPath, JSON.stringify({ version: 1, environment: { CHROMIUM_CDP_PORT: '9444' } }));
+    expect(chromiumConfigPath({}, dir, 'darwin')).toBe(xdgPath);
+  }));
 
   it('restores the selected browser/profile/port in a fresh process from another cwd', () => sandbox(dir => {
     const file = join(dir, 'config/browser.json');

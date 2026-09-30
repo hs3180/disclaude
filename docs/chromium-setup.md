@@ -61,6 +61,14 @@ selection, executable availability, profile, and relevant version/lock metadata.
 A `SingletonLock` marker does not prove that its owner is alive. Status does not
 open the profile, read cookies, change the service or remove locks.
 
+`disclaude chromium-cdp doctor` is also read-only and reports configuration,
+service state, CDP reachability, and repair hints. Inside Docker, it reports the
+service as external and leaves `cdpReady` unknown because the host cannot verify
+which process owns the container's listener. On macOS, an existing legacy
+`~/Library/Application Support/disclaude/chromium-cdp.json` remains readable
+when the default XDG config file is absent; an explicit config path or
+`XDG_CONFIG_HOME` takes precedence.
+
 Configuration metadata can differ from a service that was already loaded when
 files were externally changed. Restart through the service adapter after an
 intentional configuration change; do not infer the loaded process's settings

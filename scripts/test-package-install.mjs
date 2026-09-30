@@ -138,6 +138,8 @@ async function verifyPackage() {
   assert.match(run(cli, ['start', '--help']), /Usage:/i);
   assert.match(run(cli, ['channel', '--help']), /Usage:/i);
   assert.match(run(cli, ['chromium-cdp', 'setup', '--help']), /--download/);
+  assert.match(run(cli, ['chromium-cdp', 'status', '--help']), /Read-only/u);
+  assert.match(run(cli, ['chromium-cdp', 'doctor', '--help']), /Read-only/u);
   assert.match(run(join(prefix, 'bin/disclaude'), ['--help']), /Usage:/i);
   assert.deepEqual(Object.keys(pkg.bin), ['disclaude']);
   assert(!existsSync(join(installed, 'packages/primary-node')));

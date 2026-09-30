@@ -55,6 +55,7 @@ test('generates a standalone manifest and excludes untracked resources', () => {
   write('bin/disclaude.js', "const route = 'node_modules/@disclaude/service/dist/cli.js';");
   write('scripts/launchd.mjs', "import './chromium-config.mjs';");
   write('scripts/chromium-config.mjs', 'export {};');
+  write('scripts/chromium-diagnose.mjs', 'export const readOnly = true;');
   write('skills/example/SKILL.md', 'tracked skill');
   write('scripts/browser-use-smoke.sh', '#!/bin/bash\nexit 0');
   write('scripts/browser-use-smoke-daemon.py', 'pass');
@@ -111,6 +112,7 @@ test('generates a standalone manifest and excludes untracked resources', () => {
   assert(manifest.files.includes('README.md'));
   assert(manifest.files.includes('CHANGELOG.md'));
   assert(existsSync(join(output, 'scripts/chromium-config.mjs')));
+  assert(existsSync(join(output, 'scripts/chromium-diagnose.mjs')));
   assert(!existsSync(join(output, 'packages/core/dist/index.test.js')));
   assert(existsSync(join(output, 'docker/start-chromium.sh')));
   assert(existsSync(join(output, 'docker-compose.yml')));

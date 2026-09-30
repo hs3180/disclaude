@@ -52,6 +52,7 @@ export function sourceFingerprint(root) {
       'scripts/chromium-setup.mjs',
       'scripts/chromium-download.mjs',
       'scripts/chromium-status.mjs',
+      'scripts/chromium-diagnose.mjs',
       'scripts/chromium-profile.mjs',
     ],
     { cwd: root, encoding: 'utf8' }
@@ -163,6 +164,7 @@ export function generateRelease(root, output) {
       'scripts/chromium-setup.mjs',
       'scripts/chromium-download.mjs',
       'scripts/chromium-status.mjs',
+      'scripts/chromium-diagnose.mjs',
       'scripts/chromium-profile.mjs',
   ]) {
     if (!existsSync(join(root, path))) continue;
