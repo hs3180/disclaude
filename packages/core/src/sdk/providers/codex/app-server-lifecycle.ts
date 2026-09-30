@@ -5,6 +5,7 @@ import {
 } from './app-server-transport.js';
 
 import type { AgentInputRequest } from '../../user-input.js';
+import type { CodexReasoningEffort } from '../../../config/types.js';
 import { CodexAsyncUserInput } from './async-user-input.js';
 export type CodexAppServerSessionState = 'idle' | 'active' | 'waiting-user' | 'uncertain';
 
@@ -53,6 +54,18 @@ interface TurnResponse {
   turnId?: string;
 }
 
+interface CodexModelCatalogEntry {
+  id?: string;
+  model?: string;
+  isDefault?: boolean;
+  supportedReasoningEfforts?: Array<{ reasoningEffort?: string }>;
+}
+
+interface CodexModelListResponse {
+  data?: CodexModelCatalogEntry[];
+  nextCursor?: string | null;
+}
+
 /** Owns app-server thread/turn identity; it never retries an uncertain turn. */
 export class CodexAppServerLifecycle {
   private readonly transport: CodexAppServerTransport;
@@ -66,6 +79,7 @@ export class CodexAppServerLifecycle {
   private initializeFlight?: Promise<void>;
   private readonly pendingInputs = new Set<AgentInputRequest>();
   private readonly asyncInputs: CodexAsyncUserInput;
+  private readonly reasoningEffortsByModel = new Map<string, Set<string>>();
 
   constructor(options: CodexAppServerTransportOptions = {}) {
     this.interruptTimeoutMs = options.requestTimeoutMs ?? 10000;
@@ -177,6 +191,8 @@ export class CodexAppServerLifecycle {
       sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
       networkAccess?: boolean;
       cwd?: string;
+      model?: string;
+      reasoningEffort?: CodexReasoningEffort;
     } = {},
   ): Promise<string> {
     const session = this.requireSession(sessionKey);
@@ -186,11 +202,16 @@ export class CodexAppServerLifecycle {
     if (session.activeTurnId) {
       throw new Error(`app-server session already has active turn ${session.activeTurnId}`);
     }
+    if (options.reasoningEffort) {
+      await this.validateReasoningEffort(options.model, options.reasoningEffort);
+    }
     session.state = 'uncertain';
     try {
       const response = (await this.transport.request('turn/start', {
         threadId: session.threadId,
         input: [{ type: 'text', text: input }],
+        ...(options.model ? { model: options.model } : {}),
+        ...(options.reasoningEffort ? { effort: options.reasoningEffort } : {}),
         approvalPolicy: 'never',
         sandboxPolicy: options.sandbox === 'danger-full-access'
           ? { type: 'dangerFullAccess' }
@@ -221,6 +242,48 @@ export class CodexAppServerLifecycle {
       // The request may have reached Codex before the transport failed.
       // Keep `uncertain`: callers must reconcile, never replay silently.
       throw error;
+    }
+  }
+
+  private async validateReasoningEffort(model: string | undefined, effort: CodexReasoningEffort): Promise<void> {
+    const cacheKey = model ?? '<default>';
+    let supported = this.reasoningEffortsByModel.get(cacheKey);
+    if (!supported) {
+      let cursor: string | undefined;
+      let selected: CodexModelCatalogEntry | undefined;
+      for (let pageNumber = 0; pageNumber < 10; pageNumber++) {
+        let page: CodexModelListResponse;
+        try {
+          page = await this.transport.request('model/list', cursor ? { cursor } : {}) as CodexModelListResponse;
+        } catch {
+          throw new Error(
+            `Cannot verify Codex reasoning effort "${effort}": the app-server model catalog is unavailable. ` +
+            'Update the Codex CLI or unset agent.codex.reasoningEffort.'
+          );
+        }
+        const models = Array.isArray(page?.data) ? page.data : [];
+        selected = model
+          ? models.find(item => item.model === model || item.id === model)
+          : models.find(item => item.isDefault);
+        if (selected) {
+          break;
+        }
+        cursor = typeof page?.nextCursor === 'string' && page.nextCursor ? page.nextCursor : undefined;
+        if (!cursor) {
+          break;
+        }
+      }
+      const selectedModel = selected?.model ?? selected?.id;
+      if (!selected || !selectedModel || !Array.isArray(selected.supportedReasoningEfforts)) {
+        throw new Error(`Cannot verify Codex reasoning effort "${effort}": model "${model ?? 'Codex CLI default'}" is absent from the app-server model catalog. Choose a listed model or unset agent.codex.reasoningEffort.`);
+      }
+      supported = new Set(selected.supportedReasoningEfforts
+        .map(item => item.reasoningEffort)
+        .filter((value): value is string => typeof value === 'string' && value.length > 0));
+      this.reasoningEffortsByModel.set(cacheKey, supported);
+    }
+    if (!supported.has(effort)) {
+      throw new Error(`Codex model "${model ?? 'Codex CLI default'}" does not support reasoning effort "${effort}"; supported values: ${[...supported].join(', ') || 'none listed'}.`);
     }
   }
 

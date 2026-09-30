@@ -25,6 +25,7 @@ import type { UserInput } from '../../types.js';
 import { createInterface } from 'node:readline';
 
 import { createLogger } from '../../../utils/logger.js';
+import type { CodexReasoningEffort } from '../../../config/types.js';
 import type { CodexSandboxLevel } from './sandbox-policy.js';
 import type { CodexThreadEvent } from './exec-adapter.js';
 
@@ -63,6 +64,8 @@ export interface CodexExecRunOptions {
   cwd?: string;
   /** Model passthrough (`-m`). */
   model?: string;
+  /** Explicit model-specific reasoning effort (`-c model_reasoning_effort=...`). */
+  reasoningEffort?: CodexReasoningEffort;
   /**
    * Resume an existing codex session instead of starting a new one
    * (Issue #4628, S3): argv becomes `codex exec resume <id> -- <prompt>`.
@@ -177,6 +180,7 @@ export class CodexExecRunner {
           ...CODEX_BROWSER_DISABLE_ARGS,
           ...(options.fullAccess ? ['--dangerously-bypass-approvals-and-sandbox'] : []),
           ...(options.model ? ['-m', options.model] : []),
+          ...(options.reasoningEffort ? ['-c', `model_reasoning_effort="${options.reasoningEffort}"`] : []),
           ...(options.sandboxMode ? ['-c', `sandbox_mode=${options.sandboxMode}`] : []),
           ...((options.networkAccess ?? this.defaultNetworkAccess) !== undefined
             ? [
@@ -195,6 +199,7 @@ export class CodexExecRunner {
           ...CODEX_BROWSER_DISABLE_ARGS,
           ...(options.fullAccess ? ['--dangerously-bypass-approvals-and-sandbox'] : []),
           ...(options.model ? ['-m', options.model] : []),
+          ...(options.reasoningEffort ? ['-c', `model_reasoning_effort="${options.reasoningEffort}"`] : []),
           ...(options.sandboxMode ? ['-s', options.sandboxMode] : []),
           ...((options.networkAccess ?? this.defaultNetworkAccess) !== undefined
             ? [

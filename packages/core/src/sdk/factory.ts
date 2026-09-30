@@ -38,6 +38,10 @@ const providerRegistry = new Map<ProviderType, ProviderFactory>([
         maxActiveSessions: Config.CODEX_MAX_ACTIVE_SESSIONS,
         maxConcurrentRuns: Config.CODEX_MAX_CONCURRENT_RUNS,
         transport: Config.CODEX_TRANSPORT,
+        model: Config.CODEX_MODEL || undefined,
+        modelSource: Config.CODEX_MODEL_SOURCE,
+        reasoningEffort: Config.CODEX_REASONING_EFFORT,
+        reasoningEffortSource: Config.CODEX_REASONING_EFFORT_SOURCE,
       }),
   ],
   ['deepseek', () => new DeepSeekHarnessProvider({

@@ -15,6 +15,7 @@ import type {
   ConfigValidationError,
 } from './types.js';
 import { resolveAgentPreset, validateAgentPresets } from './agent-presets.js';
+import { isCodexReasoningEffort, resolveCodexModelSetting } from './codex-settings.js';
 
 const logger = createLogger('ConfigLoader');
 
@@ -165,6 +166,7 @@ export function validateConfig(config: DisclaudeConfig): boolean {
 
   // S01: validate named backend/model presets without changing the legacy
   // single-agent fallback path. Runtime selection is layered on afterwards.
+  const defaultPreset = config.agents ? resolveAgentPreset(config.agents) : undefined;
   if (config.agents !== undefined) {
     const result = validateAgentPresets(config.agents);
     if (!result.ok) {
@@ -177,22 +179,63 @@ export function validateConfig(config: DisclaudeConfig): boolean {
   // not through disclaude's GLM/Anthropic API configuration. Keep accepting
   // legacy provider fields for migration, but make the ignored settings
   // explicit so a deployment cannot silently use a different model backend.
-  if (config.agent?.agentBackend === 'codex') {
-    if (config.agent.provider || config.glm?.apiKey || config.glm?.model) {
+  const usesCodex = config.agent?.agentBackend === 'codex' ||
+    (defaultPreset?.ok && defaultPreset.preset.agentBackend === 'codex');
+  if (usesCodex) {
+    const environmentModel = process.env.CODEX_MODEL?.trim() || config.env?.CODEX_MODEL;
+    const environmentEffort = process.env.CODEX_REASONING_EFFORT?.trim() || config.env?.CODEX_REASONING_EFFORT;
+    const codexModel = config.agent?.codex?.model;
+    if (codexModel !== undefined && (typeof codexModel !== 'string' || !isCodexModel(codexModel))) {
+      logger.error('agent.codex.model must be a Codex/ChatGPT model (expected gpt-5.x or newer)');
+      return false;
+    }
+    if (environmentModel?.trim() && !isCodexModel(environmentModel.trim())) {
+      logger.error('CODEX_MODEL must be a Codex/ChatGPT model (expected gpt-5.x or newer)');
+      return false;
+    }
+    const configuredEffort = config.agent?.codex?.reasoningEffort;
+    if (configuredEffort !== undefined && !isCodexReasoningEffort(configuredEffort)) {
+      logger.error('agent.codex.reasoningEffort must be one of: minimal, low, medium, high, xhigh, max, ultra');
+      return false;
+    }
+    if (environmentEffort?.trim() && !isCodexReasoningEffort(environmentEffort.trim())) {
+      logger.error('CODEX_REASONING_EFFORT must be one of: minimal, low, medium, high, xhigh, max, ultra');
+      return false;
+    }
+
+    const resolvedModel = resolveCodexModelSetting({
+      environment: environmentModel,
+      configured: codexModel,
+      legacyAgent: config.agent?.model,
+      legacyPreset: defaultPreset?.ok && defaultPreset.preset.agentBackend === 'codex'
+        ? defaultPreset.preset.model : undefined,
+    });
+    if (resolvedModel.value && !isCodexModel(resolvedModel.value)) {
+      logger.error(`${resolvedModel.source} must be a Codex/ChatGPT model (expected gpt-5.x or newer)`);
+      return false;
+    }
+
+    const legacyModels: Array<[string, string | undefined]> = [
+      ['agent.model', config.agent?.model],
+      ['agents.default.model', defaultPreset?.ok && defaultPreset.preset.agentBackend === 'codex'
+        ? defaultPreset.preset.model : undefined],
+    ];
+    for (const [source, model] of legacyModels) {
+      if (model?.trim() && model.trim() !== resolvedModel.value) {
+        logger.warn({ source, effectiveSource: resolvedModel.source },
+          `Codex model conflict: ${source} is ignored; remove the duplicate and keep the effective model in ${resolvedModel.source}`);
+      }
+    }
+
+    if (config.agent?.provider || config.glm?.apiKey || config.glm?.model) {
       logger.warn(
         {
-          provider: config.agent.provider,
+          provider: config.agent?.provider,
           hasGlmApiKey: Boolean(config.glm?.apiKey),
           hasGlmModel: Boolean(config.glm?.model),
         },
         'agentBackend: codex uses the ChatGPT OAuth session; agent.provider and glm settings are ignored'
       );
-    }
-    if (config.agent.model && !isCodexModel(config.agent.model)) {
-      logger.error(
-        `agent.model must be a Codex/ChatGPT model (expected gpt-5.x or newer, got "${config.agent.model}")`
-      );
-      return false;
     }
   }
 

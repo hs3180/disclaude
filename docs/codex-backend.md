@@ -31,16 +31,43 @@ docker compose run --rm service codex login --device-auth
 ```yaml
 agent:
   agentBackend: codex
-  model: your-codex-model-id
   codex:
+    model: gpt-5.6-luna
+    reasoningEffort: high # optional; must be supported by this model
     transport: app-server # optional; default: exec
     maxActiveSessions: 3  # optional
     maxConcurrentRuns: 2  # optional
 ```
 
-Choose a model supported by the installed Codex CLI and the signed-in account.
+`agent.codex.model` is the canonical model setting. `CODEX_MODEL` overrides it;
+the legacy `agent.model` and a default Codex preset's `model` remain fallback
+sources for existing configurations. If multiple legacy and canonical values
+conflict, the selected source wins and startup warns which duplicate setting to
+remove. A named agent preset can still select its own model for that chat.
+
+The precedence for a run is a selected per-chat/per-turn model, then a
+per-query `CODEX_MODEL`, the process `CODEX_MODEL`, the resolved configuration
+setting, and finally the Codex CLI default. Avoid setting the same model in
+several places; use the resolved run log to see the effective model and source.
 Do not configure `agent.provider` or an Anthropic-compatible API key to select
 the Codex model.
+
+When no Disclaude model override is set, the Codex CLI keeps its own model
+selection from `CODEX_HOME/config.toml` or its built-in default. An explicit
+resolved model is passed as `codex exec -m`; an explicit effort is passed as
+`-c model_reasoning_effort=...`, so these run options take precedence over the
+Codex CLI config file.
+
+Set `agent.codex.reasoningEffort` or `CODEX_REASONING_EFFORT` to request an
+explicit effort. Supported labels exposed by current Codex model catalogs
+include `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, and `ultra`; each
+model exposes only a subset. App-server checks the selected model's catalog
+before starting a turn and reports unsupported pairs. With `exec`, the value is
+passed to Codex CLI as `model_reasoning_effort`; the CLI validates it. If unset,
+Disclaude leaves the model's Codex CLI default unchanged. `CODEX_REASONING_EFFORT`
+overrides the YAML value. Precedence is a per-turn `reasoningEffort` option,
+per-query `CODEX_REASONING_EFFORT`, process `CODEX_REASONING_EFFORT`, the YAML
+setting, then the selected model's Codex CLI default.
 
 The default `exec` transport runs non-interactive turns. Set
 `agent.codex.transport: app-server` when using Codex's structured

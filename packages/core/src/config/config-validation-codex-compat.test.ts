@@ -28,4 +28,34 @@ describe('Codex backend compatibility (Issue #4637)', () => {
     } as DisclaudeConfig)).toBe(true);
     spy.mockRestore();
   });
+
+  it('validates the Codex reasoning-effort vocabulary and accepts current extended levels', () => {
+    for (const reasoningEffort of ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']) {
+      expect(validateConfig({ agent: {
+        agentBackend: 'codex', codex: { reasoningEffort },
+      } } as DisclaudeConfig)).toBe(true);
+    }
+    expect(validateConfig({ agent: {
+      agentBackend: 'codex', codex: { reasoningEffort: 'turbo' },
+    } } as unknown as DisclaudeConfig)).toBe(false);
+  });
+
+  it('validates the selected model and reasoning effort environment overrides', () => {
+    vi.stubEnv('CODEX_MODEL', 'claude-sonnet-4');
+    expect(validateConfig({ agent: { agentBackend: 'codex' } } as DisclaudeConfig)).toBe(false);
+    vi.stubEnv('CODEX_MODEL', 'gpt-5.6-luna');
+    vi.stubEnv('CODEX_REASONING_EFFORT', 'turbo');
+    expect(validateConfig({ agent: { agentBackend: 'codex' } } as DisclaudeConfig)).toBe(false);
+    vi.unstubAllEnvs();
+  });
+
+  it('accepts configured environment fallbacks when process overrides are blank', () => {
+    vi.stubEnv('CODEX_MODEL', '');
+    vi.stubEnv('CODEX_REASONING_EFFORT', '');
+    expect(validateConfig({
+      env: { CODEX_MODEL: 'gpt-5.6-luna', CODEX_REASONING_EFFORT: 'high' },
+      agent: { agentBackend: 'codex' },
+    } as DisclaudeConfig)).toBe(true);
+    vi.unstubAllEnvs();
+  });
 });

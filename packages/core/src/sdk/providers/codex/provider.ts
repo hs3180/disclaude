@@ -51,6 +51,12 @@ import { delimiter, join } from 'node:path';
 
 import { createLogger } from '../../../utils/logger.js';
 import { Config } from '../../../config/index.js';
+import {
+  isCodexReasoningEffort,
+  type CodexEffortSource,
+  type CodexModelSource,
+} from '../../../config/codex-settings.js';
+import type { CodexReasoningEffort } from '../../../config/types.js';
 import type { IAgentSDKProvider } from '../../interface.js';
 import type {
   AgentMessage,
@@ -159,6 +165,14 @@ function codexModelForChatGpt(model: string | undefined): string | undefined {
  * inject a fake env pointing at temp fixtures instead of mocking fs/spawn.
  */
 export interface CodexAgentProviderOptions {
+  /** Default model resolved from the unified Codex model configuration. */
+  model?: string;
+  /** Source of the resolved default model, for actionable run readback. */
+  modelSource?: CodexModelSource;
+  /** Default explicit model reasoning effort; unset defers to Codex config/model defaults. */
+  reasoningEffort?: CodexReasoningEffort;
+  /** Source of the resolved default effort, for actionable run readback. */
+  reasoningEffortSource?: CodexEffortSource;
   /** Explicit opt-in; `exec` remains the default compatibility transport. */
   transport?: 'exec' | 'app-server';
   /** Environment used for resolution + child spawn. Default: process.env. */
@@ -194,6 +208,10 @@ export class CodexAgentProvider implements IAgentSDKProvider {
   readonly version = '0.6.0-forget-session';
 
   private readonly env: Record<string, string | undefined>;
+  private readonly model: string | undefined;
+  private readonly modelSource: CodexModelSource;
+  private readonly reasoningEffort: CodexReasoningEffort | undefined;
+  private readonly reasoningEffortSource: CodexEffortSource;
   private readonly sandboxOverride: CodexSandboxLevel | undefined;
   private readonly fullAccess: boolean;
   private readonly networkAccess: boolean;
@@ -233,6 +251,10 @@ export class CodexAgentProvider implements IAgentSDKProvider {
 
   constructor(options: CodexAgentProviderOptions = {}) {
     this.env = options.env ?? process.env;
+    this.model = options.model ?? (Config.CODEX_MODEL || undefined);
+    this.modelSource = options.modelSource ?? Config.CODEX_MODEL_SOURCE;
+    this.reasoningEffort = options.reasoningEffort ?? Config.CODEX_REASONING_EFFORT;
+    this.reasoningEffortSource = options.reasoningEffortSource ?? Config.CODEX_REASONING_EFFORT_SOURCE;
     this.sandboxOverride = options.sandboxOverride;
     this.fullAccess = options.fullAccess ?? false;
     this.networkAccess = options.networkAccess ?? true;
@@ -368,6 +390,43 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       throw new Error(BINARY_MISSING(this.env.PATH ?? ''));
     }
 
+    const queryModel = options.model?.trim();
+    const queryEnvironmentModel = options.env?.CODEX_MODEL?.trim();
+    const providerEnvironmentModel = this.env.CODEX_MODEL?.trim();
+    const configuredModel = this.model;
+    const selectedModel = queryModel || queryEnvironmentModel || providerEnvironmentModel || configuredModel;
+    const codexModel = codexModelForChatGpt(selectedModel || undefined);
+    const modelSource = !codexModel
+      ? 'codex-cli-default'
+      : queryModel
+        ? queryModel === configuredModel ? this.modelSource : 'AgentQueryOptions.model'
+        : queryEnvironmentModel
+          ? 'query CODEX_MODEL'
+          : providerEnvironmentModel
+            ? 'environment'
+            : this.modelSource;
+    const rawEffort = options.reasoningEffort ?? options.env?.CODEX_REASONING_EFFORT?.trim() ??
+      this.env.CODEX_REASONING_EFFORT?.trim() ?? this.reasoningEffort;
+    if (rawEffort && !isCodexReasoningEffort(rawEffort)) {
+      throw new Error('Codex reasoning effort must be one of: minimal, low, medium, high, xhigh, max, ultra');
+    }
+    const requestedEffort = rawEffort as CodexReasoningEffort | undefined;
+    const reasoningEffortSource = !requestedEffort
+      ? 'codex-cli-model-default'
+      : options.reasoningEffort
+        ? 'AgentQueryOptions.reasoningEffort'
+        : options.env?.CODEX_REASONING_EFFORT?.trim()
+          ? 'query CODEX_REASONING_EFFORT'
+          : this.env.CODEX_REASONING_EFFORT?.trim()
+            ? 'environment'
+            : this.reasoningEffortSource;
+    logger.info({
+      model: codexModel ?? 'codex-cli-default',
+      modelSource,
+      reasoningEffort: requestedEffort ?? null,
+      reasoningEffortSource,
+    }, 'resolved Codex run model settings');
+
     // Permission gate → sandbox level (Issue #4631, S4): resolved once per
     // stream (options are constant across turns); throws synchronously with
     // an actionable message when the policy cannot be honored headlessly
@@ -402,17 +461,16 @@ export class CodexAgentProvider implements IAgentSDKProvider {
 
     const skillsManifest = this.skillsManifestFor(options.projectRoot ?? options.cwd, options.cwd ?? process.cwd());
     if (this.transportMode === 'app-server') {
-      return this.queryAppServer(input, options, sandboxDecision.sandbox, binary, skillsManifest);
+      return this.queryAppServer(input, options, sandboxDecision.sandbox, binary, skillsManifest, codexModel, requestedEffort);
     }
 
     const runner = new CodexExecRunner({
       binary,
       networkAccess: this.networkAccess,
     });
-    const codexModel = codexModelForChatGpt(options.model);
-    if (options.model && codexModel === undefined) {
+    if ((options.model || this.model) && codexModel === undefined) {
       logger.warn(
-        { configuredModel: options.model },
+        { configuredModel: options.model || this.model },
         'ignoring legacy gpt-5.1-codex model for ChatGPT-backed Codex; using the CLI default'
       );
     }
@@ -762,6 +820,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             fullAccess,
             cwd: options.cwd,
             model: codexModel,
+            reasoningEffort: requestedEffort,
             env: { ...providerEnv, ...options.env },
             stderr: options.stderr,
           },
@@ -1051,6 +1110,8 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     sandbox: CodexSandboxLevel,
     binary: string,
     skillsManifest: string,
+    codexModel: string | undefined,
+    reasoningEffort: CodexReasoningEffort | undefined,
   ): StreamQueryResult {
     let lifecycle: CodexAppServerLifecycle | undefined;
     const sessionKey = options.sessionKey ?? `anon-app-${++this.anonSessionCounter}`;
@@ -1271,7 +1332,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               push({ type: 'status', role: 'system', content: request.isBlocking ? '等待你回答卡片中的问题。' : '有问题等待回答；任务仍在继续。' });
               await options.onUserInput({ ...request, respond: async answers => { await request.respond(answers); finish(); } }, next.value.inputContext);
             } : undefined);
-            threadId = await lifecycle.ensureThread(sessionKey, { threadId, cwd: options.cwd, model: codexModelForChatGpt(options.model), sandbox });
+            threadId = await lifecycle.ensureThread(sessionKey, { threadId, cwd: options.cwd, model: codexModel, sandbox });
             if (this.appServerLifecycles.get(sessionKey) === lifecycle) {this.appServerThreadIds.set(sessionKey, threadId);}
             if (stopped || this.disposed) {break;}
             this.appServerRoutes.set(threadId, onNotification);
@@ -1286,6 +1347,8 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               sandbox,
               networkAccess: this.networkAccess,
               cwd: options.cwd,
+              model: codexModel,
+              reasoningEffort,
               }
             );
             bindTurn(activeTurnId);

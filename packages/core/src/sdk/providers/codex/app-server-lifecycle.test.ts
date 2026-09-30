@@ -21,6 +21,64 @@ afterEach(() => {
 });
 
 describe('CodexAppServerLifecycle', () => {
+  it('checks the selected model catalog and forwards a supported reasoning effort', async () => {
+    const binary = fixture(`
+read initialize; echo '{"id":1,"result":{}}'
+read initialized
+read thread; echo '{"id":2,"result":{"thread":{"id":"thread-1"}}}'
+read catalog; echo '{"id":3,"result":{"data":[{"id":"gpt-5.6-luna","model":"gpt-5.6-luna","isDefault":true,"supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"high"}]}]}}'
+read start; printf '%s' "$start" > "$(dirname "$0")/start"; echo '{"id":4,"result":{"turn":{"id":"turn-1"}}}'
+while :; do sleep 1; done
+`);
+    const lifecycle = new CodexAppServerLifecycle({ binary });
+    try {
+      await lifecycle.ensureThread('chat-1', { model: 'gpt-5.6-luna' });
+      await expect(lifecycle.startTurn('chat-1', 'reason deeply', {
+        model: 'gpt-5.6-luna', reasoningEffort: 'high',
+      })).resolves.toBe('turn-1');
+      expect(JSON.parse(readFileSync(join(dirname(binary), 'start'), 'utf8')).params)
+        .toMatchObject({ model: 'gpt-5.6-luna', effort: 'high' });
+    } finally { await lifecycle.close(); }
+  });
+
+  it('rejects an effort absent from the selected model catalog before starting a turn', async () => {
+    const binary = fixture(`
+read initialize; echo '{"id":1,"result":{}}'
+read initialized
+read thread; echo '{"id":2,"result":{"thread":{"id":"thread-1"}}}'
+read catalog; echo '{"id":3,"result":{"data":[{"id":"gpt-5.6-mini","model":"gpt-5.6-mini","isDefault":true,"supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"high"}]}]}}'
+read unexpected; echo '{"id":4,"result":{"turn":{"id":"must-not-start"}}}'
+`);
+    const lifecycle = new CodexAppServerLifecycle({ binary });
+    try {
+      await lifecycle.ensureThread('chat-1', { model: 'gpt-5.6-mini' });
+      await expect(lifecycle.startTurn('chat-1', 'unsupported', {
+        model: 'gpt-5.6-mini', reasoningEffort: 'ultra',
+      })).rejects.toThrow('does not support reasoning effort "ultra"; supported values: low, high');
+      expect(lifecycle.snapshot('chat-1')?.state).toBe('idle');
+    } finally { await lifecycle.close(); }
+  });
+
+  it('reports an unavailable model catalog without leaking transport details', async () => {
+    const binary = fixture(`
+read initialize; echo '{"id":1,"result":{}}'
+read initialized
+read thread; echo '{"id":2,"result":{"thread":{"id":"thread-1"}}}'
+read catalog; echo '{"id":3,"error":{"code":-32601,"message":"not authorized: bearer secret"}}'
+`);
+    const lifecycle = new CodexAppServerLifecycle({ binary });
+    try {
+      await lifecycle.ensureThread('chat-1', { model: 'gpt-5.6-luna' });
+      await expect(lifecycle.startTurn('chat-1', 'verify effort', {
+        model: 'gpt-5.6-luna', reasoningEffort: 'high',
+      })).rejects.toThrow(
+        'Cannot verify Codex reasoning effort "high": the app-server model catalog is unavailable. ' +
+        'Update the Codex CLI or unset agent.codex.reasoningEffort.'
+      );
+      expect(lifecycle.snapshot('chat-1')?.state).toBe('idle');
+    } finally { await lifecycle.close(); }
+  });
+
   it('routes async questions to the host and steers only their existing turn', async () => {
     const binary = fixture(`
 read initialize; echo '{"id":1,"result":{}}'

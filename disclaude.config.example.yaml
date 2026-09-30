@@ -58,6 +58,8 @@ agent:
   # evicted (LRU) — the evicted chat resumes its conversation on its next
   # message; only a user /reset truly starts fresh.
   # codex:
+  #   model: "gpt-5.6-luna"  # Canonical model; CODEX_MODEL overrides it
+  #   reasoningEffort: high # Optional; supported labels vary by model
   #   maxActiveSessions: 3    # Default: 3
   #   maxConcurrentRuns: 2    # Default: 2
 
