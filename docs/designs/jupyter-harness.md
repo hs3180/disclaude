@@ -71,6 +71,8 @@ Jupyter 侧验证使用隔离 localhost 栈：Python `3.13.9`、JupyterLab `4.6.
 
 临时 kernel 的 Python 环境只读检查得到 jupyter-server-nbmodel 0.1.1a4、jupyter-collaboration 4.4.1、jupyter-ydoc 3.5.0 与 pycrdt 0.13.1；同一环境运行 jupyter server extension list 时，jupyter_server_nbmodel 与 jupyter_server_ydoc 显示 enabled。该 CLI 来自 kernelspec 环境，不能单独证明 Jupyter Server 主进程实际加载的扩展集合；REST 路由探针只证明 nbmodel handler 可达。部署包是预发行版，因此当前上游文档和 main 源码不能替代对该部署版本的验证。此外，认证后的 GET /lab/api/extensions 返回 200，7 条记录中 jupyter-collaboration-extension、datalayer-jupyter-server-nbmodel 和 datalayer-jupyter-mcp-tools 均显示 enabled。它确认 Lab 扩展 API 报告这些扩展已启用，但没有打开页面，因此没有验证实时 RTC 握手、页面输出 reconciliation 或恢复。
 
+另一次仅针对 UUID scratch Notebook 的隔离浏览器探针打开了 JupyterLab 页面，并观察到 collaboration room WebSocket。页面打开时通过 nbmodel 路由执行的请求返回 200/status=ok 和 SVG MIME，但 Playwright DOM 查询没有找到随机 stdout 标记，Contents API 回读也未找到该标记；没有手动保存输出。关闭这唯一的测试页面后，同一 scratch kernel 仍存在，第二个 nbmodel 请求在页面关闭期间返回 200/status=ok 与 stdout 标记，Contents API 回读仍未找到该标记。重新打开的尝试在 notebook panel 出现前超时，因此恢复结果未知。该部署版本证明请求可在测试页面关闭后继续执行并可从请求结果读取，但尚未证明输出会持久化到 .ipynb、经 RTC 显示或重新打开后恢复。临时 session 与 Notebook 均以 204 删除，Contents 查询 404，kernel/session 数量恢复为 9；未访问既有文档或 kernel。
+
 该探针中一次 `/interrupt` 返回 204，但轮询终态为 `ok` 且未带 `KeyboardInterrupt`；没有记录各次轮询状态及中断与执行完成的时间关系，所以扩展路由的取消语义仍属未验证。session 与 Notebook 删除均返回 204，Contents 后续查询为 404，9 个 kernel/session 计数恢复；没有触碰既有 Notebook，也没有调用模型。
 
 ### 其他方案的位置
