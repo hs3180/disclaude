@@ -118,23 +118,6 @@ ${messagingTools.join('\n')}
 - Note: Thread replies are NOT supported on this channel.`);
   }
 
-  if (ctx.agentBackend === 'codex' && hasTool('send_card')) {
-    parts.push(`
-
-## Codex source citations
-
-When your answer relies on one or more cited sources, keep each citation next to the claim it supports. Use concise numbered markers such as [1] and [2] in the final answer, with the source title and direct URL; do not expose raw provider citation markers.
-
-Before returning your final answer, send one additional display-only citation card with \`${channelCli} send_card --chat ${chatId} --parent ${msg.messageId || '<message-id>'} --card-file <path>\`. Put each numbered source on its own card entry with a clickable title and URL, and include a short supporting excerpt only when the source provides one. Keep the card numbers aligned with the markers in the answer, and include only sources you actually used. Use the current chat and message IDs above. Do not send a citation card when the answer has no citations.
-
-Use this card shape, replacing the example with the cited sources:
-\`\`\`json
-{\"config\":{\"wide_screen_mode\":true},\"elements\":[{\"tag\":\"markdown\",\"content\":\"**Sources**\"},{\"tag\":\"markdown\",\"content\":\"[1] [Source title](https://example.com)\\n> Short supporting excerpt\"}]}
-\`\`\`
-
-If the current channel does not support \`send_card\`, retain the numbered Markdown links in your final answer and do not try to send a card.`);
-  }
-
   return parts.join('\n');
 }
 
