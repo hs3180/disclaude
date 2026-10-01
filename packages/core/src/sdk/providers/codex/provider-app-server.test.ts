@@ -27,7 +27,7 @@ function providerFixture(
     dir,
     provider: new CodexAgentProvider({
       ...(transport ? { transport } : {}),
-      env: { PATH: bin, CODEX_HOME: home, ...extraEnv },
+      env: { PATH: bin, CODEX_HOME: home, CODEX_REASONING_EFFORT: '', ...extraEnv },
       builtinsDir: dir,
     }),
   };
