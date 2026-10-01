@@ -1,6 +1,6 @@
 # 0.6.3：以 Notebook 为第一公民的 Jupyter Harness
 
-状态：首版范围与实施顺序已确认，由[综合 issue #5214](https://github.com/hs3180/disclaude/issues/5214) 和 [0.6.3 milestone](https://github.com/hs3180/disclaude/milestone/18) 跟踪；尚未实现或通过产品验收。G0 的本地证据排除了当前安装的 dsh 路径，并支持继续评估 Codex app-server 动态 host tools。现有产品适配器尚未接入该协议，G0 和端到端产品验收仍未通过。
+状态：首版范围与实施顺序已确认，由[综合 issue #5214](https://github.com/hs3180/disclaude/issues/5214) 和 [0.6.3 milestone](https://github.com/hs3180/disclaude/milestone/18) 跟踪；尚未实现或通过产品验收。G0 已确认默认 dsh profiles 没有 Jupyter 插件；后续隔离检查又证明可显式配置 `openai-codex` / `gpt-5.6-luna` 路由，因此还不能排除 dsh。Codex app-server 动态 host tools 是另一候选，尚未完成最终选型或端到端产品验收。
 
 ## 产品定位
 
@@ -22,12 +22,12 @@
 
 ## 架构决策
 
-按当前可复现实验证据，下一步以 **Codex app-server 动态 host tools + Jupyter Server/JupyterLab + 共享文档与执行适配层** 为实现候选。Notebook 能力独立于 Agent 后端；优先复用现有 Jupyter 扩展，只有验收缺口需要自行补齐。此项是 G0 的实现选型，不代表产品能力或 #5215/#5216 验收通过。
+当前证据不足以锁定 Agent 后端。G0-A 正在比较 **dsh 原生 Agent 与 Codex app-server 动态 host tools**，待真实模型调用、原生工具和结构化结果、会话续行、分层取消，以及飞书接入边界得到验证后再选择实现路线。Notebook 能力独立于 Agent 后端；优先复用现有 Jupyter 扩展，只有验收缺口需要自行补齐。当前材料是候选架构和实验结果，不代表 #5215/#5216 验收通过。
 
 ```mermaid
 flowchart LR
   F[飞书对话与反馈] <--> P[现有 Project 与 Agent 会话]
-  P <--> A[Codex app-server]
+  P <--> A[候选 Agent harness：dsh / Codex app-server]
   A <--> T[Notebook 语义工具]
   T <--> J[Jupyter 共享文档与执行适配]
   H[JupyterLab 人工编辑与运行] <--> J
@@ -49,9 +49,13 @@ flowchart LR
 
 建议最小组件是 JupyterLab、Jupyter Server、`jupyter-collaboration`、Python/ipykernel；共享文档适配候选为 `jupyter_ydoc`/`pycrdt`，执行客户端复用 `jupyter_client` 或 `@jupyterlab/services`，以 `nbformat` 校验成果、`nbconvert` 导出 HTML、`nbclient` 做复现验证。G0 固定一组实际兼容的版本，不自行重写 kernel WebSocket 协议。[Jupyter REST](https://jupyter-server.readthedocs.io/en/latest/developers/rest-api.html)、[WebSocket 协议](https://jupyter-server.readthedocs.io/en/latest/developers/websocket-protocols.html)、[nbconvert](https://nbconvert.readthedocs.io/en/latest/config_options.html)
 
-### G0-A 结果：选择 Codex app-server 路线
+### G0-A 证据：dsh 与 Codex app-server 候选仍待实测决策
 
-在本机固定候选 `@deepseek-ai/dsh@0.1.2-rc.1` 上，G0 探针找不到 Jupyter profile/plugin，也未注册 `openai-codex` adapter，在模型调用前以 `NO_ADAPTER` 结束。这个结果否定当前已安装组合可直接承载产品路径，不证明所有 dsh 版本都不可能扩展。
+初始探针针对本机固定候选 `@deepseek-ai/dsh@0.1.2-rc.1` 的默认 SDK route：没有 Jupyter profile/plugin，选定的默认 provider 配置也没有 `openai-codex` route，因此在模型调用前以 `NO_ADAPTER` 结束。这个结果证明默认配置不能直接承载本需求，但不足以排除该版本 dsh 的其他原生 provider route。
+
+2026-10-01 对同一安装做了隔离复核。标准 `sdk` profile 加载 `@deepseek-ai/dsh-llm-pi-ai`；随附 pi-ai `0.84.4` catalog 中有 `openai-codex` / `gpt-5.6-luna`，但当前用户 profile 没有启用这条 route。用仅含 provider/model 的临时 profile patch 注册该 route 后，SDK `initialize` 明确指定 `provider=openai-codex`、`model=gpt-5.6-luna`、`reasoningEffort=low`，服务端成功返回 `deepseek-harness-sdk-runtime`。这证明固定版本能解析该精确 route，不证明已认证、调用了真实模型或完成 Jupyter 工具调用。该隔离 DSH home 没有 OpenAI API key 或 `openai-codex` OAuth record，因此本轮没有发模型请求。`sdk` 与 `sdk-minimal` 的默认 profile dump 都没有 Jupyter/Notebook 插件。
+
+取消与事件接口需按接入方式区分：SDK 提供 `session.event`（完整会话日志事件信封）和 `session.status`（running/idle）通知，但 `session/prompt` 只回传持久入队的 `messageId`，不标识最终助手回复、`turn/end` 或每个事件对应的提示词；尚未验证它与飞书消息/执行身份的关联。SDK 协议只有 `initialize`、`session/prompt` 和 `shutdown` 请求，没有远程 cancel/session-close 或 resume 方法；同一运行时可向原 session 继续排入提示词，重启后如何恢复不由该协议提供。关闭 runtime 会放弃整条 Agent runtime，不能据此宣称 Jupyter kernel 已停止。`dsh-agent` 的进程内 API 提供 create/resume/cancel/whenIdle，但尚未验证 Disclaude/飞书怎样调用该控制面，或如何把取消传递为 Jupyter kernel interrupt。G0-A 仍须验证已授权真实模型、原生工具及结构化结果、事件/提示词关联、接续和分层取消后才能锁定后端。
 
 另一条候选是在 Codex app-server 中注册动态 host tool，由 disclaude host 通过认证的 Jupyter Server API 处理请求。Codex CLI `0.159.2` 的隔离协议探针在 `initialize.capabilities.experimentalApi=true` 下，以 `gpt-5.6-luna` 调用一次 `jupyter_get_notebook`；host 读取实际 Jupyter `contents` 响应中的文档 ID、cell ID 和 marker，模型在完成回复中复述了这些值。该探针没有通过产品中的 Codex provider 或飞书运行。
 
@@ -84,7 +88,7 @@ Jupyter 侧验证使用隔离 localhost 栈：Python `3.13.9`、JupyterLab `4.6.
 | 方案 | 值得复用的部分 | 对本需求的判断 |
 | --- | --- | --- |
 | Codex app-server dynamic host tools + Jupyter | 现有 Codex backend 与 host 侧认证工具 | #5226 分支实现候选并通过一次真实模型到服务端 Contents 的读取 smoke；等待 review，执行、续行、取消和产品体验仍需验收 |
-| dsh 原生插件 + Jupyter | 可组合 Agent loop、Notebook 语义工具与原生内核 | 本机 `0.1.2-rc.1` 缺少 Notebook profile/plugin 和 Codex adapter，未进入模型调用；不作为当前实现路径 |
+| dsh 原生插件 + Jupyter | 标准 `sdk` profile 的 `dsh-tools` 支持类型化 schema/结构化结果；SDK 有 `session.event`/`session.status` 通知，`dsh-agent` handle 有进程内 resume/cancel；pi-ai 可路由 `openai-codex` | 默认 profile 没有 Jupyter 插件或 OpenAI Codex route；隔离 `initialize` 已解析 `gpt-5.6-luna`，但未登录、未调用模型或 Jupyter 工具。SDK prompt 只回传入队消息 ID，协议没有远程 cancel/resume；进程内 Agent 控制、提示词/事件关联和 kernel interrupt 尚未接入验证；选型未完成 |
 | 现成 Jupyter MCP/工具扩展 | Datalayer jupyter-mcp-tools 提供命令注册和 HTTP/WebSocket 桥；用户服务实测未登录 tools 请求重定向到登录，通过密码认证后列出 228 条命令，并在打开的 UUID scratch Notebook 上执行 `append-execute`，输出已回读到 `.ipynb`。 | 可复用为 JupyterLab 页面打开时的命令桥。该探针没有通过 MCP JSON-RPC 客户端调用，亦未验证 Notebook 级授权、关闭页面后的执行或 Agent/Feishu 集成。[工具扩展 README](https://github.com/datalayer/jupyter-mcp-tools)、[MCP Server README](https://github.com/datalayer/jupyter-mcp-server) |
 | Jupyter AI | JupyterLab 的 AI 扩展生态和工具协议 | 可提供补充入口；飞书仍是本产品主要对话入口 |
 | nbclient / Papermill | 干净内核重跑、参数化验证、批量执行 | 用于复现检查和批处理，不承担实时人机协作 |
@@ -165,7 +169,7 @@ Agent 默认围绕问题、数据与证据、方法选择、结果解释和结�
 
 | 阶段 | 可评审交付 | 通过条件 |
 | --- | --- | --- |
-| [G0-A Agent 接入验证 #5215](https://github.com/hs3180/disclaude/issues/5215) | 已比较本机 dsh `0.1.2-rc.1` 与 Codex app-server `0.159.2`；后者动态 host tool 协议探针成功 | dsh 当前组合在模型调用前 `NO_ADAPTER`；Codex 探针由指定模型读取真实 Jupyter API 结果。产品适配、取消传递、续行和完整事件身份尚未验证，issue 未完成 |
+| [G0-A Agent 接入验证 #5215](https://github.com/hs3180/disclaude/issues/5215) | dsh `0.1.2-rc.1` 默认 route 曾返回 `NO_ADAPTER`；隔离 patch 下 `openai-codex` / `gpt-5.6-luna` SDK initialize 成功；Codex app-server `0.159.2` dynamic host tool 探针也成功 | dsh 精确 provider/model route 可初始化，同一运行时 session 可继续排入 prompt，SDK 会推送 session events；真实模型、原生工具与 Feishu 关联尚未调用。SDK 没有远程 cancel/resume 请求，进程内 Agent control 与 kernel interrupt 传递也未接入证明。Codex 探针读取真实 Jupyter API 结果，但没有产品执行、续行或飞书体验证据。两条路线均未完成比较，issue 未完成 |
 | [G0-B Jupyter 能力验证 #5216](https://github.com/hs3180/disclaude/issues/5216) | 与 G0-A 并行；固定 Jupyter 兼容组合、连接与认证方式；现成扩展对照 | 无 Project 目录挂载或 Notebook 本地副本也能工作；未落盘的人工编辑可读；关浏览器仍执行保存；中断、图表回读和控制权交接可核验。此组结果决定 Jupyter 扩展复用/补齐范围，不把文档或内核问题归因于 dsh |
 | [G1-A 共享文档与资源关联 #5217](https://github.com/hs3180/disclaude/issues/5217) | Jupyter 资源引用与 Project 关联、shared model、cell 定点读写、版本及控制者校验 | 人工未保存改动可读；版本冲突拒绝；跨上下文/服务的引用隔离；解除关联不删除服务端成果 |
 | [G1-B 内核执行与可靠停止 #5218](https://github.com/hs3180/disclaude/issues/5218) | kernel 生命周期、执行协调、输出关联与持久化；必要的 JupyterLab 执行入口适配 | 用真实 Jupyter/ipykernel 验证执行完成、display 更新、取消、结果未知及源码版本；与 G1-A 共用控制者身份/代次和交接契约 |
@@ -198,4 +202,4 @@ Agent 默认围绕问题、数据与证据、方法选择、结果解释和结�
 
 ## 当前交付边界
 
-本提案已记录本机 dsh adapter 缺口、Codex app-server 隔离协议探针、#5226 分支上的 provider-to-Jupyter Contents 读取 smoke、隔离栈的 RTC/执行/取消/重启实验，以及用户 Jupyter 服务上的直接 kernel WebSocket、nbmodel、MCP Tools 页面命令桥、SVG MIME、interrupt/恢复与 Contents 保存证据。候选动态工具代码仍在未合并 PR 中；没有修改 Jupyter Server 配置，但 MCP Tools 页面探针曾因默认 workspace 恢复而短暂同步多个身份未确认文档的协作状态，随后只清理了测试创建的 workspace 引用，不能声称完全未访问既有文档。仍没有通过 MCP JSON-RPC 客户端、Feishu 入口、人直接编辑后的接续、Agent 管理的后台执行/保存、报告导出或真实设备访问验收。下一步继续完成 #5215/#5216 的剩余验证与栈选择，再按共同契约推进 G1–G4；不能据这些实验关闭 issue。
+本提案已记录本机 dsh 默认 profile 缺少 Jupyter 插件、隔离 `openai-codex` / `gpt-5.6-luna` route initialization、Codex app-server 隔离协议探针、#5226 分支上的 provider-to-Jupyter Contents 读取 smoke、隔离栈的 RTC/执行/取消/重启实验，以及用户 Jupyter 服务上的直接 kernel WebSocket、nbmodel、MCP Tools 页面命令桥、SVG MIME、interrupt/恢复与 Contents 保存证据。dsh route 尚无 OAuth/API 凭据，也没有真实模型或 Jupyter 调用；候选动态工具代码仍在未合并 PR 中。没有修改 Jupyter Server 配置，但 MCP Tools 页面探针曾因默认 workspace 恢复而短暂同步多个身份未确认文档的协作状态，随后只清理了测试创建的 workspace 引用，不能声称完全未访问既有文档。仍没有通过 MCP JSON-RPC 客户端、Feishu 入口、人直接编辑后的接续、Agent 管理的后台执行/保存、报告导出或真实设备访问验收。下一步补齐 #5215/#5216 剩余真实证据与选型，再按共同契约推进 G1–G4；不能据这些实验关闭 issue。
