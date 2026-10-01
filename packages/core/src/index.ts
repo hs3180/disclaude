@@ -121,6 +121,19 @@ export {
 // Message channel
 export { MessageChannel } from './agents/message-channel.js';
 
+// Jupyter remote execution client (issue #5218 implementation slice).
+export {
+  JupyterNbmodelExecutionClient,
+  type JupyterNbmodelConnection,
+  type JupyterNbmodelExecutionHandle,
+  type JupyterNbmodelExecutionTarget,
+  type JupyterNbmodelSubmitResult,
+  type JupyterNbmodelExecutionObservation,
+  type JupyterNbmodelCancelResult,
+  type JupyterNbmodelExecutionClientOptions,
+  type JupyterNbmodelWaitOptions,
+} from './jupyter/nbmodel-execution-client.js';
+
 // Session management
 export {
   type ChatAgentSession,
