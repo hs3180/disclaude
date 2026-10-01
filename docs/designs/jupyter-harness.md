@@ -211,3 +211,7 @@ Agent 默认围绕问题、数据与证据、方法选择、结果解释和结�
 ### Jupyter 凭据可达性补充（2026-10-01 14:09 CST）
 
 使用 `.env` 中的 JupyterLab 凭据访问用户提供的服务：未登录时 `GET /api/status` 返回 403；通过 Jupyter 密码表单登录后，同一路径返回 200。此项只证明凭据可认证到该服务；没有创建或读取 Notebook、创建 kernel，且没有将凭据或会话 cookie 写入证据。
+
+### Provider-to-kernel interrupt 联合探针（2026-10-02 00:38 CST）
+
+在 #5226 app-server dynamic host-tool 分支尝试将真实 `gpt-5.6-luna/low` 调用、远程 scratch kernel interrupt 和 Contents 保存/回读串成一次探针。runner 退出时只保留了 app-server `closed` / `processCount=0` 日志，最终结果行没有保存，无法确认是否观察到 provider abort、kernel `KeyboardInterrupt`、IOPub idle 或保存回读成功。随后认证检查确认远端恢复为基线 9 个 sessions / 9 个 kernels，且没有 `disclaude-cancel-*` 临时 Notebook 或 session 残留。该尝试记为结果不确定，不作为取消或持久化证据；后续探针须在清理前将每一阶段结果可靠落盘或输出。
