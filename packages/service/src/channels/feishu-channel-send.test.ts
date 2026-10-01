@@ -339,7 +339,7 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
     });
   });
 
-  describe('text messages with ## Sources citation contract (#5193 POC)', () => {
+  describe('text messages with ## Sources citation contract (#5193)', () => {
     const citedAnswer = [
       'Answer body citing docs [1].',
       '',
@@ -409,10 +409,14 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
       expect(JSON.parse(call.data.content).text).toBe(malformed);
     });
 
-    it('falls back to plain text (never loses the reply) when the card send fails', async () => {
+    it('falls back to plain text after a definite Feishu rejection of the card', async () => {
       const { client, mocks } = createMockClient();
       mocks.createMock
-        .mockRejectedValueOnce(new Error('card api down'))
+        .mockRejectedValueOnce(
+          Object.assign(new Error('card too large'), {
+            response: { status: 400, data: { code: 230025, msg: 'message too large' } },
+          })
+        )
         .mockResolvedValueOnce({ data: { message_id: 'text_fallback_001' } });
       const channel = createTestChannel(client);
 
@@ -428,6 +432,73 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
       expect(fallback.data.msg_type).toBe('text');
       expect(JSON.parse(fallback.data.content).text).toBe(citedAnswer);
       expect(result).toBe('text_fallback_001');
+    });
+
+    it('does not retry an ambiguously failed card send as text', async () => {
+      const { client, mocks } = createMockClient();
+      mocks.createMock.mockRejectedValueOnce(new Error('socket timeout'));
+      const channel = createTestChannel(client);
+
+      await expect(
+        channel.sendMessage({ chatId: 'chat_123', type: 'text', text: citedAnswer })
+      ).rejects.toThrow('socket timeout');
+
+      expect(mocks.createMock).toHaveBeenCalledTimes(1);
+      expect(mocks.createMock.mock.calls[0][0].data.msg_type).toBe('interactive');
+    });
+
+    it('does not retry a card after a server error with an unknown delivery outcome', async () => {
+      const { client, mocks } = createMockClient();
+      mocks.createMock.mockRejectedValueOnce(
+        Object.assign(new Error('server error'), {
+          response: { status: 503, data: { code: 230025, msg: 'upstream failure' } },
+        })
+      );
+      const channel = createTestChannel(client);
+
+      await expect(
+        channel.sendMessage({ chatId: 'chat_123', type: 'text', text: citedAnswer })
+      ).rejects.toThrow('server error');
+
+      expect(mocks.createMock).toHaveBeenCalledTimes(1);
+      expect(mocks.createMock.mock.calls[0][0].data.msg_type).toBe('interactive');
+    });
+
+    it('does not retry an ambiguously failed thread reply through message.create', async () => {
+      const { client, mocks } = createMockClient();
+      mocks.replyMock.mockRejectedValueOnce(new Error('reply timeout'));
+      const channel = createTestChannel(client);
+
+      await expect(
+        channel.sendMessage({
+          chatId: 'chat_123',
+          type: 'text',
+          text: citedAnswer,
+          threadId: 'root_msg_456',
+        })
+      ).rejects.toThrow('reply timeout');
+
+      expect(mocks.replyMock).toHaveBeenCalledTimes(1);
+      expect(mocks.createMock).not.toHaveBeenCalled();
+    });
+
+    it('uses plain text when the serialized card exceeds the safe payload budget', async () => {
+      const { client, mocks } = createMockClient();
+      const excerpt = 'x'.repeat(FEISHU_RETRY_MESSAGE_BYTES);
+      const text = [
+        'Answer body [1].',
+        '',
+        '## Sources',
+        '1. [Long source](https://example.com/long)',
+        `   > ${excerpt}`,
+      ].join('\n');
+      const channel = createTestChannel(client);
+
+      await channel.sendMessage({ chatId: 'chat_123', type: 'text', text });
+
+      expect(mocks.createMock).toHaveBeenCalledTimes(1);
+      expect(mocks.createMock.mock.calls[0][0].data.msg_type).toBe('text');
+      expect(JSON.parse(mocks.createMock.mock.calls[0][0].data.content).text).toBe(text);
     });
   });
 

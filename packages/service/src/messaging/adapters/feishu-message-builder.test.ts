@@ -221,8 +221,12 @@ describe('MessageBuilder with Feishu sections', () => {
       expect(result).toContain('## Sources');
       expect(result).toContain('number. [title](direct URL)');
       expect(result).toContain('Do not add a `## Sources` section when the answer has no citations');
-      // Narrow contract: the model must NOT handwrite cards or call send_card itself.
-      expect(result).toContain('Do not send a citation card yourself and do not write card JSON');
+      // Citation delivery is deterministic and attached to the final reply.
+      expect(result).toContain('delivery code renders this section with the final reply.');
+      expect(result).toContain(
+        'Do not call `send_card` or `send_interactive` for these citation sources'
+      );
+      expect(result).toContain('do not write card JSON');
       expect(result).not.toContain('--card-file');
     });
 

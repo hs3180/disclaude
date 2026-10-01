@@ -1,5 +1,5 @@
 /**
- * Deterministic `## Sources` citation card (POC for #5193 / #5227).
+ * Deterministic `## Sources` citation card for #5193.
  *
  * Narrow-contract counterpart to the Codex citation prompt: the model only
  * promises a strictly formatted trailing `## Sources` section in its final
@@ -8,9 +8,10 @@
  * model never handwrites card JSON or invokes channel tools (review on #5227).
  *
  * Failure policy: any deviation from the contract makes {@link extractCitations}
- * return null and the message is delivered through the legacy plain-text path,
- * bit-identical to today. Worst case degrades to readable markdown, never to a
- * broken card, a duplicate message, or an out-of-order send.
+ * return null and the message is delivered through the legacy plain-text path.
+ * The channel only retries a card as text after a definite Feishu rejection;
+ * transport/server errors with unknown delivery outcome are propagated to avoid
+ * sending a duplicate.
  */
 
 import { normalizeMarkdownLineBreaks } from './content-builder.js';
@@ -100,11 +101,25 @@ export function extractCitations(text: string): ExtractedCitations | null {
     if (entry) {
       flushExcerpt();
       const number = Number(entry[1]);
-      if (seenNumbers.has(number)) {
-        return null; // duplicate marker → ambiguous alignment, reject
+      const title = entry[2].trim();
+      let parsedUrl: URL;
+      try {
+        parsedUrl = new URL(entry[3]);
+      } catch {
+        return null;
+      }
+      if (
+        number < 1 ||
+        !title ||
+        !parsedUrl.hostname ||
+        parsedUrl.username ||
+        parsedUrl.password ||
+        seenNumbers.has(number)
+      ) {
+        return null; // invalid entry or duplicate marker → ambiguous alignment, reject
       }
       seenNumbers.add(number);
-      current = { number, title: entry[2].trim(), url: entry[3] };
+      current = { number, title, url: entry[3] };
       sources.push(current);
       continue;
     }
@@ -141,7 +156,11 @@ export function buildCitationCard(
   sources: CitationSource[]
 ): Record<string, unknown> {
   const entries = sources.map((source) => {
-    const link = `[${source.number}] [${source.title}](${source.url})`;
+    const title = source.title
+      .replace(/\\/g, '\\\\')
+      .replace(/\[/g, '\\[')
+      .replace(/\]/g, '\\]');
+    const link = `[${source.number}] [${title}](${source.url})`;
     return source.excerpt ? `${link}\n> ${source.excerpt.replace(/\n/g, '\n> ')}` : link;
   });
   return {

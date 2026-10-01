@@ -59,7 +59,7 @@ import {
   normalizeCardMarkdown,
   normalizeMarkdownLineBreaks,
 } from '../platforms/feishu/card-builders/content-builder.js';
-// #5193 POC: deterministic `## Sources` citation card (narrow contract).
+// #5193: deterministic `## Sources` citation card (narrow contract).
 import {
   buildCitationCard,
   extractCitations,
@@ -178,6 +178,23 @@ export function extractFeishuApiError(err: unknown): Record<string, unknown> {
     detail.httpStatus = httpStatus;
   }
   return detail;
+}
+
+/** A structured API rejection is safe to retry as a different message type. */
+function isDefiniteFeishuApiRejection(err: unknown): boolean {
+  const details = extractFeishuApiError(err);
+  const httpStatus = Number(details.httpStatus);
+  const apiCode = Number(details.apiCode);
+
+  // A server error or a transport error can happen after Feishu accepted the
+  // request. Do not send a second message when delivery outcome is ambiguous.
+  if (Number.isFinite(httpStatus) && httpStatus >= 500) {
+    return false;
+  }
+  if (Number.isFinite(httpStatus) && httpStatus >= 400 && httpStatus < 500) {
+    return true;
+  }
+  return Number.isFinite(apiCode) && apiCode !== 0;
 }
 
 /**
@@ -528,7 +545,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
      */
     const sendFeishuMessage = async (
       msgType: string,
-      content: string
+      content: string,
+      options: { avoidRetryAfterAmbiguousThreadReply?: boolean } = {}
     ): Promise<string | undefined> => {
       if (useThreadReply) {
         // useThreadReply is !!message.threadId — guaranteed truthy here.
@@ -546,6 +564,12 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           });
           return replyResp.data?.message_id;
         } catch (err) {
+          if (
+            options.avoidRetryAfterAmbiguousThreadReply &&
+            !isDefiniteFeishuApiRejection(err)
+          ) {
+            throw err;
+          }
           // Issue #4452: capture the Feishu API-level error (code/msg/log_id)
           // so the frequent reply() 400s become diagnosable. Rather than dump
           // the raw (very verbose) axios error, `extractFeishuApiError` pulls
@@ -628,31 +652,45 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         // #5193 POC (#5227 review): a trailing `## Sources` section is the narrow
         // citation contract — render it deterministically as ONE interactive card
         // (body + sources block), so markers and source numbers stay aligned in a
-        // single message. Strict parse failure or card-send failure falls through
-        // to the legacy plain-text path below, bit-identical to today: the reply
-        // is never lost and never depends on model-authored card JSON.
+        // single message. Malformed sections, oversized cards, and definite
+        // Feishu rejections fall through to the legacy plain-text path. A
+        // transport/server error with an unknown outcome is propagated instead
+        // of risking a duplicate message.
         const citations = extractCitations(text);
         if (citations) {
           try {
             const cardContent = JSON.stringify(
               buildCitationCard(citations.body, citations.sources)
             );
-            const cardMessageId = await sendFeishuMessage('interactive', cardContent);
+            // Bound the serialized JSON plus card markdown conservatively; large
+            // citation answers remain readable through the existing text path.
+            if (Buffer.byteLength(cardContent, 'utf8') <= FEISHU_RETRY_MESSAGE_BYTES) {
+              const cardMessageId = await sendFeishuMessage('interactive', cardContent, {
+                avoidRetryAfterAmbiguousThreadReply: true,
+              });
+              logger.info(
+                {
+                  chatId: message.chatId,
+                  messageId: cardMessageId,
+                  sourceCount: citations.sources.length,
+                  threadReply: useThreadReply,
+                },
+                'Citation card sent (## Sources narrow contract)'
+              );
+              logOutgoing(cardMessageId, text, 'interactive');
+              return cardMessageId;
+            }
             logger.info(
-              {
-                chatId: message.chatId,
-                messageId: cardMessageId,
-                sourceCount: citations.sources.length,
-                threadReply: useThreadReply,
-              },
-              'Citation card sent (## Sources narrow contract)'
+              { chatId: message.chatId, cardBytes: Buffer.byteLength(cardContent, 'utf8') },
+              'Citation card exceeds the conservative payload budget; using plain text'
             );
-            logOutgoing(cardMessageId, text, 'interactive');
-            return cardMessageId;
           } catch (err) {
+            if (!isDefiniteFeishuApiRejection(err)) {
+              throw err;
+            }
             logger.warn(
               { err, chatId: message.chatId },
-              'Citation card send failed — falling back to plain text delivery'
+              'Feishu rejected the citation card — falling back to plain text delivery'
             );
           }
         }

@@ -1,5 +1,5 @@
 /**
- * Tests for the deterministic `## Sources` citation card (POC for #5193).
+ * Tests for the deterministic `## Sources` citation card for #5193.
  *
  * The narrow contract: only a strictly formatted trailing `## Sources` section
  * is converted; every deviation must yield null so delivery falls back to the
@@ -120,6 +120,14 @@ describe('extractCitations', () => {
     expect(extractCitations(text)).toBeNull();
   });
 
+  it('returns null for zero marker numbers and empty titles', () => {
+    expect(extractCitations('Body [0].\n## Sources\n0. [A](https://a.example)')).toBeNull();
+    expect(extractCitations('Body [1].\n## Sources\n1. [   ](https://a.example)')).toBeNull();
+    expect(
+      extractCitations('Body [1].\n## Sources\n1. [A](https://user:pass@a.example)')
+    ).toBeNull();
+  });
+
   it('returns null when the body is empty', () => {
     expect(extractCitations('## Sources\n1. [A](https://a.example)')).toBeNull();
   });
@@ -181,5 +189,13 @@ describe('buildCitationCard', () => {
     expect(parsed.elements[2].content).toBe(
       '**Sources**\n[1] [含 "引号" 的标题](https://example.cn/x)\n> 多行\n> 摘录'
     );
+  });
+
+  it('escapes markdown link delimiters in source titles', () => {
+    const card = buildCitationCard('Answer [1].', [
+      { number: 1, title: 'A [nested] title', url: 'https://example.com' },
+    ]) as { elements: Array<{ tag: string; content?: string }> };
+
+    expect(card.elements[2]?.content).toContain('[1] [A \\[nested\\] title](https://example.com)');
   });
 });
