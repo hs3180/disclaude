@@ -178,14 +178,14 @@ Agent 默认围绕问题、数据与证据、方法选择、结果解释和结�
 | 阶段 | 可评审交付 | 通过条件 |
 | --- | --- | --- |
 | [G0-A Agent 接入验证 #5215](https://github.com/hs3180/disclaude/issues/5215) | dsh `0.1.2-rc.1` 默认 route 曾返回 `NO_ADAPTER`；隔离 patch 下 `openai-codex` / `gpt-5.6-luna` SDK initialize 成功；Codex app-server `0.159.2` dynamic host tool 探针与 `gpt-5.6-luna` 远程 scratch 执行成功；`a996b0ae` 补入调用身份传递；Codex CLI `0.159.3` / `gpt-5.6-luna/low` 两轮同 thread 续接探针通过 | 当前选择 Codex app-server 作为实现路线；dsh 精确 provider/model route 可初始化，但隔离环境没有可用凭据，SDK 无远程 cancel/resume 请求。尚无产品 Jupyter 适配、kernel interrupt、Feishu 会话续行或真实会话重启对账。issue 保持未完成 |
-| [G0-B Jupyter 能力验证 #5216](https://github.com/hs3180/disclaude/issues/5216) | 与 G0-A 并行；固定 Jupyter 兼容组合、连接与认证方式；现成扩展对照。已有隔离本地 JupyterLab RTC 探针：第二个页面及独立 pycrdt `YNotebook` peer 均读到尚未落盘的人工 cell 修改，Contents API 仍返回旧内容；独立 API-only 探针中 nbmodel REST 执行及输出写回、执行中断和同 kernel 后续执行均在没有浏览器页面时完成 | 已证明一个隔离栈的 server-side kernel 执行/输出、有效 interrupt 后无迟到输出、前端 RTC、协议 peer 读取未保存编辑，以及无浏览器 REST 执行后的 `.ipynb` 写回；真实用户服务的 RTC/输出整合、实际 Lab 页面关闭再打开、产品 Agent 适配、人工/Agent 控制权交接及统一发行组合仍待核验。issue 保持未完成 |
+| [G0-B Jupyter 能力验证 #5216](https://github.com/hs3180/disclaude/issues/5216) | 与 G0-A 并行；固定 Jupyter 兼容组合、连接与认证方式；现成扩展对照。隔离 JupyterLab RTC 探针与用户远程服务的双工作区 scratch 页面均观察到尚未落盘的 cell 修改同步到第二页面，Contents API 仍返回旧内容；独立 API-only 探针中 nbmodel REST 执行及输出写回、执行中断和同 kernel 后续执行均在没有浏览器页面时完成 | 已证明固定隔离栈的 server-side kernel 执行/输出、有效 interrupt 后无迟到输出与前端 RTC；用户远程服务的 scratch 页面也验证了浏览器 RTC 与未落盘源码可见性。用户服务的输出整合、实际 Lab 页面关闭再打开、产品 Agent 适配、人工/Agent 控制权交接及统一发行组合仍待核验。issue 保持未完成 |
 | [G1-A 共享文档与资源关联 #5217](https://github.com/hs3180/disclaude/issues/5217) | Jupyter 资源引用与 Project 关联、shared model、cell 定点读写、版本及控制者校验 | 人工未保存改动可读；版本冲突拒绝；跨上下文/服务的引用隔离；解除关联不删除服务端成果 |
 | [G1-B 内核执行与可靠停止 #5218](https://github.com/hs3180/disclaude/issues/5218) | kernel 生命周期、执行协调、输出关联与持久化；必要的 JupyterLab 执行入口适配 | 用真实 Jupyter/ipykernel 验证执行完成、display 更新、取消、结果未知及源码版本；与 G1-A 共用控制者身份/代次和交接契约 |
 | [G2 Agent 与飞书闭环 #5219](https://github.com/hs3180/disclaude/issues/5219) | 工具、上下文变化、数据上传、原话题入口、真实停止与续行 | 真实模型在原 Project 完成分析；用户直接修改 Notebook 后继续同一研究且改动保留 |
 | [G3 报告与可视化 #5220](https://github.com/hs3180/disclaude/issues/5220) | 报告组织指导、图表观察、静态预览、同版本 `.ipynb`/HTML 导出 | 核验图、表、公式与结论的实际可读性；交互图表与静态降级可用；导出与来源版本一致 |
 | [G4 恢复与发行 #5221](https://github.com/hs3180/disclaude/issues/5221) | 重启与重连对账、连接/扩展 doctor、版本兼容范围、文档和发行验收 | 浏览器关闭、Agent 重启、Jupyter 断连、kernel 丢失分别处理；保全服务端成果；从支持的连接环境可重复完成真实闭环 |
 
-上述七项均为综合 issue 的子 issue，全部纳入 0.6.3 发布目标。G0-A 已得到局部选型证据但仍待产品路径验证；G0-B 已有隔离协议和前端 RTC 证据，但完整能力与受支持发行组合尚未锁定；两个 issue 均保持未完成。G1-A/B 依赖 G0-B，按共同契约推进；G2 依赖 Codex app-server 适配与 G1-A/B，G3 依赖 G1-A/B 并可与 G2 并行，G4 对全部成果收口。恢复所需身份与记录在 G1 即实现，不能全部延后到 G4。
+上述七项均为综合 issue 的子 issue，全部纳入 0.6.3 发布目标。G0-A 已得到局部选型证据但仍待产品路径验证；G0-B 已有隔离协议、隔离栈和用户远程服务的前端 RTC scratch 证据，但完整能力与受支持发行组合尚未锁定；两个 issue 均保持未完成。G1-A/B 依赖 G0-B，按共同契约推进；G2 依赖 Codex app-server 适配与 G1-A/B，G3 依赖 G1-A/B 并可与 G2 并行，G4 对全部成果收口。恢复所需身份与记录在 G1 即实现，不能全部延后到 G4。
 
 这些阶段是实现与 review 的分解，不是产品强制的研究流程。换 Agent backend 不能解决共享文档或内核层的失败。基础内核/协作桥和 Codex app-server 动态工具适配在契约确定后可以独立评审；子 issue 全部关闭不自动代表产品验收通过，综合 issue 仍以完整真实体验作为关闭条件。
 
@@ -210,7 +210,7 @@ Agent 默认围绕问题、数据与证据、方法选择、结果解释和结�
 
 ## 当前交付边界
 
-本提案已记录本机 dsh 默认 profile 缺少 Jupyter 插件、隔离 `openai-codex` / `gpt-5.6-luna` route initialization、Codex app-server 隔离协议探针、#5226 分支上的真实模型 Contents 读取与固定 print 执行/持久化 scratch 探针、隔离栈的 RTC 前端与 pycrdt peer、nbmodel 无浏览器执行并写回 `.ipynb` 的独立 API 探针、执行/取消/重启实验，以及用户 Jupyter 服务上的直接 kernel WebSocket、nbmodel、MCP Tools 页面命令桥、SVG MIME、interrupt/恢复与 Contents 保存证据。dsh route 尚无 OAuth/API 凭据，也没有真实模型或 Jupyter 调用；已选择的 Codex app-server host-tool 适配仍在未合并 PR 中。隔离 RTC 探针表明 Agent 类协议 peer 可读到人工未保存的 cell 修改，但没有连接 disclaude 产品 host adapter，也没有在用户远程 Jupyter 服务上验证。没有修改 Jupyter Server 配置，但 MCP Tools 页面探针曾因默认 workspace 恢复而短暂同步多个身份未确认文档的协作状态，随后只清理了测试创建的 workspace 引用，不能声称完全未访问既有文档。仍没有通过 MCP JSON-RPC 客户端、Feishu 入口、人直接编辑后的产品接续、实际 Lab 页面关闭后重新打开的端到端恢复、报告导出或真实设备访问验收；固定 print 仅由一次性实验 host handler 执行，不能替代产品执行验收。下一步补齐 #5215/#5216 剩余真实证据与产品路径核验，再按共同契约推进 G1–G4；不能据这些实验关闭 issue。
+本提案已记录本机 dsh 默认 profile 缺少 Jupyter 插件、隔离 `openai-codex` / `gpt-5.6-luna` route initialization、Codex app-server 隔离协议探针、#5226 分支上的真实模型 Contents 读取与固定 print 执行/持久化 scratch 探针、隔离栈的 RTC 前端与 pycrdt peer、nbmodel 无浏览器执行并写回 `.ipynb` 的独立 API 探针、执行/取消/重启实验，以及用户 Jupyter 服务上的直接 kernel WebSocket、nbmodel、MCP Tools 页面命令桥、SVG MIME、interrupt/恢复、Contents 保存和双页面 RTC scratch 证据。dsh route 尚无 OAuth/API 凭据，也没有真实模型或 Jupyter 调用；已选择的 Codex app-server host-tool 适配仍在未合并 PR 中。隔离 RTC 与用户服务双工作区 scratch 探针均观察到第二页面可见未落盘编辑，但没有连接 disclaude 产品 host adapter。用户服务的双页面探针观察到前端还建立了 kernel channel WebSocket；通道帧未检查，不据此声称没有与其他运行中 kernel 交互。MCP Tools 页面探针此前曾因默认 workspace 恢复而短暂同步多个身份未确认文档，随后只清理了测试创建的 workspace 引用，不能声称完全未访问既有文档。仍没有通过产品 MCP JSON-RPC 客户端、Feishu 入口、人直接编辑后的 Agent 接续、实际 Lab 页面关闭后重新打开的端到端恢复、报告导出或真实设备访问验收；固定 print 仅由一次性实验 host handler 执行，不能替代产品执行验收。下一步补齐 #5215/#5216 剩余真实证据与产品路径核验，再按共同契约推进 G1–G4；不能据这些实验关闭 issue。
 
 ### Jupyter 凭据可达性补充（2026-10-01 14:09 CST）
 
@@ -228,4 +228,10 @@ Agent 默认围绕问题、数据与证据、方法选择、结果解释和结�
 
 使用 `.env` 中的 JupyterLab 凭据只读查询当前用户服务：`GET /api/status`、`GET /lab/api/extensions` 和 `GET /api/kernelspecs` 均返回 200；状态报告 2 个连接、9 个 kernel。扩展清单中 `datalayer-jupyter-server-nbmodel`（0.1.1--alpha.4）与 `datalayer-jupyter-mcp-tools`（0.1.6）的 status 为 `ok`；`jupyter-collaboration-extension`（4.4.1）、`jupyter-docprovider-extension`（4.4.1）和 `jupyter-notebook-lab-extension`（7.5.7）均为 installed/enabled，status 为 `error`，且 latest_version 为 null。kernelspec 清单只有 `conda-base-py`。
 
-`/lab/api/extensions` 返回的是 JupyterLab Extension Manager 的 IEntry 包元数据；其 [官方接口](https://jupyterlab.readthedocs.io/en/stable/api/interfaces/extensionmanager.IEntry.html)将 `enabled`、`installed_version`、`latest_version` 与 `status` 定义为扩展安装清单字段，`status` 是已安装扩展状态标志，不带运行时错误详情。因此这些 error 标志不能证明浏览器模块加载失败，也不能证明 RTC 正常；用户服务的实时协作仍未验证。此次没有读取 Notebook/session 列表、打开页面、创建或停止 kernel，也未修改用户服务数据；这些是只读的扩展清单与 kernelspec 证据。
+`/lab/api/extensions` 返回的是 JupyterLab Extension Manager 的 IEntry 包元数据；其 [官方接口](https://jupyterlab.readthedocs.io/en/stable/api/interfaces/extensionmanager.IEntry.html)将 `enabled`、`installed_version`、`latest_version` 与 `status` 定义为扩展安装清单字段，`status` 是已安装扩展状态标志，不带运行时错误详情。因此这些 error 标志不能证明浏览器模块加载失败，也不能证明 RTC 正常。下方单独记录的双页面 scratch 探针验证了用户服务的 RTC 同步；扩展清单本身不提供这一证据。该只读复查没有读取 Notebook/session 列表、打开页面、创建或停止 kernel，也未修改用户服务数据。
+
+### 用户 JupyterLab 双页面 RTC scratch 探针（2026-10-02）
+
+使用 `.env` 中的 JupyterLab 凭据先通过密码表单认证，再在隔离的 headless Chrome 临时 profile 中打开页面。通过 JupyterLab URL 为两个页面分别使用新建的命名 workspace，避免恢复默认 workspace；两个 workspace 打开同一唯一 scratch Notebook。服务状态基线为 2 个连接、9 个 kernel；只创建随机命名的 scratch 目录和单 cell Notebook（两个 Contents API PUT 均返回 201），未打开任何既有 Notebook，也未执行 cell 代码。第一页通过 CodeMirror 编辑器输入唯一标记；第二页从 RTC 共享文档实时读到该标记，而紧接的 Contents API GET 仍只返回最初源码，证明本次用户服务上的前端编辑经协作 WebSocket 对另一个页面可见、且当时还未写入序列化 `.ipynb`。观察到 `/api/collaboration/room/json:notebook:<file-id>` 与 global awareness WebSocket。
+
+浏览器同时观察到多个 `/api/kernels/{id}/channels` WebSocket URL（探针期间共有 10 个 channel URL，基线已有 9 个 kernel，另有本次 scratch session）。没有检查这些 channel 的帧，也未向它们发送执行或中断；因此这里只报告连接建立，不推断其内核消息影响。关闭临时页面后，scratch session、两个命名 workspace 与 scratch 目录删除均返回 204；认证后 `/api/status` 回到 2 个连接、9 个 kernel。此结果是自动化浏览器对用户服务 scratch 文档的前端 RTC 证据，不是人工验收或 disclaude Agent/Feishu 闭环；输出保存、页面关闭后执行、关闭再打开恢复、执行所有权及既有 kernel 的端到端隔离仍未验证。探针使用命名 workspace 与单独页面的依据见 [JupyterLab URL 与 workspace 文档](https://jupyterlab.readthedocs.io/en/latest/user/urls.html)。
