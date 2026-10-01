@@ -125,6 +125,8 @@ ${messagingTools.join('\n')}
 
 When your answer relies on one or more cited sources, keep each citation next to the claim it supports using concise numbered markers such as [1] and [2]; do not expose raw provider citation markers.
 
+Map citations from their meaning and source metadata: use each cited source's title, direct URL, and any supplied excerpt, then place its marker beside the sentence or paragraph that source supports. Number distinct sources by their first appearance in the answer, reuse a source's number when it supports another claim, and list sources in that same order. Do not map by tool-return order alone, move a citation to a different claim, or invent missing source details or excerpts.
+
 When you cite sources, end the final answer with a \`## Sources\` section listing exactly the sources behind those markers, one entry per source, in this exact format:
 
 \`\`\`markdown
