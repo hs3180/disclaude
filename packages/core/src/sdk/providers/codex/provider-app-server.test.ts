@@ -124,6 +124,60 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     } finally { provider.dispose(); }
   });
 
+  it('dispatches inline host tools after resuming the same thread on a new app-server process', async () => {
+    const { provider, dir } = providerFixture('exit 0', 'app-server');
+    writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
+const fs=require('node:fs');const send=m=>console.log(JSON.stringify(m));let marker='first';let turnId='';let requestId='';
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line);
+ if(m.method==='initialize')send({id:m.id,result:{}});
+ else if(m.method==='initialized'){}
+ else if(m.method==='thread/start'||m.method==='thread/resume'){
+  marker=m.method==='thread/start'?'first':'second';
+  fs.appendFileSync(process.env.CODEX_HOME+'/methods',JSON.stringify({method:m.method,params:m.params})+'\\n');
+  send({id:m.id,result:{thread:{id:'continued-thread'}}});
+ } else if(m.method==='model/list')send({id:m.id,result:{data:[{id:'gpt-6-luna',model:'gpt-6-luna',supportedReasoningEfforts:[{reasoningEffort:'max'}]}]}});
+ else if(m.method==='turn/start'){
+  turnId=marker+'-turn';requestId=marker+'-request';
+  send({id:m.id,result:{turn:{id:turnId}}});
+  send({method:'item/started',params:{threadId:'continued-thread',turnId,item:{id:marker+'-tool',type:'dynamicToolCall'}}});
+  send({id:requestId,method:'item/tool/call',params:{callId:marker+'-call',threadId:'continued-thread',turnId,namespace:'probe',tool:'emit_marker',arguments:{marker}}});
+ } else if(m.id===requestId){
+  send({method:'item/completed',params:{threadId:'continued-thread',turnId,item:{id:marker+'-tool',type:'dynamicToolCall',status:'completed'}}});
+  send({method:'item/completed',params:{threadId:'continued-thread',turnId,item:{id:marker+'-reply',type:'agentMessage',text:marker+' host tool completed'}}});
+  send({method:'turn/completed',params:{threadId:'continued-thread',turn:{id:turnId,status:'completed'}}});
+ }
+});`);
+    const handler = vi.fn((params: { marker: string }) => Promise.resolve({ accepted: true, marker: params.marker }));
+    const mcpServer = provider.createMcpServer({
+      type: 'inline', name: 'probe', version: '1.0.0',
+      tools: [{ name: 'emit_marker', description: 'Record a turn marker', parameters: z.object({ marker: z.string() }), handler }],
+    }) as McpServerConfig;
+    const result = provider.queryStream((async function* (): AsyncGenerator<UserInput> {
+      yield { role: 'user', content: 'Record the first marker' };
+      yield { role: 'user', content: 'Record the second marker' };
+    })(), {
+      sessionKey: 'dynamic-tool-resume', settingSources: [], mcpServers: { probe: mcpServer },
+    } as AgentQueryOptions);
+    const messages: AgentMessage[] = [];
+    try {
+      for await (const message of result.iterator) { messages.push(message); }
+      const threadRequests = readFileSync(join(dir, 'home/methods'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      expect(threadRequests.map(request => request.method)).toEqual(['thread/start', 'thread/resume']);
+      expect(threadRequests[0].params.dynamicTools).toMatchObject([
+        { type: 'namespace', name: 'probe', tools: [{ type: 'function', name: 'emit_marker' }] },
+      ]);
+      expect(threadRequests[1].params).not.toHaveProperty('dynamicTools');
+      expect(handler.mock.calls.map(call => call[0].marker)).toEqual(['first', 'second']);
+      expect(messages.filter(message => message.type === 'text').map(message => message.content)).toEqual([
+        'first host tool completed', 'second host tool completed',
+      ]);
+      expect(messages.filter(message => message.type === 'status').map(message => message.metadata?.sessionId)).toEqual([
+        'continued-thread', 'continued-thread',
+      ]);
+    } finally { provider.dispose(); }
+  });
+
   it('requires a conversation reset before changing a resumed thread tool registry', async () => {
     const { provider, dir } = providerFixture('exit 0', 'app-server');
     writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
