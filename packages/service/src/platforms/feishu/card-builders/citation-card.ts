@@ -15,6 +15,7 @@
  */
 
 import { normalizeMarkdownLineBreaks } from './content-builder.js';
+import { buildStreamingPlaceholderCard } from './streaming-card-builder.js';
 
 /** One parsed source entry from a `## Sources` section. */
 export interface CitationSource {
@@ -44,6 +45,14 @@ const ENTRY_PATTERN = /^(\d{1,3})\.\s+\[(.+)\]\((https?:\/\/[^\s)]+)\)\s*$/;
 
 /** Excerpt line: a blockquote indented no deeper than a list continuation. */
 const EXCERPT_PATTERN = /^\s{0,3}>\s?(.*)$/;
+
+function renderSourceEntries(sources: CitationSource[]): string[] {
+  return sources.map((source) => {
+    const title = source.title.replace(/\\/g, '\\\\').replace(/\[/g, '\\[').replace(/\]/g, '\\]');
+    const link = `[${source.number}] [${title}](${source.url})`;
+    return source.excerpt ? `${link}\n> ${source.excerpt.replace(/\n/g, '\n> ')}` : link;
+  });
+}
 
 /**
  * Strictly parse a trailing `## Sources` section.
@@ -155,14 +164,7 @@ export function buildCitationCard(
   body: string,
   sources: CitationSource[]
 ): Record<string, unknown> {
-  const entries = sources.map((source) => {
-    const title = source.title
-      .replace(/\\/g, '\\\\')
-      .replace(/\[/g, '\\[')
-      .replace(/\]/g, '\\]');
-    const link = `[${source.number}] [${title}](${source.url})`;
-    return source.excerpt ? `${link}\n> ${source.excerpt.replace(/\n/g, '\n> ')}` : link;
-  });
+  const entries = renderSourceEntries(sources);
   return {
     config: {
       wide_screen_mode: true,
@@ -179,4 +181,20 @@ export function buildCitationCard(
       },
     ],
   };
+}
+
+/**
+ * Build the final JSON-2.0 version of a streaming answer card with citations.
+ * The stream already shows this answer; replacing the card at finalization
+ * keeps its message identity while separating the answer from its sources.
+ */
+export function buildCitationStreamingCard(
+  body: string,
+  sources: CitationSource[]
+): ReturnType<typeof buildStreamingPlaceholderCard> {
+  const sourceBlock = `**Sources**\n${renderSourceEntries(sources).join('\n')}`;
+  return buildStreamingPlaceholderCard({
+    thinkingPlaceholder: '本次回复已结束',
+    replyText: `${normalizeMarkdownLineBreaks(body)}\n\n---\n\n${sourceBlock}`,
+  });
 }

@@ -7,7 +7,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { extractCitations, buildCitationCard, type CitationSource } from './citation-card.js';
+import {
+  extractCitations,
+  buildCitationCard,
+  buildCitationStreamingCard,
+  type CitationSource,
+} from './citation-card.js';
 
 const VALID_ANSWER = [
   'Per the docs, streaming cards use Card Kit [1].',
@@ -197,5 +202,25 @@ describe('buildCitationCard', () => {
     ]) as { elements: Array<{ tag: string; content?: string }> };
 
     expect(card.elements[2]?.content).toContain('[1] [A \\[nested\\] title](https://example.com)');
+  });
+
+  it('builds a JSON-2.0 final card for the streaming path', () => {
+    const card = buildCitationStreamingCard('Answer [1].', sources);
+    expect(card.schema).toBe('2.0');
+    expect(card.config.streaming_mode).toBe(true);
+    expect(card.body.elements[0]).toEqual({
+      tag: 'markdown',
+      element_id: 'streaming_thinking',
+      content: '本次回复已结束',
+    });
+    expect(card.body.elements[1]).toEqual({
+      tag: 'markdown',
+      element_id: 'streaming_reply',
+      content:
+        'Answer [1].\n\n---\n\n**Sources**\n' +
+        '[1] [Card Kit guide](https://example.com/docs/cardkit)\n' +
+        '> Line one.\n> Line two.\n' +
+        '[2] [Truncation notes](https://example.org/truncation)',
+    });
   });
 });

@@ -62,6 +62,7 @@ import {
 // #5193: deterministic `## Sources` citation card (narrow contract).
 import {
   buildCitationCard,
+  buildCitationStreamingCard,
   extractCitations,
 } from '../platforms/feishu/card-builders/citation-card.js';
 // Issue #4400 (#4208 P2-c): Card Kit streaming wiring.
@@ -258,6 +259,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   private streamingCardKitClient?: FeishuCardKitClient;
   private readonly streamingMessageIds = new Map<string, string>();
   private readonly streamingSequences = new Map<string, number>();
+  /** Full accumulated stream text, retained for deterministic final rendering. */
+  private readonly streamingReplyText = new Map<string, string>();
   private readonly deliveryHealth: DeliveryHealth = {
     status: 'unknown',
     attempts: 0,
@@ -1145,6 +1148,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       if (sent.data?.message_id) { this.streamingMessageIds.set(cardId, sent.data.message_id); }
       // createCard carries no sequence; the first PUT/PATCH uses sequence 1.
       this.streamingSequences.set(cardId, 0);
+      this.streamingReplyText.set(cardId, '');
       logger.info(
         { chatId, cardId, parentMessageId },
         'startStreaming: streaming card created and sent to chat'
@@ -1170,6 +1174,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       // Unknown / already-finalized card — nothing to patch.
       return;
     }
+    this.streamingReplyText.set(id, text);
     const client = this.streamingCardKitClient;
     if (!client) {
       return;
@@ -1200,7 +1205,31 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     this.streamingSequences.set(id, sequence);
     try {
       if (!client) { throw new Error('Streaming client unavailable during finalization'); }
-      await client.updateElementContent(id, STREAMING_THINKING_ELEMENT_ID, '本次回复已结束', sequence);
+      const finalText = normalizeMarkdownLineBreaks(this.streamingReplyText.get(id) ?? '');
+      const citations = extractCitations(finalText);
+      const citationCard = citations
+        ? buildCitationStreamingCard(citations.body, citations.sources)
+        : null;
+      const citationCardBytes = citationCard
+        ? Buffer.byteLength(JSON.stringify(citationCard), 'utf8')
+        : 0;
+      if (citationCard && citationCardBytes <= FEISHU_RETRY_MESSAGE_BYTES) {
+        // Replace the streamed Markdown with the final answer + source block
+        // in the same Card Kit message, then freeze it below.
+        await client.updateCard(id, citationCard, sequence);
+        logger.info(
+          { cardId: id, sourceCount: citations?.sources.length },
+          'Citation sources rendered into the final streaming card'
+        );
+      } else {
+        if (citationCard) {
+          logger.info(
+            { cardId: id, cardBytes: citationCardBytes },
+            'Streaming citation card exceeds the conservative payload budget; keeping streamed Markdown'
+          );
+        }
+        await client.updateElementContent(id, STREAMING_THINKING_ELEMENT_ID, '本次回复已结束', sequence);
+      }
       this.streamingSequences.set(id, sequence + 1);
       await client.finalizeStreaming(id, sequence + 1);
       logger.info({ cardId: id, sequence }, 'finalizeStreaming: streaming card frozen');
@@ -1213,6 +1242,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     } finally {
       this.streamingSequences.delete(id);
       this.streamingMessageIds.delete(id);
+      this.streamingReplyText.delete(id);
     }
   }
 
