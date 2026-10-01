@@ -69,6 +69,8 @@ Codex app-server 动态工具 API 当前标为 experimental，产品实现须固
 
 Jupyter 侧验证使用隔离 localhost 栈：Python `3.13.9`、JupyterLab `4.6.3`、Jupyter Server `2.21.1`、`jupyter-collaboration` `5.0.4`、`jupyter-server-nbmodel` `0.2.9`、ipykernel `7.4.0` 和 `httpx-ws` `0.9.0`。协议实验中，两名 RTC peer 同步了 Markdown 编辑；kernel 返回的 `42` 和输出写入并保存在 `.ipynb`；有效取消返回 204，过期取消返回 404 且未中断后续执行。服务重启后文件中的人工编辑和输出仍在，但原 kernel 消失，变量内存不可恢复。以上是隔离协议实验，不证明关闭全部 UI 后的产品后台执行、真实 Feishu 集成、远程服务、图表阅读或设备链接可用。
 
+2026-10-02 用同一隔离栈补做了实际 JupyterLab 前端 RTC 探针。独立临时 Server 使用 JupyterLab `4.6.3`、Jupyter Server `2.21.1`、`jupyter-collaboration` `5.0.4`，与长期运行的另一测试 Server、用户远程 Jupyter 和 Project workspace 分开；使用 Chromium `155.0.8057.0` 无头打开同一个 scratch Notebook 的两个页面。两页各自建立 collaboration room WebSocket。第一页通过编辑器将 cell 从 `# ORIGINAL_NOTE` 改成 `# HUMAN_EDIT_NOT_YET_SAVED`；第二页实时读到该修改，而紧接着读取 Contents API 仍只返回原文。YDoc 保存延迟设为 30 秒，以明确区分共享内存状态与已落盘 Notebook。这验证真实 JupyterLab 前端修改会进入同一协作文档并在 Contents 保存前对第二个前端 peer 可见；第二个 peer 仍是 JupyterLab 页面，不是 Agent host adapter，未证明产品 Agent 可读取未保存编辑或远程用户服务启用同样配置。页面自动产生的 1 个 notebook session 与唯一 scratch 文件按路径清理，隔离 Server 停止后删除了整棵临时 root；随后核查没有 `disclaude-063-rtc-ui-*` 临时目录残留。原有长运行隔离 Server 未触碰。本轮 UI 操作预算为 4，实际仅打开两页、编辑一次并观察一次同步。
+
 2026-10-01 的用户 Jupyter 服务补充了一次远程执行协议探针：服务报告 Jupyter Server `2.19.0`，Python kernelspec 为 `conda-base-py`；基线为 9 个 kernel/session。没有打开任何 JupyterLab 页面，也没有读取、修改或执行既有 Notebook。通过 Contents API 创建 UUID 临时 Notebook 和新 session/kernel，协商 `v1.kernel.websocket.jupyter.org` 后只执行一个 `print` 标记；同一请求收到 `execute_reply: ok`、匹配的 IOPub `idle` 与 stdout。随后由探针通过 Contents API 保存输出并回读，确认 cell ID、源码和输出一致。清理前核验了临时 cell 身份，session 和 Notebook 删除均返回 204，后续 Contents 查询返回 404；kernel/session 数量都恢复为 9。此结果证明该远程服务允许不打开 Notebook 页面时经协议执行一个新 scratch kernel，并由客户端保存、回读结果；它不证明产品 Agent 能协调执行，也不证明所有 Notebook 页面关闭时的集成后台任务、未保存 RTC 修改、服务端自动写回、控制权交接、图表渲染、导出或 Feishu 闭环。该探针没有调用模型。
 
 同一服务后续的第二个独立 scratch 探针验证了 SVG MIME、真实 kernel interrupt 和恢复：cell 输出包含带随机标记的 `image/svg+xml`，经 Contents API 保存和回读后仍可见；另一 cell 先输出 `probe-running` 再 `sleep(20)`，只在确认执行已开始后调用该临时 kernel 的 `/interrupt`，HTTP 返回 204，关联的 shell reply 为 `error/KeyboardInterrupt`，并收到同请求的 IOPub `idle`。随后同一 kernel 成功执行 `print('probe-recovered')`，且服务端 Notebook 保存/回读了 SVG 与恢复输出。session 和 Notebook 最终均以 204 删除，Contents 查询为 404，原有 9 个 kernel/session 数量恢复。它验证的是 Jupyter API/WebSocket 的底层能力，不验证 Agent 的 `/stop`、所有权/并发隔离、多个图表输出位置、绘图渲染、RTC、Feishu 体验或发行集成；没有触碰既有 Notebook，也没有调用模型。
@@ -174,14 +176,14 @@ Agent 默认围绕问题、数据与证据、方法选择、结果解释和结�
 | 阶段 | 可评审交付 | 通过条件 |
 | --- | --- | --- |
 | [G0-A Agent 接入验证 #5215](https://github.com/hs3180/disclaude/issues/5215) | dsh `0.1.2-rc.1` 默认 route 曾返回 `NO_ADAPTER`；隔离 patch 下 `openai-codex` / `gpt-5.6-luna` SDK initialize 成功；Codex app-server `0.159.2` dynamic host tool 探针与 `gpt-5.6-luna` 远程 scratch 执行成功；`a996b0ae` 补入调用身份传递；Codex CLI `0.159.3` / `gpt-5.6-luna/low` 两轮同 thread 续接探针通过 | 当前选择 Codex app-server 作为实现路线；dsh 精确 provider/model route 可初始化，但隔离环境没有可用凭据，SDK 无远程 cancel/resume 请求。尚无产品 Jupyter 适配、kernel interrupt、Feishu 会话续行或真实会话重启对账。issue 保持未完成 |
-| [G0-B Jupyter 能力验证 #5216](https://github.com/hs3180/disclaude/issues/5216) | 与 G0-A 并行；固定 Jupyter 兼容组合、连接与认证方式；现成扩展对照 | 无 Project 目录挂载或 Notebook 本地副本也能工作；未落盘的人工编辑可读；关浏览器仍执行保存；中断、图表回读和控制权交接可核验。此组结果决定 Jupyter 扩展复用/补齐范围，不把文档或内核问题归因于 dsh |
+| [G0-B Jupyter 能力验证 #5216](https://github.com/hs3180/disclaude/issues/5216) | 与 G0-A 并行；固定 Jupyter 兼容组合、连接与认证方式；现成扩展对照。已有隔离本地 JupyterLab 前端/RTC 探针：两页连接同一 room，第二页读到尚未落盘的人工 cell 修改 | 已证明一个隔离栈的 server-side kernel 执行/输出、interrupt 和 RTC 前端共享；用户远端服务的 RTC/Agent 读取未保存编辑、关闭所有页面后的集成输出持久化、人工/Agent 控制权交接及统一发行组合仍待核验。issue 保持未完成 |
 | [G1-A 共享文档与资源关联 #5217](https://github.com/hs3180/disclaude/issues/5217) | Jupyter 资源引用与 Project 关联、shared model、cell 定点读写、版本及控制者校验 | 人工未保存改动可读；版本冲突拒绝；跨上下文/服务的引用隔离；解除关联不删除服务端成果 |
 | [G1-B 内核执行与可靠停止 #5218](https://github.com/hs3180/disclaude/issues/5218) | kernel 生命周期、执行协调、输出关联与持久化；必要的 JupyterLab 执行入口适配 | 用真实 Jupyter/ipykernel 验证执行完成、display 更新、取消、结果未知及源码版本；与 G1-A 共用控制者身份/代次和交接契约 |
 | [G2 Agent 与飞书闭环 #5219](https://github.com/hs3180/disclaude/issues/5219) | 工具、上下文变化、数据上传、原话题入口、真实停止与续行 | 真实模型在原 Project 完成分析；用户直接修改 Notebook 后继续同一研究且改动保留 |
 | [G3 报告与可视化 #5220](https://github.com/hs3180/disclaude/issues/5220) | 报告组织指导、图表观察、静态预览、同版本 `.ipynb`/HTML 导出 | 核验图、表、公式与结论的实际可读性；交互图表与静态降级可用；导出与来源版本一致 |
 | [G4 恢复与发行 #5221](https://github.com/hs3180/disclaude/issues/5221) | 重启与重连对账、连接/扩展 doctor、版本兼容范围、文档和发行验收 | 浏览器关闭、Agent 重启、Jupyter 断连、kernel 丢失分别处理；保全服务端成果；从支持的连接环境可重复完成真实闭环 |
 
-上述七项均为综合 issue 的子 issue，全部纳入 0.6.3 发布目标。G0-A 已得到局部选型证据但仍待产品路径验证，G0-B 只有隔离协议证据，两个 issue 均保持未完成；G1-A/B 依赖 G0-B，按共同契约推进；G2 依赖 Codex app-server 适配与 G1-A/B，G3 依赖 G1-A/B 并可与 G2 并行，G4 对全部成果收口。恢复所需身份与记录在 G1 即实现，不能全部延后到 G4。
+上述七项均为综合 issue 的子 issue，全部纳入 0.6.3 发布目标。G0-A 已得到局部选型证据但仍待产品路径验证；G0-B 已有隔离协议和前端 RTC 证据，但完整能力与受支持发行组合尚未锁定；两个 issue 均保持未完成。G1-A/B 依赖 G0-B，按共同契约推进；G2 依赖 Codex app-server 适配与 G1-A/B，G3 依赖 G1-A/B 并可与 G2 并行，G4 对全部成果收口。恢复所需身份与记录在 G1 即实现，不能全部延后到 G4。
 
 这些阶段是实现与 review 的分解，不是产品强制的研究流程。换 Agent backend 不能解决共享文档或内核层的失败。基础内核/协作桥和 Codex app-server 动态工具适配在契约确定后可以独立评审；子 issue 全部关闭不自动代表产品验收通过，综合 issue 仍以完整真实体验作为关闭条件。
 
