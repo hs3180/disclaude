@@ -272,6 +272,43 @@ describe('JupyterNbmodelExecutionClient', () => {
     });
   });
 
+  it('surfaces nbmodel HTTP 300 as pending kernel input', async () => {
+    const mock = createMockFetch(
+      {
+        method: 'POST',
+        status: 202,
+        location: '/team/api/kernels/kernel-1/requests/request-input',
+      },
+      {
+        method: 'GET',
+        status: 300,
+        body: {
+          request_id: 'request-input',
+          kernel_id: 'kernel-1',
+          cell_id: target.cellId,
+          document_path: target.documentPath,
+          request_status: 'input_required',
+          outputs: JSON.stringify([{ output_type: 'stream', name: 'stdout', text: 'Age:' }]),
+        },
+      }
+    );
+    const client = new JupyterNbmodelExecutionClient(connection(), { fetch: mock.fetch });
+    const submitted = await client.submit('kernel-1', 'age = input("Age:")', target);
+    expect(submitted.state).toBe('accepted');
+    if (submitted.state !== 'accepted') {
+      throw new Error('Expected the test execution to be accepted');
+    }
+
+    const observation = await client.getStatus(submitted.handle);
+
+    expect(observation).toMatchObject({
+      state: 'input_required',
+      handle: submitted.handle,
+      outputs: [{ output_type: 'stream', name: 'stdout', text: 'Age:' }],
+    });
+    expect(mock.calls.map((call) => call.method)).toEqual(['POST', 'GET']);
+  });
+
   it('rejects insecure remote URLs and user info', () => {
     expect(
       () =>

@@ -253,24 +253,25 @@ export class JupyterNbmodelExecutionClient {
         httpStatus: result.status,
       };
     }
-    if (result.status >= 300 && result.status < 400) {
-      return {
-        state: 'unknown',
-        handle,
-        reason: 'status_redirect_blocked',
-        httpStatus: result.status,
-      };
-    }
     if (result.status === 300) {
       const record = asRecord(result.body);
       const mismatch = responseIdentityMismatch(record, handle);
       if (mismatch) {
         return { state: 'unknown', handle, reason: mismatch, httpStatus: result.status };
       }
-      const outputs = getOutputs(result.body);
+      const executionRecord = asRecord(record?.execution) ?? record;
+      const outputs = getOutputs(executionRecord?.outputs ?? record?.outputs);
       return outputs
         ? { state: 'input_required', handle, outputs }
         : malformedOutputs(handle, result.status);
+    }
+    if (result.status > 300 && result.status < 400) {
+      return {
+        state: 'unknown',
+        handle,
+        reason: 'status_redirect_blocked',
+        httpStatus: result.status,
+      };
     }
     if (result.status === 202) {
       if (!result.bodyValid) {
