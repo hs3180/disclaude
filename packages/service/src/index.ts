@@ -31,7 +31,6 @@ export type {
   ChannelConfig,
   ChannelFactory,
   ChannelCapabilities,
-
 } from '@disclaude/core';
 
 // Re-export constants and utilities from @disclaude/core
@@ -106,7 +105,6 @@ export {
   type CardConfig,
 } from './platforms/index.js';
 
-
 // Services (Issue #1040)
 export {
   DebugGroupService,
@@ -162,6 +160,13 @@ export {
   type DetailedHealthResponse,
 } from './http-api-server.js';
 export { type DeliveryHealth } from './health-types.js';
+
+// Jupyter RTC shared document access (0.6.3 G1-A foundation)
+export {
+  readJupyterSharedNotebookCell,
+  type JupyterRtcConnection,
+  type JupyterSharedCellSnapshot,
+} from './jupyter/rtc-notebook-reader.js';
 
 // Messaging module (Issue #513, Issue #515)
 export * from './messaging/index.js';
