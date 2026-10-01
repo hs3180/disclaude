@@ -235,3 +235,9 @@ Agent 默认围绕问题、数据与证据、方法选择、结果解释和结�
 使用 `.env` 中的 JupyterLab 凭据先通过密码表单认证，再在隔离的 headless Chrome 临时 profile 中打开页面。通过 JupyterLab URL 为两个页面分别使用新建的命名 workspace，避免恢复默认 workspace；两个 workspace 打开同一唯一 scratch Notebook。服务状态基线为 2 个连接、9 个 kernel；只创建随机命名的 scratch 目录和单 cell Notebook（两个 Contents API PUT 均返回 201），未打开任何既有 Notebook，也未执行 cell 代码。第一页通过 CodeMirror 编辑器输入唯一标记；第二页从 RTC 共享文档实时读到该标记，而紧接的 Contents API GET 仍只返回最初源码，证明本次用户服务上的前端编辑经协作 WebSocket 对另一个页面可见、且当时还未写入序列化 `.ipynb`。观察到 `/api/collaboration/room/json:notebook:<file-id>` 与 global awareness WebSocket。
 
 浏览器同时观察到多个 `/api/kernels/{id}/channels` WebSocket URL（探针期间共有 10 个 channel URL，基线已有 9 个 kernel，另有本次 scratch session）。没有检查这些 channel 的帧，也未向它们发送执行或中断；因此这里只报告连接建立，不推断其内核消息影响。关闭临时页面后，scratch session、两个命名 workspace 与 scratch 目录删除均返回 204；认证后 `/api/status` 回到 2 个连接、9 个 kernel。此结果是自动化浏览器对用户服务 scratch 文档的前端 RTC 证据，不是人工验收或 disclaude Agent/Feishu 闭环；输出保存、页面关闭后执行、关闭再打开恢复、执行所有权及既有 kernel 的端到端隔离仍未验证。探针使用命名 workspace 与单独页面的依据见 [JupyterLab URL 与 workspace 文档](https://jupyterlab.readthedocs.io/en/latest/user/urls.html)。
+
+### nbconvert HTML 导出安全门槛（2026-10-02）
+
+[Jupyter Server 官方安全公告](https://github.com/jupyter-server/jupyter_server/security/advisories/GHSA-fcw5-x6j4-ccmp)说明，2.19.0 及更早版本的 nbconvert HTML handler 缺少 `Content-Security-Policy` sandbox；打开由含用户 HTML 输出的 Notebook 生成、且托管在 Jupyter 同源下的 HTML，可能导致脚本以该服务源运行并访问其 API。该问题在 Jupyter Server 2.20.0 修复。此前记录的用户服务版本为 2.19.0，因此本版不能把该实例的默认 `/nbconvert/html/{path}` 响应作为可执行预览链接投递或在已登录浏览器中打开；本次没有请求或打开该 HTML 路由。
+
+Jupyter Server 2.18.0 增加了 GET `/nbconvert/html` 的 `sanitize_html` 选项，[当前 API 文档](https://jupyter-server.readthedocs.io/en/stable/api/jupyter_server.nbconvert.html)将其说明为对 HTML 输出进行 sanitize；但这不替代 sandbox 响应头，也不能作为受影响 2.19.0 默认路由的安全证明。发行栈的首选门槛是固定到已修复版本（至少 2.20.0），并在实际生成的响应上核验 CSP sandbox。若将 sanitizer 作为兼容旧版本的额外降级路径，须在隔离样例中验证 query 参数、HTML/JavaScript 输出、图表 MIME 保留和响应头；在验证前禁用该路径。报告 HTML 的下载/附件投递与同源浏览器预览分开验收，不在 Feishu 消息中传递复用型 Jupyter 管理凭据。
