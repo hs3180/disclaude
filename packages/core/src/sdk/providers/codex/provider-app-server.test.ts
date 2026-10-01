@@ -110,6 +110,15 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
         contentItems: [{ type: 'inputText', text: '{"path":"research.ipynb","documentId":"doc-1"}' }],
       });
       expect(handler).toHaveBeenCalledOnce();
+      expect(handler.mock.calls[0]?.[2]).toMatchObject({
+        identity: {
+          provider: 'codex-app-server',
+          requestId: 'host-request',
+          callId: 'host-call',
+          threadId: 'dynamic-thread',
+          turnId: 'dynamic-turn',
+        },
+      });
       expect(messages).toContainEqual(expect.objectContaining({ type: 'text', content: 'Notebook read completed' }));
       expect(messages.some(message => message.metadata?.terminatedReason === 'stall')).toBe(false);
     } finally { provider.dispose(); }

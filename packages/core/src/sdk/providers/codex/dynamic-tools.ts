@@ -104,6 +104,13 @@ export function createCodexDynamicToolRegistry(
         const parsed = registeredTool.definition.parameters.parse(request.arguments);
         const result = await registeredTool.definition.handler(parsed, undefined, {
           signal: request.signal,
+          identity: {
+            provider: 'codex-app-server',
+            requestId: request.requestId,
+            callId: request.callId,
+            threadId: request.threadId,
+            turnId: request.turnId,
+          },
         });
         if (request.signal.aborted) {
           return failure('Host tool call was cancelled');

@@ -252,9 +252,25 @@ export type ToolProgressPayload =
 /** 工具进度回调（#4568）：`onProgress(payload)`，可多次调用。 */
 export type ToolProgressCallback = (progress: ToolProgressPayload) => void;
 
-/** Cancellation context passed by providers that can stop a running host tool. */
+/** Provider call identity retained for tracing a host tool back to its turn. */
+export interface InlineToolCallIdentity {
+  /** Agent provider that invoked the host tool. */
+  provider: string;
+  /** JSON-RPC request identifier for the provider-to-host call. */
+  requestId: string | number;
+  /** Provider's stable identifier for this tool invocation. */
+  callId: string;
+  /** Provider conversation/thread containing the call. */
+  threadId: string;
+  /** Provider turn containing the call. */
+  turnId: string;
+}
+
+/** Cancellation and correlation context passed to a running host tool. */
 export interface InlineToolCallContext {
   signal: AbortSignal;
+  /** Present when the provider exposes stable IDs for this individual call. */
+  identity?: InlineToolCallIdentity;
 }
 
 /** 内联工具定义 */

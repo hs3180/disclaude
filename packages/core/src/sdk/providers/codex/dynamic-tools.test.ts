@@ -51,6 +51,13 @@ describe('Codex app-server dynamic tools', () => {
     });
     expect(handler).toHaveBeenCalledWith({ path: 'research.ipynb' }, undefined, {
       signal: controller.signal,
+      identity: {
+        provider: 'codex-app-server',
+        requestId: 'rpc-1',
+        callId: 'call-1',
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+      },
     });
   });
 
