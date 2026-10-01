@@ -141,6 +141,7 @@ export class JupyterNbmodelExecutionClient {
   private readonly pollIntervalMs: number;
   private readonly maxWaitMs: number;
   private readonly maxResponseBytes: number;
+  private readonly cancellationRequests = new Map<string, Promise<JupyterNbmodelCancelResult>>();
 
   constructor(
     connection: JupyterNbmodelConnection,
@@ -386,9 +387,24 @@ export class JupyterNbmodelExecutionClient {
   /**
    * Ask the server to interrupt this exact request. HTTP 204 only acknowledges
    * the request; callers must poll until the kernel reports a terminal state.
+   * Calls for the same handle on this client share one DELETE because the
+   * server may otherwise interrupt the next cell after the queue advances.
    */
-  async cancel(handle: JupyterNbmodelExecutionHandle): Promise<JupyterNbmodelCancelResult> {
+  cancel(handle: JupyterNbmodelExecutionHandle): Promise<JupyterNbmodelCancelResult> {
     validateHandle(handle);
+    const key = JSON.stringify([handle.kernelId, handle.requestId]);
+    const existing = this.cancellationRequests.get(key);
+    if (existing) {
+      return existing;
+    }
+    const cancellation = this.sendCancel(handle);
+    this.cancellationRequests.set(key, cancellation);
+    return cancellation;
+  }
+
+  private async sendCancel(
+    handle: JupyterNbmodelExecutionHandle
+  ): Promise<JupyterNbmodelCancelResult> {
     const result = await this.request('DELETE', this.requestUrl(handle));
     if (result.state === 'transport_error') {
       return { state: 'unknown', reason: `cancel_${result.reason}` };

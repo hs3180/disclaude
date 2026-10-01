@@ -171,6 +171,34 @@ describe('JupyterNbmodelExecutionClient', () => {
     expect(mock.calls.map((call) => call.method)).toEqual(['POST', 'GET', 'DELETE', 'GET']);
   });
 
+  it('sends only one DELETE when cancellation is requested concurrently for the same handle', async () => {
+    const mock = createMockFetch(
+      {
+        method: 'POST',
+        status: 202,
+        location: '/team/api/kernels/kernel-1/requests/request-cancel-once',
+      },
+      { method: 'DELETE', status: 204 }
+    );
+    const client = new JupyterNbmodelExecutionClient(connection(), { fetch: mock.fetch });
+    const submitted = await client.submit('kernel-1', 'long_running_cell()', target);
+    expect(submitted.state).toBe('accepted');
+    if (submitted.state !== 'accepted') {
+      throw new Error('Expected the test execution to be accepted');
+    }
+
+    const results = await Promise.all([
+      client.cancel(submitted.handle),
+      client.cancel(submitted.handle),
+    ]);
+
+    expect(results).toEqual([
+      { state: 'requested', httpStatus: 204 },
+      { state: 'requested', httpStatus: 204 },
+    ]);
+    expect(mock.calls.map((call) => call.method)).toEqual(['POST', 'DELETE']);
+  });
+
   it('returns unknown rather than replaying when the accepted request URL is unsafe', async () => {
     const mock = createMockFetch({
       method: 'POST',
