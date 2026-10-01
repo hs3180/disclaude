@@ -226,4 +226,6 @@ Agent 默认围绕问题、数据与证据、方法选择、结果解释和结�
 
 ### 用户 JupyterLab 扩展清单复查（2026-10-02）
 
-使用 `.env` 中的 JupyterLab 凭据只读查询当前用户服务：`GET /api/status`、`GET /lab/api/extensions` 和 `GET /api/kernelspecs` 均返回 200；状态报告 2 个连接、9 个 kernel。扩展清单中 `datalayer-jupyter-server-nbmodel` 与 `datalayer-jupyter-mcp-tools` 的 status 为 `ok`；`jupyter-collaboration-extension`、`jupyter-docprovider-extension` 和 `jupyter-notebook-lab-extension` 虽然 enabled 字段为 true，status 均为 `error`。kernelspec 清单只有 `conda-base-py`。该 API 未返回这些扩展的版本或错误原因，因此不能据此断言服务端协作后端不可用，也不能把协作 UI 视为已通过。此次没有读取 Notebook/session 列表、打开页面、创建或停止 kernel，也未修改用户服务数据；结果是当前 Lab 前端扩展状态的只读兼容性证据。
+使用 `.env` 中的 JupyterLab 凭据只读查询当前用户服务：`GET /api/status`、`GET /lab/api/extensions` 和 `GET /api/kernelspecs` 均返回 200；状态报告 2 个连接、9 个 kernel。扩展清单中 `datalayer-jupyter-server-nbmodel`（0.1.1--alpha.4）与 `datalayer-jupyter-mcp-tools`（0.1.6）的 status 为 `ok`；`jupyter-collaboration-extension`（4.4.1）、`jupyter-docprovider-extension`（4.4.1）和 `jupyter-notebook-lab-extension`（7.5.7）均为 installed/enabled，status 为 `error`，且 latest_version 为 null。kernelspec 清单只有 `conda-base-py`。
+
+`/lab/api/extensions` 返回的是 JupyterLab Extension Manager 的 IEntry 包元数据；其 [官方接口](https://jupyterlab.readthedocs.io/en/stable/api/interfaces/extensionmanager.IEntry.html)将 `enabled`、`installed_version`、`latest_version` 与 `status` 定义为扩展安装清单字段，`status` 是已安装扩展状态标志，不带运行时错误详情。因此这些 error 标志不能证明浏览器模块加载失败，也不能证明 RTC 正常；用户服务的实时协作仍未验证。此次没有读取 Notebook/session 列表、打开页面、创建或停止 kernel，也未修改用户服务数据；这些是只读的扩展清单与 kernelspec 证据。
