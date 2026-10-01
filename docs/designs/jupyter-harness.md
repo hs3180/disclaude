@@ -203,3 +203,7 @@ Agent 默认围绕问题、数据与证据、方法选择、结果解释和结�
 ## 当前交付边界
 
 本提案已记录本机 dsh 默认 profile 缺少 Jupyter 插件、隔离 `openai-codex` / `gpt-5.6-luna` route initialization、Codex app-server 隔离协议探针、#5226 分支上的 provider-to-Jupyter Contents 读取 smoke、隔离栈的 RTC/执行/取消/重启实验，以及用户 Jupyter 服务上的直接 kernel WebSocket、nbmodel、MCP Tools 页面命令桥、SVG MIME、interrupt/恢复与 Contents 保存证据。dsh route 尚无 OAuth/API 凭据，也没有真实模型或 Jupyter 调用；候选动态工具代码仍在未合并 PR 中。没有修改 Jupyter Server 配置，但 MCP Tools 页面探针曾因默认 workspace 恢复而短暂同步多个身份未确认文档的协作状态，随后只清理了测试创建的 workspace 引用，不能声称完全未访问既有文档。仍没有通过 MCP JSON-RPC 客户端、Feishu 入口、人直接编辑后的接续、Agent 管理的后台执行/保存、报告导出或真实设备访问验收。下一步补齐 #5215/#5216 剩余真实证据与选型，再按共同契约推进 G1–G4；不能据这些实验关闭 issue。
+
+### Jupyter 凭据可达性补充（2026-10-01 14:09 CST）
+
+使用 `.env` 中的 JupyterLab 凭据访问用户提供的服务：未登录时 `GET /api/status` 返回 403；通过 Jupyter 密码表单登录后，同一路径返回 200。此项只证明凭据可认证到该服务；没有创建或读取 Notebook、创建 kernel，且没有将凭据或会话 cookie 写入证据。
