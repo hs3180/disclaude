@@ -215,3 +215,7 @@ Agent 默认围绕问题、数据与证据、方法选择、结果解释和结�
 ### Provider-to-kernel interrupt 联合探针（2026-10-02 00:38 CST）
 
 在 #5226 app-server dynamic host-tool 分支尝试将真实 `gpt-5.6-luna/low` 调用、远程 scratch kernel interrupt 和 Contents 保存/回读串成一次探针。runner 退出时只保留了 app-server `closed` / `processCount=0` 日志，最终结果行没有保存，无法确认是否观察到 provider abort、kernel `KeyboardInterrupt`、IOPub idle 或保存回读成功。随后认证检查确认远端恢复为基线 9 个 sessions / 9 个 kernels，且没有 `disclaude-cancel-*` 临时 Notebook 或 session 残留。该尝试记为结果不确定，不作为取消或持久化证据；后续探针须在清理前将每一阶段结果可靠落盘或输出。
+
+### Provider-to-kernel interrupt 和输出持久化（2026-10-02 01:09 CST）
+
+在 #5226 候选 `978ffaf5` 上用 Codex CLI `0.159.3` 重做联合探针。实际加载的 `~/.disclaude/disclaude.config.yaml` 解析为 Codex backend；运行日志与 query 参数均确认本轮显式覆盖为 `gpt-5.6-luna` / `low`、app-server、read-only sandbox、`networkAccess=false`，未切换生产服务。先前一次重做因测试客户端协商 Jupyter v1 二进制子协议却发送 JSON 文本而超时；改用同一服务支持的 legacy JSON WebSocket 后，真实模型只调用了一次 inline Jupyter host tool。handler 通过 Contents API 创建含目标 cell 的 UUID scratch Notebook（HTTP 201），并新建 session/kernel（session 请求 HTTP 201）；确认长执行已输出唯一 `probe-started` 标记后调用 provider `handle.interrupt()`。provider 中断得到确认，host `AbortSignal` 到达 handler，随后对该 scratch kernel 的 `/interrupt` 返回 204。该次 shell 执行返回 `error/KeyboardInterrupt`，同一执行收到 IOPub `idle`。handler 将 stdout 与中断错误写回同一 cell，Contents PUT 返回 200；GET 回读验证 cell ID、源码、起始输出和 `KeyboardInterrupt` 一致，且 `probe-late` 未出现。session 与 Notebook 删除都返回 204，最终 inventory 恢复基线 9 sessions / 9 kernels，匹配临时资源为 0。此证据证明所选 provider 的一次性 host handler 可把 turn interrupt 传给远程 kernel、观察执行终止并保存/回读同一 cell 输出；它仍不验证产品 Jupyter 适配器、飞书 `/stop`、人工/Agent 执行协调、RTC、页面关闭后台执行或完整研究闭环。
