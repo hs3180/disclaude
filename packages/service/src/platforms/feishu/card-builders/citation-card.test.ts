@@ -49,6 +49,7 @@ describe('extractCitations', () => {
   it('handles CJK titles, quotes, and multi-line excerpts without breaking', () => {
     const text = [
       '结论见 [1]。',
+      '补充说明见 [2]。',
       '',
       '## Sources',
       '1. [中文标题「引用」测试](https://example.cn/页面?q=1&r=2)',
@@ -67,7 +68,7 @@ describe('extractCitations', () => {
 
   it('accepts blank lines between entries and trailing whitespace', () => {
     const text = [
-      'Body [1].',
+      'Body [1] and [2].',
       '',
       '## Sources',
       '',
@@ -105,7 +106,7 @@ describe('extractCitations', () => {
 
   it('uses the last header and keeps an earlier mid-answer header in the body', () => {
     const text = [
-      'Earlier mention of ## Sources stays body text.',
+      'Earlier mention of ## Sources stays body text; see [1] and [2].',
       '## Sources',
       '1. [A](https://a.example)',
       '2. [B](https://b.example)',
@@ -121,6 +122,27 @@ describe('extractCitations', () => {
       '## Sources',
       '1. [A](https://a.example)',
       '1. [B](https://b.example)',
+    ].join('\n');
+    expect(extractCitations(text)).toBeNull();
+  });
+
+  it('rejects missing or extra body markers instead of producing a mismatched card', () => {
+    expect(
+      extractCitations(
+        'Claim [1].\n## Sources\n1. [A](https://a.example)\n2. [B](https://b.example)'
+      )
+    ).toBeNull();
+    expect(
+      extractCitations('Claims [1] and [2].\n## Sources\n1. [A](https://a.example)')
+    ).toBeNull();
+  });
+
+  it('requires source entries to follow first appearance in the body', () => {
+    const text = [
+      'Claim [2] first; claim [1] second.',
+      '## Sources',
+      '1. [A](https://a.example)',
+      '2. [B](https://b.example)',
     ].join('\n');
     expect(extractCitations(text)).toBeNull();
   });

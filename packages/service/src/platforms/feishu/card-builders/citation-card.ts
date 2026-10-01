@@ -46,6 +46,32 @@ const ENTRY_PATTERN = /^(\d{1,3})\.\s+\[(.+)\]\((https?:\/\/[^\s)]+)\)\s*$/;
 /** Excerpt line: a blockquote indented no deeper than a list continuation. */
 const EXCERPT_PATTERN = /^\s{0,3}>\s?(.*)$/;
 
+/**
+ * Require the parsed source entries to match the body's citation markers in
+ * first-appearance order. A malformed model answer stays readable Markdown;
+ * the adapter must never silently attach a different source to a claim.
+ */
+function sourceOrderMatchesBody(body: string, sources: CitationSource[]): boolean {
+  const firstAppearance: number[] = [];
+  const seen = new Set<number>();
+
+  for (const match of body.matchAll(/(?<!\\)\[(\d{1,3})\]/g)) {
+    const number = Number(match[1]);
+    if (number < 1) {
+      return false;
+    }
+    if (!seen.has(number)) {
+      seen.add(number);
+      firstAppearance.push(number);
+    }
+  }
+
+  return (
+    firstAppearance.length === sources.length &&
+    firstAppearance.every((number, index) => number === sources[index]?.number)
+  );
+}
+
 function renderSourceEntries(sources: CitationSource[]): string[] {
   return sources.map((source) => {
     const title = source.title.replace(/\\/g, '\\\\').replace(/\[/g, '\\[').replace(/\]/g, '\\]');
@@ -63,7 +89,8 @@ function renderSourceEntries(sources: CitationSource[]): string[] {
  * - Each entry is `N. [title](url)` on its own line; blank lines between
  *   entries are allowed; an optional blockquote excerpt may follow.
  * - Entry numbers must be unique (they align with body markers, so the written
- *   number is authoritative; sequence gaps are tolerated).
+ *   number is authoritative; sequence gaps are tolerated). Every body marker
+ *   must have one entry, and entries must follow each source's first appearance.
  * - The body before the header must be non-empty.
  *
  * @param text - Full outgoing message text (already newline-normalized).
@@ -142,6 +169,9 @@ export function extractCitations(text: string): ExtractedCitations | null {
   flushExcerpt();
 
   if (sources.length === 0) {
+    return null;
+  }
+  if (!sourceOrderMatchesBody(body, sources)) {
     return null;
   }
   return { body, sources };
