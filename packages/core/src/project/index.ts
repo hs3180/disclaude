@@ -11,6 +11,7 @@ export type {
   CwdResolutionReason,
   IssueTriageStatus,
   ProjectContextConfig,
+  ProjectJupyterNotebookReference,
   ProjectManagerOptions,
   ProjectResult,
   ProjectState,
