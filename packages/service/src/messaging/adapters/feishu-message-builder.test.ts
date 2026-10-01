@@ -210,6 +210,50 @@ describe('MessageBuilder with Feishu sections', () => {
       expect(result).toContain(`${channelCli} send_card`);
     });
 
+    it('should guide Codex to end cited answers with the ## Sources narrow contract', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Research this question',
+        messageId: 'msg-123',
+      }, 'chat-123', withTools(['send_text', 'send_card']), 'codex');
+
+      expect(result).toContain('## Codex source citations');
+      expect(result).toContain('numbered markers such as [1] and [2]');
+      expect(result).toContain('## Sources');
+      expect(result).toContain('number. [title](direct URL)');
+      expect(result).toContain('Do not add a `## Sources` section when the answer has no citations');
+      // Narrow contract: the model must NOT handwrite cards or call send_card itself.
+      expect(result).toContain('Do not send a citation card yourself and do not write card JSON');
+      expect(result).not.toContain('--card-file');
+    });
+
+    it('should keep the Codex citation contract on card-less channels and omit it for other backends', () => {
+      // The contract is pure trailing markdown, so it stays useful (and renders
+      // as a plain list) even where the channel cannot display cards.
+      const noCardResult = messageBuilder.buildEnhancedContent({
+        text: 'Research this question',
+        messageId: 'msg-123',
+      }, 'chat-123', withTools(['send_text']), 'codex');
+      expect(noCardResult).toContain('## Codex source citations');
+
+      const otherBackendResult = messageBuilder.buildEnhancedContent({
+        text: 'Research this question',
+        messageId: 'msg-123',
+      }, 'chat-123', withTools(['send_text', 'send_card']), 'claude');
+      expect(otherBackendResult).not.toContain('## Codex source citations');
+
+      // Legacy capabilities without a tool list still gate send_card help.
+      const legacyNoCardResult = messageBuilder.buildEnhancedContent({
+        text: 'Research this question',
+        messageId: 'msg-123',
+      }, 'chat-123', {
+        ...DEFAULT_CHANNEL_CAPABILITIES,
+        supportedMcpTools: undefined,
+        supportsCard: false,
+      }, 'codex');
+      expect(legacyNoCardResult).toContain('## Codex source citations');
+      expect(legacyNoCardResult).not.toContain(`${channelCli} send_card`);
+    });
+
     it('should include send_interactive when available', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',

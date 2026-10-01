@@ -1,0 +1,163 @@
+/**
+ * Deterministic `## Sources` citation card (POC for #5193 / #5227).
+ *
+ * Narrow-contract counterpart to the Codex citation prompt: the model only
+ * promises a strictly formatted trailing `## Sources` section in its final
+ * markdown answer; this module deterministically detects, parses, and renders
+ * it. JSON construction, escaping, and delivery stay in service code — the
+ * model never handwrites card JSON or invokes channel tools (review on #5227).
+ *
+ * Failure policy: any deviation from the contract makes {@link extractCitations}
+ * return null and the message is delivered through the legacy plain-text path,
+ * bit-identical to today. Worst case degrades to readable markdown, never to a
+ * broken card, a duplicate message, or an out-of-order send.
+ */
+
+import { normalizeMarkdownLineBreaks } from './content-builder.js';
+
+/** One parsed source entry from a `## Sources` section. */
+export interface CitationSource {
+  /** Marker number as written by the model (aligns with [1]/[2] in the body). */
+  number: number;
+  /** Link title, non-empty. */
+  title: string;
+  /** Direct http(s) URL. */
+  url: string;
+  /** Optional supporting excerpt lines (joined with \n), without the `> `. */
+  excerpt?: string;
+}
+
+/** Result of a successful strict parse of a trailing `## Sources` section. */
+export interface ExtractedCitations {
+  /** Answer body before the `## Sources` header, trailing blanks trimmed. */
+  body: string;
+  /** Parsed entries in written order. */
+  sources: CitationSource[];
+}
+
+/** Exact section header the prompt contract asks for. */
+const SOURCES_HEADER = '## Sources';
+
+/** Entry line: `7. [Title](https://…)`, single line, direct http(s) URL. */
+const ENTRY_PATTERN = /^(\d{1,3})\.\s+\[(.+)\]\((https?:\/\/[^\s)]+)\)\s*$/;
+
+/** Excerpt line: a blockquote indented no deeper than a list continuation. */
+const EXCERPT_PATTERN = /^\s{0,3}>\s?(.*)$/;
+
+/**
+ * Strictly parse a trailing `## Sources` section.
+ *
+ * Contract (anything else → null, i.e. legacy plain-text delivery):
+ * - The last `## Sources` line starts the section and only whitespace may
+ *   precede it in the section scan; nothing but the parsed entries may follow.
+ * - Each entry is `N. [title](url)` on its own line; blank lines between
+ *   entries are allowed; an optional blockquote excerpt may follow.
+ * - Entry numbers must be unique (they align with body markers, so the written
+ *   number is authoritative; sequence gaps are tolerated).
+ * - The body before the header must be non-empty.
+ *
+ * @param text - Full outgoing message text (already newline-normalized).
+ * @returns Parsed body + sources, or null when the contract is not met.
+ */
+export function extractCitations(text: string): ExtractedCitations | null {
+  const lines = text.split('\n');
+  // Section header must exist and everything after the LAST occurrence must
+  // parse — an earlier `## Sources` mentioned mid-answer stays part of the body.
+  let headerIndex = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (lines[i].trimEnd() === SOURCES_HEADER) {
+      headerIndex = i;
+      break;
+    }
+  }
+  if (headerIndex === -1) {
+    return null;
+  }
+
+  const body = lines.slice(0, headerIndex).join('\n').trimEnd();
+  if (!body.trim()) {
+    return null;
+  }
+
+  const sources: CitationSource[] = [];
+  const seenNumbers = new Set<number>();
+  let current: CitationSource | null = null;
+  const excerptLines: string[] = [];
+
+  const flushExcerpt = (): void => {
+    if (current && excerptLines.length > 0) {
+      current.excerpt = excerptLines.join('\n').trimEnd();
+    }
+    excerptLines.length = 0;
+  };
+
+  for (let i = headerIndex + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.trim() === '') {
+      continue; // blank lines between entries are cosmetic
+    }
+    const entry = ENTRY_PATTERN.exec(line);
+    if (entry) {
+      flushExcerpt();
+      const number = Number(entry[1]);
+      if (seenNumbers.has(number)) {
+        return null; // duplicate marker → ambiguous alignment, reject
+      }
+      seenNumbers.add(number);
+      current = { number, title: entry[2].trim(), url: entry[3] };
+      sources.push(current);
+      continue;
+    }
+    const excerpt = EXCERPT_PATTERN.exec(line);
+    if (excerpt && current) {
+      excerptLines.push(excerpt[1]);
+      continue;
+    }
+    return null; // anything else breaks the contract → legacy delivery
+  }
+  flushExcerpt();
+
+  if (sources.length === 0) {
+    return null;
+  }
+  return { body, sources };
+}
+
+/**
+ * Build the single interactive card that carries the answer AND its sources.
+ *
+ * JSON-1.0 card (`wide_screen_mode`, root `elements`) matching the shapes the
+ * channel already sends for `msg_type: 'interactive'` (e.g. `case 'card'`).
+ * One message → body markers and source numbers stay aligned by construction;
+ * all string escaping happens in `JSON.stringify` at the send boundary, never
+ * in model-authored JSON.
+ *
+ * @param body - Answer body (without the `## Sources` section).
+ * @param sources - Parsed entries; rendered in written order.
+ * @returns Feishu interactive card payload.
+ */
+export function buildCitationCard(
+  body: string,
+  sources: CitationSource[]
+): Record<string, unknown> {
+  const entries = sources.map((source) => {
+    const link = `[${source.number}] [${source.title}](${source.url})`;
+    return source.excerpt ? `${link}\n> ${source.excerpt.replace(/\n/g, '\n> ')}` : link;
+  });
+  return {
+    config: {
+      wide_screen_mode: true,
+    },
+    elements: [
+      {
+        tag: 'markdown',
+        content: normalizeMarkdownLineBreaks(body),
+      },
+      { tag: 'hr' },
+      {
+        tag: 'markdown',
+        content: `**Sources**\n${entries.join('\n')}`,
+      },
+    ],
+  };
+}

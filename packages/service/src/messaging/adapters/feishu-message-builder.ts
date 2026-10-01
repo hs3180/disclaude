@@ -118,6 +118,27 @@ ${messagingTools.join('\n')}
 - Note: Thread replies are NOT supported on this channel.`);
   }
 
+  if (ctx.agentBackend === 'codex') {
+    parts.push(`
+
+## Codex source citations
+
+When your answer relies on one or more cited sources, keep each citation next to the claim it supports using concise numbered markers such as [1] and [2]; do not expose raw provider citation markers.
+
+When you cite sources, end the final answer with a \`## Sources\` section listing exactly the sources behind those markers, one entry per source, in this exact format:
+
+\`\`\`markdown
+## Sources
+1. [Source title](https://example.com)
+   > Optional short supporting excerpt
+2. [Another source title](https://example.org/another)
+\`\`\`
+
+Rules: each entry is a single line \`number. [title](direct URL)\` starting at 1 and incrementing; include an excerpt line only when the source provides one; keep entry numbers aligned with the markers used in the answer; include only sources you actually used. Do not add a \`## Sources\` section when the answer has no citations, and put nothing after it — it must be the last section of the answer.
+
+The delivery layer renders this section as a citation card automatically. Do not send a citation card yourself and do not write card JSON — just end with the section in the exact format above.`);
+  }
+
   return parts.join('\n');
 }
 

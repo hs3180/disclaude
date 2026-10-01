@@ -59,6 +59,11 @@ import {
   normalizeCardMarkdown,
   normalizeMarkdownLineBreaks,
 } from '../platforms/feishu/card-builders/content-builder.js';
+// #5193 POC: deterministic `## Sources` citation card (narrow contract).
+import {
+  buildCitationCard,
+  extractCitations,
+} from '../platforms/feishu/card-builders/citation-card.js';
 // Issue #4400 (#4208 P2-c): Card Kit streaming wiring.
 import {
   FeishuCardKitClient,
@@ -619,6 +624,39 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         // truncation budget reflects what is actually sent and a head/tail cut
         // can never land in the middle of an `\n` escape sequence.
         const text = normalizeMarkdownLineBreaks(message.text || '');
+
+        // #5193 POC (#5227 review): a trailing `## Sources` section is the narrow
+        // citation contract — render it deterministically as ONE interactive card
+        // (body + sources block), so markers and source numbers stay aligned in a
+        // single message. Strict parse failure or card-send failure falls through
+        // to the legacy plain-text path below, bit-identical to today: the reply
+        // is never lost and never depends on model-authored card JSON.
+        const citations = extractCitations(text);
+        if (citations) {
+          try {
+            const cardContent = JSON.stringify(
+              buildCitationCard(citations.body, citations.sources)
+            );
+            const cardMessageId = await sendFeishuMessage('interactive', cardContent);
+            logger.info(
+              {
+                chatId: message.chatId,
+                messageId: cardMessageId,
+                sourceCount: citations.sources.length,
+                threadReply: useThreadReply,
+              },
+              'Citation card sent (## Sources narrow contract)'
+            );
+            logOutgoing(cardMessageId, text, 'interactive');
+            return cardMessageId;
+          } catch (err) {
+            logger.warn(
+              { err, chatId: message.chatId },
+              'Citation card send failed — falling back to plain text delivery'
+            );
+          }
+        }
+
         let textToSend = truncateFeishuMessage(text, configuredFeishuMessageBytes());
         let messageId: string | undefined;
         try {
