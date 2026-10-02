@@ -93,6 +93,8 @@ Jupyter 侧验证使用隔离 localhost 栈：Python `3.13.9`、JupyterLab `4.6.
 
 该探针中一次 `/interrupt` 返回 204，但轮询终态为 `ok` 且未带 `KeyboardInterrupt`；没有记录各次轮询状态及中断与执行完成的时间关系，所以扩展路由的取消语义仍属未验证。session 与 Notebook 删除均返回 204，Contents 后续查询为 404，9 个 kernel/session 计数恢复；没有触碰既有 Notebook，也没有调用模型。
 
+2026-10-02 10:13 CST 的补充探针在同一远程用户服务上，经 kernel WebSocket 执行一个使用合成数据的 Matplotlib cell。`execute_reply=ok`，IOPub `display_data` 包含 44,413 字节的 `image/png`；测试 host 将输出显式写回唯一 scratch `.ipynb`，Contents API 立即读回 execution count 与 MIME output。用本地图像查看器确认标题、轴标签、图例、标记、颜色分组和刻度可读。临时 session 与 Notebook 删除返回 204，随后 kernel 与 Contents 查询均为 404。该探针验证服务端 kernel 可产出静态图并经显式 Contents PUT 持久化；没有打开 JupyterLab 页面，也没有验证自动输出 reconciliation、产品 Agent/Feishu 报告预览、HTML 导出或真实分析结果。
+
 ### 其他方案的位置
 
 | 方案 | 值得复用的部分 | 对本需求的判断 |
