@@ -26,7 +26,7 @@ import {
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ProjectManager } from './project-manager.js';
-import type { ProjectJupyterNotebookReference, ProjectManagerOptions } from './types.js';
+import type { ProjectManagerOptions } from './types.js';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Test Fixtures
@@ -43,19 +43,6 @@ function createTempDir(): string {
 function createOptions(overrides?: Partial<ProjectManagerOptions>): ProjectManagerOptions {
   const workspaceDir = createTempDir();
   return { workspaceDir, ...overrides };
-}
-
-function jupyterReference(
-  overrides?: Partial<ProjectJupyterNotebookReference>
-): ProjectJupyterNotebookReference {
-  return {
-    connectionId: 'jupyter-local',
-    serverNamespace: 'server-1',
-    documentId: 'doc-1',
-    contentPath: 'research/analysis.ipynb',
-    lastKnownVersion: 'revision-7',
-    ...overrides,
-  };
 }
 
 beforeEach(() => {
@@ -268,172 +255,6 @@ describe('ProjectManager', () => {
       expect(bindings).toHaveLength(2);
       expect(bindings.find((b) => b.chatId === 'chat-1')?.workingDir).toBe('/project-a');
       expect(bindings.find((b) => b.chatId === 'chat-2')?.workingDir).toBe('/project-b');
-    });
-  });
-
-  describe('Jupyter notebook references (#5217)', () => {
-    it('persists references by Project directory and shares them across chats on that Project', () => {
-      const opts = createOptions();
-      const pm1 = new ProjectManager(opts);
-      pm1.use('chat-1', '/projects/research');
-      pm1.use('chat-2', '/projects/research');
-
-      expect(pm1.linkJupyterNotebook('chat-1', jupyterReference())).toMatchObject({ ok: true });
-      expect(pm1.getJupyterNotebookReferences('chat-2')).toEqual({
-        ok: true,
-        data: [jupyterReference()],
-      });
-
-      const saved = JSON.parse(readFileSync(pm1.getJupyterReferencesPersistPath(), 'utf8'));
-      expect(saved.version).toBe(1);
-      expect(saved.projects['/projects/research']).toEqual([jupyterReference()]);
-
-      const pm2 = new ProjectManager(opts);
-      expect(pm2.getJupyterNotebookReferences('chat-2')).toEqual({
-        ok: true,
-        data: [jupyterReference()],
-      });
-    });
-
-    it('keeps the same content path isolated by connection and server namespace', () => {
-      const pm = new ProjectManager(createOptions());
-      pm.linkJupyterNotebook('chat-1', jupyterReference({ serverNamespace: 'server-a' }));
-      pm.linkJupyterNotebook(
-        'chat-1',
-        jupyterReference({ connectionId: 'jupyter-remote', serverNamespace: 'server-b' })
-      );
-
-      expect(pm.getJupyterNotebookReferences('chat-1')).toMatchObject({
-        ok: true,
-        data: [
-          { connectionId: 'jupyter-local', serverNamespace: 'server-a' },
-          { connectionId: 'jupyter-remote', serverNamespace: 'server-b' },
-        ],
-      });
-    });
-
-    it('updates a renamed stable document reference in place', () => {
-      const pm = new ProjectManager(createOptions());
-      pm.linkJupyterNotebook('chat-1', jupyterReference());
-      pm.linkJupyterNotebook(
-        'chat-1',
-        jupyterReference({ contentPath: 'archive/analysis-renamed.ipynb', lastKnownVersion: 'revision-8' })
-      );
-
-      expect(pm.getJupyterNotebookReferences('chat-1')).toEqual({
-        ok: true,
-        data: [
-          jupyterReference({
-            contentPath: 'archive/analysis-renamed.ipynb',
-            lastKnownVersion: 'revision-8',
-          }),
-        ],
-      });
-    });
-
-    it('keeps distinct stable document IDs separate even when paths match', () => {
-      const pm = new ProjectManager(createOptions());
-      pm.linkJupyterNotebook('chat-1', jupyterReference({ documentId: 'doc-original' }));
-      pm.linkJupyterNotebook('chat-1', jupyterReference({ documentId: 'doc-replaced' }));
-
-      expect(pm.getJupyterNotebookReferences('chat-1')).toMatchObject({
-        ok: true,
-        data: [{ documentId: 'doc-original' }, { documentId: 'doc-replaced' }],
-      });
-    });
-
-    it('stores only allowlisted identity fields and does not persist credentials or notebook content', () => {
-      const pm = new ProjectManager(createOptions());
-      const reference = {
-        ...jupyterReference(),
-        token: 'secret-token',
-        password: 'secret-password',
-        notebook: { cells: [{ source: 'private research content' }] },
-      } as unknown as ProjectJupyterNotebookReference;
-
-      const linked = pm.linkJupyterNotebook('chat-1', reference);
-      expect(linked).toEqual({ ok: true, data: jupyterReference() });
-      const saved = readFileSync(pm.getJupyterReferencesPersistPath(), 'utf8');
-      expect(saved).not.toContain('secret-token');
-      expect(saved).not.toContain('secret-password');
-      expect(saved).not.toContain('private research content');
-    });
-
-    it('rejects invalid paths and invalid identifiers', () => {
-      const pm = new ProjectManager(createOptions());
-      expect(pm.linkJupyterNotebook('chat-1', jupyterReference({ contentPath: '../escape.ipynb' }))).toMatchObject({
-        ok: false,
-        error: expect.stringContaining('relative .ipynb path'),
-      });
-      expect(pm.linkJupyterNotebook('chat-1', jupyterReference({ contentPath: '/absolute.ipynb' }))).toMatchObject({
-        ok: false,
-      });
-      expect(pm.linkJupyterNotebook('chat-1', jupyterReference({ serverNamespace: ' ' }))).toMatchObject({
-        ok: false,
-        error: expect.stringContaining('serverNamespace'),
-      });
-      expect(
-        pm.linkJupyterNotebook('chat-1', jupyterReference({ connectionId: 'https://host/?token=secret' }))
-      ).toMatchObject({ ok: false });
-    });
-
-    it('unlinks only the Project association and leaves remote identity untouched', () => {
-      const pm = new ProjectManager(createOptions());
-      pm.linkJupyterNotebook('chat-1', jupyterReference());
-
-      expect(pm.unlinkJupyterNotebook('chat-1', jupyterReference())).toEqual({ ok: true, data: true });
-      expect(pm.getJupyterNotebookReferences('chat-1')).toEqual({ ok: true, data: [] });
-      expect(pm.unlinkJupyterNotebook('chat-1', jupyterReference())).toEqual({ ok: true, data: false });
-    });
-
-    it('does not carry a notebook reference when the chat changes Project', () => {
-      const pm = new ProjectManager(createOptions());
-      pm.use('chat-1', '/projects/first');
-      pm.linkJupyterNotebook('chat-1', jupyterReference());
-      pm.use('chat-1', '/projects/second');
-
-      expect(pm.getJupyterNotebookReferences('chat-1')).toEqual({ ok: true, data: [] });
-    });
-
-    it('rolls back in-memory updates when reference persistence fails', () => {
-      const opts = createOptions();
-      const pm = new ProjectManager(opts);
-      pm.linkJupyterNotebook('chat-1', jupyterReference());
-      mkdirSync(`${pm.getJupyterReferencesPersistPath()}.tmp`);
-
-      const result = pm.linkJupyterNotebook(
-        'chat-1',
-        jupyterReference({ documentId: 'doc-2', contentPath: 'research/other.ipynb' })
-      );
-
-      expect(result).toMatchObject({ ok: false });
-      expect(pm.getJupyterNotebookReferences('chat-1')).toEqual({
-        ok: true,
-        data: [jupyterReference()],
-      });
-    });
-
-    it('skips invalid persisted references without creating a local notebook copy', () => {
-      const opts = createOptions();
-      const dataDir = join(opts.workspaceDir, '.disclaude');
-      mkdirSync(dataDir, { recursive: true });
-      writeFileSync(
-        join(dataDir, 'project-jupyter-references.json'),
-        JSON.stringify({
-          version: 1,
-          projects: {
-            '/projects/research': [jupyterReference(), jupyterReference({ contentPath: '../bad.ipynb' })],
-          },
-        })
-      );
-      const pm = new ProjectManager(opts);
-      pm.use('chat-1', '/projects/research');
-
-      expect(pm.getJupyterNotebookReferences('chat-1')).toEqual({
-        ok: true,
-        data: [jupyterReference()],
-      });
-      expect(existsSync(join(opts.workspaceDir, 'research/analysis.ipynb'))).toBe(false);
     });
   });
 

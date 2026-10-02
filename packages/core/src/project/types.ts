@@ -43,27 +43,6 @@ export interface ProjectContextConfig {
   workingDir: string;
 }
 
-/**
- * A reference to a Jupyter-managed notebook associated with a Project.
- *
- * This record contains identifiers and a server-side Contents path only. It
- * never stores the connection URL, authentication token, notebook body, or a
- * local copy of the notebook. `documentId` is optional because standard
- * Jupyter Contents paths are locators, not portable stable document IDs.
- */
-export interface ProjectJupyterNotebookReference {
-  /** Opaque ID of a separately configured Jupyter connection. */
-  connectionId: string;
-  /** Stable namespace for the Jupyter service behind that connection. */
-  serverNamespace: string;
-  /** Stable document ID when the connected collaboration service exposes one. */
-  documentId?: string;
-  /** Relative Jupyter Contents API path ending in `.ipynb`. */
-  contentPath: string;
-  /** Opaque version or YDoc revision observed at the last verified access. */
-  lastKnownVersion?: string;
-}
-
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // CwdProvider
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
