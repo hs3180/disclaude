@@ -91,6 +91,8 @@ Jupyter 侧验证使用隔离 localhost 栈：Python `3.13.9`、JupyterLab `4.6.
 
 另一次仅针对 UUID scratch Notebook 的隔离浏览器探针打开 JupyterLab 页面并观察到 collaboration room WebSocket。页面打开时，nbmodel execute 提交返回 HTTP 202，按 Location 轮询返回 HTTP 200、`status=ok` 和 SVG MIME；但随机 stdout 标记未出现在页面 DOM，Contents API 也没有对应输出。关闭测试页面后，同一 scratch kernel 仍存在；第二次提交返回 HTTP 202，轮询返回 HTTP 200、`status=ok` 和 stdout 标记，但 Contents 仍没有输出。探针没有手动 Contents PUT。重新打开尝试在 Notebook panel 出现前超时，恢复状态未知。session 与 Notebook 均以 204 删除，Contents 查询 404，kernel/session 数量恢复为 9；没有访问既有文档或 kernel。此结果证明关闭页面期间可由 REST 路由执行并取得响应，但没有证明输出自动持久化、经 RTC 显示或重开后恢复，不能视为产品输出交付通过。
 
+当前 Datalayer [输出 reconciliation 文档](https://jupyter-server-nbmodel.datalayer.tech/output-reconciliation/)说明前端 `outputRecovery` 设置默认关闭，并可在服务端已保存输出但 Notebook 页面未显示时启用。对用户部署的 `0.1.1--alpha.4` 扩展做只读核验时，`GET /lab/api/settings/` 返回 91 个设置 schema ID，但没有 nbmodel 项；`GET /lab/api/settings/@datalayer/jupyter-server-nbmodel:notebook-cell-executor` 返回 404 `Schema not found`。未尝试写设置。上游当前文档不能证明该设置已包含在用户当前预发行版；这一服务仍未能验证输出恢复配置路径。
+
 该探针中一次 `/interrupt` 返回 204，但轮询终态为 `ok` 且未带 `KeyboardInterrupt`；没有记录各次轮询状态及中断与执行完成的时间关系，所以扩展路由的取消语义仍属未验证。session 与 Notebook 删除均返回 204，Contents 后续查询为 404，9 个 kernel/session 计数恢复；没有触碰既有 Notebook，也没有调用模型。
 
 2026-10-02 10:13 CST 的补充探针在同一远程用户服务上，经 kernel WebSocket 执行一个使用合成数据的 Matplotlib cell。`execute_reply=ok`，IOPub `display_data` 包含 44,413 字节的 `image/png`；测试 host 将输出显式写回唯一 scratch `.ipynb`，Contents API 立即读回 execution count 与 MIME output。用本地图像查看器确认标题、轴标签、图例、标记、颜色分组和刻度可读。临时 session 与 Notebook 删除返回 204，随后 kernel 与 Contents 查询均为 404。该探针验证服务端 kernel 可产出静态图并经显式 Contents PUT 持久化；没有打开 JupyterLab 页面，也没有验证自动输出 reconciliation、产品 Agent/Feishu 报告预览、HTML 导出或真实分析结果。
