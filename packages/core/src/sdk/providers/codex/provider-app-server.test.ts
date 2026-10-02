@@ -445,6 +445,51 @@ echo '{"id":4,"result":{}}'
     expect(readFileSync(join(dir, 'interrupt-seen'), 'utf8')).toContain('turn/interrupt');
     provider.dispose();
   });
+
+  it('treats a stop after turn/completed as benign teardown, not a no-active-turn error (#5186)', async () => {
+    const { provider, dir } = providerFixture('exit 0');
+    // SIGTERM holds teardown open so the test's close() deterministically lands
+    // while the per-turn finalizer is still awaiting lifecycle.close().
+    writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
+require('node:fs').writeFileSync(process.env.CODEX_HOME + '/sigterm', 'pending');
+process.on('SIGTERM', () => {
+  require('node:fs').writeFileSync(process.env.CODEX_HOME + '/sigterm', 'seen');
+  setTimeout(() => process.exit(0), 250);
+});
+require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
+  const request = JSON.parse(line);
+  if (request.method === 'initialize') console.log(JSON.stringify({ id: request.id, result: {} }));
+  else if (request.method === 'thread/start' || request.method === 'thread/resume') {
+    console.log(JSON.stringify({ id: request.id, result: { thread: { id: 'race-thread' } } }));
+  } else if (request.method === 'turn/start') {
+    console.log(JSON.stringify({ id: request.id, result: { turn: { id: 'race-turn' } } }));
+    console.log(JSON.stringify({ method: 'turn/completed', params: { threadId: 'race-thread', turn: { id: 'race-turn', status: 'completed' } } }));
+  } else if (request.method === 'turn/interrupt') {
+    require('node:fs').writeFileSync(process.env.CODEX_HOME + '/interrupted', 'unexpected');
+    console.log(JSON.stringify({ id: request.id, result: {} }));
+  }
+});
+`);
+    const result = provider.queryStream((async function* () {
+      yield { role: 'user', content: 'finish quickly' } as UserInput;
+    })(), { sessionKey: 'post-terminal-stop', settingSources: [] } as AgentQueryOptions);
+    const messages: AgentMessage[] = [];
+    try {
+      for await (const message of result.iterator) {
+        messages.push(message);
+        if (message.type === 'result' && message.content === '✅ Complete') {
+          // Task-reset semantics (#5186): ChatAgent.reset() closes the handle
+          // right after the completed result, while teardown is still pending.
+          result.handle.close();
+        }
+      }
+      expect(messages.some(m => m.type === 'error')).toBe(false);
+      expect(readFileSync(join(dir, 'home/sigterm'), 'utf8')).toBe('seen');
+      // The lifecycle guard rejects locally without an RPC; assert the server
+      // never saw an interrupt request either.
+      expect(() => readFileSync(join(dir, 'home/interrupted'), 'utf8')).toThrow();
+    } finally { provider.dispose(); }
+  });
 });
 
 describe('app-server session capacity regression', () => {
