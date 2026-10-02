@@ -55,6 +55,8 @@ flowchart LR
 
 2026-10-01 对同一安装做了隔离复核。标准 `sdk` profile 加载 `@deepseek-ai/dsh-llm-pi-ai`；随附 pi-ai `0.84.4` catalog 中有 `openai-codex` / `gpt-5.6-luna`，但当前用户 profile 没有启用这条 route。用仅含 provider/model 的临时 profile patch 注册该 route 后，SDK `initialize` 明确指定 `provider=openai-codex`、`model=gpt-5.6-luna`、`reasoningEffort=low`，服务端成功返回 `deepseek-harness-sdk-runtime`。这证明固定版本能解析该精确 route，不证明已认证、调用了真实模型或完成 Jupyter 工具调用。该隔离 DSH home 没有 OpenAI API key 或 `openai-codex` OAuth record，因此本轮没有发模型请求。`sdk` 与 `sdk-minimal` 的默认 profile dump 都没有 Jupyter/Notebook 插件。
 
+2026-10-02 对本机安装的 `dsh@0.1.2-rc.1` 另用独立临时 `DSH_HOME` 枚举发行模板：随包 profile 为 `acp`、`headless`、`sdk`、`sdk-minimal`、`web`；逐个检查模板及默认 package patches，未发现 Jupyter/Notebook 集成引用。安装包的 `HarnessSdkRequestMap` 实际键也只有 `initialize`、`session/prompt`、`shutdown`，与上面的 SDK 控制面结论一致。这次核查覆盖发行配置，不覆盖用户自定义 profile 或产品接入。
+
 取消与事件接口需按接入方式区分：SDK 提供 `session.event`（完整会话日志事件信封）和 `session.status`（running/idle）通知，但 `session/prompt` 只回传持久入队的 `messageId`，不标识最终助手回复、`turn/end` 或每个事件对应的提示词；尚未验证它与飞书消息/执行身份的关联。SDK 协议只有 `initialize`、`session/prompt` 和 `shutdown` 请求，没有远程 cancel/session-close 或 resume 方法；同一运行时可向原 session 继续排入提示词，重启后如何恢复不由该协议提供。关闭 runtime 会放弃整条 Agent runtime，不能据此宣称 Jupyter kernel 已停止。`dsh-agent` 的进程内 API 提供 create/resume/cancel/whenIdle，但尚未验证 Disclaude/飞书怎样调用该控制面，或如何把取消传递为 Jupyter kernel interrupt。基于当前可用接入能力，G0-A 选择继续实现 Codex app-server 动态 host tools；仍需产品级验证已授权连接、结构化执行结果、消息与执行关联、会话续行、分层取消和飞书集成，issue 继续保持未完成。
 
 选定路线是在 Codex app-server 中注册动态 host tool，由 disclaude host 通过认证的 Jupyter Server API 处理请求。Codex CLI `0.159.2` 的隔离协议探针在 `initialize.capabilities.experimentalApi=true` 下，以 `gpt-5.6-luna` 调用一次 `jupyter_get_notebook`；host 读取实际 Jupyter `contents` 响应中的文档 ID、cell ID 和 marker，模型在完成回复中复述了这些值。该探针没有通过飞书运行。
