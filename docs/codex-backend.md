@@ -4,6 +4,10 @@ Set `agent.agentBackend: codex` to run the Codex CLI as Disclaude's agent
 harness. Codex uses its own authentication and model configuration; Disclaude's
 Anthropic-compatible `provider` settings do not select the Codex model.
 
+> Docker commands in this guide require a full source checkout. Prebuilt
+> release packages omit Compose files; see the
+> [Docker Compose deployment guide](docker-compose-deployment.md).
+
 ## Install and authenticate
 
 Install a Codex CLI version supported by your deployment using the

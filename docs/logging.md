@@ -5,6 +5,10 @@ read `docker compose logs`; host collectors can consume the service output or
 the optional application log file. Disclaude does not send logs directly to an
 Elasticsearch or other storage backend.
 
+> The Compose commands here require a full source checkout. Prebuilt release
+> packages omit Compose files; see the
+> [Docker Compose deployment guide](docker-compose-deployment.md).
+
 ## File logging and rotation
 
 | Setting | Behavior |

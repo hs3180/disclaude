@@ -27,8 +27,7 @@ export function sourceFingerprint(root) {
       'package-lock.json',
       'README.md',
       'CHANGELOG.md',
-      'docker',
-      'docker-compose.yml',
+      'docs',
       'scripts/test-chromium-container.mjs',
       'tsconfig*.json',
       'packages/*/src/**',
@@ -114,8 +113,14 @@ export function generateRelease(root, output) {
   const targets = Object.fromEntries(
     names.map((name) => [`@disclaude/${name}`, join(output, 'packages', name, 'dist/index.js')])
   );
-  targets['@disclaude/core/config-discovery'] = join(output, 'packages/core/dist/config/discovery.js');
-  targets['@disclaude/core/browser-runtime'] = join(output, 'packages/core/dist/utils/browser-env.js');
+  targets['@disclaude/core/config-discovery'] = join(
+    output,
+    'packages/core/dist/config/discovery.js'
+  );
+  targets['@disclaude/core/browser-runtime'] = join(
+    output,
+    'packages/core/dist/utils/browser-env.js'
+  );
   const dependencies = {};
   for (const manifest of [
     pkg,
@@ -147,8 +152,6 @@ export function generateRelease(root, output) {
     '.claude-plugin',
     'examples/skills',
     'docs',
-    'docker',
-    'docker-compose.yml',
     'scripts/test-chromium-container.mjs',
     'README.md',
     'CHANGELOG.md',
@@ -158,14 +161,14 @@ export function generateRelease(root, output) {
     'LICENSE',
     'disclaude.config.example.yaml',
     'scripts/launchd.mjs',
-      'scripts/chromium-config.mjs',
-      'scripts/browser-service-state.mjs',
-      'scripts/chromium-systemd.mjs',
-      'scripts/chromium-setup.mjs',
-      'scripts/chromium-download.mjs',
-      'scripts/chromium-status.mjs',
-      'scripts/chromium-diagnose.mjs',
-      'scripts/chromium-profile.mjs',
+    'scripts/chromium-config.mjs',
+    'scripts/browser-service-state.mjs',
+    'scripts/chromium-systemd.mjs',
+    'scripts/chromium-setup.mjs',
+    'scripts/chromium-download.mjs',
+    'scripts/chromium-status.mjs',
+    'scripts/chromium-diagnose.mjs',
+    'scripts/chromium-profile.mjs',
   ]) {
     if (!existsSync(join(root, path))) continue;
     mkdirSync(dirname(join(output, path)), { recursive: true });
@@ -225,10 +228,8 @@ export function generateRelease(root, output) {
       '.claude-plugin/',
       'examples/',
       'docs/',
-      'docker/',
       'README.md',
       'CHANGELOG.md',
-      'docker-compose.yml',
       'disclaude.config.example.yaml',
       'release-source.json',
     ],

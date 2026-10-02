@@ -5,6 +5,10 @@ Toolkit. Install and verify the host driver and toolkit first; Disclaude does
 not install or manage them. The normal CPU-only configuration remains the
 default.
 
+> The Compose commands here require a full source checkout. Prebuilt release
+> packages omit Compose files; see the
+> [Docker Compose deployment guide](docker-compose-deployment.md).
+
 Enable the NVIDIA runtime:
 
 ```sh

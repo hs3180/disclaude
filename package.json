@@ -120,10 +120,6 @@
     "tsconfig*.json",
     "vitest.config.ts",
     "vitest.e2e.config.ts",
-    "eslint.config.*",
-    "Dockerfile*",
-    "docker/",
-    "docker-compose.yml",
-    "docker-compose.chromium-vnc.yml"
+    "eslint.config.*"
   ]
 }
