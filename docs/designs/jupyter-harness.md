@@ -89,7 +89,7 @@ Jupyter 侧验证使用隔离 localhost 栈：Python `3.13.9`、JupyterLab `4.6.
 
 边界更正：首次打开 JupyterLab 默认路由时，持久 workspace 自动恢复了多个身份未确认的 Notebook/文件协作 room，测试浏览器因此短暂同步了这些文档的协作状态。没有对恢复文档手动读取、编辑、执行或保存；测试页面已关闭。关闭后发现 scratch 路径仍保留在默认 workspace 布局。以当前 ETag 做条件 PUT，仅删除了本次 scratch 对应的一个布局项、Notebook 页面状态和最近记录；其余顶层状态项保留，当前焦点退回 scratch 前一项。workspace 回读确认 scratch 路径已不存在；HTTP 只读核验显示 scratch Contents 为 404，kernel/session 数量仍为 9。探针前没有保存原始当前焦点，故不能声称精确恢复了原焦点。本轮不能称为“完全未访问既有文档”；今后的 UI 探针须从新的隔离 workspace 进入，避免恢复既有标签页。没有修改 Jupyter Server 配置或扩展。
 
-另一次仅针对 UUID scratch Notebook 的隔离浏览器探针打开了 JupyterLab 页面，并观察到 collaboration room WebSocket。页面打开时通过 nbmodel 路由执行的请求返回 200/status=ok 和 SVG MIME，但 Playwright DOM 查询没有找到随机 stdout 标记，Contents API 回读也未找到该标记；没有手动保存输出。关闭这唯一的测试页面后，同一 scratch kernel 仍存在，第二个 nbmodel 请求在页面关闭期间返回 200/status=ok 与 stdout 标记，Contents API 回读仍未找到该标记。重新打开的尝试在 notebook panel 出现前超时，因此恢复结果未知。该部署版本证明请求可在测试页面关闭后继续执行并可从请求结果读取，但尚未证明输出会持久化到 .ipynb、经 RTC 显示或重新打开后恢复。临时 session 与 Notebook 均以 204 删除，Contents 查询 404，kernel/session 数量恢复为 9；未访问既有文档或 kernel。
+另一次仅针对 UUID scratch Notebook 的隔离浏览器探针打开 JupyterLab 页面并观察到 collaboration room WebSocket。页面打开时，nbmodel execute 提交返回 HTTP 202，按 Location 轮询返回 HTTP 200、`status=ok` 和 SVG MIME；但随机 stdout 标记未出现在页面 DOM，Contents API 也没有对应输出。关闭测试页面后，同一 scratch kernel 仍存在；第二次提交返回 HTTP 202，轮询返回 HTTP 200、`status=ok` 和 stdout 标记，但 Contents 仍没有输出。探针没有手动 Contents PUT。重新打开尝试在 Notebook panel 出现前超时，恢复状态未知。session 与 Notebook 均以 204 删除，Contents 查询 404，kernel/session 数量恢复为 9；没有访问既有文档或 kernel。此结果证明关闭页面期间可由 REST 路由执行并取得响应，但没有证明输出自动持久化、经 RTC 显示或重开后恢复，不能视为产品输出交付通过。
 
 该探针中一次 `/interrupt` 返回 204，但轮询终态为 `ok` 且未带 `KeyboardInterrupt`；没有记录各次轮询状态及中断与执行完成的时间关系，所以扩展路由的取消语义仍属未验证。session 与 Notebook 删除均返回 204，Contents 后续查询为 404，9 个 kernel/session 计数恢复；没有触碰既有 Notebook，也没有调用模型。
 
@@ -219,12 +219,6 @@ Agent 默认围绕问题、数据与证据、方法选择、结果解释和结�
 ### Jupyter 凭据可达性补充（2026-10-01 14:09 CST）
 
 使用 `.env` 中的 JupyterLab 凭据访问用户提供的服务：未登录时 `GET /api/status` 返回 403；通过 Jupyter 密码表单登录后，同一路径返回 200。此项只证明凭据可认证到该服务；没有创建或读取 Notebook、创建 kernel，且没有将凭据或会话 cookie 写入证据。
-
-### 用户 JupyterLab nbmodel 输出呈现与写回探针（2026-10-01）
-
-在同一用户服务的唯一 scratch Notebook 上打开隔离 Lab 页面，观察到协作 room WebSocket。页面打开时，nbmodel 执行请求返回 HTTP 202，轮询返回 `status=ok` 和 SVG MIME；但 marker 未出现在 notebook DOM，Contents API 读回也没有对应输出。关闭页面后，同一 kernel 仍存活；再次经 nbmodel 请求执行返回 stdout marker，但 Contents API 仍没有输出。重新打开尝试在 Notebook panel 出现前超时，恢复状态未知；没有在此探针中用 Contents PUT 手工补写输出。清理时 session 和 Notebook 删除均返回 204，kernel/session 数恢复到 9/9 基线。
-
-这证明该扩展可在页面关闭后通过 REST 请求启动执行并返回结果，但此探针没有证明输出自动并入 `.ipynb`、Lab 页面显示执行结果或关闭再打开后恢复。该候选路径未满足持久输出与页面呈现的验收门槛；不能只凭 nbmodel API 的 `status=ok` 宣称用户成果已保存或可见。没有改动服务配置或扩展，也没有访问既有 Notebook/kernel。
 
 ### Provider-to-kernel interrupt 联合探针（2026-10-02 00:38 CST）
 
