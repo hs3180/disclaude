@@ -59,6 +59,12 @@ import {
   normalizeCardMarkdown,
   normalizeMarkdownLineBreaks,
 } from '../platforms/feishu/card-builders/content-builder.js';
+// #5193: deterministic `## Sources` citation card (narrow contract).
+import {
+  buildCitationCard,
+  buildCitationStreamingCard,
+  extractCitations,
+} from '../platforms/feishu/card-builders/citation-card.js';
 // Issue #4400 (#4208 P2-c): Card Kit streaming wiring.
 import {
   FeishuCardKitClient,
@@ -175,6 +181,23 @@ export function extractFeishuApiError(err: unknown): Record<string, unknown> {
   return detail;
 }
 
+/** A structured API rejection is safe to retry as a different message type. */
+function isDefiniteFeishuApiRejection(err: unknown): boolean {
+  const details = extractFeishuApiError(err);
+  const httpStatus = Number(details.httpStatus);
+  const apiCode = Number(details.apiCode);
+
+  // A server error or a transport error can happen after Feishu accepted the
+  // request. Do not send a second message when delivery outcome is ambiguous.
+  if (Number.isFinite(httpStatus) && httpStatus >= 500) {
+    return false;
+  }
+  if (Number.isFinite(httpStatus) && httpStatus >= 400 && httpStatus < 500) {
+    return true;
+  }
+  return Number.isFinite(apiCode) && apiCode !== 0;
+}
+
 /**
  * Feishu channel configuration.
  */
@@ -236,6 +259,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   private streamingCardKitClient?: FeishuCardKitClient;
   private readonly streamingMessageIds = new Map<string, string>();
   private readonly streamingSequences = new Map<string, number>();
+  /** Full accumulated stream text, retained for deterministic final rendering. */
+  private readonly streamingReplyText = new Map<string, string>();
   private readonly deliveryHealth: DeliveryHealth = {
     status: 'unknown',
     attempts: 0,
@@ -523,7 +548,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
      */
     const sendFeishuMessage = async (
       msgType: string,
-      content: string
+      content: string,
+      options: { avoidRetryAfterAmbiguousThreadReply?: boolean } = {}
     ): Promise<string | undefined> => {
       if (useThreadReply) {
         // useThreadReply is !!message.threadId — guaranteed truthy here.
@@ -541,6 +567,12 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           });
           return replyResp.data?.message_id;
         } catch (err) {
+          if (
+            options.avoidRetryAfterAmbiguousThreadReply &&
+            !isDefiniteFeishuApiRejection(err)
+          ) {
+            throw err;
+          }
           // Issue #4452: capture the Feishu API-level error (code/msg/log_id)
           // so the frequent reply() 400s become diagnosable. Rather than dump
           // the raw (very verbose) axios error, `extractFeishuApiError` pulls
@@ -619,6 +651,53 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         // truncation budget reflects what is actually sent and a head/tail cut
         // can never land in the middle of an `\n` escape sequence.
         const text = normalizeMarkdownLineBreaks(message.text || '');
+
+        // #5193 POC (#5227 review): a trailing `## Sources` section is the narrow
+        // citation contract — render it deterministically as ONE interactive card
+        // (body + sources block), so markers and source numbers stay aligned in a
+        // single message. Malformed sections, oversized cards, and definite
+        // Feishu rejections fall through to the legacy plain-text path. A
+        // transport/server error with an unknown outcome is propagated instead
+        // of risking a duplicate message.
+        const citations = extractCitations(text);
+        if (citations) {
+          try {
+            const cardContent = JSON.stringify(
+              buildCitationCard(citations.body, citations.sources)
+            );
+            // Bound the serialized JSON plus card markdown conservatively; large
+            // citation answers remain readable through the existing text path.
+            if (Buffer.byteLength(cardContent, 'utf8') <= FEISHU_RETRY_MESSAGE_BYTES) {
+              const cardMessageId = await sendFeishuMessage('interactive', cardContent, {
+                avoidRetryAfterAmbiguousThreadReply: true,
+              });
+              logger.info(
+                {
+                  chatId: message.chatId,
+                  messageId: cardMessageId,
+                  sourceCount: citations.sources.length,
+                  threadReply: useThreadReply,
+                },
+                'Citation card sent (## Sources narrow contract)'
+              );
+              logOutgoing(cardMessageId, text, 'interactive');
+              return cardMessageId;
+            }
+            logger.info(
+              { chatId: message.chatId, cardBytes: Buffer.byteLength(cardContent, 'utf8') },
+              'Citation card exceeds the conservative payload budget; using plain text'
+            );
+          } catch (err) {
+            if (!isDefiniteFeishuApiRejection(err)) {
+              throw err;
+            }
+            logger.warn(
+              { err, chatId: message.chatId },
+              'Feishu rejected the citation card — falling back to plain text delivery'
+            );
+          }
+        }
+
         let textToSend = truncateFeishuMessage(text, configuredFeishuMessageBytes());
         let messageId: string | undefined;
         try {
@@ -1069,6 +1148,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       if (sent.data?.message_id) { this.streamingMessageIds.set(cardId, sent.data.message_id); }
       // createCard carries no sequence; the first PUT/PATCH uses sequence 1.
       this.streamingSequences.set(cardId, 0);
+      this.streamingReplyText.set(cardId, '');
       logger.info(
         { chatId, cardId, parentMessageId },
         'startStreaming: streaming card created and sent to chat'
@@ -1094,6 +1174,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       // Unknown / already-finalized card — nothing to patch.
       return;
     }
+    this.streamingReplyText.set(id, text);
     const client = this.streamingCardKitClient;
     if (!client) {
       return;
@@ -1124,7 +1205,31 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     this.streamingSequences.set(id, sequence);
     try {
       if (!client) { throw new Error('Streaming client unavailable during finalization'); }
-      await client.updateElementContent(id, STREAMING_THINKING_ELEMENT_ID, '本次回复已结束', sequence);
+      const finalText = normalizeMarkdownLineBreaks(this.streamingReplyText.get(id) ?? '');
+      const citations = extractCitations(finalText);
+      const citationCard = citations
+        ? buildCitationStreamingCard(citations.body, citations.sources)
+        : null;
+      const citationCardBytes = citationCard
+        ? Buffer.byteLength(JSON.stringify(citationCard), 'utf8')
+        : 0;
+      if (citationCard && citationCardBytes <= FEISHU_RETRY_MESSAGE_BYTES) {
+        // Replace the streamed Markdown with the final answer + source block
+        // in the same Card Kit message, then freeze it below.
+        await client.updateCard(id, citationCard, sequence);
+        logger.info(
+          { cardId: id, sourceCount: citations?.sources.length },
+          'Citation sources rendered into the final streaming card'
+        );
+      } else {
+        if (citationCard) {
+          logger.info(
+            { cardId: id, cardBytes: citationCardBytes },
+            'Streaming citation card exceeds the conservative payload budget; keeping streamed Markdown'
+          );
+        }
+        await client.updateElementContent(id, STREAMING_THINKING_ELEMENT_ID, '本次回复已结束', sequence);
+      }
       this.streamingSequences.set(id, sequence + 1);
       await client.finalizeStreaming(id, sequence + 1);
       logger.info({ cardId: id, sequence }, 'finalizeStreaming: streaming card frozen');
@@ -1137,6 +1242,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     } finally {
       this.streamingSequences.delete(id);
       this.streamingMessageIds.delete(id);
+      this.streamingReplyText.delete(id);
     }
   }
 

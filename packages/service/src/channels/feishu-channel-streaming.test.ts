@@ -260,6 +260,45 @@ describe('FeishuChannel.streamText / finalizeStreaming — Issue #4400', () => {
     expect(mockCardKit.finalizeStreaming.mock.calls[0]).toEqual([id, 3]);
   });
 
+  it('renders a valid trailing Sources section into the same streaming card', async () => {
+    const { channel, id } = await startedChannel();
+    await channel.streamText(id, 'Answer [1].\n\n## Sources\n1. [Source title](https://example.com/source)\n   > Supporting excerpt.');
+
+    await expect(channel.finalizeStreaming(id)).resolves.toBe('msg_001');
+
+    expect(mockCardKit.updateCard).toHaveBeenCalledTimes(2);
+    const [, finalCardCall] = mockCardKit.updateCard.mock.calls;
+    const [cardId, finalCard, cardSequence] = finalCardCall;
+    expect(cardId).toBe(id);
+    expect(cardSequence).toBe(2);
+    expect(finalCard).toMatchObject({
+      schema: '2.0',
+      body: {
+        elements: [
+          expect.objectContaining({ content: '本次回复已结束' }),
+          expect.objectContaining({
+            content: expect.stringContaining(
+              'Answer [1].\n\n---\n\n**Sources**\n[1] [Source title](https://example.com/source)\n> Supporting excerpt.'
+            ),
+          }),
+        ],
+      },
+    });
+    expect(mockCardKit.updateElementContent).not.toHaveBeenCalled();
+    expect(mockCardKit.finalizeStreaming).toHaveBeenCalledWith(id, 3);
+  });
+
+  it('keeps malformed Sources text in the streamed Markdown path', async () => {
+    const { channel, id } = await startedChannel();
+    await channel.streamText(id, 'Answer [1].\n\n## Sources\nnot a source entry');
+
+    await channel.finalizeStreaming(id);
+
+    expect(mockCardKit.updateCard).toHaveBeenCalledTimes(1);
+    expect(mockCardKit.updateElementContent).toHaveBeenCalledWith(id, STREAMING_THINKING_ELEMENT_ID, '本次回复已结束', 2);
+    expect(mockCardKit.finalizeStreaming).toHaveBeenCalledWith(id, 3);
+  });
+
   it('finalizeStreaming is idempotent (second call is a no-op)', async () => {
     const { channel, id } = await startedChannel();
     await channel.finalizeStreaming(id);

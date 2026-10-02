@@ -53,6 +53,8 @@ export interface MessageBuilderContext {
   msg: MessageData;
   /** The chat ID for context */
   chatId: string;
+  /** Backend name for provider-specific channel guidance. */
+  agentBackend?: string;
   /** Channel capabilities (if available) */
   capabilities?: ChannelCapabilities;
   /** Whether the message is a skill command (starts with /) */

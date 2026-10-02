@@ -285,6 +285,7 @@ describe('ChatAgent (service)', () => {
         expect.objectContaining({ pendingQuestionEligible: true }),
         'eligible-mention',
         undefined,
+        undefined,
       );
       ChatAgent.prototype.dispose.call(agent);
     });

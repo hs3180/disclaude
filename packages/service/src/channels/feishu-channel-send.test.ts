@@ -339,6 +339,169 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
     });
   });
 
+  describe('text messages with ## Sources citation contract (#5193)', () => {
+    const citedAnswer = [
+      'Answer body citing docs [1].',
+      '',
+      '## Sources',
+      '1. [Docs](https://example.com/docs)',
+      '   > Supporting excerpt.',
+    ].join('\n');
+
+    it('delivers a conforming trailing section as ONE interactive citation card', async () => {
+      const { client, mocks } = createMockClient();
+      const channel = createTestChannel(client);
+
+      const result = await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'text',
+        text: citedAnswer,
+      });
+
+      expect(mocks.createMock).toHaveBeenCalledTimes(1);
+      const [[call]] = mocks.createMock.mock.calls;
+      expect(call.data.msg_type).toBe('interactive');
+      const card = JSON.parse(call.data.content);
+      expect(card.config.wide_screen_mode).toBe(true);
+      // Body + hr + Sources block — single message, markers stay aligned.
+      expect(card.elements).toHaveLength(3);
+      expect(card.elements[0].content).toBe('Answer body citing docs [1].');
+      expect(card.elements[1]).toEqual({ tag: 'hr' });
+      expect(card.elements[2].content).toBe(
+        '**Sources**\n[1] [Docs](https://example.com/docs)\n> Supporting excerpt.'
+      );
+      expect(result).toBe('new_msg_001');
+    });
+
+    it('keeps the citation card inside the thread when threadId is provided', async () => {
+      const { client, mocks } = createMockClient();
+      const channel = createTestChannel(client);
+
+      await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'text',
+        text: citedAnswer,
+        threadId: 'root_msg_456',
+      });
+
+      expect(mocks.replyMock).toHaveBeenCalledTimes(1);
+      expect(mocks.replyMock.mock.calls[0][0].data.msg_type).toBe('interactive');
+      expect(mocks.createMock).not.toHaveBeenCalled();
+    });
+
+    it('falls back to plain text when the section breaks the contract', async () => {
+      const { client, mocks } = createMockClient();
+      const channel = createTestChannel(client);
+
+      const malformed = [
+        'Answer body [1].',
+        '',
+        '## Sources',
+        '1. [Docs](https://example.com/docs)',
+        'Trailing prose after the section.',
+      ].join('\n');
+
+      await channel.sendMessage({ chatId: 'chat_123', type: 'text', text: malformed });
+
+      expect(mocks.createMock).toHaveBeenCalledTimes(1);
+      const [[call]] = mocks.createMock.mock.calls;
+      expect(call.data.msg_type).toBe('text');
+      expect(JSON.parse(call.data.content).text).toBe(malformed);
+    });
+
+    it('falls back to plain text after a definite Feishu rejection of the card', async () => {
+      const { client, mocks } = createMockClient();
+      mocks.createMock
+        .mockRejectedValueOnce(
+          Object.assign(new Error('card too large'), {
+            response: { status: 400, data: { code: 230025, msg: 'message too large' } },
+          })
+        )
+        .mockResolvedValueOnce({ data: { message_id: 'text_fallback_001' } });
+      const channel = createTestChannel(client);
+
+      const result = await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'text',
+        text: citedAnswer,
+      });
+
+      expect(mocks.createMock).toHaveBeenCalledTimes(2);
+      expect(mocks.createMock.mock.calls[0][0].data.msg_type).toBe('interactive');
+      const [, [fallback]] = mocks.createMock.mock.calls;
+      expect(fallback.data.msg_type).toBe('text');
+      expect(JSON.parse(fallback.data.content).text).toBe(citedAnswer);
+      expect(result).toBe('text_fallback_001');
+    });
+
+    it('does not retry an ambiguously failed card send as text', async () => {
+      const { client, mocks } = createMockClient();
+      mocks.createMock.mockRejectedValueOnce(new Error('socket timeout'));
+      const channel = createTestChannel(client);
+
+      await expect(
+        channel.sendMessage({ chatId: 'chat_123', type: 'text', text: citedAnswer })
+      ).rejects.toThrow('socket timeout');
+
+      expect(mocks.createMock).toHaveBeenCalledTimes(1);
+      expect(mocks.createMock.mock.calls[0][0].data.msg_type).toBe('interactive');
+    });
+
+    it('does not retry a card after a server error with an unknown delivery outcome', async () => {
+      const { client, mocks } = createMockClient();
+      mocks.createMock.mockRejectedValueOnce(
+        Object.assign(new Error('server error'), {
+          response: { status: 503, data: { code: 230025, msg: 'upstream failure' } },
+        })
+      );
+      const channel = createTestChannel(client);
+
+      await expect(
+        channel.sendMessage({ chatId: 'chat_123', type: 'text', text: citedAnswer })
+      ).rejects.toThrow('server error');
+
+      expect(mocks.createMock).toHaveBeenCalledTimes(1);
+      expect(mocks.createMock.mock.calls[0][0].data.msg_type).toBe('interactive');
+    });
+
+    it('does not retry an ambiguously failed thread reply through message.create', async () => {
+      const { client, mocks } = createMockClient();
+      mocks.replyMock.mockRejectedValueOnce(new Error('reply timeout'));
+      const channel = createTestChannel(client);
+
+      await expect(
+        channel.sendMessage({
+          chatId: 'chat_123',
+          type: 'text',
+          text: citedAnswer,
+          threadId: 'root_msg_456',
+        })
+      ).rejects.toThrow('reply timeout');
+
+      expect(mocks.replyMock).toHaveBeenCalledTimes(1);
+      expect(mocks.createMock).not.toHaveBeenCalled();
+    });
+
+    it('uses plain text when the serialized card exceeds the safe payload budget', async () => {
+      const { client, mocks } = createMockClient();
+      const excerpt = 'x'.repeat(FEISHU_RETRY_MESSAGE_BYTES);
+      const text = [
+        'Answer body [1].',
+        '',
+        '## Sources',
+        '1. [Long source](https://example.com/long)',
+        `   > ${excerpt}`,
+      ].join('\n');
+      const channel = createTestChannel(client);
+
+      await channel.sendMessage({ chatId: 'chat_123', type: 'text', text });
+
+      expect(mocks.createMock).toHaveBeenCalledTimes(1);
+      expect(mocks.createMock.mock.calls[0][0].data.msg_type).toBe('text');
+      expect(JSON.parse(mocks.createMock.mock.calls[0][0].data.content).text).toBe(text);
+    });
+  });
+
   describe('text messages with mentions (post type)', () => {
     it('should send as post type when mentions are provided', async () => {
       const { client, mocks } = createMockClient();
