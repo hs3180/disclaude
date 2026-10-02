@@ -220,6 +220,12 @@ Agent 默认围绕问题、数据与证据、方法选择、结果解释和结�
 
 使用 `.env` 中的 JupyterLab 凭据访问用户提供的服务：未登录时 `GET /api/status` 返回 403；通过 Jupyter 密码表单登录后，同一路径返回 200。此项只证明凭据可认证到该服务；没有创建或读取 Notebook、创建 kernel，且没有将凭据或会话 cookie 写入证据。
 
+### 用户 JupyterLab nbmodel 输出呈现与写回探针（2026-10-01）
+
+在同一用户服务的唯一 scratch Notebook 上打开隔离 Lab 页面，观察到协作 room WebSocket。页面打开时，nbmodel 执行请求返回 HTTP 202，轮询返回 `status=ok` 和 SVG MIME；但 marker 未出现在 notebook DOM，Contents API 读回也没有对应输出。关闭页面后，同一 kernel 仍存活；再次经 nbmodel 请求执行返回 stdout marker，但 Contents API 仍没有输出。重新打开尝试在 Notebook panel 出现前超时，恢复状态未知；没有在此探针中用 Contents PUT 手工补写输出。清理时 session 和 Notebook 删除均返回 204，kernel/session 数恢复到 9/9 基线。
+
+这证明该扩展可在页面关闭后通过 REST 请求启动执行并返回结果，但此探针没有证明输出自动并入 `.ipynb`、Lab 页面显示执行结果或关闭再打开后恢复。该候选路径未满足持久输出与页面呈现的验收门槛；不能只凭 nbmodel API 的 `status=ok` 宣称用户成果已保存或可见。没有改动服务配置或扩展，也没有访问既有 Notebook/kernel。
+
 ### Provider-to-kernel interrupt 联合探针（2026-10-02 00:38 CST）
 
 在 #5226 app-server dynamic host-tool 分支尝试将真实 `gpt-5.6-luna/low` 调用、远程 scratch kernel interrupt 和 Contents 保存/回读串成一次探针。runner 退出时只保留了 app-server `closed` / `processCount=0` 日志，最终结果行没有保存，无法确认是否观察到 provider abort、kernel `KeyboardInterrupt`、IOPub idle 或保存回读成功。随后认证检查确认远端恢复为基线 9 个 sessions / 9 个 kernels，且没有 `disclaude-cancel-*` 临时 Notebook 或 session 残留。该尝试记为结果不确定，不作为取消或持久化证据；后续探针须在清理前将每一阶段结果可靠落盘或输出。
