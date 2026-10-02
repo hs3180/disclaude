@@ -453,9 +453,15 @@ fi
       expect(sessionId).toBe('t-abc');
     }, 20_000);
 
-    it('omits the legacy gpt-5.1-codex alias and lets ChatGPT choose the CLI default', async () => {
+    it('passes an explicit legacy model identifier unchanged instead of selecting a different default', async () => {
       fixtures = makeFixtures({ withBinary: true, withAuth: true, body: `${ARGV_RECORDER}${HAPPY_BODY}` });
       await drainStream(makeProvider(fixtures), ['hello'], { model: 'gpt-5.1-codex' });
+      expect(argvOf(fixtures, 1)).toContain('-m gpt-5.1-codex');
+    }, 20_000);
+
+    it('leaves the CLI model selection unchanged when no model is configured', async () => {
+      fixtures = makeFixtures({ withBinary: true, withAuth: true, body: `${ARGV_RECORDER}${HAPPY_BODY}` });
+      await drainStream(makeProvider(fixtures), ['hello']);
       expect(argvOf(fixtures, 1)).not.toContain('-m');
     }, 20_000);
 

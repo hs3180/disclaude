@@ -186,11 +186,11 @@ export function validateConfig(config: DisclaudeConfig): boolean {
     const environmentEffort = process.env.CODEX_REASONING_EFFORT?.trim() || config.env?.CODEX_REASONING_EFFORT;
     const codexModel = config.agent?.codex?.model;
     if (codexModel !== undefined && (typeof codexModel !== 'string' || !isCodexModel(codexModel))) {
-      logger.error('agent.codex.model must be a Codex/ChatGPT model (expected gpt-5.x or newer)');
+      logger.error('agent.codex.model must be a Codex/ChatGPT model identifier');
       return false;
     }
     if (environmentModel?.trim() && !isCodexModel(environmentModel.trim())) {
-      logger.error('CODEX_MODEL must be a Codex/ChatGPT model (expected gpt-5.x or newer)');
+      logger.error('CODEX_MODEL must be a Codex/ChatGPT model identifier');
       return false;
     }
     const configuredEffort = config.agent?.codex?.reasoningEffort;
@@ -211,7 +211,7 @@ export function validateConfig(config: DisclaudeConfig): boolean {
         ? defaultPreset.preset.model : undefined,
     });
     if (resolvedModel.value && !isCodexModel(resolvedModel.value)) {
-      logger.error(`${resolvedModel.source} must be a Codex/ChatGPT model (expected gpt-5.x or newer)`);
+      logger.error(`${resolvedModel.source} must be a Codex/ChatGPT model identifier`);
       return false;
     }
 
@@ -335,12 +335,9 @@ export function validateConfig(config: DisclaudeConfig): boolean {
   return true;
 }
 
-/** Return whether a model identifier is supported by the Codex CLI backend. */
+/** Check identifier shape; Codex validates availability for the signed-in account. */
 export function isCodexModel(model: string): boolean {
-  // `gpt-5` itself is an API model name and is explicitly rejected by the
-  // Codex ChatGPT route; Codex model aliases carry a suffix (for example
-  // `gpt-5.1-codex`).
-  return /^gpt-(?:[5-9]|[1-9]\d+)(?:[.-].+)/i.test(model.trim());
+  return /^gpt-\d+(?:[.-].+)/i.test(model.trim());
 }
 
 /**

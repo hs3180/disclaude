@@ -36,7 +36,9 @@ export function validateAgentPresets(agents: unknown): AgentPresetValidation {
       errors.push('agents preset names must not be empty');
     }
     if (/^\d+$/.test(name)) {
-      errors.push(`agents.${name}: preset names must not be numeric; use a name such as agent-${name}`);
+      errors.push(
+        `agents.${name}: preset names must not be numeric; use a name such as agent-${name}`
+      );
     }
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
       errors.push(`agents.${name} must be a mapping`);
@@ -50,11 +52,9 @@ export function validateAgentPresets(agents: unknown): AgentPresetValidation {
       errors.push(`agents.${name}.model must be a non-empty string`);
     } else if (
       preset.agentBackend === 'codex' &&
-      !/^gpt-(?:[5-9]|[1-9]\d+)(?:[.-].+)/i.test(preset.model.trim())
+      !/^gpt-\d+(?:[.-].+)/i.test(preset.model.trim())
     ) {
-      errors.push(
-        `agents.${name}.model must be a Codex/ChatGPT model (expected gpt-5.x or newer)`
-      );
+      errors.push(`agents.${name}.model must be a Codex/ChatGPT model identifier`);
     }
     if (preset.default !== undefined && typeof preset.default !== 'boolean') {
       errors.push(`agents.${name}.default must be a boolean`);

@@ -589,7 +589,7 @@ user-invocable: true             # false = 隐藏菜单
 
 # 工具和环境
 allowed-tools: Read, Write, Edit, Bash
-model: claude-sonnet-4
+model: sonnet                    # 可选；使用环境支持的模型别名，不固定版本
 context: fork                    # 在子代理中运行
 agent: Explore                  # 子代理类型
 

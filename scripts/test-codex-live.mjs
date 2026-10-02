@@ -6,15 +6,18 @@ import { execFileSync } from 'node:child_process';
 const outputIndex = process.argv.indexOf('--output');
 if (outputIndex < 0 || !process.argv[outputIndex + 1]) {
   console.error(
-    'Usage: node scripts/test-codex-live.mjs --output <directory> (uses authenticated Codex; optional DIS' +
-      'CLAUDE_TEST_MODEL)'
+    'Usage: node scripts/test-codex-live.mjs --output <directory> (uses authenticated Codex; requires DISCLAUDE_TEST_MODEL)'
   );
+  process.exit(2);
+}
+const model = process.env.DISCLAUDE_TEST_MODEL?.trim();
+if (!model) {
+  console.error('Set DISCLAUDE_TEST_MODEL explicitly for real-model acceptance.');
   process.exit(2);
 }
 const output = resolve(process.argv[outputIndex + 1]);
 mkdirSync(output, { recursive: true });
 const candidate = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-const model = process.env.DISCLAUDE_TEST_MODEL ?? 'gpt-5.6-sol';
 const cwd = mkdtempSync(join(tmpdir(), 'disclaude-control-'));
 const provider = new CodexAgentProvider({
   transport: 'app-server',
