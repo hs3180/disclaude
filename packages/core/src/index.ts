@@ -23,6 +23,27 @@ export * from './utils/index.js';
 // REST API Protocol (shared between disclaude service and MCP Server)
 export * from './channel-api/index.js';
 
+// Jupyter identity, revision, and execution ownership contracts (#5217/#5218)
+export type {
+  JupyterServiceIdentity,
+  JupyterNotebookIdentity,
+  JupyterNotebookLocator,
+  JupyterDocumentRevision,
+  JupyterCellSnapshot,
+  JupyterCellSourceEditRequest,
+  JupyterCellSourceEditResult,
+  JupyterNotebookPort,
+  JupyterControllerGeneration,
+  JupyterExecutionTarget,
+  JupyterExecutionHandle,
+  JupyterExecutionState,
+  JupyterExecutionSubmitRequest,
+  JupyterExecutionSubmitResult,
+  JupyterExecutionObservation,
+  JupyterExecutionStopResult,
+  JupyterExecutionPort,
+} from './jupyter/contracts.js';
+
 // Config
 export * from './config/index.js';
 
