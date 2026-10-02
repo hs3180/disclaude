@@ -2,8 +2,9 @@
 
 This opt-in probe for #5216 launches its own authenticated localhost server,
 Notebook, kernel, browser and Jupyter configuration. It uses no Project mount,
-existing server, Notebook or kernel. Normal Disclaude installation and CI do not
-install these Python dependencies.
+existing server, Notebook or kernel. Normal Disclaude installation and regular
+Node checks do not install Python. The separate managed-coordinator CI installs
+its pinned server stack for backend checks, without this browser probe.
 
 Use Python 3.13 and a separate virtual environment:
 
