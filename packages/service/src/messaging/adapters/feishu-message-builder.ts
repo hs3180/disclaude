@@ -127,6 +127,8 @@ When your answer relies on one or more cited sources, keep each citation next to
 
 Map citations from their meaning and source metadata: use each cited source's title, direct URL, and any supplied excerpt, then place its marker beside the sentence or paragraph that source supports. Number distinct sources by their first appearance in the answer, reuse a source's number when it supports another claim, and list sources in that same order. Do not map by tool-return order alone, move a citation to a different claim, or invent missing source details or excerpts.
 
+Only cite a claim when the source content you actually read supports it. When a claim comes from a linked page, read that page and cite its own title and direct URL. If evidence is missing, omit the claim or say it remains unverified. Label your inferences and cite the evidence behind them.
+
 When you cite sources, end the final answer with a \`## Sources\` section listing exactly the sources behind those markers, one entry per source, in this exact format:
 
 \`\`\`markdown

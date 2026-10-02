@@ -230,6 +230,18 @@ describe('MessageBuilder with Feishu sections', () => {
       expect(result).not.toContain('--card-file');
     });
 
+    it('should request support from source content actually read and label inferences', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Research this question',
+        messageId: 'msg-123',
+      }, 'chat-123', withTools(['send_text', 'send_card']), 'codex');
+
+      expect(result).toContain('Only cite a claim when the source content you actually read supports it.');
+      expect(result).toContain('When a claim comes from a linked page, read that page and cite its own title and direct URL.');
+      expect(result).toContain('If evidence is missing, omit the claim or say it remains unverified.');
+      expect(result).toContain('Label your inferences and cite the evidence behind them.');
+    });
+
     it('should keep the Codex citation contract on card-less channels and omit it for other backends', () => {
       // The contract is pure trailing markdown, so it stays useful (and renders
       // as a plain list) even where the channel cannot display cards.
