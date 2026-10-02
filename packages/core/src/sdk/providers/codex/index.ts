@@ -4,7 +4,12 @@
 export { CodexAgentProvider } from './provider.js';
 export type { CodexAgentProviderOptions } from './provider.js';
 export { CodexAppServerTransport } from './app-server-transport.js';
-export type { CodexAppServerTransportOptions } from './app-server-transport.js';
+export type {
+  CodexAppServerTransportOptions,
+  CodexAppServerDynamicToolSpec,
+  CodexAppServerDynamicToolCallRequest,
+  CodexAppServerDynamicToolCallResult,
+} from './app-server-transport.js';
 export { CodexAppServerLifecycle } from './app-server-lifecycle.js';
 export { CodexNoActiveTurnError } from './app-server-lifecycle.js';
 export type {

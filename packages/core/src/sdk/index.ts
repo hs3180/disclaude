@@ -84,6 +84,8 @@ export type {
   ToolUseBlock,
   ToolResultBlock,
   InlineToolDefinition,
+  InlineToolCallContext,
+  InlineToolCallIdentity,
   ToolProgressPayload,
   ToolProgressCallback,
 

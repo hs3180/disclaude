@@ -252,6 +252,27 @@ export type ToolProgressPayload =
 /** 工具进度回调（#4568）：`onProgress(payload)`，可多次调用。 */
 export type ToolProgressCallback = (progress: ToolProgressPayload) => void;
 
+/** Provider call identity retained for tracing a host tool back to its turn. */
+export interface InlineToolCallIdentity {
+  /** Agent provider that invoked the host tool. */
+  provider: string;
+  /** JSON-RPC request identifier for the provider-to-host call. */
+  requestId: string | number;
+  /** Provider's stable identifier for this tool invocation. */
+  callId: string;
+  /** Provider conversation/thread containing the call. */
+  threadId: string;
+  /** Provider turn containing the call. */
+  turnId: string;
+}
+
+/** Cancellation and correlation context passed to a running host tool. */
+export interface InlineToolCallContext {
+  signal: AbortSignal;
+  /** Present when the provider exposes stable IDs for this individual call. */
+  identity?: InlineToolCallIdentity;
+}
+
 /** 内联工具定义 */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export interface InlineToolDefinition<TParams = any, TResult = any> {
@@ -272,9 +293,14 @@ export interface InlineToolDefinition<TParams = any, TResult = any> {
    * stall watchdog #4550 在工具静默期 re-arm）。Claude 后端的 tool()
    * 无对应通道，不会传入——跨后端工具使用前需
    * `typeof onProgress === 'function'` 守卫。不关心进度的 handler 忽略
-   * 该参数即可（现有工具零改动）。
+   * 该参数即可（现有工具零改动）。可选第三参 `context.signal` 在支持主机
+   * 工具取消的 provider 结束当前调用时触发；长任务应传递该信号给底层操作。
    */
-  handler: (params: TParams, onProgress?: ToolProgressCallback) => Promise<TResult>;
+  handler: (
+    params: TParams,
+    onProgress?: ToolProgressCallback,
+    context?: InlineToolCallContext,
+  ) => Promise<TResult>;
 }
 
 /** stdio 模式 MCP 服务器配置 */
