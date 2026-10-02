@@ -120,6 +120,7 @@ async def run_probe(args, root, token, report):
     for name in ("workspace", "config", "data", "runtime", "settings", "workspaces"):
         (root / name).mkdir()
     config = root / "config/jupyter_server_config.py"
+    cleanup_delay = 60 if args.room_retention == "cleanup" else None
     config.write_text(
         "c.IdentityProvider.token = " + repr(token) + "\n"
         "c.ServerApp.open_browser = False\n"
@@ -127,7 +128,7 @@ async def run_probe(args, root, token, report):
         "c.ServerApp.root_dir = " + repr(str(workspace)) + "\n"
         "c.YDocExtension.server_side_execution = True\n"
         "c.YDocExtension.document_save_delay = 30\n"
-        "c.YDocExtension.document_cleanup_delay = 60\n",
+        "c.YDocExtension.document_cleanup_delay = " + repr(cleanup_delay) + "\n",
         encoding="utf-8",
     )
     config.chmod(0o600)
@@ -173,7 +174,8 @@ async def run_probe(args, root, token, report):
     report["server_owned_pid"] = process.pid
     report["server_bound"] = "127.0.0.1"
     report["document_save_delay_seconds"] = 30
-    report["document_cleanup_delay_seconds"] = 60
+    report["document_cleanup_delay_seconds"] = cleanup_delay
+    report["room_retention"] = args.room_retention
     report["contents_put_count"] = 0
     browser = None
 
@@ -446,23 +448,35 @@ async def run_probe(args, root, token, report):
             report["browser_pages_during_background_execution"] = 0
             report["rtc_probe_peer_during_background_execution"] = False
             stage(report, "all_notebook_pages_closed")
-            # Exercise execution after the configured room cleanup delay,
-            # rather than relying on a frontend-held shared document.
             disconnected_at = time.monotonic()
 
-            async def room_deleted():
-                return time.monotonic() - disconnected_at >= 61 and (
+            async def room_lifetime_observed():
+                deleted = (
                     "Room " + room + " deleted" in (root / "server.log").read_text()
+                )
+                if args.room_retention == "server":
+                    require(
+                        not deleted, "Server-retained room was unexpectedly deleted"
+                    )
+                return time.monotonic() - disconnected_at >= 61 and (
+                    deleted if args.room_retention == "cleanup" else not deleted
                 )
 
             await eventually(
-                room_deleted, "server confirmed RTC room cleanup", timeout=90
+                room_lifetime_observed, "configured server room lifetime", timeout=90
             )
             report["seconds_after_last_peer_disconnect"] = round(
                 time.monotonic() - disconnected_at, 3
             )
-            report["rtc_room_deleted_before_background_execution"] = True
-            stage(report, "rtc_room_deleted")
+            report["rtc_room_deleted_before_background_execution"] = (
+                args.room_retention == "cleanup"
+            )
+            stage(
+                report,
+                "rtc_room_deleted"
+                if args.room_retention == "cleanup"
+                else "server_room_retained_without_clients",
+            )
 
             submit = await client.post(
                 base + "/api/kernels/" + kernel_id + "/execute",
@@ -652,10 +666,20 @@ async def run_probe(args, root, token, report):
         await client.aclose()
         log.close()
         report["owned_server_stopped"] = process.poll() is not None
+        report["nbmodel_missing_document_warnings"] = sum(
+            "Document at path" in line and "not found." in line
+            for line in (root / "server.log").read_text().splitlines()
+        )
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--room-retention",
+        choices=("cleanup", "server"),
+        default="cleanup",
+        help="Compare standard 60-second cleanup with server-lifetime document retention",
+    )
     parser.add_argument(
         "--output-recovery",
         action="store_true",
@@ -676,6 +700,7 @@ def main():
         "stage": "versions",
         "scope": "isolated G0-B stack experiment",
         "python": sys.version.split()[0],
+        "probe_source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
     }
     token = secrets.token_urlsafe(32)
     try:

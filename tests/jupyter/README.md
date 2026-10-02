@@ -27,7 +27,8 @@ parameter, running the edited cell, closing the page, and reopening it. An
 independent RTC peer must read both human edits before Contents has saved them.
 Lab Run must call the nbmodel execute API with the expected cell identity. The
 background execution starts with zero browser pages and the probe RTC peer
-disconnected. The probe uses a 30-second document save delay to observe unsaved
+disconnected. The default `--room-retention cleanup` uses a 30-second document
+save delay to observe unsaved
 edits, keeps the standard 60-second cleanup delay, and waits 61 seconds after
 disconnection before starting a three-second execution. Its stdout
 and SVG must be saved by the server without a second
@@ -52,6 +53,33 @@ this property. Reopening, chart rendering and HTML export are later assertions
 and were not reached in the cold-room run. The probe does not convert this
 known failure into a passing test. A document lifetime/persistence integration
 must be verified before treating the stack as the release path.
+
+## Server retention comparison
+
+Run `--room-retention server` to compare the supported
+`YDocExtension.document_cleanup_delay = None` configuration:
+
+```sh
+.local/jupyter-g0-venv/bin/python tests/jupyter/g0-stack-probe.py --room-retention server --report .local/jupyter-g0/server-retention.json
+```
+
+This keeps the shared document in the owned server's memory until the server
+exits. All browser pages and the independent RTC peer still disconnect; the
+probe waits 61 seconds before execution and checks that the room was not deleted.
+It uses the same save delay and assertions as the cleanup comparison.
+
+On 2026-10-02 this configuration passed: unsaved human edits were visible to the
+peer, native Run used nbmodel, and background stdout/SVG were saved with no
+Contents PUT after initial creation. Lab reopened with the same SVG and human
+edits, and HTML export contained the verified Notebook content with an
+origin-isolating CSP. `outputRecovery` was false. The six UI operations completed;
+owned kernels reached zero, the server stopped, and the temporary root was removed.
+
+This result does not pass the cold-room cleanup gate. The document was already
+initialized, remained in server memory, and was not reloaded after a restart.
+Managed integration must establish the current shared document before execution,
+bound its retained resources, and reconcile server/kernel loss. External instances
+require their own compatibility evidence; the probe never changes a user's config.
 
 The JSON report records failures at their observed stage, versions and cleanup.
 A successful run also writes the verified `.ipynb`, HTML and cropped chart PNG
