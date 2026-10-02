@@ -46,6 +46,7 @@
     "@deepseek-ai/dsh-llm": "0.1.2-rc.1",
     "@deepseek-ai/dsh-sdk-protocol": "0.1.2-rc.1",
     "@deepseek-ai/dsh-tools": "0.1.2-rc.1",
+    "ajv": "8.20.0",
     "tough-cookie": "6.0.2"
   }
 }
