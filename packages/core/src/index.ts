@@ -49,6 +49,10 @@ export type {
   JupyterCoordinatorStatus,
 } from './jupyter/coordinator-client.js';
 
+export { createNotebookTools } from './jupyter/notebook-tools.js';
+export type { NotebookToolBinding } from './jupyter/notebook-tools.js';
+export type { NativeAgentTool, NativeAgentToolContext } from './sdk/native-tools.js';
+
 // Config
 export * from './config/index.js';
 

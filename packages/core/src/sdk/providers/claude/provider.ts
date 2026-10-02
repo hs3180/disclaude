@@ -274,6 +274,9 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     if (this.disposed) {
       throw new Error('Provider has been disposed');
     }
+    if (options.nativeTools?.length) {
+      throw new Error('Claude nativeTools adapter is not implemented');
+    }
 
     if (options.autoCompactWindow === 'auto') {
       return withDiscoveredCompaction(input, options, (nextInput, nextOptions) =>
