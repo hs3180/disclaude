@@ -97,6 +97,14 @@ Jupyter 侧验证使用隔离 localhost 栈：Python `3.13.9`、JupyterLab `4.6.
 
 2026-10-02 10:13 CST 的补充探针在同一远程用户服务上，经 kernel WebSocket 执行一个使用合成数据的 Matplotlib cell。`execute_reply=ok`，IOPub `display_data` 包含 44,413 字节的 `image/png`；测试 host 将输出显式写回唯一 scratch `.ipynb`，Contents API 立即读回 execution count 与 MIME output。用本地图像查看器确认标题、轴标签、图例、标记、颜色分组和刻度可读。临时 session 与 Notebook 删除返回 204，随后 kernel 与 Contents 查询均为 404。该探针验证服务端 kernel 可产出静态图并经显式 Contents PUT 持久化；没有打开 JupyterLab 页面，也没有验证自动输出 reconciliation、产品 Agent/Feishu 报告预览、HTML 导出或真实分析结果。
 
+### 可重复运行的冷 room 持久化门禁
+
+`tests/jupyter/g0-stack-probe.py` 提供独立的 G0-B 实验，依赖固定在同目录 `requirements.txt`。它只启动和清理自身的 localhost Server、Notebook、kernel、浏览器及配置；普通安装和 CI 不增加 Python 依赖。通过实际 Lab 编辑器修改 Markdown 和参数后，独立 RTC peer 必须在 Contents 保存前读到修改；点击原生 Run 必须走 nbmodel execute API，并携带对应文档与 cell 身份。
+
+2026-10-02 的冷 room 实验在上述固定栈、Python `3.13.9`、Playwright `1.63.0` / Chromium `153.0.8010.12` 下失败：人工编辑实时同步、原生 Run 和人工输出自动保存均成功；随后关闭全部 Notebook 页面并断开实验 peer，以 30 秒保存延迟、标准 60 秒清理延迟等待 61 秒，且确认 Server 已记录该 room 删除。此时 nbmodel 接受后台执行（202），原请求查询得到 `request_status=complete`、`status=ok`、stdout 与 SVG，但继续观察 45 秒后 Contents 中该 cell 的输出数量仍为 0。探针没有补写 Contents，最终退出 1；临时 kernel 数量归零、Server 退出、root 删除。
+
+这条证据限定了前述无浏览器成功实验的结论：有存活的共享文档时可以自动写回，不能据此推断最后一个 peer 退出且 room 被清理后仍会保存。根据冷 room 结果，发行接入需要核验文档重新加载、执行期间生命周期与输出保存的衔接；延长清理 TTL 或一直保留页面不能替代这项验收。该次失败未到达重开页面、图表渲染和 HTML 导出断言，这些条件继续保持未验证。`outputRecovery` 的可选对照开关只修改探针自身配置，尚未作为该失败的修复验证。#5216 继续开放，#5217/#5218 的产品实现必须补齐并通过该门禁。
+
 ### 其他方案的位置
 
 | 方案 | 值得复用的部分 | 对本需求的判断 |
