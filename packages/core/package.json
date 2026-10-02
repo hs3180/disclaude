@@ -40,5 +40,8 @@
     "@types/pino": "^7.0.4",
     "@types/uuid": "^10.0.0",
     "typescript": "^5.9.3"
+  },
+  "optionalDependencies": {
+    "tough-cookie": "6.0.2"
   }
 }

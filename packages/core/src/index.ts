@@ -43,6 +43,11 @@ export type {
   JupyterExecutionStopResult,
   JupyterExecutionPort,
 } from './jupyter/contracts.js';
+export { JupyterCoordinatorClient } from './jupyter/coordinator-client.js';
+export type {
+  JupyterCoordinatorOptions,
+  JupyterCoordinatorStatus,
+} from './jupyter/coordinator-client.js';
 
 // Config
 export * from './config/index.js';
