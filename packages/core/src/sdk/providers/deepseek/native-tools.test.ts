@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { NativeAgentTool } from '../../native-tools.js';
 import { registerDshNativeTools, type DshNativeToolRegistry } from './native-tools.js';
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools';
+import { createNotebookTools } from '../../../jupyter/notebook-tools.js';
 
 function context(signal: AbortSignal): ToolRunContext {
   return {
@@ -27,6 +28,46 @@ function tool(name = 'notebook_read_cell'): NativeAgentTool {
 }
 
 describe('DSH native tool registration', () => {
+  it('registers the actual five Notebook tools with their shared schema constraints', async () => {
+    const notebook = {
+      identity: { connectionId: 'connection', serverNamespace: 'namespace', documentId: 'doc' },
+      contentPath: 'test.ipynb',
+    };
+    const readCell = vi
+      .fn()
+      .mockResolvedValue({
+        notebook,
+        cellId: 'cell',
+        revision: 'revision',
+        sourceHash: 'hash',
+        source: 'print(1)',
+      });
+    const tools = createNotebookTools({
+      notebook,
+      documents: { readCell, editCellSource: vi.fn() },
+      executions: { submit: vi.fn(), getStatus: vi.fn(), stop: vi.fn() },
+      controller: () => Promise.resolve({ ownerId: 'owner', generation: 1 }),
+      kernel: () => Promise.resolve({ kernelId: 'kernel', kernelIncarnation: 'incarnation' }),
+    });
+    const register = vi.fn<DshNativeToolRegistry['register']>().mockReturnValue(() => {});
+    registerDshNativeTools({ register }, tools);
+    expect(register.mock.calls.map(([definition]) => definition.name)).toEqual(
+      tools.map((item) => item.name)
+    );
+    const [[read]] = register.mock.calls;
+    const { signal } = new AbortController();
+    await expect(read.execute({ cellId: '' }, context(signal))).rejects.toThrow(
+      'Invalid native tool arguments'
+    );
+    expect(readCell).not.toHaveBeenCalled();
+    await expect(read.execute({ cellId: 'cell' }, context(signal))).resolves.toMatchObject({
+      notebook,
+      sourceHash: 'hash',
+      source: 'print(1)',
+    });
+    expect(readCell).toHaveBeenCalledWith(notebook, 'cell');
+  });
+
   it('registers the canonical contract directly, preserving structured values and signal', async () => {
     const nativeTool = tool();
     const dispose = vi.fn();
@@ -66,6 +107,65 @@ describe('DSH native tool registration', () => {
       registerDshNativeTools({ register }, [tool('read_cell'), tool('edit_cell')])
     ).toThrow('registry unavailable');
     expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('maps string constraints to native declarations while enforcing the original input schema', async () => {
+    const nativeTool: NativeAgentTool = {
+      ...tool(),
+      inputSchema: {
+        type: 'object',
+        properties: { cellId: { type: 'string', minLength: 1, maxLength: 64 } },
+        required: ['cellId'],
+        additionalProperties: false,
+      },
+    };
+    const register = vi.fn<DshNativeToolRegistry['register']>().mockReturnValue(() => {});
+    registerDshNativeTools({ register }, [nativeTool]);
+    const [[definition]] = register.mock.calls;
+    expect(definition.parameters).toMatchObject({
+      properties: {
+        cellId: { type: 'string', description: expect.stringContaining('minLength=1') },
+      },
+    });
+    expect(definition.parameters).not.toMatchObject({ properties: { cellId: { minLength: 1 } } });
+    expect(nativeTool.inputSchema).toMatchObject({ properties: { cellId: { minLength: 1 } } });
+    const { signal } = new AbortController();
+    await expect(definition.execute({ cellId: '' }, context(signal))).rejects.toThrow(
+      'Invalid native tool arguments'
+    );
+    await expect(definition.execute({ cellId: 'x'.repeat(65) }, context(signal))).rejects.toThrow(
+      'Invalid native tool arguments'
+    );
+    expect(nativeTool.execute).not.toHaveBeenCalled();
+    await expect(definition.execute({ cellId: 'cell-1' }, context(signal))).resolves.toMatchObject({
+      cellId: 'cell-1',
+    });
+  });
+
+  it('enforces output constraints and rejects other unrepresentable native schema keywords', async () => {
+    const nativeTool: NativeAgentTool = {
+      ...tool(),
+      outputSchema: {
+        type: 'object',
+        properties: { revision: { type: 'string', minLength: 10 } },
+        required: ['revision'],
+      },
+    };
+    const register = vi.fn<DshNativeToolRegistry['register']>().mockReturnValue(() => {});
+    registerDshNativeTools({ register }, [nativeTool]);
+    await expect(
+      register.mock.calls[0][0].execute({ cellId: 'cell-1' }, context(new AbortController().signal))
+    ).rejects.toThrow('Invalid native tool result');
+    const unsupported: NativeAgentTool = {
+      ...nativeTool,
+      inputSchema: {
+        type: 'object',
+        properties: { cellId: { type: 'string', pattern: '^cell-' } },
+      },
+    };
+    expect(() => registerDshNativeTools({ register }, [unsupported])).toThrow(
+      'not a supported keyword'
+    );
   });
 
   it('rejects invalid and duplicate names before mutating the registry', () => {
