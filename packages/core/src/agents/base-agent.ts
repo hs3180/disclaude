@@ -42,6 +42,8 @@ export type { BaseAgentConfig } from './types.js';
  * Extra SDK options configuration.
  */
 export interface SdkOptionsExtra {
+  /** Canonical tools consumed by the selected Harness's native adapter. */
+  nativeTools?: AgentQueryOptions['nativeTools'];
   /** Allowed tools list */
   allowedTools?: string[];
   /** Disallowed tools list */
@@ -212,6 +214,7 @@ export abstract class BaseAgent implements Disposable {
       ...(extra.projectRoot ? { projectRoot: extra.projectRoot } : {}),
       permissionMode: this.permissionMode,
       ...(extra.sessionKey !== undefined ? { sessionKey: extra.sessionKey } : {}),
+      ...(extra.nativeTools !== undefined ? { nativeTools: extra.nativeTools } : {}),
       settingSources: ['user', 'project', 'local'],
       ...((this.agentBackend ?? 'claude') !== 'claude'
         ? {}

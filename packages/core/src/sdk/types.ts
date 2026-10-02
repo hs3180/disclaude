@@ -356,8 +356,8 @@ export interface AgentQueryOptions {
   projectRoot?: string;
   /** 使用的模型 */
   model?: string;
-  /** Codex-only per-turn reasoning override; otherwise provider and CLI defaults apply. */
-  reasoningEffort?: import('../config/types.js').CodexReasoningEffort;
+  /** Native adapter-owned reasoning selection; each provider validates its supported levels. */
+  reasoningEffort?: string;
   /** 权限模式 */
   permissionMode?: PermissionMode;
   /** 允许使用的工具列表 */
@@ -375,6 +375,8 @@ export interface AgentQueryOptions {
   tools?: string[] | ToolsPreset;
   /** MCP 服务器配置 */
   mcpServers?: Record<string, McpServerConfig>;
+  /** Canonical business tools registered through the selected Harness's native API. */
+  nativeTools?: readonly import('./native-tools.js').NativeAgentTool[];
   /** 环境变量 */
   env?: Record<string, string | undefined>;
   /**
@@ -394,9 +396,10 @@ export interface AgentQueryOptions {
    */
   stderr?: (data: string) => void;
   /**
-   * 会话身份键（Issue #4634，S7）：调用方（ChatAgent 传 chatId）用来标识
-   * "哪个会话"拥有这条流。并发治理类 provider（codex）用它做会话上限的
-   * LRU 身份与逐 chat 续接；不传时 provider 退化为匿名会话（仍计上限）。
+   * Host-owned conversation key (ChatAgent supplies its chat identity).
+   * Native adapters use it for conversation continuity and concurrency policy.
+   * DSH scopes its persisted reference by cwd. This is never Notebook identity
+   * or execution authority. Omission creates an anonymous conversation.
    */
   sessionKey?: string;
   /**

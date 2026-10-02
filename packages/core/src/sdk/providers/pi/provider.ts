@@ -85,6 +85,9 @@ export class PiAgentProvider implements IAgentSDKProvider {
     if (this.disposed) {
       throw new Error('Provider has been disposed');
     }
+    if (options.nativeTools?.length) {
+      throw new Error('Pi nativeTools adapter is not implemented');
+    }
     if (!this.streamFn) {resolvePiModel(options);}
 
     // Abort plumbing: pi's Agent.abort() cancels the active run; the handle's

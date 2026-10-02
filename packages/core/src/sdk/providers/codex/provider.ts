@@ -384,6 +384,9 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     if (this.disposed) {
       throw new Error('Provider has been disposed');
     }
+    if (options.nativeTools?.length) {
+      throw new Error('Codex nativeTools adapter is not implemented');
+    }
     // Fail fast with an actionable message — same contract as pi's missing
     // streamFn check (#4386 part 3): the environment problem is knowable at
     // call time, so it must not surface as a cryptic mid-stream ENOENT.

@@ -64,6 +64,7 @@
 // 类型导出
 // ============================================================================
 export type { AgentInputRequest, AgentInputParams, AgentInputQuestion, AgentInputAnswers, AgentInputContext } from './user-input.js';
+export type { NativeAgentTool, NativeAgentToolContext } from './native-tools.js';
 
 export type {
   // 内容类型
