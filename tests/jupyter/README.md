@@ -81,6 +81,33 @@ Managed integration must establish the current shared document before execution,
 bound its retained resources, and reconcile server/kernel loss. External instances
 require their own compatibility evidence; the probe never changes a user's config.
 
+## Unattended initialization experiment
+
+To initialize a new Notebook without ever opening Lab, use:
+
+```sh
+.local/jupyter-g0-venv/bin/python tests/jupyter/g0-stack-probe.py --room-retention server --unattended-bootstrap --report .local/jupyter-g0/unattended.json
+```
+
+This mode creates the scratch Notebook and kernel through the server APIs,
+initializes the shared document with a transient RTC peer, verifies its cell IDs
+and sources, then disconnects the peer. After 61 seconds with no browser or RTC
+client, the first background execution must return stdout/SVG and save those outputs
+without another Contents PUT. The report records the source hash, server document
+and execution IDs, zero UI operations, preserved initial cells, and resource
+cleanup. A successful run also writes the verified Notebook beside the report.
+
+On 2026-10-02 this mode passed in two independent runs with server retention:
+the peer was disconnected for 61.051 and 61.202 seconds, execution completed with
+`execution_count=1`, and the saved cell contained stdout and SVG.
+The only Contents PUT created the Notebook;
+initial cell IDs/sources were preserved. No document-not-found warning occurred,
+and owned kernels, server and temporary root were removed.
+
+This is a separate bootstrap experiment. It does not exercise human editing,
+Lab reopening, chart rendering, HTML export, server restart or Disclaude tools.
+The default Lab mode retains its existing assertions and cleanup comparison.
+
 The JSON report records failures at their observed stage, versions and cleanup.
 A successful run also writes the verified `.ipynb`, HTML and cropped chart PNG
 beside the report. These artifacts contain synthetic probe content only. The

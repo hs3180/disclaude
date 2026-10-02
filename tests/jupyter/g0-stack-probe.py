@@ -115,6 +115,141 @@ async def notebook(client, base, path):
     return value
 
 
+async def unattended_bootstrap(args, client, base, root, path, content, marker, report):
+    report["ui_operations_budget"] = 0
+    report["ui_operations_performed"] = []
+    report["browser_pages_ever_opened"] = 0
+    session = await client.post(
+        base + "/api/sessions",
+        json={
+            "path": path,
+            "name": path,
+            "type": "notebook",
+            "kernel": {"name": "python3"},
+        },
+    )
+    require(session.status_code == 201, "Unattended kernel session creation failed")
+    kernel_id = session.json()["kernel"]["id"]
+    report["kernel_id"] = kernel_id
+    collab = await client.put(
+        base + "/api/collaboration/session/" + path,
+        json={"format": "json", "type": "notebook"},
+    )
+    require(collab.status_code in (200, 201), "Unattended RTC session creation failed")
+    identity = collab.json()
+    room = identity["format"] + ":" + identity["type"] + ":" + identity["fileId"]
+    report["notebook_identity"] = {
+        "document_id": identity["fileId"],
+        "room": room,
+        "path": path,
+        "cell_ids": [cell["id"] for cell in content["cells"]],
+    }
+    ws_url = (
+        base.replace("http://", "ws://")
+        + "/api/collaboration/room/"
+        + room
+        + "?sessionId="
+        + identity["sessionId"]
+    )
+    peer = YNotebook()
+    async with (
+        aconnect_ws(ws_url, client=client) as websocket,
+        Provider(peer.ydoc, HttpxWebsocket(websocket, room)),
+    ):
+
+        async def initial_sync():
+            cells = peer.get().get("cells", [])
+            return len(cells) == len(content["cells"]) and all(
+                actual["id"] == expected["id"]
+                and actual["source"] == expected["source"]
+                for actual, expected in zip(cells, content["cells"])
+            )
+
+        await eventually(initial_sync, "unattended RTC document initialization")
+    report["document_bootstrap"] = "transient RTC peer"
+    report["browser_pages_during_background_execution"] = 0
+    report["rtc_probe_peer_during_background_execution"] = False
+    stage(report, "unattended_document_initialized_peer_disconnected")
+    disconnected_at = time.monotonic()
+
+    async def room_lifetime_observed():
+        deleted = "Room " + room + " deleted" in (root / "server.log").read_text()
+        if args.room_retention == "server":
+            require(not deleted, "Server-retained unattended room was deleted")
+        return time.monotonic() - disconnected_at >= 61 and (
+            deleted if args.room_retention == "cleanup" else not deleted
+        )
+
+    await eventually(room_lifetime_observed, "unattended room lifetime", timeout=90)
+    report["seconds_after_last_peer_disconnect"] = round(
+        time.monotonic() - disconnected_at, 3
+    )
+    report["rtc_room_deleted_before_background_execution"] = (
+        args.room_retention == "cleanup"
+    )
+    cell = content["cells"][2]
+    report["source_sha256"] = {
+        "background": hashlib.sha256(cell["source"].encode()).hexdigest()
+    }
+    submit = await client.post(
+        base + "/api/kernels/" + kernel_id + "/execute",
+        json={
+            "code": cell["source"],
+            "metadata": {
+                "document_id": room,
+                "document_path": path,
+                "cell_id": cell["id"],
+            },
+        },
+    )
+    require(submit.status_code == 202, "First unattended execution was not accepted")
+    request_id = submit.json()["request_id"]
+    report["background_request_id"] = request_id
+    result = await request_result(
+        client, base + "/api/kernels/" + kernel_id + "/requests/" + request_id
+    )
+    report["background_execution"] = {
+        "request_status": result.get("request_status"),
+        "status": result.get("status"),
+        "execution_count": result.get("execution_count"),
+    }
+    require(
+        "BACKGROUND_" + marker in json.dumps(result)
+        and "image/svg+xml" in json.dumps(result),
+        "Unattended request result lacked its stdout or SVG",
+    )
+    stage(report, "first_unattended_request_completed")
+
+    async def saved_output():
+        value = await notebook(client, base, path)
+        saved_cell = value["cells"][2]
+        report["last_background_cell_output_count"] = len(saved_cell.get("outputs", []))
+        return (
+            value
+            if "BACKGROUND_" + marker in outputs(saved_cell)
+            and "image/svg+xml" in outputs(saved_cell)
+            else None
+        )
+
+    saved = await eventually(saved_output, "first unattended output saved by server")
+    require(
+        all(
+            actual["id"] == expected["id"] and actual["source"] == expected["source"]
+            for actual, expected in zip(saved["cells"], content["cells"])
+        )
+        and len(saved["cells"]) == len(content["cells"]),
+        "Unattended execution changed initial cell identity or source",
+    )
+    report["server_saved_background_outputs"] = True
+    report["initial_cell_ids_and_sources_preserved"] = True
+    report["saved_notebook_sha256"] = digest(saved)
+    if args.report:
+        args.report.with_suffix(".ipynb").write_text(
+            json.dumps(saved, ensure_ascii=False, indent=2) + "\n"
+        )
+    stage(report, "first_unattended_output_saved")
+
+
 async def run_probe(args, root, token, report):
     workspace = root / "workspace"
     for name in ("workspace", "config", "data", "runtime", "settings", "workspaces"):
@@ -255,6 +390,12 @@ async def run_probe(args, root, token, report):
             json={"type": "notebook", "format": "json", "content": content},
         )
         require(created.status_code == 201, "Scratch notebook was not created")
+
+        if args.unattended_bootstrap:
+            await unattended_bootstrap(
+                args, client, base, root, path, content, marker, report
+            )
+            return
 
         async with async_playwright() as playwright:
             options = {"headless": True}
@@ -681,6 +822,11 @@ def main():
         help="Compare standard 60-second cleanup with server-lifetime document retention",
     )
     parser.add_argument(
+        "--unattended-bootstrap",
+        action="store_true",
+        help="Initialize through a transient RTC peer and execute without ever opening Lab",
+    )
+    parser.add_argument(
         "--output-recovery",
         action="store_true",
         help="Enable nbmodel recovery in this probe's isolated Lab settings",
@@ -692,7 +838,7 @@ def main():
     parser.add_argument(
         "--report",
         type=Path,
-        help="Write JSON evidence and successful Notebook/HTML/SVG-preview artifacts",
+        help="Write JSON and Notebook evidence; Lab mode also writes HTML and chart preview",
     )
     args = parser.parse_args()
     report = {

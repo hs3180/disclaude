@@ -111,7 +111,9 @@ Jupyter 侧验证使用隔离 localhost 栈：Python `3.13.9`、JupyterLab `4.6.
 
 2026-10-02 通过同一隔离探针的 `--room-retention server` 验证上述受支持配置。所有 Notebook 页面及独立 RTC peer 都关闭，61.032 秒后共享文档仍由 Server 保留；背景执行原请求 `complete/ok`，stdout 与 SVG 自动写入 cell，整个流程仅创建时发生一次 Contents PUT。重开 Lab 后人工参数和 Markdown 保留，实际渲染的 SVG 与保存输出一致；HTML 导出内容匹配，导出前后 Notebook hash 不变，响应 CSP 为不含 `allow-same-origin` 的 sandbox。`outputRecovery=false`，没有保留前端或 RTC 工具连接。六项 UI 操作完成后仅回收自身 kernel/server/root，均确认退出。
 
-这为托管发行栈提供了经过实验的文档保留配置候选；默认 60 秒清理后的失败仍保留。该对照未验证首次无人打开时的文档初始化、Server 重启后的重新建 room、执行/控制代次对账或长期资源限额。托管适配须在执行前建立当前共享文档并限制保留资源；外部实例按自身配置单独验证，不能自动修改用户服务的清理策略。两种配置的报告明确区分 room 删除与服务端保留，不把其中一种结果代替另一种。
+另用 `--unattended-bootstrap` 在同一固定栈独立两次验证首次无人打开 Lab 的初始化：通过服务端 API 创建 Notebook/kernel，由短暂的独立 RTC peer 读到预期 cell ID 和源码后断开。`document_cleanup_delay=None` 下，分别断开 61.051 与 61.202 秒后首次执行返回 `complete/ok`、`execution_count=1`，stdout/SVG 自动保存到目标 cell；Contents PUT 仅创建时一次，初始 cell ID/源码保留，UI 操作数为 0。临时 kernel/server/root 均确认清理。这证明隔离栈可以由 RTC 客户端初始化共享文档再无客户端执行，尚未接入产品 Agent。
+
+这为托管发行栈提供了经过实验的文档保留与初始化配置候选；默认 60 秒清理后的失败仍保留。仍未验证清理后的文档重载、Server 重启后的重新建 room、执行/控制代次对账或长期资源限额。托管适配须在执行前建立当前共享文档并限制保留资源；外部实例按自身配置单独验证，不能自动修改用户服务的清理策略。两种配置的报告明确区分 room 删除与服务端保留，不把其中一种结果代替另一种。
 
 ### 其他方案的位置
 
@@ -200,7 +202,7 @@ Agent 默认围绕问题、数据与证据、方法选择、结果解释和结�
 | 阶段 | 可评审交付 | 通过条件 |
 | --- | --- | --- |
 | [G0-A Agent 接入验证 #5215](https://github.com/hs3180/disclaude/issues/5215) | dsh `0.1.2-rc.1` 默认 route 曾返回 `NO_ADAPTER`；隔离 patch 下 `openai-codex` / `gpt-5.6-luna` SDK initialize 成功；Codex app-server `0.159.2` dynamic host tool 探针与 `gpt-5.6-luna` 远程 scratch 执行成功；`a996b0ae` 补入调用身份传递；Codex CLI `0.159.3` / `gpt-5.6-luna/low` 两轮同 thread 续接探针通过 | 当前选择 Codex app-server 作为实现路线；dsh 精确 provider/model route 可初始化，但隔离环境没有可用凭据，SDK 无远程 cancel/resume 请求。尚无产品 Jupyter 适配、kernel interrupt、Feishu 会话续行或真实会话重启对账。issue 保持未完成 |
-| [G0-B Jupyter 能力验证 #5216](https://github.com/hs3180/disclaude/issues/5216) | 与 G0-A 并行；固定 Jupyter 兼容组合、连接与认证方式；现成扩展对照。隔离 JupyterLab RTC 探针与用户远程服务的双工作区 scratch 页面均观察到尚未落盘的 cell 修改同步到第二页面，Contents API 仍返回旧内容；独立 API-only 探针中 nbmodel REST 执行及输出写回、执行中断和同 kernel 后续执行均在没有浏览器页面时完成 | 已证明固定隔离栈的 server-side kernel 执行/输出、有效 interrupt 后无迟到输出与前端 RTC；用户远程服务的 scratch 页面也验证了浏览器 RTC 与未落盘源码可见性。用户服务的输出整合、实际 Lab 页面关闭再打开、产品 Agent 适配、人工/Agent 控制权交接及统一发行组合仍待核验。issue 保持未完成 |
+| [G0-B Jupyter 能力验证 #5216](https://github.com/hs3180/disclaude/issues/5216) | 固定隔离栈与用户服务均有前端 RTC/未落盘编辑证据。固定栈默认 60 秒清理后输出保存失败；服务端保留配置下，关闭所有页面/peer 后输出自动保存、Lab 重开与同版本 HTML 通过。短暂 RTC peer 首次初始化且从未打开 Lab 的独立两次后台执行也通过 | 托管路线已有文档保留与初始化配置证据；默认清理缺口仍成立。产品 Agent/Feishu 适配、原子修改、控制权交接、清理后重载、Server 重启、长期资源限额及实际设备入口仍待核验。issue 保持未完成 |
 | [G1-A 共享文档与资源关联 #5217](https://github.com/hs3180/disclaude/issues/5217) | Jupyter 资源引用与 Project 关联、shared model、cell 定点读写、版本及控制者校验 | 人工未保存改动可读；版本冲突拒绝；跨上下文/服务的引用隔离；解除关联不删除服务端成果 |
 | [G1-B 内核执行与可靠停止 #5218](https://github.com/hs3180/disclaude/issues/5218) | kernel 生命周期、执行协调、输出关联与持久化；必要的 JupyterLab 执行入口适配 | 用真实 Jupyter/ipykernel 验证执行完成、display 更新、取消、结果未知及源码版本；与 G1-A 共用控制者身份/代次和交接契约 |
 | [G2 Agent 与飞书闭环 #5219](https://github.com/hs3180/disclaude/issues/5219) | 工具、上下文变化、数据上传、原话题入口、真实停止与续行 | 真实模型在原 Project 完成分析；用户直接修改 Notebook 后继续同一研究且改动保留 |
