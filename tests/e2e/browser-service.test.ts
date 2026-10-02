@@ -25,11 +25,8 @@ const configuredRestartCycles = Number.isInteger(restartCycles) && restartCycles
 // explicitly requested acceptance run to use a larger, still finite budget.
 const modelTimeout = Number.parseInt(process.env.DISCLAUDE_E2E_BROWSER_MODEL_TIMEOUT_MS || '90000', 10);
 const configuredModelTimeout = Number.isInteger(modelTimeout) && modelTimeout >= 30_000 && modelTimeout <= 300_000 ? modelTimeout : 90_000;
-// Real model acceptance in this repository is intentionally pinned to the
-// operator-approved model. Do not inherit a user's global Codex default: that
-// would make the evidence non-reproducible and could silently exercise another
-// model.
-const CODEX_BROWSER_ACCEPTANCE_MODEL = 'gpt-6-luna';
+// Real-model acceptance requires an explicit operator-selected model.
+const codexAcceptanceModel = process.env.DISCLAUDE_E2E_BROWSER_CODEX_MODEL?.trim();
 
 async function stopProcessGroup(child: ReturnType<typeof spawn>): Promise<void> {
   if (!child.pid || child.exitCode !== null || child.signalCode !== null) return;
@@ -80,6 +77,9 @@ async function startDeployedChromium(binary: string, profile: string) {
 
 describe('user starts Disclaude and coordinates an already deployed browser', () => {
   it.skipIf(!enabled)('serializes upstream CLI calls, preserves shared state, and handles service stop/restart', async () => {
+    if (process.env.DISCLAUDE_E2E_BROWSER_CODEX === '1' && !codexAcceptanceModel) {
+      throw new Error('Set DISCLAUDE_E2E_BROWSER_CODEX_MODEL explicitly for real-model acceptance.');
+    }
     const root = await mkdtemp(join(tmpdir(), 'dc-browser-e2e-'));
     console.info('BROWSER_SERVICE_TEST_ROOT', root);
     let socket = '';
@@ -293,7 +293,7 @@ describe('user starts Disclaude and coordinates an already deployed browser', ()
             const model = backend === 'deepseek' ? process.env.DISCLAUDE_E2E_BROWSER_MODEL
               : backend === 'claude' ? process.env.DISCLAUDE_E2E_BROWSER_CLAUDE_MODEL
                 : backend === 'pi' ? process.env.DISCLAUDE_E2E_BROWSER_PI_MODEL
-                  : CODEX_BROWSER_ACCEPTANCE_MODEL;
+                  : codexAcceptanceModel;
             const stream = provider.queryStream(input(), { cwd: root, settingSources: [], env: taskEnv,
               ...(['claude', 'pi'].includes(backend) ? { tools: ['Bash'], allowedTools: ['Bash'] } : {}), ...(model ? { model } : {}) });
             const messages: AgentMessage[] = [];

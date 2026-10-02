@@ -89,7 +89,7 @@ workspace: { dir: "./workspace" }        # Docker: /data/workspace
 agent:
   agentBackend: codex                    # claude | pi | codex (agent SDK runtime, #4383)
   fullAccess: true                       # codex only → danger-full-access sandbox (#4818)
-  codex: { model: "gpt-6-luna", maxActiveSessions: 3, maxConcurrentRuns: 2 }
+  codex: { maxActiveSessions: 3, maxConcurrentRuns: 2 }
 feishu: { appId: "...", appSecret: "..." }
 logging: { level: info, pretty: true, rotate: false }
 env: { MY_VAR: "value" }
@@ -97,7 +97,7 @@ env: { MY_VAR: "value" }
 
 ### Codex backend (`agentBackend: codex`, #4627)
 
-Disclaude drives the **Codex CLI** (`codex exec`), authenticated via the **ChatGPT-subscription OAuth session** — not an API key. Consequently `provider` and `glm.*` are ignored (loader warns), and model IDs must be supported Codex/ChatGPT identifiers (GPT-5 or later with a suffix). The standard Codex model choice is `gpt-6-luna`, configured canonically as `agent.codex.model`; explicit per-chat, per-turn, preset, or `CODEX_MODEL` selections can override it. The legacy `gpt-5.1-codex` alias maps to the CLI default. Requires the `codex` binary + one-time `codex login`. Deep doc: `docs/codex-backend.md`.
+Disclaude drives the **Codex CLI** (`codex exec`), authenticated via the **ChatGPT-subscription OAuth session** — not an API key. Consequently `provider` and `glm.*` are ignored (loader warns), and model IDs must be available to the signed-in Codex account. Disclaude does not select a fixed default model. Configure an explicit model with `agent.codex.model`; per-chat, per-turn, preset, or `CODEX_MODEL` selections can override it. Explicit identifiers are passed unchanged to Codex, which validates availability; when unset, Codex keeps its own model selection. Concrete model recommendations belong only in `disclaude.config.example.yaml`. Requires the `codex` binary + one-time `codex login`. Deep doc: `docs/codex-backend.md`.
 
 Sandbox mapping (`permissionMode` → `codex exec` `sandbox_mode`, see `packages/core/src/sdk/providers/codex/sandbox-policy.ts`):
 

@@ -454,7 +454,7 @@ export class Config {
       if (this.CLAUDE_MODEL && !isCodexModel(this.CLAUDE_MODEL)) {
         errors.push({
           field: 'agent.model',
-          message: 'agent.model must be a Codex/ChatGPT model (expected gpt-5.x or newer)',
+          message: 'agent.model must be a Codex/ChatGPT model identifier',
         });
       }
       if (errors.length > 0) {
@@ -575,8 +575,7 @@ export class Config {
       return {
         apiKey: '',
         // Leave model selection to the Codex CLI when no explicit model is
-        // configured. The bare `gpt-5` identifier is not available to Codex
-        // when authenticated with a ChatGPT account.
+        // configured.
         model: this.CLAUDE_MODEL,
         provider: 'anthropic',
       };

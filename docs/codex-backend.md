@@ -32,8 +32,6 @@ docker compose run --rm service codex login --device-auth
 agent:
   agentBackend: codex
   codex:
-    model: gpt-6-luna
-    reasoningEffort: high # optional; must be supported by this model
     transport: app-server # optional; default: exec
     maxActiveSessions: 3  # optional
     maxConcurrentRuns: 2  # optional
@@ -45,11 +43,12 @@ sources for existing configurations. If multiple legacy and canonical values
 conflict, the selected source wins and startup warns which duplicate setting to
 remove. A named agent preset can still select its own model for that chat.
 
-The standard Codex model choice for Disclaude is `gpt-6-luna`, shown in the
-configuration above. Per-chat or per-turn selection and `CODEX_MODEL` can
-override it according to the precedence below. If no Disclaude configuration,
-selected preset, or environment value resolves a model, Codex uses the model
-from `CODEX_HOME` or its built-in default.
+Disclaude does not define a fixed default model. Concrete model and effort
+recommendations are kept in the [configuration sample](../disclaude.config.example.yaml).
+Choose a model available to the signed-in Codex account; explicit identifiers
+are passed unchanged to Codex, which validates their availability. If no
+Disclaude configuration, selected preset, or environment value resolves a
+model, Codex uses the model from `CODEX_HOME` or its built-in default.
 
 The precedence for a run is a selected per-chat/per-turn model, then a
 per-query `CODEX_MODEL`, the process `CODEX_MODEL`, the resolved configuration
@@ -80,6 +79,21 @@ The default `exec` transport runs non-interactive turns. Set
 `requestUserInput` interaction; see [Feishu channel cards](feishu-channel.md#codex-input-cards).
 Concurrency limits are per service process; extra work waits rather than
 starting unlimited Codex sessions or child processes.
+
+## Real-model acceptance
+
+Live acceptance scripts require an explicit model available to the signed-in
+account; they do not supply a fixed model or inherit the account's default:
+
+- `scripts/test-codex-live.mjs`: set `DISCLAUDE_TEST_MODEL`.
+- Codex user-input E2E: set `DISCLAUDE_E2E_CODEX_INPUT_MODEL` when enabling
+  `DISCLAUDE_E2E_CODEX_INPUT=1`.
+- Browser Codex E2E: set `DISCLAUDE_E2E_BROWSER_CODEX_MODEL` when enabling
+  `DISCLAUDE_E2E_BROWSER_CODEX=1`.
+
+Use the model required by the acceptance issue and record that selection with
+the result. Missing or blank model values fail before creating test resources
+or starting a model turn.
 
 ## Permissions and behavior
 

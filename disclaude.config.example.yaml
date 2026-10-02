@@ -58,8 +58,8 @@ agent:
   # evicted (LRU) — the evicted chat resumes its conversation on its next
   # message; only a user /reset truly starts fresh.
   # codex:
-  #   model: "gpt-6-luna"    # Default Codex choice; CODEX_MODEL overrides it
-  #   reasoningEffort: high # Optional; supported labels vary by model
+  #   model: "gpt-6-luna"    # Recommended example; no repository default; CODEX_MODEL overrides it
+  #   reasoningEffort: max  # Recommended example; must be supported by the selected model
   #   maxActiveSessions: 3    # Default: 3
   #   maxConcurrentRuns: 2    # Default: 2
 
@@ -111,7 +111,7 @@ agent:
 #     provider: glm
 #   codex-fast:
 #     agentBackend: codex
-#     model: "gpt-5.6-sol"
+#     model: "gpt-6-luna"  # Recommended example; effort is set in agent.codex above
 #   pi-fast:
 #     agentBackend: pi
 #     model: "glm-4.7"
