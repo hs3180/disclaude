@@ -1,0 +1,57 @@
+name: Managed Jupyter coordinator
+
+on:
+  pull_request:
+    paths:
+      - 'jupyter/**'
+      - 'packages/core/src/jupyter/**'
+      - 'packages/core/package.json'
+      - 'package-lock.json'
+      - 'tests/jupyter/coordinator-probe.py'
+      - '.github/workflows/jupyter-coordinator.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'jupyter/**'
+      - 'packages/core/src/jupyter/**'
+      - 'packages/core/package.json'
+      - 'package-lock.json'
+      - 'tests/jupyter/coordinator-probe.py'
+      - '.github/workflows/jupyter-coordinator.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  managed-backend:
+    name: Managed backend (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: jupyter/pyproject.toml
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: python -m pip install -e './jupyter[test]'
+      - run: npm ci
+      - run: npm run build --workspace=@disclaude/core
+      - run: npx vitest --run packages/core/src/jupyter/coordinator-client.test.ts
+      - run: python -m unittest discover -s jupyter/tests -v
+      - name: Real managed RTC and kernel probe
+        run: python tests/jupyter/coordinator-probe.py --output coordinator-report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coordinator-${{ matrix.os }}
+          path: coordinator-report.json
+          retention-days: 7

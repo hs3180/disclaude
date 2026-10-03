@@ -88,6 +88,27 @@ try {
   report.source = provenance;
   const packed = await run('npm', ['pack', '--json', '--ignore-scripts'], distribution, 60_000);
   const packResult = JSON.parse(packed)[0];
+  const packedPaths = new Set(packResult.files.map((file) => file.path));
+  for (const path of [
+    'jupyter/pyproject.toml',
+    'jupyter/disclaude_jupyter/__init__.py',
+    'jupyter/disclaude_jupyter/extension.py',
+    'jupyter/disclaude_jupyter/documents.py',
+    'jupyter/disclaude_jupyter/executions.py',
+    'jupyter/disclaude_jupyter/ledger.py',
+  ]) {
+    assert(packedPaths.has(path), `Optional remote Jupyter server payload is missing ${path}`);
+    assert(readFileSync(join(distribution, path)).length > 0);
+  }
+  assert(
+    !packResult.files.some((file) =>
+      /(?:__pycache__|\.pyc$|\.sqlite3$|\.owner\.lock$)/u.test(file.path)
+    ),
+    'Jupyter server payload must not include runtime state or Python caches'
+  );
+  report.checks.push(
+    'optional remote-server source payload is complete and excludes runtime state'
+  );
   assert.deepEqual(
     packResult.files.filter((file) => isDockerDeploymentEntry(file.path)).map((file) => file.path),
     [],

@@ -1,9 +1,26 @@
-# G0-B Jupyter stack experiment
+# Jupyter protocol probes
+
+## Current remote deployment and acceptance
+
+The Notebook runtime uses a Node client on the disclaude host and Python/kernel
+services in the configured remote Jupyter environment. Actual acceptance uses
+the user's private `.env` `JUPYTERLAB_HOST` / `JUPYTERLAB_PASS`; it requires no
+host-local Python environment, Jupyter server or Project filesystem mount.
+The configured DSH/persistent-Project probe is reviewed in
+[#5250](https://github.com/hs3180/disclaude/pull/5250). A missing remote extension
+blocks acceptance; it does not select a local fallback.
+
+## Historical isolated G0-B experiment
+
+The following commands/results document earlier isolated component experiments
+and server-side CI fixtures. They do not define host runtime setup or current
+product acceptance. Do not recreate their local environment for this task.
 
 This opt-in probe for #5216 launches its own authenticated localhost server,
 Notebook, kernel, browser and Jupyter configuration. It uses no Project mount,
-existing server, Notebook or kernel. Normal Disclaude installation and CI do not
-install these Python dependencies.
+existing server, Notebook or kernel. Normal Disclaude installation and regular
+Node checks do not install Python. The separate managed-coordinator CI installs
+its pinned server stack for backend checks, without this browser probe.
 
 Use Python 3.13 and a separate virtual environment:
 
