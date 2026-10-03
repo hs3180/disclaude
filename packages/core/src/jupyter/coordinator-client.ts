@@ -16,6 +16,7 @@ import type {
 } from './contracts.js';
 
 export interface JupyterCoordinatorOptions {
+  /** Explicit remote Jupyter endpoint; Python and kernels belong to that server. */
   baseUrl: string;
   connectionId: string;
   /** Pin a saved connection to its original server namespace. */
@@ -162,7 +163,7 @@ function sameTarget(a: JupyterExecutionTarget, b: JupyterExecutionTarget): boole
   );
 }
 
-/** Concrete shared ports for the optional managed Jupyter server extension. */
+/** Node HTTP ports for the optional extension deployed in the remote Jupyter server. */
 export class JupyterCoordinatorClient implements JupyterNotebookPort, JupyterExecutionPort {
   private readonly base: URL;
   private namespace?: string;
@@ -441,6 +442,7 @@ export class JupyterCoordinatorClient implements JupyterNotebookPort, JupyterExe
     }
   }
 
+  /** Select a kernelspec and bind a kernel through the remote server API. */
   async ensureKernel(
     notebook: JupyterNotebookLocator,
     kernelName = 'python3'
