@@ -5,6 +5,7 @@ import {
   JupyterCoordinatorClient,
   createJupyterCookieJar,
   type JupyterCoordinatorOptions,
+  type JupyterConnectionInspection,
 } from '@disclaude/core';
 
 export interface JupyterConnectionDefinition {
@@ -12,6 +13,9 @@ export interface JupyterConnectionDefinition {
   baseUrl: string;
   authorizationEnv?: string;
   authorizationFile?: string;
+  passwordEnv?: string;
+  passwordFile?: string;
+  allowInsecureHttp?: boolean;
 }
 
 type Jar = NonNullable<JupyterCoordinatorOptions['cookieJar']>;
@@ -52,12 +56,18 @@ export class JupyterConnections {
         throw new Error('Invalid Jupyter connection');
       }
       const d = value as Record<string, unknown>;
+      const references = ['authorizationEnv', 'authorizationFile', 'passwordEnv', 'passwordFile'];
       if (
         typeof d.id !== 'string' ||
         !/^[A-Za-z0-9_-]{1,200}$/.test(d.id) ||
         ids.has(d.id) ||
         typeof d.baseUrl !== 'string' ||
-        (typeof d.authorizationEnv === 'string') === (typeof d.authorizationFile === 'string')
+        references.filter((key) => typeof d[key] === 'string').length !== 1 ||
+        references.some((key) => d[key] !== undefined && (typeof d[key] !== 'string' || !d[key])) ||
+        ['authorizationEnv', 'passwordEnv'].some(
+          (key) => typeof d[key] === 'string' && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(d[key])
+        ) ||
+        (d.allowInsecureHttp !== undefined && typeof d.allowInsecureHttp !== 'boolean')
       ) {
         throw new Error('Invalid Jupyter host connection identity or authentication reference');
       }
@@ -69,17 +79,22 @@ export class JupyterConnections {
         ...(typeof d.authorizationFile === 'string'
           ? { authorizationFile: d.authorizationFile }
           : {}),
+        ...(typeof d.passwordEnv === 'string' ? { passwordEnv: d.passwordEnv } : {}),
+        ...(typeof d.passwordFile === 'string' ? { passwordFile: d.passwordFile } : {}),
+        ...(d.allowInsecureHttp === true ? { allowInsecureHttp: true } : {}),
       };
     });
   }
 
-  private authorization(definition: JupyterConnectionDefinition): string {
+  private authentication(definition: JupyterConnectionDefinition): string {
     let value: string | undefined;
-    if (definition.authorizationEnv) {
-      value = this.environment()[definition.authorizationEnv];
+    const envReference = definition.authorizationEnv ?? definition.passwordEnv;
+    const fileReference = definition.authorizationFile ?? definition.passwordFile;
+    if (envReference) {
+      value = this.environment()[envReference];
     }
-    if (definition.authorizationFile) {
-      const stat = fs.lstatSync(definition.authorizationFile);
+    if (fileReference) {
+      const stat = fs.lstatSync(fileReference);
       if (
         !stat.isFile() ||
         stat.isSymbolicLink() ||
@@ -88,7 +103,8 @@ export class JupyterConnections {
       ) {
         throw new Error('Jupyter authentication reference cannot be verified');
       }
-      value = fs.readFileSync(definition.authorizationFile, 'utf8').trim();
+      const raw = fs.readFileSync(fileReference, 'utf8');
+      value = definition.passwordFile ? raw : raw.trim();
     }
     if (!value || value.length > 8192 || /[\r\n]/.test(value)) {
       throw new Error('Jupyter authentication is unavailable');
@@ -96,7 +112,7 @@ export class JupyterConnections {
     return value;
   }
 
-  private async connect(
+  private async prepareConnection(
     definition: JupyterConnectionDefinition,
     namespace: string
   ): Promise<Connection> {
@@ -125,14 +141,39 @@ export class JupyterConnections {
     const client = new JupyterCoordinatorClient({
       baseUrl: definition.baseUrl,
       connectionId: definition.id,
-      serverNamespace: namespace,
-      authorization: () => Promise.resolve(this.authorization(definition)),
+      ...(namespace ? { serverNamespace: namespace } : {}),
+      ...(definition.passwordEnv || definition.passwordFile
+        ? { password: () => Promise.resolve(this.authentication(definition)) }
+        : { authorization: () => Promise.resolve(this.authentication(definition)) }),
+      allowInsecureHttp: definition.allowInsecureHttp,
       cookieJar: jar,
     });
-    const connection = { client, jar, cookiePath };
-    await client.connect();
-    await this.persist(connection);
-    return connection;
+    return { client, jar, cookiePath };
+  }
+
+  private async connect(
+    definition: JupyterConnectionDefinition,
+    namespace: string
+  ): Promise<Connection> {
+    const connection = await this.prepareConnection(definition, namespace);
+    try {
+      await connection.client.connect();
+      return connection;
+    } finally {
+      await this.persist(connection);
+    }
+  }
+
+  /** Read-only host capability check. No Project, controller or kernel changes. */
+  async inspect(connectionId: string, namespace = ''): Promise<JupyterConnectionInspection> {
+    const definition = this.definitions().find((item) => item.id === connectionId);
+    if (!definition) {throw new Error('Notebook connection is not authorized by the host');}
+    const connection = await this.prepareConnection(definition, namespace);
+    try {
+      return await connection.client.inspectConnection();
+    } finally {
+      await this.persist(connection);
+    }
   }
 
   private async persist(connection: Connection): Promise<void> {
@@ -213,6 +254,7 @@ export class JupyterConnections {
         // An explicit undefined overrides inherited/provider environment too.
         environment[definition.authorizationEnv] = undefined;
       }
+      if (definition.passwordEnv) {environment[definition.passwordEnv] = undefined;}
     }
   }
 }
