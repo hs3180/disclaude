@@ -18,6 +18,7 @@ const { values } = parseArgs({
     'server-url': { type: 'string' },
     notebook: { type: 'string' },
     output: { type: 'string' },
+    'host-session': { type: 'boolean', default: false },
   },
 });
 for (const key of [
@@ -65,6 +66,9 @@ const report = {
 };
 const providers = [];
 const diagnostics = [];
+let hostSession;
+let createHostSession;
+let notebookAlias;
 let access;
 async function sourceState(directory, paths) {
   const head = (await run('git', ['rev-parse', 'HEAD'], { cwd: directory })).stdout.trim();
@@ -113,35 +117,105 @@ try {
       '\n    compression: none\n- id: session-telemetry-otel\n  disabled: true\n',
     { mode: 0o600 }
   );
-  const client = new JupyterCoordinatorClient({
+  let client = new JupyterCoordinatorClient({
     baseUrl: values['server-url'],
     connectionId: 'owned-dsh-probe',
     authorization: async () => 'token ' + token,
   });
   const notebook = await client.openNotebook(values.notebook);
   const previous = await client.currentController(notebook);
-  const authority = await client.claimControl(
-    notebook,
-    'dsh-probe-' + randomUUID(),
-    previous?.generation ?? 0
-  );
-  report.notebook = notebook;
-  const tools = createNotebookTools({
-    notebook,
-    documents: client,
-    executions: client,
-    controller: async () => {
-      const current = await client.currentController(notebook);
-      if (
-        !current ||
-        current.ownerId !== authority.ownerId ||
-        current.generation !== authority.generation
+  let authority;
+  if (values['host-session']) {
+    const { NotebookAgentSession } = await import(
+      pathToFileURL(path.join(checkout, 'packages/service/dist/jupyter/agent-session.js'))
+    );
+    const { JupyterConnections } = await import(
+      pathToFileURL(path.join(checkout, 'packages/service/dist/jupyter/connections.js'))
+    );
+    const { JupyterProjectConfigStore } = await import(
+      pathToFileURL(path.join(checkout, 'packages/service/dist/jupyter/project-config-store.js'))
+    );
+    const { NotebookRunStore } = await import(
+      pathToFileURL(path.join(checkout, 'packages/service/dist/jupyter/run-store.js'))
+    );
+    const host = path.join(owned, 'host');
+    await fs.mkdir(host, { mode: 0o700 });
+    const authorizationFile = path.join(host, 'authorization');
+    await fs.writeFile(authorizationFile, 'token ' + token, { mode: 0o600 });
+    const configFile = path.join(host, 'connections.json');
+    await fs.writeFile(
+      configFile,
+      JSON.stringify({
+        version: 1,
+        connections: [
+          { id: notebook.identity.connectionId, baseUrl: values['server-url'], authorizationFile },
+        ],
+      }),
+      { mode: 0o600 }
+    );
+    const connections = new JupyterConnections(configFile, () => ({}));
+    client = await connections.use(
+      notebook.identity.connectionId,
+      notebook.identity.serverNamespace,
+      async (connected) => connected
+    );
+    const records = new NotebookRunStore(cwd, 'real-notebook-probe');
+    authority = await client.claimControl(notebook, records.ownerId(), previous?.generation ?? 0);
+    notebookAlias = createHash('sha256')
+      .update(
+        JSON.stringify([
+          notebook.identity.connectionId,
+          notebook.identity.serverNamespace,
+          notebook.identity.documentId,
+        ])
       )
-        throw new Error('DSH Notebook ownership lost');
-      return current;
-    },
-    kernel: () => client.ensureKernel(notebook),
-  }).map((tool) => ({
+      .digest('hex');
+    records.saveLease(notebookAlias, authority);
+    const linked = new JupyterProjectConfigStore(cwd).linkNotebook({
+      ...notebook.identity,
+      contentPath: notebook.contentPath,
+    });
+    if (!linked.ok) throw new Error('Owned Project Notebook reference could not be saved');
+    createHostSession = () =>
+      new NotebookAgentSession(
+        { workingDir: cwd, conversationKey: 'real-notebook-probe', currentWorkingDir: () => cwd },
+        connections
+      );
+    hostSession = createHostSession();
+    report.scope = 'real Service-owned native Notebook capabilities over DSH and managed Jupyter';
+    report.hostSource = await sourceState(checkout, [
+      'packages/service/src/jupyter',
+      'packages/service/src/agents/chat-agent.ts',
+      'packages/service/src/chat-session-pool.ts',
+      'packages/service/src/cli-main.ts',
+    ]);
+  } else {
+    authority = await client.claimControl(
+      notebook,
+      'dsh-probe-' + randomUUID(),
+      previous?.generation ?? 0
+    );
+  }
+  report.notebook = notebook;
+  let tools = (
+    hostSession?.tools ??
+    createNotebookTools({
+      notebook,
+      documents: client,
+      executions: client,
+      controller: async () => {
+        const current = await client.currentController(notebook);
+        if (
+          !current ||
+          current.ownerId !== authority.ownerId ||
+          current.generation !== authority.generation
+        )
+          throw new Error('DSH Notebook ownership lost');
+        return current;
+      },
+      kernel: () => client.ensureKernel(notebook),
+    })
+  ).map((tool) => ({
     ...tool,
     execute: async (args, context) => {
       const record = {
@@ -188,7 +262,14 @@ try {
     report.phases.push(phase);
     const before = report.calls.length;
     async function* input() {
-      yield { role: 'user', content: prompt };
+      yield {
+        role: 'user',
+        content:
+          prompt +
+          (hostSession
+            ? '\nNotebook alias: ' + notebookAlias + '\n' + (await hostSession.messageContext())
+            : ''),
+      };
     }
     const query = provider.queryStream(input(), options);
     const timer = setTimeout(() => query.handle.cancel(), 180_000);
@@ -232,6 +313,28 @@ try {
     throw new Error('Native first-run output was not observed');
   first.state = 'passed';
   await firstProvider.shutdown();
+  if (hostSession) {
+    hostSession.dispose();
+    hostSession = createHostSession();
+    // Native wrappers resolve the current host instance on every invocation.
+    tools = tools.map((tool) => ({
+      ...tool,
+      execute: async (args, context) => {
+        const record = {
+          tool: tool.name,
+          input: args,
+          invocationObserved: !!context.invocationId,
+          startedAt: new Date().toISOString(),
+        };
+        report.calls.push(record);
+        const currentTool = hostSession.tools.find((item) => item.name === tool.name);
+        record.output = await currentTool.execute(args, context);
+        record.finishedAt = new Date().toISOString();
+        return record.output;
+      },
+    }));
+    options.nativeTools = tools;
+  }
   const resumedProvider = createProvider();
   const resumed = await collect(
     resumedProvider,
@@ -282,6 +385,48 @@ try {
   )
     throw new Error('Native post-stop continuation failed');
   recovery.state = 'passed';
+  if (hostSession) {
+    const background = await collect(
+      resumedProvider,
+      'Service keeps a submitted Notebook run after inference ends',
+      'Read long-cell, change time.sleep(30) to time.sleep(300), run its applied snapshot. Query only until its output shows RUNNING, then finish this response immediately with its runId. Leave that run executing for the host stop action. Do not stop it yourself or wait until terminal.'
+    );
+    const backgroundRun = background.calls.find(
+      (call) => call.tool === 'notebook_run_cell' && call.output?.state === 'accepted'
+    )?.output.handle;
+    if (!backgroundRun) throw new Error('Service background run was not submitted');
+    const beforeStop = await client.getStatus(notebook, backgroundRun.runId);
+    if (beforeStop.state !== 'running')
+      throw new Error('Service background run was not active after inference ended');
+    const hostStop = await hostSession.stop();
+    const hostStatus = await client.getStatus(notebook, backgroundRun.runId);
+    if (
+      !hostStop.some((item) => item.runId === backgroundRun.runId && item.state === 'cancelled') ||
+      hostStatus.state !== 'cancelled' ||
+      !hostStatus.details?.kernelIdleConfirmed
+    ) {
+      throw new Error('Service owner stop did not reach confirmed kernel cancellation');
+    }
+    background.state = 'passed';
+    report.hostStop = { observations: hostStop, status: hostStatus };
+    hostSession.dispose();
+    hostSession = createHostSession();
+    const hostRecovery = await collect(
+      resumedProvider,
+      'new Service host continues after owner stop',
+      'Query the preceding exact runId first and verify cancellation. Then read short-cell, change its source to print("AFTER_HOST_STOP", dsh_value), run the applied snapshot and poll until terminal. Report the actual output; do not restart the kernel.'
+    );
+    if (
+      !hostRecovery.calls.some(
+        (call) =>
+          call.tool === 'notebook_execution_status' &&
+          JSON.stringify(call.output).includes('AFTER_HOST_STOP 7302')
+      )
+    ) {
+      throw new Error('Service host post-stop kernel continuation failed');
+    }
+    hostRecovery.state = 'passed';
+  }
   report.state = 'passed';
 } catch (error) {
   report.error = error instanceof Error ? error.message : String(error);
