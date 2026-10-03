@@ -36,8 +36,8 @@ class Ledger:
             application_id = self.db.execute("PRAGMA application_id").fetchone()[0]
             schema_version = self.db.execute("PRAGMA user_version").fetchone()[0]
             tables = self.db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-            if (application_id not in (0, 0x444A5031) or schema_version not in (0, 1)
-                    or (tables and (application_id != 0x444A5031 or schema_version != 1))):
+            if (application_id not in (0, 0x444A5031) or schema_version not in (0, 2)
+                    or (tables and (application_id != 0x444A5031 or schema_version != 2))):
                 raise RuntimeError("unsupported Notebook ledger schema; preserve state for explicit migration")
             self.db.execute("PRAGMA journal_mode=DELETE")
             self.db.execute("PRAGMA synchronous=FULL")
@@ -47,6 +47,9 @@ class Ledger:
                 CREATE TABLE IF NOT EXISTS controllers (
                     document_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL,
                     generation INTEGER NOT NULL, principal TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS paused_controllers (
+                    document_id TEXT PRIMARY KEY, generation INTEGER NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS kernels (
                     document_id TEXT PRIMARY KEY, kernel_id TEXT NOT NULL UNIQUE,
@@ -61,7 +64,7 @@ class Ledger:
                 );
                 CREATE INDEX IF NOT EXISTS runs_document ON runs(document_id, state);
                 PRAGMA application_id=1145720881;
-                PRAGMA user_version=1;
+                PRAGMA user_version=2;
             """)
             self.db.execute(
                 "INSERT OR IGNORE INTO settings VALUES ('server_namespace', ?)",
@@ -113,18 +116,33 @@ class Ledger:
         ).fetchone()
         return dict(row) if row else None
 
-    def owns(self, document_id: str, controller: dict, principal: str) -> bool:
+    def paused(self, document_id: str) -> bool:
+        current = self.controller(document_id)
+        row = self.db.execute("SELECT generation FROM paused_controllers WHERE document_id=?",
+                              (document_id,)).fetchone()
+        return bool(current and row and row[0] == current["generation"])
+
+    def owns(self, document_id: str, controller: dict, principal: str, *, allow_paused=False) -> bool:
         current = self.controller(document_id)
         return bool(current and current["owner_id"] == controller.get("ownerId")
                     and current["generation"] == controller.get("generation")
-                    and current["principal"] == principal)
+                    and current["principal"] == principal
+                    and (allow_paused or not self.paused(document_id)))
+
+    def pause(self, document_id: str, controller: dict, principal: str):
+        if not self.owns(document_id, controller, principal, allow_paused=True):
+            raise ValueError("controller generation changed")
+        self.db.execute("INSERT INTO paused_controllers VALUES (?,?) ON CONFLICT(document_id) "
+                        "DO UPDATE SET generation=excluded.generation",
+                        (document_id, controller["generation"]))
 
     def claim(self, document_id: str, owner_id: str, principal: str, expected: int):
         current = self.controller(document_id)
         generation = current["generation"] if current else 0
         if generation != expected:
             raise ValueError("controller generation changed")
-        if current and current["owner_id"] == owner_id and current["principal"] == principal:
+        if (current and current["owner_id"] == owner_id and current["principal"] == principal
+                and not self.paused(document_id)):
             return {"ownerId": owner_id, "generation": generation}
         if generation >= 9007199254740991:
             raise ValueError("controller generation exhausted")
@@ -134,6 +152,7 @@ class Ledger:
             "owner_id=excluded.owner_id,generation=excluded.generation,principal=excluded.principal",
             (document_id, owner_id, generation, principal),
         )
+        self.db.execute("DELETE FROM paused_controllers WHERE document_id=?", (document_id,))
         return {"ownerId": owner_id, "generation": generation}
 
     def run(self, run_id: str):

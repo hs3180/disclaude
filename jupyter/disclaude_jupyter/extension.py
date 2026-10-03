@@ -104,9 +104,9 @@ class NotebookHandler(Handler):
         if not isinstance(notebook, dict) or notebook.get("identity", {}).get("documentId") != document_id:
             raise tornado.web.HTTPError(400, reason="Notebook route and identity mismatch")
         locator = documents.locate(notebook)
-        read = operation in ("read-cell", "status", "outputs", "describe")
+        read = operation in ("read-cell", "status", "outputs", "describe", "control-state")
         await self.allow("read" if read else "write", "contents")
-        if operation in ("kernel", "submit", "stop", "input"):
+        if operation in ("kernel", "submit", "stop", "stop-owner", "input"):
             await self.allow("execute", "kernels")
         if operation == "read-cell":
             result = await documents.read(locator, text(data, "cellId", limit=64))
@@ -116,6 +116,10 @@ class NotebookHandler(Handler):
             text(data, "source", empty=True)
             controller(data.get("controller"))
             result = await documents.edit(data, self.principal)
+        elif operation == "control-state":
+            current = ledger.controller(document_id)
+            result = {"controller": {"ownerId": current["owner_id"], "generation": current["generation"]} if current else None,
+                      "paused": ledger.paused(document_id)}
         elif operation == "control":
             current = ledger.controller(document_id)
             if data.get("action") == "read":
@@ -148,6 +152,8 @@ class NotebookHandler(Handler):
                 raise tornado.web.HTTPError(400, reason="stop handle Notebook mismatch")
             text(handle, "runId", limit=64)
             result = await executions.stop(handle, controller(data.get("controller")), self.principal)
+        elif operation == "stop-owner":
+            result = await executions.stop_owner(locator, controller(data.get("controller")), self.principal)
         elif operation == "input":
             run_id = text(data, "runId", limit=64)
             run = ledger.run(run_id)

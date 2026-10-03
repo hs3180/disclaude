@@ -43,10 +43,11 @@ export type {
   JupyterExecutionStopResult,
   JupyterExecutionPort,
 } from './jupyter/contracts.js';
-export { JupyterCoordinatorClient } from './jupyter/coordinator-client.js';
+export { JupyterCoordinatorClient, createJupyterCookieJar } from './jupyter/coordinator-client.js';
 export type {
   JupyterCoordinatorOptions,
   JupyterCoordinatorStatus,
+  JupyterNotebookOverview,
 } from './jupyter/coordinator-client.js';
 
 export { createNotebookTools } from './jupyter/notebook-tools.js';
