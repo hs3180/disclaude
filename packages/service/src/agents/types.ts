@@ -206,6 +206,7 @@ export interface ChatAgentConfig extends BaseAgentConfig {
   skipHistory?: boolean;
   /** Native provider identity independent of the real delivery/history chat ID. */
   sdkSessionKey?: string;
+  notebookSessionFactory?: import('../jupyter/agent-session.js').NotebookAgentSessionFactory;
 
 }
 

@@ -119,6 +119,7 @@ describe('CodexAgentProvider (Issues #4629 + #4630)', () => {
           ? `${fx.binDir}:${process.env.PATH ?? ''}`
           : fx.binDir,
         CODEX_HOME: fx.codexHome,
+        CODEX_REASONING_EFFORT: '',
       },
       // Ignore the developer machine's ~/.disclaude model so these subprocess
       // contract tests only exercise values passed in their own fixtures.
