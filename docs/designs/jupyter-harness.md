@@ -92,7 +92,7 @@ flowchart LR
 
 实现通过受管理的临时 profile patch 加载 `disclaude-dsh-native-app`，调用固定版本的 `dsh-tools.register` 和 `dsh-agent` create/resume/cancel/whenIdle。窄控制面增加宿主工具回调及明确的 session/open、session/cancel；这些方法属于 disclaude 插件协议。模型、provider route 和 reasoning effort 传给原生 Agent，未显式设置时采用所选 profile 的配置。原 profile 文件由 DSH 管理，临时 patch 在进程退出后清理。
 
-共同 `NativeAgentTool` 使用 JSON Schema、结构化返回值与 `AbortSignal`；`createNotebookTools` 将它映射到共享文档和执行 ports。工具仅绑定宿主已授权的 Notebook，原生调用 ID 用于 trace，执行 runId 与控制者代次沿用 Jupyter 契约。当前 ports 尚无产品后端实现。DSH 以原生 registry 注册这些定义；其他 adapter 遇到尚未实现的 nativeTools 注册会明确拒绝。
+共同 `HostToolDefinition` 使用 JSON Schema、结构化返回值与 `AbortSignal`；`createNotebookTools` 将它映射到共享文档和执行 ports。工具仅绑定宿主已授权的 Notebook，原生调用 ID 用于 trace，执行 runId 与控制者代次沿用 Jupyter 契约。当前 ports 尚无产品后端实现。业务定义统一由 `hostTools` 提供，DSH/Pi 使用原生 registry，Codex app-server 使用 dynamic tools，Claude 由适配器包装为进程内 MCP；详见 [Agent 工具契约](agent-tools.md)。这些适配器验证不扩大既有真实模型或 Notebook 产品验收的提交范围。
 
 04:33 CST 在真实 `dsh@0.1.2-rc.1` / Node `v26.10.0` 下，显式使用原生 `openai-codex` route、`gpt-5.6-luna` / `low`，四阶段组件探针通过：一次原生工具调用保留 canonical 对象；新 provider/进程恢复同一 native Session 并复述前轮随机 marker；取消信号到达宿主 handler，确认在其清理完成后返回；中断后同一 Session 再次调用工具成功。原生日志回读的四条 request/header 均记录该 route、模型和 effort，扫描 114 条存储记录未发现本次 access credential。两个 provider 的清理完成，专用临时 DSH_HOME 删除。
 

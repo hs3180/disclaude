@@ -1,16 +1,15 @@
+import { assertToolOptions } from '../../host-tools.js';
 /**
  * Claude SDK Provider 实现
  *
  * 实现 IAgentSDKProvider 接口，封装 Claude Agent SDK 的功能。
  */
 
-import { query, tool, createSdkMcpServer, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import { query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { IAgentSDKProvider } from '../../interface.js';
 import type {
   AgentMessage,
   AgentQueryOptions,
-  InlineToolDefinition,
-  McpServerConfig,
   ProviderInfo,
   StreamQueryResult,
   UserInput,
@@ -271,12 +270,11 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     input: AsyncGenerator<UserInput>,
     options: AgentQueryOptions
   ): StreamQueryResult {
+    assertToolOptions(options);
     if (this.disposed) {
       throw new Error('Provider has been disposed');
     }
-    if (options.nativeTools?.length) {
-      throw new Error('Claude nativeTools adapter is not implemented');
-    }
+
 
     if (options.autoCompactWindow === 'auto') {
       return withDiscoveredCompaction(input, options, (nextInput, nextOptions) =>
@@ -698,32 +696,6 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
       },
       iterator: adaptIterator(),
     };
-  }
-
-  createInlineTool(definition: InlineToolDefinition): unknown {
-    return tool(
-      definition.name,
-      definition.description,
-      definition.parameters as unknown as Parameters<typeof tool>[2],
-      // #4568: drop the handler's optional onProgress second argument — the
-      // Claude SDK tool() channel has no progress plumbing (it passes its own
-      // `extra` context there). Progress reporting is pi-backend-only.
-      (params) => definition.handler(params)
-    );
-  }
-
-  createMcpServer(config: McpServerConfig): unknown {
-    if (config.type === 'inline') {
-      const tools = (config.tools?.map(t => this.createInlineTool(t)) ?? []) as Parameters<typeof createSdkMcpServer>[0]['tools'];
-      return createSdkMcpServer({
-        name: config.name,
-        version: config.version,
-        tools,
-      });
-    }
-
-    // stdio 模式不支持通过此方法创建
-    throw new Error('stdio MCP servers are not supported by ClaudeSDKProvider.createMcpServer');
   }
 
   validateConfig(): boolean {

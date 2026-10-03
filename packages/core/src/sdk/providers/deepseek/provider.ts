@@ -5,12 +5,10 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createLogger } from '../../../utils/logger.js';
 import type { IAgentSDKProvider } from '../../interface.js';
-import type { NativeAgentTool } from '../../native-tools.js';
+import { assertToolOptions, prepareHostTools, selectHostTools, type HostToolDefinition } from '../../host-tools.js';
 import type {
   AgentMessage,
   AgentQueryOptions,
-  InlineToolDefinition,
-  McpServerConfig,
   ProviderInfo,
   StreamQueryResult,
   UserInput,
@@ -49,7 +47,7 @@ interface QueryState {
   wake(): void;
   abort: AbortController;
   pendingText: string;
-  tools: Map<string, NativeAgentTool>;
+  tools: Map<string, HostToolDefinition>;
   invocations: Map<string, NativeInvocation>;
   receivedInvocations: Set<string>;
   stderr?: (data: string) => void;
@@ -151,6 +149,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
   }
 
   queryStream(input: AsyncGenerator<UserInput>, options: AgentQueryOptions): StreamQueryResult {
+    assertToolOptions(options);
     if (this.disposed) {
       throw new Error('DeepSeekHarnessProvider has been disposed');
     }
@@ -158,31 +157,19 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
     if (reason) {
       throw new Error(`DeepSeekHarnessProvider unavailable: ${reason}`);
     }
-    if (options.mcpServers || options.tools) {
-      throw new Error(
-        'DSH uses nativeTools and its profile registry; legacy MCP/inline tool options are unsupported'
-      );
+    if (Object.keys(options.mcpServers ?? {}).length) {
+      throw new Error('DSH does not support external MCP servers through AgentQueryOptions');
+    }
+    if (options.builtinTools !== undefined && !Array.isArray(options.builtinTools)) {
+      throw new TypeError('DSH builtinTools must name profile tools; Claude Code presets are unsupported');
     }
     if (options.systemPrompt !== undefined && typeof options.systemPrompt !== 'string') {
       throw new TypeError(
         'DSH systemPrompt must be raw text; Claude Code presets belong to their own adapter'
       );
     }
-    const tools = new Map<string, NativeAgentTool>();
-    const descriptors = options.nativeTools ?? [];
-    const seen = new Set<string>();
-    for (const tool of descriptors) {
-      if (!/^[a-z][a-z0-9_]*$/.test(tool.name) || seen.has(tool.name)) {
-        throw new TypeError('Invalid or duplicate native tool name');
-      }
-      seen.add(tool.name);
-      if (
-        (!options.allowedTools || options.allowedTools.includes(tool.name)) &&
-        !options.disallowedTools?.includes(tool.name)
-      ) {
-        tools.set(tool.name, tool);
-      }
-    }
+    const descriptors = prepareHostTools(options.hostTools);
+    const tools = new Map(selectHostTools(descriptors, options).map((tool) => [tool.name, tool]));
     const cwd = resolve(options.cwd ?? process.cwd());
     const binding = this.bindings.reserve(options.sessionKey, cwd);
     if (this.active.has(binding.sessionId)) {
@@ -275,11 +262,12 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
               ? {}
               : { reasoningEffort: options.reasoningEffort }),
             ...(options.systemPrompt === undefined ? {} : { systemPrompt: options.systemPrompt }),
+            ...(options.builtinTools === undefined ? {} : { builtinTools: options.builtinTools }),
             ...(options.allowedTools === undefined ? {} : { allowedTools: options.allowedTools }),
             ...(options.disallowedTools === undefined
               ? {}
               : { disallowedTools: options.disallowedTools }),
-            nativeTools: descriptors.map(({ name, description, inputSchema, outputSchema }) => ({
+            hostTools: descriptors.map(({ name, description, inputSchema, outputSchema }) => ({
               name,
               description,
               inputSchema,
@@ -287,9 +275,9 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
             })),
           },
           state.abort.signal
-        )) as { capabilities?: { nativeTools?: boolean; resume?: boolean; cancel?: boolean } };
+        )) as { capabilities?: { hostTools?: boolean; resume?: boolean; cancel?: boolean } };
         if (
-          !initialized?.capabilities?.nativeTools ||
+          !initialized?.capabilities?.hostTools ||
           !initialized.capabilities.resume ||
           !initialized.capabilities.cancel
         ) {
@@ -413,16 +401,6 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
     };
   }
 
-  createInlineTool(_definition: InlineToolDefinition): unknown {
-    throw new Error(
-      'DSH registers canonical nativeTools directly; inline-MCP wrappers are unsupported'
-    );
-  }
-
-  createMcpServer(_config: McpServerConfig): unknown {
-    throw new Error('DSH uses its native profile registry rather than a legacy MCP wrapper');
-  }
-
   validateConfig(): boolean {
     return !this.disposed && !this.diagnose();
   }
@@ -479,7 +457,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
   }
 
   private async onRequest(state: QueryState, request: DshRpcRequest): Promise<unknown> {
-    if (request.method !== 'native_tool.call') {
+    if (request.method !== 'host_tool.call') {
       throw new Error('Unsupported DSH host request');
     }
     const params = request.params as
@@ -544,7 +522,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
     ) {
       return;
     }
-    if (notification.method === 'native_tool.cancel') {
+    if (notification.method === 'host_tool.cancel') {
       if (typeof params.invocationId === 'string') {
         state.invocations.get(params.invocationId)?.abort.abort();
       }

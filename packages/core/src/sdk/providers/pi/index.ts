@@ -4,13 +4,12 @@
 
 export { PiAgentProvider } from './provider.js';
 
-// Issue #4387 (S4): disclaude InlineToolDefinition → pi AgentHarnessTool.
+// Host tool definitions are adapted only inside the Pi provider.
 export {
-  adaptInlineTool,
+  adaptPiHostTools,
   type PiAgentHarnessTool,
   type PiAgentToolResult,
-  type PiToolParameters,
-} from './inline-tool-adapter.js';
+} from './host-tool-adapter.js';
 // Issue #4386 (S3, part 1): pi AgentEvent → AgentMessage adapter.
 export { adaptPiEvent, type PiAgentEvent, type PiAssistantMessageEvent } from './event-adapter.js';
 // Issue #4386 (S3, part 2): disclaude AgentQueryOptions → pi run-options adapter.

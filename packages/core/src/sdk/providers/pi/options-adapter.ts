@@ -31,7 +31,7 @@
  * they are owned by sibling sub-issues or are Claude-specific and have no pi
  * equivalent at this layer:
  * - `model` string → `Model<any>` object: provider.ts (part 3), via pi `Models`.
- * - `mcpServers`: the MCP→`AgentHarnessTool` converter, #4417 (S4b).
+ * - `hostTools`: business callbacks registered by the native Pi adapter.
  * - `permissionMode` / permission gating: #4389 (S6); pi has no built-in perms
  *   (the `disallowedTools` deny gate itself landed in tool-permission-gate.ts).
  * - Claude-only fields with no pi agentLoop-level meaning: `cwd`, `settingSources`
@@ -80,13 +80,13 @@ export interface PiAdaptedOptions {
   systemPrompt?: string;
 
   /**
-   * Resolved from `options.allowedTools` / `options.tools` (string-array form
+   * Resolved from `options.allowedTools` / `options.builtinTools` (string-array form
    * only) minus `options.disallowedTools`. Maps to pi's
    * `AgentHarness.setActiveTools(names)` selection — NOT to a config field.
    *
-   * A `ToolsPreset` (`{ type: 'preset', preset: 'claude_code' }`) is not
-   * portable to pi and is ignored (returns `undefined`); the provider supplies
-   * a default tool set.
+   * A `BuiltinToolsPreset` (`{ type: 'preset', preset: 'claude_code' }`) is not
+   * portable to pi and is explicitly rejected; omitted selection keeps
+   * the provider default tool set.
    */
   activeToolNames?: string[];
 
@@ -148,7 +148,7 @@ function resolveSystemPrompt(options: AgentQueryOptions): string | undefined {
  * Resolve the active tool-name list from the disclaude tool options.
  *
  * Precedence: `allowedTools` (explicit allowlist) wins over a string-array
- * `tools`. A `ToolsPreset` is not portable to pi and contributes nothing.
+ * `builtinTools`. Provider-specific presets are explicitly rejected.
  * `disallowedTools` are subtracted from whichever base was chosen.
  */
 function resolveActiveToolNames(options: AgentQueryOptions): string[] | undefined {
@@ -170,14 +170,16 @@ function resolveActiveToolNames(options: AgentQueryOptions): string[] | undefine
  * Returns `undefined` when no portable (string-array) tool source is present.
  */
 function pickToolBase(options: AgentQueryOptions): string[] | undefined {
-  if (Array.isArray(options.allowedTools) && options.allowedTools.length > 0) {
+  const { builtinTools: tools } = options;
+  if (tools !== undefined && !Array.isArray(tools)) {
+    throw new TypeError('Pi builtinTools must name Pi tools; Claude Code presets are unsupported');
+  }
+  if (options.allowedTools !== undefined) {
     return [...options.allowedTools];
   }
-  const { tools } = options;
-  if (Array.isArray(tools) && tools.length > 0) {
-    return [...tools];
+  if (Array.isArray(tools)) {
+    return [...tools, ...(options.hostTools ?? []).map((tool) => tool.name)];
   }
-  // tools = ToolsPreset ({ type: 'preset', preset: 'claude_code' }) is not
-  // portable to pi → no base; provider supplies a default tool set.
+  // No explicit selection: keep the provider default tool set.
   return undefined;
 }

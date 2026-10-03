@@ -64,7 +64,7 @@
 // 类型导出
 // ============================================================================
 export type { AgentInputRequest, AgentInputParams, AgentInputQuestion, AgentInputAnswers, AgentInputContext } from './user-input.js';
-export type { NativeAgentTool, NativeAgentToolContext } from './native-tools.js';
+export type { HostToolDefinition, HostToolContext } from './host-tools.js';
 
 export type {
   // 内容类型
@@ -84,9 +84,7 @@ export type {
   // 工具类型
   ToolUseBlock,
   ToolResultBlock,
-  InlineToolDefinition,
-  InlineToolCallContext,
-  InlineToolCallIdentity,
+  HostToolCallIdentity,
   ToolProgressPayload,
   ToolProgressCallback,
 
@@ -94,12 +92,12 @@ export type {
   McpServerConfig,
   McpServerConfig as SdkMcpServerConfig,
   StdioMcpServerConfig,
-  InlineMcpServerConfig,
 
   // 查询选项
   AgentQueryOptions,
   PermissionMode,
   SystemPromptPreset,
+  BuiltinToolsPreset,
 
   // 查询结果
   QueryHandle,

@@ -59,12 +59,12 @@ describe('adaptPiOptions (Issue #4386 part 2 / #4384)', () => {
   });
 
   it('falls back to a string-array `tools` when allowedTools is absent', () => {
-    const res = adaptPiOptions(opts({ tools: ['read', 'edit'] }));
+    const res = adaptPiOptions(opts({ builtinTools: ['read', 'edit'] }));
     expect(res.activeToolNames).toEqual(['read', 'edit']);
   });
 
   it('prefers allowedTools over a string-array tools when both are present', () => {
-    const res = adaptPiOptions(opts({ allowedTools: ['read'], tools: ['read', 'edit'] }));
+    const res = adaptPiOptions(opts({ allowedTools: ['read'], builtinTools: ['read', 'edit'] }));
     expect(res.activeToolNames).toEqual(['read']);
   });
 
@@ -83,9 +83,8 @@ describe('adaptPiOptions (Issue #4386 part 2 / #4384)', () => {
     expect(res.activeToolNames).toEqual(['read', 'bash']);
   });
 
-  it('returns undefined activeToolNames for a claude_code ToolsPreset (not portable to pi)', () => {
-    const res = adaptPiOptions(opts({ tools: { type: 'preset', preset: 'claude_code' } }));
-    expect(res.activeToolNames).toBeUndefined();
+  it('rejects Claude Code presets instead of dropping an explicit built-in selection', () => {
+    expect(() => adaptPiOptions(opts({ builtinTools: { type: 'preset', preset: 'claude_code' } }))).toThrow('Claude Code presets are unsupported');
   });
 
   it('returns undefined activeToolNames when no tool option is present', () => {

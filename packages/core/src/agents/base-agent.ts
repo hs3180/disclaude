@@ -42,14 +42,16 @@ export type { BaseAgentConfig } from './types.js';
  * Extra SDK options configuration.
  */
 export interface SdkOptionsExtra {
-  /** Canonical tools consumed by the selected Harness's native adapter. */
-  nativeTools?: AgentQueryOptions['nativeTools'];
+  /** Host-owned tools; the provider registers them for this query. */
+  hostTools?: AgentQueryOptions['hostTools'];
+  /** Select Harness-provided tools independently of host callbacks. */
+  builtinTools?: AgentQueryOptions['builtinTools'];
   /** Allowed tools list */
   allowedTools?: string[];
   /** Disallowed tools list */
   disallowedTools?: string[];
   /** MCP servers configuration */
-  mcpServers?: Record<string, unknown>;
+  mcpServers?: AgentQueryOptions['mcpServers'];
   /** Custom working directory */
   cwd?: string;
   /** Project root for resource discovery when it differs from the runtime cwd. */
@@ -214,13 +216,14 @@ export abstract class BaseAgent implements Disposable {
       ...(extra.projectRoot ? { projectRoot: extra.projectRoot } : {}),
       permissionMode: this.permissionMode,
       ...(extra.sessionKey !== undefined ? { sessionKey: extra.sessionKey } : {}),
-      ...(extra.nativeTools !== undefined ? { nativeTools: extra.nativeTools } : {}),
+      ...(extra.hostTools !== undefined ? { hostTools: extra.hostTools } : {}),
+      ...(extra.builtinTools !== undefined ? { builtinTools: extra.builtinTools } : {}),
       settingSources: ['user', 'project', 'local'],
       ...((this.agentBackend ?? 'claude') !== 'claude'
         ? {}
         : {
             systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const },
-            tools: { type: 'preset' as const, preset: 'claude_code' as const },
+            ...(extra.builtinTools === undefined ? { builtinTools: { type: 'preset' as const, preset: 'claude_code' as const } } : {}),
           }),
     };
 
@@ -246,12 +249,9 @@ export abstract class BaseAgent implements Disposable {
       }
     }
 
-    // Add MCP servers (convert to SDK format)
+    // Keep external MCP configuration typed; the provider owns SDK conversion.
     if (extra.mcpServers) {
-      options.mcpServers = extra.mcpServers as Record<
-        string,
-        import('../sdk/index.js').SdkMcpServerConfig
-      >;
+      options.mcpServers = extra.mcpServers;
     }
 
     // Set environment: config env + runtime env file (Issue #1361)
