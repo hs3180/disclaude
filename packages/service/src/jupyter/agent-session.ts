@@ -127,8 +127,10 @@ export class NotebookAgentSession {
           this.assertActive();
           return await this.use(ref, async (client) => {
             const view = await client.describeNotebook(locator(ref));
+            const control = await client.controlState(locator(ref));
             return {
               ...view,
+              control,
               cells: view.cells
                 .slice(0, 64)
                 .map((cell) => ({ ...cell, sourcePreview: cell.sourcePreview.slice(0, 500) })),
@@ -136,6 +138,36 @@ export class NotebookAgentSession {
             };
           });
         },
+      },
+      {
+        name: 'notebook_take_control',
+        description:
+          'Explicitly take Notebook automation control for a user request to resume editing or running. Read notebook_describe control first and pass its exact owner and generation (empty owner and zero if unowned). Reconcile your earlier runs first. Active foreign experiments refuse transfer. This does not interrupt or restart a kernel.',
+        inputSchema: inputSchema({
+          notebookId: { type: 'string', minLength: 1 },
+          expectedOwnerId: { type: 'string', maxLength: 4096 },
+          expectedGeneration: {
+            type: 'integer',
+            description:
+              'Exact observed nonnegative controller generation; validated before transfer.',
+          },
+        }),
+        outputSchema: { type: 'object' },
+        execute: (input, { signal }) =>
+          this.tracked(async () => {
+            signal.throwIfAborted();
+            this.assertActive();
+            const ref = await this.reference(String(input.notebookId));
+            return {
+              state: 'claimed',
+              controller: await this.takeControl(
+                ref,
+                String(input.expectedOwnerId),
+                Number(input.expectedGeneration),
+                signal
+              ),
+            };
+          }),
       },
       ...createNotebookTools(dummy).map((template) => ({
         ...template,
@@ -259,12 +291,14 @@ export class NotebookAgentSession {
     const refs = await this.references();
     const overviews = [];
     for (const ref of refs.slice(0, 4)) {
-      const overview = await this.use<{
-        cells: Array<{ cellId: string; cellType: string; sourcePreview: string }>;
-      }>(ref, (client) => client.describeNotebook(locator(ref)));
+      const overview = await this.use(ref, async (client) => ({
+        ...(await client.describeNotebook(locator(ref))),
+        control: await client.controlState(locator(ref)),
+      }));
       overviews.push({
         notebookId: resourceKey(ref),
         contentPath: ref.contentPath.slice(0, 300),
+        control: overview.control,
         cells: overview.cells
           .slice(0, 8)
           .map((cell) => ({ ...cell, sourcePreview: cell.sourcePreview.slice(0, 160) })),
@@ -274,12 +308,10 @@ export class NotebookAgentSession {
     return `\n\n[Notebook resources]\nUse the native notebook tools for these server-owned documents. Read current revisions before changes. Kernel/data paths belong to Jupyter; this Project contains references only. A submitted run still needs status reconciliation; stop acknowledgment is not confirmation.\n${JSON.stringify(
       {
         resources: {
-          notebooks: refs
-            .slice(0, 8)
-            .map((ref) => ({
-              notebookId: resourceKey(ref),
-              contentPath: ref.contentPath.slice(0, 300),
-            })),
+          notebooks: refs.slice(0, 8).map((ref) => ({
+            notebookId: resourceKey(ref),
+            contentPath: ref.contentPath.slice(0, 300),
+          })),
           omittedNotebooks: Math.max(0, refs.length - 8),
           recentRuns: this.records
             .records()
@@ -290,6 +322,75 @@ export class NotebookAgentSession {
         overviews,
       }
     )}`;
+  }
+
+  /** Explicit, stale-checked handoff; ordinary mutations never adopt a foreign lease. */
+  private async takeControl(
+    ref: JupyterNotebookReference,
+    expectedOwnerId: string,
+    expectedGeneration: number,
+    signal: AbortSignal
+  ): Promise<JupyterControllerGeneration> {
+    signal.throwIfAborted();
+    this.assertActive();
+    if (!Number.isSafeInteger(expectedGeneration) || expectedGeneration < 0) {
+      throw new Error('Notebook control requires an exact observed generation');
+    }
+    const key = resourceKey(ref);
+    if (this.leaseFlights.has(key)) {
+      throw new Error('Another Notebook control operation is pending');
+    }
+    const flight = (async () => {
+      const state = await this.use(ref, (client) => client.controlState(locator(ref)));
+      signal.throwIfAborted();
+      this.assertActive();
+      if (
+        (state.controller?.ownerId ?? '') !== expectedOwnerId ||
+        (state.controller?.generation ?? 0) !== expectedGeneration
+      ) {
+        throw new Error(
+          'Notebook control changed; read its current control before requesting transfer'
+        );
+      }
+      if (
+        this.records.records().some(
+          (record) =>
+            resourceKey({
+              ...record.target.notebook.identity,
+              contentPath: record.target.notebook.contentPath,
+            }) === key && !terminal.has(record.state)
+        )
+      ) {
+        throw new Error(
+          'Earlier Notebook executions require reconciliation before control transfer'
+        );
+      }
+      const claimed = await this.use(ref, (client) => {
+        signal.throwIfAborted();
+        this.assertActive();
+        return client.claimControl(locator(ref), this.owner, expectedGeneration);
+      });
+      if (
+        claimed.ownerId !== this.owner ||
+        claimed.generation < expectedGeneration ||
+        (state.controller?.ownerId !== this.owner && claimed.generation === expectedGeneration)
+      ) {
+        throw new Error('Notebook control response does not match the requested transfer');
+      }
+      this.records.saveLease(key, claimed);
+      signal.throwIfAborted();
+      this.assertActive();
+      this.boundLeases.add(key);
+      return claimed;
+    })();
+    this.leaseFlights.set(key, flight);
+    try {
+      return await flight;
+    } finally {
+      if (this.leaseFlights.get(key) === flight) {
+        this.leaseFlights.delete(key);
+      }
+    }
   }
 
   private async controller(ref: JupyterNotebookReference): Promise<JupyterControllerGeneration> {

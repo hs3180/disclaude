@@ -47,11 +47,17 @@ version). An unresolved path is replaced with its server-issued stable identity
 only while the original reference still matches. Each operation rechecks Project
 references and current control; a model cannot supply a foreign Notebook URL.
 
-The seven native tools list resources, describe live cells, read/edit a cell,
+The eight native tools list resources, describe live cells/control, read/edit a cell,
 submit an exact version, query a run, and stop that exact run. Per-message context
 refreshes bounded live previews so human parameter and Markdown edits are visible.
 Full cell source and execution results are read on demand. Changing Project
 fences callbacks against the old directory.
+
+Human Run transfers control to that human. To resume a requested Agent experiment,
+use the explicit `notebook_take_control` tool with the owner/generation observed by
+`notebook_describe`. The server refuses transfer during active experiments; stale
+intent, unresolved local runs, a stopped session and a changed Project also refuse.
+This transfer keeps the same Notebook and kernel and does not interrupt anyone's run.
 
 Metadata-only execution records live under `.jupyter/executions`. A durable owner
 belongs to the conversation, independently of its model/Harness. Each submitted

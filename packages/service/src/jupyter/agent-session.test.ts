@@ -161,7 +161,7 @@ describe('NotebookAgentSession', () => {
 
   it('binds tools only to live authorized references and refreshes human source per message', async () => {
     const f = fixture();
-    expect(f.session.tools).toHaveLength(7);
+    expect(f.session.tools).toHaveLength(8);
     await expect(
       f.execute('notebook_read_cell', { notebookId: 'unbound', cellId: 'cell' })
     ).rejects.toThrow('not authorized');
@@ -225,6 +225,163 @@ describe('NotebookAgentSession', () => {
         .tools.find((tool) => tool.name === 'notebook_edit_cell')!
         .execute({ notebookId: alias, cellId: 'cell' }, { signal: new AbortController().signal })
     ).rejects.toThrow();
+  });
+
+  it('takes control only through an explicit exact owner/generation handoff', async () => {
+    const f = fixture();
+    const alias = await f.id();
+    f.setOwner('human');
+    const described = await f.execute('notebook_describe', { notebookId: alias });
+    expect(described).toMatchObject({
+      control: { controller: { ownerId: 'human', generation: 2 } },
+    });
+    await expect(f.submit()).rejects.toThrow('could not be verified');
+    expect(f.fake.claimControl).not.toHaveBeenCalled();
+    const taken = await f.execute('notebook_take_control', {
+      notebookId: alias,
+      expectedOwnerId: 'human',
+      expectedGeneration: 2,
+    });
+    expect(taken).toMatchObject({ state: 'claimed', controller: { generation: 3 } });
+    expect(f.fake.claimControl).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringMatching(/^disclaude:/),
+      2
+    );
+    expect((await f.submit()).state).toBe('accepted');
+    expect(f.fake.stopOwner).not.toHaveBeenCalled();
+    expect(f.fake.stop).not.toHaveBeenCalled();
+  });
+
+  it('rejects stale handoff intent and leaves the human controller intact', async () => {
+    const f = fixture();
+    const alias = await f.id();
+    f.setOwner('human');
+    for (const [expectedOwnerId, expectedGeneration] of [
+      ['other', 2],
+      ['human', 1],
+    ] as const) {
+      await expect(
+        f.execute('notebook_take_control', {
+          notebookId: alias,
+          expectedOwnerId,
+          expectedGeneration,
+        })
+      ).rejects.toThrow('control changed');
+    }
+    expect(f.fake.claimControl).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid numeric generations before any control request', async () => {
+    const f = fixture();
+    const alias = await f.id();
+    for (const expectedGeneration of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      await expect(
+        f.execute('notebook_take_control', {
+          notebookId: alias,
+          expectedOwnerId: '',
+          expectedGeneration,
+        })
+      ).rejects.toThrow('exact observed generation');
+    }
+    expect(f.fake.controlState).not.toHaveBeenCalled();
+    expect(f.fake.claimControl).not.toHaveBeenCalled();
+  });
+
+  it('keeps unconfirmed runs and server-side active-run rejection as handoff barriers', async () => {
+    const f = fixture();
+    const alias = await f.id();
+    const submitted = await f.submit();
+    f.setOwner('human');
+    await expect(
+      f.execute('notebook_take_control', {
+        notebookId: alias,
+        expectedOwnerId: 'human',
+        expectedGeneration: 2,
+      })
+    ).rejects.toThrow('require reconciliation');
+    f.runs.set(submitted.handle.runId, {
+      runId: submitted.handle.runId,
+      state: 'completed',
+      handle: submitted.handle,
+    });
+    await f.execute('notebook_execution_status', {
+      notebookId: alias,
+      runId: submitted.handle.runId,
+    });
+    f.fake.claimControl.mockRejectedValueOnce(new Error('active human experiment; secret=hidden'));
+    await expect(
+      f.execute('notebook_take_control', {
+        notebookId: alias,
+        expectedOwnerId: 'human',
+        expectedGeneration: 2,
+      })
+    ).rejects.toThrow('could not be verified');
+    expect(f.fake.stopOwner).not.toHaveBeenCalled();
+    expect(f.fake.stop).not.toHaveBeenCalled();
+  });
+
+  it('fences explicit handoff after pause and checks cancellation before claim', async () => {
+    const f = fixture();
+    const alias = await f.id();
+    f.setOwner('human');
+    const abort = new AbortController();
+    f.fake.controlState.mockImplementationOnce(() => {
+      abort.abort();
+      return Promise.resolve({ controller: { ownerId: 'human', generation: 2 }, paused: false });
+    });
+    await expect(
+      f.session.tools
+        .find((tool) => tool.name === 'notebook_take_control')!
+        .execute(
+          {
+            notebookId: alias,
+            expectedOwnerId: 'human',
+            expectedGeneration: 2,
+          },
+          { signal: abort.signal }
+        )
+    ).rejects.toThrow();
+    f.session.pause();
+    await expect(
+      f.execute('notebook_take_control', {
+        notebookId: alias,
+        expectedOwnerId: 'human',
+        expectedGeneration: 2,
+      })
+    ).rejects.toThrow('stopped');
+    expect(f.fake.claimControl).not.toHaveBeenCalled();
+  });
+
+  it('tracks a late verified handoff for stop without allowing the old callback to continue', async () => {
+    const f = fixture();
+    const alias = await f.id();
+    f.setOwner('human');
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const claim = f.fake.claimControl.getMockImplementation()!;
+    f.fake.claimControl.mockImplementationOnce((notebook, owner, generation) =>
+      barrier.then(() => claim(notebook, owner, generation))
+    );
+    const taking = f.execute('notebook_take_control', {
+      notebookId: alias,
+      expectedOwnerId: 'human',
+      expectedGeneration: 2,
+    });
+    const rejected = expect(taking).rejects.toThrow('stopped');
+    await vi.waitFor(() => expect(f.fake.claimControl).toHaveBeenCalledOnce());
+    const stopping = f.session.stop();
+    release();
+    await rejected;
+    await stopping;
+    expect(f.fake.stopOwner).toHaveBeenCalledWith(expect.anything(), {
+      ownerId: expect.stringMatching(/^disclaude:/),
+      generation: 3,
+    });
+    expect(f.fake.submit).not.toHaveBeenCalled();
+    expect(f.fake.stop).not.toHaveBeenCalled();
   });
 
   it('fences tools after Project changes and redacts host failures', async () => {
