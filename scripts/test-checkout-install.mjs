@@ -97,17 +97,17 @@ try {
     'jupyter/disclaude_jupyter/executions.py',
     'jupyter/disclaude_jupyter/ledger.py',
   ]) {
-    assert(packedPaths.has(path), `Optional managed Jupyter payload is missing ${path}`);
+    assert(packedPaths.has(path), `Optional remote Jupyter server payload is missing ${path}`);
     assert(readFileSync(join(distribution, path)).length > 0);
   }
   assert(
     !packResult.files.some((file) =>
       /(?:__pycache__|\.pyc$|\.sqlite3$|\.owner\.lock$)/u.test(file.path)
     ),
-    'Managed Jupyter package must not include runtime state or Python caches'
+    'Jupyter server payload must not include runtime state or Python caches'
   );
   report.checks.push(
-    'optional managed Jupyter source payload is complete and excludes runtime state'
+    'optional remote-server source payload is complete and excludes runtime state'
   );
   assert.deepEqual(
     packResult.files.filter((file) => isDockerDeploymentEntry(file.path)).map((file) => file.path),
