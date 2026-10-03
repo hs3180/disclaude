@@ -69,6 +69,22 @@ work. It does not create/open a Notebook, claim control, run code or change a
 kernel. Successful authentication does not establish stack compatibility or
 product acceptance.
 
+After building the checkout, inspect an explicitly authorized connection:
+
+```sh
+node tests/jupyter/connection-probe.mjs \
+  --config-file /private/jupyter/connections.json \
+  --connection-id research \
+  --env-file /private/host.env \
+  --output /private/new-connection-report.json
+```
+
+The probe verifies cookie continuation through a second host instance and
+authentication-variable removal. It uses only login and safe capability reads;
+the output path must be new. A missing coordinator is a diagnostic result,
+not a successful Notebook experiment. The environment file is optional when
+the host already provides the referenced variables.
+
 ## Project and conversation state
 
 `<workingDir>/.jupyter/config.json` contains only authorized Notebook references
