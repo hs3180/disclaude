@@ -3,8 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { parseArgs, promisify } from 'node:util';
-import { pathToFileURL } from 'node:url';
+import { parseArgs, parseEnv, promisify } from 'node:util';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JupyterCoordinatorClient } from '../../packages/core/dist/jupyter/coordinator-client.js';
 
 // Opt-in: the native DSH adapter is independently reviewed in #5244. This
@@ -19,21 +19,46 @@ const { values } = parseArgs({
     notebook: { type: 'string' },
     output: { type: 'string' },
     'host-session': { type: 'boolean', default: false },
+    'config-file': { type: 'string' },
+    'connection-id': { type: 'string' },
+    'env-file': { type: 'string' },
+    'project-dir': { type: 'string' },
   },
 });
-for (const key of [
-  'dsh-checkout',
-  'oauth-auth-file',
-  'model',
-  'server-url',
-  'notebook',
-  'output',
-]) {
+for (const key of ['dsh-checkout', 'oauth-auth-file', 'model', 'notebook', 'output']) {
   if (!values[key]) throw new Error(`Explicit --${key} required`);
 }
 const token = process.env.DISCLAUDE_JUPYTER_PROBE_TOKEN;
 delete process.env.DISCLAUDE_JUPYTER_PROBE_TOKEN;
-if (!token) throw new Error('Owned Jupyter probe authentication is required');
+const configured = !!values['config-file'];
+if (values.model.toLowerCase().includes('astra'))
+  throw new Error('Astra is not permitted for this acceptance probe');
+if (configured) {
+  if (!values['connection-id'] || !values['project-dir'] || values['server-url'] || token)
+    throw new Error(
+      'Configured mode requires connection-id/project-dir and no owned-server URL/token'
+    );
+  if (
+    !values.notebook.endsWith('.ipynb') ||
+    values.notebook.startsWith('/') ||
+    values.notebook.includes('\\') ||
+    values.notebook.split('/').some((x) => !x || x === '..' || x === '.')
+  )
+    throw new Error('Configured acceptance requires a relative scratch Notebook path');
+  values['host-session'] = true;
+} else if (
+  !token ||
+  !values['server-url'] ||
+  values['connection-id'] ||
+  values['env-file'] ||
+  values['project-dir']
+) {
+  throw new Error('Owned mode requires its explicit server URL/token and no host catalog options');
+}
+const secrets = [token].filter(Boolean);
+const sanitize = (value) =>
+  secrets.reduce((text, secret) => text.replaceAll(secret, '[REDACTED]'), value);
+const sourceDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const checkout = path.resolve(values['dsh-checkout']);
 const { DeepSeekHarnessProvider } = await import(
   pathToFileURL(path.join(checkout, 'packages/core/dist/sdk/providers/deepseek/provider.js'))
@@ -43,16 +68,16 @@ const { createNotebookTools } = await import(
 );
 const reportPath = path.resolve(values.output);
 await fs.writeFile(reportPath, '{"state":"starting"}\n', { flag: 'wx', mode: 0o600 });
-const owned = await fs.mkdtemp(path.join(os.tmpdir(), 'disclaude-dsh-notebook-'));
-const dshHome = path.join(owned, 'dsh');
-const cwd = path.join(owned, 'project');
-await fs.mkdir(dshHome, { mode: 0o700 });
-await fs.mkdir(cwd, { mode: 0o700 });
+let owned;
+let dshHome;
+let cwd;
 const run = promisify(execFile);
 const report = {
   state: 'failed',
-  scope: 'real DSH native Notebook tools over managed Jupyter ports',
-  notebookProduct: 'component_probe_only',
+  scope: configured
+    ? 'configured-server Service-owned DSH native probe; not Feishu/native UI acceptance'
+    : 'real DSH native Notebook tools over managed Jupyter ports',
+  notebookProduct: 'not_executed',
   feishuProduct: 'not_executed',
   startedAt: new Date().toISOString(),
   harness: 'DSH',
@@ -62,7 +87,10 @@ const report = {
   phases: [],
   calls: [],
   nodeVersion: process.version,
-  ownedRoot: owned,
+  mode: configured ? 'configured' : 'owned',
+  modelStarted: false,
+  notebookOpened: false,
+  ownedRootCreated: false,
 };
 const providers = [];
 const diagnostics = [];
@@ -70,6 +98,9 @@ let hostSession;
 let createHostSession;
 let notebookAlias;
 let access;
+let client;
+let connections;
+const modelEnvironment = { ...process.env, JUPYTERLAB_PASS: undefined, JUPYTERLAB_HOST: undefined };
 async function sourceState(directory, paths) {
   const head = (await run('git', ['rev-parse', 'HEAD'], { cwd: directory })).stdout.trim();
   const status = (await run('git', ['status', '--porcelain'], { cwd: directory })).stdout.trim();
@@ -93,7 +124,7 @@ try {
     'packages/core/package.json',
     'package-lock.json',
   ]);
-  report.backendSource = await sourceState(path.resolve(''), [
+  report.backendSource = await sourceState(sourceDirectory, [
     'jupyter',
     'packages/core/src/jupyter',
     'packages/core/package.json',
@@ -101,14 +132,86 @@ try {
     'tests/jupyter/coordinator-probe.py',
     'tests/jupyter/dsh-notebook-probe.mjs',
   ]);
+  if (configured) {
+    const { JupyterConnections } = await import(
+      pathToFileURL(path.join(checkout, 'packages/service/dist/jupyter/connections.js'))
+    );
+    const environment = {
+      ...process.env,
+      ...(values['env-file']
+        ? parseEnv(await fs.readFile(path.resolve(values['env-file']), 'utf8'))
+        : {}),
+    };
+    connections = new JupyterConnections(path.resolve(values['config-file']), () => environment);
+    // No model, Project write, Notebook open, control claim, kernel operation
+    // or temporary root before the configured-server capability gate.
+    report.configuredInspection = await connections.inspect(values['connection-id']);
+    if (report.configuredInspection.coordinator !== 'available') {
+      const error = new Error(
+        'Configured Jupyter is authenticated but its Notebook coordinator is missing'
+      );
+      error.code = 'coordinator_missing';
+      throw error;
+    }
+    const definitions = JSON.parse(
+      await fs.readFile(path.resolve(values['config-file']), 'utf8')
+    ).connections;
+    const selected = definitions.find((item) => item.id === values['connection-id']);
+    const key = selected.passwordEnv ?? selected.authorizationEnv;
+    const file = selected.passwordFile ?? selected.authorizationFile;
+    const credential = key ? environment[key] : await fs.readFile(file, 'utf8');
+    if (credential) {
+      secrets.push(credential);
+      if (credential.trim()) secrets.push(credential.trim());
+    }
+    connections.redactEnvironment(modelEnvironment);
+    const project = await fs.lstat(path.resolve(values['project-dir']));
+    if (!project.isDirectory() || project.isSymbolicLink())
+      throw new Error('Configured acceptance requires an existing dedicated Project directory');
+    client = await connections.use(
+      values['connection-id'],
+      report.configuredInspection.status.serverNamespace,
+      async (connected) => connected
+    );
+    report.projectPreserved = true;
+  } else {
+    client = new JupyterCoordinatorClient({
+      baseUrl: values['server-url'],
+      connectionId: 'owned-dsh-probe',
+      authorization: async () => 'token ' + token,
+    });
+  }
   report.dshVersion = (await run(values.binary, ['--version'])).stdout.trim();
   if (report.dshVersion !== '0.1.2-rc.1') throw new Error('Expected DSH 0.1.2-rc.1');
-  const auth = JSON.parse(await fs.readFile(path.resolve(values['oauth-auth-file']), 'utf8'));
+  let auth;
+  try {
+    auth = JSON.parse(await fs.readFile(path.resolve(values['oauth-auth-file']), 'utf8'));
+  } catch {
+    throw new Error('Existing OAuth auth file could not be verified');
+  }
   access = auth.tokens?.access_token;
   if (!access) throw new Error('Existing OAuth access credential unavailable');
-  const claims = JSON.parse(Buffer.from(access.split('.')[1], 'base64url').toString());
-  if (claims.exp * 1000 < Date.now() + 15 * 60_000)
+  secrets.push(access);
+  let claims;
+  try {
+    claims = JSON.parse(Buffer.from(access.split('.')[1], 'base64url').toString());
+  } catch {
+    throw new Error('Existing OAuth access credential could not be verified');
+  }
+  if (
+    typeof claims.exp !== 'number' ||
+    !Number.isFinite(claims.exp) ||
+    claims.exp * 1000 < Date.now() + 15 * 60_000
+  )
     throw new Error('Access credential near expiry; no refresh attempted');
+  owned = await fs.mkdtemp(path.join(os.tmpdir(), 'disclaude-dsh-notebook-'));
+  dshHome = path.join(owned, 'dsh');
+  cwd = configured ? await fs.realpath(values['project-dir']) : path.join(owned, 'project');
+  await fs.mkdir(dshHome, { mode: 0o700 });
+  if (!configured) await fs.mkdir(cwd, { mode: 0o700 });
+  report.ownedRoot = owned;
+  report.ownedRootCreated = true;
+  report.projectDirectory = cwd;
   const route = path.join(dshHome, 'route.patch.yml');
   await fs.writeFile(
     route,
@@ -117,12 +220,8 @@ try {
       '\n    compression: none\n- id: session-telemetry-otel\n  disabled: true\n',
     { mode: 0o600 }
   );
-  let client = new JupyterCoordinatorClient({
-    baseUrl: values['server-url'],
-    connectionId: 'owned-dsh-probe',
-    authorization: async () => 'token ' + token,
-  });
   const notebook = await client.openNotebook(values.notebook);
+  report.notebookOpened = true;
   const previous = await client.currentController(notebook);
   let authority;
   if (values['host-session']) {
@@ -138,28 +237,51 @@ try {
     const { NotebookRunStore } = await import(
       pathToFileURL(path.join(checkout, 'packages/service/dist/jupyter/run-store.js'))
     );
-    const host = path.join(owned, 'host');
-    await fs.mkdir(host, { mode: 0o700 });
-    const authorizationFile = path.join(host, 'authorization');
-    await fs.writeFile(authorizationFile, 'token ' + token, { mode: 0o600 });
-    const configFile = path.join(host, 'connections.json');
-    await fs.writeFile(
-      configFile,
-      JSON.stringify({
-        version: 1,
-        connections: [
-          { id: notebook.identity.connectionId, baseUrl: values['server-url'], authorizationFile },
-        ],
-      }),
-      { mode: 0o600 }
-    );
-    const connections = new JupyterConnections(configFile, () => ({}));
+    if (!configured) {
+      const host = path.join(owned, 'host');
+      await fs.mkdir(host, { mode: 0o700 });
+      const authorizationFile = path.join(host, 'authorization');
+      await fs.writeFile(authorizationFile, 'token ' + token, { mode: 0o600 });
+      const configFile = path.join(host, 'connections.json');
+      await fs.writeFile(
+        configFile,
+        JSON.stringify({
+          version: 1,
+          connections: [
+            {
+              id: notebook.identity.connectionId,
+              baseUrl: values['server-url'],
+              authorizationFile,
+            },
+          ],
+        }),
+        { mode: 0o600 }
+      );
+      connections = new JupyterConnections(configFile, () => ({}));
+    }
     client = await connections.use(
       notebook.identity.connectionId,
       notebook.identity.serverNamespace,
       async (connected) => connected
     );
     const records = new NotebookRunStore(cwd, 'real-notebook-probe');
+    const store = new JupyterProjectConfigStore(cwd);
+    const refs = store.listNotebookReferences();
+    if (
+      configured &&
+      (!refs.ok ||
+        refs.data.some(
+          (ref) =>
+            ref.connectionId !== notebook.identity.connectionId ||
+            ref.serverNamespace !== notebook.identity.serverNamespace ||
+            (ref.documentId
+              ? ref.documentId !== notebook.identity.documentId
+              : ref.contentPath !== notebook.contentPath)
+        ))
+    )
+      throw new Error('Dedicated Project already references a different Notebook');
+    if (configured && previous && previous.ownerId !== records.ownerId())
+      throw new Error('Configured Notebook has another controller; explicit handoff is required');
     authority = await client.claimControl(notebook, records.ownerId(), previous?.generation ?? 0);
     notebookAlias = createHash('sha256')
       .update(
@@ -171,7 +293,7 @@ try {
       )
       .digest('hex');
     records.saveLease(notebookAlias, authority);
-    const linked = new JupyterProjectConfigStore(cwd).linkNotebook({
+    const linked = store.linkNotebook({
       ...notebook.identity,
       contentPath: notebook.contentPath,
     });
@@ -182,7 +304,9 @@ try {
         connections
       );
     hostSession = createHostSession();
-    report.scope = 'real Service-owned native Notebook capabilities over DSH and managed Jupyter';
+    report.scope = configured
+      ? 'real Service-owned native Notebook capabilities over DSH and configured Jupyter; not Feishu/native UI acceptance'
+      : 'real Service-owned native Notebook capabilities over DSH and managed Jupyter';
     report.hostSource = await sourceState(checkout, [
       'packages/service/src/jupyter',
       'packages/service/src/agents/chat-agent.ts',
@@ -197,6 +321,7 @@ try {
     );
   }
   report.notebook = notebook;
+  const humanNote = await client.readCell(notebook, 'human-note');
   let tools = (
     hostSession?.tools ??
     createNotebookTools({
@@ -237,7 +362,7 @@ try {
       provider: 'openai-codex',
       args: ['--profile', 'sdk', '--patch', route],
       requestTimeoutMs: 60_000,
-      env: { ...process.env, DEEPSEEK_API_KEY: undefined, DISCLAUDE_DSH_PROBE_ACCESS: access },
+      env: { ...modelEnvironment, DEEPSEEK_API_KEY: undefined, DISCLAUDE_DSH_PROBE_ACCESS: access },
     });
     providers.push(provider);
     return provider;
@@ -271,6 +396,8 @@ try {
             : ''),
       };
     }
+    report.modelStarted = true;
+    report.notebookProduct = 'component_probe_only';
     const query = provider.queryStream(input(), options);
     const timer = setTimeout(() => query.handle.cancel(), 180_000);
     const events = [];
@@ -427,81 +554,132 @@ try {
     }
     hostRecovery.state = 'passed';
   }
+  const handles = report.calls
+    .filter((call) => call.tool === 'notebook_run_cell' && call.output?.state === 'accepted')
+    .map((call) => call.output.handle);
+  const kernelIdentities = new Set(
+    handles.map((handle) =>
+      JSON.stringify([
+        handle.notebook.identity.connectionId,
+        handle.notebook.identity.serverNamespace,
+        handle.notebook.identity.documentId,
+        handle.kernelId,
+        handle.kernelIncarnation,
+      ])
+    )
+  );
+  if (handles.length < (hostSession ? 6 : 4) || kernelIdentities.size !== 1)
+    throw new Error('Native continuation did not retain the same Notebook/kernel incarnation');
+  const afterHumanNote = await client.readCell(notebook, 'human-note');
+  if (
+    afterHumanNote.source !== humanNote.source ||
+    report.calls.some(
+      (call) =>
+        call.tool === 'notebook_edit_cell' &&
+        !['short-cell', 'long-cell'].includes(call.input.cellId)
+    )
+  )
+    throw new Error('Native probe changed a cell outside its requested experiments');
+  report.sameKernelIncarnationVerified = true;
+  report.humanNotePreserved = true;
   report.state = 'passed';
 } catch (error) {
-  report.error = error instanceof Error ? error.message : String(error);
+  report.state = error?.code === 'coordinator_missing' ? 'blocked' : 'failed';
+  report.error = sanitize(error instanceof Error ? error.message : String(error));
 } finally {
   const cleanup = await Promise.allSettled(providers.map((provider) => provider.shutdown()));
   report.providerCleanup = cleanup.map((result) => result.status);
+  if (hostSession) {
+    try {
+      report.cleanupOwnerStop = await hostSession.stop();
+      if (
+        report.cleanupOwnerStop.some((item) => ['unknown', 'ownership_lost'].includes(item.state))
+      ) {
+        report.state = 'failed';
+        report.cleanupError = 'Configured Notebook owner stop could not be confirmed';
+      }
+    } catch {
+      report.state = 'failed';
+      report.cleanupError = 'Notebook owner stop failed; preserve and reconcile the original runs';
+    }
+  }
+  if (cleanup.some((result) => result.status !== 'fulfilled')) report.state = 'failed';
   try {
-    async function files(directory) {
-      const result = [];
-      for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
-        const location = path.join(directory, entry.name);
-        if (entry.isDirectory()) result.push(...(await files(location)));
-        else if (entry.isFile()) result.push(location);
+    if (!providers.length) {
+      report.nativeLogInspection = 'not_executed';
+    } else {
+      async function files(directory) {
+        const result = [];
+        for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+          const location = path.join(directory, entry.name);
+          if (entry.isDirectory()) result.push(...(await files(location)));
+          else if (entry.isFile()) result.push(location);
+        }
+        return result;
       }
-      return result;
-    }
-    const events = [];
-    for (const file of (await files(path.join(dshHome, 'sessions'))).filter((file) =>
-      file.endsWith('.jsonl')
-    )) {
-      const content = await fs.readFile(file, 'utf8');
-      if ((access && content.includes(access)) || content.includes(token))
-        throw new Error('Probe credential persisted in native history');
-      for (const line of content.split('\n').filter(Boolean)) {
-        try {
-          const item = JSON.parse(line);
-          events.push(item.event ?? item);
-        } catch {}
+      const events = [];
+      for (const file of (await files(path.join(dshHome, 'sessions'))).filter((file) =>
+        file.endsWith('.jsonl')
+      )) {
+        const content = await fs.readFile(file, 'utf8');
+        if (secrets.some((secret) => content.includes(secret)))
+          throw new Error('Probe credential persisted in native history');
+        for (const line of content.split('\n').filter(Boolean)) {
+          try {
+            const item = JSON.parse(line);
+            events.push(item.event ?? item);
+          } catch {}
+        }
       }
-    }
-    report.nativeSessionEventCount = events.length;
-    report.nativeRouteEvidence = events
-      .filter((event) => event.type === 'request/header')
-      .map((event) => event.data.header.config);
-    if (
-      !events.length ||
-      report.nativeRouteEvidence.length < report.phases.length ||
-      report.nativeRouteEvidence.some(
-        (config) =>
-          config.provider !== report.provider ||
-          config.model !== report.model ||
-          config.reasoningEffort !== report.reasoningEffort
+      report.nativeSessionEventCount = events.length;
+      report.nativeRouteEvidence = events
+        .filter((event) => event.type === 'request/header')
+        .map((event) => event.data.header.config);
+      if (
+        !events.length ||
+        report.nativeRouteEvidence.length < report.phases.length ||
+        report.nativeRouteEvidence.some(
+          (config) =>
+            config.provider !== report.provider ||
+            config.model !== report.model ||
+            config.reasoningEffort !== report.reasoningEffort
+        )
       )
-    )
-      throw new Error('Native model route evidence incomplete');
-    report.nativeLogInspection = 'passed';
+        throw new Error('Native model route evidence incomplete');
+      report.nativeLogInspection = 'passed';
+    }
   } catch (error) {
     report.nativeLogInspection = 'failed';
     report.inspectionError = error.message;
     report.state = 'failed';
   }
   report.finishedAt = new Date().toISOString();
-  report.diagnostics = diagnostics
-    .join('')
-    .replaceAll(access || 'UNUSED_SECRET_SENTINEL', '[REDACTED]')
-    .replaceAll(token, '[REDACTED]');
-  if (cleanup.every((result) => result.status === 'fulfilled')) {
+  report.diagnostics = sanitize(diagnostics.join(''));
+  if (owned && cleanup.every((result) => result.status === 'fulfilled')) {
     await fs.rm(owned, { recursive: true, force: true });
     report.ownedRootRemoved = true;
   }
   await fs.writeFile(
     reportPath,
-    JSON.stringify(report, null, 2)
-      .replaceAll(access || 'UNUSED_SECRET_SENTINEL', '[REDACTED]')
-      .replaceAll(token, '[REDACTED]') + '\n',
+    JSON.stringify(
+      report,
+      (_key, value) => (typeof value === 'string' ? sanitize(value) : value),
+      2
+    ) + '\n',
     { mode: 0o600 }
   );
   console.log(
     JSON.stringify({
       state: report.state,
       error: report.error,
+      mode: report.mode,
+      modelStarted: report.modelStarted,
+      notebookOpened: report.notebookOpened,
+      ownedRootCreated: report.ownedRootCreated,
       phases: report.phases.map((phase) => ({ name: phase.name, state: phase.state })),
       notebookProduct: report.notebookProduct,
       ownedRootRemoved: report.ownedRootRemoved,
     })
   );
-  if (report.state !== 'passed') process.exitCode = 1;
+  if (report.state !== 'passed') process.exitCode = report.state === 'blocked' ? 2 : 1;
 }
