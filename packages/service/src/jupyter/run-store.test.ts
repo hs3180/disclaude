@@ -32,6 +32,26 @@ function fixture() {
 }
 
 describe('NotebookRunStore', () => {
+  it.each(['completed', 'failed', 'cancelled', 'rejected', 'not_started'] as const)(
+    'preserves verified %s across an unverified status read',
+    (state) => {
+      const { store, target } = fixture();
+      store.prepare(target);
+      store.observe(target.runId, state);
+      const [original] = store.records();
+      store.observe(target.runId, 'unknown');
+      expect(store.records()[0]).toEqual(original);
+    }
+  );
+
+  it('preserves a contradictory server observation with the exact accepted handle', () => {
+    const { store, target } = fixture();
+    store.prepare(target);
+    const handle = { ...target, requestId: 'original' };
+    store.observe(target.runId, 'completed', handle);
+    store.observe(target.runId, 'unknown', handle);
+    expect(store.records()[0].state).toBe('unknown');
+  });
   it('persists owner, exact metadata and stop intent through a new instance', () => {
     const { store, target, owner } = fixture();
     store.prepare(target);

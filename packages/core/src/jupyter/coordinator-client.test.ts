@@ -361,6 +361,90 @@ describe('JupyterCoordinatorClient', () => {
     expect(seen).toHaveLength(1);
   });
 
+  it('fences one exact unaccepted target without sending any source code', async () => {
+    const proof = { state: 'not_started', runId: target.runId, target, submissionFenced: true };
+    const { client, seen } = await fixture((_request, response) =>
+      response.end(JSON.stringify(proof))
+    );
+    expect(await client.fenceUnsentSubmission(target)).toEqual(proof);
+    const requests = seen.filter((item) => item.path.endsWith('/fence-submission'));
+    expect(requests).toHaveLength(1);
+    expect(requests[0].body).toEqual({ notebook, target });
+    expect(requests[0].body).not.toHaveProperty('source');
+  });
+
+  it('observes an already recorded attempt without replacing or resubmitting it', async () => {
+    const current = {
+      runId: target.runId,
+      state: 'unknown',
+      handle: execution,
+      reason: 'native send unknown',
+    };
+    const { client, seen } = await fixture((_request, response) =>
+      response.end(JSON.stringify({ state: 'recorded', observation: current }))
+    );
+    expect(await client.fenceUnsentSubmission(target)).toEqual({
+      state: 'recorded',
+      observation: current,
+    });
+    expect(seen.filter((item) => item.path.endsWith('/submit'))).toHaveLength(0);
+  });
+
+  it.each([
+    { submissionFenced: false },
+    { submissionFenced: 'true' },
+    { target: { ...target, kernelIncarnation: 'other' } },
+    { target: { ...target, sourceHash: 'other' } },
+    { target: { ...target, controller: { ...controller, ownerId: 'foreign' } } },
+    { runId: 'other' },
+    { handle: execution },
+  ])('keeps a malformed or foreign absence proof unknown (%j)', async (changed) => {
+    const { client, seen } = await fixture((_request, response) =>
+      response.end(
+        JSON.stringify({
+          state: 'not_started',
+          runId: target.runId,
+          target,
+          submissionFenced: true,
+          ...changed,
+        })
+      )
+    );
+    expect((await client.fenceUnsentSubmission(target)).state).toBe('unknown');
+    expect(seen.filter((item) => item.path.endsWith('/fence-submission'))).toHaveLength(1);
+  });
+
+  it('queries the original run after a lost fence reply without replaying the mutation', async () => {
+    const proof = { state: 'not_started', runId: target.runId, target, submissionFenced: true };
+    const { client, seen } = await fixture((request, response) => {
+      if (request.url?.endsWith('/fence-submission')) {
+        response.destroy();
+      } else {
+        response.end(JSON.stringify(proof));
+      }
+    });
+    expect((await client.fenceUnsentSubmission(target)).state).toBe('unknown');
+    expect(await client.getStatus(notebook, target.runId)).toEqual(proof);
+    expect(seen.filter((item) => item.path.endsWith('/fence-submission'))).toHaveLength(1);
+    expect(seen.filter((item) => item.path.endsWith('/submit'))).toHaveLength(0);
+  });
+
+  it('does not infer an absence proof from not_started without a durable fence', async () => {
+    const { client } = await fixture((_request, response) =>
+      response.end(JSON.stringify({ runId: target.runId, state: 'not_started', target }))
+    );
+    expect((await client.getStatus(notebook, target.runId)).state).toBe('unknown');
+  });
+
+  it('keeps fence authorization or server failures unknown with one request', async () => {
+    const { client, seen } = await fixture((_request, response) => {
+      response.statusCode = 503;
+      response.end('{}');
+    });
+    expect((await client.fenceUnsentSubmission(target)).state).toBe('unknown');
+    expect(seen.filter((item) => item.path.endsWith('/fence-submission'))).toHaveLength(1);
+  });
+
   it('rejects another host connection before a mutating request', async () => {
     const { client, seen } = await fixture((_request, response) => response.end('{}'));
     const foreign = { ...notebook, identity: { ...notebook.identity, connectionId: 'foreign' } };

@@ -36,8 +36,8 @@ class Ledger:
             application_id = self.db.execute("PRAGMA application_id").fetchone()[0]
             schema_version = self.db.execute("PRAGMA user_version").fetchone()[0]
             tables = self.db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-            if (application_id not in (0, 0x444A5031) or schema_version not in (0, 2)
-                    or (tables and (application_id != 0x444A5031 or schema_version != 2))):
+            if (application_id not in (0, 0x444A5031) or schema_version not in (0, 3)
+                    or (tables and (application_id != 0x444A5031 or schema_version != 3))):
                 raise RuntimeError("unsupported Notebook ledger schema; preserve state for explicit migration")
             self.db.execute("PRAGMA journal_mode=DELETE")
             self.db.execute("PRAGMA synchronous=FULL")
@@ -63,8 +63,13 @@ class Ledger:
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
                 CREATE INDEX IF NOT EXISTS runs_document ON runs(document_id, state);
+                CREATE TABLE IF NOT EXISTS submission_fences (
+                    run_id TEXT PRIMARY KEY, document_id TEXT NOT NULL,
+                    target TEXT NOT NULL, principal TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
                 PRAGMA application_id=1145720881;
-                PRAGMA user_version=2;
+                PRAGMA user_version=3;
             """)
             self.db.execute(
                 "INSERT OR IGNORE INTO settings VALUES ('server_namespace', ?)",
@@ -175,12 +180,36 @@ class Ledger:
         )]
 
     def insert(self, target: dict, source: str, request_id: str, principal: str):
+        if self.submission_fence(target["runId"]):
+            raise ValueError("runId is permanently fenced before submission")
         self.db.execute(
             "INSERT INTO runs(run_id,document_id,request_id,kernel_id,target,source,state,stage,details) "
             "VALUES(?,?,?,?,?,?,'queued','recorded',?)",
             (target["runId"], target["notebook"]["identity"]["documentId"], request_id,
              target["kernelId"], json.dumps(target, ensure_ascii=False), source,
              json.dumps({"principal": principal, "outputs": [], "outputCommit": "pending"})),
+        )
+
+    def submission_fence(self, run_id: str):
+        row = self.db.execute("SELECT * FROM submission_fences WHERE run_id=?", (run_id,)).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        result["target"] = json.loads(result["target"])
+        return result
+
+    def fence_submission(self, target: dict, principal: str):
+        if self.run(target["runId"]) is not None:
+            raise ValueError("recorded executions cannot be fenced as unsubmitted")
+        existing = self.submission_fence(target["runId"])
+        if existing is not None:
+            if existing["target"] != target or existing["principal"] != principal:
+                raise ValueError("submission fence identifies another attempt")
+            return
+        self.db.execute(
+            "INSERT INTO submission_fences(run_id,document_id,target,principal) VALUES (?,?,?,?)",
+            (target["runId"], target["notebook"]["identity"]["documentId"],
+             json.dumps(target, ensure_ascii=False), principal),
         )
 
     def update(self, run_id: str, *, state: str | None = None, stage: str | None = None,

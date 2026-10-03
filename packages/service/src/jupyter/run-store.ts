@@ -248,6 +248,11 @@ export class NotebookRunStore {
     ) {
       throw new Error('Notebook execution identity changed');
     }
+    // A failed read cannot erase a previously verified terminal outcome.
+    // A contradictory server observation with its exact handle remains observable.
+    if (terminal.has(record.state) && state === 'unknown' && !handle) {
+      return;
+    }
     record.state = state;
     record.observedAt = Date.now();
     if (handle) {

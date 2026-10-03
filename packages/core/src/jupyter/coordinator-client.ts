@@ -7,6 +7,8 @@ import type {
   JupyterExecutionHandle,
   JupyterExecutionObservation,
   JupyterExecutionPort,
+  JupyterExecutionReconciliationPort,
+  JupyterExecutionReconciliationResult,
   JupyterExecutionStopResult,
   JupyterExecutionSubmitRequest,
   JupyterExecutionSubmitResult,
@@ -148,11 +150,11 @@ function snapshot(
   };
 }
 
-function handle(
+function executionTarget(
   value: unknown,
   notebook: JupyterNotebookLocator,
   runId: string
-): JupyterExecutionHandle {
+): JupyterExecutionTarget {
   const data = object(value);
   const resource = locator(data.notebook);
   if (!sameNotebook(resource, notebook) || data.runId !== runId) {
@@ -167,8 +169,66 @@ function handle(
     kernelIncarnation: string(data.kernelIncarnation, 'kernelIncarnation'),
     runId,
     controller: lease(data.controller),
-    requestId: string(data.requestId, 'requestId'),
   };
+}
+
+function handle(
+  value: unknown,
+  notebook: JupyterNotebookLocator,
+  runId: string
+): JupyterExecutionHandle {
+  return {
+    ...executionTarget(value, notebook, runId),
+    requestId: string(object(value).requestId, 'requestId'),
+  };
+}
+
+function observation(
+  value: unknown,
+  notebook: JupyterNotebookLocator,
+  runId: string
+): JupyterExecutionObservation {
+  const data = object(value);
+  if (data.runId !== runId) {
+    throw new Error('Execution observation runId mismatch');
+  }
+  if (data.state === 'not_started') {
+    if (data.submissionFenced !== true || data.handle !== undefined) {
+      throw new Error('Unsubmitted execution has no permanent submission fence');
+    }
+    return {
+      state: 'not_started',
+      runId,
+      target: executionTarget(data.target, notebook, runId),
+      submissionFenced: true,
+    };
+  }
+  const current = data.handle ? handle(data.handle, notebook, runId) : undefined;
+  if (data.state === 'unknown') {
+    return { runId, state: 'unknown', handle: current, reason: string(data.reason, 'reason') };
+  }
+  if (!current) {
+    throw new Error('Execution observation has no handle');
+  }
+  if (
+    [
+      'queued',
+      'running',
+      'input_required',
+      'stopping',
+      'completed',
+      'failed',
+      'cancelled',
+    ].includes(String(data.state))
+  ) {
+    return {
+      runId,
+      state: data.state,
+      handle: current,
+      details: data.details,
+    } as JupyterExecutionObservation;
+  }
+  throw new Error('Unknown Jupyter execution state');
 }
 
 function sameTarget(a: JupyterExecutionTarget, b: JupyterExecutionTarget): boolean {
@@ -186,7 +246,9 @@ function sameTarget(a: JupyterExecutionTarget, b: JupyterExecutionTarget): boole
 }
 
 /** Concrete shared ports for the optional managed Jupyter server extension. */
-export class JupyterCoordinatorClient implements JupyterNotebookPort, JupyterExecutionPort {
+export class JupyterCoordinatorClient
+  implements JupyterNotebookPort, JupyterExecutionPort, JupyterExecutionReconciliationPort
+{
   private readonly base: URL;
   private namespace?: string;
   private readonly timeoutMs: number;
@@ -354,13 +416,17 @@ export class JupyterCoordinatorClient implements JupyterNotebookPort, JupyterExe
   }
 
   private async authenticate(): Promise<void> {
-    if (!this.options.password) {return;}
+    if (!this.options.password) {
+      return;
+    }
     this.authenticating ??= this.loginPassword();
     const pending = this.authenticating;
     try {
       await pending;
     } finally {
-      if (this.authenticating === pending) {this.authenticating = undefined;}
+      if (this.authenticating === pending) {
+        this.authenticating = undefined;
+      }
     }
   }
 
@@ -371,13 +437,17 @@ export class JupyterCoordinatorClient implements JupyterNotebookPort, JupyterExe
     }
     const existing = await this.send('api/status');
     await existing.body?.cancel();
-    if (existing.ok) {return;}
+    if (existing.ok) {
+      return;
+    }
     if (![401, 403].includes(existing.status)) {
       throw new Error(`Jupyter authentication check returned HTTP ${existing.status}`);
     }
     const page = await this.send('login');
     await page.body?.cancel();
-    if (!page.ok) {throw new Error('Jupyter password login is unavailable');}
+    if (!page.ok) {
+      throw new Error('Jupyter password login is unavailable');
+    }
     const loginUrl = new URL('login', this.base);
     const xsrf = (await (await this.cookieJar()).getCookies(loginUrl.href)).find(
       (c) => c.key === '_xsrf'
@@ -413,14 +483,18 @@ export class JupyterCoordinatorClient implements JupyterNotebookPort, JupyterExe
     // Verify the cookie with a safe read. Never follow a redirect or retry a mutation.
     const verified = await this.send('api/status');
     await verified.body?.cancel();
-    if (!verified.ok) {throw new Error('Jupyter password login could not be verified');}
+    if (!verified.ok) {
+      throw new Error('Jupyter password login could not be verified');
+    }
   }
 
   private async request(path: string, body?: Record<string, unknown>): Promise<unknown> {
     const response = await this.send(`api/disclaude${path}`, body);
     if (!response.ok) {
       await response.body?.cancel();
-      if ([401, 403].includes(response.status)) {this.connected = false;}
+      if ([401, 403].includes(response.status)) {
+        this.connected = false;
+      }
       throw new CoordinatorHttpError(response.status, path === '' && response.status === 404);
     }
     return JSON.parse(await this.responseText(response)) as unknown;
@@ -436,7 +510,9 @@ export class JupyterCoordinatorClient implements JupyterNotebookPort, JupyterExe
     }
     const data = object(JSON.parse(await this.responseText(response)));
     const serverVersion = string(data.version, 'server version');
-    if (serverVersion.length > 100) {throw new Error('Invalid Jupyter server version');}
+    if (serverVersion.length > 100) {
+      throw new Error('Invalid Jupyter server version');
+    }
     try {
       return { serverVersion, coordinator: 'available', status: await this.connect() };
     } catch (error) {
@@ -700,42 +776,50 @@ export class JupyterCoordinatorClient implements JupyterNotebookPort, JupyterExe
     runId: string
   ): Promise<JupyterExecutionObservation> {
     try {
-      const data = object(await this.operation(notebook, 'status', { runId }));
-      if (data.runId !== runId) {
-        throw new Error('Execution observation runId mismatch');
-      }
-      const current = data.handle ? handle(data.handle, notebook, runId) : undefined;
-      if (data.state === 'unknown') {
-        return { runId, state: 'unknown', handle: current, reason: string(data.reason, 'reason') };
-      }
-      if (!current) {
-        throw new Error('Execution observation has no handle');
-      }
-      if (
-        [
-          'queued',
-          'running',
-          'input_required',
-          'stopping',
-          'completed',
-          'failed',
-          'cancelled',
-        ].includes(String(data.state))
-      ) {
-        // Preserve bounded execution/persistence diagnostics from the backend.
-        return {
-          runId,
-          state: data.state,
-          handle: current,
-          details: data.details,
-        } as JupyterExecutionObservation;
-      }
-      throw new Error('Unknown Jupyter execution state');
+      return observation(await this.operation(notebook, 'status', { runId }), notebook, runId);
     } catch (error) {
       return {
         runId,
         state: 'unknown',
         reason: error instanceof Error ? error.message : 'Jupyter observation unavailable',
+      };
+    }
+  }
+
+  async fenceUnsentSubmission(
+    target: JupyterExecutionTarget
+  ): Promise<JupyterExecutionReconciliationResult> {
+    try {
+      const data = object(await this.operation(target.notebook, 'fence-submission', { target }));
+      if (data.state === 'not_started') {
+        const proof = observation(data, target.notebook, target.runId);
+        if (proof.state !== 'not_started' || !sameTarget(proof.target, target)) {
+          throw new Error('Submission fence target mismatch');
+        }
+        return proof;
+      }
+      if (data.state === 'recorded') {
+        const current = observation(data.observation, target.notebook, target.runId);
+        if (!current.handle || !sameTarget(current.handle, target)) {
+          throw new Error('Recorded execution target mismatch');
+        }
+        return { state: 'recorded', observation: current };
+      }
+      if (data.state === 'ownership_lost') {
+        return {
+          state: 'ownership_lost',
+          currentGeneration: number(data.currentGeneration, 'currentGeneration'),
+        };
+      }
+      if (data.state === 'unknown' && data.runId === target.runId) {
+        return { state: 'unknown', runId: target.runId, reason: string(data.reason, 'reason') };
+      }
+      throw new Error('Unknown submission reconciliation outcome');
+    } catch {
+      return {
+        state: 'unknown',
+        runId: target.runId,
+        reason: 'Submission reconciliation could not be verified; do not replay',
       };
     }
   }

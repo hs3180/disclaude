@@ -148,22 +148,67 @@ class Executions:
     def handle(self, run: dict):
         return dict(run["target"], requestId=run["request_id"])
 
+    def existing_submission(self, run: dict, request: dict, principal: str):
+        if (run["target"] != request["target"] or run["source"] != request["source"]
+                or run["details"]["principal"] != principal):
+            return {"state": "rejected", "reason": "runId already identifies another request"}
+        if run["state"] == "unknown":
+            return {"state": "unknown", "runId": run["run_id"],
+                    "reason": run["details"].get("reason", "execution outcome unknown")}
+        return {"state": "accepted", "handle": self.handle(run)}
+
+    @staticmethod
+    def fenced_observation(target: dict):
+        return {"state": "not_started", "runId": target["runId"],
+                "target": copy.deepcopy(target), "submissionFenced": True}
+
+    def fence_unsubmitted(self, target: dict, principal: str):
+        locator = self.documents.locate(target["notebook"])
+        document_id = locator["identity"]["documentId"]
+        run_id = target["runId"]
+        with self.ledger.transaction():
+            existing = self.ledger.run(run_id)
+            if existing is not None:
+                if existing["target"] != target or existing["details"]["principal"] != principal:
+                    return {"state": "unknown", "runId": run_id,
+                            "reason": "runId identifies a different recorded execution"}
+                return {"state": "recorded", "observation": self.status(target["notebook"], run_id)}
+            fenced = self.ledger.submission_fence(run_id)
+            if fenced is not None:
+                if fenced["target"] != target or fenced["principal"] != principal:
+                    return {"state": "unknown", "runId": run_id,
+                            "reason": "runId identifies a different submission fence"}
+                return self.fenced_observation(fenced["target"])
+            if not self.ledger.owns(document_id, target["controller"], principal, allow_paused=True):
+                current = self.ledger.controller(document_id)
+                return {"state": "ownership_lost", "currentGeneration": current["generation"] if current else 0}
+            runtime = self.runtimes.get(document_id)
+            if (not runtime or not self.valid(runtime) or runtime.kernel_id != target["kernelId"]
+                    or runtime.incarnation != target["kernelIncarnation"]):
+                return {"state": "unknown", "runId": run_id,
+                        "reason": "original kernel incarnation is not verified; no absence proof"}
+            # No await: absence and the permanent late-submit fence commit together.
+            self.ledger.fence_submission(target, principal)
+            return self.fenced_observation(target)
+
     async def submit(self, request: dict, principal: str):
         target = copy.deepcopy(request["target"])
         document_id = target["notebook"]["identity"]["documentId"]
+        if self.ledger.submission_fence(target["runId"]):
+            return {"state": "not_started", "reason": "runId is permanently fenced before submission"}
         existing = self.ledger.run(target["runId"])
         if existing:
-            if existing["target"] != target or existing["source"] != request["source"]:
-                return {"state": "rejected", "reason": "runId already identifies another request"}
-            if existing["state"] == "unknown":
-                return {"state": "unknown", "runId": target["runId"],
-                        "reason": existing["details"].get("reason", "execution outcome unknown")}
-            return {"state": "accepted", "handle": self.handle(existing)}
+            return self.existing_submission(existing, request, principal)
         entry, locator = await self.documents.acquire(target["notebook"])
         keep = False
         try:
             runtime = self.runtimes.get(document_id)
             with self.ledger.transaction():
+                if self.ledger.submission_fence(target["runId"]):
+                    return {"state": "not_started", "reason": "runId is permanently fenced before submission"}
+                existing = self.ledger.run(target["runId"])
+                if existing is not None:
+                    return self.existing_submission(existing, request, principal)
                 if not runtime or not self.valid(runtime) or (
                     runtime.kernel_id != target["kernelId"] or
                     runtime.incarnation != target["kernelIncarnation"]
@@ -445,6 +490,10 @@ class Executions:
     def status(self, notebook: dict, run_id: str):
         locator = self.documents.locate(notebook)
         run = self.ledger.run(run_id)
+        if run is None:
+            fenced = self.ledger.submission_fence(run_id)
+            if fenced and fenced["document_id"] == locator["identity"]["documentId"]:
+                return self.fenced_observation(fenced["target"])
         if not run or run["document_id"] != locator["identity"]["documentId"]:
             return {"runId": run_id, "state": "unknown", "reason": "run not found for this Notebook"}
         runtime = self.runtimes.get(run["document_id"])

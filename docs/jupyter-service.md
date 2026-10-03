@@ -93,7 +93,7 @@ version). An unresolved path is replaced with its server-issued stable identity
 only while the original reference still matches. Each operation rechecks Project
 references and current control; a model cannot supply a foreign Notebook URL.
 
-The eight native tools list resources, describe live cells/control, read/edit a cell,
+The nine native tools list resources, describe live cells/control, read/edit a cell,
 submit an exact version, query a run, and stop that exact run. Per-message context
 refreshes bounded live previews so human parameter and Markdown edits are visible.
 Full cell source and execution results are read on demand. Changing Project
@@ -111,11 +111,30 @@ run is recorded before HTTP and retains its original target/request identity.
 Service session recreation and `/reset` retain the Notebook and its kernel;
 unverified runs must be queried, never automatically replayed.
 
+`notebook_reconcile_submission` resolves an original unaccepted attempt using its
+persisted target, not model-provided execution metadata. It sends no source code.
+The server either returns the existing correlated execution, or atomically proves
+absence and permanently blocks that run ID from entering a kernel. A late original
+POST cannot bypass the fence, including one already waiting for an RTC room.
+Ownership loss, an unverified original kernel incarnation, recorded unknown native
+sends, malformed proofs and network failures keep the attempt unresolved.
+
+A verified `not_started` observation includes the full original target and a
+durable `submissionFenced` flag. It invents no accepted handle, native request ID,
+interrupt, idle confirmation or surviving kernel memory. Once reconciled, a user
+can explicitly request a new experiment with a new run ID; the old one is never
+resubmitted. A failed status read cannot erase an already verified terminal record;
+an exact server handle reporting a contradictory unknown state remains visible.
+
 `/stop` first fences native callbacks and inference. It then asks the server to
 pause this controller generation and cancel its whole unsent queue atomically,
 before interrupting the exact active run. The response reports confirmed
 cancellation, already terminal runs, lost authority and unknown outcomes
 separately. Idle inference does not prevent stopping a background Notebook run.
+After a successful owner pause, an unknown attempt without an accepted handle is
+also reconciled and fenced. Verified unsubmitted work is reported as already
+terminal, not as a confirmed kernel cancellation. If the server finds an existing
+run, stop follows its original handle and waits for its terminal observation.
 A new host session resumes a paused generation only after recorded runs are
 terminal; old callbacks cannot resume it. This local metadata store assumes one
 Service writer; the Jupyter ledger enforces a single server writer.
@@ -128,6 +147,12 @@ ends, owner stop and same-kernel continuation. Run the composed probe with
 `tests/jupyter/coordinator-probe.py --host-session --dsh-checkout <checkout>` and
 explicit authentication/model arguments; it uses only owned temporary resources.
 These are component results, not Feishu or JupyterLab UI acceptance.
+
+The submission fence requires ledger schema 3. Earlier experimental schemas are
+preserved and refused, with no reset or automatic migration. The configured
+instance still needs reviewed extension activation and actual same-Notebook
+DSH/Feishu read/edit/run/continuation/stop acceptance; unit checks on its installed
+dependencies do not establish that product loop.
 
 Daily and candidate default model selection remains `gpt-6-luna`. The designated
 #5215/#5219 real-model acceptance explicitly uses `gpt-5.6-luna` without changing

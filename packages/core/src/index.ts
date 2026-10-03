@@ -42,6 +42,9 @@ export type {
   JupyterExecutionObservation,
   JupyterExecutionStopResult,
   JupyterExecutionPort,
+  JupyterUnsubmittedExecution,
+  JupyterExecutionReconciliationResult,
+  JupyterExecutionReconciliationPort,
 } from './jupyter/contracts.js';
 export { JupyterCoordinatorClient, createJupyterCookieJar } from './jupyter/coordinator-client.js';
 export type {

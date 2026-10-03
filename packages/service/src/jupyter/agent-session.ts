@@ -140,6 +140,64 @@ export class NotebookAgentSession {
         },
       },
       {
+        name: 'notebook_reconcile_submission',
+        description:
+          'Reconcile your persisted unknown submission by runId. The server either returns its recorded execution or permanently fences that exact attempt before proving not_started. This never sends source code, interrupts work, restarts a kernel or replays the original request. Accepted handles must use status/stop instead.',
+        inputSchema: inputSchema({
+          notebookId: { type: 'string', minLength: 1 },
+          runId: { type: 'string', minLength: 1 },
+        }),
+        outputSchema: { type: 'object' },
+        execute: (input, { signal }) =>
+          this.tracked(async () => {
+            signal.throwIfAborted();
+            const ref = await this.reference(String(input.notebookId));
+            signal.throwIfAborted();
+            this.assertActive();
+            const record = this.records.records().find((item) => item.target.runId === input.runId);
+            if (
+              !record ||
+              record.handle ||
+              resourceKey({
+                ...record.target.notebook.identity,
+                contentPath: record.target.notebook.contentPath,
+              }) !== resourceKey(ref)
+            ) {
+              throw new Error(
+                "Submission reconciliation requires this conversation's original unaccepted attempt"
+              );
+            }
+            const result = await this.use(ref, (client) => {
+              signal.throwIfAborted();
+              this.assertActive();
+              return client.fenceUnsentSubmission(record.target);
+            });
+            if (result.state === 'not_started') {
+              if (
+                result.submissionFenced !== true ||
+                JSON.stringify(handleTarget(result.target)) !==
+                  JSON.stringify(handleTarget(record.target))
+              ) {
+                throw new Error('Submission fence does not match the original execution target');
+              }
+              this.records.observe(record.target.runId, 'not_started');
+            } else if (result.state === 'recorded') {
+              if (!result.observation.handle) {
+                throw new Error('Recorded execution has no original accepted handle');
+              }
+              this.records.observe(
+                record.target.runId,
+                result.observation.state,
+                result.observation.handle
+              );
+            }
+            // Keep verified evidence even when inference was paused during the POST.
+            signal.throwIfAborted();
+            this.assertActive();
+            return result;
+          }),
+      },
+      {
         name: 'notebook_take_control',
         description:
           'Explicitly take Notebook automation control for a user request to resume editing or running. Read notebook_describe control first and pass its exact owner and generation (empty owner and zero if unowned). Reconcile your earlier runs first. Active foreign experiments refuse transfer. This does not interrupt or restart a kernel.',
@@ -305,7 +363,7 @@ export class NotebookAgentSession {
         omittedCells: Math.max(0, overview.cells.length - 8),
       });
     }
-    return `\n\n[Notebook resources]\nUse the native notebook tools for these server-owned documents. Read current revisions before changes. Kernel/data paths belong to Jupyter; this Project contains references only. A submitted run still needs status reconciliation; stop acknowledgment is not confirmation.\n${JSON.stringify(
+    return `\n\n[Notebook resources]\nUse the native notebook tools for these server-owned documents. Read current revisions before changes. Kernel/data paths belong to Jupyter; this Project contains references only. Query submitted runs by their original runId. An unknown unaccepted attempt can use notebook_reconcile_submission; an absence read alone never authorizes replay. Stop acknowledgment is not confirmation.\n${JSON.stringify(
       {
         resources: {
           notebooks: refs.slice(0, 8).map((ref) => ({
@@ -530,7 +588,15 @@ export class NotebookAgentSession {
         getStatus: (_notebook, runId) =>
           this.use<JupyterExecutionObservation>(ref, async (client) => {
             const result = await client.getStatus(notebook, runId);
-            if (this.records.records().some((r) => r.target.runId === runId)) {
+            const record = this.records.records().find((r) => r.target.runId === runId);
+            if (record) {
+              if (
+                result.state === 'not_started' &&
+                JSON.stringify(handleTarget(result.target)) !==
+                  JSON.stringify(handleTarget(record.target))
+              ) {
+                throw new Error('Unsubmitted execution proof has another recorded target');
+              }
               this.records.observe(runId, result.state, result.handle);
             }
             return result;
@@ -632,7 +698,31 @@ export class NotebookAgentSession {
       try {
         await this.use(ref, async (client) => {
           while (Date.now() < deadline) {
-            const status = await client.getStatus(locator(ref), record.target.runId);
+            let status = await client.getStatus(locator(ref), record.target.runId);
+            if (status.state === 'unknown' && !status.handle && !record.handle) {
+              const reconciled = await client.fenceUnsentSubmission(record.target);
+              if (reconciled.state === 'not_started') {
+                status = reconciled;
+              } else if (reconciled.state === 'recorded') {
+                status = reconciled.observation;
+              } else {
+                if (reconciled.state === 'ownership_lost') {
+                  outcome.state = 'ownership_lost';
+                }
+                return;
+              }
+            }
+            if (status.state === 'not_started') {
+              if (
+                JSON.stringify(handleTarget(status.target)) !==
+                JSON.stringify(handleTarget(record.target))
+              ) {
+                return;
+              }
+              this.records.observe(record.target.runId, 'not_started');
+              outcome.state = 'already_terminal';
+              return;
+            }
             if (
               !status.handle ||
               JSON.stringify(handleTarget(status.handle)) !==

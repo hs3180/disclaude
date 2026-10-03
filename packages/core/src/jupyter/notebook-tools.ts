@@ -122,6 +122,9 @@ export function createNotebookTools(binding: NotebookToolBinding): NativeAgentTo
       execute: async (input, { signal }) => {
         const runId = requiredString(input, 'runId');
         const current = await binding.executions.getStatus(binding.notebook, runId);
+        if (current.state === 'not_started') {
+          return { state: 'not_found' };
+        }
         if (current.state === 'unknown' && !current.handle) {
           return { state: 'unknown', reason: current.reason };
         }

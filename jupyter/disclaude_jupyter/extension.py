@@ -84,7 +84,7 @@ class StatusHandler(Handler):
                       "pendingRooms": len(documents.pending_rooms),
                       "roomFailures": dict(documents.cleanup_errors),
                       "kernels": len(executions.runtimes), "serverSideExecution": True,
-                      "outputRecovery": False})
+                      "outputRecovery": False, "submissionFence": True})
 
 
 class OpenHandler(Handler):
@@ -110,7 +110,7 @@ class NotebookHandler(Handler):
         locator = documents.locate(notebook)
         read = operation in ("read-cell", "status", "outputs", "describe", "control-state")
         await self.allow("read" if read else "write", "contents")
-        if operation in ("kernel", "submit", "stop", "stop-owner", "input"):
+        if operation in ("kernel", "submit", "fence-submission", "stop", "stop-owner", "input"):
             await self.allow("execute", "kernels")
         if operation == "read-cell":
             result = await documents.read(locator, text(data, "cellId", limit=64))
@@ -135,19 +135,21 @@ class NotebookHandler(Handler):
                 result = executions.claim(document_id, text(data, "ownerId", limit=256), self.principal, expected)
         elif operation == "kernel":
             result = await executions.bind(locator, data.get("kernelName", "python3"))
-        elif operation == "submit":
+        elif operation in ("submit", "fence-submission"):
             target = data.get("target")
             if not isinstance(target, dict) or target.get("notebook") != notebook:
                 raise tornado.web.HTTPError(400, reason="execution target Notebook mismatch")
             for key in ("cellId", "expectedRevision", "sourceHash", "kernelId", "kernelIncarnation", "runId"):
                 text(target, key, limit=65536)
             controller(target.get("controller"))
-            text(data, "source", empty=True)
+            if operation == "submit":
+                text(data, "source", empty=True)
             try:
                 uuid.UUID(target["runId"])
             except ValueError:
                 raise tornado.web.HTTPError(400, reason="runId must be a UUID") from None
-            result = await executions.submit(data, self.principal)
+            result = (await executions.submit(data, self.principal) if operation == "submit"
+                      else executions.fence_unsubmitted(target, self.principal))
         elif operation == "status":
             result = executions.status(locator, text(data, "runId", limit=64))
         elif operation == "stop":

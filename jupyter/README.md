@@ -166,10 +166,21 @@ metadata; Jupyter run IDs and kernel incarnations are business identities.
   ledger transaction before interrupting the exact active run. Late submissions
   and old callbacks are rejected. A new claim resumes a paused owner with a new
   generation only after active runs terminate. `control-state` reports the pause
-  independently of the controller identity. Ledger schema is now version 2;
+  independently of the controller identity. Ledger schema is now version 3;
   earlier experimental ledgers are preserved and refused, never reset or replayed.
 - Server restart marks unfinished runs unknown and does not replay them.
   Notebook persistence does not prove that kernel variables survived.
+- `fence-submission` reconciles an exact unaccepted target without source code.
+  An existing ledger run is observed, including recorded unknown sends. Otherwise
+  the current principal/controller and original verified kernel incarnation are
+  required before absence and a permanent run-ID fence commit in one transaction.
+  A late original submission rechecks that fence after room acquisition and before
+  insertion/queueing. Simultaneous duplicate submissions also recheck the ledger
+  and cannot create a second queue entry. The proof is `not_started` with its exact
+  target and `submissionFenced: true`; no native request ID or kernel-idle claim is
+  invented. Fences survive restart. Previously recorded side effects remain unknown
+  when native completion cannot be proved. Earlier schema-2 ledgers are preserved
+  and refused until an explicit migration is prepared.
 
 ## Remaining acceptance work
 
