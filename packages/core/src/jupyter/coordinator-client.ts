@@ -21,7 +21,11 @@ export interface JupyterCoordinatorOptions {
   /** Pin a saved connection to its original server namespace. */
   serverNamespace?: string;
   /** Host-owned authentication; never included in a Notebook/tool descriptor. */
-  authorization(): Promise<string>;
+  authorization?(): Promise<string>;
+  /** Standard Jupyter password login, resolved only by the host. Choose one auth mode. */
+  password?(): Promise<string>;
+  /** Host explicitly permits this configured HTTP endpoint. Never a model argument. */
+  allowInsecureHttp?: boolean;
   /** Dedicated host-owned session store; never pass cookies to Notebook tools. */
   cookieJar?: CookieJar;
   timeoutMs?: number;
@@ -37,6 +41,25 @@ export interface JupyterCoordinatorStatus {
   roomFailures: Record<string, string>;
   maxRooms: number;
   idleSeconds: number;
+}
+
+export interface JupyterConnectionInspection {
+  serverVersion: string;
+  coordinator: 'available' | 'missing';
+  status?: JupyterCoordinatorStatus;
+}
+
+class CoordinatorHttpError extends Error {
+  constructor(
+    readonly status: number,
+    missingExtension = false
+  ) {
+    super(
+      missingExtension
+        ? 'Jupyter coordinator extension is unavailable (HTTP 404)'
+        : `Jupyter coordinator returned HTTP ${status}`
+    );
+  }
 }
 
 export interface JupyterNotebookOverview {
@@ -170,6 +193,7 @@ export class JupyterCoordinatorClient implements JupyterNotebookPort, JupyterExe
   private readonly maxResponseBytes: number;
   private cookies?: Promise<CookieJar>;
   private connecting?: Promise<JupyterCoordinatorStatus>;
+  private authenticating?: Promise<void>;
   private connected = false;
 
   constructor(private readonly options: JupyterCoordinatorOptions) {
@@ -182,12 +206,21 @@ export class JupyterCoordinatorClient implements JupyterNotebookPort, JupyterExe
       (this.base.protocol !== 'https:' &&
         !(
           this.base.protocol === 'http:' &&
-          ['localhost', '127.0.0.1', '[::1]'].includes(this.base.hostname)
+          (['localhost', '127.0.0.1', '[::1]'].includes(this.base.hostname) ||
+            options.allowInsecureHttp === true)
         ))
     ) {
       throw new Error(
-        'Jupyter coordinator requires HTTPS or loopback HTTP without URL credentials'
+        'Jupyter coordinator requires HTTPS, loopback HTTP or explicit host HTTP permission without URL credentials'
       );
+    }
+    if (
+      (typeof options.authorization === 'function') === (typeof options.password === 'function') ||
+      (options.authorization !== undefined && typeof options.authorization !== 'function') ||
+      (options.password !== undefined && typeof options.password !== 'function') ||
+      (options.allowInsecureHttp !== undefined && typeof options.allowInsecureHttp !== 'boolean')
+    ) {
+      throw new Error('Choose exactly one host-owned Jupyter authentication mode');
     }
     string(options.connectionId, 'connectionId');
     this.namespace = options.serverNamespace;
@@ -204,31 +237,70 @@ export class JupyterCoordinatorClient implements JupyterNotebookPort, JupyterExe
     this.base.pathname = this.base.pathname.replace(/\/?$/, '/');
   }
 
-  private async request(path: string, body?: Record<string, unknown>): Promise<unknown> {
-    const authorization = await this.options.authorization();
-    if (!authorization || /[\r\n]/.test(authorization)) {
-      throw new Error('Jupyter connection authentication is unavailable');
-    }
-    const url = new URL(`api/disclaude${path}`, this.base);
+  private cookieJar(): Promise<CookieJar> {
     this.cookies ??= this.options.cookieJar
       ? Promise.resolve(this.options.cookieJar)
       : import('tough-cookie').then(({ CookieJar }) => new CookieJar());
-    const cookies = await this.cookies;
+    return this.cookies;
+  }
+
+  private async secret(resolver: () => Promise<string>): Promise<string> {
+    try {
+      const value = await resolver();
+      if (typeof value !== 'string' || !value || value.length > 8192 || /[\r\n]/.test(value)) {
+        throw new Error('Invalid secret');
+      }
+      return value;
+    } catch {
+      throw new Error('Jupyter connection authentication is unavailable');
+    }
+  }
+
+  private async send(
+    route: string,
+    body?: Record<string, unknown> | URLSearchParams,
+    loginRedirect = false
+  ): Promise<Response> {
+    const url = new URL(route, this.base);
+    const authorization = this.options.authorization
+      ? await this.secret(this.options.authorization)
+      : undefined;
+    const cookies = await this.cookieJar();
     const cookie = await cookies.getCookieString(url.href);
     if (Buffer.byteLength(cookie) > 16_384) {
       throw new Error('Jupyter session cookie limit exceeded');
     }
-    const response = await fetch(url, {
-      method: body ? 'POST' : 'GET',
-      headers: {
-        Authorization: authorization,
-        ...(cookie ? { Cookie: cookie } : {}),
-        ...(body ? { 'Content-Type': 'application/json' } : {}),
-      },
-      body: body ? JSON.stringify(body) : undefined,
-      redirect: 'error',
-      signal: AbortSignal.timeout(this.timeoutMs),
-    });
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: body ? 'POST' : 'GET',
+        headers: {
+          ...(authorization ? { Authorization: authorization } : {}),
+          ...(cookie ? { Cookie: cookie } : {}),
+          ...(body
+            ? {
+                'Content-Type':
+                  body instanceof URLSearchParams
+                    ? 'application/x-www-form-urlencoded'
+                    : 'application/json',
+                ...(this.options.password && !(body instanceof URLSearchParams)
+                  ? {
+                      'X-XSRFToken':
+                        (await cookies.getCookies(url.href)).find((c) => c.key === '_xsrf')
+                          ?.value ?? '',
+                    }
+                  : {}),
+              }
+            : {}),
+        },
+        body: body instanceof URLSearchParams ? body : body ? JSON.stringify(body) : undefined,
+        redirect: 'manual',
+        signal: AbortSignal.timeout(this.timeoutMs),
+      });
+    } catch {
+      // Fetch errors may quote a rejected Authorization value. Keep them host-private.
+      throw new Error('Jupyter request outcome could not be verified');
+    }
     try {
       const updates = response.headers.getSetCookie();
       if (updates.length > 16 || updates.some((value) => Buffer.byteLength(value) > 8192)) {
@@ -243,12 +315,20 @@ export class JupyterCoordinatorClient implements JupyterNotebookPort, JupyterExe
       }
     } catch (error) {
       await response.body?.cancel();
-      throw error;
+      throw new Error(
+        error instanceof Error && error.message === 'Jupyter session cookie limit exceeded'
+          ? error.message
+          : 'Jupyter session cookies cannot be verified'
+      );
     }
-    if (!response.ok) {
+    if (response.status >= 300 && response.status < 400 && !loginRedirect) {
       await response.body?.cancel();
-      throw new Error(`Jupyter coordinator returned HTTP ${response.status}`);
+      throw new Error('Jupyter redirect was refused');
     }
+    return response;
+  }
+
+  private async responseText(response: Response): Promise<string> {
     const reader = response.body?.getReader();
     if (!reader) {
       throw new Error('Jupyter coordinator response body is missing');
@@ -270,7 +350,101 @@ export class JupyterCoordinatorClient implements JupyterNotebookPort, JupyterExe
     } finally {
       await reader.cancel();
     }
-    return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+    return Buffer.concat(chunks).toString('utf8');
+  }
+
+  private async authenticate(): Promise<void> {
+    if (!this.options.password) {return;}
+    this.authenticating ??= this.loginPassword();
+    const pending = this.authenticating;
+    try {
+      await pending;
+    } finally {
+      if (this.authenticating === pending) {this.authenticating = undefined;}
+    }
+  }
+
+  private async loginPassword(): Promise<void> {
+    const resolvePassword = this.options.password;
+    if (!resolvePassword) {
+      throw new Error('Jupyter password authentication is unavailable');
+    }
+    const existing = await this.send('api/status');
+    await existing.body?.cancel();
+    if (existing.ok) {return;}
+    if (![401, 403].includes(existing.status)) {
+      throw new Error(`Jupyter authentication check returned HTTP ${existing.status}`);
+    }
+    const page = await this.send('login');
+    await page.body?.cancel();
+    if (!page.ok) {throw new Error('Jupyter password login is unavailable');}
+    const loginUrl = new URL('login', this.base);
+    const xsrf = (await (await this.cookieJar()).getCookies(loginUrl.href)).find(
+      (c) => c.key === '_xsrf'
+    )?.value;
+    if (!xsrf || xsrf.length > 8192 || /[\r\n]/.test(xsrf)) {
+      throw new Error('Jupyter password login token is unavailable');
+    }
+    const password = await this.secret(resolvePassword);
+    const result = await this.send(
+      'login',
+      new URLSearchParams({ _xsrf: xsrf, password, next: this.base.pathname }),
+      true
+    );
+    await result.body?.cancel();
+    const destination = result.headers.get('Location');
+    if (![302, 303].includes(result.status) || !destination) {
+      throw new Error('Jupyter password login failed');
+    }
+    let redirect: URL;
+    try {
+      redirect = new URL(destination, loginUrl);
+    } catch {
+      throw new Error('Jupyter password login redirect was refused');
+    }
+    if (
+      redirect.origin !== this.base.origin ||
+      redirect.username ||
+      redirect.password ||
+      !redirect.pathname.startsWith(this.base.pathname)
+    ) {
+      throw new Error('Jupyter password login redirect was refused');
+    }
+    // Verify the cookie with a safe read. Never follow a redirect or retry a mutation.
+    const verified = await this.send('api/status');
+    await verified.body?.cancel();
+    if (!verified.ok) {throw new Error('Jupyter password login could not be verified');}
+  }
+
+  private async request(path: string, body?: Record<string, unknown>): Promise<unknown> {
+    const response = await this.send(`api/disclaude${path}`, body);
+    if (!response.ok) {
+      await response.body?.cancel();
+      if ([401, 403].includes(response.status)) {this.connected = false;}
+      throw new CoordinatorHttpError(response.status, path === '' && response.status === 404);
+    }
+    return JSON.parse(await this.responseText(response)) as unknown;
+  }
+
+  /** Host diagnostics only: no document, controller or kernel operations. */
+  async inspectConnection(): Promise<JupyterConnectionInspection> {
+    await this.authenticate();
+    const response = await this.send('api');
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error(`Jupyter version check returned HTTP ${response.status}`);
+    }
+    const data = object(JSON.parse(await this.responseText(response)));
+    const serverVersion = string(data.version, 'server version');
+    if (serverVersion.length > 100) {throw new Error('Invalid Jupyter server version');}
+    try {
+      return { serverVersion, coordinator: 'available', status: await this.connect() };
+    } catch (error) {
+      if (error instanceof CoordinatorHttpError && error.status === 404) {
+        return { serverVersion, coordinator: 'missing' };
+      }
+      throw error;
+    }
   }
 
   async connect(): Promise<JupyterCoordinatorStatus> {
@@ -287,6 +461,7 @@ export class JupyterCoordinatorClient implements JupyterNotebookPort, JupyterExe
 
   private async loadStatus(): Promise<JupyterCoordinatorStatus> {
     this.connected = false;
+    await this.authenticate();
     const data = object(await this.request(''));
     if (data.protocolVersion !== 1) {
       throw new Error('Unsupported Jupyter coordinator protocol');

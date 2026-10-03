@@ -27,17 +27,47 @@ The Service reads `JUPYTER_CONNECTIONS_FILE`, or
 
 The authorization file contains the complete HTTP authorization header and must
 also have mode 0600. Alternatively use `authorizationEnv` with a host environment
-variable name. This variable is removed from the environment passed to model
-processes. URLs must not contain credentials or tokens. Password login and
-automatic credential refresh are not implemented.
+variable name. For standard Jupyter password login, use exactly one
+`passwordEnv` or `passwordFile` instead of the Authorization reference:
+
+```json
+{
+  "id": "research",
+  "baseUrl": "https://jupyter.example/",
+  "passwordEnv": "JUPYTERLAB_PASS"
+}
+```
+
+Password files must be private regular files (mode 0600), with the exact password
+and no trailing newline. Password whitespace is preserved. Authentication
+variables are removed from the environment passed to model processes; neither
+passwords nor cookies belong in Project references or tool results. URLs must
+not contain credentials or tokens.
+
+HTTPS and loopback HTTP remain the default connection policy. A host catalog
+can explicitly set `allowInsecureHttp: true` for one configured HTTP endpoint;
+HTTP sends its password and cookies without transport encryption. Models cannot
+set this permission or choose an endpoint.
 
 Cookie identity is kept in a private `sessions` directory beside the host
 configuration, with connection definition and server namespace isolation.
-Restarting a Service connection restores that cookie identity. Project files and
+Restarting a Service connection restores that cookie identity. A valid password
+cookie avoids another login. After expiry, a safe connection handshake may log
+in again; an already attempted edit/run/stop/input is never retried. A new
+principal must still satisfy the server controller-generation fences. SSO and
+external credential refresh are not implemented. Project files and
 native tool descriptors contain no credentials or cookies. The host must already
 run the pinned managed Jupyter extension described in [the backend guide](../jupyter/README.md).
 The Service does not install Python packages, start a server, delete kernels or
 edit an existing external server configuration.
+
+`JupyterConnections.inspect(connectionId, optionalNamespace)` performs a host-only
+connection check: standard login, server version and coordinator status. It
+returns `coordinator: "missing"` when the authenticated server has no
+`/api/disclaude` extension, independently of whether its ordinary Jupyter APIs
+work. It does not create/open a Notebook, claim control, run code or change a
+kernel. Successful authentication does not establish stack compatibility or
+product acceptance.
 
 ## Project and conversation state
 

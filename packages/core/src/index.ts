@@ -47,6 +47,7 @@ export { JupyterCoordinatorClient, createJupyterCookieJar } from './jupyter/coor
 export type {
   JupyterCoordinatorOptions,
   JupyterCoordinatorStatus,
+  JupyterConnectionInspection,
   JupyterNotebookOverview,
 } from './jupyter/coordinator-client.js';
 
