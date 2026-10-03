@@ -1,4 +1,62 @@
-# G0-B Jupyter stack experiment
+# Notebook acceptance probes
+
+## Configured-server DSH probe
+
+Real acceptance for this work uses the server configured by `JUPYTERLAB_HOST` /
+`JUPYTERLAB_PASS`. No local JupyterLab or Python environment is started by this
+mode. Build the composed Service/native checkout, then use a host-private
+connection catalog as described in [the Service guide](../../docs/jupyter-service.md):
+
+```sh
+node tests/jupyter/dsh-notebook-probe.mjs \
+  --config-file /private/jupyter/connections.json \
+  --connection-id configured \
+  --env-file /private/host.env \
+  --project-dir /path/to/dedicated-acceptance-project \
+  --dsh-checkout /path/to/composed-service-checkout \
+  --oauth-auth-file /private/existing-auth.json \
+  --model gpt-5.6-luna \
+  --notebook scratch-acceptance.ipynb \
+  --output /private/new-configured-dsh-report.json
+```
+
+The Project directory must already exist and be dedicated to this scratch
+Notebook. The Notebook must already exist on that server with `human-note`
+(Markdown), `short-cell` (code), and `long-cell` (code) IDs. The long cell should
+print `RUNNING` with `flush=True`, sleep for 30 seconds, then print `LATE`.
+The probe explicitly edits/runs the two code cells; it preserves the Markdown.
+It does not create or delete a remote Notebook/kernel. It preserves the Project's
+reference and execution records for follow-up acceptance. Existing references to
+a different Notebook and control held by another owner are refused; an explicit
+handoff must be performed before reusing that Notebook.
+
+Before reading model authentication, running the DSH binary, opening a Notebook,
+writing the Project or creating temporary DSH state, the probe performs only safe
+host login/capability reads. An authenticated server without the coordinator
+exits **2**, reports `blocked` / `not_executed`, and keeps both `modelStarted` and
+`notebookOpened` false. Other connection failures exit **1**. Neither condition
+passes Notebook acceptance. The host catalog owns the endpoint and HTTP policy;
+models receive neither that catalog nor Jupyter authentication variables.
+
+With the coordinator available, the existing native DSH phases test exact
+read/edit/run, a new native process and Service session continuing the same
+Notebook, confirmed exact-run stop, inference-idle owner stop and same-kernel
+continuation. Accepted handles must keep the same Notebook/kernel incarnation;
+the Markdown source must survive. Cleanup asks the host to stop its original
+owner, reports unknown/lost-authority outcomes as failure, and retains the remote
+Notebook/kernel and persistent Project. It removes only its own temporary DSH
+configuration/history after provider shutdown. Existing OAuth credentials are
+read without refresh and must have at least 15 minutes remaining.
+
+This is native Service/DSH component evidence. Real Feishu, native Lab human
+edits and access from the user's device remain separate product acceptance.
+The explicit `gpt-5.6-luna` route is the #5215/#5219 acceptance exception; daily
+and candidate defaults remain `gpt-6-luna`, and Astra is refused.
+
+## Historical G0-B Jupyter stack experiment
+
+The following owned-local commands describe the earlier stack experiments.
+They are not the configured-server acceptance path for this task.
 
 This opt-in probe for #5216 launches its own authenticated localhost server,
 Notebook, kernel, browser and Jupyter configuration. It uses no Project mount,

@@ -148,6 +148,13 @@ ends, owner stop and same-kernel continuation. Run the composed probe with
 explicit authentication/model arguments; it uses only owned temporary resources.
 These are component results, not Feishu or JupyterLab UI acceptance.
 
+For the user's configured server, use the host-catalog mode documented in
+[the acceptance probe guide](../tests/jupyter/README.md#configured-server-dsh-probe).
+It checks authentication/coordinator readiness before any model or Notebook
+operation, preserves a dedicated persistent Project, refuses a foreign owner
+and verifies that accepted runs keep one kernel incarnation. A missing extension
+is a blocked prerequisite, never a passing Notebook result.
+
 The submission fence requires ledger schema 3. Earlier experimental schemas are
 preserved and refused, with no reset or automatic migration. The configured
 instance still needs reviewed extension activation and actual same-Notebook
