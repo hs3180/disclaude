@@ -357,18 +357,40 @@ class Executions:
 
     def _input_requested(self, runtime, run_id, message):
         current = self.ledger.run(run_id)
-        if current["state"] not in ("stopping", "unknown"):
-            self.ledger.update(run_id, state="input_required", details={"input": message["content"]})
+        if current["state"] in ("running", "input_required"):
+            input_id = message.get("header", {}).get("msg_id")
+            if (runtime.active_run != run_id or
+                    message.get("parent_header", {}).get("msg_id") != current["request_id"] or
+                    not isinstance(input_id, str) or not input_id or len(input_id) > 256):
+                self.quarantine(runtime, "native input request identity cannot be proved")
+                return
+            self.ledger.update(run_id, state="input_required", details={
+                "input": message["content"], "inputRequestId": input_id, "inputReply": "waiting",
+            })
 
-    def input(self, run_id, value: str, controller: dict, principal: str):
+    def input(self, run_id, input_request_id: str, value: str, controller: dict, principal: str):
         run = self.ledger.run(run_id)
         runtime = self.runtimes.get(run["document_id"]) if run else None
         if not runtime or runtime.active_run != run_id or run["state"] != "input_required":
             raise HTTPError(409, reason="execution is not waiting for this input")
-        if not self.valid(runtime) or not self.ledger.owns(run["document_id"], controller, principal):
+        if (not self.valid(runtime) or runtime.incarnation != run["target"]["kernelIncarnation"] or
+                controller != run["target"]["controller"] or run["details"]["principal"] != principal or
+                not self.ledger.owns(run["document_id"], controller, principal)):
             raise HTTPError(409, reason="execution authority changed")
-        runtime.client.input(value)
-        self.ledger.update(run_id, state="running", details={"input": None})
+        if not input_request_id or run["details"].get("inputRequestId") != input_request_id:
+            raise HTTPError(409, reason="native input prompt identity changed")
+        # Consume the prompt before native send. An ambiguous reply must never
+        # be replayed into a later prompt or execution. Never persist the value.
+        self.ledger.update(run_id, state="running", details={
+            "input": None, "inputRequestId": None, "inputReply": "sending",
+        })
+        try:
+            runtime.client.input(value)
+        except Exception:
+            self.ledger.update(run_id, details={"inputReply": "unknown"})
+            self.quarantine(runtime, "native input reply outcome unknown; do not replay")
+            raise HTTPError(503, reason="native input reply outcome unknown; do not replay") from None
+        self.ledger.update(run_id, details={"inputReply": "sent"})
 
     async def stop(self, handle: dict, controller: dict, principal: str):
         run = self.ledger.run(handle["runId"])

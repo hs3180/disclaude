@@ -110,10 +110,22 @@ metadata; Jupyter run IDs and kernel incarnations are business identities.
 
 ## Remaining acceptance work
 
+The coordinator provides a request-bound Lab input endpoint at
+`POST /api/kernels/<kernelId>/requests/<requestId>/input`, with
+`input_request_id` from the request's HTTP 300 observation and an `input` value.
+Both execution identity and each native stdin prompt are fenced. The Notebook
+API similarly requires `runId`, `inputRequestId` and the current controller.
+The input transport does not persist reply values; code-generated outputs
+remain Notebook evidence. An ambiguous native send consumes the prompt and
+quarantines the execution without replay. This is a backend
+interface. The stock kernel-only nbmodel input request is unsupported; a Lab
+frontend adapter must retain the request/prompt identities before interactive
+input can be accepted as a product flow.
+
 The current tools cover cell read/edit/submit/status/stop. Creation, structured
 insert/delete/move, full report/graph observation, versioned export and Feishu
 data/result delivery remain required by the product issues. Also pending are
-the complete restart/auth/network fault matrix, shared Lab interactive input,
+the complete restart/auth/network fault matrix, Lab frontend interactive input,
 cross-run display updates, late-output reconciliation, full queue-stop behavior,
 large-output artifact delivery and visible result validity after source/kernel
 changes. Output truncation in this candidate is not full artifact acceptance.

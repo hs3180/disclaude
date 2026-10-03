@@ -250,6 +250,56 @@ async def probe(args, report):
             return response.json() if response.status_code == 200 else None
         require((await eventually(lab_done))["status"] == "ok", "Lab shared entry did not execute")
         stage("lab_run_uses_shared_coordinator")
+        human_controller = await operation("control", action="read")
+        current = await operation("read-cell", cellId="short-cell")
+        interactive_source = "first = input('First: ')\nsecond = input('Second: ')\nprint('LAB_INPUT', first, second)"
+        edited = await operation("edit-cell", cellId="short-cell", expectedRevision=current["revision"],
+                                 expectedSourceHash=current["sourceHash"], source=interactive_source,
+                                 controller=human_controller)
+        require(edited["state"] == "applied", "interactive source edit failed")
+        current = edited["snapshot"]
+        interactive = await post(f"/api/kernels/{kernel['kernelId']}/execute", {
+            "code": interactive_source, "metadata": {"document_path": path,
+                "document_id": "json:notebook:" + document_id, "cell_id": "short-cell"},
+        })
+        request_path = f"/api/kernels/{kernel['kernelId']}/requests/{interactive['request_id']}"
+        async def waiting_input(previous=None):
+            response = await client.get(base + request_path)
+            require(response.status_code in (202, 300), "interactive execution failed before input")
+            value = response.json()
+            return value if response.status_code == 300 and value["input_request_id"] != previous else None
+        first_prompt = (await eventually(waiting_input))["input_request_id"]
+        require((await client.post(base + request_path + "/input", json={"input": "missing identity"})).status_code == 400,
+                "Lab accepted an input without prompt identity")
+        require((await client.post(base + f"/api/kernels/{kernel['kernelId']}/requests/missing/input", json={
+            "input_request_id": first_prompt, "input": "wrong execution",
+        })).status_code == 404, "Lab input adopted an unknown native execution")
+        async with httpx.AsyncClient(headers={"Authorization": "token " + token}, timeout=30) as other_client:
+            await other_client.get(base + "/api/disclaude")
+            require((await other_client.post(base + request_path + "/input", json={
+                "input_request_id": first_prompt, "input": "another principal",
+            })).status_code == 409, "Lab input adopted another authenticated principal")
+        require((await client.post(base + f"/api/disclaude/notebooks/{document_id}/input", json={
+            "notebook": locator, "runId": str(uuid.uuid4()), "inputRequestId": first_prompt,
+            "controller": human_controller, "value": "unknown run",
+        })).status_code == 404, "Notebook input adopted an unknown run")
+        await post(request_path + "/input", {"input_request_id": first_prompt, "input": "answer-1"})
+        second_prompt = (await eventually(lambda: waiting_input(first_prompt)))["input_request_id"]
+        require((await client.post(base + request_path + "/input", json={
+            "input_request_id": first_prompt, "input": "stale reply",
+        })).status_code == 409, "late input reply reached the next prompt")
+        await post(request_path + "/input", {"input_request_id": second_prompt, "input": "answer-2"})
+        async def interactive_done():
+            response = await client.get(base + request_path)
+            require(response.status_code in (200, 202), "interactive execution did not complete")
+            return response.json() if response.status_code == 200 else None
+        interactive_result = await eventually(interactive_done)
+        require(interactive_result["status"] == "ok" and
+                "LAB_INPUT answer-1 answer-2" in interactive_result["outputs"], "interactive result differs")
+        require((await client.post(base + request_path + "/input", json={
+            "input_request_id": second_prompt, "input": "late terminal reply",
+        })).status_code == 409, "terminal run accepted input")
+        stage("lab_input_binds_run_and_each_native_prompt")
         async def idle_rooms():
             response = await client.get(base + "/api/disclaude")
             return response.json() if response.json()["activeRooms"] == 0 else None

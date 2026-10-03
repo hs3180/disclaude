@@ -149,7 +149,12 @@ class NotebookHandler(Handler):
             text(handle, "runId", limit=64)
             result = await executions.stop(handle, controller(data.get("controller")), self.principal)
         elif operation == "input":
-            executions.input(text(data, "runId", limit=64), text(data, "value", empty=True),
+            run_id = text(data, "runId", limit=64)
+            run = ledger.run(run_id)
+            if not run or run["document_id"] != document_id:
+                raise tornado.web.HTTPError(404, reason="run not found for Notebook")
+            executions.input(run_id, text(data, "inputRequestId", limit=256),
+                             text(data, "value", empty=True),
                              controller(data.get("controller")), self.principal)
             result = {"state": "sent"}
         elif operation == "outputs":
@@ -208,7 +213,7 @@ class LabExecuteHandler(Handler):
                       "request_status": "queued", "request_url": url, "outputs": "[]"}, 202)
 
 
-class LabRequestHandler(Handler):
+class LabRunHandler(Handler):
     def run(self, kernel_id, request_id):
         ledger, _, _ = self.coordinator
         run = ledger.request(request_id)
@@ -216,6 +221,8 @@ class LabRequestHandler(Handler):
             raise tornado.web.HTTPError(404, reason="execution request not found")
         return run
 
+
+class LabRequestHandler(LabRunHandler):
     @tornado.web.authenticated
     @authorized(action="read", resource="kernels")
     def get(self, kernel_id, request_id):
@@ -232,7 +239,9 @@ class LabRequestHandler(Handler):
                       "pending": state in ACTIVE, "status": reply.get("status"),
                       "execution_count": reply.get("execution_count"),
                       "outputs": json.dumps(details.get("outputs", [])),
-                      "input": details.get("input")}, 300 if state == "input_required" else 202 if state in ACTIVE else 200)
+                      "input": details.get("input"),
+                      "input_request_id": details.get("inputRequestId")},
+                     300 if state == "input_required" else 202 if state in ACTIVE else 200)
 
     @tornado.web.authenticated
     @authorized(action="execute", resource="kernels")
@@ -246,6 +255,20 @@ class LabRequestHandler(Handler):
             raise tornado.web.HTTPError(409, reason=result.get("reason", result["state"]))
         self.set_status(204)
         self.finish()
+
+
+class LabInputHandler(LabRunHandler):
+    @tornado.web.authenticated
+    @authorized(action="execute", resource="kernels")
+    def post(self, kernel_id, request_id):
+        run = self.run(kernel_id, request_id)
+        if run["target"]["controller"]["ownerId"] != "human:" + self.principal:
+            raise tornado.web.HTTPError(409, reason="Lab input does not own this execution")
+        data = self.body()
+        _, _, executions = self.coordinator
+        executions.input(run["run_id"], text(data, "input_request_id", limit=256),
+                         text(data, "input", empty=True), run["target"]["controller"], self.principal)
+        self.respond({"state": "sent"}, 201)
 
 
 class RecoveryHandler(Handler):
@@ -284,6 +307,7 @@ class NotebookExtension(ExtensionApp):
             (rf"/api/disclaude/notebooks/({ID})/({ID})", NotebookHandler, {}),
             (rf"/api/kernels/({ID})/execute", LabExecuteHandler, {}),
             (rf"/api/kernels/({ID})/requests/({ID})", LabRequestHandler, {}),
+            (rf"/api/kernels/({ID})/requests/({ID})/input", LabInputHandler, {}),
             (r"/api/nbmodel/settings/output-recovery", RecoveryHandler, {}),
         ])
 
