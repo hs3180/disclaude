@@ -42,7 +42,7 @@ jobs:
         with:
           node-version: '20'
           cache: npm
-      - run: python -m pip install -e './jupyter[test]'
+      - run: python -m pip install -e './jupyter[managed,test]'
       - run: npm ci
       - run: npm run build --workspace=@disclaude/core
       - run: npx vitest --run packages/core/src/jupyter/coordinator-client.test.ts

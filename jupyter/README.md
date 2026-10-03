@@ -12,18 +12,20 @@ checks do not establish product acceptance.
 
 ## Supported candidate environment
 
-Use a separate, owned Python environment and configuration. The candidate pins
+The default `managed` profile pins
 Jupyter Server 2.21.1, JupyterLab 4.6.3, collaboration 5.0.4, server-ydoc 3.0.4,
 docprovider 3.0.4, ydoc 4.1.1, pycrdt 0.14.8, nbmodel 0.2.9, jupyter-client
 8.10.0, ipykernel 7.4.0 and nbformat 5.11.1. The server refuses unverified
-versions of the RTC internals it uses. POSIX local kernel provisioners are the
-initial support boundary; Windows, remote provisioners and existing external
-instances need separate evidence.
+versions of all eleven profile dependencies. POSIX local kernel provisioners
+are the initial support boundary; Windows and remote provisioners need separate
+evidence. Historical managed probes and CI remain component checks. Actual
+acceptance uses the user's configured `.env` server; do not create or restart a
+local Jupyter environment as a substitute.
 
 Install this directory into that environment:
 
 ```sh
-python -m pip install '/path/to/disclaude/jupyter'
+python -m pip install '/path/to/disclaude/jupyter[managed]'
 ```
 
 Configure only the owned server, with an authenticated entry and private state:
@@ -47,6 +49,47 @@ cannot own execution. The existing Lab frontend's server-side Run protocol is
 handled by this coordinator. It uses Jupyter's native kernel client and manager;
 it does not implement a new kernel WebSocket protocol. Enabling the extension on
 an existing user server is not an automatic setup or compatibility check.
+
+### Experimental configured-server profile
+
+The `configured-20261003` profile exactly describes the inspected `.env`
+Docker instance. It uses Server 2.19.0, Lab/collaboration 4.4.1,
+server-ydoc/docprovider 2.4.1, nbmodel 0.1.1a4, ydoc 3.5.0, pycrdt 0.13.1,
+client 8.8.0, ipykernel 7.2.0 and nbformat 5.10.4. This is a candidate for
+in-place testing, **not an accepted supported release stack**. Installed source
+inspection and unit checks do not establish live RTC or Notebook acceptance.
+
+Package dependency ranges allow both exact profiles; they are not a statement
+that intervening versions work. Always select a pinned extra when provisioning
+an environment. Runtime startup checks the selected complete profile and
+refuses mixed, changed, missing or unknown versions. Installing the package
+does not select a profile or enable an extension.
+
+For a reviewed deployment on the existing instance, first confirm its exact
+dependencies and stage the candidate wheel. Install that wheel with
+`python -m pip install --no-deps /owned/path/disclaude_jupyter-0.1.0-py3-none-any.whl`
+to avoid altering its installed Jupyter stack. Retain the original configuration,
+image reference and private runtime state. Explicit candidate configuration is:
+
+```python
+c.NotebookExtension.stack_profile = 'configured-20261003'
+c.NotebookExtension.allow_experimental_stack = True
+```
+
+The common extension configuration above is also required, including disabling
+the original nbmodel server routes. The two execution implementations cannot be
+active together. The status endpoint reports the selected profile and its
+experimental flag. This candidate does not upgrade, patch or restart the server.
+Deployment activation needs the user's restart window: the inspected instance
+has nine existing kernels, whose live memory cannot be promised across restart.
+Do not stop them as part of a connection check. See the staged deployment plan
+in [configured-deployment.md](configured-deployment.md).
+
+Server 2.19.0 is affected by the upstream
+[nbconvert HTML sandbox advisory](https://github.com/jupyter-server/jupyter_server/security/advisories/GHSA-fcw5-x6j4-ccmp)
+(fixed in 2.20.0). This experimental profile is not the safe HTML report-preview
+release path; HTML sandbox mitigation and actual device/render checks remain
+separate deployment acceptance work.
 
 The state directory belongs to this server. A separate owner lock permits one
 writer; namespace, controller generations, native request IDs and run records
@@ -161,7 +204,7 @@ the explicitly specified real-model acceptance uses `gpt-5.6-luna`.
 Install test dependencies into the same separate environment:
 
 ```sh
-python -m pip install -e './jupyter[test]'
+python -m pip install -e './jupyter[managed,test]'
 PYTHONPATH=jupyter python -m unittest discover -s jupyter/tests -v
 npm run build --workspace=@disclaude/core
 npx vitest --run packages/core/src/jupyter/coordinator-client.test.ts
