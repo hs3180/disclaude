@@ -14,11 +14,12 @@ from jupyter_server.auth.decorator import authorized
 from jupyter_server.base.handlers import APIHandler
 from jupyter_server.extension.application import ExtensionApp
 from jupyter_server.extension.handler import ExtensionHandlerMixin
-from traitlets import Float, Integer, Unicode
+from traitlets import Bool, Enum, Float, Integer, Unicode
 
 from .documents import Documents
 from .executions import Executions
 from .ledger import ACTIVE, Ledger
+from .stacks import EXPERIMENTAL_PROFILES, STACK_PACKAGES, STACK_PROFILES, verify_stack
 
 ID = r"[A-Za-z0-9_-]+"
 
@@ -75,7 +76,10 @@ class StatusHandler(Handler):
     def get(self):
         ledger, documents, executions = self.coordinator
         self.respond({"protocolVersion": 1, "serverNamespace": ledger.namespace,
-                      "stack": self.extensionapp.stack, "activeRooms": len(documents.leases),
+                      "stack": self.extensionapp.stack,
+                      "stackProfile": self.extensionapp.stack_profile,
+                      "experimentalStack": self.extensionapp.stack_profile in EXPERIMENTAL_PROFILES,
+                      "activeRooms": len(documents.leases),
                       "maxRooms": documents.max_rooms, "idleSeconds": documents.idle_seconds,
                       "pendingRooms": len(documents.pending_rooms),
                       "roomFailures": dict(documents.cleanup_errors),
@@ -291,18 +295,16 @@ class RecoveryHandler(Handler):
 
 class NotebookExtension(ExtensionApp):
     name = "disclaude_jupyter"
+    stack_profile = Enum(tuple(STACK_PROFILES), default_value="managed", config=True)
+    allow_experimental_stack = Bool(False, config=True)
     ledger_path = Unicode("", config=True)
     idle_seconds = Float(60, min=1, config=True)
     max_rooms = Integer(16, min=1, config=True)
 
     def initialize_handlers(self):
-        self.stack = {name: version(name) for name in (
-            "jupyter-server", "jupyter-server-ydoc", "jupyter-server-nbmodel", "jupyter-ydoc", "pycrdt"
-        )}
-        expected = {"jupyter-server": "2.21.1", "jupyter-server-ydoc": "3.0.4",
-                    "jupyter-server-nbmodel": "0.2.9", "jupyter-ydoc": "4.1.1", "pycrdt": "0.14.8"}
-        if self.stack != expected:
-            raise RuntimeError("Notebook coordinator requires its verified managed stack")
+        self.stack = {name: version(name) for name in STACK_PACKAGES}
+        verify_stack(self.stack_profile, self.stack,
+                     allow_experimental=self.allow_experimental_stack)
         original = self.serverapp.extension_manager.extensions.get("jupyter_server_nbmodel")
         if original and original.enabled:
             raise RuntimeError("disable the original nbmodel server routes before enabling the coordinator")

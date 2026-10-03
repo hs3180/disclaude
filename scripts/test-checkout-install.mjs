@@ -96,6 +96,7 @@ try {
     'jupyter/disclaude_jupyter/documents.py',
     'jupyter/disclaude_jupyter/executions.py',
     'jupyter/disclaude_jupyter/ledger.py',
+    'jupyter/disclaude_jupyter/stacks.py',
   ]) {
     assert(packedPaths.has(path), `Optional managed Jupyter payload is missing ${path}`);
     assert(readFileSync(join(distribution, path)).length > 0);
