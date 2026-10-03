@@ -105,6 +105,12 @@ metadata; Jupyter run IDs and kernel incarnations are business identities.
 - Stop targets the stored run and current principal/controller generation. An
   interrupt acknowledgment is not confirmation: cancellation requires the
   terminal native observation. Stopping inference is a separate operation.
+- `stop-owner` pauses the current generation and cancels its unsent queue in one
+  ledger transaction before interrupting the exact active run. Late submissions
+  and old callbacks are rejected. A new claim resumes a paused owner with a new
+  generation only after active runs terminate. `control-state` reports the pause
+  independently of the controller identity. Ledger schema is now version 2;
+  earlier experimental ledgers are preserved and refused, never reset or replayed.
 - Server restart marks unfinished runs unknown and does not replay them.
   Notebook persistence does not prove that kernel variables survived.
 
@@ -126,7 +132,7 @@ The current tools cover cell read/edit/submit/status/stop. Creation, structured
 insert/delete/move, full report/graph observation, versioned export and Feishu
 data/result delivery remain required by the product issues. Also pending are
 the complete restart/auth/network fault matrix, Lab frontend interactive input,
-cross-run display updates, late-output reconciliation, full queue-stop behavior,
+cross-run display updates, late-output reconciliation, the queue-stop fault matrix,
 large-output artifact delivery and visible result validity after source/kernel
 changes. Output truncation in this candidate is not full artifact acceptance.
 

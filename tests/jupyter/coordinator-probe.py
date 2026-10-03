@@ -165,12 +165,20 @@ async def probe(args, report):
         kernel = await operation("kernel")
 
         async def submit(cell_id):
-            snapshot = await operation("read-cell", cellId=cell_id)
-            target = {"notebook": locator, "cellId": cell_id, "expectedRevision": snapshot["revision"],
-                      "sourceHash": snapshot["sourceHash"], **kernel, "controller": lease, "runId": str(uuid.uuid4())}
-            result = await operation("submit", target=target, source=snapshot["source"])
-            require(result["state"] == "accepted", "execution submission failed: " + str(result))
-            return result["handle"]
+            run_id = str(uuid.uuid4())
+            for attempt in range(3):
+                snapshot = await operation("read-cell", cellId=cell_id)
+                target = {"notebook": locator, "cellId": cell_id, "expectedRevision": snapshot["revision"],
+                          "sourceHash": snapshot["sourceHash"], **kernel, "controller": lease, "runId": run_id}
+                result = await operation("submit", target=target, source=snapshot["source"])
+                if result["state"] == "accepted":
+                    return result["handle"]
+                # Only an explicit pre-send CAS rejection permits a new read.
+                # Unknown/lost acknowledgments are never replayed.
+                require(result == {"state": "rejected", "reason": "live Notebook source or revision changed"},
+                        "execution submission failed: " + str(result))
+                report.setdefault("preSendConflicts", []).append({"cellId": cell_id, "runId": run_id, "attempt": attempt + 1})
+            raise RuntimeError("Notebook revision continued changing before native send")
 
         async def terminal(handle):
             async def check():
@@ -210,6 +218,31 @@ async def probe(args, report):
         recovery = await submit("short-cell")
         require((await terminal(recovery))["state"] == "completed", "same kernel failed after interrupt")
         stage("same_kernel_recovery")
+        owner_active = await submit("long-cell")
+        async def owner_running():
+            output = await operation("outputs", runId=owner_active["runId"])
+            return output if "RUNNING" in json.dumps(output["outputs"]) else None
+        await eventually(owner_running)
+        owner_queued = await submit("short-cell")
+        require((await operation("status", runId=owner_queued["runId"]))["state"] == "queued", "queue fixture already executed")
+        owner_ack = await operation("stop-owner", controller=lease)
+        require(owner_ack["state"] == "requested" and set(owner_ack["runIds"]) == {owner_active["runId"], owner_queued["runId"]}, "owner stop did not cover exact active queue")
+        owner_cancelled = await terminal(owner_active)
+        queued_cancelled = await terminal(owner_queued)
+        require(owner_cancelled["state"] == "cancelled" and owner_cancelled["details"].get("kernelIdleConfirmed"), "owner interrupt did not reach confirmed terminal idle")
+        require(queued_cancelled["state"] == "cancelled" and queued_cancelled["details"].get("outputCount") == 0, "unsent queue was not cancelled")
+        require((await operation("control-state"))["paused"] is True, "owner generation was not paused")
+        snapshot = await operation("read-cell", cellId="short-cell")
+        late_target = {**owner_queued, "runId": str(uuid.uuid4()), "expectedRevision": snapshot["revision"], "sourceHash": snapshot["sourceHash"]}
+        late_target.pop("requestId")
+        require((await operation("submit", target=late_target, source=snapshot["source"]))["state"] == "rejected", "late POST crossed the owner pause")
+        old_lease = lease
+        lease = await operation("control", ownerId=lease["ownerId"], expectedGeneration=lease["generation"])
+        require(lease["generation"] == old_lease["generation"] + 1, "same owner resume reused paused generation")
+        require((await operation("stop-owner", controller=old_lease))["state"] == "ownership_lost", "old owner stop crossed resumed generation")
+        require((await terminal(await submit("short-cell")))["state"] == "completed", "resumed same kernel failed")
+        report["ownerStop"] = {"acknowledgment": owner_ack, "active": owner_cancelled, "queued": queued_cancelled, "resumedController": lease}
+        stage("atomic_owner_queue_stop_late_post_fence_and_resume")
         if args.dsh_checkout:
             native_report = Path(args.output).resolve().with_name(Path(args.output).stem + "-native-dsh.json")
             native_environment = dict(os.environ)
@@ -219,6 +252,7 @@ async def probe(args, report):
                 "--dsh-checkout", args.dsh_checkout, "--oauth-auth-file", args.oauth_auth_file,
                 "--model", args.model, "--binary", args.dsh_binary,
                 "--server-url", base, "--notebook", path, "--output", str(native_report),
+                *(["--host-session"] if args.host_session else []),
                 cwd=Path(__file__).resolve().parents[2], env=native_environment,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
             )
@@ -341,6 +375,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", required=True)
     parser.add_argument("--dsh-checkout")
+    parser.add_argument("--host-session", action="store_true")
     parser.add_argument("--oauth-auth-file")
     parser.add_argument("--model")
     parser.add_argument("--dsh-binary", default="dsh")

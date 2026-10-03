@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import nock from 'nock';
-import { JupyterCoordinatorClient } from './coordinator-client.js';
+import { JupyterCoordinatorClient, createJupyterCookieJar } from './coordinator-client.js';
 import type { JupyterExecutionSubmitRequest, JupyterNotebookLocator } from './contracts.js';
 
 const notebook: JupyterNotebookLocator = {
@@ -106,6 +106,51 @@ async function fixture(
 }
 
 describe('JupyterCoordinatorClient', () => {
+  it('reads bounded live overviews and restores a host cookie jar', async () => {
+    const { client } = await fixture((_request, response) =>
+      response.end(
+        JSON.stringify({
+          notebook,
+          cells: [{ cellId: 'markdown', cellType: 'markdown', sourcePreview: 'human revision' }],
+        })
+      )
+    );
+    expect(await client.describeNotebook(notebook)).toMatchObject({
+      cells: [{ sourcePreview: 'human revision' }],
+    });
+    const original = await createJupyterCookieJar();
+    await original.setCookie('host=private; Path=/', 'https://owned.example/');
+    const restored = await createJupyterCookieJar(await original.serialize());
+    expect(await restored.getCookieString('https://owned.example/')).toBe('host=private');
+    expect(await restored.getCookieString('https://foreign.example/')).toBe('');
+  });
+
+  it('separates owner-stop acknowledgment from execution status', async () => {
+    const { client, seen } = await fixture((request, response) =>
+      response.end(
+        JSON.stringify(
+          request.url?.endsWith('/control-state')
+            ? { controller, paused: true }
+            : { state: 'requested', runIds: ['run'] }
+        )
+      )
+    );
+    expect(await client.controlState(notebook)).toEqual({ controller, paused: true });
+    expect(await client.stopOwner(notebook, controller)).toEqual({
+      state: 'requested',
+      runIds: ['run'],
+    });
+    expect(seen.at(-1)?.body).toEqual({ notebook, controller });
+    expect(seen.some((item) => item.path.endsWith('/status'))).toBe(false);
+  });
+
+  it('keeps malformed and failed owner-stop responses unknown', async () => {
+    const { client } = await fixture((_request, response) =>
+      response.end(JSON.stringify({ state: 'requested' }))
+    );
+    expect(await client.stopOwner(notebook, controller)).toMatchObject({ state: 'unknown' });
+  });
+
   it('preserves the authenticated Jupyter cookie identity through control and edits', async () => {
     const { client, seen } = await fixture(
       (request, response) => {

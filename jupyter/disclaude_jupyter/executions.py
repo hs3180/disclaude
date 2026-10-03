@@ -137,6 +137,7 @@ class Executions:
             current = self.ledger.controller(document_id)
             if self.ledger.active(document_id) and not (
                 current and current["owner_id"] == owner and current["principal"] == principal
+                and not self.ledger.paused(document_id)
             ):
                 raise HTTPError(409, reason="stop the active execution before taking control")
             try:
@@ -188,10 +189,10 @@ class Executions:
             if not keep:
                 self.documents.release(entry)
 
-    def authorized_run(self, run: dict, runtime: KernelRuntime, entry):
+    def authorized_run(self, run: dict, runtime: KernelRuntime, entry, *, allow_paused=False):
         return (self.valid(runtime) and run["target"]["kernelIncarnation"] == runtime.incarnation
                 and self.ledger.owns(runtime.document_id, run["target"]["controller"],
-                                     run["details"]["principal"])
+                                     run["details"]["principal"], allow_paused=allow_paused)
                 and source_hash(str(cell(entry.document, run["target"]["cellId"])["source"]))
                 == run["target"]["sourceHash"])
 
@@ -327,7 +328,7 @@ class Executions:
             self.ledger.update(run_id, details={"lateOutput": True})
             return
         try:
-            allowed = self.authorized_run(run, runtime, entry)
+            allowed = self.authorized_run(run, runtime, entry, allow_paused=True)
         except HTTPError:
             allowed = False
         if not allowed or run["state"] == "unknown":
@@ -392,11 +393,32 @@ class Executions:
             raise HTTPError(503, reason="native input reply outcome unknown; do not replay") from None
         self.ledger.update(run_id, details={"inputReply": "sent"})
 
+    async def stop_owner(self, notebook: dict, controller: dict, principal: str):
+        document_id = self.documents.locate(notebook)["identity"]["documentId"]
+        with self.ledger.transaction():
+            if not self.ledger.owns(document_id, controller, principal, allow_paused=True):
+                current = self.ledger.controller(document_id)
+                return {"state": "ownership_lost", "currentGeneration": current["generation"] if current else 0}
+            # This transaction fences late POSTs and the worker's before_send,
+            # and cancels every queued request before yielding to interrupt.
+            self.ledger.pause(document_id, controller, principal)
+            owned = [run for run in self.ledger.active(document_id)
+                     if run["target"]["controller"] == controller and run["details"]["principal"] == principal]
+            for run in owned:
+                if run["state"] == "queued":
+                    self.ledger.update(run["run_id"], state="cancelled", stage="not_sent",
+                                       details={"reason": "owner stopped before native send"})
+        for run in owned:
+            if run["state"] != "queued":
+                await self.stop(self.handle(run), controller, principal)
+        return {"state": "requested", "runIds": [run["run_id"] for run in owned]}
+
     async def stop(self, handle: dict, controller: dict, principal: str):
         run = self.ledger.run(handle["runId"])
         if not run or self.handle(run) != handle:
             return {"state": "not_found"}
-        if not self.ledger.owns(run["document_id"], controller, principal):
+        if (controller != run["target"]["controller"] or run["details"]["principal"] != principal
+                or not self.ledger.owns(run["document_id"], controller, principal, allow_paused=True)):
             current = self.ledger.controller(run["document_id"])
             return {"state": "ownership_lost", "currentGeneration": current["generation"] if current else 0}
         runtime = self.runtimes.get(run["document_id"])

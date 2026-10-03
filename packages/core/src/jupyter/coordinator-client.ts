@@ -39,6 +39,19 @@ export interface JupyterCoordinatorStatus {
   idleSeconds: number;
 }
 
+export interface JupyterNotebookOverview {
+  notebook: JupyterNotebookLocator;
+  cells: Array<{ cellId: string; cellType: string; sourcePreview: string }>;
+}
+
+/** Restore only a host-owned jar. No cookie data belongs in a tool descriptor. */
+export async function createJupyterCookieJar(serialized?: unknown): Promise<CookieJar> {
+  const { CookieJar } = await import('tough-cookie');
+  return serialized === undefined
+    ? new CookieJar()
+    : CookieJar.fromJSON(JSON.stringify(serialized));
+}
+
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('Invalid Jupyter coordinator object');
@@ -346,6 +359,33 @@ export class JupyterCoordinatorClient implements JupyterNotebookPort, JupyterExe
     return resource;
   }
 
+  async describeNotebook(notebook: JupyterNotebookLocator): Promise<JupyterNotebookOverview> {
+    const data = object(await this.operation(notebook, 'describe'));
+    const resource = locator(data.notebook);
+    if (
+      !sameNotebook(resource, notebook) ||
+      !Array.isArray(data.cells) ||
+      data.cells.length > 1024
+    ) {
+      throw new Error('Notebook overview identity or cell limit changed');
+    }
+    return {
+      notebook: resource,
+      cells: data.cells.map((value) => {
+        const cell = object(value);
+        const preview = typeof cell.sourcePreview === 'string' ? cell.sourcePreview : undefined;
+        if (preview === undefined || Buffer.byteLength(preview) > 8000) {
+          throw new Error('Invalid Notebook source preview');
+        }
+        return {
+          cellId: string(cell.cellId, 'cellId'),
+          cellType: string(cell.cellType, 'cellType'),
+          sourcePreview: preview,
+        };
+      }),
+    };
+  }
+
   async claimControl(
     notebook: JupyterNotebookLocator,
     ownerId: string,
@@ -359,6 +399,46 @@ export class JupyterCoordinatorClient implements JupyterNotebookPort, JupyterExe
   ): Promise<JupyterControllerGeneration | null> {
     const result = await this.operation(notebook, 'control', { action: 'read' });
     return result === null ? null : lease(result);
+  }
+
+  async controlState(notebook: JupyterNotebookLocator): Promise<{
+    controller: JupyterControllerGeneration | null;
+    paused: boolean;
+  }> {
+    const data = object(await this.operation(notebook, 'control-state'));
+    if (typeof data.paused !== 'boolean') {
+      throw new Error('Invalid Notebook control state');
+    }
+    return {
+      controller: data.controller === null ? null : lease(data.controller),
+      paused: data.paused,
+    };
+  }
+
+  /** Atomically fence this generation and cancel its entire unsent queue. */
+  async stopOwner(
+    notebook: JupyterNotebookLocator,
+    controller: JupyterControllerGeneration
+  ): Promise<
+    | { state: 'requested'; runIds: string[] }
+    | { state: 'ownership_lost'; currentGeneration: number }
+    | { state: 'unknown'; reason: string }
+  > {
+    try {
+      const data = object(await this.operation(notebook, 'stop-owner', { controller }));
+      if (data.state === 'ownership_lost') {
+        return {
+          state: 'ownership_lost',
+          currentGeneration: number(data.currentGeneration, 'currentGeneration'),
+        };
+      }
+      if (data.state !== 'requested' || !Array.isArray(data.runIds) || data.runIds.length > 256) {
+        throw new Error('Invalid Notebook owner stop acknowledgment');
+      }
+      return { state: 'requested', runIds: data.runIds.map((value) => string(value, 'runId')) };
+    } catch {
+      return { state: 'unknown', reason: 'Notebook owner stop outcome could not be verified' };
+    }
   }
 
   async ensureKernel(

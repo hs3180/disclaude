@@ -3,6 +3,7 @@ import sqlite3
 import unittest
 import uuid
 from pathlib import Path
+from contextlib import closing
 
 from disclaude_jupyter.ledger import Ledger
 from disclaude_jupyter.executions import ExecutionSession
@@ -48,6 +49,28 @@ class LedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "exhausted"):
             self.ledger.claim("doc-1", "new", "user", 9007199254740991)
 
+    def test_pause_blocks_new_writes_and_resume_fences_the_old_generation(self):
+        original = self.ledger.claim("doc-1", "agent", "user", 0)
+        with self.ledger.transaction():
+            self.ledger.pause("doc-1", original, "user")
+        self.assertTrue(self.ledger.paused("doc-1"))
+        self.assertFalse(self.ledger.owns("doc-1", original, "user"))
+        self.assertTrue(self.ledger.owns("doc-1", original, "user", allow_paused=True))
+        self.assertFalse(self.ledger.owns("doc-1", original, "other", allow_paused=True))
+        resumed = self.ledger.claim("doc-1", "agent", "user", original["generation"])
+        self.assertEqual(resumed["generation"], original["generation"] + 1)
+        self.assertFalse(self.ledger.paused("doc-1"))
+        self.assertFalse(self.ledger.owns("doc-1", original, "user", allow_paused=True))
+        self.assertTrue(self.ledger.owns("doc-1", resumed, "user"))
+
+    def test_pause_survives_server_restart(self):
+        original = self.ledger.claim("doc-1", "agent", "user", 0)
+        self.ledger.pause("doc-1", original, "user")
+        self.ledger.close()
+        self.ledger = Ledger(self.path)
+        self.assertTrue(self.ledger.paused("doc-1"))
+        self.assertFalse(self.ledger.owns("doc-1", original, "user"))
+
     def test_failed_transaction_rolls_back(self):
         with self.assertRaises(ValueError):
             with self.ledger.transaction():
@@ -67,13 +90,13 @@ class LedgerTests(unittest.TestCase):
 
     def test_future_schema_is_preserved_and_rejected(self):
         self.ledger.close()
-        with sqlite3.connect(self.path) as database:
-            database.execute("PRAGMA user_version=2")
+        with closing(sqlite3.connect(self.path)) as database:
+            database.execute("PRAGMA user_version=3")
         with self.assertRaisesRegex(RuntimeError, "unsupported Notebook ledger schema"):
             Ledger(self.path)
-        with sqlite3.connect(self.path) as database:
-            self.assertEqual(database.execute("PRAGMA user_version").fetchone()[0], 2)
-            database.execute("PRAGMA user_version=1")
+        with closing(sqlite3.connect(self.path)) as database:
+            self.assertEqual(database.execute("PRAGMA user_version").fetchone()[0], 3)
+            database.execute("PRAGMA user_version=2")
         self.ledger = Ledger(self.path)
 
     def test_restart_preserves_identity_and_does_not_replay(self):
