@@ -30,11 +30,11 @@ checks do not establish product acceptance.
 
 The following versions describe the remote server's environment, not the
 disclaude host. Preserve its existing deployment and configuration. This
-candidate pins
+default `managed` profile pins
 Jupyter Server 2.21.1, JupyterLab 4.6.3, collaboration 5.0.4, server-ydoc 3.0.4,
 docprovider 3.0.4, ydoc 4.1.1, pycrdt 0.14.8, nbmodel 0.2.9, jupyter-client
 8.10.0, ipykernel 7.4.0 and nbformat 5.11.1. The server refuses unverified
-versions of the RTC internals it uses. The current backend verifies a POSIX
+versions of all eleven selected-profile dependencies. The current backend verifies a POSIX
 kernel process through Jupyter's LocalProvisioner on the remote Jupyter machine.
 "Local" here means local to that remote server/container. Network access from a
 different disclaude machine is supported by the HTTP client; kernels on a third
@@ -51,9 +51,8 @@ python -m pip install --no-deps /staged/disclaude_jupyter-0.1.0-py3-none-any.whl
 
 This does not resolve a version mismatch or authorize a server restart. The
 actual `.env` server has a different stack and lacks this extension; its
-experimental compatibility/deployment candidate is reviewed separately in
-[#5248](https://github.com/hs3180/disclaude/pull/5248). Preserve its existing
-configuration, image, persistent data and kernel work before activation.
+experimental profile is described below. Preserve its existing configuration,
+image, persistent data and kernel work before activation.
 
 Configure the remote server through its deployment controller, with an
 authenticated entry and private persistent state:
@@ -77,6 +76,47 @@ cannot own execution. The existing Lab frontend's server-side Run protocol is
 handled by this coordinator. It uses Jupyter's native kernel client and manager;
 it does not implement a new kernel WebSocket protocol. Enabling the extension on
 an existing user server is not an automatic setup or compatibility check.
+
+### Experimental configured-server profile
+
+The `configured-20261003` profile exactly describes the inspected `.env`
+Docker instance. It uses Server 2.19.0, Lab/collaboration 4.4.1,
+server-ydoc/docprovider 2.4.1, nbmodel 0.1.1a4, ydoc 3.5.0, pycrdt 0.13.1,
+client 8.8.0, ipykernel 7.2.0 and nbformat 5.10.4. This is a candidate for
+in-place testing, **not an accepted supported release stack**. Installed source
+inspection and unit checks do not establish live RTC or Notebook acceptance.
+
+Package dependency ranges allow both exact profiles; they are not a statement
+that intervening versions work. Always select a pinned extra when provisioning
+an environment. Runtime startup checks the selected complete profile and
+refuses mixed, changed, missing or unknown versions. Installing the package
+does not select a profile or enable an extension.
+
+For a reviewed deployment on the existing instance, first confirm its exact
+dependencies and stage the candidate wheel. Install that wheel with
+`python -m pip install --no-deps /owned/path/disclaude_jupyter-0.1.0-py3-none-any.whl`
+to avoid altering its installed Jupyter stack. Retain the original configuration,
+image reference and private runtime state. Explicit candidate configuration is:
+
+```python
+c.NotebookExtension.stack_profile = 'configured-20261003'
+c.NotebookExtension.allow_experimental_stack = True
+```
+
+The common extension configuration above is also required, including disabling
+the original nbmodel server routes. The two execution implementations cannot be
+active together. The status endpoint reports the selected profile and its
+experimental flag. This candidate does not upgrade, patch or restart the server.
+Deployment activation needs the user's restart window: the inspected instance
+has nine existing kernels, whose live memory cannot be promised across restart.
+Do not stop them as part of a connection check. See the staged deployment plan
+in [configured-deployment.md](configured-deployment.md).
+
+Server 2.19.0 is affected by the upstream
+[nbconvert HTML sandbox advisory](https://github.com/jupyter-server/jupyter_server/security/advisories/GHSA-fcw5-x6j4-ccmp)
+(fixed in 2.20.0). This experimental profile is not the safe HTML report-preview
+release path; HTML sandbox mitigation and actual device/render checks remain
+separate deployment acceptance work.
 
 The example ledger path is a remote deployment placeholder: select an actual
 persistent writable mount through the server's deployment controller.
