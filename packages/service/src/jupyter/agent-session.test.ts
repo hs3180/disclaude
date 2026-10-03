@@ -7,6 +7,8 @@ import type {
   JupyterExecutionHandle,
   JupyterExecutionObservation,
   JupyterExecutionSubmitRequest,
+  JupyterExecutionTarget,
+  JupyterExecutionReconciliationResult,
 } from '@disclaude/core';
 import { NotebookAgentSession, notebookSessionFactory } from './agent-session.js';
 import { JupyterConnections } from './connections.js';
@@ -74,6 +76,15 @@ function fixture() {
     }),
     getStatus: vi.fn((_notebook, runId: string) =>
       Promise.resolve(runs.get(runId) ?? { runId, state: 'unknown' })
+    ),
+    fenceUnsentSubmission: vi.fn(
+      (target: JupyterExecutionTarget): Promise<JupyterExecutionReconciliationResult> =>
+        Promise.resolve({
+          state: 'not_started',
+          runId: target.runId,
+          target,
+          submissionFenced: true,
+        })
     ),
     stopOwner: vi.fn((_notebook, controller) => {
       if (
@@ -161,7 +172,7 @@ describe('NotebookAgentSession', () => {
 
   it('binds tools only to live authorized references and refreshes human source per message', async () => {
     const f = fixture();
-    expect(f.session.tools).toHaveLength(8);
+    expect(f.session.tools).toHaveLength(9);
     await expect(
       f.execute('notebook_read_cell', { notebookId: 'unbound', cellId: 'cell' })
     ).rejects.toThrow('not authorized');
@@ -209,6 +220,231 @@ describe('NotebookAgentSession', () => {
     expect((await f.submit()).state).toBe('not_started');
     expect(f.fake.submit).toHaveBeenCalledOnce();
     expect(await f.session.messageContext()).toContain('unknown');
+  });
+
+  it('unblocks only after fencing the original unknown target, then uses a new runId', async () => {
+    const f = fixture();
+    f.fake.submit.mockImplementationOnce((request) =>
+      Promise.resolve({ state: 'unknown', runId: request.target.runId } as never)
+    );
+    expect((await f.submit()).state).toBe('unknown');
+    const [[{ target: original }]] = f.fake.submit.mock.calls;
+    expect((await f.submit()).state).toBe('not_started');
+    const proof = await f.execute('notebook_reconcile_submission', {
+      notebookId: await f.id(),
+      runId: original.runId,
+    });
+    expect(proof).toMatchObject({
+      state: 'not_started',
+      submissionFenced: true,
+      target: original,
+    });
+    expect(f.fake.fenceUnsentSubmission).toHaveBeenCalledWith(original);
+    const next = await f.submit();
+    expect(next.state).toBe('accepted');
+    expect(next.handle.runId).not.toBe(original.runId);
+    expect(
+      f.fake.submit.mock.calls.filter(([r]) => r.target.runId === original.runId)
+    ).toHaveLength(1);
+  });
+
+  it('keeps a recorded run and its original handle instead of pretending it never started', async () => {
+    const f = fixture();
+    const send = f.fake.submit.getMockImplementation()!;
+    f.fake.submit.mockImplementationOnce(async (request) => {
+      await send(request);
+      return { state: 'unknown', runId: request.target.runId } as never;
+    });
+    expect((await f.submit()).state).toBe('unknown');
+    const [[{ target: original }]] = f.fake.submit.mock.calls;
+    f.fake.fenceUnsentSubmission.mockImplementationOnce((target) =>
+      Promise.resolve({ state: 'recorded', observation: f.runs.get(target.runId)! })
+    );
+    expect(
+      await f.execute('notebook_reconcile_submission', {
+        notebookId: await f.id(),
+        runId: original.runId,
+      })
+    ).toMatchObject({
+      state: 'recorded',
+      observation: { state: 'running', handle: { runId: original.runId } },
+    });
+    expect(f.fake.submit).toHaveBeenCalledOnce();
+    expect(await f.session.stop()).toEqual([{ runId: original.runId, state: 'cancelled' }]);
+  });
+
+  it.each(['unknown', 'ownership_lost'] as const)(
+    'keeps %s reconciliation blocked',
+    async (state) => {
+      const f = fixture();
+      f.fake.submit.mockImplementationOnce((request) =>
+        Promise.resolve({ state: 'unknown', runId: request.target.runId } as never)
+      );
+      expect((await f.submit()).state).toBe('unknown');
+      const [[{ target: original }]] = f.fake.submit.mock.calls;
+      f.fake.fenceUnsentSubmission.mockResolvedValueOnce({
+        state,
+        runId: original.runId,
+        reason: 'unverified',
+        currentGeneration: 2,
+      } as never);
+      expect(
+        await f.execute('notebook_reconcile_submission', {
+          notebookId: await f.id(),
+          runId: original.runId,
+        })
+      ).toMatchObject({ state });
+      expect((await f.submit()).state).toBe('not_started');
+      expect(f.fake.submit).toHaveBeenCalledOnce();
+    }
+  );
+
+  it('rejects another target in an absence proof without clearing the unknown attempt', async () => {
+    const f = fixture();
+    f.fake.submit.mockImplementationOnce((request) =>
+      Promise.resolve({ state: 'unknown', runId: request.target.runId } as never)
+    );
+    expect((await f.submit()).state).toBe('unknown');
+    const [[{ target: original }]] = f.fake.submit.mock.calls;
+    f.fake.fenceUnsentSubmission.mockImplementationOnce((target) =>
+      Promise.resolve({
+        state: 'not_started',
+        runId: target.runId,
+        target: { ...target, kernelIncarnation: 'other' },
+        submissionFenced: true,
+      })
+    );
+    await expect(
+      f.execute('notebook_reconcile_submission', {
+        notebookId: await f.id(),
+        runId: original.runId,
+      })
+    ).rejects.toThrow('original execution target');
+    expect((await f.submit()).state).toBe('not_started');
+  });
+
+  it('refuses a foreign runId, an accepted handle and stopped callbacks before a fence request', async () => {
+    const f = fixture();
+    const alias = await f.id();
+    await expect(
+      f.execute('notebook_reconcile_submission', { notebookId: alias, runId: 'foreign' })
+    ).rejects.toThrow('original unaccepted attempt');
+    const accepted = await f.submit();
+    await expect(
+      f.execute('notebook_reconcile_submission', {
+        notebookId: alias,
+        runId: accepted.handle.runId,
+      })
+    ).rejects.toThrow('original unaccepted attempt');
+    f.session.pause();
+    await expect(
+      f.execute('notebook_reconcile_submission', {
+        notebookId: alias,
+        runId: accepted.handle.runId,
+      })
+    ).rejects.toThrow('stopped');
+    expect(f.fake.fenceUnsentSubmission).not.toHaveBeenCalled();
+  });
+
+  it('continues a host-reopened conversation after its original unknown attempt is fenced', async () => {
+    const f = fixture();
+    f.fake.submit.mockImplementationOnce((request) =>
+      Promise.resolve({ state: 'unknown', runId: request.target.runId } as never)
+    );
+    expect((await f.submit()).state).toBe('unknown');
+    const [[{ target: original }]] = f.fake.submit.mock.calls;
+    const reopened = f.create();
+    const alias = await f.id();
+    await reopened.tools
+      .find((tool) => tool.name === 'notebook_reconcile_submission')!
+      .execute(
+        { notebookId: alias, runId: original.runId },
+        { signal: new AbortController().signal }
+      );
+    f.fake.getStatus.mockResolvedValueOnce({ runId: original.runId, state: 'unknown' } as never);
+    await reopened.tools
+      .find((tool) => tool.name === 'notebook_execution_status')!
+      .execute(
+        { notebookId: alias, runId: original.runId },
+        { signal: new AbortController().signal }
+      );
+    expect(await reopened.messageContext()).toContain('not_started');
+    const next = await reopened.tools
+      .find((tool) => tool.name === 'notebook_run_cell')!
+      .execute(
+        {
+          notebookId: alias,
+          cellId: 'cell',
+          expectedRevision: 'revision',
+          sourceHash: 'hash',
+          source: 'value = 73',
+        },
+        { signal: new AbortController().signal }
+      );
+    expect(next).toMatchObject({ state: 'accepted' });
+    expect(f.fake.submit.mock.calls[1][0].target.runId).not.toBe(original.runId);
+  });
+
+  it('owner stop fences an absent unknown attempt before a fresh session resumes', async () => {
+    const f = fixture();
+    f.fake.submit.mockImplementationOnce((request) =>
+      Promise.resolve({ state: 'unknown', runId: request.target.runId } as never)
+    );
+    expect((await f.submit()).state).toBe('unknown');
+    const [[{ target: original }]] = f.fake.submit.mock.calls;
+    const alias = await f.id();
+    expect(await f.session.stop()).toEqual([{ runId: original.runId, state: 'already_terminal' }]);
+    expect(f.fake.fenceUnsentSubmission).toHaveBeenCalledWith(
+      f.fake.submit.mock.calls[0][0].target
+    );
+    const reopened = f.create();
+    const next = await reopened.tools
+      .find((tool) => tool.name === 'notebook_run_cell')!
+      .execute(
+        {
+          notebookId: alias,
+          cellId: 'cell',
+          expectedRevision: 'revision',
+          sourceHash: 'hash',
+          source: 'value = 73',
+        },
+        { signal: new AbortController().signal }
+      );
+    expect(next).toMatchObject({ state: 'accepted' });
+    expect(f.fake.claimControl.mock.calls.map((call) => call[2])).toEqual([0, 1]);
+    expect(f.fake.submit.mock.calls[1][0].target.runId).not.toBe(original.runId);
+  });
+
+  it('records a verified late fence before refusing an inference-paused callback', async () => {
+    const f = fixture();
+    f.fake.submit.mockImplementationOnce((request) =>
+      Promise.resolve({ state: 'unknown', runId: request.target.runId } as never)
+    );
+    expect((await f.submit()).state).toBe('unknown');
+    const [[{ target: original }]] = f.fake.submit.mock.calls;
+    let resolve!: (value: JupyterExecutionReconciliationResult) => void;
+    f.fake.fenceUnsentSubmission.mockImplementationOnce(
+      () =>
+        new Promise((r) => {
+          resolve = r;
+        })
+    );
+    const pending = f.execute('notebook_reconcile_submission', {
+      notebookId: await f.id(),
+      runId: original.runId,
+    });
+    await vi.waitFor(() => expect(f.fake.fenceUnsentSubmission).toHaveBeenCalledOnce());
+    f.session.pause();
+    resolve({
+      state: 'not_started',
+      runId: original.runId,
+      target: original,
+      submissionFenced: true,
+    });
+    await expect(pending).rejects.toThrow('stopped');
+    expect(await f.create().messageContext()).toContain('not_started');
+    await expect(f.submit()).rejects.toThrow('stopped');
+    expect(f.fake.submit).toHaveBeenCalledOnce();
   });
 
   it('never adopts another owner or interrupts after authority changed', async () => {

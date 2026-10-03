@@ -129,8 +129,18 @@ export type JupyterExecutionSubmitResult =
   | { state: 'not_started'; reason: string }
   | { state: 'unknown'; runId: string; reason: string };
 
+/** Durable server proof: this exact attempt cannot enter a kernel later. */
+export interface JupyterUnsubmittedExecution {
+  runId: string;
+  state: 'not_started';
+  target: JupyterExecutionTarget;
+  submissionFenced: true;
+  handle?: never;
+}
+
 /** Current server observation for one persisted local execution attempt. */
 export type JupyterExecutionObservation =
+  | JupyterUnsubmittedExecution
   | {
       runId: string;
       state: 'queued' | 'running' | 'input_required' | 'stopping';
@@ -166,4 +176,18 @@ export interface JupyterExecutionPort {
     handle: JupyterExecutionHandle,
     controller: JupyterControllerGeneration
   ): Promise<JupyterExecutionStopResult>;
+}
+
+/** An absence read alone is insufficient: a late original POST must also be fenced. */
+export type JupyterExecutionReconciliationResult =
+  | JupyterUnsubmittedExecution
+  | { state: 'recorded'; observation: JupyterExecutionObservation }
+  | { state: 'ownership_lost'; currentGeneration: number }
+  | { state: 'unknown'; runId: string; reason: string };
+
+/** Optional server capability, independent of the Harness and source execution. */
+export interface JupyterExecutionReconciliationPort {
+  fenceUnsentSubmission(
+    target: JupyterExecutionTarget
+  ): Promise<JupyterExecutionReconciliationResult>;
 }

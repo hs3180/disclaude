@@ -91,12 +91,12 @@ class LedgerTests(unittest.TestCase):
     def test_future_schema_is_preserved_and_rejected(self):
         self.ledger.close()
         with closing(sqlite3.connect(self.path)) as database:
-            database.execute("PRAGMA user_version=3")
+            database.execute("PRAGMA user_version=4")
         with self.assertRaisesRegex(RuntimeError, "unsupported Notebook ledger schema"):
             Ledger(self.path)
         with closing(sqlite3.connect(self.path)) as database:
-            self.assertEqual(database.execute("PRAGMA user_version").fetchone()[0], 3)
-            database.execute("PRAGMA user_version=2")
+            self.assertEqual(database.execute("PRAGMA user_version").fetchone()[0], 4)
+            database.execute("PRAGMA user_version=3")
         self.ledger = Ledger(self.path)
 
     def test_restart_preserves_identity_and_does_not_replay(self):
@@ -118,6 +118,19 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(run["details"]["kernelMemory"], "unknown")
         self.assertEqual(run["details"]["outputCommit"], "stale")
         self.assertEqual(self.ledger.active("doc-1"), [])
+
+    def test_previous_schema_is_preserved_for_explicit_migration(self):
+        namespace = self.ledger.namespace
+        self.ledger.close()
+        with closing(sqlite3.connect(self.path)) as database:
+            database.execute("PRAGMA user_version=2")
+        with self.assertRaisesRegex(RuntimeError, "unsupported Notebook ledger schema"):
+            Ledger(self.path)
+        with closing(sqlite3.connect(self.path)) as database:
+            self.assertEqual(database.execute("PRAGMA user_version").fetchone()[0], 2)
+            self.assertEqual(database.execute("SELECT value FROM settings WHERE name='server_namespace'").fetchone()[0], namespace)
+            database.execute("PRAGMA user_version=3")
+        self.ledger = Ledger(self.path)
 
     def test_native_message_uses_preexisting_request_id(self):
         session = ExecutionSession()
