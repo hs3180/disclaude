@@ -32,6 +32,7 @@ async function sdkFixture(
     binary,
     `#!/usr/bin/env node
 require('node:fs').writeFileSync(require('node:path').join(${JSON.stringify(dir)}, 'argv.json'), JSON.stringify(process.argv.slice(2)));
+require('node:fs').writeFileSync(require('node:path').join(${JSON.stringify(dir)}, 'environment.json'), JSON.stringify({ sentinel: process.env.DSH_QUERY_VISIBLE, hasAuthority: Object.hasOwn(process.env, 'DSH_QUERY_AUTHORITY') }));
 const rl = require('node:readline').createInterface({ input: process.stdin });
 const reply = (id, result) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id, result }) + '\\n');
 const notify = (method, params) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method, params }) + '\\n');
@@ -113,6 +114,30 @@ async function* oneInput() {
 }
 
 describe('DeepSeekHarnessProvider (Issue #4741)', () => {
+  it('uses query environment overrides and omits explicitly removed host authority', async () => {
+    const fixture = await sdkFixture();
+    const provider = new DeepSeekHarnessProvider({
+      binary: fixture.binary,
+      dshHome: fixture.dir,
+      env: { DSH_QUERY_AUTHORITY: 'private-fixture', DSH_QUERY_VISIBLE: 'provider-default' },
+    });
+    try {
+      await collect(
+        provider.queryStream(oneInput(), {
+          settingSources: [],
+          cwd: fixture.dir,
+          env: { DSH_QUERY_AUTHORITY: undefined, DSH_QUERY_VISIBLE: 'query-override' },
+        }).iterator
+      );
+      expect(JSON.parse(await readFile(join(fixture.dir, 'environment.json'), 'utf8'))).toEqual({
+        sentinel: 'query-override',
+        hasAuthority: false,
+      });
+    } finally {
+      await provider.shutdown();
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
+  });
   it.each([undefined, 'standard', 'minimal'] as const)(
     'selects the SDK profile for mode %s without changing the RPC flow',
     async (mode) => {

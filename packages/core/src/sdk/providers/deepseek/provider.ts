@@ -53,6 +53,7 @@ interface QueryState {
   invocations: Map<string, NativeInvocation>;
   receivedInvocations: Set<string>;
   stderr?: (data: string) => void;
+  environment?: Record<string, string | undefined>;
   opened: boolean;
   idle: boolean;
   stopping: boolean;
@@ -99,16 +100,17 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
     this.configuredHome = options.dshHome ?? env.DSH_HOME;
     this.home = dshHome(this.configuredHome);
     this.route = options.provider;
+    const environment = {
+      ...process.env,
+      ...env,
+      DEEPSEEK_API_KEY: options.apiKey ?? env.DEEPSEEK_API_KEY,
+      DSH_HOME: this.home,
+    };
     this.bindings = new DshSessionBindings(this.home);
     this.pool = new DshSessionPool({
       binary: options.binary,
       requestTimeoutMs: options.requestTimeoutMs ?? 30_000,
-      env: {
-        ...process.env,
-        ...env,
-        DEEPSEEK_API_KEY: options.apiKey ?? env.DEEPSEEK_API_KEY,
-        DSH_HOME: this.home,
-      },
+      env: environment,
       forSession: (runtimeId) => {
         const state = this.queries.get(runtimeId);
         if (!state) {
@@ -117,6 +119,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
         this.overlay ??= createDshNativeProfileOverlay();
         return {
           cwd: state.cwd,
+          env: { ...environment, ...state.environment },
           args: [...(options.args ?? ['--profile', this.profile]), '--patch', this.overlay.path],
           onRequest: (request) => this.onRequest(state, request),
           onStderr: (data) => state.stderr?.(data),
@@ -199,6 +202,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
       invocations: new Map(),
       receivedInvocations: new Set(),
       stderr: options.stderr,
+      environment: options.env,
       opened: false,
       idle: false,
       stopping: false,
