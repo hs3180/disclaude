@@ -12,8 +12,18 @@ async function fakeDsh(): Promise<{ dir: string; binary: string }> {
     `#!/usr/bin/env node
 const readline = require('node:readline');
 const rl = readline.createInterface({ input: process.stdin });
+let pendingHost;
 rl.on('line', (line) => {
   const request = JSON.parse(line);
+  if (request.id === 'from-dsh' && !request.method) {
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: pendingHost, result: request }) + '\\n');
+    return;
+  }
+  if (request.method === 'host-call') {
+    pendingHost = request.id;
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: 'from-dsh', method: 'host_tool.call', params: { marker: 'native-marker' } }) + '\\n');
+    return;
+  }
   if (request.method === 'notify-me') {
     process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method: 'event', params: { ok: true } }) + '\\n');
     process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result: 'notified' }) + '\\n');
@@ -121,6 +131,42 @@ describe('DshStdioTransport', () => {
       );
     } finally {
       transport.close();
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('replies to string-ID native host requests without confusing them with responses', async () => {
+    const fixture = await fakeDsh();
+    const transport = new DshStdioTransport({
+      binary: fixture.binary,
+      onRequest: (request) => Promise.resolve({ canonical: request.params }),
+    });
+    try {
+      await expect(transport.request('host-call')).resolves.toMatchObject({
+        id: 'from-dsh',
+        result: { canonical: { marker: 'native-marker' } },
+      });
+      await transport.shutdown();
+      expect(() => transport.start()).toThrow('transport is closed');
+    } finally {
+      transport.close();
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns a protocol error for a host value that cannot be serialized', async () => {
+    const fixture = await fakeDsh();
+    const transport = new DshStdioTransport({
+      binary: fixture.binary,
+      onRequest: () => Promise.resolve({ invalid: 1n }),
+    });
+    try {
+      await expect(transport.request('host-call')).resolves.toMatchObject({
+        id: 'from-dsh',
+        error: { code: -32603 },
+      });
+    } finally {
+      await transport.shutdown();
       await rm(fixture.dir, { recursive: true, force: true });
     }
   });

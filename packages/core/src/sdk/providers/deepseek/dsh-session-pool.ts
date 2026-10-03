@@ -13,6 +13,8 @@ export interface DshTransportFactory {
 
 export interface DshSessionPoolOptions extends DshTransportOptions {
   createTransport?: DshTransportFactory;
+  /** Bind callbacks to the transport's trusted session identity. */
+  forSession?: (sessionKey: string) => Partial<DshTransportOptions>;
 }
 
 export class DshSessionPool {
@@ -36,8 +38,8 @@ export class DshSessionPool {
       return existing;
     }
 
-    const { createTransport: _createTransport, ...transportOptions } = this.options;
-    const transport = this.createTransport(transportOptions);
+    const { createTransport: _createTransport, forSession, ...transportOptions } = this.options;
+    const transport = this.createTransport({ ...transportOptions, ...forSession?.(sessionKey) });
     this.sessions.set(sessionKey, transport);
     return transport;
   }
@@ -61,6 +63,20 @@ export class DshSessionPool {
       transport.close();
     }
     this.sessions.clear();
+  }
+
+  async shutdown(): Promise<void> {
+    const results = await Promise.allSettled(
+      [...this.sessions.values()].map((transport) => transport.shutdown())
+    );
+    this.close();
+    const failures = results.filter((result) => result.status === 'rejected');
+    if (failures.length) {
+      throw new AggregateError(
+        failures.map((result) => result.reason),
+        'DSH runtime teardown failed'
+      );
+    }
   }
 
   get size(): number {

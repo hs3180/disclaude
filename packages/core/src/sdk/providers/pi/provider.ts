@@ -1,3 +1,4 @@
+import { assertToolOptions } from '../../host-tools.js';
 import { readStallPolicy } from '../stall-policy.js';
 /** pi Agent runtime with optional, per-query Anthropic-compatible production wiring. */
 
@@ -8,15 +9,13 @@ import type { IAgentSDKProvider } from '../../interface.js';
 import type {
   AgentMessage,
   AgentQueryOptions,
-  InlineToolDefinition,
-  McpServerConfig,
   ProviderInfo,
   StreamQueryResult,
   UserInput,
 } from '../../types.js';
 import { createLogger } from '../../../utils/logger.js';
 import { adaptPiEvent, type PiAgentEvent } from './event-adapter.js';
-import { adaptInlineTool } from './inline-tool-adapter.js';
+import { adaptPiHostTools } from './host-tool-adapter.js';
 import { adaptPiOptions } from './options-adapter.js';
 import { loadPiRuntime, toPiUserMessage, type PiAgentOptions } from './pi-runtime.js';
 import { createPiToolPermissionGate } from './tool-permission-gate.js';
@@ -82,9 +81,15 @@ export class PiAgentProvider implements IAgentSDKProvider {
     input: AsyncGenerator<UserInput>,
     options: AgentQueryOptions,
   ): StreamQueryResult {
+    assertToolOptions(options);
     if (this.disposed) {
       throw new Error('Provider has been disposed');
     }
+
+    if (Object.keys(options.mcpServers ?? {}).length) {
+      throw new Error('Pi does not support external MCP servers');
+    }
+    const hostTools = adaptPiHostTools(options.hostTools, options);
     if (!this.streamFn) {resolvePiModel(options);}
 
     // Abort plumbing: pi's Agent.abort() cancels the active run; the handle's
@@ -190,7 +195,7 @@ export class PiAgentProvider implements IAgentSDKProvider {
       // direction 1 / PR #4569) exhausts STALL_TIMEOUT_MS and is misjudged as
       // a stall. While openToolCalls > 0 the watchdog re-arms instead of
       // firing. Tool deadlocks stay detectable in principle through the tool's
-      // own abort signal (wired in inline-tool-adapter) — the same residual
+      // own abort signal (wired in host-tool-adapter) — the same residual
       // #3706 accepts for its request-level exemption.
       // Scope guard: the counter is reset when a run settles (runInput's
       // finally). pi 0.82.1 pairs every start with an end before settlement
@@ -274,12 +279,23 @@ export class PiAgentProvider implements IAgentSDKProvider {
       // since MCP was dropped) reaches its handler ungated. `null` when
       // `disallowedTools` is absent/empty → hook omitted, behavior unchanged.
       const toolPermissionGate = createPiToolPermissionGate(options);
+      const inherited = new Set((production?.tools ?? []).map((tool) => tool.name));
+      for (const tool of hostTools) {
+        if (inherited.has(tool.name)) {
+          throw new TypeError(`Host tool conflicts with Pi built-in tool: ${tool.name}`);
+        }
+      }
+      const builtinTools = (production?.tools ?? []).filter((tool) =>
+        (!Array.isArray(options.builtinTools) || options.builtinTools.includes(tool.name)) &&
+        (options.allowedTools === undefined || options.allowedTools.includes(tool.name)) &&
+        !options.disallowedTools?.includes(tool.name),
+      );
       agent = new Agent({
         streamFn: (streamFn ?? production?.streamFn) as PiAgentOptions['streamFn'],
         initialState: {
           ...(production ? { model: production.model } : {}),
           systemPrompt: adaptedOptions.systemPrompt ?? '',
-          tools: [...(production?.tools ?? []), ...collectInlineTools(options)],
+          tools: [...builtinTools, ...hostTools],
         },
         ...(toolPermissionGate
           ? { beforeToolCall: toolPermissionGate satisfies PiAgentOptions['beforeToolCall'] }
@@ -459,55 +475,7 @@ export class PiAgentProvider implements IAgentSDKProvider {
     };
   }
 
-  createInlineTool(definition: InlineToolDefinition): unknown {
-    // Issue #4387 (S4): wrap the disclaude tool for pi's tool dispatch.
-    // Zod→JSON-Schema parameter translation lives in the adapter —
-    // see inline-tool-adapter.ts. Permission enforcement is NOT here:
-    // #4389 lives in queryStream's beforeToolCall hook (per-query Agent
-    // instance), which gates every tool call the loop makes — inline tools
-    // included — without per-provider mutable state.
-    return adaptInlineTool(definition);
-  }
-
-  createMcpServer(config: McpServerConfig): unknown {
-    if (config.type === 'inline') {
-      // Issue #4417 (S4, part 1): build an inline MCP server handle from
-      // disclaude tool definitions, mirroring ClaudeSDKProvider (claude/
-      // provider.ts). Each tool is wrapped via createInlineTool, which produces
-      // a pi AgentHarnessTool shape (inline-tool-adapter.ts). The returned
-      // handle carries the AgentHarnessTool[] that the pi queryStream path
-      // (#4386 part 4) seeds into the Agent via initialState.tools —
-      // collectInlineTools duck-types this handle shape (see below).
-      //
-      // Inline handles only — external stdio MCP servers are not planned for
-      // the pi backend (2026-08-07 decision, see the error path below).
-      const tools = (config.tools?.map((tool) => this.createInlineTool(tool)) ?? []);
-      return {
-        name: config.name,
-        version: config.version,
-        tools,
-      };
-    }
-
-    // stdio MCP servers are not supported by the pi backend (decision
-    // 2026-08-07: pi does not support MCP; tools go through Skills / inline
-    // tools only). External stdio servers are a config error.
-    throw new Error(
-      'stdio MCP servers are not supported by PiAgentProvider.createMcpServer',
-    );
-  }
-
-  // --------------------------------------------------------------------------
-  // Lifecycle
-  // --------------------------------------------------------------------------
-
-  /**
-   * Check whether the pi.dev packages are importable and the required
-   * configuration (model-provider API key via pi-ai) is present.
-   *
-   * Returns `false` (never throws) when pi is not set up — matching
-   * ClaudeSDKProvider's pattern.
-   */
+  /** Check optional runtime packages and model configuration without starting a query. */
   validateConfig(): boolean {
     if (this.disposed) {
       return false;
@@ -550,71 +518,4 @@ function userInputText(input: UserInput): string {
   return input.content
     .map((block) => (block.type === 'text' ? block.text : JSON.stringify(block)))
     .join('\n');
-}
-
-/**
- * Extract the session's live tool registry from `AgentQueryOptions.mcpServers`
- * (Issue #4386 part 4 — the inline-tool round-trip acceptance item).
- *
- * Per the 2026-08-07 decision (pi backend does NOT support MCP, #4461), the
- * inline `channel-mcp` server is the pi backend's ONLY tool source: each of
- * its `InlineToolDefinition`s is adapted into a pi `AgentHarnessTool` via
- * `createInlineTool` (#4387 — Zod→JSON-Schema parameters + execute wrapper)
- * and seeded into the Agent's `initialState.tools`, where it is live for
- * every run of the session (pi 0.82.1: `createMutableAgentState` copies
- * `initialState.tools` into the state registry at construction).
- *
- * TWO server shapes reach `mcpServers` on this path (matching what
- * ClaudeSDKProvider's `adaptMcpServers` handles):
- *
- * 1. **config shape** — `{ type: 'inline', tools: InlineToolDefinition[] }`
- *    (types.ts `InlineMcpServerConfig`): raw Zod definitions; each tool is
- *    adapted here via `adaptInlineTool`.
- * 2. **handle shape** — the object `PiAgentProvider.createMcpServer` returns
- *    (`{ name, version, tools }` with NO `type` field, tools ALREADY adapted
- *    to AgentHarnessTool shapes). This is the PRODUCTION shape: chat-agent's
- *    `buildMcpServers()` populates `mcpServers['channel-mcp']` with
- *    `createChannelMcpServer()` = `getProvider().createMcpServer(...)`, which
- *    flows into `AgentQueryOptions.mcpServers` verbatim (base-agent.ts:202).
- *    Duck-typed on `Array.isArray(tools) && tools.every(t => typeof t?.execute
- *    === 'function')` (cf. Claude's `isSdkInlineMcpServer`) and passed through
- *    WITHOUT re-adapting — re-adapting an AgentHarnessTool would wrap an
- *    already-wrapped execute and Zod-parse a JSON-Schema object.
- *
- * stdio servers are skipped here: pi rejects them at `createMcpServer`, and
- * a stdio entry in `mcpServers` on the pi backend is a config error surfaced
- * there (throwing in the iterator would instead surface as a hung/dead
- * stream — worse). The return is always an array (possibly empty) so
- * `initialState.tools` stays a stable shape.
- */
-function collectInlineTools(options: AgentQueryOptions): unknown[] {
-  const tools: unknown[] = [];
-  for (const server of Object.values(options.mcpServers ?? {})) {
-    if (server.type === 'inline') {
-      // Config shape: adapt each raw InlineToolDefinition for pi.
-      for (const tool of server.tools ?? []) {
-        tools.push(adaptInlineTool(tool));
-      }
-    } else if (isAdaptedToolHandle((server as unknown as { tools?: unknown }).tools)) {
-      // Handle shape from createMcpServer (the production path) — no `type`
-      // field, tools ALREADY AgentHarnessTools; pass them through as-is.
-      // (The production mcpServers record is cast into McpServerConfig by
-      // base-agent.ts:202 without a real conversion, hence the unknown hop.)
-      tools.push(...((server as unknown as { tools: Array<{ execute: unknown }> }).tools));
-    }
-  }
-  return tools;
-}
-
-/**
- * Duck-type a `createMcpServer` inline handle's tool list: every entry must
- * already be an adapted `AgentHarnessTool` (has an `execute` function).
- * Mirrors ClaudeSDKProvider's `isSdkInlineMcpServer` approach — the handle
- * carries no `type` field, so shape detection is the only signal.
- */
-function isAdaptedToolHandle(tools: unknown): tools is Array<{ execute: unknown }> {
-  return (
-    Array.isArray(tools) &&
-    tools.every((tool) => typeof (tool as { execute?: unknown })?.execute === 'function')
-  );
 }

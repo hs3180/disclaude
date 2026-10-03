@@ -210,7 +210,7 @@ describe('adaptOptions', () => {
   it('should pass through tools preset (Issue #2890)', () => {
     const result = adaptOptions({
       settingSources: ['user', 'project', 'local'],
-      tools: { type: 'preset', preset: 'claude_code' },
+      builtinTools: { type: 'preset', preset: 'claude_code' },
     });
 
     expect(result.tools).toEqual({
@@ -222,7 +222,7 @@ describe('adaptOptions', () => {
   it('should pass through tools as string array (Issue #2890)', () => {
     const result = adaptOptions({
       settingSources: ['user', 'project', 'local'],
-      tools: ['Read', 'Write', 'Bash'],
+      builtinTools: ['Read', 'Write', 'Bash'],
     });
 
     expect(result.tools).toEqual(['Read', 'Write', 'Bash']);

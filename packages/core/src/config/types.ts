@@ -246,6 +246,8 @@ export interface GlmConfig {
 
 /** DeepSeek harness configuration (developer preview; Issue #4741). */
 export interface DeepSeekConfig {
+  /** DSH model provider route. Omit to use the selected native profile's default. */
+  provider?: string;
   /** Harness composition. Changes apply after service restart. Default: standard. */
   mode?: 'minimal' | 'standard';
   /** API key consumed by dsh (overrides DEEPSEEK_API_KEY). */
