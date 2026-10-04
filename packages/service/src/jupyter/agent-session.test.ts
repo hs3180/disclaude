@@ -77,7 +77,7 @@ function fixture() {
     getStatus: vi.fn((_notebook, runId: string) =>
       Promise.resolve(runs.get(runId) ?? { runId, state: 'unknown' })
     ),
-    fenceUnsentSubmission: vi.fn(
+    reconcileSubmission: vi.fn(
       (target: JupyterExecutionTarget): Promise<JupyterExecutionReconciliationResult> =>
         Promise.resolve({
           state: 'not_started',
@@ -239,7 +239,7 @@ describe('NotebookAgentSession', () => {
       submissionFenced: true,
       target: original,
     });
-    expect(f.fake.fenceUnsentSubmission).toHaveBeenCalledWith(original);
+    expect(f.fake.reconcileSubmission).toHaveBeenCalledWith(original);
     const next = await f.submit();
     expect(next.state).toBe('accepted');
     expect(next.handle.runId).not.toBe(original.runId);
@@ -257,7 +257,7 @@ describe('NotebookAgentSession', () => {
     });
     expect((await f.submit()).state).toBe('unknown');
     const [[{ target: original }]] = f.fake.submit.mock.calls;
-    f.fake.fenceUnsentSubmission.mockImplementationOnce((target) =>
+    f.fake.reconcileSubmission.mockImplementationOnce((target) =>
       Promise.resolve({ state: 'recorded', observation: f.runs.get(target.runId)! })
     );
     expect(
@@ -282,7 +282,7 @@ describe('NotebookAgentSession', () => {
       );
       expect((await f.submit()).state).toBe('unknown');
       const [[{ target: original }]] = f.fake.submit.mock.calls;
-      f.fake.fenceUnsentSubmission.mockResolvedValueOnce({
+      f.fake.reconcileSubmission.mockResolvedValueOnce({
         state,
         runId: original.runId,
         reason: 'unverified',
@@ -306,7 +306,7 @@ describe('NotebookAgentSession', () => {
     );
     expect((await f.submit()).state).toBe('unknown');
     const [[{ target: original }]] = f.fake.submit.mock.calls;
-    f.fake.fenceUnsentSubmission.mockImplementationOnce((target) =>
+    f.fake.reconcileSubmission.mockImplementationOnce((target) =>
       Promise.resolve({
         state: 'not_started',
         runId: target.runId,
@@ -343,7 +343,7 @@ describe('NotebookAgentSession', () => {
         runId: accepted.handle.runId,
       })
     ).rejects.toThrow('stopped');
-    expect(f.fake.fenceUnsentSubmission).not.toHaveBeenCalled();
+    expect(f.fake.reconcileSubmission).not.toHaveBeenCalled();
   });
 
   it('continues a host-reopened conversation after its original unknown attempt is fenced', async () => {
@@ -394,7 +394,7 @@ describe('NotebookAgentSession', () => {
     const [[{ target: original }]] = f.fake.submit.mock.calls;
     const alias = await f.id();
     expect(await f.session.stop()).toEqual([{ runId: original.runId, state: 'already_terminal' }]);
-    expect(f.fake.fenceUnsentSubmission).toHaveBeenCalledWith(
+    expect(f.fake.reconcileSubmission).toHaveBeenCalledWith(
       f.fake.submit.mock.calls[0][0].target
     );
     const reopened = f.create();
@@ -423,7 +423,7 @@ describe('NotebookAgentSession', () => {
     expect((await f.submit()).state).toBe('unknown');
     const [[{ target: original }]] = f.fake.submit.mock.calls;
     let resolve!: (value: JupyterExecutionReconciliationResult) => void;
-    f.fake.fenceUnsentSubmission.mockImplementationOnce(
+    f.fake.reconcileSubmission.mockImplementationOnce(
       () =>
         new Promise((r) => {
           resolve = r;
@@ -433,7 +433,7 @@ describe('NotebookAgentSession', () => {
       notebookId: await f.id(),
       runId: original.runId,
     });
-    await vi.waitFor(() => expect(f.fake.fenceUnsentSubmission).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(f.fake.reconcileSubmission).toHaveBeenCalledOnce());
     f.session.pause();
     resolve({
       state: 'not_started',

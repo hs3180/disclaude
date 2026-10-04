@@ -55,8 +55,9 @@ and candidate defaults remain `gpt-6-luna`, and Astra is refused.
 
 ## Historical G0-B Jupyter stack experiment
 
-The following owned-local commands describe the earlier stack experiments.
-They are not the configured-server acceptance path for this task.
+The following commands/results document earlier isolated component experiments
+and server-side CI fixtures. They do not define host runtime setup or current
+product acceptance. Do not recreate their local environment for this task.
 
 This opt-in probe for #5216 launches its own authenticated localhost server,
 Notebook, kernel, browser and Jupyter configuration. It uses no Project mount,

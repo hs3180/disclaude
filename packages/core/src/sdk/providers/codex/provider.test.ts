@@ -11,7 +11,7 @@
  *   `codex` — happy-path event flow, thread_id → handle.sessionId, exit-code
  *   error mapping, actionable throw when the binary is missing, cancel()
  *   teardown, dispose() guard. Real spawn/readline/timer machinery, no mocks.
- * - createInlineTool / createMcpServer preserve inline host-tool definitions.
+ * - Host tool dispatch is covered by provider-app-server.test.ts.
  * - Lifecycle: dispose() flips state, is idempotent, forces checks false.
  */
 
@@ -833,30 +833,6 @@ fi
       );
       expect(error?.content).toMatch(/codex login/); // auth is the actionable one
     }, 15_000);
-  });
-
-  // --------------------------------------------------------------------------
-  // Inline tools / MCP host handles
-  // --------------------------------------------------------------------------
-
-  describe('inline tools', () => {
-    it('preserves inline definitions for app-server registration', () => {
-      fixtures = makeFixtures({ withBinary: false, withAuth: false });
-      const provider = makeProvider(fixtures);
-      const tool = { name: 'read_notebook', description: 'Read', parameters: {}, handler: vi.fn() };
-      expect(provider.createInlineTool(tool as never)).toBe(tool);
-    });
-
-    it('returns inline server handles and rejects stdio servers', () => {
-      fixtures = makeFixtures({ withBinary: false, withAuth: false });
-      const provider = makeProvider(fixtures);
-      const tool = { name: 'read_notebook', description: 'Read', parameters: {}, handler: vi.fn() };
-      expect(provider.createMcpServer({
-        type: 'inline', name: 'jupyter', version: '1.0.0', tools: [tool as never],
-      })).toEqual({ name: 'jupyter', version: '1.0.0', tools: [tool] });
-      expect(() => provider.createMcpServer({ type: 'stdio', name: 'external', command: 'node' }))
-        .toThrow(/do not support stdio/);
-    });
   });
 
   // --------------------------------------------------------------------------

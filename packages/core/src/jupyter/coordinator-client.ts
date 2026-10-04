@@ -7,7 +7,6 @@ import type {
   JupyterExecutionHandle,
   JupyterExecutionObservation,
   JupyterExecutionPort,
-  JupyterExecutionReconciliationPort,
   JupyterExecutionReconciliationResult,
   JupyterExecutionStopResult,
   JupyterExecutionSubmitRequest,
@@ -18,6 +17,7 @@ import type {
 } from './contracts.js';
 
 export interface JupyterCoordinatorOptions {
+  /** Explicit remote Jupyter endpoint; Python and kernels belong to that server. */
   baseUrl: string;
   connectionId: string;
   /** Pin a saved connection to its original server namespace. */
@@ -245,10 +245,8 @@ function sameTarget(a: JupyterExecutionTarget, b: JupyterExecutionTarget): boole
   );
 }
 
-/** Concrete shared ports for the optional managed Jupyter server extension. */
-export class JupyterCoordinatorClient
-  implements JupyterNotebookPort, JupyterExecutionPort, JupyterExecutionReconciliationPort
-{
+/** Node HTTP ports for the optional extension deployed in the remote Jupyter server. */
+export class JupyterCoordinatorClient implements JupyterNotebookPort, JupyterExecutionPort {
   private readonly base: URL;
   private namespace?: string;
   private readonly timeoutMs: number;
@@ -692,6 +690,7 @@ export class JupyterCoordinatorClient
     }
   }
 
+  /** Select a kernelspec and bind a kernel through the remote server API. */
   async ensureKernel(
     notebook: JupyterNotebookLocator,
     kernelName = 'python3'
@@ -786,7 +785,7 @@ export class JupyterCoordinatorClient
     }
   }
 
-  async fenceUnsentSubmission(
+  async reconcileSubmission(
     target: JupyterExecutionTarget
   ): Promise<JupyterExecutionReconciliationResult> {
     try {

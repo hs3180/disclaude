@@ -34,10 +34,10 @@ const descriptor = {
 describe('DSH native controller tool selection', () => {
   it('keeps the profile registry when the host supplies no filters', async () => {
     const f = fixture();
-    await f.app.handleRequest('initialize', { cwd: '/project', nativeTools: [descriptor] });
+    await f.app.handleRequest('initialize', { cwd: '/project', tools: [descriptor] });
     await f.app.handleRequest('session/open', { sessionId: 'test-1' });
     expect(f.tools.restrict).not.toHaveBeenCalled();
-    expect(f.tools.schemas).not.toHaveBeenCalled();
+    expect(f.tools.schemas).toHaveBeenCalledOnce();
     expect(f.tools.register).toHaveBeenCalledWith(
       expect.objectContaining({ name: descriptor.name })
     );
@@ -49,7 +49,7 @@ describe('DSH native controller tool selection', () => {
     const f = fixture();
     await f.app.handleRequest('initialize', {
       cwd: '/project',
-      nativeTools: [descriptor],
+      tools: [descriptor],
       allowedTools: [descriptor.name],
     });
     await f.app.handleRequest('session/open', { sessionId: 'test-2' });
@@ -62,7 +62,7 @@ describe('DSH native controller tool selection', () => {
     const f = fixture();
     await f.app.handleRequest('initialize', {
       cwd: '/project',
-      nativeTools: [descriptor],
+      tools: [descriptor],
       allowedTools: ['read', descriptor.name],
       disallowedTools: ['bash', descriptor.name],
     });
@@ -72,11 +72,33 @@ describe('DSH native controller tool selection', () => {
     await f.app.shutdown();
   });
 
+  it('keeps the profile default tools when only business definitions are supplied', async () => {
+    const f = fixture();
+    await f.app.handleRequest('initialize', { cwd: '/project', tools: [descriptor] });
+    await f.app.handleRequest('session/open', { sessionId: 'profile-defaults' });
+    expect(f.tools.restrict).not.toHaveBeenCalled();
+    expect(f.tools.register).toHaveBeenCalledOnce();
+    await f.app.shutdown();
+  });
+
+  it('rejects ambiguous host names already provided by the profile', async () => {
+    const f = fixture();
+    await f.app.handleRequest('initialize', {
+      cwd: '/project',
+      tools: [{ ...descriptor, name: 'read' }],
+    });
+    await expect(f.app.handleRequest('session/open', { sessionId: 'collision' })).rejects.toThrow(
+      'conflicts with DSH profile tool'
+    );
+    expect(f.tools.register).not.toHaveBeenCalled();
+    await f.app.shutdown();
+  });
+
   it('rejects unknown filter names before registering any host operation', async () => {
     const f = fixture();
     await f.app.handleRequest('initialize', {
       cwd: '/project',
-      nativeTools: [descriptor],
+      tools: [descriptor],
       allowedTools: ['missing'],
     });
     await expect(f.app.handleRequest('session/open', { sessionId: 'test-4' })).rejects.toThrow(
@@ -90,7 +112,7 @@ describe('DSH native controller tool selection', () => {
     const f = fixture();
     await f.app.handleRequest('initialize', {
       cwd: '/project',
-      nativeTools: [descriptor],
+      tools: [descriptor],
       disallowedTools: ['CronCreate'],
     });
     await f.app.handleRequest('session/open', { sessionId: 'test-5' });

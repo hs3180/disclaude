@@ -176,6 +176,10 @@ export interface JupyterExecutionPort {
     handle: JupyterExecutionHandle,
     controller: JupyterControllerGeneration
   ): Promise<JupyterExecutionStopResult>;
+  /** Reconcile the original submission; persist a fence before claiming it never started. */
+  reconcileSubmission?(
+    target: JupyterExecutionTarget
+  ): Promise<JupyterExecutionReconciliationResult>;
 }
 
 /** An absence read alone is insufficient: a late original POST must also be fenced. */
@@ -184,10 +188,3 @@ export type JupyterExecutionReconciliationResult =
   | { state: 'recorded'; observation: JupyterExecutionObservation }
   | { state: 'ownership_lost'; currentGeneration: number }
   | { state: 'unknown'; runId: string; reason: string };
-
-/** Optional server capability, independent of the Harness and source execution. */
-export interface JupyterExecutionReconciliationPort {
-  fenceUnsentSubmission(
-    target: JupyterExecutionTarget
-  ): Promise<JupyterExecutionReconciliationResult>;
-}

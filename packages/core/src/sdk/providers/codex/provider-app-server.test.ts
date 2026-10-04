@@ -2,8 +2,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { z } from 'zod';
-import type { AgentMessage, AgentQueryOptions, InlineToolDefinition, McpServerConfig, UserInput } from '../../types.js';
+import type { AgentMessage, AgentQueryOptions, ToolDefinition, ToolContext, UserInput } from '../../types.js';
 import { CodexAgentProvider } from './provider.js';
 import type { AgentInputRequest, AgentInputContext } from '../../user-input.js';
 
@@ -41,20 +40,18 @@ afterEach(() => {
 describe('CodexAgentProvider app-server transport', () => {
   it('rejects host tools before starting codex exec', () => {
     const { provider } = providerFixture('exit 0', 'exec');
-    const mcpServer = provider.createMcpServer({
-      type: 'inline', name: 'jupyter', version: '1.0.0', tools: [],
-    }) as McpServerConfig;
+    const tools: ToolDefinition[] = [{ name: 'read_notebook', description: 'Read', inputSchema: { type: 'object' }, outputSchema: { type: 'object' }, execute: () => Promise.resolve({}) }];
     const input = (async function* (): AsyncGenerator<UserInput> {
       yield { role: 'user', content: 'Read the notebook' };
     })();
     try {
       expect(() => provider.queryStream(input, {
-        sessionKey: 'exec-host-tool', settingSources: [], mcpServers: { jupyter: mcpServer },
+        sessionKey: 'exec-host-tool', settingSources: [], tools,
       } as AgentQueryOptions)).toThrow(/require agent\.codex\.transport: app-server/);
     } finally { provider.dispose(); }
   });
 
-  it('registers and executes an inline host tool on the active turn', async () => {
+  it('registers and executes a host tool on the active turn', async () => {
     const { provider, dir } = providerFixture('exit 0', 'app-server', { DISCLAUDE_STALL_TIMEOUT_MS: '40' });
     writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
 const fs=require('node:fs');const send=m=>console.log(JSON.stringify(m));
@@ -67,7 +64,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
  else if(m.method==='turn/start'){
   send({id:m.id,result:{turn:{id:'dynamic-turn'}}});
   send({method:'item/started',params:{threadId:'dynamic-thread',turnId:'dynamic-turn',item:{id:'host-item',type:'dynamicToolCall'}}});
-  send({id:'host-request',method:'item/tool/call',params:{callId:'host-call',threadId:'dynamic-thread',turnId:'dynamic-turn',namespace:'jupyter',tool:'read_notebook',arguments:{path:'research.ipynb'}}});
+  send({id:'host-request',method:'item/tool/call',params:{callId:'host-call',threadId:'dynamic-thread',turnId:'dynamic-turn',namespace:'disclaude',tool:'read_notebook',arguments:{path:'research.ipynb'}}});
  } else if(m.id==='host-request'){
   fs.writeFileSync(process.env.CODEX_HOME+'/tool-result',JSON.stringify(m.result));
   send({method:'item/completed',params:{threadId:'dynamic-thread',turnId:'dynamic-turn',item:{id:'host-item',type:'dynamicToolCall',status:'completed'}}});
@@ -75,24 +72,23 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   send({method:'turn/completed',params:{threadId:'dynamic-thread',turn:{id:'dynamic-turn',status:'completed'}}});
  }
 });`);
-    const handler = vi.fn(async (params: { path: string }, _progress?: unknown, context?: { signal: AbortSignal }) => {
+    const handler = vi.fn(async (params: Record<string, unknown>, context: ToolContext) => {
       await new Promise(resolve => setTimeout(resolve, 100));
       expect(context?.signal.aborted).toBe(false);
       return { path: params.path, documentId: 'doc-1' };
     });
-    const definition: InlineToolDefinition<{ path: string }, { path: string; documentId: string }> = {
+    const definition: ToolDefinition = {
       name: 'read_notebook',
       description: 'Read a Jupyter notebook',
-      parameters: z.object({ path: z.string() }),
-      handler,
+      inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+      outputSchema: { type: 'object' },
+      execute: handler,
     };
-    const mcpServer = provider.createMcpServer({
-      type: 'inline', name: 'jupyter', version: '1.0.0', tools: [definition],
-    }) as McpServerConfig;
+    const tools = [definition];
     const result = provider.queryStream((async function* (): AsyncGenerator<UserInput> {
       yield { role: 'user', content: 'Read the notebook' };
     })(), {
-      sessionKey: 'dynamic-tools', settingSources: [], mcpServers: { jupyter: mcpServer },
+      sessionKey: 'dynamic-tools', settingSources: [], tools,
     } as AgentQueryOptions);
     const messages: AgentMessage[] = [];
     try {
@@ -101,7 +97,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       expect(JSON.parse(readFileSync(join(dir, 'home/thread'), 'utf8')).dynamicTools).toMatchObject([
         {
           type: 'namespace',
-          name: 'jupyter',
+          name: 'disclaude',
           tools: [{ type: 'function', name: 'read_notebook', inputSchema: { type: 'object' } }],
         },
       ]);
@@ -110,21 +106,14 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
         contentItems: [{ type: 'inputText', text: '{"path":"research.ipynb","documentId":"doc-1"}' }],
       });
       expect(handler).toHaveBeenCalledOnce();
-      expect(handler.mock.calls[0]?.[2]).toMatchObject({
-        identity: {
-          provider: 'codex-app-server',
-          requestId: 'host-request',
-          callId: 'host-call',
-          threadId: 'dynamic-thread',
-          turnId: 'dynamic-turn',
-        },
+      expect(handler.mock.calls[0]?.[1]).toMatchObject({
       });
       expect(messages).toContainEqual(expect.objectContaining({ type: 'text', content: 'Notebook read completed' }));
       expect(messages.some(message => message.metadata?.terminatedReason === 'stall')).toBe(false);
     } finally { provider.dispose(); }
   });
 
-  it('dispatches inline host tools after resuming the same thread on a new app-server process', async () => {
+  it('dispatches host tools after resuming the same thread on a new app-server process', async () => {
     const { provider, dir } = providerFixture('exit 0', 'app-server');
     writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
 const fs=require('node:fs');const send=m=>console.log(JSON.stringify(m));let marker='first';let turnId='';let requestId='';
@@ -141,23 +130,20 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   turnId=marker+'-turn';requestId=marker+'-request';
   send({id:m.id,result:{turn:{id:turnId}}});
   send({method:'item/started',params:{threadId:'continued-thread',turnId,item:{id:marker+'-tool',type:'dynamicToolCall'}}});
-  send({id:requestId,method:'item/tool/call',params:{callId:marker+'-call',threadId:'continued-thread',turnId,namespace:'probe',tool:'emit_marker',arguments:{marker}}});
+  send({id:requestId,method:'item/tool/call',params:{callId:marker+'-call',threadId:'continued-thread',turnId,namespace:'disclaude',tool:'emit_marker',arguments:{marker}}});
  } else if(m.id===requestId){
   send({method:'item/completed',params:{threadId:'continued-thread',turnId,item:{id:marker+'-tool',type:'dynamicToolCall',status:'completed'}}});
   send({method:'item/completed',params:{threadId:'continued-thread',turnId,item:{id:marker+'-reply',type:'agentMessage',text:marker+' host tool completed'}}});
   send({method:'turn/completed',params:{threadId:'continued-thread',turn:{id:turnId,status:'completed'}}});
  }
 });`);
-    const handler = vi.fn((params: { marker: string }) => Promise.resolve({ accepted: true, marker: params.marker }));
-    const mcpServer = provider.createMcpServer({
-      type: 'inline', name: 'probe', version: '1.0.0',
-      tools: [{ name: 'emit_marker', description: 'Record a turn marker', parameters: z.object({ marker: z.string() }), handler }],
-    }) as McpServerConfig;
+    const handler = vi.fn((params: Record<string, unknown>) => Promise.resolve({ accepted: true, marker: params.marker }));
+    const tools: ToolDefinition[] = [{ name: 'emit_marker', description: 'Record a turn marker', inputSchema: { type: 'object', properties: { marker: { type: 'string' } }, required: ['marker'] }, outputSchema: { type: 'object' }, execute: handler }];
     const result = provider.queryStream((async function* (): AsyncGenerator<UserInput> {
       yield { role: 'user', content: 'Record the first marker' };
       yield { role: 'user', content: 'Record the second marker' };
     })(), {
-      sessionKey: 'dynamic-tool-resume', settingSources: [], mcpServers: { probe: mcpServer },
+      sessionKey: 'dynamic-tool-resume', settingSources: [], tools,
     } as AgentQueryOptions);
     const messages: AgentMessage[] = [];
     try {
@@ -165,7 +151,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       const threadRequests = readFileSync(join(dir, 'home/methods'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
       expect(threadRequests.map(request => request.method)).toEqual(['thread/start', 'thread/resume']);
       expect(threadRequests[0].params.dynamicTools).toMatchObject([
-        { type: 'namespace', name: 'probe', tools: [{ type: 'function', name: 'emit_marker' }] },
+        { type: 'namespace', name: 'disclaude', tools: [{ type: 'function', name: 'emit_marker' }] },
       ]);
       expect(threadRequests[1].params).not.toHaveProperty('dynamicTools');
       expect(handler.mock.calls.map(call => call[0].marker)).toEqual(['first', 'second']);
@@ -197,16 +183,13 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   send({method:'turn/completed',params:{threadId:'registry-thread',turn:{id:'registry-turn',status:'completed'}}});
  }
 });`);
-    const makeServer = (name: string): McpServerConfig => provider.createMcpServer({
-      type: 'inline', name: 'jupyter', version: '1.0.0',
-      tools: [{ name, description: 'Jupyter tool', parameters: z.object({}), handler: () => Promise.resolve('ok') }],
-    }) as McpServerConfig;
+    const makeTools = (name: string): ToolDefinition[] => [{ name, description: 'Jupyter tool', inputSchema: { type: 'object' }, outputSchema: { type: 'string' }, execute: () => Promise.resolve('ok') }];
     const input = () => (async function* (): AsyncGenerator<UserInput> {
       yield { role: 'user', content: 'Continue the notebook work' };
     })();
     try {
       const first = provider.queryStream(input(), {
-        sessionKey: 'registry-change', settingSources: [], mcpServers: { jupyter: makeServer('read_notebook') },
+        sessionKey: 'registry-change', settingSources: [], tools: makeTools('read_notebook'),
       } as AgentQueryOptions);
       for await (const _message of first.iterator) { /* drain */ }
       expect(JSON.parse(readFileSync(join(dir, 'home/thread'), 'utf8')).dynamicTools)
@@ -214,8 +197,11 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
           { type: 'namespace', tools: [{ type: 'function', name: 'read_notebook' }] },
         ]);
       expect(() => provider.queryStream(input(), {
-        sessionKey: 'registry-change', settingSources: [], mcpServers: { jupyter: makeServer('execute_cell') },
-      } as AgentQueryOptions)).toThrow(/different inline tool registry/);
+        sessionKey: 'registry-change', settingSources: [], tools: makeTools('execute_cell'),
+      } as AgentQueryOptions)).toThrow(/different host tool registry/);
+      expect(() => provider.queryStream(input(), {
+        sessionKey: 'registry-change', settingSources: [], tools: [{ ...makeTools('read_notebook')[0], outputSchema: { type: 'object' } }],
+      })).toThrow(/different host tool registry/);
       expect(readFileSync(join(dir, 'home/methods'), 'utf8').trim().split('\n')).toEqual(['thread/start']);
     } finally { provider.dispose(); }
   });

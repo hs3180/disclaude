@@ -6,8 +6,8 @@ import {
   type JupyterCoordinatorClient,
   type JupyterExecutionObservation,
   type JupyterNotebookLocator,
-  type NativeAgentTool,
-  type NativeAgentToolContext,
+  type ToolDefinition,
+  type ToolContext,
   type NotebookToolBinding,
 } from '@disclaude/core';
 import { JupyterConnections } from './connections.js';
@@ -82,7 +82,7 @@ const inputSchema = (properties: Record<string, unknown>): Record<string, unknow
 
 /** Native tools over host-bound resources. No Harness/CLI or Jupyter credential appears in a DTO. */
 export class NotebookAgentSession {
-  readonly tools: NativeAgentTool[];
+  readonly tools: ToolDefinition[];
   private readonly config: JupyterProjectConfigStore;
   private readonly records: NotebookRunStore;
   private readonly root: string;
@@ -170,7 +170,7 @@ export class NotebookAgentSession {
             const result = await this.use(ref, (client) => {
               signal.throwIfAborted();
               this.assertActive();
-              return client.fenceUnsentSubmission(record.target);
+              return client.reconcileSubmission(record.target);
             });
             if (result.state === 'not_started') {
               if (
@@ -237,7 +237,7 @@ export class NotebookAgentSession {
           },
           required: [...(template.inputSchema.required as string[]), 'notebookId'],
         },
-        execute: (input: Record<string, unknown>, invocation: NativeAgentToolContext) =>
+        execute: (input: Record<string, unknown>, invocation: ToolContext) =>
           this.tracked(async () => {
             invocation.signal.throwIfAborted();
             this.assertActive();
@@ -700,7 +700,7 @@ export class NotebookAgentSession {
           while (Date.now() < deadline) {
             let status = await client.getStatus(locator(ref), record.target.runId);
             if (status.state === 'unknown' && !status.handle && !record.handle) {
-              const reconciled = await client.fenceUnsentSubmission(record.target);
+              const reconciled = await client.reconcileSubmission(record.target);
               if (reconciled.state === 'not_started') {
                 status = reconciled;
               } else if (reconciled.state === 'recorded') {
