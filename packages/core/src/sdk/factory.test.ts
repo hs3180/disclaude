@@ -35,8 +35,6 @@ function createMockProvider(overrides: Partial<IAgentSDKProvider> = {}): IAgentS
     validateConfig: vi.fn().mockReturnValue(true),
     dispose: vi.fn(),
     queryStream: vi.fn(),
-    createInlineTool: vi.fn(),
-    createMcpServer: vi.fn(),
     ...overrides,
   };
 }

@@ -1,5 +1,4 @@
-import type { NativeAgentTool } from '../../native-tools.js';
-import Ajv, { type ValidateFunction } from 'ajv';
+import { prepareTools, type ToolDefinition } from '../../tools.js';
 import {
   assertObjectJsonSchema,
   assertSupportedJsonSchema,
@@ -7,7 +6,7 @@ import {
 } from '@deepseek-ai/dsh-tools';
 
 /** The public dsh-tools registration boundary; no Codex or inline-MCP shape. */
-export type DshNativeToolRegistry = Pick<ToolRuntime, 'register'>;
+export type DshHostToolRegistry = Pick<ToolRuntime, 'register'>;
 
 /** DSH 0.1.2 has a narrower declaration DSL. Keep constraints enforced. */
 function nativeDeclaration(schema: Record<string, unknown>): Record<string, unknown> {
@@ -51,43 +50,21 @@ function nativeDeclaration(schema: Record<string, unknown>): Record<string, unkn
   return changed ? result : schema;
 }
 
-function validateValue(validate: ValidateFunction, value: unknown, kind: string, ajv: Ajv): void {
-  if (!validate(value)) {
-    // Default non-verbose errors contain schema paths/constraints, not values.
-    throw new TypeError(`Invalid native tool ${kind}: ${ajv.errorsText(validate.errors)}`);
-  }
-}
-
 /** Register canonical tools directly in the agent-scoped DSH native registry. */
-export function registerDshNativeTools(
-  registry: DshNativeToolRegistry,
-  tools: readonly NativeAgentTool[]
+export function registerDshTools(
+  registry: DshHostToolRegistry,
+  tools: readonly ToolDefinition[]
 ): () => void {
-  const names = new Set<string>();
-  const ajv = new Ajv({
-    strict: true,
-    coerceTypes: false,
-    useDefaults: false,
-    removeAdditional: false,
-  });
-  const prepared = tools.map((tool) => {
-    const input = ajv.compile(tool.inputSchema);
-    const output = ajv.compile(tool.outputSchema);
+  const prepared = prepareTools(tools).map((tool) => {
     const parameters = nativeDeclaration(tool.inputSchema);
     const outputSchema = nativeDeclaration(tool.outputSchema);
     assertObjectJsonSchema(parameters);
     assertSupportedJsonSchema(outputSchema);
-    return { tool, input, output, parameters, outputSchema };
+    return { tool, parameters, outputSchema };
   });
-  for (const tool of tools) {
-    if (!/^[a-z][a-z0-9_]*$/.test(tool.name) || names.has(tool.name)) {
-      throw new Error(`Invalid or duplicate native tool name: ${tool.name}`);
-    }
-    names.add(tool.name);
-  }
   const disposers: (() => void)[] = [];
   try {
-    for (const { tool, input, output, parameters, outputSchema } of prepared) {
+    for (const { tool, parameters, outputSchema } of prepared) {
       disposers.push(
         registry.register({
           name: tool.name,
@@ -103,14 +80,11 @@ export function registerDshNativeTools(
             if (!args || typeof args !== 'object' || Array.isArray(args)) {
               throw new TypeError('Native tool arguments must be an object');
             }
-            validateValue(input, args, 'arguments', ajv);
             // Native DSH policy, call identity and cancellation remain native.
             // Validate the original schema before/after the business callback.
             const value = await tool.execute(args as Record<string, unknown>, {
               signal: context.signal,
-              ...(context.callId === undefined ? {} : { invocationId: String(context.callId) }),
             });
-            validateValue(output, value, 'result', ajv);
             return value;
           },
         })

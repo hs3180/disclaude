@@ -5,7 +5,7 @@ This opt-in script sends real model requests. The model must be selected explici
 the #5215 acceptance model is `gpt-5.6-luna`, with `low` reasoning.
 
 ```sh
-node tests/dsh/native-tools-probe.mjs \
+node tests/dsh/host-tools-probe.mjs \
   --binary /path/to/dsh \
   --oauth-auth-file /path/to/existing/auth.json \
   --model gpt-5.6-luna \
