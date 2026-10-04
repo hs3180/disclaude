@@ -73,7 +73,7 @@ import {
 } from './codex-runner.js';
 import { resolveCodexSandboxPolicy, type CodexSandboxLevel } from './sandbox-policy.js';
 import { CodexSessionGovernor, type SessionRegistration } from './session-governor.js';
-import { CodexAppServerLifecycle } from './app-server-lifecycle.js';
+import { CodexAppServerLifecycle, CodexNoActiveTurnError } from './app-server-lifecycle.js';
 import type {
   CodexAppServerDynamicToolCallRequest,
   CodexAppServerDynamicToolCallResult,
@@ -1282,9 +1282,28 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       admissionAbort.abort();
       stopInput();
       void input.return?.(undefined);
-      interruptFlight = lifecycle?.interrupt(sessionKey).catch((error: unknown) => {
-        push({ type: 'error', content: error instanceof Error ? error.message : String(error), role: 'system' });
-      });
+      // Issue #5186: a stop can land after the turn's terminal notification
+      // (turn/completed cleared activeTurnId and idled the lifecycle) while
+      // the per-turn finalizer is still awaiting lifecycle.close() — done is
+      // not set yet, so this handle used to interrupt an idle session and
+      // surface the no-active-turn guard rejection as a stream error after an
+      // otherwise-successful turn (e.g. task-reset close racing teardown).
+      // With no active turn there is nothing to interrupt: teardown continues
+      // through the finalizer, and any concurrently started turn is interrupted
+      // by the post-startTurn stopped check below.
+      if (!activeTurnId) {
+        logger.debug({ sessionKey, reason }, 'Codex stream stopped with no active turn; skipping interrupt');
+      } else {
+        interruptFlight = lifecycle?.interrupt(sessionKey).catch((error: unknown) => {
+          // A no-active-turn rejection on the teardown path means the turn
+          // completed concurrently; expected, not a provider failure.
+          if (error instanceof CodexNoActiveTurnError) {
+            logger.debug({ sessionKey, reason, operation: error.operation }, 'Codex stop raced turn completion; interrupt had no active turn');
+            return;
+          }
+          push({ type: 'error', content: error instanceof Error ? error.message : String(error), role: 'system' });
+        });
+      }
       turnDone?.(new Error(reason));
     };
 
