@@ -50,9 +50,8 @@ python -m pip install --no-deps /staged/disclaude_jupyter-0.1.0-py3-none-any.whl
 
 This does not resolve a version mismatch or authorize a server restart. The
 actual `.env` server has a different stack and lacks this extension; its
-experimental compatibility/deployment candidate is reviewed separately in
-[#5248](https://github.com/hs3180/disclaude/pull/5248). Preserve its existing
-configuration, image, persistent data and kernel work before activation.
+experimental profile is described below. Preserve its existing configuration,
+image, persistent data and kernel work before activation.
 
 Configure the remote server through its deployment controller, with an
 authenticated entry and private persistent state:
