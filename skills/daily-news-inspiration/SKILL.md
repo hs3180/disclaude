@@ -133,16 +133,16 @@ Rotate between different question types across days:
 ## Example
 
 ### Search Results:
-- "GPT-5 released with multi-modal reasoning"
+- "New AI model released with multi-modal reasoning"
 - "China's new data privacy regulation"
 - "Quantum computing breakthrough at Google"
 
 ### Selected News:
-GPT-5 with multi-modal reasoning (tech-relevant, interesting)
+A new AI model with multi-modal reasoning (tech-relevant, interesting)
 
 ### Generated Question:
 
-> 刚看到 GPT-5 发布了，据说支持多模态推理，能同时理解图片和文字的复杂关系了。你觉得这种能力对日常开发工作会有实际影响吗？还是说更多是概念上的进步？
+> 刚看到一款新 AI 模型发布了，据说支持多模态推理，能同时理解图片和文字的复杂关系了。你觉得这种能力对日常开发工作会有实际影响吗？还是说更多是概念上的进步？
 
 ---
 

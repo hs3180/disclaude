@@ -4,6 +4,10 @@ Set `agent.agentBackend: codex` to run the Codex CLI as Disclaude's agent
 harness. Codex uses its own authentication and model configuration; Disclaude's
 Anthropic-compatible `provider` settings do not select the Codex model.
 
+> Docker commands in this guide require a full source checkout. Prebuilt
+> release packages omit Compose files; see the
+> [Docker Compose deployment guide](docker-compose-deployment.md).
+
 ## Install and authenticate
 
 Install a Codex CLI version supported by your deployment using the
@@ -32,8 +36,6 @@ docker compose run --rm service codex login --device-auth
 agent:
   agentBackend: codex
   codex:
-    model: gpt-5.6-luna
-    reasoningEffort: high # optional; must be supported by this model
     transport: app-server # optional; default: exec
     maxActiveSessions: 3  # optional
     maxConcurrentRuns: 2  # optional
@@ -44,6 +46,13 @@ the legacy `agent.model` and a default Codex preset's `model` remain fallback
 sources for existing configurations. If multiple legacy and canonical values
 conflict, the selected source wins and startup warns which duplicate setting to
 remove. A named agent preset can still select its own model for that chat.
+
+Disclaude does not define a fixed default model. Concrete model and effort
+recommendations are kept in the [configuration sample](../disclaude.config.example.yaml).
+Choose a model available to the signed-in Codex account; explicit identifiers
+are passed unchanged to Codex, which validates their availability. If no
+Disclaude configuration, selected preset, or environment value resolves a
+model, Codex uses the model from `CODEX_HOME` or its built-in default.
 
 The precedence for a run is a selected per-chat/per-turn model, then a
 per-query `CODEX_MODEL`, the process `CODEX_MODEL`, the resolved configuration
@@ -75,15 +84,29 @@ The default `exec` transport runs non-interactive turns. Set
 Concurrency limits are per service process; extra work waits rather than
 starting unlimited Codex sessions or child processes.
 
+## Real-model acceptance
+
+Live acceptance scripts require an explicit model available to the signed-in
+account; they do not supply a fixed model or inherit the account's default:
+
+- `scripts/test-codex-live.mjs`: set `DISCLAUDE_TEST_MODEL`.
+- Codex user-input E2E: set `DISCLAUDE_E2E_CODEX_INPUT_MODEL` when enabling
+  `DISCLAUDE_E2E_CODEX_INPUT=1`.
+- Browser Codex E2E: set `DISCLAUDE_E2E_BROWSER_CODEX_MODEL` when enabling
+  `DISCLAUDE_E2E_BROWSER_CODEX=1`.
+
+Use the model required by the acceptance issue and record that selection with
+the result. Missing or blank model values fail before creating test resources
+or starting a model turn.
+
 ## Permissions and behavior
 
 - The default Codex sandbox is `workspace-write`. Set `agent.codexSandbox` to
   `read-only`, `workspace-write`, or `danger-full-access` to choose an explicit
   level. `agent.fullAccess: true` is an explicit opt-in to unrestricted access.
-- A `disallowedTools` policy that denies mutating tools caps the effective
-  sandbox at `read-only`. If a requested restriction cannot be enforced by the
-  selected Codex transport, Disclaude fails closed instead of claiming it was
-  applied.
+- Claude `allowedTools` / `disallowedTools` are not Codex policies; stale
+  query fields are rejected. Choose business callbacks by passing their
+  definitions in `tools`, and use the native sandbox configuration above.
 - Codex conversations resume within a running service process. Restarting the
   service clears Disclaude's in-memory conversation mapping; Codex owns its
   session files under `CODEX_HOME`.

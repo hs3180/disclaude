@@ -114,9 +114,9 @@ test('generates a standalone manifest and excludes untracked resources', () => {
   assert(existsSync(join(output, 'scripts/chromium-config.mjs')));
   assert(existsSync(join(output, 'scripts/chromium-diagnose.mjs')));
   assert(!existsSync(join(output, 'packages/core/dist/index.test.js')));
-  assert(existsSync(join(output, 'docker/start-chromium.sh')));
-  assert(existsSync(join(output, 'docker-compose.yml')));
-  assert(manifest.files.includes('docker/'));
+  assert(!existsSync(join(output, 'docker/start-chromium.sh')));
+  assert(!existsSync(join(output, 'docker-compose.yml')));
+  assert(!manifest.files.includes('docker/'));
   assert(!existsSync(join(output, 'packages/core/package.json')));
   assert.match(
     readFileSync(join(output, 'packages/service/dist/index.js'), 'utf8'),

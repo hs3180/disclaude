@@ -5,7 +5,6 @@
  * 提供统一的接口供上层业务代码使用。
  */
 
-import type { ZodSchema } from 'zod';
 import type { AgentInputContext, AgentInputRequest } from './user-input.js';
 
 // ============================================================================
@@ -227,75 +226,7 @@ export interface ToolResultBlock {
 // MCP 服务器配置
 // ============================================================================
 
-/**
- * 工具进度上报载荷（#4568）。
- *
- * handler 可选第二参 `onProgress` 收到的值。推荐用结构化对象——pi 后端
- * 把它原样放进 `tool_execution_update` 的 `details`，并在 `content` 里
- * JSON 序列化为模型可读文本。两种惯用形状：
- *
- * - `{ message, percent? }`：人类可读的一行进度 + 可选完成百分比
- *   （0–100 整数）；UI 可直接渲染进度条。
- * - `{ done, total? }`：计数式进度（已处理/总量）；`total` 缺省表示总量
- *   未知，仅作心跳 + 计数展示。
- *
- * 不强制：字符串（直接透传为文本）与任意 JSON 可序列化对象也接受
- * （`unknown` 兜底），适配层不做校验——上报是尽力而为的旁路，不该让
- * 工具执行失败。
- */
-export type ToolProgressPayload =
-  | { message: string; percent?: number }
-  | { done: number; total?: number; message?: string }
-  | string
-  | unknown;
-
-/** 工具进度回调（#4568）：`onProgress(payload)`，可多次调用。 */
-export type ToolProgressCallback = (progress: ToolProgressPayload) => void;
-
-/** 内联工具定义 */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export interface InlineToolDefinition<TParams = any, TResult = any> {
-  /** 工具名称 */
-  name: string;
-  /** 工具描述 */
-  description: string;
-  /** 参数 Schema（Zod） */
-  parameters: ZodSchema<TParams>;
-  /**
-   * 处理函数。
-   *
-   * 可选第二参 `onProgress`（#4568）：长时间运行的工具可在执行期间多
-   * 次调用它上报中间进度，载荷为 {@link ToolProgressPayload}（结构化
-   * `{message, percent?}` / `{done, total?}` 或字符串）。目前仅 pi 后端
-   * 传入——adapter 把它接到 pi execute 的 onUpdate → pi 发
-   * `tool_execution_update` → 流里出现 `tool_progress` 消息（同时让
-   * stall watchdog #4550 在工具静默期 re-arm）。Claude 后端的 tool()
-   * 无对应通道，不会传入——跨后端工具使用前需
-   * `typeof onProgress === 'function'` 守卫。不关心进度的 handler 忽略
-   * 该参数即可（现有工具零改动）。
-   */
-  handler: (params: TParams, onProgress?: ToolProgressCallback) => Promise<TResult>;
-}
-
-/** stdio 模式 MCP 服务器配置 */
-export interface StdioMcpServerConfig {
-  type: 'stdio';
-  name: string;
-  command: string;
-  args?: string[];
-  env?: Record<string, string>;
-}
-
-/** 内联模式 MCP 服务器配置 */
-export interface InlineMcpServerConfig {
-  type: 'inline';
-  name: string;
-  version: string;
-  tools?: InlineToolDefinition[];
-}
-
-/** MCP 服务器配置联合类型 */
-export type McpServerConfig = StdioMcpServerConfig | InlineMcpServerConfig;
+export type { ToolDefinition, ToolContext, ToolProgressPayload, ToolProgressCallback } from './tools.js';
 
 // ============================================================================
 // 查询选项
@@ -311,12 +242,6 @@ export interface SystemPromptPreset {
   append?: string;
 }
 
-/** Tools preset 配置 (Issue #2890) */
-export interface ToolsPreset {
-  type: 'preset';
-  preset: 'claude_code';
-}
-
 /** 查询选项（Provider 无关） */
 export interface AgentQueryOptions {
   /** Host interaction callback; never serialized into model input or tool traces. */
@@ -330,25 +255,12 @@ export interface AgentQueryOptions {
   projectRoot?: string;
   /** 使用的模型 */
   model?: string;
-  /** Codex-only per-turn reasoning override; otherwise provider and CLI defaults apply. */
-  reasoningEffort?: import('../config/types.js').CodexReasoningEffort;
+  /** Native adapter-owned reasoning selection; each provider validates its supported levels. */
+  reasoningEffort?: string;
   /** 权限模式 */
   permissionMode?: PermissionMode;
-  /** 允许使用的工具列表 */
-  allowedTools?: string[];
-  /** 禁用的工具列表 */
-  disallowedTools?: string[];
-  /**
-   * 工具配置 (Issue #2890)
-   * - `string[]` - 指定可用工具列表
-   * - `{ type: 'preset', preset: 'claude_code' }` - 使用 Claude Code 默认工具集
-   *
-   * 不设置时由 SDK 决定默认工具集。设置为 `claude_code` preset 可确保
-   * Agent 使用完整的 Claude Code 内置工具，是 vibe coding 合规的关键配置。
-   */
-  tools?: string[] | ToolsPreset;
-  /** MCP 服务器配置 */
-  mcpServers?: Record<string, McpServerConfig>;
+  /** Business tools; each Harness adapter owns registration and transport. */
+  tools?: readonly import('./tools.js').ToolDefinition[];
   /** 环境变量 */
   env?: Record<string, string | undefined>;
   /**
@@ -368,9 +280,10 @@ export interface AgentQueryOptions {
    */
   stderr?: (data: string) => void;
   /**
-   * 会话身份键（Issue #4634，S7）：调用方（ChatAgent 传 chatId）用来标识
-   * "哪个会话"拥有这条流。并发治理类 provider（codex）用它做会话上限的
-   * LRU 身份与逐 chat 续接；不传时 provider 退化为匿名会话（仍计上限）。
+   * Host-owned conversation key (ChatAgent supplies its chat identity).
+   * Native adapters use it for conversation continuity and concurrency policy.
+   * DSH scopes its persisted reference by cwd. This is never Notebook identity
+   * or execution authority. Omission creates an anonymous conversation.
    */
   sessionKey?: string;
   /**

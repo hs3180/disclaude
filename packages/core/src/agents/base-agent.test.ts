@@ -119,21 +119,21 @@ describe('BaseAgent', () => {
     expect(mockGetProvider).toHaveBeenLastCalledWith('pi');
   });
 
-  it('omits Claude-only presets and inapplicable default denies for deepseek', () => {
+  it('omits Claude-only runtime options for deepseek', () => {
     const deepseek = new TestAgent({ ...config, agentBackend: 'deepseek' });
-    const options = deepseek.testCreateSdkOptions({
-      disallowedTools: ['EnterPlanMode', 'CronCreate'],
-    });
+    const options = deepseek.testCreateSdkOptions();
     expect(options.systemPrompt).toBeUndefined();
-    expect(options.tools).toBeUndefined();
-    expect(options.disallowedTools).toBeUndefined();
+    expect(options).not.toHaveProperty('builtinTools');
+    expect(options).not.toHaveProperty('disallowedTools');
   });
 
   it.each(['codex', 'pi', 'deepseek'] as const)('does not inject Claude runtime options into %s', (backend) => {
     const instance = new TestAgent({ ...config, agentBackend: backend });
     const options = instance.testCreateSdkOptions({});
     expect(options.systemPrompt).toBeUndefined();
-    expect(options.tools).toBeUndefined();
+    expect(options).not.toHaveProperty('builtinTools');
+    expect(options).not.toHaveProperty('allowedTools');
+    expect(options).not.toHaveProperty('disallowedTools');
     expect(options.includePartialMessages).toBeUndefined();
     expect(options.teammateMode).toBeUndefined();
     expect(options.env?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
@@ -147,22 +147,13 @@ describe('BaseAgent', () => {
       name: 'deepseek',
     } as typeof mockSdkProvider);
     const defaultAgent = new TestAgent(config);
-    const options = defaultAgent.testCreateSdkOptions({
-      disallowedTools: ['EnterPlanMode', 'AskUserQuestion', 'CronCreate'],
-    });
+    const options = defaultAgent.testCreateSdkOptions();
     expect(defaultAgent.agentBackend).toBe('deepseek');
-    expect(options.tools).toBeUndefined();
+    expect(options).not.toHaveProperty('builtinTools');
     expect(options.systemPrompt).toBeUndefined();
-    expect(options.disallowedTools).toBeUndefined();
+    expect(options).not.toHaveProperty('disallowedTools');
   });
 
-  it('retains enforceable tool restrictions for deepseek to reject explicitly', () => {
-    const deepseek = new TestAgent({ ...config, agentBackend: 'deepseek' });
-    const options = deepseek.testCreateSdkOptions({
-      disallowedTools: ['AskUserQuestion', 'Bash', 'Write'],
-    });
-    expect(options.disallowedTools).toEqual(['Bash', 'Write']);
-  });
 
   afterEach(() => {
     clearRuntimeContext();
@@ -236,13 +227,11 @@ describe('BaseAgent', () => {
       });
     });
 
-    it('should set tools to claude_code preset (Issue #2890)', () => {
+    it('leaves native tool defaults to the Harness adapter', () => {
       const options = agent.testCreateSdkOptions();
-
-      expect(options.tools).toEqual({
-        type: 'preset',
-        preset: 'claude_code',
-      });
+      expect(options.tools).toBeUndefined();
+      expect(options).not.toHaveProperty('builtinTools');
+      expect(options).not.toHaveProperty('mcpServers');
     });
 
     it('should include model if specified', () => {
@@ -250,24 +239,18 @@ describe('BaseAgent', () => {
       expect(options.model).toBe('claude-3-5-sonnet-20241022');
     });
 
-    it('should add allowedTools when specified', () => {
-      const options = agent.testCreateSdkOptions({
-        allowedTools: ['Read', 'Write'],
-      });
-      expect(options.allowedTools).toEqual(['Read', 'Write']);
+
+
+    it.each(['allowedTools', 'disallowedTools'])('rejects a retired common %s field', (field) => {
+      expect(() => agent.testCreateSdkOptions({ [field]: [] } as SdkOptionsExtra)).toThrow('Claude-specific');
     });
 
-    it('should add disallowedTools when specified', () => {
-      const options = agent.testCreateSdkOptions({
-        disallowedTools: ['Bash'],
-      });
-      expect(options.disallowedTools).toEqual(['Bash']);
-    });
-
-    it('should add mcpServers when specified', () => {
-      const mcpServers = { 'test-server': { command: 'node', args: ['server.js'] } };
-      const options = agent.testCreateSdkOptions({ mcpServers });
-      expect(options.mcpServers).toEqual(mcpServers);
+    it('forwards business definitions without creating Harness configuration', () => {
+      const tools = [{ name: 'read_value', description: 'Read', inputSchema: { type: 'object' }, outputSchema: { type: 'object' }, execute: () => Promise.resolve({}) }];
+      const options = agent.testCreateSdkOptions({ tools });
+      expect(options.tools).toBe(tools);
+      expect(options).not.toHaveProperty('builtinTools');
+      expect(options).not.toHaveProperty('mcpServers');
     });
 
     it('should set teammateMode when Agent Teams is enabled', () => {

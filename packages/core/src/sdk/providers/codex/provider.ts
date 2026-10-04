@@ -1,3 +1,4 @@
+import { assertToolOptions } from '../../tools.js';
 import { readStallPolicy } from '../stall-policy.js';
 /**
  * Codex CLI Agent Provider (Issue #4629 skeleton + #4630 exec bridge +
@@ -61,8 +62,6 @@ import type { IAgentSDKProvider } from '../../interface.js';
 import type {
   AgentMessage,
   AgentQueryOptions,
-  InlineToolDefinition,
-  McpServerConfig,
   ProviderInfo,
   StreamQueryResult,
   UserInput,
@@ -75,6 +74,11 @@ import {
 import { resolveCodexSandboxPolicy, type CodexSandboxLevel } from './sandbox-policy.js';
 import { CodexSessionGovernor, type SessionRegistration } from './session-governor.js';
 import { CodexAppServerLifecycle, CodexNoActiveTurnError } from './app-server-lifecycle.js';
+import type {
+  CodexAppServerDynamicToolCallRequest,
+  CodexAppServerDynamicToolCallResult,
+} from './app-server-transport.js';
+import { createCodexDynamicToolRegistry } from './dynamic-tools.js';
 import type { AgentInputRequest } from '../../user-input.js';
 import {
   adaptCodexEvent,
@@ -153,11 +157,6 @@ const BINARY_MISSING = (pathValue: string): string =>
   `CodexAgentProvider: codex CLI binary not found on PATH "${pathValue}" — install it first: ` +
   '`npm install -g @openai/codex`, then complete `codex login` (Sign in with ChatGPT).';
 
-/** The ChatGPT endpoint rejects this legacy API-style model alias. */
-function codexModelForChatGpt(model: string | undefined): string | undefined {
-  return model?.trim().toLowerCase() === 'gpt-5.1-codex' ? undefined : model;
-}
-
 /**
  * Constructor options — dependency injection seams for tests.
  *
@@ -222,6 +221,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
   private readonly appServerLifecycles = new Map<string, CodexAppServerLifecycle>();
   private readonly appServerStops = new Map<string, () => void>();
   private readonly appServerThreadIds = new Map<string, string>();
+  private readonly appServerDynamicToolSignatures = new Map<string, string>();
   /** Cumulative quota counters (S5, #4632) — see CodexQuotaStats. */
   private readonly quota: CodexQuotaStats = {
     turnsCompleted: 0,
@@ -364,6 +364,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     void this.appServerLifecycles.get(sessionKey)?.close();
     this.appServerLifecycles.delete(sessionKey);
     this.appServerThreadIds.delete(sessionKey);
+    this.appServerDynamicToolSignatures.delete(sessionKey);
     const hadRegistration = this.governor.forgetSession(sessionKey);
     const hadStash = this.threadStash.delete(sessionKey);
     if (hadRegistration || hadStash) {
@@ -379,9 +380,11 @@ export class CodexAgentProvider implements IAgentSDKProvider {
   // --------------------------------------------------------------------------
 
   queryStream(input: AsyncGenerator<UserInput>, options: AgentQueryOptions): StreamQueryResult {
+    assertToolOptions(options);
     if (this.disposed) {
       throw new Error('Provider has been disposed');
     }
+
     // Fail fast with an actionable message — same contract as pi's missing
     // streamFn check (#4386 part 3): the environment problem is knowable at
     // call time, so it must not surface as a cryptic mid-stream ENOENT.
@@ -395,7 +398,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     const providerEnvironmentModel = this.env.CODEX_MODEL?.trim();
     const configuredModel = this.model;
     const selectedModel = queryModel || queryEnvironmentModel || providerEnvironmentModel || configuredModel;
-    const codexModel = codexModelForChatGpt(selectedModel || undefined);
+    const codexModel = selectedModel || undefined;
     const modelSource = !codexModel
       ? 'codex-cli-default'
       : queryModel
@@ -430,7 +433,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     // Permission gate → sandbox level (Issue #4631, S4): resolved once per
     // stream (options are constant across turns); throws synchronously with
     // an actionable message when the policy cannot be honored headlessly
-    // (e.g. a WebSearch denylist entry) — same fail-fast contract as the
+    // (e.g. an invalid permissionMode) — same fail-fast contract as the
     // binary check above.
     const sandboxDecision = resolveCodexSandboxPolicy(
       options,
@@ -463,17 +466,14 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     if (this.transportMode === 'app-server') {
       return this.queryAppServer(input, options, sandboxDecision.sandbox, binary, skillsManifest, codexModel, requestedEffort);
     }
+    if (options.tools?.length) {
+      throw new Error('Codex host tools require agent.codex.transport: app-server; codex exec cannot dispatch host tools.');
+    }
 
     const runner = new CodexExecRunner({
       binary,
       networkAccess: this.networkAccess,
     });
-    if ((options.model || this.model) && codexModel === undefined) {
-      logger.warn(
-        { configuredModel: options.model || this.model },
-        'ignoring legacy gpt-5.1-codex model for ChatGPT-backed Codex; using the CLI default'
-      );
-    }
     // Captured at queryStream call time — the constructor-injected env the
     // binary was resolved from (tests: PATH fixtures; prod: process.env).
     const providerEnv = this.env;
@@ -1113,12 +1113,21 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     codexModel: string | undefined,
     reasoningEffort: CodexReasoningEffort | undefined,
   ): StreamQueryResult {
+    const dynamicToolRegistry = createCodexDynamicToolRegistry(options.tools);
+    const dynamicToolSignature = dynamicToolRegistry.signature;
     let lifecycle: CodexAppServerLifecycle | undefined;
     const sessionKey = options.sessionKey ?? `anon-app-${++this.anonSessionCounter}`;
     const queue: AgentMessage[] = [];
     const wakeups: Array<() => void> = [];
-    this.appServerStops.get(sessionKey)?.();
     let threadId = this.appServerThreadIds.get(sessionKey);
+    const registeredToolSignature = this.appServerDynamicToolSignatures.get(sessionKey);
+    if (threadId && registeredToolSignature !== undefined && registeredToolSignature !== dynamicToolSignature) {
+      throw new Error('Codex app-server thread already has a different host tool registry; reset the conversation before changing its tools.');
+    }
+    if (threadId && registeredToolSignature === undefined && dynamicToolRegistry.specs.length > 0) {
+      throw new Error('Codex app-server cannot add host tools to an existing thread; reset the conversation to register them.');
+    }
+    this.appServerStops.get(sessionKey)?.();
     let done = false;
     let stopped = false;
     let wasEvicted = false;
@@ -1134,7 +1143,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     const { timeoutMs: stallTimeoutMs } = readStallPolicy(this.env);
     let interruptFlight: Promise<void> | undefined;
     const isToolItem = (type: string | undefined): boolean =>
-      type === 'commandExecution' || type === 'mcpToolCall';
+      type === 'commandExecution' || type === 'mcpToolCall' || type === 'dynamicToolCall';
     const fireStall = (): void => {
       stallTimer = undefined;
       if (stopped || !activeTurnId) { return; }
@@ -1329,6 +1338,14 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           }
           let bindTurn!: (id: string | undefined) => void;
           const turnBinding = new Promise<string | undefined>(resolve => { bindTurn = resolve; });
+          const onDynamicToolCall = dynamicToolRegistry.specs.length > 0 ? async (request: CodexAppServerDynamicToolCallRequest) => {
+            const boundTurn = await turnBinding;
+            if (!boundTurn || stopped || request.threadId !== threadId || request.turnId !== boundTurn
+              || activeTurnId !== boundTurn) {
+              throw new Error('Host tool request has no matching active Codex turn');
+            }
+            return dynamicToolRegistry.call(request);
+          } : undefined;
           try {
             if (stopped) {break;}
             lifecycle = this.createAppServerLifecycle(binary, sessionKey, next.value.correlation, options.onUserInput ? async request => {
@@ -1350,9 +1367,18 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               request.signal.addEventListener('abort', finish, { once: true });
               push({ type: 'status', role: 'system', content: request.isBlocking ? '等待你回答卡片中的问题。' : '有问题等待回答；任务仍在继续。' });
               await options.onUserInput({ ...request, respond: async answers => { await request.respond(answers); finish(); } }, next.value.inputContext);
-            } : undefined);
-            threadId = await lifecycle.ensureThread(sessionKey, { threadId, cwd: options.cwd, model: codexModel, sandbox });
-            if (this.appServerLifecycles.get(sessionKey) === lifecycle) {this.appServerThreadIds.set(sessionKey, threadId);}
+            } : undefined, onDynamicToolCall);
+            threadId = await lifecycle.ensureThread(sessionKey, {
+              threadId,
+              cwd: options.cwd,
+              model: codexModel,
+              sandbox,
+              dynamicTools: dynamicToolRegistry.specs,
+            });
+            if (this.appServerLifecycles.get(sessionKey) === lifecycle) {
+              this.appServerThreadIds.set(sessionKey, threadId);
+              this.appServerDynamicToolSignatures.set(sessionKey, dynamicToolSignature);
+            }
             if (stopped || this.disposed) {break;}
             this.appServerRoutes.set(threadId, onNotification);
             deliveredItems.clear();
@@ -1458,12 +1484,19 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     };
   }
 
-  private createAppServerLifecycle(binary: string, sessionKey: string, correlation?: UserInput['correlation'], onUserInput?: (request: AgentInputRequest) => Promise<void>): CodexAppServerLifecycle {
+  private createAppServerLifecycle(
+    binary: string,
+    sessionKey: string,
+    correlation?: UserInput['correlation'],
+    onUserInput?: (request: AgentInputRequest) => Promise<void>,
+    onDynamicToolCall?: (request: CodexAppServerDynamicToolCallRequest) => Promise<CodexAppServerDynamicToolCallResult>,
+  ): CodexAppServerLifecycle {
     const lifecycle = new CodexAppServerLifecycle({
       binary,
       sessionKey,
       correlation,
       onUserInput,
+      onDynamicToolCall,
       env: this.env,
       onNotification: (method, params) => {
         const threadId = (params as { threadId?: string } | null)?.threadId;
@@ -1478,20 +1511,6 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     });
     this.appServerLifecycles.set(sessionKey, lifecycle);
     return lifecycle;
-  }
-
-  createInlineTool(_definition: InlineToolDefinition): unknown {
-    // Tools/MCP mapping is an open question on #4627 (codex has its own MCP
-    // config surface) — deliberately not stubbed half-way.
-    throw new Error(
-      'CodexAgentProvider: tools/MCP mapping is not supported yet — tracked as an open question on #4627.'
-    );
-  }
-
-  createMcpServer(_config: McpServerConfig): unknown {
-    throw new Error(
-      'CodexAgentProvider: tools/MCP mapping is not supported yet — tracked as an open question on #4627.'
-    );
   }
 
   // --------------------------------------------------------------------------
@@ -1516,6 +1535,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     for (const lifecycle of this.appServerLifecycles.values()) {void lifecycle.close();}
     this.appServerLifecycles.clear();
     this.appServerThreadIds.clear();
+    this.appServerDynamicToolSignatures.clear();
   }
 
   // --------------------------------------------------------------------------

@@ -25,7 +25,7 @@ changes ship under a new version.
   upstream `browser-use` CLI calls per CDP browser; no separate Disclaude broker
   is required.
 - **Operations:** scheduled tasks, workspace-backed files, service diagnostics,
-  and Docker or macOS deployment.
+  and source-checkout Docker Compose or macOS deployment.
 
 ## Documentation
 
@@ -39,6 +39,7 @@ changes ship under a new version.
 | [Skills](docs/skills.md) | Discovery, precedence, and CLI contract |
 | [Logging](docs/logging.md) | File output, rotation, and collection |
 | [GitHub installation](docs/releases/git-install.md) | Install, upgrade, and roll back a release tag |
+| [Docker Compose deployment](docs/docker-compose-deployment.md) | Deploy from the full source checkout |
 
 ## Quickstart
 

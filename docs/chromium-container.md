@@ -2,6 +2,10 @@
 
 Build and start the optional browser service:
 
+> These Compose commands require a full source checkout. Prebuilt release
+> packages omit Compose files; see the
+> [Docker Compose deployment guide](docker-compose-deployment.md).
+
 ```sh
 docker compose --profile chromium build chromium
 docker compose --profile chromium up -d chromium

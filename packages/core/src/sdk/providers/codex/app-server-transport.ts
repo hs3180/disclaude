@@ -30,7 +30,36 @@ export interface CodexAppServerTransportOptions {
   requestTimeoutMs?: number;
   killGraceMs?: number;
   onUserInput?: (request: AgentInputRequest) => Promise<void>;
+  onDynamicToolCall?: (request: CodexAppServerDynamicToolCallRequest) => Promise<CodexAppServerDynamicToolCallResult>;
   userInputTimeoutMs?: number;
+}
+
+export interface CodexAppServerDynamicToolSpec {
+  type: 'namespace';
+  name: string;
+  description: string;
+  tools: Array<{
+    type: 'function';
+    name: string;
+    description: string;
+    inputSchema: Record<string, unknown>;
+  }>;
+}
+
+export interface CodexAppServerDynamicToolCallRequest {
+  requestId: JsonRpcId;
+  callId: string;
+  threadId: string;
+  turnId: string;
+  namespace?: string | null;
+  tool: string;
+  arguments: unknown;
+  signal: AbortSignal;
+}
+
+export interface CodexAppServerDynamicToolCallResult {
+  contentItems: Array<{ type: 'inputText'; text: string }>;
+  success: boolean;
 }
 
 export interface CodexAppServerExit {
@@ -41,8 +70,9 @@ export interface CodexAppServerExit {
 
 /**
  * Experimental persistent stdio transport for the Codex app-server protocol.
- * It is deliberately not selected by CodexAgentProvider yet: `codex exec`
- * remains the default until thread/turn lifecycle parity is implemented.
+ * CodexAgentProvider selects it only when explicitly configured; `codex exec`
+ * remains the compatibility default. Dynamic host-tool calls use the
+ * app-server's experimental API and are enabled only when a handler is set.
  */
 export class CodexAppServerTransport {
   private readonly logger;
@@ -65,6 +95,10 @@ export class CodexAppServerTransport {
     params: AgentInputParams; abort: AbortController; timer: ReturnType<typeof setTimeout>; writing: boolean;
   }>();
   private readonly seenInputIds = new Set<JsonRpcId>();
+  private readonly dynamicCalls = new Map<JsonRpcId, {
+    threadId: string; turnId: string; abort: AbortController; writing: boolean;
+  }>();
+  private readonly seenDynamicCallIds = new Set<JsonRpcId>();
 
   constructor(private readonly options: CodexAppServerTransportOptions = {}) {
     this.logger = createLogger('CodexAppServerTransport', Object.freeze({
@@ -112,7 +146,7 @@ export class CodexAppServerTransport {
   async initialize(clientName = 'disclaude', clientVersion = '0.5.0'): Promise<unknown> {
     const result = await this.request('initialize', {
       clientInfo: { name: clientName, title: 'Disclaude', version: clientVersion },
-      capabilities: this.options.onUserInput ? { experimentalApi: true } : null,
+      capabilities: this.options.onUserInput || this.options.onDynamicToolCall ? { experimentalApi: true } : null,
     });
     this.notify('initialized');
     await this.reportResources('initialized');
@@ -238,6 +272,10 @@ export class CodexAppServerTransport {
         this.receiveUserInput(message.id, message.params);
         return;
       }
+      if (message.method === 'item/tool/call' && this.options.onDynamicToolCall) {
+        this.receiveDynamicToolCall(message.id, message.params);
+        return;
+      }
       // Tool and approval requests require an explicit policy integration.
       // Rejecting is fail-closed; silently ignoring would hang the turn.
       this.write({
@@ -270,6 +308,11 @@ export class CodexAppServerTransport {
         for (const [id, input] of this.inputs) {
           if (input.params.threadId === event.threadId && input.params.turnId === event.turn.id) { this.cancelInput(id, undefined, 'turn-ended'); }
         }
+        for (const [id, call] of this.dynamicCalls) {
+          if (call.threadId === event.threadId && call.turnId === event.turn.id) {
+            this.cancelDynamicToolCall(id, 'Turn ended before the host tool completed');
+          }
+        }
       }
       try {
         this.options.onNotification?.(message.method, message.params);
@@ -283,6 +326,8 @@ export class CodexAppServerTransport {
   private failAll(error: Error): void {
     this.acceptingRequests = false;
     for (const id of this.inputs.keys()) { this.cancelInput(id, undefined, 'closed'); }
+    for (const call of this.dynamicCalls.values()) { call.abort.abort('closed'); }
+    this.dynamicCalls.clear();
     for (const waiter of this.pending.values()) {
       clearTimeout(waiter.timer);
       waiter.reject(error);
@@ -299,6 +344,67 @@ export class CodexAppServerTransport {
     if (replyError && this.acceptingRequests && !input.writing) {
       this.write({ jsonrpc: '2.0', id, error: { code: -32800, message: replyError } });
     }
+  }
+
+  private receiveDynamicToolCall(id: JsonRpcId, raw: unknown): void {
+    if (!this.acceptingRequests) { return; }
+    if (this.seenDynamicCallIds.has(id)) { return; }
+    if (this.dynamicCalls.size >= 1000 || this.seenDynamicCallIds.size >= 1000) {
+      this.write({ jsonrpc: '2.0', id, result: this.dynamicToolFailure('Too many dynamic tool calls in this session') });
+      return;
+    }
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+      this.write({ jsonrpc: '2.0', id, error: { code: -32602, message: 'Unsupported dynamic tool request shape' } });
+      return;
+    }
+    const params = raw as Partial<CodexAppServerDynamicToolCallRequest>;
+    if (typeof params.callId !== 'string' || typeof params.threadId !== 'string' || typeof params.turnId !== 'string'
+      || typeof params.tool !== 'string' || !('arguments' in params)
+      || (params.namespace !== undefined && params.namespace !== null && typeof params.namespace !== 'string')) {
+      this.write({ jsonrpc: '2.0', id, error: { code: -32602, message: 'Unsupported dynamic tool request shape' } });
+      return;
+    }
+    this.seenDynamicCallIds.add(id);
+    const pending = { threadId: params.threadId, turnId: params.turnId, abort: new AbortController(), writing: false };
+    this.dynamicCalls.set(id, pending);
+    const request: CodexAppServerDynamicToolCallRequest = {
+      requestId: id,
+      callId: params.callId,
+      threadId: params.threadId,
+      turnId: params.turnId,
+      ...(params.namespace !== undefined ? { namespace: params.namespace } : {}),
+      tool: params.tool,
+      arguments: params.arguments,
+      signal: pending.abort.signal,
+    };
+    void Promise.resolve().then(() => this.options.onDynamicToolCall?.(request)).then(
+      result => this.respondToDynamicToolCall(id, pending, result ?? this.dynamicToolFailure('Host tool handler returned no result')),
+      error => this.respondToDynamicToolCall(id, pending, this.dynamicToolFailure(error instanceof Error ? error.message : String(error))),
+    );
+  }
+
+  private respondToDynamicToolCall(
+    id: JsonRpcId,
+    pending: { threadId: string; turnId: string; abort: AbortController; writing: boolean },
+    result: CodexAppServerDynamicToolCallResult,
+  ): void {
+    if (this.dynamicCalls.get(id) !== pending || pending.writing || !this.acceptingRequests) { return; }
+    pending.writing = true;
+    this.child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, result })}\n`, error => {
+      if (this.dynamicCalls.get(id) === pending) { this.dynamicCalls.delete(id); }
+      if (error) { this.failAll(error); }
+    });
+  }
+
+  private cancelDynamicToolCall(id: JsonRpcId, message: string): void {
+    const pending = this.dynamicCalls.get(id);
+    if (!pending) { return; }
+    pending.abort.abort('turn-ended');
+    this.respondToDynamicToolCall(id, pending, this.dynamicToolFailure(message));
+  }
+
+  private dynamicToolFailure(message: string): CodexAppServerDynamicToolCallResult {
+    return { contentItems: [{ type: 'inputText', text: message }], success: false };
   }
 
   private receiveUserInput(id: JsonRpcId, raw: unknown): void {
