@@ -60,7 +60,7 @@ import {
 } from '@disclaude/core';
 import { getDebugGroupService } from '../services/debug-group-service.js';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
-import { buildDisallowedTools } from './disallowed-tools.js';
+import { buildClaudeDisallowedTools } from './claude-disallowed-tools.js';
 import { HistoryManager } from './history-manager.js';
 import crypto from 'node:crypto';
 
@@ -1154,12 +1154,6 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // Keep resource discovery bound to the selected project even when a
       // provider uses a separate workspace as its execution cwd.
       projectRoot: resolution?.boundWorkingDir,
-      // Issue #4181: the built-in (session-only) cron/loop tools are disallowed
-      // by default; set DISCLAUDE_ALLOW_BUILTIN_CRON=1 to restore them.
-      // Disallowing alone blocks the calls; rerouting recurring work to the
-      // persistent `schedule` skill needs a guidance nudge (tracked as a #4181
-      // follow-up).
-      disallowedTools: buildDisallowedTools(),
       // Issue #4634 (S7): chatId as session identity for concurrency
       // governance on backends that bound active sessions (codex).
       sessionKey: this.sdkSessionKey,
@@ -1191,7 +1185,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     this.channel = new MessageChannel();
 
     // Create streaming query using channel's generator
-    const { handle, iterator } = this.createQueryStream(this.channel.generator(), sdkOptions);
+    const queryOptions = (this.agentBackend ?? 'claude') === 'claude'
+      ? { ...sdkOptions, disallowedTools: buildClaudeDisallowedTools() }
+      : sdkOptions;
+    const { handle, iterator } = this.createQueryStream(this.channel.generator(), queryOptions);
 
     this.queryHandle = handle;
     this.isSessionActive = true;

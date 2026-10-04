@@ -1,0 +1,14 @@
+jupyterlab==4.6.3
+jupyter-server==2.21.1
+jupyter-collaboration==5.0.4
+jupyter-server-ydoc==3.0.4
+jupyter-docprovider==3.0.4
+jupyter-server-nbmodel==0.2.9
+jupyter-ydoc==4.1.1
+pycrdt==0.14.8
+ipykernel==7.4.0
+nbformat==5.11.1
+nbconvert==7.17.1
+httpx==0.28.1
+httpx-ws==0.9.0
+playwright==1.63.0

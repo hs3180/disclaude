@@ -457,6 +457,19 @@ describe('ChatAgent (service)', () => {
         expect.not.objectContaining({ mcpServers: expect.anything() }),
       );
     });
+    it.each(['claude', 'pi', 'codex', 'deepseek'])('passes the chat denylist only to Claude, with %s selected', (backend) => {
+      (chatAgent as any).agentBackend = backend;
+      (chatAgent as any).startAgentLoop();
+      const [[baseOptions]] = (chatAgent as any).createSdkOptions.mock.calls;
+      expect(baseOptions).not.toHaveProperty('allowedTools');
+      expect(baseOptions).not.toHaveProperty('disallowedTools');
+      const [[, queryOptions]] = (chatAgent as any).createQueryStream.mock.calls;
+      if (backend === 'claude') {
+        expect(queryOptions.disallowedTools).toContain('AskUserQuestion');
+      } else {
+        expect(queryOptions).not.toHaveProperty('disallowedTools');
+      }
+    });
   });
 
   // Issue #4448 (direction #1): a chat bound to a directory that does not

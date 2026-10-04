@@ -9,8 +9,8 @@ import { FeishuAgentInput } from '../../packages/service/src/channels/feishu/age
 
 // Real Codex model/app-server and product card adapter. Feishu HTTP delivery and
 // the human submission are captured/simulated; live-channel acceptance is separate.
-// Luna currently exposes the RPC tool. Async is a separate capability probe,
-// explicitly enabled only when checking that optional model/tool combination.
+// Choose a model with the RPC tool explicitly. Async is a separate capability
+// probe, enabled only when checking that optional model/tool combination.
 // Codex 0.155 can represent the async tool as either the older
 // `item/completed`/agentMessage.questions notification or a non-blocking
 // item/tool/requestUserInput RPC. The latter still answers through the
@@ -21,6 +21,8 @@ const questionTools = process.env.DISCLAUDE_E2E_CODEX_ASYNC_INPUT === '1'
   : ['request_user_input'] as const;
 it.skipIf(process.env.DISCLAUDE_E2E_CODEX_INPUT !== '1').each(questionTools)('answers a real Codex %s question through its native card and completes the original turn', async tool => {
   const asyncTool = tool === 'request_user_input_async';
+  const model = process.env.DISCLAUDE_E2E_CODEX_INPUT_MODEL?.trim();
+  if (!model) throw new Error('Set DISCLAUDE_E2E_CODEX_INPUT_MODEL explicitly for real-model acceptance.');
   const root = await mkdtemp(join(tmpdir(), 'codex-input-e2e-'));
   const provider = new CodexAgentProvider({
     transport: 'app-server',
@@ -49,7 +51,7 @@ it.skipIf(process.env.DISCLAUDE_E2E_CODEX_INPUT !== '1').each(questionTools)('an
       ? 'Use the non-blocking user-input capability (the app-server request must have isBlocking=false)'
       : 'Call the actual request_user_input tool';
     yield { role: 'user', inputContext, content: `Interaction integration test: ${instruction} to ask exactly one question, which browser should this test use? Offer Chromium and Chrome with short descriptions. After receiving the answer, state the selected browser and finish. Do not use shell, files, network, other tools, subagents, or send messages. Do not ask through plain text.` };
-  })(), { sessionKey: 'codex-input-e2e', cwd: root, model: 'gpt-5.6-luna', settingSources: [], onUserInput: async (request, context) => {
+  })(), { sessionKey: 'codex-input-e2e', cwd: root, model, settingSources: [], onUserInput: async (request, context) => {
     requests++;
     questionItems.add(request.itemId);
     if (asyncTool) {

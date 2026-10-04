@@ -1,31 +1,99 @@
 import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DeepSeekHarnessProvider } from './provider.js';
+import type { ToolDefinition } from '../../tools.js';
 
-async function sdkFixture(): Promise<{ dir: string; binary: string }> {
+function nativeTool(execute: ToolDefinition['execute']): ToolDefinition {
+  return {
+    name: 'notebook_read_cell',
+    description: 'Read current source',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    outputSchema: { type: 'object' },
+    execute,
+  };
+}
+
+async function collect(iterator: ReturnType<DeepSeekHarnessProvider['queryStream']>['iterator']) {
+  const events = [];
+  for await (const event of iterator) {
+    events.push(event);
+  }
+  return events;
+}
+
+async function sdkFixture(
+  options: { foreignSession?: boolean } = {}
+): Promise<{ dir: string; binary: string }> {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-provider-'));
   const binary = join(dir, 'dsh');
   await writeFile(
     binary,
     `#!/usr/bin/env node
 require('node:fs').writeFileSync(require('node:path').join(${JSON.stringify(dir)}, 'argv.json'), JSON.stringify(process.argv.slice(2)));
+require('node:fs').writeFileSync(require('node:path').join(${JSON.stringify(dir)}, 'environment.json'), JSON.stringify({ sentinel: process.env.DSH_QUERY_VISIBLE, hasAuthority: Object.hasOwn(process.env, 'DSH_QUERY_AUTHORITY') }));
 const rl = require('node:readline').createInterface({ input: process.stdin });
 const reply = (id, result) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id, result }) + '\\n');
 const notify = (method, params) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method, params }) + '\\n');
 const seen = new Set();
+let initialization;
+let pendingHost;
+let pendingCancel;
+const fs = require('node:fs');
+const path = require('node:path');
+const root = ${JSON.stringify(dir)};
+const end = sid => {
+  notify('session.event', { sessionId: sid, event: { type: 'assistant/message', data: { message: { id: 'assistant-1', content: [{ type: 'text', text: 'done' }] } } } });
+  notify('session.event', { sessionId: sid, event: { type: 'turn/end', data: { reason: { kind: 'completed' } } } });
+  notify('session.status', { sessionId: sid, status: 'idle' });
+};
 rl.on('line', line => {
   const req = JSON.parse(line);
-  if (req.method === 'initialize') { reply(req.id, { serverInfo: { name: 'deepseek-harness-sdk-runtime', version: '0.0.1' } }); return; }
+  if (!req.method && req.id === 'host-1') {
+    fs.writeFileSync(path.join(root, 'host-response.json'), JSON.stringify(req));
+    const sid = pendingHost;
+    notify('session.event', { sessionId: sid, event: { type: 'tool/result', data: { meta: req.result, message: { content: [{ type: 'tool-result', toolCallId: 'call-1', isError: !!req.error, content: [{ type: 'text', text: JSON.stringify(req.result || req.error) }] }] } } } });
+    if (pendingCancel !== undefined) {
+      notify('session.event', { sessionId: sid, event: { type: 'turn/end', data: { reason: { kind: 'aborted' } } } });
+      notify('session.status', { sessionId: sid, status: 'idle' });
+      reply(pendingCancel, { reasoningStopped: true });
+    } else end(sid);
+    pendingHost = undefined;
+    return;
+  }
+  fs.appendFileSync(path.join(root, 'requests.jsonl'), JSON.stringify(req) + '\\n');
+  if (req.method === 'initialize') {
+    initialization = req.params;
+    reply(req.id, { capabilities: { tools: true, resume: true, cancel: true } }); return;
+  }
   if (req.method === 'shutdown') { reply(req.id, {}); process.exit(0); return; }
   const sid = req.params.sessionId;
-  if (!seen.has(sid)) {
-    try { require('node:fs').writeFileSync(require('node:path').join(${JSON.stringify(dir)}, sid), '', { flag: 'wx' }); }
-    catch { process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: req.id, error: { code: -32000, message: 'persisted session id collision' } }) + '\\n'); return; }
+  if (req.method === 'session/open') {
+    try {
+      if (req.params.resume) fs.readFileSync(path.join(root, sid));
+      else fs.writeFileSync(path.join(root, sid), '', { flag: 'wx' });
+    }
+    catch { process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: req.id, error: { code: -32000, message: 'native session missing or already exists' } }) + '\\n'); return; }
     seen.add(sid);
+    reply(req.id, { sessionId: sid, resumed: req.params.resume }); return;
   }
+  if (req.method === 'session/cancel') {
+    if (pendingHost) {
+      pendingCancel = req.id;
+      notify('tool.cancel', { sessionId: sid, invocationId: 'call-1' });
+    } else reply(req.id, { reasoningStopped: true });
+    return;
+  }
+  if (req.method !== 'session/prompt' || !seen.has(sid)) throw new Error('unknown or unopened session');
   reply(req.id, { messageId: 'user-1' });
+  if (initialization.tools.length) {
+    pendingHost = sid;
+    const tool = initialization.tools[0];
+    notify('session.event', { sessionId: sid, event: { type: 'tool/call', data: { callId: 'call-1', name: tool.name, arguments: '{}' } } });
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: 'host-1', method: 'tool.call', params: { sessionId: ${options.foreignSession ? "'foreign-session'" : 'sid'}, name: tool.name, input: {}, invocationId: 'call-1' } }) + '\\n');
+    return;
+  }
   notify('session.event', { sessionId: sid, event: { type: 'tool/call', data: { callId: 'call-1', name: 'read_file', arguments: '{"path":"a.txt"}' } } });
   notify('session.event', { sessionId: sid, event: { type: 'tool/result', data: { message: { content: [{ type: 'tool-result', toolCallId: 'call-1', content: [{ type: 'text', text: 'file data' }] }] } } } });
   notify('session.event', { sessionId: sid, event: { type: 'assistant/chunk', data: { chunk: { type: 'reasoning-delta', text: 'private reasoning' } } } });
@@ -33,6 +101,7 @@ rl.on('line', line => {
   notify('session.event', { sessionId: sid, event: { type: 'assistant/chunk', data: { chunk: { type: 'text-delta', text: 'ne' } } } });
   notify('session.event', { sessionId: sid, event: { type: 'assistant/message', data: { message: { id: 'assistant-1', content: [{ type: 'text', text: 'done' }] } } } });
   notify('session.event', { sessionId: sid, event: { type: 'turn/end', data: { reason: { kind: 'completed' } } } });
+  notify('session.status', { sessionId: sid, status: 'idle' });
 });
 `,
     { mode: 0o755 }
@@ -45,28 +114,91 @@ async function* oneInput() {
 }
 
 describe('DeepSeekHarnessProvider (Issue #4741)', () => {
-  it.each([undefined, 'standard', 'minimal'] as const)('selects the SDK profile for mode %s without changing the RPC flow', async mode => {
+  it('uses query environment overrides and omits explicitly removed host authority', async () => {
     const fixture = await sdkFixture();
-    const provider = new DeepSeekHarnessProvider({ binary: fixture.binary, mode });
+    const provider = new DeepSeekHarnessProvider({
+      binary: fixture.binary,
+      dshHome: fixture.dir,
+      env: { DSH_QUERY_AUTHORITY: 'private-fixture', DSH_QUERY_VISIBLE: 'provider-default' },
+    });
     try {
-      const events = [];
-      for await (const event of provider.queryStream(oneInput(), { settingSources: [] }).iterator) { events.push(event); }
-      expect(JSON.parse(await readFile(join(fixture.dir, 'argv.json'), 'utf8'))).toEqual(['--profile', mode === 'minimal' ? 'sdk-minimal' : 'sdk']);
-      expect(events.at(-1)?.type).toBe('result');
-    } finally { provider.dispose(); await rm(fixture.dir, { recursive: true, force: true }); }
+      await collect(
+        provider.queryStream(oneInput(), {
+          settingSources: [],
+          cwd: fixture.dir,
+          env: { DSH_QUERY_AUTHORITY: undefined, DSH_QUERY_VISIBLE: 'query-override' },
+        }).iterator
+      );
+      expect(JSON.parse(await readFile(join(fixture.dir, 'environment.json'), 'utf8'))).toEqual({
+        sentinel: 'query-override',
+        hasAuthority: false,
+      });
+    } finally {
+      await provider.shutdown();
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
   });
+  it.each([undefined, 'standard', 'minimal'] as const)(
+    'selects the SDK profile for mode %s without changing the RPC flow',
+    async (mode) => {
+      const fixture = await sdkFixture();
+      const provider = new DeepSeekHarnessProvider({
+        binary: fixture.binary,
+        dshHome: fixture.dir,
+        mode,
+      });
+      try {
+        const events = [];
+        for await (const event of provider.queryStream(oneInput(), { settingSources: [] })
+          .iterator) {
+          events.push(event);
+        }
+        const argv = JSON.parse(await readFile(join(fixture.dir, 'argv.json'), 'utf8'));
+        expect(argv.slice(0, 3)).toEqual([
+          '--profile',
+          mode === 'minimal' ? 'sdk-minimal' : 'sdk',
+          '--patch',
+        ]);
+        expect(await readFile(argv[3], 'utf8')).toContain('disclaude-dsh-native-app');
+        expect(events.at(-1)?.type).toBe('result');
+      } finally {
+        provider.dispose();
+        await rm(fixture.dir, { recursive: true, force: true });
+      }
+    }
+  );
   it('reports an unavailable minimal profile without retrying the standard profile', async () => {
     const fixture = await sdkFixture();
-    await writeFile(fixture.binary, `#!/usr/bin/env node\nrequire('node:fs').appendFileSync(${JSON.stringify(join(fixture.dir, 'attempts'))}, JSON.stringify(process.argv.slice(2))+'\\n');\nprocess.exit(2);\n`, { mode: 0o755 });
-    const provider = new DeepSeekHarnessProvider({ binary: fixture.binary, mode: 'minimal' });
+    await writeFile(
+      fixture.binary,
+      `#!/usr/bin/env node\nrequire('node:fs').appendFileSync(${JSON.stringify(join(fixture.dir, 'attempts'))}, JSON.stringify(process.argv.slice(2))+'\\n');\nprocess.exit(2);\n`,
+      { mode: 0o755 }
+    );
+    const provider = new DeepSeekHarnessProvider({
+      binary: fixture.binary,
+      dshHome: fixture.dir,
+      mode: 'minimal',
+    });
     try {
-      await expect(provider.queryStream(oneInput(), { settingSources: [] }).iterator.next()).rejects.toThrow(/profile sdk-minimal.*no mode fallback/);
-      expect((await readFile(join(fixture.dir, 'attempts'), 'utf8')).trim().split('\n')).toEqual([JSON.stringify(['--profile', 'sdk-minimal'])]);
-    } finally { provider.dispose(); await rm(fixture.dir, { recursive: true, force: true }); }
+      await expect(
+        provider.queryStream(oneInput(), { settingSources: [] }).iterator.next()
+      ).rejects.toThrow(/exited|sdk-minimal/);
+      const attempts = (await readFile(join(fixture.dir, 'attempts'), 'utf8'))
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+      expect(attempts).toHaveLength(1);
+      expect(attempts[0].slice(0, 2)).toEqual(['--profile', 'sdk-minimal']);
+    } finally {
+      provider.dispose();
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
   });
   it('rejects invalid modes and custom arguments that could override the selected mode', () => {
     expect(() => new DeepSeekHarnessProvider({ mode: 'typo' as never })).toThrow('deepseek.mode');
-    expect(() => new DeepSeekHarnessProvider({ mode: 'minimal', args: ['--profile', 'sdk'] })).toThrow('custom process args');
+    expect(
+      () => new DeepSeekHarnessProvider({ mode: 'minimal', args: ['--profile', 'sdk'] })
+    ).toThrow('custom process args');
   });
   it('allows dsh to resolve credentials from its own credential service', () => {
     const provider = new DeepSeekHarnessProvider({ env: {} });
@@ -87,14 +219,18 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
     expect(provider.validateConfig()).toBe(true);
     expect(provider.getInfo()).toMatchObject({
       name: 'deepseek',
-      version: '0.0.0-harness-preview',
+      version: '0.1.2-native',
       available: true,
     });
   });
 
   it('streams an official-protocol prompt through native tool events to one completion', async () => {
     const fixture = await sdkFixture();
-    const provider = new DeepSeekHarnessProvider({ apiKey: 'test-key', binary: fixture.binary });
+    const provider = new DeepSeekHarnessProvider({
+      apiKey: 'test-key',
+      binary: fixture.binary,
+      dshHome: fixture.dir,
+    });
     try {
       const { iterator } = provider.queryStream(oneInput(), {
         cwd: fixture.dir,
@@ -128,10 +264,13 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
   });
 
   it.each(['completion', 'cancellation'])(
-    'uses a fresh durable ID for the same logical chat after %s',
+    'resumes the durable ID for the same logical chat after %s',
     async (ending) => {
       const fixture = await sdkFixture();
-      const provider = new DeepSeekHarnessProvider({ binary: fixture.binary });
+      const provider = new DeepSeekHarnessProvider({
+        binary: fixture.binary,
+        dshHome: fixture.dir,
+      });
       try {
         const first = provider.queryStream(oneInput(), {
           sessionKey: 'same-chat',
@@ -153,7 +292,7 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
         for await (const event of second.iterator) {
           events.push(event);
         }
-        expect(second.handle.sessionId).not.toBe(first.handle.sessionId);
+        expect(second.handle.sessionId).toBe(first.handle.sessionId);
         expect(events.filter((event) => event.type === 'result')).toHaveLength(1);
         expect(events.some((event) => event.type === 'error')).toBe(false);
       } finally {
@@ -165,17 +304,20 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
 
   it('fails fast when unsupported client tool controls are requested', () => {
     const provider = new DeepSeekHarnessProvider({ apiKey: 'test-key' });
-    expect(() =>
-      provider.queryStream(oneInput(), { settingSources: [], allowedTools: ['Read'] })
-    ).toThrow(/does not support client tool registration/);
-    expect(() => provider.createInlineTool({} as never)).toThrow(
-      /no inline-tool registration method/
+    expect(() => provider.queryStream(oneInput(), { settingSources: [], ...({ builtinTools: { type: 'preset', preset: 'claude_code' } } as Record<string, unknown>) })).toThrow(
+      'no longer a query option'
     );
+    expect(() => provider.queryStream(oneInput(), { settingSources: [], ...({ mcpServers: {} } as Record<string, unknown>) })).toThrow('no longer a query option');
+    provider.dispose();
   });
 
   it('cancels before startup and releases the child without hanging the iterator', async () => {
     const fixture = await sdkFixture();
-    const provider = new DeepSeekHarnessProvider({ apiKey: 'test-key', binary: fixture.binary });
+    const provider = new DeepSeekHarnessProvider({
+      apiKey: 'test-key',
+      binary: fixture.binary,
+      dshHome: fixture.dir,
+    });
     try {
       const query = provider.queryStream(oneInput(), {
         settingSources: [],
@@ -195,5 +337,149 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
     provider.dispose();
 
     expect(provider.validateConfig()).toBe(false);
+  });
+
+  it('dispatches canonical native host tools and preserves structured results', async () => {
+    const fixture = await sdkFixture();
+    const provider = new DeepSeekHarnessProvider({
+      binary: fixture.binary,
+      dshHome: fixture.dir,
+      provider: 'route-one',
+    });
+    const execute = vi.fn().mockResolvedValue({ runId: 'run-one', state: 'accepted' });
+    try {
+      const events = await collect(
+        provider.queryStream(oneInput(), {
+          settingSources: [],
+          cwd: fixture.dir,
+          model: 'native-model',
+          reasoningEffort: 'native-effort',
+          systemPrompt: 'Native instructions',
+          tools: [nativeTool(execute)],
+        }).iterator
+      );
+      expect(execute).toHaveBeenCalledWith(
+        {},
+        { signal: expect.any(AbortSignal) }
+      );
+      expect(events.find((event) => event.type === 'tool_result')?.metadata?.toolOutput).toEqual({
+        runId: 'run-one',
+        state: 'accepted',
+      });
+      const frames = (await readFile(join(fixture.dir, 'requests.jsonl'), 'utf8'))
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+      expect(frames[0].params).toMatchObject({
+        provider: 'route-one',
+        model: 'native-model',
+        reasoningEffort: 'native-effort',
+        systemPrompt: 'Native instructions',
+      });
+      expect(frames[0].params.tools[0]).not.toHaveProperty('execute');
+    } finally {
+      await provider.shutdown();
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a host request claiming a different session', async () => {
+    const fixture = await sdkFixture({ foreignSession: true });
+    const provider = new DeepSeekHarnessProvider({ binary: fixture.binary, dshHome: fixture.dir });
+    const execute = vi.fn();
+    try {
+      await collect(
+        provider.queryStream(oneInput(), { settingSources: [], tools: [nativeTool(execute)] })
+          .iterator
+      );
+      expect(execute).not.toHaveBeenCalled();
+      expect(
+        JSON.parse(await readFile(join(fixture.dir, 'host-response.json'), 'utf8')).error
+      ).toMatchObject({ code: -32603 });
+    } finally {
+      await provider.shutdown();
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the native reference across provider restart and drops it on explicit reset', async () => {
+    const fixture = await sdkFixture();
+    const options = { binary: fixture.binary, dshHome: fixture.dir };
+    const queryOptions = { settingSources: [], cwd: fixture.dir, sessionKey: 'durable-chat' };
+    const first = new DeepSeekHarnessProvider(options);
+    const second = new DeepSeekHarnessProvider(options);
+    try {
+      const original = first.queryStream(oneInput(), queryOptions);
+      await collect(original.iterator);
+      await first.shutdown();
+      const resumed = second.queryStream(oneInput(), queryOptions);
+      await collect(resumed.iterator);
+      expect(resumed.handle.sessionId).toBe(original.handle.sessionId);
+      second.forgetSession('durable-chat');
+      const reset = second.queryStream(oneInput(), queryOptions);
+      await collect(reset.iterator);
+      expect(reset.handle.sessionId).not.toBe(original.handle.sessionId);
+      expect(await readFile(join(fixture.dir, original.handle.sessionId!), 'utf8')).toBe('');
+    } finally {
+      await first.shutdown();
+      await second.shutdown();
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('waits for owned tool cleanup before confirming interruption', async () => {
+    const fixture = await sdkFixture();
+    const provider = new DeepSeekHarnessProvider({ binary: fixture.binary, dshHome: fixture.dir });
+    let entered!: () => void;
+    let aborted!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const signalled = new Promise<void>((resolve) => {
+      aborted = resolve;
+    });
+    const quiescent = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let cleaned = false;
+    const tool = nativeTool(async (_input, { signal }) => {
+      entered();
+      await new Promise<void>((resolve) => {
+        signal.addEventListener(
+          'abort',
+          () => {
+            aborted();
+            resolve();
+          },
+          { once: true }
+        );
+      });
+      await quiescent;
+      cleaned = true;
+      return { executionStop: 'not_confirmed' };
+    });
+    try {
+      const query = provider.queryStream(oneInput(), { settingSources: [], tools: [tool] });
+      const events = collect(query.iterator);
+      await started;
+      let acknowledged = false;
+      const interrupted = query.handle.interrupt!().then(() => {
+        acknowledged = true;
+      });
+      await signalled;
+      expect(acknowledged).toBe(false);
+      expect(cleaned).toBe(false);
+      release();
+      await interrupted;
+      expect(cleaned).toBe(true);
+      expect((await events).find((event) => event.type === 'result')?.metadata?.stopReason).toBe(
+        'interrupted'
+      );
+    } finally {
+      release();
+      await provider.shutdown();
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
   });
 });

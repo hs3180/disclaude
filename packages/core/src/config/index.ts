@@ -209,6 +209,7 @@ export class Config {
   static readonly DEEPSEEK_API_KEY =
     fileConfigOnly.deepseek?.apiKey || process.env.DEEPSEEK_API_KEY || '';
   static readonly DSH_MODE = fileConfigOnly.deepseek?.mode ?? 'standard';
+  static readonly DSH_PROVIDER = fileConfigOnly.deepseek?.provider;
   static readonly DSH_HOME = fileConfigOnly.deepseek?.dshHome || process.env.DSH_HOME || '';
 
   // Anthropic Messages API service; file credentials take precedence over env.
@@ -454,7 +455,7 @@ export class Config {
       if (this.CLAUDE_MODEL && !isCodexModel(this.CLAUDE_MODEL)) {
         errors.push({
           field: 'agent.model',
-          message: 'agent.model must be a Codex/ChatGPT model (expected gpt-5.x or newer)',
+          message: 'agent.model must be a Codex/ChatGPT model identifier',
         });
       }
       if (errors.length > 0) {
@@ -575,8 +576,7 @@ export class Config {
       return {
         apiKey: '',
         // Leave model selection to the Codex CLI when no explicit model is
-        // configured. The bare `gpt-5` identifier is not available to Codex
-        // when authenticated with a ChatGPT account.
+        // configured.
         model: this.CLAUDE_MODEL,
         provider: 'anthropic',
       };

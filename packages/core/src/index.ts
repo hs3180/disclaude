@@ -23,6 +23,31 @@ export * from './utils/index.js';
 // REST API Protocol (shared between disclaude service and MCP Server)
 export * from './channel-api/index.js';
 
+// Jupyter identity, revision, and execution ownership contracts (#5217/#5218)
+export type {
+  JupyterServiceIdentity,
+  JupyterNotebookIdentity,
+  JupyterNotebookLocator,
+  JupyterDocumentRevision,
+  JupyterCellSnapshot,
+  JupyterCellSourceEditRequest,
+  JupyterCellSourceEditResult,
+  JupyterNotebookPort,
+  JupyterControllerGeneration,
+  JupyterExecutionTarget,
+  JupyterExecutionHandle,
+  JupyterExecutionState,
+  JupyterExecutionSubmitRequest,
+  JupyterExecutionSubmitResult,
+  JupyterExecutionObservation,
+  JupyterExecutionStopResult,
+  JupyterExecutionPort,
+} from './jupyter/contracts.js';
+
+export { createNotebookTools } from './jupyter/notebook-tools.js';
+export type { NotebookToolBinding } from './jupyter/notebook-tools.js';
+export type { ToolDefinition, ToolContext } from './sdk/tools.js';
+
 // Config
 export * from './config/index.js';
 
@@ -68,7 +93,6 @@ export type {
   // Tool types
   ToolUseBlock as SdkToolUseBlock,
   ToolResultBlock as SdkToolResultBlock,
-  InlineToolDefinition as SdkInlineToolDefinition,
   ToolProgressPayload as SdkToolProgressPayload,
   ToolProgressCallback as SdkToolProgressCallback,
   // #4568: also exported unprefixed — consumers (mcp-server tools) import the
@@ -76,9 +100,6 @@ export type {
   ToolProgressPayload,
   ToolProgressCallback,
   // MCP types
-  StdioMcpServerConfig,
-  InlineMcpServerConfig,
-  McpServerConfig as SdkMcpServerConfig,
   // Query types
   AgentQueryOptions,
   PermissionMode,

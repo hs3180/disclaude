@@ -49,6 +49,15 @@ Package installation does not migrate or delete configuration or workspace
 data. For workspace relocation, use the separate
 [workspace migration procedure](../workspace-setup.md#moving-an-existing-production-workspace).
 
+## Docker Compose deployment
+
+The generated release tag is a prebuilt distribution. It intentionally omits
+the source Docker build files, so it does not include a Compose deployment
+entry point. To use Docker Compose, follow the
+[source deployment guide](../docker-compose-deployment.md) with a full source
+checkout. The guide also shows how to check out the exact source commit recorded
+in `release-source.json` for this release.
+
 ## Roll back
 
 If the new version does not start or pass health checks, stop it and reinstall

@@ -8,7 +8,7 @@ import { isSyntheticMessageId } from './message-id.js';
 describe('isSyntheticMessageId', () => {
   describe('synthetic prefixes (returns true)', () => {
     it.each([
-      ['sched-', 'sched-schedule-pr-scanner-1780907400594'],
+      ['sched-', 'sched-schedule-release-watch-1780907400594'],
       ['push_', 'push_0638cffc-adeb-47df-a3ac-ebaaaedaee43'],
       ['http-push-', 'http-push-550e8400-e29b-41d4-a716-446655440000'],
       ['cli-', 'cli-1719123456789'],

@@ -417,6 +417,8 @@ describe('ClaudeSDKProvider', () => {
       const result = provider.queryStream(testInput(), {
         settingSources: ['user', 'project', 'local'],
         cwd: '/workspace',
+        allowedTools: ['Read'],
+        disallowedTools: ['CronCreate'],
         env: { ANTHROPIC_API_KEY: 'sk-test-key' },
       });
 
@@ -432,7 +434,7 @@ describe('ClaudeSDKProvider', () => {
 
       expect(messages.length).toBe(1);
       expect(messages[0].role).toBe('assistant');
-      expect(mockQuery).toHaveBeenCalled();
+      expect(mockQuery).toHaveBeenCalledWith(expect.objectContaining({ options: expect.objectContaining({ allowedTools: ['Read'], disallowedTools: ['CronCreate'] }) }));
     });
 
     // Issue #4442 (part 2 + part 3): empty stream — the SDK yields zero messages
@@ -1286,111 +1288,6 @@ describe('ClaudeSDKProvider', () => {
       expect(resultMsg).toBeDefined();
       // NOT tagged — the recovered turn genuinely succeeded.
       expect(resultMsg?.metadata?.upstreamApiError).toBeFalsy();
-    });
-  });
-
-  // --------------------------------------------------------------------------
-  // createInlineTool
-  // --------------------------------------------------------------------------
-
-  describe('createInlineTool', () => {
-    it('should create a tool using SDK tool function', () => {
-      const handler = vi.fn();
-      const definition = {
-        name: 'test_tool',
-        description: 'A test tool',
-        parameters: {} as never, // Zod schema - simplified for test
-        handler,
-      };
-
-      const result = provider.createInlineTool(definition);
-
-      // #4568: the handler passed to SDK tool() is a progress-dropping
-      // adapter around definition.handler (the Claude channel has no
-      // onProgress plumbing), not definition.handler itself.
-      expect(mockTool).toHaveBeenCalledWith(
-        'test_tool',
-        'A test tool',
-        definition.parameters,
-        expect.any(Function),
-      );
-      expect(result).toBeDefined();
-
-      // The adapter still routes execution to the original handler.
-      const wrapped = mockTool.mock.calls[0][3] as (params: unknown) => Promise<unknown>;
-      void wrapped({ x: 1 });
-      expect(handler).toHaveBeenCalledWith({ x: 1 });
-    });
-  });
-
-  // --------------------------------------------------------------------------
-  // createMcpServer
-  // --------------------------------------------------------------------------
-
-  describe('createMcpServer', () => {
-    it('should create MCP server for inline config with tools', () => {
-      const tools = [
-        {
-          name: 'tool1',
-          description: 'First tool',
-          parameters: {} as never, // Zod schema - simplified for test
-          handler: vi.fn(),
-        },
-        {
-          name: 'tool2',
-          description: 'Second tool',
-          parameters: {} as never, // Zod schema - simplified for test
-          handler: vi.fn(),
-        },
-      ];
-
-      const config = {
-        type: 'inline' as const,
-        name: 'test-server',
-        version: '1.0.0',
-        tools,
-      };
-
-      const result = provider.createMcpServer(config);
-
-      expect(mockCreateSdkMcpServer).toHaveBeenCalledWith({
-        name: 'test-server',
-        version: '1.0.0',
-        tools: expect.arrayContaining([
-          expect.objectContaining({ name: 'tool1' }),
-          expect.objectContaining({ name: 'tool2' }),
-        ]),
-      });
-      expect(result).toBeDefined();
-    });
-
-    it('should create MCP server for inline config without tools', () => {
-      const config = {
-        type: 'inline' as const,
-        name: 'empty-server',
-        version: '1.0.0',
-      };
-
-      provider.createMcpServer(config);
-
-      expect(mockCreateSdkMcpServer).toHaveBeenCalledWith({
-        name: 'empty-server',
-        version: '1.0.0',
-        tools: [],
-      });
-    });
-
-    it('should throw error for stdio config', () => {
-      const config = {
-        type: 'stdio' as const,
-        name: 'stdio-server',
-        command: 'npx',
-        args: ['-y', 'some-mcp-server'],
-      };
-
-      expect(() => provider.createMcpServer(config)).toThrow(
-        'stdio MCP servers are not supported by ClaudeSDKProvider.createMcpServer'
-      );
     });
   });
 
