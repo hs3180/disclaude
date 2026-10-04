@@ -89,7 +89,7 @@ export function adaptDeepSeekEvent(event: DeepSeekSessionEvent): AgentMessage[] 
         .join('');
       return [
         makeMessage('tool_result', block?.isError === true ? `Error: ${output}` : output, {
-          toolOutput: output,
+          toolOutput: data.meta ?? output,
           messageId: String(block?.toolCallId ?? ''),
         }),
       ];
@@ -98,6 +98,9 @@ export function adaptDeepSeekEvent(event: DeepSeekSessionEvent): AgentMessage[] 
       const reason = data.reason as Record<string, unknown> | undefined;
       if (reason?.kind === 'completed') {
         return [makeMessage('result', '', { stopReason: 'completed' })];
+      }
+      if (reason?.kind === 'aborted') {
+        return [makeMessage('result', '', { stopReason: 'interrupted' })];
       }
       const detail =
         reason?.kind === 'error'

@@ -1,7 +1,6 @@
 import { browserAgentEnv } from '../../../utils/browser-env.js';
 /** Optional pi 0.83 runtime: per-query Anthropic-compatible model and native tools. */
 import type { AgentQueryOptions } from '../../types.js';
-import { adaptPiOptions } from './options-adapter.js';
 import type { PiStreamFn } from './provider.js';
 
 interface NativeTool {
@@ -64,14 +63,12 @@ export async function loadPiProduction(options: AgentQueryOptions): Promise<{
       shellEnv: browserAgentEnv({ ...process.env, ...options.env }),
     }),
   };
-  const active = adaptPiOptions(options).activeToolNames;
   const tools = ['Bash', 'Read', 'Write', 'Edit']
     .map((name) => {
       const tool = core[`create${name}Tool`]();
-      // Keep disclaude's existing tool-policy names across backends.
+      // Expose the existing Pi coding tool names.
       return { ...tool, name, execute: (...args: unknown[]) => tool.execute(...args, context) };
-    })
-    .filter((tool) => !active || active.includes(tool.name));
+    });
   return {
     model,
     tools,

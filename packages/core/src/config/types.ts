@@ -75,8 +75,7 @@ export interface AgentConfig {
    * Codex exec sandbox level override (Issue #4631, S4 of #4627).
    * Only meaningful when `agentBackend: 'codex'`. Unset → the normal
    * workspace-write policy. An explicit value wins over that default, but the
-   * disallowedTools mutation cap still outranks it. Use fullAccess for
-   * the clear, documented full-access opt-in.
+   * explicit fullAccess setting takes precedence over it.
    */
   codexSandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
   /** Explicit opt-in to unrestricted execution for the active agent backend. */
@@ -246,6 +245,8 @@ export interface GlmConfig {
 
 /** DeepSeek harness configuration (developer preview; Issue #4741). */
 export interface DeepSeekConfig {
+  /** DSH model provider route. Omit to use the selected native profile's default. */
+  provider?: string;
   /** Harness composition. Changes apply after service restart. Default: standard. */
   mode?: 'minimal' | 'standard';
   /** API key consumed by dsh (overrides DEEPSEEK_API_KEY). */

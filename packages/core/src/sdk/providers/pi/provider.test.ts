@@ -14,8 +14,7 @@
  * - queryStream (implemented in #4386 part 3) throws the no-streamFn guard
  *   error when no stream function is injected (full behavior in
  *   provider.querystream.test.ts).
- * - createInlineTool (#4387) is implemented; createMcpServer inline path
- *   (#4417 part 1) is implemented and stdio throws "not supported".
+ * - Host tool injection is covered by provider.querystream.test.ts.
  *
  * The package-probe resolver is mocked so we can deterministically simulate
  * both "package installed" and "package absent". The companion file
@@ -26,7 +25,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PiAgentProvider } from './provider.js';
 import type {
   AgentQueryOptions,
-  InlineToolDefinition,
   UserInput,
 } from '../../types.js';
 
@@ -222,83 +220,6 @@ describe('PiAgentProvider (skeleton, Issue #4385)', () => {
       );
     });
 
-    // Issue #4387 (part 1): createInlineTool is now implemented — it adapts a
-    // disclaude InlineToolDefinition into a pi AgentHarnessTool shape (execute
-    // wrapper + Zod validation; schema translation deferred to part 2).
-    it('createInlineTool returns a pi tool shape (name + label + execute) instead of throwing', () => {
-      const tool = provider.createInlineTool({
-        name: 'echo',
-        description: 'echoes the input',
-        parameters: { parse: (p: unknown) => p } as never, // minimal Zod-like stub
-        handler: (p: unknown) => Promise.resolve(p),
-      } as InlineToolDefinition) as { name: string; label: string; execute: Function };
 
-      expect(tool.name).toBe('echo');
-      expect(tool.label).toBe('echo');
-      expect(typeof tool.execute).toBe('function');
-    });
-
-    // Issue #4417 (part 1): createMcpServer inline path is now implemented —
-    // it wraps disclaude tools via createInlineTool into a handle the pi
-    // queryStream path (#4386) will inject via setTools. stdio throws (decision
-    // recorded), matching ClaudeSDKProvider. External stdio servers (S4b) and
-    // live injection (#4386) are deferred to later parts.
-    describe('createMcpServer (#4417 part 1)', () => {
-      const makeTool = (name: string) =>
-        ({
-          name,
-          description: `${name} tool`,
-          parameters: { parse: (p: unknown) => p } as never, // minimal Zod-like stub
-          handler: (p: unknown) => Promise.resolve(p),
-        } as InlineToolDefinition);
-
-      it('builds an inline handle mapping tools via createInlineTool', () => {
-        const result = provider.createMcpServer({
-          type: 'inline',
-          name: 'test-server',
-          version: '1.0.0',
-          tools: [makeTool('tool1'), makeTool('tool2')],
-        }) as {
-          name: string;
-          version: string;
-          tools: { name: string; label: string; execute: Function }[];
-        };
-
-        expect(result.name).toBe('test-server');
-        expect(result.version).toBe('1.0.0');
-        expect(result.tools).toHaveLength(2);
-        expect(result.tools.map((t) => t.name)).toEqual(['tool1', 'tool2']);
-        // each wrapped tool is a pi AgentHarnessTool shape
-        for (const t of result.tools) {
-          expect(t.label).toBeDefined();
-          expect(typeof t.execute).toBe('function');
-        }
-      });
-
-      it('builds an inline handle with no tools (empty array)', () => {
-        const result = provider.createMcpServer({
-          type: 'inline',
-          name: 'empty-server',
-          version: '1.0.0',
-        }) as { name: string; version: string; tools: unknown[] };
-
-        expect(result.name).toBe('empty-server');
-        expect(result.version).toBe('1.0.0');
-        expect(result.tools).toEqual([]);
-      });
-
-      it('throws for stdio config (decision recorded, matches ClaudeSDKProvider)', () => {
-        expect(() =>
-          provider.createMcpServer({
-            type: 'stdio',
-            name: 'stdio-server',
-            command: 'npx',
-            args: ['-y', 'some-mcp-server'],
-          }),
-        ).toThrow(
-          'stdio MCP servers are not supported by PiAgentProvider.createMcpServer',
-        );
-      });
-    });
   });
 });
