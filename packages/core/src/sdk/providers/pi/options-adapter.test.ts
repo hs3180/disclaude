@@ -49,47 +49,12 @@ describe('adaptPiOptions (Issue #4386 part 2 / #4384)', () => {
     expect(res.systemPrompt).toBeUndefined();
   });
 
-  // -------------------------------------------------------------------------
-  // activeToolNames
-  // -------------------------------------------------------------------------
 
-  it('uses allowedTools as the active tool-name base', () => {
-    const res = adaptPiOptions(opts({ allowedTools: ['read', 'bash'] }));
-    expect(res.activeToolNames).toEqual(['read', 'bash']);
-  });
 
-  it('keeps Harness defaults when business tools are registered without an allowlist', () => {
-    const tools = [{ name: 'read_value', description: 'Read', inputSchema: { type: 'object' }, outputSchema: { type: 'object' }, execute: () => Promise.resolve({}) }];
-    expect(adaptPiOptions(opts({ tools })).activeToolNames).toBeUndefined();
-  });
 
-  it('subtracts disallowedTools from the resolved base', () => {
-    const res = adaptPiOptions(
-      opts({
-        allowedTools: ['read', 'bash', 'edit'],
-        disallowedTools: ['bash'],
-      })
-    );
-    expect(res.activeToolNames).toEqual(['read', 'edit']);
-  });
 
-  it('ignores an empty disallowedTools (no filtering)', () => {
-    const res = adaptPiOptions(opts({ allowedTools: ['read', 'bash'], disallowedTools: [] }));
-    expect(res.activeToolNames).toEqual(['read', 'bash']);
-  });
 
-  it('returns undefined activeToolNames when no tool option is present', () => {
-    const res = adaptPiOptions(opts());
-    expect(res.activeToolNames).toBeUndefined();
-  });
 
-  it('does not mutate the input arrays', () => {
-    const allowed = ['read', 'bash'];
-    const disallowed = ['bash'];
-    adaptPiOptions(opts({ allowedTools: allowed, disallowedTools: disallowed }));
-    expect(allowed).toEqual(['read', 'bash']);
-    expect(disallowed).toEqual(['bash']);
-  });
 
   // -------------------------------------------------------------------------
   // model (string passthrough; Model<any> resolution deferred to provider.ts)
@@ -131,14 +96,12 @@ describe('adaptPiOptions (Issue #4386 part 2 / #4384)', () => {
     );
     const carried: Array<keyof PiAdaptedOptions> = [
       'systemPrompt',
-      'activeToolNames',
       'model',
       'env',
     ];
     expect(Object.keys(res).sort()).toEqual([...carried].sort());
     // none of the Claude-only inputs produced a field:
     expect(res.systemPrompt).toBeUndefined();
-    expect(res.activeToolNames).toBeUndefined();
     expect(res.model).toBeUndefined();
     expect(res.env).toBeUndefined();
   });

@@ -18,7 +18,6 @@ import { adaptPiEvent, type PiAgentEvent } from './event-adapter.js';
 import { adaptPiTools } from './tool-adapter.js';
 import { adaptPiOptions } from './options-adapter.js';
 import { loadPiRuntime, toPiUserMessage, type PiAgentOptions } from './pi-runtime.js';
-import { createPiToolPermissionGate } from './tool-permission-gate.js';
 
 const logger = createLogger('PiAgentProvider');
 
@@ -86,7 +85,7 @@ export class PiAgentProvider implements IAgentSDKProvider {
       throw new Error('Provider has been disposed');
     }
 
-    const tools = adaptPiTools(options.tools, options);
+    const tools = adaptPiTools(options.tools);
     if (!this.streamFn) {resolvePiModel(options);}
 
     // Abort plumbing: pi's Agent.abort() cancels the active run; the handle's
@@ -269,33 +268,19 @@ export class PiAgentProvider implements IAgentSDKProvider {
       const inputIterator = input[Symbol.asyncIterator]();
 
       const adaptedOptions = adaptPiOptions(options);
-      // Issue #4389 (S6, part 1): disclaude is the sole permission authority
-      // on the pi path (pi has no built-in perms). The gate rides pi's native
-      // pre-tool-call deny hook — invoked in-loop after argument validation,
-      // before EVERY tool execution — so no tool (inline is the only path
-      // since MCP was dropped) reaches its handler ungated. `null` when
-      // `disallowedTools` is absent/empty → hook omitted, behavior unchanged.
-      const toolPermissionGate = createPiToolPermissionGate(options);
       const inherited = new Set((production?.tools ?? []).map((tool) => tool.name));
       for (const tool of tools) {
         if (inherited.has(tool.name)) {
           throw new TypeError(`Host tool conflicts with Pi built-in tool: ${tool.name}`);
         }
       }
-      const builtinTools = (production?.tools ?? []).filter((tool) =>
-        (options.allowedTools === undefined || options.allowedTools.includes(tool.name)) &&
-        !options.disallowedTools?.includes(tool.name),
-      );
       agent = new Agent({
         streamFn: (streamFn ?? production?.streamFn) as PiAgentOptions['streamFn'],
         initialState: {
           ...(production ? { model: production.model } : {}),
           systemPrompt: adaptedOptions.systemPrompt ?? '',
-          tools: [...builtinTools, ...tools],
+          tools: [...(production?.tools ?? []), ...tools],
         },
-        ...(toolPermissionGate
-          ? { beforeToolCall: toolPermissionGate satisfies PiAgentOptions['beforeToolCall'] }
-          : {}),
       } satisfies PiAgentOptions);
       const piAgent = agent;
       if (cancelRequested) {
