@@ -11,7 +11,7 @@ export {
   cleanupNewProcessListeners,
   SDK_PROCESS_EVENTS,
 } from './claude/index.js';
-export type { ProcessListenerSnapshot, ProcessEventListener } from './claude/index.js';
+export type { ClaudeQueryOptions, ProcessListenerSnapshot, ProcessEventListener } from './claude/index.js';
 
 // Issue #4385: pi.dev provider skeleton (stubbed loop; real lifecycle)
 export { PiAgentProvider } from './pi/index.js';

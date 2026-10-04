@@ -209,6 +209,7 @@ export class Config {
   static readonly DEEPSEEK_API_KEY =
     fileConfigOnly.deepseek?.apiKey || process.env.DEEPSEEK_API_KEY || '';
   static readonly DSH_MODE = fileConfigOnly.deepseek?.mode ?? 'standard';
+  static readonly DSH_PROVIDER = fileConfigOnly.deepseek?.provider;
   static readonly DSH_HOME = fileConfigOnly.deepseek?.dshHome || process.env.DSH_HOME || '';
 
   // Anthropic Messages API service; file credentials take precedence over env.

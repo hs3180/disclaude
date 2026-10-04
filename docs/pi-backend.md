@@ -32,12 +32,12 @@ Anthropic 兼容地址（以 `/anthropic` 结尾）。请勿将真实 key 写入
 ## 工具、会话与限制
 
 - 原生 Bash、Read、Write、Edit 工具使用 query 的 cwd 和环境；工具名称保持
-  disclaude 的现有命名。声明式工具选择控制这些原生工具的枚举。
-- inline 工具沿用现有适配器；stdio/HTTP MCP 不在 pi 的支持范围内。
+  disclaude 的现有命名。保留 Pi 的默认工具集。
+- 业务工具通过 `tools: ToolDefinition[]` 注册；stdio/HTTP MCP 不在 pi 的支持范围内。
 - 每个 query 独立创建 Agent；同一输入流支持多轮，取消会中止该查询。
   不承诺跨进程恢复原生会话。
-- 工具调用仍经过已有的 `beforeToolCall` / `disallowedTools` 名称拒绝门。
-  不新增权限系统；NodeExecutionEnv 是执行环境，**不是文件系统沙箱**。
+- Claude 黑白名单不转译到 Pi；旧名单查询字段明确报错。
+  NodeExecutionEnv 是执行环境，**不是文件系统沙箱**。
 - 原生文本片段合并为完整消息再投递；thinking 不作为回复发送。
   上游 error 不会被伪装成成功 result。
 - 自定义模型描述使用保守的客户端预算：32,768 上下文、4,096 输出 token。

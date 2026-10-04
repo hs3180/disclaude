@@ -1,3 +1,4 @@
+import { assertToolOptions } from '../../tools.js';
 import { readStallPolicy } from '../stall-policy.js';
 /**
  * Codex CLI Agent Provider (Issue #4629 skeleton + #4630 exec bridge +
@@ -61,8 +62,6 @@ import type { IAgentSDKProvider } from '../../interface.js';
 import type {
   AgentMessage,
   AgentQueryOptions,
-  InlineToolDefinition,
-  McpServerConfig,
   ProviderInfo,
   StreamQueryResult,
   UserInput,
@@ -381,9 +380,11 @@ export class CodexAgentProvider implements IAgentSDKProvider {
   // --------------------------------------------------------------------------
 
   queryStream(input: AsyncGenerator<UserInput>, options: AgentQueryOptions): StreamQueryResult {
+    assertToolOptions(options);
     if (this.disposed) {
       throw new Error('Provider has been disposed');
     }
+
     // Fail fast with an actionable message — same contract as pi's missing
     // streamFn check (#4386 part 3): the environment problem is knowable at
     // call time, so it must not surface as a cryptic mid-stream ENOENT.
@@ -432,7 +433,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     // Permission gate → sandbox level (Issue #4631, S4): resolved once per
     // stream (options are constant across turns); throws synchronously with
     // an actionable message when the policy cannot be honored headlessly
-    // (e.g. a WebSearch denylist entry) — same fail-fast contract as the
+    // (e.g. an invalid permissionMode) — same fail-fast contract as the
     // binary check above.
     const sandboxDecision = resolveCodexSandboxPolicy(
       options,
@@ -465,8 +466,8 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     if (this.transportMode === 'app-server') {
       return this.queryAppServer(input, options, sandboxDecision.sandbox, binary, skillsManifest, codexModel, requestedEffort);
     }
-    if (Object.keys(options.mcpServers ?? {}).length > 0) {
-      throw new Error('Codex inline tools require agent.codex.transport: app-server; codex exec cannot dispatch host tools.');
+    if (options.tools?.length) {
+      throw new Error('Codex host tools require agent.codex.transport: app-server; codex exec cannot dispatch host tools.');
     }
 
     const runner = new CodexExecRunner({
@@ -1112,8 +1113,8 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     codexModel: string | undefined,
     reasoningEffort: CodexReasoningEffort | undefined,
   ): StreamQueryResult {
-    const dynamicToolRegistry = createCodexDynamicToolRegistry(options.mcpServers);
-    const dynamicToolSignature = JSON.stringify(dynamicToolRegistry.specs);
+    const dynamicToolRegistry = createCodexDynamicToolRegistry(options.tools);
+    const dynamicToolSignature = dynamicToolRegistry.signature;
     let lifecycle: CodexAppServerLifecycle | undefined;
     const sessionKey = options.sessionKey ?? `anon-app-${++this.anonSessionCounter}`;
     const queue: AgentMessage[] = [];
@@ -1121,10 +1122,10 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     let threadId = this.appServerThreadIds.get(sessionKey);
     const registeredToolSignature = this.appServerDynamicToolSignatures.get(sessionKey);
     if (threadId && registeredToolSignature !== undefined && registeredToolSignature !== dynamicToolSignature) {
-      throw new Error('Codex app-server thread already has a different inline tool registry; reset the conversation before changing its MCP tools.');
+      throw new Error('Codex app-server thread already has a different host tool registry; reset the conversation before changing its tools.');
     }
     if (threadId && registeredToolSignature === undefined && dynamicToolRegistry.specs.length > 0) {
-      throw new Error('Codex app-server cannot add inline tools to an existing thread; reset the conversation to register them.');
+      throw new Error('Codex app-server cannot add host tools to an existing thread; reset the conversation to register them.');
     }
     this.appServerStops.get(sessionKey)?.();
     let done = false;
@@ -1491,21 +1492,6 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     });
     this.appServerLifecycles.set(sessionKey, lifecycle);
     return lifecycle;
-  }
-
-  createInlineTool(definition: InlineToolDefinition): unknown {
-    return definition;
-  }
-
-  createMcpServer(config: McpServerConfig): unknown {
-    if (config.type === 'stdio') {
-      throw new Error('Codex app-server dynamic host tools do not support stdio MCP servers.');
-    }
-    return {
-      name: config.name,
-      version: config.version,
-      tools: config.tools?.map(tool => this.createInlineTool(tool)) ?? [],
-    };
   }
 
   // --------------------------------------------------------------------------

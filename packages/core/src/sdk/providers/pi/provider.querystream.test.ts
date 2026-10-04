@@ -25,7 +25,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { z } from 'zod';
 
 // --- Fake pi-agent-core module ------------------------------------------------
 // vi.mock is hoisted; the state it closes over must be hoisted too.
@@ -262,156 +261,52 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Issue #4389 (S6, part 1): tool permission gate on the beforeToolCall hook
+  // Claude query fields are rejected; Pi keeps its native runtime defaults.
   // -------------------------------------------------------------------------
 
-  it('installs the beforeToolCall deny hook when disallowedTools is non-empty (#4389)', async () => {
-    fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];
-    await collect(
-      provider
-        .queryStream(inputs(userInput('hi')), {
-          ...baseOptions(),
-          disallowedTools: ['CronCreate'],
-        })
-        .iterator,
-    );
-    const ctorOptions = fakeState.ctorOptions as { beforeToolCall?: unknown };
-    expect(typeof ctorOptions.beforeToolCall).toBe('function');
-    // And the installed hook actually denies the disallowed tool (#4389
-    // acceptance: a disallowed call does not execute — `{block:true}` is
-    // what pi's loop converts into an error tool result pre-execution).
-    const verdict = (await (ctorOptions.beforeToolCall as (ctx: unknown) => Promise<unknown>)({
-      assistantMessage: { role: 'assistant', content: [] },
-      toolCall: { type: 'toolCall', id: 't1', name: 'CronCreate', arguments: {} },
-      args: {},
-      context: {},
-    })) as { block?: boolean; reason?: string } | undefined;
-    expect(verdict).toEqual({ block: true, reason: expect.stringContaining('CronCreate') });
-  });
 
-  it('omits the beforeToolCall hook when disallowedTools is absent (#4389 — behavior unchanged)', async () => {
+  it('uses Pi runtime defaults without a Claude permission hook', async () => {
     fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];
     await collect(provider.queryStream(inputs(userInput('hi')), baseOptions()).iterator);
     const ctorOptions = fakeState.ctorOptions as { beforeToolCall?: unknown };
     expect(ctorOptions.beforeToolCall).toBeUndefined();
   });
 
-  // Issue #4386 (part 4): inline tools from options.mcpServers are injected
-  // into the pi Agent's initialState.tools — the session's live tool registry
-  // (pi 0.82.1: createMutableAgentState seeds state.tools from it at
-  // construction). This is the "tool passed directly, not via MCP" acceptance
-  // item; stdio servers are skipped (pi does not support MCP, #4461 decision).
-  describe('inline-tool injection (Issue #4386, part 4)', () => {
-    /** A real-Zod inline tool (the adapter's zodToJsonSchema needs a real schema). */
+  it.each(['allowedTools', 'disallowedTools'])('rejects a Claude-only %s option before starting Pi', (field) => {
+    const previous = fakeState.ctorOptions;
+    expect(() => provider.queryStream(inputs(userInput('hi')), { ...baseOptions(), [field]: [] })).toThrow('Claude-specific');
+    expect(fakeState.ctorOptions).toBe(previous);
+  });
+
+  describe('host tool injection', () => {
     const makeTool = (name: string) => ({
-      name,
-      description: `${name} tool`,
-      parameters: z.object({ x: z.number() }),
-      handler: (p: { x: number }) => Promise.resolve({ doubled: p.x * 2 }),
+      name, description: `${name} tool`,
+      inputSchema: { type: 'object', properties: { x: { type: 'number' } }, required: ['x'], additionalProperties: false },
+      outputSchema: { type: 'object' },
+      execute: (args: Record<string, unknown>) => Promise.resolve({ doubled: Number(args.x) * 2 }),
     });
 
-    it('seeds initialState.tools with adapted inline tools from mcpServers', async () => {
+    it('registers and executes host callbacks with the canonical schema', async () => {
       fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];
-      await collect(
-        provider.queryStream(inputs(userInput('hi')), {
-          ...baseOptions(),
-          mcpServers: {
-            'channel-mcp': { type: 'inline', name: 'channel-mcp', version: '1.0.0', tools: [makeTool('echo')] },
-          },
-        }).iterator,
-      );
-      const ctor = fakeState.ctorOptions as { initialState?: { tools?: unknown[] } };
-      const tools = ctor?.initialState?.tools ?? [];
-      expect(tools).toHaveLength(1);
-      // The AgentHarnessTool shape produced by adaptInlineTool (#4387).
-      const tool = tools[0] as { name: string; label: string; parameters: { type: string } };
-      expect(tool.name).toBe('echo');
-      expect(tool.label).toBe('echo');
-      expect(tool.parameters.type).toBe('object');
-      expect(typeof (tools[0] as { execute: unknown }).execute).toBe('function');
+      await collect(provider.queryStream(inputs(userInput('go')), { ...baseOptions(), tools: [makeTool('echo')] }).iterator);
+      const ctor = fakeState.ctorOptions as { initialState?: { tools?: Array<{ name: string; parameters: unknown; execute: Function }> } };
+      const tools = ctor.initialState?.tools ?? [];
+      expect(tools.map(tool => tool.name)).toEqual(['echo']);
+      expect(tools[0].parameters).toEqual(makeTool('echo').inputSchema);
+      await expect(tools[0].execute('call', { x: 21 }, undefined, undefined, undefined)).resolves.toMatchObject({ details: { doubled: 42 } });
+      await expect(tools[0].execute('invalid', { x: '21' }, undefined, undefined, undefined)).rejects.toThrow('Invalid host tool arguments');
     });
 
-    it('injects an empty tool array when no inline servers are configured', async () => {
+
+    it('uses an empty host registry when no callbacks are supplied', async () => {
       fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];
       await collect(provider.queryStream(inputs(userInput('hi')), baseOptions()).iterator);
       const ctor = fakeState.ctorOptions as { initialState?: { tools?: unknown[] } };
-      expect(ctor?.initialState?.tools).toEqual([]);
+      expect(ctor.initialState?.tools).toEqual([]);
     });
 
-    it('skips stdio servers (pi does not support MCP) but still injects inline ones', async () => {
-      fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];
-      await collect(
-        provider.queryStream(inputs(userInput('hi')), {
-          ...baseOptions(),
-          mcpServers: {
-            'dummy-server': { type: 'stdio', name: 'dummy-server', command: 'npx', args: ['-y', 'some-mcp-server'] },
-            'channel-mcp': { type: 'inline', name: 'channel-mcp', version: '1.0.0', tools: [makeTool('send')] },
-          },
-        }).iterator,
-      );
-      const ctor = fakeState.ctorOptions as { initialState?: { tools?: Array<{ name: string }> } };
-      expect((ctor?.initialState?.tools ?? []).map((t) => t.name)).toEqual(['send']);
-    });
-
-    it('injected tools execute through the inline-tool adapter round-trip', async () => {
-      // The full acceptance item: the tool handed to the Agent is the SAME
-      // wrapper createInlineTool produces — its execute validates params via
-      // Zod, calls the disclaude handler, and shapes an AgentToolResult.
-      fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];
-      await collect(
-        provider.queryStream(inputs(userInput('go')), {
-          ...baseOptions(),
-          mcpServers: {
-            'channel-mcp': { type: 'inline', name: 'channel-mcp', version: '1.0.0', tools: [makeTool('echo')] },
-          },
-        }).iterator,
-      );
-      const ctor = fakeState.ctorOptions as { initialState?: { tools?: Array<{ execute: Function }> } };
-      const tool = ctor?.initialState?.tools?.[0];
-      expect(tool).toBeDefined();
-      const result = (await tool!.execute('call-1', { x: 21 }, undefined, undefined, undefined)) as {
-        content: Array<{ type: string; text: string }>;
-        details: unknown;
-      };
-      expect(result.details).toEqual({ doubled: 42 });
-      expect(result.content[0]?.type).toBe('text');
-      // Invalid params throw (pi converts a thrown execute error into an
-      // isError tool result — the adapter contract, #4387).
-      await expect(tool!.execute('call-2', { x: 'not-a-number' }, undefined, undefined, undefined)).rejects.toThrow();
-    });
-
-    it('recognizes the createMcpServer handle shape (the production wiring) without re-adapting', async () => {
-      // The production path: chat-agent's buildMcpServers() puts
-      // createChannelMcpServer() = getProvider().createMcpServer({...type:'inline'...})
-      // into mcpServers — a `{ name, version, tools }` handle with NO `type`
-      // field whose tools are ALREADY AgentHarnessTools. collectInlineTools
-      // must pass those through as-is (re-adapting would double-wrap execute
-      // and Zod-parse a JSON-Schema object). Cf. ClaudeSDKProvider's
-      // isSdkInlineMcpServer duck-typing for the same production flow.
-      fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];
-      const handle = provider.createMcpServer({
-        type: 'inline',
-        name: 'channel-mcp',
-        version: '1.0.0',
-        tools: [makeTool('send_text')],
-      });
-      await collect(
-        provider.queryStream(inputs(userInput('hi')), {
-          ...baseOptions(),
-          // base-agent.ts:202 casts the built handle record into the options
-          // the same way — the handle shape is not statically a McpServerConfig.
-          mcpServers: { 'channel-mcp': handle } as unknown as AgentQueryOptions['mcpServers'],
-        }).iterator,
-      );
-      const ctor = fakeState.ctorOptions as { initialState?: { tools?: Array<{ name: string; execute: Function }> } };
-      const tools = ctor?.initialState?.tools ?? [];
-      expect(tools.map((t) => t.name)).toEqual(['send_text']);
-      // The SAME adapted instance, not a re-wrapped one: executing it runs the
-      // original handler round-trip.
-      const result = (await tools[0]!.execute('call-h', { x: 5 }, undefined, undefined, undefined)) as {
-        details: unknown;
-      };
-      expect(result.details).toEqual({ doubled: 10 });
+    it('rejects external MCP instead of silently dropping it', () => {
+      expect(() => provider.queryStream(inputs(userInput('hi')), { ...baseOptions(), ...({ mcpServers: {} } as Record<string, unknown>) })).toThrow('no longer a query option');
     });
   });
 

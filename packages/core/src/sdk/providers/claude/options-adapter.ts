@@ -1,3 +1,4 @@
+import { assertToolOptions } from '../../tools.js';
 import { browserAgentEnv } from '../../../utils/browser-env.js';
 /**
  * Claude SDK 选项适配器
@@ -5,8 +6,9 @@ import { browserAgentEnv } from '../../../utils/browser-env.js';
  * 将统一的 AgentQueryOptions 转换为 Claude SDK 特定的选项格式。
  */
 
-import type { AgentQueryOptions, InlineMcpServerConfig, McpServerConfig, UserInput } from '../../types.js';
-import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import type { AgentQueryOptions, UserInput } from '../../types.js';
+import type { ClaudeQueryOptions } from './provider.js';
+import { createClaudeToolServer, claudeToolNames, CLAUDE_HOST_SERVER } from './tool-adapter.js';
 import * as path from 'node:path';
 import { Config } from '../../../config/index.js';
 
@@ -16,7 +18,11 @@ import { Config } from '../../../config/index.js';
  * @param options - 统一的查询选项
  * @returns Claude SDK 选项对象
  */
-export function adaptOptions(options: AgentQueryOptions): Record<string, unknown> {
+export function adaptOptions(
+  options: AgentQueryOptions,
+  permissions: Pick<ClaudeQueryOptions, 'allowedTools' | 'disallowedTools'> = {}
+): Record<string, unknown> {
+  assertToolOptions(options);
   const sdkOptions: Record<string, unknown> = {};
   // Claude launches its own subprocess; this is its final environment boundary.
   sdkOptions.env = browserAgentEnv(options.env);
@@ -53,22 +59,21 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
   // 设置来源（必填）
   sdkOptions.settingSources = options.settingSources;
 
-  // 工具配置 (Issue #2890: tools preset for vibe coding compliance)
-  if (options.tools) {
-    sdkOptions.tools = options.tools;
+  // Claude's built-in tool defaults are a Harness detail.
+  sdkOptions.tools = { type: 'preset', preset: 'claude_code' };
+
+  if (permissions.allowedTools) {
+    sdkOptions.allowedTools = claudeToolNames(permissions.allowedTools, options.tools);
   }
 
-  if (options.allowedTools) {
-    sdkOptions.allowedTools = options.allowedTools;
+  if (permissions.disallowedTools) {
+    sdkOptions.disallowedTools = claudeToolNames(permissions.disallowedTools, options.tools);
   }
 
-  if (options.disallowedTools) {
-    sdkOptions.disallowedTools = options.disallowedTools;
-  }
-
-  // MCP 服务器
-  if (options.mcpServers) {
-    sdkOptions.mcpServers = adaptMcpServers(options.mcpServers);
+  if (options.tools?.length) {
+    sdkOptions.mcpServers = {
+      [CLAUDE_HOST_SERVER]: createClaudeToolServer(options.tools, permissions),
+    };
   }
 
   // 环境变量
@@ -102,93 +107,6 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
   }
 
   return sdkOptions;
-}
-
-/**
- * 检查值是否为 SDK 的 inline MCP 服务器包装对象
- *
- * SDK 的 createSdkMcpServer 返回 { type: 'sdk', name, instance } 格式，
- * 而不是原始的 SDK 实例。我们需要检测这种格式并直接传递。
- *
- * @param value - 要检查的值
- * @returns true 如果是 SDK inline MCP 服务器包装对象
- */
-function isSdkInlineMcpServer(value: unknown): boolean {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    'type' in value &&
-    (value as Record<string, unknown>).type === 'sdk' &&
-    'instance' in value
-  );
-}
-
-/**
- * 适配 MCP 服务器配置
- *
- * 支持三种格式：
- * 1. SDK inline MCP 服务器包装对象（直接传递）
- * 2. inline 配置对象（转换为 SDK 实例）
- * 3. stdio 配置对象（直接传递配置）
- *
- * @param mcpServers - 统一的 MCP 服务器配置
- * @returns Claude SDK MCP 服务器配置
- */
-function adaptMcpServers(
-  mcpServers: Record<string, McpServerConfig>
-): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-
-  for (const [name, config] of Object.entries(mcpServers)) {
-    // 检查是否为 SDK 的 inline MCP 服务器包装对象（已通过 createSdkMcpServer 创建）
-    if (isSdkInlineMcpServer(config)) {
-      // 直接传递 SDK 包装对象
-      result[name] = config;
-    } else if (config.type === 'inline') {
-      // inline 配置：转换为 SDK 实例
-      result[name] = adaptInlineMcpServer(config);
-    } else {
-      // stdio 模式：传递完整配置，包括 type 字段
-      result[name] = {
-        type: 'stdio',
-        command: config.command,
-        args: config.args,
-        env: config.env,
-      };
-    }
-  }
-
-  return result;
-}
-
-/**
- * 适配内联 MCP 服务器
- *
- * @param config - 内联 MCP 服务器配置
- * @returns Claude SDK MCP 服务器实例
- */
-function adaptInlineMcpServer(config: InlineMcpServerConfig): unknown {
-  if (!config.tools || config.tools.length === 0) {
-    return createSdkMcpServer({
-      name: config.name,
-      version: config.version,
-      tools: [],
-    });
-  }
-
-  // 将统一工具定义转换为 SDK 工具
-  // 使用双重类型断言来处理 Zod schema 类型兼容性
-  // #4568：丢弃 handler 可选的 onProgress 第二参——Claude SDK tool() 通道
-  // 无进度管道（该位置传的是 SDK 自己的 extra 上下文），进度上报仅 pi 后端支持。
-  const sdkTools = config.tools.map(t =>
-    tool(t.name, t.description, t.parameters as unknown as Parameters<typeof tool>[2], (params) => t.handler(params))
-  );
-
-  return createSdkMcpServer({
-    name: config.name,
-    version: config.version,
-    tools: sdkTools,
-  });
 }
 
 /**

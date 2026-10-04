@@ -11,7 +11,7 @@
  *   `codex` — happy-path event flow, thread_id → handle.sessionId, exit-code
  *   error mapping, actionable throw when the binary is missing, cancel()
  *   teardown, dispose() guard. Real spawn/readline/timer machinery, no mocks.
- * - createInlineTool / createMcpServer preserve inline host-tool definitions.
+ * - Host tool dispatch is covered by provider-app-server.test.ts.
  * - Lifecycle: dispose() flips state, is idempotent, forces checks false.
  */
 
@@ -665,30 +665,7 @@ JSONL
       expect(argvOf(fixtures)).toContain('-s read-only');
     }, 15_000);
 
-    it('caps at read-only when the denylist blocks mutation tools', async () => {
-      sandboxedFixtures();
-      await drainStream(makeProvider(fixtures), ['hi'], {
-        disallowedTools: ['Bash'],
-      });
-      expect(argvOf(fixtures)).toContain('-s read-only');
-    }, 15_000);
 
-    it('runs unrestricted with ChatAgent’s actual default denylist (claude-only names)', async () => {
-      // buildDisallowedTools() output (#4181) — every entry names a
-      // claude-only tool, so none of it may degrade the codex backend.
-      sandboxedFixtures();
-      await drainStream(makeProvider(fixtures), ['hi'], {
-        disallowedTools: [
-          'EnterPlanMode',
-          'AskUserQuestion',
-          'CronCreate',
-          'CronList',
-          'CronDelete',
-          'ScheduleWakeup',
-        ],
-      });
-      expect(argvOf(fixtures)).toContain('-s workspace-write');
-    }, 15_000);
 
     it('uses danger-full-access when the explicit full-access switch is enabled', async () => {
       sandboxedFixtures();
@@ -704,17 +681,10 @@ JSONL
       expect(argvOf(fixtures)).toContain('--dangerously-bypass-approvals-and-sandbox');
     }, 15_000);
 
-    it('throws (fail closed, actionable) for a WebSearch denylist entry', () => {
-      // Verified live on 0.132.0: codex exec has NO working web-search off
-      // switch — a policy demanding it must not run silently weakened.
+
+    it.each(['allowedTools', 'disallowedTools'])('rejects the Claude-only %s option before launching Codex', (field) => {
       sandboxedFixtures();
-      const provider = makeProvider(fixtures);
-      expect(() =>
-        provider.queryStream(undefined as never, {
-          settingSources: [],
-          disallowedTools: ['WebSearch'],
-        } as AgentQueryOptions),
-      ).toThrow(/cannot disable its built-in web search.*fail closed/s);
+      expect(() => makeProvider(fixtures).queryStream(undefined as never, { settingSources: [], [field]: ['Bash'] })).toThrow('Claude-specific');
     });
 
     it('honors the explicit sandboxOverride constructor option over permissionMode', async () => {
@@ -730,20 +700,6 @@ JSONL
       expect(argvOf(fixtures)).toContain('-s danger-full-access');
     }, 15_000);
 
-    it('the denylist mutation cap outranks an explicit danger-full-access override', async () => {
-      // Security policy (denylist) > convenience preference (explicit config).
-      sandboxedFixtures();
-      const provider = new CodexAgentProvider({
-        env: {
-          PATH: `${fixtures.binDir}:${process.env.PATH ?? ''}`,
-          CODEX_HOME: fixtures.codexHome,
-        },
-        sandboxOverride: 'danger-full-access',
-      });
-      await drainStream(provider, ['hi'], { disallowedTools: ['Write'] });
-      expect(argvOf(fixtures)).toContain('-s read-only');
-      expect(argvOf(fixtures)).not.toContain('--dangerously-bypass-approvals-and-sandbox');
-    }, 15_000);
   });
 
   // --------------------------------------------------------------------------
@@ -832,30 +788,6 @@ fi
       );
       expect(error?.content).toMatch(/codex login/); // auth is the actionable one
     }, 15_000);
-  });
-
-  // --------------------------------------------------------------------------
-  // Inline tools / MCP host handles
-  // --------------------------------------------------------------------------
-
-  describe('inline tools', () => {
-    it('preserves inline definitions for app-server registration', () => {
-      fixtures = makeFixtures({ withBinary: false, withAuth: false });
-      const provider = makeProvider(fixtures);
-      const tool = { name: 'read_notebook', description: 'Read', parameters: {}, handler: vi.fn() };
-      expect(provider.createInlineTool(tool as never)).toBe(tool);
-    });
-
-    it('returns inline server handles and rejects stdio servers', () => {
-      fixtures = makeFixtures({ withBinary: false, withAuth: false });
-      const provider = makeProvider(fixtures);
-      const tool = { name: 'read_notebook', description: 'Read', parameters: {}, handler: vi.fn() };
-      expect(provider.createMcpServer({
-        type: 'inline', name: 'jupyter', version: '1.0.0', tools: [tool as never],
-      })).toEqual({ name: 'jupyter', version: '1.0.0', tools: [tool] });
-      expect(() => provider.createMcpServer({ type: 'stdio', name: 'external', command: 'node' }))
-        .toThrow(/do not support stdio/);
-    });
   });
 
   // --------------------------------------------------------------------------
