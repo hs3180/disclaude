@@ -7,8 +7,8 @@ import { parseArgs, promisify } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { JupyterCoordinatorClient } from '../../packages/core/dist/jupyter/coordinator-client.js';
 
-// Opt-in: the native DSH adapter is independently reviewed in #5244. This
-// composes exact checkouts without sharing workspace node_modules directories.
+// Opt-in: use the merged DSH tool contract and record the exact checkout.
+// Each checkout keeps its own workspace node_modules directory.
 const { values } = parseArgs({
   options: {
     'dsh-checkout': { type: 'string' },
@@ -172,9 +172,7 @@ try {
     cwd,
     sessionKey: 'real-notebook-probe',
     settingSources: [],
-    nativeTools: tools,
-    allowedTools: tools.map((tool) => tool.name),
-    disallowedTools: ['CronCreate'],
+    tools,
     model: values.model,
     reasoningEffort: 'low',
     systemPrompt:
