@@ -16,6 +16,9 @@ export interface DshTransportOptions {
   env?: Record<string, string | undefined>;
   requestTimeoutMs?: number;
   onNotification?: (message: DshRpcNotification) => void;
+  onRequest?: (message: DshRpcRequest) => Promise<unknown>;
+  onExit?: (error: Error) => void;
+  onStderr?: (data: string) => void;
   onProtocolError?: (error: Error, line: string) => void;
 }
 
@@ -38,9 +41,9 @@ export interface DshRpcResponse {
   error?: DshRpcError;
 }
 
-interface DshRpcRequest {
+export interface DshRpcRequest {
   jsonrpc: '2.0';
-  id: number;
+  id: number | string;
   method: string;
   params?: unknown;
 }
@@ -59,6 +62,9 @@ export class DshStdioTransport {
   private readline: Interface | undefined;
   private nextId = 1;
   private closed = false;
+  private ended = false;
+  private processExit?: Promise<void>;
+  private shutdownFlight?: Promise<void>;
   private readonly pending = new Map<number, PendingRequest>();
 
   constructor(options: DshTransportOptions = {}) {
@@ -79,23 +85,34 @@ export class DshStdioTransport {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     this.child = child;
+    this.processExit = new Promise((resolve) => child.once('close', () => resolve()));
     // Drain diagnostics even when no consumer is attached, so startup cannot
     // deadlock on a full stderr pipe (for example, an unsupported SDK profile).
     child.stderr?.resume();
+    const { onStderr } = this.options;
+    if (onStderr) {
+      child.stderr?.on('data', (chunk) => onStderr(String(chunk)));
+    }
     if (!child.stdout) {
       throw new Error('dsh transport stdout is unavailable');
     }
     this.readline = createInterface({ input: child.stdout });
     this.readline.on('line', (line) => this.handleLine(line));
-    child.on('error', (error) => this.fail(error));
+    child.on('error', (error) => this.exited(error));
     child.on('close', (code, signal) => {
-      this.fail(
+      this.exited(
         new Error(`dsh process exited before completion (code=${code}, signal=${signal ?? 'none'})`)
       );
     });
   }
 
   request(method: string, params?: unknown, signal?: AbortSignal): Promise<unknown> {
+    if (signal?.aborted) {
+      return Promise.reject(new Error(`dsh request cancelled: ${method}`));
+    }
+    if (this.ended) {
+      return Promise.reject(new Error('dsh process has exited'));
+    }
     this.start();
     const stdin = this.child?.stdin;
     if (!stdin || stdin.destroyed) {
@@ -136,11 +153,13 @@ export class DshStdioTransport {
         pending.timer.unref?.();
       }
       this.pending.set(id, pending);
-      if (!stdin.write(`${JSON.stringify(request)}\n`)) {
-        this.pending.delete(id);
+      stdin.write(`${JSON.stringify(request)}\n`, (error) => {
+        if (!error || !this.pending.delete(id)) {
+          return;
+        }
         this.clearPending(pending);
-        reject(new Error('dsh transport failed to write request'));
-      }
+        reject(new Error('dsh transport failed to write request', { cause: error }));
+      });
     });
   }
 
@@ -155,29 +174,81 @@ export class DshStdioTransport {
   }
 
   /** Ask the SDK runtime to dispose its agents before closing stdio. */
-  async shutdown(): Promise<void> {
-    if (this.closed) {
-      return;
+  shutdown(): Promise<void> {
+    if (this.shutdownFlight) {
+      return this.shutdownFlight;
     }
-    try {
-      await this.request('shutdown', {});
-    } finally {
-      this.close();
-    }
+    this.shutdownFlight = (async () => {
+      if (this.closed) {
+        return;
+      }
+      if (!this.child) {
+        this.closed = true;
+        return;
+      }
+      try {
+        await this.request('shutdown', {});
+      } finally {
+        this.closed = true;
+        this.child.stdin?.end();
+        // SDK startup owns EOF/root disposal. Reap the process before removing
+        // its profile overlay or persistent home; a SIGTERM alone is not a wait.
+        if (!(await this.waitForExit(2_000))) {
+          this.child.kill();
+          if (!(await this.waitForExit(2_000))) {
+            this.child.kill('SIGKILL');
+            if (!(await this.waitForExit(2_000))) {
+              throw new Error('Owned DSH process did not exit');
+            }
+          }
+        }
+        this.readline?.close();
+        this.fail(new Error('dsh transport closed'));
+      }
+    })();
+    return this.shutdownFlight;
   }
 
   private handleLine(line: string): void {
     if (!line.trim()) {
       return;
     }
-    let message: DshRpcResponse | DshRpcNotification;
+    let message: DshRpcResponse | DshRpcNotification | DshRpcRequest;
     try {
-      message = JSON.parse(line) as DshRpcResponse | DshRpcNotification;
+      message = JSON.parse(line) as DshRpcResponse | DshRpcNotification | DshRpcRequest;
+      if (!message || typeof message !== 'object' || Array.isArray(message)) {
+        throw new Error('Invalid RPC envelope');
+      }
     } catch {
       this.options.onProtocolError?.(new Error('dsh emitted invalid JSON'), line);
       return;
     }
 
+    if (
+      'id' in message &&
+      'method' in message &&
+      (typeof message.id === 'string' || typeof message.id === 'number')
+    ) {
+      const request = message as DshRpcRequest;
+      void Promise.resolve()
+        .then(() => {
+          if (!this.options.onRequest) {
+            throw new Error('DSH host requests are not configured');
+          }
+          return this.options.onRequest(request);
+        })
+        .then(
+          (result) => this.reply(request.id, { result }),
+          (error) =>
+            this.reply(request.id, {
+              error: {
+                code: -32603,
+                message: error instanceof Error ? error.message : 'DSH host operation failed',
+              },
+            })
+        );
+      return;
+    }
     if ('id' in message && typeof message.id === 'number') {
       const pending = this.pending.get(message.id);
       if (!pending) {
@@ -188,7 +259,7 @@ export class DshStdioTransport {
       if ('error' in message && message.error) {
         pending.reject(new Error(`dsh RPC error ${message.error.code}: ${message.error.message}`));
       } else {
-        pending.resolve(message.result);
+        pending.resolve((message as DshRpcResponse).result);
       }
       return;
     }
@@ -200,12 +271,65 @@ export class DshStdioTransport {
     this.options.onProtocolError?.(new Error('dsh emitted an unknown JSON-RPC message'), line);
   }
 
+  private reply(id: number | string, body: { result?: unknown; error?: DshRpcError }): void {
+    const stdin = this.child?.stdin;
+    if (!stdin || stdin.destroyed || this.closed) {
+      return;
+    }
+    let frame: string;
+    try {
+      frame = JSON.stringify({ jsonrpc: '2.0', id, ...body });
+    } catch {
+      frame = JSON.stringify({
+        jsonrpc: '2.0',
+        id,
+        error: { code: -32603, message: 'DSH host output is not JSON serializable' },
+      });
+    }
+    stdin.write(`${frame}\n`, (error) => {
+      if (error) {
+        this.fail(new Error('DSH host response write failed', { cause: error }));
+      }
+    });
+  }
+
   private fail(error: Error): void {
     for (const pending of this.pending.values()) {
       this.clearPending(pending);
       pending.reject(error);
     }
     this.pending.clear();
+  }
+
+  private exited(error: Error): void {
+    if (this.ended) {
+      return;
+    }
+    this.ended = true;
+    this.fail(error);
+    if (!this.closed) {
+      this.options.onExit?.(error);
+    }
+  }
+
+  private async waitForExit(timeoutMs: number): Promise<boolean> {
+    const exit = this.processExit;
+    if (!exit) {
+      return true;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        exit.then(() => true),
+        new Promise<false>((resolve) => {
+          timer = setTimeout(() => resolve(false), timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }
   }
 
   private clearPending(pending: PendingRequest): void {

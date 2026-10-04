@@ -44,6 +44,8 @@ import net from 'node:net';
 import path from 'node:path';
 import { homedir } from 'node:os';
 import { statSync } from 'node:fs';
+import { JupyterConnections } from './jupyter/connections.js';
+import { notebookSessionFactory } from './jupyter/agent-session.js';
 
 const logger = createLogger('DisclaudeServiceCLI');
 
@@ -342,6 +344,10 @@ export async function main(): Promise<void> {
   logger.info({ workspaceDir }, 'ProjectManager initialized');
 
   const agentPool = new ChatSessionPool({
+    notebookSessionFactory: notebookSessionFactory(new JupyterConnections(
+      process.env.JUPYTER_CONNECTIONS_FILE ?? path.join(homedir(), '.disclaude', 'jupyter', 'connections.json'),
+      () => process.env,
+    )),
     agentPresets: Config.getAgentPresets(),
     messageBuilderOptions: createFeishuMessageBuilderOptions(),
     cwdProvider: projectManager.createCwdProvider(),
@@ -386,6 +392,7 @@ export async function main(): Promise<void> {
       resetThread: (chatId, skipContext, threadRootId) =>
         agentPool.reset(chatId, skipContext, threadRootId),
       stopThread: (chatId, threadRootId) => agentPool.stop(chatId, threadRootId),
+      stopNotebook: (chatId, threadRootId) => agentPool.stopNotebook(chatId, threadRootId),
       listAgentPresets: () => agentPool.listAgentPresets(),
       getActiveAgentPreset: (chatId, threadRootId) =>
         agentPool.getActiveAgentPreset(chatId, threadRootId),

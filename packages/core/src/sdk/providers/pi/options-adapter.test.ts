@@ -49,57 +49,12 @@ describe('adaptPiOptions (Issue #4386 part 2 / #4384)', () => {
     expect(res.systemPrompt).toBeUndefined();
   });
 
-  // -------------------------------------------------------------------------
-  // activeToolNames
-  // -------------------------------------------------------------------------
 
-  it('uses allowedTools as the active tool-name base', () => {
-    const res = adaptPiOptions(opts({ allowedTools: ['read', 'bash'] }));
-    expect(res.activeToolNames).toEqual(['read', 'bash']);
-  });
 
-  it('falls back to a string-array `tools` when allowedTools is absent', () => {
-    const res = adaptPiOptions(opts({ tools: ['read', 'edit'] }));
-    expect(res.activeToolNames).toEqual(['read', 'edit']);
-  });
 
-  it('prefers allowedTools over a string-array tools when both are present', () => {
-    const res = adaptPiOptions(opts({ allowedTools: ['read'], tools: ['read', 'edit'] }));
-    expect(res.activeToolNames).toEqual(['read']);
-  });
 
-  it('subtracts disallowedTools from the resolved base', () => {
-    const res = adaptPiOptions(
-      opts({
-        allowedTools: ['read', 'bash', 'edit'],
-        disallowedTools: ['bash'],
-      })
-    );
-    expect(res.activeToolNames).toEqual(['read', 'edit']);
-  });
 
-  it('ignores an empty disallowedTools (no filtering)', () => {
-    const res = adaptPiOptions(opts({ allowedTools: ['read', 'bash'], disallowedTools: [] }));
-    expect(res.activeToolNames).toEqual(['read', 'bash']);
-  });
 
-  it('returns undefined activeToolNames for a claude_code ToolsPreset (not portable to pi)', () => {
-    const res = adaptPiOptions(opts({ tools: { type: 'preset', preset: 'claude_code' } }));
-    expect(res.activeToolNames).toBeUndefined();
-  });
-
-  it('returns undefined activeToolNames when no tool option is present', () => {
-    const res = adaptPiOptions(opts());
-    expect(res.activeToolNames).toBeUndefined();
-  });
-
-  it('does not mutate the input arrays', () => {
-    const allowed = ['read', 'bash'];
-    const disallowed = ['bash'];
-    adaptPiOptions(opts({ allowedTools: allowed, disallowedTools: disallowed }));
-    expect(allowed).toEqual(['read', 'bash']);
-    expect(disallowed).toEqual(['bash']);
-  });
 
   // -------------------------------------------------------------------------
   // model (string passthrough; Model<any> resolution deferred to provider.ts)
@@ -137,19 +92,16 @@ describe('adaptPiOptions (Issue #4386 part 2 / #4384)', () => {
         teammateMode: 'in-process',
         includePartialMessages: true,
         permissionMode: 'bypassPermissions',
-        mcpServers: { x: { type: 'stdio', command: 'x' } as never },
       })
     );
     const carried: Array<keyof PiAdaptedOptions> = [
       'systemPrompt',
-      'activeToolNames',
       'model',
       'env',
     ];
     expect(Object.keys(res).sort()).toEqual([...carried].sort());
     // none of the Claude-only inputs produced a field:
     expect(res.systemPrompt).toBeUndefined();
-    expect(res.activeToolNames).toBeUndefined();
     expect(res.model).toBeUndefined();
     expect(res.env).toBeUndefined();
   });

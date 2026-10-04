@@ -41,6 +41,9 @@ export interface ControlHandlerContext {
      * as `resetThread`.
      */
     stopThread?(chatId: string, threadRootId: string): boolean;
+    stopNotebook?(chatId: string, threadRootId?: string): Promise<{
+      cancelled: number; alreadyTerminal: number; ownershipLost: number; unknown: number; unavailable?: boolean;
+    }>;
     listAgentPresets?(): Array<{ name: string; agentBackend: string; model: string }>;
     getActiveAgentPreset?(chatId: string, threadRootId?: string):
       { name: string; agentBackend: string; model: string } | undefined;

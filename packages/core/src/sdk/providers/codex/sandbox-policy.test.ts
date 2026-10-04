@@ -1,12 +1,4 @@
-/**
- * Tests for the codex sandbox policy resolver — Issue #4631 (S4 of #4627).
- *
- * Locks the full mapping table (full-access switch / explicit override /
- * denylist cap / web-search fail-closed) as a pure-function contract,
- * including the deny paths verified live against codex-cli 0.132.0:
- * - read-only blocks file mutation (enforcement probe, see module header)
- * - web search has no working off switch → unsupported policy throws
- */
+/** Tests Codex sandbox/full-access selection and invalid permission-mode rejection. */
 
 import { describe, expect, it } from 'vitest';
 
@@ -45,94 +37,19 @@ describe('resolveCodexSandboxPolicy (Issue #4631)', () => {
     expect(d.reasons.join(' ')).toMatch(/fullAccess=true/);
   });
 
-  // ── denylist cap (fail closed) ───────────────────────────────────────
 
-  it('caps at read-only when the denylist blocks mutation tools (claude names)', () => {
-    for (const name of ['Bash', 'Write', 'Edit', 'NotebookEdit']) {
-      const d = resolveCodexSandboxPolicy(
-        { disallowedTools: [name] },
-      );
-      expect(d.sandbox, name).toBe('read-only');
-    }
-  });
 
-  it('caps at read-only when the denylist blocks mutation tools (codex names)', () => {
-    for (const name of ['shell', 'file_change', 'apply_patch', 'command_execution']) {
-      const d = resolveCodexSandboxPolicy({ disallowedTools: [name] });
-      expect(d.sandbox, name).toBe('read-only');
-    }
-  });
 
-  it('the denylist cap outranks an explicit danger-full-access override', () => {
-    // Security policy (denylist) beats preference (explicit config).
-    const d = resolveCodexSandboxPolicy(
-      { disallowedTools: ['Bash'] },
-      'danger-full-access',
-    );
-    expect(d.sandbox).toBe('read-only');
-    expect(d.reasons.join(' ')).toMatch(/capped at read-only/);
-  });
 
-  it('is case-insensitive on denylist names (Bash/bash/WebSearch/web_search)', () => {
-    expect(resolveCodexSandboxPolicy({ disallowedTools: ['bash'] }).sandbox).toBe('read-only');
-  });
 
-  // ── not-applicable denylist entries (pi-gate parity: no match, no effect) ──
 
-  it('ignores claude-only denylist names — codex has no such capability', () => {
-    // This is ChatAgent's ACTUAL default denylist (buildDisallowedTools,
-    // #4181): every entry names claude-only tools, so the codex backend
-    // must run unrestricted-by-default, not fail.
-    const d = resolveCodexSandboxPolicy({
-      disallowedTools: [
-        'EnterPlanMode',
-        'AskUserQuestion',
-        'CronCreate',
-        'CronList',
-        'CronDelete',
-        'ScheduleWakeup',
-      ],
-    });
-    expect(d.sandbox).toBe('workspace-write');
-  });
 
-  // ── unenforceable policy → fail closed with a clear error ────────────
 
-  it('throws for WebSearch denylist entries (no working off switch on 0.132.0)', () => {
-    expect(() =>
-      resolveCodexSandboxPolicy({ disallowedTools: ['WebSearch'] }),
-    ).toThrow(/cannot disable its built-in web search.*fail closed/s);
-    expect(() =>
-      resolveCodexSandboxPolicy({ disallowedTools: ['web_search'] }),
-    ).toThrow(/#4631/);
-  });
 
-  it('the web-search refusal wins even alongside mutation entries (checks run regardless)', () => {
-    expect(() =>
-      resolveCodexSandboxPolicy({ disallowedTools: ['Bash', 'WebSearch'] }),
-    ).toThrow(/web search/i);
-  });
 
   // ── decision shape ───────────────────────────────────────────────────
 
-  it('returns ordered reasons (base inference + denylist cap)', () => {
-    const d = resolveCodexSandboxPolicy(
-      { permissionMode: 'default', disallowedTools: ['Bash'] },
-    );
-    expect(d.reasons.length).toBe(2);
-    expect(d.reasons[0]).toMatch(/fail closed/);
-    expect(d.reasons[1]).toMatch(/disallowedTools/);
-  });
 
-  it('normalizes denylist RULE FORMS — Bash(rm:*) caps, WebSearch(a:b) throws', () => {
-    // Claude Code rule forms must not silently skip the policy (S4 review).
-    expect(
-      resolveCodexSandboxPolicy({ disallowedTools: ['Bash(rm:*)'] }).sandbox,
-    ).toBe('read-only');
-    expect(() =>
-      resolveCodexSandboxPolicy({ disallowedTools: ['WebSearch(domain:example.com)'] }),
-    ).toThrow(/web search/i);
-  });
 
   it('throws on an out-of-enum permissionMode instead of widening (fail closed)', () => {
     expect(() =>

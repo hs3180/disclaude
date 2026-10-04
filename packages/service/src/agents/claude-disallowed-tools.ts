@@ -17,7 +17,7 @@
  * reroute needs a guidance/system-prompt nudge, tracked as a follow-up to
  * #4181. Disallowing by default is the mechanical half of that change.
  *
- * @module service/agents/disallowed-tools
+ * @module service/agents/claude-disallowed-tools
  */
 
 /** Tools always disallowed for chat agents. */
@@ -47,7 +47,7 @@ function isTruthyFlag(value: string | undefined): boolean {
  * case-insensitive) to restore them. `env` defaults to `process.env` but is
  * injectable for tests.
  */
-export function buildDisallowedTools(env: NodeJS.ProcessEnv = process.env): string[] {
+export function buildClaudeDisallowedTools(env: NodeJS.ProcessEnv = process.env): string[] {
   const tools: string[] = [...BASE_DISALLOWED_TOOLS];
   if (!isTruthyFlag(env.DISCLAUDE_ALLOW_BUILTIN_CRON)) {
     tools.push(...BUILTIN_CRON_TOOLS);

@@ -383,7 +383,7 @@ describe('ConversationSessionManager', () => {
     // 合成 ID 不可作为线程根,否则 Feishu 线程回复会触发 400(99992354)。
     // 来源:scheduler(sched-)、push(push_/http-push-)、cli(cli-)、handleInput(msg-)、微信卡片(wechat_interactive_)
     it.each([
-      ['sched-', 'sched-schedule-pr-scanner-1780907400594'],
+      ['sched-', 'sched-schedule-release-watch-1780907400594'],
       ['push_', 'push_0638cffc-adeb-47df-a3ac-ebaaaedaee43'],
       ['http-push-', 'http-push-550e8400-e29b-41d4-a716-446655440000'],
       ['cli-', 'cli-1719123456789'],
@@ -411,7 +411,7 @@ describe('ConversationSessionManager', () => {
     it('should not overwrite a real thread root when a synthetic ID arrives', () => {
       manager.setThreadRoot('chat-1', 'om_real_msg_1');
       // 同一会话后续进来一条定时任务的合成消息,不得覆盖已有真实线程根
-      manager.setThreadRoot('chat-1', 'sched-schedule-pr-scanner-123');
+      manager.setThreadRoot('chat-1', 'sched-schedule-release-watch-123');
       expect(manager.getThreadRoot('chat-1')).toBe('om_real_msg_1');
     });
 
@@ -426,7 +426,7 @@ describe('ConversationSessionManager', () => {
     });
 
     it('should reflect unset thread root in stats for synthetic-only session', () => {
-      manager.setThreadRoot('chat-1', 'sched-schedule-pr-scanner-123');
+      manager.setThreadRoot('chat-1', 'sched-schedule-release-watch-123');
       const stats = manager.getStats('chat-1');
       expect(stats!.threadRootId).toBeUndefined();
     });

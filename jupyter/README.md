@@ -130,9 +130,12 @@ and must be treated as private workspace data.
 
 `JupyterCoordinatorClient` implements `JupyterNotebookPort` and
 `JupyterExecutionPort`. Its connection contains a host-owned Authorization
-resolver, explicit remote HTTPS base URL, connection ID and optional saved
-server namespace. Loopback HTTP is retained for protocol fixtures; it is not a
-fallback deployment or a request to install Python on the host. Remote URLs with credentials,
+resolver or standard password resolver, explicit remote HTTPS base URL,
+connection ID and optional saved server namespace. Loopback HTTP is retained
+for protocol fixtures; it is not a fallback deployment or a request to install
+Python on the host. Non-loopback HTTP requires explicit host
+`allowInsecureHttp` permission for the configured endpoint and carries its
+password/cookies without encryption. Remote URLs with credentials,
 queries or fragments and redirects are rejected.
 
 Jupyter's default token authentication generates an identity and preserves it in
@@ -143,9 +146,19 @@ they manage connection persistence. Cookie/domain/path/expiry handling uses the
 library; cookie counts, header sizes and response bodies are bounded. Neither
 credentials nor cookies enter Notebook identities or model tool descriptors.
 The connector requires a Node runtime with `Headers.getSetCookie` (Node 20+).
-Password/XSRF authentication is a separate host-side slice in
-[#5247](https://github.com/hs3180/disclaude/pull/5247); this base client requires
-a pre-resolved Authorization header. Neither mode moves Python to the host.
+Standard password login uses the server's XSRF cookie and a form POST, then
+verifies the resulting cookie with a safe read. Login redirects are checked and
+never followed; Notebook redirects are refused. A valid saved cookie avoids
+resolving the password. Expiry is handled only at a later safe handshake; an
+attempted mutation is never replayed, and ownership still requires the original
+principal/controller generation. SSO and external credential refresh are not
+implemented.
+
+`inspectConnection()` reads server version and coordinator availability without
+opening a document, claiming control or changing a kernel. An authenticated
+server without the extension is reported as `coordinator: 'missing'`; ordinary
+REST execution does not satisfy the shared Notebook contract.
+Both authentication modes keep Python and kernels in the remote deployment.
 
 The host must bind tools to its claimed controller generation and recheck it at
 operation boundaries. Reading the global controller does not authorize a host
