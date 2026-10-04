@@ -45,33 +45,6 @@ describe('DSH native controller tool selection', () => {
     expect(f.dispose).toHaveBeenCalledOnce();
   });
 
-  it('allows a scoped native tool without passing its name to the inherited restriction API', async () => {
-    const f = fixture();
-    await f.app.handleRequest('initialize', {
-      cwd: '/project',
-      tools: [descriptor],
-      allowedTools: [descriptor.name],
-    });
-    await f.app.handleRequest('session/open', { sessionId: 'test-2' });
-    expect(f.tools.restrict).toHaveBeenCalledWith({ allow: [] });
-    expect(f.tools.register).toHaveBeenCalledOnce();
-    await f.app.shutdown();
-  });
-
-  it('selects inherited and scoped tools independently, including explicit denial', async () => {
-    const f = fixture();
-    await f.app.handleRequest('initialize', {
-      cwd: '/project',
-      tools: [descriptor],
-      allowedTools: ['read', descriptor.name],
-      disallowedTools: ['bash', descriptor.name],
-    });
-    await f.app.handleRequest('session/open', { sessionId: 'test-3' });
-    expect(f.tools.restrict).toHaveBeenCalledWith({ allow: ['read'], deny: ['bash'] });
-    expect(f.tools.register).not.toHaveBeenCalled();
-    await f.app.shutdown();
-  });
-
   it('keeps the profile default tools when only business definitions are supplied', async () => {
     const f = fixture();
     await f.app.handleRequest('initialize', { cwd: '/project', tools: [descriptor] });
@@ -94,33 +67,16 @@ describe('DSH native controller tool selection', () => {
     await f.app.shutdown();
   });
 
-  it('rejects unknown filter names before registering any host operation', async () => {
-    const f = fixture();
-    await f.app.handleRequest('initialize', {
-      cwd: '/project',
-      tools: [descriptor],
-      allowedTools: ['missing'],
-    });
-    await expect(f.app.handleRequest('session/open', { sessionId: 'test-4' })).rejects.toThrow(
-      'Unknown DSH tool filter'
-    );
-    expect(f.tools.register).not.toHaveBeenCalled();
-    await f.app.shutdown();
-  });
-
-  it('keeps an absent denied tool blocked without rejecting a shared caller', async () => {
-    const f = fixture();
-    await f.app.handleRequest('initialize', {
-      cwd: '/project',
-      tools: [descriptor],
-      disallowedTools: ['CronCreate'],
-    });
-    await f.app.handleRequest('session/open', { sessionId: 'test-5' });
-    expect(f.tools.restrict).not.toHaveBeenCalled();
-    expect(f.tools.register).toHaveBeenCalledOnce();
-    const [[guard]] = f.tools.guard.mock.calls;
-    expect(guard({ name: 'CronCreate' })).toBe('Tool is disallowed by the host');
-    expect(guard({ name: 'read' })).toBeUndefined();
-    await f.app.shutdown();
-  });
+  it.each(['allowedTools', 'disallowedTools'])(
+    'rejects a stale %s protocol field without changing the profile',
+    async (field) => {
+      const f = fixture();
+      await expect(
+        f.app.handleRequest('initialize', { cwd: '/project', tools: [descriptor], [field]: [] })
+      ).rejects.toThrow('Claude-specific');
+      expect(f.tools.restrict).not.toHaveBeenCalled();
+      expect(f.tools.register).not.toHaveBeenCalled();
+      await f.app.shutdown();
+    }
+  );
 });

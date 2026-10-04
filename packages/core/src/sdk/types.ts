@@ -259,10 +259,6 @@ export interface AgentQueryOptions {
   reasoningEffort?: string;
   /** 权限模式 */
   permissionMode?: PermissionMode;
-  /** 允许使用的工具列表 */
-  allowedTools?: string[];
-  /** 禁用的工具列表 */
-  disallowedTools?: string[];
   /** Business tools; each Harness adapter owns registration and transport. */
   tools?: readonly import('./tools.js').ToolDefinition[];
   /** 环境变量 */

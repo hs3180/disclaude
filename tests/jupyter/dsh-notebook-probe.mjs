@@ -247,8 +247,6 @@ try {
     sessionKey: 'real-notebook-probe',
     settingSources: [],
     tools: tools,
-    allowedTools: tools.map((tool) => tool.name),
-    disallowedTools: ['CronCreate'],
     model: values.model,
     reasoningEffort: 'low',
     systemPrompt:

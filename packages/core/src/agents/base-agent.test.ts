@@ -119,14 +119,12 @@ describe('BaseAgent', () => {
     expect(mockGetProvider).toHaveBeenLastCalledWith('pi');
   });
 
-  it('omits Claude-only presets and inapplicable default denies for deepseek', () => {
+  it('omits Claude-only runtime options for deepseek', () => {
     const deepseek = new TestAgent({ ...config, agentBackend: 'deepseek' });
-    const options = deepseek.testCreateSdkOptions({
-      disallowedTools: ['EnterPlanMode', 'CronCreate'],
-    });
+    const options = deepseek.testCreateSdkOptions();
     expect(options.systemPrompt).toBeUndefined();
     expect(options).not.toHaveProperty('builtinTools');
-    expect(options.disallowedTools).toBeUndefined();
+    expect(options).not.toHaveProperty('disallowedTools');
   });
 
   it.each(['codex', 'pi', 'deepseek'] as const)('does not inject Claude runtime options into %s', (backend) => {
@@ -134,6 +132,8 @@ describe('BaseAgent', () => {
     const options = instance.testCreateSdkOptions({});
     expect(options.systemPrompt).toBeUndefined();
     expect(options).not.toHaveProperty('builtinTools');
+    expect(options).not.toHaveProperty('allowedTools');
+    expect(options).not.toHaveProperty('disallowedTools');
     expect(options.includePartialMessages).toBeUndefined();
     expect(options.teammateMode).toBeUndefined();
     expect(options.env?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
@@ -147,22 +147,13 @@ describe('BaseAgent', () => {
       name: 'deepseek',
     } as typeof mockSdkProvider);
     const defaultAgent = new TestAgent(config);
-    const options = defaultAgent.testCreateSdkOptions({
-      disallowedTools: ['EnterPlanMode', 'AskUserQuestion', 'CronCreate'],
-    });
+    const options = defaultAgent.testCreateSdkOptions();
     expect(defaultAgent.agentBackend).toBe('deepseek');
     expect(options).not.toHaveProperty('builtinTools');
     expect(options.systemPrompt).toBeUndefined();
-    expect(options.disallowedTools).toBeUndefined();
+    expect(options).not.toHaveProperty('disallowedTools');
   });
 
-  it('retains enforceable tool restrictions for deepseek to reject explicitly', () => {
-    const deepseek = new TestAgent({ ...config, agentBackend: 'deepseek' });
-    const options = deepseek.testCreateSdkOptions({
-      disallowedTools: ['AskUserQuestion', 'Bash', 'Write'],
-    });
-    expect(options.disallowedTools).toEqual(['Bash', 'Write']);
-  });
 
   afterEach(() => {
     clearRuntimeContext();
@@ -248,18 +239,10 @@ describe('BaseAgent', () => {
       expect(options.model).toBe('claude-3-5-sonnet-20241022');
     });
 
-    it('should add allowedTools when specified', () => {
-      const options = agent.testCreateSdkOptions({
-        allowedTools: ['Read', 'Write'],
-      });
-      expect(options.allowedTools).toEqual(['Read', 'Write']);
-    });
 
-    it('should add disallowedTools when specified', () => {
-      const options = agent.testCreateSdkOptions({
-        disallowedTools: ['Bash'],
-      });
-      expect(options.disallowedTools).toEqual(['Bash']);
+
+    it.each(['allowedTools', 'disallowedTools'])('rejects a retired common %s field', (field) => {
+      expect(() => agent.testCreateSdkOptions({ [field]: [] } as SdkOptionsExtra)).toThrow('Claude-specific');
     });
 
     it('forwards business definitions without creating Harness configuration', () => {

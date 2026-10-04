@@ -295,7 +295,7 @@ describe('user starts Disclaude and coordinates an already deployed browser', ()
                 : backend === 'pi' ? process.env.DISCLAUDE_E2E_BROWSER_PI_MODEL
                   : codexAcceptanceModel;
             const stream = provider.queryStream(input(), { cwd: root, settingSources: [], env: taskEnv,
-              ...(['claude', 'pi'].includes(backend) ? { tools: ['Bash'], allowedTools: ['Bash'] } : {}), ...(model ? { model } : {}) });
+              ...(backend === 'claude' ? { allowedTools: ['Bash'] } : {}), ...(model ? { model } : {}) });
             const messages: AgentMessage[] = [];
             let timedOut = false;
             const deadline = setTimeout(() => { timedOut = true; void stream.handle.cancel(); }, configuredModelTimeout);

@@ -59,6 +59,7 @@ describe('adaptOptions', () => {
   it('should pass through allowedTools and disallowedTools', () => {
     const result = adaptOptions({
       settingSources: ['user', 'project', 'local'],
+    }, {
       allowedTools: ['tool1', 'tool2'],
       disallowedTools: ['tool3'],
     });
