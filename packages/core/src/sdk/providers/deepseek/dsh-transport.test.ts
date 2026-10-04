@@ -21,7 +21,7 @@ rl.on('line', (line) => {
   }
   if (request.method === 'host-call') {
     pendingHost = request.id;
-    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: 'from-dsh', method: 'native_tool.call', params: { marker: 'native-marker' } }) + '\\n');
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: 'from-dsh', method: 'tool.call', params: { marker: 'native-marker' } }) + '\\n');
     return;
   }
   if (request.method === 'notify-me') {

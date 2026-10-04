@@ -58,14 +58,9 @@ describe('adaptPiOptions (Issue #4386 part 2 / #4384)', () => {
     expect(res.activeToolNames).toEqual(['read', 'bash']);
   });
 
-  it('falls back to a string-array `tools` when allowedTools is absent', () => {
-    const res = adaptPiOptions(opts({ tools: ['read', 'edit'] }));
-    expect(res.activeToolNames).toEqual(['read', 'edit']);
-  });
-
-  it('prefers allowedTools over a string-array tools when both are present', () => {
-    const res = adaptPiOptions(opts({ allowedTools: ['read'], tools: ['read', 'edit'] }));
-    expect(res.activeToolNames).toEqual(['read']);
+  it('keeps Harness defaults when business tools are registered without an allowlist', () => {
+    const tools = [{ name: 'read_value', description: 'Read', inputSchema: { type: 'object' }, outputSchema: { type: 'object' }, execute: () => Promise.resolve({}) }];
+    expect(adaptPiOptions(opts({ tools })).activeToolNames).toBeUndefined();
   });
 
   it('subtracts disallowedTools from the resolved base', () => {
@@ -81,11 +76,6 @@ describe('adaptPiOptions (Issue #4386 part 2 / #4384)', () => {
   it('ignores an empty disallowedTools (no filtering)', () => {
     const res = adaptPiOptions(opts({ allowedTools: ['read', 'bash'], disallowedTools: [] }));
     expect(res.activeToolNames).toEqual(['read', 'bash']);
-  });
-
-  it('returns undefined activeToolNames for a claude_code ToolsPreset (not portable to pi)', () => {
-    const res = adaptPiOptions(opts({ tools: { type: 'preset', preset: 'claude_code' } }));
-    expect(res.activeToolNames).toBeUndefined();
   });
 
   it('returns undefined activeToolNames when no tool option is present', () => {
@@ -137,7 +127,6 @@ describe('adaptPiOptions (Issue #4386 part 2 / #4384)', () => {
         teammateMode: 'in-process',
         includePartialMessages: true,
         permissionMode: 'bypassPermissions',
-        mcpServers: { x: { type: 'stdio', command: 'x' } as never },
       })
     );
     const carried: Array<keyof PiAdaptedOptions> = [
