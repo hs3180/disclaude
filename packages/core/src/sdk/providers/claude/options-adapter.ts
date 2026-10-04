@@ -1,4 +1,4 @@
-import { assertToolOptions } from '../../host-tools.js';
+import { assertToolOptions } from '../../tools.js';
 import { browserAgentEnv } from '../../../utils/browser-env.js';
 /**
  * Claude SDK 选项适配器
@@ -6,8 +6,8 @@ import { browserAgentEnv } from '../../../utils/browser-env.js';
  * 将统一的 AgentQueryOptions 转换为 Claude SDK 特定的选项格式。
  */
 
-import type { AgentQueryOptions, McpServerConfig, UserInput } from '../../types.js';
-import { createClaudeHostToolServer, claudeToolNames, CLAUDE_HOST_SERVER } from './host-tool-adapter.js';
+import type { AgentQueryOptions, UserInput } from '../../types.js';
+import { createClaudeToolServer, claudeToolNames, CLAUDE_HOST_SERVER } from './tool-adapter.js';
 import * as path from 'node:path';
 import { Config } from '../../../config/index.js';
 
@@ -55,31 +55,20 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
   // 设置来源（必填）
   sdkOptions.settingSources = options.settingSources;
 
-  // 工具配置 (Issue #2890: tools preset for vibe coding compliance)
-  if (options.builtinTools) {
-    sdkOptions.tools = options.builtinTools;
-  }
+  // Claude's built-in tool defaults are a Harness detail.
+  sdkOptions.tools = { type: 'preset', preset: 'claude_code' };
 
   if (options.allowedTools) {
-    sdkOptions.allowedTools = claudeToolNames(options.allowedTools, options.hostTools);
+    sdkOptions.allowedTools = claudeToolNames(options.allowedTools, options.tools);
   }
 
   if (options.disallowedTools) {
-    sdkOptions.disallowedTools = claudeToolNames(options.disallowedTools, options.hostTools);
+    sdkOptions.disallowedTools = claudeToolNames(options.disallowedTools, options.tools);
   }
 
-  // MCP 服务器
-  if (options.mcpServers) {
-    sdkOptions.mcpServers = adaptMcpServers(options.mcpServers);
-  }
-
-  if (options.hostTools?.length) {
-    if (options.mcpServers?.[CLAUDE_HOST_SERVER]) {
-      throw new Error('External MCP server name disclaude is reserved for hostTools');
-    }
+  if (options.tools?.length) {
     sdkOptions.mcpServers = {
-      ...(sdkOptions.mcpServers as Record<string, unknown> | undefined),
-      [CLAUDE_HOST_SERVER]: createClaudeHostToolServer(options.hostTools, options),
+      [CLAUDE_HOST_SERVER]: createClaudeToolServer(options.tools, options),
     };
   }
 
@@ -114,18 +103,6 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
   }
 
   return sdkOptions;
-}
-
-/** External MCP configuration is distinct from host-owned callbacks. */
-function adaptMcpServers(servers: Record<string, McpServerConfig>): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  for (const [name, config] of Object.entries(servers)) {
-    if (config.type !== 'stdio') {
-      throw new TypeError('mcpServers accepts external stdio servers; use hostTools for callbacks');
-    }
-    result[name] = { type: 'stdio', command: config.command, args: config.args, env: config.env };
-  }
-  return result;
 }
 
 /**

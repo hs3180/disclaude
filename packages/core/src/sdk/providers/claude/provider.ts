@@ -1,4 +1,4 @@
-import { assertToolOptions } from '../../host-tools.js';
+import { assertToolOptions } from '../../tools.js';
 /**
  * Claude SDK Provider 实现
  *

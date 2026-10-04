@@ -1,4 +1,4 @@
-import { assertToolOptions } from '../../host-tools.js';
+import { assertToolOptions } from '../../tools.js';
 import { readStallPolicy } from '../stall-policy.js';
 /**
  * Codex CLI Agent Provider (Issue #4629 skeleton + #4630 exec bridge +
@@ -462,18 +462,11 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       );
     }
 
-    if (options.builtinTools !== undefined) {
-      throw new Error('Codex does not support builtinTools selection; use its sandbox and permission settings');
-    }
-    if (Object.keys(options.mcpServers ?? {}).length) {
-      throw new Error('Codex does not support external MCP servers through AgentQueryOptions');
-    }
-
     const skillsManifest = this.skillsManifestFor(options.projectRoot ?? options.cwd, options.cwd ?? process.cwd());
     if (this.transportMode === 'app-server') {
       return this.queryAppServer(input, options, sandboxDecision.sandbox, binary, skillsManifest, codexModel, requestedEffort);
     }
-    if (options.hostTools?.length) {
+    if (options.tools?.length) {
       throw new Error('Codex host tools require agent.codex.transport: app-server; codex exec cannot dispatch host tools.');
     }
 
@@ -1120,7 +1113,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     codexModel: string | undefined,
     reasoningEffort: CodexReasoningEffort | undefined,
   ): StreamQueryResult {
-    const dynamicToolRegistry = createCodexDynamicToolRegistry(options.hostTools, options);
+    const dynamicToolRegistry = createCodexDynamicToolRegistry(options.tools, options);
     const dynamicToolSignature = dynamicToolRegistry.signature;
     let lifecycle: CodexAppServerLifecycle | undefined;
     const sessionKey = options.sessionKey ?? `anon-app-${++this.anonSessionCounter}`;
@@ -1129,7 +1122,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     let threadId = this.appServerThreadIds.get(sessionKey);
     const registeredToolSignature = this.appServerDynamicToolSignatures.get(sessionKey);
     if (threadId && registeredToolSignature !== undefined && registeredToolSignature !== dynamicToolSignature) {
-      throw new Error('Codex app-server thread already has a different host tool registry; reset the conversation before changing its hostTools.');
+      throw new Error('Codex app-server thread already has a different host tool registry; reset the conversation before changing its tools.');
     }
     if (threadId && registeredToolSignature === undefined && dynamicToolRegistry.specs.length > 0) {
       throw new Error('Codex app-server cannot add host tools to an existing thread; reset the conversation to register them.');

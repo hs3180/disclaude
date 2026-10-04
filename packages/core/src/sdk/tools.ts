@@ -1,32 +1,21 @@
 import Ajv, { type ValidateFunction } from 'ajv';
 
 /** A host-owned business tool. Registration and result rendering belong to the Harness adapter. */
-export interface HostToolDefinition {
+export interface ToolDefinition {
   readonly name: string;
   readonly description: string;
   /** JSON Schema draft-07; the root must describe an object. */
   readonly inputSchema: Readonly<Record<string, unknown>>;
   /** The successful JSON result, before Harness-specific rendering. */
   readonly outputSchema: Readonly<Record<string, unknown>>;
-  execute(input: Record<string, unknown>, context: HostToolContext): Promise<unknown>;
-}
-
-/** Provider identifiers are trace metadata, never business identity or execution authority. */
-export interface HostToolCallIdentity {
-  provider: string;
-  requestId: string | number;
-  callId: string;
-  threadId: string;
-  turnId: string;
+  execute(input: Record<string, unknown>, context: ToolContext): Promise<unknown>;
 }
 
 export type ToolProgressPayload = unknown;
 export type ToolProgressCallback = (progress: ToolProgressPayload) => void;
 
-export interface HostToolContext {
+export interface ToolContext {
   readonly signal: AbortSignal;
-  readonly invocationId?: string;
-  readonly identity?: HostToolCallIdentity;
   /** Best-effort progress when supported by the selected Harness. */
   readonly onProgress?: ToolProgressCallback;
 }
@@ -64,7 +53,7 @@ function validate(validate: ValidateFunction, value: unknown, kind: string, ajv:
 }
 
 /** Prepare one query's registry before dispatch. Validation never coerces or mutates values. */
-export function prepareHostTools(tools: readonly HostToolDefinition[] = []): HostToolDefinition[] {
+export function prepareTools(tools: readonly ToolDefinition[] = []): ToolDefinition[] {
   if (tools.length === 0) {
     return [];
   }
@@ -114,19 +103,30 @@ export function prepareHostTools(tools: readonly HostToolDefinition[] = []): Hos
 
 /** Retired ambiguous options must fail explicitly for JavaScript callers as well. */
 export function assertToolOptions(options: object): void {
-  if ('nativeTools' in options) {
-    throw new TypeError('nativeTools was replaced by hostTools');
+  for (const legacy of ['nativeTools', 'hostTools', 'builtinTools', 'mcpServers']) {
+    if (legacy in options) {
+      throw new TypeError(
+        `${legacy} is no longer a query option; use tools for business definitions and configure the Harness separately`
+      );
+    }
   }
-  if ('tools' in options) {
-    throw new TypeError('tools was replaced by builtinTools; host callbacks belong in hostTools');
+  if ('tools' in options && options.tools !== undefined) {
+    if (
+      !Array.isArray(options.tools) ||
+      options.tools.some((tool: unknown) => !tool || typeof tool !== 'object')
+    ) {
+      throw new TypeError(
+        'tools must contain ToolDefinition objects; tool permissions use allowedTools/disallowedTools'
+      );
+    }
   }
 }
 
 /** Permissions apply to canonical names, independently of built-in tool selection. */
-export function selectHostTools(
-  tools: readonly HostToolDefinition[],
+export function selectTools(
+  tools: readonly ToolDefinition[],
   options: { allowedTools?: readonly string[]; disallowedTools?: readonly string[] }
-): HostToolDefinition[] {
+): ToolDefinition[] {
   return tools.filter(
     (tool) =>
       (options.allowedTools === undefined || options.allowedTools.includes(tool.name)) &&

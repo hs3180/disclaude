@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { HostToolDefinition } from '../../host-tools.js';
+import type { ToolDefinition } from '../../tools.js';
 import { createCodexDynamicToolRegistry } from './dynamic-tools.js';
 
 function tool(
-  execute = vi.fn<HostToolDefinition['execute']>().mockResolvedValue({ documentId: 'doc-1' })
-): HostToolDefinition {
+  execute = vi.fn<ToolDefinition['execute']>().mockResolvedValue({ documentId: 'doc-1' })
+): ToolDefinition {
   return {
     name: 'read_notebook',
     description: 'Read',
@@ -47,14 +47,6 @@ describe('Codex host tool adapter', () => {
     });
     expect(definition.execute).toHaveBeenCalledWith(call.arguments, {
       signal: call.signal,
-      invocationId: call.callId,
-      identity: {
-        provider: 'codex-app-server',
-        requestId: call.requestId,
-        callId: call.callId,
-        threadId: call.threadId,
-        turnId: call.turnId,
-      },
     });
   });
 
@@ -77,7 +69,7 @@ describe('Codex host tool adapter', () => {
 
   it('waits for running host work but rejects its result after cancellation', async () => {
     let finish!: (value: unknown) => void;
-    const execute = vi.fn<HostToolDefinition['execute']>(
+    const execute = vi.fn<ToolDefinition['execute']>(
       () =>
         new Promise((resolve) => {
           finish = resolve;

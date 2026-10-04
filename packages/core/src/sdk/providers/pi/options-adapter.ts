@@ -31,7 +31,7 @@
  * they are owned by sibling sub-issues or are Claude-specific and have no pi
  * equivalent at this layer:
  * - `model` string → `Model<any>` object: provider.ts (part 3), via pi `Models`.
- * - `hostTools`: business callbacks registered by the native Pi adapter.
+ * - `tools`: business callbacks registered by the native Pi adapter.
  * - `permissionMode` / permission gating: #4389 (S6); pi has no built-in perms
  *   (the `disallowedTools` deny gate itself landed in tool-permission-gate.ts).
  * - Claude-only fields with no pi agentLoop-level meaning: `cwd`, `settingSources`
@@ -79,15 +79,7 @@ export interface PiAdaptedOptions {
    */
   systemPrompt?: string;
 
-  /**
-   * Resolved from `options.allowedTools` / `options.builtinTools` (string-array form
-   * only) minus `options.disallowedTools`. Maps to pi's
-   * `AgentHarness.setActiveTools(names)` selection — NOT to a config field.
-   *
-   * A `BuiltinToolsPreset` (`{ type: 'preset', preset: 'claude_code' }`) is not
-   * portable to pi and is explicitly rejected; omitted selection keeps
-   * the provider default tool set.
-   */
+  /** Native active names from the existing permission allow/deny lists. */
   activeToolNames?: string[];
 
   /**
@@ -144,42 +136,7 @@ function resolveSystemPrompt(options: AgentQueryOptions): string | undefined {
   return sp.append;
 }
 
-/**
- * Resolve the active tool-name list from the disclaude tool options.
- *
- * Precedence: `allowedTools` (explicit allowlist) wins over a string-array
- * `builtinTools`. Provider-specific presets are explicitly rejected.
- * `disallowedTools` are subtracted from whichever base was chosen.
- */
+/** Tool definitions are registered separately; permissions select native names. */
 function resolveActiveToolNames(options: AgentQueryOptions): string[] | undefined {
-  const base = pickToolBase(options);
-  if (base === undefined) {
-    return undefined;
-  }
-  const disallowed = options.disallowedTools;
-  if (!disallowed || disallowed.length === 0) {
-    return base;
-  }
-  const deny = new Set(disallowed);
-  const filtered = base.filter((name) => !deny.has(name));
-  return filtered;
-}
-
-/**
- * Pick the base tool-name list before disallowed-subtraction.
- * Returns `undefined` when no portable (string-array) tool source is present.
- */
-function pickToolBase(options: AgentQueryOptions): string[] | undefined {
-  const { builtinTools: tools } = options;
-  if (tools !== undefined && !Array.isArray(tools)) {
-    throw new TypeError('Pi builtinTools must name Pi tools; Claude Code presets are unsupported');
-  }
-  if (options.allowedTools !== undefined) {
-    return [...options.allowedTools];
-  }
-  if (Array.isArray(tools)) {
-    return [...tools, ...(options.hostTools ?? []).map((tool) => tool.name)];
-  }
-  // No explicit selection: keep the provider default tool set.
-  return undefined;
+  return options.allowedTools?.filter((name) => !options.disallowedTools?.includes(name));
 }

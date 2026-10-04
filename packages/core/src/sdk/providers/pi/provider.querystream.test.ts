@@ -305,7 +305,7 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
 
     it('registers and executes host callbacks with the canonical schema', async () => {
       fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];
-      await collect(provider.queryStream(inputs(userInput('go')), { ...baseOptions(), hostTools: [makeTool('echo')] }).iterator);
+      await collect(provider.queryStream(inputs(userInput('go')), { ...baseOptions(), tools: [makeTool('echo')] }).iterator);
       const ctor = fakeState.ctorOptions as { initialState?: { tools?: Array<{ name: string; parameters: unknown; execute: Function }> } };
       const tools = ctor.initialState?.tools ?? [];
       expect(tools.map(tool => tool.name)).toEqual(['echo']);
@@ -316,7 +316,7 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
 
     it('keeps host permission filters separate from built-in selection', async () => {
       fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];
-      await collect(provider.queryStream(inputs(userInput('go')), { ...baseOptions(), builtinTools: [], hostTools: [makeTool('echo'), makeTool('denied')], disallowedTools: ['denied'] }).iterator);
+      await collect(provider.queryStream(inputs(userInput('go')), { ...baseOptions(), tools: [makeTool('echo'), makeTool('denied')], disallowedTools: ['denied'] }).iterator);
       const ctor = fakeState.ctorOptions as { initialState?: { tools?: Array<{ name: string }> } };
       expect(ctor.initialState?.tools?.map(tool => tool.name)).toEqual(['echo']);
     });
@@ -329,7 +329,7 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
     });
 
     it('rejects external MCP instead of silently dropping it', () => {
-      expect(() => provider.queryStream(inputs(userInput('hi')), { ...baseOptions(), mcpServers: { external: { type: 'stdio', name: 'external', command: 'node' } } })).toThrow('Pi does not support external MCP');
+      expect(() => provider.queryStream(inputs(userInput('hi')), { ...baseOptions(), ...({ mcpServers: {} } as Record<string, unknown>) })).toThrow('no longer a query option');
     });
   });
 

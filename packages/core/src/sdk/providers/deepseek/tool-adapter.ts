@@ -1,4 +1,4 @@
-import { prepareHostTools, type HostToolDefinition } from '../../host-tools.js';
+import { prepareTools, type ToolDefinition } from '../../tools.js';
 import {
   assertObjectJsonSchema,
   assertSupportedJsonSchema,
@@ -51,11 +51,11 @@ function nativeDeclaration(schema: Record<string, unknown>): Record<string, unkn
 }
 
 /** Register canonical tools directly in the agent-scoped DSH native registry. */
-export function registerDshHostTools(
+export function registerDshTools(
   registry: DshHostToolRegistry,
-  tools: readonly HostToolDefinition[]
+  tools: readonly ToolDefinition[]
 ): () => void {
-  const prepared = prepareHostTools(tools).map((tool) => {
+  const prepared = prepareTools(tools).map((tool) => {
     const parameters = nativeDeclaration(tool.inputSchema);
     const outputSchema = nativeDeclaration(tool.outputSchema);
     assertObjectJsonSchema(parameters);
@@ -84,7 +84,6 @@ export function registerDshHostTools(
             // Validate the original schema before/after the business callback.
             const value = await tool.execute(args as Record<string, unknown>, {
               signal: context.signal,
-              ...(context.callId === undefined ? {} : { invocationId: String(context.callId) }),
             });
             return value;
           },

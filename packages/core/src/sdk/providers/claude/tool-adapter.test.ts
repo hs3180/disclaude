@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import type { HostToolDefinition } from '../../host-tools.js';
+import type { ToolDefinition } from '../../tools.js';
 import { adaptOptions } from './options-adapter.js';
-import { createClaudeHostToolServer } from './host-tool-adapter.js';
+import { createClaudeToolServer } from './tool-adapter.js';
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -13,10 +13,10 @@ afterEach(async () => {
 });
 
 async function connect(
-  definitions: HostToolDefinition[],
+  definitions: ToolDefinition[],
   permissions: { allowedTools?: string[]; disallowedTools?: string[] } = {}
 ) {
-  const handle = createClaudeHostToolServer(definitions, permissions);
+  const handle = createClaudeToolServer(definitions, permissions);
   const client = new Client({ name: 'host-tool-test', version: '1' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await handle.instance.connect(serverTransport);
@@ -29,8 +29,8 @@ async function connect(
 }
 
 function definition(
-  execute = vi.fn<HostToolDefinition['execute']>().mockResolvedValue({ value: 42 })
-): HostToolDefinition {
+  execute = vi.fn<ToolDefinition['execute']>().mockResolvedValue({ value: 42 })
+): ToolDefinition {
   return {
     name: 'read_value',
     description: 'Read',
@@ -66,7 +66,7 @@ describe('Claude host tool adapter over real MCP transport', () => {
     });
     expect(source.execute).toHaveBeenCalledWith(
       { key: 'cell-1' },
-      expect.objectContaining({ signal: expect.any(AbortSignal), invocationId: expect.any(String) })
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
     );
   });
 
@@ -122,30 +122,19 @@ describe('Claude host tool adapter over real MCP transport', () => {
     finish();
   });
 
-  it('translates canonical permission names and keeps external MCP configuration separate', () => {
+  it('owns built-in defaults and MCP wrapping while accepting canonical permissions', () => {
     const source = definition();
     const options = adaptOptions({
       settingSources: [],
-      builtinTools: ['Read'],
-      hostTools: [source],
+      tools: [source],
       allowedTools: ['Read', source.name],
-      mcpServers: { external: { type: 'stdio', name: 'external', command: 'node' } },
     });
-    expect(options.tools).toEqual(['Read']);
+    expect(options.tools).toEqual({ type: 'preset', preset: 'claude_code' });
     expect(options.allowedTools).toEqual(['Read', 'mcp__disclaude__read_value']);
-    expect(options.mcpServers).toMatchObject({
-      external: { type: 'stdio', command: 'node' },
-      disclaude: { type: 'sdk', name: 'disclaude' },
-    });
+    expect(Object.keys(options.mcpServers as object)).toEqual(['disclaude']);
+    expect(options.mcpServers).toMatchObject({ disclaude: { type: 'sdk', name: 'disclaude' } });
     expect(() =>
-      adaptOptions({
-        settingSources: [],
-        hostTools: [source],
-        mcpServers: { disclaude: { type: 'stdio', name: 'disclaude', command: 'node' } },
-      })
-    ).toThrow('reserved');
-    expect(() =>
-      adaptOptions({ settingSources: [], mcpServers: { old: { type: 'inline' } as never } })
-    ).toThrow('use hostTools');
+      adaptOptions({ settingSources: [], ...({ mcpServers: {} } as Record<string, unknown>) })
+    ).toThrow('no longer a query option');
   });
 });

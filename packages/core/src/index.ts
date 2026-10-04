@@ -46,7 +46,7 @@ export type {
 
 export { createNotebookTools } from './jupyter/notebook-tools.js';
 export type { NotebookToolBinding } from './jupyter/notebook-tools.js';
-export type { HostToolDefinition, HostToolContext } from './sdk/host-tools.js';
+export type { ToolDefinition, ToolContext } from './sdk/tools.js';
 
 // Config
 export * from './config/index.js';
@@ -100,8 +100,6 @@ export type {
   ToolProgressPayload,
   ToolProgressCallback,
   // MCP types
-  StdioMcpServerConfig,
-  McpServerConfig as SdkMcpServerConfig,
   // Query types
   AgentQueryOptions,
   PermissionMode,

@@ -226,19 +226,7 @@ export interface ToolResultBlock {
 // MCP 服务器配置
 // ============================================================================
 
-export type { HostToolDefinition, HostToolContext, HostToolCallIdentity, ToolProgressPayload, ToolProgressCallback } from './host-tools.js';
-
-/** stdio 模式 MCP 服务器配置 */
-export interface StdioMcpServerConfig {
-  type: 'stdio';
-  name: string;
-  command: string;
-  args?: string[];
-  env?: Record<string, string>;
-}
-
-/** External MCP transport configuration. Host callbacks belong in hostTools. */
-export type McpServerConfig = StdioMcpServerConfig;
+export type { ToolDefinition, ToolContext, ToolProgressPayload, ToolProgressCallback } from './tools.js';
 
 // ============================================================================
 // 查询选项
@@ -252,12 +240,6 @@ export interface SystemPromptPreset {
   type: 'preset';
   preset: 'claude_code';
   append?: string;
-}
-
-/** Tools preset 配置 (Issue #2890) */
-export interface BuiltinToolsPreset {
-  type: 'preset';
-  preset: 'claude_code';
 }
 
 /** 查询选项（Provider 无关） */
@@ -281,19 +263,8 @@ export interface AgentQueryOptions {
   allowedTools?: string[];
   /** 禁用的工具列表 */
   disallowedTools?: string[];
-  /**
-   * Harness 内置工具选择（不注册宿主回调）
-   * - `string[]` - 指定可用工具列表
-   * - `{ type: 'preset', preset: 'claude_code' }` - 使用 Claude Code 默认工具集
-   *
-   * 不设置时由 SDK 决定默认工具集。设置为 `claude_code` preset 可确保
-   * Agent 使用完整的 Claude Code 内置工具，是 vibe coding 合规的关键配置。
-   */
-  builtinTools?: string[] | BuiltinToolsPreset;
-  /** External MCP server processes. Local business callbacks belong in hostTools. */
-  mcpServers?: Record<string, McpServerConfig>;
-  /** Host-owned business definitions; each Harness adapter owns their registration. */
-  hostTools?: readonly import('./host-tools.js').HostToolDefinition[];
+  /** Business tools; each Harness adapter owns registration and transport. */
+  tools?: readonly import('./tools.js').ToolDefinition[];
   /** 环境变量 */
   env?: Record<string, string | undefined>;
   /**

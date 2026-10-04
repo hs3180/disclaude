@@ -6,10 +6,10 @@ export { PiAgentProvider } from './provider.js';
 
 // Host tool definitions are adapted only inside the Pi provider.
 export {
-  adaptPiHostTools,
+  adaptPiTools,
   type PiAgentHarnessTool,
   type PiAgentToolResult,
-} from './host-tool-adapter.js';
+} from './tool-adapter.js';
 // Issue #4386 (S3, part 1): pi AgentEvent → AgentMessage adapter.
 export { adaptPiEvent, type PiAgentEvent, type PiAssistantMessageEvent } from './event-adapter.js';
 // Issue #4386 (S3, part 2): disclaude AgentQueryOptions → pi run-options adapter.

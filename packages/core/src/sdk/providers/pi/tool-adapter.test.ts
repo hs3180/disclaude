@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { HostToolDefinition } from '../../host-tools.js';
-import { adaptPiHostTools } from './host-tool-adapter.js';
+import type { ToolDefinition } from '../../tools.js';
+import { adaptPiTools } from './tool-adapter.js';
 
 function definition(
-  execute: HostToolDefinition['execute'] = ({ x }) => Promise.resolve({ doubled: Number(x) * 2 })
-): HostToolDefinition {
+  execute: ToolDefinition['execute'] = ({ x }) => Promise.resolve({ doubled: Number(x) * 2 })
+): ToolDefinition {
   return {
     name: 'double',
     description: 'Double',
@@ -21,21 +21,21 @@ function definition(
 
 describe('Pi host tool adapter', () => {
   it('preserves model-facing schema and structured results', async () => {
-    const execute = vi.fn<HostToolDefinition['execute']>().mockResolvedValue({ doubled: 42 });
+    const execute = vi.fn<ToolDefinition['execute']>().mockResolvedValue({ doubled: 42 });
     const source = definition(execute);
-    const [tool] = adaptPiHostTools([source]);
+    const [tool] = adaptPiTools([source]);
     expect(tool.parameters).toEqual(source.inputSchema);
     const { signal } = new AbortController();
     await expect(tool.execute('call', { x: 21 }, signal, undefined, undefined)).resolves.toEqual({
       content: [{ type: 'text', text: '{"doubled":42}' }],
       details: { doubled: 42 },
     });
-    expect(execute).toHaveBeenCalledWith({ x: 21 }, { signal, invocationId: 'call' });
+    expect(execute).toHaveBeenCalledWith({ x: 21 }, { signal });
   });
 
   it('enforces original schemas without coercion, defaults or dropped fields', async () => {
-    const execute = vi.fn<HostToolDefinition['execute']>().mockResolvedValue({});
-    const [tool] = adaptPiHostTools([definition(execute)]);
+    const execute = vi.fn<ToolDefinition['execute']>().mockResolvedValue({});
+    const [tool] = adaptPiTools([definition(execute)]);
     for (const args of [{ x: '21' }, {}, { x: 21, extra: true }]) {
       await expect(tool.execute('call', args, undefined, undefined, undefined)).rejects.toThrow(
         'Invalid host tool arguments'
@@ -46,12 +46,12 @@ describe('Pi host tool adapter', () => {
 
   it('passes the live abort signal to the host and rejects late success', async () => {
     const abort = new AbortController();
-    const execute = vi.fn<HostToolDefinition['execute']>((_args, context) => {
+    const execute = vi.fn<ToolDefinition['execute']>((_args, context) => {
       expect(context.signal).toBe(abort.signal);
       abort.abort();
       return Promise.resolve({});
     });
-    const [tool] = adaptPiHostTools([definition(execute)]);
+    const [tool] = adaptPiTools([definition(execute)]);
     await expect(
       tool.execute('call', { x: 1 }, abort.signal, undefined, undefined)
     ).rejects.toThrow();
@@ -62,7 +62,7 @@ describe('Pi host tool adapter', () => {
   });
 
   it('bridges best-effort progress without losing the final result', async () => {
-    const [tool] = adaptPiHostTools([
+    const [tool] = adaptPiTools([
       definition((_args, context) => {
         context.onProgress?.({ percent: 50 });
         return Promise.resolve({ done: true });
@@ -82,7 +82,7 @@ describe('Pi host tool adapter', () => {
 
   it('keeps denied host callbacks out of the native registry', () => {
     const source = definition();
-    expect(adaptPiHostTools([source], { allowedTools: [] })).toEqual([]);
-    expect(adaptPiHostTools([source], { disallowedTools: ['double'] })).toEqual([]);
+    expect(adaptPiTools([source], { allowedTools: [] })).toEqual([]);
+    expect(adaptPiTools([source], { disallowedTools: ['double'] })).toEqual([]);
   });
 });

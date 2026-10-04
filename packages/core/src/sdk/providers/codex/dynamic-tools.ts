@@ -1,4 +1,4 @@
-import { prepareHostTools, selectHostTools, type HostToolDefinition } from '../../host-tools.js';
+import { prepareTools, selectTools, type ToolDefinition } from '../../tools.js';
 import type {
   CodexAppServerDynamicToolCallRequest,
   CodexAppServerDynamicToolCallResult,
@@ -16,10 +16,10 @@ export interface CodexDynamicToolRegistry {
 const HOST_NAMESPACE = 'disclaude';
 
 export function createCodexDynamicToolRegistry(
-  definitions: readonly HostToolDefinition[] = [],
+  definitions: readonly ToolDefinition[] = [],
   permissions: { allowedTools?: string[]; disallowedTools?: string[] } = {}
 ): CodexDynamicToolRegistry {
-  const tools = selectHostTools(prepareHostTools(definitions), permissions).sort((left, right) =>
+  const tools = selectTools(prepareTools(definitions), permissions).sort((left, right) =>
     left.name < right.name ? -1 : left.name > right.name ? 1 : 0
   );
   const registered = new Map(tools.map((tool) => [tool.name, tool]));
@@ -55,14 +55,6 @@ export function createCodexDynamicToolRegistry(
       try {
         const value = await tool.execute(request.arguments as Record<string, unknown>, {
           signal: request.signal,
-          invocationId: request.callId,
-          identity: {
-            provider: 'codex-app-server',
-            requestId: request.requestId,
-            callId: request.callId,
-            threadId: request.threadId,
-            turnId: request.turnId,
-          },
         });
         return {
           contentItems: [

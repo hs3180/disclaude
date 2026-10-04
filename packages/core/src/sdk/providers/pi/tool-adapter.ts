@@ -1,4 +1,4 @@
-import { prepareHostTools, selectHostTools, type HostToolDefinition } from '../../host-tools.js';
+import { prepareTools, selectTools, type ToolDefinition } from '../../tools.js';
 
 export interface PiAgentToolResult {
   content: Array<{ type: 'text'; text: string }>;
@@ -26,20 +26,19 @@ function result(value: unknown): PiAgentToolResult {
   };
 }
 
-/** Pi uses its native registry; the business definition stays in hostTools. */
-export function adaptPiHostTools(
-  definitions: readonly HostToolDefinition[] = [],
+/** Pi uses its native registry; the business definition stays in tools. */
+export function adaptPiTools(
+  definitions: readonly ToolDefinition[] = [],
   permissions: { allowedTools?: string[]; disallowedTools?: string[] } = {}
 ): PiAgentHarnessTool[] {
-  return selectHostTools(prepareHostTools(definitions), permissions).map((definition) => ({
+  return selectTools(prepareTools(definitions), permissions).map((definition) => ({
     name: definition.name,
     label: definition.name,
     description: definition.description,
     parameters: definition.inputSchema,
-    execute: async (toolCallId, params, signal, onUpdate) => {
+    execute: async (_toolCallId, params, signal, onUpdate) => {
       const value = await definition.execute(params as Record<string, unknown>, {
         signal: signal ?? new AbortController().signal,
-        invocationId: toolCallId,
         ...(onUpdate
           ? {
               onProgress: (progress: unknown) => {

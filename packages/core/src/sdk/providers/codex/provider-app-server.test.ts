@@ -2,7 +2,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AgentMessage, AgentQueryOptions, HostToolDefinition, HostToolContext, UserInput } from '../../types.js';
+import type { AgentMessage, AgentQueryOptions, ToolDefinition, ToolContext, UserInput } from '../../types.js';
 import { CodexAgentProvider } from './provider.js';
 import type { AgentInputRequest, AgentInputContext } from '../../user-input.js';
 
@@ -40,13 +40,13 @@ afterEach(() => {
 describe('CodexAgentProvider app-server transport', () => {
   it('rejects host tools before starting codex exec', () => {
     const { provider } = providerFixture('exit 0', 'exec');
-    const hostTools: HostToolDefinition[] = [{ name: 'read_notebook', description: 'Read', inputSchema: { type: 'object' }, outputSchema: { type: 'object' }, execute: () => Promise.resolve({}) }];
+    const tools: ToolDefinition[] = [{ name: 'read_notebook', description: 'Read', inputSchema: { type: 'object' }, outputSchema: { type: 'object' }, execute: () => Promise.resolve({}) }];
     const input = (async function* (): AsyncGenerator<UserInput> {
       yield { role: 'user', content: 'Read the notebook' };
     })();
     try {
       expect(() => provider.queryStream(input, {
-        sessionKey: 'exec-host-tool', settingSources: [], hostTools,
+        sessionKey: 'exec-host-tool', settingSources: [], tools,
       } as AgentQueryOptions)).toThrow(/require agent\.codex\.transport: app-server/);
     } finally { provider.dispose(); }
   });
@@ -72,23 +72,23 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   send({method:'turn/completed',params:{threadId:'dynamic-thread',turn:{id:'dynamic-turn',status:'completed'}}});
  }
 });`);
-    const handler = vi.fn(async (params: Record<string, unknown>, context: HostToolContext) => {
+    const handler = vi.fn(async (params: Record<string, unknown>, context: ToolContext) => {
       await new Promise(resolve => setTimeout(resolve, 100));
       expect(context?.signal.aborted).toBe(false);
       return { path: params.path, documentId: 'doc-1' };
     });
-    const definition: HostToolDefinition = {
+    const definition: ToolDefinition = {
       name: 'read_notebook',
       description: 'Read a Jupyter notebook',
       inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
       outputSchema: { type: 'object' },
       execute: handler,
     };
-    const hostTools = [definition];
+    const tools = [definition];
     const result = provider.queryStream((async function* (): AsyncGenerator<UserInput> {
       yield { role: 'user', content: 'Read the notebook' };
     })(), {
-      sessionKey: 'dynamic-tools', settingSources: [], hostTools,
+      sessionKey: 'dynamic-tools', settingSources: [], tools,
     } as AgentQueryOptions);
     const messages: AgentMessage[] = [];
     try {
@@ -107,13 +107,6 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       });
       expect(handler).toHaveBeenCalledOnce();
       expect(handler.mock.calls[0]?.[1]).toMatchObject({
-        identity: {
-          provider: 'codex-app-server',
-          requestId: 'host-request',
-          callId: 'host-call',
-          threadId: 'dynamic-thread',
-          turnId: 'dynamic-turn',
-        },
       });
       expect(messages).toContainEqual(expect.objectContaining({ type: 'text', content: 'Notebook read completed' }));
       expect(messages.some(message => message.metadata?.terminatedReason === 'stall')).toBe(false);
@@ -145,12 +138,12 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
  }
 });`);
     const handler = vi.fn((params: Record<string, unknown>) => Promise.resolve({ accepted: true, marker: params.marker }));
-    const hostTools: HostToolDefinition[] = [{ name: 'emit_marker', description: 'Record a turn marker', inputSchema: { type: 'object', properties: { marker: { type: 'string' } }, required: ['marker'] }, outputSchema: { type: 'object' }, execute: handler }];
+    const tools: ToolDefinition[] = [{ name: 'emit_marker', description: 'Record a turn marker', inputSchema: { type: 'object', properties: { marker: { type: 'string' } }, required: ['marker'] }, outputSchema: { type: 'object' }, execute: handler }];
     const result = provider.queryStream((async function* (): AsyncGenerator<UserInput> {
       yield { role: 'user', content: 'Record the first marker' };
       yield { role: 'user', content: 'Record the second marker' };
     })(), {
-      sessionKey: 'dynamic-tool-resume', settingSources: [], hostTools,
+      sessionKey: 'dynamic-tool-resume', settingSources: [], tools,
     } as AgentQueryOptions);
     const messages: AgentMessage[] = [];
     try {
@@ -190,13 +183,13 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   send({method:'turn/completed',params:{threadId:'registry-thread',turn:{id:'registry-turn',status:'completed'}}});
  }
 });`);
-    const makeTools = (name: string): HostToolDefinition[] => [{ name, description: 'Jupyter tool', inputSchema: { type: 'object' }, outputSchema: { type: 'string' }, execute: () => Promise.resolve('ok') }];
+    const makeTools = (name: string): ToolDefinition[] => [{ name, description: 'Jupyter tool', inputSchema: { type: 'object' }, outputSchema: { type: 'string' }, execute: () => Promise.resolve('ok') }];
     const input = () => (async function* (): AsyncGenerator<UserInput> {
       yield { role: 'user', content: 'Continue the notebook work' };
     })();
     try {
       const first = provider.queryStream(input(), {
-        sessionKey: 'registry-change', settingSources: [], hostTools: makeTools('read_notebook'),
+        sessionKey: 'registry-change', settingSources: [], tools: makeTools('read_notebook'),
       } as AgentQueryOptions);
       for await (const _message of first.iterator) { /* drain */ }
       expect(JSON.parse(readFileSync(join(dir, 'home/thread'), 'utf8')).dynamicTools)
@@ -204,10 +197,10 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
           { type: 'namespace', tools: [{ type: 'function', name: 'read_notebook' }] },
         ]);
       expect(() => provider.queryStream(input(), {
-        sessionKey: 'registry-change', settingSources: [], hostTools: makeTools('execute_cell'),
+        sessionKey: 'registry-change', settingSources: [], tools: makeTools('execute_cell'),
       } as AgentQueryOptions)).toThrow(/different host tool registry/);
       expect(() => provider.queryStream(input(), {
-        sessionKey: 'registry-change', settingSources: [], hostTools: [{ ...makeTools('read_notebook')[0], outputSchema: { type: 'object' } }],
+        sessionKey: 'registry-change', settingSources: [], tools: [{ ...makeTools('read_notebook')[0], outputSchema: { type: 'object' } }],
       })).toThrow(/different host tool registry/);
       expect(readFileSync(join(dir, 'home/methods'), 'utf8').trim().split('\n')).toEqual(['thread/start']);
     } finally { provider.dispose(); }

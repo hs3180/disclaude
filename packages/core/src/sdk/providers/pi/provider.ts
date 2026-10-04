@@ -1,4 +1,4 @@
-import { assertToolOptions } from '../../host-tools.js';
+import { assertToolOptions } from '../../tools.js';
 import { readStallPolicy } from '../stall-policy.js';
 /** pi Agent runtime with optional, per-query Anthropic-compatible production wiring. */
 
@@ -15,7 +15,7 @@ import type {
 } from '../../types.js';
 import { createLogger } from '../../../utils/logger.js';
 import { adaptPiEvent, type PiAgentEvent } from './event-adapter.js';
-import { adaptPiHostTools } from './host-tool-adapter.js';
+import { adaptPiTools } from './tool-adapter.js';
 import { adaptPiOptions } from './options-adapter.js';
 import { loadPiRuntime, toPiUserMessage, type PiAgentOptions } from './pi-runtime.js';
 import { createPiToolPermissionGate } from './tool-permission-gate.js';
@@ -86,10 +86,7 @@ export class PiAgentProvider implements IAgentSDKProvider {
       throw new Error('Provider has been disposed');
     }
 
-    if (Object.keys(options.mcpServers ?? {}).length) {
-      throw new Error('Pi does not support external MCP servers');
-    }
-    const hostTools = adaptPiHostTools(options.hostTools, options);
+    const tools = adaptPiTools(options.tools, options);
     if (!this.streamFn) {resolvePiModel(options);}
 
     // Abort plumbing: pi's Agent.abort() cancels the active run; the handle's
@@ -195,7 +192,7 @@ export class PiAgentProvider implements IAgentSDKProvider {
       // direction 1 / PR #4569) exhausts STALL_TIMEOUT_MS and is misjudged as
       // a stall. While openToolCalls > 0 the watchdog re-arms instead of
       // firing. Tool deadlocks stay detectable in principle through the tool's
-      // own abort signal (wired in host-tool-adapter) — the same residual
+      // own abort signal (wired in tool-adapter) — the same residual
       // #3706 accepts for its request-level exemption.
       // Scope guard: the counter is reset when a run settles (runInput's
       // finally). pi 0.82.1 pairs every start with an end before settlement
@@ -280,13 +277,12 @@ export class PiAgentProvider implements IAgentSDKProvider {
       // `disallowedTools` is absent/empty → hook omitted, behavior unchanged.
       const toolPermissionGate = createPiToolPermissionGate(options);
       const inherited = new Set((production?.tools ?? []).map((tool) => tool.name));
-      for (const tool of hostTools) {
+      for (const tool of tools) {
         if (inherited.has(tool.name)) {
           throw new TypeError(`Host tool conflicts with Pi built-in tool: ${tool.name}`);
         }
       }
       const builtinTools = (production?.tools ?? []).filter((tool) =>
-        (!Array.isArray(options.builtinTools) || options.builtinTools.includes(tool.name)) &&
         (options.allowedTools === undefined || options.allowedTools.includes(tool.name)) &&
         !options.disallowedTools?.includes(tool.name),
       );
@@ -295,7 +291,7 @@ export class PiAgentProvider implements IAgentSDKProvider {
         initialState: {
           ...(production ? { model: production.model } : {}),
           systemPrompt: adaptedOptions.systemPrompt ?? '',
-          tools: [...builtinTools, ...hostTools],
+          tools: [...builtinTools, ...tools],
         },
         ...(toolPermissionGate
           ? { beforeToolCall: toolPermissionGate satisfies PiAgentOptions['beforeToolCall'] }

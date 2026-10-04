@@ -1,14 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
-  prepareHostTools,
-  selectHostTools,
-  assertToolOptions,
-  type HostToolDefinition,
-} from './host-tools.js';
+import { prepareTools, selectTools, assertToolOptions, type ToolDefinition } from './tools.js';
 
 function definition(
-  execute = vi.fn<HostToolDefinition['execute']>().mockResolvedValue({ value: 42 })
-): HostToolDefinition {
+  execute = vi.fn<ToolDefinition['execute']>().mockResolvedValue({ value: 42 })
+): ToolDefinition {
   return {
     name: 'read_value',
     description: 'Read a value',
@@ -30,14 +25,23 @@ function definition(
 const context = () => ({ signal: new AbortController().signal });
 
 describe('host tool contract', () => {
-  it('rejects retired query option names for JavaScript callers', () => {
-    expect(() => assertToolOptions({ nativeTools: [] })).toThrow('replaced by hostTools');
-    expect(() => assertToolOptions({ tools: [] })).toThrow('replaced by builtinTools');
-    expect(() => assertToolOptions({ builtinTools: [], hostTools: [] })).not.toThrow();
+  it.each(['nativeTools', 'hostTools', 'builtinTools', 'mcpServers'])(
+    'rejects retired query option %s for JavaScript callers',
+    (name) => {
+      expect(() => assertToolOptions({ [name]: [] })).toThrow('no longer a query option');
+    }
+  );
+  it('accepts definitions and rejects tool names or presets in the business entry', () => {
+    expect(() => assertToolOptions({ tools: [definition()] })).not.toThrow();
+    expect(() => assertToolOptions({ tools: [] })).not.toThrow();
+    expect(() => assertToolOptions({ tools: ['read'] })).toThrow('ToolDefinition');
+    expect(() => assertToolOptions({ tools: { type: 'preset', preset: 'claude_code' } })).toThrow(
+      'ToolDefinition'
+    );
   });
   it('preserves inputs/results and isolates declarations from subsequent caller mutation', async () => {
     const source = definition();
-    const [prepared] = prepareHostTools([source]);
+    const [prepared] = prepareTools([source]);
     (source.inputSchema.properties as Record<string, unknown>).key = { type: 'number' };
     const args = { key: 'answer' };
     const ctx = context();
@@ -53,7 +57,7 @@ describe('host tool contract', () => {
       const source = definition();
       const before = JSON.stringify(args);
       await expect(
-        prepareHostTools([source])[0].execute(args as Record<string, unknown>, context())
+        prepareTools([source])[0].execute(args as Record<string, unknown>, context())
       ).rejects.toThrow('Invalid host tool arguments');
       expect(source.execute).not.toHaveBeenCalled();
       expect(JSON.stringify(args)).toBe(before);
@@ -68,9 +72,7 @@ describe('host tool contract', () => {
     new Date(),
   ])('rejects invalid or non-JSON results', async (value) => {
     const source = definition(vi.fn().mockResolvedValue(value));
-    await expect(
-      prepareHostTools([source])[0].execute({ key: 'answer' }, context())
-    ).rejects.toThrow();
+    await expect(prepareTools([source])[0].execute({ key: 'answer' }, context())).rejects.toThrow();
   });
 
   it('checks cancellation before dispatch and after owned work settles', async () => {
@@ -81,7 +83,7 @@ describe('host tool contract', () => {
         return Promise.resolve({ value: 42 });
       })
     );
-    const [tool] = prepareHostTools([source]);
+    const [tool] = prepareTools([source]);
     await expect(tool.execute({ key: 'answer' }, { signal: abort.signal })).rejects.toThrow();
     await expect(tool.execute({ key: 'answer' }, { signal: abort.signal })).rejects.toThrow();
     expect(source.execute).toHaveBeenCalledOnce();
@@ -89,22 +91,22 @@ describe('host tool contract', () => {
 
   it('rejects duplicate names, non-object input schemas and unsupported schema constraints', () => {
     const source = definition();
-    expect(() => prepareHostTools([source, source])).toThrow('duplicate');
-    expect(() => prepareHostTools([{ ...source, name: 'Bad-name' }])).toThrow('Invalid');
-    expect(() => prepareHostTools([{ ...source, inputSchema: { type: 'string' } }])).toThrow(
+    expect(() => prepareTools([source, source])).toThrow('duplicate');
+    expect(() => prepareTools([{ ...source, name: 'Bad-name' }])).toThrow('Invalid');
+    expect(() => prepareTools([{ ...source, inputSchema: { type: 'string' } }])).toThrow(
       'Invalid host tool definition'
     );
     expect(() =>
-      prepareHostTools([{ ...source, inputSchema: { type: 'object', unknownConstraint: true } }])
+      prepareTools([{ ...source, inputSchema: { type: 'object', unknownConstraint: true } }])
     ).toThrow();
   });
 
-  it('treats an empty allowlist as deny-all and keeps builtinTools out of host permissions', () => {
-    const tools = prepareHostTools([definition()]);
-    expect(selectHostTools(tools, {})).toHaveLength(1);
-    expect(selectHostTools(tools, { allowedTools: [] })).toEqual([]);
+  it('treats an empty allowlist as deny-all and gives deny precedence', () => {
+    const tools = prepareTools([definition()]);
+    expect(selectTools(tools, {})).toHaveLength(1);
+    expect(selectTools(tools, { allowedTools: [] })).toEqual([]);
     expect(
-      selectHostTools(tools, { allowedTools: ['read_value'], disallowedTools: ['read_value'] })
+      selectTools(tools, { allowedTools: ['read_value'], disallowedTools: ['read_value'] })
     ).toEqual([]);
   });
 });

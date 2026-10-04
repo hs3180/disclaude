@@ -5,8 +5,9 @@ import { admitEncodedImages } from '@deepseek-ai/dsh-attachment';
 import { createUserMessage, ReasoningEffortId, type ContentBlock } from '@deepseek-ai/dsh-llm';
 import { JsonRpcLineTransport, type JsonRpcTransportPeer } from '@deepseek-ai/dsh-sdk-protocol';
 import { resolve } from 'node:path';
-import type { HostToolDefinition } from '../../host-tools.js';
-import { registerDshHostTools } from './host-tool-adapter.js';
+import { randomUUID } from 'node:crypto';
+import type { ToolDefinition } from '../../tools.js';
+import { registerDshTools } from './tool-adapter.js';
 
 export const name = 'disclaude-dsh-native-app';
 export const inject = ['agents', 'tools', 'systemPrompt', 'sdkAppStartup'];
@@ -51,7 +52,6 @@ export class DshNativeApp {
   private cwd = process.cwd();
   private options: AgentOptions = {};
   private descriptors: ToolDescriptor[] = [];
-  private builtin?: string[];
   private allowed?: string[];
   private denied?: string[];
   private prompt?: string;
@@ -139,9 +139,9 @@ export class DshNativeApp {
     const provider = optionalString(params.provider, 'provider');
     const model = optionalString(params.model, 'model');
     const effort = optionalString(params.reasoningEffort, 'reasoningEffort');
-    const descriptors = params.hostTools ?? [];
+    const descriptors = params.tools ?? [];
     if (!Array.isArray(descriptors)) {
-      throw new TypeError('hostTools must be an array');
+      throw new TypeError('tools must be an array');
     }
     this.descriptors = descriptors.map((item: unknown) => {
       if (!item || typeof item !== 'object') {
@@ -170,14 +170,13 @@ export class DshNativeApp {
       ...(model === undefined ? {} : { model }),
       ...(effort === undefined ? {} : { reasoningEffort: ReasoningEffortId(effort) }),
     };
-    this.builtin = names(params.builtinTools, 'builtinTools');
     this.allowed = names(params.allowedTools, 'allowedTools');
     this.denied = names(params.disallowedTools, 'disallowedTools');
     this.prompt = optionalString(params.systemPrompt, 'systemPrompt');
     this.initialized = true;
     return {
       serverInfo: { name, version: '1' },
-      capabilities: { hostTools: true, resume: true, cancel: true },
+      capabilities: { tools: true, resume: true, cancel: true },
     };
   }
 
@@ -186,7 +185,7 @@ export class DshNativeApp {
     resume: boolean
   ): Promise<unknown> {
     const setup = (agentCtx: Context) => {
-      if (this.descriptors.length || this.builtin || this.allowed || this.denied) {
+      if (this.descriptors.length || this.allowed || this.denied) {
         // Only inherited names go to DSH restriction APIs; host definitions are scoped.
         const inherited = new Set(agentCtx.tools.schemas(agentCtx.agent).map((tool) => tool.name));
         const host = new Set(this.descriptors.map((tool) => tool.name));
@@ -200,13 +199,7 @@ export class DshNativeApp {
             throw new TypeError(`Unknown DSH tool filter: ${tool}`);
           }
         }
-        for (const tool of this.builtin ?? []) {
-          if (!inherited.has(tool)) {
-            throw new TypeError(`Unknown DSH built-in tool: ${tool}`);
-          }
-        }
-        const allow = this.builtin?.filter((tool) => !this.allowed || this.allowed.includes(tool))
-          ?? this.allowed?.filter((tool) => inherited.has(tool));
+        const allow = this.allowed?.filter((tool) => inherited.has(tool));
         const deny = this.denied?.filter((tool) => inherited.has(tool));
         if (allow !== undefined || (deny && deny.length > 0)) {
           agentCtx.tools.restrict({
@@ -227,16 +220,17 @@ export class DshNativeApp {
         (tool) =>
           (!this.allowed || this.allowed.includes(tool.name)) && !this.denied?.includes(tool.name)
       );
-      const tools: HostToolDefinition[] = descriptors.map((tool) => ({
+      const tools: ToolDefinition[] = descriptors.map((tool) => ({
         ...tool,
-        execute: async (input, { signal, invocationId }) => {
-          const cancel = () => this.peer.notify('host_tool.cancel', { sessionId, invocationId });
+        execute: async (input, { signal }) => {
+          const invocationId = randomUUID();
+          const cancel = () => this.peer.notify('tool.cancel', { sessionId, invocationId });
           signal.addEventListener('abort', cancel, { once: true });
           try {
             signal.throwIfAborted();
             // Keep waiting for the host operation after cancellation, so the
             // DSH tool body only settles once its owned work is quiescent.
-            return await this.peer.request('host_tool.call', {
+            return await this.peer.request('tool.call', {
               sessionId,
               name: tool.name,
               input,
@@ -247,7 +241,7 @@ export class DshNativeApp {
           }
         },
       }));
-      registerDshHostTools(agentCtx.tools, tools);
+      registerDshTools(agentCtx.tools, tools);
       if (this.prompt) {
         agentCtx.systemPrompt.section({
           name: 'disclaude-context',

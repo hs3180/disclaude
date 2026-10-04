@@ -125,7 +125,7 @@ describe('BaseAgent', () => {
       disallowedTools: ['EnterPlanMode', 'CronCreate'],
     });
     expect(options.systemPrompt).toBeUndefined();
-    expect(options.builtinTools).toBeUndefined();
+    expect(options).not.toHaveProperty('builtinTools');
     expect(options.disallowedTools).toBeUndefined();
   });
 
@@ -133,7 +133,7 @@ describe('BaseAgent', () => {
     const instance = new TestAgent({ ...config, agentBackend: backend });
     const options = instance.testCreateSdkOptions({});
     expect(options.systemPrompt).toBeUndefined();
-    expect(options.builtinTools).toBeUndefined();
+    expect(options).not.toHaveProperty('builtinTools');
     expect(options.includePartialMessages).toBeUndefined();
     expect(options.teammateMode).toBeUndefined();
     expect(options.env?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
@@ -151,7 +151,7 @@ describe('BaseAgent', () => {
       disallowedTools: ['EnterPlanMode', 'AskUserQuestion', 'CronCreate'],
     });
     expect(defaultAgent.agentBackend).toBe('deepseek');
-    expect(options.builtinTools).toBeUndefined();
+    expect(options).not.toHaveProperty('builtinTools');
     expect(options.systemPrompt).toBeUndefined();
     expect(options.disallowedTools).toBeUndefined();
   });
@@ -236,13 +236,11 @@ describe('BaseAgent', () => {
       });
     });
 
-    it('should set tools to claude_code preset (Issue #2890)', () => {
+    it('leaves native tool defaults to the Harness adapter', () => {
       const options = agent.testCreateSdkOptions();
-
-      expect(options.builtinTools).toEqual({
-        type: 'preset',
-        preset: 'claude_code',
-      });
+      expect(options.tools).toBeUndefined();
+      expect(options).not.toHaveProperty('builtinTools');
+      expect(options).not.toHaveProperty('mcpServers');
     });
 
     it('should include model if specified', () => {
@@ -264,18 +262,12 @@ describe('BaseAgent', () => {
       expect(options.disallowedTools).toEqual(['Bash']);
     });
 
-    it('keeps an explicit built-in selection independent of host tools', () => {
-      const hostTools = [{ name: 'read_value', description: 'Read', inputSchema: { type: 'object' }, outputSchema: { type: 'object' }, execute: () => Promise.resolve({}) }];
-      const options = agent.testCreateSdkOptions({ builtinTools: [], hostTools });
-      expect(options.builtinTools).toEqual([]);
-      expect(options.hostTools).toBe(hostTools);
-      expect(options).not.toHaveProperty('tools');
-    });
-
-    it('should add mcpServers when specified', () => {
-      const mcpServers = { 'test-server': { type: 'stdio' as const, name: 'test-server', command: 'node', args: ['server.js'] } };
-      const options = agent.testCreateSdkOptions({ mcpServers });
-      expect(options.mcpServers).toEqual(mcpServers);
+    it('forwards business definitions without creating Harness configuration', () => {
+      const tools = [{ name: 'read_value', description: 'Read', inputSchema: { type: 'object' }, outputSchema: { type: 'object' }, execute: () => Promise.resolve({}) }];
+      const options = agent.testCreateSdkOptions({ tools });
+      expect(options.tools).toBe(tools);
+      expect(options).not.toHaveProperty('builtinTools');
+      expect(options).not.toHaveProperty('mcpServers');
     });
 
     it('should set teammateMode when Agent Teams is enabled', () => {
