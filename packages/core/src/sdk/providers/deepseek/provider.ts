@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createLogger } from '../../../utils/logger.js';
 import type { IAgentSDKProvider } from '../../interface.js';
-import { assertToolOptions, prepareTools, selectTools, type ToolDefinition } from '../../tools.js';
+import { assertToolOptions, prepareTools, type ToolDefinition } from '../../tools.js';
 import type {
   AgentMessage,
   AgentQueryOptions,
@@ -161,7 +161,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
       throw new TypeError('DSH systemPrompt must be raw text; Claude Code presets belong to their own adapter');
     }
     const descriptors = prepareTools(options.tools);
-    const tools = new Map(selectTools(descriptors, options).map((tool) => [tool.name, tool]));
+    const tools = new Map(descriptors.map((tool) => [tool.name, tool]));
     const cwd = resolve(options.cwd ?? process.cwd());
     const binding = this.bindings.reserve(options.sessionKey, cwd);
     if (this.active.has(binding.sessionId)) {
@@ -254,10 +254,6 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
               ? {}
               : { reasoningEffort: options.reasoningEffort }),
             ...(options.systemPrompt === undefined ? {} : { systemPrompt: options.systemPrompt }),
-            ...(options.allowedTools === undefined ? {} : { allowedTools: options.allowedTools }),
-            ...(options.disallowedTools === undefined
-              ? {}
-              : { disallowedTools: options.disallowedTools }),
             tools: descriptors.map(({ name, description, inputSchema, outputSchema }) => ({
               name,
               description,

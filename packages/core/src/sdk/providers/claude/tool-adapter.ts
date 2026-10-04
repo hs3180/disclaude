@@ -1,6 +1,6 @@
 import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { prepareTools, selectTools, type ToolDefinition } from '../../tools.js';
+import { prepareTools, type ToolDefinition } from '../../tools.js';
 
 export const CLAUDE_HOST_SERVER = 'disclaude';
 
@@ -9,7 +9,11 @@ export function createClaudeToolServer(
   definitions: readonly ToolDefinition[],
   permissions: { allowedTools?: string[]; disallowedTools?: string[] } = {}
 ) {
-  const tools = selectTools(prepareTools(definitions), permissions);
+  const tools = prepareTools(definitions).filter(
+    (tool) =>
+      (permissions.allowedTools === undefined || permissions.allowedTools.includes(tool.name)) &&
+      !permissions.disallowedTools?.includes(tool.name)
+  );
   const registered = new Map(tools.map((tool) => [tool.name, tool]));
   const handle = createSdkMcpServer({ name: CLAUDE_HOST_SERVER, version: '1.0.0', tools: [] });
   // Raw MCP request handlers preserve the canonical schemas without a lossy Zod conversion.

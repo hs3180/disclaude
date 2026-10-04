@@ -103,6 +103,13 @@ export function prepareTools(tools: readonly ToolDefinition[] = []): ToolDefinit
 
 /** Retired ambiguous options must fail explicitly for JavaScript callers as well. */
 export function assertToolOptions(options: object): void {
+  for (const field of ['allowedTools', 'disallowedTools']) {
+    if (field in options) {
+      throw new TypeError(
+        `${field} is a Claude-specific query option; use tools to choose business definitions and configure the selected Harness directly`
+      );
+    }
+  }
   for (const legacy of ['nativeTools', 'hostTools', 'builtinTools', 'mcpServers']) {
     if (legacy in options) {
       throw new TypeError(
@@ -116,20 +123,8 @@ export function assertToolOptions(options: object): void {
       options.tools.some((tool: unknown) => !tool || typeof tool !== 'object')
     ) {
       throw new TypeError(
-        'tools must contain ToolDefinition objects; tool permissions use allowedTools/disallowedTools'
+        'tools must contain ToolDefinition objects; pass the business definitions required for this query'
       );
     }
   }
-}
-
-/** Permissions apply to canonical names, independently of built-in tool selection. */
-export function selectTools(
-  tools: readonly ToolDefinition[],
-  options: { allowedTools?: readonly string[]; disallowedTools?: readonly string[] }
-): ToolDefinition[] {
-  return tools.filter(
-    (tool) =>
-      (options.allowedTools === undefined || options.allowedTools.includes(tool.name)) &&
-      !options.disallowedTools?.includes(tool.name)
-  );
 }

@@ -79,10 +79,4 @@ describe('Pi host tool adapter', () => {
       details: { percent: 50 },
     });
   });
-
-  it('keeps denied host callbacks out of the native registry', () => {
-    const source = definition();
-    expect(adaptPiTools([source], { allowedTools: [] })).toEqual([]);
-    expect(adaptPiTools([source], { disallowedTools: ['double'] })).toEqual([]);
-  });
 });
