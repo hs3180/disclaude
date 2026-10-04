@@ -159,6 +159,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   /** The chatId this ChatAgent is bound to (Issue #644) */
   private readonly boundChatId: string;
   private readonly sdkSessionKey: string;
+  private readonly notebookSessionFactory?: import('../jupyter/agent-session.js').NotebookAgentSessionFactory;
+  private notebookSession?: import('../jupyter/agent-session.js').NotebookAgentSession;
 
   /**
    * Callbacks for sending responses to the channel.
@@ -329,6 +331,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Issue #644: Bind chatId at construction time
     this.boundChatId = config.chatId;
     this.sdkSessionKey = config.sdkSessionKey ?? config.chatId;
+    this.notebookSessionFactory = config.notebookSessionFactory;
     this.callbacks = config.callbacks;
     this.cwdProvider = config.cwdProvider;
     // Issue #4448 (direction #1)
@@ -665,7 +668,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         type: 'user',
         message: {
           role: 'user',
-          content: enhancedContent,
+          content: enhancedContent + (this.notebookSession ? await this.notebookMessageContext() : ''),
         },
         parent_tool_use_id: null,
         session_id: '',
@@ -965,7 +968,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         threadRootId: threadRootId ?? this.conversationOrchestrator.getThreadRoot(chatId) } } : {}),
       message: {
         role: 'user',
-        content: enhancedContent,
+        content: enhancedContent + (this.notebookSession ? await this.notebookMessageContext() : ''),
       },
       parent_tool_use_id: null,
       session_id: '',
@@ -1147,6 +1150,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
     const projectCwd = resolution?.effectiveCwd ?? this.cwdProvider?.(chatId);
 
+    this.notebookSession?.dispose();
+    this.notebookSession = this.notebookSessionFactory?.({
+      workingDir: projectCwd ?? this.getWorkspaceDir(),
+      conversationKey: this.sdkSessionKey,
+      currentWorkingDir: () => this.cwdResolver?.(chatId).effectiveCwd ?? this.cwdProvider?.(chatId) ?? this.getWorkspaceDir(),
+    });
+
     const sdkOptions = this.createSdkOptions({
       cwd: projectCwd,
       // Keep resource discovery bound to the selected project even when a
@@ -1155,7 +1165,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // Issue #4634 (S7): chatId as session identity for concurrency
       // governance on backends that bound active sessions (codex).
       sessionKey: this.sdkSessionKey,
+      ...(this.notebookSession ? { tools: this.notebookSession.tools } : {}),
     });
+
+    if (sdkOptions.env && this.notebookSession) { this.notebookSession.redactEnvironment(sdkOptions.env); }
 
     if (this.callbacks.requestAgentInput) { sdkOptions.onUserInput = async (request, context) => {
       if (!context || context.chatId !== chatId || !this.callbacks.requestAgentInput) { throw new Error('This channel cannot answer SDK input requests'); }
@@ -2732,6 +2745,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
 
     this.logger.info({ chatId: this.boundChatId, keepContext }, 'Resetting ChatAgent session');
+    this.notebookSession?.pause();
 
     // Issue #2926: Abort the running agent loop first so processIterator
     // breaks out of its for-await loop immediately, rather than continuing
@@ -2846,6 +2860,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       return false;
     }
 
+    this.notebookSession?.pause();
     // Check if there's an active query to stop
     if (!this.queryHandle) {
       this.logger.debug({ chatId: this.boundChatId }, 'No active query to stop');
@@ -2880,6 +2895,27 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // The next user message starts a fresh query through startAgentLoop().
 
     return true;
+  }
+
+  private async notebookMessageContext(): Promise<string> {
+    const session = this.notebookSession;
+    if (!session) { return ''; }
+    try {
+      const context = await session.messageContext();
+      if (session.inactive || this.notebookSession !== session || this.disposed) {
+        throw new Error('Notebook turn stopped during context loading');
+      }
+      return context;
+    }
+    catch {
+      if (session.inactive || this.notebookSession !== session) { throw new Error('Notebook turn stopped during context loading'); }
+      return '\n\n[Notebook connection unverified] Use the native Notebook tools to check the existing resource. Do not create a local replacement or replay an uncertain run.';
+    }
+  }
+
+  async stopNotebookWork(): Promise<import('../jupyter/agent-session.js').NotebookStopSummary> {
+    const { summarizeNotebookStop } = await import('../jupyter/agent-session.js');
+    return summarizeNotebookStop(this.notebookSession);
   }
 
   /** Apply an instruction to the currently executing native turn after backend acknowledgement. */
@@ -2927,6 +2963,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Issue #4391 (part 2 review): mark disposed synchronously first, so a
     // replay timer firing mid-dispose (or right after) sees the flag.
     this.disposed = true;
+    this.notebookSession?.dispose();
     // Issue #3745: Synchronously close queryHandle and channel to prevent
     // exit listener leaks. The previous fire-and-forget pattern (dispose →
     // shutdown() without await) meant shutdown()'s `await Promise.resolve()`

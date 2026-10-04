@@ -42,7 +42,16 @@ export type {
   JupyterExecutionObservation,
   JupyterExecutionStopResult,
   JupyterExecutionPort,
+  JupyterUnsubmittedExecution,
+  JupyterExecutionReconciliationResult,
 } from './jupyter/contracts.js';
+export { JupyterCoordinatorClient, createJupyterCookieJar } from './jupyter/coordinator-client.js';
+export type {
+  JupyterCoordinatorOptions,
+  JupyterCoordinatorStatus,
+  JupyterConnectionInspection,
+  JupyterNotebookOverview,
+} from './jupyter/coordinator-client.js';
 
 export { createNotebookTools } from './jupyter/notebook-tools.js';
 export type { NotebookToolBinding } from './jupyter/notebook-tools.js';

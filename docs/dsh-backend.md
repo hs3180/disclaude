@@ -1,5 +1,7 @@
 # DeepSeek harness modes
 
+For Project-bound Notebook capabilities, see [Notebook tools in the Service](jupyter-service.md).
+
 Select the dsh backend and its composition in the service configuration:
 
 ```yaml
