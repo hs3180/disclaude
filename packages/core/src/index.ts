@@ -52,7 +52,6 @@ export type {
 
 export { createNotebookTools } from './jupyter/notebook-tools.js';
 export type { NotebookToolBinding } from './jupyter/notebook-tools.js';
-
 export type { ToolDefinition, ToolContext } from './sdk/tools.js';
 
 // Config
