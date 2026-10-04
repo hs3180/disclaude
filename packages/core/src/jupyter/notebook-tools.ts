@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { NativeAgentTool } from '../sdk/native-tools.js';
+import type { ToolDefinition } from '../sdk/tools.js';
 import type {
   JupyterControllerGeneration,
   JupyterExecutionPort,
@@ -38,7 +38,7 @@ function requiredString(input: Record<string, unknown>, key: string, allowEmpty 
 }
 
 /** The same document and execution tools can be registered by any native adapter. */
-export function createNotebookTools(binding: NotebookToolBinding): NativeAgentTool[] {
+export function createNotebookTools(binding: NotebookToolBinding): ToolDefinition[] {
   return [
     {
       name: 'notebook_read_cell',

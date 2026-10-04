@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { DeepSeekHarnessProvider } from './provider.js';
-import type { NativeAgentTool } from '../../native-tools.js';
+import type { ToolDefinition } from '../../tools.js';
 
-function nativeTool(execute: NativeAgentTool['execute']): NativeAgentTool {
+function nativeTool(execute: ToolDefinition['execute']): ToolDefinition {
   return {
     name: 'notebook_read_cell',
     description: 'Read current source',
@@ -65,7 +65,7 @@ rl.on('line', line => {
   fs.appendFileSync(path.join(root, 'requests.jsonl'), JSON.stringify(req) + '\\n');
   if (req.method === 'initialize') {
     initialization = req.params;
-    reply(req.id, { capabilities: { nativeTools: true, resume: true, cancel: true } }); return;
+    reply(req.id, { capabilities: { tools: true, resume: true, cancel: true } }); return;
   }
   if (req.method === 'shutdown') { reply(req.id, {}); process.exit(0); return; }
   const sid = req.params.sessionId;
@@ -81,17 +81,17 @@ rl.on('line', line => {
   if (req.method === 'session/cancel') {
     if (pendingHost) {
       pendingCancel = req.id;
-      notify('native_tool.cancel', { sessionId: sid, invocationId: 'call-1' });
+      notify('tool.cancel', { sessionId: sid, invocationId: 'call-1' });
     } else reply(req.id, { reasoningStopped: true });
     return;
   }
   if (req.method !== 'session/prompt' || !seen.has(sid)) throw new Error('unknown or unopened session');
   reply(req.id, { messageId: 'user-1' });
-  if (initialization.nativeTools.length) {
+  if (initialization.tools.length) {
     pendingHost = sid;
-    const tool = initialization.nativeTools[0];
+    const tool = initialization.tools[0];
     notify('session.event', { sessionId: sid, event: { type: 'tool/call', data: { callId: 'call-1', name: tool.name, arguments: '{}' } } });
-    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: 'host-1', method: 'native_tool.call', params: { sessionId: ${options.foreignSession ? "'foreign-session'" : 'sid'}, name: tool.name, input: {}, invocationId: 'call-1' } }) + '\\n');
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: 'host-1', method: 'tool.call', params: { sessionId: ${options.foreignSession ? "'foreign-session'" : 'sid'}, name: tool.name, input: {}, invocationId: 'call-1' } }) + '\\n');
     return;
   }
   notify('session.event', { sessionId: sid, event: { type: 'tool/call', data: { callId: 'call-1', name: 'read_file', arguments: '{"path":"a.txt"}' } } });
@@ -304,10 +304,11 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
 
   it('fails fast when unsupported client tool controls are requested', () => {
     const provider = new DeepSeekHarnessProvider({ apiKey: 'test-key' });
-    expect(() => provider.queryStream(oneInput(), { settingSources: [], tools: [] })).toThrow(
-      /legacy MCP\/inline/
+    expect(() => provider.queryStream(oneInput(), { settingSources: [], ...({ builtinTools: { type: 'preset', preset: 'claude_code' } } as Record<string, unknown>) })).toThrow(
+      'no longer a query option'
     );
-    expect(() => provider.createInlineTool({} as never)).toThrow(/inline-MCP wrappers/);
+    expect(() => provider.queryStream(oneInput(), { settingSources: [], ...({ mcpServers: {} } as Record<string, unknown>) })).toThrow('no longer a query option');
+    provider.dispose();
   });
 
   it('cancels before startup and releases the child without hanging the iterator', async () => {
@@ -354,12 +355,12 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
           model: 'native-model',
           reasoningEffort: 'native-effort',
           systemPrompt: 'Native instructions',
-          nativeTools: [nativeTool(execute)],
+          tools: [nativeTool(execute)],
         }).iterator
       );
       expect(execute).toHaveBeenCalledWith(
         {},
-        { signal: expect.any(AbortSignal), invocationId: 'call-1' }
+        { signal: expect.any(AbortSignal) }
       );
       expect(events.find((event) => event.type === 'tool_result')?.metadata?.toolOutput).toEqual({
         runId: 'run-one',
@@ -375,7 +376,7 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
         reasoningEffort: 'native-effort',
         systemPrompt: 'Native instructions',
       });
-      expect(frames[0].params.nativeTools[0]).not.toHaveProperty('execute');
+      expect(frames[0].params.tools[0]).not.toHaveProperty('execute');
     } finally {
       await provider.shutdown();
       await rm(fixture.dir, { recursive: true, force: true });
@@ -388,7 +389,7 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
     const execute = vi.fn();
     try {
       await collect(
-        provider.queryStream(oneInput(), { settingSources: [], nativeTools: [nativeTool(execute)] })
+        provider.queryStream(oneInput(), { settingSources: [], tools: [nativeTool(execute)] })
           .iterator
       );
       expect(execute).not.toHaveBeenCalled();
@@ -459,7 +460,7 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
       return { executionStop: 'not_confirmed' };
     });
     try {
-      const query = provider.queryStream(oneInput(), { settingSources: [], nativeTools: [tool] });
+      const query = provider.queryStream(oneInput(), { settingSources: [], tools: [tool] });
       const events = collect(query.iterator);
       await started;
       let acknowledged = false;

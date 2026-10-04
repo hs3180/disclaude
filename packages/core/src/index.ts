@@ -53,7 +53,8 @@ export type {
 
 export { createNotebookTools } from './jupyter/notebook-tools.js';
 export type { NotebookToolBinding } from './jupyter/notebook-tools.js';
-export type { NativeAgentTool, NativeAgentToolContext } from './sdk/native-tools.js';
+
+export type { ToolDefinition, ToolContext } from './sdk/tools.js';
 
 // Config
 export * from './config/index.js';
@@ -100,7 +101,6 @@ export type {
   // Tool types
   ToolUseBlock as SdkToolUseBlock,
   ToolResultBlock as SdkToolResultBlock,
-  InlineToolDefinition as SdkInlineToolDefinition,
   ToolProgressPayload as SdkToolProgressPayload,
   ToolProgressCallback as SdkToolProgressCallback,
   // #4568: also exported unprefixed — consumers (mcp-server tools) import the
@@ -108,9 +108,6 @@ export type {
   ToolProgressPayload,
   ToolProgressCallback,
   // MCP types
-  StdioMcpServerConfig,
-  InlineMcpServerConfig,
-  McpServerConfig as SdkMcpServerConfig,
   // Query types
   AgentQueryOptions,
   PermissionMode,
