@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { prepareTools, selectTools, assertToolOptions, type ToolDefinition } from './tools.js';
+import { prepareTools, assertToolOptions, type ToolDefinition } from './tools.js';
 
 function definition(
   execute = vi.fn<ToolDefinition['execute']>().mockResolvedValue({ value: 42 })
@@ -101,12 +101,10 @@ describe('host tool contract', () => {
     ).toThrow();
   });
 
-  it('treats an empty allowlist as deny-all and gives deny precedence', () => {
-    const tools = prepareTools([definition()]);
-    expect(selectTools(tools, {})).toHaveLength(1);
-    expect(selectTools(tools, { allowedTools: [] })).toEqual([]);
-    expect(
-      selectTools(tools, { allowedTools: ['read_value'], disallowedTools: ['read_value'] })
-    ).toEqual([]);
-  });
+  it.each(['allowedTools', 'disallowedTools'])(
+    'rejects the Claude-only %s field at a common query boundary',
+    (field) => {
+      expect(() => assertToolOptions({ [field]: [] })).toThrow('Claude-specific query option');
+    }
+  );
 });

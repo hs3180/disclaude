@@ -6,7 +6,7 @@ import { createUserMessage, ReasoningEffortId, type ContentBlock } from '@deepse
 import { JsonRpcLineTransport, type JsonRpcTransportPeer } from '@deepseek-ai/dsh-sdk-protocol';
 import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { ToolDefinition } from '../../tools.js';
+import { assertToolOptions, type ToolDefinition } from '../../tools.js';
 import { registerDshTools } from './tool-adapter.js';
 
 export const name = 'disclaude-dsh-native-app';
@@ -29,16 +29,6 @@ function optionalString(value: unknown, name: string): string | undefined {
   return value;
 }
 
-function names(value: unknown, name: string): string[] | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string' || !item)) {
-    throw new TypeError(`${name} must be an array of non-empty strings`);
-  }
-  return value as string[];
-}
-
 function sessionIdentity(value: unknown): CreateAgentOptions['sessionId'] {
   if (typeof value !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(value)) {
     throw new TypeError('Invalid native DSH session identity');
@@ -52,8 +42,6 @@ export class DshNativeApp {
   private cwd = process.cwd();
   private options: AgentOptions = {};
   private descriptors: ToolDescriptor[] = [];
-  private allowed?: string[];
-  private denied?: string[];
   private prompt?: string;
   private readonly sessions = new Map<string, AgentHandle>();
   private readonly openings = new Map<string, Promise<unknown>>();
@@ -170,8 +158,7 @@ export class DshNativeApp {
       ...(model === undefined ? {} : { model }),
       ...(effort === undefined ? {} : { reasoningEffort: ReasoningEffortId(effort) }),
     };
-    this.allowed = names(params.allowedTools, 'allowedTools');
-    this.denied = names(params.disallowedTools, 'disallowedTools');
+    assertToolOptions(params);
     this.prompt = optionalString(params.systemPrompt, 'systemPrompt');
     this.initialized = true;
     return {
@@ -185,42 +172,15 @@ export class DshNativeApp {
     resume: boolean
   ): Promise<unknown> {
     const setup = (agentCtx: Context) => {
-      if (this.descriptors.length || this.allowed || this.denied) {
-        // Only inherited names go to DSH restriction APIs; host definitions are scoped.
+      if (this.descriptors.length) {
         const inherited = new Set(agentCtx.tools.schemas(agentCtx.agent).map((tool) => tool.name));
-        const host = new Set(this.descriptors.map((tool) => tool.name));
-        for (const tool of host) {
-          if (inherited.has(tool)) {
-            throw new TypeError(`Host tool conflicts with DSH profile tool: ${tool}`);
+        for (const tool of this.descriptors) {
+          if (inherited.has(tool.name)) {
+            throw new TypeError(`Host tool conflicts with DSH profile tool: ${tool.name}`);
           }
-        }
-        for (const tool of this.allowed ?? []) {
-          if (!inherited.has(tool) && !host.has(tool)) {
-            throw new TypeError(`Unknown DSH tool filter: ${tool}`);
-          }
-        }
-        const allow = this.allowed?.filter((tool) => inherited.has(tool));
-        const deny = this.denied?.filter((tool) => inherited.has(tool));
-        if (allow !== undefined || (deny && deny.length > 0)) {
-          agentCtx.tools.restrict({
-            ...(allow === undefined ? {} : { allow }),
-            ...(deny === undefined ? {} : { deny }),
-          });
-        }
-        const { denied } = this;
-        if (denied?.length) {
-          // Shared callers may forbid an absent tool (such as Claude's cron
-          // names). Keep that prohibition if a profile later registers it.
-          agentCtx.tools.guard((execution) =>
-            denied.includes(execution.name) ? 'Tool is disallowed by the host' : undefined
-          );
         }
       }
-      const descriptors = this.descriptors.filter(
-        (tool) =>
-          (!this.allowed || this.allowed.includes(tool.name)) && !this.denied?.includes(tool.name)
-      );
-      const tools: ToolDefinition[] = descriptors.map((tool) => ({
+      const tools: ToolDefinition[] = this.descriptors.map((tool) => ({
         ...tool,
         execute: async (input, { signal }) => {
           const invocationId = randomUUID();

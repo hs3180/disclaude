@@ -244,6 +244,12 @@ export function isStartupFailure(messageCount: number, elapsedMs: number): boole
   return messageCount === 0 && elapsedMs < 10_000;
 }
 
+/** Claude-native permissions are intentionally absent from AgentQueryOptions. */
+export interface ClaudeQueryOptions extends AgentQueryOptions {
+  allowedTools?: string[];
+  disallowedTools?: string[];
+}
+
 /**
  * Claude SDK Provider
  *
@@ -268,9 +274,10 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
 
   queryStream(
     input: AsyncGenerator<UserInput>,
-    options: AgentQueryOptions
+    options: ClaudeQueryOptions
   ): StreamQueryResult {
-    assertToolOptions(options);
+    const { allowedTools, disallowedTools, ...commonOptions } = options;
+    assertToolOptions(commonOptions);
     if (this.disposed) {
       throw new Error('Provider has been disposed');
     }
@@ -290,7 +297,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     // Issue #2920: 创建 stderr 捕获器
     const stderrCapture = new StderrCapture();
 
-    const sdkOptions = adaptOptions(options);
+    const sdkOptions = adaptOptions(commonOptions, { allowedTools, disallowedTools });
     // 将 stderr 回调注入 SDK 选项
     sdkOptions.stderr = (data: string) => {
       stderrCapture.append(data);
