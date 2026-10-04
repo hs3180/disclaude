@@ -106,30 +106,6 @@ describe('adaptOptions', () => {
     expect(result.apiBaseUrl).toBeUndefined();
   });
 
-  it('should adapt stdio MCP servers', () => {
-    const result = adaptOptions({
-      settingSources: ['user', 'project', 'local'],
-      mcpServers: {
-        'my-server': {
-          type: 'stdio',
-          name: 'my-server',
-          command: 'npx',
-          args: ['-y', 'my-mcp-server'],
-          env: { PORT: '3000' },
-        },
-      },
-    });
-
-    expect(result.mcpServers).toBeDefined();
-    const server = (result.mcpServers as Record<string, unknown>)['my-server'];
-    expect(server).toEqual({
-      type: 'stdio',
-      command: 'npx',
-      args: ['-y', 'my-mcp-server'],
-      env: { PORT: '3000' },
-    });
-  });
-
   it('should pass through stderr callback (Issue #2920)', () => {
     const stderrFn = (_data: string) => { /* test callback */ };
     const result = adaptOptions({
@@ -207,34 +183,12 @@ describe('adaptOptions', () => {
     expect(result.systemPrompt).toBeUndefined();
   });
 
-  it('should pass through tools preset (Issue #2890)', () => {
-    const result = adaptOptions({
-      settingSources: ['user', 'project', 'local'],
-      tools: { type: 'preset', preset: 'claude_code' },
-    });
-
-    expect(result.tools).toEqual({
-      type: 'preset',
-      preset: 'claude_code',
-    });
+  it('owns Claude Code built-in defaults without a business query preset', () => {
+    const result = adaptOptions({ settingSources: ['user', 'project', 'local'] });
+    expect(result.tools).toEqual({ type: 'preset', preset: 'claude_code' });
+    expect(result.mcpServers).toBeUndefined();
   });
 
-  it('should pass through tools as string array (Issue #2890)', () => {
-    const result = adaptOptions({
-      settingSources: ['user', 'project', 'local'],
-      tools: ['Read', 'Write', 'Bash'],
-    });
-
-    expect(result.tools).toEqual(['Read', 'Write', 'Bash']);
-  });
-
-  it('should not include tools when not provided', () => {
-    const result = adaptOptions({
-      settingSources: ['user', 'project', 'local'],
-    });
-
-    expect(result.tools).toBeUndefined();
-  });
 });
 
 describe('adaptInput', () => {

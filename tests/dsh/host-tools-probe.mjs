@@ -17,7 +17,7 @@ const { values } = parseArgs({
 });
 if (!values.model || !values['oauth-auth-file'] || !values.output) {
   throw new Error(
-    'Usage: node tests/dsh/native-tools-probe.mjs --oauth-auth-file <existing-auth.json> --model <explicit-model> --output <new-report.json> [--binary <dsh>]'
+    'Usage: node tests/dsh/host-tools-probe.mjs --oauth-auth-file <existing-auth.json> --model <explicit-model> --output <new-report.json> [--binary <dsh>]'
   );
 }
 const reportPath = path.resolve(values.output);
@@ -131,7 +131,7 @@ try {
   const firstProvider = createProvider();
   const first = firstProvider.queryStream(
     input('Call native_probe_read exactly once, then report its marker.'),
-    { ...options, allowedTools: ['native_probe_read'], nativeTools: [readTool(marker1)] }
+    { ...options, allowedTools: ['native_probe_read'], tools: [readTool(marker1)] }
   );
   const firstEvents = await collect(first, firstPhase);
   const firstResult = firstEvents.find((event) => event.type === 'tool_result')?.metadata
@@ -150,7 +150,7 @@ try {
     input(
       'Call native_probe_read once more. Report the exact previous marker from our preceding interaction and the new marker. If the previous marker is unavailable, say so.'
     ),
-    { ...options, allowedTools: ['native_probe_read'], nativeTools: [readTool(marker2)] }
+    { ...options, allowedTools: ['native_probe_read'], tools: [readTool(marker2)] }
   );
   const secondEvents = await collect(second, resumedPhase);
   const answer = secondEvents
@@ -202,7 +202,7 @@ try {
   };
   const third = resumedProvider.queryStream(
     input('Call native_probe_wait exactly once. Wait for its result.'),
-    { ...options, allowedTools: ['native_probe_wait'], nativeTools: [waitingTool] }
+    { ...options, allowedTools: ['native_probe_wait'], tools: [waitingTool] }
   );
   const thirdEvents = collect(third, cancelledPhase);
   await Promise.race([
@@ -235,7 +235,7 @@ try {
   report.phases.push(recoveryPhase);
   const recovery = resumedProvider.queryStream(
     input('Call native_probe_read exactly once and report the observed marker.'),
-    { ...options, allowedTools: ['native_probe_read'], nativeTools: [readTool(marker2)] }
+    { ...options, allowedTools: ['native_probe_read'], tools: [readTool(marker2)] }
   );
   const recoveryEvents = await collect(recovery, recoveryPhase);
   if (

@@ -1171,7 +1171,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // Issue #4634 (S7): chatId as session identity for concurrency
       // governance on backends that bound active sessions (codex).
       sessionKey: this.sdkSessionKey,
-      ...(this.notebookSession ? { nativeTools: this.notebookSession.tools } : {}),
+      ...(this.notebookSession ? { tools: this.notebookSession.tools } : {}),
     });
 
     if (sdkOptions.env && this.notebookSession) { this.notebookSession.redactEnvironment(sdkOptions.env); }

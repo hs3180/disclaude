@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { NativeAgentTool } from '../../native-tools.js';
-import { registerDshNativeTools, type DshNativeToolRegistry } from './native-tools.js';
+import type { ToolDefinition } from '../../tools.js';
+import { registerDshTools, type DshHostToolRegistry } from './tool-adapter.js';
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools';
 import { createNotebookTools } from '../../../jupyter/notebook-tools.js';
 
@@ -17,7 +17,7 @@ function context(signal: AbortSignal): ToolRunContext {
   };
 }
 
-function tool(name = 'notebook_read_cell'): NativeAgentTool {
+function tool(name = 'notebook_read_cell'): ToolDefinition {
   return {
     name,
     description: 'Read current shared source',
@@ -33,15 +33,13 @@ describe('DSH native tool registration', () => {
       identity: { connectionId: 'connection', serverNamespace: 'namespace', documentId: 'doc' },
       contentPath: 'test.ipynb',
     };
-    const readCell = vi
-      .fn()
-      .mockResolvedValue({
-        notebook,
-        cellId: 'cell',
-        revision: 'revision',
-        sourceHash: 'hash',
-        source: 'print(1)',
-      });
+    const readCell = vi.fn().mockResolvedValue({
+      notebook,
+      cellId: 'cell',
+      revision: 'revision',
+      sourceHash: 'hash',
+      source: 'print(1)',
+    });
     const tools = createNotebookTools({
       notebook,
       documents: { readCell, editCellSource: vi.fn() },
@@ -49,15 +47,15 @@ describe('DSH native tool registration', () => {
       controller: () => Promise.resolve({ ownerId: 'owner', generation: 1 }),
       kernel: () => Promise.resolve({ kernelId: 'kernel', kernelIncarnation: 'incarnation' }),
     });
-    const register = vi.fn<DshNativeToolRegistry['register']>().mockReturnValue(() => {});
-    registerDshNativeTools({ register }, tools);
+    const register = vi.fn<DshHostToolRegistry['register']>().mockReturnValue(() => {});
+    registerDshTools({ register }, tools);
     expect(register.mock.calls.map(([definition]) => definition.name)).toEqual(
       tools.map((item) => item.name)
     );
     const [[read]] = register.mock.calls;
     const { signal } = new AbortController();
     await expect(read.execute({ cellId: '' }, context(signal))).rejects.toThrow(
-      'Invalid native tool arguments'
+      'Invalid host tool arguments'
     );
     expect(readCell).not.toHaveBeenCalled();
     await expect(read.execute({ cellId: 'cell' }, context(signal))).resolves.toMatchObject({
@@ -71,20 +69,17 @@ describe('DSH native tool registration', () => {
   it('registers the canonical contract directly, preserving structured values and signal', async () => {
     const nativeTool = tool();
     const dispose = vi.fn();
-    const register = vi.fn<DshNativeToolRegistry['register']>().mockReturnValue(dispose);
-    const release = registerDshNativeTools({ register }, [nativeTool]);
+    const register = vi.fn<DshHostToolRegistry['register']>().mockReturnValue(dispose);
+    const release = registerDshTools({ register }, [nativeTool]);
     const [[definition]] = register.mock.calls;
-    expect(definition.parameters).toBe(nativeTool.inputSchema);
-    expect(definition.output.schema).toBe(nativeTool.outputSchema);
+    expect(definition.parameters).toEqual(nativeTool.inputSchema);
+    expect(definition.output.schema).toEqual(nativeTool.outputSchema);
     const { signal } = new AbortController();
     const value = (await definition.execute({ cellId: 'cell-1' }, context(signal))) as {
       cellId: string;
       revision: string;
     };
-    expect(nativeTool.execute).toHaveBeenCalledWith(
-      { cellId: 'cell-1' },
-      { signal, invocationId: 'call-1' }
-    );
+    expect(nativeTool.execute).toHaveBeenCalledWith({ cellId: 'cell-1' }, { signal });
     expect(value).toEqual({ cellId: 'cell-1', revision: 'rev-2' });
     expect(definition.output.presentationMeta?.({}, value)).toBe(value);
     expect(definition.output.render({}, value)).toEqual([
@@ -98,19 +93,19 @@ describe('DSH native tool registration', () => {
   it('rolls back partial registration', () => {
     const dispose = vi.fn();
     const register = vi
-      .fn<DshNativeToolRegistry['register']>()
+      .fn<DshHostToolRegistry['register']>()
       .mockReturnValueOnce(dispose)
       .mockImplementationOnce(() => {
         throw new Error('registry unavailable');
       });
-    expect(() =>
-      registerDshNativeTools({ register }, [tool('read_cell'), tool('edit_cell')])
-    ).toThrow('registry unavailable');
+    expect(() => registerDshTools({ register }, [tool('read_cell'), tool('edit_cell')])).toThrow(
+      'registry unavailable'
+    );
     expect(dispose).toHaveBeenCalledTimes(1);
   });
 
   it('maps string constraints to native declarations while enforcing the original input schema', async () => {
-    const nativeTool: NativeAgentTool = {
+    const nativeTool: ToolDefinition = {
       ...tool(),
       inputSchema: {
         type: 'object',
@@ -119,8 +114,8 @@ describe('DSH native tool registration', () => {
         additionalProperties: false,
       },
     };
-    const register = vi.fn<DshNativeToolRegistry['register']>().mockReturnValue(() => {});
-    registerDshNativeTools({ register }, [nativeTool]);
+    const register = vi.fn<DshHostToolRegistry['register']>().mockReturnValue(() => {});
+    registerDshTools({ register }, [nativeTool]);
     const [[definition]] = register.mock.calls;
     expect(definition.parameters).toMatchObject({
       properties: {
@@ -131,10 +126,10 @@ describe('DSH native tool registration', () => {
     expect(nativeTool.inputSchema).toMatchObject({ properties: { cellId: { minLength: 1 } } });
     const { signal } = new AbortController();
     await expect(definition.execute({ cellId: '' }, context(signal))).rejects.toThrow(
-      'Invalid native tool arguments'
+      'Invalid host tool arguments'
     );
     await expect(definition.execute({ cellId: 'x'.repeat(65) }, context(signal))).rejects.toThrow(
-      'Invalid native tool arguments'
+      'Invalid host tool arguments'
     );
     expect(nativeTool.execute).not.toHaveBeenCalled();
     await expect(definition.execute({ cellId: 'cell-1' }, context(signal))).resolves.toMatchObject({
@@ -143,7 +138,7 @@ describe('DSH native tool registration', () => {
   });
 
   it('enforces output constraints and rejects other unrepresentable native schema keywords', async () => {
-    const nativeTool: NativeAgentTool = {
+    const nativeTool: ToolDefinition = {
       ...tool(),
       outputSchema: {
         type: 'object',
@@ -151,36 +146,32 @@ describe('DSH native tool registration', () => {
         required: ['revision'],
       },
     };
-    const register = vi.fn<DshNativeToolRegistry['register']>().mockReturnValue(() => {});
-    registerDshNativeTools({ register }, [nativeTool]);
+    const register = vi.fn<DshHostToolRegistry['register']>().mockReturnValue(() => {});
+    registerDshTools({ register }, [nativeTool]);
     await expect(
       register.mock.calls[0][0].execute({ cellId: 'cell-1' }, context(new AbortController().signal))
-    ).rejects.toThrow('Invalid native tool result');
-    const unsupported: NativeAgentTool = {
+    ).rejects.toThrow('Invalid host tool result');
+    const unsupported: ToolDefinition = {
       ...nativeTool,
       inputSchema: {
         type: 'object',
         properties: { cellId: { type: 'string', pattern: '^cell-' } },
       },
     };
-    expect(() => registerDshNativeTools({ register }, [unsupported])).toThrow(
-      'not a supported keyword'
-    );
+    expect(() => registerDshTools({ register }, [unsupported])).toThrow('not a supported keyword');
   });
 
   it('rejects invalid and duplicate names before mutating the registry', () => {
     const register = vi.fn();
-    expect(() => registerDshNativeTools({ register }, [tool(), tool()])).toThrow('duplicate');
-    expect(() => registerDshNativeTools({ register }, [tool('mcp__legacy-tool')])).toThrow(
-      'Invalid'
-    );
+    expect(() => registerDshTools({ register }, [tool(), tool()])).toThrow('duplicate');
+    expect(() => registerDshTools({ register }, [tool('mcp__legacy-tool')])).toThrow('Invalid');
     expect(register).not.toHaveBeenCalled();
   });
 
   it('does not invoke business operations after caller cancellation', async () => {
     const nativeTool = tool();
-    const register = vi.fn<DshNativeToolRegistry['register']>().mockReturnValue(() => {});
-    registerDshNativeTools({ register }, [nativeTool]);
+    const register = vi.fn<DshHostToolRegistry['register']>().mockReturnValue(() => {});
+    registerDshTools({ register }, [nativeTool]);
     const abort = new AbortController();
     abort.abort(new Error('human takeover'));
     await expect(register.mock.calls[0][0].execute({}, context(abort.signal))).rejects.toThrow(

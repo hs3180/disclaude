@@ -246,7 +246,7 @@ try {
     cwd,
     sessionKey: 'real-notebook-probe',
     settingSources: [],
-    nativeTools: tools,
+    tools: tools,
     allowedTools: tools.map((tool) => tool.name),
     disallowedTools: ['CronCreate'],
     model: values.model,
@@ -333,7 +333,7 @@ try {
         return record.output;
       },
     }));
-    options.nativeTools = tools;
+    options.tools = tools;
   }
   const resumedProvider = createProvider();
   const resumed = await collect(
