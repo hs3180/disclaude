@@ -261,38 +261,21 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Issue #4389 (S6, part 1): tool permission gate on the beforeToolCall hook
+  // Claude query fields are rejected; Pi keeps its native runtime defaults.
   // -------------------------------------------------------------------------
 
-  it('installs the beforeToolCall deny hook when disallowedTools is non-empty (#4389)', async () => {
-    fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];
-    await collect(
-      provider
-        .queryStream(inputs(userInput('hi')), {
-          ...baseOptions(),
-          disallowedTools: ['CronCreate'],
-        })
-        .iterator,
-    );
-    const ctorOptions = fakeState.ctorOptions as { beforeToolCall?: unknown };
-    expect(typeof ctorOptions.beforeToolCall).toBe('function');
-    // And the installed hook actually denies the disallowed tool (#4389
-    // acceptance: a disallowed call does not execute — `{block:true}` is
-    // what pi's loop converts into an error tool result pre-execution).
-    const verdict = (await (ctorOptions.beforeToolCall as (ctx: unknown) => Promise<unknown>)({
-      assistantMessage: { role: 'assistant', content: [] },
-      toolCall: { type: 'toolCall', id: 't1', name: 'CronCreate', arguments: {} },
-      args: {},
-      context: {},
-    })) as { block?: boolean; reason?: string } | undefined;
-    expect(verdict).toEqual({ block: true, reason: expect.stringContaining('CronCreate') });
-  });
 
-  it('omits the beforeToolCall hook when disallowedTools is absent (#4389 — behavior unchanged)', async () => {
+  it('uses Pi runtime defaults without a Claude permission hook', async () => {
     fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];
     await collect(provider.queryStream(inputs(userInput('hi')), baseOptions()).iterator);
     const ctorOptions = fakeState.ctorOptions as { beforeToolCall?: unknown };
     expect(ctorOptions.beforeToolCall).toBeUndefined();
+  });
+
+  it.each(['allowedTools', 'disallowedTools'])('rejects a Claude-only %s option before starting Pi', (field) => {
+    const previous = fakeState.ctorOptions;
+    expect(() => provider.queryStream(inputs(userInput('hi')), { ...baseOptions(), [field]: [] })).toThrow('Claude-specific');
+    expect(fakeState.ctorOptions).toBe(previous);
   });
 
   describe('host tool injection', () => {
@@ -314,12 +297,6 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
       await expect(tools[0].execute('invalid', { x: '21' }, undefined, undefined, undefined)).rejects.toThrow('Invalid host tool arguments');
     });
 
-    it('keeps host permission filters separate from built-in selection', async () => {
-      fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];
-      await collect(provider.queryStream(inputs(userInput('go')), { ...baseOptions(), tools: [makeTool('echo'), makeTool('denied')], disallowedTools: ['denied'] }).iterator);
-      const ctor = fakeState.ctorOptions as { initialState?: { tools?: Array<{ name: string }> } };
-      expect(ctor.initialState?.tools?.map(tool => tool.name)).toEqual(['echo']);
-    });
 
     it('uses an empty host registry when no callbacks are supplied', async () => {
       fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];

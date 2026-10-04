@@ -417,6 +417,8 @@ describe('ClaudeSDKProvider', () => {
       const result = provider.queryStream(testInput(), {
         settingSources: ['user', 'project', 'local'],
         cwd: '/workspace',
+        allowedTools: ['Read'],
+        disallowedTools: ['CronCreate'],
         env: { ANTHROPIC_API_KEY: 'sk-test-key' },
       });
 
@@ -432,7 +434,7 @@ describe('ClaudeSDKProvider', () => {
 
       expect(messages.length).toBe(1);
       expect(messages[0].role).toBe('assistant');
-      expect(mockQuery).toHaveBeenCalled();
+      expect(mockQuery).toHaveBeenCalledWith(expect.objectContaining({ options: expect.objectContaining({ allowedTools: ['Read'], disallowedTools: ['CronCreate'] }) }));
     });
 
     // Issue #4442 (part 2 + part 3): empty stream — the SDK yields zero messages

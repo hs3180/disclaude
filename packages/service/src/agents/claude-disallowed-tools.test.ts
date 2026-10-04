@@ -3,11 +3,11 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { buildDisallowedTools } from './disallowed-tools.js';
+import { buildClaudeDisallowedTools } from './claude-disallowed-tools.js';
 
-describe('buildDisallowedTools', () => {
+describe('buildClaudeDisallowedTools', () => {
   it('disallows the built-in cron tools by default (issue #4181)', () => {
-    expect(buildDisallowedTools({})).toEqual([
+    expect(buildClaudeDisallowedTools({})).toEqual([
       'EnterPlanMode',
       'AskUserQuestion',
       'CronCreate',
@@ -18,14 +18,14 @@ describe('buildDisallowedTools', () => {
   });
 
   it('restores the built-in cron tools when DISCLAUDE_ALLOW_BUILTIN_CRON=1', () => {
-    expect(buildDisallowedTools({ DISCLAUDE_ALLOW_BUILTIN_CRON: '1' })).toEqual([
+    expect(buildClaudeDisallowedTools({ DISCLAUDE_ALLOW_BUILTIN_CRON: '1' })).toEqual([
       'EnterPlanMode',
       'AskUserQuestion',
     ]);
   });
 
   it('restores the built-in cron tools when DISCLAUDE_ALLOW_BUILTIN_CRON=true', () => {
-    expect(buildDisallowedTools({ DISCLAUDE_ALLOW_BUILTIN_CRON: 'true' })).toEqual([
+    expect(buildClaudeDisallowedTools({ DISCLAUDE_ALLOW_BUILTIN_CRON: 'true' })).toEqual([
       'EnterPlanMode',
       'AskUserQuestion',
     ]);
@@ -33,13 +33,13 @@ describe('buildDisallowedTools', () => {
 
   it('treats the flag case-insensitively', () => {
     for (const value of ['True', 'TRUE', 'tRuE']) {
-      expect(buildDisallowedTools({ DISCLAUDE_ALLOW_BUILTIN_CRON: value })).not.toContain('CronCreate');
+      expect(buildClaudeDisallowedTools({ DISCLAUDE_ALLOW_BUILTIN_CRON: value })).not.toContain('CronCreate');
     }
   });
 
   it('keeps disallowing the cron tools for falsy/other values', () => {
     for (const value of ['0', 'false', '', 'yes', 'allow']) {
-      expect(buildDisallowedTools({ DISCLAUDE_ALLOW_BUILTIN_CRON: value })).toEqual([
+      expect(buildClaudeDisallowedTools({ DISCLAUDE_ALLOW_BUILTIN_CRON: value })).toEqual([
         'EnterPlanMode',
         'AskUserQuestion',
         'CronCreate',

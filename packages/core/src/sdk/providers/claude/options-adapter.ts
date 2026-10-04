@@ -7,6 +7,7 @@ import { browserAgentEnv } from '../../../utils/browser-env.js';
  */
 
 import type { AgentQueryOptions, UserInput } from '../../types.js';
+import type { ClaudeQueryOptions } from './provider.js';
 import { createClaudeToolServer, claudeToolNames, CLAUDE_HOST_SERVER } from './tool-adapter.js';
 import * as path from 'node:path';
 import { Config } from '../../../config/index.js';
@@ -17,7 +18,10 @@ import { Config } from '../../../config/index.js';
  * @param options - 统一的查询选项
  * @returns Claude SDK 选项对象
  */
-export function adaptOptions(options: AgentQueryOptions): Record<string, unknown> {
+export function adaptOptions(
+  options: AgentQueryOptions,
+  permissions: Pick<ClaudeQueryOptions, 'allowedTools' | 'disallowedTools'> = {}
+): Record<string, unknown> {
   assertToolOptions(options);
   const sdkOptions: Record<string, unknown> = {};
   // Claude launches its own subprocess; this is its final environment boundary.
@@ -58,17 +62,17 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
   // Claude's built-in tool defaults are a Harness detail.
   sdkOptions.tools = { type: 'preset', preset: 'claude_code' };
 
-  if (options.allowedTools) {
-    sdkOptions.allowedTools = claudeToolNames(options.allowedTools, options.tools);
+  if (permissions.allowedTools) {
+    sdkOptions.allowedTools = claudeToolNames(permissions.allowedTools, options.tools);
   }
 
-  if (options.disallowedTools) {
-    sdkOptions.disallowedTools = claudeToolNames(options.disallowedTools, options.tools);
+  if (permissions.disallowedTools) {
+    sdkOptions.disallowedTools = claudeToolNames(permissions.disallowedTools, options.tools);
   }
 
   if (options.tools?.length) {
     sdkOptions.mcpServers = {
-      [CLAUDE_HOST_SERVER]: createClaudeToolServer(options.tools, options),
+      [CLAUDE_HOST_SERVER]: createClaudeToolServer(options.tools, permissions),
     };
   }
 
