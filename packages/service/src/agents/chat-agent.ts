@@ -661,7 +661,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           senderOpenId,
         },
         chatId,
-        capabilities
+        capabilities,
+        this.sdkProvider.name,
       );
 
       const streamingMessage: StreamingUserMessage = {
@@ -958,7 +959,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         threadRootId: threadRootId ?? this.conversationOrchestrator.getThreadRoot(chatId),
       },
       chatId,
-      capabilities
+      capabilities,
+      this.sdkProvider.name,
     );
 
     const userMessage: StreamingUserMessage = {

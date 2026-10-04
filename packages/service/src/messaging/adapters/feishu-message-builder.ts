@@ -70,6 +70,9 @@ function buildFeishuToolsSection(ctx: MessageBuilderContext): string {
       if (toolName === 'send_file') {
         return capabilities?.supportsFile !== false;
       }
+      if (toolName === 'send_card') {
+        return capabilities?.supportsCard !== false;
+      }
       // For backward compatibility with old configs, assume messaging tools are available
       return true;
     }
@@ -115,6 +118,31 @@ ${messagingTools.join('\n')}
 - Note: Thread replies are NOT supported on this channel.`);
   }
 
+  if (ctx.agentBackend === 'codex') {
+    parts.push(`
+
+## Codex source citations
+
+When your answer relies on one or more cited sources, keep each citation next to the claim it supports using concise numbered markers such as [1] and [2]; do not expose raw provider citation markers.
+
+Map citations from their meaning and source metadata: use each cited source's title, direct URL, and any supplied excerpt, then place its marker beside the sentence or paragraph that source supports. Number distinct sources by their first appearance in the answer, reuse a source's number when it supports another claim, and list sources in that same order. Do not map by tool-return order alone, move a citation to a different claim, or invent missing source details or excerpts.
+
+Only cite a claim when the source content you actually read supports it. When a claim comes from a linked page, read that page and cite its own title and direct URL. If evidence is missing, omit the claim or say it remains unverified. Label your inferences and cite the evidence behind them.
+
+When you cite sources, end the final answer with a \`## Sources\` section listing exactly the sources behind those markers, one entry per source, in this exact format:
+
+\`\`\`markdown
+## Sources
+1. [Source title](https://example.com)
+   > Optional short supporting excerpt
+2. [Another source title](https://example.org/another)
+\`\`\`
+
+Rules: each entry is a single line \`number. [title](direct URL)\` starting at 1 and incrementing; include an excerpt line only when the source provides one; keep entry numbers aligned with the markers used in the answer; include only sources you actually used. Do not add a \`## Sources\` section when the answer has no citations, and put nothing after it — it must be the last section of the answer.
+
+Where the channel supports citation cards, delivery code renders this section with the final reply. Do not call \`send_card\` or \`send_interactive\` for these citation sources and do not write card JSON; just end with the section in the exact format above.`);
+  }
+
   return parts.join('\n');
 }
 
@@ -123,7 +151,11 @@ function buildFeishuStableToolsSection(ctx: MessageBuilderStableContext): string
   const channelCli = 'disclaude channel';
   const supported = ctx.capabilities?.supportedMcpTools;
   const sendCommands = ['send_text', 'send_file', 'send_card', 'send_interactive']
-    .filter(command => supported === undefined || supported.includes(command));
+    .filter(command =>
+      supported === undefined
+        ? command !== 'send_card' || ctx.capabilities?.supportsCard !== false
+        : supported.includes(command),
+    );
   return `For the current channel feature list and command options, run \`${channelCli} help\`.\n${buildChannelCliHelpGuidance(channelCli, { sendCommands })}`;
 }
 
