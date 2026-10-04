@@ -1,4 +1,4 @@
-import { prepareTools, selectTools, type ToolDefinition } from '../../tools.js';
+import { prepareTools, type ToolDefinition } from '../../tools.js';
 
 export interface PiAgentToolResult {
   content: Array<{ type: 'text'; text: string }>;
@@ -27,11 +27,8 @@ function result(value: unknown): PiAgentToolResult {
 }
 
 /** Pi uses its native registry; the business definition stays in tools. */
-export function adaptPiTools(
-  definitions: readonly ToolDefinition[] = [],
-  permissions: { allowedTools?: string[]; disallowedTools?: string[] } = {}
-): PiAgentHarnessTool[] {
-  return selectTools(prepareTools(definitions), permissions).map((definition) => ({
+export function adaptPiTools(definitions: readonly ToolDefinition[] = []): PiAgentHarnessTool[] {
+  return prepareTools(definitions).map((definition) => ({
     name: definition.name,
     label: definition.name,
     description: definition.description,

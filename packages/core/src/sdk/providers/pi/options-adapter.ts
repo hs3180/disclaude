@@ -1,45 +1,4 @@
-/**
- * disclaude `AgentQueryOptions` → pi-agent-core run-options adapter.
- *
- * Issue #4386 (S3, part 2): the pure option mapping the
- * `PiAgentProvider.queryStream` implementation will use to translate
- * disclaude's SDK-agnostic `AgentQueryOptions` into the pieces of pi's
- * per-run options that disclaude can supply declaratively. Extracted as a
- * standalone, fully unit-testable module — companion to `event-adapter.ts`
- * (part 1, #4409) — so the options contract is locked independently of the
- * (still-unimplemented) queryStream wiring (part 3).
- *
- * Source of truth for the pi side: the pinned pi-agent-core/pi-ai TypeScript
- * declarations. The pi type references below are a STRUCTURAL description of
- * what the adapter targets, NOT an import — disclaude takes no hard dependency
- * on pi-agent-core. Re-verify on a pi version bump.
- *
- * Why pi options are split (unlike Claude's flat options object):
- * - pi's `agentLoop(prompts, context, config, signal, streamFn)`
- *   (`agent-loop.d.ts:12`) takes a per-run **`AgentContext`**
- *   (`{ systemPrompt, messages, tools? }`, `types.d.ts:353`) AND a
- *   **`AgentLoopConfig`** (`{ model, convertToLlm, ... }` + `SimpleStreamOptions`,
- *   `types.d.ts:117`). The higher-level `AgentHarness` further exposes
- *   `setActiveTools(names)` / `setModel(Model)` / `setThinkingLevel(...)`.
- * - Several disclaude options therefore do not become a flat field: `model` is
- *   a string here but pi wants a `Model<any>` resolved through its `Models`
- *   registry (runtime work, deferred to provider.ts part 3); tool *names* map
- *   to `setActiveTools` rather than to a config field.
- *
- * Part-2 scope: the declarative mapping only (systemPrompt / activeToolNames /
- * model-string / env passthrough). The following are intentionally DEFERRED —
- * they are owned by sibling sub-issues or are Claude-specific and have no pi
- * equivalent at this layer:
- * - `model` string → `Model<any>` object: provider.ts (part 3), via pi `Models`.
- * - `tools`: business callbacks registered by the native Pi adapter.
- * - `permissionMode` / permission gating: #4389 (S6); pi has no built-in perms
- *   (the `disallowedTools` deny gate itself landed in tool-permission-gate.ts).
- * - Claude-only fields with no pi agentLoop-level meaning: `cwd`, `settingSources`
- *   (required on the disclaude type but a Claude-Code-settings concept),
- *   `stderr` (Claude subprocess capture), `teammateMode` (Claude Agent Teams),
- *   `includePartialMessages` (GLM stall watchdog, #3706), `plugins` (local
- *   Claude plugin, injected in the Claude adapter only).
- */
+/** Map shared query values to Pi; tool registration stays in its adapter. */
 
 import type { AgentQueryOptions } from '../../types.js';
 
@@ -79,9 +38,6 @@ export interface PiAdaptedOptions {
    */
   systemPrompt?: string;
 
-  /** Native active names from the existing permission allow/deny lists. */
-  activeToolNames?: string[];
-
   /**
    * `options.model` (string) passed through unchanged. pi needs a `Model<any>`
    * resolved through its `Models` registry — that resolution is runtime work
@@ -104,13 +60,12 @@ export interface PiAdaptedOptions {
  * than errors, so the caller can fall back to pi defaults.
  *
  * @param options - disclaude unified query options (`types.ts` `AgentQueryOptions`).
- * @returns the pi-relevant subset (system prompt / active tool names / model
+ * @returns the pi-relevant subset (system prompt / model
  *   string / env); see `PiAdaptedOptions` for the deferred-items contract.
  */
 export function adaptPiOptions(options: AgentQueryOptions): PiAdaptedOptions {
   return {
     systemPrompt: resolveSystemPrompt(options),
-    activeToolNames: resolveActiveToolNames(options),
     model: options.model,
     env: options.env,
   };
@@ -134,9 +89,4 @@ function resolveSystemPrompt(options: AgentQueryOptions): string | undefined {
   // SystemPromptPreset: { type: 'preset', preset: 'claude_code', append? }
   // The preset itself is a Claude Code concept; only `append` carries over.
   return sp.append;
-}
-
-/** Tool definitions are registered separately; permissions select native names. */
-function resolveActiveToolNames(options: AgentQueryOptions): string[] | undefined {
-  return options.allowedTools?.filter((name) => !options.disallowedTools?.includes(name));
 }

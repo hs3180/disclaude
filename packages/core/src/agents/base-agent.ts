@@ -34,6 +34,7 @@ import {
 import { Config } from '../config/index.js';
 import { loadRuntimeEnv } from '../config/runtime-env.js';
 import path from 'node:path';
+import { assertToolOptions } from '../sdk/tools.js';
 
 // Re-export BaseAgentConfig for backward compatibility
 export type { BaseAgentConfig } from './types.js';
@@ -44,10 +45,6 @@ export type { BaseAgentConfig } from './types.js';
 export interface SdkOptionsExtra {
   /** Host-owned tools; the provider registers them for this query. */
   tools?: AgentQueryOptions['tools'];
-  /** Allowed tools list */
-  allowedTools?: string[];
-  /** Disallowed tools list */
-  disallowedTools?: string[];
   /** Custom working directory */
   cwd?: string;
   /** Project root for resource discovery when it differs from the runtime cwd. */
@@ -122,7 +119,7 @@ export interface QueryStreamResult {
  *   protected getAgentName() { return 'MyAgent'; }
  *
  *   async *query(input: string): AsyncIterable<AgentMessage> {
- *     const options = this.createSdkOptions({ allowedTools: ['Read', 'Write'] });
+ *     const options = this.createSdkOptions();
  *     async function* singleInput(): AsyncGenerator<UserInput> {
  *       yield { role: 'user', content: input };
  *     }
@@ -200,6 +197,7 @@ export abstract class BaseAgent implements Disposable {
    * @returns AgentQueryOptions object
    */
   protected createSdkOptions(extra: SdkOptionsExtra = {}): AgentQueryOptions {
+    assertToolOptions(extra);
     const workspaceDir = this.getWorkspaceDir();
     const effectiveCwd = extra.cwd ?? workspaceDir;
 
@@ -220,28 +218,6 @@ export abstract class BaseAgent implements Disposable {
             systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const },
           }),
     };
-
-    // Add allowed/disallowed tools
-    if (extra.allowedTools) {
-      options.allowedTools = extra.allowedTools;
-    }
-    if (extra.disallowedTools) {
-      const nonApplicableDeepSeekDefaults = new Set([
-        'EnterPlanMode',
-        'AskUserQuestion',
-        'CronCreate',
-        'CronList',
-        'CronDelete',
-        'ScheduleWakeup',
-      ]);
-      const disallowedTools =
-        this.agentBackend === 'deepseek'
-          ? extra.disallowedTools.filter((tool) => !nonApplicableDeepSeekDefaults.has(tool))
-          : extra.disallowedTools;
-      if (disallowedTools.length > 0) {
-        options.disallowedTools = disallowedTools;
-      }
-    }
 
     // Set environment: config env + runtime env file (Issue #1361)
     const loggingConfig = this.getLoggingConfig();

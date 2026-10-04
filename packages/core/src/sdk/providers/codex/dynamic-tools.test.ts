@@ -84,16 +84,6 @@ describe('Codex host tool adapter', () => {
     await expect(pending).resolves.toMatchObject({ success: false });
   });
 
-  it('filters canonical tool names and cannot dispatch a denied tool', async () => {
-    const definition = tool();
-    for (const permissions of [{ allowedTools: [] }, { disallowedTools: [definition.name] }]) {
-      const registry = createCodexDynamicToolRegistry([definition], permissions);
-      expect(registry.specs).toEqual([]);
-      await expect(registry.call(request())).resolves.toMatchObject({ success: false });
-    }
-    expect(definition.execute).not.toHaveBeenCalled();
-  });
-
   it('reports invalid output and duplicate names before creating a partial registry', async () => {
     const definition = tool(vi.fn().mockResolvedValue('invalid object'));
     await expect(

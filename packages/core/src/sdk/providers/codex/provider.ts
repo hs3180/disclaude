@@ -433,7 +433,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     // Permission gate → sandbox level (Issue #4631, S4): resolved once per
     // stream (options are constant across turns); throws synchronously with
     // an actionable message when the policy cannot be honored headlessly
-    // (e.g. a WebSearch denylist entry) — same fail-fast contract as the
+    // (e.g. an invalid permissionMode) — same fail-fast contract as the
     // binary check above.
     const sandboxDecision = resolveCodexSandboxPolicy(
       options,
@@ -1113,7 +1113,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     codexModel: string | undefined,
     reasoningEffort: CodexReasoningEffort | undefined,
   ): StreamQueryResult {
-    const dynamicToolRegistry = createCodexDynamicToolRegistry(options.tools, options);
+    const dynamicToolRegistry = createCodexDynamicToolRegistry(options.tools);
     const dynamicToolSignature = dynamicToolRegistry.signature;
     let lifecycle: CodexAppServerLifecycle | undefined;
     const sessionKey = options.sessionKey ?? `anon-app-${++this.anonSessionCounter}`;

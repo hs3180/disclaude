@@ -1,4 +1,4 @@
-import { prepareTools, selectTools, type ToolDefinition } from '../../tools.js';
+import { prepareTools, type ToolDefinition } from '../../tools.js';
 import type {
   CodexAppServerDynamicToolCallRequest,
   CodexAppServerDynamicToolCallResult,
@@ -16,10 +16,9 @@ export interface CodexDynamicToolRegistry {
 const HOST_NAMESPACE = 'disclaude';
 
 export function createCodexDynamicToolRegistry(
-  definitions: readonly ToolDefinition[] = [],
-  permissions: { allowedTools?: string[]; disallowedTools?: string[] } = {}
+  definitions: readonly ToolDefinition[] = []
 ): CodexDynamicToolRegistry {
-  const tools = selectTools(prepareTools(definitions), permissions).sort((left, right) =>
+  const tools = prepareTools(definitions).sort((left, right) =>
     left.name < right.name ? -1 : left.name > right.name ? 1 : 0
   );
   const registered = new Map(tools.map((tool) => [tool.name, tool]));
