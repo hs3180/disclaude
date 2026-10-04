@@ -7,8 +7,6 @@
 
 import type {
   AgentQueryOptions,
-  InlineToolDefinition,
-  McpServerConfig,
   ProviderInfo,
   StreamQueryResult,
   UserInput,
@@ -59,30 +57,6 @@ export interface IAgentSDKProvider {
     input: AsyncGenerator<UserInput>,
     options: AgentQueryOptions
   ): StreamQueryResult;
-
-  // ==========================================================================
-  // 工具和 MCP 服务器
-  // ==========================================================================
-
-  /**
-   * 创建内联 MCP 工具
-   *
-   * 将工具定义转换为 SDK 特定的工具格式。
-   *
-   * @param definition - 工具定义
-   * @returns SDK 特定的工具对象
-   */
-  createInlineTool(definition: InlineToolDefinition): unknown;
-
-  /**
-   * 创建 MCP 服务器
-   *
-   * 根据 MCP 服务器配置创建 SDK 特定的 MCP 服务器实例。
-   *
-   * @param config - MCP 服务器配置
-   * @returns SDK 特定的 MCP 服务器对象
-   */
-  createMcpServer(config: McpServerConfig): unknown;
 
   // ==========================================================================
   // 生命周期

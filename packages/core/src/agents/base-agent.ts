@@ -42,14 +42,12 @@ export type { BaseAgentConfig } from './types.js';
  * Extra SDK options configuration.
  */
 export interface SdkOptionsExtra {
-  /** Canonical tools consumed by the selected Harness's native adapter. */
-  nativeTools?: AgentQueryOptions['nativeTools'];
+  /** Host-owned tools; the provider registers them for this query. */
+  tools?: AgentQueryOptions['tools'];
   /** Allowed tools list */
   allowedTools?: string[];
   /** Disallowed tools list */
   disallowedTools?: string[];
-  /** MCP servers configuration */
-  mcpServers?: Record<string, unknown>;
   /** Custom working directory */
   cwd?: string;
   /** Project root for resource discovery when it differs from the runtime cwd. */
@@ -214,13 +212,12 @@ export abstract class BaseAgent implements Disposable {
       ...(extra.projectRoot ? { projectRoot: extra.projectRoot } : {}),
       permissionMode: this.permissionMode,
       ...(extra.sessionKey !== undefined ? { sessionKey: extra.sessionKey } : {}),
-      ...(extra.nativeTools !== undefined ? { nativeTools: extra.nativeTools } : {}),
+      ...(extra.tools !== undefined ? { tools: extra.tools } : {}),
       settingSources: ['user', 'project', 'local'],
       ...((this.agentBackend ?? 'claude') !== 'claude'
         ? {}
         : {
             systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const },
-            tools: { type: 'preset' as const, preset: 'claude_code' as const },
           }),
     };
 
@@ -244,14 +241,6 @@ export abstract class BaseAgent implements Disposable {
       if (disallowedTools.length > 0) {
         options.disallowedTools = disallowedTools;
       }
-    }
-
-    // Add MCP servers (convert to SDK format)
-    if (extra.mcpServers) {
-      options.mcpServers = extra.mcpServers as Record<
-        string,
-        import('../sdk/index.js').SdkMcpServerConfig
-      >;
     }
 
     // Set environment: config env + runtime env file (Issue #1361)

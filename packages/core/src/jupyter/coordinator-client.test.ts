@@ -366,7 +366,7 @@ describe('JupyterCoordinatorClient', () => {
     const { client, seen } = await fixture((_request, response) =>
       response.end(JSON.stringify(proof))
     );
-    expect(await client.fenceUnsentSubmission(target)).toEqual(proof);
+    expect(await client.reconcileSubmission(target)).toEqual(proof);
     const requests = seen.filter((item) => item.path.endsWith('/fence-submission'));
     expect(requests).toHaveLength(1);
     expect(requests[0].body).toEqual({ notebook, target });
@@ -383,7 +383,7 @@ describe('JupyterCoordinatorClient', () => {
     const { client, seen } = await fixture((_request, response) =>
       response.end(JSON.stringify({ state: 'recorded', observation: current }))
     );
-    expect(await client.fenceUnsentSubmission(target)).toEqual({
+    expect(await client.reconcileSubmission(target)).toEqual({
       state: 'recorded',
       observation: current,
     });
@@ -410,7 +410,7 @@ describe('JupyterCoordinatorClient', () => {
         })
       )
     );
-    expect((await client.fenceUnsentSubmission(target)).state).toBe('unknown');
+    expect((await client.reconcileSubmission(target)).state).toBe('unknown');
     expect(seen.filter((item) => item.path.endsWith('/fence-submission'))).toHaveLength(1);
   });
 
@@ -423,7 +423,7 @@ describe('JupyterCoordinatorClient', () => {
         response.end(JSON.stringify(proof));
       }
     });
-    expect((await client.fenceUnsentSubmission(target)).state).toBe('unknown');
+    expect((await client.reconcileSubmission(target)).state).toBe('unknown');
     expect(await client.getStatus(notebook, target.runId)).toEqual(proof);
     expect(seen.filter((item) => item.path.endsWith('/fence-submission'))).toHaveLength(1);
     expect(seen.filter((item) => item.path.endsWith('/submit'))).toHaveLength(0);
@@ -441,7 +441,7 @@ describe('JupyterCoordinatorClient', () => {
       response.statusCode = 503;
       response.end('{}');
     });
-    expect((await client.fenceUnsentSubmission(target)).state).toBe('unknown');
+    expect((await client.reconcileSubmission(target)).state).toBe('unknown');
     expect(seen.filter((item) => item.path.endsWith('/fence-submission'))).toHaveLength(1);
   });
 

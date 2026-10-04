@@ -162,7 +162,6 @@ describe('Runtime Context', () => {
         getLoggingConfig: () => ({ sdkDebug: true }),
         getGlobalEnv: () => ({ NODE_ENV: 'test' }),
         isAgentTeamsEnabled: () => true,
-        createMcpServer() { return Promise.resolve({}); },
         async sendMessage() {},
         async sendCard() {},
         async sendFile() {},
