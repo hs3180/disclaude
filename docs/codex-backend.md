@@ -104,10 +104,9 @@ or starting a model turn.
 - The default Codex sandbox is `workspace-write`. Set `agent.codexSandbox` to
   `read-only`, `workspace-write`, or `danger-full-access` to choose an explicit
   level. `agent.fullAccess: true` is an explicit opt-in to unrestricted access.
-- A `disallowedTools` policy that denies mutating tools caps the effective
-  sandbox at `read-only`. If a requested restriction cannot be enforced by the
-  selected Codex transport, Disclaude fails closed instead of claiming it was
-  applied.
+- Claude `allowedTools` / `disallowedTools` are not Codex policies; stale
+  query fields are rejected. Choose business callbacks by passing their
+  definitions in `tools`, and use the native sandbox configuration above.
 - Codex conversations resume within a running service process. Restarting the
   service clears Disclaude's in-memory conversation mapping; Codex owns its
   session files under `CODEX_HOME`.

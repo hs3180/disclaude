@@ -124,11 +124,15 @@ describe('Claude host tool adapter over real MCP transport', () => {
 
   it('owns built-in defaults and MCP wrapping while accepting canonical permissions', () => {
     const source = definition();
-    const options = adaptOptions({
-      settingSources: [],
-      tools: [source],
-      allowedTools: ['Read', source.name],
-    });
+    const options = adaptOptions(
+      {
+        settingSources: [],
+        tools: [source],
+      },
+      {
+        allowedTools: ['Read', source.name],
+      }
+    );
     expect(options.tools).toEqual({ type: 'preset', preset: 'claude_code' });
     expect(options.allowedTools).toEqual(['Read', 'mcp__disclaude__read_value']);
     expect(Object.keys(options.mcpServers as object)).toEqual(['disclaude']);

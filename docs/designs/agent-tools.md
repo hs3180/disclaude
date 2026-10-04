@@ -26,7 +26,7 @@ provider.queryStream(input, { settingSources: [], tools: [readValue] });
 - 业务绑定已授权的资源，通过 `context.signal` 传递取消；支持时用可选 `context.onProgress` 上报进度。
 - 共享层校验原始 draft-07 Schema 与有限、无循环的 JSON，注册时复制声明；不转换类型、不填默认值、不删字段。无效输入不触发操作，无效结果不报告成功。
 - adapter 负责原生注册、MCP 包装、namespace、结果呈现和调用 ID。内置工具与外部 MCP 沿用 Harness 自己的 profile/settings，公共查询不提供相应选择或连接字段。
-- 现有 `allowedTools` / `disallowedTools` 控制工具权限；业务工具使用共同名称，deny 优先，空 allow 禁用全部业务工具。原生权限能力仍按各 Harness 的实际语义处理。
+- 业务直接传入本次需要的工具定义，不增加通用黑白名单。`allowedTools` / `disallowedTools` 只属于 `ClaudeSDKProvider` 的原生查询选项；其他 Harness 使用各自的配置。
 
 取消后等待 callback 自身结束并拒绝成功结果。Notebook 的远程执行仍通过 runId 查询/停止；取消 Agent 不代表 kernel 已停止。资源身份与控制权由 Jupyter 契约定义，Harness 调用 ID 留在 adapter 内。
 
@@ -43,6 +43,8 @@ Codex exec 无 callback 调度能力，显式拒绝 `tools` 并要求 app-server
 
 ## 迁移
 
-`nativeTools` / `hostTools` 与旧内联 callbacks 合并为 `tools`，类型统一为 `ToolDefinition` / `ToolContext`。旧 `tools` 名称数组改用适用的权限配置；内置 preset 和外部 MCP 在 Harness 自己的配置中设置。旧共享 SDK 工厂、MCP 配置类型和调用 identity 类型移除。JavaScript 的旧字段、名称数组及 preset 明确报错。
+`nativeTools` / `hostTools` 与旧内联 callbacks 合并为 `tools`，类型统一为 `ToolDefinition` / `ToolContext`。旧 `tools` 名称数组改为具体定义；内置 preset 和外部 MCP 在 Harness 自己的配置中设置。旧共享 SDK 工厂、MCP 配置类型和调用 identity 类型移除。JavaScript 的旧字段、名称数组及 preset 明确报错。
 
 依赖 PR 同步迁移字段/imports 并重新验证集成。真实模型及 Notebook/飞书证据始终只属于记录的提交；adapter 回归不代表产品验收通过。
+
+通用 `AgentQueryOptions` / `SdkOptionsExtra` 移除 `allowedTools` / `disallowedTools`，不再将 Claude 名称转译为 Pi 过滤、DSH 限制或 Codex sandbox 政策。非 Claude 的旧 JavaScript 名单字段显式报错；Claude 直接查询仍支持原生名单，聊天默认禁用策略仅在该后端传入。
