@@ -71,24 +71,18 @@ export class MessageBuilder {
   buildEnhancedContent(
     msg: MessageData,
     chatId: string,
-    capabilities?: ChannelCapabilities,
-    agentBackend?: string,
+    capabilities?: ChannelCapabilities
   ): string {
     const isSkillCommand = msg.text.trimStart().startsWith('/');
-    const ctx: MessageBuilderContext = { msg, chatId, capabilities, agentBackend, isSkillCommand };
+    const ctx: MessageBuilderContext = { msg, chatId, capabilities, isSkillCommand };
 
     return this.renderSections(this.buildSectionsForContext(ctx));
   }
 
   /** Build an inspectable stable-to-dynamic representation of one prompt. */
-  buildSections(
-    msg: MessageData,
-    chatId: string,
-    capabilities?: ChannelCapabilities,
-    agentBackend?: string,
-  ): MessageBuilderSection[] {
+  buildSections(msg: MessageData, chatId: string, capabilities?: ChannelCapabilities): MessageBuilderSection[] {
     const isSkillCommand = msg.text.trimStart().startsWith('/');
-    return this.buildSectionsForContext({ msg, chatId, capabilities, agentBackend, isSkillCommand });
+    return this.buildSectionsForContext({ msg, chatId, capabilities, isSkillCommand });
   }
 
   renderSections(sections: readonly MessageBuilderSection[]): string {
