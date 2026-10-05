@@ -210,6 +210,18 @@ describe('MessageBuilder with Feishu sections', () => {
       expect(result).toContain(`${channelCli} send_card`);
     });
 
+    it('should omit send_card help when legacy capabilities disable cards', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-123', {
+        ...DEFAULT_CHANNEL_CAPABILITIES,
+        supportedMcpTools: undefined,
+        supportsCard: false,
+      });
+      expect(result).not.toContain(`${channelCli} send_card`);
+    });
+
     it('should include send_interactive when available', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',

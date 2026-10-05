@@ -18,7 +18,7 @@ vi.mock('@disclaude/core', async (importOriginal) => {
   // test). Pull the real class from the actual module; everything else stays
   // explicitly mocked below.
   const actual = await importOriginal<typeof import('@disclaude/core')>();
-  const BaseAgent = vi.fn().mockImplementation(function (this: any) {
+  const BaseAgent = vi.fn().mockImplementation(function (this: any, config: any) {
     this.createSdkOptions = vi.fn((extra: Record<string, unknown> = {}) => extra);
     this.createQueryStream = vi.fn(() => ({
       handle: { close: vi.fn(), cancel: vi.fn() },
@@ -35,6 +35,7 @@ vi.mock('@disclaude/core', async (importOriginal) => {
     // Issue #4644: real BaseAgent always resolves a provider singleton —
     // mirror it so reset()'s optional forgetSession capability is callable.
     this.sdkProvider = {
+      name: config.agentBackend ?? 'claude',
       forgetSession: vi.fn(),
     };
     this.logger = {
@@ -169,6 +170,37 @@ describe('ChatAgent (service)', () => {
   });
 
   describe('constructor', () => {
+    it('uses injected message callbacks without selecting a backend policy', async () => {
+      const core = await import('@disclaude/core');
+      const actual = await vi.importActual<typeof core>('@disclaude/core');
+      const options = { buildStableToolsSection: () => 'Injected instructions' };
+      const agent = new ChatAgent({
+        chatId: 'policy-chat', callbacks, apiKey: 'test', model: 'test',
+        messageBuilderOptions: options,
+      });
+      const injected = vi.mocked(core.MessageBuilder).mock.calls.at(-1)?.[0];
+      expect(injected).toBe(options);
+      expect(new actual.MessageBuilder(injected).buildEnhancedContent({
+        text: 'Question', messageId: 'm1',
+      }, 'policy-chat')).toContain('Injected instructions');
+      ChatAgent.prototype.dispose.call(agent);
+    });
+
+    it('applies an injected query policy when starting a session', () => {
+      const configureQueryOptions = vi.fn((options) => ({ ...options, model: 'configured-model' }));
+      const agent = new ChatAgent({
+        chatId: 'policy-chat', callbacks, apiKey: 'test', model: 'test', configureQueryOptions,
+      });
+      (agent as any).startAgentLoop();
+      const original = (agent as any).createSdkOptions.mock.results[0].value;
+      expect(configureQueryOptions).toHaveBeenCalledExactlyOnceWith(original);
+      expect((agent as any).createQueryStream).toHaveBeenCalledWith(
+        expect.anything(), { ...original, model: 'configured-model' },
+      );
+      expect(original).not.toHaveProperty('model');
+      ChatAgent.prototype.dispose.call(agent);
+    });
+
     it('uses an isolated provider session key while remaining bound to the real chat (#4812)', async () => {
       const agent = new ChatAgent({ chatId: 'oc_test_chat', callbacks, apiKey: 'test', model: 'test', provider: 'anthropic', sdkSessionKey: 'oc_test_chat::schedule:tick-1' });
       await agent.processMessage({ chatId: 'oc_test_chat', payload: 'run', messageId: 'tick-1' });
@@ -456,19 +488,7 @@ describe('ChatAgent (service)', () => {
         expect.not.objectContaining({ mcpServers: expect.anything() }),
       );
     });
-    it.each(['claude', 'pi', 'codex', 'deepseek'])('passes the chat denylist only to Claude, with %s selected', (backend) => {
-      (chatAgent as any).agentBackend = backend;
-      (chatAgent as any).startAgentLoop();
-      const [[baseOptions]] = (chatAgent as any).createSdkOptions.mock.calls;
-      expect(baseOptions).not.toHaveProperty('allowedTools');
-      expect(baseOptions).not.toHaveProperty('disallowedTools');
-      const [[, queryOptions]] = (chatAgent as any).createQueryStream.mock.calls;
-      if (backend === 'claude') {
-        expect(queryOptions.disallowedTools).toContain('AskUserQuestion');
-      } else {
-        expect(queryOptions).not.toHaveProperty('disallowedTools');
-      }
-    });
+
   });
 
   // Issue #4448 (direction #1): a chat bound to a directory that does not

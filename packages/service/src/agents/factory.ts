@@ -39,7 +39,8 @@ import {
   type CwdResolution,
   type AgentPreset,
 } from '@disclaude/core';
-import { ChatAgent } from './chat-agent.js';
+import type { ChatAgent } from './chat-agent.js';
+import { createChatAgent } from './create-chat-agent.js';
 import type { ChatAgentConfig, ChatAgentCallbacks } from './types.js';
 
 const logger = createLogger('AgentFactory');
@@ -258,7 +259,7 @@ export class AgentFactory {
         sdkSessionKey: options.sdkSessionKey,
       };
 
-      return new ChatAgent(config);
+      return createChatAgent(config);
     }
     throw new Error(`Unknown ChatAgent: ${name}`);
   }
@@ -319,6 +320,6 @@ export class AgentFactory {
       sdkSessionKey: options.sdkSessionKey,
     };
 
-    return new ChatAgent(config);
+    return createChatAgent(config);
   }
 }

@@ -60,7 +60,6 @@ import {
 } from '@disclaude/core';
 import { getDebugGroupService } from '../services/debug-group-service.js';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
-import { buildClaudeDisallowedTools } from './claude-disallowed-tools.js';
 import { HistoryManager } from './history-manager.js';
 import crypto from 'node:crypto';
 
@@ -273,6 +272,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
   // Message builder (Issue #697)
   private readonly messageBuilder: MessageBuilder;
+  private readonly configureQueryOptions: ChatAgentConfig['configureQueryOptions'];
 
   // History loading (Issue #955, #1230, #3996) — extracted into HistoryManager (Issue #4125 part 2)
   private readonly historyManager: HistoryManager;
@@ -354,10 +354,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       maxBackoffMs: 60000, // Max 1 minute
     });
 
-    // Initialize message builder with channel-specific options (Issue #697, #1492, #1499)
-    // When messageBuilderOptions is provided (e.g., by service), use those;
-    // otherwise, create a default MessageBuilder with no channel-specific extensions.
     this.messageBuilder = new MessageBuilder(config.messageBuilderOptions);
+    this.configureQueryOptions = config.configureQueryOptions;
 
     this.logger.info(
       { chatId: this.boundChatId, skipHistory: config.skipHistory },
@@ -658,7 +656,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           senderOpenId,
         },
         chatId,
-        capabilities
+        capabilities,
       );
 
       const streamingMessage: StreamingUserMessage = {
@@ -955,7 +953,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         threadRootId: threadRootId ?? this.conversationOrchestrator.getThreadRoot(chatId),
       },
       chatId,
-      capabilities
+      capabilities,
     );
 
     const userMessage: StreamingUserMessage = {
@@ -1153,7 +1151,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // provider uses a separate workspace as its execution cwd.
       projectRoot: resolution?.boundWorkingDir,
       // Issue #4634 (S7): chatId as session identity for concurrency
-      // governance on backends that bound active sessions (codex).
+      // governance on backends that bound active sessions.
       sessionKey: this.sdkSessionKey,
     });
 
@@ -1183,9 +1181,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     this.channel = new MessageChannel();
 
     // Create streaming query using channel's generator
-    const queryOptions = (this.agentBackend ?? 'claude') === 'claude'
-      ? { ...sdkOptions, disallowedTools: buildClaudeDisallowedTools() }
-      : sdkOptions;
+    const queryOptions = this.configureQueryOptions?.(sdkOptions) ?? sdkOptions;
     const { handle, iterator } = this.createQueryStream(this.channel.generator(), queryOptions);
 
     this.queryHandle = handle;
@@ -1218,7 +1214,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     this.rejectTurn(new Error('Session replaced — queued message never processed'));
 
     // Issue #3378: Log process exit listener count for leak monitoring.
-    // Each Claude Agent SDK query() registers process.on("exit", handler) via ProcessTransport.
+    // SDK queries can register process.on("exit") handlers.
     // Normal range is 1-3; values > 8 indicate a leak.
     // #4813: only the provider's guarded per-query owner cleans SDK listeners.
     // A process-wide count cannot distinguish active queries or host listeners.
@@ -1620,7 +1616,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // 属于内部进度,不能当用户消息发。SDK 每个请求都发一次 requesting,
           // 群聊没有流式卡片(见下方 streamDriver 仅在 p2p 构建),每步都会单蹦
           // 一条 —— 一个多步任务足以把群刷屏。诊断仍可经 debug 群 / 日志获取,
-          // 语义型 status(如 Codex 的 "Please sign in again.")不设该标记,照常
+          // 语义型 status(如 "Please sign in again.")不设该标记,照常
           // 投递。
           const isIntermediateMessage =
             parsed.type === 'tool_use' ||
@@ -1735,14 +1731,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
               'Streaming terminal delivery failed after fallback'
             );
           }
-          // Codex can emit an empty synthetic result after a failed process.
+          // A provider can emit an empty synthetic result after a failed process.
           // Handle this before the normal success/empty-turn accounting so it
           // always has a user-visible terminal outcome.
           if (parsed.terminatedReason === 'turn_failed') {
             this.restartManager.recordFailure(chatId, 'turn_failed');
             await this.deliverUserVisible(
               chatId,
-              `❌ 本轮 ${this.sdkProvider.name === 'codex' ? 'Codex' : this.sdkProvider.name} 执行失败，未生成可交付结果。请稍后重试；若持续失败，请检查模型服务、凭据和超时配置。`,
+              `❌ 本轮 ${this.sdkProvider.name} 执行失败，未生成可交付结果。请稍后重试；若持续失败，请检查模型服务、凭据和超时配置。`,
               resolveReplyThreadRoot()
             );
           }
@@ -1819,10 +1815,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             // re-registering the same sessionKey while still at cap would
             // evict the next victim and cascade evictions into the circuit
             // breaker. The evicted chat lazily re-registers on its next
-            // message and resumes its stashed codex thread.
+            // message and resumes its saved provider session.
             this.logger.info(
               { chatId, messageCount },
-              'Codex session evicted (concurrency cap) — ending stream without auto-restart (Issue #4634)'
+              'SDK session evicted (concurrency cap) — ending stream without auto-restart (Issue #4634)'
             );
             evictedTerminated = true;
             this.isSessionActive = false;
@@ -2481,7 +2477,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // LRU eviction is a terminal governance outcome, not an unexpected
       // provider failure. Release only this generation's now-finished query;
       // a new user message may already have started a replacement session from
-      // the stashed Codex thread while onDone/stream finalization was pending.
+      // the saved provider session while onDone/stream finalization was pending.
       if (this.sessionGeneration === myGeneration) {
         this.queryHandle?.close();
         this.queryHandle = undefined;
@@ -2493,7 +2489,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       }
       this.logger.info(
         { chatId, messageCount, myGeneration, currentGeneration: this.sessionGeneration },
-        'Codex session eviction ended cleanly; suppressing reconnect and automatic restart (Issue #5015)'
+        'SDK session eviction ended cleanly; suppressing reconnect and automatic restart (Issue #5015)'
       );
       return;
     }
@@ -2756,13 +2752,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
 
     // Issue #4644: forget provider-side session state as well. Stream
-    // teardown alone cannot cover it: the codex backend stashes an EVICTED
+    // teardown alone cannot cover it: a backend can stash an EVICTED
     // chat's thread anchor (so its next message resumes the conversation),
     // and eviction teardown deliberately keeps that stash — so a /reset while
     // the chat has no live stream (the eviction drain window, or after the
     // pool already disposed the agent) would otherwise resurrect the
-    // conversation the user reset away. Optional capability — claude/pi
-    // providers don't implement it and stay untouched.
+    // conversation the user reset away. Providers without this optional
+    // capability stay untouched.
     this.sdkProvider.forgetSession?.(this.sdkSessionKey);
 
     // Clear conversation context

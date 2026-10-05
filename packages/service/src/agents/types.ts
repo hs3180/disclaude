@@ -9,7 +9,7 @@
  * callbacks that satisfy this interface.
  */
 
-import type { FeishuCard, ChannelCapabilities, BaseAgentConfig, MessageBuilderOptions, CwdProvider, CwdResolution } from '@disclaude/core';
+import type { FeishuCard, ChannelCapabilities, BaseAgentConfig, ChatAgentHooks, MessageBuilderOptions, CwdProvider, CwdResolution } from '@disclaude/core';
 
 // ============================================================================
 // ChatAgentCallbacks
@@ -132,7 +132,7 @@ export interface ChatAgentCallbacks {
  * Issue #644: Added chatId binding for session isolation.
  * Issue #857: Added complexityThreshold for task progress tracking.
  */
-export interface ChatAgentConfig extends BaseAgentConfig {
+export interface ChatAgentConfig extends BaseAgentConfig, ChatAgentHooks {
   /**
    * The chatId this ChatAgent is bound to.
    * Each ChatAgent instance serves exactly one chatId.
@@ -158,8 +158,8 @@ export interface ChatAgentConfig extends BaseAgentConfig {
    *
    * When provided, the ChatAgent will use these options for building
    * enhanced message content (e.g., platform headers, tool sections,
-   * attachment extras). When omitted, a default empty MessageBuilder
-   * is used with no channel-specific extensions.
+   * attachment extras). When omitted, no channel-specific extensions are
+   * used. The creation layer may compose guidance through these callbacks.
    *
    * Issue #1499: Decouple Feishu-specific logic from worker-node.
    * Callers (e.g., service) should provide channel-specific

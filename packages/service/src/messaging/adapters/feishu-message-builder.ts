@@ -70,6 +70,9 @@ function buildFeishuToolsSection(ctx: MessageBuilderContext): string {
       if (toolName === 'send_file') {
         return capabilities?.supportsFile !== false;
       }
+      if (toolName === 'send_card') {
+        return capabilities?.supportsCard !== false;
+      }
       // For backward compatibility with old configs, assume messaging tools are available
       return true;
     }
@@ -115,6 +118,7 @@ ${messagingTools.join('\n')}
 - Note: Thread replies are NOT supported on this channel.`);
   }
 
+
   return parts.join('\n');
 }
 
@@ -123,7 +127,11 @@ function buildFeishuStableToolsSection(ctx: MessageBuilderStableContext): string
   const channelCli = 'disclaude channel';
   const supported = ctx.capabilities?.supportedMcpTools;
   const sendCommands = ['send_text', 'send_file', 'send_card', 'send_interactive']
-    .filter(command => supported === undefined || supported.includes(command));
+    .filter(command =>
+      supported === undefined
+        ? command !== 'send_card' || ctx.capabilities?.supportsCard !== false
+        : supported.includes(command),
+    );
   return `For the current channel feature list and command options, run \`${channelCli} help\`.\n${buildChannelCliHelpGuidance(channelCli, { sendCommands })}`;
 }
 
