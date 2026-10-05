@@ -167,6 +167,7 @@ async function verifyPackage() {
     await load('core', 'jupyter/rtc-document.js');
     const { createJupyterCookieJar } = await load('core');
     await createJupyterCookieJar();
+    await load('core', 'sdk/providers/deepseek/native-app.js');
     const { DisclaudeService } = await load('service', 'service.js');
     const { Config } = await load('core');
     if (${isPrebuilt} && realpathSync(Config.getBuiltinsDir()) !== realpathSync(installed)) throw new Error('Builtins do not resolve to installed release');

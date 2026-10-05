@@ -123,10 +123,12 @@ export function generateRelease(root, output) {
     'packages/core/dist/utils/browser-env.js'
   );
   const dependencies = {};
-  for (const manifest of [
+  const optionalDependencies = {};
+  const manifests = [
     pkg,
     ...names.map((name) => json(join(root, 'packages', name, 'package.json'))),
-  ]) {
+  ];
+  for (const manifest of manifests) {
     for (const [name, version] of Object.entries(manifest.dependencies || {})) {
       if (targets[name]) continue;
       assert(!name.startsWith('@disclaude/'), `Unresolved workspace dependency: ${name}`);
@@ -135,6 +137,20 @@ export function generateRelease(root, output) {
         `Conflicting dependency: ${name}`
       );
       dependencies[name] = version;
+    }
+  }
+  // Native DSH plugins have runtime imports even though the backend is optional.
+  // Flatten these declarations too, without making them required for other backends.
+  for (const manifest of manifests) {
+    for (const [name, version] of Object.entries(manifest.optionalDependencies || {})) {
+      if (targets[name]) continue;
+      assert(!name.startsWith('@disclaude/'), `Unresolved optional workspace dependency: ${name}`);
+      assert(
+        (!dependencies[name] || dependencies[name] === version) &&
+          (!optionalDependencies[name] || optionalDependencies[name] === version),
+        `Conflicting optional dependency: ${name}`
+      );
+      if (!dependencies[name]) optionalDependencies[name] = version;
     }
   }
   for (const name of names) {
@@ -221,6 +237,7 @@ export function generateRelease(root, output) {
   Object.assign(manifest, {
     engines: { node: '>=20.0.0', npm: '>=10.0.0' },
     dependencies,
+    optionalDependencies,
     files: [
       'bin/',
       'packages/',
