@@ -25,6 +25,7 @@ const { mockLoggerWarn } = vi.hoisted(() => ({ mockLoggerWarn: vi.fn() }));
 // Mock @disclaude/core — Config is the main dependency; createLogger backs the
 // factory's module-level `logger` (Issue #4448 direction #4 guard).
 vi.mock('@disclaude/core', () => ({
+  getProvider: vi.fn((backend?: string) => ({ name: backend ?? 'claude' })),
   Config: {
     AGENT_BACKEND: 'claude',
     ANTHROPIC_API_KEY: 'anthropic-service-key',
