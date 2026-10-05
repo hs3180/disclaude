@@ -15,8 +15,10 @@ This uses the real Service Notebook tools and remote RTC/nbmodel APIs. It create
 a uniquely named scratch Notebook/Project, checks unsaved edits, persistent
 kernel calculations, original run-ID lookup/recovery, PNG and remote nbconvert
 exports, then disconnects every document client for a 67-second execution.
-It tests request cancellation and, separately, explicitly interrupts only its
-owned scratch kernel. Original server kernels/sessions must survive cleanup.
+It confirms cancellation on the original request, then submits a separate run
+before explicitly interrupting its owned scratch kernel. The separate runs
+avoid a second interrupt corrupting the first run's error handling.
+Original server kernels/sessions must survive cleanup.
 No local Python/Jupyter or remote installation/configuration change occurs.
 
 The new output directory is private. Synthetic Notebook/report files and local
@@ -28,6 +30,31 @@ it does not establish persistence beyond document cleanup. `--wait-ui` waits up
 to four minutes for a host-created `ui-done.json` evidence record so a logged-in
 human can edit the scratch Notebook. That record must contain `completed: true`
 only after the UI edit is verified; never send passwords through a model/UI tool.
+
+For cancellation target checks, source edits during execution, unread pending
+request recovery after host connection recreation, metadata/attachment retention,
+kernel incarnation, MIME display updates/clear and rename/copy identity:
+
+```sh
+node tests/jupyter/datalayer-edge-probe.mjs \
+  --env-file /private/host.env \
+  --output /private/new-datalayer-edge-results
+```
+
+Each case owns a different scratch Notebook/kernel. It tests cancelling a queued
+or finished unread request while another request runs; it never interrupts other
+kernels. The incarnation case restarts only its owned kernel, not the Jupyter
+service. Rename/copy operations also apply only to owned scratch files.
+The output case observes raw IOPub alongside nbmodel/RTC, including the interval
+after `clear_output(wait=True)` before replacement arrives. Failures remain in
+the report; probe completion is distinct from requirement success.
+Use `--cases output-features,document-identity` to select cases; available names
+also include `queued-cancel`, `finished-cancel`, `edit-running`,
+`pending-host-recovery` and `kernel-incarnation`. The recovery case launches an
+independent Node process while the original request is pending, polls that
+request without submitting execution, then recreates the original host session
+from its persisted terminal cache. This does not establish recovery after a
+machine/Jupyter restart or a lost submission reply.
 
 For two real native DSH turns with session recreation and an independent RTC
 participant editing the parameter/Markdown between them:
@@ -48,7 +75,7 @@ history. The explicit model is the #5215/#5219 acceptance override; daily defaul
 remain `gpt-6-luna`, and Astra is refused. Scratch kernels/sessions and the owned
 provider process are cleaned up; private review evidence remains.
 
-Neither probe switches production Feishu or passes native JupyterLab/device
+None of these probes switches production Feishu or passes native JupyterLab/device
 acceptance. Current instance failures and all unverified behaviors are recorded
 in [the MVP matrix](../../docs/designs/datalayer-mvp.md). The coordinator-only
 `connection-probe.mjs` does not assess this backend.

@@ -26,7 +26,44 @@
 
 工具为 `notebook_list`、`notebook_describe`、`notebook_read_cell`、`notebook_insert_cell`、`notebook_edit_cell`、`notebook_execute`、`notebook_status`、`notebook_stop`、`notebook_export`。编辑使用稳定 cell ID 和客户端源码哈希检查；执行前落盘原目标和 runId，未知提交不自动重放。服务端 GET 消费的终态在宿主缓存，导出用同一次捕获的共享文档生成 `.ipynb` 和远端 nbconvert HTML。
 
-## 当前实例与实际协议
+## 更新后实例复验（2026-10-05 UTC，上海时间跨至 10-06）
+
+依赖更新并重启后，重新测试了用户配置中的同一远端 Jupyter。MCP 为 **2.2.3**，nbmodel 为 **0.2.9**，Lab / Server 为 **4.6.4 / 2.21.1**，collaboration / server_ydoc / pycrdt 为 **5.0.4 / 3.0.4 / 0.14.8**。本轮只创建自有随机 Notebook、Project 和 kernel；没有再次重启服务或修改其配置。此前的升级前结果保留在下文。
+
+**结论：常规 MVP 流程通过，全部 Notebook 产品要求尚未满足。** 以下失败来自当前实例的实际请求与共享文档，不是对上游能力的推测。缺少 MCP Tasks 路由单独作为协议调查，不作为产品失败的理由。
+
+| 当前行为                      | 复验结果与证据                                                                                                                                                                                                                                        |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Live 编辑、持续计算和模型续行 | 通过。独立 RTC peer 的未保存参数、Markdown 可读取。真实 DSH 两轮均为 `openai-codex` / `gpt-5.6-luna` / low，在同一 Project、Notebook、kernel 和原生模型 session 得到 69，再由人工参数 31 得到 93；人工文字保留，HTML/ipynb 导出成功。                 |
+| 宿主连接重建、原请求去重      | 所测场景通过。运行尚未结束时，销毁 Notebook session 和连接对象后，由独立 Node 进程查询同一 request ID 并得到 43，随后宿主重建恢复缓存；整个过程只有一次执行 POST，kernel incarnation 未变。已缓存终态也可恢复。此实验不是宿主机器重启或远端重启验收。 |
+| 过期写入与其他内容            | 观察到 stale sourceHash 后拒绝编辑，人工新文字保留；源码定点编辑保留未知 metadata 和 Markdown attachment。通过这些场景不代表服务端原子 CAS 或并发控制权交接已经实现。                                                                                 |
+| 文件身份与 kernel 进程身份    | 原生 API 改名后 document ID 相同，复制后不同；重启自有 kernel 后 kernel ID 相同、incarnation 改变。后端已提供身份信息，Project 自动跟随改名及 MVP 执行日志的 incarnation 对账仍待接入/验收。                                                          |
+| 普通输出与导出                | stdout、stderr、结构化 ValueError、静态 PNG 及同快照 HTML/ipynb 通过；PNG 已目视核验。                                                                                                                                                                |
+| 全客户端断开后的保存          | **失败。** 67 秒的后台执行完成，原请求有 stdout；落盘 Notebook 对应 cell 的 outputs 为空。                                                                                                                                                            |
+| 远端原结果重复读取            | **失败。** 第一次 GET 消费终态，第二次 GET 为 404；另一个消费者先读取、宿主尚未缓存时，恢复为 unknown。宿主缓存仅解决已经读到的结果。                                                                                                                 |
+| 精确取消                      | 取消当前 running 请求通过，原请求返回 KeyboardInterrupt。**取消目标校验失败：**取消排队 B 会中断正在运行的 A，B 随前一请求失败而被队列取消；取消已经完成但未读取的 A 会中断新运行的 B。DELETE 接受不等于目标正确。                                    |
+| 执行中修改源码                | **失败。** 原请求可查询旧结果，但共享 cell 已是新源码，仍附旧执行的 stdout，metadata 只有 trusted 标记，没有旧源码版本/历史结果标识。                                                                                                                 |
+| `display_id` 更新             | **失败。** 同一父消息、同一 display ID 的 `update_display_data` 已由 kernel 发出；nbmodel 原请求及共享 cell 仍保留更新前 MIME 内容。                                                                                                                  |
+| `clear_output(wait=True)`     | 最终替换输出正确；**等待语义失败。** kernel 发出 wait=true 后、下一输出尚未到达时，原请求仍 202，但旧输出已被清空。不能用最终快照正确代替等待期间的行为。                                                                                             |
+
+新版请求 DELETE 已解决旧版 405；核心探针将请求取消和整 kernel interrupt 分成两个执行，均单独核验原请求终态，避免连续中断同一请求的错误处理。取消其他请求的两种失败属于原生 nbmodel 目标校验问题，不能因正常 running 取消成功而略过。
+
+源码核对也与输出实测一致：发布的 nbmodel 0.2.9 `_output_hook` 中 `update_display_data` 尚为占位，`clear_output` 立即清空且尚未处理 wait 参数。这两处需要针对性修复；普通 MIME 展示本身可复用。RTC 文档保留配置、结果存储、取消目标与输出版本关联也应优先在现有 Datalayer/Jupyter 集成中补齐，无需由这些失败推导出另建完整执行插件。
+
+仍未验收：完整飞书持久 Project UX、原生 Lab 人工 Run/Interrupt、控制权交接与旧 owner 失效、服务端原子版本检查、持久迟到请求 fence、服务/机器重启恢复、完整大输出产物、stdin、设备访问及 HTML sanitizer/CSP、干净 kernel 的研究复现。这些与已经观察到的失败分开记录。
+
+本轮证据在任务 worktree 的私有 `.local/`：
+
+- `datalayer-reacceptance-core-01/report.json`：18 项，14 通过；4 项失败/不支持，其中 Tasks 仅为能力调查。
+- `datalayer-reacceptance-edge-02/report.json`：11 项，8 通过；取消目标的两种误中断与源码改动后输出归属失败。
+- `datalayer-reacceptance-capabilities-01/report.json`：改名/复制身份两项通过；输出更新的早期复验保留。
+- `datalayer-reacceptance-output-03/report.json`：5 项，3 通过；保存 kernel IOPub 证据，动态更新和 clear wait 语义失败。
+- `datalayer-reacceptance-fresh-node-01/report.json`：5 项均通过；独立 Node 进程在原请求 running 时恢复查询、零执行 POST，随后原宿主恢复缓存并保留 metadata/attachment。
+- `datalayer-reacceptance-model-01/report.json`、`report.html`、`tool-errors.json`：真实两轮模型续行与导出通过。18 次工具尝试中 1 次因模型使用了错误 Notebook ID 被 Project 边界拒绝，之后使用正确 ID 完成；不将每次尝试都记录为成功。
+
+核心与边界各轮均为 0 → 0 kernel/session，真实模型的自有 kernel/session 已清理；原资源保留，Jupyter 与日常飞书服务保持健康。密码和 OAuth token 未进入工具、Project 或模型原生历史。边界第一轮把上游 `output_type` 与宿主预览 `outputType` 混用，导致恢复断言误报，原始证据保留；修正后的第二轮恢复及去重通过。
+
+## 升级前实例与实际协议（历史）
 
 | 组件                                 | 实际版本                  |
 | ------------------------------------ | ------------------------- |
@@ -42,7 +79,7 @@ MCP 的共享写入和执行可用，但 `read_cell` 在实测中读到了落盘
 
 nbmodel 的提交返回 HTTP 202、空 JSON 和原请求 `Location`。0.1.1a4 的结果 `outputs` 为 JSON 字符串，Python 错误也返回 HTTP 200；客户端按实际结构解析终态。没有收到可验证原 handle 的提交保留为 unknown，不自动重发。
 
-## 要求覆盖与未通过项
+## 升级前要求覆盖与未通过项（历史）
 
 | 产品行为                             | 结果               | 实际证据及限制                                                                                                                                                                                      |
 | ------------------------------------ | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -62,7 +99,7 @@ nbmodel 的提交返回 HTTP 202、空 JSON 和原请求 `Location`。0.1.1a4 �
 
 输出预览已有大小上限，但完整大输出产物引用和明确截断提示尚不完整，不能以小样本 PNG 通过替代大输出要求。客户端源码哈希检查也不能替代服务端原子版本检查。MVP 的本地执行日志按单宿主 writer 使用，不提供分布式锁。
 
-## 可复验材料
+## 升级前可复验材料（历史）
 
 探针与命令见 [测试指南](../../tests/jupyter/README.md#configured-datalayer-mvp-probes)。它们只创建带随机名字的自有 Notebook/Project/session，清理自身 kernel/session，保留合成 Notebook、报告和宿主私有证据；不更新远端包、不修改配置、不重启用户服务。
 

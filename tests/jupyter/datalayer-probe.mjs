@@ -411,9 +411,43 @@ try {
   await wait(200);
   const stop = await call('notebook_stop', { notebookId, runId: 'mvp-stop' });
   check('Native nbmodel request-scoped cancellation', stop.state === 'requested', stop);
+  if (stop.state === 'requested') {
+    const stopped = await poll(notebookId, 'mvp-stop');
+    check(
+      'Native request cancellation is confirmed on the original run',
+      stopped.state === 'cancelled',
+      stopped
+    );
+  }
+  // A second interrupt needs its own run: interrupting the first run twice can
+  // interrupt IPython's error handling and obscure its KeyboardInterrupt reply.
+  const readyDeadline = Date.now() + 10000;
+  while (Date.now() < readyDeadline) {
+    const state = await client.json(`api/kernels/${report.ownedKernelId}`);
+    if (state.execution_state === 'idle') break;
+    await wait(100);
+  }
+  await call('notebook_insert_cell', {
+    notebookId,
+    cellId: 'mvp-kernel-interrupt',
+    beforeCellId: '',
+    cellType: 'code',
+    source: 'import time\ntime.sleep(10)\nprint("UNEXPECTED_INTERRUPT_COMPLETION")',
+  });
+  const interruptCell = await call('notebook_read_cell', {
+    notebookId,
+    cellId: 'mvp-kernel-interrupt',
+  });
+  await call('notebook_execute', {
+    notebookId,
+    cellId: interruptCell.cellId,
+    expectedSourceHash: interruptCell.sourceHash,
+    runId: 'mvp-kernel-interrupt',
+  });
+  await wait(200);
   // Explicit kernel-wide interrupt is permitted only on the verified scratch kernel.
   await client.json(`api/kernels/${report.ownedKernelId}/interrupt`, 'POST', {});
-  const interrupted = await poll(notebookId, 'mvp-stop');
+  const interrupted = await poll(notebookId, 'mvp-kernel-interrupt');
   check(
     'Explicit interrupt of owned scratch kernel is confirmed',
     interrupted.state === 'cancelled',
