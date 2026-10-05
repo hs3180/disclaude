@@ -168,7 +168,7 @@ RUN pip3 install --no-cache-dir --break-system-packages ${PIP_INDEX_URL:+--index
 RUN pip3 install --no-cache-dir --break-system-packages ${PIP_INDEX_URL:+--index-url $PIP_INDEX_URL} 'browser-use==0.13.8'
 
 # Install Feishu tooling and the supported CLI backends globally
-# Issue #3888: @larksuite/cli needed by dissolve-group, lark-docs, pr-scanner skills
+# Issue #3888: @larksuite/cli needed by dissolve-group and lark-docs skills
 RUN npm config set registry ${NPM_REGISTRY} && \
     npm install -g "@larksuite/cli@>=1.0.0" "@openai/codex@${CODEX_VERSION}" "@deepseek-ai/dsh@${DSH_VERSION}"
 
