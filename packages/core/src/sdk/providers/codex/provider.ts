@@ -58,7 +58,8 @@ import {
   type CodexModelSource,
 } from '../../../config/codex-settings.js';
 import type { CodexReasoningEffort } from '../../../config/types.js';
-import type { IAgentSDKProvider } from '../../interface.js';
+import type { ChatAgentHooks, IAgentSDKProvider } from '../../interface.js';
+import { withCodexSourceCitations } from './source-citations.js';
 import type {
   AgentMessage,
   AgentQueryOptions,
@@ -265,6 +266,13 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       maxActiveSessions: options.maxActiveSessions,
       maxConcurrentRuns: options.maxConcurrentRuns,
     });
+  }
+
+  configureChat(hooks: ChatAgentHooks): ChatAgentHooks {
+    return {
+      ...hooks,
+      messageBuilderOptions: withCodexSourceCitations(hooks.messageBuilderOptions),
+    };
   }
 
   private skillsManifestFor(projectRoot: string | undefined, executionRoot = projectRoot): string {
