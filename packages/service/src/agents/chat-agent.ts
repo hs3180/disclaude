@@ -159,7 +159,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   private readonly boundChatId: string;
   private readonly sdkSessionKey: string;
   private readonly notebookSessionFactory?: import('../jupyter/agent-session.js').NotebookAgentSessionFactory;
-  private notebookSession?: import('../jupyter/agent-session.js').NotebookAgentSession;
+  private notebookSession?: import('../jupyter/agent-session.js').NotebookSession;
 
   /**
    * Callbacks for sending responses to the channel.

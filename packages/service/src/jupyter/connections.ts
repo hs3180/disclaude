@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import {
   JupyterCoordinatorClient,
+  DatalayerJupyterClient,
   createJupyterCookieJar,
   type JupyterCoordinatorOptions,
   type JupyterConnectionInspection,
@@ -10,6 +11,7 @@ import {
 
 export interface JupyterConnectionDefinition {
   id: string;
+  backend?: 'coordinator' | 'datalayer';
   baseUrl: string;
   authorizationEnv?: string;
   authorizationFile?: string;
@@ -19,8 +21,8 @@ export interface JupyterConnectionDefinition {
 }
 
 type Jar = NonNullable<JupyterCoordinatorOptions['cookieJar']>;
-interface Connection {
-  client: JupyterCoordinatorClient;
+interface Connection<T = JupyterCoordinatorClient> {
+  client: T;
   jar: Jar;
   cookiePath: string;
 }
@@ -28,6 +30,10 @@ interface Connection {
 /** Host configuration and cookie state live outside Project references and tool DTOs. */
 export class JupyterConnections {
   private readonly clients = new Map<string, Promise<Connection>>();
+  private readonly datalayerClients = new Map<
+    string,
+    Promise<Connection<DatalayerJupyterClient>>
+  >();
 
   constructor(
     readonly configPath: string,
@@ -62,6 +68,7 @@ export class JupyterConnections {
         !/^[A-Za-z0-9_-]{1,200}$/.test(d.id) ||
         ids.has(d.id) ||
         typeof d.baseUrl !== 'string' ||
+        (d.backend !== undefined && d.backend !== 'coordinator' && d.backend !== 'datalayer') ||
         references.filter((key) => typeof d[key] === 'string').length !== 1 ||
         references.some((key) => d[key] !== undefined && (typeof d[key] !== 'string' || !d[key])) ||
         ['authorizationEnv', 'passwordEnv'].some(
@@ -75,6 +82,7 @@ export class JupyterConnections {
       return {
         id: d.id,
         baseUrl: d.baseUrl,
+        ...(d.backend === 'datalayer' ? { backend: 'datalayer' as const } : {}),
         ...(typeof d.authorizationEnv === 'string' ? { authorizationEnv: d.authorizationEnv } : {}),
         ...(typeof d.authorizationFile === 'string'
           ? { authorizationFile: d.authorizationFile }
@@ -116,6 +124,29 @@ export class JupyterConnections {
     definition: JupyterConnectionDefinition,
     namespace: string
   ): Promise<Connection> {
+    if (definition.backend === 'datalayer') {
+      throw new Error('Notebook requires the Datalayer client');
+    }
+    return await this.prepare(
+      definition,
+      namespace,
+      (options) => new JupyterCoordinatorClient(options)
+    );
+  }
+
+  backend(connectionId: string): 'coordinator' | 'datalayer' {
+    const definition = this.definitions().find((d) => d.id === connectionId);
+    if (!definition) {
+      throw new Error('Notebook connection is not authorized by the host');
+    }
+    return definition.backend ?? 'coordinator';
+  }
+
+  private async prepare<T>(
+    definition: JupyterConnectionDefinition,
+    namespace: string,
+    create: (options: JupyterCoordinatorOptions) => T
+  ): Promise<Connection<T>> {
     const key = createHash('sha256')
       .update(JSON.stringify([definition, namespace]))
       .digest('hex');
@@ -138,7 +169,7 @@ export class JupyterConnections {
       }
     }
     const jar = await createJupyterCookieJar(saved);
-    const client = new JupyterCoordinatorClient({
+    const client = create({
       baseUrl: definition.baseUrl,
       connectionId: definition.id,
       ...(namespace ? { serverNamespace: namespace } : {}),
@@ -167,7 +198,9 @@ export class JupyterConnections {
   /** Read-only host capability check. No Project, controller or kernel changes. */
   async inspect(connectionId: string, namespace = ''): Promise<JupyterConnectionInspection> {
     const definition = this.definitions().find((item) => item.id === connectionId);
-    if (!definition) {throw new Error('Notebook connection is not authorized by the host');}
+    if (!definition) {
+      throw new Error('Notebook connection is not authorized by the host');
+    }
     const connection = await this.prepareConnection(definition, namespace);
     try {
       return await connection.client.inspectConnection();
@@ -176,7 +209,7 @@ export class JupyterConnections {
     }
   }
 
-  private async persist(connection: Connection): Promise<void> {
+  private async persist(connection: Connection<unknown>): Promise<void> {
     const data = `${JSON.stringify(await connection.jar.serialize())}\n`;
     if (Buffer.byteLength(data) > 262144) {
       throw new Error('Jupyter host cookie state limit exceeded');
@@ -210,6 +243,50 @@ export class JupyterConnections {
           /* Successful rename removed it. */
         }
       }
+    }
+  }
+
+  async useDatalayer<T>(
+    connectionId: string,
+    namespace: string,
+    operation: (client: DatalayerJupyterClient) => Promise<T>
+  ): Promise<T> {
+    const definition = this.definitions().find((d) => d.id === connectionId);
+    if (!definition || definition.backend !== 'datalayer') {
+      throw new Error('Datalayer Notebook connection is not authorized by the host');
+    }
+    const key = JSON.stringify([definition, namespace]);
+    let pending = this.datalayerClients.get(key);
+    if (!pending) {
+      if (this.datalayerClients.size >= 32) {
+        throw new Error('Jupyter host session limit exceeded');
+      }
+      pending = (async () => {
+        const connection = await this.prepare(
+          definition,
+          namespace,
+          (options) => new DatalayerJupyterClient(options)
+        );
+        try {
+          await connection.client.initialize();
+          return connection;
+        } finally {
+          await this.persist(connection);
+        }
+      })();
+      this.datalayerClients.set(key, pending);
+    }
+    let connection: Connection<DatalayerJupyterClient>;
+    try {
+      connection = await pending;
+    } catch (error) {
+      this.datalayerClients.delete(key);
+      throw error;
+    }
+    try {
+      return await operation(connection.client);
+    } finally {
+      await this.persist(connection);
     }
   }
 
@@ -254,7 +331,9 @@ export class JupyterConnections {
         // An explicit undefined overrides inherited/provider environment too.
         environment[definition.authorizationEnv] = undefined;
       }
-      if (definition.passwordEnv) {environment[definition.passwordEnv] = undefined;}
+      if (definition.passwordEnv) {
+        environment[definition.passwordEnv] = undefined;
+      }
     }
   }
 }

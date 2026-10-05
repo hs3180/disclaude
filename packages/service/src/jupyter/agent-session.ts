@@ -16,6 +16,7 @@ import {
   type JupyterNotebookReference,
 } from './project-config-store.js';
 import { NotebookRunStore, handleTarget } from './run-store.js';
+import { DatalayerNotebookAgentSession } from './datalayer-agent-session.js';
 
 export interface NotebookAgentContext {
   workingDir: string;
@@ -26,7 +27,18 @@ export interface NotebookAgentContext {
 
 export type NotebookAgentSessionFactory = (
   context: NotebookAgentContext
-) => NotebookAgentSession | undefined;
+) => NotebookSession | undefined;
+
+/** Agent-facing lifecycle only; backend protocols belong to their session implementations. */
+export interface NotebookSession {
+  readonly tools: ToolDefinition[];
+  readonly inactive: boolean;
+  pause(): void;
+  dispose(): void;
+  redactEnvironment(environment: Record<string, string | undefined>): void;
+  messageContext(): Promise<string>;
+  stop(): Promise<NotebookStopObservation[]>;
+}
 
 export interface NotebookStopObservation {
   runId: string;
@@ -766,12 +778,21 @@ export function notebookSessionFactory(
     if (!config.ok) {
       throw new Error('Project Notebook references cannot be verified');
     }
-    return config.data.length ? new NotebookAgentSession(context, connections) : undefined;
+    if (!config.data.length) {
+      return undefined;
+    }
+    const backends = new Set(config.data.map((ref) => connections.backend(ref.connectionId)));
+    if (backends.size !== 1) {
+      throw new Error('A Notebook session requires one backend profile');
+    }
+    return backends.has('datalayer')
+      ? new DatalayerNotebookAgentSession(context, connections)
+      : new NotebookAgentSession(context, connections);
   };
 }
 
 export async function summarizeNotebookStop(
-  session?: NotebookAgentSession
+  session?: NotebookSession
 ): Promise<NotebookStopSummary> {
   const result: NotebookStopSummary = {
     cancelled: 0,

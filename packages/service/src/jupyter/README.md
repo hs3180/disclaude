@@ -1,5 +1,11 @@
 # Project-local Jupyter configuration
 
+For the existing Datalayer RTC/nbmodel backend, select `backend: "datalayer"`
+in the host connection catalog. The same Project reference format is used.
+See [MVP setup, actual tests and unsupported requirements](../../../../docs/designs/datalayer-mvp.md).
+The Datalayer session's conversation journal is separate from reference metadata;
+this store does not acquire a server owner generation or promise atomic cell edits.
+
 Jupyter reference metadata belongs to the Jupyter integration. It is stored at
 `<workingDir>/.jupyter/config.json`, independently of the generic ProjectManager
 and its chat-to-directory bindings.

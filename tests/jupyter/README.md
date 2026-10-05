@@ -1,5 +1,58 @@
 # Notebook acceptance probes
 
+## Configured Datalayer MVP probes
+
+Build the checkout (`npm run build`) and run against the existing server named
+by the host-private `JUPYTERLAB_HOST` / `JUPYTERLAB_PASS` environment file:
+
+```sh
+node tests/jupyter/datalayer-probe.mjs \
+  --env-file /private/host.env \
+  --output /private/new-datalayer-component-results
+```
+
+This uses the real Service Notebook tools and remote RTC/nbmodel APIs. It creates
+a uniquely named scratch Notebook/Project, checks unsaved edits, persistent
+kernel calculations, original run-ID lookup/recovery, PNG and remote nbconvert
+exports, then disconnects every document client for a 67-second execution.
+It tests request cancellation and, separately, explicitly interrupts only its
+owned scratch kernel. Original server kernels/sessions must survive cleanup.
+No local Python/Jupyter or remote installation/configuration change occurs.
+
+The new output directory is private. Synthetic Notebook/report files and local
+Project evidence are retained for review; owned kernels/sessions are deleted.
+The report retains failed capability checks. `completed: true` means all probe
+phases finished, **not** that every requirement passed. Authentication/operation
+failure exits nonzero. `--long-seconds` may explicitly change the delay; shortening
+it does not establish persistence beyond document cleanup. `--wait-ui` waits up
+to four minutes for a host-created `ui-done.json` evidence record so a logged-in
+human can edit the scratch Notebook. That record must contain `completed: true`
+only after the UI edit is verified; never send passwords through a model/UI tool.
+
+For two real native DSH turns with session recreation and an independent RTC
+participant editing the parameter/Markdown between them:
+
+```sh
+node tests/jupyter/datalayer-dsh-probe.mjs \
+  --env-file /private/host.env \
+  --oauth-auth-file /private/existing-auth.json \
+  --model gpt-5.6-luna \
+  --output /private/new-datalayer-model-results
+```
+
+The host's existing OAuth credential is read without refresh and needs at least
+15 minutes remaining. `--binary /path/to/dsh` selects an explicit DSH executable.
+The probe checks native model/session routing, 69 then 93 on one kernel, human
+text/parameter preservation, HTML/ipynb export and credential absence from native
+history. The explicit model is the #5215/#5219 acceptance override; daily defaults
+remain `gpt-6-luna`, and Astra is refused. Scratch kernels/sessions and the owned
+provider process are cleaned up; private review evidence remains.
+
+Neither probe switches production Feishu or passes native JupyterLab/device
+acceptance. Current instance failures and all unverified behaviors are recorded
+in [the MVP matrix](../../docs/designs/datalayer-mvp.md). The coordinator-only
+`connection-probe.mjs` does not assess this backend.
+
 ## Configured-server DSH probe
 
 Real acceptance for this work uses the server configured by `JUPYTERLAB_HOST` /

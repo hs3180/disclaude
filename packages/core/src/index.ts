@@ -46,6 +46,15 @@ export type {
   JupyterExecutionReconciliationResult,
 } from './jupyter/contracts.js';
 export { JupyterCoordinatorClient, createJupyterCookieJar } from './jupyter/coordinator-client.js';
+export { JupyterHttpConnection } from './jupyter/http-connection.js';
+export type { JupyterHttpOptions } from './jupyter/http-connection.js';
+export { DatalayerJupyterClient } from './jupyter/datalayer-client.js';
+export type {
+  DatalayerTool,
+  DatalayerToolResult,
+  DatalayerExecutionHandle,
+  DatalayerExecutionObservation,
+} from './jupyter/datalayer-client.js';
 export type {
   JupyterCoordinatorOptions,
   JupyterCoordinatorStatus,

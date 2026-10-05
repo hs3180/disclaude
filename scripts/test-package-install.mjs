@@ -162,6 +162,11 @@ async function verifyPackage() {
     for (const name of ['core', 'service', 'channel-cli']) {
       await load(name);
     }
+    // The Datalayer RTC module is lazy-loaded during normal Service startup.
+    // Import it here so an archive cannot pass while missing its runtime libraries.
+    await load('core', 'jupyter/rtc-document.js');
+    const { createJupyterCookieJar } = await load('core');
+    await createJupyterCookieJar();
     const { DisclaudeService } = await load('service', 'service.js');
     const { Config } = await load('core');
     if (${isPrebuilt} && realpathSync(Config.getBuiltinsDir()) !== realpathSync(installed)) throw new Error('Builtins do not resolve to installed release');

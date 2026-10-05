@@ -9,6 +9,14 @@ required for Notebook access.
 
 ## Host connection configuration
 
+An existing Datalayer deployment can use `backend: "datalayer"` in each host
+connection. This MVP uses native RTC/nbmodel/nbconvert without installing
+`disclaude_jupyter`. See [the configured-instance results and limits](./designs/datalayer-mvp.md)
+and [the opt-in probes](../tests/jupyter/README.md#configured-datalayer-mvp-probes).
+The controller-generation, atomic edit, durable fence and exact-stop guarantees
+below describe the default coordinator backend; the Datalayer MVP does not
+provide those guarantees. One Project cannot mix the two backends.
+
 The Service reads `JUPYTER_CONNECTIONS_FILE`, or
 `~/.disclaude/jupyter/connections.json`. Create a private file (mode 0600):
 
