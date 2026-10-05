@@ -61,6 +61,7 @@ import {
 import { getDebugGroupService } from '../services/debug-group-service.js';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 import { buildClaudeDisallowedTools } from './claude-disallowed-tools.js';
+import { withCodexSourceCitations } from './codex-source-citations.js';
 import { HistoryManager } from './history-manager.js';
 import crypto from 'node:crypto';
 
@@ -357,10 +358,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       maxBackoffMs: 60000, // Max 1 minute
     });
 
-    // Initialize message builder with channel-specific options (Issue #697, #1492, #1499)
-    // When messageBuilderOptions is provided (e.g., by service), use those;
-    // otherwise, create a default MessageBuilder with no channel-specific extensions.
-    this.messageBuilder = new MessageBuilder(config.messageBuilderOptions);
+    // Compose backend guidance here; core and channel adapters only receive callbacks.
+    const messageBuilderOptions = this.sdkProvider.name === 'codex'
+      ? withCodexSourceCitations(config.messageBuilderOptions)
+      : config.messageBuilderOptions;
+    this.messageBuilder = new MessageBuilder(messageBuilderOptions);
 
     this.logger.info(
       { chatId: this.boundChatId, skipHistory: config.skipHistory },
@@ -662,7 +664,6 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         },
         chatId,
         capabilities,
-        this.sdkProvider.name,
       );
 
       const streamingMessage: StreamingUserMessage = {
@@ -960,7 +961,6 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       },
       chatId,
       capabilities,
-      this.sdkProvider.name,
     );
 
     const userMessage: StreamingUserMessage = {

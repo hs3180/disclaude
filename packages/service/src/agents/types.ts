@@ -158,8 +158,8 @@ export interface ChatAgentConfig extends BaseAgentConfig {
    *
    * When provided, the ChatAgent will use these options for building
    * enhanced message content (e.g., platform headers, tool sections,
-   * attachment extras). When omitted, a default empty MessageBuilder
-   * is used with no channel-specific extensions.
+   * attachment extras). When omitted, no channel-specific extensions are
+   * used. ChatAgent composes backend guidance through the same callbacks.
    *
    * Issue #1499: Decouple Feishu-specific logic from worker-node.
    * Callers (e.g., service) should provide channel-specific

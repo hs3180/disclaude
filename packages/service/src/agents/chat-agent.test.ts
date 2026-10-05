@@ -18,7 +18,7 @@ vi.mock('@disclaude/core', async (importOriginal) => {
   // test). Pull the real class from the actual module; everything else stays
   // explicitly mocked below.
   const actual = await importOriginal<typeof import('@disclaude/core')>();
-  const BaseAgent = vi.fn().mockImplementation(function (this: any) {
+  const BaseAgent = vi.fn().mockImplementation(function (this: any, config: any) {
     this.createSdkOptions = vi.fn((extra: Record<string, unknown> = {}) => extra);
     this.createQueryStream = vi.fn(() => ({
       handle: { close: vi.fn(), cancel: vi.fn() },
@@ -35,6 +35,7 @@ vi.mock('@disclaude/core', async (importOriginal) => {
     // Issue #4644: real BaseAgent always resolves a provider singleton —
     // mirror it so reset()'s optional forgetSession capability is callable.
     this.sdkProvider = {
+      name: config.agentBackend ?? 'claude',
       forgetSession: vi.fn(),
     };
     this.logger = {
@@ -169,6 +170,49 @@ describe('ChatAgent (service)', () => {
   });
 
   describe('constructor', () => {
+    it.each(['codex', 'claude', 'pi', 'deepseek'] as const)(
+      'composes source guidance only for the resolved %s backend', async (agentBackend) => {
+        const core = await import('@disclaude/core');
+        const actual = await vi.importActual<typeof core>('@disclaude/core');
+        const options = {
+          buildHeader: () => 'Channel header',
+          buildStableToolsSection: () => 'Stable channel instructions',
+          buildToolsSection: () => 'Dynamic channel instructions',
+        };
+        const agent = new ChatAgent({
+          chatId: 'citation-chat', callbacks, agentBackend,
+          apiKey: 'test', model: 'test',
+          messageBuilderOptions: options,
+        });
+        const composed = vi.mocked(core.MessageBuilder).mock.calls.at(-1)?.[0];
+        const prompt = new actual.MessageBuilder(composed).buildEnhancedContent({
+          text: 'Research this question', messageId: 'research-1',
+        }, 'citation-chat');
+        expect(prompt).toContain('Channel header');
+        expect(prompt).toContain('Stable channel instructions');
+        expect(prompt).toContain('Dynamic channel instructions');
+        expect(prompt.includes('## Codex source citations')).toBe(agentBackend === 'codex');
+        if (agentBackend !== 'codex') {
+          expect(composed).toBe(options);
+        }
+        ChatAgent.prototype.dispose.call(agent);
+      },
+    );
+
+    it('gives Codex source guidance without requiring a channel adapter', async () => {
+      const core = await import('@disclaude/core');
+      const actual = await vi.importActual<typeof core>('@disclaude/core');
+      const agent = new ChatAgent({
+        chatId: 'plain-chat', callbacks, agentBackend: 'codex', apiKey: 'test', model: 'test',
+      });
+      const composed = vi.mocked(core.MessageBuilder).mock.calls.at(-1)?.[0];
+      const prompt = new actual.MessageBuilder(composed).buildEnhancedContent({
+        text: 'Research this question', messageId: 'research-1',
+      }, 'plain-chat');
+      expect(prompt).toContain('## Codex source citations');
+      ChatAgent.prototype.dispose.call(agent);
+    });
+
     it('uses an isolated provider session key while remaining bound to the real chat (#4812)', async () => {
       const agent = new ChatAgent({ chatId: 'oc_test_chat', callbacks, apiKey: 'test', model: 'test', provider: 'anthropic', sdkSessionKey: 'oc_test_chat::schedule:tick-1' });
       await agent.processMessage({ chatId: 'oc_test_chat', payload: 'run', messageId: 'tick-1' });
@@ -284,7 +328,6 @@ describe('ChatAgent (service)', () => {
       expect((agent as any).messageBuilder.buildEnhancedContent).toHaveBeenCalledWith(
         expect.objectContaining({ pendingQuestionEligible: true }),
         'eligible-mention',
-        undefined,
         undefined,
       );
       ChatAgent.prototype.dispose.call(agent);
