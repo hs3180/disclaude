@@ -1,5 +1,12 @@
 # Configured Jupyter candidate deployment
 
+> Historical coordinator activation plan, superseded as the 0.6.3 delivery route
+> on 2026-10-06. Do not apply these settings to the Datalayer deployment: they
+> disable nbmodel and enable a different backend. Use the
+> [current delivery tasks](../docs/designs/jupyter-harness.md) and
+> [Datalayer instance evidence](../docs/designs/datalayer-mvp.md); this old
+> candidate was not activated by the Datalayer upgrade.
+
 This is the concrete activation plan for the `configured-20261003` experimental
 profile. It has not been executed. No package, server setting or existing
 Notebook/kernel was changed during inspection or unit checks.

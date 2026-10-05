@@ -13,9 +13,12 @@ An existing Datalayer deployment can use `backend: "datalayer"` in each host
 connection. This MVP uses native RTC/nbmodel/nbconvert without installing
 `disclaude_jupyter`. See [the configured-instance results and limits](./designs/datalayer-mvp.md)
 and [the opt-in probes](../tests/jupyter/README.md#configured-datalayer-mvp-probes).
-The controller-generation, atomic edit, durable fence and exact-stop guarantees
-below describe the default coordinator backend; the Datalayer MVP does not
-provide those guarantees. One Project cannot mix the two backends.
+The [0.6.3 delivery plan](./designs/jupyter-harness.md) now targets this route.
+The current implementation still defaults to the coordinator when `backend`
+is omitted; default migration is [#5216](https://github.com/hs3180/disclaude/issues/5216)
+work. One Project cannot mix the two backends. The controller-generation,
+atomic edit and durable fence sections below document the legacy coordinator;
+they are not prerequisites or claimed capabilities of the Datalayer MVP.
 
 The Service reads `JUPYTER_CONNECTIONS_FILE`, or
 `~/.disclaude/jupyter/connections.json`. Create a private file (mode 0600):
@@ -26,6 +29,7 @@ The Service reads `JUPYTER_CONNECTIONS_FILE`, or
   "connections": [
     {
       "id": "research",
+      "backend": "datalayer",
       "baseUrl": "https://jupyter.example/",
       "authorizationFile": "/private/path/jupyter-authorization"
     }
@@ -41,6 +45,7 @@ variable name. For standard Jupyter password login, use exactly one
 ```json
 {
   "id": "research",
+  "backend": "datalayer",
   "baseUrl": "https://jupyter.example/",
   "passwordEnv": "JUPYTERLAB_PASS"
 }
@@ -62,13 +67,54 @@ configuration, with connection definition and server namespace isolation.
 Restarting a Service connection restores that cookie identity. A valid password
 cookie avoids another login. After expiry, a safe connection handshake may log
 in again; an already attempted edit/run/stop/input is never retried. A new
-principal must still satisfy the server controller-generation fences. SSO and
+principal must still satisfy the selected backend's authorization checks. SSO and
 external credential refresh are not implemented. Project files and
-native tool descriptors contain no credentials or cookies. The host must already
-run the pinned managed Jupyter extension described in [the backend guide](../jupyter/README.md).
+native tool descriptors contain no credentials or cookies. The configured
+remote server must provide the selected backend's interfaces. The legacy coordinator
+requires its extension described in [the backend guide](../jupyter/README.md);
+the Datalayer route uses existing RTC/nbmodel/nbconvert.
 The Service does not install Python packages, start a server, delete kernels or
 edit an existing external server configuration.
 
+## Datalayer delivery scope
+
+The Node host handles connection/authentication, authorized Project references,
+live RTC reads/edits and original execution records. The remote server handles
+Python, kernel queues, shared documents, output saving and official export.
+Execute uses nbmodel's actual source-code POST and retains its 202 Location;
+status and cancel use that original request. MCP is JSON-RPC at `/mcp`, using
+the actual discovered schema. Missing MCP Tasks does not block this route.
+
+The current MVP has passed live-edit, same-kernel calculation, independent Node
+pending recovery and two real DSH turns. It has **not** passed the following
+release conditions; each remains an explicit task:
+
+| Issue                                                    | Required behavior                                                                  |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| [#5262](https://github.com/hs3180/disclaude/issues/5262) | Save outputs with no document clients beyond cleanup                               |
+| [#5263](https://github.com/hs3180/disclaude/issues/5263) | Repeated original-result reads within an explicit retention policy                 |
+| [#5264](https://github.com/hs3180/disclaude/issues/5264) | Cancel the target without interrupting a different queued/running/finished request |
+| [#5265](https://github.com/hs3180/disclaude/issues/5265) | Keep historical execution outputs distinct from a cell's edited source             |
+| [#5266](https://github.com/hs3180/disclaude/issues/5266) | Correct display updates and clear_output(wait) behavior                            |
+
+First-release scope is Python, one Service writer and a dedicated Notebook
+kernel. Live source-hash checks reject observed stale edits; they do not provide
+atomic concurrency. Lab Run must use the verified native server-side route.
+Stop must block new local work, cancel original accepted requests and confirm
+their outcomes; an HTTP 204 or inference AbortSignal alone is insufficient.
+Unknown submissions are not automatically replayed. Kernel/Jupyter restart
+does not promise restored Python memory or an unconfirmed result.
+
+Multi-controller isolation, atomic editing and a permanent late-request fence
+are recorded in [#5267](https://github.com/hs3180/disclaude/issues/5267) outside
+0.6.3. Real Feishu, human Lab interaction, device access, HTML/CSP, stdin,
+large artifacts and final-source acceptance remain separate work in #5219–#5221.
+The [configured Datalayer probe guide](../tests/jupyter/README.md#configured-datalayer-mvp-probes)
+records component evidence without claiming those gates have passed.
+
+## Legacy coordinator diagnostics
+
+The following diagnostic and probe are specific to the coordinator.
 `JupyterConnections.inspect(connectionId, optionalNamespace)` performs a host-only
 connection check: standard login, server version and coordinator status. It
 returns `coordinator: "missing"` when the authenticated server has no
@@ -90,10 +136,14 @@ node tests/jupyter/connection-probe.mjs \
 The probe verifies cookie continuation through a second host instance and
 authentication-variable removal. It uses only login and safe capability reads;
 the output path must be new. A missing coordinator is a diagnostic result,
-not a successful Notebook experiment. The environment file is optional when
+not a successful coordinator Notebook experiment. It does not disqualify the
+Datalayer backend. The environment file is optional when
 the host already provides the referenced variables.
 
-## Project and conversation state
+## Legacy coordinator Project and conversation state
+
+This section preserves the old backend's protocol and evidence. The Datalayer
+release tasks above do not require adopting this protocol or installing it.
 
 `<workingDir>/.jupyter/config.json` contains only authorized Notebook references
 (`connectionId`, `serverNamespace`, `documentId`, `contentPath`, optional observed
@@ -147,7 +197,7 @@ A new host session resumes a paused generation only after recorded runs are
 terminal; old callbacks cannot resume it. This local metadata store assumes one
 Service writer; the Jupyter ledger enforces a single server writer.
 
-## Evidence and remaining work
+## Legacy coordinator evidence
 
 Tests and an opt-in real DSH probe cover native read/edit/run, continuation with
 persisted session/run identity, exact stop, background execution after inference
@@ -165,9 +215,10 @@ is a blocked prerequisite, never a passing Notebook result.
 
 The submission fence requires ledger schema 3. Earlier experimental schemas are
 preserved and refused, with no reset or automatic migration. The configured
-instance still needs reviewed extension activation and actual same-Notebook
-DSH/Feishu read/edit/run/continuation/stop acceptance; unit checks on its installed
-dependencies do not establish that product loop.
+coordinator candidate would still need reviewed extension activation and actual
+same-Notebook DSH/Feishu acceptance. That activation is not the 0.6.3 Datalayer
+route. The old profile's unit checks do not establish the product loop for either
+backend.
 
 Daily and candidate default model selection remains `gpt-6-luna`. The designated
 #5215/#5219 real-model acceptance explicitly uses `gpt-5.6-luna` without changing

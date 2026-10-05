@@ -121,4 +121,6 @@ nbmodel 的提交返回 HTTP 202、空 JSON 和原请求 `Location`。0.1.1a4 �
 
 历史独立栈实验曾用 `YDocExtension.document_cleanup_delay = None` 通过保留文档的后台保存场景，详见 [原证据](./jupyter-harness-evidence.md) 和 [实验指南](../../tests/jupyter/README.md#server-retention-comparison)。它不是当前远端已经通过的证据；未更改用户配置，也不能据此宣称服务端重启恢复成立。任何版本升级或保留设置仍需在用户实例上重新验收并评估现有 Notebook 影响。
 
-严格 owner generation、服务端原子源码检查和永久迟到提交 fence 若继续作为发行条件，需要有具体实现及并发/故障证据；本 MVP 没有伪造这些保证。完整飞书、原生 UI、用户设备访问和远端重启仍是独立未完成验收。
+2026-10-06 按用户要求，发行目标已调整为 [Datalayer 研究闭环](./jupyter-harness.md)：后台保存、结果留存、目标取消、源码/输出关联和 display/clear 修复分别由 [#5262](https://github.com/hs3180/disclaude/issues/5262)–[#5266](https://github.com/hs3180/disclaude/issues/5266) 跟踪，仍是本版必过条件。多控制方 owner generation、服务端原子源码检查和永久迟到提交 fence 改由 [#5267](https://github.com/hs3180/disclaude/issues/5267) 按实际用例评估，不纳入 0.6.3 milestone。
+
+该范围调整没有改变本轮实验结果或把失败记为通过。完整飞书、原生 UI、用户设备访问和远端重启仍是独立未完成验收；当前 MVP 的显式后端配置尚未完成默认路线迁移。

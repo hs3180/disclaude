@@ -1,5 +1,10 @@
 # Remote Jupyter Notebook coordinator
 
+> Historical optional coordinator candidate. The 2026-10-06
+> [0.6.3 delivery plan](../docs/designs/jupyter-harness.md) uses Datalayer's native
+> RTC/nbmodel/nbconvert interfaces and does not require this package or its
+> activation. The protocol and prior evidence below remain for reference.
+
 This optional server package implements the shared Notebook document and
 execution ports used by disclaude. It has no Harness dependency: DSH registers
 the common Notebook tools through its native registry; other adapters can use
