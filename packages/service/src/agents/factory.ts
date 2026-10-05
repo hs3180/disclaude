@@ -40,7 +40,7 @@ import {
   type AgentPreset,
 } from '@disclaude/core';
 import type { ChatAgent } from './chat-agent.js';
-import { createChatAgent } from './backends/create-chat-agent.js';
+import { createChatAgent } from './create-chat-agent.js';
 import type { ChatAgentConfig, ChatAgentCallbacks } from './types.js';
 
 const logger = createLogger('AgentFactory');

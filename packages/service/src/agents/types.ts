@@ -9,7 +9,7 @@
  * callbacks that satisfy this interface.
  */
 
-import type { FeishuCard, ChannelCapabilities, BaseAgentConfig, MessageBuilderOptions, AgentQueryOptions, CwdProvider, CwdResolution } from '@disclaude/core';
+import type { FeishuCard, ChannelCapabilities, BaseAgentConfig, ChatAgentHooks, MessageBuilderOptions, CwdProvider, CwdResolution } from '@disclaude/core';
 
 // ============================================================================
 // ChatAgentCallbacks
@@ -132,7 +132,7 @@ export interface ChatAgentCallbacks {
  * Issue #644: Added chatId binding for session isolation.
  * Issue #857: Added complexityThreshold for task progress tracking.
  */
-export interface ChatAgentConfig extends BaseAgentConfig {
+export interface ChatAgentConfig extends BaseAgentConfig, ChatAgentHooks {
   /**
    * The chatId this ChatAgent is bound to.
    * Each ChatAgent instance serves exactly one chatId.
@@ -166,9 +166,6 @@ export interface ChatAgentConfig extends BaseAgentConfig {
    * options when creating ChatAgent instances.
    */
   messageBuilderOptions?: MessageBuilderOptions;
-
-  /** Transform query options before opening a session; injected by the creation layer. */
-  configureQueryOptions?: (options: AgentQueryOptions) => AgentQueryOptions;
 
   /**
    * Dynamic cwd resolution callback for project-scoped Agent context switching.

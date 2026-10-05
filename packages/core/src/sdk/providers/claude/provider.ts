@@ -6,7 +6,7 @@ import { assertToolOptions } from '../../tools.js';
  */
 
 import { query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
-import type { IAgentSDKProvider } from '../../interface.js';
+import type { ChatAgentHooks, IAgentSDKProvider } from '../../interface.js';
 import type {
   AgentMessage,
   AgentQueryOptions,
@@ -21,6 +21,7 @@ import { tagErrorCategory } from '../../../utils/error-handler.js';
 import { computeBackoffDelay } from '../../../utils/retry.js';
 import { Config } from '../../../config/index.js';
 import { withDiscoveredCompaction } from './compaction.js';
+import { buildClaudeDisallowedTools } from './disallowed-tools.js';
 
 const logger = createLogger('ClaudeSDKProvider');
 
@@ -261,6 +262,16 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
   readonly version = '0.3.263';
 
   private disposed = false;
+
+  configureChat(hooks: ChatAgentHooks): ChatAgentHooks {
+    return {
+      ...hooks,
+      configureQueryOptions: (options): ClaudeQueryOptions => ({
+        ...(hooks.configureQueryOptions?.(options) ?? options),
+        disallowedTools: buildClaudeDisallowedTools(),
+      }),
+    };
+  }
 
   getInfo(): ProviderInfo {
     const available = this.validateConfig();

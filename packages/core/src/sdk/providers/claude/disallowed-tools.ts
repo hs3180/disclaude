@@ -17,7 +17,7 @@
  * reroute needs a guidance/system-prompt nudge, tracked as a follow-up to
  * #4181. Disallowing by default is the mechanical half of that change.
  *
- * @module service/agents/backends/claude-disallowed-tools
+ * @module sdk/providers/claude/disallowed-tools
  */
 
 /** Tools always disallowed for chat agents. */

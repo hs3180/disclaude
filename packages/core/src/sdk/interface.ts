@@ -11,6 +11,14 @@ import type {
   StreamQueryResult,
   UserInput,
 } from './types.js';
+import type { MessageBuilderOptions } from '../agents/message-builder/types.js';
+
+/** Host callbacks that a provider may compose for a chat session. */
+export interface ChatAgentHooks {
+  messageBuilderOptions?: MessageBuilderOptions;
+  /** Transform options before opening each query. */
+  configureQueryOptions?: (options: AgentQueryOptions) => AgentQueryOptions;
+}
 
 /**
  * Agent SDK Provider 接口
@@ -81,6 +89,9 @@ export interface IAgentSDKProvider {
   // ==========================================================================
   // 可选能力（Optional capabilities）
   // ==========================================================================
+
+  /** Compose provider-specific chat behavior with the caller's prompt/query hooks. */
+  configureChat?(hooks: ChatAgentHooks): ChatAgentHooks;
 
   /**
    * 忘记指定会话的 Provider 侧状态（可选能力，Issue #4644）。
