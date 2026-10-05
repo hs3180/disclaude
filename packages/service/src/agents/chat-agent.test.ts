@@ -170,46 +170,34 @@ describe('ChatAgent (service)', () => {
   });
 
   describe('constructor', () => {
-    it.each(['codex', 'claude', 'pi', 'deepseek'] as const)(
-      'composes source guidance only for the resolved %s backend', async (agentBackend) => {
-        const core = await import('@disclaude/core');
-        const actual = await vi.importActual<typeof core>('@disclaude/core');
-        const options = {
-          buildHeader: () => 'Channel header',
-          buildStableToolsSection: () => 'Stable channel instructions',
-          buildToolsSection: () => 'Dynamic channel instructions',
-        };
-        const agent = new ChatAgent({
-          chatId: 'citation-chat', callbacks, agentBackend,
-          apiKey: 'test', model: 'test',
-          messageBuilderOptions: options,
-        });
-        const composed = vi.mocked(core.MessageBuilder).mock.calls.at(-1)?.[0];
-        const prompt = new actual.MessageBuilder(composed).buildEnhancedContent({
-          text: 'Research this question', messageId: 'research-1',
-        }, 'citation-chat');
-        expect(prompt).toContain('Channel header');
-        expect(prompt).toContain('Stable channel instructions');
-        expect(prompt).toContain('Dynamic channel instructions');
-        expect(prompt.includes('## Codex source citations')).toBe(agentBackend === 'codex');
-        if (agentBackend !== 'codex') {
-          expect(composed).toBe(options);
-        }
-        ChatAgent.prototype.dispose.call(agent);
-      },
-    );
-
-    it('gives Codex source guidance without requiring a channel adapter', async () => {
+    it('uses injected message callbacks without selecting a backend policy', async () => {
       const core = await import('@disclaude/core');
       const actual = await vi.importActual<typeof core>('@disclaude/core');
+      const options = { buildStableToolsSection: () => 'Injected instructions' };
       const agent = new ChatAgent({
-        chatId: 'plain-chat', callbacks, agentBackend: 'codex', apiKey: 'test', model: 'test',
+        chatId: 'policy-chat', callbacks, apiKey: 'test', model: 'test',
+        messageBuilderOptions: options,
       });
-      const composed = vi.mocked(core.MessageBuilder).mock.calls.at(-1)?.[0];
-      const prompt = new actual.MessageBuilder(composed).buildEnhancedContent({
-        text: 'Research this question', messageId: 'research-1',
-      }, 'plain-chat');
-      expect(prompt).toContain('## Codex source citations');
+      const injected = vi.mocked(core.MessageBuilder).mock.calls.at(-1)?.[0];
+      expect(injected).toBe(options);
+      expect(new actual.MessageBuilder(injected).buildEnhancedContent({
+        text: 'Question', messageId: 'm1',
+      }, 'policy-chat')).toContain('Injected instructions');
+      ChatAgent.prototype.dispose.call(agent);
+    });
+
+    it('applies an injected query policy when starting a session', () => {
+      const configureQueryOptions = vi.fn((options) => ({ ...options, model: 'configured-model' }));
+      const agent = new ChatAgent({
+        chatId: 'policy-chat', callbacks, apiKey: 'test', model: 'test', configureQueryOptions,
+      });
+      (agent as any).startAgentLoop();
+      const original = (agent as any).createSdkOptions.mock.results[0].value;
+      expect(configureQueryOptions).toHaveBeenCalledExactlyOnceWith(original);
+      expect((agent as any).createQueryStream).toHaveBeenCalledWith(
+        expect.anything(), { ...original, model: 'configured-model' },
+      );
+      expect(original).not.toHaveProperty('model');
       ChatAgent.prototype.dispose.call(agent);
     });
 
@@ -500,19 +488,7 @@ describe('ChatAgent (service)', () => {
         expect.not.objectContaining({ mcpServers: expect.anything() }),
       );
     });
-    it.each(['claude', 'pi', 'codex', 'deepseek'])('passes the chat denylist only to Claude, with %s selected', (backend) => {
-      (chatAgent as any).agentBackend = backend;
-      (chatAgent as any).startAgentLoop();
-      const [[baseOptions]] = (chatAgent as any).createSdkOptions.mock.calls;
-      expect(baseOptions).not.toHaveProperty('allowedTools');
-      expect(baseOptions).not.toHaveProperty('disallowedTools');
-      const [[, queryOptions]] = (chatAgent as any).createQueryStream.mock.calls;
-      if (backend === 'claude') {
-        expect(queryOptions.disallowedTools).toContain('AskUserQuestion');
-      } else {
-        expect(queryOptions).not.toHaveProperty('disallowedTools');
-      }
-    });
+
   });
 
   // Issue #4448 (direction #1): a chat bound to a directory that does not

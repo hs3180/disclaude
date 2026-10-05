@@ -9,7 +9,7 @@
  * callbacks that satisfy this interface.
  */
 
-import type { FeishuCard, ChannelCapabilities, BaseAgentConfig, MessageBuilderOptions, CwdProvider, CwdResolution } from '@disclaude/core';
+import type { FeishuCard, ChannelCapabilities, BaseAgentConfig, MessageBuilderOptions, AgentQueryOptions, CwdProvider, CwdResolution } from '@disclaude/core';
 
 // ============================================================================
 // ChatAgentCallbacks
@@ -159,13 +159,16 @@ export interface ChatAgentConfig extends BaseAgentConfig {
    * When provided, the ChatAgent will use these options for building
    * enhanced message content (e.g., platform headers, tool sections,
    * attachment extras). When omitted, no channel-specific extensions are
-   * used. ChatAgent composes backend guidance through the same callbacks.
+   * used. The creation layer may compose guidance through these callbacks.
    *
    * Issue #1499: Decouple Feishu-specific logic from worker-node.
    * Callers (e.g., service) should provide channel-specific
    * options when creating ChatAgent instances.
    */
   messageBuilderOptions?: MessageBuilderOptions;
+
+  /** Transform query options before opening a session; injected by the creation layer. */
+  configureQueryOptions?: (options: AgentQueryOptions) => AgentQueryOptions;
 
   /**
    * Dynamic cwd resolution callback for project-scoped Agent context switching.
