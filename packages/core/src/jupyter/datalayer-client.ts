@@ -47,6 +47,16 @@ class DatalayerProtocolError extends Error {
 export interface DatalayerExecutionHandle {
   kernelId: string;
   requestId: string;
+  requestLocation?: string;
+  kernelIncarnation?: string;
+  serverInstanceId?: string;
+}
+
+export interface DatalayerExecutionPolicy {
+  serverInstanceId: string;
+  resultRetentionSeconds: number;
+  requestQuota: number;
+  inlineResultBytes: number;
 }
 
 export type DatalayerExecutionObservation = {
@@ -303,7 +313,13 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
     kernelId: string,
     documentId: string,
     cellId: string,
-    code: string
+    code: string,
+    context?: {
+      documentPath: string;
+      runId: string;
+      kernelIncarnation: string;
+      serverInstanceId: string;
+    }
   ): Promise<
     | { state: 'accepted'; handle: DatalayerExecutionHandle }
     | { state: 'rejected' | 'unknown'; httpStatus?: number }
@@ -311,14 +327,25 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
     const kernel = id(kernelId);
     id(documentId);
     id(cellId);
-    if (!code || Buffer.byteLength(code) > 1_000_000) {
+    if (!code || Buffer.byteLength(code) > 262144) {
       throw new Error('Invalid Notebook execution source');
     }
     let response: Response;
     try {
       response = await this.response(`api/kernels/${kernel}/execute`, 'POST', {
         code,
-        metadata: { document_id: `json:notebook:${documentId}`, cell_id: cellId },
+        metadata: {
+          document_id: `json:notebook:${documentId}`,
+          cell_id: cellId,
+          ...(context
+            ? {
+                document_path: context.documentPath,
+                run_id: context.runId,
+                kernel_incarnation: context.kernelIncarnation,
+                allow_stdin: false,
+              }
+            : {}),
+        },
       });
     } catch {
       return { state: 'unknown' };
@@ -326,7 +353,9 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
     await response.body?.cancel();
     if (response.status !== 202) {
       return {
-        state: [400, 401, 403, 404, 405, 422].includes(response.status) ? 'rejected' : 'unknown',
+        state: [400, 401, 403, 404, 405, 409, 413, 422, 429].includes(response.status)
+          ? 'rejected'
+          : 'unknown',
         httpStatus: response.status,
       };
     }
@@ -349,13 +378,26 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
       ) {
         return { state: 'unknown', httpStatus: 202 };
       }
-      return { state: 'accepted', handle: { kernelId, requestId: match[2] } };
+      return {
+        state: 'accepted',
+        handle: {
+          kernelId,
+          requestId: match[2],
+          ...(context
+            ? {
+                requestLocation: url.pathname,
+                kernelIncarnation: context.kernelIncarnation,
+                serverInstanceId: context.serverInstanceId,
+              }
+            : {}),
+        },
+      };
     } catch {
       return { state: 'unknown', httpStatus: 202 };
     }
   }
 
-  /** nbmodel terminal reads can consume their result; the host must persist it immediately. */
+  /** Read only the original request. Missing lookup never proves non-execution. */
   async observe(handle: DatalayerExecutionHandle): Promise<DatalayerExecutionObservation> {
     try {
       const response = await this.response(
@@ -365,15 +407,23 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
         await response.body?.cancel();
         return { state: 'unknown', httpStatus: response.status };
       }
-      if (response.status === 202) {
-        await response.body?.cancel();
-        return { state: 'running', httpStatus: 202 };
-      }
-      if (![200, 300, 500].includes(response.status)) {
+      if (![200, 202, 300, 500].includes(response.status)) {
         await response.body?.cancel();
         return { state: 'unknown', httpStatus: response.status };
       }
       const result = JSON.parse(await this.responseText(response)) as Record<string, unknown>;
+      if (
+        (result.request_id !== undefined && result.request_id !== handle.requestId) ||
+        (result.kernel_id !== undefined && result.kernel_id !== handle.kernelId) ||
+        (handle.kernelIncarnation &&
+          result.kernel_incarnation !== undefined &&
+          result.kernel_incarnation !== handle.kernelIncarnation)
+      ) {
+        return { state: 'unknown', httpStatus: response.status };
+      }
+      if (response.status === 202) {
+        return { state: 'running', httpStatus: 202, result };
+      }
       if (response.status === 300) {
         return { state: 'input_required', httpStatus: 300, result };
       }
@@ -396,7 +446,7 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
       };
       return {
         state:
-          error?.ename === 'KeyboardInterrupt'
+          error?.ename === 'KeyboardInterrupt' || error?.ename === 'CancelledError'
             ? 'cancelled'
             : response.status === 500 || error || result.status === 'error'
               ? 'failed'
@@ -409,11 +459,55 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
     }
   }
 
-  /** Some installed nbmodel versions have no request cancellation handler. No kernel-wide fallback. */
+  /** Advertised queue policy is discovery, not proof that product acceptance passed. */
+  async executionPolicy(
+    kernelId: string = randomUUID()
+  ): Promise<DatalayerExecutionPolicy | undefined> {
+    const inspected = await this.inspectJson(`api/kernels/${id(kernelId)}/execute`);
+    const data = inspected.data as Record<string, unknown> | undefined;
+    const policy = data?.execution_policy as Record<string, unknown> | undefined;
+    if (
+      inspected.state !== 'available' ||
+      data?.kernel_id !== kernelId ||
+      !Array.isArray(data.requests) ||
+      policy?.schema !== 1 ||
+      policy.terminal_gets !== 'non_consuming' ||
+      policy.target_cancellation !== 'managed_pid_and_queue_owner' ||
+      policy.native_incarnation !== true ||
+      policy.source_provenance !== true ||
+      policy.stdin_opt_out !== true ||
+      typeof policy.server_instance_id !== 'string' ||
+      !/^[A-Za-z0-9_-]{1,256}$/.test(policy.server_instance_id) ||
+      typeof policy.result_retention_seconds !== 'number' ||
+      !Number.isFinite(policy.result_retention_seconds) ||
+      policy.result_retention_seconds <= 0 ||
+      !Number.isSafeInteger(policy.request_quota) ||
+      Number(policy.request_quota) < 1 ||
+      !Number.isSafeInteger(policy.inline_result_bytes) ||
+      Number(policy.inline_result_bytes) < 1024
+    ) {
+      return undefined;
+    }
+    return {
+      serverInstanceId: policy.server_instance_id,
+      resultRetentionSeconds: policy.result_retention_seconds,
+      requestQuota: Number(policy.request_quota),
+      inlineResultBytes: Number(policy.inline_result_bytes),
+    };
+  }
+
+  /** Require target cancellation policy before a DELETE; no kernel-wide fallback. */
   async stopRequest(
     handle: DatalayerExecutionHandle
   ): Promise<'requested' | 'unsupported' | 'unknown'> {
     try {
+      const policy = await this.executionPolicy(handle.kernelId);
+      if (!policy) {
+        return 'unsupported';
+      }
+      if (handle.serverInstanceId && handle.serverInstanceId !== policy.serverInstanceId) {
+        return 'unknown';
+      }
       const response = await this.response(
         `api/kernels/${id(handle.kernelId)}/requests/${id(handle.requestId)}`,
         'DELETE'
@@ -421,7 +515,7 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
       await response.body?.cancel();
       return response.status === 204
         ? 'requested'
-        : response.status === 405
+        : [405, 501].includes(response.status)
           ? 'unsupported'
           : 'unknown';
     } catch {

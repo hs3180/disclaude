@@ -11,6 +11,8 @@ export interface DatalayerRunTarget {
   cellId: string;
   sourceHash: string;
   kernelId: string;
+  kernelIncarnation?: string;
+  serverInstanceId?: string;
 }
 
 export interface DatalayerRunRecord {

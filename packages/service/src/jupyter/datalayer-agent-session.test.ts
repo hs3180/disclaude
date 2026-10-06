@@ -73,6 +73,17 @@ async function fixture() {
       throw new Error('Unexpected remote API operation');
     }),
     submitCell: vi.fn(() => Promise.resolve({ state: 'unknown' })),
+    executionPolicy: vi.fn(() =>
+      Promise.resolve({
+        serverInstanceId: 'server-instance',
+        resultRetentionSeconds: 3600,
+        requestQuota: 512,
+        inlineResultBytes: 65536,
+      })
+    ),
+    kernelInfo: vi.fn(() =>
+      Promise.resolve({ kernelId: 'kernel', incarnation: 'native-instance' })
+    ),
     observe: vi.fn(() =>
       Promise.resolve({
         state: 'completed',
@@ -209,5 +220,83 @@ describe('Datalayer MVP service boundaries', () => {
       requestId: 'original-request',
     });
     expect(f.client.json.mock.calls.every(([route]) => !route.endsWith('/interrupt'))).toBe(true);
+  });
+
+  it('requires execution policy before selecting or creating a kernel', async () => {
+    const f = await fixture();
+    f.client.executionPolicy.mockResolvedValue(undefined as never);
+    await expect(f.call(f.session, 'notebook_execute', f.args)).rejects.toThrow('execution policy');
+    expect(f.client.json).not.toHaveBeenCalled();
+    expect(f.client.submitCell).not.toHaveBeenCalled();
+    expect(f.journal.records()).toEqual([]);
+  });
+
+  it('records native provenance and rejects silent memory replacement on later runs', async () => {
+    const f = await fixture();
+    await f.call(f.session, 'notebook_execute', f.args);
+    expect(f.journal.get('original')?.target).toMatchObject({
+      kernelId: 'kernel',
+      kernelIncarnation: 'native-instance',
+      serverInstanceId: 'server-instance',
+    });
+    expect(f.client.submitCell).toHaveBeenCalledWith('kernel', 'doc-id', 'code', 'print(42)', {
+      documentPath: 'analysis.ipynb',
+      runId: 'original',
+      kernelIncarnation: 'native-instance',
+      serverInstanceId: 'server-instance',
+    });
+    f.client.kernelInfo.mockResolvedValue({ kernelId: 'kernel', incarnation: 'replacement' });
+    await expect(
+      f.call(f.session, 'notebook_execute', { ...f.args, runId: 'after-restart' })
+    ).rejects.toThrow('memory was lost');
+    expect(f.client.submitCell).toHaveBeenCalledOnce();
+    expect(f.journal.get('after-restart')).toBeUndefined();
+  });
+
+  it('refuses a kernel shared with another Notebook', async () => {
+    const f = await fixture();
+    f.client.json.mockResolvedValue([
+      { path: 'analysis.ipynb', kernel: { id: 'kernel' } },
+      { path: 'unowned.ipynb', kernel: { id: 'kernel' } },
+    ] as never);
+    await expect(f.call(f.session, 'notebook_execute', f.args)).rejects.toThrow(
+      'shared by another document'
+    );
+    expect(f.client.submitCell).not.toHaveBeenCalled();
+  });
+
+  it('exposes historical provenance and complete artifact when inline output is bounded', async () => {
+    const f = await fixture();
+    f.client.submitCell.mockResolvedValue({
+      state: 'accepted',
+      handle: { kernelId: 'kernel', requestId: 'request' },
+    } as never);
+    f.client.observe.mockResolvedValue({
+      state: 'completed',
+      result: {
+        status: 'ok',
+        outputs: [],
+        source_hash: f.args.expectedSourceHash,
+        source_matches: false,
+        output_attachment: 'historical',
+        outputs_truncated: true,
+        result_artifact: 'nbmodel-results/kernel/request.json',
+      },
+    } as never);
+    await f.call(f.session, 'notebook_execute', f.args);
+    expect(
+      await f.call(f.session, 'notebook_status', {
+        notebookId: f.args.notebookId,
+        runId: 'original',
+      })
+    ).toMatchObject({
+      kernelIncarnation: 'native-instance',
+      result: {
+        sourceMatches: false,
+        outputAttachment: 'historical',
+        outputsTruncated: true,
+        resultArtifact: 'nbmodel-results/kernel/request.json',
+      },
+    });
   });
 });

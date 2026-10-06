@@ -82,6 +82,25 @@ function discoveryReply(path: string, _method: string, body: Record<string, unkn
   return { status: 404 };
 }
 
+function queuePolicy(serverInstanceId = 'server-instance') {
+  return {
+    kernel_id: 'kernel',
+    requests: [],
+    execution_policy: {
+      schema: 1,
+      server_instance_id: serverInstanceId,
+      terminal_gets: 'non_consuming',
+      result_retention_seconds: 3600,
+      request_quota: 512,
+      inline_result_bytes: 65536,
+      target_cancellation: 'managed_pid_and_queue_owner',
+      native_incarnation: true,
+      source_provenance: true,
+      stdin_opt_out: true,
+    },
+  };
+}
+
 describe('existing Datalayer HTTP interfaces', () => {
   it('discovers native interfaces with safe requests and keeps product behavior unverified', async () => {
     const f = await fixture(discoveryReply);
@@ -236,8 +255,115 @@ describe('existing Datalayer HTTP interfaces', () => {
       'unsupported'
     );
     expect(f.requests.map((r) => [r.method, r.path])).toEqual([
+      ['GET', '/prefix/api/kernels/kernel/execute'],
+    ]);
+  });
+
+  it('refuses a legacy DELETE handler without a target cancellation policy', async () => {
+    const f = await fixture((_path, method) =>
+      method === 'DELETE' ? { status: 204 } : { data: { kernel_id: 'kernel', requests: [] } }
+    );
+    expect(await f.client.stopRequest({ kernelId: 'kernel', requestId: 'request' })).toBe(
+      'unsupported'
+    );
+    expect(f.requests.some((r) => r.method === 'DELETE')).toBe(false);
+  });
+
+  it('checks the original server instance before stopping a recovered request', async () => {
+    const f = await fixture(() => ({ data: queuePolicy('replacement-server') }));
+    expect(
+      await f.client.stopRequest({
+        kernelId: 'kernel',
+        requestId: 'request',
+        serverInstanceId: 'original-server',
+      })
+    ).toBe('unknown');
+    expect(f.requests).toHaveLength(1);
+    expect(f.requests[0].method).toBe('GET');
+  });
+
+  it('uses only the target DELETE when the queue policy is compatible', async () => {
+    const f = await fixture((_path, method) =>
+      method === 'DELETE' ? { status: 204 } : { data: queuePolicy() }
+    );
+    expect(
+      await f.client.stopRequest({
+        kernelId: 'kernel',
+        requestId: 'request',
+        serverInstanceId: 'server-instance',
+      })
+    ).toBe('requested');
+    expect(f.requests.map((r) => [r.method, r.path])).toEqual([
+      ['GET', '/prefix/api/kernels/kernel/execute'],
       ['DELETE', '/prefix/api/kernels/kernel/requests/request'],
     ]);
+  });
+
+  it('retains queued cancellation and bounded running status explicitly', async () => {
+    const f = await fixture(() => ({
+      status: 500,
+      data: { error: { ename: 'CancelledError' }, execution_started: false, outputs: '[]' },
+    }));
+    expect(await f.client.observe({ kernelId: 'kernel', requestId: 'request' })).toMatchObject({
+      state: 'cancelled',
+      result: { execution_started: false },
+    });
+    const running = await fixture(() => ({
+      status: 202,
+      data: { pending: true, outputs_truncated: true, result_artifact_pending: true },
+    }));
+    expect(
+      await running.client.observe({ kernelId: 'kernel', requestId: 'request' })
+    ).toMatchObject({
+      state: 'running',
+      result: { outputs_truncated: true, result_artifact_pending: true },
+    });
+  });
+
+  it('rejects a result carrying another original native incarnation', async () => {
+    const f = await fixture(() => ({
+      data: {
+        status: 'ok',
+        request_id: 'request',
+        kernel_id: 'kernel',
+        kernel_incarnation: 'replacement',
+        outputs: '[]',
+      },
+    }));
+    expect(
+      await f.client.observe({
+        kernelId: 'kernel',
+        requestId: 'request',
+        kernelIncarnation: 'original',
+      })
+    ).toMatchObject({ state: 'unknown' });
+  });
+
+  it('records recoverable Location and sends explicit original context with stdin disabled', async () => {
+    const f = await fixture(() => ({
+      status: 202,
+      headers: { Location: '/prefix/api/kernels/kernel/requests/request' },
+    }));
+    const result = await f.client.submitCell('kernel', 'document', 'cell', 'print(1)', {
+      documentPath: 'owned.ipynb',
+      runId: 'original-run',
+      kernelIncarnation: 'native-instance',
+      serverInstanceId: 'server-instance',
+    });
+    expect(result).toMatchObject({
+      state: 'accepted',
+      handle: {
+        requestLocation: '/prefix/api/kernels/kernel/requests/request',
+        kernelIncarnation: 'native-instance',
+        serverInstanceId: 'server-instance',
+      },
+    });
+    expect(f.requests[0].body.metadata).toMatchObject({
+      document_path: 'owned.ipynb',
+      run_id: 'original-run',
+      kernel_incarnation: 'native-instance',
+      allow_stdin: false,
+    });
   });
 
   it('handles installed 0.1.1a4 string outputs and HTTP 200 Python errors', async () => {

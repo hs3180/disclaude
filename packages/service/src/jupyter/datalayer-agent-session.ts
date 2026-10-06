@@ -159,7 +159,7 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
       ),
       this.tool(
         'notebook_status',
-        'Query the original runId without replay. Terminal nbmodel responses are persisted because the remote GET consumes them.',
+        'Query the original runId without replay. Retained remote results and host snapshots preserve original execution provenance.',
         { ...notebookId, runId: text },
         async (input) =>
           this.observe(await this.record(String(input.notebookId), String(input.runId)))
@@ -348,15 +348,13 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
       documentId: bound.doc.documentId,
       entry: bound.client.notebookEntry(bound.ref.contentPath),
       revision: snapshot.revision,
-      cells: snapshot.cells
-        .slice(0, limit)
-        .map((c) => ({
-          cellId: c.id,
-          cellType: c.cell_type,
-          sourceHash: c.sourceHash,
-          sourcePreview: String(c.source).slice(0, 500),
-          outputs: this.outputs(c),
-        })),
+      cells: snapshot.cells.slice(0, limit).map((c) => ({
+        cellId: c.id,
+        cellType: c.cell_type,
+        sourceHash: c.sourceHash,
+        sourcePreview: String(c.source).slice(0, 500),
+        outputs: this.outputs(c),
+      })),
       omittedCells: Math.max(0, snapshot.cells.length - limit),
     };
   }
@@ -396,6 +394,11 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
       throw new Error('Notebook has multiple kernel bindings');
     }
     let [id] = ids;
+    if (id && sessions.some((s) => s.kernel.id === id && s.path !== bound.ref.contentPath)) {
+      throw new Error(
+        'Notebook kernel is shared by another document; an exclusive binding is required'
+      );
+    }
     if (!id) {
       if (this.journal.records().some((r) => r.target.documentId === bound.ref.documentId)) {
         throw new Error('Original Notebook kernel is missing; do not silently start a replacement');
@@ -473,7 +476,28 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
     if (cell.cell_type !== 'code' || hash(cell.source) !== input.expectedSourceHash) {
       return { state: 'conflict', sourceHash: hash(cell.source) };
     }
+    const policy = await bound.client.executionPolicy();
+    if (!policy) {
+      throw new Error(
+        'Notebook execution policy is unavailable; verify the remote Datalayer repair'
+      );
+    }
     const kernelId = await this.kernel(bound);
+    const { incarnation } = await bound.client.kernelInfo(kernelId);
+    if (
+      this.journal
+        .records()
+        .some(
+          (r) =>
+            r.target.kernelId === kernelId &&
+            r.target.kernelIncarnation !== undefined &&
+            r.target.kernelIncarnation !== incarnation
+        )
+    ) {
+      throw new Error(
+        'Original kernel memory was lost; explicitly choose a new kernel before continuing'
+      );
+    }
     await bound.doc.flush();
     invocation.signal.throwIfAborted();
     this.assertActive();
@@ -489,8 +513,15 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
       cellId: cell.id,
       sourceHash: hash(source),
       kernelId,
+      kernelIncarnation: incarnation,
+      serverInstanceId: policy.serverInstanceId,
     });
-    const result = await bound.client.submitCell(kernelId, bound.doc.documentId, cell.id, source);
+    const result = await bound.client.submitCell(kernelId, bound.doc.documentId, cell.id, source, {
+      documentPath: bound.ref.contentPath,
+      runId,
+      kernelIncarnation: incarnation,
+      serverInstanceId: policy.serverInstanceId,
+    });
     const saved = this.journal.update(
       runId,
       result.state === 'accepted'
@@ -545,6 +576,10 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
       sourceHash: current.target.sourceHash,
       cellId: current.target.cellId,
       ...(current.handle ? { requestId: current.handle.requestId } : {}),
+      kernelId: current.target.kernelId,
+      ...(current.target.kernelIncarnation
+        ? { kernelIncarnation: current.target.kernelIncarnation }
+        : {}),
       ...(current.observation?.result ? { result: this.summary(current.observation.result) } : {}),
     };
   }
@@ -553,6 +588,16 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
       ...('execution_count' in result ? { executionCount: result.execution_count } : {}),
       outputs: this.outputs({ outputs: result.outputs }),
       ...(result.error ? { error: result.error } : {}),
+      ...(result.source_hash ? { sourceHash: result.source_hash } : {}),
+      ...(typeof result.source_matches === 'boolean'
+        ? { sourceMatches: result.source_matches }
+        : {}),
+      ...(result.output_attachment ? { outputAttachment: result.output_attachment } : {}),
+      ...(result.outputs_truncated === true ? { outputsTruncated: true } : {}),
+      ...(result.result_artifact ? { resultArtifact: result.result_artifact } : {}),
+      ...(result.result_artifact_pending === true ? { resultArtifactPending: true } : {}),
+      ...(typeof result.kernel_ready === 'boolean' ? { kernelReady: result.kernel_ready } : {}),
+      ...(result.continuation_error ? { continuationError: result.continuation_error } : {}),
     };
   }
 

@@ -54,6 +54,7 @@ export type {
   DatalayerTool,
   DatalayerToolResult,
   DatalayerExecutionHandle,
+  DatalayerExecutionPolicy,
   DatalayerExecutionObservation,
 } from './jupyter/datalayer-client.js';
 export type {
