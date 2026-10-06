@@ -1,0 +1,303 @@
+diff --git a/execution_stack.py b/execution_stack.py
+index b9d89795b..6d1dba83d 100644
+--- a/execution_stack.py
++++ b/execution_stack.py
+@@ -5,6 +5,7 @@
+ from __future__ import annotations
+ 
+ import asyncio
++import hashlib
+ import inspect
+ import json
+ import threading
+@@ -12,6 +13,8 @@ import typing as t
+ import uuid
+ from dataclasses import asdict
+ 
++from jupyter_core.utils import ensure_async
++
+ import jupyter_server
+ import jupyter_server.services
+ import jupyter_server.services.kernels
+@@ -20,6 +23,7 @@ import jupyter_server.services.kernels.kernelmanager
+ from jupyter_server_nbmodel.actions import kernel_worker
+ from jupyter_server_nbmodel.log import get_logger
+ from jupyter_server_nbmodel.models import PendingInput
++from jupyter_server_nbmodel.runtime import ExecutionControl, RetainedResults, TargetChanged, cancel_target
+ 
+ if t.TYPE_CHECKING:
+     try:
+@@ -58,16 +62,24 @@ class ExecutionStack:
+ 
+     It is keeping track of the execution requests.
+ 
+-    The request result can only be queried once.
++    Terminal GETs are non-consuming within the configured retention period.
+     """
+ 
+     def __init__(
+         self,
+         manager: jupyter_server.services.kernels.kernelmanager.AsyncMappingKernelManager,
+         ydoc_extension: jupyter_server_ydoc.app.YDocExtension | None,
++        contents_manager: t.Any = None,
++        result_ttl: float = 86400,
++        result_max_records: int = 256,
++        result_inline_bytes: int = 1048576,
+     ):
+         self.__manager = manager
+         self.__ydoc = ydoc_extension
++        self.__contents_manager = contents_manager
++        self.__result_ttl = result_ttl
++        self.__result_max_records = result_max_records
++        self.__result_inline_bytes = result_inline_bytes
+         # Store execution results per kernelID per execution request ID
+         self.__execution_results: dict[str, dict[str, t.Any]] = {}
+         # Keep request metadata until its result is consumed so every response
+@@ -83,6 +95,53 @@ class ExecutionStack:
+         self.__tasks: dict[str, asyncio.Queue] = {}
+         # Execution request queue worker per kernel ID
+         self.__workers: dict[str, asyncio.Task] = {}
++        self.__controls: dict[str, ExecutionControl] = {}
++        self.__instance_id = str(uuid.uuid4())
++
++    def execution_policy(self) -> dict:
++        """Read-only capabilities for the existing execute/requests API."""
++        return {
++            "schema": 1, "revision": "0.6.3-nbmodel-repair-1",
++            "server_instance_id": self.__instance_id,
++            "terminal_gets": "non_consuming",
++            "result_retention_seconds": self.__result_ttl,
++            "request_quota": self.__result_max_records,
++            "inline_result_bytes": self.__result_inline_bytes,
++            "target_cancellation": "managed_pid_and_queue_owner",
++            "native_incarnation": True, "source_provenance": True,
++            "stdin_opt_out": True,
++        }
++
++    def _kernel_pid(self, kernel_id: str) -> int | None:
++        try:
++            pid = getattr(self.__manager.get_kernel(kernel_id).provisioner, "pid", None)
++            return pid if isinstance(pid, int) and pid > 0 else None
++        except (KeyError, AttributeError):
++            return None
++
++    def _prune_results(self) -> None:
++        for kernel_id, results in self.__execution_results.items():
++            for uid in results.prune():
++                self.__execution_metadata.get(kernel_id, {}).pop(uid, None)
++
++    async def _archive_result(self, kernel_id: str, uid: str, result: dict) -> str:
++        """Save a complete oversized result through native authenticated storage."""
++        manager = self.__contents_manager
++        if manager is None:
++            raise RuntimeError("nbmodel result artifact storage is unavailable")
++        for path in ("nbmodel-results", f"nbmodel-results/{kernel_id}"):
++            if not await ensure_async(manager.dir_exists(path)):
++                await ensure_async(manager.save({"type": "directory"}, path))
++        path = f"nbmodel-results/{kernel_id}/{uid}.json"
++        metadata = self.__execution_metadata[kernel_id].get(uid) or {}
++        payload = {**result, "request_id": uid, "kernel_id": kernel_id,
++                   "document_id": metadata.get("document_id"),
++                   "document_path": metadata.get("document_path"),
++                   "cell_id": metadata.get("cell_id"),
++                   "source_hash": metadata.get("source_hash")}
++        await ensure_async(manager.save({"type": "file", "format": "text",
++                                         "content": json.dumps(payload, ensure_ascii=False)}, path))
++        return path
+ 
+     def __del__(self):
+         if (
+@@ -94,7 +153,6 @@ class ExecutionStack:
+             get_logger().warning(
+                 "Deleting active ExecutionStack. Be sure to call `await ExecutionStack.dispose()`."
+             )
+-            self.dispose()
+ 
+     def _get_local_client(self, kernel_id: str) -> t.Any:
+         """Get or create a client managed by the local Jupyter server."""
+@@ -157,6 +215,8 @@ class ExecutionStack:
+             self.__tasks[kernel_id],
+             self.__execution_results[kernel_id],
+             self.__pending_inputs[kernel_id],
++            self.__controls[kernel_id],
++            lambda: self._kernel_pid(kernel_id),
+         )
+ 
+     async def dispose(self) -> None:
+@@ -168,7 +228,7 @@ class ExecutionStack:
+             if input_.is_pending():
+                 await self.send_input(kernel_id, "")
+         self.__pending_inputs.clear()
+-        await asyncio.wait_for(asyncio.gather(*self.__workers.values()), timeout=3)
++        await asyncio.wait_for(asyncio.gather(*self.__workers.values(), return_exceptions=True), timeout=3)
+         self.__workers.clear()
+ 
+         await asyncio.wait_for(
+@@ -185,6 +245,8 @@ class ExecutionStack:
+         self.__kernel_clients.clear()
+         self.__remote_servers.clear()
+         self.__execution_metadata.clear()
++        self.__execution_results.clear()
++        self.__controls.clear()
+         get_logger().debug("ExecutionStack has been disposed.")
+ 
+     async def cancel(self, kernel_id: str, timeout: float | None = None) -> None:
+@@ -247,28 +309,20 @@ class ExecutionStack:
+             NotImplementedError: for a kernel hosted by a remote Jupyter server
+                 whose client cannot be interrupted from here.
+         """
+-        if request_id is not None and request_id not in self.__execution_results.get(
+-            kernel_id, {}
+-        ):
++        if request_id is None or request_id not in self.__execution_results.get(kernel_id, {}):
+             raise ValueError(
+                 f"Execution request {request_id} for kernel {kernel_id} does not exists."
+             )
+ 
+-        if self.is_remote(kernel_id):
+-            client = self.__kernel_clients.get(kernel_id)
+-            interrupt = getattr(client, "interrupt_kernel", None)
+-            if interrupt is None:
+-                raise NotImplementedError(
+-                    f"Cannot interrupt the remote kernel {kernel_id} from here."
+-                )
+-            get_logger().info("Interrupting remote kernel %s.", kernel_id)
+-            await _run_in_thread(interrupt)
+-            return
++        async def send_interrupt() -> None:
++            if self.is_remote(kernel_id):
++                raise NotImplementedError("Target-specific remote proxy interruption is unverified")
++            result = self.__manager.interrupt_kernel(kernel_id)
++            if inspect.isawaitable(result):
++                await result
+ 
+-        get_logger().info("Interrupting kernel %s.", kernel_id)
+-        result = self.__manager.interrupt_kernel(kernel_id)
+-        if inspect.isawaitable(result):
+-            await result
++        await cancel_target(self.__controls[kernel_id], self.__execution_results[kernel_id],
++                            request_id, send_interrupt, lambda: self._kernel_pid(kernel_id))
+ 
+     async def send_input(self, kernel_id: str, value: str) -> None:
+         """Send input ``value`` to the kernel ``kernel_id``.
+@@ -318,6 +372,10 @@ class ExecutionStack:
+             ValueError: If the request ``uid`` does not exists.
+         """
+         kernel_results = self.__execution_results.get(kernel_id, {})
++        self._prune_results()
++        if isinstance(kernel_results, RetainedResults) and uid in kernel_results.expired:
++            from jupyter_server_nbmodel.runtime import ResultExpired
++            raise ResultExpired("Original nbmodel result expired; execution is not disproved")
+         if uid not in kernel_results:
+             raise ValueError(f"Execution request {uid} for kernel {kernel_id} does not exists.")
+ 
+@@ -327,6 +385,11 @@ class ExecutionStack:
+             "kernel_id": kernel_id,
+             "request_url": f"/api/kernels/{kernel_id}/requests/{uid}",
+             "cell_id": metadata.get("cell_id") if isinstance(metadata, dict) else None,
++            "document_id": metadata.get("document_id") if isinstance(metadata, dict) else None,
++            "source_hash": metadata.get("source_hash") if isinstance(metadata, dict) else None,
++            "source": metadata.get("source") if isinstance(metadata, dict) else None,
++            "kernel_incarnation": metadata.get("kernel_incarnation") if isinstance(metadata, dict) else None,
++            "result_retention_seconds": self.__result_ttl,
+             "document_path": (
+                 metadata.get("document_path") if isinstance(metadata, dict) else None
+             ),
+@@ -352,6 +415,7 @@ class ExecutionStack:
+                 **request_context,
+                 "pending": True,
+                 "request_status": "queued",
++                "output_version": 0,
+                 "outputs": "[]",
+             }
+         elif isinstance(result, dict) and result.get("pending") is True:
+@@ -361,12 +425,12 @@ class ExecutionStack:
+                 **request_context,
+                 "pending": True,
+                 "request_status": "running",
+-                "outputs": json.dumps(result.get("outputs", [])),
++                "output_version": result.get("output_version", 0),
++                **kernel_results.progress(result.get("outputs", [])),
+             }
+         else:
+-            self.__execution_metadata.get(kernel_id, {}).pop(uid, None)
+             return {
+-                **kernel_results.pop(uid),
++                **kernel_results.snapshot(uid),
+                 **request_context,
+                 "pending": False,
+                 "request_status": "complete",
+@@ -375,6 +439,7 @@ class ExecutionStack:
+     def pending(self, kernel_id: str) -> list[dict[str, t.Any]]:
+         """Describe active requests without consuming their final results."""
+         requests: list[dict[str, t.Any]] = []
++        self._prune_results()
+         for uid, result in self.__execution_results.get(kernel_id, {}).items():
+             metadata = self.__execution_metadata.get(kernel_id, {}).get(uid)
+             context = {
+@@ -382,19 +447,23 @@ class ExecutionStack:
+                 "kernel_id": kernel_id,
+                 "request_url": f"/api/kernels/{kernel_id}/requests/{uid}",
+                 "cell_id": metadata.get("cell_id") if isinstance(metadata, dict) else None,
++                "source": metadata.get("source") if isinstance(metadata, dict) else None,
++                "source_hash": metadata.get("source_hash") if isinstance(metadata, dict) else None,
++                "kernel_incarnation": metadata.get("kernel_incarnation") if isinstance(metadata, dict) else None,
+                 "document_path": (
+                     metadata.get("document_path") if isinstance(metadata, dict) else None
+                 ),
+                 "pending": True,
+             }
+             if result == NO_RESULT:
+-                requests.append({**context, "request_status": "queued", "outputs": "[]"})
++                requests.append({**context, "request_status": "queued", "outputs": "[]", "output_version": 0})
+             elif isinstance(result, dict) and result.get("pending") is True:
+                 requests.append(
+                     {
+                         **context,
+                         "request_status": "running",
+-                        "outputs": json.dumps(result.get("outputs", [])),
++                        "output_version": result.get("output_version", 0),
++                        **self.__execution_results[kernel_id].progress(result.get("outputs", [])),
+                     }
+                 )
+         return requests
+@@ -417,13 +486,25 @@ class ExecutionStack:
+         Returns:
+             Request identifier
+         """
++        control = self.__controls.get(kernel_id)
++        if control is not None and control.quarantined:
++            raise TargetChanged("Kernel readiness unverified; dispatch refused for this kernel")
++        self._prune_results()
++        from jupyter_server_nbmodel.runtime import ResultQuotaExceeded
++        if sum(len(results) for results in self.__execution_results.values()) >= self.__result_max_records:
++            raise ResultQuotaExceeded("nbmodel retained-request quota is full")
+         uid = str(uuid.uuid4())
++        metadata = {**(metadata or {}), "source": snippet,
++                    "source_hash": hashlib.sha256(snippet.encode("utf-8")).hexdigest()}
+ 
+         if remote_server is not None:
+             self.__remote_servers[kernel_id] = remote_server
+ 
+         if kernel_id not in self.__execution_results:
+-            self.__execution_results[kernel_id] = {}
++            self.__execution_results[kernel_id] = RetainedResults(
++                self.__result_ttl, self.__result_max_records, self.__result_inline_bytes,
++                archive=lambda uid, result: self._archive_result(kernel_id, uid, result),
++            )
+         if kernel_id not in self.__execution_metadata:
+             self.__execution_metadata[kernel_id] = {}
+         # Make the stack aware a request `uid` exists.
+@@ -433,9 +514,11 @@ class ExecutionStack:
+             self.__pending_inputs[kernel_id] = PendingInput()
+         if kernel_id not in self.__tasks:
+             self.__tasks[kernel_id] = asyncio.Queue()
++        if kernel_id not in self.__controls:
++            self.__controls[kernel_id] = ExecutionControl()
+ 
+         self.__tasks[kernel_id].put_nowait((uid, snippet, metadata))
+ 
+-        if kernel_id not in self.__workers:
++        if kernel_id not in self.__workers or self.__workers[kernel_id].done():
+             self.__workers[kernel_id] = asyncio.create_task(self._run_worker(kernel_id))
+         return uid

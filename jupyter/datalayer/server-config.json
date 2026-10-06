@@ -1,0 +1,11 @@
+{
+  "YDocExtension": {
+    "document_cleanup_delay": null,
+    "document_save_delay": 1
+  },
+  "Extension": {
+    "result_ttl": 3600,
+    "result_max_records": 512,
+    "result_inline_bytes": 65536
+  }
+}
