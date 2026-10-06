@@ -67,6 +67,18 @@ request without submitting execution, then recreates the original host session
 from its persisted terminal cache. This does not establish recovery after a
 machine/Jupyter restart or a lost submission reply.
 
+The edge probe also covers `terminal-host-recovery`, `move-delete-running`,
+`display-many-positions`, `clear-immediate`, `large-output-stdin`,
+`completion-cancel-race`, `service-stop-continuation` and `export-revision-race`.
+These verify an uncached original terminal in an independent Node process after
+other consumers read first, offline cached lookup, native cell moves/deletion,
+cross-cell display updates, immediate clear, complete authenticated oversized
+result artifacts, explicit stdin rejection, cancellation/dispatch races,
+Service lifecycle stop and same-incarnation continuation, and historical export
+snapshot consistency during a concurrent live edit. The probe exits nonzero
+for any failed check. It does not certify native Lab UI, production Feishu,
+actual-device rendering or server restart behavior.
+
 For two real native DSH turns with session recreation and an independent RTC
 participant editing the parameter/Markdown between them:
 

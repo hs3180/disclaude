@@ -26,6 +26,14 @@ const knownCases = new Set([
   'kernel-incarnation',
   'output-features',
   'document-identity',
+  'terminal-host-recovery',
+  'move-delete-running',
+  'display-many-positions',
+  'clear-immediate',
+  'large-output-stdin',
+  'completion-cancel-race',
+  'service-stop-continuation',
+  'export-revision-race',
 ]);
 if (selected && [...selected].some((name) => !knownCases.has(name)))
   throw new Error('Unknown edge case selection');
@@ -117,6 +125,176 @@ const markdown = {
     },
   },
 };
+
+async function withService(c, name, work) {
+  const project = path.join(root, 'project-' + name);
+  fs.mkdirSync(project, { mode: 0o700 });
+  const config = path.join(root, 'connections-' + name + '.json');
+  const connectionId = 'edge-' + name,
+    namespace = 'configured-datalayer-edge';
+  fs.writeFileSync(
+    config,
+    JSON.stringify({
+      version: 1,
+      connections: [
+        {
+          id: connectionId,
+          backend: 'datalayer',
+          baseUrl: env.JUPYTERLAB_HOST,
+          passwordEnv: 'JUPYTERLAB_PASS',
+          allowInsecureHttp: true,
+        },
+      ],
+    }),
+    { mode: 0o600 }
+  );
+  const linked = new JupyterProjectConfigStore(project).linkNotebook({
+    connectionId,
+    serverNamespace: namespace,
+    contentPath: c.file,
+  });
+  if (!linked.ok) throw new Error('Owned Project reference unavailable');
+  const connections = new JupyterConnections(config, () => env);
+  const api = await connections.useDatalayer(connectionId, namespace, async (value) => value);
+  const response = api.response.bind(api),
+    requests = [];
+  api.response = async (route, method = 'GET', body) => {
+    const result = await response(route, method, body);
+    requests.push({ route, method, status: result.status });
+    return result;
+  };
+  const context = { workingDir: project, conversationKey: name, currentWorkingDir: () => project };
+  const created = [];
+  const create = () => {
+    const session = notebookSessionFactory(connections)(context);
+    created.push(session);
+    return session;
+  };
+  const session = create();
+  const invocation = { signal: new AbortController().signal };
+  const call = (name, input, owner = session) => {
+    const tool = owner.tools.find((t) => t.name === name);
+    if (!tool) throw new Error('Required Notebook tool unavailable');
+    return tool.execute(input, invocation);
+  };
+  const [{ notebookId }] = (await call('notebook_list', {})).notebooks;
+  const args = async (cellId, runId, owner = session) => ({
+    notebookId,
+    cellId,
+    runId,
+    expectedSourceHash: (await call('notebook_read_cell', { notebookId, cellId }, owner))
+      .sourceHash,
+  });
+  const status = async (runId, owner = session) => {
+    const deadline = Date.now() + 15000;
+    let observed;
+    do {
+      observed = await call('notebook_status', { notebookId, runId }, owner);
+      if (!['accepted', 'running'].includes(observed.state)) return observed;
+      await wait(100);
+    } while (Date.now() < deadline);
+    throw new Error('Original request did not reach an observable terminal state');
+  };
+  try {
+    await work({
+      project,
+      config,
+      connectionId,
+      namespace,
+      context,
+      api,
+      requests,
+      create,
+      session,
+      call,
+      notebookId,
+      args,
+      status,
+    });
+  } finally {
+    for (const owner of created) owner.dispose();
+  }
+}
+
+async function freshStatus(f, runId, offline = false) {
+  const childSource = `
+    import fs from 'node:fs';import {parseEnv} from 'node:util';
+    import {JupyterConnections} from ${JSON.stringify(new URL('../../packages/service/dist/jupyter/connections.js', import.meta.url).href)};
+    import {notebookSessionFactory} from ${JSON.stringify(new URL('../../packages/service/dist/jupyter/agent-session.js', import.meta.url).href)};
+    const input=JSON.parse(process.argv[1]),env=parseEnv(fs.readFileSync(input.envFile,'utf8'));
+    const connections=new JupyterConnections(input.config,()=>env);
+    const client=await connections.useDatalayer(input.connectionId,input.namespace,async c=>c);
+    const response=client.response.bind(client);let executePosts=0;const requests=[];
+    client.response=async(route,method='GET',body)=>{requests.push({route,method});if(method==='POST'&&route.endsWith('/execute'))executePosts++;if(input.offline)throw new Error('Offline probe');return response(route,method,body);};
+    const session=notebookSessionFactory(connections)({workingDir:input.project,conversationKey:input.conversationKey,currentWorkingDir:()=>input.project});
+    try{const tool=session.tools.find(t=>t.name==='notebook_status');const result=await tool.execute({notebookId:input.notebookId,runId:input.runId},{signal:new AbortController().signal});console.log(JSON.stringify({kind:'fresh-terminal-status',pid:process.pid,result,executePosts,requests}));}
+    finally{session.dispose();}
+  `;
+  const child = await promisify(execFile)(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      childSource,
+      JSON.stringify({
+        envFile: path.resolve(values['env-file']),
+        config: f.config,
+        project: f.project,
+        connectionId: f.connectionId,
+        namespace: f.namespace,
+        conversationKey: f.context.conversationKey,
+        notebookId: f.notebookId,
+        runId,
+        offline,
+      }),
+    ],
+    { timeout: 25000, maxBuffer: 128 * 1024 }
+  );
+  const line = child.stdout
+    .split('\n')
+    .find((line) => line.startsWith('{"kind":"fresh-terminal-status"'));
+  if (!line) throw new Error('Independent process did not return original status');
+  return JSON.parse(line);
+}
+
+async function watchOutputs(c, work) {
+  const { default: WebSocket } = await import('ws');
+  const options = await client.socket(
+    `api/kernels/${c.kernelId}/channels?session_id=${randomUUID()}`
+  );
+  const socket = new WebSocket(options.url, {
+    headers: options.headers,
+    followRedirects: false,
+    handshakeTimeout: 12000,
+    maxPayload: 1024 * 1024,
+  });
+  const messages = [];
+  socket.on('error', () => {});
+  socket.on('message', (data) => {
+    try {
+      const m = JSON.parse(data.toString());
+      if (
+        m.channel === 'iopub' &&
+        ['display_data', 'update_display_data', 'clear_output'].includes(m.header?.msg_type)
+      )
+        messages.push({
+          type: m.header.msg_type,
+          content: m.content,
+          parentMessageId: m.parent_header?.msg_id,
+        });
+    } catch {}
+  });
+  try {
+    await new Promise((resolve, reject) => {
+      socket.once('open', resolve);
+      socket.once('error', reject);
+    });
+    await wait(150);
+    await work(messages);
+  } finally {
+    socket.close();
+  }
+}
 async function isolated(name, sources, work) {
   if (selected && !selected.has(name)) return;
   const file = `disclaude-datalayer-edge-${name}-${randomUUID().slice(0, 8)}.ipynb`;
@@ -690,6 +868,401 @@ await isolated('document-identity', ["print('DOCUMENT_IDENTITY')"], async (c) =>
   }
 });
 
+await isolated('terminal-host-recovery', ["print('UNCACHED_TERMINAL_RESULT', 47)"], async (c) => {
+  await withService(c, 'terminal-host-recovery', async (f) => {
+    const runId = 'unread-original-terminal';
+    const accepted = await f.call('notebook_execute', await f.args('edge-0', runId));
+    if (accepted.state !== 'accepted') throw new Error('Original submission was not accepted');
+    const handle = { kernelId: c.kernelId, requestId: accepted.requestId };
+    const firstConsumer = await terminal(handle);
+    const secondConsumer = await peek(handle);
+    f.session.dispose();
+    const recovered = await freshStatus(f, runId);
+    check(
+      'New Node process recovers an uncached terminal result after other consumers read first',
+      firstConsumer.result?.status === 'ok' &&
+        secondConsumer.result?.status === 'ok' &&
+        recovered.pid !== process.pid &&
+        recovered.executePosts === 0 &&
+        recovered.result.state === 'completed' &&
+        recovered.result.requestId === accepted.requestId &&
+        recovered.result.result?.outputs?.some((o) =>
+          o.text?.includes('UNCACHED_TERMINAL_RESULT 47')
+        ) &&
+        recovered.requests.some((r) => r.route.endsWith('/requests/' + accepted.requestId)) &&
+        !recovered.requests.some((r) => r.route.includes('collaboration')),
+      { accepted, firstConsumer, secondConsumer, recovered }
+    );
+    const offline = await freshStatus(f, runId, true);
+    check(
+      'Independent offline Node process reads a cached terminal with complete result reference',
+      offline.result.state === 'completed' &&
+        offline.result.requestId === accepted.requestId &&
+        offline.requests.length === 0 &&
+        offline.executePosts === 0 &&
+        typeof offline.result.originalResultEntry === 'string',
+      offline
+    );
+  });
+});
+
+await isolated(
+  'move-delete-running',
+  [
+    "import time\nprint('MOVE_BEGIN',flush=True)\ntime.sleep(3)\nprint('MOVE_ORIGINAL_END')",
+    "import time\nprint('DELETE_BEGIN',flush=True)\ntime.sleep(3)\nprint('DELETED_ORIGINAL_END')",
+  ],
+  async (c) => {
+    await withService(c, 'move-delete-running', async (f) => {
+      const a = await f.call('notebook_execute', await f.args('edge-0', 'move-original'));
+      const handleA = { kernelId: c.kernelId, requestId: a.requestId };
+      await active(handleA, 'MOVE_BEGIN');
+      const source = await f.call('notebook_read_cell', {
+        notebookId: f.notebookId,
+        cellId: 'edge-0',
+      });
+      const moved = await f.call('notebook_move_cell', {
+        notebookId: f.notebookId,
+        cellId: 'edge-0',
+        expectedSourceHash: source.sourceHash,
+        beforeCellId: '',
+      });
+      await wait(120);
+      const edited = await f.call('notebook_edit_cell', {
+        notebookId: f.notebookId,
+        cellId: 'edge-0',
+        expectedSourceHash: source.sourceHash,
+        source: "print('MOVE_NEW_SOURCE')",
+      });
+      await wait(120);
+      await c.doc.flush();
+      const immediate = c.doc.snapshot().cells.find((cell) => cell.id === 'edge-0');
+      const pending = await peek(handleA);
+      check(
+        'Native cell move rebinds source observation and clears edited outputs while still running',
+        moved.state === 'moved' &&
+          edited.state === 'edited' &&
+          pending.httpStatus === 202 &&
+          immediate.source === "print('MOVE_NEW_SOURCE')" &&
+          immediate.outputs.length === 0,
+        { moved, edited, immediate, pending }
+      );
+      const original = await f.status('move-original');
+      const currentAccepted = await f.call('notebook_execute', await f.args('edge-0', 'move-new'));
+      const current = await f.status('move-new');
+      const retained = await peek(handleA);
+      await c.doc.flush();
+      const newCell = c.doc.snapshot().cells.find((cell) => cell.id === 'edge-0');
+      check(
+        'Next run owns the moved cell while the original source/result remains historical',
+        original.state === 'completed' &&
+          original.result.sourceMatches === false &&
+          original.result.outputAttachment === 'historical' &&
+          currentAccepted.state === 'accepted' &&
+          current.state === 'completed' &&
+          stdout(newCell).includes('MOVE_NEW_SOURCE') &&
+          !stdout(newCell).includes('MOVE_ORIGINAL_END') &&
+          stdout(retained.result).includes('MOVE_ORIGINAL_END') &&
+          retained.result.source === c.sources[0],
+        { original, current, retained, newCell }
+      );
+      const b = await f.call('notebook_execute', await f.args('edge-1', 'delete-original'));
+      const handleB = { kernelId: c.kernelId, requestId: b.requestId };
+      await active(handleB, 'DELETE_BEGIN');
+      const removed = await f.call(
+        'notebook_delete_cell',
+        await f.args('edge-1', 'unused-delete-read')
+      );
+      await f.call('notebook_insert_cell', {
+        notebookId: f.notebookId,
+        cellId: 'replacement-cell',
+        beforeCellId: '',
+        cellType: 'code',
+        source: "print('REPLACEMENT_RESULT')",
+      });
+      const deleted = await f.status('delete-original');
+      const replacementAccepted = await f.call(
+        'notebook_execute',
+        await f.args('replacement-cell', 'replacement-run')
+      );
+      const replacement = await f.status('replacement-run');
+      await c.doc.flush();
+      const snapshot = c.doc.snapshot();
+      const note = snapshot.cells.find((cell) => cell.id === 'edge-note');
+      check(
+        'Deleting a running stable cell retains original history and isolates its replacement',
+        removed.state === 'deleted' &&
+          deleted.state === 'completed' &&
+          deleted.result.sourceMatches === false &&
+          replacementAccepted.state === 'accepted' &&
+          replacement.state === 'completed' &&
+          !snapshot.cells.some((cell) => cell.id === 'edge-1') &&
+          !snapshot.cells.some((cell) => stdout(cell).includes('DELETED_ORIGINAL_END')) &&
+          JSON.stringify(note.metadata) === JSON.stringify(markdown.metadata) &&
+          JSON.stringify(note.attachments) === JSON.stringify(markdown.attachments),
+        { removed, deleted, replacement, snapshot }
+      );
+    });
+  }
+);
+
+await isolated(
+  'display-many-positions',
+  [
+    "from IPython.display import display\nshared_display='disclaude-multi-display'\ndisplay({'text/plain':'MULTI_BEFORE_A','text/html':'<b>MULTI_BEFORE_A</b>'},raw=True,display_id=shared_display)\ndisplay({'text/plain':'MULTI_BEFORE_A2'},raw=True,display_id=shared_display)",
+    "display({'text/plain':'MULTI_BEFORE_B'},raw=True,display_id=shared_display)",
+    "from IPython.display import update_display\nupdate_display({'text/plain':'MULTI_AFTER','text/html':'<b>MULTI_AFTER</b>'},raw=True,display_id=shared_display)",
+  ],
+  async (c) => {
+    await watchOutputs(c, async (messages) => {
+      const handles = [];
+      for (let i = 0; i < c.sources.length; i++) {
+        const handle = await submit(c, 'edge-' + i, c.sources[i]);
+        handles.push(handle);
+        if ((await terminal(handle)).result?.status !== 'ok')
+          throw new Error('Display execution failed');
+      }
+      await wait(200);
+      await c.doc.flush();
+      const cells = c.doc.snapshot().cells;
+      const targets = [...cells[0].outputs, ...cells[1].outputs];
+      const historical = await peek(handles[0]);
+      check(
+        'One display_id updates every position across two cells through native IOPub',
+        targets.length === 3 &&
+          targets.every(
+            (o) =>
+              o.data?.['text/plain'] === 'MULTI_AFTER' &&
+              o.data?.['text/html'] === '<b>MULTI_AFTER</b>'
+          ) &&
+          messages.filter((m) => m.type === 'display_data').length === 3 &&
+          messages.some(
+            (m) =>
+              m.type === 'update_display_data' &&
+              m.content.transient?.display_id === 'disclaude-multi-display'
+          ),
+        {
+          outputs: cells.slice(0, 3).map((cell) => ({ id: cell.id, outputs: cell.outputs })),
+          messages,
+        }
+      );
+      check(
+        'A later display update does not rewrite the already-retained original run result',
+        outputs(historical.result).every((o) =>
+          o.data?.['text/plain']?.startsWith('MULTI_BEFORE_A')
+        ),
+        { historical, currentTargets: targets }
+      );
+    });
+  }
+);
+
+await isolated(
+  'clear-immediate',
+  [
+    "import time\nfrom IPython.display import clear_output,display\nprint('IMMEDIATE_BEFORE',flush=True)\nclear_output(wait=False)\ntime.sleep(1.5)\ndisplay({'text/plain':'IMMEDIATE_AFTER'},raw=True)",
+  ],
+  async (c) => {
+    await watchOutputs(c, async (messages) => {
+      const handle = await submit(c, 'edge-0', c.sources[0]);
+      const deadline = Date.now() + 8000;
+      while (!messages.some((m) => m.type === 'clear_output') && Date.now() < deadline)
+        await wait(30);
+      await wait(120);
+      await c.doc.flush();
+      const beforeReplacement = c.doc.snapshot().cells[0];
+      const pending = await peek(handle);
+      check(
+        'clear_output(wait=False) empties the live cell before the next output',
+        messages.some((m) => m.type === 'clear_output' && m.content.wait === false) &&
+          pending.httpStatus === 202 &&
+          beforeReplacement.outputs.length === 0,
+        { pending, beforeReplacement, messages }
+      );
+      const complete = await terminal(handle);
+      await wait(120);
+      await c.doc.flush();
+      const cell = c.doc.snapshot().cells[0];
+      check(
+        'Immediate clear retains only the replacement in the final Notebook',
+        complete.result?.status === 'ok' &&
+          JSON.stringify(cell.outputs).includes('IMMEDIATE_AFTER') &&
+          !JSON.stringify(cell.outputs).includes('IMMEDIATE_BEFORE'),
+        { complete, cell }
+      );
+    });
+  }
+);
+
+await isolated(
+  'large-output-stdin',
+  [
+    "from IPython.display import display\nprint('LARGE_BEGIN'+('x'*80000)+'LARGE_END')\nfor i in range(21): display({'text/plain':f'OUTPUT_POSITION_{i}'},raw=True)",
+    "input('THIS_MUST_BE_EXPLICITLY_REJECTED:')",
+  ],
+  async (c) => {
+    await withService(c, 'large-output-stdin', async (f) => {
+      const accepted = await f.call('notebook_execute', await f.args('edge-0', 'large-original'));
+      const result = await f.status('large-original');
+      const pathName = result.result?.resultArtifact;
+      if (typeof pathName !== 'string')
+        throw new Error('Large result omitted its complete artifact');
+      const artifactResponse = await client.response('files/' + pathName);
+      const artifact = JSON.parse(await artifactResponse.text());
+      const anonymous = await fetch(result.resultArtifactEntry, { redirect: 'manual' });
+      const anonymousStatus = anonymous.status;
+      await anonymous.body?.cancel();
+      const read = await f.call('notebook_read_cell', {
+        notebookId: f.notebookId,
+        cellId: 'edge-0',
+      });
+      check(
+        'Large status/RTC previews disclose truncation and reference the complete authenticated artifact',
+        accepted.state === 'accepted' &&
+          result.state === 'completed' &&
+          result.result.outputsTruncated === true &&
+          typeof result.originalResultEntry === 'string' &&
+          typeof result.resultArtifactEntry === 'string' &&
+          stdout(artifact).includes('LARGE_END') &&
+          stdout(artifact).length > 80000 &&
+          outputs(artifact).length === 22 &&
+          read.outputsTruncated === true &&
+          read.outputs.length === 16 &&
+          read.omittedOutputs === 6 &&
+          [302, 303, 401, 403].includes(anonymousStatus),
+        {
+          accepted,
+          result,
+          artifactBytes: artifact.result_bytes ?? Buffer.byteLength(JSON.stringify(artifact)),
+          completeOutputs: outputs(artifact).length,
+          preview: read,
+          anonymousStatus,
+          csp: artifactResponse.headers.get('content-security-policy'),
+        }
+      );
+      await f.call('notebook_execute', await f.args('edge-1', 'stdin-rejected'));
+      const stdin = await f.status('stdin-rejected');
+      check(
+        'Host execution explicitly refuses stdin rather than hanging for invisible input',
+        stdin.state === 'failed' && stdin.result?.error?.ename === 'StdinNotImplementedError',
+        stdin
+      );
+    });
+  }
+);
+
+await isolated(
+  'completion-cancel-race',
+  [
+    "import time\nprint('RACE_A_BEGIN',flush=True)\ntime.sleep(0.2)\nprint('RACE_A_DONE')",
+    "import time\nprint('RACE_B_BEGIN',flush=True)\ntime.sleep(0.4)\nprint('RACE_B_DONE')",
+  ],
+  async (c) => {
+    const trials = [];
+    for (const delay of [0, 120, 190, 230, 300]) {
+      const a = await submit(c, 'edge-0', c.sources[0]);
+      await active(a, 'RACE_A_BEGIN');
+      const b = await submit(c, 'edge-1', c.sources[1]);
+      await wait(delay);
+      const before = await peek(a);
+      const cancel = await client.stopRequest(a);
+      const aFinal = await terminal(a),
+        bFinal = await terminal(b);
+      trials.push({ delay, a, b, before, cancel, aFinal, bFinal });
+    }
+    check(
+      'Cancellation racing completion and next dispatch never interrupts the other request',
+      trials.every(
+        (t) =>
+          t.cancel === 'requested' &&
+          t.aFinal.httpStatus !== 202 &&
+          t.bFinal.result?.status === 'ok' &&
+          stdout(t.bFinal.result).includes('RACE_B_DONE')
+      ),
+      trials
+    );
+  }
+);
+
+await isolated(
+  'service-stop-continuation',
+  [
+    "import time\nstop_memory=37\nprint('SERVICE_STOP_BEGIN',flush=True)\ntime.sleep(20)\nprint('SERVICE_STOP_LATE')",
+    "print('SERVICE_SAME_KERNEL',stop_memory+5)",
+  ],
+  async (c) => {
+    await withService(c, 'service-stop-continuation', async (f) => {
+      const accepted = await f.call('notebook_execute', await f.args('edge-0', 'service-long'));
+      await active({ kernelId: c.kernelId, requestId: accepted.requestId }, 'SERVICE_STOP_BEGIN');
+      const stopped = await f.session.stop();
+      const exact = await peek({ kernelId: c.kernelId, requestId: accepted.requestId });
+      const next = f.create();
+      const nextArgs = await f.args('edge-1', 'service-continue', next);
+      const continued = await f.call('notebook_execute', nextArgs, next);
+      const complete = await f.status('service-continue', next);
+      const incarnation = await client.kernelInfo(c.kernelId);
+      check(
+        'Service lifecycle stop confirms the original request before same-kernel continuation',
+        stopped.some((r) => r.runId === 'service-long' && r.state === 'cancelled') &&
+          outputs(exact.result).some((o) => o.ename === 'KeyboardInterrupt') &&
+          !stdout(exact.result).includes('SERVICE_STOP_LATE') &&
+          continued.state === 'accepted' &&
+          complete.state === 'completed' &&
+          complete.result?.outputs?.some((o) => o.text?.includes('SERVICE_SAME_KERNEL 42')) &&
+          incarnation.incarnation === c.incarnation.incarnation &&
+          f.requests.filter((r) => r.method === 'POST' && r.route.endsWith('/execute')).length ===
+            2,
+        { stopped, exact, continued, complete, incarnation, requests: f.requests }
+      );
+    });
+  }
+);
+
+await isolated('export-revision-race', ["print('EXPORT_RECORDED_RESULT')"], async (c) => {
+  await withService(c, 'export-revision-race', async (f) => {
+    await f.call('notebook_execute', await f.args('edge-0', 'export-original'));
+    const complete = await f.status('export-original');
+    const response = f.api.response.bind(f.api);
+    let changed = false;
+    f.api.response = async (route, method = 'GET', body) => {
+      if (route === 'nbconvert/html' && method === 'POST' && !changed) {
+        changed = true;
+        c.doc.notebook.cells.find((cell) => cell.id === 'edge-note').source =
+          'Human edit during export; keep live.';
+        await c.doc.flush();
+      }
+      return response(route, method, body);
+    };
+    const exported = await f.call('notebook_export', { notebookId: f.notebookId });
+    const notebook = await client.json('api/contents/' + exported.notebookPath);
+    const htmlResponse = await client.response('files/' + exported.htmlPath);
+    const html = await htmlResponse.text();
+    await c.doc.flush();
+    const live = c.doc.snapshot().cells.find((cell) => cell.id === 'edge-note');
+    check(
+      'Concurrent live edit is diagnosed while HTML and ipynb retain one historical snapshot',
+      complete.state === 'completed' &&
+        changed &&
+        exported.liveChangedDuringExport === true &&
+        exported.snapshotState === 'historical' &&
+        exported.revision !== exported.liveRevision &&
+        notebook.content.cells.find((cell) => cell.id === 'edge-note').source === markdown.source &&
+        html.includes(markdown.source) &&
+        html.includes('disclaude-snapshot-sha256') &&
+        html.includes(exported.revision) &&
+        live.source === 'Human edit during export; keep live.',
+      {
+        exported,
+        live,
+        csp: htmlResponse.headers.get('content-security-policy'),
+        contentType: htmlResponse.headers.get('content-type'),
+      }
+    );
+    report.ownedNotebooks.push(exported.notebookPath, exported.htmlPath);
+    persist();
+  });
+});
+
 const remainingKernels = await client.json('api/kernels'),
   remainingSessions = await client.json('api/sessions');
 report.originalKernelsPreserved = originalKernels.every((k) =>
@@ -714,5 +1287,10 @@ console.log(
     resourceCounts: report.resourceCounts,
   })
 );
-if (!report.completed || !report.originalKernelsPreserved || !report.originalSessionsPreserved)
+if (
+  !report.completed ||
+  report.checks.some((c) => !c.passed) ||
+  !report.originalKernelsPreserved ||
+  !report.originalSessionsPreserved
+)
   process.exitCode = 1;

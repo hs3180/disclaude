@@ -492,6 +492,56 @@ class StackTests(unittest.IsolatedAsyncioTestCase):
 
 
 class LiveSourceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_native_move_rebinds_source_observer_and_preserves_original_history(self):
+        doc = notebook()
+        ctx = runtime.OutputContext(doc, "print('first')", metadata(), {})
+        cell = ctx.begin()
+        outputs = []
+        actions._output_hook(outputs, cell, actions._StreamState(), message("stream", name="stdout", text="original"), ctx)
+        clone = doc.get_cell(0)
+        with doc.ycells.doc.transaction():
+            del doc.ycells[0]
+            doc.ycells.insert(1, doc.create_ycell(clone))
+        await asyncio.sleep(0)
+        moved = doc.ycells[1]
+        self.assertEqual(moved["id"], "first")
+        self.assertEqual(output_text(moved["outputs"].to_py()), "original")
+        source = moved["source"]
+        source += " # human edit after move"
+        await asyncio.sleep(0)
+        self.assertEqual(moved["outputs"].to_py(), [])
+        self.assertEqual(output_text(outputs), "original")
+        self.assertTrue(ctx.stale)
+        ctx.finish()
+
+    async def test_finish_does_not_recreate_a_subscription_from_a_pending_move_callback(self):
+        doc = notebook()
+        ctx = runtime.OutputContext(doc, "print('first')", metadata(), {})
+        ctx.begin()
+        clone = doc.get_cell(0)
+        with doc.ycells.doc.transaction():
+            del doc.ycells[0]
+            doc.ycells.insert(1, doc.create_ycell(clone))
+        ctx.finish()
+        await asyncio.sleep(0)
+        self.assertIsNone(ctx.source_subscription)
+        self.assertIsNone(ctx.cells_subscription)
+
+    async def test_deleted_cell_does_not_write_into_another_stable_cell(self):
+        doc = notebook()
+        ctx = runtime.OutputContext(doc, "print('first')", metadata(), {})
+        cell = ctx.begin()
+        outputs = []
+        state = actions._StreamState()
+        del doc.ycells[0]
+        await asyncio.sleep(0)
+        actions._output_hook(outputs, cell, state, message("stream", name="stdout", text="deleted original"), ctx)
+        self.assertEqual(doc.ycells[0]["id"], "second")
+        self.assertEqual(doc.ycells[0]["outputs"].to_py(), [])
+        self.assertEqual(output_text(outputs), "deleted original")
+        self.assertTrue(ctx.stale)
+        ctx.finish()
+
     async def test_source_edit_clears_current_outputs_before_another_kernel_message(self):
         doc = notebook()
         ctx = runtime.OutputContext(doc, "print('first')", metadata(), {})

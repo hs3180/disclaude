@@ -66,6 +66,8 @@ class OutputContext:
         self.progress = progress
         self.source_subscription = None
         self.observed_source = None
+        self.cells_subscription = None
+        self.finished = False
 
     def _cell(self):
         if self.notebook is None:
@@ -102,10 +104,29 @@ class OutputContext:
         except RuntimeError:
             loop = None
         if loop is not None:
+            # Native YNotebook moves clone a cell's CRDT types. Observe the
+            # array to rebind the source subscription after a stable-ID move.
+            self.cells_subscription = self.notebook.ycells.observe(
+                lambda event: loop.call_soon(self._refresh_source_observer))
+            self._refresh_source_observer()
+        return cell
+
+    def _refresh_source_observer(self) -> None:
+        if self.finished:
+            return
+        cell = self.cell_for_output()
+        if self.source_subscription is not None:
+            self.observed_source.unobserve(self.source_subscription)
+            self.source_subscription = None
+        if cell is not None:
+            loop = asyncio.get_running_loop()
             self.observed_source = cell["source"]
             self.source_subscription = self.observed_source.observe(
-                lambda event: loop.call_soon(self.cell_for_output))
-        return cell
+                lambda event: loop.call_soon(self._check_source))
+
+    def _check_source(self) -> None:
+        if not self.finished:
+            self.cell_for_output()
 
     def bump_output_version(self) -> None:
         self.output_version += 1
@@ -130,6 +151,10 @@ class OutputContext:
         return None
 
     def finish(self) -> None:
+        self.finished = True
+        if self.cells_subscription is not None:
+            self.notebook.ycells.unobserve(self.cells_subscription)
+            self.cells_subscription = None
         if self.source_subscription is not None:
             self.observed_source.unobserve(self.source_subscription)
             self.source_subscription = None

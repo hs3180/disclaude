@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "revision": "0.6.3-nbmodel-repair-1",
+  "revision": "0.6.3-nbmodel-repair-2",
   "nbmodelVersion": "0.2.9",
   "frontendVersion": "0.2.8",
   "source": "Configured upstream installation captured 2026-10-06; original failures retained separately",
@@ -67,7 +67,7 @@
       "area": "python",
       "target": "runtime.py",
       "file": "runtime.py",
-      "sha256": "203a2844be8d3c80bbff6790be44227e04505f9606a18127c5c588b012ce7845"
+      "sha256": "9a6e3c55de98b0f306d3f016c26033c4f70f85dc05bf302fab547b9455753029"
     }
   ]
 }

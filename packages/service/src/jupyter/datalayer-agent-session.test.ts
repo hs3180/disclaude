@@ -12,6 +12,7 @@ import type { JupyterConnections } from './connections.js';
 
 const roots: string[] = [];
 afterEach(() => {
+  vi.useRealTimers();
   for (const root of roots.splice(0)) {
     fs.rmSync(root, { recursive: true });
   }
@@ -47,7 +48,7 @@ async function fixture() {
     notebook,
     documentId: 'doc-id',
     contentPath: 'analysis.ipynb',
-    flush: () => Promise.resolve(),
+    flush: vi.fn(() => Promise.resolve()),
     close: vi.fn(),
     snapshot: () => ({
       documentId: 'doc-id',
@@ -61,6 +62,15 @@ async function fixture() {
     }),
   };
   const client = {
+    inspectConnection: vi.fn(() =>
+      Promise.resolve({
+        mcp: { state: 'available' },
+        nbmodel: { state: 'available' },
+        rtc: { state: 'configured' },
+        nbconvert: { state: 'available' },
+      })
+    ),
+    documentPath: vi.fn(() => Promise.resolve('analysis.ipynb')),
     openDocument: vi.fn(() => Promise.resolve(doc)),
     notebookEntry: () => 'https://configured.invalid/lab/tree/analysis.ipynb',
     json: vi.fn((route: string) => {
@@ -130,6 +140,7 @@ async function fixture() {
   return {
     root,
     client,
+    doc,
     notebook,
     session,
     create,
@@ -207,6 +218,22 @@ describe('Datalayer MVP service boundaries', () => {
     expect(f.notebook.getCell(1).source).toBe('Preserve my conclusion.');
   });
 
+  it('rechecks the live stable cell after a native move and edit during kernel discovery', async () => {
+    const f = await fixture();
+    f.client.kernelInfo.mockImplementation(() => {
+      f.notebook.moveCell(0, 1);
+      f.notebook.getCell(1).source = 'print(100)';
+      return Promise.resolve({ kernelId: 'kernel', incarnation: 'native-instance' });
+    });
+    expect(await f.call(f.session, 'notebook_execute', f.args)).toMatchObject({
+      state: 'conflict',
+    });
+    expect(f.client.submitCell).not.toHaveBeenCalled();
+    expect(f.notebook.cells.find((cell) => cell.id === 'human')?.source).toBe(
+      'Preserve my conclusion.'
+    );
+  });
+
   it('reports unsupported stop without an unrelated kernel-wide API call', async () => {
     const f = await fixture();
     f.client.submitCell.mockResolvedValue({
@@ -229,6 +256,97 @@ describe('Datalayer MVP service boundaries', () => {
     expect(f.client.json).not.toHaveBeenCalled();
     expect(f.client.submitCell).not.toHaveBeenCalled();
     expect(f.journal.records()).toEqual([]);
+  });
+
+  it('waits beyond cancellation acceptance for the original terminal result', async () => {
+    const f = await fixture();
+    f.client.submitCell.mockResolvedValue({
+      state: 'accepted',
+      handle: { kernelId: 'kernel', requestId: 'original-request' },
+    } as never);
+    f.client.stopRequest.mockResolvedValue('requested');
+    f.client.observe.mockResolvedValueOnce({ state: 'running' } as never).mockResolvedValueOnce({
+      state: 'cancelled',
+      result: { error: { ename: 'KeyboardInterrupt' } },
+    } as never);
+    await f.call(f.session, 'notebook_execute', f.args);
+    expect(await f.call(f.session, 'notebook_stop', f.args)).toMatchObject({
+      state: 'cancelled',
+      runId: 'original',
+      stopConfirmed: true,
+    });
+    expect(f.client.observe).toHaveBeenCalledTimes(2);
+    expect(f.journal.get('original')).toMatchObject({ state: 'cancelled' });
+  });
+
+  it('reports a completion race from its result rather than claiming cancellation', async () => {
+    const f = await fixture();
+    f.client.submitCell.mockResolvedValue({
+      state: 'accepted',
+      handle: { kernelId: 'kernel', requestId: 'original-request' },
+    } as never);
+    f.client.stopRequest.mockResolvedValue('requested');
+    await f.call(f.session, 'notebook_execute', f.args);
+    expect(await f.call(f.session, 'notebook_stop', f.args)).toMatchObject({
+      state: 'already_terminal',
+      stopConfirmed: false,
+    });
+    expect(f.journal.get('original')).toMatchObject({ state: 'completed' });
+  });
+
+  it('keeps a failed original lookup unknown after an accepted cancellation', async () => {
+    const f = await fixture();
+    f.client.submitCell.mockResolvedValue({
+      state: 'accepted',
+      handle: { kernelId: 'kernel', requestId: 'original-request' },
+    } as never);
+    f.client.stopRequest.mockResolvedValue('requested');
+    f.client.observe.mockResolvedValue({ state: 'unknown' } as never);
+    await f.call(f.session, 'notebook_execute', f.args);
+    expect(await f.session.stop()).toEqual([{ runId: 'original', state: 'unknown' }]);
+    expect(f.client.observe).toHaveBeenCalledOnce();
+    expect(f.client.submitCell).toHaveBeenCalledOnce();
+  });
+
+  it('reconciles a settling POST handle after pausing before confirming its stop', async () => {
+    const f = await fixture();
+    let accept!: (value: unknown) => void;
+    f.client.submitCell.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          accept = resolve;
+        }) as never
+    );
+    f.client.stopRequest.mockResolvedValue('requested');
+    f.client.observe.mockResolvedValue({ state: 'cancelled' } as never);
+    const attempt = f.call(f.session, 'notebook_execute', f.args).catch((error) => error);
+    await vi.waitFor(() => expect(f.client.submitCell).toHaveBeenCalledOnce());
+    const stopping = f.session.stop();
+    accept({ state: 'accepted', handle: { kernelId: 'kernel', requestId: 'original-request' } });
+    expect(await attempt).toBeInstanceOf(Error);
+    expect(await stopping).toEqual([{ runId: 'original', state: 'cancelled' }]);
+    expect(f.client.stopRequest).toHaveBeenCalledWith({
+      kernelId: 'kernel',
+      requestId: 'original-request',
+    });
+    expect(f.client.submitCell).toHaveBeenCalledOnce();
+  });
+
+  it('bounds cancellation confirmation and does not replace a still-running result', async () => {
+    const f = await fixture();
+    f.client.submitCell.mockResolvedValue({
+      state: 'accepted',
+      handle: { kernelId: 'kernel', requestId: 'original-request' },
+    } as never);
+    f.client.stopRequest.mockResolvedValue('requested');
+    f.client.observe.mockResolvedValue({ state: 'running' } as never);
+    await f.call(f.session, 'notebook_execute', f.args);
+    vi.useFakeTimers();
+    const stopping = f.session.stop();
+    await vi.advanceTimersByTimeAsync(15000);
+    expect(await stopping).toEqual([{ runId: 'original', state: 'unknown' }]);
+    expect(f.journal.get('original')).toMatchObject({ state: 'running' });
+    expect(f.client.stopRequest).toHaveBeenCalledOnce();
   });
 
   it('records native provenance and rejects silent memory replacement on later runs', async () => {
@@ -298,5 +416,181 @@ describe('Datalayer MVP service boundaries', () => {
         resultArtifact: 'nbmodel-results/kernel/request.json',
       },
     });
+  });
+
+  it('moves and deletes stable cells while preserving human metadata and attachments', async () => {
+    const f = await fixture();
+    const human = f.notebook.getCell(1);
+    human.setMetadata('custom', { retain: 'unknown metadata' });
+    (human as import('@jupyter/ydoc').YMarkdownCell).attachments = {
+      'keep.txt': { 'text/plain': 'human attachment' },
+    };
+    const before = human.toJSON();
+    const read = (await f.call(f.session, 'notebook_read_cell', {
+      notebookId: f.args.notebookId,
+      cellId: 'human',
+    })) as { sourceHash: string };
+    await f.call(f.session, 'notebook_move_cell', {
+      notebookId: f.args.notebookId,
+      cellId: 'human',
+      expectedSourceHash: read.sourceHash,
+      beforeCellId: 'code',
+    });
+    expect(f.notebook.cells.map((c) => c.id)).toEqual(['human', 'code']);
+    expect(f.notebook.getCell(0).toJSON()).toEqual(before);
+    await f.call(f.session, 'notebook_move_cell', {
+      notebookId: f.args.notebookId,
+      cellId: 'human',
+      expectedSourceHash: read.sourceHash,
+      beforeCellId: '',
+    });
+    expect(f.notebook.cells.map((c) => c.id)).toEqual(['code', 'human']);
+    f.notebook.getCell(0).source = 'new human code';
+    expect(await f.call(f.session, 'notebook_delete_cell', f.args)).toMatchObject({
+      state: 'conflict',
+    });
+    const next = (await f.call(f.session, 'notebook_read_cell', {
+      notebookId: f.args.notebookId,
+      cellId: 'code',
+    })) as { sourceHash: string };
+    const args = {
+      notebookId: f.args.notebookId,
+      cellId: 'code',
+      expectedSourceHash: next.sourceHash,
+    };
+    expect(await f.call(f.session, 'notebook_delete_cell', args)).toMatchObject({
+      state: 'deleted',
+    });
+    expect(await f.call(f.session, 'notebook_delete_cell', args)).toMatchObject({
+      state: 'missing',
+    });
+    expect(f.notebook.cells.map((c) => c.id)).toEqual(['human']);
+    expect(f.notebook.getCell(0).toJSON()).toEqual(before);
+  });
+
+  it('refuses ambiguous stable IDs before editing either cell', async () => {
+    const f = await fixture();
+    f.notebook.insertCell(2, {
+      id: 'code',
+      cell_type: 'code',
+      source: 'unrelated',
+      metadata: {},
+      outputs: [],
+      execution_count: null,
+    });
+    await expect(
+      f.call(f.session, 'notebook_edit_cell', { ...f.args, source: 'overwrite' })
+    ).rejects.toThrow('ambiguous');
+    expect(f.notebook.cells.map((c) => c.source)).toEqual([
+      'print(42)',
+      'Preserve my conclusion.',
+      'unrelated',
+    ]);
+  });
+
+  it('checks Project authorization again after shared state synchronization', async () => {
+    const f = await fixture();
+    const ref = new JupyterProjectConfigStore(f.root).listNotebookReferences();
+    if (!ref.ok) {
+      throw new Error('Fixture reference unavailable');
+    }
+    f.doc.flush.mockImplementation(() => {
+      new JupyterProjectConfigStore(f.root).unlinkNotebook(ref.data[0]);
+      return Promise.resolve();
+    });
+    await expect(
+      f.call(f.session, 'notebook_edit_cell', { ...f.args, source: 'unauthorized overwrite' })
+    ).rejects.toThrow('no longer authorized');
+    expect(f.notebook.getCell(0).source).toBe('print(42)');
+  });
+
+  it('follows a native rename on an already open Project document', async () => {
+    const f = await fixture();
+    f.client.documentPath.mockResolvedValue('renamed.ipynb');
+    expect(
+      await f.call(f.session, 'notebook_describe', { notebookId: f.args.notebookId })
+    ).toMatchObject({ contentPath: 'renamed.ipynb' });
+    const refs = new JupyterProjectConfigStore(f.root).listNotebookReferences();
+    expect(refs).toMatchObject({
+      ok: true,
+      data: [{ documentId: 'doc-id', contentPath: 'renamed.ipynb' }],
+    });
+    expect(f.client.openDocument).toHaveBeenCalledOnce();
+    expect(f.client.documentPath).toHaveBeenCalledWith('doc-id');
+  });
+
+  it('checks interface capabilities before creating a new shared document session', async () => {
+    const f = await fixture();
+    f.client.inspectConnection.mockResolvedValue({
+      mcp: { state: 'available' },
+      nbmodel: { state: 'available' },
+      rtc: { state: 'disabled' },
+      nbconvert: { state: 'available' },
+    });
+    await expect(
+      f.call(f.create(), 'notebook_describe', { notebookId: f.args.notebookId })
+    ).rejects.toThrow('interfaces could not be verified');
+    expect(f.client.openDocument).toHaveBeenCalledOnce();
+  });
+
+  it('reads cached terminal history without network or an RTC document', async () => {
+    const f = await fixture();
+    f.client.submitCell.mockResolvedValue({
+      state: 'accepted',
+      handle: { kernelId: 'kernel', requestId: 'request' },
+    } as never);
+    f.client.observe.mockResolvedValue({
+      state: 'completed',
+      result: {
+        outputs: [{ output_type: 'stream', text: 'original result' }],
+        original_result_entry: 'https://configured.invalid/api/kernels/kernel/requests/request',
+      },
+    } as never);
+    await f.call(f.session, 'notebook_execute', f.args);
+    await f.call(f.session, 'notebook_status', {
+      notebookId: f.args.notebookId,
+      runId: 'original',
+    });
+    f.session.dispose();
+    f.client.openDocument.mockRejectedValue(new Error('network down'));
+    f.client.documentPath.mockRejectedValue(new Error('network down'));
+    f.client.observe.mockRejectedValue(new Error('network down'));
+    expect(
+      await f.call(f.create(), 'notebook_status', {
+        notebookId: f.args.notebookId,
+        runId: 'original',
+      })
+    ).toMatchObject({
+      state: 'completed',
+      originalResultEntry: 'https://configured.invalid/api/kernels/kernel/requests/request',
+      result: { outputs: [{ text: 'original result' }] },
+    });
+    expect(f.client.openDocument).toHaveBeenCalledOnce();
+    expect(f.client.observe).toHaveBeenCalledOnce();
+  });
+
+  it('marks host preview clipping and retains the complete original request link', async () => {
+    const f = await fixture();
+    f.client.submitCell.mockResolvedValue({
+      state: 'accepted',
+      handle: { kernelId: 'kernel', requestId: 'request' },
+    } as never);
+    f.client.observe.mockResolvedValue({
+      state: 'completed',
+      result: {
+        outputs: Array.from({ length: 20 }, () => ({ output_type: 'stream', text: 'original' })),
+        original_result_entry: 'https://configured.invalid/api/kernels/kernel/requests/request',
+      },
+    } as never);
+    await f.call(f.session, 'notebook_execute', f.args);
+    const value = (await f.call(f.session, 'notebook_status', {
+      notebookId: f.args.notebookId,
+      runId: 'original',
+    })) as { result: { outputs: unknown[] } };
+    expect(value).toMatchObject({
+      originalResultEntry: 'https://configured.invalid/api/kernels/kernel/requests/request',
+      result: { outputsTruncated: true, omittedOutputs: 4 },
+    });
+    expect(value.result.outputs).toHaveLength(16);
   });
 });

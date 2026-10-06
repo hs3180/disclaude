@@ -24,13 +24,20 @@
 
 配置文件需为宿主私有普通文件（0600），通过 `JUPYTER_CONNECTIONS_FILE` 指定。Project 引用的 `connectionId` 使用上述 ID。可用 `authorizationEnv`/私有文件替代密码；HTTP 的显式授权及凭据隔离规则沿用 [Service 文档](../jupyter-service.md)。一个 Project 的 Notebook 不能混用两个后端。当前适配层省略 `backend` 时默认选择 Datalayer；旧 coordinator 需显式指定，其控制权、原子检查和持久 fence 的保证不适用于本 MVP。历史实验记录仍以当时的源码和显式后端配置为准。
 
-工具为 `notebook_list`、`notebook_describe`、`notebook_read_cell`、`notebook_insert_cell`、`notebook_edit_cell`、`notebook_execute`、`notebook_status`、`notebook_stop`、`notebook_export`。编辑使用稳定 cell ID 和客户端源码哈希检查；执行前落盘原目标和 runId，未知提交不自动重放。原结果按远端明确保留策略查询并在宿主缓存，导出用同一次捕获的共享文档生成 `.ipynb` 和远端 nbconvert HTML。
+工具为 `notebook_list`、`notebook_describe`、`notebook_read_cell`、`notebook_insert_cell`、`notebook_edit_cell`、`notebook_move_cell`、`notebook_delete_cell`、`notebook_execute`、`notebook_status`、`notebook_stop`、`notebook_export`。编辑使用稳定 cell ID 和客户端源码哈希检查；执行前落盘原目标和 runId，未知提交不自动重放。原结果按远端明确保留策略查询并在宿主缓存，导出用同一次捕获的共享文档生成 `.ipynb` 和远端 nbconvert HTML。
 
 后续宿主改动已增加执行政策检查、原生 kernel incarnation、服务实例与 Location
 记录、显式关闭 stdin、独占 kernel 检查及大输出／历史结果提示。未声明安全目标取消政策
 的服务不会收到取消 DELETE，也不会创建新的执行 kernel；原生 incarnation 改变后拒绝
 把下一次运行称为原内存续行。29 项相关组件检查、build 和 lint 通过；这些宿主改动在
 配置远端的复验仍未完成。
+
+第二轮开发已补充稳定 cell 的移动/删除、原生文件 ID 反查改名路径、Project 解除关联
+后的异步写入拒绝，以及不打开 RTC 文档的原请求查询。缓存终态可在离线的新宿主读取；
+预览明确标记截断并保留认证的原结果/完整产物入口。取消后最多等待 15 秒确认原请求
+终态，204 不算停止；导出保留捕获快照并报告期间 live 版本变化。原生移动会重建 CRDT
+源码对象，服务端监听相应重新绑定，结束时释放监听。当前宿主 75 项测试、构建和
+targeted lint、远端隔离测试进程 34 项回归通过；新增配置远端集成探针尚待执行。
 
 ## 修复候选第一轮复验（2026-10-06 UTC）
 

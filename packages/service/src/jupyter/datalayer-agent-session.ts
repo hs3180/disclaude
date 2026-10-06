@@ -73,6 +73,8 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
             source: cell.source,
             sourceHash: hash(cell.source),
             outputs: this.outputs(cell.toJSON() as unknown as Record<string, unknown>),
+            ...this.previewState(cell.toJSON() as unknown as Record<string, unknown>),
+            completeNotebookEntry: bound.client.notebookEntry(bound.ref.contentPath),
           };
         }
       ),
@@ -88,6 +90,7 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
         async (input) => {
           const bound = await this.bound(String(input.notebookId));
           await bound.doc.flush();
+          this.assertBound(bound);
           const existing = bound.doc.notebook.cells.find((c) => c.id === input.cellId);
           if (existing) {
             if (existing.source !== input.source || existing.cell_type !== input.cellType) {
@@ -130,6 +133,7 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
         async (input) => {
           const bound = await this.bound(String(input.notebookId));
           await bound.doc.flush();
+          this.assertBound(bound);
           const cell = this.cell(bound, String(input.cellId));
           if (hash(cell.source) !== input.expectedSourceHash) {
             return { state: 'conflict', sourceHash: hash(cell.source) };
@@ -142,6 +146,57 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
             sourceHash: hash(cell.source),
             revision: bound.doc.snapshot().revision,
           };
+        }
+      ),
+      this.tool(
+        'notebook_move_cell',
+        'Move one stable cell before beforeCellId; an empty target appends. Check the latest sourceHash and preserve cell metadata/attachments.',
+        { ...cellId, expectedSourceHash: text, beforeCellId: text },
+        async (input) => {
+          const bound = await this.bound(String(input.notebookId));
+          await bound.doc.flush();
+          this.assertBound(bound);
+          const cell = this.cell(bound, String(input.cellId));
+          if (hash(cell.source) !== input.expectedSourceHash) {
+            return { state: 'conflict', sourceHash: hash(cell.source) };
+          }
+          if (input.beforeCellId === cell.id) {
+            return { state: 'unchanged', cellId: cell.id };
+          }
+          const { cells } = bound.doc.notebook;
+          const from = cells.indexOf(cell);
+          const before = input.beforeCellId
+            ? cells.indexOf(this.cell(bound, String(input.beforeCellId)))
+            : cells.length;
+          const to = from < before ? before - 1 : before;
+          const stableId = cell.id;
+          if (from !== to) {
+            bound.doc.notebook.moveCell(from, to);
+          }
+          await bound.doc.flush();
+          return { state: 'moved', cellId: stableId, revision: bound.doc.snapshot().revision };
+        }
+      ),
+      this.tool(
+        'notebook_delete_cell',
+        'Delete the explicitly identified stable cell only if its last read sourceHash still matches. Preserve unrelated human cells.',
+        { ...cellId, expectedSourceHash: text },
+        async (input) => {
+          const bound = await this.bound(String(input.notebookId));
+          await bound.doc.flush();
+          this.assertBound(bound);
+          const matches = bound.doc.notebook.cells.filter((c) => c.id === input.cellId);
+          if (!matches.length) {
+            return { state: 'missing', cellId: input.cellId };
+          }
+          const cell = this.cell(bound, String(input.cellId));
+          if (hash(cell.source) !== input.expectedSourceHash) {
+            return { state: 'conflict', sourceHash: hash(cell.source) };
+          }
+          const stableId = cell.id;
+          bound.doc.notebook.deleteCell(bound.doc.notebook.cells.indexOf(cell));
+          await bound.doc.flush();
+          return { state: 'deleted', cellId: stableId, revision: bound.doc.snapshot().revision };
         }
       ),
       this.tool(
@@ -161,24 +216,16 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
         'notebook_status',
         'Query the original runId without replay. Retained remote results and host snapshots preserve original execution provenance.',
         { ...notebookId, runId: text },
-        async (input) =>
-          this.observe(await this.record(String(input.notebookId), String(input.runId)))
+        (input) => this.observe(this.record(String(input.notebookId), String(input.runId)))
       ),
       this.tool(
         'notebook_stop',
-        'Request cancellation of this exact nbmodel request. Older servers may report unsupported; no kernel-wide interrupt fallback is performed.',
+        'Cancel this exact original nbmodel request and wait for its terminal result. Report unknown when completion cannot be verified.',
         { ...notebookId, runId: text },
         async (input) => {
-          const record = await this.record(String(input.notebookId), String(input.runId));
-          if (terminal.has(record.state)) {
-            return { state: 'already_terminal', runId: record.runId };
-          }
-          if (!record.handle) {
-            return { state: 'unknown', runId: record.runId };
-          }
-          const { handle } = record;
-          const state = await this.useRecord(record, (client) => client.stopRequest(handle));
-          return { state, runId: record.runId, stopConfirmed: false };
+          const record = this.record(String(input.notebookId), String(input.runId));
+          const result = await this.requestStop(record);
+          return { ...result, stopConfirmed: result.state === 'cancelled' };
         }
       ),
       this.tool(
@@ -217,11 +264,14 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
           (input.expectedSourceHash !== undefined &&
             (typeof input.expectedSourceHash !== 'string' ||
               !/^[a-f0-9]{64}$/.test(input.expectedSourceHash))) ||
-          ['cellId', 'runId'].some(
+          ['cellId', 'runId', 'beforeCellId'].some(
             (field) =>
               input[field] !== undefined &&
               (typeof input[field] !== 'string' ||
-                !/^[A-Za-z0-9_-]{1,200}$/.test(input[field] as string))
+                !(
+                  (field === 'beforeCellId' && input[field] === '') ||
+                  /^[A-Za-z0-9_-]{1,200}$/.test(input[field] as string)
+                ))
           )
         ) {
           throw new Error('Invalid or oversized Notebook tool argument');
@@ -265,6 +315,22 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
   }
 
   private async bind(ref: JupyterNotebookReference): Promise<Bound> {
+    if (ref.documentId) {
+      const { documentId } = ref;
+      const contentPath = await this.connections.useDatalayer(
+        ref.connectionId,
+        ref.serverNamespace,
+        (client) => client.documentPath(documentId)
+      );
+      this.assertActive();
+      if (contentPath !== ref.contentPath) {
+        const updated = this.config.updateNotebookPath(ref, contentPath);
+        if (!updated.ok) {
+          throw new Error(updated.error);
+        }
+        ref = updated.data;
+      }
+    }
     const identifier = key(ref);
     let pending = this.documents.get(identifier);
     if (!pending) {
@@ -272,6 +338,18 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
         ref.connectionId,
         ref.serverNamespace,
         async (client) => {
+          const capabilities = await client.inspectConnection();
+          if (
+            capabilities.mcp.state !== 'available' ||
+            capabilities.nbmodel.state !== 'available' ||
+            capabilities.rtc.state !== 'configured' ||
+            capabilities.nbconvert.state !== 'available'
+          ) {
+            throw new Error(
+              'Required remote Notebook interfaces could not be verified; inspect the host connection'
+            );
+          }
+          this.assertActive();
           const doc = await client.openDocument(ref.contentPath, ref.documentId);
           const resolved = this.config.resolveNotebook(ref, doc.documentId);
           if (!resolved.ok) {
@@ -285,6 +363,7 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
     }
     try {
       const bound = await pending;
+      bound.ref = ref.documentId ? ref : bound.ref;
       this.documents.set(key(bound.ref), pending);
       return bound;
     } catch (error) {
@@ -305,11 +384,41 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
   }
 
   private cell(bound: Bound, id: string): Document['notebook']['cells'][number] {
-    const cell = bound.doc.notebook.cells.find((c) => c.id === id);
-    if (!cell) {
-      throw new Error('Notebook cell ID is missing');
+    const matches = bound.doc.notebook.cells.filter((c) => c.id === id);
+    if (matches.length !== 1) {
+      throw new Error('Notebook cell ID is missing or ambiguous');
     }
-    return cell;
+    return matches[0];
+  }
+
+  private assertBound(bound: Bound): void {
+    this.assertActive();
+    if (!this.refs().some((ref) => key(ref) === key(bound.ref))) {
+      throw new Error('Notebook reference is no longer authorized by this Project');
+    }
+  }
+
+  private previewState(cell: Record<string, unknown>): {
+    outputsTruncated?: true;
+    omittedOutputs?: number;
+  } {
+    const outputs = Array.isArray(cell.outputs)
+      ? (cell.outputs as Array<Record<string, unknown>>)
+      : [];
+    const clipped =
+      outputs.length > 16 ||
+      outputs.some((o) => {
+        const value = Array.isArray(o.text) ? o.text.join('') : String(o.text ?? '');
+        const data = o.data as Record<string, unknown> | undefined;
+        return (
+          value.length > 8000 ||
+          String(o.evalue ?? '').length > 1000 ||
+          String(data?.['text/plain'] ?? '').length > 2000
+        );
+      });
+    return clipped
+      ? { outputsTruncated: true, omittedOutputs: Math.max(0, outputs.length - 16) }
+      : {};
   }
 
   private outputs(cell: Record<string, unknown>): unknown[] {
@@ -354,6 +463,7 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
         sourceHash: c.sourceHash,
         sourcePreview: String(c.source).slice(0, 500),
         outputs: this.outputs(c),
+        ...this.previewState(c),
       })),
       omittedCells: Math.max(0, snapshot.cells.length - limit),
     };
@@ -416,6 +526,7 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
       if (!name) {
         throw new Error('Notebook needs an explicitly configured remote kernel');
       }
+      this.assertBound(bound);
       const session = (await bound.client.json('api/sessions', 'POST', {
         path: bound.ref.contentPath,
         name: bound.ref.contentPath,
@@ -482,6 +593,7 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
         'Notebook execution policy is unavailable; verify the remote Datalayer repair'
       );
     }
+    this.assertBound(bound);
     const kernelId = await this.kernel(bound);
     const { incarnation } = await bound.client.kernelInfo(kernelId);
     if (
@@ -500,9 +612,10 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
     }
     await bound.doc.flush();
     invocation.signal.throwIfAborted();
-    this.assertActive();
-    const { source } = cell;
-    if (hash(source) !== input.expectedSourceHash) {
+    this.assertBound(bound);
+    const currentCell = this.cell(bound, String(input.cellId));
+    const { source } = currentCell;
+    if (currentCell.cell_type !== 'code' || hash(source) !== input.expectedSourceHash) {
       return { state: 'conflict', sourceHash: hash(source) };
     }
     const record = this.journal.reserve(runId, {
@@ -510,18 +623,24 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
       serverNamespace: bound.ref.serverNamespace,
       contentPath: bound.ref.contentPath,
       documentId: bound.doc.documentId,
-      cellId: cell.id,
+      cellId: currentCell.id,
       sourceHash: hash(source),
       kernelId,
       kernelIncarnation: incarnation,
       serverInstanceId: policy.serverInstanceId,
     });
-    const result = await bound.client.submitCell(kernelId, bound.doc.documentId, cell.id, source, {
-      documentPath: bound.ref.contentPath,
-      runId,
-      kernelIncarnation: incarnation,
-      serverInstanceId: policy.serverInstanceId,
-    });
+    const result = await bound.client.submitCell(
+      kernelId,
+      bound.doc.documentId,
+      currentCell.id,
+      source,
+      {
+        documentPath: bound.ref.contentPath,
+        runId,
+        kernelIncarnation: incarnation,
+        serverInstanceId: policy.serverInstanceId,
+      }
+    );
     const saved = this.journal.update(
       runId,
       result.state === 'accepted'
@@ -535,14 +654,15 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
     };
   }
 
-  private async record(notebookId: string, runId: string): Promise<DatalayerRunRecord> {
-    const bound = await this.bound(notebookId);
+  private record(notebookId: string, runId: string): DatalayerRunRecord {
+    const ref = this.refs().find((item) => key(item) === notebookId);
     const record = this.journal.get(runId);
     if (
+      !ref ||
       !record ||
-      record.target.documentId !== bound.ref.documentId ||
-      record.target.connectionId !== bound.ref.connectionId ||
-      record.target.serverNamespace !== bound.ref.serverNamespace
+      record.target.documentId !== ref.documentId ||
+      record.target.connectionId !== ref.connectionId ||
+      record.target.serverNamespace !== ref.serverNamespace
     ) {
       throw new Error('Notebook run does not belong to this conversation/resource');
     }
@@ -576,6 +696,12 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
       sourceHash: current.target.sourceHash,
       cellId: current.target.cellId,
       ...(current.handle ? { requestId: current.handle.requestId } : {}),
+      ...(typeof current.observation?.result?.original_result_entry === 'string'
+        ? { originalResultEntry: current.observation.result.original_result_entry }
+        : {}),
+      ...(typeof current.observation?.result?.result_artifact_entry === 'string'
+        ? { resultArtifactEntry: current.observation.result.result_artifact_entry }
+        : {}),
       kernelId: current.target.kernelId,
       ...(current.target.kernelIncarnation
         ? { kernelIncarnation: current.target.kernelIncarnation }
@@ -587,6 +713,7 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
     return {
       ...('execution_count' in result ? { executionCount: result.execution_count } : {}),
       outputs: this.outputs({ outputs: result.outputs }),
+      ...this.previewState({ outputs: result.outputs }),
       ...(result.error ? { error: result.error } : {}),
       ...(result.source_hash ? { sourceHash: result.source_hash } : {}),
       ...(typeof result.source_matches === 'boolean'
@@ -603,6 +730,7 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
 
   private async export(bound: Bound): Promise<Record<string, unknown>> {
     await bound.doc.flush();
+    this.assertBound(bound);
     const notebook = bound.doc.notebook.toJSON();
     const serialized = JSON.stringify(notebook);
     const revision = hash(serialized);
@@ -614,6 +742,7 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
       'PUT',
       { type: 'notebook', format: 'json', content: notebook }
     );
+    this.assertBound(bound);
     const converted = await bound.client.response('nbconvert/html', 'POST', {
       name: notebookPath,
       content: notebook,
@@ -626,13 +755,20 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
       /<\/head>/i,
       `<meta name="disclaude-snapshot-sha256" content="${revision}">$&`
     );
+    this.assertBound(bound);
     await bound.client.json(
       `api/contents/${htmlPath.split('/').map(encodeURIComponent).join('/')}`,
       'PUT',
       { type: 'file', format: 'text', content: html }
     );
+    await bound.doc.flush();
+    this.assertBound(bound);
+    const liveRevision = hash(JSON.stringify(bound.doc.notebook.toJSON()));
     return {
       revision,
+      liveRevision,
+      liveChangedDuringExport: revision !== liveRevision,
+      snapshotState: revision === liveRevision ? 'current' : 'historical',
       renderer: 'jupyter-nbconvert',
       notebookEntry: bound.client.notebookEntry(bound.ref.contentPath),
       snapshotEntry: bound.client.notebookEntry(notebookPath),
@@ -644,24 +780,50 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
 
   async stop(): Promise<NotebookStopObservation[]> {
     this.pause();
+    // A POST already sent may settle after pause. Reconcile its original
+    // handle before stopping; a timed-out/unknown submission is never replayed.
+    const deadline = Date.now() + 15000;
+    while (this.executions.size > 0 && Date.now() < deadline) {
+      await wait(100);
+    }
     const results: NotebookStopObservation[] = [];
     for (const record of this.journal.records().filter((r) => !terminal.has(r.state))) {
-      let state: NotebookStopObservation['state'] = 'unknown';
-      if (record.handle) {
-        const { handle } = record;
-        const requested = await this.useRecord(record, (client) => client.stopRequest(handle));
-        if (requested === 'requested') {
-          const result = await this.useRecord(record, (client) => client.observe(handle));
-          this.journal.update(record.runId, { state: result.state, observation: result });
-          if (result.state === 'cancelled') {
-            state = 'cancelled';
-          } else if (terminal.has(result.state)) {
-            state = 'already_terminal';
-          }
-        }
-      }
-      results.push({ runId: record.runId, state });
+      results.push(await this.requestStop(record));
     }
     return results;
+  }
+
+  private async requestStop(record: DatalayerRunRecord): Promise<NotebookStopObservation> {
+    const result: NotebookStopObservation = { runId: record.runId, state: 'unknown' };
+    if (terminal.has(record.state)) {
+      return { ...result, state: 'already_terminal' };
+    }
+    if (!record.handle) {
+      return result;
+    }
+    const { handle } = record;
+    try {
+      if ((await this.useRecord(record, (client) => client.stopRequest(handle))) !== 'requested') {
+        return result;
+      }
+      const deadline = Date.now() + 15000;
+      do {
+        const observation = await this.useRecord(record, (client) => client.observe(handle));
+        this.journal.update(record.runId, { state: observation.state, observation });
+        if (terminal.has(observation.state)) {
+          return {
+            ...result,
+            state: observation.state === 'cancelled' ? 'cancelled' : 'already_terminal',
+          };
+        }
+        if (observation.state !== 'running') {
+          return result;
+        }
+        await wait(100);
+      } while (Date.now() < deadline);
+    } catch {
+      // Authentication, transport and authorization failures do not confirm a stop.
+    }
+    return result;
   }
 }

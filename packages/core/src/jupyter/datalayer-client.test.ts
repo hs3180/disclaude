@@ -102,6 +102,55 @@ function queuePolicy(serverInstanceId = 'server-instance') {
 }
 
 describe('existing Datalayer HTTP interfaces', () => {
+  it('resolves the original file ID through the native read-only reverse path route', async () => {
+    const f = await fixture(() => ({ data: { id: 'document', path: 'renamed.ipynb' } }));
+    expect(await f.client.documentPath('document')).toBe('renamed.ipynb');
+    expect(f.requests.map((r) => [r.method, r.path])).toEqual([
+      ['GET', '/prefix/api/fileid/path?id=document'],
+    ]);
+  });
+
+  it('refuses another file identity or a traversal path', async () => {
+    const f = await fixture(() => ({ data: { id: 'copy', path: 'analysis.ipynb' } }));
+    await expect(f.client.documentPath('original')).rejects.toThrow('stable path');
+    const invalid = await fixture(() => ({ data: { id: 'document', path: '../outside.ipynb' } }));
+    await expect(invalid.client.documentPath('document')).rejects.toThrow('without traversal');
+    expect(invalid.requests).toHaveLength(1);
+  });
+
+  it('keeps complete result links on the configured origin and original artifact identity', async () => {
+    const f = await fixture(() => ({
+      data: {
+        status: 'ok',
+        outputs: '[]',
+        outputs_truncated: true,
+        result_artifact: 'nbmodel-results/kernel/request.json',
+      },
+    }));
+    const observed = await f.client.observe({ kernelId: 'kernel', requestId: 'request' });
+    expect(observed).toMatchObject({ state: 'completed', result: { outputs_truncated: true } });
+    expect(new URL(String(observed.result?.original_result_entry)).pathname).toBe(
+      '/prefix/api/kernels/kernel/requests/request'
+    );
+    const artifact = new URL(String(observed.result?.result_artifact_entry));
+    expect(artifact.origin).toBe(new URL(String(observed.result?.original_result_entry)).origin);
+    expect(artifact.pathname).toBe('/prefix/files/nbmodel-results/kernel/request.json');
+    expect(artifact.search).toBe('');
+  });
+
+  it('does not expose a foreign artifact as the complete original result', async () => {
+    const f = await fixture(() => ({
+      data: {
+        status: 'ok',
+        outputs: '[]',
+        outputs_truncated: true,
+        result_artifact: '../unowned.json',
+      },
+    }));
+    expect(await f.client.observe({ kernelId: 'kernel', requestId: 'request' })).toMatchObject({
+      state: 'unknown',
+    });
+  });
   it('discovers native interfaces with safe requests and keeps product behavior unverified', async () => {
     const f = await fixture(discoveryReply);
     expect(await f.client.inspectConnection()).toEqual({

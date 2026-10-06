@@ -238,6 +238,24 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
     return this.url(`files/${path.split('/').map(encodeURIComponent).join('/')}`).href;
   }
 
+  requestEntry(handle: DatalayerExecutionHandle): string {
+    return this.url(`api/kernels/${id(handle.kernelId)}/requests/${id(handle.requestId)}`).href;
+  }
+
+  /** Follow a native file ID rather than a replacement at its old path. */
+  async documentPath(documentId: string): Promise<string> {
+    const data = (await this.json(`api/fileid/path?id=${id(documentId)}`)) as Record<
+      string,
+      unknown
+    >;
+    if (data?.id !== documentId || typeof data.path !== 'string') {
+      throw new Error('Notebook stable path could not be verified');
+    }
+    const { notebookPath } = await import('./rtc-document.js');
+    notebookPath(data.path);
+    return data.path;
+  }
+
   /** Standard kernel channels handshake; captures the process's native message session. */
   async kernelInfo(kernelId: string): Promise<{ kernelId: string; incarnation: string }> {
     const { default: WebSocket } = await import('ws');
@@ -421,8 +439,21 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
       ) {
         return { state: 'unknown', httpStatus: response.status };
       }
+      const artifact = result.result_artifact;
+      if (
+        artifact !== undefined &&
+        artifact !== `nbmodel-results/${handle.kernelId}/${handle.requestId}.json`
+      ) {
+        return { state: 'unknown', httpStatus: response.status };
+      }
+      const entries = {
+        original_result_entry: this.requestEntry(handle),
+        ...(typeof artifact === 'string'
+          ? { result_artifact_entry: this.fileEntry(artifact) }
+          : {}),
+      };
       if (response.status === 202) {
-        return { state: 'running', httpStatus: 202, result };
+        return { state: 'running', httpStatus: 202, result: { ...result, ...entries } };
       }
       if (response.status === 300) {
         return { state: 'input_required', httpStatus: 300, result };
@@ -441,6 +472,7 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
         | undefined;
       const normalized = {
         ...result,
+        ...entries,
         ...(outputs !== undefined ? { outputs } : {}),
         ...(error ? { error } : {}),
       };
