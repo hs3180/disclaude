@@ -153,6 +153,10 @@ ID, executes in two separate new remote kernels, and compares seeded numerical
 results/package versions. It retains CSV, PNG, ipynb/HTML and hash evidence,
 including complete inline Plotly assets. Authentication and sandbox header/source
 checks do not establish actual-device rendering or HTML sanitizer behavior.
+Report content fingerprints use `notebookSnapshotHash` with
+`revisionAlgorithm: sorted-json-sha256-v1`: sort object keys before JSON encoding
+and SHA-256, retaining array order and all metadata. Artifact file-byte hashes are
+recorded separately. Jupyter's serialization key order does not change content identity.
 The Datalayer HTTP transport permits complete responses up to 8 MB by default,
 including nbconvert's inline Plotly bundle; model previews keep their smaller
 limits. The host can set a smaller `maxResponseBytes` when constructing its client.

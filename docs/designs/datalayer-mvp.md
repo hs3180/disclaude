@@ -31,7 +31,7 @@
 被改动的文件。返回远端 kernel 相对路径、大小和 SHA-256，模型不使用宿主路径
 读取远端数据。PNG/JPEG 观察走统一图片结果，由 Harness adapter 转原生图片；
 源码变化后的旧图标为 historical，无来源标记的输出为 unverified。大图提供完整
-Notebook 入口；真实附件/图片组合和飞书产品验收仍待执行。
+Notebook 入口；注册附件/图片组件已复验，真实飞书附件输入仍待验收。
 
 后续宿主改动已增加执行政策检查、原生 kernel incarnation、服务实例与 Location
 记录、显式关闭 stdin、独占 kernel 检查及大输出／历史结果提示。未声明安全目标取消政策
@@ -45,6 +45,58 @@ Notebook 入口；真实附件/图片组合和飞书产品验收仍待执行。
 终态，204 不算停止；导出保留捕获快照并报告期间 live 版本变化。原生移动会重建 CRDT
 源码对象，服务端监听相应重新绑定，结束时释放监听。当前宿主 75 项测试、构建和
 targeted lint、远端隔离测试进程 34 项回归通过；新增配置远端集成探针已执行。
+
+## 图片观察与完整报告复验（2026-10-06 UTC）
+
+宿主新增图片结果、附件注册与导入后，在 `a8f962e4e` 通过一次真实 DSH 图片观察：
+`openai-codex / gpt-5.6-luna / low` 只获得 `notebook_observe_image` 工具，
+一条原生图片引用、一次工具调用，正确识别三点上升折线及 step/value 坐标轴。
+原生历史无凭据；此只读观察没有启动 kernel。此前两次 DSH 服务依赖接线失败
+保留在 `configured-image-7b756e8cd` 和 `configured-image-b4f80c841`，修复后
+`configured-image-native-root` 通过。
+
+报告候选的远端源码为 `b4f80c841`，镜像
+`sha256:ddfe58902ce74ed598d5f3582535b02bcf9b71666a8d1ded4a509377851b6c3f`。
+固定运行补丁 manifest 仍为
+`db82f9d7efd5f4886465b79e1e84b74d58858ee11f894761ac96156d299a8e4b`；
+此次显式启用报告依赖，仅增加 Plotly 7.1.0，原有 Narwhals 2.22.1 和全部
+313 个已安装依赖版本均未变，`pip check` 通过。早期 169 项记录仅指
+`pip freeze` 中的 `==` 项，不是完整环境包数。第一次依赖候选意外替换
+Narwhals，被预检拒绝且未部署；修正后的完整 inventory 比对和启动预检通过。
+
+宿主 `8002ac42b` 的 `configured-report-fingerprint-03` 11/11 通过：
+24 字节合成 CSV 按注册附件 ID 导入并核验重复内容；两个新远端 kernel
+得到相同均值 4、样本标准差 2.6457513110645907、种子 63 的随机均值
+-0.014563260591700372。记录 NumPy 2.4.6、Matplotlib 3.10.9、Plotly 7.1.0
+和 Narwhals 2.22.1；PNG 已目视核验，SVG、表格 HTML 和内嵌 Plotly 资产
+均保留。此复现承诺是指定输入/种子/环境的数值结果，不是 runtime ID、
+路径或 SVG 日期等产物的逐字节一致。
+
+完整 HTML 为 5,123,868 字节，SHA-256 为
+`740125e3a816a4fbd358e1626d52249e61884568b9f9f02528fc3ee61d54e7fd`；
+Notebook 内容指纹为
+`d995b776327d75ab1124e68dc329a4d47e9b004c167d998ddd616ff6dbcadfea`，
+采用 `sorted-json-sha256-v1`，对象键排序后 JSON 编码再 SHA-256，数组顺序
+和全部 metadata 保留。HTML 的 meta 指纹、返回的 revision 与保存后 ipynb
+一致；文件字节 SHA 与内容指纹分别记录。认证下载成功、匿名 GET 被拒绝，
+CSP 为 sandbox allow-scripts 且无 allow-same-origin。这些是文件和响应头
+证据，尚未证明实际设备的 JavaScript、公式渲染或 sanitizer 行为。
+
+报告首轮被宿主 3 MB 响应上限截断；`d66c9fef5` 将 Datalayer 默认上限
+调整为 8 MB，模型预览限制不变。第二轮发现 Jupyter 保存时排序 JSON 键
+使旧指纹失配；`8002ac42b` 修正后通过，并额外通过导出期间 live 编辑的
+历史快照检查。两轮失败原样保留，88 项传输/会话、55 项指纹/会话定向
+测试及 build/lint 通过；最终冻结源码的工程检查另行记录。
+
+候选窗口为 03:37:16 至 03:45:28，前切/回退登录入口观测中断约 4.390/4.108 秒。
+恢复原镜像后环境、command、entrypoint 和原挂载保留，额外两项身份持久化
+挂载保留；SQLite 247 行在恢复前后完整指纹一致，integrity check 通过，
+四个核心/模型/报告 Project 的原 document ID 仍可解析。自有资源均为
+0 → 0；日常飞书容器未重启，本地日常 LaunchAgent 未切换。
+证据仍在主仓库私有 `.local/063-jupyter/datalayer-delivery-20261006/`，包括
+`configured-report-a8f962e4e`、`configured-report-transport-02`、最终报告、
+`configured-export-fingerprint-race`、依赖预检和恢复记录。真实飞书、用户
+Lab 修改、实际设备渲染与发行验收仍未通过。
 
 ## 第二轮组合复验（2026-10-06 UTC）
 
