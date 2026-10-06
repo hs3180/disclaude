@@ -24,6 +24,7 @@ export * from './utils/index.js';
 export * from './channel-api/index.js';
 
 // Jupyter identity, revision, and execution ownership contracts (#5217/#5218)
+export { notebookSnapshotHash } from './jupyter/notebook-fingerprint.js';
 export type {
   JupyterServiceIdentity,
   JupyterNotebookIdentity,

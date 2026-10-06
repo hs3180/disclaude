@@ -1,12 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import type {
-  DatalayerJupyterClient,
-  ToolDefinition,
-  ToolContext,
-  FileRef,
-  ToolMediaResult,
+import {
+  notebookSnapshotHash,
+  type DatalayerJupyterClient,
+  type ToolDefinition,
+  type ToolContext,
+  type FileRef,
+  type ToolMediaResult,
 } from '@disclaude/core';
 import type {
   NotebookAgentContext,
@@ -981,8 +982,7 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
     await bound.doc.flush();
     this.assertBound(bound);
     const notebook = bound.doc.notebook.toJSON();
-    const serialized = JSON.stringify(notebook);
-    const revision = hash(serialized);
+    const revision = notebookSnapshotHash(notebook);
     const stem = `${bound.ref.contentPath.slice(0, -6)}.report-${revision.slice(0, 12)}-${randomUUID().slice(0, 8)}`;
     const notebookPath = `${stem}.ipynb`;
     const htmlPath = `${stem}.html`;
@@ -1012,9 +1012,10 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
     );
     await bound.doc.flush();
     this.assertBound(bound);
-    const liveRevision = hash(JSON.stringify(bound.doc.notebook.toJSON()));
+    const liveRevision = notebookSnapshotHash(bound.doc.notebook.toJSON());
     return {
       revision,
+      revisionAlgorithm: 'sorted-json-sha256-v1',
       liveRevision,
       liveChangedDuringExport: revision !== liveRevision,
       snapshotState: revision === liveRevision ? 'current' : 'historical',

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { parseArgs, parseEnv } from 'node:util';
 import { DatalayerJupyterClient } from '../../packages/core/dist/jupyter/datalayer-client.js';
+import { notebookSnapshotHash } from '../../packages/core/dist/jupyter/notebook-fingerprint.js';
 import { JupyterConnections } from '../../packages/service/dist/jupyter/connections.js';
 import { notebookSessionFactory } from '../../packages/service/dist/jupyter/agent-session.js';
 import { JupyterProjectConfigStore } from '../../packages/service/dist/jupyter/project-config-store.js';
@@ -301,7 +302,7 @@ try {
     );
   report.exports.push(exported);
   const snapshot = await client.json(`api/contents/${exported.notebookPath}`);
-  const revision = createHash('sha256').update(JSON.stringify(snapshot.content)).digest('hex');
+  const revision = notebookSnapshotHash(snapshot.content);
   const response = await client.response(`files/${exported.htmlPath}`);
   const html = await client.responseText(response);
   const csp = response.headers.get('content-security-policy');
