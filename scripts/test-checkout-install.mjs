@@ -101,8 +101,8 @@ try {
   // This optional backend may be reviewed/merged separately from packaging.
   if (coordinatorPayload.some((path) => existsSync(resolve(path)))) {
     for (const path of coordinatorPayload) {
-    assert(packedPaths.has(path), `Optional remote Jupyter server payload is missing ${path}`);
-    assert(readFileSync(join(distribution, path)).length > 0);
+      assert(packedPaths.has(path), `Optional remote Jupyter server payload is missing ${path}`);
+      assert(readFileSync(join(distribution, path)).length > 0);
     }
   }
   assert(
@@ -112,7 +112,7 @@ try {
     'Jupyter server payload must not include runtime state or Python caches'
   );
   report.checks.push(
-    'optional remote-server source payload is complete and excludes runtime state'
+    'optional remote-server payload follows source scope and excludes runtime state'
   );
   assert.deepEqual(
     packResult.files.filter((file) => isDockerDeploymentEntry(file.path)).map((file) => file.path),
