@@ -162,6 +162,7 @@ async function verifyPackage() {
     for (const name of ['core', 'service', 'channel-cli']) {
       await load(name);
     }
+    await load('core', 'sdk/providers/deepseek/native-app.js');
     const { DisclaudeService } = await load('service', 'service.js');
     const { Config } = await load('core');
     if (${isPrebuilt} && realpathSync(Config.getBuiltinsDir()) !== realpathSync(installed)) throw new Error('Builtins do not resolve to installed release');
