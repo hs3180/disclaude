@@ -58,7 +58,7 @@ export interface CodexAppServerDynamicToolCallRequest {
 }
 
 export interface CodexAppServerDynamicToolCallResult {
-  contentItems: Array<{ type: 'inputText'; text: string }>;
+  contentItems: Array<{ type: 'inputText'; text: string } | { type: 'inputImage'; imageUrl: string }>;
   success: boolean;
 }
 

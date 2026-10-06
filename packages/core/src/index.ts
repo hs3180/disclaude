@@ -47,6 +47,7 @@ export type {
 export { createNotebookTools } from './jupyter/notebook-tools.js';
 export type { NotebookToolBinding } from './jupyter/notebook-tools.js';
 export type { ToolDefinition, ToolContext } from './sdk/tools.js';
+export type { ToolMediaResult, ToolImage } from './sdk/tool-result.js';
 
 // Config
 export * from './config/index.js';

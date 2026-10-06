@@ -1,4 +1,5 @@
 import { prepareTools, type ToolDefinition } from '../../tools.js';
+import { renderToolResult } from '../../tool-result.js';
 import type {
   CodexAppServerDynamicToolCallRequest,
   CodexAppServerDynamicToolCallResult,
@@ -55,9 +56,14 @@ export function createCodexDynamicToolRegistry(
         const value = await tool.execute(request.arguments as Record<string, unknown>, {
           signal: request.signal,
         });
+        const rendered = renderToolResult(value);
         return {
           contentItems: [
-            { type: 'inputText', text: typeof value === 'string' ? value : JSON.stringify(value) },
+            { type: 'inputText', text: rendered.text },
+            ...rendered.images.map((image) => ({
+              type: 'inputImage' as const,
+              imageUrl: `data:${image.mimeType};base64,${image.data}`,
+            })),
           ],
           success: true,
         };

@@ -10,7 +10,7 @@ import { assertToolOptions, type ToolDefinition } from '../../tools.js';
 import { registerDshTools } from './tool-adapter.js';
 
 export const name = 'disclaude-dsh-native-app';
-export const inject = ['agents', 'tools', 'systemPrompt', 'sdkAppStartup'];
+export const inject = ['agents', 'tools', 'systemPrompt', 'sdkAppStartup', 'attachments'];
 
 interface ToolDescriptor {
   name: string;
@@ -201,7 +201,7 @@ export class DshNativeApp {
           }
         },
       }));
-      registerDshTools(agentCtx.tools, tools);
+      registerDshTools(agentCtx.tools, tools, this.ctx.attachments);
       if (this.prompt) {
         agentCtx.systemPrompt.section({
           name: 'disclaude-context',
