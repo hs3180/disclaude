@@ -505,6 +505,9 @@ try {
     sessions: [originalSessions.length, sessions.length],
   };
   report.finishedAt = new Date().toISOString();
+  report.requiredChecksPassed = report.checks
+    .filter((check) => check.name !== 'MCP Tasks protocol')
+    .every((check) => check.passed);
   persist();
   console.log(
     JSON.stringify({
@@ -517,6 +520,7 @@ try {
   );
   if (
     !report.completed ||
+    !report.requiredChecksPassed ||
     !report.originalKernelsPreserved ||
     !report.originalSessionsPreserved ||
     report.cleanupFailed

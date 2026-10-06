@@ -67,8 +67,18 @@ replace a GPU/scientific environment with a fresh generic Jupyter image.
 ```sh
 docker build --build-arg JUPYTER_BASE_IMAGE=<saved-existing-image> \
   --build-arg JUPYTER_RUNTIME_USER=<existing-user-or-root> \
-  -t <private-candidate-tag> .
+-t <private-candidate-tag> .
 ```
+
+The configured baseline had no Plotly package. An optional report fixture uses
+[Plotly 7.1.0](https://pypi.org/project/plotly/7.1.0/) and its Narwhals dependency,
+pinned with universal-wheel hashes in `reporting-requirements.txt`. Build with
+`--build-arg INSTALL_REPORTING_DEPS=1` only for that candidate. Installation uses
+`--no-deps --require-hashes` and runs `pip check`; compare every existing
+distribution and scientific package against the saved inventory. This option
+adds remote report packages without installing Python on the disclaude host.
+The default overlay build does not install them. Record additions separately
+from the unchanged original distribution versions and retain the original image.
 
 The installer checks every fingerprint and Python syntax before writes. Run it
 only in a new image or an owned staging tree, never over a live package directory.

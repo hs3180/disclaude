@@ -8,6 +8,7 @@ import {
   type JupyterNotebookLocator,
   type ToolDefinition,
   type ToolContext,
+  type FileRef,
   type NotebookToolBinding,
 } from '@disclaude/core';
 import { JupyterConnections } from './connections.js';
@@ -37,6 +38,8 @@ export interface NotebookSession {
   dispose(): void;
   redactEnvironment(environment: Record<string, string | undefined>): void;
   messageContext(): Promise<string>;
+  /** Only files supplied by the host's incoming message path are importable. */
+  registerAttachments?(attachments: readonly FileRef[]): void;
   stop(): Promise<NotebookStopObservation[]>;
 }
 

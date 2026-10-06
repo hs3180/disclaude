@@ -170,6 +170,19 @@ describe('ChatAgent (service)', () => {
   });
 
   describe('constructor', () => {
+    it('registers the current message attachments before building Notebook model context', async () => {
+      const attachment = {id:'csv',fileName:'data.csv',source:'user' as const,localPath:'/private/download/data.csv',createdAt:1};
+      const registerAttachments = vi.fn();
+      const messageContext = vi.fn(() => {
+        expect(registerAttachments).toHaveBeenCalledExactlyOnceWith([attachment]);
+        return Promise.resolve('\nRemote Notebook attachment csv is importable.');
+      });
+      Object.assign(chatAgent,{isSessionActive:true,notebookSession:{registerAttachments,messageContext,inactive:false},channel:{push:vi.fn(()=>true)}});
+      await chatAgent.processMessage({chatId:'oc_test_chat',messageId:'file-message',payload:'Analyze this CSV in the Notebook',attachments:[attachment]});
+      expect(messageContext).toHaveBeenCalledOnce();
+      expect((chatAgent as any).channel.push.mock.calls[0][0].message.content).toContain('attachment csv');
+    });
+
     it('uses injected message callbacks without selecting a backend policy', async () => {
       const core = await import('@disclaude/core');
       const actual = await vi.importActual<typeof core>('@disclaude/core');

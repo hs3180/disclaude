@@ -30,6 +30,28 @@ const request = () => ({
 });
 
 describe('Codex host tool adapter', () => {
+  it('renders canonical tool images as app-server inputImage without base64 text', async () => {
+    const data = Buffer.from('png bytes').toString('base64');
+    const registry = createCodexDynamicToolRegistry([
+      tool(
+        vi
+          .fn()
+          .mockResolvedValue({
+            format: 'disclaude.tool-result.v1',
+            data: { cellId: 'plot' },
+            images: [{ mimeType: 'image/png', data }],
+          })
+      ),
+    ]);
+    expect(await registry.call(request())).toEqual({
+      success: true,
+      contentItems: [
+        { type: 'inputText', text: '{"cellId":"plot"}' },
+        { type: 'inputImage', imageUrl: `data:image/png;base64,${data}` },
+      ],
+    });
+  });
+
   it('exposes canonical schemas and dispatches with cancellation and trace context', async () => {
     const definition = tool();
     const registry = createCodexDynamicToolRegistry([definition]);

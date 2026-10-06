@@ -152,6 +152,167 @@ async function fixture() {
 }
 
 describe('Datalayer MVP service boundaries', () => {
+  it('observes a native image with provenance and marks a later source edit historical', async () => {
+    const f = await fixture();
+    const [cell] = f.notebook.cells;
+    const sourceHash = createHash('sha256').update(cell.source).digest('hex');
+    cell.setMetadata('jupyter_server_nbmodel_provenance', {
+      sourceHash,
+      requestId: 'image-original',
+    });
+    (cell as typeof cell & { outputs: unknown[] }).outputs = [
+      {
+        output_type: 'display_data',
+        data: { 'image/png': Buffer.from('png bytes').toString('base64') },
+        metadata: {},
+      },
+    ];
+    const input = { notebookId: f.args.notebookId, cellId: 'code', outputIndex: 0 };
+    expect(await f.call(f.session, 'notebook_observe_image', input)).toMatchObject({
+      format: 'disclaude.tool-result.v1',
+      data: {
+        outputState: 'current',
+        outputRequestId: 'image-original',
+        executedSourceHash: sourceHash,
+      },
+      images: [{ mimeType: 'image/png' }],
+    });
+    cell.source = 'print("changed after completion")';
+    expect(
+      await f.call(f.session, 'notebook_read_cell', {
+        notebookId: input.notebookId,
+        cellId: 'code',
+      })
+    ).toMatchObject({ outputState: 'historical', executedSourceHash: sourceHash });
+    expect(await f.call(f.session, 'notebook_observe_image', input)).toMatchObject({
+      data: { outputState: 'historical' },
+    });
+    await expect(
+      f.call(f.session, 'notebook_observe_image', { ...input, outputIndex: 1 })
+    ).rejects.toThrow('index');
+  });
+
+  it('imports only registered user attachments with a remote path and verified repeat lookup', async () => {
+    const f = await fixture();
+    const localPath = path.join(f.root, 'data.csv');
+    const content = 'value\n3\n7\n';
+    fs.writeFileSync(localPath, content);
+    f.session.registerAttachments([
+      { id: 'input-csv', fileName: '../../data.csv', localPath, source: 'user', createdAt: 1 },
+    ]);
+    const files = new Map<string, Record<string, unknown>>();
+    const response = vi.fn((route: string) => {
+      const value = files.get(route.split('?')[0]);
+      return Promise.resolve(
+        new Response(value ? JSON.stringify(value) : '{}', { status: value ? 200 : 404 })
+      );
+    });
+    Object.assign(f.client, { response, responseText: (value: Response) => value.text() });
+    Object.assign(f.client, {
+      json: vi.fn((route: string, method?: string, body?: Record<string, unknown>) => {
+        expect(method).toBe('PUT');
+        files.set(route, { ...body });
+        return Promise.resolve({ path: route });
+      }),
+    });
+    const input = { notebookId: f.args.notebookId, attachmentId: 'input-csv' };
+    const imported = (await f.call(f.session, 'notebook_import_file', input)) as {
+      remotePath: string;
+      kernelRelativePath: string;
+      sha256: string;
+    };
+    expect(imported).toMatchObject({
+      state: 'imported',
+      size: Buffer.byteLength(content),
+      sha256: createHash('sha256').update(content).digest('hex'),
+    });
+    expect(imported.kernelRelativePath).toBe(imported.remotePath);
+    expect(imported.remotePath).toMatch(/^disclaude-inputs-doc-id\/[a-f0-9]{64}-data.csv$/);
+    expect(await f.call(f.session, 'notebook_import_file', input)).toMatchObject({
+      state: 'existing',
+      remotePath: imported.remotePath,
+    });
+    expect(f.client.json).toHaveBeenCalledTimes(2);
+    const context = await f.session.messageContext();
+    expect(context).toContain('input-csv');
+    expect(context).not.toContain(localPath);
+    await expect(
+      f.call(f.session, 'notebook_import_file', { ...input, attachmentId: localPath })
+    ).rejects.toThrow('not registered');
+    files.set(`api/contents/${imported.remotePath}`, {
+      type: 'file',
+      format: 'base64',
+      content: Buffer.from('modified remotely').toString('base64'),
+    });
+    await expect(f.call(f.session, 'notebook_import_file', input)).rejects.toThrow(
+      'refusing to overwrite'
+    );
+    expect(f.client.json).toHaveBeenCalledTimes(2);
+  });
+
+  it('refuses changed files, symlinks, agent files and oversized input before remote writes', async () => {
+    const f = await fixture();
+    const localPath = path.join(f.root, 'data.csv');
+    fs.writeFileSync(localPath, 'original');
+    const file = {
+      id: 'csv',
+      fileName: 'data.csv',
+      localPath,
+      source: 'user' as const,
+      createdAt: 1,
+    };
+    f.session.registerAttachments([file]);
+    fs.writeFileSync(localPath, 'changed content');
+    await expect(
+      f.call(f.session, 'notebook_import_file', {
+        notebookId: f.args.notebookId,
+        attachmentId: 'csv',
+      })
+    ).rejects.toThrow('changed');
+    const link = path.join(f.root, 'link');
+    fs.symlinkSync(localPath, link);
+    const large = path.join(f.root, 'large');
+    fs.writeFileSync(large, Buffer.alloc(2_000_001));
+    f.session.registerAttachments([
+      { ...file, id: 'symlink', localPath: link },
+      { ...file, id: 'agent', source: 'agent' },
+      { ...file, id: 'large', localPath: large },
+    ]);
+    for (const attachmentId of ['symlink', 'agent', 'large']) {
+      await expect(
+        f.call(f.session, 'notebook_import_file', { notebookId: f.args.notebookId, attachmentId })
+      ).rejects.toThrow('not registered');
+    }
+    expect(f.client.json).not.toHaveBeenCalled();
+  });
+
+  it('refuses an attachment import write when its Project reference is removed during the read', async () => {
+    const f = await fixture();
+    const localPath = path.join(f.root, 'data.csv');
+    fs.writeFileSync(localPath, 'value\n1');
+    f.session.registerAttachments([
+      { id: 'csv', fileName: 'data.csv', localPath, source: 'user', createdAt: 1 },
+    ]);
+    Object.assign(f.client, {
+      response: vi.fn(() => {
+        new JupyterProjectConfigStore(f.root).unlinkNotebook({
+          connectionId: 'configured',
+          serverNamespace: 'host-bound',
+          documentId: 'doc-id',
+          contentPath: 'analysis.ipynb',
+        });
+        return Promise.resolve(new Response('{}', { status: 404 }));
+      }),
+    });
+    await expect(
+      f.call(f.session, 'notebook_import_file', {
+        notebookId: f.args.notebookId,
+        attachmentId: 'csv',
+      })
+    ).rejects.toThrow('no longer authorized');
+    expect(f.client.json).not.toHaveBeenCalled();
+  });
+
   it('persists before POST and never replays an unknown attempt after session recreation', async () => {
     const f = await fixture();
     f.client.submitCell.mockImplementation(() => {

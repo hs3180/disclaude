@@ -201,7 +201,7 @@ export class DshNativeApp {
           }
         },
       }));
-      registerDshTools(agentCtx.tools, tools);
+      registerDshTools(agentCtx.tools, tools, agentCtx.attachments);
       if (this.prompt) {
         agentCtx.systemPrompt.section({
           name: 'disclaude-context',

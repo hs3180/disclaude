@@ -1,6 +1,7 @@
 import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { prepareTools, type ToolDefinition } from '../../tools.js';
+import { renderToolResult } from '../../tool-result.js';
 
 export const CLAUDE_HOST_SERVER = 'disclaude';
 
@@ -39,9 +40,15 @@ export function createClaudeToolServer(
       const value = await tool.execute(request.params.arguments ?? {}, {
         signal,
       });
+      const rendered = renderToolResult(value);
       return {
         content: [
-          { type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value) },
+          { type: 'text', text: rendered.text },
+          ...rendered.images.map((image) => ({
+            type: 'image',
+            mimeType: image.mimeType,
+            data: image.data,
+          })),
         ],
         ...(value !== null && typeof value === 'object' && !Array.isArray(value)
           ? { structuredContent: value }

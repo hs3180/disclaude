@@ -30,6 +30,23 @@ provider.queryStream(input, { settingSources: [], tools: [readValue] });
 
 取消后等待 callback 自身结束并拒绝成功结果。Notebook 的远程执行仍通过 runId 查询/停止；取消 Agent 不代表 kernel 已停止。资源身份与控制权由 Jupyter 契约定义，Harness 调用 ID 留在 adapter 内。
 
+图片结果可使用统一 JSON `ToolMediaResult`：
+
+```ts
+return {
+  format: 'disclaude.tool-result.v1',
+  data: { cellId, sourceHash },
+  images: [{ mimeType: 'image/png', data: pngBase64 }],
+};
+```
+
+业务仍声明该 JSON 的 outputSchema，不创建 provider 对象。共享边界限制图片数量、
+base64 格式与总大小；adapter 将 `data` 呈现为文字、将图片转成原生图片块，
+不把 base64 当长文本发送给模型。DSH 在 callback 结束前复用其 attachment service
+验证和保存图片，再返回持久引用；缺该能力时明确报错。Codex 的 `inputImage`/`imageUrl`
+字段已用本机 app-server 生成的协议类型核对；官方支持按当前 CLI 版本
+[生成协议类型](https://developers.openai.com/codex/app-server)。这不替代各 Harness 的真实图片验收。
+
 ## 现有接入
 
 | Harness          | adapter 内的接入                                                |

@@ -1,7 +1,8 @@
 import { prepareTools, type ToolDefinition } from '../../tools.js';
+import { renderToolResult, type ToolImage } from '../../tool-result.js';
 
 export interface PiAgentToolResult {
-  content: Array<{ type: 'text'; text: string }>;
+  content: Array<{ type: 'text'; text: string } | ({ type: 'image' } & ToolImage)>;
   details: unknown;
 }
 
@@ -20,8 +21,12 @@ export interface PiAgentHarnessTool {
 }
 
 function result(value: unknown): PiAgentToolResult {
+  const rendered = renderToolResult(value);
   return {
-    content: [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value) }],
+    content: [
+      { type: 'text', text: rendered.text },
+      ...rendered.images.map((image) => ({ type: 'image' as const, ...image })),
+    ],
     details: value,
   };
 }

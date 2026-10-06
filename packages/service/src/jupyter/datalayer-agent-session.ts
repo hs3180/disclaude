@@ -1,6 +1,13 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import type { DatalayerJupyterClient, ToolDefinition, ToolContext } from '@disclaude/core';
+import type {
+  DatalayerJupyterClient,
+  ToolDefinition,
+  ToolContext,
+  FileRef,
+  ToolMediaResult,
+} from '@disclaude/core';
 import type {
   NotebookAgentContext,
   NotebookSession,
@@ -23,6 +30,8 @@ const key = (ref: JupyterNotebookReference): string =>
 const text = { type: 'string' };
 const notebookId = { notebookId: text };
 const cellId = { ...notebookId, cellId: text };
+const inputLimit = 2_000_000;
+type InputAttachment = { file: FileRef; localPath: string; identity: fs.Stats; name: string };
 
 /** MVP over existing RTC/nbmodel APIs. Reports unsupported guarantees explicitly. */
 export class DatalayerNotebookAgentSession implements NotebookSession {
@@ -33,6 +42,7 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
   private readonly documents = new Map<string, Promise<Bound>>();
   private readonly executions = new Map<string, { target: string; pending: Promise<unknown> }>();
   private paused = false;
+  private readonly attachments = new Map<string, InputAttachment>();
 
   constructor(
     private readonly context: NotebookAgentContext,
@@ -75,6 +85,10 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
             outputs: this.outputs(cell.toJSON() as unknown as Record<string, unknown>),
             ...this.previewState(cell.toJSON() as unknown as Record<string, unknown>),
             completeNotebookEntry: bound.client.notebookEntry(bound.ref.contentPath),
+            ...this.outputProvenance(
+              cell.toJSON() as unknown as Record<string, unknown>,
+              cell.source
+            ),
           };
         }
       ),
@@ -229,6 +243,68 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
         }
       ),
       this.tool(
+        'notebook_observe_image',
+        'Observe one PNG/JPEG image output by its zero-based outputIndex in the live cell. Returns native model image content with source provenance; do not infer a plot from MIME names. Large images remain in the complete Notebook.',
+        { ...cellId, outputIndex: { type: 'integer' } },
+        async (input) => {
+          const bound = await this.bound(String(input.notebookId));
+          await bound.doc.flush();
+          const cell = this.cell(bound, String(input.cellId));
+          const json = cell.toJSON() as unknown as Record<string, unknown>;
+          const outputs = Array.isArray(json.outputs)
+            ? (json.outputs as Array<Record<string, unknown>>)
+            : [];
+          const index = Number(input.outputIndex);
+          if (!Number.isSafeInteger(index) || index < 0 || index >= outputs.length) {
+            throw new Error('Notebook image output index is invalid');
+          }
+          const mime = outputs[index].data as Record<string, unknown> | undefined;
+          const mimeType = mime?.['image/png']
+            ? 'image/png'
+            : mime?.['image/jpeg']
+              ? 'image/jpeg'
+              : undefined;
+          if (!mimeType) {
+            throw new Error(
+              'This output has no supported raster image; inspect the complete Notebook'
+            );
+          }
+          const image = mime?.[mimeType];
+          const data = Array.isArray(image) ? image.join('') : image;
+          if (
+            typeof data !== 'string' ||
+            !data ||
+            data.length > 2_000_000 ||
+            Buffer.from(data, 'base64').toString('base64') !== data
+          ) {
+            return {
+              state: 'unavailable',
+              reason: 'Image exceeds the preview limit or its bytes cannot be verified',
+              completeNotebookEntry: bound.client.notebookEntry(bound.ref.contentPath),
+            };
+          }
+          const result: ToolMediaResult = {
+            format: 'disclaude.tool-result.v1',
+            data: {
+              notebookId: key(bound.ref),
+              cellId: cell.id,
+              outputIndex: index,
+              sourceHash: hash(cell.source),
+              ...this.outputProvenance(json, cell.source),
+              completeNotebookEntry: bound.client.notebookEntry(bound.ref.contentPath),
+            },
+            images: [{ mimeType, data }],
+          };
+          return result;
+        }
+      ),
+      this.tool(
+        'notebook_import_file',
+        'Copy a host-registered incoming attachment to this remote Notebook’s input directory. Use an attachmentId from message context; host paths are not accepted. Return a kernel-relative path, SHA-256 and size; limit 2 MB.',
+        { ...notebookId, attachmentId: text },
+        (input, invocation) => this.importFile(input, invocation)
+      ),
+      this.tool(
         'notebook_export',
         'Export HTML and an ipynb snapshot from the same live revision on the remote server. Images stay in the report; return links and revision metadata.',
         notebookId,
@@ -301,9 +377,156 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
       void document.then((bound) => bound.doc.close()).catch(() => {});
     }
     this.documents.clear();
+    this.attachments.clear();
   }
   redactEnvironment(environment: Record<string, string | undefined>): void {
     this.connections.redactEnvironment(environment);
+  }
+
+  registerAttachments(files: readonly FileRef[]): void {
+    this.assertActive();
+    for (const file of files) {
+      if (file.source !== 'user' || !file.localPath || !/^[A-Za-z0-9_-]{1,200}$/.test(file.id)) {
+        continue;
+      }
+      try {
+        const identity = fs.lstatSync(file.localPath);
+        if (!identity.isFile() || identity.size > inputLimit) {
+          continue;
+        }
+        const name =
+          path
+            .basename(file.fileName.replace(/\\/g, '/'))
+            .replace(/[^A-Za-z0-9._-]/g, '_')
+            .replace(/^\.+/, '')
+            .slice(-120) || 'input';
+        if (!this.attachments.has(file.id)) {
+          this.attachments.set(file.id, {
+            file: { ...file },
+            localPath: file.localPath,
+            identity,
+            name,
+          });
+        }
+        while (this.attachments.size > 32) {
+          const first = this.attachments.keys().next().value;
+          if (first !== undefined) {
+            this.attachments.delete(first);
+          }
+        }
+      } catch {
+        // Undownloaded or expired attachments remain unavailable, never model-selected paths.
+      }
+    }
+  }
+
+  private async importFile(
+    input: Record<string, unknown>,
+    invocation: ToolContext
+  ): Promise<unknown> {
+    const attachment = this.attachments.get(String(input.attachmentId));
+    if (!attachment) {
+      throw new Error('Attachment is not registered, unavailable or exceeds the 2 MB input limit');
+    }
+    const bound = await this.bound(String(input.notebookId));
+    const descriptor = fs.openSync(
+      attachment.localPath,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW
+    );
+    let data: Buffer;
+    try {
+      const current = fs.fstatSync(descriptor);
+      const original = attachment.identity;
+      if (
+        !current.isFile() ||
+        current.size > inputLimit ||
+        current.dev !== original.dev ||
+        current.ino !== original.ino ||
+        current.size !== original.size ||
+        current.mtimeMs !== original.mtimeMs
+      ) {
+        throw new Error('Registered attachment changed; send it again before importing');
+      }
+      data = fs.readFileSync(descriptor);
+      const after = fs.fstatSync(descriptor);
+      if (
+        data.length !== original.size ||
+        after.mtimeMs !== original.mtimeMs ||
+        after.size !== original.size
+      ) {
+        throw new Error('Registered attachment changed during reading');
+      }
+    } finally {
+      fs.closeSync(descriptor);
+    }
+    const sha256 = createHash('sha256').update(data).digest('hex');
+    const directory = path.posix.join(
+      path.posix.dirname(bound.ref.contentPath),
+      `disclaude-inputs-${bound.doc.documentId}`
+    );
+    const remotePath = path.posix.join(directory, `${sha256}-${attachment.name}`);
+    const route = (value: string): string =>
+      `api/contents/${value.split('/').map(encodeURIComponent).join('/')}`;
+    invocation.signal.throwIfAborted();
+    this.assertBound(bound);
+    const existingDirectory = await bound.client.response(`${route(directory)}?content=0`);
+    if (existingDirectory.status === 404) {
+      await existingDirectory.body?.cancel();
+      invocation.signal.throwIfAborted();
+      this.assertBound(bound);
+      await bound.client.json(route(directory), 'PUT', { type: 'directory' });
+    } else if (existingDirectory.ok) {
+      const metadata = JSON.parse(await bound.client.responseText(existingDirectory)) as {
+        type?: string;
+      };
+      if (metadata.type !== 'directory') {
+        throw new Error('Remote Notebook input directory belongs to another resource');
+      }
+    } else {
+      await existingDirectory.body?.cancel();
+      throw new Error('Remote Notebook input directory could not be verified');
+    }
+    const existing = await bound.client.response(`${route(remotePath)}?format=base64`);
+    let state = 'existing';
+    if (existing.status === 404) {
+      await existing.body?.cancel();
+      invocation.signal.throwIfAborted();
+      this.assertBound(bound);
+      await bound.client.json(route(remotePath), 'PUT', {
+        type: 'file',
+        format: 'base64',
+        content: data.toString('base64'),
+      });
+      state = 'imported';
+    } else if (existing.ok) {
+      const stored = JSON.parse(await bound.client.responseText(existing)) as {
+        type?: string;
+        format?: string;
+        content?: unknown;
+      };
+      if (
+        stored.type !== 'file' ||
+        stored.format !== 'base64' ||
+        typeof stored.content !== 'string' ||
+        createHash('sha256').update(Buffer.from(stored.content, 'base64')).digest('hex') !== sha256
+      ) {
+        throw new Error('Remote input content changed; refusing to overwrite it');
+      }
+    } else {
+      await existing.body?.cancel();
+      throw new Error('Remote input content could not be verified');
+    }
+    return {
+      state,
+      attachmentId: input.attachmentId,
+      remotePath,
+      kernelRelativePath: path.posix.relative(
+        path.posix.dirname(bound.ref.contentPath),
+        remotePath
+      ),
+      sha256,
+      size: data.length,
+    };
   }
 
   private refs(): JupyterNotebookReference[] {
@@ -421,6 +644,26 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
       : {};
   }
 
+  private outputProvenance(cell: Record<string, unknown>, source: string): Record<string, unknown> {
+    if (cell.cell_type !== 'code') {
+      return {};
+    }
+    const metadata = cell.metadata as Record<string, unknown> | undefined;
+    const provenance = metadata?.jupyter_server_nbmodel_provenance as
+      | Record<string, unknown>
+      | undefined;
+    if (!provenance || typeof provenance.sourceHash !== 'string') {
+      return { outputState: 'unverified' };
+    }
+    return {
+      outputState: provenance.sourceHash === hash(source) ? 'current' : 'historical',
+      executedSourceHash: provenance.sourceHash,
+      ...(typeof provenance.requestId === 'string'
+        ? { outputRequestId: provenance.requestId }
+        : {}),
+    };
+  }
+
   private outputs(cell: Record<string, unknown>): unknown[] {
     const outputs = Array.isArray(cell.outputs) ? cell.outputs : [];
     return outputs.slice(0, 16).map((output: Record<string, unknown>) => {
@@ -464,6 +707,7 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
         sourcePreview: String(c.source).slice(0, 500),
         outputs: this.outputs(c),
         ...this.previewState(c),
+        ...this.outputProvenance(c, String(c.source)),
       })),
       omittedCells: Math.max(0, snapshot.cells.length - limit),
     };
@@ -489,7 +733,7 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
       }));
   }
   async messageContext(): Promise<string> {
-    return `\n\n[Notebook resources — Datalayer MVP]\nThe host uses existing remote RTC and nbmodel APIs. Read current live cells by ID, preserve human edits, and keep analysis/conclusions in the Notebook. Kernel/data paths belong to Jupyter, not this host. Reuse runId to query an original attempt; never replay unknown work. Source checks are client-side. Request cancellation may be unsupported on this server. Report links from notebook_export refer to one snapshot.\n${JSON.stringify({ notebooks: await this.overviews(8), recentRuns: this.recentRuns() })}`;
+    return `\n\n[Notebook resources — Datalayer]\nRead current live cells by ID, preserve human edits, and keep analysis/conclusions in the Notebook. Kernel/data paths belong to Jupyter, not this host. Import registered incoming attachments with notebook_import_file before using their kernelRelativePath. Reuse runId to query an original attempt; never replay unknown work. Source checks are client-side. Confirm cancellation on the original request. Report links from notebook_export refer to one snapshot.\n${JSON.stringify({ notebooks: await this.overviews(8), recentRuns: this.recentRuns(), attachments: [...this.attachments.entries()].map(([attachmentId, value]) => ({ attachmentId, fileName: value.name, size: value.identity.size, ...(value.file.mimeType ? { mimeType: value.file.mimeType } : {}) })) })}`;
   }
 
   private async kernel(bound: Bound): Promise<string> {

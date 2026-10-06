@@ -24,7 +24,14 @@
 
 配置文件需为宿主私有普通文件（0600），通过 `JUPYTER_CONNECTIONS_FILE` 指定。Project 引用的 `connectionId` 使用上述 ID。可用 `authorizationEnv`/私有文件替代密码；HTTP 的显式授权及凭据隔离规则沿用 [Service 文档](../jupyter-service.md)。一个 Project 的 Notebook 不能混用两个后端。当前适配层省略 `backend` 时默认选择 Datalayer；旧 coordinator 需显式指定，其控制权、原子检查和持久 fence 的保证不适用于本 MVP。历史实验记录仍以当时的源码和显式后端配置为准。
 
-工具为 `notebook_list`、`notebook_describe`、`notebook_read_cell`、`notebook_insert_cell`、`notebook_edit_cell`、`notebook_move_cell`、`notebook_delete_cell`、`notebook_execute`、`notebook_status`、`notebook_stop`、`notebook_export`。编辑使用稳定 cell ID 和客户端源码哈希检查；执行前落盘原目标和 runId，未知提交不自动重放。原结果按远端明确保留策略查询并在宿主缓存，导出用同一次捕获的共享文档生成 `.ipynb` 和远端 nbconvert HTML。
+工具为 `notebook_list`、`notebook_describe`、`notebook_read_cell`、`notebook_insert_cell`、`notebook_edit_cell`、`notebook_move_cell`、`notebook_delete_cell`、`notebook_execute`、`notebook_status`、`notebook_stop`、`notebook_import_file`、`notebook_observe_image`、`notebook_export`。编辑使用稳定 cell ID 和客户端源码哈希检查；执行前落盘原目标和 runId，未知提交不自动重放。原结果按远端明确保留策略查询并在宿主缓存，导出用同一次捕获的共享文档生成 `.ipynb` 和远端 nbconvert HTML。
+
+附件只按宿主接收消息注册的 ID 导入，工具不接受宿主路径。上限 2 MB，校验本地
+文件身份和内容，使用远端 Contents 内容哈希路径；重复导入核对原内容且拒绝覆盖
+被改动的文件。返回远端 kernel 相对路径、大小和 SHA-256，模型不使用宿主路径
+读取远端数据。PNG/JPEG 观察走统一图片结果，由 Harness adapter 转原生图片；
+源码变化后的旧图标为 historical，无来源标记的输出为 unverified。大图提供完整
+Notebook 入口；真实附件/图片组合和飞书产品验收仍待执行。
 
 后续宿主改动已增加执行政策检查、原生 kernel incarnation、服务实例与 Location
 记录、显式关闭 stdin、独占 kernel 检查及大输出／历史结果提示。未声明安全目标取消政策

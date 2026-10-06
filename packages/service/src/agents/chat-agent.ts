@@ -959,6 +959,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       capabilities,
     );
 
+    this.notebookSession?.registerAttachments?.(attachments ?? []);
     const userMessage: StreamingUserMessage = {
       type: 'user',
       correlation: lifecycleContext,

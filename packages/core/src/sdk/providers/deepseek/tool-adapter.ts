@@ -1,4 +1,8 @@
 import { prepareTools, type ToolDefinition } from '../../tools.js';
+import { renderToolResult } from '../../tool-result.js';
+import { admitEncodedImages, type AttachmentStore } from '@deepseek-ai/dsh-attachment';
+import type { ContentBlock } from '@deepseek-ai/dsh-llm';
+import { createHash } from 'node:crypto';
 import {
   assertObjectJsonSchema,
   assertSupportedJsonSchema,
@@ -53,7 +57,8 @@ function nativeDeclaration(schema: Record<string, unknown>): Record<string, unkn
 /** Register canonical tools directly in the agent-scoped DSH native registry. */
 export function registerDshTools(
   registry: DshHostToolRegistry,
-  tools: readonly ToolDefinition[]
+  tools: readonly ToolDefinition[],
+  attachments?: AttachmentStore
 ): () => void {
   const prepared = prepareTools(tools).map((tool) => {
     const parameters = nativeDeclaration(tool.inputSchema);
@@ -65,6 +70,11 @@ export function registerDshTools(
   const disposers: (() => void)[] = [];
   try {
     for (const { tool, parameters, outputSchema } of prepared) {
+      const admitted = new Map<string, ContentBlock[]>();
+      const mediaKey = (value: unknown): string =>
+        createHash('sha256')
+          .update(JSON.stringify(renderToolResult(value).images))
+          .digest('hex');
       disposers.push(
         registry.register({
           name: tool.name,
@@ -72,7 +82,14 @@ export function registerDshTools(
           parameters,
           output: {
             schema: outputSchema,
-            render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
+            render: (_args, value) => {
+              const rendered = renderToolResult(value);
+              const images = rendered.images.length ? admitted.get(mediaKey(value)) : [];
+              if (!images) {
+                throw new Error('Native tool image admission is unavailable');
+              }
+              return [{ type: 'text', text: rendered.text }, ...images];
+            },
             presentationMeta: (_args, value) => value,
           },
           execute: async (args, context) => {
@@ -85,6 +102,21 @@ export function registerDshTools(
             const value = await tool.execute(args as Record<string, unknown>, {
               signal: context.signal,
             });
+            const rendered = renderToolResult(value);
+            if (rendered.images.length) {
+              if (!attachments) {
+                throw new Error('Native tool image admission is unavailable');
+              }
+              const refs = await admitEncodedImages(
+                attachments,
+                rendered.images.map((image) => ({ data: image.data, mediaType: image.mimeType }))
+              );
+              context.signal.throwIfAborted();
+              admitted.set(
+                mediaKey(value),
+                refs.map((attachment) => ({ type: 'image', attachment }))
+              );
+            }
             return value;
           },
         })
