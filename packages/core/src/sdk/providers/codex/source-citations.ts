@@ -1,4 +1,4 @@
-import type { MessageBuilderOptions } from '@disclaude/core';
+import type { MessageBuilderOptions } from '../../../agents/message-builder/types.js';
 
 const CODEX_SOURCE_CITATIONS = `## Codex source citations
 

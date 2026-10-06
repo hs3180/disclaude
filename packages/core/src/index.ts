@@ -127,6 +127,7 @@ export type {
   QueryUsageStats,
   ProviderInfo,
   // Interfaces
+  ChatAgentHooks,
   IAgentSDKProvider,
   ProviderFactory,
   ProviderConstructor,

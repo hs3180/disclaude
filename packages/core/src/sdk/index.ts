@@ -108,6 +108,7 @@ export type {
 // ============================================================================
 
 export type {
+  ChatAgentHooks,
   IAgentSDKProvider,
   ProviderFactory,
   ProviderConstructor,

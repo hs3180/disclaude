@@ -1,14 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   MessageBuilder,
-  DEFAULT_CHANNEL_CAPABILITIES,
   type MessageBuilderOptions,
-} from '@disclaude/core';
-import { withCodexSourceCitations } from './codex-source-citations.js';
+} from '../../../agents/message-builder/index.js';
+import { DEFAULT_CHANNEL_CAPABILITIES } from '../../../types/channel.js';
+import type { AgentQueryOptions } from '../../types.js';
+import { CodexAgentProvider } from './provider.js';
+import { withCodexSourceCitations } from './source-citations.js';
 
 describe('Codex source guidance composition', () => {
   it('keeps the source contract on channels without cards', () => {
-    const builder = new MessageBuilder(withCodexSourceCitations());
+    const provider = new CodexAgentProvider({ env: {}, builtinsDir: process.cwd() });
+    const hooks = provider.configureChat({});
+    provider.dispose();
+    const builder = new MessageBuilder(hooks.messageBuilderOptions);
     const prompt = builder.buildEnhancedContent({ text: 'Research', messageId: 'm1' }, 'chat', {
       ...DEFAULT_CHANNEL_CAPABILITIES,
       supportsCard: false,
@@ -32,6 +37,26 @@ describe('Codex source guidance composition', () => {
       'Do not call `send_card` or `send_interactive` for these citation sources'
     );
     expect(prompt).toContain('do not write card JSON');
+  });
+
+  it('composes chat prompts through the provider without replacing the query hook', () => {
+    const provider = new CodexAgentProvider({ env: {}, builtinsDir: process.cwd() });
+    const configureQueryOptions = (options: AgentQueryOptions) => options;
+    const hooks = Object.freeze({
+      messageBuilderOptions: Object.freeze({ buildHeader: () => 'Channel header' }),
+      configureQueryOptions,
+    });
+    const configured = provider.configureChat(hooks);
+    provider.dispose();
+
+    const prompt = new MessageBuilder(configured.messageBuilderOptions).buildEnhancedContent(
+      { text: 'Research', messageId: 'm1' },
+      'chat'
+    );
+    expect(prompt).toContain('Channel header');
+    expect(prompt).toContain('## Codex source citations');
+    expect(configured.configureQueryOptions).toBe(configureQueryOptions);
+    expect(configured.messageBuilderOptions).not.toBe(hooks.messageBuilderOptions);
   });
 
   it('preserves channel callbacks and does not mutate shared options', () => {
