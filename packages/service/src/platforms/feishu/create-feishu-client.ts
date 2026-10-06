@@ -121,8 +121,9 @@ async function requestWithRetry<T>(
 }
 
 /** Message creation/replies have no known receipt after a lost response. */
-function retryAmbiguousRequest(method: string | undefined, url: string): boolean {
+function retryAmbiguousRequest(method: string | undefined, url: string | undefined): boolean {
   if (method?.toLowerCase() !== 'post') { return true; }
+  if (!url) { return false; }
   const { pathname } = new URL(url, 'https://open.feishu.cn');
   return !/\/im\/v1\/messages(?:\/[^/]+\/reply)?\/?$/.test(pathname);
 }
