@@ -68,7 +68,8 @@ function sleep(ms: number): Promise<void> {
  */
 async function requestWithRetry<T>(
   requestFn: () => Promise<T>,
-  context: string
+  context: string,
+  retryAmbiguousFailure = true,
 ): Promise<T> {
   const { MAX_RETRIES } = FEISHU_API.RETRY;
   let lastError: unknown;
@@ -80,7 +81,8 @@ async function requestWithRetry<T>(
       lastError = error;
 
       // Check if we should retry
-      if (!isRetryableError(error)) {
+      if (!isRetryableError(error) ||
+          (!retryAmbiguousFailure && (error as AxiosError).response?.status !== 429)) {
         throw error;
       }
 
@@ -118,6 +120,13 @@ async function requestWithRetry<T>(
   throw lastError;
 }
 
+/** Message creation/replies have no known receipt after a lost response. */
+function retryAmbiguousRequest(method: string | undefined, url: string): boolean {
+  if (method?.toLowerCase() !== 'post') { return true; }
+  const { pathname } = new URL(url, 'https://open.feishu.cn');
+  return !/\/im\/v1\/messages(?:\/[^/]+\/reply)?\/?$/.test(pathname);
+}
+
 /**
  * Wrap an axios instance to match lark SDK's HttpInstance interface.
  * Includes retry logic for transient errors.
@@ -152,7 +161,8 @@ function wrapAxiosAsHttpInstance(axiosInstance: AxiosInstance): lark.HttpInstanc
           responseType: opts.responseType as 'arraybuffer' | 'blob' | 'document' | 'json' | 'text' | 'stream' | 'formdata' | undefined,
           timeout: opts.timeout,
         }).then(res => processResponse(res, rawOpts)),
-        `request ${opts.method} ${opts.url}`
+        `request ${opts.method} ${opts.url}`,
+        retryAmbiguousRequest(opts.method, opts.url),
       );
     },
     get: async (url, opts) => {
@@ -207,7 +217,8 @@ function wrapAxiosAsHttpInstance(axiosInstance: AxiosInstance): lark.HttpInstanc
           timeout: opts?.timeout,
           responseType: opts?.responseType as 'arraybuffer' | 'blob' | 'document' | 'json' | 'text' | 'stream' | 'formdata' | undefined,
         }).then(res => res.data),
-        `post ${url}`
+        `post ${url}`,
+        retryAmbiguousRequest('post', url),
       );
     },
     put: async (url, data, opts) => {
