@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   notebookSnapshotHash,
@@ -304,6 +305,12 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
         'Copy a host-registered incoming attachment to this remote Notebook’s input directory. Use an attachmentId from message context; host paths are not accepted. Return a kernel-relative path, SHA-256 and size; limit 2 MB.',
         { ...notebookId, attachmentId: text },
         (input, invocation) => this.importFile(input, invocation)
+      ),
+      this.tool(
+        'notebook_deliver_report',
+        'Export and send matching ipynb/HTML and up to four bounded PNG/JPEG previews to the current channel/thread. Returns snapshot revision, file SHA-256 and confirmed message IDs. Uses temporary host copies only; never replay an unknown delivery.',
+        notebookId,
+        (input, invocation) => this.deliver(String(input.notebookId), invocation)
       ),
       this.tool(
         'notebook_export',
@@ -734,7 +741,7 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
       }));
   }
   async messageContext(): Promise<string> {
-    return `\n\n[Notebook resources — Datalayer]\nRead current live cells by ID, preserve human edits, and keep analysis/conclusions in the Notebook. Kernel/data paths belong to Jupyter, not this host. Import registered incoming attachments with notebook_import_file before using their kernelRelativePath. Reuse runId to query an original attempt; never replay unknown work. Source checks are client-side. Confirm cancellation on the original request. Report links from notebook_export refer to one snapshot.\n${JSON.stringify({ notebooks: await this.overviews(8), recentRuns: this.recentRuns(), attachments: [...this.attachments.entries()].map(([attachmentId, value]) => ({ attachmentId, fileName: value.name, size: value.identity.size, ...(value.file.mimeType ? { mimeType: value.file.mimeType } : {}) })) })}`;
+    return `\n\n[Notebook resources — Datalayer]\nRead current live cells by ID, preserve human edits, and keep analysis/conclusions in the Notebook. Kernel/data paths belong to Jupyter, not this host. Import registered incoming attachments with notebook_import_file before using their kernelRelativePath. Reuse runId to query an original attempt; never replay unknown work. Source checks are client-side. Confirm cancellation on the original request. Report links from notebook_export refer to one snapshot. Use notebook_deliver_report for matching report files/static images in this channel; cite its revision in the summary and report unconfirmed delivery without retry.\n${JSON.stringify({ notebooks: await this.overviews(8), recentRuns: this.recentRuns(), attachments: [...this.attachments.entries()].map(([attachmentId, value]) => ({ attachmentId, fileName: value.name, size: value.identity.size, ...(value.file.mimeType ? { mimeType: value.file.mimeType } : {}) })) })}`;
   }
 
   private async kernel(bound: Bound): Promise<string> {
@@ -1026,6 +1033,149 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
       notebookPath,
       htmlPath,
     };
+  }
+
+  private async deliver(
+    notebookId: string,
+    invocation: ToolContext
+  ): Promise<Record<string, unknown>> {
+    const delivery = this.context.delivery?.();
+    if (!delivery) {
+      return {
+        state: 'unsupported',
+        reason: 'This channel cannot deliver Notebook files',
+        use: 'notebook_export',
+      };
+    }
+    const bound = await this.bound(notebookId);
+    const report = await this.export(bound);
+    const snapshot = (await bound.client.json(
+      `api/contents/${String(report.notebookPath).split('/').map(encodeURIComponent).join('/')}`
+    )) as { content?: Record<string, unknown> };
+    if (!snapshot.content || notebookSnapshotHash(snapshot.content) !== report.revision) {
+      throw new Error('Exported Notebook snapshot cannot be verified');
+    }
+    const response = await bound.client.response(
+      `files/${String(report.htmlPath).split('/').map(encodeURIComponent).join('/')}`
+    );
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error('Exported HTML cannot be downloaded');
+    }
+    const html = await bound.client.responseText(response);
+    if (
+      !html.includes(`<meta name="disclaude-snapshot-sha256" content="${String(report.revision)}">`)
+    ) {
+      throw new Error('Exported HTML snapshot cannot be verified');
+    }
+    const copies: Array<{ name: string; bytes: Buffer; metadata: Record<string, unknown> }> = [
+      {
+        name: 'report.ipynb',
+        bytes: Buffer.from(JSON.stringify(snapshot.content)),
+        metadata: { kind: 'ipynb' },
+      },
+      { name: 'report.html', bytes: Buffer.from(html), metadata: { kind: 'html' } },
+    ];
+    let omittedImages = 0;
+    for (const [cellIndex, cell] of (
+      (snapshot.content.cells ?? []) as Array<Record<string, unknown>>
+    ).entries()) {
+      for (const [outputIndex, output] of (
+        (cell.outputs ?? []) as Array<Record<string, unknown>>
+      ).entries()) {
+        const mime = output.data as Record<string, unknown> | undefined;
+        const mimeType = mime?.['image/png']
+          ? 'image/png'
+          : mime?.['image/jpeg']
+            ? 'image/jpeg'
+            : undefined;
+        if (!mimeType) {
+          continue;
+        }
+        const value = mime?.[mimeType];
+        const encoded = Array.isArray(value) ? value.join('') : value;
+        if (
+          copies.length >= 6 ||
+          typeof encoded !== 'string' ||
+          !encoded ||
+          encoded.length > 2_000_000 ||
+          Buffer.from(encoded, 'base64').toString('base64') !== encoded
+        ) {
+          omittedImages++;
+          continue;
+        }
+        const source = Array.isArray(cell.source)
+          ? cell.source.join('')
+          : String(cell.source ?? '');
+        copies.push({
+          name: `chart-${cellIndex}-${outputIndex}.${mimeType === 'image/png' ? 'png' : 'jpg'}`,
+          bytes: Buffer.from(encoded, 'base64'),
+          metadata: {
+            kind: 'image',
+            mimeType,
+            cellId: cell.id,
+            outputIndex,
+            sourceHash: hash(source),
+            ...this.outputProvenance(cell, source),
+          },
+        });
+      }
+    }
+    const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'disclaude-notebook-delivery-'));
+    fs.chmodSync(temporary, 0o700);
+    const artifacts: Array<Record<string, unknown>> = [];
+    const finish = async (result: Record<string, unknown>): Promise<Record<string, unknown>> => {
+      await bound.doc.flush();
+      this.assertBound(bound);
+      const liveRevision = notebookSnapshotHash(bound.doc.notebook.toJSON());
+      return {
+        ...report,
+        ...result,
+        liveRevision,
+        liveChangedDuringDelivery: liveRevision !== report.revision,
+        snapshotState: liveRevision === report.revision ? 'current' : 'historical',
+      };
+    };
+    try {
+      for (const copy of copies) {
+        invocation.signal.throwIfAborted();
+        this.assertBound(bound);
+        const file = path.join(temporary, copy.name);
+        fs.writeFileSync(file, copy.bytes, { mode: 0o600, flag: 'wx' });
+        const artifact = {
+          ...copy.metadata,
+          fileName: copy.name,
+          bytes: copy.bytes.length,
+          sha256: createHash('sha256').update(copy.bytes).digest('hex'),
+        };
+        let messageId: string | void;
+        try {
+          messageId = await delivery.sendFile(file, invocation.signal);
+        } catch {
+          return await finish({
+            state: 'partial_or_unknown',
+            artifacts,
+            unconfirmedArtifact: artifact,
+            omittedImages,
+            reason: 'Channel did not confirm this artifact. Do not automatically resend.',
+          });
+        }
+        artifacts.push({
+          ...artifact,
+          ...(messageId ? { messageId } : {}),
+          delivery: messageId ? 'confirmed' : 'acknowledged_without_message_id',
+        });
+      }
+      return await finish({
+        state: artifacts.every((a) => a.messageId)
+          ? 'delivered'
+          : 'acknowledged_without_message_ids',
+        artifacts,
+        omittedImages,
+      });
+    } finally {
+      fs.rmSync(temporary, { recursive: true });
+    }
   }
 
   async stop(): Promise<NotebookStopObservation[]> {

@@ -162,6 +162,26 @@ including nbconvert's inline Plotly bundle; model previews keep their smaller
 limits. The host can set a smaller `maxResponseBytes` when constructing its client.
 Only owned kernels/sessions are removed; the remote synthetic artifacts remain.
 
+To explicitly send the retained owned report to a fresh authorized Feishu test
+thread through the generic file callback, with `lark-cli` already authenticated:
+
+```sh
+node tests/jupyter/datalayer-delivery-probe.mjs \
+  --env-file /private/host.env \
+  --connections /private/report-probe/connections.json \
+  --project /private/report-probe/project-0 \
+  --chat-id oc_actual_test_chat --root-message-id om_actual_fresh_root \
+  --output /private/new-delivery-results
+```
+
+This opt-in probe makes real bot file/image replies in that thread. It exports
+one verified remote snapshot, calls `notebook_deliver_report` once, records actual
+message IDs/file hashes and checks the thread via user read APIs. Only the current
+delivery files are copied; the tool cleans its temporary directory. It does not
+start a model, subscribe to bot events or open another WebSocket. It does not
+pass the real incoming-attachment, Agent continuation, user Lab or device gate.
+Do not repeat a write with an unknown result or bypass a CLI confirmation gate.
+
 None of these probes switches production Feishu or passes native JupyterLab/device
 acceptance. Current instance failures and all unverified behaviors are recorded
 in [the MVP matrix](../../docs/designs/datalayer-mvp.md). The host-only

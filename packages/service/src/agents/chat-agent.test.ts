@@ -170,6 +170,24 @@ describe('ChatAgent (service)', () => {
   });
 
   describe('constructor', () => {
+    it('binds Notebook files to their original turn and rejects late or aborted delivery', async () => {
+      const session = { inactive: false };
+      callbacks.getCapabilities.mockReturnValue({ supportsFile: true });
+      callbacks.sendFile.mockResolvedValue('file-message');
+      Object.assign(chatAgent, { notebookSession: session, activeTurnMessageId: 'original-turn', lastTurnMessage: { threadRootId: 'topic-root' } });
+      const delivery = (chatAgent as any).notebookDelivery();
+      const { signal } = new AbortController();
+      expect(await delivery.sendFile('/private/owned/report.html', signal)).toBe('file-message');
+      expect(callbacks.sendFile).toHaveBeenCalledExactlyOnceWith('oc_test_chat', '/private/owned/report.html', 'topic-root');
+      Object.assign(chatAgent, { activeTurnMessageId: 'next-turn' });
+      await expect(delivery.sendFile('/private/owned/report.html', signal)).rejects.toThrow('inactive channel or turn');
+      Object.assign(chatAgent, { activeTurnMessageId: 'original-turn', notebookSession: { inactive: false } });
+      await expect(delivery.sendFile('/private/owned/report.html', signal)).rejects.toThrow('inactive channel or turn');
+      const aborted = new AbortController(); aborted.abort();
+      await expect(delivery.sendFile('/private/owned/report.html', aborted.signal)).rejects.toThrow();
+      expect(callbacks.sendFile).toHaveBeenCalledOnce();
+    });
+
     it('registers the current message attachments before building Notebook model context', async () => {
       const attachment = {id:'csv',fileName:'data.csv',source:'user' as const,localPath:'/private/download/data.csv',createdAt:1};
       const registerAttachments = vi.fn();

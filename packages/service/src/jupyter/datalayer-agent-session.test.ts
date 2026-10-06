@@ -4,7 +4,12 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { YNotebook } from '@jupyter/ydoc';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { DatalayerJupyterClient, ToolContext } from '@disclaude/core';
+import {
+  notebookSnapshotHash,
+  type DatalayerJupyterClient,
+  type ToolContext,
+} from '@disclaude/core';
+import type { NotebookAgentContext } from './agent-session.js';
 import { DatalayerNotebookAgentSession } from './datalayer-agent-session.js';
 import { DatalayerRunStore } from './datalayer-run-store.js';
 import { JupyterProjectConfigStore } from './project-config-store.js';
@@ -73,15 +78,17 @@ async function fixture() {
     documentPath: vi.fn(() => Promise.resolve('analysis.ipynb')),
     openDocument: vi.fn(() => Promise.resolve(doc)),
     notebookEntry: () => 'https://configured.invalid/lab/tree/analysis.ipynb',
-    json: vi.fn((route: string) => {
-      if (route === 'api/sessions') {
-        return Promise.resolve([{ path: 'analysis.ipynb', kernel: { id: 'kernel' } }]);
+    json: vi.fn(
+      (route: string, _method?: string, _body?: Record<string, unknown>): Promise<unknown> => {
+        if (route === 'api/sessions') {
+          return Promise.resolve([{ path: 'analysis.ipynb', kernel: { id: 'kernel' } }]);
+        }
+        if (route === 'api/kernels/kernel') {
+          return Promise.resolve({ execution_state: 'idle' });
+        }
+        throw new Error('Unexpected remote API operation');
       }
-      if (route === 'api/kernels/kernel') {
-        return Promise.resolve({ execution_state: 'idle' });
-      }
-      throw new Error('Unexpected remote API operation');
-    }),
+    ),
     submitCell: vi.fn(() => Promise.resolve({ state: 'unknown' })),
     executionPolicy: vi.fn(() =>
       Promise.resolve({
@@ -113,9 +120,14 @@ async function fixture() {
     ) => operation(client as unknown as DatalayerJupyterClient),
     redactEnvironment: vi.fn(),
   } as unknown as JupyterConnections;
-  const create = () =>
+  const create = (delivery?: NotebookAgentContext['delivery']) =>
     new DatalayerNotebookAgentSession(
-      { workingDir: root, conversationKey: 'conversation', currentWorkingDir: () => root },
+      {
+        workingDir: root,
+        conversationKey: 'conversation',
+        currentWorkingDir: () => root,
+        delivery,
+      },
       connections
     );
   const session = create();
@@ -152,6 +164,177 @@ async function fixture() {
 }
 
 describe('Datalayer MVP service boundaries', () => {
+  function deliveryFixture(
+    f: Awaited<ReturnType<typeof fixture>>
+  ): Map<string, Record<string, unknown>> {
+    const saved = new Map<string, Record<string, unknown>>();
+    const original = f.client.json.getMockImplementation()!;
+    f.client.json.mockImplementation(
+      (route: string, method?: string, body?: Record<string, unknown>) => {
+        if (!route.startsWith('api/contents/')) {
+          return original(route);
+        }
+        if (method === 'PUT') {
+          saved.set(route, structuredClone(body!));
+          return Promise.resolve({});
+        }
+        return Promise.resolve(saved.get(route));
+      }
+    );
+    Object.assign(f.client, {
+      response: vi.fn((route: string) =>
+        Promise.resolve(
+          new Response(
+            route === 'nbconvert/html'
+              ? '<html><head></head><body>Rendered report</body></html>'
+              : String(saved.get(route.replace(/^files\//, 'api/contents/'))?.content),
+            { headers: { 'content-type': 'text/html' } }
+          )
+        )
+      ),
+      responseText: (response: Response) => response.text(),
+      fileEntry: (contentPath: string) => `https://configured.invalid/files/${contentPath}`,
+    });
+    return saved;
+  }
+
+  it('delivers one verified snapshot and image in temporary copies, retaining a concurrent human edit', async () => {
+    const f = await fixture();
+    deliveryFixture(f);
+    const image = Buffer.from('verified image bytes');
+    (f.notebook.cells[0] as (typeof f.notebook.cells)[0] & { outputs: unknown[] }).outputs = [
+      {
+        output_type: 'display_data',
+        data: { 'image/png': image.toString('base64') },
+        metadata: {},
+      },
+    ];
+    const expected = notebookSnapshotHash(f.notebook.toJSON());
+    const delivered: Array<{ file: string; bytes: Buffer }> = [];
+    const sendFile = vi.fn((file: string) => {
+      expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+      delivered.push({ file, bytes: fs.readFileSync(file) });
+      f.notebook.cells[1].source = 'New human note while files upload.';
+      return Promise.resolve(`message-${delivered.length}`);
+    });
+    const result = (await f.call(
+      f.create(() => ({ sendFile })),
+      'notebook_deliver_report',
+      { notebookId: f.args.notebookId }
+    )) as {
+      state: string;
+      revision: string;
+      artifacts: Array<{ messageId: string; sha256: string }>;
+      snapshotState: string;
+      liveChangedDuringDelivery: boolean;
+    };
+    expect(result).toMatchObject({
+      state: 'delivered',
+      revision: expected,
+      snapshotState: 'historical',
+      liveChangedDuringDelivery: true,
+    });
+    expect(result.artifacts.map((a) => a.messageId)).toEqual([
+      'message-1',
+      'message-2',
+      'message-3',
+    ]);
+    expect(notebookSnapshotHash(JSON.parse(delivered[0].bytes.toString()))).toBe(expected);
+    expect(delivered[1].bytes.toString()).toContain(`content="${expected}"`);
+    expect(delivered[2].bytes).toEqual(image);
+    expect(result.artifacts[2].sha256).toBe(createHash('sha256').update(image).digest('hex'));
+    expect(
+      delivered.every((d) => !fs.existsSync(d.file) && !fs.existsSync(path.dirname(d.file)))
+    ).toBe(true);
+    expect(fs.readdirSync(f.root).some((name) => name.endsWith('.ipynb'))).toBe(false);
+    expect(f.notebook.cells[1].source).toContain('New human note');
+    expect(f.client.submitCell).not.toHaveBeenCalled();
+  });
+
+  it('retains confirmed delivery IDs, stops on an uncertain send, and never retries it', async () => {
+    const f = await fixture();
+    deliveryFixture(f);
+    const files: string[] = [];
+    const sendFile = vi.fn((file: string) => {
+      files.push(file);
+      return files.length === 1
+        ? Promise.resolve('confirmed-ipynb')
+        : Promise.reject(new Error('accepted reply lost'));
+    });
+    const result = await f.call(
+      f.create(() => ({ sendFile })),
+      'notebook_deliver_report',
+      { notebookId: f.args.notebookId }
+    );
+    expect(result).toMatchObject({
+      state: 'partial_or_unknown',
+      artifacts: [{ kind: 'ipynb', messageId: 'confirmed-ipynb' }],
+      unconfirmedArtifact: { kind: 'html' },
+    });
+    expect(sendFile).toHaveBeenCalledTimes(2);
+    expect(files.every((file) => !fs.existsSync(path.dirname(file)))).toBe(true);
+  });
+
+  it('bounds raster previews while preserving complete outputs and does not invent delivery IDs', async () => {
+    const f = await fixture();
+    deliveryFixture(f);
+    const outputs = [
+      ...Array.from({ length: 6 }, () => ({
+        output_type: 'display_data',
+        data: { 'image/png': Buffer.from('small image').toString('base64') },
+        metadata: {},
+      })),
+      {
+        output_type: 'display_data',
+        data: { 'image/png': Buffer.alloc(1_500_003).toString('base64') },
+        metadata: {},
+      },
+    ];
+    (f.notebook.cells[0] as (typeof f.notebook.cells)[0] & { outputs: unknown[] }).outputs =
+      outputs;
+    const sendFile = vi.fn((file: string) => {
+      if (file.endsWith('.ipynb')) {
+        expect(JSON.parse(fs.readFileSync(file, 'utf8')).cells[0].outputs).toHaveLength(7);
+      }
+      return Promise.resolve();
+    });
+    const result = await f.call(
+      f.create(() => ({ sendFile })),
+      'notebook_deliver_report',
+      { notebookId: f.args.notebookId }
+    );
+    expect(result).toMatchObject({ state: 'acknowledged_without_message_ids', omittedImages: 3 });
+    expect(sendFile).toHaveBeenCalledTimes(6);
+    expect(JSON.stringify(result)).not.toContain('messageId');
+  });
+
+  it('reports unavailable channel delivery before exporting and rejects altered snapshots before sending', async () => {
+    const f = await fixture();
+    expect(
+      await f.call(f.session, 'notebook_deliver_report', { notebookId: f.args.notebookId })
+    ).toMatchObject({ state: 'unsupported' });
+    const saved = deliveryFixture(f);
+    const original = f.client.json.getMockImplementation()!;
+    f.client.json.mockImplementation(
+      async (route: string, method?: string, body?: Record<string, unknown>) => {
+        const value = await original(route, method, body);
+        if (!method && saved.has(route)) {
+          return { content: { metadata: { changed: true }, cells: [] } };
+        }
+        return value;
+      }
+    );
+    const sendFile = vi.fn();
+    await expect(
+      f.call(
+        f.create(() => ({ sendFile })),
+        'notebook_deliver_report',
+        { notebookId: f.args.notebookId }
+      )
+    ).rejects.toThrow('snapshot cannot be verified');
+    expect(sendFile).not.toHaveBeenCalled();
+  });
+
   it('observes a native image with provenance and marks a later source edit historical', async () => {
     const f = await fixture();
     const [cell] = f.notebook.cells;

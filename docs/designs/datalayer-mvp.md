@@ -24,7 +24,7 @@
 
 配置文件需为宿主私有普通文件（0600），通过 `JUPYTER_CONNECTIONS_FILE` 指定。Project 引用的 `connectionId` 使用上述 ID。可用 `authorizationEnv`/私有文件替代密码；HTTP 的显式授权及凭据隔离规则沿用 [Service 文档](../jupyter-service.md)。一个 Project 的 Notebook 不能混用两个后端。当前适配层省略 `backend` 时默认选择 Datalayer；旧 coordinator 需显式指定，其控制权、原子检查和持久 fence 的保证不适用于本 MVP。历史实验记录仍以当时的源码和显式后端配置为准。
 
-工具为 `notebook_list`、`notebook_describe`、`notebook_read_cell`、`notebook_insert_cell`、`notebook_edit_cell`、`notebook_move_cell`、`notebook_delete_cell`、`notebook_execute`、`notebook_status`、`notebook_stop`、`notebook_import_file`、`notebook_observe_image`、`notebook_export`。编辑使用稳定 cell ID 和客户端源码哈希检查；执行前落盘原目标和 runId，未知提交不自动重放。原结果按远端明确保留策略查询并在宿主缓存，导出用同一次捕获的共享文档生成 `.ipynb` 和远端 nbconvert HTML。
+工具为 `notebook_list`、`notebook_describe`、`notebook_read_cell`、`notebook_insert_cell`、`notebook_edit_cell`、`notebook_move_cell`、`notebook_delete_cell`、`notebook_execute`、`notebook_status`、`notebook_stop`、`notebook_import_file`、`notebook_observe_image`、`notebook_export`、`notebook_deliver_report`。编辑使用稳定 cell ID 和客户端源码哈希检查；执行前落盘原目标和 runId，未知提交不自动重放。原结果按远端明确保留策略查询并在宿主缓存，导出用同一次捕获的共享文档生成 `.ipynb` 和远端 nbconvert HTML。
 
 附件只按宿主接收消息注册的 ID 导入，工具不接受宿主路径。上限 2 MB，校验本地
 文件身份和内容，使用远端 Contents 内容哈希路径；重复导入核对原内容且拒绝覆盖
@@ -32,6 +32,15 @@
 读取远端数据。PNG/JPEG 观察走统一图片结果，由 Harness adapter 转原生图片；
 源码变化后的旧图标为 historical，无来源标记的输出为 unverified。大图提供完整
 Notebook 入口；注册附件/图片组件已复验，真实飞书附件输入仍待验收。
+
+`notebook_deliver_report` 通过通用 channel 文件回调向当前话题投递同一快照的
+ipynb/HTML 和最多四张有界 PNG/JPEG。工具不接受宿主路径或任意下载 URL；先核对
+快照内容指纹及 HTML 版本标记，仅创建本次投递的私有临时副本，完成/失败后清理。
+回调捕获当前 turn/channel，拒绝迟到调用；上传期间的人工修改保留，结果注明
+historical。每个附件记录文件 SHA-256、大小、来源和实际消息 ID；无消息 ID 不称为
+确认投递，部分或未知结果不自动重试。模型仍需用返回的 revision 撰写同版本摘要。
+不支持文件的 channel 返回 unsupported 和远端导出入口。真实 Agent 的调用、飞书
+附件输入、设备渲染与用户 Lab 编辑分别验收，不能由投递组件检查替代。
 
 后续宿主改动已增加执行政策检查、原生 kernel incarnation、服务实例与 Location
 记录、显式关闭 stdin、独占 kernel 检查及大输出／历史结果提示。未声明安全目标取消政策
@@ -45,6 +54,40 @@ Notebook 入口；注册附件/图片组件已复验，真实飞书附件输入�
 终态，204 不算停止；导出保留捕获快照并报告期间 live 版本变化。原生移动会重建 CRDT
 源码对象，服务端监听相应重新绑定，结束时释放监听。当前宿主 75 项测试、构建和
 targeted lint、远端隔离测试进程 34 项回归通过；新增配置远端集成探针已执行。
+
+## 飞书报告投递组件追加（2026-10-06 UTC）
+
+新增投递边界后，245 项相关宿主测试、build 和 targeted lint 通过。真实配置远端
+的保留研究样例导出后，通过通用文件回调和 `lark-cli` 向已授权测试话题投递；
+没有模型调用、入站事件订阅或第二个机器人 WebSocket。此处不是完整 Service/Agent
+产品验收。
+
+`delivery-component-03` 在话题 `omt_19a1f0d8df8f1a76` 确认两个 file 消息和一个
+原生 image 消息；三份产物经用户读 API 下载后的 SHA-256 全部相同，kernel/session
+均为 0→0。内容 revision 为
+`279f7f39e6dd40f5fcd7c8d551b31bd791fce9f5ac2ae746f49437b6ace1e20c`，
+ipynb 4,951,141 bytes、HTML 5,123,868 bytes、PNG 9,348 bytes。下载 PNG 的本地
+图像检查能看到 A/B/C 的 3/7/2 柱形、category/value 坐标；这不等于用户设备的
+飞书或 HTML 渲染检查。
+
+原始记录在主仓库私有 `.local/063-feishu-datalayer-20261006/`，包括
+`delivery-component-03/report.json`、`download-hashes.json`、真实发送/话题读取
+响应及本次产物。首轮连接路径输入失败保留在 `delivery-component-01.log`，未发送
+附件；`delivery-component-02` 的三个 file 消息和下载指纹通过，但 PNG 当时作为
+文件而非原生图片投递。修正探针的 MIME 路由后单独复验，不把旧记录改写为图片通过。
+
+宿主源码 `09411ddb3` 与远端 overlay `b4f80c841` 的最后执行组合已完成核心
+17 required/18 overall（额外 MCP Tasks 在范围外）和 33/33 边界检查。随后冻结的
+`44913e277` 完成 273 files/5202 tests、lint/type/build、干净安装和 Node 22.23.2
+× npm 10.9.9/11.6.0、Node 26.10.0 × npm 11.6.0；[#5270](https://github.com/hs3180/disclaude/pull/5270)
+对应的八项 CI 通过。该包先于本次投递补充，最终候选以 PR head 和相应
+`release-source.json`/发行包指纹为准，不能使用旧包证明新代码通过。
+
+Jupyter 已恢复原镜像、环境、command 和原挂载，保留两个文档身份持久化挂载。
+恢复时 266 条原生身份记录完整指纹一致，六个 Project 引用可解析、0 kernels/
+0 sessions。日常飞书仍有在途任务，首轮 180 秒空闲等待未进入候选窗口，服务未停止。
+真实附件输入、DSH 在飞书的研究和 /stop/续行、用户 Lab、设备/CSP/sanitizer 及
+引用 P2P/纯文本降级继续保持未验证。
 
 ## 图片观察与完整报告复验（2026-10-06 UTC）
 

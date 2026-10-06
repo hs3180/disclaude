@@ -19,11 +19,17 @@ import {
 import { NotebookRunStore, handleTarget } from './run-store.js';
 import { DatalayerNotebookAgentSession } from './datalayer-agent-session.js';
 
+export interface NotebookDelivery {
+  sendFile(filePath: string, signal: AbortSignal): Promise<string | void>;
+}
+
 export interface NotebookAgentContext {
   workingDir: string;
   /** Conversation identity, independent of the selected Harness/model. */
   conversationKey: string;
   currentWorkingDir(): string;
+  /** Capture the current channel/turn before producing temporary delivery files. */
+  delivery?(): NotebookDelivery | undefined;
 }
 
 export type NotebookAgentSessionFactory = (

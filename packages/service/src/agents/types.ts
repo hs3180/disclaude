@@ -47,7 +47,7 @@ export interface ChatAgentCallbacks {
    * @param chatId - Platform-specific chat identifier
    * @param filePath - Local file path to send
    */
-  sendFile: (chatId: string, filePath: string) => Promise<void>;
+  sendFile: (chatId: string, filePath: string, parentMessageId?: string) => Promise<string | void>;
 
   /**
    * Called when the Agent query completes (result message received).

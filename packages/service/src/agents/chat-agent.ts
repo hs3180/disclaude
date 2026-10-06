@@ -1060,6 +1060,22 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     return true;
   }
 
+  private notebookDelivery(): import('../jupyter/agent-session.js').NotebookDelivery | undefined {
+    const session = this.notebookSession;
+    const { callbacks } = this;
+    const messageId = this.activeTurnMessageId;
+    const chatId = this.boundChatId;
+    if (!session || session.inactive || !messageId || !callbacks.getCapabilities?.(chatId)?.supportsFile) { return undefined; }
+    const parentMessageId = this.lastTurnMessage?.threadRootId ?? messageId;
+    return { sendFile: async (filePath, signal) => {
+      signal.throwIfAborted();
+      if (this.notebookSession !== session || session.inactive || this.callbacks !== callbacks || this.activeTurnMessageId !== messageId) {
+        throw new Error('Notebook delivery belongs to an inactive channel or turn');
+      }
+      return await callbacks.sendFile(chatId, filePath, parentMessageId);
+    } };
+  }
+
   /**
    * Start the Agent loop for this chatId.
    *
@@ -1154,6 +1170,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       workingDir: projectCwd ?? this.getWorkspaceDir(),
       conversationKey: this.sdkSessionKey,
       currentWorkingDir: () => this.cwdResolver?.(chatId).effectiveCwd ?? this.cwdProvider?.(chatId) ?? this.getWorkspaceDir(),
+      delivery: () => this.notebookDelivery(),
     });
 
     const sdkOptions = this.createSdkOptions({
