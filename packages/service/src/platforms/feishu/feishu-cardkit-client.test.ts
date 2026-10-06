@@ -56,6 +56,36 @@ describe('FeishuCardKitClient (Issue #4395)', () => {
     });
   }
 
+  it('uses current host SDK authentication for each operation without an environment token', async () => {
+    const getTenantAccessToken = vi
+      .fn()
+      .mockResolvedValueOnce('sdk-current')
+      .mockResolvedValueOnce('sdk-renewed');
+    const client = new FeishuCardKitClient({ getTenantAccessToken, fetchImpl: mockFetch });
+    await client.createCard({ schema: '2.0' });
+    await client.finalizeStreaming(CARD_ID, 1);
+    expect(getTenantAccessToken).toHaveBeenCalledTimes(2);
+    expect(
+      calls.map((call) => (call.init.headers as Record<string, string>).Authorization)
+    ).toEqual(['Bearer sdk-current', 'Bearer sdk-renewed']);
+  });
+
+  it.each(['empty', 'rejected'])(
+    'fails before HTTP when SDK authentication is %s, without exposing its error',
+    async (kind) => {
+      const getTenantAccessToken =
+        kind === 'empty'
+          ? vi.fn().mockResolvedValue('')
+          : vi.fn().mockRejectedValue(new Error('private-token-details'));
+      const client = new FeishuCardKitClient({ getTenantAccessToken, fetchImpl: mockFetch });
+      await expect(client.createCard({ schema: '2.0' })).rejects.toMatchObject({
+        message: 'Card Kit authentication unavailable',
+        status: 0,
+      });
+      expect(mockFetch).not.toHaveBeenCalled();
+    }
+  );
+
   describe('updateElementContent (typewriter streaming)', () => {
     it('PUTs the element content endpoint with Bearer auth + {content,sequence,uuid}', async () => {
       const client = makeClient();

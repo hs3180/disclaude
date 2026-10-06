@@ -75,6 +75,34 @@ describe('createFeishuClient', () => {
   });
 
   describe('retry logic', () => {
+    it.each([
+      ['post', 'https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id', undefined],
+      ['post', 'https://open.feishu.cn/open-apis/im/v1/messages/om_owned/reply', 503],
+      ['request', 'https://open.feishu.cn/open-apis/im/v1/messages', 500],
+      ['request', '/open-apis/im/v1/messages/om_owned/reply', undefined],
+    ])('does not replay an uncertain message via %s (%s)', async (method, url, status) => {
+      const error = { isAxiosError: true, code: 'ECONNRESET', message: 'Message receipt unavailable', response: status ? { status } : undefined };
+      const transport = method === 'post' ? mockAxiosInstance.post : mockAxiosInstance.request;
+      transport.mockReset().mockResolvedValue({ data: 'duplicate' }).mockRejectedValueOnce(error);
+      const client = createFeishuClient('test-app-id', 'test-app-secret');
+      const http = (client as unknown as { httpInstance: { post: (url: string, data: unknown) => Promise<unknown>; request: (options: { url: string; method: string; data: unknown }) => Promise<unknown> } }).httpInstance;
+      const result = method === 'post' ? http.post(url, { content: 'report' }) : http.request({ url, method: 'POST', data: { content: 'report' } });
+      await expect(result).rejects.toBe(error);
+      expect(transport).toHaveBeenCalledOnce();
+    });
+
+    it('retries a message after an explicit HTTP 429 rejection', async () => {
+      const error = { isAxiosError: true, code: 'ERR_BAD_RESPONSE', response: { status: 429 } };
+      mockAxiosInstance.post.mockRejectedValueOnce(error).mockResolvedValueOnce({ data: 'confirmed' });
+      const client = createFeishuClient('test-app-id', 'test-app-secret');
+      const http = (client as unknown as { httpInstance: { post: (url: string, data: unknown) => Promise<unknown> } }).httpInstance;
+      vi.useFakeTimers();
+      const result = http.post('https://open.feishu.cn/open-apis/im/v1/messages/om_owned/reply', { content: 'report' });
+      await vi.runAllTimersAsync();
+      expect(await result).toBe('confirmed');
+      expect(mockAxiosInstance.post).toHaveBeenCalledTimes(2);
+    });
+
     it('should retry on ETIMEDOUT error', async () => {
       const timeoutError = {
         isAxiosError: true,
