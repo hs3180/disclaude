@@ -154,9 +154,13 @@ results/package versions. It retains CSV, PNG, ipynb/HTML and hash evidence,
 including complete inline Plotly assets. Authentication and sandbox header/source
 checks do not establish actual-device rendering or HTML sanitizer behavior.
 Report content fingerprints use `notebookSnapshotHash` with
-`revisionAlgorithm: sorted-json-sha256-v1`: sort object keys before JSON encoding
-and SHA-256, retaining array order and all metadata. Artifact file-byte hashes are
-recorded separately. Jupyter's serialization key order does not change content identity.
+`revisionAlgorithm: nbformat-content-sha256-v2`: normalize nbformat multiline
+source, stream and known text/image MIME fields, omit only the boolean runtime
+`trusted` flag on code cells, then sort object keys before JSON encoding and
+SHA-256. Human and unknown metadata, JSON MIME arrays and cell/output order remain
+part of content identity. File-byte hashes are recorded separately. Delivery
+downloads and verifies the saved ipynb and sends those exact bytes; serialization
+key order, line arrays and runtime trust do not change its logical revision.
 The Datalayer HTTP transport permits complete responses up to 8 MB by default,
 including nbconvert's inline Plotly bundle; model previews keep their smaller
 limits. The host can set a smaller `maxResponseBytes` when constructing its client.

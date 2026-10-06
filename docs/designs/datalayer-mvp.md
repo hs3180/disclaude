@@ -167,6 +167,16 @@ CSP 为 sandbox allow-scripts 且无 allow-same-origin。这些是文件和响�
 历史快照检查。两轮失败原样保留，88 项传输/会话、55 项指纹/会话定向
 测试及 build/lint 通过；最终冻结源码的工程检查另行记录。
 
+05:42 的真实 Service/DSH 报告交付再次失败，保留了原始工具错误且未发送
+附件、未自动重试。新增 CSV cell 的 `metadata.trusted` 在 RTC 中缺省，
+Contents 读取时为 false；保存的 ipynb 则移除 code cell 的 trust 标记，
+并将 source、stream 和文本 MIME 输出保存为行数组。三份内容的研究结果
+相同，但 v1 指纹不同。当前指纹升级为 `nbformat-content-sha256-v2`：仅对
+nbformat 的多行字符串表示做归一化，并排除 code cell 的 boolean runtime
+trust；人工/未知 metadata、JSON MIME 数组、cell/output 顺序仍参与校验。
+交付下载并核验保存的 ipynb 原文件，发送其原字节并单独记录文件 SHA-256。
+这项修正的回归通过不能替代真实报告交付复验。
+
 候选窗口为 03:37:16 至 03:45:28，前切/回退登录入口观测中断约 4.390/4.108 秒。
 恢复原镜像后环境、command、entrypoint 和原挂载保留，额外两项身份持久化
 挂载保留；SQLite 247 行在恢复前后完整指纹一致，integrity check 通过，

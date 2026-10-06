@@ -1022,7 +1022,7 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
     const liveRevision = notebookSnapshotHash(bound.doc.notebook.toJSON());
     return {
       revision,
-      revisionAlgorithm: 'sorted-json-sha256-v1',
+      revisionAlgorithm: 'nbformat-content-sha256-v2',
       liveRevision,
       liveChangedDuringExport: revision !== liveRevision,
       snapshotState: revision === liveRevision ? 'current' : 'historical',
@@ -1049,10 +1049,16 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
     }
     const bound = await this.bound(notebookId);
     const report = await this.export(bound);
-    const snapshot = (await bound.client.json(
-      `api/contents/${String(report.notebookPath).split('/').map(encodeURIComponent).join('/')}`
-    )) as { content?: Record<string, unknown> };
-    if (!snapshot.content || notebookSnapshotHash(snapshot.content) !== report.revision) {
+    const notebookResponse = await bound.client.response(
+      `files/${String(report.notebookPath).split('/').map(encodeURIComponent).join('/')}`
+    );
+    if (!notebookResponse.ok) {
+      await notebookResponse.body?.cancel();
+      throw new Error('Exported Notebook cannot be downloaded');
+    }
+    const notebookText = await bound.client.responseText(notebookResponse);
+    const snapshot = { content: JSON.parse(notebookText) as Record<string, unknown> };
+    if (notebookSnapshotHash(snapshot.content) !== report.revision) {
       throw new Error('Exported Notebook snapshot cannot be verified');
     }
     const response = await bound.client.response(
@@ -1071,7 +1077,7 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
     const copies: Array<{ name: string; bytes: Buffer; metadata: Record<string, unknown> }> = [
       {
         name: 'report.ipynb',
-        bytes: Buffer.from(JSON.stringify(snapshot.content)),
+        bytes: Buffer.from(notebookText),
         metadata: { kind: 'ipynb' },
       },
       { name: 'report.html', bytes: Buffer.from(html), metadata: { kind: 'html' } },

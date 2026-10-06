@@ -165,7 +165,8 @@ async function fixture() {
 
 describe('Datalayer MVP service boundaries', () => {
   function deliveryFixture(
-    f: Awaited<ReturnType<typeof fixture>>
+    f: Awaited<ReturnType<typeof fixture>>,
+    serializeNotebook = (content: unknown) => JSON.stringify(content, null, 2)
   ): Map<string, Record<string, unknown>> {
     const saved = new Map<string, Record<string, unknown>>();
     const original = f.client.json.getMockImplementation()!;
@@ -187,7 +188,9 @@ describe('Datalayer MVP service boundaries', () => {
           new Response(
             route === 'nbconvert/html'
               ? '<html><head></head><body>Rendered report</body></html>'
-              : String(saved.get(route.replace(/^files\//, 'api/contents/'))?.content),
+              : route.endsWith('.ipynb')
+                ? serializeNotebook(saved.get(route.replace(/^files\//, 'api/contents/'))?.content)
+                : String(saved.get(route.replace(/^files\//, 'api/contents/'))?.content),
             { headers: { 'content-type': 'text/html' } }
           )
         )
@@ -248,6 +251,52 @@ describe('Datalayer MVP service boundaries', () => {
     ).toBe(true);
     expect(fs.readdirSync(f.root).some((name) => name.endsWith('.ipynb'))).toBe(false);
     expect(f.notebook.cells[1].source).toContain('New human note');
+    expect(f.client.submitCell).not.toHaveBeenCalled();
+  });
+
+  it('delivers the exact saved Notebook bytes after native serialization changes', async () => {
+    const f = await fixture();
+    f.notebook.cells[0].setMetadata('trusted', true);
+    const image = Buffer.from('native image bytes');
+    (f.notebook.cells[0] as (typeof f.notebook.cells)[0] & { outputs: unknown[] }).outputs = [
+      { output_type: 'stream', name: 'stdout', text: '42\nDone\n' },
+      {
+        output_type: 'display_data',
+        metadata: {},
+        data: { 'image/png': image.toString('base64') },
+      },
+    ];
+    let raw = '';
+    deliveryFixture(f, (content: unknown) => {
+      const saved = structuredClone(content) as { cells: Array<Record<string, unknown>> };
+      const [code] = saved.cells;
+      delete (code.metadata as Record<string, unknown>).trusted;
+      code.source = ['print(', '42)'];
+      const outputs = code.outputs as Array<Record<string, unknown>>;
+      outputs[0].text = ['42\n', 'Done\n'];
+      outputs[1].data = { 'image/png': [image.toString('base64')] };
+      raw = `${JSON.stringify(saved, null, 1)}\n`;
+      return raw;
+    });
+    const received: Buffer[] = [];
+    const sendFile = vi.fn((file: string) => {
+      received.push(fs.readFileSync(file));
+      return Promise.resolve(`message-${received.length}`);
+    });
+    const result = await f.call(
+      f.create(() => ({ sendFile })),
+      'notebook_deliver_report',
+      {
+        notebookId: f.args.notebookId,
+      }
+    );
+    expect(result).toMatchObject({
+      state: 'delivered',
+      revisionAlgorithm: 'nbformat-content-sha256-v2',
+    });
+    expect(received[0]).toEqual(Buffer.from(raw));
+    expect(received[2]).toEqual(image);
+    expect(f.notebook.cells[0].getMetadata('trusted')).toBe(true);
     expect(f.client.submitCell).not.toHaveBeenCalled();
   });
 
@@ -313,17 +362,7 @@ describe('Datalayer MVP service boundaries', () => {
     expect(
       await f.call(f.session, 'notebook_deliver_report', { notebookId: f.args.notebookId })
     ).toMatchObject({ state: 'unsupported' });
-    const saved = deliveryFixture(f);
-    const original = f.client.json.getMockImplementation()!;
-    f.client.json.mockImplementation(
-      async (route: string, method?: string, body?: Record<string, unknown>) => {
-        const value = await original(route, method, body);
-        if (!method && saved.has(route)) {
-          return { content: { metadata: { changed: true }, cells: [] } };
-        }
-        return value;
-      }
-    );
+    deliveryFixture(f, () => JSON.stringify({ metadata: { changed: true }, cells: [] }));
     const sendFile = vi.fn();
     await expect(
       f.call(
@@ -333,6 +372,30 @@ describe('Datalayer MVP service boundaries', () => {
       )
     ).rejects.toThrow('snapshot cannot be verified');
     expect(sendFile).not.toHaveBeenCalled();
+  });
+
+  it('does not send artifacts when the saved Notebook download fails', async () => {
+    const f = await fixture();
+    deliveryFixture(f);
+    Object.assign(f.client, {
+      response: vi.fn((route: string) =>
+        Promise.resolve(
+          route === 'nbconvert/html'
+            ? new Response('<html><head></head><body>Report</body></html>', {
+                headers: { 'content-type': 'text/html' },
+              })
+            : new Response('Unavailable', { status: 503 })
+        )
+      ),
+    });
+    const sendFile = vi.fn();
+    await expect(
+      f.call(f.create(() => ({ sendFile })), 'notebook_deliver_report', {
+        notebookId: f.args.notebookId,
+      })
+    ).rejects.toThrow('Exported Notebook cannot be downloaded');
+    expect(sendFile).not.toHaveBeenCalled();
+    expect(f.client.submitCell).not.toHaveBeenCalled();
   });
 
   it('observes a native image with provenance and marks a later source edit historical', async () => {
