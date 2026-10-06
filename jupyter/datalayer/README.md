@@ -84,6 +84,12 @@ Change only the same service's candidate image, keeping authentication and
 Notebook mounts. Reload Lab pages to load the new client. Restore the recorded
 image/configuration to roll back and verify health and file preservation.
 
+The image merges repair traits into the shared `jupyter_config.json`, retaining
+other sections. Extension discovery files under `jupyter_server_config.d` do
+not establish that arbitrary trait values were loaded. Verify the running
+queue's advertised retention/quota and the loaded ydoc cleanup policy before
+acceptance; a recipe or config file alone is insufficient evidence.
+
 ## Verification
 
 Inside the remote image, the staged/installed regressions use stdlib unittest
