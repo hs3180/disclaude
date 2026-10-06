@@ -410,8 +410,9 @@ try {
   });
   await wait(200);
   const stop = await call('notebook_stop', { notebookId, runId: 'mvp-stop' });
-  check('Native nbmodel request-scoped cancellation', stop.state === 'requested', stop);
-  if (stop.state === 'requested') {
+  const stopAccepted = stop.state === 'cancelled' && stop.stopConfirmed === true;
+  check('Native nbmodel request-scoped cancellation', stopAccepted, stop);
+  if (stopAccepted) {
     const stopped = await poll(notebookId, 'mvp-stop');
     check(
       'Native request cancellation is confirmed on the original run',
