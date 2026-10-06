@@ -77,7 +77,9 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
   private nextId = 0;
 
   constructor(options: JupyterHttpOptions) {
-    super(options);
+    // Complete Notebook/nbconvert responses may include Plotly's inline bundle.
+    // This transport bound is separate from the much smaller model previews.
+    super({ ...options, maxResponseBytes: options.maxResponseBytes ?? 8_000_000 });
   }
 
   private async inspectJson(

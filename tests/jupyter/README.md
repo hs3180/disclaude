@@ -153,6 +153,9 @@ ID, executes in two separate new remote kernels, and compares seeded numerical
 results/package versions. It retains CSV, PNG, ipynb/HTML and hash evidence,
 including complete inline Plotly assets. Authentication and sandbox header/source
 checks do not establish actual-device rendering or HTML sanitizer behavior.
+The Datalayer HTTP transport permits complete responses up to 8 MB by default,
+including nbconvert's inline Plotly bundle; model previews keep their smaller
+limits. The host can set a smaller `maxResponseBytes` when constructing its client.
 Only owned kernels/sessions are removed; the remote synthetic artifacts remain.
 
 None of these probes switches production Feishu or passes native JupyterLab/device

@@ -44,7 +44,7 @@ async function fixture(
     baseUrl,
     authorization: () => Promise.resolve('token fixture'),
   });
-  return { client, requests };
+  return { client, requests, baseUrl };
 }
 
 function discoveryReply(path: string, _method: string, body: Record<string, unknown>) {
@@ -102,6 +102,29 @@ function queuePolicy(serverInstanceId = 'server-instance') {
 }
 
 describe('existing Datalayer HTTP interfaces', () => {
+  it('accepts complete inline report bodies above the historical 3 MB limit', async () => {
+    const html = `<html>${'x'.repeat(4_000_000)}</html>`;
+    const f = await fixture(() => ({ raw: html, headers: { 'content-type': 'text/html' } }));
+    const response = await f.client.response('nbconvert/html', 'POST', { name: 'report.ipynb' });
+    expect(await f.client.responseText(response)).toBe(html);
+    expect(f.requests).toHaveLength(1);
+  });
+
+  it('still bounds complete reports and honors a host-provided smaller limit', async () => {
+    const f = await fixture(() => ({ raw: 'x'.repeat(8_000_001) }));
+    await expect(
+      f.client.responseText(await f.client.response('files/report.html'))
+    ).rejects.toThrow('limit exceeded');
+    const limited = new DatalayerJupyterClient({
+      baseUrl: f.baseUrl,
+      authorization: () => Promise.resolve('token fixture'),
+      maxResponseBytes: 16,
+    });
+    await expect(limited.responseText(await limited.response('files/report.html'))).rejects.toThrow(
+      'limit exceeded'
+    );
+  });
+
   it('resolves the original file ID through the native read-only reverse path route', async () => {
     const f = await fixture(() => ({ data: { id: 'document', path: 'renamed.ipynb' } }));
     expect(await f.client.documentPath('document')).toBe('renamed.ipynb');
