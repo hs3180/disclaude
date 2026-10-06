@@ -174,7 +174,7 @@ describe('ChatAgent (service)', () => {
       const session = { inactive: false };
       callbacks.getCapabilities.mockReturnValue({ supportsFile: true });
       callbacks.sendFile.mockResolvedValue('file-message');
-      Object.assign(chatAgent, { notebookSession: session, activeTurnMessageId: 'original-turn', lastTurnMessage: { threadRootId: 'topic-root' } });
+      Object.assign(chatAgent, { notebookSession: session, activeTurnMessageId: 'original-turn', activeTurnThreadRootId: 'topic-root', lastTurnMessage: { threadRootId: 'queued-other-topic' } });
       const delivery = (chatAgent as any).notebookDelivery();
       const { signal } = new AbortController();
       expect(await delivery.sendFile('/private/owned/report.html', signal)).toBe('file-message');
@@ -186,6 +186,51 @@ describe('ChatAgent (service)', () => {
       const aborted = new AbortController(); aborted.abort();
       await expect(delivery.sendFile('/private/owned/report.html', aborted.signal)).rejects.toThrow();
       expect(callbacks.sendFile).toHaveBeenCalledOnce();
+    });
+
+    it('keeps report files in the active topic when another topic queues before the tool call', async () => {
+      const localCallbacks = createMockCallbacks();
+      localCallbacks.getCapabilities.mockReturnValue({ supportsFile: true });
+      localCallbacks.sendFile.mockResolvedValue('file-message');
+      const session = {
+        inactive: false, tools: [], messageContext: () => Promise.resolve(''),
+        registerAttachments: vi.fn(), dispose: vi.fn(), pause: vi.fn(),
+      };
+      const agent = new ChatAgent({
+        chatId: 'oc_report_topics', callbacks: localCallbacks, apiKey: 'key', model: 'model',
+        notebookSessionFactory: () => session as any,
+      });
+      (agent as any).getWorkspaceDir = () => '/owned/project';
+      (agent as any).isAgentTeamsEnabled = () => false;
+      let resume!: () => void;
+      const queued = new Promise<void>((resolve) => { resume = resolve; });
+      const { signal } = new AbortController();
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          yield { parsed: { type: 'text', content: 'A started' }, raw: {} };
+          await queued;
+          await (agent as any).notebookDelivery().sendFile('/owned/A.html', signal);
+          yield { parsed: { type: 'result', content: 'Done A' }, raw: {} };
+          yield { parsed: { type: 'text', content: 'B started' }, raw: {} };
+          await (agent as any).notebookDelivery().sendFile('/owned/B.html', signal);
+          yield { parsed: { type: 'result', content: 'Done B' }, raw: {} };
+        })(),
+      });
+      try {
+        await agent.processMessage({ chatId: 'oc_report_topics', messageId: 'msg-a', payload: 'Report A', threadRootId: 'root-a', chatType: 'topic' });
+        await vi.waitFor(() => expect(localCallbacks.sendMessage).toHaveBeenCalledWith('oc_report_topics', 'A started', 'root-a'));
+        await agent.processMessage({ chatId: 'oc_report_topics', messageId: 'msg-b', payload: 'Report B', threadRootId: 'root-b', chatType: 'topic' });
+        resume();
+        await vi.waitFor(() => expect(localCallbacks.sendFile).toHaveBeenCalledTimes(2));
+        expect(localCallbacks.sendFile.mock.calls).toEqual([
+          ['oc_report_topics', '/owned/A.html', 'root-a'],
+          ['oc_report_topics', '/owned/B.html', 'root-b'],
+        ]);
+      } finally {
+        resume();
+        agent.dispose();
+      }
     });
 
     it('registers the current message attachments before building Notebook model context', async () => {

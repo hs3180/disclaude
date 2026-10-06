@@ -568,7 +568,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           return replyResp.data?.message_id;
         } catch (err) {
           if (
-            options.avoidRetryAfterAmbiguousThreadReply &&
+            (options.avoidRetryAfterAmbiguousThreadReply || message.type === 'file') &&
             !isDefiniteFeishuApiRejection(err)
           ) {
             throw err;
