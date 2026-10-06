@@ -1,5 +1,11 @@
 # Notebook acceptance probes
 
+The user removed manual JupyterLab editing support and its human acceptance from
+0.6.3 on 2026-10-06. Existing RTC/native Lab probes remain useful engineering
+checks and historical evidence; they do not claim human acceptance. Current scope,
+real Service/device results and remaining checks are recorded in the
+[candidate acceptance record](../../docs/releases/0.6.3-acceptance.md).
+
 ## Pinned remote nbmodel repair
 
 The [remote overlay](../../jupyter/datalayer/README.md) applies only to the
