@@ -1,5 +1,16 @@
 # Notebook acceptance probes
 
+## Pinned remote nbmodel repair
+
+The [remote overlay](../../jupyter/datalayer/README.md) applies only to the
+verified existing nbmodel/Lab bundle and includes its image recipe, source
+fingerprints, retention/queue policies and rollback procedure. Run
+`datalayer-runtime-test.py` inside the existing remote environment or its owned
+candidate image; the disclaude host needs no Python. Run
+`datalayer-frontend-test.mjs --bundle <installed-patched-bundle>` on the host
+to check actual shipped frontend modules. These regressions are component
+evidence; the configured-server and product probes below remain required.
+
 ## Configured Datalayer MVP probes
 
 Build the checkout (`npm run build`) and run against the existing server named

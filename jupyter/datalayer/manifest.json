@@ -1,0 +1,73 @@
+{
+  "schema": 1,
+  "revision": "0.6.3-nbmodel-repair-1",
+  "nbmodelVersion": "0.2.9",
+  "frontendVersion": "0.2.8",
+  "source": "Configured upstream installation captured 2026-10-06; original failures retained separately",
+  "changes": [
+    {
+      "area": "python",
+      "source": "actions.py",
+      "target": "actions.py",
+      "patch": "patches/actions.patch",
+      "originalSha256": "4b5354216c9b027b8cc68e6407bed68e6aebe1dab8085b602c3a7c04fc941315",
+      "patchedSha256": "757c4eba6ea8710517cd16fe7c0a6560d18eb4a45b5dfdf5b22ff991e99c7046"
+    },
+    {
+      "area": "python",
+      "source": "execution_stack.py",
+      "target": "execution_stack.py",
+      "patch": "patches/execution_stack.patch",
+      "originalSha256": "a4539dde1335c2655397790f48de4c375a09cd39529e9af45dad84e6c8af9e5e",
+      "patchedSha256": "629d77cb016098baeca4045da51dc49d93622bfb75270f335a2333471d89a88b"
+    },
+    {
+      "area": "python",
+      "source": "handlers.py",
+      "target": "handlers.py",
+      "patch": "patches/handlers.patch",
+      "originalSha256": "3054dbc3a75718a991508fa50a9b22065ed213d8d7d2c6419e9c21f58d079b4a",
+      "patchedSha256": "e839a9d93a00e74cffe08f46a98f8892e09430ad12267cc4cee606642d363732"
+    },
+    {
+      "area": "python",
+      "source": "extension.py",
+      "target": "extension.py",
+      "patch": "patches/extension.patch",
+      "originalSha256": "f93791e5cfc5f0f17217b86b4008a598b3eab10cb1621acdd0a5196375bf91d4",
+      "patchedSha256": "7a50a9817a500f7bbee3ab49ab298ee11d9ff635854e568089d3b2a89cd273c0"
+    },
+    {
+      "area": "frontend",
+      "source": "static/lib_index_js.385efdae00a63983.js",
+      "target": "static/lib_index_js.0b698b27bf2a9945.js",
+      "patch": "patches/lab-bundle.patch",
+      "originalSha256": "3834c14b783749943eccaa931e6cf398968d816e27e79357a24dc4e1d0a1bc2c",
+      "patchedSha256": "0b698b27bf2a99450a510ccae33955d87ae54e31fabdbcc1573c40fe700c0f16"
+    },
+    {
+      "area": "frontend",
+      "source": "static/remoteEntry.bc6ceee2cce29f48.js",
+      "target": "static/remoteEntry.897e0861bddf847b.js",
+      "patch": "patches/lab-loader.patch",
+      "originalSha256": "065ebb6ae811078abf09adadd7aed31b6b11bc2c4ab99b06d32d7978f6252a25",
+      "patchedSha256": "897e0861bddf847b8884e49d92698c8f4f5524d9bdb8c73ec281346a77c8b22e"
+    },
+    {
+      "area": "frontend",
+      "source": "package.json",
+      "target": "package.json",
+      "patch": "patches/lab-package.patch",
+      "originalSha256": "9ce12f793204b8b9b2f9fe0e0017bc237d52e7248594a6dbd8fec7d7d9228d46",
+      "patchedSha256": "4eb32b209da449ff340187df22b9f7308734c9e38bb69fce4acf49f6039046b7"
+    }
+  ],
+  "additions": [
+    {
+      "area": "python",
+      "target": "runtime.py",
+      "file": "runtime.py",
+      "sha256": "203a2844be8d3c80bbff6790be44227e04505f9606a18127c5c588b012ce7845"
+    }
+  ]
+}
