@@ -197,6 +197,9 @@ export function generateRelease(root, output) {
       .split('\0')
       .filter(Boolean);
     for (const file of tracked) {
+      // Remote build recipes also belong to a full source checkout. Keeping
+      // their optional runtime payload must not add Docker assets to npm installs.
+      if (file.split('/').at(-1).startsWith('Dockerfile')) continue;
       assert(
         !lstatSync(join(root, file)).isSymbolicLink(),
         `Release resources must not be symlinks: ${file}`

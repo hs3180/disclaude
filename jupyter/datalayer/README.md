@@ -60,8 +60,9 @@ Changed generated files omit the original source-map link.
 
 ## Build and rollback
 
-Run the following on the existing remote Docker host, with this directory as
-the build context. Use the actual saved base image and runtime user; do not
+Run the following on the existing remote Docker host from a full source checkout,
+with this directory as the build context. The npm distribution includes the
+optional remote overlay source but omits Docker build recipes. Use the actual saved base image and runtime user; do not
 replace a GPU/scientific environment with a fresh generic Jupyter image.
 
 ```sh
