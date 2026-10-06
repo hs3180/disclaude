@@ -1,6 +1,6 @@
 # 0.6.3 Datalayer MVP：配置实例实测
 
-2026-10-05，按用户要求将 0.6.3 候选增加 `datalayer` 后端，并在用户已有的远程 Jupyter 上实测。共享编辑、远程执行、模型续行及导出已经跑通；当前部署还不能满足 [Notebook 产品要求](./jupyter-harness.md) 的全部行为。这是可评审的 MVP 和组件证据，尚未发布，也未完成飞书产品验收。
+2026-10-05 增加 `datalayer` 后端，并在用户已有的远程 Jupyter 上实测。2026-10-06 的修复候选已通过原六个失败场景的第一轮远端复验。完整 [Notebook 产品要求](./jupyter-harness.md)、飞书、原生 Lab 和设备验收仍未完成；以下按源码和实例区分当前修复证据与历史失败。
 
 ## 实现与部署
 
@@ -24,9 +24,54 @@
 
 配置文件需为宿主私有普通文件（0600），通过 `JUPYTER_CONNECTIONS_FILE` 指定。Project 引用的 `connectionId` 使用上述 ID。可用 `authorizationEnv`/私有文件替代密码；HTTP 的显式授权及凭据隔离规则沿用 [Service 文档](../jupyter-service.md)。一个 Project 的 Notebook 不能混用两个后端。当前适配层省略 `backend` 时默认选择 Datalayer；旧 coordinator 需显式指定，其控制权、原子检查和持久 fence 的保证不适用于本 MVP。历史实验记录仍以当时的源码和显式后端配置为准。
 
-工具为 `notebook_list`、`notebook_describe`、`notebook_read_cell`、`notebook_insert_cell`、`notebook_edit_cell`、`notebook_execute`、`notebook_status`、`notebook_stop`、`notebook_export`。编辑使用稳定 cell ID 和客户端源码哈希检查；执行前落盘原目标和 runId，未知提交不自动重放。服务端 GET 消费的终态在宿主缓存，导出用同一次捕获的共享文档生成 `.ipynb` 和远端 nbconvert HTML。
+工具为 `notebook_list`、`notebook_describe`、`notebook_read_cell`、`notebook_insert_cell`、`notebook_edit_cell`、`notebook_execute`、`notebook_status`、`notebook_stop`、`notebook_export`。编辑使用稳定 cell ID 和客户端源码哈希检查；执行前落盘原目标和 runId，未知提交不自动重放。原结果按远端明确保留策略查询并在宿主缓存，导出用同一次捕获的共享文档生成 `.ipynb` 和远端 nbconvert HTML。
 
-## 更新后实例复验（2026-10-05 UTC，上海时间跨至 10-06）
+后续宿主改动已增加执行政策检查、原生 kernel incarnation、服务实例与 Location
+记录、显式关闭 stdin、独占 kernel 检查及大输出／历史结果提示。未声明安全目标取消政策
+的服务不会收到取消 DELETE，也不会创建新的执行 kernel；原生 incarnation 改变后拒绝
+把下一次运行称为原内存续行。29 项相关组件检查、build 和 lint 通过；这些宿主改动在
+配置远端的复验仍未完成。
+
+## 修复候选第一轮复验（2026-10-06 UTC）
+
+远端候选源码为 `79c2bf82f`，镜像为
+`sha256:0f7a907190d9c0afa4a5c05a8952fbe154a06baa8de9ed38414c9d007f3586ab`。
+[固定补丁与部署说明](../../jupyter/datalayer/README.md) 的 manifest SHA-256 为
+`99c4aa1770a03d738568f0a7ba8a273df1116c7d4cdd4947cd9dfbc187994061`。
+本轮 Node 工具来源是 `16ad2ed23`；后续宿主 incarnation/能力检查改动需重新验收。
+原镜像、运行配置和环境已保存回退副本，169 项发行包版本及 12 项科学计算依赖未变，
+`pip check` 通过。空闲实例切换到 healthy 耗时 21.65 秒；登录入口观测不可用为
+4.562 秒。原挂载与认证环境保留，日常飞书容器未切换。
+
+实际启动验证了一小时非消费结果保留、512 条全局请求配额及 64 KiB inline 上限。
+共享配置中 cleanup delay 为 `None`，由原生 ydoc 保存；没有宿主补写或常驻 RTC peer。
+第一次启动预检使用错误格式的 kernel ID，第二次发现扩展发现 `.d` 文件未加载任意
+trait 配置；修正探针并合并标准共享配置后复验通过，失败记录保留。
+
+| 原失败条件                          | 本轮结果                                                                           |
+| ----------------------------------- | ---------------------------------------------------------------------------------- |
+| 全部文档客户端退出后的保存          | 67 秒运行完成，原请求 stdout 和磁盘 Notebook 输出均包含完成标记。                  |
+| 原结果重复读取／其他消费者先读      | 原请求重复 GET 和宿主未缓存时另一个消费者先 GET 后的恢复均通过，无额外执行 POST。  |
+| 取消 queued B                       | running A 保持运行；B 有未执行的取消终态。                                         |
+| 取消 finished unread A              | 新 running B 保持运行；读取仍得到原 A 终态。                                       |
+| 执行中改源码                        | 原请求保留原输出；当前新源码 cell 无旧输出，未知 metadata/attachment 保留。        |
+| display_id／clear_output(wait=True) | 内核实际发出更新；live MIME 使用更新值；wait=True 保留旧输出，下一输出到达时清空。 |
+
+核心探针 18 项中 17 项通过，唯一不支持项是范围外 MCP Tasks；边界探针 19 项全部通过。
+独立 Node 进程恢复 pending 原请求且没有执行 POST、改名/复制身份及自有 kernel 重启后的
+原生 incarnation 变化也通过。补丁安装后 31 项服务端回归和实际 bundled modules 的
+16 项前端检查通过。原始证据位于主仓库私有目录
+`.local/063-jupyter/datalayer-delivery-20261006/`，包含 `configured-core-01/`、
+`configured-edge-01/`、镜像构建、配置和中断记录。
+
+这一轮没有完成原生 Lab Run 路由、多位置跨 cell display 更新、独立进程读取未缓存的
+终态、大输出产物、故障恢复、真实飞书或设备验收。不能据此关闭完整产品／发行任务。
+冻结最终交付源码上的复验仍需执行。原生 UI 会话在选择 Chromium 时被 Computer Use
+工具因当前 URL 不允许访问而终止，没有继续或换工具绕过；这项保持未验证。
+本轮结束前已恢复修复前的运行快照；Jupyter/MCP 和日常飞书服务健康，原挂载与认证
+环境保留，未遗留自有 kernel/session。修复候选镜像和回退文件保留供下一轮验收。
+
+## 更新后实例复验（历史：2026-10-05 UTC，上海时间跨至 10-06）
 
 依赖更新并重启后，重新测试了用户配置中的同一远端 Jupyter。MCP 为 **2.2.3**，nbmodel 为 **0.2.9**，Lab / Server 为 **4.6.4 / 2.21.1**，collaboration / server_ydoc / pycrdt 为 **5.0.4 / 3.0.4 / 0.14.8**。本轮只创建自有随机 Notebook、Project 和 kernel；没有再次重启服务或修改其配置。此前的升级前结果保留在下文。
 
