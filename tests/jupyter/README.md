@@ -79,6 +79,27 @@ snapshot consistency during a concurrent live edit. The probe exits nonzero
 for any failed check. It does not certify native Lab UI, production Feishu,
 actual-device rendering or server restart behavior.
 
+For original identity recovery under authentication/HTTP failure, a deliberately
+lost accepted submission reply, native kernel restart and optional guarded
+restart of the configured Jupyter container:
+
+```sh
+node tests/jupyter/datalayer-fault-probe.mjs \
+  --env-file /private/host.env \
+  --output /private/new-datalayer-fault-results
+```
+
+The optional `--restart-ssh`, `--restart-container` and `--restart-image` must
+identify the actual owned candidate. The probe refuses restart if the image or
+live workloads differ from the recorded owned resources. It restarts that same
+container, preserving its native file-ID database; it does not recreate an image.
+Read the [identity persistence procedure](../../jupyter/datalayer/README.md#native-file-identity)
+before a separate deployment/image change. The report distinguishes actual HTTP
+timeout/authentication denial from injected reply loss. All unknown submissions
+retain their identity and must produce no replay POST. A native restart does
+not restore kernel memory. Failed checks exit nonzero, and this probe does not
+pass physical network outage, native Lab UI or production Feishu acceptance.
+
 For two real native DSH turns with session recreation and an independent RTC
 participant editing the parameter/Markdown between them:
 

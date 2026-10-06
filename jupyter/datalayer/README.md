@@ -90,6 +90,29 @@ not establish that arbitrary trait values were loaded. Verify the running
 queue's advertised retention/quota and the loaded ydoc cleanup policy before
 acceptance; a recipe or config file alone is insufficient evidence.
 
+## Native file identity
+
+The native file-ID database must survive image replacement as well as Notebook
+files. Its default `jupyter_data_dir()/file_id_manager.db` may be in the
+container's writable layer; restoring an older image can otherwise invalidate
+new Project references even when Notebook files survive.
+
+Before recreating an idle service, take a coherent SQLite backup of the current
+database and verify its integrity and sorted ID/path rows. Retain that current
+database on a private persistent **directory** volume, including any journal
+files. Set the supported `BaseFileIdManager.db_path` trait to its absolute mounted
+path in the standard shared `jupyter_config.json`, preserving other settings.
+Keep separate candidate and original shared configs; both use the same database
+path, while the rollback config preserves the original traits. Do not restore
+the old image's database over newly created identities.
+
+Record the extra database-directory and read-only config mounts explicitly.
+Preserve the original environment, command, entrypoint and data mounts, and
+retain private deployment backups. After switching or rolling back, verify
+health, SQLite integrity/row fingerprint and existing document IDs through the
+authenticated native file-ID API. A config file alone does not establish that
+the running service uses it.
+
 ## Verification
 
 Inside the remote image, the staged/installed regressions use stdlib unittest
