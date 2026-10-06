@@ -7,10 +7,12 @@ import {
   createJupyterCookieJar,
   type JupyterCoordinatorOptions,
   type JupyterConnectionInspection,
+  type DatalayerConnectionInspection,
 } from '@disclaude/core';
 
 export interface JupyterConnectionDefinition {
   id: string;
+  /** Omitted selects Datalayer. The historical coordinator must be explicit. */
   backend?: 'coordinator' | 'datalayer';
   baseUrl: string;
   authorizationEnv?: string;
@@ -19,6 +21,10 @@ export interface JupyterConnectionDefinition {
   passwordFile?: string;
   allowInsecureHttp?: boolean;
 }
+
+export type JupyterBackendInspection =
+  | DatalayerConnectionInspection
+  | (JupyterConnectionInspection & { backend: 'coordinator' });
 
 type Jar = NonNullable<JupyterCoordinatorOptions['cookieJar']>;
 interface Connection<T = JupyterCoordinatorClient> {
@@ -82,7 +88,7 @@ export class JupyterConnections {
       return {
         id: d.id,
         baseUrl: d.baseUrl,
-        ...(d.backend === 'datalayer' ? { backend: 'datalayer' as const } : {}),
+        backend: d.backend === 'coordinator' ? 'coordinator' : 'datalayer',
         ...(typeof d.authorizationEnv === 'string' ? { authorizationEnv: d.authorizationEnv } : {}),
         ...(typeof d.authorizationFile === 'string'
           ? { authorizationFile: d.authorizationFile }
@@ -139,7 +145,7 @@ export class JupyterConnections {
     if (!definition) {
       throw new Error('Notebook connection is not authorized by the host');
     }
-    return definition.backend ?? 'coordinator';
+    return definition.backend ?? 'datalayer';
   }
 
   private async prepare<T>(
@@ -147,8 +153,14 @@ export class JupyterConnections {
     namespace: string,
     create: (options: JupyterCoordinatorOptions) => T
   ): Promise<Connection<T>> {
+    // Historical coordinator definitions omitted this field from cookie identity.
+    // Preserve their authenticated jars when the operator makes the backend explicit.
+    const cookieDefinition = { ...definition };
+    if (cookieDefinition.backend === 'coordinator') {
+      delete cookieDefinition.backend;
+    }
     const key = createHash('sha256')
-      .update(JSON.stringify([definition, namespace]))
+      .update(JSON.stringify([cookieDefinition, namespace]))
       .digest('hex');
     const cookiePath = join(dirname(this.configPath), 'sessions', `${key}.json`);
     let saved: unknown;
@@ -195,15 +207,27 @@ export class JupyterConnections {
     }
   }
 
-  /** Read-only host capability check. No Project, controller or kernel changes. */
-  async inspect(connectionId: string, namespace = ''): Promise<JupyterConnectionInspection> {
+  /** Safe host discovery. No Project, controller, document or kernel changes. */
+  async inspect(connectionId: string, namespace = ''): Promise<JupyterBackendInspection> {
     const definition = this.definitions().find((item) => item.id === connectionId);
     if (!definition) {
       throw new Error('Notebook connection is not authorized by the host');
     }
+    if (definition.backend === 'datalayer') {
+      const connection = await this.prepare(
+        definition,
+        namespace,
+        (options) => new DatalayerJupyterClient(options)
+      );
+      try {
+        return await connection.client.inspectConnection();
+      } finally {
+        await this.persist(connection);
+      }
+    }
     const connection = await this.prepareConnection(definition, namespace);
     try {
-      return await connection.client.inspectConnection();
+      return { backend: 'coordinator', ...(await connection.client.inspectConnection()) };
     } finally {
       await this.persist(connection);
     }

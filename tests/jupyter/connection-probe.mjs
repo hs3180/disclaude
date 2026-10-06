@@ -6,7 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { JupyterConnections } from '../../packages/service/dist/jupyter/connections.js';
 
 // Host-only inspection of the explicitly configured server. Does not start
-// Jupyter, open a Notebook, claim a controller, or touch a kernel.
+// Jupyter, open a Notebook, claim a controller, or touch a kernel. Datalayer
+// initialize/tools-list use read-only JSON-RPC POSTs, never tools/call.
 const { values } = parseArgs({
   options: {
     'config-file': { type: 'string' },
@@ -47,6 +48,9 @@ globalThis.fetch = async (url, options) => {
     path: new URL(url).pathname,
     method: options?.method ?? 'GET',
     status: response.status,
+    ...(options?.method === 'POST' && new URL(url).pathname.endsWith('/mcp')
+      ? { rpcMethod: JSON.parse(options.body).method }
+      : {}),
   });
   return response;
 };
@@ -58,7 +62,7 @@ try {
   report.resumedInspection = await resumed.inspect(values['connection-id']);
   report.resumedWithoutLoginPost = !report.requests
     .slice(boundary)
-    .some((x) => x.method === 'POST');
+    .some((x) => x.method === 'POST' && x.path.endsWith('/login'));
   const modelEnvironment = { ...environment };
   first.redactEnvironment(modelEnvironment);
   const definitions = JSON.parse(await fs.readFile(config, 'utf8')).connections;
@@ -69,7 +73,12 @@ try {
     (name) => modelEnvironment[name] === undefined
   );
   report.onlySafeConnectionRequests = report.requests.every(
-    (x) => x.method === 'GET' || (x.method === 'POST' && x.path.endsWith('/login'))
+    (x) =>
+      x.method === 'GET' ||
+      (x.method === 'POST' && x.path.endsWith('/login')) ||
+      (x.method === 'POST' &&
+        x.path.endsWith('/mcp') &&
+        ['initialize', 'tools/list'].includes(x.rpcMethod))
   );
   if (
     !report.resumedWithoutLoginPost ||

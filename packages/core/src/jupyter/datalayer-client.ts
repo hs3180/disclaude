@@ -12,6 +12,38 @@ export interface DatalayerToolResult {
   isError?: boolean;
 }
 
+type InterfaceState = 'available' | 'missing' | 'incompatible' | 'unverified';
+
+export interface DatalayerConnectionInspection {
+  backend: 'datalayer';
+  serverVersion: string;
+  mcp: {
+    state: InterfaceState;
+    httpStatus?: number;
+    protocolVersion?: string;
+    tools?: string[];
+  };
+  nbmodel: { state: InterfaceState; httpStatus?: number };
+  rtc: {
+    state: 'configured' | 'disabled' | 'unverified';
+    httpStatus?: number;
+    serverSideExecution?: boolean;
+  };
+  nbconvert: { state: InterfaceState; httpStatus?: number; formats?: string[] };
+  /** Interface discovery does not run a Notebook or prove save/cancel/output behavior. */
+  productAcceptance: 'not_verified';
+}
+
+class DatalayerProtocolError extends Error {
+  constructor(
+    message: string,
+    readonly httpStatus?: number,
+    readonly rpcCode?: number
+  ) {
+    super(message);
+  }
+}
+
 export interface DatalayerExecutionHandle {
   kernelId: string;
   requestId: string;
@@ -36,6 +68,148 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
 
   constructor(options: JupyterHttpOptions) {
     super(options);
+  }
+
+  private async inspectJson(
+    route: string
+  ): Promise<{ state: InterfaceState; httpStatus?: number; data?: unknown }> {
+    try {
+      const response = await this.response(route);
+      if (!response.ok) {
+        await response.body?.cancel();
+        return {
+          state: response.status === 404 ? 'missing' : 'unverified',
+          httpStatus: response.status,
+        };
+      }
+      try {
+        return {
+          state: 'available',
+          httpStatus: response.status,
+          data: JSON.parse(await this.responseText(response)) as unknown,
+        };
+      } catch {
+        return { state: 'incompatible', httpStatus: response.status };
+      }
+    } catch {
+      return { state: 'unverified' };
+    }
+  }
+
+  private async inspectMcp(): Promise<DatalayerConnectionInspection['mcp']> {
+    try {
+      const initialized = await this.initialize();
+      if (
+        !initialized ||
+        typeof initialized.protocolVersion !== 'string' ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(initialized.protocolVersion)
+      ) {
+        return { state: 'incompatible' };
+      }
+      const tools = await this.listTools();
+      return {
+        state: 'available',
+        protocolVersion: initialized.protocolVersion,
+        tools: tools.map((tool) => tool.name),
+      };
+    } catch (error) {
+      return {
+        state:
+          error instanceof DatalayerProtocolError
+            ? error.httpStatus === 404 || error.rpcCode === -32601
+              ? 'missing'
+              : error.httpStatus === undefined && error.rpcCode === undefined
+                ? 'incompatible'
+                : 'unverified'
+            : 'unverified',
+        ...(error instanceof DatalayerProtocolError && error.httpStatus !== undefined
+          ? { httpStatus: error.httpStatus }
+          : {}),
+      };
+    }
+  }
+
+  private async inspectRtc(): Promise<DatalayerConnectionInspection['rtc']> {
+    try {
+      const response = await this.response('lab');
+      if (!response.ok) {
+        await response.body?.cancel();
+        return { state: 'unverified', httpStatus: response.status };
+      }
+      const html = await this.responseText(response);
+      const script = html.match(
+        /<script\b(?=[^>]*\bid=(["'])jupyter-config-data\1)[^>]*>([\s\S]*?)<\/script>/i
+      );
+      const config = script ? (JSON.parse(script[2]) as Record<string, unknown>) : undefined;
+      return {
+        state:
+          config?.disableRTC === false
+            ? 'configured'
+            : config?.disableRTC === true
+              ? 'disabled'
+              : 'unverified',
+        httpStatus: response.status,
+        ...(typeof config?.serverSideExecution === 'boolean'
+          ? { serverSideExecution: config.serverSideExecution }
+          : {}),
+      };
+    } catch {
+      return { state: 'unverified' };
+    }
+  }
+
+  /** Authenticated reads and MCP discovery only: no document, kernel or execution is created. */
+  async inspectConnection(): Promise<DatalayerConnectionInspection> {
+    const server = await this.inspectJson('api');
+    const version = (server.data as Record<string, unknown> | undefined)?.version;
+    if (
+      server.state !== 'available' ||
+      typeof version !== 'string' ||
+      !/^\d+\.\d+\.\d+[A-Za-z0-9.+-]*$/.test(version) ||
+      version.length > 128
+    ) {
+      throw new Error('Authenticated Jupyter API version could not be verified');
+    }
+    // The installed nbmodel GET lists a queue without creating a client or task.
+    // An unowned random ID avoids opening or inspecting any user's kernel.
+    const probeKernel = randomUUID();
+    const [mcp, queue, rtc, exported] = await Promise.all([
+      this.inspectMcp(),
+      this.inspectJson(`api/kernels/${probeKernel}/execute`),
+      this.inspectRtc(),
+      this.inspectJson('api/nbconvert'),
+    ]);
+    const queueData = queue.data as Record<string, unknown> | undefined;
+    const formats =
+      exported.data && typeof exported.data === 'object' && !Array.isArray(exported.data)
+        ? Object.keys(exported.data).filter((name) => /^[A-Za-z0-9_-]{1,100}$/.test(name))
+        : undefined;
+    return {
+      backend: 'datalayer',
+      serverVersion: version,
+      mcp,
+      nbmodel: {
+        state:
+          queue.state !== 'available'
+            ? queue.state
+            : queueData?.kernel_id === probeKernel && Array.isArray(queueData.requests)
+              ? 'available'
+              : 'incompatible',
+        ...(queue.httpStatus !== undefined ? { httpStatus: queue.httpStatus } : {}),
+      },
+      rtc,
+      nbconvert: {
+        state:
+          exported.state !== 'available'
+            ? exported.state
+            : formats?.includes('html')
+              ? 'available'
+              : 'incompatible',
+        ...(exported.httpStatus !== undefined ? { httpStatus: exported.httpStatus } : {}),
+        ...(formats ? { formats } : {}),
+      },
+      productAcceptance: 'not_verified',
+    };
   }
 
   async openDocument(
@@ -260,16 +434,31 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
     const response = await this.response('mcp', 'POST', { jsonrpc: '2.0', id, method, params });
     if (!response.ok) {
       await response.body?.cancel();
-      throw new Error(`Datalayer MCP returned HTTP ${response.status}`);
+      throw new DatalayerProtocolError(
+        `Datalayer MCP returned HTTP ${response.status}`,
+        response.status
+      );
     }
     const data = JSON.parse(await this.responseText(response)) as Record<string, unknown>;
-    if (data.jsonrpc !== '2.0' || data.id !== id) {
-      throw new Error('Datalayer MCP response identity mismatch');
+    if (
+      !data ||
+      typeof data !== 'object' ||
+      Array.isArray(data) ||
+      data.jsonrpc !== '2.0' ||
+      data.id !== id
+    ) {
+      throw new DatalayerProtocolError('Datalayer MCP response identity mismatch');
     }
     if (data.error) {
-      // Remote errors may contain internal paths. Keep the transport diagnostic bounded.
+      // Remote errors can reflect paths or credentials. Only a numeric protocol code is public.
       const error = data.error as Record<string, unknown>;
-      throw new Error(`Datalayer MCP ${method} failed: ${String(error.message).slice(0, 600)}`);
+      const code =
+        typeof error.code === 'number' && Number.isSafeInteger(error.code) ? error.code : undefined;
+      throw new DatalayerProtocolError(
+        `Datalayer MCP ${method} failed${code !== undefined ? ` (code ${code})` : ''}`,
+        undefined,
+        code
+      );
     }
     return data.result;
   }
@@ -284,8 +473,22 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
 
   async listTools(): Promise<DatalayerTool[]> {
     const result = (await this.rpc('tools/list')) as { tools?: DatalayerTool[] };
-    if (!Array.isArray(result.tools) || result.tools.length > 256) {
-      throw new Error('Invalid Datalayer tool inventory');
+    if (
+      !result ||
+      !Array.isArray(result.tools) ||
+      result.tools.length > 256 ||
+      result.tools.some(
+        (tool) =>
+          !tool ||
+          typeof tool.name !== 'string' ||
+          !/^[A-Za-z][A-Za-z0-9_-]{0,99}$/.test(tool.name) ||
+          !tool.inputSchema ||
+          typeof tool.inputSchema !== 'object' ||
+          Array.isArray(tool.inputSchema) ||
+          tool.inputSchema.type !== 'object'
+      )
+    ) {
+      throw new DatalayerProtocolError('Invalid Datalayer tool inventory');
     }
     return result.tools;
   }

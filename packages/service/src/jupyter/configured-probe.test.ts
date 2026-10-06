@@ -80,6 +80,7 @@ async function fixture(coordinator: 'missing' | 'error' | 'available') {
       connections: [
         {
           id: 'configured',
+          backend: 'coordinator',
           baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/`,
           authorizationEnv: 'CONFIGURED_PROBE_FIXTURE_AUTH',
         },

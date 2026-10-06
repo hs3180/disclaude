@@ -17,7 +17,7 @@ async function fixture(
     path: string,
     method: string,
     body: Record<string, unknown>
-  ) => { status?: number; headers?: Record<string, string>; data?: unknown }
+  ) => { status?: number; headers?: Record<string, string>; data?: unknown; raw?: string }
 ) {
   const requests: Array<{ path: string; method: string; body: Record<string, unknown> }> = [];
   const server = createServer(async (request, response) => {
@@ -34,7 +34,7 @@ async function fixture(
       'content-type': 'application/json',
       ...result.headers,
     });
-    response.end(JSON.stringify(result.data ?? {}));
+    response.end(result.raw ?? JSON.stringify(result.data ?? {}));
   });
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -47,7 +47,110 @@ async function fixture(
   return { client, requests };
 }
 
+function discoveryReply(path: string, _method: string, body: Record<string, unknown>) {
+  if (path === '/prefix/api') {
+    return { data: { version: '2.21.1' } };
+  }
+  if (path === '/prefix/mcp') {
+    return {
+      data: {
+        jsonrpc: '2.0',
+        id: body.id,
+        result:
+          body.method === 'initialize'
+            ? { protocolVersion: '2024-11-05', capabilities: { tools: {} } }
+            : { tools: [{ name: 'read_cell', inputSchema: { type: 'object' } }] },
+      },
+    };
+  }
+  if (path === '/prefix/lab') {
+    return {
+      raw: `<script type="application/json" id="jupyter-config-data">${JSON.stringify({
+        disableRTC: false,
+        serverSideExecution: true,
+        token: 'private-page-value',
+      })}</script>`,
+    };
+  }
+  if (path === '/prefix/api/nbconvert') {
+    return { data: { html: {}, notebook: {} } };
+  }
+  const queue = path.match(/^\/prefix\/api\/kernels\/([^/]+)\/execute$/);
+  if (queue) {
+    return { data: { kernel_id: queue[1], requests: [] } };
+  }
+  return { status: 404 };
+}
+
 describe('existing Datalayer HTTP interfaces', () => {
+  it('discovers native interfaces with safe requests and keeps product behavior unverified', async () => {
+    const f = await fixture(discoveryReply);
+    expect(await f.client.inspectConnection()).toEqual({
+      backend: 'datalayer',
+      serverVersion: '2.21.1',
+      mcp: { state: 'available', protocolVersion: '2024-11-05', tools: ['read_cell'] },
+      nbmodel: { state: 'available', httpStatus: 200 },
+      rtc: { state: 'configured', httpStatus: 200, serverSideExecution: true },
+      nbconvert: { state: 'available', httpStatus: 200, formats: ['html', 'notebook'] },
+      productAcceptance: 'not_verified',
+    });
+    expect(
+      f.requests.every(
+        (r) =>
+          r.method === 'GET' ||
+          (r.path === '/prefix/mcp' && ['initialize', 'tools/list'].includes(String(r.body.method)))
+      )
+    ).toBe(true);
+    expect(f.requests.some((r) => r.path.includes('/api/disclaude'))).toBe(false);
+  });
+
+  it('reports missing Datalayer handlers separately from authenticated Jupyter', async () => {
+    const f = await fixture((p, m, b) =>
+      p === '/prefix/mcp' || p.endsWith('/execute') ? { status: 404 } : discoveryReply(p, m, b)
+    );
+    expect(await f.client.inspectConnection()).toMatchObject({
+      serverVersion: '2.21.1',
+      mcp: { state: 'missing', httpStatus: 404 },
+      nbmodel: { state: 'missing', httpStatus: 404 },
+      nbconvert: { state: 'available' },
+      productAcceptance: 'not_verified',
+    });
+  });
+
+  it('refuses an incompatible tool schema without calling any tool', async () => {
+    const f = await fixture((p, m, b) =>
+      b.method === 'tools/list'
+        ? {
+            data: {
+              jsonrpc: '2.0',
+              id: b.id,
+              result: { tools: [{ name: 'read_cell', inputSchema: [] }] },
+            },
+          }
+        : discoveryReply(p, m, b)
+    );
+    expect(await f.client.inspectConnection()).toMatchObject({ mcp: { state: 'incompatible' } });
+    expect(f.requests.some((r) => r.body.method === 'tools/call')).toBe(false);
+  });
+
+  it('does not expose reflected credentials in remote JSON-RPC failures', async () => {
+    const f = await fixture((_p, _m, b) => ({
+      data: {
+        jsonrpc: '2.0',
+        id: b.id,
+        error: { code: -32000, message: 'token reflected-private-value' },
+      },
+    }));
+    await expect(f.client.listTools()).rejects.toThrow('code -32000');
+    await expect(f.client.listTools()).rejects.not.toThrow('reflected-private-value');
+  });
+
+  it('stops discovery at an invalid server version without exposing its content', async () => {
+    const f = await fixture(() => ({ data: { version: 'reflected-private-value' } }));
+    await expect(f.client.inspectConnection()).rejects.toThrow('could not be verified');
+    expect(f.requests).toHaveLength(1);
+  });
+
   it('calls the actual JSON-RPC endpoint instead of the REST placeholder', async () => {
     const f = await fixture((_path, _method, body) => ({
       data: {

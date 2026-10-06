@@ -10,7 +10,7 @@
 
 ## Datalayer 接口与责任
 
-本版复用用户已有 Datalayer/Jupyter 部署，使用薄 Node 适配层。不以安装 `disclaude_jupyter`、激活 `/api/disclaude` 或合并旧 coordinator PR 链为前置。连接配置和诊断将以 Datalayer 为交付主线；当前 MVP 仍显式配置 `backend: "datalayer"`，默认路线迁移由 #5216 完成。
+本版复用用户已有 Datalayer/Jupyter 部署，使用薄 Node 适配层。不以安装 `disclaude_jupyter`、激活 `/api/disclaude` 或合并旧 coordinator PR 链为前置。连接与只读诊断已默认选择 Datalayer，显式 `backend: "coordinator"` 保留旧后端及 cookie 身份。#5216 仍需完成引用兼容、远端部署/回退与实际 Lab Run 入口验收；默认选择和接口可用不代表该任务或产品验收完成。
 
 ```mermaid
 flowchart LR

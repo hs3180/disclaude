@@ -22,7 +22,7 @@
 }
 ```
 
-配置文件需为宿主私有普通文件（0600），通过 `JUPYTER_CONNECTIONS_FILE` 指定。Project 引用的 `connectionId` 使用上述 ID。可用 `authorizationEnv`/私有文件替代密码；HTTP 的显式授权及凭据隔离规则沿用 [Service 文档](../jupyter-service.md)。一个 Project 的 Notebook 不能混用两个后端。省略 `backend` 保持原 coordinator 路线；其控制权、原子检查和持久 fence 的保证不适用于本 MVP。
+配置文件需为宿主私有普通文件（0600），通过 `JUPYTER_CONNECTIONS_FILE` 指定。Project 引用的 `connectionId` 使用上述 ID。可用 `authorizationEnv`/私有文件替代密码；HTTP 的显式授权及凭据隔离规则沿用 [Service 文档](../jupyter-service.md)。一个 Project 的 Notebook 不能混用两个后端。当前适配层省略 `backend` 时默认选择 Datalayer；旧 coordinator 需显式指定，其控制权、原子检查和持久 fence 的保证不适用于本 MVP。历史实验记录仍以当时的源码和显式后端配置为准。
 
 工具为 `notebook_list`、`notebook_describe`、`notebook_read_cell`、`notebook_insert_cell`、`notebook_edit_cell`、`notebook_execute`、`notebook_status`、`notebook_stop`、`notebook_export`。编辑使用稳定 cell ID 和客户端源码哈希检查；执行前落盘原目标和 runId，未知提交不自动重放。服务端 GET 消费的终态在宿主缓存，导出用同一次捕获的共享文档生成 `.ipynb` 和远端 nbconvert HTML。
 
@@ -123,4 +123,4 @@ nbmodel 的提交返回 HTTP 202、空 JSON 和原请求 `Location`。0.1.1a4 �
 
 2026-10-06 按用户要求，发行目标已调整为 [Datalayer 研究闭环](./jupyter-harness.md)：后台保存、结果留存、目标取消、源码/输出关联和 display/clear 修复分别由 [#5262](https://github.com/hs3180/disclaude/issues/5262)–[#5266](https://github.com/hs3180/disclaude/issues/5266) 跟踪，仍是本版必过条件。多控制方 owner generation、服务端原子源码检查和永久迟到提交 fence 改由 [#5267](https://github.com/hs3180/disclaude/issues/5267) 按实际用例评估，不纳入 0.6.3 milestone。
 
-该范围调整没有改变本轮实验结果或把失败记为通过。完整飞书、原生 UI、用户设备访问和远端重启仍是独立未完成验收；当前 MVP 的显式后端配置尚未完成默认路线迁移。
+该范围调整没有改变本轮实验结果或把失败记为通过。完整飞书、原生 UI、用户设备访问和远端重启仍是独立未完成验收。后续开发已增加默认 Datalayer 选择与安全连接诊断；引用兼容、Lab Run 入口和修复验收仍按当前任务逐项完成。

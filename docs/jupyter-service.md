@@ -9,14 +9,17 @@ required for Notebook access.
 
 ## Host connection configuration
 
-An existing Datalayer deployment can use `backend: "datalayer"` in each host
-connection. This MVP uses native RTC/nbmodel/nbconvert without installing
+An existing Datalayer deployment is the default when `backend` is omitted;
+`backend: "datalayer"` also selects it explicitly. The adapter uses native
+RTC/nbmodel/nbconvert without installing
 `disclaude_jupyter`. See [the configured-instance results and limits](./designs/datalayer-mvp.md)
 and [the opt-in probes](../tests/jupyter/README.md#configured-datalayer-mvp-probes).
 The [0.6.3 delivery plan](./designs/jupyter-harness.md) now targets this route.
-The current implementation still defaults to the coordinator when `backend`
-is omitted; default migration is [#5216](https://github.com/hs3180/disclaude/issues/5216)
-work. One Project cannot mix the two backends. The controller-generation,
+Existing coordinator operators must set `backend: "coordinator"` explicitly;
+this preserves their historical authenticated cookie identity. Migrating to
+Datalayer keeps host connection IDs and credential references, while Notebook
+references still need the selected backend's identity checks. One Project
+cannot mix the two backends. The controller-generation,
 atomic edit and durable fence sections below document the legacy coordinator;
 they are not prerequisites or claimed capabilities of the Datalayer MVP.
 
@@ -112,16 +115,22 @@ large artifacts and final-source acceptance remain separate work in #5219–#522
 The [configured Datalayer probe guide](../tests/jupyter/README.md#configured-datalayer-mvp-probes)
 records component evidence without claiming those gates have passed.
 
-## Legacy coordinator diagnostics
+## Host diagnostics
 
-The following diagnostic and probe are specific to the coordinator.
-`JupyterConnections.inspect(connectionId, optionalNamespace)` performs a host-only
-connection check: standard login, server version and coordinator status. It
-returns `coordinator: "missing"` when the authenticated server has no
-`/api/disclaude` extension, independently of whether its ordinary Jupyter APIs
-work. It does not create/open a Notebook, claim control, run code or change a
-kernel. Successful authentication does not establish stack compatibility or
-product acceptance.
+`JupyterConnections.inspect(connectionId, optionalNamespace)` checks the selected
+backend after standard host authentication. Datalayer discovery inspects the
+MCP initialize/tool-list schemas, the nbmodel queue route for an unowned random
+kernel ID, Lab RTC configuration and official export formats. It returns each
+interface as available, missing, incompatible or unverified. RTC configuration
+and the `serverSideExecution` flag are diagnostic evidence; they do not prove
+that Lab Run enters nbmodel. The result always reports
+`productAcceptance: "not_verified"`. No Notebook or kernel is created or opened,
+and no execution or tool call is submitted.
+
+An explicit coordinator connection retains the historical diagnosis. It returns
+`coordinator: "missing"` when the authenticated server lacks `/api/disclaude`,
+independently of ordinary Jupyter API availability. A missing interface is a
+diagnostic result, not a passing Notebook experiment.
 
 After building the checkout, inspect an explicitly authorized connection:
 
@@ -134,10 +143,10 @@ node tests/jupyter/connection-probe.mjs \
 ```
 
 The probe verifies cookie continuation through a second host instance and
-authentication-variable removal. It uses only login and safe capability reads;
-the output path must be new. A missing coordinator is a diagnostic result,
-not a successful coordinator Notebook experiment. It does not disqualify the
-Datalayer backend. The environment file is optional when
+authentication-variable removal. It uses only login, safe GETs and MCP
+initialize/tool-list discovery POSTs; the output path must be new. A `passed`
+probe means those host inspection invariants passed, not that every discovered
+interface is available or that product behavior passed. The environment file is optional when
 the host already provides the referenced variables.
 
 ## Legacy coordinator Project and conversation state

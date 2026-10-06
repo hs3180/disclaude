@@ -1,10 +1,12 @@
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import nock from 'nock';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createJupyterCookieJar } from '@disclaude/core';
 import { JupyterConnections } from './connections.js';
 
 let root: string;
@@ -37,7 +39,9 @@ async function fixture(passwordMode = false) {
   let requests = 0;
   const server = createServer(async (request, response) => {
     const chunks: Buffer[] = [];
-    for await (const chunk of request) {chunks.push(Buffer.from(chunk as Uint8Array));}
+    for await (const chunk of request) {
+      chunks.push(Buffer.from(chunk as Uint8Array));
+    }
     const body = Buffer.concat(chunks).toString();
     seen.push({
       cookie: request.headers.cookie,
@@ -77,6 +81,39 @@ async function fixture(passwordMode = false) {
         return;
       }
     }
+    if (request.url === '/mcp' && request.method === 'POST') {
+      const rpc = JSON.parse(body) as { id: number; method: string };
+      response.end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: rpc.id,
+          result:
+            rpc.method === 'initialize'
+              ? { protocolVersion: '2024-11-05', capabilities: { tools: {} } }
+              : { tools: [{ name: 'read_cell', inputSchema: { type: 'object' } }] },
+        })
+      );
+      return;
+    }
+    const queue = request.url?.match(/^\/api\/kernels\/([^/]+)\/execute$/);
+    if (queue && request.method === 'GET') {
+      response.end(JSON.stringify({ kernel_id: queue[1], requests: [] }));
+      return;
+    }
+    if (request.url === '/api/nbconvert') {
+      response.end(JSON.stringify({ html: { output_mimetype: 'text/html' } }));
+      return;
+    }
+    if (request.url === '/lab') {
+      response.end(
+        `<script id="jupyter-config-data" type="application/json">${JSON.stringify({
+          disableRTC: false,
+          serverSideExecution: false,
+          token: 'private-page-value',
+        })}</script>`
+      );
+      return;
+    }
     if (!request.headers.cookie) {
       response.setHeader('Set-Cookie', 'owned-session=principal-1; HttpOnly; Path=/');
     }
@@ -109,6 +146,7 @@ async function fixture(passwordMode = false) {
       connections: [
         {
           id: 'host',
+          backend: 'coordinator',
           baseUrl,
           ...(passwordMode ? { passwordFile: auth } : { authorizationFile: auth }),
         },
@@ -120,6 +158,40 @@ async function fixture(passwordMode = false) {
 }
 
 describe('JupyterConnections', () => {
+  it('defaults to Datalayer discovery without requiring a coordinator or performing Notebook mutations', async () => {
+    const f = await fixture(true);
+    const config = JSON.parse(fs.readFileSync(f.config, 'utf8'));
+    delete config.connections[0].backend;
+    fs.writeFileSync(f.config, JSON.stringify(config));
+    const first = new JupyterConnections(f.config, () => ({}));
+    expect(first.backend('host')).toBe('datalayer');
+    const result = await first.inspect('host', 'namespace');
+    expect(result).toMatchObject({
+      backend: 'datalayer',
+      mcp: { state: 'available' },
+      nbmodel: { state: 'available' },
+      rtc: { state: 'configured', serverSideExecution: false },
+      nbconvert: { state: 'available' },
+      productAcceptance: 'not_verified',
+    });
+    expect(JSON.stringify(result)).not.toMatch(/private-password|private-page-value/);
+    await new JupyterConnections(f.config, () => ({})).inspect('host', 'namespace');
+    expect(f.seen.filter((r) => r.path === '/login' && r.method === 'POST')).toHaveLength(1);
+    expect(f.seen.every((r) => !r.path?.includes('/api/disclaude'))).toBe(true);
+    expect(
+      f.seen
+        .filter((r) => r.method !== 'GET')
+        .every(
+          (r) =>
+            r.path === '/login' ||
+            (r.path === '/mcp' && ['initialize', 'tools/list'].includes(JSON.parse(r.body!).method))
+        )
+    ).toBe(true);
+    await expect(first.use('host', 'namespace', () => Promise.resolve(true))).rejects.toThrow(
+      'Datalayer'
+    );
+  });
+
   it('uses an exact private password file and restores the authenticated cookie for later Service instances', async () => {
     const f = await fixture(true);
     const first = new JupyterConnections(f.config, () => ({}));
@@ -134,6 +206,37 @@ describe('JupyterConnections', () => {
     expect(f.seen.every((x) => x.authorization === undefined)).toBe(true);
     expect(fs.readFileSync(f.config, 'utf8')).not.toContain('private-password');
     expect(fs.readdirSync(join(root, 'sessions'))).toHaveLength(1);
+  });
+
+  it('reuses a historical coordinator cookie when the backend is made explicit', async () => {
+    const f = await fixture(true);
+    const [current] = JSON.parse(fs.readFileSync(f.config, 'utf8')).connections;
+    const historical = {
+      id: current.id,
+      baseUrl: current.baseUrl,
+      passwordFile: current.passwordFile,
+    };
+    const filename = createHash('sha256')
+      .update(JSON.stringify([historical, 'namespace']))
+      .digest('hex');
+    const jar = await createJupyterCookieJar();
+    await jar.setCookie('owned-session=principal-1; HttpOnly; Path=/', current.baseUrl);
+    fs.mkdirSync(join(root, 'sessions'), { mode: 0o700 });
+    fs.writeFileSync(
+      join(root, 'sessions', `${filename}.json`),
+      JSON.stringify(await jar.serialize()),
+      {
+        mode: 0o600,
+      }
+    );
+    expect(
+      await new JupyterConnections(f.config, () => ({})).inspect('host', 'namespace')
+    ).toMatchObject({
+      backend: 'coordinator',
+      coordinator: 'available',
+    });
+    expect(f.seen.filter((r) => r.path === '/login')).toHaveLength(0);
+    expect(fs.readdirSync(join(root, 'sessions'))).toEqual([`${filename}.json`]);
   });
 
   it('rejects ambiguous or invalid secret references and public password files', async () => {

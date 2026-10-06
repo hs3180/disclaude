@@ -77,8 +77,11 @@ provider process are cleaned up; private review evidence remains.
 
 None of these probes switches production Feishu or passes native JupyterLab/device
 acceptance. Current instance failures and all unverified behaviors are recorded
-in [the MVP matrix](../../docs/designs/datalayer-mvp.md). The coordinator-only
-`connection-probe.mjs` does not assess this backend.
+in [the MVP matrix](../../docs/designs/datalayer-mvp.md). The host-only
+`connection-probe.mjs` supports both backends as described in
+[the connection guide](../../docs/jupyter-service.md#host-diagnostics); omitted
+`backend` selects Datalayer. Its successful inspection does not pass any of the
+execution, save, cancellation or UI acceptance cases above.
 
 ## Configured-server DSH probe
 
