@@ -57,6 +57,40 @@ historical。每个附件记录文件 SHA-256、大小、来源和实际消息 I
 源码对象，服务端监听相应重新绑定，结束时释放监听。当前宿主 75 项测试、构建和
 targeted lint、远端隔离测试进程 34 项回归通过；新增配置远端集成探针已执行。
 
+## 真实飞书候选 Service 首轮（2026-10-06 05:08–05:18 UTC）
+
+冻结宿主 `588b44a20` 经真实用户飞书入站、唯一候选机器人 WebSocket、持久 Project
+和原生 DSH 接入配置远端。原生请求记录确认 `openai-codex/gpt-5.6-luna`；日常及
+候选默认仍为 `gpt-6-luna`。DSH 执行参数和分析 cell 后得到 `69`，实际观察 PNG
+并回复原话题。人工占位 Markdown 与未知 metadata 保留；这不是用户亲自修改
+Lab 的证据。实际 `/stop` 在宿主日志和远端原请求均确认 cancelled，随后相同
+kernel/incarnation 打印 `FEISHU_CONTINUE 58`，参数 execution_count 仍为 1。
+扫描模型原生会话、候选日志与 Project 未发现 11 项已配置宿主凭据值。
+
+本轮保留两个产品失败：`/agent` 等控制命令确认消息另起话题；CSV file 入站没有
+下载/注册附件，模型明确报告 `attachments` 为空，没有产生 CSV 执行或伪造结论。
+消息回合完成不等于附件验收通过。宿主修复使命令反馈带原 thread root，下载器按次
+读取同一 SDK 的当前 token/应用 ID，向 CLI 传工作目录下的相对路径。187 项针对
+测试、type/build 和 lint 通过；真实原 CSV 经修正下载器读取的 24 bytes/SHA-256
+与上传源一致。这仍是只读下载组件证据，修正后真实 Service 导入/报告须单独复验。
+
+候选窗口自动恢复日常服务；切换中断 1.446 秒、恢复中断 1.527 秒，原配置/plist
+指纹及原 Project binding 保留并确认健康。结束时一条非测试回合尚无终态，记录为
+未确认中断，不能只用 WebSocket 健康代替该回合完成证据。后续窗口应在回合空闲
+后恢复。仅删除本轮空闲自有 session/kernel，保留 Notebook；Jupyter 原镜像恢复
+中断 4.123 秒，284 条原生身份记录指纹完整一致，七个 Project 引用可解析，
+0 kernels/0 sessions，原环境/command/挂载保留，远端日常机器人健康。
+
+原始证据位于主仓库私有 `.local/063-feishu-datalayer-20261006/`：
+`service-acceptance-01/{report,verification}.json`、原生 DSH session、真实入站/读取
+响应、`candidate-window.json`、`window-588-lifecycle-audit.json` 和
+`file-download-verification-02/report.json`。恢复证据位于
+`.local/063-jupyter/datalayer-delivery-20261006/` 的 `service-588-final-restore-*`
+与 `restored-service-588b44a20-health.json`。原失败与修正后复验分别保留。
+该源的 273 files/5216 tests、type/build/lint、三组干净安装及八项 CI 通过；
+最终候选应使用后续修正源的证据。用户 Lab/实际设备、同版本原生模型报告和
+引用卡片 P2P/真实纯文本降级仍未完成，不更新产品任务为通过。
+
 ## 飞书报告投递组件追加（2026-10-06 UTC）
 
 新增投递边界后，245 项相关宿主测试、build 和 targeted lint 通过。真实配置远端
