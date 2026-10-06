@@ -36,7 +36,8 @@ The new output directory is private. Synthetic Notebook/report files and local
 Project evidence are retained for review; owned kernels/sessions are deleted.
 The report retains failed capability checks. `completed: true` means all probe
 phases finished, **not** that every requirement passed. Authentication/operation
-failure exits nonzero. `--long-seconds` may explicitly change the delay; shortening
+failure or a failed required check exits nonzero; `requiredChecksPassed` excludes
+the explicitly out-of-scope MCP Tasks discovery. `--long-seconds` may explicitly change the delay; shortening
 it does not establish persistence beyond document cleanup. `--wait-ui` waits up
 to four minutes for a host-created `ui-done.json` evidence record so a logged-in
 human can edit the scratch Notebook. That record must contain `completed: true`
@@ -118,6 +119,41 @@ text/parameter preservation, HTML/ipynb export and credential absence from nativ
 history. The explicit model is the #5215/#5219 acceptance override; daily defaults
 remain `gpt-6-luna`, and Astra is refused. Scratch kernels/sessions and the owned
 provider process are cleaned up; private review evidence remains.
+
+For a real read-only DSH image observation of the owned core probe's retained
+`mvp-plot`, use its private connection catalog and Project:
+
+```sh
+node tests/jupyter/datalayer-image-probe.mjs \
+  --env-file /private/host.env \
+  --oauth-auth-file /private/existing-auth.json \
+  --connections /private/core-probe/host-connections.json \
+  --project /private/core-probe/project --cell-id mvp-plot \
+  --model gpt-5.6-luna --output /private/new-image-observation
+```
+
+Only the image business tool is supplied. The prompt forbids source/data/file
+reads and other tools; it records the model answer, actual native image references
+and provider route. The line plot's three increasing marked points and visible
+`step`/`value` axes form the expected observation. The probe does not execute a
+kernel or certify human/browser rendering.
+
+For remote attachment import, two clean numerical reproductions and matching
+PNG/SVG/HTML/inline Plotly reports:
+
+```sh
+node tests/jupyter/datalayer-report-probe.mjs \
+  --env-file /private/host.env --output /private/new-report-results
+```
+
+The optional [remote report dependencies](../../jupyter/datalayer/README.md#build-and-rollback)
+must already be installed in the owned candidate. This probe registers a
+synthetic incoming CSV through the same host boundary, imports it by attachment
+ID, executes in two separate new remote kernels, and compares seeded numerical
+results/package versions. It retains CSV, PNG, ipynb/HTML and hash evidence,
+including complete inline Plotly assets. Authentication and sandbox header/source
+checks do not establish actual-device rendering or HTML sanitizer behavior.
+Only owned kernels/sessions are removed; the remote synthetic artifacts remain.
 
 None of these probes switches production Feishu or passes native JupyterLab/device
 acceptance. Current instance failures and all unverified behaviors are recorded
