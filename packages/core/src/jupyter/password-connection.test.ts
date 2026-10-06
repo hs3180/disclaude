@@ -33,6 +33,8 @@ async function fixture(
     cookie?: string;
     authorization?: string;
     xsrf?: string;
+    origin?: string;
+    referer?: string;
   }> = [];
   let principal = 'principal-1';
   const server = createServer(async (request, response) => {
@@ -50,6 +52,8 @@ async function fixture(
       cookie: request.headers.cookie,
       authorization: request.headers.authorization,
       xsrf: request.headers['x-xsrftoken'] as string | undefined,
+      origin: request.headers.origin,
+      referer: request.headers.referer,
     });
     const authenticated = request.headers.cookie?.includes(`owned-session=${principal}`);
     if (path === '/prefix/api/status') {
@@ -99,6 +103,12 @@ async function fixture(
           })
         );
       }
+    } else if (path === '/prefix/files/result.json') {
+      const sameOrigin =
+        request.headers.origin === `http://${request.headers.host}` &&
+        request.headers.referer === `http://${request.headers.host}/prefix/`;
+      response.writeHead(sameOrigin ? 200 : 403, { 'Content-Type': 'application/json' });
+      response.end(sameOrigin ? '{"complete":true}' : '{"error":"cross origin"}');
     } else if (path.endsWith('/read-cell')) {
       response.end(
         JSON.stringify({
@@ -153,6 +163,19 @@ async function fixture(
 }
 
 describe('Jupyter password connection', () => {
+  it('keeps authenticated file GET within the configured native origin policy', async () => {
+    const f = await fixture();
+    const response = await f.client.response('files/result.json');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ complete: true });
+    const request = f.seen.find((item) => item.path === '/prefix/files/result.json');
+    expect(request).toMatchObject({
+      method: 'GET',
+      origin: new URL(f.baseUrl).origin,
+      referer: f.baseUrl,
+    });
+    expect(request?.body).not.toContain(password);
+  });
   it('keeps fetch exceptions private and leaves a failed mutation unknown', async () => {
     const f = await fixture();
     await f.client.connect();

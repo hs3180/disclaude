@@ -1025,7 +1025,9 @@ await isolated(
       await wait(200);
       await c.doc.flush();
       const cells = c.doc.snapshot().cells;
-      const targets = [...cells[0].outputs, ...cells[1].outputs];
+      const targets = [...cells[0].outputs, ...cells[1].outputs].filter(
+        (o) => o.output_type === 'display_data'
+      );
       const historical = await peek(handles[0]);
       check(
         'One display_id updates every position across two cells through native IOPub',
@@ -1048,9 +1050,9 @@ await isolated(
       );
       check(
         'A later display update does not rewrite the already-retained original run result',
-        outputs(historical.result).every((o) =>
-          o.data?.['text/plain']?.startsWith('MULTI_BEFORE_A')
-        ),
+        outputs(historical.result)
+          .filter((o) => o.output_type === 'display_data')
+          .every((o) => o.data?.['text/plain']?.startsWith('MULTI_BEFORE_A')),
         { historical, currentTargets: targets }
       );
     });
@@ -1108,6 +1110,12 @@ await isolated(
       if (typeof pathName !== 'string')
         throw new Error('Large result omitted its complete artifact');
       const artifactResponse = await client.response('files/' + pathName);
+      if (!artifactResponse.ok) {
+        await artifactResponse.body?.cancel();
+        throw new Error(
+          'Authenticated complete artifact GET failed: HTTP ' + artifactResponse.status
+        );
+      }
       const artifact = JSON.parse(await artifactResponse.text());
       const anonymous = await fetch(result.resultArtifactEntry, { redirect: 'manual' });
       const anonymousStatus = anonymous.status;
@@ -1236,6 +1244,10 @@ await isolated('export-revision-race', ["print('EXPORT_RECORDED_RESULT')"], asyn
     const exported = await f.call('notebook_export', { notebookId: f.notebookId });
     const notebook = await client.json('api/contents/' + exported.notebookPath);
     const htmlResponse = await client.response('files/' + exported.htmlPath);
+    if (!htmlResponse.ok) {
+      await htmlResponse.body?.cancel();
+      throw new Error('Authenticated HTML file GET failed: HTTP ' + htmlResponse.status);
+    }
     const html = await htmlResponse.text();
     await c.doc.flush();
     const live = c.doc.snapshot().cells.find((cell) => cell.id === 'edge-note');

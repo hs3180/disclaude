@@ -112,6 +112,9 @@ export class JupyterHttpConnection {
         headers: {
           ...(authorization ? { Authorization: authorization } : {}),
           ...(cookie ? { Cookie: cookie } : {}),
+          ...(this.httpOptions.password
+            ? { Origin: this.base.origin, Referer: this.base.href }
+            : {}),
           ...(method !== 'GET'
             ? {
                 'Content-Type':
