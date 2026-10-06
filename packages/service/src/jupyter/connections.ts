@@ -291,12 +291,9 @@ export class JupyterConnections {
           namespace,
           (options) => new DatalayerJupyterClient(options)
         );
-        try {
-          await connection.client.initialize();
-          return connection;
-        } finally {
-          await this.persist(connection);
-        }
+        // Native HTTP request recovery must not depend on MCP initialization.
+        // Capability inspection and MCP callers initialize explicitly.
+        return connection;
       })();
       this.datalayerClients.set(key, pending);
     }

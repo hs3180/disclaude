@@ -140,6 +140,7 @@ async function fixture() {
   return {
     root,
     client,
+    connections,
     doc,
     notebook,
     session,
@@ -256,6 +257,25 @@ describe('Datalayer MVP service boundaries', () => {
     expect(f.client.json).not.toHaveBeenCalled();
     expect(f.client.submitCell).not.toHaveBeenCalled();
     expect(f.journal.records()).toEqual([]);
+  });
+
+  it('retains the original handle as unknown when host connection preparation fails', async () => {
+    const f = await fixture();
+    f.client.submitCell.mockResolvedValue({
+      state: 'accepted',
+      handle: { kernelId: 'kernel', requestId: 'original-request' },
+    } as never);
+    await f.call(f.session, 'notebook_execute', f.args);
+    vi.spyOn(f.connections, 'useDatalayer').mockRejectedValueOnce(
+      new Error('private connection preparation error')
+    );
+    const result = await f.call(f.session, 'notebook_status', {
+      notebookId: f.args.notebookId,
+      runId: 'original',
+    });
+    expect(result).toMatchObject({ state: 'unknown', requestId: 'original-request' });
+    expect(JSON.stringify(result)).not.toContain('private connection preparation error');
+    expect(f.client.submitCell).toHaveBeenCalledOnce();
   });
 
   it('waits beyond cancellation acceptance for the original terminal result', async () => {

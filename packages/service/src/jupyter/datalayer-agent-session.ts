@@ -687,7 +687,12 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
     let current = record;
     if (!terminal.has(record.state) && record.handle) {
       const { handle } = record;
-      const observation = await this.useRecord(record, (client) => client.observe(handle));
+      let observation: Awaited<ReturnType<DatalayerJupyterClient['observe']>>;
+      try {
+        observation = await this.useRecord(record, (client) => client.observe(handle));
+      } catch {
+        observation = { state: 'unknown' };
+      }
       current = this.journal.update(record.runId, { state: observation.state, observation });
     }
     return {
