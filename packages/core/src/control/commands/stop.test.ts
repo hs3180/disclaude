@@ -43,6 +43,25 @@ describe('handleStop', () => {
     expect(context.agentPool.stop).toHaveBeenCalledWith('test-chat-id');
   });
 
+  it('reconciles background Notebook work even without active inference', async () => {
+    const context = createMockContext();
+    context.agentPool.stopNotebook = vi.fn().mockResolvedValue({ cancelled: 2, alreadyTerminal: 1, ownershipLost: 1, unknown: 1 });
+    const result = await handleStop({ type: 'stop', chatId: 'chat', threadRootId: 'thread' }, context);
+    expect(context.agentPool.stopNotebook).toHaveBeenCalledWith('chat', 'thread');
+    expect(result.message).toContain('已确认取消 2');
+    expect(result.message).toContain('控制权已转移');
+    expect(result.message).toContain('停止状态未确认');
+  });
+
+  it('does not report confirmed Notebook cancellation after an unavailable stop', async () => {
+    const context = createMockContext();
+    context.agentPool.stopNotebook = vi.fn().mockRejectedValue(new Error('host credential'));
+    const result = await handleStop({ type: 'stop', chatId: 'chat' }, context);
+    expect(result.message).toContain('Notebook 停止状态未确认');
+    expect(result.message).not.toContain('host credential');
+    expect(result.message).not.toContain('已确认取消');
+  });
+
   it('should return info message when no active query', () => {
     const context = createMockContext({
       agentPool: {

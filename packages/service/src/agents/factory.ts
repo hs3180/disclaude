@@ -92,6 +92,7 @@ export interface AgentCreateOptions {
   agentBackend?: AgentPreset['agentBackend'];
   /** Native provider identity; defaults to the delivery chat ID. */
   sdkSessionKey?: string;
+  notebookSessionFactory?: import('../jupyter/agent-session.js').NotebookAgentSessionFactory;
   /** Override API key */
   apiKey?: string;
   /** Override model */
@@ -257,6 +258,7 @@ export class AgentFactory {
         cwdResolver: options.cwdResolver,
         skipHistory: options.skipHistory,
         sdkSessionKey: options.sdkSessionKey,
+        notebookSessionFactory: options.notebookSessionFactory,
       };
 
       return createChatAgent(config);
@@ -318,6 +320,7 @@ export class AgentFactory {
       cwdResolver: options.cwdResolver,
       skipHistory: options.skipHistory,
       sdkSessionKey: options.sdkSessionKey,
+      notebookSessionFactory: options.notebookSessionFactory,
     };
 
     return createChatAgent(config);

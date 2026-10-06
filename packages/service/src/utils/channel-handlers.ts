@@ -141,9 +141,9 @@ export function createChannelCallbacksFactory(
         threadId: parentMessageId,
       });
     },
-    // eslint-disable-next-line require-await
-    sendFile: async (chatId: string, filePath: string) => {
-      logger.warn({ chatId, filePath }, 'File sending not fully implemented');
+    sendFile: async (chatId: string, filePath: string, parentMessageId?: string) => {
+      if (!channel.getCapabilities().supportsFile) { throw new Error('This channel does not support file delivery'); }
+      return await channel.sendMessage({ chatId, type: 'file', filePath, threadId: parentMessageId });
     },
     onDone: options?.sendDoneSignal
       ? async (chatId: string, parentMessageId?: string) => {

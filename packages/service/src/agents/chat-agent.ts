@@ -158,6 +158,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   /** The chatId this ChatAgent is bound to (Issue #644) */
   private readonly boundChatId: string;
   private readonly sdkSessionKey: string;
+  private readonly notebookSessionFactory?: import('../jupyter/agent-session.js').NotebookAgentSessionFactory;
+  private notebookSession?: import('../jupyter/agent-session.js').NotebookSession;
 
   /**
    * Callbacks for sending responses to the channel.
@@ -198,6 +200,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   private turnStartedAtMsPrivate = 0;
   /** Message identity of the turn currently consumed by the persistent iterator. */
   private activeTurnMessageId?: string;
+  /** Frozen reply anchor of that turn; queued messages cannot change file delivery. */
+  private activeTurnThreadRootId?: string;
 
   // Issue #3706 (GLM stall): set when the provider's no-content-progress watchdog
   // terminated the stream. Checked at the iterator-end/restart decision point to
@@ -329,6 +333,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Issue #644: Bind chatId at construction time
     this.boundChatId = config.chatId;
     this.sdkSessionKey = config.sdkSessionKey ?? config.chatId;
+    this.notebookSessionFactory = config.notebookSessionFactory;
     this.callbacks = config.callbacks;
     this.cwdProvider = config.cwdProvider;
     // Issue #4448 (direction #1)
@@ -663,7 +668,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         type: 'user',
         message: {
           role: 'user',
-          content: enhancedContent,
+          content: enhancedContent + (this.notebookSession ? await this.notebookMessageContext() : ''),
         },
         parent_tool_use_id: null,
         session_id: '',
@@ -956,6 +961,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       capabilities,
     );
 
+    this.notebookSession?.registerAttachments?.(attachments ?? []);
     const userMessage: StreamingUserMessage = {
       type: 'user',
       correlation: lifecycleContext,
@@ -963,7 +969,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         threadRootId: threadRootId ?? this.conversationOrchestrator.getThreadRoot(chatId) } } : {}),
       message: {
         role: 'user',
-        content: enhancedContent,
+        content: enhancedContent + (this.notebookSession ? await this.notebookMessageContext() : ''),
       },
       parent_tool_use_id: null,
       session_id: '',
@@ -1056,6 +1062,22 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     return true;
   }
 
+  private notebookDelivery(): import('../jupyter/agent-session.js').NotebookDelivery | undefined {
+    const session = this.notebookSession;
+    const { callbacks } = this;
+    const messageId = this.activeTurnMessageId;
+    const chatId = this.boundChatId;
+    if (!session || session.inactive || !messageId || !callbacks.getCapabilities?.(chatId)?.supportsFile) { return undefined; }
+    const parentMessageId = this.activeTurnThreadRootId ?? messageId;
+    return { sendFile: async (filePath, signal) => {
+      signal.throwIfAborted();
+      if (this.notebookSession !== session || session.inactive || this.callbacks !== callbacks || this.activeTurnMessageId !== messageId) {
+        throw new Error('Notebook delivery belongs to an inactive channel or turn');
+      }
+      return await callbacks.sendFile(chatId, filePath, parentMessageId);
+    } };
+  }
+
   /**
    * Start the Agent loop for this chatId.
    *
@@ -1145,6 +1167,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
     const projectCwd = resolution?.effectiveCwd ?? this.cwdProvider?.(chatId);
 
+    this.notebookSession?.dispose();
+    this.notebookSession = this.notebookSessionFactory?.({
+      workingDir: projectCwd ?? this.getWorkspaceDir(),
+      conversationKey: this.sdkSessionKey,
+      currentWorkingDir: () => this.cwdResolver?.(chatId).effectiveCwd ?? this.cwdProvider?.(chatId) ?? this.getWorkspaceDir(),
+      delivery: () => this.notebookDelivery(),
+    });
+
     const sdkOptions = this.createSdkOptions({
       cwd: projectCwd,
       // Keep resource discovery bound to the selected project even when a
@@ -1153,7 +1183,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // Issue #4634 (S7): chatId as session identity for concurrency
       // governance on backends that bound active sessions.
       sessionKey: this.sdkSessionKey,
+      ...(this.notebookSession ? { tools: this.notebookSession.tools } : {}),
     });
+
+    if (sdkOptions.env && this.notebookSession) { this.notebookSession.redactEnvironment(sdkOptions.env); }
 
     if (this.callbacks.requestAgentInput) { sdkOptions.onUserInput = async (request, context) => {
       if (!context || context.chatId !== chatId || !this.callbacks.requestAgentInput) { throw new Error('This channel cannot answer SDK input requests'); }
@@ -1204,6 +1237,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     this.pendingTurnAnchors = [];
     this.pendingTurnMessageIds = [];
     this.pendingLifecycleContexts = [];
+    this.activeTurnMessageId = undefined;
+    this.activeTurnThreadRootId = undefined;
 
     // Issue #4649 (review ③): fresh session — the OLD session's queued
     // messages will never get a turn (their channel is closed above), so
@@ -1501,6 +1536,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         turnResultText = '';
         turnResultTruncated = false;
         this.activeTurnMessageId = currentTurnMessageId;
+        this.activeTurnThreadRootId = currentTurnAnchor;
       }
       return currentTurnAnchor;
     };
@@ -1824,6 +1860,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             this.isSessionActive = false;
             this.isProcessingMessage = false;
             this.activeTurnMessageId = undefined;
+            this.activeTurnThreadRootId = undefined;
             this.resolveTurn(currentTurnMessageId);
             if (this.callbacks.onDone) {
               const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
@@ -2313,6 +2350,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // after a result are not expected but read the frozen value).
           turnAnchorConsumed = false;
           this.activeTurnMessageId = undefined;
+          this.activeTurnThreadRootId = undefined;
 
           // Issue #3124: In once-mode, close channel after result to end the iterator.
           // This enables blocking one-shot execution via processMessage + taskComplete.
@@ -2466,6 +2504,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         this.isSessionActive = false;
         this.isProcessingMessage = false;
         this.activeTurnMessageId = undefined;
+        this.activeTurnThreadRootId = undefined;
         await this.deliverUserVisible(chatId, '⏹️ 本轮已停止。', threadRoot);
         if (this.sessionGeneration !== myGeneration) { return; }
         await this.callbacks.onDone?.(chatId, threadRoot);
@@ -2486,6 +2525,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         this.isSessionActive = false;
         this.isProcessingMessage = false;
         this.activeTurnMessageId = undefined;
+        this.activeTurnThreadRootId = undefined;
       }
       this.logger.info(
         { chatId, messageCount, myGeneration, currentGeneration: this.sessionGeneration },
@@ -2728,6 +2768,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
 
     this.logger.info({ chatId: this.boundChatId, keepContext }, 'Resetting ChatAgent session');
+    this.notebookSession?.pause();
 
     // Issue #2926: Abort the running agent loop first so processIterator
     // breaks out of its for-await loop immediately, rather than continuing
@@ -2787,6 +2828,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     this.pendingTurnAnchors = [];
     this.pendingTurnMessageIds = [];
     this.pendingLifecycleContexts = [];
+    this.activeTurnMessageId = undefined;
+    this.activeTurnThreadRootId = undefined;
 
     // Issue #4063: Clear per-turn completion state
     this.rejectTurn(new Error('Agent reset'));
@@ -2842,6 +2885,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       return false;
     }
 
+    this.notebookSession?.pause();
     // Check if there's an active query to stop
     if (!this.queryHandle) {
       this.logger.debug({ chatId: this.boundChatId }, 'No active query to stop');
@@ -2876,6 +2920,27 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // The next user message starts a fresh query through startAgentLoop().
 
     return true;
+  }
+
+  private async notebookMessageContext(): Promise<string> {
+    const session = this.notebookSession;
+    if (!session) { return ''; }
+    try {
+      const context = await session.messageContext();
+      if (session.inactive || this.notebookSession !== session || this.disposed) {
+        throw new Error('Notebook turn stopped during context loading');
+      }
+      return context;
+    }
+    catch {
+      if (session.inactive || this.notebookSession !== session) { throw new Error('Notebook turn stopped during context loading'); }
+      return '\n\n[Notebook connection unverified] Use the native Notebook tools to check the existing resource. Do not create a local replacement or replay an uncertain run.';
+    }
+  }
+
+  async stopNotebookWork(): Promise<import('../jupyter/agent-session.js').NotebookStopSummary> {
+    const { summarizeNotebookStop } = await import('../jupyter/agent-session.js');
+    return summarizeNotebookStop(this.notebookSession);
   }
 
   /** Apply an instruction to the currently executing native turn after backend acknowledgement. */
@@ -2923,6 +2988,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Issue #4391 (part 2 review): mark disposed synchronously first, so a
     // replay timer firing mid-dispose (or right after) sees the flag.
     this.disposed = true;
+    this.notebookSession?.dispose();
     // Issue #3745: Synchronously close queryHandle and channel to prevent
     // exit listener leaks. The previous fire-and-forget pattern (dispose →
     // shutdown() without await) meant shutdown()'s `await Promise.resolve()`
