@@ -64,6 +64,9 @@ test('generates a standalone manifest and excludes untracked resources', () => {
   write('agents/example.md', 'builtin agent');
   write('docker/start-chromium.sh', '#!/bin/bash\nexit 0');
   write('docker-compose.yml', 'services: {}');
+  write('jupyter/datalayer/Dockerfile', 'FROM configured-existing-image');
+  write('jupyter/datalayer/runtime.py', '# optional remote runtime');
+  write('jupyter/datalayer/README.md', '# Remote overlay from a full source checkout');
   for (const name of ['core', 'service', 'channel-cli']) {
     write(
       `packages/${name}/package.json`,
@@ -116,6 +119,9 @@ test('generates a standalone manifest and excludes untracked resources', () => {
   assert(!existsSync(join(output, 'packages/core/dist/index.test.js')));
   assert(!existsSync(join(output, 'docker/start-chromium.sh')));
   assert(!existsSync(join(output, 'docker-compose.yml')));
+  assert(!existsSync(join(output, 'jupyter/datalayer/Dockerfile')));
+  assert(existsSync(join(output, 'jupyter/datalayer/runtime.py')));
+  assert(existsSync(join(output, 'jupyter/datalayer/README.md')));
   assert(!manifest.files.includes('docker/'));
   assert(!existsSync(join(output, 'packages/core/package.json')));
   assert.match(

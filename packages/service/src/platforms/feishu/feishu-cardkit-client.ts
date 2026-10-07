@@ -27,9 +27,9 @@
  * are rejected with business code 300317. The client is stateless — the caller
  * (streaming state machine #4399) owns the counter and passes it in.
  *
- * Auth: tenant_access_token sent as `Bearer`. disclaude's existing Feishu
- * plumbing carries it in `process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN`
- * (see feishu-channel.ts); `createCardKitClientFromEnv()` reuses that.
+ * Auth: tenant_access_token sent as `Bearer`. The channel uses its host-owned
+ * SDK token manager for each operation. `createCardKitClientFromEnv()` retains
+ * fixed-token authentication for legacy callers.
  *
  * Scope (this file = #4395 parts 1–3): the create + update/finalize operations,
  * plus the once-per-client 401 token refresh (part 3 — `onUnauthorized`). Part 2
@@ -93,8 +93,10 @@ export class CardKitClientError extends Error {
 }
 
 export interface CardKitClientOptions {
-  /** tenant_access_token (sent as Bearer). Required. */
-  tenantAccessToken: string;
+  /** Fixed tenant_access_token, for legacy callers without an SDK token manager. */
+  tenantAccessToken?: string;
+  /** Host-owned SDK authentication, resolved afresh for every HTTP operation. */
+  getTenantAccessToken?: () => Promise<string>;
   /** Override base URL (default open.feishu.cn; useful for Lark / tests). */
   baseUrl?: string;
   /** Inject fetch (tests). Defaults to globalThis.fetch. */
@@ -129,6 +131,7 @@ export interface CardKitClientOptions {
  */
 export class FeishuCardKitClient {
   private token: string;
+  private readonly getTenantAccessToken?: () => Promise<string>;
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
   private readonly timeoutMs: number;
@@ -147,10 +150,11 @@ export class FeishuCardKitClient {
   private refreshPromise?: Promise<string>;
 
   constructor(options: CardKitClientOptions) {
-    if (!options || !options.tenantAccessToken) {
+    if (!options || (!options.tenantAccessToken && !options.getTenantAccessToken)) {
       throw new Error('FeishuCardKitClient: options.tenantAccessToken is required');
     }
-    this.token = options.tenantAccessToken;
+    this.token = options.tenantAccessToken ?? '';
+    this.getTenantAccessToken = options.getTenantAccessToken;
     this.baseUrl = (options.baseUrl ?? DEFAULT_CARDKIT_BASE_URL).replace(/\/+$/, '');
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
     if (!this.fetchImpl) {
@@ -350,10 +354,22 @@ export class FeishuCardKitClient {
     externalSignal?.addEventListener('abort', onExternalAbort);
 
     try {
+      let { token } = this;
+      if (this.getTenantAccessToken) {
+        try {
+          token = await this.getTenantAccessToken();
+          if (!token) {
+            throw new Error('Empty authentication');
+          }
+        } catch {
+          // SDK errors can contain credential/request details; keep them host-owned.
+          throw new CardKitClientError('Card Kit authentication unavailable', 0);
+        }
+      }
       const res = await this.fetchImpl(url, {
         method,
         headers: {
-          Authorization: `Bearer ${this.token}`,
+          Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json; charset=utf-8',
         },
         body: JSON.stringify(body),

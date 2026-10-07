@@ -28,6 +28,7 @@ export function sourceFingerprint(root) {
       'README.md',
       'CHANGELOG.md',
       'docs',
+      'jupyter',
       'scripts/test-chromium-container.mjs',
       'tsconfig*.json',
       'packages/*/src/**',
@@ -123,10 +124,12 @@ export function generateRelease(root, output) {
     'packages/core/dist/utils/browser-env.js'
   );
   const dependencies = {};
-  for (const manifest of [
+  const optionalDependencies = {};
+  const manifests = [
     pkg,
     ...names.map((name) => json(join(root, 'packages', name, 'package.json'))),
-  ]) {
+  ];
+  for (const manifest of manifests) {
     for (const [name, version] of Object.entries(manifest.dependencies || {})) {
       if (targets[name]) continue;
       assert(!name.startsWith('@disclaude/'), `Unresolved workspace dependency: ${name}`);
@@ -135,6 +138,20 @@ export function generateRelease(root, output) {
         `Conflicting dependency: ${name}`
       );
       dependencies[name] = version;
+    }
+  }
+  // Native DSH plugins have runtime imports even though the backend is optional.
+  // Flatten these declarations too, without making them required for other backends.
+  for (const manifest of manifests) {
+    for (const [name, version] of Object.entries(manifest.optionalDependencies || {})) {
+      if (targets[name]) continue;
+      assert(!name.startsWith('@disclaude/'), `Unresolved optional workspace dependency: ${name}`);
+      assert(
+        (!dependencies[name] || dependencies[name] === version) &&
+          (!optionalDependencies[name] || optionalDependencies[name] === version),
+        `Conflicting optional dependency: ${name}`
+      );
+      if (!dependencies[name]) optionalDependencies[name] = version;
     }
   }
   for (const name of names) {
@@ -154,6 +171,7 @@ export function generateRelease(root, output) {
     '.claude-plugin',
     'examples/skills',
     'docs',
+    'jupyter',
     'scripts/test-chromium-container.mjs',
     'README.md',
     'CHANGELOG.md',
@@ -181,6 +199,9 @@ export function generateRelease(root, output) {
       .split('\0')
       .filter(Boolean);
     for (const file of tracked) {
+      // Remote build recipes also belong to a full source checkout. Keeping
+      // their optional runtime payload must not add Docker assets to npm installs.
+      if (file.split('/').at(-1).startsWith('Dockerfile')) continue;
       assert(
         !lstatSync(join(root, file)).isSymbolicLink(),
         `Release resources must not be symlinks: ${file}`
@@ -230,6 +251,7 @@ export function generateRelease(root, output) {
   Object.assign(manifest, {
     engines: { node: '>=20.0.0', npm: '>=10.0.0' },
     dependencies,
+    optionalDependencies,
     files: [
       'bin/',
       'jupyter/datalayer/',
@@ -240,6 +262,7 @@ export function generateRelease(root, output) {
       '.claude-plugin/',
       'examples/',
       'docs/',
+      'jupyter/',
       'README.md',
       'CHANGELOG.md',
       'disclaude.config.example.yaml',

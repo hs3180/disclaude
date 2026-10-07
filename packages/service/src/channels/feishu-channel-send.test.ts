@@ -873,9 +873,9 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
       expect(result).toBe('reply_msg_001');
     });
 
-    it('should fall back to create when reply fails during file send', async () => {
+    it('should fall back to create after a definite file reply rejection', async () => {
       const { client, mocks } = createMockClient();
-      mocks.replyMock.mockRejectedValueOnce(new Error('Thread expired'));
+      mocks.replyMock.mockRejectedValueOnce({ response: { status: 400, data: { code: 230001, msg: 'Thread expired' } } });
       const channel = createTestChannel(client);
 
       const testImagePath = path.join(os.tmpdir(), `test_image_fb_${Date.now()}.png`);
@@ -900,6 +900,23 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
       expect(mocks.replyMock).toHaveBeenCalledTimes(1);
       expect(mocks.createMock).toHaveBeenCalledTimes(1);
       expect(result).toBe('new_msg_001');
+    });
+
+    it.each([
+      ['html', new Error('Reply connection lost after submission')],
+      ['png', { response: { status: 503, data: { code: 999, msg: 'Uncertain server result' } } }],
+    ])('does not resend a %s report when the thread reply outcome is unknown', async (extension, error) => {
+      const { client, mocks } = createMockClient();
+      mocks.replyMock.mockRejectedValueOnce(error);
+      const channel = createTestChannel(client);
+      const file = path.join(os.tmpdir(), `unknown_report_${Date.now()}.${extension}`);
+      fs.writeFileSync(file, 'Owned report artifact');
+      tempFiles.push(file);
+      await expect(channel.sendMessage({
+        chatId: 'chat_123', type: 'file', filePath: file, threadId: 'root_msg_789',
+      })).rejects.toBe(error);
+      expect(mocks.replyMock).toHaveBeenCalledOnce();
+      expect(mocks.createMock).not.toHaveBeenCalled();
     });
   });
 

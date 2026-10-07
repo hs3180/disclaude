@@ -940,6 +940,63 @@ describe('MessageHandler', () => {
       expect(msg.content).toContain('下载失败');
     });
 
+    it('registers incoming files using current SDK authentication without a startup token', async () => {
+      const { handler } = createHandler({ tenantAccessToken: '' });
+      const getTenantAccessToken = vi.fn().mockResolvedValueOnce('sdk-token-one').mockResolvedValueOnce('sdk-token-two');
+      handler.initialize({ appId: 'cli-channel-app', tokenManager: { getTenantAccessToken } } as any);
+
+      await handler.handleMessageReceive(fileEvent('file', { file_key: 'file_a', file_name: 'input-a.csv' }));
+      await handler.handleMessageReceive(fileEvent('file', { file_key: 'file_b', file_name: 'input-b.csv' }));
+
+      expect(getTenantAccessToken).toHaveBeenCalledTimes(2);
+      expect(mockExecFile).toHaveBeenCalledTimes(2);
+      const { calls } = mockExecFile.mock;
+      expect(calls[0][2]).toEqual(expect.objectContaining({
+        cwd: '/tmp/mh-test/downloads', env: expect.objectContaining({ LARKSUITE_CLI_APP_ID: 'cli-channel-app', LARKSUITE_CLI_TENANT_ACCESS_TOKEN: 'sdk-token-one' }),
+      }));
+      expect(calls[1][2]).toEqual(expect.objectContaining({
+        env: expect.objectContaining({ LARKSUITE_CLI_TENANT_ACCESS_TOKEN: 'sdk-token-two' }),
+      }));
+      expect(firstCallArg(mockState.emitMessage).attachments).toEqual([{ fileName: 'input-a.csv', filePath: '/tmp/mh-test/downloads/input-a.csv' }]);
+      expect(firstCallArg(mockState.emitMessage).content).not.toContain('sdk-token');
+    });
+
+    it('uses a relative CLI output in the download directory', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(fileEvent('file', { file_key: 'file_relative', file_name: '../input.csv' }));
+      expect(mockExecFile).toHaveBeenCalledWith('npx', expect.arrayContaining(['--output', './input.csv']),
+        expect.objectContaining({ cwd: '/tmp/mh-test/downloads' }), expect.any(Function));
+      expect(firstCallArg(mockState.emitMessage).attachments[0].filePath).toBe('/tmp/mh-test/downloads/input.csv');
+    });
+
+    it('keeps a dot filename inside the download directory', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(fileEvent('file', { file_key: 'file_dot', file_name: '..' }));
+      expect(firstCallArg(mockState.emitMessage).attachments[0].filePath).toMatch(/^\/tmp\/mh-test\/downloads\/resource-[a-f0-9]{16}$/);
+    });
+
+    it('downloads quoted files through SDK authentication without a startup token', async () => {
+      const { handler } = createHandler({ tenantAccessToken: '' });
+      const getTenantAccessToken = vi.fn().mockResolvedValue('sdk-quoted-token');
+      handler.initialize({ appId: 'cli-channel-app', tokenManager: { getTenantAccessToken } } as any);
+      const result = await (handler as any).handleQuotedFileMessage('file', JSON.stringify({ file_key: 'file_quoted_sdk', file_name: 'quoted.csv' }), 'msg_quoted_sdk');
+      expect(getTenantAccessToken).toHaveBeenCalledOnce();
+      expect(result.attachment.filePath).toBe('/tmp/mh-test/downloads/quoted.csv');
+      expect(mockExecFile).toHaveBeenCalledWith('npx', expect.arrayContaining(['--message-id', 'msg_quoted_sdk', '--output', './quoted.csv']),
+        expect.objectContaining({ cwd: '/tmp/mh-test/downloads', env: expect.objectContaining({ LARKSUITE_CLI_TENANT_ACCESS_TOKEN: 'sdk-quoted-token' }) }), expect.any(Function));
+    });
+
+    it('reports unavailable SDK authentication without a download or fabricated attachment', async () => {
+      const { handler } = createHandler({ tenantAccessToken: '' });
+      handler.initialize({ tokenManager: { getTenantAccessToken: vi.fn().mockRejectedValue(new Error('private credential detail')) } } as any);
+      await handler.handleMessageReceive(fileEvent('file', { file_key: 'file_auth', file_name: 'input.csv' }));
+      expect(mockExecFile).not.toHaveBeenCalled();
+      const message = firstCallArg(mockState.emitMessage);
+      expect(message.attachments).toBeUndefined();
+      expect(message.content).toContain('下载失败');
+      expect(message.content).not.toContain('private credential detail');
+    });
+
     it('should include manual download instructions in failure prompt', async () => {
       const { handler } = createHandler({ tenantAccessToken: '' });
       await handler.handleMessageReceive(fileEvent('file', { file_key: 'file_abc', file_name: 'report.pdf' }));

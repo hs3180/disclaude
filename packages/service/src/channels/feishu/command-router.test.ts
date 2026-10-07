@@ -60,6 +60,34 @@ describe('tryHandleSlashCommand', () => {
     expect(deps.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: 'triggered' }));
   });
 
+  it.each([true, false])('replies to the original thread for control success=%s', async (success) => {
+    const { deps } = makeDeps({ hasControlHandler: true, controlResponse: { success, message: 'preset response' } });
+    await tryHandleSlashCommand({ ...input('/agent use notebook063dl'), threadRootId: 'om_original' }, deps);
+    expect(deps.sendMessage).toHaveBeenCalledExactlyOnceWith({
+      chatId: 'oc_x', threadId: 'om_original', type: 'text', text: 'preset response',
+    });
+  });
+
+  it.each(['reset', 'status', 'stop'])('keeps /%s fallback feedback in the original thread', async (command) => {
+    const { deps } = makeDeps();
+    await tryHandleSlashCommand({ ...input(`/${command}`), threadRootId: 'om_original' }, deps);
+    expect(deps.sendMessage).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      chatId: 'oc_x', threadId: 'om_original', type: 'text',
+    }));
+  });
+
+  it('keeps unmatched-control fallback feedback in the original thread', async () => {
+    const { deps } = makeDeps({ hasControlHandler: true, controlResponse: { success: false } });
+    await tryHandleSlashCommand({ ...input('/stop'), threadRootId: 'om_original' }, deps);
+    expect(deps.sendMessage).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ threadId: 'om_original' }));
+  });
+
+  it('does not add a thread target to ordinary chat feedback', async () => {
+    const { deps } = makeDeps({ hasControlHandler: true, controlResponse: { success: true, message: 'status' } });
+    await tryHandleSlashCommand(input('/status'), deps);
+    expect(deps.sendMessage).toHaveBeenCalledExactlyOnceWith({ chatId: 'oc_x', type: 'text', text: 'status' });
+  });
+
   it('returns true on control success with no message (no sendMessage)', async () => {
     const { deps } = makeDeps({ hasControlHandler: true, controlResponse: { success: true } });
     expect(await tryHandleSlashCommand(input('/something'), deps)).toBe(true);

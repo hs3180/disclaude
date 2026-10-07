@@ -568,7 +568,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           return replyResp.data?.message_id;
         } catch (err) {
           if (
-            options.avoidRetryAfterAmbiguousThreadReply &&
+            (options.avoidRetryAfterAmbiguousThreadReply || message.type === 'file') &&
             !isDefiniteFeishuApiRejection(err)
           ) {
             throw err;
@@ -1061,17 +1061,20 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   // ───────────────────────────────────────────────────────────────────────
 
   /**
-   * Lazily build the Card Kit HTTP client from the tenant token env var that
-   * feishu-channel already maintains. Returns null (→ sendMessage degrade) if
-   * the token is missing rather than throwing, so a misconfigured deployment
-   * never loses a reply.
+   * Reuse the channel SDK's current authentication without exporting tokens.
+   * Retain the fixed-token fallback for legacy callers without a token manager.
    */
   private getCardKitClient(): FeishuCardKitClient | null {
     if (this.streamingCardKitClient) {
       return this.streamingCardKitClient;
     }
     try {
-      this.streamingCardKitClient = createCardKitClientFromEnv();
+      const tokenManager = this.client?.tokenManager;
+      this.streamingCardKitClient = tokenManager?.getTenantAccessToken
+        ? new FeishuCardKitClient({
+            getTenantAccessToken: () => tokenManager.getTenantAccessToken(),
+          })
+        : createCardKitClientFromEnv();
       return this.streamingCardKitClient;
     } catch (err) {
       logger.warn(
