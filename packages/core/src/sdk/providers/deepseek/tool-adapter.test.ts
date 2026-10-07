@@ -3,6 +3,7 @@ import type { ToolDefinition } from '../../tools.js';
 import { registerDshTools, type DshHostToolRegistry } from './tool-adapter.js';
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools';
 import { createNotebookTools } from '../../../jupyter/notebook-tools.js';
+import type { AttachmentStore } from '@deepseek-ai/dsh-attachment';
 
 function context(signal: AbortSignal): ToolRunContext {
   return {
@@ -28,6 +29,39 @@ function tool(name = 'notebook_read_cell'): ToolDefinition {
 }
 
 describe('DSH native tool registration', () => {
+  it('admits tool images into the native attachment store before pure rendering', async () => {
+    const data = Buffer.from('png bytes').toString('base64');
+    const value = {
+      format: 'disclaude.tool-result.v1',
+      data: { cellId: 'plot' },
+      images: [{ mimeType: 'image/png', data }],
+    };
+    const native = { ...tool(), execute: () => Promise.resolve(value) };
+    const register = vi.fn<DshHostToolRegistry['register']>().mockReturnValue(() => {});
+    const ref = {
+      attachmentId: 'durable-image',
+      mediaType: 'image/png',
+      bytes: 9,
+      width: 1,
+      height: 1,
+    };
+    const saveImages = vi.fn().mockResolvedValue([ref]);
+    registerDshTools({ register }, [native], { saveImages } as unknown as AttachmentStore);
+    const [[registered]] = register.mock.calls;
+    const result = await registered.execute({}, context(new AbortController().signal));
+    expect(saveImages).toHaveBeenCalledOnce();
+    expect(result).toEqual(value);
+    expect(registered.output.render({}, value)).toEqual([
+      { type: 'text', text: '{"cellId":"plot"}' },
+      { type: 'image', attachment: ref },
+    ]);
+    const unsupported = vi.fn<DshHostToolRegistry['register']>().mockReturnValue(() => {});
+    registerDshTools({ register: unsupported }, [native]);
+    await expect(
+      unsupported.mock.calls[0][0].execute({}, context(new AbortController().signal))
+    ).rejects.toThrow('admission is unavailable');
+  });
+
   it('registers the actual five Notebook tools with their shared schema constraints', async () => {
     const notebook = {
       identity: { connectionId: 'connection', serverNamespace: 'namespace', documentId: 'doc' },
