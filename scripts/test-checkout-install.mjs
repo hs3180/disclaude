@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -88,6 +88,32 @@ try {
   report.source = provenance;
   const packed = await run('npm', ['pack', '--json', '--ignore-scripts'], distribution, 60_000);
   const packResult = JSON.parse(packed)[0];
+  const packedPaths = new Set(packResult.files.map((file) => file.path));
+  const coordinatorPayload = [
+    'jupyter/pyproject.toml',
+    'jupyter/disclaude_jupyter/__init__.py',
+    'jupyter/disclaude_jupyter/extension.py',
+    'jupyter/disclaude_jupyter/documents.py',
+    'jupyter/disclaude_jupyter/executions.py',
+    'jupyter/disclaude_jupyter/ledger.py',
+    'jupyter/disclaude_jupyter/stacks.py',
+  ];
+  // This optional backend may be reviewed/merged separately from packaging.
+  if (coordinatorPayload.some((path) => existsSync(resolve(path)))) {
+    for (const path of coordinatorPayload) {
+      assert(packedPaths.has(path), `Optional remote Jupyter server payload is missing ${path}`);
+      assert(readFileSync(join(distribution, path)).length > 0);
+    }
+  }
+  assert(
+    !packResult.files.some((file) =>
+      /(?:__pycache__|\.pyc$|\.sqlite3$|\.owner\.lock$)/u.test(file.path)
+    ),
+    'Jupyter server payload must not include runtime state or Python caches'
+  );
+  report.checks.push(
+    'optional remote-server payload follows source scope and excludes runtime state'
+  );
   assert.deepEqual(
     packResult.files.filter((file) => isDockerDeploymentEntry(file.path)).map((file) => file.path),
     [],

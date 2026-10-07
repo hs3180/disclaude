@@ -159,6 +159,7 @@ async function verifyPackage() {
     const installed = ${JSON.stringify(installed)};
     const modulesRoot = ${JSON.stringify(isPrebuilt ? 'packages' : 'node_modules/@disclaude')};
     const load = (name, file = 'index.js') => import(pathToFileURL(join(installed, modulesRoot, name, 'dist', file)).href);
+    await load('core', 'sdk/providers/deepseek/native-app.js');
     for (const name of ['core', 'service', 'channel-cli']) {
       await load(name);
     }

@@ -115,6 +115,7 @@
     "skills/",
     "examples/skills/",
     "docs/",
+    "jupyter/",
     "tests/",
     "disclaude.config.example.yaml",
     "tsconfig*.json",
