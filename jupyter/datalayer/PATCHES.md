@@ -56,7 +56,7 @@ request、incarnation 和输出版本必须匹配；历史结果、截断预览�
 | `extension.patch` | 将可配置 TTL/配额/预览大小及 Contents manager 传给执行栈；修正停服时对私有栈的属性检查和释放。 | 让策略真正接入扩展生命周期。 |
 | `server-config.json`、`configure.py` | 使用共享 Jupyter 配置加载 room 保留与结果策略，合并时保留其他配置。 | 后台保存依赖 room 保留；具体限额是部署选择，不是协议要求的唯一数值。 |
 | `manifest.json`、`install.py` | 固定上游输入/补丁输出 hash；应用前核对全部内容和 Python 语法；拒绝未知源码，支持只读检查。 | 对直接修改已发布包的交付方式提供来源和漂移检查。仅在新镜像或自有临时树使用。 |
-| `package.py`、`deploy.py` | 将上述资源打成单文件 `.pyz`，自动构建、合并候选配置、生成 Compose 覆盖和回退记录；原配置文件不改写。 | 可选的便捷安装入口，推荐现有 Docker Compose 环境使用；底层修复源码和 hash 未改变。 |
+| `bin/jupyter-patch.js`、`deploy.py` | `disclaude jupyter patch` 由 Node 生成上游修复产物并通过 SSH 自动部署，合并候选配置并保存 Compose 覆盖和回退记录；原配置文件不改写。 | CLI 安装入口，适配现有 Docker Compose；不是独立 disclaude 补丁发行。底层修复源码和 hash 未改变；整组修复需要重启 Server，详见 README 的 Hot activation。 |
 | `Dockerfile`、`README.md`、`LICENSE.nbmodel` | 在原科学计算镜像上构建、说明部署/回退与原生文件身份持久化，并保留上游许可。 | Docker recipe 对非 Docker 部署可替换，来源、许可、回退和数据保留仍需落实。 |
 | `reporting-requirements.txt` | 可选的 Plotly 报告样例依赖，固定 wheel hash，保留现有 Narwhals 版本。 | **可省略。** 默认不安装，六个执行/输出修复不依赖 Plotly。 |
 

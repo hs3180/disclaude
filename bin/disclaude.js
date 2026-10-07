@@ -47,6 +47,7 @@ function showHelp() {
       '  start [options]    Start disclaude',
       '  channel <command>  Send channel messages through the service',
       '  browser <cmd>      Inspect coordinated browser control',
+      '  jupyter patch <action> Generate or deploy the upstream Jupyter repair',
       '  chromium-cdp <cmd> Manage or diagnose the persistent Chromium CDP service (Issue #4807)',
       '',
       'Global Options:',
@@ -65,6 +66,7 @@ function showHelp() {
 }
 
 const ROUTES = {
+  jupyter: { file: resolve(ROOT, 'bin/jupyter-patch.js') },
   browser: { file: resolve(ROOT, 'node_modules/@disclaude/service/dist/browser-control/cli.mjs') },
   start: {
     file: resolve(ROOT, 'node_modules/@disclaude/service/dist/cli.js'),
@@ -76,10 +78,19 @@ const ROUTES = {
   },
   // Status is a cross-platform, read-only doctor. Lifecycle commands remain
   // routed to their native managers; those scripts expect the selector in argv.
-  'chromium-cdp': { file: resolve(ROOT,
-    ['status', 'doctor'].includes(args[1]) ? 'scripts/chromium-diagnose.mjs'
-      : args[1] === 'setup' ? 'scripts/chromium-setup.mjs'
-        : process.platform === 'linux' ? 'scripts/chromium-systemd.mjs' : 'scripts/launchd.mjs'), keepCommand: true },
+  'chromium-cdp': {
+    file: resolve(
+      ROOT,
+      ['status', 'doctor'].includes(args[1])
+        ? 'scripts/chromium-diagnose.mjs'
+        : args[1] === 'setup'
+          ? 'scripts/chromium-setup.mjs'
+          : process.platform === 'linux'
+            ? 'scripts/chromium-systemd.mjs'
+            : 'scripts/launchd.mjs'
+    ),
+    keepCommand: true,
+  },
 };
 
 if (!command || command === '--help' || command === '-h') {

@@ -34,6 +34,7 @@ export function sourceFingerprint(root) {
       'packages/*/package.json',
       'packages/*/tsconfig.json',
       'bin',
+      'jupyter/datalayer',
       'skills',
       'agents',
       '.claude-plugin',
@@ -147,6 +148,7 @@ export function generateRelease(root, output) {
   // Explicit allowlist: never copy credentials, node_modules or local workspace.
   for (const path of [
     'bin',
+    'jupyter/datalayer',
     'skills',
     'agents',
     '.claude-plugin',
@@ -221,6 +223,7 @@ export function generateRelease(root, output) {
     dependencies,
     files: [
       'bin/',
+      'jupyter/datalayer/',
       'packages/',
       'scripts/',
       'skills/',

@@ -36,6 +36,7 @@ changes ship under a new version.
 | [Environment variables](docs/environment-variables.md) | Operator-facing runtime settings |
 | [Codex](docs/codex-backend.md), [Pi](docs/pi-backend.md), [DeepSeek](docs/dsh-backend.md) | Backend-specific configuration |
 | [Browser control](docs/browser-coordination.md) | Serialized CLI calls, ownership, and recovery |
+| [Jupyter repair CLI](jupyter/datalayer/README.md#cli-deployment) | Generate/deploy the upstream repair and inspect restart requirements |
 | [Skills](docs/skills.md) | Discovery, precedence, and CLI contract |
 | [Logging](docs/logging.md) | File output, rotation, and collection |
 | [GitHub installation](docs/releases/git-install.md) | Install, upgrade, and roll back a release tag |

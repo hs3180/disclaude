@@ -25,15 +25,21 @@ def load(name, path):
 
 
 deploy = load("patch_deploy", SOURCE / "deploy.py")
-package = load("patch_package", SOURCE / "package.py")
+CLI = SOURCE.parents[1] / "bin/disclaude.js"
+
+
+def build(target, cli=CLI):
+    return json.loads(subprocess.check_output([
+        "node", str(cli), "jupyter", "patch", "generate", "--output", str(target)
+    ], cwd=target.parent, text=True))
 
 
 class PackageTests(unittest.TestCase):
     def test_single_file_runs_outside_checkout_and_is_reproducible(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            first = package.build(root / "first.pyz")
-            second = package.build(root / "second.pyz")
+            first = build(root / "first.pyz")
+            second = build(root / "second.pyz")
             self.assertEqual(first["sha256"], second["sha256"])
             output = subprocess.check_output([sys.executable, str(root / "first.pyz"), "info"], cwd=root, text=True)
             self.assertEqual(json.loads(output)["manifestSha256"], deploy.sha(SOURCE / "manifest.json"))
@@ -47,7 +53,7 @@ class PackageTests(unittest.TestCase):
     def test_damaged_payload_is_refused_before_docker(self):
         with tempfile.TemporaryDirectory() as temporary:
             archive = Path(temporary) / "damaged.pyz"
-            package.build(archive)
+            build(archive)
             with zipfile.ZipFile(archive) as original:
                 files = {name: original.read(name) for name in original.namelist()}
             files["payload/runtime.py"] += b"\n# modified\n"
@@ -61,12 +67,15 @@ class PackageTests(unittest.TestCase):
     def test_undeclared_patch_and_runtime_config_are_not_packaged(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            copied = root / "source"
+            copied = root / "jupyter/datalayer"
             shutil.copytree(SOURCE, copied, ignore=shutil.ignore_patterns("__pycache__"))
             (copied / "patches/private-debug.patch").write_text("fixture-private-debug")
             (copied / "jupyter-config-restore.json").write_text('{"password":"fixture-secret"}')
-            with patch.object(package, "__file__", str(copied / "package.py")):
-                package.build(root / "clean.pyz")
+            (root / "bin").mkdir()
+            for name in ("disclaude.js", "jupyter-patch.js"):
+                shutil.copyfile(CLI.parent / name, root / "bin" / name)
+            (root / "package.json").write_text('{"type":"module"}')
+            build(root / "clean.pyz", root / "bin/disclaude.js")
             with zipfile.ZipFile(root / "clean.pyz") as archive:
                 self.assertFalse(any("private-debug" in name or "config-restore" in name for name in archive.namelist()))
 

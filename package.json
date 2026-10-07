@@ -107,6 +107,13 @@
   ],
   "files": [
     "bin/",
+    "jupyter/datalayer/*.py",
+    "jupyter/datalayer/*.json",
+    "jupyter/datalayer/Dockerfile",
+    "jupyter/datalayer/LICENSE.nbmodel",
+    "jupyter/datalayer/frontend-source.patch",
+    "jupyter/datalayer/reporting-requirements.txt",
+    "jupyter/datalayer/patches/*.patch",
     "packages/*/dist/",
     "packages/*/src/",
     "packages/*/package.json",

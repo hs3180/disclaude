@@ -19,76 +19,136 @@ upgraded-server failures, their research impact, the Python/Lab file mapping,
 required versus optional changes, evidence and limits. The scope is the pinned
 installation above; newer upstream releases need their own verification.
 
-## Single-file installation
+## CLI deployment
 
-Download the `.pyz` and its SHA-256 file from the **Datalayer patch package** CI
-artifact for the reviewed commit, and put them on the existing remote Docker
-host. Only Python 3.9+ stdlib and Docker Compose v2 are required there. Python
-and scientific packages used by notebooks stay in the remote Jupyter image.
-Check the downloaded file with `sha256sum -c <filename>.sha256`.
+The user entry point is `disclaude jupyter patch`, shipped with disclaude.
+It generates an **upstream Jupyter/nbmodel repair**, transfers it via SSH and
+manages the existing remote Docker Compose deployment. It is not a separate
+disclaude patch distribution. Generation uses Node only; no host Python, pip,
+npm installation or frontend build is required. Remote deployment requires
+Python 3.9+ stdlib, Docker Compose v2 and existing SSH access to the Docker host.
+Notebook Python/scientific packages stay in the remote Jupyter image.
+
+Inspect the fixed revision and activation requirements, or prepare without
+interrupting the running service:
+
+```sh
+disclaude jupyter patch info
+disclaude jupyter patch prepare --ssh mathlab@192.168.5.183
+```
 
 After saving notebooks and closing kernels, apply with one command:
 
 ```sh
-python3 disclaude-datalayer-patch-0.6.3.pyz apply --container jupyter-gpu-1 --restart
+disclaude jupyter patch apply --ssh mathlab@192.168.5.183 --restart
 ```
 
-The tool discovers the current immutable image, runtime user, Compose project,
-service and shared JSON config. It builds on that image, checks all eight
+View the deployment or restore its recorded original image/config:
+
+```sh
+disclaude jupyter patch status --ssh mathlab@192.168.5.183
+disclaude jupyter patch rollback --ssh mathlab@192.168.5.183 --restart
+```
+
+The container defaults to `jupyter-gpu-1`; use `--container NAME` for another
+existing Compose service container. SSH aliases support custom ports/IPv6.
+The CLI generates the artifact in memory, streams it over SSH, verifies its
+SHA-256 and saves it under the remote user's
+`~/.local/share/disclaude/jupyter-patches/<sha256>/nbmodel-repair.pyz`.
+No manual artifact download, upload or configuration merge is needed. To export
+an artifact for inspection or another deployment channel:
+
+```sh
+disclaude jupyter patch generate --output nbmodel-repair.pyz
+```
+
+This creates a Python-stdlib zip application and a `.sha256` sidecar, refusing
+existing output files. Python is needed only when executing it on the remote
+Docker host. Its verified index contains the whitelisted fixed overlay resources
+and upstream license, with no deployment configuration or credentials.
+Generation is available through the installed CLI, including prebuilt Git/npm
+installations, outside the repository. Maintainers can exercise it in a checkout
+with `node bin/disclaude.js jupyter patch ...`.
+
+The remote engine discovers the immutable original image, runtime user, Compose
+project/service and shared JSON config. It builds on that image, checks all eight
 overlay files, merges the policy into a private candidate config, and generates
 Compose overrides. It checks that only the selected service image/config mount
-changes; notebook/file-ID mounts, other settings and other services remain in
-the original Compose. It does not edit the original Compose/config files or
-install reporting dependencies. No Python package installation on the Docker
-host, frontend build or manual config merge is needed.
+changes; Notebook/file-ID mounts, other settings and other services stay in the
+original Compose. Original Compose/config files are not edited; optional report
+dependencies are not installed.
 
-`--restart` explicitly requests recreation of that Jupyter service and ends its
-kernels. To prepare the image/config without switching first, use:
+State defaults to the remote user's
+`~/.local/state/disclaude-datalayer-patch/<container>/` (0700), containing private
+configuration snapshots, original/candidate image IDs, checksums and the
+apply/rollback overrides. `--state-dir` selects an absolute remote directory;
+retain it for rollback. Existing state from the earlier prepared candidate is
+reusable with the same repair manifest. Repeated apply/rollback does not recreate
+an already matching container. Original/prepared input drift, changed resolved
+Compose environment, another image, changed data mounts and multiple service
+containers are refused. SSH/switch failures are not automatically replayed;
+inspect `status` before further action.
 
-```sh
-python3 disclaude-datalayer-patch-0.6.3.pyz prepare --container jupyter-gpu-1
-python3 disclaude-datalayer-patch-0.6.3.pyz status --container jupyter-gpu-1
-python3 disclaude-datalayer-patch-0.6.3.pyz rollback --container jupyter-gpu-1 --restart
-```
+`--restart` recreates the Jupyter service and ends its kernels. Without it,
+apply/rollback is refused before SSH. `prepare` does not switch the service.
+The operator checks kernel idleness; the CLI does not check live user tasks.
+Use this CLI for subsequent switches: plain `docker compose up` without the saved
+override uses the original deployment. `status` reports the recorded phase and
+observed image, not product acceptance. After apply, refresh Lab and verify the
+running execution policy and required configured/product cases.
 
-State defaults to `~/.local/state/disclaude-datalayer-patch/<container>/` (0700),
-containing private configuration snapshots, original/candidate image IDs,
-checksums and the apply/rollback Compose overrides. Use `--state-dir` to select
-another private directory, and keep it for rollback. Repeated apply/rollback
-does not recreate a container already on the expected image/config. Changed
-original/prepared inputs, another image or multiple target-service containers
-are refused; unknown switch results are not automatically replayed. `status`
-reports observed image and the last requested phase, not product acceptance.
-
-Use this tool for subsequent switches: plain `docker compose up` without its
-saved override uses the original deployment. The underlying recipe currently
-targets a shared JSON config at `/opt/conda/etc/jupyter/jupyter_config.json` and
-an existing pinned nbmodel/Lab installation. Arbitrary non-Compose deployments,
-config paths and unverified upstream versions require a separate adapter.
+The current adapter targets a shared JSON config at
+`/opt/conda/etc/jupyter/jupyter_config.json` and the pinned nbmodel/Lab versions.
 Native file IDs must already use an explicit `BaseFileIdManager.db_path` inside
 a writable persistent directory mount; otherwise preparation refuses image
-replacement. The existing user deployment already has this mount. The original
-database directory is retained, rather than copying a writable-layer database
-without a coherent backup. See [Native file identity](#native-file-identity).
+replacement. The existing deployment already has this mount. Other deployment
+systems, config paths and unverified upstream versions need another adapter.
+See [Native file identity](#native-file-identity).
 
-After apply, reload Lab, verify the running execution policy and run configured
-acceptance as needed. Docker health and installed-file checks alone do not prove
-the notebook/product cases. The tool does not check live kernel idleness;
-the operator saves and closes kernels before using `--restart`.
-
-Maintainers build the file from this checkout without third-party build tools:
+Maintainer checks:
 
 ```sh
-python3 jupyter/datalayer/package.py --output disclaude-datalayer-patch-0.6.3.pyz
+node --test tests/jupyter/patch-cli-test.mjs
 python3 tests/jupyter/datalayer-package-test.py -v
 ```
 
-The archive contains the whitelisted pinned overlay/resources and upstream
-license, plus a verified file index. It contains no runtime configuration or
-credentials. It uses Python's [zip application format](https://docs.python.org/3/library/zipapp.html),
-and [Compose volume merging by target](https://docs.docker.com/reference/compose-file/merge/#unique-resources).
-The internal index detects content changes; the separately delivered SHA-256
-and reviewed source establish which artifact the operator chooses.
+## Hot activation
+
+This complete repair does **not** have a supported hot activation path on the
+inspected Jupyter Server 2.21.1 / nbmodel 0.2.9 installation. `patch info` reports
+`hotApplySupported=false`, `serverRestartRequired=true` and
+`kernelMemoryPreserved=false`; a requested `--hot` is refused before SSH.
+The conclusion is specific to these repairs, rather than every Jupyter extension.
+
+| Layer | Existing mechanism | Consequence for this repair |
+| --- | --- | --- |
+| Lab JavaScript | Prebuilt/federated extensions avoid a frontend rebuild; a new page loads resources published by the Server | Refresh Lab after deployment; frontend installation alone does not establish server hot activation |
+| Kernel user modules | IPython `%autoreload` reloads imported user modules inside the kernel | Does not reload the separate Jupyter Server process |
+| Server Python | ExtensionManager can invoke load/start hooks; it retains imported extension modules | Does not replace existing nbmodel instances, queues, coroutine frames or registered handlers |
+| Server development autoreload | `ServerApp.autoreload` enables Tornado autoreload | Restarts the server process and aborts in-flight requests; it is not state-preserving hot patching |
+
+The [Jupyter Server extension lifecycle](https://jupyter-server.readthedocs.io/en/stable/developers/extensions.html)
+and [ExtensionManager API](https://jupyter-server.readthedocs.io/en/stable/api/jupyter_server.extension.html#jupyter_server.extension.manager.ExtensionManager)
+describe loading/starting extensions, without a migration contract for existing
+nbmodel state. The inspected loader calls the cached module's loader. The repair
+adds constructor state for retention, controls, contents storage and instance
+identity; old objects do not acquire those fields merely by replacing files.
+`kernel_worker` is imported by reference and existing coroutine frames retain
+running code. Python documents that [reload leaves existing instances and external references unchanged](https://docs.python.org/3/library/importlib.html#importlib.reload).
+This explains why calling reload or the extension loader is insufficient here.
+
+[ServerApp.autoreload](https://jupyter-server.readthedocs.io/en/stable/other/full-config.html#ServerApp.autoreload)
+uses [Tornado's process restart](https://www.tornadoweb.org/en/stable/autoreload.html),
+which aborts in-progress requests. [IPython autoreload](https://ipython.readthedocs.io/en/stable/config/extensions/autoreload.html)
+operates before kernel user-code execution. [Lab prebuilt extensions](https://jupyterlab.readthedocs.io/en/stable/user/extensions.html)
+avoid rebuilding JavaScript; this alone does not promise server hot activation.
+
+A future nbmodel hot-update hook could quiesce submissions, finish/drain existing
+workers, migrate retained results/controls, replace handlers and resume against
+the same kernel managers. That requires an upstream/in-process mechanism and
+separate state/continuity verification; it is not implemented by this CLI.
+The current CLI prepares without interruption and explicitly restarts at apply.
+It does not write into a live installed package or inject code into user kernels.
 
 ## Behavior and policies
 
@@ -137,8 +197,7 @@ and reviewed source establish which artifact the operator chooses.
 ## Build and rollback
 
 Run the following on the existing remote Docker host from a full source checkout,
-with this directory as the build context. The npm distribution includes the
-optional remote overlay source but omits Docker build recipes. Use a local image
+with this directory as the build context. The disclaude distribution includes the repair resources and CLI generator. Use a local image
 tag verified against the actual saved image ID, and the original runtime user; do not
 replace a GPU/scientific environment with a fresh generic Jupyter image.
 

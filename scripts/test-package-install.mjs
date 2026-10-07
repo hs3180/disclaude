@@ -132,6 +132,15 @@ async function verifyPackage() {
   const cli = join(prefix, 'bin/disclaude');
   assert.equal(run(cli, ['--version']).trim(), `disclaude v${pkg.version}`);
   assert.match(run(cli, ['browser', '--help']), /automatically serializes calls/u);
+  assert.match(run(cli, ['jupyter', 'patch', '--help']), /Generation uses Node only/u);
+  const patchInfo = JSON.parse(run(cli, ['jupyter', 'patch', 'info']));
+  assert.equal(patchInfo.target, 'jupyter_server_nbmodel');
+  assert.equal(patchInfo.activation.hotApplySupported, false);
+  const patchArtifact = join(temp, 'nbmodel-repair.pyz');
+  const generatedPatch = JSON.parse(run(cli, ['jupyter', 'patch', 'generate', '--output', patchArtifact]));
+  assert.equal(generatedPatch.manifestSha256, patchInfo.manifestSha256);
+  assert(existsSync(patchArtifact));
+  assert.equal(readFileSync(patchArtifact + '.sha256', 'utf8').split(' ')[0], generatedPatch.sha256);
   for (const removed of ['coordinator.mjs', 'harness-session.mjs', 'python-runtime.mjs']) {
     assert(!existsSync(join(prefix, 'lib/node_modules/disclaude/packages/service/dist/browser-control', removed)), `Obsolete browser layer shipped: ${removed}`);
   }
