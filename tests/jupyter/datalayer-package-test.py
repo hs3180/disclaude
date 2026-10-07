@@ -295,6 +295,19 @@ class EnvironmentTests(unittest.TestCase):
         with self.assertRaisesRegex(environment.EnvironmentError, "--service"):
             environment.transition(self.plan, self.state, "apply", True, False)
 
+    def test_existing_identical_policy_does_not_prevent_apply_or_idempotence(self):
+        config = self.root / "already-configured.json"
+        policy = json.loads((SOURCE / "server-config.json").read_text())
+        config.write_text(json.dumps(policy, indent=2) + "\n")
+        target = {**self.target, "configFile": str(config)}
+        state = self.root / "another state"
+        plan = environment.prepare(SOURCE, deploy.sha(SOURCE / "manifest.json"), state, target)
+        with patch.object(environment, "require_stopped"):
+            self.assertTrue(environment.transition(plan, state, "apply", False, True)["changed"])
+            self.assertFalse(environment.transition(plan, state, "apply", False, True)["changed"])
+            environment.transition(plan, state, "rollback", False, True)
+        self.assertEqual(json.loads(config.read_text()), policy)
+
     def test_search_paths_and_explicit_selection_do_not_depend_on_prefix_or_home(self):
         paths = types.ModuleType("jupyter_core.paths")
         config_dir = self.root / "custom config dir"

@@ -133,6 +133,10 @@ Actions:
 
 Options:
   --ssh HOST          Remote host or SSH config alias
+  --jupyter URL       Use Jupyter Terminal for prepare/status (or 'configured')
+  --env-file FILE     Host-private .env for JUPYTERLAB_HOST/JUPYTERLAB_PASS
+  --password-env NAME Password environment key (default: JUPYTERLAB_PASS)
+  --token-env NAME    Use an API token environment key instead of password
   --python PATH       Target Jupyter Python (default: python3); venv/conda supported
   --container NAME    Select an existing Compose container instead of plain Python
   --config-file PATH  Target .py/.json config; default uses Jupyter search paths
@@ -146,6 +150,7 @@ Options:
 
 Generation uses Node only. Deployment uses the selected remote Python 3.9+.
 Docker Compose v2 is needed only with --container; there is no default container.
+Terminal uses the existing Jupyter login and needs no SSH. Stop/restart is external.
 Save notebooks and close kernels before --restart; this repair cannot activate hot.`);
 }
 
@@ -170,6 +175,10 @@ function parse(args) {
     if (
       ![
         '--ssh',
+        '--jupyter',
+        '--env-file',
+        '--password-env',
+        '--token-env',
         '--container',
         '--python',
         '--config-file',
@@ -185,6 +194,10 @@ function parse(args) {
     }
     const property = {
       '--ssh': 'ssh',
+      '--jupyter': 'jupyter',
+      '--env-file': 'envFile',
+      '--password-env': 'passwordEnv',
+      '--token-env': 'tokenEnv',
       '--container': 'container',
       '--python': 'python',
       '--config-file': 'configFile',
@@ -217,6 +230,10 @@ function parse(args) {
   if (options.restart && options.stopped) throw new Error('Choose --restart or --stopped');
   const deploymentOptions = [
     'ssh',
+    'jupyter',
+    'envFile',
+    'passwordEnv',
+    'tokenEnv',
     'container',
     'python',
     'configFile',
@@ -235,7 +252,28 @@ function parse(args) {
     if (deploymentOptions.some((key) => Object.hasOwn(options, key)))
       throw new Error('info does not use deployment options');
   } else if (options.action !== 'generate') {
-    if (!options.ssh || !/^(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9][A-Za-z0-9._-]*$/.test(options.ssh))
+    if (!!options.ssh === !!options.jupyter) throw new Error('Choose --jupyter URL or --ssh HOST');
+    for (const key of ['passwordEnv', 'tokenEnv']) {
+      if (options[key] && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(options[key]))
+        throw new Error('Invalid credential environment key');
+    }
+    if (options.passwordEnv && options.tokenEnv)
+      throw new Error('Choose password or token authentication');
+    if (
+      options.jupyter &&
+      (!['prepare', 'status'].includes(options.action) ||
+        options.container ||
+        options.service ||
+        options.system ||
+        options.restart ||
+        options.stopped)
+    )
+      throw new Error(
+        'Jupyter Terminal supports prepare/status; apply/rollback requires an external stop/restart channel'
+      );
+    if (!options.jupyter && (options.envFile || options.passwordEnv || options.tokenEnv))
+      throw new Error('Jupyter authentication options require --jupyter');
+    if (options.ssh && !/^(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9][A-Za-z0-9._-]*$/.test(options.ssh))
       throw new Error(
         '--ssh requires a host or user@host (use SSH config aliases for custom ports/IPv6)'
       );
@@ -258,7 +296,7 @@ function parse(args) {
 
 const quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
 
-export function remoteCommand(options, digest) {
+export function remoteArguments(options) {
   const forwarded = [options.action];
   for (const [property, key] of [
     ['container', '--container'],
@@ -271,6 +309,11 @@ export function remoteCommand(options, digest) {
   }
   if (options.container && options.python) forwarded.push('--python', options.python);
   for (const key of ['restart', 'stopped', 'system']) if (options[key]) forwarded.push('--' + key);
+  return forwarded;
+}
+
+export function remoteCommand(options, digest) {
+  const forwarded = remoteArguments(options);
   // Artifact bytes travel on stdin; deployment configuration and credentials
   // never enter them. Do not retry an SSH failure after an unknown switch result.
   const code = `import hashlib, os, pathlib, sys, tempfile
@@ -375,6 +418,9 @@ export async function main(args = process.argv.slice(2)) {
         activation,
       })
     );
+  } else if (options.jupyter) {
+    const { deployTerminal } = await import('./jupyter-terminal.js');
+    console.log(JSON.stringify(await deployTerminal(options, patch, remoteArguments(options))));
   } else await deployRemote(options, patch);
 }
 

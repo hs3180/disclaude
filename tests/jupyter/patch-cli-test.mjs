@@ -6,6 +6,10 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+import { EventEmitter } from 'node:events';
+import { inflateSync } from 'node:zlib';
+import { buildPatch } from '../../bin/jupyter-patch.js';
+import { deployTerminal } from '../../bin/jupyter-terminal.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const cli = join(root, 'bin/disclaude.js');
@@ -66,6 +70,10 @@ test('invalid hosts, hot activation and missing restart are refused before SSH',
       ['prepare', '--ssh', 'fixture;touch injected'],
       ['prepare', '--ssh', 'fixture', '--restart'],
       ['prepare', '--ssh', 'fixture', '--state-dir', 'relative-state'],
+      ['apply', '--jupyter', 'configured', '--restart'],
+      ['rollback', '--jupyter', 'configured', '--stopped'],
+      ['prepare', '--jupyter', 'configured', '--ssh', 'fixture'],
+      ['prepare', '--jupyter', 'configured', '--container', 'chosen'],
     ]) {
       const result = spawnSync(process.execPath, [cli, 'jupyter', 'patch', ...args], {
         encoding: 'utf8',
@@ -171,4 +179,118 @@ test('deployment selects an explicit environment or container, with no machine-s
   );
   assert(compose.startsWith("'python3' -c "));
   assert(compose.includes('["prepare","--container","chosen","--python","/custom/python"]'));
+});
+
+function terminalFixture(closeEarly = false, forbidden = false) {
+  const calls = [],
+    commands = [];
+  let received, socketHeaders;
+  class Socket extends EventEmitter {
+    constructor(url, options) {
+      super();
+      socketHeaders = options.headers;
+      queueMicrotask(() => this.emit('open'));
+    }
+    send(message) {
+      const [kind, command] = JSON.parse(message);
+      assert.equal(kind, 'stdin');
+      commands.push(command);
+      if (commands.length === 1) {
+        if (closeEarly) return queueMicrotask(() => this.emit('close'));
+        const encoded = command.match(/[A-Za-z0-9+/=]{100,}/)[0];
+        const script = inflateSync(Buffer.from(encoded, 'base64')).toString('utf8');
+        this.ready = script.match(/REPAIR_READY_[a-z0-9]+/)[0];
+        this.receipt = script.match(/REPAIR_RESULT_[a-z0-9]+/)[0];
+        // POSIX shells can prefix Python's first line with bracketed-paste
+        // control sequences. The marker must still be recognized once only.
+        queueMicrotask(() =>
+          this.emit(
+            'message',
+            Buffer.from(JSON.stringify(['stdout', '\x1b[?2004l\r' + this.ready + '\r\n']))
+          )
+        );
+      } else if (command.trim() === this.receipt) {
+        received = Buffer.from(commands.slice(1, -1).join('').replaceAll('\n', ''), 'base64');
+        const output =
+          this.receipt +
+          JSON.stringify({ ok: true, result: { phase: 'prepared', deployment: 'environment' } }) +
+          '\r\n';
+        const middle = Math.floor(output.length / 2);
+        queueMicrotask(() => {
+          this.emit('message', Buffer.from(JSON.stringify(['stdout', output.slice(0, middle)])));
+          this.emit('message', Buffer.from(JSON.stringify(['stdout', output.slice(middle)])));
+        });
+      } else {
+        assert(command.length <= 1025, 'PTY lines must remain bounded');
+      }
+    }
+    terminate() {
+      this.emit('close');
+    }
+  }
+  const client = {
+    async response(route, method) {
+      calls.push([route, method]);
+      return {
+        ok: !forbidden,
+        status: forbidden ? 403 : method === 'DELETE' ? 204 : 200,
+        body: { async cancel() {} },
+      };
+    },
+    async responseText() {
+      return JSON.stringify({ name: 'owned-terminal' });
+    },
+    async socket(route) {
+      calls.push([route, 'WS']);
+      return {
+        url: 'ws://owned.invalid/prefix/' + route,
+        headers: { Cookie: 'host-private-cookie' },
+      };
+    },
+  };
+  return {
+    client,
+    WebSocket: Socket,
+    calls,
+    commands,
+    received: () => received,
+    headers: () => socketHeaders,
+  };
+}
+
+test('Terminal streams the same repair with bounded PTY lines, handles fragmented/control output and closes only its own terminal', async () => {
+  const fixture = terminalFixture(),
+    patch = buildPatch();
+  const result = await deployTerminal({ action: 'prepare' }, patch, ['prepare'], fixture);
+  assert.equal(result.transport, 'jupyter-terminal');
+  assert.equal(result.artifactSha256, sha(patch.bytes));
+  assert.deepEqual(fixture.received(), patch.bytes);
+  assert.equal(fixture.headers().Cookie, 'host-private-cookie');
+  assert(!fixture.commands.join('').includes('host-private-cookie'));
+  assert.deepEqual(fixture.calls, [
+    ['api/terminals', 'POST'],
+    ['terminals/websocket/owned-terminal', 'WS'],
+    ['api/terminals/owned-terminal', 'DELETE'],
+  ]);
+});
+
+test('Terminal connection failure does not replay preparation and still closes its owned terminal', async () => {
+  const fixture = terminalFixture(true);
+  await assert.rejects(
+    deployTerminal({ action: 'status' }, buildPatch(), ['status'], fixture),
+    /before a verified receipt/
+  );
+  assert.equal(fixture.commands.length, 1);
+  assert.equal(fixture.calls.filter(([, method]) => method === 'POST').length, 1);
+  assert.deepEqual(fixture.calls.at(-1), ['api/terminals/owned-terminal', 'DELETE']);
+});
+
+test('Disabled/unauthorized terminals fail without a socket or deleting an unknown terminal', async () => {
+  const fixture = terminalFixture(false, true);
+  await assert.rejects(
+    deployTerminal({ action: 'prepare' }, buildPatch(), ['prepare'], fixture),
+    /HTTP 403/
+  );
+  assert.deepEqual(fixture.calls, [['api/terminals', 'POST']]);
+  assert.equal(fixture.commands.length, 0);
 });

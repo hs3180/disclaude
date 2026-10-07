@@ -108,7 +108,9 @@ def verify(plan: dict, state: Path) -> list[str]:
                 if path.is_symlink() or current_hash(path) != item[field + "Sha256"]:
                     raise EnvironmentError("Saved patch/rollback file changed; transition refused")
         actual = current_hash(Path(item["target"]))
-        if actual == item["originalSha256"]:
+        if actual == item["originalSha256"] == item["candidateSha256"]:
+            positions.append("unchanged")
+        elif actual == item["originalSha256"]:
             positions.append("original")
         elif actual == item["candidateSha256"]:
             positions.append("candidate")
@@ -137,8 +139,8 @@ def prepare(root: Path, manifest_sha: str, state: Path, target: dict, service=No
         raise EnvironmentError("Environment is already partially/patched; original rollback must come from its existing state")
     config = Path(target["configFile"])
     policy = json.loads((root / "server-config.json").read_text())
-    writes += [(roots["python"] / "disclaude-repair.json", install.marker(root)),
-               (config, configure.configured_bytes(config, policy))]
+    writes = [*writes, (roots["python"] / "disclaude-repair.json", install.marker(root)),
+              (config, configure.configured_bytes(config, policy))]
     if len({str(path) for path, _ in writes}) != len(writes):
         raise EnvironmentError("Configuration and patch targets overlap")
     # Check all targets before staging. Preparation never creates install/config
@@ -179,7 +181,7 @@ def transition(plan: dict, state: Path, action: str, restart: bool, stopped: boo
         raise EnvironmentError("Use --service UNIT --restart, or stop Jupyter externally and use --stopped")
     positions = verify(plan, state)
     expected = "candidate" if action == "apply" else "original"
-    complete = all(position == expected for position in positions)
+    complete = all(position in (expected, "unchanged") for position in positions)
     finished = "applied" if action == "apply" else "rolled_back"
     # A failed start must not be mistaken for an idempotent successful activation.
     if complete and plan["phase"] == finished:
@@ -204,7 +206,7 @@ def transition(plan: dict, state: Path, action: str, restart: bool, stopped: boo
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
             atomic(path, (state / item[expected]).read_bytes(), item["mode"], item["owner"])
-    if any(position != expected for position in verify(plan, state)):
+    if any(position not in (expected, "unchanged") for position in verify(plan, state)):
         raise EnvironmentError("Installed files could not be verified; keep service stopped and inspect state")
     if service:
         plan["phase"] = action + "_start_requested"

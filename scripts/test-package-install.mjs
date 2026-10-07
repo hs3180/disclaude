@@ -133,6 +133,9 @@ async function verifyPackage() {
   assert.equal(run(cli, ['--version']).trim(), `disclaude v${pkg.version}`);
   assert.match(run(cli, ['browser', '--help']), /automatically serializes calls/u);
   assert.match(run(cli, ['jupyter', 'patch', '--help']), /Generation uses Node only/u);
+  assert.match(run(cli, ['jupyter', 'patch', '--help']), /--jupyter URL/u);
+  assert(existsSync(join(installed, 'bin/jupyter-terminal.js')));
+  assert(existsSync(join(installed, 'packages/core/dist/jupyter/http-connection.js')));
   const patchInfo = JSON.parse(run(cli, ['jupyter', 'patch', 'info']));
   assert.equal(patchInfo.target, 'jupyter_server_nbmodel');
   assert.equal(patchInfo.activation.hotApplySupported, false);

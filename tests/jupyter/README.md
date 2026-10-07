@@ -117,3 +117,24 @@ success or failure.
 This is a stack-selection experiment. It does not verify Disclaude adapters,
 atomic cell edits, controller generations, kernel ownership handoff, Feishu,
 model continuation, report quality or access from a user's actual device.
+
+## Patch deployment portability
+
+`node --test tests/jupyter/patch-cli-test.mjs` checks Node-only generation, SSH
+quoting, explicit target/lifecycle selection and Jupyter Terminal framing,
+streaming, permissions, cleanup and failure handling. It uses owned protocol
+fixtures and does not contact a live service.
+
+`python3 tests/jupyter/datalayer-package-test.py -v` checks archive integrity,
+Compose preservation/drift and reversible plain-environment filesystem updates,
+custom Python/JSON config, nonstandard discovery paths, a running-server refusal,
+partial-update rollback and service-start failure. These are component tests,
+not a replacement for configured Jupyter or product acceptance.
+
+The configured-server Terminal probe used the existing login/REST/WebSocket
+service to discover the actual Server interpreter and prepare privately. It did
+not patch or restart the daily service. Separate owned remote bare-host venv and
+Compose fixtures verified apply/rollback, arbitrary paths and exact original
+file/image/config restoration. The venv fixture copied only pinned package/Lab
+and path-discovery files; it did not launch a Jupyter server or install science
+dependencies. Record these evidence scopes separately from product acceptance.

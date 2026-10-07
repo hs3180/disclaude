@@ -329,17 +329,17 @@ def main() -> None:
                 return
             sys.path.insert(0, str(root))
             import environment
+            service = {"unit": args.service, "system": args.system} if args.service else None
             if args.container:
                 target = None
                 identity = args.container
             else:
                 target = environment.discover(args.config_file, args.frontend_dir, args.package_dir)
-                identity = "environment-" + hashlib.sha256(json.dumps(target, sort_keys=True).encode()).hexdigest()[:16]
+                identity = "environment-" + hashlib.sha256(json.dumps({"target": target, "service": service}, sort_keys=True).encode()).hexdigest()[:16]
             requested_state = args.state_dir or Path.home() / ".local/state/disclaude-datalayer-patch" / identity
             if not requested_state.is_absolute() or requested_state.is_symlink():
                 raise DeploymentError("State directory must be an absolute, non-symlink path")
             state = requested_state.resolve()
-            service = {"unit": args.service, "system": args.system} if args.service else None
             if args.action in ("prepare", "apply"):
                 if args.container:
                     plan = prepare(root, digest, args.container, state, args.python, args.config_file, args.frontend_dir)

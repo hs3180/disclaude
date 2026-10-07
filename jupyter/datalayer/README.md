@@ -26,6 +26,41 @@ not a separate disclaude patch distribution. Generation uses Node only. Remote
 execution uses Python 3.9+ stdlib in the existing Jupyter deployment; scientific
 packages are not installed or replaced.
 
+### Existing Jupyter login
+
+When Jupyter's POSIX Terminal is enabled, the CLI can use the existing password
+or API token login, Terminal REST API and authenticated WebSocket without SSH:
+
+```sh
+disclaude jupyter patch prepare --jupyter configured --env-file /your/private/.env
+disclaude jupyter patch status --jupyter configured --env-file /your/private/.env
+```
+
+`configured` reads host-private `JUPYTERLAB_HOST` / `JUPYTERLAB_PASS`. A literal
+`--jupyter URL` also works. Real environment variables take precedence over
+`--env-file` (Node 20.12+); without a file, environment variables work directly.
+`--password-env NAME` selects another password key; `--token-env NAME` selects
+token authentication. Credentials/cookies stay on the host and are not included
+in shell commands, artifacts, state or output. The existing HTTP client supplies
+cookie/XSRF/origin and redirect rules, respecting reverse-proxy URL prefixes.
+
+The CLI creates/closes only its own terminal, transfers the verified artifact in
+bounded PTY lines, and discovers the Server interpreter from the terminal's
+process ancestry. If that is ambiguous, specify `--python`. Configuration/Lab
+selection and private state options work as for a plain Python environment.
+Disabled/unauthorized terminals fail without silently choosing another transport.
+
+Terminal supports **prepare/status**, not stopping/restarting its own Server.
+The REST API has no manager-independent service restart endpoint. Stop the server
+with its real deployment manager, execute the prepared artifact under the same
+target Python/environment and state (`apply --stopped`), then restart; SSH/systemd
+or the Compose adapter can automate their respective full deployment flows.
+Do not run in-place apply from a live Jupyter terminal: the complete repair needs
+a server stop, and that terminates this connection. Terminal preparation is not
+installation/activation or evidence of preserved kernel memory.
+
+### Python environment over SSH
+
 Select a remote Python environment (system Python, venv or conda) explicitly when
 it differs from `python3` on the remote PATH:
 
@@ -48,6 +83,8 @@ For an existing systemd service, the CLI stops it, verifies the server is stoppe
 installs the previously checked files, starts it and observes service state:
 
 ```sh
+disclaude jupyter patch prepare --ssh your-jupyter-host --python /your/env/bin/python \
+  --service your-jupyter.service
 disclaude jupyter patch apply --ssh your-jupyter-host --python /your/env/bin/python \
   --service your-jupyter.service --restart
 disclaude jupyter patch rollback --ssh your-jupyter-host --python /your/env/bin/python \
