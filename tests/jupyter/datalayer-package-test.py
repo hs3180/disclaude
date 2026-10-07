@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from unittest.mock import patch
 import zipfile
@@ -25,6 +26,10 @@ def load(name, path):
 
 
 deploy = load("patch_deploy", SOURCE / "deploy.py")
+sys.path.insert(0, str(SOURCE))
+import environment
+import discovery
+import configure
 CLI = SOURCE.parents[1] / "bin/disclaude.js"
 
 
@@ -92,13 +97,13 @@ class DeploymentTests(unittest.TestCase):
         self.base = self.state / "compose.json"
         self.base.write_text('{"services":{"jupyter":{},"sentinel":{}}}\n')
         self.plan = {"project": "owned-fixture", "service": "jupyter", "directory": str(self.state),
-                     "container": "owned-jupyter", "composeFiles": [str(self.base)],
+                     "container": "owned-jupyter", "configTarget": "/arbitrary/config/shared.json", "composeFiles": [str(self.base)],
                      "originalImage": "sha256:original", "candidateImage": "sha256:patched",
                      "inputs": {str(self.config): deploy.sha(self.config), str(self.base): deploy.sha(self.base)},
                      "outputs": {}, "phase": "prepared", "manifestSha256": deploy.sha(SOURCE / "manifest.json")}
         self.current = {"image": "sha256:original", "state": {"Status": "running"},
                         "labels": {"com.docker.compose.project": "owned-fixture", "com.docker.compose.service": "jupyter"},
-                        "mounts": [{"Destination": deploy.CONFIG_TARGET, "Source": str(self.config)}]}
+                        "mounts": [{"Destination": self.plan["configTarget"], "Source": str(self.config)}]}
         for action, image, config in [("apply", "sha256:patched", self.candidate), ("rollback", "sha256:original", self.config)]:
             path = self.state / (action + ".json")
             deploy.write_json(path, deploy.override(self.plan, image, str(config)))
@@ -154,7 +159,7 @@ class DeploymentTests(unittest.TestCase):
 
     def test_changed_data_mount_refuses_transition(self):
         self.current["mounts"].append({"Type": "bind", "Source": "/old-data", "Destination": "/notebooks", "RW": True})
-        self.plan["originalMounts"] = deploy.stable_mounts(self.current)
+        self.plan["originalMounts"] = deploy.stable_mounts(self.current, self.plan["configTarget"])
         self.current["mounts"][-1]["Source"] = "/new-data"
         with patch.object(deploy, "inspect_container", return_value=self.current), patch.object(deploy, "docker") as docker:
             with self.assertRaisesRegex(deploy.DeploymentError, "data mounts changed"):
@@ -183,7 +188,7 @@ class DeploymentTests(unittest.TestCase):
     def test_override_must_preserve_other_services_and_notebook_mount(self):
         baseline = {"services": {"jupyter": {"image": "original", "environment": {"keep": "fixture"},
                                              "volumes": [{"target": "/notebooks", "source": "/owned-data"},
-                                                         {"target": deploy.CONFIG_TARGET, "source": "/old"}]},
+                                                         {"target": self.plan["configTarget"], "source": "/old"}]},
                                  "sentinel": {"image": "original"}}}
         candidate = json.loads(json.dumps(baseline))
         candidate["services"]["jupyter"]["image"] = "patched"
@@ -201,6 +206,122 @@ class DeploymentTests(unittest.TestCase):
             result = deploy.prepare(SOURCE, self.plan["manifestSha256"], self.plan["container"], self.state)
         self.assertEqual(result["originalImage"], "sha256:original")
         docker.assert_not_called()
+
+
+class EnvironmentTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.package = self.root / "unusual prefix/lib/nbmodel"
+        self.frontend = self.root / "separate lab data/extension"
+        self.package.mkdir(parents=True)
+        self.frontend.mkdir(parents=True)
+        self.original = self.package / "source.py"
+        self.original.write_text("original = True\n")
+        self.config = self.root / "custom-config.py"
+        self.config.write_text("c = get_config()\nc.ServerApp.port = 9999\n")
+        self.state = self.root / "private state"
+        self.target = {"python": "/unusual/venv/bin/python", "prefix": "/unusual/venv",
+                       "packageDir": str(self.package), "frontendDir": str(self.frontend),
+                       "configFile": str(self.config), "configPaths": [str(self.root)],
+                       "runtimeDir": str(self.root / "runtime")}
+        self.planner = patch.object(environment.install, "plan_files", return_value=(
+            [(self.original, b"patched = True\n"), (self.frontend / "new.js", b"patched client\n")], 0))
+        self.planner.start()
+        self.addCleanup(self.planner.stop)
+        self.plan = environment.prepare(SOURCE, deploy.sha(SOURCE / "manifest.json"), self.state, self.target)
+
+    def test_prepare_and_offline_apply_rollback_preserve_custom_python_config_and_modes(self):
+        self.assertEqual(self.original.read_bytes(), b"original = True\n")
+        self.assertFalse((self.frontend / "new.js").exists())
+        self.assertEqual(self.config.read_text(), "c = get_config()\nc.ServerApp.port = 9999\n")
+        self.assertEqual(self.state.stat().st_mode & 0o777, 0o700)
+        with patch.object(environment, "require_stopped"):
+            applied = environment.transition(self.plan, self.state, "apply", False, True)
+            self.assertTrue(applied["changed"])
+            self.assertEqual(self.original.read_bytes(), b"patched = True\n")
+            policy = self.config.read_text()
+            self.assertIn("c.ServerApp.port = 9999", policy)
+            self.assertIn("c.YDocExtension.document_cleanup_delay = None", policy)
+            self.assertFalse(environment.transition(self.plan, self.state, "apply", False, True)["changed"])
+            environment.transition(self.plan, self.state, "rollback", False, True)
+        self.assertEqual(self.original.read_bytes(), b"original = True\n")
+        self.assertFalse((self.frontend / "new.js").exists())
+        self.assertFalse((self.package / "disclaude-repair.json").exists())
+        self.assertEqual(self.config.read_text(), "c = get_config()\nc.ServerApp.port = 9999\n")
+
+    def test_running_server_refuses_all_target_writes(self):
+        runtime = Path(self.target["runtimeDir"])
+        runtime.mkdir()
+        (runtime / "jpserver-owned.json").write_text(json.dumps({"pid": 4321}))
+        with patch.object(environment, "alive", return_value=True):
+            with self.assertRaisesRegex(environment.EnvironmentError, "still running"):
+                environment.transition(self.plan, self.state, "apply", False, True)
+        self.assertEqual(self.original.read_bytes(), b"original = True\n")
+
+    def test_foreign_edit_and_corrupt_backup_refuse_before_service_stop(self):
+        self.original.write_text("human edit\n")
+        with patch.object(environment, "systemctl") as lifecycle:
+            with self.assertRaisesRegex(environment.EnvironmentError, "outside this deployment"):
+                environment.transition(self.plan, self.state, "apply", False, True)
+            lifecycle.assert_not_called()
+        self.original.write_text("original = True\n")
+        (self.state / self.plan["files"][0]["original"]).write_text("corrupt backup\n")
+        with self.assertRaisesRegex(environment.EnvironmentError, "rollback file changed"):
+            environment.transition(self.plan, self.state, "rollback", False, True)
+
+    def test_partial_write_failure_can_be_explicitly_rolled_back(self):
+        # An interrupted update may have both before/after files. Keep backups
+        # and permit a deliberate rollback without silently replaying anything.
+        self.original.write_text("patched = True\n")
+        self.plan["phase"] = "apply_requested"
+        with patch.object(environment, "require_stopped"):
+            environment.transition(self.plan, self.state, "rollback", False, True)
+        self.assertEqual(self.original.read_bytes(), b"original = True\n")
+
+    def test_service_start_failure_is_not_reported_as_success_or_replayed(self):
+        self.plan["service"] = {"unit": "owned-jupyter.service", "system": False}
+        self.plan["serviceSha256"] = "owned"
+        with patch.object(environment, "service_signature", return_value="owned"), \
+             patch.object(environment, "require_stopped"), \
+             patch.object(environment, "systemctl", side_effect=["", "inactive", environment.EnvironmentError("start failed")]) as lifecycle:
+            with self.assertRaisesRegex(environment.EnvironmentError, "start failed"):
+                environment.transition(self.plan, self.state, "apply", True, False)
+        self.assertEqual([call.args[1] for call in lifecycle.call_args_list], ["stop", "show", "start"])
+        self.assertEqual(json.loads((self.state / "plan.json").read_text())["phase"], "apply_start_requested")
+
+    def test_plain_restart_without_lifecycle_is_refused(self):
+        with self.assertRaisesRegex(environment.EnvironmentError, "--service"):
+            environment.transition(self.plan, self.state, "apply", True, False)
+
+    def test_search_paths_and_explicit_selection_do_not_depend_on_prefix_or_home(self):
+        paths = types.ModuleType("jupyter_core.paths")
+        config_dir = self.root / "custom config dir"
+        config_dir.mkdir()
+        config = config_dir / "jupyter_config.json"
+        config.write_text('{"ServerApp":{"port":9999}}')
+        (self.frontend / "package.json").write_text('{}')
+        paths.jupyter_config_path = lambda: [str(self.root / "higher priority"), str(config_dir)]
+        data = self.root / "custom data/labextensions/@datalayer/jupyter-server-nbmodel"
+        data.mkdir(parents=True)
+        (data / "package.json").write_text('{}')
+        paths.jupyter_path = lambda *args: [str(data.parent.parent)]
+        paths.jupyter_runtime_dir = lambda: str(self.root / "runtime")
+        spec = types.SimpleNamespace(origin=str(self.package / "__init__.py"))
+        with patch.dict(sys.modules, {"jupyter_core": types.ModuleType("jupyter_core"), "jupyter_core.paths": paths}), \
+             patch.object(discovery.importlib.util, "find_spec", return_value=spec):
+            discovered = discovery.discover()
+            self.assertEqual(discovered["configFile"], str(config))
+            self.assertEqual(discovered["frontendDir"], str(data.resolve()))
+            self.assertEqual(discovery.discover(self.config, self.frontend)["configFile"], str(self.config))
+            extra = self.root / "other/labextensions/@datalayer/jupyter-server-nbmodel"
+            extra.mkdir(parents=True)
+            (extra / "package.json").write_text('{}')
+            paths.jupyter_path = lambda *args: [str(data.parent.parent), str(extra.parent.parent)]
+            with self.assertRaisesRegex(RuntimeError, "Exactly one"):
+                discovery.discover()
+            self.assertEqual(discovery.discover(frontend_dir=self.frontend)["frontendDir"], str(self.frontend.resolve()))
 
 
 if __name__ == "__main__":

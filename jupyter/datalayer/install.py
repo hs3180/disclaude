@@ -1,4 +1,4 @@
-"""Apply the pinned nbmodel repair inside a remote candidate image only."""
+"""Verify and stage the pinned nbmodel repair in the selected Python environment."""
 
 from __future__ import annotations
 
@@ -90,29 +90,29 @@ def replace_file(path: Path, data: bytes) -> None:
     temporary.replace(path)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--package-dir", type=Path)
-    parser.add_argument("--frontend-dir", type=Path)
-    parser.add_argument("--check", action="store_true")
-    args = parser.parse_args()
-    overlay = Path(__file__).resolve().parent
-    manifest = json.loads((overlay / "manifest.json").read_text())
-    if manifest.get("schema") != 1 or version("jupyter-server-nbmodel") != manifest["nbmodelVersion"]:
-        raise RuntimeError("Overlay requires its pinned nbmodel version")
+def targets(package_dir: Path | None = None, frontend_dir: Path | None = None) -> dict:
+    """Use the target interpreter and Jupyter's data search path, never a prefix literal."""
     spec = importlib.util.find_spec("jupyter_server_nbmodel")
-    package = args.package_dir or Path(spec.origin).parent
-    if args.frontend_dir:
-        frontend = args.frontend_dir
+    if package_dir is None and (spec is None or spec.origin is None):
+        raise RuntimeError("nbmodel is not installed in the selected Python environment")
+    package = package_dir or Path(spec.origin).parent
+    if frontend_dir:
+        frontend = frontend_dir
     else:
         from jupyter_core.paths import jupyter_path
         installed = [Path(root) / "@datalayer/jupyter-server-nbmodel" for root in jupyter_path("labextensions")]
         installed = [path for path in installed if (path / "package.json").is_file()]
         if len(installed) != 1:
-            raise RuntimeError("Exactly one pinned nbmodel Lab bundle is required")
+            raise RuntimeError("Exactly one pinned nbmodel Lab bundle is required; select --frontend-dir explicitly")
         frontend = installed[0]
-    roots = {"python": package, "frontend": frontend}
-    frontend_metadata = json.loads((frontend / "package.json").read_text())
+    return {"python": package.resolve(), "frontend": frontend.resolve()}
+
+
+def plan_files(overlay: Path, roots: dict) -> tuple[list, int]:
+    manifest = json.loads((overlay / "manifest.json").read_text())
+    if manifest.get("schema") != 1 or version("jupyter-server-nbmodel") != manifest["nbmodelVersion"]:
+        raise RuntimeError("Overlay requires its pinned nbmodel version")
+    frontend_metadata = json.loads((roots["frontend"] / "package.json").read_text())
     if frontend_metadata.get("version") != manifest["frontendVersion"]:
         raise RuntimeError("Overlay requires its pinned nbmodel Lab version")
     writes = []
@@ -151,15 +151,31 @@ def main() -> None:
             unchanged += 1
         else:
             writes.append((target, after))
+    return writes, unchanged
+
+
+def marker(overlay: Path) -> bytes:
+    manifest = json.loads((overlay / "manifest.json").read_text())
+    return (json.dumps({"manifestSha256": digest((overlay / "manifest.json").read_bytes()),
+                       "revision": manifest["revision"], "changes": manifest["changes"]}, indent=2) + "\n").encode()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--package-dir", type=Path)
+    parser.add_argument("--frontend-dir", type=Path)
+    parser.add_argument("--check", action="store_true")
+    args = parser.parse_args()
+    overlay = Path(__file__).resolve().parent
+    roots = targets(args.package_dir, args.frontend_dir)
+    writes, unchanged = plan_files(overlay, roots)
+    manifest = json.loads((overlay / "manifest.json").read_text())
     if not args.check:
         # All sources, contexts, fingerprints and syntax were checked first.
-        # Apply only in a new image/staging tree, never over a live deployment.
+        # The deployment adapter stops the service before applying to an environment.
         for target, after in writes:
             replace_file(target, after)
-        (package / "disclaude-repair.json").write_text(json.dumps({
-            "manifestSha256": digest((overlay / "manifest.json").read_bytes()),
-            "revision": manifest["revision"], "changes": manifest["changes"],
-        }, indent=2) + "\n")
+        replace_file(roots["python"] / "disclaude-repair.json", marker(overlay))
     print(json.dumps({"mode": "check" if args.check else "applied", "revision": manifest["revision"],
                       "pendingFiles": len(writes), "alreadyAppliedFiles": unchanged,
                       "manifestSha256": digest((overlay / "manifest.json").read_bytes())}))

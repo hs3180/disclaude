@@ -135,7 +135,17 @@ require('fs').appendFileSync(${JSON.stringify(receipt)}, 'attempt\\n');process.e
     );
     const result = spawnSync(
       process.execPath,
-      [cli, 'jupyter', 'patch', 'apply', '--ssh', 'fixture', '--restart'],
+      [
+        cli,
+        'jupyter',
+        'patch',
+        'apply',
+        '--ssh',
+        'fixture',
+        '--container',
+        'owned-fixture',
+        '--restart',
+      ],
       { encoding: 'utf8', cwd: path, env: { ...process.env, PATH: join(path, 'bin') } }
     );
     assert.notEqual(result.status, 0);
@@ -144,4 +154,21 @@ require('fs').appendFileSync(${JSON.stringify(receipt)}, 'attempt\\n');process.e
   } finally {
     rmSync(path, { recursive: true, force: true });
   }
+});
+
+test('deployment selects an explicit environment or container, with no machine-specific defaults', async () => {
+  const { remoteCommand } = await import('../../bin/jupyter-patch.js');
+  const plain = remoteCommand(
+    { action: 'prepare', python: '/custom/venv with spaces/bin/python' },
+    '0'.repeat(64)
+  );
+  assert(plain.startsWith("'/custom/venv with spaces/bin/python' -c "));
+  assert(!plain.includes('--container'));
+  assert(!plain.includes('jupyter-gpu-1'));
+  const compose = remoteCommand(
+    { action: 'prepare', container: 'chosen', python: '/custom/python' },
+    '0'.repeat(64)
+  );
+  assert(compose.startsWith("'python3' -c "));
+  assert(compose.includes('["prepare","--container","chosen","--python","/custom/python"]'));
 });

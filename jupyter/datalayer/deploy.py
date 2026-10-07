@@ -1,4 +1,4 @@
-"""Prepare, apply and roll back the pinned overlay on an existing Docker Compose Jupyter."""
+"""Deploy to a selected Python environment or an existing Docker Compose Jupyter."""
 
 from __future__ import annotations
 
@@ -14,9 +14,6 @@ import sys
 import tempfile
 import time
 import zipfile
-
-
-CONFIG_TARGET = "/opt/conda/etc/jupyter/jupyter_config.json"
 
 
 class DeploymentError(RuntimeError):
@@ -87,20 +84,29 @@ def compose(plan: dict, override: str | None = None) -> list[str]:
     return command
 
 
+def config_target(plan: dict) -> str:
+    if "configTarget" in plan:
+        return plan["configTarget"]
+    # Schema-1 preparations already recorded the actual mount target in their
+    # override. Preserve their rollback without any old directory literal.
+    value = json.loads(Path(plan["applyOverride"]).read_text())
+    return value["services"][plan["service"]]["volumes"][0]["target"]
+
+
 def check_compose_merge(plan: dict, override: str) -> None:
     original = json.loads(docker(*compose(plan), "config", "--format", "json"))
     candidate = json.loads(docker(*compose(plan, override), "config", "--format", "json"))
     for value in (original, candidate):
         service = value["services"][plan["service"]]
         service.pop("image", None)
-        service["volumes"] = [v for v in service.get("volumes", []) if v["target"] != CONFIG_TARGET]
+        service["volumes"] = [v for v in service.get("volumes", []) if v["target"] != config_target(plan)]
     if original != candidate:
         raise DeploymentError("Compose override changes fields other than the target image/config mount")
 
 
 def override(plan: dict, image: str, config: str) -> dict:
     return {"services": {plan["service"]: {"image": image, "volumes": [
-        {"type": "bind", "source": config, "target": CONFIG_TARGET, "read_only": True}
+        {"type": "bind", "source": config, "target": config_target(plan), "read_only": True}
     ]}}}
 
 
@@ -125,13 +131,13 @@ def check_identity(plan: dict, container: dict) -> None:
         raise DeploymentError("Container no longer belongs to the original Compose service")
     if container["image"] not in (plan["originalImage"], plan["candidateImage"]):
         raise DeploymentError("Container image changed outside this deployment; transition refused")
-    if "originalMounts" in plan and stable_mounts(container) != plan["originalMounts"]:
+    if "originalMounts" in plan and stable_mounts(container, config_target(plan)) != plan["originalMounts"]:
         raise DeploymentError("Container data mounts changed outside this deployment; transition refused")
 
 
-def stable_mounts(container: dict) -> list:
+def stable_mounts(container: dict, target: str) -> list:
     return sorted([[m["Type"], m["Source"], m["Destination"], m["RW"]]
-                   for m in container["mounts"] if m["Destination"] != CONFIG_TARGET])
+                   for m in container["mounts"] if m["Destination"] != target])
 
 
 def check_file_ids(config: dict, container: dict) -> None:
@@ -144,7 +150,7 @@ def check_file_ids(config: dict, container: dict) -> None:
     raise DeploymentError("Native file-ID database needs an explicit db_path inside a persistent directory mount before image replacement")
 
 
-def prepare(root: Path, manifest_sha: str, name: str, state: Path) -> dict:
+def prepare(root: Path, manifest_sha: str, name: str, state: Path, python="python3", config_file=None, frontend_dir=None) -> dict:
     state.mkdir(parents=True, exist_ok=True)
     if state.is_symlink():
         raise DeploymentError("Refuse a symlinked state directory")
@@ -157,6 +163,10 @@ def prepare(root: Path, manifest_sha: str, name: str, state: Path) -> dict:
             raise DeploymentError("State belongs to another patch/container")
         check_inputs(plan)
         check_identity(plan, container)
+        if config_file and config_target(plan) != str(config_file):
+            raise DeploymentError("Saved preparation uses another configuration path")
+        if "target" in plan and (frontend_dir and plan["target"]["frontendDir"] != str(frontend_dir)):
+            raise DeploymentError("Saved preparation uses another Lab extension path")
         return plan
     labels = container["labels"] or {}
     directory = labels.get("com.docker.compose.project.working_dir")
@@ -166,27 +176,44 @@ def prepare(root: Path, manifest_sha: str, name: str, state: Path) -> dict:
     files = [str(Path(filename).resolve()) for filename in files]
     if any(not Path(filename).is_file() or Path(filename).is_symlink() for filename in files):
         raise DeploymentError("Compose source files must be readable regular files")
-    original_config = state / "original-config.json"
-    docker("cp", f"{name}:{CONFIG_TARGET}", str(original_config))
-    original_settings = json.loads(original_config.read_text())
-    if not isinstance(original_settings, dict):
-        raise DeploymentError("Expected a shared JSON Jupyter configuration")
+    arguments = []
+    if config_file:
+        arguments += ["--config-file", str(config_file)]
+    if frontend_dir:
+        arguments += ["--frontend-dir", str(frontend_dir)]
+    target = json.loads(docker("exec", name, python, "-c", (root / "discovery.py").read_text(), *arguments))
+    config_path = target["configFile"]
+    original_config = state / ("original-config" + Path(config_path).suffix)
+    # Reading via the runtime user honors its permissions and supports a new
+    # standard config file. Nothing is written into the live container.
+    encoded = docker("exec", name, target["python"], "-c",
+                     "import base64,json,pathlib,sys; p=pathlib.Path(sys.argv[1]); "
+                     "print(json.dumps(base64.b64encode(p.read_bytes()).decode() if p.exists() else None))", config_path)
+    import base64
+    original_bytes = json.loads(encoded)
+    original_config.write_bytes(base64.b64decode(original_bytes) if original_bytes is not None else b"{}\n" if original_config.suffix == ".json" else b"")
+    # Load effective traits privately, rather than assuming file IDs are in JSON.
+    # Custom startup --config paths must be explicitly selected by the operator.
+    original_settings = json.loads(docker("exec", name, target["python"], "-c",
+        "import json,sys; from jupyter_server.serverapp import ServerApp; "
+        "app=ServerApp(); app.load_config_file(sys.argv[1]); print(json.dumps(dict(app.config)))", config_path))
     check_file_ids(original_settings, container)
     original_config.chmod(0o644)
-    mounted = next((m for m in container["mounts"] if m["Destination"] == CONFIG_TARGET), None)
+    mounted = next((m for m in container["mounts"] if m["Destination"] == config_path), None)
     if mounted and (mounted["Type"] != "bind" or not Path(mounted["Source"]).is_file() or Path(mounted["Source"]).is_symlink()):
         raise DeploymentError("Expected a regular bind-mounted shared config")
     rollback_config = mounted["Source"] if mounted else str(original_config)
-    candidate_config = state / "candidate-config.json"
+    candidate_config = state / ("candidate-config" + Path(config_path).suffix)
     shutil.copyfile(original_config, candidate_config)
     subprocess.run([sys.executable, str(root / "configure.py"), "--config-file", str(candidate_config)],
                    check=True, capture_output=True)
     candidate_config.chmod(0o644)  # Private parent; readable by the existing container UID.
-    plan = {"schema": 1, "container": name, "manifestSha256": manifest_sha,
+    plan = {"schema": 2, "deployment": "compose", "target": target, "configTarget": config_path,
+            "container": name, "manifestSha256": manifest_sha,
             "directory": directory, "composeFiles": files,
             "project": labels["com.docker.compose.project"],
             "service": labels["com.docker.compose.service"], "originalImage": container["image"],
-            "originalMounts": stable_mounts(container),
+            "originalMounts": stable_mounts(container, config_path),
             "candidateTag": f"disclaude-datalayer-repair:{manifest_sha[:12]}-{container['image'].split(':')[-1][:12]}",
             "inputs": {filename: sha(Path(filename)) for filename in files}, "outputs": {},
             "phase": "prepared"}
@@ -205,10 +232,13 @@ def prepare(root: Path, manifest_sha: str, name: str, state: Path) -> dict:
     if json.loads(docker("image", "inspect", "--format", "{{json .Id}}", base_tag)) != container["image"]:
         raise DeploymentError("Local base-image tag cannot be verified")
     docker("build", "--build-arg", f"JUPYTER_BASE_IMAGE={base_tag}", "--build-arg",
-           f"JUPYTER_RUNTIME_USER={container['user'] or 'root'}", "-t", plan["candidateTag"], str(root))
+           f"JUPYTER_RUNTIME_USER={container['user'] or 'root'}", "--build-arg", f"JUPYTER_PYTHON={target['python']}",
+           "--build-arg", f"JUPYTER_FRONTEND_DIR={target['frontendDir']}", "--build-arg", f"JUPYTER_PACKAGE_DIR={target['packageDir']}",
+           "--build-arg", f"JUPYTER_PACKAGE_PARENT={Path(target['packageDir']).parent}", "-t", plan["candidateTag"], str(root))
     plan["candidateImage"] = json.loads(docker("image", "inspect", "--format", "{{json .Id}}", plan["candidateTag"]))
-    verification = json.loads(docker("run", "--rm", "--network", "none", "--entrypoint", "python",
-                                    plan["candidateImage"], "/opt/disclaude/datalayer-repair/install.py", "--check"))
+    verification = json.loads(docker("run", "--rm", "--network", "none", "--entrypoint", target["python"],
+                                    plan["candidateImage"], "/opt/disclaude/datalayer-repair/install.py", "--check",
+                                    "--package-dir", target["packageDir"], "--frontend-dir", target["frontendDir"]))
     if verification["pendingFiles"] != 0 or verification["alreadyAppliedFiles"] != 8 or verification["manifestSha256"] != manifest_sha:
         raise DeploymentError("Candidate overlay verification failed")
     for action, image, config in [("apply", plan["candidateImage"], str(candidate_config)),
@@ -240,7 +270,7 @@ def transition(plan: dict, state: Path, action: str, restart: bool) -> dict:
     target = plan["candidateImage"] if action == "apply" else plan["originalImage"]
     filename = plan[action + "Override"]
     expected_config = json.loads(Path(filename).read_text())["services"][plan["service"]]["volumes"][0]["source"]
-    if current["image"] == target and any(m["Destination"] == CONFIG_TARGET and m["Source"] == expected_config for m in current["mounts"]):
+    if current["image"] == target and any(m["Destination"] == config_target(plan) and m["Source"] == expected_config for m in current["mounts"]):
         return {"action": action, "changed": False, "state": str(state), "image": target}
     check_compose_merge(plan, filename)
     plan["phase"] = action + "_requested"
@@ -255,7 +285,7 @@ def transition(plan: dict, state: Path, action: str, restart: bool) -> dict:
         time.sleep(1)
     else:
         raise DeploymentError("Service health unconfirmed; inspect status or explicitly roll back, no automatic retry")
-    if not any(m["Destination"] == CONFIG_TARGET and m["Source"] == expected_config for m in actual["mounts"]):
+    if not any(m["Destination"] == config_target(plan) and m["Source"] == expected_config for m in actual["mounts"]):
         raise DeploymentError("Applied config mount cannot be verified")
     plan["phase"] = "applied" if action == "apply" else "rolled_back"
     write_json(state / "plan.json", plan)
@@ -266,37 +296,80 @@ def transition(plan: dict, state: Path, action: str, restart: bool) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["info", "prepare", "apply", "rollback", "status"])
-    parser.add_argument("--container", default="jupyter-gpu-1")
+    parser.add_argument("--container", help="Select Compose deployment; no default container")
+    parser.add_argument("--python", default="python3", help="Interpreter in the selected container")
+    parser.add_argument("--config-file", type=Path)
+    parser.add_argument("--frontend-dir", type=Path)
+    parser.add_argument("--package-dir", type=Path, help="Owned staging override for component tests")
+    parser.add_argument("--service", help="Existing systemd unit for plain-environment stop/start")
+    parser.add_argument("--system", action="store_true", help="System systemd unit rather than user unit")
     parser.add_argument("--state-dir", type=Path)
-    parser.add_argument("--restart", action="store_true", help="Recreate only this Jupyter service; existing kernels end")
+    parser.add_argument("--restart", action="store_true")
+    parser.add_argument("--stopped", action="store_true", help="Externally stopped plain-environment server")
     args = parser.parse_args()
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", args.container):
+    if args.container and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", args.container):
         parser.error("Expected a Docker container name or ID")
-    requested_state = args.state_dir or Path.home() / ".local/state/disclaude-datalayer-patch" / args.container
-    if requested_state.is_symlink():
-        parser.error("Refuse a symlinked state directory")
-    state = requested_state.resolve()
+    if args.service and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.@-]*\.service", args.service):
+        parser.error("Expected a systemd .service unit name")
+    if (args.container and (args.service or args.system or args.stopped or args.package_dir)) or (args.system and not args.service):
+        parser.error("Service/stopped options target a plain environment; --system requires --service")
+    if args.restart and args.stopped:
+        parser.error("Choose --restart or --stopped")
+    if args.action in ("apply", "rollback"):
+        if args.container and not args.restart:
+            parser.error("Compose apply/rollback requires --restart")
+        if not args.container and not ((args.service and args.restart) or (not args.service and args.stopped)):
+            parser.error("Use --service UNIT --restart, or stop Jupyter externally and use --stopped")
+    elif args.restart or args.stopped:
+        parser.error("--restart/--stopped is only for apply/rollback")
     try:
         with payload() as (root, digest):
             if args.action == "info":
                 print(json.dumps({"manifestSha256": digest, "revision": json.loads((root / "manifest.json").read_text())["revision"]}))
                 return
+            sys.path.insert(0, str(root))
+            import environment
+            if args.container:
+                target = None
+                identity = args.container
+            else:
+                target = environment.discover(args.config_file, args.frontend_dir, args.package_dir)
+                identity = "environment-" + hashlib.sha256(json.dumps(target, sort_keys=True).encode()).hexdigest()[:16]
+            requested_state = args.state_dir or Path.home() / ".local/state/disclaude-datalayer-patch" / identity
+            if not requested_state.is_absolute() or requested_state.is_symlink():
+                raise DeploymentError("State directory must be an absolute, non-symlink path")
+            state = requested_state.resolve()
+            service = {"unit": args.service, "system": args.system} if args.service else None
             if args.action in ("prepare", "apply"):
-                plan = prepare(root, digest, args.container, state)
+                if args.container:
+                    plan = prepare(root, digest, args.container, state, args.python, args.config_file, args.frontend_dir)
+                else:
+                    plan = environment.prepare(root, digest, state, target, service)
             else:
                 plan = json.loads((state / "plan.json").read_text())
-                if plan["manifestSha256"] != digest or plan["container"] != args.container:
-                    raise DeploymentError("State belongs to another patch/container")
+                if plan["manifestSha256"] != digest:
+                    raise DeploymentError("State belongs to another patch")
+                if args.container:
+                    if plan.get("container") != args.container or plan.get("deployment") == "environment":
+                        raise DeploymentError("State belongs to another container/deployment")
+                elif plan.get("deployment") != "environment" or plan["target"] != target or plan.get("service") != service:
+                    raise DeploymentError("State belongs to another environment/service")
             if args.action in ("apply", "rollback"):
-                result = transition(plan, state, args.action, args.restart)
+                result = transition(plan, state, args.action, args.restart) if args.container else environment.transition(plan, state, args.action, args.restart, args.stopped)
             elif args.action == "status":
-                current = inspect_container(args.container)
-                result = {"phase": plan["phase"], "image": current["image"], "state": str(state)}
+                if args.container:
+                    current = inspect_container(args.container)
+                    check_inputs(plan)
+                    check_identity(plan, current)
+                    result = {"deployment": "compose", "phase": plan["phase"], "image": current["image"], "state": str(state), "configFile": config_target(plan)}
+                else:
+                    result = environment.status(plan, state)
             else:
-                result = {"action": "prepared", "state": str(state), "candidateImage": plan["candidateImage"],
-                          "manifestSha256": digest, "service": plan["service"]}
+                result = {"action": "prepared", "deployment": "compose" if args.container else "environment",
+                          "state": str(state), "manifestSha256": digest,
+                          **({"candidateImage": plan["candidateImage"], "service": plan["service"], "configFile": config_target(plan)} if args.container else {"target": target, "service": service})}
             print(json.dumps(result))
-    except (DeploymentError, OSError, ValueError, KeyError, subprocess.CalledProcessError) as error:
+    except (RuntimeError, OSError, ValueError, KeyError, ImportError, subprocess.CalledProcessError) as error:
         print(f"Patch deployment refused: {error}", file=sys.stderr)
         raise SystemExit(1)
 

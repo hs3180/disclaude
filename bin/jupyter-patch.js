@@ -56,6 +56,8 @@ export function buildPatch(source = SOURCE) {
     'Dockerfile',
     'install.py',
     'configure.py',
+    'discovery.py',
+    'environment.py',
     'manifest.json',
     'runtime.py',
     'server-config.json',
@@ -127,29 +129,38 @@ Actions:
   prepare    Generate, transfer and prepare remotely; keep Jupyter running
   apply      Generate and deploy remotely (--restart required)
   rollback   Restore the saved original deployment (--restart required)
-  status     Read the saved remote phase and current image
+  status     Read the saved phase and observed deployment
 
 Options:
-  --ssh HOST          Remote Docker host, e.g. mathlab@192.168.5.183
-  --container NAME    Existing Compose container (default: jupyter-gpu-1)
+  --ssh HOST          Remote host or SSH config alias
+  --python PATH       Target Jupyter Python (default: python3); venv/conda supported
+  --container NAME    Select an existing Compose container instead of plain Python
+  --config-file PATH  Target .py/.json config; default uses Jupyter search paths
+  --frontend-dir PATH Select a Lab bundle when discovery is ambiguous
+  --service UNIT      Existing systemd .service for plain-environment stop/start
+  --system            Use system systemd rather than user systemd
   --state-dir PATH    Absolute remote state directory; retain it for rollback
-  --restart           Recreate this Jupyter service; existing kernels end
+  --restart           Restart the selected Compose/systemd service
+  --stopped           Apply to an externally stopped plain Python deployment
   --output FILE       Local artifact path, only for generate
 
-Generation uses Node only. Deployment uses remote Python 3.9+ and Docker Compose v2.
+Generation uses Node only. Deployment uses the selected remote Python 3.9+.
+Docker Compose v2 is needed only with --container; there is no default container.
 Save notebooks and close kernels before --restart; this repair cannot activate hot.`);
 }
 
 function parse(args) {
   if (args[0] !== 'patch') throw new Error("Use 'disclaude jupyter patch --help'");
-  const options = { action: args[1], container: 'jupyter-gpu-1', restart: false };
+  const options = { action: args[1] };
   if (!['info', 'generate', 'prepare', 'apply', 'rollback', 'status'].includes(options.action)) {
     throw new Error('Expected info, generate, prepare, apply, rollback or status');
   }
   for (let i = 2; i < args.length; i++) {
     const key = args[i];
-    if (key === '--restart') {
-      options.restart = true;
+    if (['--restart', '--stopped', '--system'].includes(key)) {
+      const property = key.slice(2);
+      if (Object.hasOwn(options, property)) throw new Error('Repeated option: ' + key);
+      options[property] = true;
       continue;
     }
     if (key === '--hot')
@@ -157,7 +168,16 @@ function parse(args) {
         'Hot activation is unavailable for this Jupyter repair; no service operation performed'
       );
     if (
-      !['--ssh', '--container', '--state-dir', '--output'].includes(key) ||
+      ![
+        '--ssh',
+        '--container',
+        '--python',
+        '--config-file',
+        '--frontend-dir',
+        '--service',
+        '--state-dir',
+        '--output',
+      ].includes(key) ||
       !args[i + 1] ||
       args[i + 1].startsWith('--')
     ) {
@@ -166,35 +186,72 @@ function parse(args) {
     const property = {
       '--ssh': 'ssh',
       '--container': 'container',
+      '--python': 'python',
+      '--config-file': 'configFile',
+      '--frontend-dir': 'frontendDir',
+      '--service': 'service',
       '--state-dir': 'stateDir',
       '--output': 'output',
     }[key];
-    if (Object.hasOwn(options, property) && property !== 'container')
-      throw new Error('Repeated option: ' + key);
+    if (Object.hasOwn(options, property)) throw new Error('Repeated option: ' + key);
     options[property] = args[++i];
   }
-  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(options.container))
+  if (options.container && !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(options.container))
     throw new Error('Invalid container name or ID');
-  if (options.stateDir && !options.stateDir.startsWith('/'))
-    throw new Error('--state-dir must be an absolute remote path');
+  if (options.python && (/[\0\r\n]/.test(options.python) || options.python.startsWith('-')))
+    throw new Error('Invalid target Python executable');
+  for (const property of ['stateDir', 'configFile', 'frontendDir']) {
+    if (
+      options[property] &&
+      (!options[property].startsWith('/') || /[\0\r\n]/.test(options[property]))
+    )
+      throw new Error('Target paths must be absolute');
+  }
+  if (options.service && !/^[A-Za-z0-9][A-Za-z0-9_.@-]*\.service$/.test(options.service))
+    throw new Error('Expected a systemd .service unit name');
+  if (
+    (options.container && (options.service || options.system || options.stopped)) ||
+    (options.system && !options.service)
+  )
+    throw new Error('Service/stopped options target plain Python; --system requires --service');
+  if (options.restart && options.stopped) throw new Error('Choose --restart or --stopped');
+  const deploymentOptions = [
+    'ssh',
+    'container',
+    'python',
+    'configFile',
+    'frontendDir',
+    'service',
+    'stateDir',
+    'restart',
+    'stopped',
+    'system',
+  ];
   if (options.action === 'generate') {
-    if (!options.output || options.ssh || options.restart || options.stateDir)
+    if (!options.output || deploymentOptions.some((key) => Object.hasOwn(options, key)))
       throw new Error('generate requires --output FILE and no deployment options');
   } else if (options.output) throw new Error('--output is only for generate');
   if (options.action === 'info') {
-    if (options.ssh || options.restart || options.stateDir)
+    if (deploymentOptions.some((key) => Object.hasOwn(options, key)))
       throw new Error('info does not use deployment options');
   } else if (options.action !== 'generate') {
     if (!options.ssh || !/^(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9][A-Za-z0-9._-]*$/.test(options.ssh))
       throw new Error(
         '--ssh requires a host or user@host (use SSH config aliases for custom ports/IPv6)'
       );
-    if (['apply', 'rollback'].includes(options.action) && !options.restart)
+    if (
+      ['apply', 'rollback'].includes(options.action) &&
+      !(
+        (options.container && options.restart) ||
+        (!options.container &&
+          ((options.service && options.restart) || (!options.service && options.stopped)))
+      )
+    )
       throw new Error(
-        'Save/close kernels, then add --restart; no SSH or service operation performed'
+        'Use --container/--service with --restart, or stop Jupyter externally and use --stopped; no SSH or service operation performed'
       );
-    if (!['apply', 'rollback'].includes(options.action) && options.restart)
-      throw new Error('--restart is only for apply/rollback');
+    if (!['apply', 'rollback'].includes(options.action) && (options.restart || options.stopped))
+      throw new Error('--restart/--stopped is only for apply/rollback');
   }
   return options;
 }
@@ -202,9 +259,18 @@ function parse(args) {
 const quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
 
 export function remoteCommand(options, digest) {
-  const forwarded = [options.action, '--container', options.container];
-  if (options.stateDir) forwarded.push('--state-dir', options.stateDir);
-  if (options.restart) forwarded.push('--restart');
+  const forwarded = [options.action];
+  for (const [property, key] of [
+    ['container', '--container'],
+    ['configFile', '--config-file'],
+    ['frontendDir', '--frontend-dir'],
+    ['service', '--service'],
+    ['stateDir', '--state-dir'],
+  ]) {
+    if (options[property]) forwarded.push(key, options[property]);
+  }
+  if (options.container && options.python) forwarded.push('--python', options.python);
+  for (const key of ['restart', 'stopped', 'system']) if (options[key]) forwarded.push('--' + key);
   // Artifact bytes travel on stdin; deployment configuration and credentials
   // never enter them. Do not retry an SSH failure after an unknown switch result.
   const code = `import hashlib, os, pathlib, sys, tempfile
@@ -229,7 +295,7 @@ else:
     temporary.replace(artifact)
 os.execv(sys.executable, [sys.executable, str(artifact)] + ${JSON.stringify(forwarded)})
 `;
-  return 'python3 -c ' + quote(code);
+  return quote(options.container ? 'python3' : options.python || 'python3') + ' -c ' + quote(code);
 }
 
 async function deployRemote(options, patch) {

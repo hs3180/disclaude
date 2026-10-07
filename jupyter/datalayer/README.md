@@ -21,89 +21,113 @@ installation above; newer upstream releases need their own verification.
 
 ## CLI deployment
 
-The user entry point is `disclaude jupyter patch`, shipped with disclaude.
-It generates an **upstream Jupyter/nbmodel repair**, transfers it via SSH and
-manages the existing remote Docker Compose deployment. It is not a separate
-disclaude patch distribution. Generation uses Node only; no host Python, pip,
-npm installation or frontend build is required. Remote deployment requires
-Python 3.9+ stdlib, Docker Compose v2 and existing SSH access to the Docker host.
-Notebook Python/scientific packages stay in the remote Jupyter image.
+`disclaude jupyter patch` generates an upstream Jupyter/nbmodel repair; it is
+not a separate disclaude patch distribution. Generation uses Node only. Remote
+execution uses Python 3.9+ stdlib in the existing Jupyter deployment; scientific
+packages are not installed or replaced.
 
-Inspect the fixed revision and activation requirements, or prepare without
-interrupting the running service:
+Select a remote Python environment (system Python, venv or conda) explicitly when
+it differs from `python3` on the remote PATH:
 
 ```sh
 disclaude jupyter patch info
-disclaude jupyter patch prepare --ssh mathlab@192.168.5.183
+disclaude jupyter patch prepare --ssh your-jupyter-host --python /your/env/bin/python
 ```
 
-After saving notebooks and closing kernels, apply with one command:
+The interpreter determines the Python package. Jupyter's own config/data search
+paths determine the Lab extension and standard shared config, respecting
+`JUPYTER_CONFIG_PATH`, `JUPYTER_CONFIG_DIR`, `JUPYTER_PATH` and the environment
+prefix. There is no assumed container name, environment prefix, home or deployment
+directory. `--config-file /your/config.py` or `.json` selects an arbitrary startup
+config, preserving existing contents/settings. Custom startup `--config` files
+must be selected explicitly. `--frontend-dir` resolves multiple Lab installations;
+ambiguous discovery is refused. Run as the deployment owner with its runtime
+environment variables, especially for user installations.
+
+For an existing systemd service, the CLI stops it, verifies the server is stopped,
+installs the previously checked files, starts it and observes service state:
 
 ```sh
-disclaude jupyter patch apply --ssh mathlab@192.168.5.183 --restart
+disclaude jupyter patch apply --ssh your-jupyter-host --python /your/env/bin/python \
+  --service your-jupyter.service --restart
+disclaude jupyter patch rollback --ssh your-jupyter-host --python /your/env/bin/python \
+  --service your-jupyter.service --restart
 ```
 
-View the deployment or restore its recorded original image/config:
+User systemd is the default; `--system` selects a system unit and requires its
+normal deployment permissions. The service must launch the selected environment.
+For manually started Jupyter, Supervisor, launchd or another manager, stop the
+server externally and use `apply --stopped` / `rollback --stopped`, then restart
+with the existing manager. `--stopped` is an explicit operator assertion plus
+checks of Jupyter runtime PID records and, on Linux, matching processes. These
+checks supplement the operator's control of custom launch/runtime arrangements.
+No kernel code is executed. There is no portable manager-independent restart API.
+
+Plain-environment preparation saves exact original and candidate bytes in a
+private state directory, leaving installed files/config untouched. Apply checks
+all originals/backups before any writes and atomically replaces individual files
+only after stopping. Rollback restores exact bytes/modes/owners and removes added
+files; it does not restore an older Notebook or file-ID database. Interrupted
+updates retain the phase and rollback inventory; an explicit follow-up can handle
+known before/after files. Foreign edits and service-definition/environment drift
+are refused. Installation is not an atomic transaction across all files: keep the
+server stopped after a failed operation and inspect `status` before proceeding.
+
+### Docker Compose
+
+Container deployment is opt-in and discovers paths inside the selected running
+container using its runtime identity and interpreter:
 
 ```sh
-disclaude jupyter patch status --ssh mathlab@192.168.5.183
-disclaude jupyter patch rollback --ssh mathlab@192.168.5.183 --restart
+disclaude jupyter patch prepare --ssh your-docker-host --container your-jupyter
+disclaude jupyter patch apply --ssh your-docker-host --container your-jupyter --restart
+disclaude jupyter patch status --ssh your-docker-host --container your-jupyter
+disclaude jupyter patch rollback --ssh your-docker-host --container your-jupyter --restart
 ```
 
-The container defaults to `jupyter-gpu-1`; use `--container NAME` for another
-existing Compose service container. SSH aliases support custom ports/IPv6.
-The CLI generates the artifact in memory, streams it over SSH, verifies its
-SHA-256 and saves it under the remote user's
-`~/.local/share/disclaude/jupyter-patches/<sha256>/nbmodel-repair.pyz`.
-No manual artifact download, upload or configuration merge is needed. To export
-an artifact for inspection or another deployment channel:
+`--python`, `--config-file` and `--frontend-dir` also select container paths.
+Docker Compose v2 is needed only for this adapter. It builds on the immutable
+original image, retains its runtime user and verifies the eight repair files.
+The candidate config is merged privately and mounted at the discovered/selected
+path. Python configs and JSON configs are both supported. Compose overrides may
+change only the chosen image/config mount; Notebook/file-ID mounts, other
+settings/services and original source files are preserved. Native file IDs need
+an explicit `BaseFileIdManager.db_path` in a persistent writable directory mount
+before image replacement; see [Native file identity](#native-file-identity).
+
+The existing prepared schema-1 state remains reusable: its config target is read
+from its recorded override, without assuming the old deployment directory.
+Repeated apply/rollback does not recreate a matching container. Changed inputs,
+resolved Compose environment, image, data mounts or multiple replicas are refused.
+
+### Artifacts and activation
+
+The CLI streams its generated artifact via SSH and verifies its SHA-256. The
+remote cache is `~/.local/share/disclaude/jupyter-patches/<sha256>/`.
+State defaults to `~/.local/state/disclaude-datalayer-patch/<target>/`; environment
+targets use a discovered identity hash, Compose targets use the selected container.
+`--state-dir` selects an absolute private directory. Retain state for rollback
+and pass the same environment/service/path options to subsequent commands.
+SSH aliases support custom ports/IPv6. Unknown transfer/switch outcomes are not
+retried automatically.
+
+To inspect/export the same Python-stdlib zip application:
 
 ```sh
 disclaude jupyter patch generate --output nbmodel-repair.pyz
 ```
 
-This creates a Python-stdlib zip application and a `.sha256` sidecar, refusing
-existing output files. Python is needed only when executing it on the remote
-Docker host. Its verified index contains the whitelisted fixed overlay resources
-and upstream license, with no deployment configuration or credentials.
-Generation is available through the installed CLI, including prebuilt Git/npm
-installations, outside the repository. Maintainers can exercise it in a checkout
-with `node bin/disclaude.js jupyter patch ...`.
+It includes the whitelisted repair resources/license and checksum sidecar,
+without deployment configuration or credentials, and refuses existing output
+files. It runs outside a checkout under the target interpreter. Generation works
+through installed/prebuilt Git/npm CLI distributions; maintainers can use
+`node bin/disclaude.js jupyter patch ...` in a checkout.
 
-The remote engine discovers the immutable original image, runtime user, Compose
-project/service and shared JSON config. It builds on that image, checks all eight
-overlay files, merges the policy into a private candidate config, and generates
-Compose overrides. It checks that only the selected service image/config mount
-changes; Notebook/file-ID mounts, other settings and other services stay in the
-original Compose. Original Compose/config files are not edited; optional report
-dependencies are not installed.
-
-State defaults to the remote user's
-`~/.local/state/disclaude-datalayer-patch/<container>/` (0700), containing private
-configuration snapshots, original/candidate image IDs, checksums and the
-apply/rollback overrides. `--state-dir` selects an absolute remote directory;
-retain it for rollback. Existing state from the earlier prepared candidate is
-reusable with the same repair manifest. Repeated apply/rollback does not recreate
-an already matching container. Original/prepared input drift, changed resolved
-Compose environment, another image, changed data mounts and multiple service
-containers are refused. SSH/switch failures are not automatically replayed;
-inspect `status` before further action.
-
-`--restart` recreates the Jupyter service and ends its kernels. Without it,
-apply/rollback is refused before SSH. `prepare` does not switch the service.
-The operator checks kernel idleness; the CLI does not check live user tasks.
-Use this CLI for subsequent switches: plain `docker compose up` without the saved
-override uses the original deployment. `status` reports the recorded phase and
-observed image, not product acceptance. After apply, refresh Lab and verify the
-running execution policy and required configured/product cases.
-
-The current adapter targets a shared JSON config at
-`/opt/conda/etc/jupyter/jupyter_config.json` and the pinned nbmodel/Lab versions.
-Native file IDs must already use an explicit `BaseFileIdManager.db_path` inside
-a writable persistent directory mount; otherwise preparation refuses image
-replacement. The existing deployment already has this mount. Other deployment
-systems, config paths and unverified upstream versions need another adapter.
-See [Native file identity](#native-file-identity).
+Save notebooks and close kernels before a restart. `prepare` does not stop a
+service. `status` reports files/images/service observations, not product acceptance.
+Refresh Lab after activation and verify the running execution policy and required
+configured/product cases. The pinned nbmodel/Lab versions still apply; directory
+portability does not establish compatibility with unverified versions.
 
 Maintainer checks:
 
@@ -120,12 +144,12 @@ inspected Jupyter Server 2.21.1 / nbmodel 0.2.9 installation. `patch info` repor
 `kernelMemoryPreserved=false`; a requested `--hot` is refused before SSH.
 The conclusion is specific to these repairs, rather than every Jupyter extension.
 
-| Layer | Existing mechanism | Consequence for this repair |
-| --- | --- | --- |
-| Lab JavaScript | Prebuilt/federated extensions avoid a frontend rebuild; a new page loads resources published by the Server | Refresh Lab after deployment; frontend installation alone does not establish server hot activation |
-| Kernel user modules | IPython `%autoreload` reloads imported user modules inside the kernel | Does not reload the separate Jupyter Server process |
-| Server Python | ExtensionManager can invoke load/start hooks; it retains imported extension modules | Does not replace existing nbmodel instances, queues, coroutine frames or registered handlers |
-| Server development autoreload | `ServerApp.autoreload` enables Tornado autoreload | Restarts the server process and aborts in-flight requests; it is not state-preserving hot patching |
+| Layer                         | Existing mechanism                                                                                         | Consequence for this repair                                                                        |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Lab JavaScript                | Prebuilt/federated extensions avoid a frontend rebuild; a new page loads resources published by the Server | Refresh Lab after deployment; frontend installation alone does not establish server hot activation |
+| Kernel user modules           | IPython `%autoreload` reloads imported user modules inside the kernel                                      | Does not reload the separate Jupyter Server process                                                |
+| Server Python                 | ExtensionManager can invoke load/start hooks; it retains imported extension modules                        | Does not replace existing nbmodel instances, queues, coroutine frames or registered handlers       |
+| Server development autoreload | `ServerApp.autoreload` enables Tornado autoreload                                                          | Restarts the server process and aborts in-flight requests; it is not state-preserving hot patching |
 
 The [Jupyter Server extension lifecycle](https://jupyter-server.readthedocs.io/en/stable/developers/extensions.html)
 and [ExtensionManager API](https://jupyter-server.readthedocs.io/en/stable/api/jupyter_server.extension.html#jupyter_server.extension.manager.ExtensionManager)
@@ -147,8 +171,9 @@ A future nbmodel hot-update hook could quiesce submissions, finish/drain existin
 workers, migrate retained results/controls, replace handlers and resume against
 the same kernel managers. That requires an upstream/in-process mechanism and
 separate state/continuity verification; it is not implemented by this CLI.
-The current CLI prepares without interruption and explicitly restarts at apply.
-It does not write into a live installed package or inject code into user kernels.
+The CLI prepares without interruption, then stops/restarts through the selected
+manager or applies after an external stop. It does not write into a live installed
+package or inject code into user kernels.
 
 ## Behavior and policies
 
@@ -232,8 +257,9 @@ Change only the same service's candidate image, keeping authentication and
 Notebook mounts. Reload Lab pages to load the new client. Restore the recorded
 image/configuration to roll back and verify health and file preservation.
 
-The image merges repair traits into the shared `jupyter_config.json`, retaining
-other sections. Extension discovery files under `jupyter_server_config.d` do
+The deployment adapter merges repair traits into the selected shared/configured
+Python or JSON config, retaining other settings. A manual image build must also
+arrange that config before activation. Extension discovery files under `jupyter_server_config.d` do
 not establish that arbitrary trait values were loaded. Verify the running
 queue's advertised retention/quota and the loaded ydoc cleanup policy before
 acceptance; a recipe or config file alone is insufficient evidence.
