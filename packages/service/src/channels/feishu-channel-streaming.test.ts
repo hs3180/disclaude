@@ -160,6 +160,24 @@ describe('FeishuChannel.startStreaming — Issue #4400', () => {
     expect(mockCardKit.createCard).not.toHaveBeenCalled();
   });
 
+  it('reuses SDK authentication instead of the fixed-token environment factory', async () => {
+    const { FeishuCardKitClient, createCardKitClientFromEnv } = await import('../platforms/feishu/feishu-cardkit-client.js');
+    const getTenantAccessToken = vi.fn().mockResolvedValue('host-sdk-token');
+    // The mocked class constructor must be constructible with `new`.
+    // eslint-disable-next-line prefer-arrow-callback
+    vi.mocked(FeishuCardKitClient).mockImplementationOnce(function () { return mockCardKit as unknown as InstanceType<typeof FeishuCardKitClient>; });
+    const { client } = createMockLarkClient();
+    client.tokenManager = { getTenantAccessToken };
+    const channel = createTestChannel({ streamingCard: true, client });
+    await expect(channel.startStreaming('oc_chat1')).resolves.toBe('card_123');
+    expect(createCardKitClientFromEnv).not.toHaveBeenCalled();
+    const [[options]] = vi.mocked(FeishuCardKitClient).mock.calls;
+    expect(options.tenantAccessToken).toBeUndefined();
+    await expect(options.getTenantAccessToken!()).resolves.toBe('host-sdk-token');
+    expect(getTenantAccessToken).toHaveBeenCalledTimes(1);
+    expect(mockCardKit.createCard).toHaveBeenCalledTimes(1);
+  });
+
   it('declines when the lark IM client is not ready', async () => {
     const channel = createTestChannel({ streamingCard: true }); // no client injected
     await expect(channel.startStreaming('oc_chat1')).resolves.toBe(null);

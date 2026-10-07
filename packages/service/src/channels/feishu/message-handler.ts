@@ -71,6 +71,13 @@ function mapResourceType(messageType: string): 'image' | 'file' {
   return messageType === 'image' ? 'image' : 'file';
 }
 
+function resourceFileName(fileName: string | undefined, fileKey: string): string {
+  const name = path.basename(fileName || fileKey);
+  return name && name !== '.' && name !== '..'
+    ? name
+    : `resource-${crypto.createHash('sha256').update(fileKey).digest('hex').slice(0, 16)}`;
+}
+
 /**
  * Callback interface for emitting messages and control events.
  */
@@ -235,9 +242,6 @@ export class MessageHandler {
     this.tenantAccessToken = options.tenantAccessToken;
     if (options.privateInput) {this.privateInput = new FeishuPrivateInput(options.privateInput, options.callbacks.sendMessage);}
 
-    if (!this.tenantAccessToken) {
-      logger.warn('tenantAccessToken is empty — file downloads via lark-cli will fail');
-    }
   }
 
   /**
@@ -270,6 +274,8 @@ export class MessageHandler {
    *
    * Uses `npx @larksuite/cli im +messages-resources-download` instead of the Feishu SDK,
    * leveraging lark-cli's built-in retry, chunked download, and error handling.
+   * SDK-managed authentication is resolved at download time and stays in the
+   * child environment. The output path is relative to its download directory.
    *
    * Issue #3960: Replaces SDK-based this.client.im.messageResource.get() + writeFile()
    */
@@ -279,9 +285,25 @@ export class MessageHandler {
     resourceType: 'image' | 'file',
     outputPath: string,
   ): Promise<void> {
+    // Use the same SDK authentication/cache as the channel. A startup token is
+    // optional legacy configuration and can expire during a long-lived service.
+    let token: unknown;
+    try {
+      token = this.client?.tokenManager
+        ? await this.client.tokenManager.getTenantAccessToken()
+        : this.tenantAccessToken;
+    } catch {
+      throw new Error('Feishu resource download authentication unavailable');
+    }
+    if (typeof token !== 'string' || !token) {
+      throw new Error('Feishu resource download authentication unavailable');
+    }
     const env = {
       ...process.env,
-      LARKSUITE_CLI_TENANT_ACCESS_TOKEN: this.tenantAccessToken,
+      LARKSUITE_CLI_APP_ID: this.client?.appId || process.env.LARKSUITE_CLI_APP_ID || Config.FEISHU_APP_ID,
+      LARKSUITE_CLI_TENANT_ACCESS_TOKEN: token,
+      LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1',
+      LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1',
     };
 
     const { stdout, stderr } = await promisify(execFile)(
@@ -291,10 +313,10 @@ export class MessageHandler {
         '--message-id', messageId,
         '--file-key', fileKey,
         '--type', resourceType,
-        '--output', outputPath,
+        '--output', `./${path.basename(outputPath)}`,
         '--as', 'bot',
       ],
-      { env, timeout: 120_000 },
+      { env, cwd: path.dirname(outputPath), timeout: 120_000 },
     );
 
     if (stderr) {
@@ -811,13 +833,13 @@ export class MessageHandler {
     let { fileName } = media;
 
     // Download file to workspace/downloads directory
-    // Issue #3960: downloadResourceViaLarkCli uses npx lark-cli, which only needs tenantAccessToken (not this.client)
+    // CLI downloads use current SDK authentication or an explicit legacy token.
     let localPath: string | undefined;
-    if (this.tenantAccessToken) {
+    if (this.tenantAccessToken || this.client?.tokenManager) {
       try {
         const downloadDir = path.join(Config.getWorkspaceDir(), 'downloads');
         await fs.mkdir(downloadDir, { recursive: true });
-        localPath = path.join(downloadDir, String(fileName || fileKey));
+        localPath = path.join(downloadDir, resourceFileName(fileName, fileKey));
 
         // Issue #4326: skip re-download when a non-empty file already exists at the
         // target path or an extension-corrected sibling (left by ensureFileExtensionFromPath).
@@ -1034,13 +1056,13 @@ export class MessageHandler {
       }
 
       // Download file to workspace/downloads directory
-      // Issue #3960: downloadResourceViaLarkCli uses npx lark-cli, which only needs tenantAccessToken (not this.client)
+      // CLI downloads use current SDK authentication or an explicit legacy token.
       let localPath: string | undefined;
-      if (this.tenantAccessToken) {
+      if (this.tenantAccessToken || this.client?.tokenManager) {
         try {
           const downloadDir = path.join(Config.getWorkspaceDir(), 'downloads');
           await fs.mkdir(downloadDir, { recursive: true });
-          localPath = path.join(downloadDir, String(fileName || fileKey));
+          localPath = path.join(downloadDir, resourceFileName(fileName, fileKey));
 
           logger.info({ fileKey, fileName, localPath }, 'Downloading file from Feishu');
 

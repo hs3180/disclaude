@@ -19,6 +19,7 @@ import {
 /** A message to send back to the chat. */
 export interface CommandReply {
   chatId: string;
+  threadId?: string;
   type: string;
   text: string;
 }
@@ -71,6 +72,10 @@ export async function tryHandleSlashCommand(
 
   const [command, ...args] = input.textWithoutMentions.slice(1).split(/\s+/);
   const cmd = command.toLowerCase();
+  const replyTarget = {
+    chatId: input.chatId,
+    ...(input.threadRootId ? { threadId: input.threadRootId } : {}),
+  };
 
   // Control-handler path (Issue #3529: typed command data).
   // Issue #4587 (part 3): threadRootId rides along so /reset and /stop
@@ -85,7 +90,7 @@ export async function tryHandleSlashCommand(
     // Issue #1562: relay both success and error messages from the control handler.
     if (response.success || response.message) {
       if (response.message) {
-        await deps.sendMessage({ chatId: input.chatId, type: 'text', text: response.message });
+        await deps.sendMessage({ ...replyTarget, type: 'text', text: response.message });
       }
       return true;
     }
@@ -94,7 +99,7 @@ export async function tryHandleSlashCommand(
   // Fallback command handling (when controlHandler is unavailable or didn't match).
   if (cmd === 'reset') {
     await deps.sendMessage({
-      chatId: input.chatId,
+      ...replyTarget,
       type: 'text',
       text: '✅ **对话已重置**\n\n新的会话已启动，之前的上下文已清除。',
     });
@@ -103,7 +108,7 @@ export async function tryHandleSlashCommand(
 
   if (cmd === 'status') {
     await deps.sendMessage({
-      chatId: input.chatId,
+      ...replyTarget,
       type: 'text',
       text: '📊 **状态**\n\nChannel: Feishu\nStatus: running',
     });
@@ -113,7 +118,7 @@ export async function tryHandleSlashCommand(
   // Issue #1494: fallback /stop handling.
   if (cmd === 'stop') {
     await deps.sendMessage({
-      chatId: input.chatId,
+      ...replyTarget,
       type: 'text',
       text: '⏹️ **停止命令已发送**\n\n当前会话将尝试停止响应。',
     });
