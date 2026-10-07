@@ -2,6 +2,10 @@
 
 2026-10-05 增加 `datalayer` 后端，并在用户已有的远程 Jupyter 上实测。2026-10-06 的修复候选已通过原六个失败场景及扩展边界、故障和真实 DSH 组件复验。后续真实飞书附件、停止/续行、报告和引用卡片已有通过记录，用户确认旧报告整体显示正常。用户同时明确将手工修改支持及验收移出 0.6.3。当前状态见 [候选验收记录](../releases/0.6.3-acceptance.md)；以下按源码和实例保留各轮证据、历史失败与当时未验证条件。
 
+评审远端修复时先看 [Datalayer 补丁必要性](../../jupyter/datalayer/PATCHES.md)：
+逐项解释原失败对研究结果的影响、对应 Python/Lab 文件、必需与可选内容，以及
+现有证据和未提供的保证。本页保留各轮详细实测，不将历史未验证项改写为通过。
+
 ## 实现与部署
 
 宿主仍只运行 Node。复用 Jupyter 的密码登录、Contents、Sessions、kernel channels、RTC/YNotebook、nbmodel 执行队列和 nbconvert；不安装宿主 Python，不启动本地 Jupyter，也不要求远端安装 `disclaude_jupyter`。

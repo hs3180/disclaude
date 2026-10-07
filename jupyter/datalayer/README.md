@@ -14,6 +14,11 @@ TypeScript changes; `patches/lab-*.patch` applies them to the verified shipped
 bundle. New bundle/loader names avoid reuse of cached original JavaScript.
 Changed generated files omit the original source-map link.
 
+For review, start with [why each patch is needed](PATCHES.md): the six observed
+upgraded-server failures, their research impact, the Python/Lab file mapping,
+required versus optional changes, evidence and limits. The scope is the pinned
+installation above; newer upstream releases need their own verification.
+
 ## Behavior and policies
 
 - Shared documents load through the supported `get_document(create=True)` API.
