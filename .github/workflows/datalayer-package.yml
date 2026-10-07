@@ -1,0 +1,35 @@
+name: Datalayer patch package
+
+on:
+  pull_request:
+    paths:
+      - 'jupyter/datalayer/**'
+      - 'tests/jupyter/datalayer-package-test.py'
+      - '.github/workflows/datalayer-package.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'jupyter/datalayer/**'
+      - 'tests/jupyter/datalayer-package-test.py'
+      - '.github/workflows/datalayer-package.yml'
+
+jobs:
+  package:
+    name: Standalone patch package (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.9', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Verify standalone archive and deployment guards
+        run: python tests/jupyter/datalayer-package-test.py -v
+      - name: Build downloadable patch tool
+        run: python jupyter/datalayer/package.py --output artifacts/disclaude-datalayer-patch-0.6.3.pyz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: datalayer-patch-python-${{ matrix.python }}
+          path: artifacts/disclaude-datalayer-patch-0.6.3.pyz*

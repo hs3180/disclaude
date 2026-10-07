@@ -19,6 +19,77 @@ upgraded-server failures, their research impact, the Python/Lab file mapping,
 required versus optional changes, evidence and limits. The scope is the pinned
 installation above; newer upstream releases need their own verification.
 
+## Single-file installation
+
+Download the `.pyz` and its SHA-256 file from the **Datalayer patch package** CI
+artifact for the reviewed commit, and put them on the existing remote Docker
+host. Only Python 3.9+ stdlib and Docker Compose v2 are required there. Python
+and scientific packages used by notebooks stay in the remote Jupyter image.
+Check the downloaded file with `sha256sum -c <filename>.sha256`.
+
+After saving notebooks and closing kernels, apply with one command:
+
+```sh
+python3 disclaude-datalayer-patch-0.6.3.pyz apply --container jupyter-gpu-1 --restart
+```
+
+The tool discovers the current immutable image, runtime user, Compose project,
+service and shared JSON config. It builds on that image, checks all eight
+overlay files, merges the policy into a private candidate config, and generates
+Compose overrides. It checks that only the selected service image/config mount
+changes; notebook/file-ID mounts, other settings and other services remain in
+the original Compose. It does not edit the original Compose/config files or
+install reporting dependencies. No Python package installation on the Docker
+host, frontend build or manual config merge is needed.
+
+`--restart` explicitly requests recreation of that Jupyter service and ends its
+kernels. To prepare the image/config without switching first, use:
+
+```sh
+python3 disclaude-datalayer-patch-0.6.3.pyz prepare --container jupyter-gpu-1
+python3 disclaude-datalayer-patch-0.6.3.pyz status --container jupyter-gpu-1
+python3 disclaude-datalayer-patch-0.6.3.pyz rollback --container jupyter-gpu-1 --restart
+```
+
+State defaults to `~/.local/state/disclaude-datalayer-patch/<container>/` (0700),
+containing private configuration snapshots, original/candidate image IDs,
+checksums and the apply/rollback Compose overrides. Use `--state-dir` to select
+another private directory, and keep it for rollback. Repeated apply/rollback
+does not recreate a container already on the expected image/config. Changed
+original/prepared inputs, another image or multiple target-service containers
+are refused; unknown switch results are not automatically replayed. `status`
+reports observed image and the last requested phase, not product acceptance.
+
+Use this tool for subsequent switches: plain `docker compose up` without its
+saved override uses the original deployment. The underlying recipe currently
+targets a shared JSON config at `/opt/conda/etc/jupyter/jupyter_config.json` and
+an existing pinned nbmodel/Lab installation. Arbitrary non-Compose deployments,
+config paths and unverified upstream versions require a separate adapter.
+Native file IDs must already use an explicit `BaseFileIdManager.db_path` inside
+a writable persistent directory mount; otherwise preparation refuses image
+replacement. The existing user deployment already has this mount. The original
+database directory is retained, rather than copying a writable-layer database
+without a coherent backup. See [Native file identity](#native-file-identity).
+
+After apply, reload Lab, verify the running execution policy and run configured
+acceptance as needed. Docker health and installed-file checks alone do not prove
+the notebook/product cases. The tool does not check live kernel idleness;
+the operator saves and closes kernels before using `--restart`.
+
+Maintainers build the file from this checkout without third-party build tools:
+
+```sh
+python3 jupyter/datalayer/package.py --output disclaude-datalayer-patch-0.6.3.pyz
+python3 tests/jupyter/datalayer-package-test.py -v
+```
+
+The archive contains the whitelisted pinned overlay/resources and upstream
+license, plus a verified file index. It contains no runtime configuration or
+credentials. It uses Python's [zip application format](https://docs.python.org/3/library/zipapp.html),
+and [Compose volume merging by target](https://docs.docker.com/reference/compose-file/merge/#unique-resources).
+The internal index detects content changes; the separately delivered SHA-256
+and reviewed source establish which artifact the operator chooses.
+
 ## Behavior and policies
 
 - Shared documents load through the supported `get_document(create=True)` API.
@@ -67,7 +138,8 @@ installation above; newer upstream releases need their own verification.
 
 Run the following on the existing remote Docker host from a full source checkout,
 with this directory as the build context. The npm distribution includes the
-optional remote overlay source but omits Docker build recipes. Use the actual saved base image and runtime user; do not
+optional remote overlay source but omits Docker build recipes. Use a local image
+tag verified against the actual saved image ID, and the original runtime user; do not
 replace a GPU/scientific environment with a fresh generic Jupyter image.
 
 ```sh
