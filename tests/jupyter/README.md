@@ -77,6 +77,14 @@ formula/table sources, bounded image files, matching HTML/ipynb revisions,
 authentication and sandbox headers. Source/header checks do not establish
 rendering on the user's actual device.
 
+The report probe selects the advertised remote default or sole available Python
+kernelspec. Use `--kernel-name <existing-name>` to bind an explicit fresh scratch
+kernel. That remote environment needs NumPy, Matplotlib, Plotly and Narwhals;
+missing packages remain failed execution evidence. `--python-path <remote-dir>`
+can load an explicitly prepared, owned test dependency directory in the two
+scratch kernels. Its path and package versions are recorded. The probe does not
+install packages or change existing kernelspecs or server settings.
+
 ## Explicit model and outbound component probes
 
 The DSH probes expose optional CLI-backed tools only within their test harness;

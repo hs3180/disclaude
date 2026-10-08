@@ -7,7 +7,12 @@ import { createCLIProbe, probeSource } from './cli-probe-client.mjs';
 import { notebookSnapshotHash } from '../../packages/core/dist/jupyter/notebook-fingerprint.js';
 
 const { values } = parseArgs({
-  options: { 'env-file': { type: 'string' }, output: { type: 'string' } },
+  options: {
+    'env-file': { type: 'string' },
+    output: { type: 'string' },
+    'kernel-name': { type: 'string' },
+    'python-path': { type: 'string' },
+  },
 });
 if (!values['env-file'] || !values.output) {
   throw new Error('Explicit environment and fresh private output directory required');
@@ -81,6 +86,20 @@ const run = async (owner, id, runId) => {
   throw new Error('Study original request did not finish');
 };
 try {
+  const specs = await client.json('api/kernelspecs');
+  const names = Object.keys(specs.kernelspecs);
+  const kernelName =
+    values['kernel-name'] ??
+    (names.includes(specs.default) ? specs.default : names.length === 1 ? names[0] : undefined);
+  const spec = specs.kernelspecs[kernelName]?.spec;
+  if (!spec || spec.language !== 'python')
+    throw new Error('Select an existing remote Python kernelspec with --kernel-name');
+  report.kernel = {
+    name: kernelName,
+    displayName: spec.display_name,
+    language: spec.language,
+    pythonPath: values['python-path'],
+  };
   const reproductions = [];
   for (let trial = 0; trial < 2; trial++) {
     const notebook = `disclaude-datalayer-report-${nonce}-${trial}.ipynb`;
@@ -98,9 +117,9 @@ try {
         nbformat_minor: 5,
         metadata: {
           kernelspec: {
-            name: 'conda-base-py',
-            display_name: 'Python (conda base)',
-            language: 'python',
+            name: kernelName,
+            display_name: spec.display_name,
+            language: spec.language,
           },
         },
         cells: [
@@ -122,6 +141,13 @@ try {
         ],
       },
     });
+    if (values['kernel-name'])
+      await client.json('api/sessions', 'POST', {
+        path: notebook,
+        name: notebook,
+        type: 'notebook',
+        kernel: { name: kernelName },
+      });
     const project = path.join(root, `project-${trial}`);
     fs.mkdirSync(project, { mode: 0o700 });
     const session = await createCLIProbe({
@@ -149,7 +175,10 @@ try {
         imported.sha256 === report.dataset.sha256,
       { imported, repeated }
     );
-    const source = `import csv,json,random,importlib.metadata as metadata\nimport numpy as np\nimport matplotlib.pyplot as plt\nfrom IPython.display import display,SVG,HTML\nimport plotly.graph_objects as go\nrandom.seed(63)\nrng=np.random.default_rng(63)\nwith open(${JSON.stringify(imported.kernelRelativePath)},newline='') as stream:\n    rows=list(csv.DictReader(stream))\nx=np.array([float(row['value']) for row in rows])\nsummary={'mean':float(x.mean()),'sample_std':float(x.std(ddof=1)),'seeded_mean':float(rng.normal(size=1000).mean()),'seed':63,'versions':{name:metadata.version(name) for name in ['numpy','matplotlib','plotly','narwhals']}}\nprint('STUDY_RESULT '+json.dumps(summary,sort_keys=True),flush=True)\nplt.figure(figsize=(5,3))\nplt.bar([row['group'] for row in rows],x,color=['royalblue','seagreen','tomato'])\nplt.xlabel('category');plt.ylabel('value');plt.title('Synthetic CSV study');plt.tight_layout();plt.show()\ndisplay(SVG('<svg xmlns="http://www.w3.org/2000/svg" width="180" height="50"><circle cx="25" cy="25" r="15" fill="green"/><text x="50" y="30">SVG_REPORT_MARKER</text></svg>'))\ndisplay(HTML('<table><tr><th>Mean</th><td>4.0</td></tr></table>'))\nfigure=go.Figure(go.Bar(x=[row['group'] for row in rows],y=x.tolist()))\nfigure.update_layout(title='PLOTLY_REPORT_MARKER')\ndisplay(HTML(figure.to_html(full_html=False,include_plotlyjs=True,div_id='disclaude-synthetic-plot')))\n`;
+    const pythonPath = values['python-path']
+      ? `import sys\nsys.path.insert(0,${JSON.stringify(values['python-path'])})\n`
+      : '';
+    const source = `${pythonPath}import csv,json,random,importlib.metadata as metadata\nimport numpy as np\nimport matplotlib.pyplot as plt\nfrom IPython.display import display,SVG,HTML\nimport plotly.graph_objects as go\nrandom.seed(63)\nrng=np.random.default_rng(63)\nwith open(${JSON.stringify(imported.kernelRelativePath)},newline='') as stream:\n    rows=list(csv.DictReader(stream))\nx=np.array([float(row['value']) for row in rows])\nsummary={'mean':float(x.mean()),'sample_std':float(x.std(ddof=1)),'seeded_mean':float(rng.normal(size=1000).mean()),'seed':63,'versions':{name:metadata.version(name) for name in ['numpy','matplotlib','plotly','narwhals']}}\nprint('STUDY_RESULT '+json.dumps(summary,sort_keys=True),flush=True)\nplt.figure(figsize=(5,3))\nplt.bar([row['group'] for row in rows],x,color=['royalblue','seagreen','tomato'])\nplt.xlabel('category');plt.ylabel('value');plt.title('Synthetic CSV study');plt.tight_layout();plt.show()\ndisplay(SVG('<svg xmlns="http://www.w3.org/2000/svg" width="180" height="50"><circle cx="25" cy="25" r="15" fill="green"/><text x="50" y="30">SVG_REPORT_MARKER</text></svg>'))\ndisplay(HTML('<table><tr><th>Mean</th><td>4.0</td></tr></table>'))\nfigure=go.Figure(go.Bar(x=[row['group'] for row in rows],y=x.tolist()))\nfigure.update_layout(title='PLOTLY_REPORT_MARKER')\ndisplay(HTML(figure.to_html(full_html=False,include_plotlyjs=True,div_id='disclaude-synthetic-plot')))\n`;
     const initial = await invoke('notebook_read_cell', {
       notebookId: id,
       cellId: 'study-analysis',
@@ -162,6 +191,8 @@ try {
     });
     const result = await run(session, id, `study-${trial}`);
     check(`Clean remote study execution ${trial}`, result.state === 'completed', result);
+    if (result.state !== 'completed')
+      throw new Error(result.result?.error?.evalue ?? 'Remote study execution failed');
     const peer = await client.openDocument(notebook, linked.documentId);
     let snapshot, notebookJSON;
     try {
