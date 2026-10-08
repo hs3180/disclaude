@@ -1,0 +1,19 @@
+diff --git a/static/remoteEntry.bc6ceee2cce29f48.js b/static/remoteEntry.897e0861bddf847b.js
+index 2a3be4a85..2f9695dfe 100644
+--- a/static/remoteEntry.bc6ceee2cce29f48.js
++++ b/static/remoteEntry.897e0861bddf847b.js
+@@ -120,7 +120,7 @@ __webpack_require__.u = (chunkId) => {
+   // return url for filenames not based on template
+   
+   // return url for filenames based on template
+-  return "" + chunkId + "." + {"lib_index_js": "385efdae00a63983","style_index_js": "9bb1583ab4a32f5b",}[chunkId] + ".js"
++  return "" + chunkId + "." + {"lib_index_js": "0b698b27bf2a9945","style_index_js": "9bb1583ab4a32f5b",}[chunkId] + ".js"
+ }
+ })();
+ // webpack/runtime/global
+@@ -976,4 +976,3 @@ var __webpack_exports__ = __webpack_require__("webpack/container/entry/@datalaye
+ (_JUPYTERLAB = typeof _JUPYTERLAB === 'undefined' ? {} : _JUPYTERLAB)["@datalayer/jupyter-server-nbmodel"] = __webpack_exports__;
+ })()
+ ;
+-//# sourceMappingURL=remoteEntry.bc6ceee2cce29f48.js.map
+\ No newline at end of file

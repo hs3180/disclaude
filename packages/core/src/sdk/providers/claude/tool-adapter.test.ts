@@ -51,6 +51,29 @@ function definition(
 }
 
 describe('Claude host tool adapter over real MCP transport', () => {
+  it('renders image content through native MCP without encoded bytes in text', async () => {
+    const data = Buffer.from('png bytes').toString('base64');
+    const source = {
+      ...definition(),
+      outputSchema: { type: 'object' },
+      execute: () =>
+        Promise.resolve({
+          format: 'disclaude.tool-result.v1',
+          data: { cellId: 'plot' },
+          images: [{ mimeType: 'image/png', data }],
+        }),
+    };
+    const client = await connect([source]);
+    expect(
+      await client.callTool({ name: source.name, arguments: { key: 'cell-1' } })
+    ).toMatchObject({
+      content: [
+        { type: 'text', text: '{"cellId":"plot"}' },
+        { type: 'image', mimeType: 'image/png', data },
+      ],
+    });
+  });
+
   it('preserves full schemas and returns model text plus structured content', async () => {
     const source = definition();
     const client = await connect([source]);

@@ -1,0 +1,64 @@
+name: Jupyter patch CLI
+
+on:
+  pull_request:
+    paths:
+      - 'jupyter/datalayer/**'
+      - 'bin/disclaude.js'
+      - 'bin/jupyter-patch.js'
+      - 'bin/jupyter-terminal.js'
+      - 'bin/jupyter-auth.js'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'scripts/build-git-release.mjs'
+      - 'scripts/test-checkout-install.mjs'
+      - 'scripts/test-package-install.mjs'
+      - 'tests/jupyter/datalayer-package-test.py'
+      - 'tests/jupyter/patch-cli-test.mjs'
+      - 'tests/jupyter/auth-input-test.mjs'
+      - 'tests/jupyter/auth-tty-test.py'
+      - '.github/workflows/datalayer-package.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'jupyter/datalayer/**'
+      - 'bin/disclaude.js'
+      - 'bin/jupyter-patch.js'
+      - 'bin/jupyter-terminal.js'
+      - 'bin/jupyter-auth.js'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'scripts/build-git-release.mjs'
+      - 'scripts/test-checkout-install.mjs'
+      - 'scripts/test-package-install.mjs'
+      - 'tests/jupyter/datalayer-package-test.py'
+      - 'tests/jupyter/patch-cli-test.mjs'
+      - 'tests/jupyter/auth-input-test.mjs'
+      - 'tests/jupyter/auth-tty-test.py'
+      - '.github/workflows/datalayer-package.yml'
+
+jobs:
+  package:
+    name: Jupyter patch CLI (Node ${{ matrix.node }}, Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - { node: '18', python: '3.9' }
+          - { node: '24', python: '3.13' }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install locked dependencies for the host .env parser
+        run: npm ci --ignore-scripts --include=dev
+      - name: Verify CLI generation, authentication and Terminal-only transport
+        run: node --test tests/jupyter/patch-cli-test.mjs tests/jupyter/auth-input-test.mjs
+      - name: Verify artifact integrity, file rollback and activation reporting
+        run: python tests/jupyter/datalayer-package-test.py -v
+      - name: Verify hidden authentication in a real terminal
+        run: python tests/jupyter/auth-tty-test.py -v

@@ -1,0 +1,78 @@
+diff --git a/handlers.py b/handlers.py
+index 0171eb3d9..0343d2dac 100644
+--- a/handlers.py
++++ b/handlers.py
+@@ -5,6 +5,7 @@
+ from __future__ import annotations
+ 
+ import json
++import hashlib
+ import os
+ import re
+ import typing as t
+@@ -16,6 +17,7 @@ from jupyter_server.base.handlers import APIHandler
+ from jupyter_server.extension.handler import ExtensionHandlerMixin
+ 
+ from jupyter_server_nbmodel.execution_stack import ExecutionStack
++from jupyter_server_nbmodel.runtime import ResultExpired, ResultQuotaExceeded, TargetChanged
+ from jupyter_server_nbmodel.log import get_logger
+ 
+ 
+@@ -40,6 +42,7 @@ class ExecuteHandler(ExtensionHandlerMixin, APIHandler):
+                 {
+                     "kernel_id": kernel_id,
+                     "requests": self._execution_stack.pending(kernel_id),
++                    "execution_policy": self._execution_stack.execution_policy(),
+                 }
+             )
+         )
+@@ -63,6 +66,8 @@ class ExecuteHandler(ExtensionHandlerMixin, APIHandler):
+         snippet = body.get("code")
+         metadata = body.get("metadata", {})
+         remote_server = body.get("server")
++        if not isinstance(snippet, str) or len(snippet.encode("utf-8")) > 262144 or not isinstance(metadata, dict):
++            raise tornado.web.HTTPError(400, reason="Invalid nbmodel source or metadata")
+ 
+         if remote_server is not None:
+             if (
+@@ -84,7 +89,12 @@ class ExecuteHandler(ExtensionHandlerMixin, APIHandler):
+             msg = f"Unknown kernel with id: {kernel_id}"
+             get_logger().error(msg)
+             raise tornado.web.HTTPError(status_code=HTTPStatus.NOT_FOUND, reason=msg)
+-        uid = self._execution_stack.put(kernel_id, snippet, metadata, remote_server=remote_server)
++        try:
++            uid = self._execution_stack.put(kernel_id, snippet, metadata, remote_server=remote_server)
++        except ResultQuotaExceeded as err:
++            raise tornado.web.HTTPError(429, reason=str(err)) from err
++        except TargetChanged as err:
++            raise tornado.web.HTTPError(409, reason=str(err)) from err
+         location = f"/api/kernels/{kernel_id}/requests/{uid}"
+         self.set_status(HTTPStatus.ACCEPTED)
+         self.set_header("Location", location)
+@@ -98,6 +108,8 @@ class ExecuteHandler(ExtensionHandlerMixin, APIHandler):
+                     "request_id": uid,
+                     "kernel_id": kernel_id,
+                     "cell_id": metadata.get("cell_id"),
++                    "source": snippet,
++                    "source_hash": hashlib.sha256(snippet.encode("utf-8")).hexdigest(),
+                     "document_path": metadata.get("document_path"),
+                     "pending": True,
+                     "request_status": "queued",
+@@ -169,6 +181,8 @@ class RequestHandler(ExtensionHandlerMixin, APIHandler):
+         """
+         try:
+             r = self._stack.get(kernel_id, request_id)
++        except ResultExpired as err:
++            raise tornado.web.HTTPError(410, reason=str(err)) from err
+         except ValueError as err:
+             raise tornado.web.HTTPError(404, reason=str(err)) from err
+         else:
+@@ -210,6 +224,8 @@ class RequestHandler(ExtensionHandlerMixin, APIHandler):
+         """
+         try:
+             await self._stack.interrupt(kernel_id, request_id)
++        except TargetChanged as err:
++            raise tornado.web.HTTPError(409, reason=str(err)) from err
+         except ValueError as err:
+             raise tornado.web.HTTPError(HTTPStatus.NOT_FOUND, reason=str(err)) from err
+         except NotImplementedError as err:
