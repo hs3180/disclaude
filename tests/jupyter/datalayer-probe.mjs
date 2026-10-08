@@ -3,15 +3,12 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { parseArgs, parseEnv } from 'node:util';
 import { DatalayerJupyterClient } from '../../packages/core/dist/jupyter/datalayer-client.js';
-import { JupyterConnections } from '../../packages/service/dist/jupyter/connections.js';
-import { notebookSessionFactory } from '../../packages/service/dist/jupyter/agent-session.js';
-import { JupyterProjectConfigStore } from '../../packages/service/dist/jupyter/project-config-store.js';
+import { createCLIProbe, probeSource } from './cli-probe-client.mjs';
 
 const { values } = parseArgs({
   options: {
     'env-file': { type: 'string' },
     output: { type: 'string' },
-    'wait-ui': { type: 'boolean', default: false },
     'long-seconds': { type: 'string', default: '67' },
   },
 });
@@ -34,31 +31,14 @@ const client = new DatalayerJupyterClient({
   password: async () => env.JUPYTERLAB_PASS,
   allowInsecureHttp: true,
 });
-const connectionId = 'datalayer-mvp-probe';
-const namespace = 'configured-datalayer-mvp';
-const configFile = path.join(directory, 'host-connections.json');
-fs.writeFileSync(
-  configFile,
-  JSON.stringify({
-    version: 1,
-    connections: [
-      {
-        id: connectionId,
-        backend: 'datalayer',
-        baseUrl: env.JUPYTERLAB_HOST,
-        passwordEnv: 'JUPYTERLAB_PASS',
-        allowInsecureHttp: true,
-      },
-    ],
-  }),
-  { mode: 0o600 }
-);
 const project = path.join(directory, 'project');
 fs.mkdirSync(project, { mode: 0o700 });
+const probe = await createCLIProbe({ envFile: values['env-file'], project, directory: project });
 const report = {
+  source: probeSource(),
   startedAt: new Date().toISOString(),
   scope:
-    'Configured remote Datalayer + Service session component acceptance; no production Feishu switch',
+    'Configured remote Datalayer + independent public CLI process component acceptance; no production Feishu switch',
   checks: [],
   requests: [],
   project,
@@ -78,23 +58,9 @@ const persist = () => {
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const originalKernels = await client.json('api/kernels');
 const originalSessions = await client.json('api/sessions');
-const connections = new JupyterConnections(configFile, () => env);
-const factory = notebookSessionFactory(connections);
-const context = {
-  workingDir: project,
-  conversationKey: 'datalayer-mvp-native-acceptance',
-  currentWorkingDir: () => project,
-};
-let session, peer;
+let peer;
 const createdSessions = [];
-const invocation = { signal: new AbortController().signal };
-const call = async (name, input) => {
-  const tool = session.tools.find((t) => t.name === name);
-  if (!tool) {
-    throw new Error('Expected MVP tool is unavailable');
-  }
-  return tool.execute(input, invocation);
-};
+const call = probe.call;
 const poll = async (notebookId, runId, seconds = 25) => {
   const deadline = Date.now() + seconds * 1000;
   let result;
@@ -174,31 +140,11 @@ try {
   });
   report.ownedNotebooks.push(notebook);
   report.notebookEntry = client.notebookEntry(notebook);
-  const linked = new JupyterProjectConfigStore(project).linkNotebook({
-    connectionId,
-    serverNamespace: namespace,
-    contentPath: notebook,
-  });
-  if (!linked.ok) {
-    throw new Error('Scratch Project reference unavailable');
-  }
-  session = factory(context);
-  const list = await call('notebook_list', {});
-  const notebookId = list.notebooks[0].notebookId;
+  const linked = await probe.command('link', undefined, ['--path', notebook]);
+  const notebookId = linked.notebookId;
   report.notebookId = notebookId;
-  const reference = new JupyterProjectConfigStore(project).listNotebookReferences().data[0];
+  const reference = linked;
   report.documentId = reference.documentId;
-  const api = await connections.useDatalayer(
-    connectionId,
-    namespace,
-    async (connected) => connected
-  );
-  const originalResponse = api.response.bind(api);
-  api.response = async (route, method = 'GET', body) => {
-    const response = await originalResponse(route, method, body);
-    report.requests.push({ route, method, status: response.status });
-    return response;
-  };
   peer = await client.openDocument(notebook, reference.documentId);
   peer.notebook.getCell(1).source = 'mvp_value = 17';
   peer.notebook.getCell(3).source = 'Human note: edited through an independent RTC participant.';
@@ -210,30 +156,6 @@ try {
     diskSource: disk.content.cells[1].source,
     confirmedUnsaved: disk.content.cells[1].source !== live.source,
   });
-  if (values['wait-ui']) {
-    report.phase = 'waiting_for_native_ui_edit';
-    persist();
-    console.log(
-      JSON.stringify({
-        phase: report.phase,
-        notebookEntry: report.notebookEntry,
-        uiSignalFile: path.join(directory, 'ui-done.json'),
-      })
-    );
-    const deadline = Date.now() + 240000;
-    while (!fs.existsSync(path.join(directory, 'ui-done.json')) && Date.now() < deadline) {
-      await wait(500);
-    }
-    if (fs.existsSync(path.join(directory, 'ui-done.json'))) {
-      report.nativeUi = JSON.parse(fs.readFileSync(path.join(directory, 'ui-done.json'), 'utf8'));
-    } else {
-      report.nativeUi = {
-        completed: false,
-        reason: 'UI operation was not confirmed before the deadline',
-      };
-    }
-    check('Native JupyterLab UI edit', report.nativeUi.completed === true, report.nativeUi);
-  }
   const parameter = await call('notebook_read_cell', { notebookId, cellId: 'mvp-params' });
   report.finalParameterSource = parameter.source;
   const expected = Number(parameter.source.match(/^mvp_value = (\d+)$/)?.[1]);
@@ -268,24 +190,20 @@ try {
     result.state === 'completed' && JSON.stringify(result).includes(String(expected * 3)),
     result
   );
-  const posts = () =>
-    report.requests.filter((r) => r.route.endsWith('/execute') && r.method === 'POST').length;
-  const beforePosts = posts();
-  await call('notebook_execute', args);
-  check('Repeated original runId does not resubmit', posts() === beforePosts, {
-    executePostsBefore: beforePosts,
-    executePostsAfter: posts(),
-  });
+  const repeated = await call('notebook_execute', args);
+  check(
+    'Repeated original runId preserves the original request',
+    repeated.requestId === accepted.requestId && repeated.state === 'completed',
+    { original: accepted, repeated }
+  );
   const rawRepeat = await client.observe({
     kernelId: report.ownedKernelId,
     requestId: run.requestId,
   });
   check('Upstream terminal GET is repeatable', rawRepeat.state === 'completed', rawRepeat);
-  session.dispose();
-  session = factory(context);
   const recovered = await call('notebook_status', { notebookId, runId: 'mvp-analysis' });
   check(
-    'Host session recreation recovers cached original result',
+    'A fresh CLI process recovers the cached original result',
     recovered.state === 'completed' && JSON.stringify(recovered).includes(String(expected * 3)),
     recovered
   );
@@ -362,8 +280,6 @@ try {
     expectedSourceHash: background.sourceHash,
     runId: 'mvp-background',
   });
-  session.dispose();
-  session = undefined;
   peer.close();
   peer = undefined;
   report.phase = 'background_execution_without_document_clients';
@@ -387,7 +303,6 @@ try {
     { durationSeconds: longSeconds, outputs: savedCell?.outputs }
   );
   // The preceding direct GET consumed the result. It was intentionally not entered in the journal.
-  session = factory(context);
   const afterExternalRead = await call('notebook_status', { notebookId, runId: 'mvp-background' });
   check(
     'Original request remains queryable after another consumer reads it',
@@ -450,7 +365,7 @@ try {
   await client.json(`api/kernels/${report.ownedKernelId}/interrupt`, 'POST', {});
   const interrupted = await poll(notebookId, 'mvp-kernel-interrupt');
   check(
-    'Explicit interrupt of owned scratch kernel is confirmed',
+    'Explicit API interrupt of owned scratch kernel is confirmed (not a CLI command)',
     interrupted.state === 'cancelled',
     interrupted
   );
@@ -459,22 +374,27 @@ try {
     source: human.source,
   });
   const descriptor = fs.readFileSync(path.join(project, '.jupyter', 'config.json'), 'utf8');
-  const modelEnv = { JUPYTERLAB_PASS: env.JUPYTERLAB_PASS };
-  session.redactEnvironment(modelEnv);
   check(
-    'Credentials stay outside Project/tool/model environment',
+    'Credentials stay outside Project and CLI outputs',
     !descriptor.includes(env.JUPYTERLAB_PASS) &&
       !descriptor.includes(env.JUPYTERLAB_HOST) &&
-      modelEnv.JUPYTERLAB_PASS === undefined,
+      !JSON.stringify(probe.commands).includes(env.JUPYTERLAB_PASS),
     {}
   );
+  check(
+    'Notebook operations used independent CLI processes',
+    probe.commands.length > 10 &&
+      new Set(probe.commands.map((c) => c.pid)).size === probe.commands.length,
+    { commands: probe.commands.length, pids: probe.commands.map((c) => c.pid) }
+  );
+  report.commands = probe.commands;
   report.completed = true;
 } catch (error) {
   report.completed = false;
   report.error = error.message.replaceAll(env.JUPYTERLAB_PASS, '[REDACTED]');
 } finally {
   peer?.close();
-  session?.dispose();
+  await probe.close();
   const remaining = await client.json('api/sessions');
   for (const owned of remaining.filter(
     (s) =>

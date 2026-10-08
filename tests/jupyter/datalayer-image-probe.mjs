@@ -2,15 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { parseArgs, parseEnv } from 'node:util';
+import { createCLIProbe, probeSource } from './cli-probe-client.mjs';
 import { DeepSeekHarnessProvider } from '../../packages/core/dist/sdk/providers/deepseek/provider.js';
-import { JupyterConnections } from '../../packages/service/dist/jupyter/connections.js';
-import { notebookSessionFactory } from '../../packages/service/dist/jupyter/agent-session.js';
 
 const { values } = parseArgs({
   options: {
     'env-file': { type: 'string' },
     'oauth-auth-file': { type: 'string' },
-    connections: { type: 'string' },
     project: { type: 'string' },
     'cell-id': { type: 'string' },
     'output-index': { type: 'string', default: '0' },
@@ -19,15 +17,7 @@ const { values } = parseArgs({
     output: { type: 'string' },
   },
 });
-for (const key of [
-  'env-file',
-  'oauth-auth-file',
-  'connections',
-  'project',
-  'cell-id',
-  'model',
-  'output',
-]) {
+for (const key of ['env-file', 'oauth-auth-file', 'project', 'cell-id', 'model', 'output']) {
   if (!values[key]) {
     throw new Error(`Explicit --${key} required`);
   }
@@ -45,9 +35,10 @@ if (!access || !expiry || expiry * 1000 < Date.now() + 900000) {
 }
 const secrets = [access, env.JUPYTERLAB_PASS].filter(Boolean);
 const report = {
+  source: probeSource(),
   startedAt: new Date().toISOString(),
   scope:
-    'Real DSH read-only image observation of the owned configured core-probe line plot; no native UI/Feishu acceptance',
+    'Real DSH optional CLI-backed read-only image observation of the owned configured core-probe line plot; no native UI/Feishu acceptance',
   model: values.model,
   calls: [],
   events: [],
@@ -59,18 +50,12 @@ const persist = () => {
   }
   fs.writeFileSync(path.join(root, 'report.json'), data + '\n', { mode: 0o600 });
 };
-const connections = new JupyterConnections(values.connections, () => env);
-const session = notebookSessionFactory(connections)({
-  workingDir: values.project,
-  currentWorkingDir: () => values.project,
-  conversationKey: 'datalayer-image-observation',
+const probe = await createCLIProbe({
+  envFile: values['env-file'],
+  project: values.project,
+  directory: root,
 });
-if (!session) {
-  throw new Error('Existing authorized Notebook session unavailable');
-}
-const overview = await session.tools
-  .find((t) => t.name === 'notebook_list')
-  .execute({}, { signal: new AbortController().signal });
+const overview = await probe.call('notebook_list', {});
 if (overview.notebooks.length !== 1) {
   throw new Error('A single owned core-probe Notebook is required');
 }
@@ -97,7 +82,6 @@ for (const name of Object.keys(modelEnv)) {
     modelEnv[name] = undefined;
   }
 }
-connections.redactEnvironment(modelEnv);
 const provider = new DeepSeekHarnessProvider({
   binary: values.binary,
   dshHome,
@@ -106,7 +90,7 @@ const provider = new DeepSeekHarnessProvider({
   requestTimeoutMs: 60000,
   env: modelEnv,
 });
-const tools = session.tools
+const tools = (await probe.modelTools())
   .filter((tool) => tool.name === 'notebook_observe_image')
   .map((tool) => ({
     ...tool,
@@ -175,7 +159,8 @@ try {
 } finally {
   clearTimeout(timer);
   query?.handle.close();
-  session.dispose();
+  await probe.close();
+  report.commands = probe.commands;
   await provider.shutdown();
   const native = [];
   const scan = (directory) => {

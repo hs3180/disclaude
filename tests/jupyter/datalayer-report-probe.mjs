@@ -3,10 +3,8 @@ import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { parseArgs, parseEnv } from 'node:util';
 import { DatalayerJupyterClient } from '../../packages/core/dist/jupyter/datalayer-client.js';
+import { createCLIProbe, probeSource } from './cli-probe-client.mjs';
 import { notebookSnapshotHash } from '../../packages/core/dist/jupyter/notebook-fingerprint.js';
-import { JupyterConnections } from '../../packages/service/dist/jupyter/connections.js';
-import { notebookSessionFactory } from '../../packages/service/dist/jupyter/agent-session.js';
-import { JupyterProjectConfigStore } from '../../packages/service/dist/jupyter/project-config-store.js';
 
 const { values } = parseArgs({
   options: { 'env-file': { type: 'string' }, output: { type: 'string' } },
@@ -29,6 +27,7 @@ const before = {
 };
 const nonce = randomUUID().slice(0, 8);
 const report = {
+  source: probeSource(),
   startedAt: new Date().toISOString(),
   scope:
     'Configured remote CSV input, PNG/SVG/HTML/inline Plotly artifacts and two clean kernel numerical reproductions; native device rendering/Feishu remain separate',
@@ -49,25 +48,6 @@ const check = (name, passed, evidence) => {
   persist();
   console.log(JSON.stringify({ name, passed }));
 };
-const config = path.join(root, 'connections.json');
-fs.writeFileSync(
-  config,
-  JSON.stringify({
-    version: 1,
-    connections: [
-      {
-        id: 'report-probe',
-        backend: 'datalayer',
-        baseUrl: env.JUPYTERLAB_HOST,
-        passwordEnv: 'JUPYTERLAB_PASS',
-        allowInsecureHttp: true,
-      },
-    ],
-  }),
-  { mode: 0o600 }
-);
-const connections = new JupyterConnections(config, () => env);
-const factory = notebookSessionFactory(connections);
 const csv = 'group,value\nA,3\nB,7\nC,2\n';
 const localPath = path.join(root, 'synthetic-input.csv');
 fs.writeFileSync(localPath, csv, { mode: 0o600 });
@@ -81,26 +61,17 @@ report.dataset = {
 };
 const sessions = [];
 const run = async (owner, id, runId) => {
-  const cell = await owner.tools
-    .find((t) => t.name === 'notebook_read_cell')
-    .execute(
-      { notebookId: id, cellId: 'study-analysis' },
-      { signal: new AbortController().signal }
-    );
-  const submitted = await owner.tools
-    .find((t) => t.name === 'notebook_execute')
-    .execute(
-      { notebookId: id, cellId: 'study-analysis', expectedSourceHash: cell.sourceHash, runId },
-      { signal: new AbortController().signal }
-    );
-  if (submitted.state !== 'accepted') {
-    throw new Error('Original study submission not accepted');
-  }
+  const cell = await owner.call('notebook_read_cell', { notebookId: id, cellId: 'study-analysis' });
+  const submitted = await owner.call('notebook_execute', {
+    notebookId: id,
+    cellId: 'study-analysis',
+    expectedSourceHash: cell.sourceHash,
+    runId,
+  });
+  if (submitted.state !== 'accepted') throw new Error('Original study submission not accepted');
   const deadline = Date.now() + 60000;
   while (Date.now() < deadline) {
-    const result = await owner.tools
-      .find((t) => t.name === 'notebook_status')
-      .execute({ notebookId: id, runId }, { signal: new AbortController().signal });
+    const result = await owner.call('notebook_status', { notebookId: id, runId });
     if (['completed', 'failed', 'cancelled', 'unknown'].includes(result.state)) {
       report.runs.push(result);
       return result;
@@ -153,42 +124,23 @@ try {
     });
     const project = path.join(root, `project-${trial}`);
     fs.mkdirSync(project, { mode: 0o700 });
-    const linked = new JupyterProjectConfigStore(project).linkNotebook({
-      connectionId: 'report-probe',
-      serverNamespace: 'configured-report-probe',
-      contentPath: notebook,
+    const session = await createCLIProbe({
+      envFile: values['env-file'],
+      project,
+      directory: project,
     });
-    if (!linked.ok) {
-      throw new Error('Owned Project reference unavailable');
-    }
-    const owner = factory({
-      workingDir: project,
-      currentWorkingDir: () => project,
-      conversationKey: `study-${nonce}-${trial}`,
-    });
-    sessions.push(owner);
-    const invoke = (name, input) =>
-      owner.tools
-        .find((t) => t.name === name)
-        .execute(input, { signal: new AbortController().signal });
-    owner.registerAttachments([
-      {
-        id: 'synthetic-csv',
-        fileName: 'synthetic-input.csv',
-        localPath,
-        source: 'user',
-        createdAt: Date.now(),
-      },
-    ]);
-    const view = await invoke('notebook_list', {});
-    const id = view.notebooks[0].notebookId;
+    sessions.push(session);
+    const linked = await session.command('link', undefined, ['--path', notebook]);
+    const id = linked.notebookId;
+    const invoke = session.call;
+    fs.copyFileSync(localPath, path.join(project, 'synthetic-input.csv'));
     const imported = await invoke('notebook_import_file', {
       notebookId: id,
-      attachmentId: 'synthetic-csv',
+      filePath: 'synthetic-input.csv',
     });
     const repeated = await invoke('notebook_import_file', {
       notebookId: id,
-      attachmentId: 'synthetic-csv',
+      filePath: 'synthetic-input.csv',
     });
     check(
       `Remote CSV import ${trial} preserves bytes and verifies repeat`,
@@ -208,9 +160,9 @@ try {
       expectedSourceHash: initial.sourceHash,
       source,
     });
-    const result = await run(owner, id, `study-${trial}`);
+    const result = await run(session, id, `study-${trial}`);
     check(`Clean remote study execution ${trial}`, result.state === 'completed', result);
-    const peer = await client.openDocument(notebook, view.notebooks[0].documentId);
+    const peer = await client.openDocument(notebook, linked.documentId);
     let snapshot, notebookJSON;
     try {
       await peer.flush();
@@ -252,19 +204,17 @@ try {
     });
     check(
       `Bound native PNG observation ${trial}`,
-      image.format === 'disclaude.tool-result.v1' &&
-        image.data.outputState === 'current' &&
-        image.images[0].mimeType === 'image/png',
+      image.data.outputState === 'current' && image.images[0].mimeType === 'image/png',
       {
         metadata: image.data,
         imageSha256: createHash('sha256')
-          .update(Buffer.from(image.images[0].data, 'base64'))
+          .update(fs.readFileSync(image.images[0].filePath))
           .digest('hex'),
       }
     );
     fs.writeFileSync(
       path.join(root, `study-${trial}.png`),
-      Buffer.from(image.images[0].data, 'base64'),
+      fs.readFileSync(image.images[0].filePath),
       { mode: 0o600 }
     );
     fs.writeFileSync(
@@ -272,7 +222,6 @@ try {
       JSON.stringify(notebookJSON, null, 2) + '\n',
       { mode: 0o600 }
     );
-    sessions[trial].dispose();
   }
   check(
     'Two clean kernels reproduce the recorded numerical range',
@@ -284,22 +233,11 @@ try {
       kernels: report.runs.map((run) => ({ id: run.kernelId, incarnation: run.kernelIncarnation })),
     }
   );
-  const firstProject = path.join(root, 'project-0');
-  const exporter = factory({
-    workingDir: firstProject,
-    currentWorkingDir: () => firstProject,
-    conversationKey: `study-${nonce}-0`,
+  const exporter = sessions[0];
+  const view = await exporter.call('notebook_list', {});
+  const exported = await exporter.call('notebook_export', {
+    notebookId: view.notebooks[0].notebookId,
   });
-  sessions.push(exporter);
-  const view = await exporter.tools
-    .find((t) => t.name === 'notebook_list')
-    .execute({}, { signal: new AbortController().signal });
-  const exported = await exporter.tools
-    .find((t) => t.name === 'notebook_export')
-    .execute(
-      { notebookId: view.notebooks[0].notebookId },
-      { signal: new AbortController().signal }
-    );
   report.exports.push(exported);
   const snapshot = await client.json(`api/contents/${exported.notebookPath}`);
   const revision = notebookSnapshotHash(snapshot.content);
@@ -347,7 +285,8 @@ try {
   report.completed = false;
   report.error = error.message;
 } finally {
-  sessions.forEach((session) => session?.dispose());
+  await Promise.all(sessions.map((session) => session.close()));
+  report.commands = sessions.flatMap((session) => session.commands);
   const current = await client.json('api/sessions');
   for (const session of current.filter(
     (session) =>

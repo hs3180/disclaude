@@ -4,10 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { parseArgs, parseEnv } from 'node:util';
 import { DatalayerJupyterClient } from '../../packages/core/dist/jupyter/datalayer-client.js';
+import { createCLIProbe, probeSource } from './cli-probe-client.mjs';
 import { DeepSeekHarnessProvider } from '../../packages/core/dist/sdk/providers/deepseek/provider.js';
-import { JupyterConnections } from '../../packages/service/dist/jupyter/connections.js';
-import { notebookSessionFactory } from '../../packages/service/dist/jupyter/agent-session.js';
-import { JupyterProjectConfigStore } from '../../packages/service/dist/jupyter/project-config-store.js';
 
 const { values } = parseArgs({
   options: {
@@ -23,8 +21,8 @@ for (const field of ['env-file', 'oauth-auth-file', 'output', 'model']) {
     throw new Error(`Explicit --${field} required`);
   }
 }
-if (values.model.toLowerCase().includes('astra')) {
-  throw new Error('Astra is prohibited');
+if (values.model !== 'gpt-5.6-luna') {
+  throw new Error('This explicit #5215/#5219 probe requires gpt-5.6-luna');
 }
 const root = path.resolve(values.output);
 fs.mkdirSync(path.dirname(root), { recursive: true });
@@ -49,9 +47,10 @@ const originalKernels = await client.json('api/kernels');
 const originalSessions = await client.json('api/sessions');
 const notebook = `disclaude-datalayer-model-${randomUUID().slice(0, 8)}.ipynb`;
 const report = {
+  source: probeSource(),
   startedAt: new Date().toISOString(),
   scope:
-    'Real DSH model + persistent Project + configured Datalayer; not production Feishu/native UI acceptance',
+    'Real DSH model + optional CLI-backed tools + configured Datalayer; not production Feishu/native UI acceptance',
   model: values.model,
   reasoningEffort: 'low',
   acceptanceOverride: '#5215/#5219 explicit model acceptance; daily model configuration unchanged',
@@ -60,32 +59,8 @@ const report = {
   notebook,
   project,
 };
-const connectionId = 'datalayer-model-probe';
-const namespace = 'configured-datalayer-mvp';
-const config = path.join(root, 'host-connections.json');
-fs.writeFileSync(
-  config,
-  JSON.stringify({
-    version: 1,
-    connections: [
-      {
-        id: connectionId,
-        backend: 'datalayer',
-        baseUrl: env.JUPYTERLAB_HOST,
-        passwordEnv: 'JUPYTERLAB_PASS',
-        allowInsecureHttp: true,
-      },
-    ],
-  }),
-  { mode: 0o600 }
-);
-const connections = new JupyterConnections(config, () => env);
-const factory = notebookSessionFactory(connections);
-const context = {
-  workingDir: project,
-  conversationKey: 'real-datalayer-model-acceptance',
-  currentWorkingDir: () => project,
-};
+const probe = await createCLIProbe({ envFile: values['env-file'], project, directory: project });
+const notebookTools = await probe.modelTools();
 const dshHome = path.join(root, 'dsh');
 fs.mkdirSync(dshHome, { mode: 0o700 });
 const route = path.join(dshHome, 'route.patch.yml');
@@ -104,8 +79,7 @@ for (const name of Object.keys(modelEnv)) {
     modelEnv[name] = undefined;
   }
 }
-connections.redactEnvironment(modelEnv);
-let session, peer;
+let peer;
 const providers = [];
 const stderr = [];
 const persist = () =>
@@ -124,7 +98,7 @@ async function phase(name, prompt) {
     env: modelEnv,
   });
   providers.push(provider);
-  const tools = session.tools.map((tool) => ({
+  const tools = notebookTools.map((tool) => ({
     ...tool,
     execute: async (input, invocation) => {
       const call = { tool: tool.name, input, startedAt: new Date().toISOString() };
@@ -135,19 +109,20 @@ async function phase(name, prompt) {
       return call.output;
     },
   }));
-  const nativeContext = await session.messageContext();
+  const nativeContext =
+    '\nBound Project Notebooks: ' + JSON.stringify(await probe.call('notebook_list', {}));
   async function* messages() {
     yield { role: 'user', content: prompt + nativeContext };
   }
   const query = provider.queryStream(messages(), {
     cwd: project,
-    sessionKey: context.conversationKey,
+    sessionKey: 'real-datalayer-model-acceptance',
     settingSources: [],
     tools,
     model: values.model,
     reasoningEffort: 'low',
     systemPrompt:
-      'Use the native notebook tools for every Notebook read/edit/run/export. The host is Node-only: do not run host Python, local Jupyter, shell commands or install dependencies. Use only the bound existing remote Notebook. Preserve human Markdown and source outside the explicit request. Query accepted run IDs until terminal, never replay unknown work. Report actual observations.',
+      'Use the optional notebook tools for every Notebook read/edit/run/export; each tool invokes the public disclaude jupyter CLI in a separate Node process. The host is Node-only: do not run host Python, local Jupyter, shell commands or install dependencies. Use only the bound existing remote Notebook. Preserve human Markdown and source outside the explicit request. Query accepted run IDs until terminal, never replay unknown work. Report actual observations.',
     stderr: (chunk) => {
       if (stderr.join('').length < 24000) {
         stderr.push(chunk);
@@ -227,21 +202,12 @@ try {
       ],
     },
   });
-  const linked = new JupyterProjectConfigStore(project).linkNotebook({
-    connectionId,
-    serverNamespace: namespace,
-    contentPath: notebook,
-  });
-  if (!linked.ok) {
-    throw new Error('Project reference failed');
-  }
-  session = factory(context);
+  const linked = await probe.command('link', undefined, ['--path', notebook]);
   await phase(
     'Initial model turn',
     'Read the bound live Notebook. Set only model-params to exactly `mvp_value = 23` using a fresh sourceHash. Execute model-params, then model-analysis, each with a distinct runId, and query until terminal. Report the printed MODEL_RESULT. Keep all Markdown unchanged.'
   );
-  const refs = new JupyterProjectConfigStore(project).listNotebookReferences().data;
-  peer = await client.openDocument(notebook, refs[0].documentId);
+  peer = await client.openDocument(notebook, linked.documentId);
   const first = peer.snapshot();
   report.firstResultVerified = JSON.stringify(
     first.cells.find((c) => c.id === 'model-analysis')?.outputs
@@ -253,10 +219,8 @@ try {
   const humanWording = 'Human conclusion: parameter changed to 31; preserve this exact wording.';
   peer.notebook.cells.find((c) => c.id === 'model-human-note').source = humanWording;
   await peer.flush();
-  session.dispose();
-  session = factory(context);
   await phase(
-    'Follow-up after independent live edit and host session recreation',
+    'Follow-up after independent live edit and fresh CLI processes',
     'A person changed the parameter and their Markdown in the same shared Notebook. Read the latest live cells. Execute the current model-params and model-analysis with new run IDs, query until terminal, and report the actual MODEL_RESULT. Preserve all human wording. Add one Markdown cell with ID model-agent-summary to record the observed result and that these are synthetic test data. Export one HTML/ipynb snapshot and include both links in your response.'
   );
   await peer.flush();
@@ -288,7 +252,8 @@ try {
   report.error = sanitize(error.message);
 } finally {
   peer?.close();
-  session?.dispose();
+  await probe.close();
+  report.commands = probe.commands;
   report.providerCleanup = (await Promise.allSettled(providers.map((p) => p.shutdown()))).map(
     (r) => r.status
   );

@@ -4,21 +4,20 @@ import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { parseArgs, parseEnv, promisify } from 'node:util';
 import { DatalayerJupyterClient } from '../../packages/core/dist/jupyter/datalayer-client.js';
-import { JupyterConnections } from '../../packages/service/dist/jupyter/connections.js';
-import { notebookSessionFactory } from '../../packages/service/dist/jupyter/agent-session.js';
+import { createCLIProbe, probeSource } from './cli-probe-client.mjs';
 import { createChannelCallbacksFactory } from '../../packages/service/dist/utils/channel-handlers.js';
 
 // Explicitly opted-in real outbound component check. No model, incoming-event
 // subscription or competing bot WebSocket. This cannot pass the product gate.
 const { values } = parseArgs({
   options: Object.fromEntries(
-    ['env-file', 'connections', 'project', 'chat-id', 'root-message-id', 'output'].map((name) => [
+    ['env-file', 'project', 'chat-id', 'root-message-id', 'output'].map((name) => [
       name,
       { type: 'string' },
     ])
   ),
 });
-for (const name of ['env-file', 'connections', 'project', 'chat-id', 'root-message-id', 'output']) {
+for (const name of ['env-file', 'project', 'chat-id', 'root-message-id', 'output']) {
   if (!values[name]) {
     throw new Error(`Explicit --${name} required`);
   }
@@ -30,7 +29,6 @@ if (
   throw new Error('Use an authorized chat and the actual root message returned by Feishu');
 }
 const output = path.resolve(values.output);
-const connectionFile = fs.realpathSync(values.connections);
 const project = fs.realpathSync(values.project);
 fs.mkdirSync(output, { mode: 0o700 });
 const files = path.join(output, 'sent-files');
@@ -47,9 +45,10 @@ const resources = async () => ({
 });
 const before = await resources();
 const report = {
+  source: probeSource(),
   startedAt: new Date().toISOString(),
   scope:
-    'Configured remote snapshot -> generic file callback -> real lark-cli bot thread replies; no Agent/user Lab/device acceptance',
+    'Configured remote public CLI snapshot -> generic file callback -> real lark-cli bot thread replies; no Agent/user Lab/device acceptance',
   chatId: values['chat-id'],
   rootMessageId: values['root-message-id'],
   before,
@@ -153,30 +152,27 @@ const callbacks = createChannelCallbacksFactory(
   },
   { warn() {}, info() {} }
 )(report.chatId);
-const connections = new JupyterConnections(connectionFile, () => env);
-const session = notebookSessionFactory(connections)({
-  workingDir: project,
-  conversationKey: `outbound-component-${nonce}`,
-  currentWorkingDir: () => project,
-  delivery: () => ({
-    sendFile: async (file, signal) => {
-      signal.throwIfAborted();
-      return await callbacks.sendFile(report.chatId, file, report.rootMessageId);
-    },
-  }),
-});
+const probe = await createCLIProbe({ envFile: values['env-file'], project, directory: output });
 try {
-  if (!session) {
-    throw new Error('An existing owned Project Notebook is required');
+  const list = await probe.call('notebook_list', {});
+  if (list.notebooks.length !== 1) throw new Error('Use exactly one owned Notebook');
+  const downloaded = await probe.call('notebook_download_report', {
+    notebookId: list.notebooks[0].notebookId,
+  });
+  if (downloaded.state !== 'downloaded')
+    throw new Error('CLI did not download a verified snapshot');
+  const messageIds = [];
+  for (const artifact of downloaded.artifacts) {
+    if (
+      createHash('sha256').update(fs.readFileSync(artifact.filePath)).digest('hex') !==
+      artifact.sha256
+    )
+      throw new Error('Artifact changed before delivery');
+    messageIds.push(
+      await callbacks.sendFile(report.chatId, artifact.filePath, report.rootMessageId)
+    );
   }
-  const invocation = { signal: new AbortController().signal };
-  const list = await session.tools.find((t) => t.name === 'notebook_list').execute({}, invocation);
-  if (list.notebooks.length !== 1) {
-    throw new Error('Use exactly one owned Notebook');
-  }
-  report.delivery = await session.tools
-    .find((t) => t.name === 'notebook_deliver_report')
-    .execute({ notebookId: list.notebooks[0].notebookId }, invocation);
+  report.delivery = { ...downloaded, state: 'delivered', messageIds };
   report.threadAfter = await cli(threadArgs, output, 'thread-after.json');
   const actualIds = new Set(report.threadAfter.messages.map((m) => m.message_id));
   report.allFilesInOriginalThread = report.attempts.every((a) => actualIds.has(a.messageId));
@@ -185,10 +181,15 @@ try {
   report.error = error.message;
   report.completed = false;
 } finally {
-  session?.dispose();
+  await probe.close();
+  report.commands = probe.commands;
   await new Promise((resolve) => setTimeout(resolve, 250));
   report.after = await resources();
-  report.noKernelOrSessionChanges = JSON.stringify(before) === JSON.stringify(report.after);
+  report.noKernelOrSessionChanges = ['kernels', 'sessions'].every(
+    (kind) =>
+      JSON.stringify(before[kind].map((x) => x.id).sort()) ===
+      JSON.stringify(report.after[kind].map((x) => x.id).sort())
+  );
   report.completed = report.completed === true && report.noKernelOrSessionChanges;
   report.finishedAt = new Date().toISOString();
   save();

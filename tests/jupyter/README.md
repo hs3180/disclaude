@@ -1,263 +1,112 @@
-# Notebook acceptance probes
+# Configured Jupyter CLI acceptance probes
 
-These opt-in probes are preserved from candidate `0dee0fa16ff4ca3118ed7c5fb96f03f85a23004a`.
-They require a built checkout containing the Node client and Project Service PRs;
-DSH image/report product checks also require the SDK and Feishu fixes, plus the
-configured remote overlay. This probe-only PR can merge independently, but its
-syntax checks do not certify a baseline checkout or repeat product acceptance.
+These opt-in probes exercise the public `disclaude jupyter` CLI merged in
+[#5282](https://github.com/hs3180/disclaude/pull/5282). Build this checkout with
+`npm ci` and `npm run build`. Every Notebook operation launches a fresh Node
+CLI process with `--no-interactive`; Project references and the original-run
+journal survive between commands. No Notebook session factory, ChatAgent hook,
+service lifecycle owner or host Python is needed.
 
-The user removed manual JupyterLab editing support and its human acceptance from
-0.6.3 on 2026-10-06. Existing RTC/native Lab probes remain useful engineering
-checks and historical evidence; they do not claim human acceptance. Current scope,
-real Service/device results and remaining checks are recorded in the
-[candidate acceptance record](https://github.com/hs3180/disclaude/blob/0dee0fa16ff4ca3118ed7c5fb96f03f85a23004a/docs/releases/0.6.3-acceptance.md).
+Use the existing remote server from a host-private `.env` containing
+`JUPYTERLAB_HOST` / `JUPYTERLAB_PASS`. The shared CLI authentication helper
+also supports environment credentials and tokens. These automated probes never
+prompt; interactive authentication is checked separately by the auth tests.
+The repair installer is `disclaude jupyter patch` through Jupyter Terminal;
+see the [patch guide](../../jupyter/datalayer/README.md). Probes do not install
+patches or manage remote machines, containers or Jupyter service restarts.
 
-## Pinned remote nbmodel repair
+Probe runners require Node 22 or newer (the public CLI has separate compatibility checks).
+Receipts record the Git commit/dirty state and probe/CLI source hashes.
+All output directories must be new and are created with private permissions.
+Reports preserve failed checks and distinguish phase completion from success.
+`cli-commands.json` records command, actual child PID, result and exit status;
+raw stderr, authentication headers and credentials are not stored. Cleanup
+closes only sessions/kernels created for each uniquely named scratch Notebook,
+retains Notebook/report/Project evidence and verifies pre-existing resources.
+UI operation budget for these scripts is zero. Independent RTC participants
+are protocol fixtures, not manual Lab editing acceptance.
 
-The [remote overlay](../../jupyter/datalayer/README.md) applies only to the
-verified existing nbmodel/Lab bundle and includes its image recipe, source
-fingerprints, retention/queue policies and rollback procedure. Run
-`datalayer-runtime-test.py` inside the existing remote environment or its owned
-candidate image; the disclaude host needs no Python. Run
-`datalayer-frontend-test.mjs --bundle <installed-patched-bundle>` on the host
-to check actual shipped frontend modules. These regressions are component
-evidence; the configured-server and product probes below remain required.
+## Execution, recovery and explicit cancellation
 
-## Configured Datalayer MVP probes
+`node tests/jupyter/datalayer-probe.mjs --env-file /private/host.env --output /private/new-cli-results`
 
-Build the checkout (`npm run build`) and run against the existing server named
-by the host-private `JUPYTERLAB_HOST` / `JUPYTERLAB_PASS` environment file:
+Checks live RTC reads, persistent calculations, original run-ID deduplication
+and recovery in new CLI processes, raster output, matching native exports,
+browser/client-closed output persistence and explicit `jupyter stop`.
+The default background wait is 67 seconds; `--long-seconds` may choose 2–120,
+but a shorter wait is not evidence beyond document cleanup. An owned kernel's
+direct API interrupt is a separate protocol check and does not implement the
+future [CLI interrupt command #5286](https://github.com/hs3180/disclaude/issues/5286).
 
-```sh
-node tests/jupyter/datalayer-probe.mjs \
-  --env-file /private/host.env \
-  --output /private/new-datalayer-component-results
-```
+Chat `/stop` stops inference. Remote cancellation requires the original
+`notebookId` and `runId` through `jupyter stop`; only an observed cancelled
+terminal gives `stopConfirmed: true`. CLI exit, an accepted HTTP response and
+phase completion do not prove remote cancellation.
 
-This uses the real Service Notebook tools and remote RTC/nbmodel APIs. It creates
-a uniquely named scratch Notebook/Project, checks unsaved edits, persistent
-kernel calculations, original run-ID lookup/recovery, PNG and remote nbconvert
-exports, then disconnects every document client for a 67-second execution.
-It confirms cancellation on the original request, then submits a separate run
-before explicitly interrupting its owned scratch kernel. The separate runs
-avoid a second interrupt corrupting the first run's error handling.
-Original server kernels/sessions must survive cleanup.
-No local Python/Jupyter or remote installation/configuration change occurs.
+`node tests/jupyter/datalayer-edge-probe.mjs --env-file /private/host.env --output /private/new-edge-results`
 
-The new output directory is private. Synthetic Notebook/report files and local
-Project evidence are retained for review; owned kernels/sessions are deleted.
-The report retains failed capability checks. `completed: true` means all probe
-phases finished, **not** that every requirement passed. Authentication/operation
-failure or a failed required check exits nonzero; `requiredChecksPassed` excludes
-the explicitly out-of-scope MCP Tasks discovery. `--long-seconds` may explicitly change the delay; shortening
-it does not establish persistence beyond document cleanup. `--wait-ui` waits up
-to four minutes for a host-created `ui-done.json` evidence record so a logged-in
-human can edit the scratch Notebook. That record must contain `completed: true`
-only after the UI edit is verified; never send passwords through a model/UI tool.
+The default suite runs target cancellation, source/output attribution,
+original pending/terminal recovery in new CLI processes, document identity,
+MIME display/clear behavior, moves/deletes during execution, large outputs and
+stdin rejection, cancellation races, `cli-stop-continuation` and concurrent
+export revisions. `--cases` selects comma-separated names from the script's
+explicit case list. Kernel restart applies only to a verified scratch kernel.
 
-For cancellation target checks, source edits during execution, unread pending
-request recovery after host connection recreation, metadata/attachment retention,
-kernel incarnation, MIME display updates/clear and rename/copy identity:
+The edge and fault suites use a temporary host HTTP observer forwarding to the
+configured remote endpoint. It counts actual execute POSTs and introduces
+labelled transport failures or concurrent edits. The observer is not a Jupyter
+server and creates no local kernel. Its Project references belong to that
+short-lived observer endpoint; use the core/report probe's direct-endpoint
+Project for subsequent image or delivery checks.
 
-```sh
-node tests/jupyter/datalayer-edge-probe.mjs \
-  --env-file /private/host.env \
-  --output /private/new-datalayer-edge-results
-```
+`node tests/jupyter/datalayer-fault-probe.mjs --env-file /private/host.env --output /private/new-fault-results`
 
-Each case owns a different scratch Notebook/kernel. It tests cancelling a queued
-or finished unread request while another request runs; it never interrupts other
-kernels. The incarnation case restarts only its owned kernel, not the Jupyter
-service. Rename/copy operations also apply only to owned scratch files.
-The output case observes raw IOPub alongside nbmodel/RTC, including the interval
-after `clear_output(wait=True)` before replacement arrives. Failures remain in
-the report; probe completion is distinct from requirement success.
-Use `--cases output-features,document-identity` to select cases; available names
-also include `queued-cancel`, `finished-cancel`, `edit-running`,
-`pending-host-recovery` and `kernel-incarnation`. The recovery case launches an
-independent Node process while the original request is pending, polls that
-request without submitting execution, then recreates the original host session
-from its persisted terminal cache. This does not establish recovery after a
-machine/Jupyter restart or a lost submission reply.
+Checks injected HTTP denial/reply loss, recovery of an original request,
+a genuinely accepted but dropped 202 reply with no replay, and refusal to
+silently continue after an owned native kernel restart. Injection is not
+physical network outage or an expired credential. Jupyter service restart
+remains `not_verified`; this script provides no deployment/restart options.
 
-The edge probe also covers `terminal-host-recovery`, `move-delete-running`,
-`display-many-positions`, `clear-immediate`, `large-output-stdin`,
-`completion-cancel-race`, `service-stop-continuation` and `export-revision-race`.
-These verify an uncached original terminal in an independent Node process after
-other consumers read first, offline cached lookup, native cell moves/deletion,
-cross-cell display updates, immediate clear, complete authenticated oversized
-result artifacts, explicit stdin rejection, cancellation/dispatch races,
-Service lifecycle stop and same-incarnation continuation, and historical export
-snapshot consistency during a concurrent live edit. The probe exits nonzero
-for any failed check. It does not certify native Lab UI, production Feishu,
-actual-device rendering or server restart behavior.
+## Reports and numerical reproduction
 
-For original identity recovery under authentication/HTTP failure, a deliberately
-lost accepted submission reply, native kernel restart and optional guarded
-restart of the configured Jupyter container:
+`node tests/jupyter/datalayer-report-probe.mjs --env-file /private/host.env --output /private/new-report-results`
 
-```sh
-node tests/jupyter/datalayer-fault-probe.mjs \
-  --env-file /private/host.env \
-  --output /private/new-datalayer-fault-results
-```
+Imports exact synthetic CSV bytes through the CLI, runs two fresh remote
+kernels, compares numerical results, and checks PNG/SVG/HTML/inline Plotly,
+formula/table sources, bounded image files, matching HTML/ipynb revisions,
+authentication and sandbox headers. Source/header checks do not establish
+rendering on the user's actual device.
 
-The optional `--restart-ssh`, `--restart-container` and `--restart-image` must
-identify the actual owned candidate. The probe refuses restart if the image or
-live workloads differ from the recorded owned resources. It restarts that same
-container, preserving its native file-ID database; it does not recreate an image.
-Read the [identity persistence procedure](../../jupyter/datalayer/README.md#native-file-identity)
-before a separate deployment/image change. The report distinguishes actual HTTP
-timeout/authentication denial from injected reply loss. All unknown submissions
-retain their identity and must produce no replay POST. A native restart does
-not restore kernel memory. Failed checks exit nonzero, and this probe does not
-pass physical network outage, native Lab UI or production Feishu acceptance.
+## Explicit model and outbound component probes
 
-For two real native DSH turns with session recreation and an independent RTC
-participant editing the parameter/Markdown between them:
+The DSH probes expose optional CLI-backed tools only within their test harness;
+they do not create Notebook state in ChatAgent or certify Skill discovery.
+Supply the existing host-private OAuth auth file and the explicit
+`gpt-5.6-luna` override required by #5215/#5219. Daily service configuration
+is unaffected. Credentials are removed from the model environment and checked
+against native history; these probes do not open a competing bot connection.
 
-```sh
-node tests/jupyter/datalayer-dsh-probe.mjs \
-  --env-file /private/host.env \
-  --oauth-auth-file /private/existing-auth.json \
-  --model gpt-5.6-luna \
-  --output /private/new-datalayer-model-results
-```
+`node tests/jupyter/datalayer-dsh-probe.mjs --env-file /private/host.env --oauth-auth-file /private/auth.json --model gpt-5.6-luna --output /private/new-dsh-results`
 
-The host's existing OAuth credential is read without refresh and needs at least
-15 minutes remaining. `--binary /path/to/dsh` selects an explicit DSH executable.
-The probe checks native model/session routing, 69 then 93 on one kernel, human
-text/parameter preservation, HTML/ipynb export and credential absence from native
-history. The explicit model is the #5215/#5219 acceptance override; daily defaults
-remain `gpt-6-luna`, and Astra is refused. Scratch kernels/sessions and the owned
-provider process are cleaned up; private review evidence remains.
+`node tests/jupyter/datalayer-image-probe.mjs --env-file /private/host.env --oauth-auth-file /private/auth.json --model gpt-5.6-luna --project /private/core-results/project --cell-id mvp-plot --output /private/new-image-results`
 
-For a real read-only DSH image observation of the owned core probe's retained
-`mvp-plot`, use its private connection catalog and Project:
+Image observation converts the CLI's verified local raster artifact into the
+native SDK image result. The image probe is read-only. DSH/model validation is
+separate from real Feishu Agent acceptance and native-device rendering.
 
-```sh
-node tests/jupyter/datalayer-image-probe.mjs \
-  --env-file /private/host.env \
-  --oauth-auth-file /private/existing-auth.json \
-  --connections /private/core-probe/host-connections.json \
-  --project /private/core-probe/project --cell-id mvp-plot \
-  --model gpt-5.6-luna --output /private/new-image-observation
-```
+The outbound probe requires an explicitly authorized fresh Feishu thread; it
+uses `download-report` and the generic file callback/channel path, records
+actual message identities and checks the original thread. It does not send on
+ordinary test invocation or retry an ambiguous write. Run only when separately
+authorized to send into that chat:
 
-Only the image business tool is supplied. The prompt forbids source/data/file
-reads and other tools; it records the model answer, actual native image references
-and provider route. The line plot's three increasing marked points and visible
-`step`/`value` axes form the expected observation. The probe does not execute a
-kernel or certify human/browser rendering.
+`node tests/jupyter/datalayer-delivery-probe.mjs --env-file /private/host.env --project /private/core-results/project --chat-id oc_AUTHORIZED --root-message-id om_OWNED --output /private/new-delivery-results`
 
-For remote attachment import, two clean numerical reproductions and matching
-PNG/SVG/HTML/inline Plotly reports:
-
-```sh
-node tests/jupyter/datalayer-report-probe.mjs \
-  --env-file /private/host.env --output /private/new-report-results
-```
-
-The optional [remote report dependencies](../../jupyter/datalayer/README.md#build-and-rollback)
-must already be installed in the owned candidate. This probe registers a
-synthetic incoming CSV through the same host boundary, imports it by attachment
-ID, executes in two separate new remote kernels, and compares seeded numerical
-results/package versions. It retains CSV, PNG, ipynb/HTML and hash evidence,
-including complete inline Plotly assets. Authentication and sandbox header/source
-checks do not establish actual-device rendering or HTML sanitizer behavior.
-Report content fingerprints use `notebookSnapshotHash` with
-`revisionAlgorithm: nbformat-content-sha256-v2`: normalize nbformat multiline
-source, stream and known text/image MIME fields, omit only the boolean runtime
-`trusted` flag on code cells, then sort object keys before JSON encoding and
-SHA-256. Human and unknown metadata, JSON MIME arrays and cell/output order remain
-part of content identity. File-byte hashes are recorded separately. Delivery
-downloads and verifies the saved ipynb and sends those exact bytes; serialization
-key order, line arrays and runtime trust do not change its logical revision.
-The Datalayer HTTP transport permits complete responses up to 8 MB by default,
-including nbconvert's inline Plotly bundle; model previews keep their smaller
-limits. The host can set a smaller `maxResponseBytes` when constructing its client.
-Only owned kernels/sessions are removed; the remote synthetic artifacts remain.
-
-To explicitly send the retained owned report to a fresh authorized Feishu test
-thread through the generic file callback, with `lark-cli` already authenticated:
-
-```sh
-node tests/jupyter/datalayer-delivery-probe.mjs \
-  --env-file /private/host.env \
-  --connections /private/report-probe/connections.json \
-  --project /private/report-probe/project-0 \
-  --chat-id oc_actual_test_chat --root-message-id om_actual_fresh_root \
-  --output /private/new-delivery-results
-```
-
-This opt-in probe makes real bot file/image replies in that thread. It exports
-one verified remote snapshot, calls `notebook_deliver_report` once, records actual
-message IDs/file hashes and checks the thread via user read APIs. Only the current
-delivery files are copied; the tool cleans its temporary directory. It does not
-start a model, subscribe to bot events or open another WebSocket. It does not
-pass the real incoming-attachment, Agent continuation, user Lab or device gate.
-Do not repeat a write with an unknown result or bypass a CLI confirmation gate.
-
-None of these probes switches production Feishu or passes native JupyterLab/device
-acceptance. Current instance failures and all unverified behaviors are recorded
-in [the MVP matrix](../../docs/designs/datalayer-mvp.md). The host-only
-`connection-probe.mjs` supports both backends as described in
-[the connection guide](../../docs/jupyter-service.md#host-diagnostics); omitted
-`backend` selects Datalayer. Its successful inspection does not pass any of the
-execution, save, cancellation or UI acceptance cases above.
-
-## Configured-server DSH probe
-
-Real acceptance for this work uses the server configured by `JUPYTERLAB_HOST` /
-`JUPYTERLAB_PASS`. No local JupyterLab or Python environment is started by this
-mode. Build the composed Service/native checkout, then use a host-private
-connection catalog as described in [the Service guide](../../docs/jupyter-service.md):
-
-```sh
-node tests/jupyter/dsh-notebook-probe.mjs \
-  --config-file /private/jupyter/connections.json \
-  --connection-id configured \
-  --env-file /private/host.env \
-  --project-dir /path/to/dedicated-acceptance-project \
-  --dsh-checkout /path/to/composed-service-checkout \
-  --oauth-auth-file /private/existing-auth.json \
-  --model gpt-5.6-luna \
-  --notebook scratch-acceptance.ipynb \
-  --output /private/new-configured-dsh-report.json
-```
-
-The Project directory must already exist and be dedicated to this scratch
-Notebook. The Notebook must already exist on that server with `human-note`
-(Markdown), `short-cell` (code), and `long-cell` (code) IDs. The long cell should
-print `RUNNING` with `flush=True`, sleep for 30 seconds, then print `LATE`.
-The probe explicitly edits/runs the two code cells; it preserves the Markdown.
-It does not create or delete a remote Notebook/kernel. It preserves the Project's
-reference and execution records for follow-up acceptance. Existing references to
-a different Notebook and control held by another owner are refused; an explicit
-handoff must be performed before reusing that Notebook.
-
-Before reading model authentication, running the DSH binary, opening a Notebook,
-writing the Project or creating temporary DSH state, the probe performs only safe
-host login/capability reads. An authenticated server without the coordinator
-exits **2**, reports `blocked` / `not_executed`, and keeps both `modelStarted` and
-`notebookOpened` false. Other connection failures exit **1**. Neither condition
-passes Notebook acceptance. The host catalog owns the endpoint and HTTP policy;
-models receive neither that catalog nor Jupyter authentication variables.
-
-With the coordinator available, the existing native DSH phases test exact
-read/edit/run, a new native process and Service session continuing the same
-Notebook, confirmed exact-run stop, inference-idle owner stop and same-kernel
-continuation. Accepted handles must keep the same Notebook/kernel incarnation;
-the Markdown source must survive. Cleanup asks the host to stop its original
-owner, reports unknown/lost-authority outcomes as failure, and retains the remote
-Notebook/kernel and persistent Project. It removes only its own temporary DSH
-configuration/history after provider shutdown. Existing OAuth credentials are
-read without refresh and must have at least 15 minutes remaining.
-
-This is native Service/DSH component evidence. Real Feishu, native Lab human
-edits and access from the user's device remain separate product acceptance.
-The explicit `gpt-5.6-luna` route is the #5215/#5219 acceptance exception; daily
-and candidate defaults remain `gpt-6-luna`, and Astra is refused.
+Historical results remain pinned to
+[0dee0fa16](https://github.com/hs3180/disclaude/blob/0dee0fa16ff4ca3118ed7c5fb96f03f85a23004a/docs/releases/0.6.3-acceptance.md).
+The updated probes must be run on their own committed source before recording
+new evidence. Final merged-source installation and release checks remain
+required; neither syntax checks nor earlier candidate passes replace them.
 
 ## Historical G0-B Jupyter stack experiment
 

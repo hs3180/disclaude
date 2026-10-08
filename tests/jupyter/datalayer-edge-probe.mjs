@@ -1,12 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { execFile } from 'node:child_process';
-import { parseArgs, parseEnv, promisify } from 'node:util';
+import { parseArgs, parseEnv } from 'node:util';
+import { createCLIProbe, probeSource } from './cli-probe-client.mjs';
 import { DatalayerJupyterClient } from '../../packages/core/dist/jupyter/datalayer-client.js';
-import { JupyterConnections } from '../../packages/service/dist/jupyter/connections.js';
-import { notebookSessionFactory } from '../../packages/service/dist/jupyter/agent-session.js';
-import { JupyterProjectConfigStore } from '../../packages/service/dist/jupyter/project-config-store.js';
 
 const { values } = parseArgs({
   options: {
@@ -32,7 +29,7 @@ const knownCases = new Set([
   'clear-immediate',
   'large-output-stdin',
   'completion-cancel-race',
-  'service-stop-continuation',
+  'cli-stop-continuation',
   'export-revision-race',
 ]);
 if (selected && [...selected].some((name) => !knownCases.has(name)))
@@ -51,6 +48,7 @@ const client = new DatalayerJupyterClient({
 const originalKernels = await client.json('api/kernels'),
   originalSessions = await client.json('api/sessions');
 const report = {
+  source: probeSource(),
   startedAt: new Date().toISOString(),
   scope:
     'Configured remote Datalayer edge cases; only isolated owned notebooks/kernels; no server reconfiguration or restart',
@@ -126,135 +124,60 @@ const markdown = {
   },
 };
 
-async function withService(c, name, work) {
+async function withCLI(c, name, work) {
   const project = path.join(root, 'project-' + name);
   fs.mkdirSync(project, { mode: 0o700 });
-  const config = path.join(root, 'connections-' + name + '.json');
-  const connectionId = 'edge-' + name,
-    namespace = 'configured-datalayer-edge';
-  fs.writeFileSync(
-    config,
-    JSON.stringify({
-      version: 1,
-      connections: [
-        {
-          id: connectionId,
-          backend: 'datalayer',
-          baseUrl: env.JUPYTERLAB_HOST,
-          passwordEnv: 'JUPYTERLAB_PASS',
-          allowInsecureHttp: true,
-        },
-      ],
-    }),
-    { mode: 0o600 }
-  );
-  const linked = new JupyterProjectConfigStore(project).linkNotebook({
-    connectionId,
-    serverNamespace: namespace,
-    contentPath: c.file,
+  const probe = await createCLIProbe({
+    envFile: values['env-file'],
+    project,
+    directory: project,
+    observe: true,
   });
-  if (!linked.ok) throw new Error('Owned Project reference unavailable');
-  const connections = new JupyterConnections(config, () => env);
-  const api = await connections.useDatalayer(connectionId, namespace, async (value) => value);
-  const response = api.response.bind(api),
-    requests = [];
-  api.response = async (route, method = 'GET', body) => {
-    const result = await response(route, method, body);
-    requests.push({ route, method, status: result.status });
-    return result;
-  };
-  const context = { workingDir: project, conversationKey: name, currentWorkingDir: () => project };
-  const created = [];
-  const create = () => {
-    const session = notebookSessionFactory(connections)(context);
-    created.push(session);
-    return session;
-  };
-  const session = create();
-  const invocation = { signal: new AbortController().signal };
-  const call = (name, input, owner = session) => {
-    const tool = owner.tools.find((t) => t.name === name);
-    if (!tool) throw new Error('Required Notebook tool unavailable');
-    return tool.execute(input, invocation);
-  };
-  const [{ notebookId }] = (await call('notebook_list', {})).notebooks;
-  const args = async (cellId, runId, owner = session) => ({
-    notebookId,
-    cellId,
-    runId,
-    expectedSourceHash: (await call('notebook_read_cell', { notebookId, cellId }, owner))
-      .sourceHash,
-  });
-  const status = async (runId, owner = session) => {
-    const deadline = Date.now() + 15000;
-    let observed;
-    do {
-      observed = await call('notebook_status', { notebookId, runId }, owner);
-      if (!['accepted', 'running'].includes(observed.state)) return observed;
-      await wait(100);
-    } while (Date.now() < deadline);
-    throw new Error('Original request did not reach an observable terminal state');
-  };
   try {
-    await work({
-      project,
-      config,
-      connectionId,
-      namespace,
-      context,
-      api,
-      requests,
-      create,
-      session,
-      call,
+    const linked = await probe.command('link', undefined, ['--path', c.file]);
+    const notebookId = linked.notebookId;
+    const call = probe.call;
+    const args = async (cellId, runId) => ({
       notebookId,
-      args,
-      status,
+      cellId,
+      runId,
+      expectedSourceHash: (await call('notebook_read_cell', { notebookId, cellId })).sourceHash,
     });
+    const status = async (runId) => {
+      const deadline = Date.now() + 15000;
+      do {
+        const result = await call('notebook_status', { notebookId, runId });
+        if (!['accepted', 'running'].includes(result.state)) return result;
+        await wait(100);
+      } while (Date.now() < deadline);
+      throw new Error('Original request did not reach an observable terminal state');
+    };
+    await work({ project, probe, requests: probe.requests, call, notebookId, args, status });
   } finally {
-    for (const owner of created) owner.dispose();
+    await probe.close();
+    report.commands ??= [];
+    report.commands.push(...probe.commands);
+    persist();
   }
 }
 
 async function freshStatus(f, runId, offline = false) {
-  const childSource = `
-    import fs from 'node:fs';import {parseEnv} from 'node:util';
-    import {JupyterConnections} from ${JSON.stringify(new URL('../../packages/service/dist/jupyter/connections.js', import.meta.url).href)};
-    import {notebookSessionFactory} from ${JSON.stringify(new URL('../../packages/service/dist/jupyter/agent-session.js', import.meta.url).href)};
-    const input=JSON.parse(process.argv[1]),env=parseEnv(fs.readFileSync(input.envFile,'utf8'));
-    const connections=new JupyterConnections(input.config,()=>env);
-    const client=await connections.useDatalayer(input.connectionId,input.namespace,async c=>c);
-    const response=client.response.bind(client);let executePosts=0;const requests=[];
-    client.response=async(route,method='GET',body)=>{requests.push({route,method});if(method==='POST'&&route.endsWith('/execute'))executePosts++;if(input.offline)throw new Error('Offline probe');return response(route,method,body);};
-    const session=notebookSessionFactory(connections)({workingDir:input.project,conversationKey:input.conversationKey,currentWorkingDir:()=>input.project});
-    try{const tool=session.tools.find(t=>t.name==='notebook_status');const result=await tool.execute({notebookId:input.notebookId,runId:input.runId},{signal:new AbortController().signal});console.log(JSON.stringify({kind:'fresh-terminal-status',pid:process.pid,result,executePosts,requests}));}
-    finally{session.dispose();}
-  `;
-  const child = await promisify(execFile)(
-    process.execPath,
-    [
-      '--input-type=module',
-      '-e',
-      childSource,
-      JSON.stringify({
-        envFile: path.resolve(values['env-file']),
-        config: f.config,
-        project: f.project,
-        connectionId: f.connectionId,
-        namespace: f.namespace,
-        conversationKey: f.context.conversationKey,
-        notebookId: f.notebookId,
-        runId,
-        offline,
-      }),
-    ],
-    { timeout: 25000, maxBuffer: 128 * 1024 }
-  );
-  const line = child.stdout
-    .split('\n')
-    .find((line) => line.startsWith('{"kind":"fresh-terminal-status"'));
-  if (!line) throw new Error('Independent process did not return original status');
-  return JSON.parse(line);
+  const before = f.requests.length;
+  if (offline) f.probe.traffic.fault = { kind: 'offline' };
+  try {
+    const result = await f.call('notebook_status', { notebookId: f.notebookId, runId });
+    const requests = f.requests.slice(before);
+    return {
+      kind: 'fresh-cli-status',
+      pid: f.probe.commands.at(-1).pid,
+      result,
+      executePosts: requests.filter((r) => r.method === 'POST' && r.route.endsWith('/execute'))
+        .length,
+      requests,
+    };
+  } finally {
+    f.probe.traffic.fault = undefined;
+  }
 }
 
 async function watchOutputs(c, work) {
@@ -479,175 +402,53 @@ await isolated(
     "import time\nhost_pending_value = 43\nprint('HOST_PENDING_BEGIN',flush=True)\ntime.sleep(6)\nprint('HOST_PENDING_RESULT',host_pending_value)",
   ],
   async (c) => {
-    const project = path.join(root, 'project');
-    fs.mkdirSync(project, { mode: 0o700 });
-    const connectionId = 'edge-recovery',
-      namespace = 'configured-datalayer-edge';
-    const config = path.join(root, 'host-connections.json');
-    fs.writeFileSync(
-      config,
-      JSON.stringify({
-        version: 1,
-        connections: [
-          {
-            id: connectionId,
-            backend: 'datalayer',
-            baseUrl: env.JUPYTERLAB_HOST,
-            passwordEnv: 'JUPYTERLAB_PASS',
-            allowInsecureHttp: true,
-          },
-        ],
-      }),
-      { mode: 0o600 }
-    );
-    const linked = new JupyterProjectConfigStore(project).linkNotebook({
-      connectionId,
-      serverNamespace: namespace,
-      contentPath: c.file,
-    });
-    if (!linked.ok) throw new Error('Owned Project reference unavailable');
-    const context = {
-      workingDir: project,
-      conversationKey: 'pending-host-recovery',
-      currentWorkingDir: () => project,
-    };
-    const invocation = { signal: new AbortController().signal };
-    const requests = [];
-    let first, second;
-    const create = async () => {
-      const connections = new JupyterConnections(config, () => env);
-      const api = await connections.useDatalayer(
-        connectionId,
-        namespace,
-        async (connected) => connected
-      );
-      const response = api.response.bind(api);
-      api.response = async (route, method = 'GET', body) => {
-        const result = await response(route, method, body);
-        requests.push({ route, method, status: result.status });
-        return result;
-      };
-      return notebookSessionFactory(connections)(context);
-    };
-    const call = (session, name, input) =>
-      session.tools.find((t) => t.name === name).execute(input, invocation);
-    try {
-      first = await create();
-      const notebookId = (await call(first, 'notebook_list', {})).notebooks[0].notebookId;
-      const cell = await call(first, 'notebook_read_cell', { notebookId, cellId: 'edge-0' });
-      const args = {
-        notebookId,
-        cellId: 'edge-0',
-        expectedSourceHash: cell.sourceHash,
-        runId: 'edge-pending-original',
-      };
-      const accepted = await call(first, 'notebook_execute', args);
+    await withCLI(c, 'pending-host-recovery', async (f) => {
+      const { notebookId, call, requests } = f;
+      const originalArgs = await f.args('edge-0', 'edge-pending-original');
+      const accepted = await call('notebook_execute', originalArgs);
       if (accepted.state !== 'accepted')
-        throw new Error('MVP did not accept owned pending execution');
-      const handle = { kernelId: c.kernelId, requestId: accepted.requestId };
-      await active(handle, 'HOST_PENDING_BEGIN');
-      first.dispose();
-      first = undefined;
-      const childSource = `
-        import fs from 'node:fs';
-        import { parseEnv } from 'node:util';
-        import { JupyterConnections } from ${JSON.stringify(new URL('../../packages/service/dist/jupyter/connections.js', import.meta.url).href)};
-        import { notebookSessionFactory } from ${JSON.stringify(new URL('../../packages/service/dist/jupyter/agent-session.js', import.meta.url).href)};
-        const input=JSON.parse(process.argv[1]);
-        const env=parseEnv(fs.readFileSync(input.envFile,'utf8'));
-        const connections=new JupyterConnections(input.config,()=>env);
-        const client=await connections.useDatalayer(input.connectionId,input.namespace,async c=>c);
-        const original=client.response.bind(client);let executePosts=0;
-        client.response=async(route,method='GET',body)=>{if(method==='POST'&&route.endsWith('/execute'))executePosts++;return original(route,method,body);};
-        const session=notebookSessionFactory(connections)({workingDir:input.project,conversationKey:input.conversationKey,currentWorkingDir:()=>input.project});
-        const observedStates=[];let result;
-        try{
-          const tool=session.tools.find(t=>t.name==='notebook_status');
-          const deadline=Date.now()+14000;
-          do{result=await tool.execute({notebookId:input.notebookId,runId:input.runId},{signal:new AbortController().signal});observedStates.push(result.state);if(!['accepted','running'].includes(result.state))break;await new Promise(r=>setTimeout(r,120));}while(Date.now()<deadline);
-          console.log(JSON.stringify({kind:'fresh-node-status',pid:process.pid,result,observedStates,executePosts}));
-        }finally{session.dispose();}
-      `;
-      const child = await promisify(execFile)(
-        process.execPath,
-        [
-          '--input-type=module',
-          '-e',
-          childSource,
-          JSON.stringify({
-            envFile: path.resolve(values['env-file']),
-            config,
-            project,
-            connectionId,
-            namespace,
-            conversationKey: context.conversationKey,
-            notebookId,
-            runId: args.runId,
-          }),
-        ],
-        { timeout: 25000, maxBuffer: 128 * 1024 }
-      );
-      const line = child.stdout
-        .split('\n')
-        .find((line) => line.startsWith('{"kind":"fresh-node-status"'));
-      if (!line) throw new Error('Fresh Node process did not return a status result');
-      const freshProcess = JSON.parse(line);
-      check(
-        'Independent Node process recovers the pending original request without replay',
-        freshProcess.pid !== process.pid &&
-          freshProcess.result.state === 'completed' &&
-          freshProcess.result.requestId === accepted.requestId &&
-          freshProcess.executePosts === 0 &&
-          freshProcess.observedStates.includes('running') &&
-          freshProcess.result.result?.outputs?.some((o) =>
-            o.text?.includes('HOST_PENDING_RESULT 43')
-          ),
-        freshProcess
-      );
-      second = await create();
+        throw new Error('CLI did not accept the owned pending run');
+      await active({ kernelId: c.kernelId, requestId: accepted.requestId }, 'HOST_PENDING_BEGIN');
+      const observedStates = [],
+        pids = [];
       let recovered;
-      const deadline = Date.now() + 14000;
       do {
-        recovered = await call(second, 'notebook_status', { notebookId, runId: args.runId });
+        const fresh = await freshStatus(f, originalArgs.runId);
+        recovered = fresh.result;
+        observedStates.push(recovered.state);
+        pids.push(fresh.pid);
         if (!['accepted', 'running'].includes(recovered.state)) break;
         await wait(120);
-      } while (Date.now() < deadline);
+      } while (observedStates.length < 25);
       const executePosts = requests.filter(
         (r) => r.method === 'POST' && r.route.endsWith('/execute')
       ).length;
       const currentIncarnation = await client.kernelInfo(c.kernelId);
-      const recoveredText =
-        recovered.result?.outputs
-          ?.filter((o) => o.outputType === 'stream')
-          .map((o) => o.text)
-          .join('') ?? '';
       check(
-        'Host recreation recovers an unread pending original request without replay',
+        'Independent CLI processes recover the pending original request without replay',
         recovered.state === 'completed' &&
-          recoveredText.includes('HOST_PENDING_RESULT 43') &&
           recovered.requestId === accepted.requestId &&
+          JSON.stringify(recovered.result).includes('HOST_PENDING_RESULT 43') &&
           executePosts === 1 &&
+          observedStates.includes('running') &&
+          pids.every((pid) => pid !== process.pid) &&
+          new Set(pids).size === pids.length &&
           currentIncarnation.incarnation === c.incarnation.incarnation,
-        {
-          accepted,
-          recovered,
-          executePosts,
-          originalIncarnation: c.incarnation,
-          currentIncarnation,
-        }
+        { accepted, recovered, executePosts, observedStates, pids, currentIncarnation }
       );
-      const cached = await call(second, 'notebook_execute', args);
+      const cached = await call('notebook_execute', originalArgs);
       check(
-        'Recovered pending runId is deduplicated after terminal caching',
+        'Recovered runId is deduplicated after terminal caching',
         cached.state === 'completed' &&
+          cached.requestId === accepted.requestId &&
           requests.filter((r) => r.method === 'POST' && r.route.endsWith('/execute')).length === 1,
         { cached, executePosts }
       );
-      const oldNote = await call(second, 'notebook_read_cell', { notebookId, cellId: 'edge-note' });
+      const oldNote = await call('notebook_read_cell', { notebookId, cellId: 'edge-note' });
       c.doc.notebook.cells.find((cell) => cell.id === 'edge-note').source =
         'Human note changed independently; preserve this wording.';
       await c.doc.flush();
-      const conflict = await call(second, 'notebook_edit_cell', {
+      const conflict = await call('notebook_edit_cell', {
         notebookId,
         cellId: 'edge-note',
         expectedSourceHash: oldNote.sourceHash,
@@ -663,8 +464,8 @@ await isolated(
             .source.includes('changed independently'),
         conflict
       );
-      const fresh = await call(second, 'notebook_read_cell', { notebookId, cellId: 'edge-note' });
-      const edited = await call(second, 'notebook_edit_cell', {
+      const fresh = await call('notebook_read_cell', { notebookId, cellId: 'edge-note' });
+      const edited = await call('notebook_edit_cell', {
         notebookId,
         cellId: 'edge-note',
         expectedSourceHash: fresh.sourceHash,
@@ -679,10 +480,7 @@ await isolated(
           JSON.stringify(note.attachments) === JSON.stringify(markdown.attachments),
         { edited, metadata: note.metadata, attachments: note.attachments }
       );
-    } finally {
-      first?.dispose();
-      second?.dispose();
-    }
+    });
   }
 );
 
@@ -869,14 +667,13 @@ await isolated('document-identity', ["print('DOCUMENT_IDENTITY')"], async (c) =>
 });
 
 await isolated('terminal-host-recovery', ["print('UNCACHED_TERMINAL_RESULT', 47)"], async (c) => {
-  await withService(c, 'terminal-host-recovery', async (f) => {
+  await withCLI(c, 'terminal-host-recovery', async (f) => {
     const runId = 'unread-original-terminal';
     const accepted = await f.call('notebook_execute', await f.args('edge-0', runId));
     if (accepted.state !== 'accepted') throw new Error('Original submission was not accepted');
     const handle = { kernelId: c.kernelId, requestId: accepted.requestId };
     const firstConsumer = await terminal(handle);
     const secondConsumer = await peek(handle);
-    f.session.dispose();
     const recovered = await freshStatus(f, runId);
     check(
       'New Node process recovers an uncached terminal result after other consumers read first',
@@ -913,7 +710,7 @@ await isolated(
     "import time\nprint('DELETE_BEGIN',flush=True)\ntime.sleep(3)\nprint('DELETED_ORIGINAL_END')",
   ],
   async (c) => {
-    await withService(c, 'move-delete-running', async (f) => {
+    await withCLI(c, 'move-delete-running', async (f) => {
       const a = await f.call('notebook_execute', await f.args('edge-0', 'move-original'));
       const handleA = { kernelId: c.kernelId, requestId: a.requestId };
       await active(handleA, 'MOVE_BEGIN');
@@ -1103,7 +900,7 @@ await isolated(
     "input('THIS_MUST_BE_EXPLICITLY_REJECTED:')",
   ],
   async (c) => {
-    await withService(c, 'large-output-stdin', async (f) => {
+    await withCLI(c, 'large-output-stdin', async (f) => {
       const accepted = await f.call('notebook_execute', await f.args('edge-0', 'large-original'));
       const result = await f.status('large-original');
       const pathName = result.result?.resultArtifact;
@@ -1193,25 +990,28 @@ await isolated(
 );
 
 await isolated(
-  'service-stop-continuation',
+  'cli-stop-continuation',
   [
     "import time\nstop_memory=37\nprint('SERVICE_STOP_BEGIN',flush=True)\ntime.sleep(20)\nprint('SERVICE_STOP_LATE')",
     "print('SERVICE_SAME_KERNEL',stop_memory+5)",
   ],
   async (c) => {
-    await withService(c, 'service-stop-continuation', async (f) => {
+    await withCLI(c, 'cli-stop-continuation', async (f) => {
       const accepted = await f.call('notebook_execute', await f.args('edge-0', 'service-long'));
       await active({ kernelId: c.kernelId, requestId: accepted.requestId }, 'SERVICE_STOP_BEGIN');
-      const stopped = await f.session.stop();
+      const stopped = await f.call('notebook_stop', {
+        notebookId: f.notebookId,
+        runId: 'service-long',
+      });
       const exact = await peek({ kernelId: c.kernelId, requestId: accepted.requestId });
-      const next = f.create();
-      const nextArgs = await f.args('edge-1', 'service-continue', next);
-      const continued = await f.call('notebook_execute', nextArgs, next);
-      const complete = await f.status('service-continue', next);
+      const nextArgs = await f.args('edge-1', 'service-continue');
+      const continued = await f.call('notebook_execute', nextArgs);
+      const complete = await f.status('service-continue');
       const incarnation = await client.kernelInfo(c.kernelId);
       check(
-        'Service lifecycle stop confirms the original request before same-kernel continuation',
-        stopped.some((r) => r.runId === 'service-long' && r.state === 'cancelled') &&
+        'Explicit CLI stop confirms the original request before same-kernel continuation',
+        stopped.state === 'cancelled' &&
+          stopped.stopConfirmed === true &&
           outputs(exact.result).some((o) => o.ename === 'KeyboardInterrupt') &&
           !stdout(exact.result).includes('SERVICE_STOP_LATE') &&
           continued.state === 'accepted' &&
@@ -1227,19 +1027,17 @@ await isolated(
 );
 
 await isolated('export-revision-race', ["print('EXPORT_RECORDED_RESULT')"], async (c) => {
-  await withService(c, 'export-revision-race', async (f) => {
+  await withCLI(c, 'export-revision-race', async (f) => {
     await f.call('notebook_execute', await f.args('edge-0', 'export-original'));
     const complete = await f.status('export-original');
-    const response = f.api.response.bind(f.api);
     let changed = false;
-    f.api.response = async (route, method = 'GET', body) => {
+    f.probe.traffic.onResponse = async ({ route, method }) => {
       if (route === 'nbconvert/html' && method === 'POST' && !changed) {
         changed = true;
         c.doc.notebook.cells.find((cell) => cell.id === 'edge-note').source =
           'Human edit during export; keep live.';
         await c.doc.flush();
       }
-      return response(route, method, body);
     };
     const exported = await f.call('notebook_export', { notebookId: f.notebookId });
     const notebook = await client.json('api/contents/' + exported.notebookPath);
