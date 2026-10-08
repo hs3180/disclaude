@@ -1,0 +1,13 @@
+diff --git a/package.json b/package.json
+index 1913269ae..5d58a6635 100644
+--- a/package.json
++++ b/package.json
+@@ -126,7 +126,7 @@
+     "outputDir": "jupyter_server_nbmodel/labextension",
+     "schemaDir": "schema",
+     "_build": {
+-      "load": "static/remoteEntry.bc6ceee2cce29f48.js",
++      "load": "static/remoteEntry.897e0861bddf847b.js",
+       "extension": "./extension",
+       "style": "./style"
+     }

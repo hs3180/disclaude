@@ -132,6 +132,30 @@ async function verifyPackage() {
   const cli = join(prefix, 'bin/disclaude');
   assert.equal(run(cli, ['--version']).trim(), `disclaude v${pkg.version}`);
   assert.match(run(cli, ['browser', '--help']), /automatically serializes calls/u);
+  assert.match(run(cli, ['jupyter', 'patch', '--help']), /Generation uses Node only/u);
+  assert.match(run(cli, ['jupyter', 'patch', '--help']), /--jupyter URL/u);
+  assert.match(run(cli, ['jupyter', 'patch', '--help']), /--interactive/u);
+  assert.match(run(cli, ['jupyter', 'patch', '--help']), /--no-interactive/u);
+  assert.doesNotMatch(run(cli, ['jupyter', 'patch', '--help']), /--ssh|--container|--service|--restart|--stopped/u);
+  assert.equal(existsSync(join(installed, 'jupyter/datalayer/Dockerfile')), false);
+  assert(existsSync(join(installed, 'bin/jupyter-terminal.js')));
+  assert(existsSync(join(installed, 'bin/jupyter-auth.js')));
+  run(process.execPath, ['--input-type=module', '-e', `
+    const { resolveJupyterAuth } = await import(${JSON.stringify(join(installed, 'bin/jupyter-auth.js'))});
+    const auth = await resolveJupyterAuth({ jupyter: 'configured', interactive: false }, {
+      cwd: ${JSON.stringify(temp)}, environment: { JUPYTERLAB_HOST: 'https://fixture.invalid/prefix/', JUPYTERLAB_TOKEN: 'fixture-token' }
+    });
+    if (auth.mode !== 'token' || auth.secret !== 'fixture-token') throw new Error('Installed Jupyter auth resolution failed');
+  `]);
+  assert(existsSync(join(installed, 'packages/core/dist/jupyter/http-connection.js')));
+  const patchInfo = JSON.parse(run(cli, ['jupyter', 'patch', 'info']));
+  assert.equal(patchInfo.target, 'jupyter_server_nbmodel');
+  assert.equal(patchInfo.activation.hotApplySupported, false);
+  const patchArtifact = join(temp, 'nbmodel-repair.pyz');
+  const generatedPatch = JSON.parse(run(cli, ['jupyter', 'patch', 'generate', '--output', patchArtifact]));
+  assert.equal(generatedPatch.manifestSha256, patchInfo.manifestSha256);
+  assert(existsSync(patchArtifact));
+  assert.equal(readFileSync(patchArtifact + '.sha256', 'utf8').split(' ')[0], generatedPatch.sha256);
   for (const removed of ['coordinator.mjs', 'harness-session.mjs', 'python-runtime.mjs']) {
     assert(!existsSync(join(prefix, 'lib/node_modules/disclaude/packages/service/dist/browser-control', removed)), `Obsolete browser layer shipped: ${removed}`);
   }

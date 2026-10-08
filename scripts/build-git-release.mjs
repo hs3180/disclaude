@@ -35,6 +35,7 @@ export function sourceFingerprint(root) {
       'packages/*/package.json',
       'packages/*/tsconfig.json',
       'bin',
+      'jupyter/datalayer',
       'skills',
       'agents',
       '.claude-plugin',
@@ -164,6 +165,7 @@ export function generateRelease(root, output) {
   // Explicit allowlist: never copy credentials, node_modules or local workspace.
   for (const path of [
     'bin',
+    'jupyter/datalayer',
     'skills',
     'agents',
     '.claude-plugin',
@@ -197,8 +199,7 @@ export function generateRelease(root, output) {
       .split('\0')
       .filter(Boolean);
     for (const file of tracked) {
-      // Remote build recipes also belong to a full source checkout. Keeping
-      // their optional runtime payload must not add Docker assets to npm installs.
+      // Deployment recipes belong to a full source checkout.
       if (file.split('/').at(-1).startsWith('Dockerfile')) continue;
       assert(
         !lstatSync(join(root, file)).isSymbolicLink(),
@@ -243,6 +244,7 @@ export function generateRelease(root, output) {
     optionalDependencies,
     files: [
       'bin/',
+      'jupyter/datalayer/',
       'packages/',
       'scripts/',
       'skills/',

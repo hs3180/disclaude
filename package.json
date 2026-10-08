@@ -98,6 +98,7 @@
     "@disclaude/channel-cli": "*",
     "@disclaude/core": "*",
     "@disclaude/service": "*",
+    "dotenv": "18.0.6",
     "qrcode": "1.5.4"
   },
   "bundledDependencies": [
@@ -107,6 +108,11 @@
   ],
   "files": [
     "bin/",
+    "jupyter/datalayer/*.py",
+    "jupyter/datalayer/*.json",
+    "jupyter/datalayer/LICENSE.nbmodel",
+    "jupyter/datalayer/frontend-source.patch",
+    "jupyter/datalayer/patches/*.patch",
     "packages/*/dist/",
     "packages/*/src/",
     "packages/*/package.json",
