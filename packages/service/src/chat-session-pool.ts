@@ -24,7 +24,7 @@ import type { ChatAgent } from './agents/chat-agent.js';
  * at pool creation time.
  */
 export interface ChatSessionPoolOptions {
-  notebookSessionFactory?: import('./jupyter/agent-session.js').NotebookAgentSessionFactory;
+  sessionExtensionFactory?: import('./agents/session-extension.js').AgentSessionExtensionFactory;
   /** Named runtime presets. Defaults to Config.getAgentPresets(). */
   agentPresets?: AgentPresets;
   /** Backend availability probe; injectable for deterministic tests. */
@@ -382,7 +382,7 @@ export class ChatSessionPool {
       cwdResolver,
       skipHistory,
       sdkSessionKey,
-      notebookSessionFactory: this.options.notebookSessionFactory,
+      sessionExtensionFactory: this.options.sessionExtensionFactory,
       ...(preset ? {
         agentBackend: preset.agentBackend,
         model: preset.model,
@@ -602,21 +602,6 @@ export class ChatSessionPool {
       return agent.stop(chatId);
     }
     return false;
-  }
-
-  async stopNotebook(chatId: string, threadRootId?: string): Promise<import('./jupyter/agent-session.js').NotebookStopSummary> {
-    const key = this.sessionKeyOf(chatId, threadRootId);
-    const agent = this.agents.get(key);
-    if (agent) { return agent.stopNotebookWork(); }
-    const { summarizeNotebookStop } = await import('./jupyter/agent-session.js');
-    try {
-      const resolution = this.options.cwdResolver?.(chatId);
-      if (resolution?.reason === 'bound-missing') { throw new Error('Project directory unavailable'); }
-      const cwd = resolution?.effectiveCwd ?? this.options.cwdProvider?.(chatId) ?? Config.getWorkspaceDir();
-      const session = this.options.notebookSessionFactory?.({ workingDir: cwd, conversationKey: key,
-        currentWorkingDir: () => this.options.cwdResolver?.(chatId).effectiveCwd ?? this.options.cwdProvider?.(chatId) ?? Config.getWorkspaceDir() });
-      return await summarizeNotebookStop(session);
-    } catch { return { cancelled: 0, alreadyTerminal: 0, ownershipLost: 0, unknown: 0, unavailable: true }; }
   }
 
   async steer(chatId: string, prompt: string, threadRootId?: string): Promise<

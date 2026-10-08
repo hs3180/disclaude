@@ -36,7 +36,7 @@ export type NotebookAgentSessionFactory = (
   context: NotebookAgentContext
 ) => NotebookSession | undefined;
 
-/** Agent-facing lifecycle only; backend protocols belong to their session implementations. */
+/** Notebook lifecycle used by the Service integration; protocols stay in backend sessions. */
 export interface NotebookSession {
   readonly tools: ToolDefinition[];
   readonly inactive: boolean;

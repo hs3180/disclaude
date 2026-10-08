@@ -10,6 +10,7 @@
  */
 
 import type { FeishuCard, ChannelCapabilities, BaseAgentConfig, ChatAgentHooks, MessageBuilderOptions, CwdProvider, CwdResolution } from '@disclaude/core';
+import type { AgentSessionExtensionFactory } from './session-extension.js';
 
 // ============================================================================
 // ChatAgentCallbacks
@@ -206,7 +207,7 @@ export interface ChatAgentConfig extends BaseAgentConfig, ChatAgentHooks {
   skipHistory?: boolean;
   /** Native provider identity independent of the real delivery/history chat ID. */
   sdkSessionKey?: string;
-  notebookSessionFactory?: import('../jupyter/agent-session.js').NotebookAgentSessionFactory;
+  sessionExtensionFactory?: AgentSessionExtensionFactory;
 
 }
 

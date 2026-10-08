@@ -6,6 +6,11 @@ See [MVP setup, actual tests and unsupported requirements](../../../../docs/desi
 The Datalayer session's conversation journal is separate from reference metadata;
 this store does not acquire a server owner generation or promise atomic cell edits.
 
+`agent-integration.ts` composes Notebook support at the Service boundary through
+the generic Agent session-extension contract. It owns Notebook tool/context
+injection and stop recovery; `ChatAgent`, its factory and session pool do not
+depend on Jupyter types. See [Service composition](../../../../docs/jupyter-service.md#service-composition).
+
 Jupyter reference metadata belongs to the Jupyter integration. It is stored at
 `<workingDir>/.jupyter/config.json`, independently of the generic ProjectManager
 and its chat-to-directory bindings.
@@ -47,7 +52,7 @@ collaboration/execution contract before operations on a remote document. Renamin
 a reference with a stable ID updates it in place; distinct server namespaces,
 connections and document IDs remain separate.
 
-This module only reads and writes local reference metadata. It does not connect
+`JupyterProjectConfigStore` only reads and writes local reference metadata. It does not connect
 to Jupyter, manage authentication, synchronize RTC state, edit cells, coordinate
 ownership or execute kernels. Unlinking a reference does not delete the remote
 notebook or stop a kernel. The previous unmerged PR's workspace-wide

@@ -7,6 +7,22 @@ identity nor execution authority comes from a Harness session ID. Select
 currently reject these native tools explicitly. No Codex CLI/MCP process is
 required for Notebook access.
 
+## Service composition
+
+`cli-main` composes `NotebookAgentIntegration` with the generic
+`AgentSessionExtension` contract. `ChatAgent`, its factory and its session pool
+have no Notebook types or Jupyter imports. Their extension hooks only transform
+query options, add incoming-message context, pause/dispose session resources and
+capture file delivery for the active channel and turn.
+
+The Notebook integration owns backend-session creation, native tools, attachment
+registration, credential redaction, connection-failure guidance and the
+conversation-to-session registry. It adds Notebook tools after provider option
+composition, retains existing tools and removes credentials from a copied SDK
+environment. `/stop` calls this integration separately from inference stopping;
+when no active session remains, it reads the original Project/conversation journal
+through a temporary session and disposes that session after observation.
+
 ## Host connection configuration
 
 An existing Datalayer deployment is the default when `backend` is omitted;

@@ -170,19 +170,19 @@ describe('ChatAgent (service)', () => {
   });
 
   describe('constructor', () => {
-    it('binds Notebook files to their original turn and rejects late or aborted delivery', async () => {
+    it('binds extension files to their original turn and rejects late or aborted delivery', async () => {
       const session = { inactive: false };
       callbacks.getCapabilities.mockReturnValue({ supportsFile: true });
       callbacks.sendFile.mockResolvedValue('file-message');
-      Object.assign(chatAgent, { notebookSession: session, activeTurnMessageId: 'original-turn', activeTurnThreadRootId: 'topic-root', lastTurnMessage: { threadRootId: 'queued-other-topic' } });
-      const delivery = (chatAgent as any).notebookDelivery();
+      Object.assign(chatAgent, { sessionExtension: session, activeTurnMessageId: 'original-turn', activeTurnThreadRootId: 'topic-root', lastTurnMessage: { threadRootId: 'queued-other-topic' } });
+      const delivery = (chatAgent as any).captureFileDelivery();
       const { signal } = new AbortController();
       expect(await delivery.sendFile('/private/owned/report.html', signal)).toBe('file-message');
       expect(callbacks.sendFile).toHaveBeenCalledExactlyOnceWith('oc_test_chat', '/private/owned/report.html', 'topic-root');
       Object.assign(chatAgent, { activeTurnMessageId: 'next-turn' });
-      await expect(delivery.sendFile('/private/owned/report.html', signal)).rejects.toThrow('inactive channel or turn');
-      Object.assign(chatAgent, { activeTurnMessageId: 'original-turn', notebookSession: { inactive: false } });
-      await expect(delivery.sendFile('/private/owned/report.html', signal)).rejects.toThrow('inactive channel or turn');
+      await expect(delivery.sendFile('/private/owned/report.html', signal)).rejects.toThrow('inactive session, channel or turn');
+      Object.assign(chatAgent, { activeTurnMessageId: 'original-turn', sessionExtension: { inactive: false } });
+      await expect(delivery.sendFile('/private/owned/report.html', signal)).rejects.toThrow('inactive session, channel or turn');
       const aborted = new AbortController(); aborted.abort();
       await expect(delivery.sendFile('/private/owned/report.html', aborted.signal)).rejects.toThrow();
       expect(callbacks.sendFile).toHaveBeenCalledOnce();
@@ -193,12 +193,16 @@ describe('ChatAgent (service)', () => {
       localCallbacks.getCapabilities.mockReturnValue({ supportsFile: true });
       localCallbacks.sendFile.mockResolvedValue('file-message');
       const session = {
-        inactive: false, tools: [], messageContext: () => Promise.resolve(''),
-        registerAttachments: vi.fn(), dispose: vi.fn(), pause: vi.fn(),
+        inactive: false, messageContext: () => Promise.resolve(''),
+        dispose: vi.fn(), pause: vi.fn(),
       };
+      let captureFileDelivery!: import('./session-extension.js').AgentSessionContext['captureFileDelivery'];
       const agent = new ChatAgent({
         chatId: 'oc_report_topics', callbacks: localCallbacks, apiKey: 'key', model: 'model',
-        notebookSessionFactory: () => session as any,
+        sessionExtensionFactory: (context) => {
+          ({ captureFileDelivery } = context);
+          return session;
+        },
       });
       (agent as any).getWorkspaceDir = () => '/owned/project';
       (agent as any).isAgentTeamsEnabled = () => false;
@@ -210,10 +214,10 @@ describe('ChatAgent (service)', () => {
         iterator: (async function* () {
           yield { parsed: { type: 'text', content: 'A started' }, raw: {} };
           await queued;
-          await (agent as any).notebookDelivery().sendFile('/owned/A.html', signal);
+          await captureFileDelivery()!.sendFile('/owned/A.html', signal);
           yield { parsed: { type: 'result', content: 'Done A' }, raw: {} };
           yield { parsed: { type: 'text', content: 'B started' }, raw: {} };
-          await (agent as any).notebookDelivery().sendFile('/owned/B.html', signal);
+          await captureFileDelivery()!.sendFile('/owned/B.html', signal);
           yield { parsed: { type: 'result', content: 'Done B' }, raw: {} };
         })(),
       });
@@ -229,21 +233,112 @@ describe('ChatAgent (service)', () => {
         ]);
       } finally {
         resume();
-        agent.dispose();
+        ChatAgent.prototype.dispose.call(agent);
       }
     });
 
-    it('registers the current message attachments before building Notebook model context', async () => {
+    it('passes incoming attachments to a domain-independent message extension', async () => {
       const attachment = {id:'csv',fileName:'data.csv',source:'user' as const,localPath:'/private/download/data.csv',createdAt:1};
-      const registerAttachments = vi.fn();
-      const messageContext = vi.fn(() => {
-        expect(registerAttachments).toHaveBeenCalledExactlyOnceWith([attachment]);
-        return Promise.resolve('\nRemote Notebook attachment csv is importable.');
-      });
-      Object.assign(chatAgent,{isSessionActive:true,notebookSession:{registerAttachments,messageContext,inactive:false},channel:{push:vi.fn(()=>true)}});
-      await chatAgent.processMessage({chatId:'oc_test_chat',messageId:'file-message',payload:'Analyze this CSV in the Notebook',attachments:[attachment]});
-      expect(messageContext).toHaveBeenCalledOnce();
+      const messageContext = vi.fn(() => Promise.resolve('\nExtension attachment csv is importable.'));
+      Object.assign(chatAgent,{isSessionActive:true,sessionExtension:{messageContext,inactive:false},channel:{push:vi.fn(()=>true)}});
+      await chatAgent.processMessage({chatId:'oc_test_chat',messageId:'file-message',payload:'Analyze this CSV',attachments:[attachment]});
+      expect(messageContext).toHaveBeenCalledExactlyOnceWith([attachment]);
       expect((chatAgent as any).channel.push.mock.calls[0][0].message.content).toContain('attachment csv');
+    });
+
+    it('does not enqueue context that finishes after its session extension is paused', async () => {
+      let resolve!: (context: string) => void;
+      const session = { inactive: false, messageContext: () => new Promise<string>((done) => { resolve = done; }) };
+      const push = vi.fn(() => true);
+      Object.assign(chatAgent, { isSessionActive: true, sessionExtension: session, channel: { push } });
+      const pending = chatAgent.processMessage({ chatId: 'oc_test_chat', messageId: 'paused-context', payload: 'Check the resource' });
+      await vi.waitFor(() => expect(resolve).toBeTypeOf('function'));
+      session.inactive = true;
+      resolve('Context from a paused session');
+      await expect(pending).rejects.toThrow('Session stopped during context loading');
+      expect(push).not.toHaveBeenCalled();
+    });
+
+    it('composes provider query options with a generic extension and forwards lifecycle cleanup', async () => {
+      const events: string[] = [];
+      const session = {
+        inactive: false,
+        configureQueryOptions: vi.fn((options: import('@disclaude/core').AgentQueryOptions) => { events.push('extension'); return { ...options, extensionFlag: true }; }),
+        pause: vi.fn(() => { events.push('pause'); }),
+        dispose: vi.fn(),
+      };
+      const factory = vi.fn(() => session);
+      const agent = new ChatAgent({
+        chatId: 'generic-extension', sdkSessionKey: 'generic-extension::thread', callbacks,
+        apiKey: 'test', model: 'test', sessionExtensionFactory: factory,
+        configureQueryOptions: (options) => { events.push('provider'); return { ...options, model: 'provider-model' }; },
+      });
+      (agent as any).getWorkspaceDir = () => '/owned/project';
+      (agent as any).isAgentTeamsEnabled = () => false;
+      let finish!: () => void;
+      const parked = new Promise<void>((done) => { finish = done; });
+      const handle = { close: vi.fn(() => { events.push('close'); }), cancel: vi.fn() };
+      (agent as any).createQueryStream = vi.fn(() => ({
+        handle, iterator: (async function* () { await parked; })(),
+      }));
+      try {
+        await agent.processMessage({ chatId: 'generic-extension', messageId: 'message', payload: 'Hello' });
+        expect(factory).toHaveBeenCalledWith(expect.objectContaining({ workingDir: '/owned/project', sessionKey: 'generic-extension::thread' }));
+        expect(session.configureQueryOptions).toHaveBeenCalledWith(expect.objectContaining({ model: 'provider-model' }));
+        expect((agent as any).createQueryStream.mock.calls[0][1]).toMatchObject({ extensionFlag: true });
+        expect(events.slice(0, 2)).toEqual(['provider', 'extension']);
+        expect(agent.stop()).toBe(true);
+        expect(events.indexOf('pause')).toBeLessThan(events.indexOf('close'));
+        agent.reset();
+        expect(session.pause).toHaveBeenCalledTimes(2);
+        ChatAgent.prototype.dispose.call(agent);
+        expect(session.dispose).toHaveBeenCalledOnce();
+      } finally {
+        finish();
+        if (!(agent as any).disposed) { ChatAgent.prototype.dispose.call(agent); }
+      }
+    });
+
+    it('does not let a previous query extension capture delivery from a new query', async () => {
+      const contexts: import('./session-extension.js').AgentSessionContext[] = [];
+      const extension = {
+        inactive: false,
+        pause: vi.fn(() => { extension.inactive = true; }),
+        dispose: vi.fn(() => { extension.inactive = true; }),
+      };
+      callbacks.getCapabilities.mockReturnValue({ supportsFile: true });
+      const agent = new ChatAgent({
+        chatId: 'generic-extension', callbacks, apiKey: 'test', model: 'test',
+        sessionExtensionFactory: (context) => {
+          contexts.push(context);
+          extension.inactive = false;
+          return extension;
+        },
+      });
+      (agent as any).getWorkspaceDir = () => '/owned/project';
+      (agent as any).isAgentTeamsEnabled = () => false;
+      let finish!: () => void;
+      const parked = new Promise<void>((done) => { finish = done; });
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () { await parked; })(),
+      });
+      try {
+        await agent.processMessage({ chatId: 'generic-extension', messageId: 'message', payload: 'First' });
+        Object.assign(agent, { activeTurnMessageId: 'same-message-id' });
+        const previousDelivery = contexts[0].captureFileDelivery()!;
+        expect(previousDelivery).toBeDefined();
+        agent.reset();
+        await agent.processMessage({ chatId: 'generic-extension', messageId: 'message', payload: 'Second' });
+        Object.assign(agent, { activeTurnMessageId: 'same-message-id' });
+        expect(contexts[0].captureFileDelivery()).toBeUndefined();
+        expect(contexts[1].captureFileDelivery()).toBeDefined();
+        await expect(previousDelivery.sendFile('/owned/file.txt', new AbortController().signal)).rejects.toThrow('inactive session, channel or turn');
+        expect(callbacks.sendFile).not.toHaveBeenCalled();
+      } finally {
+        finish();
+        ChatAgent.prototype.dispose.call(agent);
+      }
     });
 
     it('uses injected message callbacks without selecting a backend policy', async () => {
