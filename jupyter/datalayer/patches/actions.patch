@@ -1,0 +1,349 @@
+diff --git a/actions.py b/actions.py
+index c0a9b87bc..d1cb9f87d 100644
+--- a/actions.py
++++ b/actions.py
+@@ -8,7 +8,7 @@ import asyncio
+ import json
+ import threading
+ import typing as t
+-from dataclasses import dataclass
++from dataclasses import dataclass, field
+ from datetime import datetime, timezone
+ from functools import partial
+ 
+@@ -22,6 +22,7 @@ from jupyter_server_nbmodel.models import (
+     InputRequest,
+     PendingInput,
+ )
++from jupyter_server_nbmodel.runtime import ExecutionControl, OutputContext, kernel_incarnation
+ 
+ if t.TYPE_CHECKING:
+     from nbformat import NotebookNode
+@@ -39,6 +40,7 @@ if t.TYPE_CHECKING:
+ async def _get_ycell(
+     ydoc: jupyter_server_ydoc.app.YDocExtension | None,
+     metadata: dict | None,
++    documents: list | None = None,
+ ) -> y.Map | None:
+     """Get the cell from which the execution was triggered.
+ 
+@@ -71,7 +73,7 @@ async def _get_ycell(
+     ycell: y.Map | None = None
+     candidates: list[YNotebook] = []
+     if document_id is not None:
+-        candidate = await ydoc.get_document(room_id=document_id, copy=False)
++        candidate = await ydoc.get_document(room_id=document_id, copy=False, create=True)
+         if candidate is not None:
+             candidates.append(candidate)
+     if isinstance(document_path, str) and document_path:
+@@ -80,6 +82,7 @@ async def _get_ycell(
+             content_type="notebook",
+             file_format="json",
+             copy=False,
++            create=True,
+         )
+         if candidate is not None:
+             candidates.append(candidate)
+@@ -91,6 +94,8 @@ async def _get_ycell(
+         ycells = filter(lambda c: c["id"] == cell_id, candidate.ycells)
+         ycell = next(ycells, None)
+         if ycell is not None:
++            if documents is not None:
++                documents.append(candidate)
+             # Check if there is more than one cell
+             if next(ycells, None) is not None:
+                 get_logger().warning("Multiple cells have the same ID '%s'.", cell_id)
+@@ -128,6 +133,8 @@ class _StreamState:
+     text: str = ""
+     #: Where the next character lands in ``text``.
+     cursor: int = 0
++    clear_on_output: bool = False
++    display_ids: dict[str, list[int]] = field(default_factory=dict)
+ 
+     def reset(self, name: str = "", text: str = "") -> None:
+         self.name = name
+@@ -205,6 +212,7 @@ def _output_hook(
+     ycell: y.Map | None,
+     stream_state: _StreamState,
+     msg: dict,
++    context: OutputContext | None = None,
+ ) -> None:
+     """Callback on execution request when an output is emitted.
+ 
+@@ -215,10 +223,27 @@ def _output_hook(
+         msg: The output message
+     """
+     msg_type = msg["header"]["msg_type"]
++    if context is not None:
++        if msg_type in ("display_data", "stream", "execute_result", "error", "clear_output", "update_display_data"):
++            context.bump_output_version()
++        ycell = context.cell_for_output()
++    if stream_state.clear_on_output and msg_type in ("display_data", "stream", "execute_result", "error"):
++        outputs.clear()
++        stream_state.reset()
++        stream_state.clear_on_output = False
++        stream_state.display_ids.clear()
++        if context is not None:
++            context.forget_displays()
++        if ycell is not None:
++            with ycell.doc.transaction():
++                del ycell["outputs"][:]
+     if msg_type in ("display_data", "stream", "execute_result", "error"):
+         # FIXME support for version
+         output = nbformat.v4.output_from_msg(msg)
+         outputs.append(output)
++        display_id = msg.get("content", {}).get("transient", {}).get("display_id")
++        if isinstance(display_id, str) and display_id:
++            stream_state.display_ids.setdefault(display_id, []).append(len(outputs) - 1)
+         if ycell is not None:
+             cell_outputs = ycell["outputs"]
+             if msg_type == "stream":
+@@ -279,18 +304,34 @@ def _output_hook(
+                 # Avoid persisting the same execute_result/error twice.
+                 current = cell_outputs[-1] if cell_outputs else None
+                 current_value = current.to_py() if hasattr(current, "to_py") else current
+-                if current_value != dict(output):
++                if msg_type == "display_data" or current_value != dict(output):
+                     with cell_outputs.doc.transaction():
+                         cell_outputs.append(output)
++        if context is not None and isinstance(display_id, str) and display_id:
++            context.register_display(display_id, output, ycell)
+     elif msg_type == "clear_output":
+-        # FIXME msg.content.wait - if true should clear at the next message
++        if msg.get("content", {}).get("wait") is True:
++            stream_state.clear_on_output = True
++            return
+         outputs.clear()
+         stream_state.reset()
++        stream_state.clear_on_output = False
++        stream_state.display_ids.clear()
++        if context is not None:
++            context.forget_displays()
+         if ycell is not None:
+-            del ycell["outputs"][:]
++            with ycell.doc.transaction():
++                del ycell["outputs"][:]
+     elif msg_type == "update_display_data":
+-        # FIXME
+-        ...
++        content = msg.get("content", {})
++        display_id = content.get("transient", {}).get("display_id")
++        if not isinstance(display_id, str) or not display_id:
++            return
++        for index in stream_state.display_ids.get(display_id, []):
++            outputs[index]["data"] = dict(content.get("data", {}))
++            outputs[index]["metadata"] = dict(content.get("metadata", {}))
++        if context is not None:
++            context.update_display(display_id, content)
+ 
+ 
+ def _stdin_hook(kernel_id: str, request_id: str, pending_input: PendingInput, msg: dict) -> None:
+@@ -383,6 +424,7 @@ async def _execute_snippet(
+     metadata: dict | None,
+     stdin_hook: t.Callable[[dict], None] | None,
+     progress: dict[str, t.Any] | None = None,
++    control: ExecutionControl | None = None,
+ ) -> dict[str, t.Any]:
+     """Snippet executor
+ 
+@@ -397,9 +439,14 @@ async def _execute_snippet(
+         The execution status and outputs.
+     """
+     ycell = None
++    documents = []
++    execution_context = None
+     time_info = {}
+     if metadata is not None:
+-        ycell = await _get_ycell(ydoc, metadata)
++        ycell = await _get_ycell(ydoc, metadata, documents)
++        execution_context = OutputContext(documents[0] if documents else None, snippet, metadata,
++                                          control.display_targets if control is not None else {}, progress)
++        ycell = execution_context.begin()
+         if ycell is not None:
+             execution_start_time = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+             # Reset cell
+@@ -441,13 +488,27 @@ async def _execute_snippet(
+         progress["outputs"] = outputs
+     # FIXME we don't check if the session is consistent (aka the kernel is linked to the document)
+     #   - should we?
+-    output_hook = partial(_output_hook, outputs, ycell, _StreamState())
++    output_hook = partial(_output_hook, outputs, ycell, _StreamState(), context=execution_context)
++    if control is not None:
++        async with control.lock:
++            if control.cancelled_id == (metadata or {}).get("request_id"):
++                if ycell is not None:
++                    with ycell.doc.transaction():
++                        ycell["execution_state"] = "idle"
++                if execution_context is not None:
++                    execution_context.finish()
++                return {"status": "error", "execution_started": False,
++                        "cancellation_requested": True,
++                        "error": {"ename": "CancelledError", "evalue": "Preparing request cancelled"},
++                        "outputs": "[]"}
++            control.phase = "running"
+     if not getattr(client, "_server_nbmodel_remote", False):
+         reply = await ensure_async(
+             client.execute_interactive(
+                 snippet,
+                 output_hook=output_hook,
+-                stdin_hook=stdin_hook if client.allow_stdin else None,
++                stdin_hook=stdin_hook if client.allow_stdin and (metadata or {}).get("allow_stdin", True) else None,
++                allow_stdin=bool(client.allow_stdin and (metadata or {}).get("allow_stdin", True)),
+             )
+         )
+     else:
+@@ -459,10 +520,13 @@ async def _execute_snippet(
+                 client.execute_interactive,
+                 snippet,
+                 output_hook=_threadsafe_hook(loop, output_hook),
+-                stdin_hook=_threadsafe_hook(loop, stdin_hook if client.allow_stdin else None),
++                stdin_hook=_threadsafe_hook(loop, stdin_hook if client.allow_stdin and (metadata or {}).get("allow_stdin", True) else None),
++                allow_stdin=bool(client.allow_stdin and (metadata or {}).get("allow_stdin", True)),
+             )
+         )
+     reply_content = reply["content"]
++    if execution_context is not None:
++        ycell = execution_context.cell_for_output()
+     if ycell is not None:
+         execution_end_time = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+         with ycell.doc.transaction():
+@@ -488,6 +552,8 @@ async def _execute_snippet(
+                 "timestamp": execution_end_time,
+             },
+         )
++    if execution_context is not None:
++        execution_context.finish()
+     # One line per execution, always: which document received the outputs and
+     # how many the kernel emitted. This is the line to look for when a cell
+     # runs and shows nothing — it says on which side the outputs were lost.
+@@ -506,6 +572,10 @@ async def _execute_snippet(
+         "execution_count": reply_content.get("execution_count"),
+         # FIXME quid for buffers
+         "outputs": json.dumps(outputs),
++        "source_matches": False if execution_context is not None and execution_context.stale else ycell is not None,
++        "output_attachment": ("historical" if execution_context is not None and execution_context.stale
++                              else "current" if ycell is not None else "unattached"),
++        "output_version": execution_context.output_version if execution_context is not None else 0,
+     }
+ 
+ 
+@@ -572,6 +642,8 @@ async def kernel_worker(
+     queue: asyncio.Queue,
+     results: dict,
+     pending_input: PendingInput,
++    control: ExecutionControl | None = None,
++    current_pid: t.Callable[[], int | None] | None = None,
+ ) -> None:
+     """Process execution request in order for a kernel."""
+     get_logger().debug(f"Starting worker to process execution requests of kernel {kernel_id}…")
+@@ -580,6 +652,8 @@ async def kernel_worker(
+         uid = None
+         try:
+             uid, snippet, metadata = await queue.get()
++            if isinstance(results.get(uid), dict) and results[uid].get("pending") is not True:
++                continue
+             for dropped_uid in await dedup_task_queue(queue):
+                 results[dropped_uid] = {
+                     "error": "Superseded by a newer queued execution for the same cell_id."
+@@ -594,21 +668,88 @@ async def kernel_worker(
+                 get_logger().debug(f"start channels {kernel_id}")
+                 await client.start_channels()
+             progress = {"pending": True, "outputs": []}
+-            results[uid] = progress
+             execution_metadata = dict(metadata or {})
+             execution_metadata.update({"request_id": uid, "kernel_id": kernel_id})
+-            results[uid] = await _execute_snippet(
++            if control is not None:
++                async with control.lock:
++                    incarnation = await kernel_incarnation(client)
++                    if control.incarnation is not None and control.incarnation != incarnation:
++                        control.display_targets.clear()
++                    control.incarnation = incarnation
++                    expected = execution_metadata.get("kernel_incarnation")
++                    if expected is not None and expected != control.incarnation:
++                        results[uid] = {"status": "error", "execution_started": False,
++                                        "error": {"ename": "KernelIncarnationChanged", "evalue": "Original kernel memory was lost"},
++                                        "outputs": "[]"}
++                        continue
++                    control.kernel_pid = current_pid() if current_pid else None
++                    control.active_id = uid
++                    control.cancelled_id = None
++                    control.phase = "preparing"
++                    execution_metadata["kernel_incarnation"] = control.incarnation
++                    if isinstance(metadata, dict):
++                        metadata["kernel_incarnation"] = control.incarnation
++            results[uid] = progress
++            result = await _execute_snippet(
+                 client,
+                 ydoc,
+                 snippet,
+                 execution_metadata,
+                 partial(_stdin_hook, kernel_id, uid, pending_input),
+                 progress,
++                control,
+             )
++            if control is not None:
++                async with control.lock:
++                    control.phase = "finishing"
++                    if control.needs_ready:
++                        result["cancellation_requested"] = True
++                        # Drain the interrupted native reply/idle before another
++                        # request can reach this kernel, including a completion race.
++                        try:
++                            await ensure_async(client.wait_for_ready(timeout=15))
++                            if await kernel_incarnation(client) != control.incarnation:
++                                raise RuntimeError("Kernel incarnation changed during cancellation")
++                        except Exception:
++                            # This is a continuation failure, not a replacement
++                            # for the execute reply/output already observed.
++                            control.quarantined = True
++                            result["kernel_ready"] = False
++                            result["continuation_error"] = {
++                                "ename": "KernelReadinessUnverified",
++                                "evalue": "Original result retained; further dispatch refused",
++                            }
++                        else:
++                            control.needs_ready = False
++                            result["kernel_ready"] = True
++            result["source"] = snippet
++            result["source_hash"] = execution_metadata.get("source_hash")
++            result["kernel_incarnation"] = execution_metadata.get("kernel_incarnation")
++            if hasattr(results, "finish"):
++                await results.finish(uid, result)
++            else:
++                results[uid] = result
++            if control is not None:
++                async with control.lock:
++                    control.active_id = None
++                    control.phase = "quarantined" if control.quarantined else "idle"
+             get_logger().debug(f"Execution request {uid} processed for kernel {kernel_id}.")
+ 
++            if control is not None and control.quarantined:
++                while not queue.empty():
++                    dropped_uid, _, _ = queue.get_nowait()
++                    results[dropped_uid] = {
++                        "status": "error", "execution_started": False, "outputs": "[]",
++                        "error": {"ename": "KernelReadinessUnverified",
++                                  "evalue": "Queued request not dispatched; native readiness unverified"},
++                    }
++                    queue.task_done()
++                break
++
+             # stop other tasks if one hits error
+-            if results[uid]["status"] == "error":
++            if (results[uid].get("status") == "error"
++                    and results[uid].get("execution_started") is not False
++                    and not results[uid].get("cancellation_requested")):
+                 while not queue.empty():
+                     dropped_uid, _, _ = queue.get_nowait()
+                     results[dropped_uid] = {
+@@ -637,5 +778,9 @@ async def kernel_worker(
+         finally:
+             if uid is not None:
+                 queue.task_done()
++                if control is not None and control.active_id == uid:
++                    async with control.lock:
++                        control.active_id = None
++                        control.phase = "quarantined" if control.quarantined else "idle"
+     if to_raise is not None:
+         raise to_raise

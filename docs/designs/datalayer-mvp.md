@@ -1,0 +1,374 @@
+# 0.6.3 Datalayer MVP：配置实例实测
+
+2026-10-05 增加 `datalayer` 后端，并在用户已有的远程 Jupyter 上实测。2026-10-06 的修复候选已通过原六个失败场景及扩展边界、故障和真实 DSH 组件复验。后续真实飞书附件、停止/续行、报告和引用卡片已有通过记录，用户确认旧报告整体显示正常。用户同时明确将手工修改支持及验收移出 0.6.3。当前状态见 [候选验收记录](../releases/0.6.3-acceptance.md)；以下按源码和实例保留各轮证据、历史失败与当时未验证条件。
+
+评审远端修复时先看 [Datalayer 补丁必要性](../../jupyter/datalayer/PATCHES.md)：
+逐项解释原失败对研究结果的影响、对应 Python/Lab 文件、必需与可选内容，以及
+现有证据和未提供的保证。本页保留各轮详细实测，不将历史未验证项改写为通过。
+
+## 实现与部署
+
+宿主仍只运行 Node。复用 Jupyter 的密码登录、Contents、Sessions、kernel channels、RTC/YNotebook、nbmodel 执行队列和 nbconvert；不安装宿主 Python，不启动本地 Jupyter，也不要求远端安装 `disclaude_jupyter`。
+
+`JupyterConnections` 的连接增加 `backend: "datalayer"`。凭据和私有 cookie jar 位于宿主；Project 仍只保存 `.jupyter/config.json` 的远端引用。每个会话的原始执行记录保存到 `.jupyter/datalayer-runs-<conversation-hash>.json`。标准 `ToolDefinition[]` 接入现有 DSH，ChatAgent 通过同一个 Notebook session 接口调用。
+
+```json
+{
+  "version": 1,
+  "connections": [
+    {
+      "id": "research",
+      "backend": "datalayer",
+      "baseUrl": "https://jupyter.example/",
+      "passwordEnv": "JUPYTERLAB_PASS"
+    }
+  ]
+}
+```
+
+配置文件需为宿主私有普通文件（0600），通过 `JUPYTER_CONNECTIONS_FILE` 指定。Project 引用的 `connectionId` 使用上述 ID。可用 `authorizationEnv`/私有文件替代密码；HTTP 的显式授权及凭据隔离规则沿用 [Service 文档](../jupyter-service.md)。一个 Project 的 Notebook 不能混用两个后端。当前适配层省略 `backend` 时默认选择 Datalayer；旧 coordinator 需显式指定，其控制权、原子检查和持久 fence 的保证不适用于本 MVP。历史实验记录仍以当时的源码和显式后端配置为准。
+
+工具为 `notebook_list`、`notebook_describe`、`notebook_read_cell`、`notebook_insert_cell`、`notebook_edit_cell`、`notebook_move_cell`、`notebook_delete_cell`、`notebook_execute`、`notebook_status`、`notebook_stop`、`notebook_import_file`、`notebook_observe_image`、`notebook_export`、`notebook_deliver_report`。编辑使用稳定 cell ID 和客户端源码哈希检查；执行前落盘原目标和 runId，未知提交不自动重放。原结果按远端明确保留策略查询并在宿主缓存，导出用同一次捕获的共享文档生成 `.ipynb` 和远端 nbconvert HTML。
+
+附件只按宿主接收消息注册的 ID 导入，工具不接受宿主路径。上限 2 MB，校验本地
+文件身份和内容，使用远端 Contents 内容哈希路径；重复导入核对原内容且拒绝覆盖
+被改动的文件。返回远端 kernel 相对路径、大小和 SHA-256，模型不使用宿主路径
+读取远端数据。PNG/JPEG 观察走统一图片结果，由 Harness adapter 转原生图片；
+源码变化后的旧图标为 historical，无来源标记的输出为 unverified。大图提供完整
+Notebook 入口；注册附件/图片组件及后续真实飞书 CSV 输入已分别复验。
+
+`notebook_deliver_report` 通过通用 channel 文件回调向当前话题投递同一快照的
+ipynb/HTML 和最多四张有界 PNG/JPEG。工具不接受宿主路径或任意下载 URL；先核对
+快照内容指纹及 HTML 版本标记，仅创建本次投递的私有临时副本，完成/失败后清理。
+回调捕获当前 turn/channel，拒绝迟到调用；上传期间的人工修改保留，结果注明
+historical。每个附件记录文件 SHA-256、大小、来源和实际消息 ID；无消息 ID 不称为
+确认投递，部分或未知结果不自动重试。模型仍需用返回的 revision 撰写同版本摘要。
+话题根消息随当前 turn 的 FIFO 身份一起冻结，其他话题排队不能改变附件目标；
+飞书文件回复结果未知时也不转为新消息重发，只有明确拒绝才允许原有降级路径。
+不支持文件的 channel 返回 unsupported 和远端导出入口。真实 Agent 的调用、飞书
+附件输入和设备渲染分别验收，不能由投递组件检查替代。用户 Lab 手工修改协作
+按最新范围调整后续验收。
+
+后续宿主改动已增加执行政策检查、原生 kernel incarnation、服务实例与 Location
+记录、显式关闭 stdin、独占 kernel 检查及大输出／历史结果提示。未声明安全目标取消政策
+的服务不会收到取消 DELETE，也不会创建新的执行 kernel；原生 incarnation 改变后拒绝
+把下一次运行称为原内存续行。29 项相关组件检查、build 和 lint 通过；后续配置远端
+复验见下一节。
+
+第二轮开发已补充稳定 cell 的移动/删除、原生文件 ID 反查改名路径、Project 解除关联
+后的异步写入拒绝，以及不打开 RTC 文档的原请求查询。缓存终态可在离线的新宿主读取；
+预览明确标记截断并保留认证的原结果/完整产物入口。取消后最多等待 15 秒确认原请求
+终态，204 不算停止；导出保留捕获快照并报告期间 live 版本变化。原生移动会重建 CRDT
+源码对象，服务端监听相应重新绑定，结束时释放监听。当前宿主 75 项测试、构建和
+targeted lint、远端隔离测试进程 34 项回归通过；新增配置远端集成探针已执行。
+
+## 真实飞书候选 Service 首轮（2026-10-06 05:08–05:18 UTC）
+
+冻结宿主 `588b44a20` 经真实用户飞书入站、唯一候选机器人 WebSocket、持久 Project
+和原生 DSH 接入配置远端。原生请求记录确认 `openai-codex/gpt-5.6-luna`；日常及
+候选默认仍为 `gpt-6-luna`。DSH 执行参数和分析 cell 后得到 `69`，实际观察 PNG
+并回复原话题。人工占位 Markdown 与未知 metadata 保留；这不是用户亲自修改
+Lab 的证据。实际 `/stop` 在宿主日志和远端原请求均确认 cancelled，随后相同
+kernel/incarnation 打印 `FEISHU_CONTINUE 58`，参数 execution_count 仍为 1。
+扫描模型原生会话、候选日志与 Project 未发现 11 项已配置宿主凭据值。
+
+本轮保留两个产品失败：`/agent` 等控制命令确认消息另起话题；CSV file 入站没有
+下载/注册附件，模型明确报告 `attachments` 为空，没有产生 CSV 执行或伪造结论。
+消息回合完成不等于附件验收通过。宿主修复使命令反馈带原 thread root，下载器按次
+读取同一 SDK 的当前 token/应用 ID，向 CLI 传工作目录下的相对路径。187 项针对
+测试、type/build 和 lint 通过；真实原 CSV 经修正下载器读取的 24 bytes/SHA-256
+与上传源一致。这仍是只读下载组件证据，修正后真实 Service 导入/报告须单独复验。
+
+候选窗口自动恢复日常服务；切换中断 1.446 秒、恢复中断 1.527 秒，原配置/plist
+指纹及原 Project binding 保留并确认健康。结束时一条非测试回合尚无终态，记录为
+未确认中断，不能只用 WebSocket 健康代替该回合完成证据。后续窗口应在回合空闲
+后恢复。仅删除本轮空闲自有 session/kernel，保留 Notebook；Jupyter 原镜像恢复
+中断 4.123 秒，284 条原生身份记录指纹完整一致，七个 Project 引用可解析，
+0 kernels/0 sessions，原环境/command/挂载保留，远端日常机器人健康。
+
+原始证据位于主仓库私有 `.local/063-feishu-datalayer-20261006/`：
+`service-acceptance-01/{report,verification}.json`、原生 DSH session、真实入站/读取
+响应、`candidate-window.json`、`window-588-lifecycle-audit.json` 和
+`file-download-verification-02/report.json`。恢复证据位于
+`.local/063-jupyter/datalayer-delivery-20261006/` 的 `service-588-final-restore-*`
+与 `restored-service-588b44a20-health.json`。原失败与修正后复验分别保留。
+该源的 273 files/5216 tests、type/build/lint、三组干净安装及八项 CI 通过；
+最终候选应使用后续修正源的证据。用户 Lab/实际设备、同版本原生模型报告和
+引用卡片 P2P/真实纯文本降级仍未完成，不更新产品任务为通过。
+
+## 飞书报告投递组件追加（2026-10-06 UTC）
+
+新增投递边界后，245 项相关宿主测试、build 和 targeted lint 通过。真实配置远端
+的保留研究样例导出后，通过通用文件回调和 `lark-cli` 向已授权测试话题投递；
+没有模型调用、入站事件订阅或第二个机器人 WebSocket。此处不是完整 Service/Agent
+产品验收。
+
+`delivery-component-03` 在话题 `omt_19a1f0d8df8f1a76` 确认两个 file 消息和一个
+原生 image 消息；三份产物经用户读 API 下载后的 SHA-256 全部相同，kernel/session
+均为 0→0。内容 revision 为
+`279f7f39e6dd40f5fcd7c8d551b31bd791fce9f5ac2ae746f49437b6ace1e20c`，
+ipynb 4,951,141 bytes、HTML 5,123,868 bytes、PNG 9,348 bytes。下载 PNG 的本地
+图像检查能看到 A/B/C 的 3/7/2 柱形、category/value 坐标；这不等于用户设备的
+飞书或 HTML 渲染检查。
+
+原始记录在主仓库私有 `.local/063-feishu-datalayer-20261006/`，包括
+`delivery-component-03/report.json`、`download-hashes.json`、真实发送/话题读取
+响应及本次产物。首轮连接路径输入失败保留在 `delivery-component-01.log`，未发送
+附件；`delivery-component-02` 的三个 file 消息和下载指纹通过，但 PNG 当时作为
+文件而非原生图片投递。修正探针的 MIME 路由后单独复验，不把旧记录改写为图片通过。
+
+宿主源码 `09411ddb3` 与远端 overlay `b4f80c841` 的最后执行组合已完成核心
+17 required/18 overall（额外 MCP Tasks 在范围外）和 33/33 边界检查。随后冻结的
+`44913e277` 完成 273 files/5202 tests、lint/type/build、干净安装和 Node 22.23.2
+× npm 10.9.9/11.6.0、Node 26.10.0 × npm 11.6.0；[#5270](https://github.com/hs3180/disclaude/pull/5270)
+对应的八项 CI 通过。该包先于本次投递补充，最终候选以 PR head 和相应
+`release-source.json`/发行包指纹为准，不能使用旧包证明新代码通过。
+
+Jupyter 已恢复原镜像、环境、command 和原挂载，保留两个文档身份持久化挂载。
+恢复时 266 条原生身份记录完整指纹一致，六个 Project 引用可解析、0 kernels/
+0 sessions。日常飞书仍有在途任务，首轮 180 秒空闲等待未进入候选窗口，服务未停止。
+真实附件输入、DSH 在飞书的研究和 /stop/续行、用户 Lab、设备/CSP/sanitizer 及
+引用 P2P/纯文本降级继续保持未验证。
+
+## 图片观察与完整报告复验（2026-10-06 UTC）
+
+宿主新增图片结果、附件注册与导入后，在 `a8f962e4e` 通过一次真实 DSH 图片观察：
+`openai-codex / gpt-5.6-luna / low` 只获得 `notebook_observe_image` 工具，
+一条原生图片引用、一次工具调用，正确识别三点上升折线及 step/value 坐标轴。
+原生历史无凭据；此只读观察没有启动 kernel。此前两次 DSH 服务依赖接线失败
+保留在 `configured-image-7b756e8cd` 和 `configured-image-b4f80c841`，修复后
+`configured-image-native-root` 通过。
+
+报告候选的远端源码为 `b4f80c841`，镜像
+`sha256:ddfe58902ce74ed598d5f3582535b02bcf9b71666a8d1ded4a509377851b6c3f`。
+固定运行补丁 manifest 仍为
+`db82f9d7efd5f4886465b79e1e84b74d58858ee11f894761ac96156d299a8e4b`；
+此次显式启用报告依赖，仅增加 Plotly 7.1.0，原有 Narwhals 2.22.1 和全部
+313 个已安装依赖版本均未变，`pip check` 通过。早期 169 项记录仅指
+`pip freeze` 中的 `==` 项，不是完整环境包数。第一次依赖候选意外替换
+Narwhals，被预检拒绝且未部署；修正后的完整 inventory 比对和启动预检通过。
+
+宿主 `8002ac42b` 的 `configured-report-fingerprint-03` 11/11 通过：
+24 字节合成 CSV 按注册附件 ID 导入并核验重复内容；两个新远端 kernel
+得到相同均值 4、样本标准差 2.6457513110645907、种子 63 的随机均值
+-0.014563260591700372。记录 NumPy 2.4.6、Matplotlib 3.10.9、Plotly 7.1.0
+和 Narwhals 2.22.1；PNG 已目视核验，SVG、表格 HTML 和内嵌 Plotly 资产
+均保留。此复现承诺是指定输入/种子/环境的数值结果，不是 runtime ID、
+路径或 SVG 日期等产物的逐字节一致。
+
+完整 HTML 为 5,123,868 字节，SHA-256 为
+`740125e3a816a4fbd358e1626d52249e61884568b9f9f02528fc3ee61d54e7fd`；
+Notebook 内容指纹为
+`d995b776327d75ab1124e68dc329a4d47e9b004c167d998ddd616ff6dbcadfea`，
+采用 `sorted-json-sha256-v1`，对象键排序后 JSON 编码再 SHA-256，数组顺序
+和全部 metadata 保留。HTML 的 meta 指纹、返回的 revision 与保存后 ipynb
+一致；文件字节 SHA 与内容指纹分别记录。认证下载成功、匿名 GET 被拒绝，
+CSP 为 sandbox allow-scripts 且无 allow-same-origin。这些是文件和响应头
+证据，尚未证明实际设备的 JavaScript、公式渲染或 sanitizer 行为。
+
+报告首轮被宿主 3 MB 响应上限截断；`d66c9fef5` 将 Datalayer 默认上限
+调整为 8 MB，模型预览限制不变。第二轮发现 Jupyter 保存时排序 JSON 键
+使旧指纹失配；`8002ac42b` 修正后通过，并额外通过导出期间 live 编辑的
+历史快照检查。两轮失败原样保留，88 项传输/会话、55 项指纹/会话定向
+测试及 build/lint 通过；最终冻结源码的工程检查另行记录。
+
+05:42 的真实 Service/DSH 报告交付再次失败，保留了原始工具错误且未发送
+附件、未自动重试。新增 CSV cell 的 `metadata.trusted` 在 RTC 中缺省，
+Contents 读取时为 false；保存的 ipynb 则移除 code cell 的 trust 标记，
+并将 source、stream 和文本 MIME 输出保存为行数组。三份内容的研究结果
+相同，但 v1 指纹不同。当前指纹升级为 `nbformat-content-sha256-v2`：仅对
+nbformat 的多行字符串表示做归一化，并排除 code cell 的 boolean runtime
+trust；人工/未知 metadata、JSON MIME 数组、cell/output 顺序仍参与校验。
+交付下载并核验保存的 ipynb 原文件，发送其原字节并单独记录文件 SHA-256。
+这项修正的回归通过不能替代真实报告交付复验。
+
+候选窗口为 03:37:16 至 03:45:28，前切/回退登录入口观测中断约 4.390/4.108 秒。
+恢复原镜像后环境、command、entrypoint 和原挂载保留，额外两项身份持久化
+挂载保留；SQLite 247 行在恢复前后完整指纹一致，integrity check 通过，
+四个核心/模型/报告 Project 的原 document ID 仍可解析。自有资源均为
+0 → 0；日常飞书容器未重启，本地日常 LaunchAgent 未切换。
+证据仍在主仓库私有 `.local/063-jupyter/datalayer-delivery-20261006/`，包括
+`configured-report-a8f962e4e`、`configured-report-transport-02`、最终报告、
+`configured-export-fingerprint-race`、依赖预检和恢复记录。真实飞书、用户
+Lab 修改、实际设备渲染与发行验收仍未通过。
+
+## 第二轮组合复验（2026-10-06 UTC）
+
+宿主组合为 `c4b3af2ba`，远端补丁来自 `2208722f7`，镜像
+`sha256:4ac85b7416255a1354d8df82c5481becc7d8ff94afe115871a84bab997f363b4`；
+16 个补丁文件的 manifest SHA-256 为
+`db82f9d7efd5f4886465b79e1e84b74d58858ee11f894761ac96156d299a8e4b`。
+169 项发行包和 12 项科学计算依赖与保存的原实例相同，`pip check` 通过。
+安装 overlay 标签为 `0.6.3-nbmodel-repair-2`，API 政策标签仍为 repair-1；
+标签不是源码指纹，不能据此认定两个来源相同。
+
+| 范围                   | 实测结果与限制                                                                                                                                                                                                                          |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 核心保存、原结果、停止 | `configured-core-c4b3af2ba` 18 项中 17 项通过，唯一缺失为范围外 MCP Tasks。全客户端断开 67 秒后落盘、重复原请求查询、精确取消及独立 scratch interrupt 均通过。                                                                          |
+| 稳定 cell 与原历史     | 原生移动重建 CRDT 对象后监听继续生效，运行中删除/编辑不把旧输出附给新源码。独立 Node 进程恢复未缓存终态，其他消费者先读取无影响；离线已缓存终态读取没有 HTTP。                                                                          |
+| 输出和导出             | 多位置跨 cell display 更新、wait=false 立即清空通过；超过 80 KiB 的 22 个输出完整产物可认证下载，预览只保留 16 个并标记遗漏。stdin 返回明确错误。导出中 live 编辑保留，HTML/ipynb 同属捕获的历史快照。                                  |
+| 取消与续行             | queued/finished 目标取消、完成/下一请求派发竞态和 Service stop 后同 incarnation 续行通过；收到 204 后等待原请求终态，不把接受取消写成确认停止。                                                                                         |
+| 故障对账               | `configured-fault-retry-02` 5 项通过：实际认证拒绝、真实 1 ms HTTP 超时、受控丢失已接受 POST 回复、native kernel restart 及原容器 Docker restart。未知身份保留且不重发 POST；重启后不声称恢复原内存。丢回复为注入，未记作物理网络中断。 |
+| 真实模型               | `configured-model-c4b3af2ba` 两轮 DSH 为 `openai-codex / gpt-5.6-luna / low`，16 次工具调用，同一 kernel 从 69 续至 93，保留独立 RTC peer 的参数/Markdown，生成 HTML/ipynb，原生历史无凭据。此证据不包含用户亲自 Lab 编辑或真实飞书。   |
+
+扩展边界首轮 32 条中有 4 条失败，记录保留：两个 display 断言误计
+Python 自动返回的 DisplayHandle，另两处实际 `/files` GET 因缺少密码模式下
+Origin/Referer 返回 403。宿主在 `e42bc506e` 修正文件认证上下文和探针断言，
+三个案例五项复验通过。故障首轮在多余 MCP initialize 的 403 处退出，
+`c4b3af2ba` 移除原请求查询对 MCP 的初始化依赖后五项复验通过。
+`e42bc506e` 全量 5182 tests、完整 lint 通过；后续 `c4b3af2ba` 的 31 项
+定向测试、build/lint 通过，最终冻结源码的全量及干净安装仍待执行。
+
+候选窗口为 02:30:06 至 03:10:04；中间自有故障案例原容器重启至 healthy
+耗时 25.791 秒。恢复原快照至 healthy 耗时 22.274 秒，登录入口观测中断
+4.896 秒。原环境、command、entrypoint 和原挂载保留；日常飞书容器仍健康，
+启动时间未变。全部自有 kernel/session 清理为 0 → 0。
+
+回退前发现原生 file-ID SQLite 位于容器可写层，回退旧镜像会丢掉候选窗口产生的
+身份记录。已备份完整 240 条记录，迁至独立目录挂载，并用受支持的
+`BaseFileIdManager.db_path` 共享配置；额外增加数据库目录和只读配置两个挂载。
+恢复后完整行指纹一致、integrity check 通过，两个新 Project 的原 document ID
+仍由 API 解析到原路径。部署源/环境未覆盖；回退配置仅增加数据库路径。
+详见 [身份持久化与回退](../../jupyter/datalayer/README.md#native-file-identity)。
+原始记录位于主仓库私有 `.local/063-jupyter/datalayer-delivery-20261006/`，
+包括上述案例、原始失败、`restore-c4b3af2ba-*` 和
+`restored-c4b3af2ba-health.json`。尚未完成真实飞书、用户 Lab 操作、实际设备
+渲染/认证/CSP、干净 kernel 研究复现及冻结候选的最终发行检查。
+
+## 修复候选第一轮复验（2026-10-06 UTC）
+
+远端候选源码为 `79c2bf82f`，镜像为
+`sha256:0f7a907190d9c0afa4a5c05a8952fbe154a06baa8de9ed38414c9d007f3586ab`。
+[固定补丁与部署说明](../../jupyter/datalayer/README.md) 的 manifest SHA-256 为
+`99c4aa1770a03d738568f0a7ba8a273df1116c7d4cdd4947cd9dfbc187994061`。
+本轮 Node 工具来源是 `16ad2ed23`；后续宿主 incarnation/能力检查改动需重新验收。
+原镜像、运行配置和环境已保存回退副本，169 项发行包版本及 12 项科学计算依赖未变，
+`pip check` 通过。空闲实例切换到 healthy 耗时 21.65 秒；登录入口观测不可用为
+4.562 秒。原挂载与认证环境保留，日常飞书容器未切换。
+
+实际启动验证了一小时非消费结果保留、512 条全局请求配额及 64 KiB inline 上限。
+共享配置中 cleanup delay 为 `None`，由原生 ydoc 保存；没有宿主补写或常驻 RTC peer。
+第一次启动预检使用错误格式的 kernel ID，第二次发现扩展发现 `.d` 文件未加载任意
+trait 配置；修正探针并合并标准共享配置后复验通过，失败记录保留。
+
+| 原失败条件                          | 本轮结果                                                                           |
+| ----------------------------------- | ---------------------------------------------------------------------------------- |
+| 全部文档客户端退出后的保存          | 67 秒运行完成，原请求 stdout 和磁盘 Notebook 输出均包含完成标记。                  |
+| 原结果重复读取／其他消费者先读      | 原请求重复 GET 和宿主未缓存时另一个消费者先 GET 后的恢复均通过，无额外执行 POST。  |
+| 取消 queued B                       | running A 保持运行；B 有未执行的取消终态。                                         |
+| 取消 finished unread A              | 新 running B 保持运行；读取仍得到原 A 终态。                                       |
+| 执行中改源码                        | 原请求保留原输出；当前新源码 cell 无旧输出，未知 metadata/attachment 保留。        |
+| display_id／clear_output(wait=True) | 内核实际发出更新；live MIME 使用更新值；wait=True 保留旧输出，下一输出到达时清空。 |
+
+核心探针 18 项中 17 项通过，唯一不支持项是范围外 MCP Tasks；边界探针 19 项全部通过。
+独立 Node 进程恢复 pending 原请求且没有执行 POST、改名/复制身份及自有 kernel 重启后的
+原生 incarnation 变化也通过。补丁安装后 31 项服务端回归和实际 bundled modules 的
+16 项前端检查通过。原始证据位于主仓库私有目录
+`.local/063-jupyter/datalayer-delivery-20261006/`，包含 `configured-core-01/`、
+`configured-edge-01/`、镜像构建、配置和中断记录。
+
+这一轮没有完成原生 Lab Run 路由、多位置跨 cell display 更新、独立进程读取未缓存的
+终态、大输出产物、故障恢复、真实飞书或设备验收。不能据此关闭完整产品／发行任务。
+冻结最终交付源码上的复验仍需执行。原生 UI 会话在选择 Chromium 时被 Computer Use
+工具因当前 URL 不允许访问而终止，没有继续或换工具绕过；这项保持未验证。
+本轮结束前已恢复修复前的运行快照；Jupyter/MCP 和日常飞书服务健康，原挂载与认证
+环境保留，未遗留自有 kernel/session。修复候选镜像和回退文件保留供下一轮验收。
+
+## 更新后实例复验（历史：2026-10-05 UTC，上海时间跨至 10-06）
+
+依赖更新并重启后，重新测试了用户配置中的同一远端 Jupyter。MCP 为 **2.2.3**，nbmodel 为 **0.2.9**，Lab / Server 为 **4.6.4 / 2.21.1**，collaboration / server_ydoc / pycrdt 为 **5.0.4 / 3.0.4 / 0.14.8**。本轮只创建自有随机 Notebook、Project 和 kernel；没有再次重启服务或修改其配置。此前的升级前结果保留在下文。
+
+**结论：常规 MVP 流程通过，全部 Notebook 产品要求尚未满足。** 以下失败来自当前实例的实际请求与共享文档，不是对上游能力的推测。缺少 MCP Tasks 路由单独作为协议调查，不作为产品失败的理由。
+
+| 当前行为                      | 复验结果与证据                                                                                                                                                                                                                                        |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Live 编辑、持续计算和模型续行 | 通过。独立 RTC peer 的未保存参数、Markdown 可读取。真实 DSH 两轮均为 `openai-codex` / `gpt-5.6-luna` / low，在同一 Project、Notebook、kernel 和原生模型 session 得到 69，再由人工参数 31 得到 93；人工文字保留，HTML/ipynb 导出成功。                 |
+| 宿主连接重建、原请求去重      | 所测场景通过。运行尚未结束时，销毁 Notebook session 和连接对象后，由独立 Node 进程查询同一 request ID 并得到 43，随后宿主重建恢复缓存；整个过程只有一次执行 POST，kernel incarnation 未变。已缓存终态也可恢复。此实验不是宿主机器重启或远端重启验收。 |
+| 过期写入与其他内容            | 观察到 stale sourceHash 后拒绝编辑，人工新文字保留；源码定点编辑保留未知 metadata 和 Markdown attachment。通过这些场景不代表服务端原子 CAS 或并发控制权交接已经实现。                                                                                 |
+| 文件身份与 kernel 进程身份    | 原生 API 改名后 document ID 相同，复制后不同；重启自有 kernel 后 kernel ID 相同、incarnation 改变。后端已提供身份信息，Project 自动跟随改名及 MVP 执行日志的 incarnation 对账仍待接入/验收。                                                          |
+| 普通输出与导出                | stdout、stderr、结构化 ValueError、静态 PNG 及同快照 HTML/ipynb 通过；PNG 已目视核验。                                                                                                                                                                |
+| 全客户端断开后的保存          | **失败。** 67 秒的后台执行完成，原请求有 stdout；落盘 Notebook 对应 cell 的 outputs 为空。                                                                                                                                                            |
+| 远端原结果重复读取            | **失败。** 第一次 GET 消费终态，第二次 GET 为 404；另一个消费者先读取、宿主尚未缓存时，恢复为 unknown。宿主缓存仅解决已经读到的结果。                                                                                                                 |
+| 精确取消                      | 取消当前 running 请求通过，原请求返回 KeyboardInterrupt。**取消目标校验失败：**取消排队 B 会中断正在运行的 A，B 随前一请求失败而被队列取消；取消已经完成但未读取的 A 会中断新运行的 B。DELETE 接受不等于目标正确。                                    |
+| 执行中修改源码                | **失败。** 原请求可查询旧结果，但共享 cell 已是新源码，仍附旧执行的 stdout，metadata 只有 trusted 标记，没有旧源码版本/历史结果标识。                                                                                                                 |
+| `display_id` 更新             | **失败。** 同一父消息、同一 display ID 的 `update_display_data` 已由 kernel 发出；nbmodel 原请求及共享 cell 仍保留更新前 MIME 内容。                                                                                                                  |
+| `clear_output(wait=True)`     | 最终替换输出正确；**等待语义失败。** kernel 发出 wait=true 后、下一输出尚未到达时，原请求仍 202，但旧输出已被清空。不能用最终快照正确代替等待期间的行为。                                                                                             |
+
+新版请求 DELETE 已解决旧版 405；核心探针将请求取消和整 kernel interrupt 分成两个执行，均单独核验原请求终态，避免连续中断同一请求的错误处理。取消其他请求的两种失败属于原生 nbmodel 目标校验问题，不能因正常 running 取消成功而略过。
+
+源码核对也与输出实测一致：发布的 nbmodel 0.2.9 `_output_hook` 中 `update_display_data` 尚为占位，`clear_output` 立即清空且尚未处理 wait 参数。这两处需要针对性修复；普通 MIME 展示本身可复用。RTC 文档保留配置、结果存储、取消目标与输出版本关联也应优先在现有 Datalayer/Jupyter 集成中补齐，无需由这些失败推导出另建完整执行插件。
+
+仍未验收：完整飞书持久 Project UX、原生 Lab 人工 Run/Interrupt、控制权交接与旧 owner 失效、服务端原子版本检查、持久迟到请求 fence、服务/机器重启恢复、完整大输出产物、stdin、设备访问及 HTML sanitizer/CSP、干净 kernel 的研究复现。这些与已经观察到的失败分开记录。
+
+本轮证据在任务 worktree 的私有 `.local/`：
+
+- `datalayer-reacceptance-core-01/report.json`：18 项，14 通过；4 项失败/不支持，其中 Tasks 仅为能力调查。
+- `datalayer-reacceptance-edge-02/report.json`：11 项，8 通过；取消目标的两种误中断与源码改动后输出归属失败。
+- `datalayer-reacceptance-capabilities-01/report.json`：改名/复制身份两项通过；输出更新的早期复验保留。
+- `datalayer-reacceptance-output-03/report.json`：5 项，3 通过；保存 kernel IOPub 证据，动态更新和 clear wait 语义失败。
+- `datalayer-reacceptance-fresh-node-01/report.json`：5 项均通过；独立 Node 进程在原请求 running 时恢复查询、零执行 POST，随后原宿主恢复缓存并保留 metadata/attachment。
+- `datalayer-reacceptance-model-01/report.json`、`report.html`、`tool-errors.json`：真实两轮模型续行与导出通过。18 次工具尝试中 1 次因模型使用了错误 Notebook ID 被 Project 边界拒绝，之后使用正确 ID 完成；不将每次尝试都记录为成功。
+
+核心与边界各轮均为 0 → 0 kernel/session，真实模型的自有 kernel/session 已清理；原资源保留，Jupyter 与日常飞书服务保持健康。密码和 OAuth token 未进入工具、Project 或模型原生历史。边界第一轮把上游 `output_type` 与宿主预览 `outputType` 混用，导致恢复断言误报，原始证据保留；修正后的第二轮恢复及去重通过。
+
+## 升级前实例与实际协议（历史）
+
+| 组件                                 | 实际版本                  |
+| ------------------------------------ | ------------------------- |
+| Jupyter Server / Lab                 | 2.19.0 / 4.4.1            |
+| collaboration / server_ydoc / pycrdt | 4.4.1 / 2.4.1 / 0.13.1    |
+| jupyter-server-nbmodel               | 0.1.1a4                   |
+| jupyter-mcp-server                   | 1.0.2，来自已安装包元数据 |
+| 本次真实模型 DSH                     | 0.1.2rc1                  |
+
+MCP 的 health/initialize 返回硬编码的 `0.20.0`，不能用它判断安装版本。真实调用应使用 `/mcp` JSON-RPC；`/mcp/tools/call` REST 路径只返回占位成功。当前 `tasks/list` 返回 Method not found，不能套用新版 upstream Tasks 文档当作该实例的能力。
+
+MCP 的共享写入和执行可用，但 `read_cell` 在实测中读到了落盘的 `mvp_value = 2`，独立 RTC 客户端已看到未落盘的 `mvp_value = 17`。MVP 因而直接使用原生 RTC 读取，而不将 MCP 的磁盘读取作为最新状态。
+
+nbmodel 的提交返回 HTTP 202、空 JSON 和原请求 `Location`。0.1.1a4 的结果 `outputs` 为 JSON 字符串，Python 错误也返回 HTTP 200；客户端按实际结构解析终态。没有收到可验证原 handle 的提交保留为 unknown，不自动重发。
+
+## 升级前要求覆盖与未通过项（历史）
+
+| 产品行为                             | 结果               | 实际证据及限制                                                                                                                                                                                      |
+| ------------------------------------ | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 持久 Project 引用，模型会话续行      | 通过组件测试       | 原 Project、Notebook 和 kernel 续行；跨后端/Project 引用检查。改名、复制的完整 UI 流程未验收。                                                                                                      |
+| 读取未落盘的人类编辑                 | 通过               | 独立 RTC peer 改参数和 Markdown；宿主读取 live 状态，Contents 同时仍为旧参数。                                                                                                                      |
+| 定点写入、保留其他 cell 和人工文字   | 通过所测场景       | 两轮真实模型保留人工正文；过期源码哈希返回 conflict。并发同 cell 的服务端原子 CAS 未实现，metadata/附件完整并发覆盖未验收。                                                                         |
+| 同一远端 Python kernel 持续计算      | 通过               | 参数 17 得到 51；真实模型参数 23 得到 69，人工改成 31 后续行得到 93，kernel ID 相同。                                                                                                               |
+| 人工/Agent 串行入口及控制权交接      | 部分 / 未通过保证  | 执行复用 nbmodel 队列；未实现服务端 owner generation、独占 kernel 或旧提交/输出/stop 失效。未把“kernel ID 相同”当作 incarnation 存活证明。                                                          |
+| stdout、错误、PNG 图表及服务端输出   | 通过所测场景       | 实际远端 Matplotlib PNG 已保存并目视核验；解析真实 KeyboardInterrupt 输出。display 更新、clear、stdin、运行中改源码的全面覆盖未完成。                                                               |
+| 所有文档客户端关闭仍执行并保存       | 执行通过，保存失败 | 67 秒执行在所有 RTC 客户端关闭后完成，原请求有 stdout，但 saved Notebook 对应 cell 的 outputs 为空；两次实验一致。浏览器关闭而宿主 RTC 仍连接与此条件不同。                                         |
+| 精确停止原请求并核验结果             | 当前实例不支持     | 请求级 DELETE 返回 405。工具报告 unsupported/unknown，不退化为整个 kernel interrupt。只在自有 scratch kernel 上单独测试标准 interrupt，原请求确实返回 KeyboardInterrupt；这不通过请求级 stop 要求。 |
+| 原运行重复查询、Host 重建恢复        | 部分通过           | 重复 runId 没有第二个提交；宿主已缓存的终态可在新 Node 进程查询。远端终态 GET 会消费记录，第二次或其他消费者读取后为 404；宿主未缓存的结果不能恢复。                                                |
+| 未知提交、远端重启与 kernel 丢失恢复 | 保守处理 / 未验证  | 本地记录先于 POST，未知不重放；没有永久服务端 run-ID fence、跨进程并发幂等或 incarnation 对账。未重启用户 Jupyter/kernel；服务端内存任务重启恢复没有验收证据。                                      |
+| 同版本 Notebook / HTML / 图表交付    | 通过组件测试       | 同一次 live snapshot 写成 ipynb，由远端 nbconvert POST 转 HTML，附 snapshot SHA-256；PNG 已包含。实际设备可达、飞书附件/摘要、HTML sanitizer/CSP 与浏览器预览未验收。                               |
+| 凭据隔离、Node-only 宿主             | 通过               | 宿主变量和 cookie 留在私有配置；检查工具/Project 和 DSH 原生历史无密码或 OAuth token。未启动宿主 Python/Jupyter。                                                                                   |
+| 完整飞书研究体验与干净 kernel 复现   | 未验收             | 本次没有切换生产机器人，没有用户原生 Lab 编辑/Run/Interrupt 或研究报告完整产品验收。                                                                                                                |
+
+输出预览已有大小上限，但完整大输出产物引用和明确截断提示尚不完整，不能以小样本 PNG 通过替代大输出要求。客户端源码哈希检查也不能替代服务端原子版本检查。MVP 的本地执行日志按单宿主 writer 使用，不提供分布式锁。
+
+## 升级前可复验材料（历史）
+
+探针与命令见 [测试指南](../../tests/jupyter/README.md#configured-datalayer-mvp-probes)。它们只创建带随机名字的自有 Notebook/Project/session，清理自身 kernel/session，保留合成 Notebook、报告和宿主私有证据；不更新远端包、不修改配置、不重启用户服务。
+
+本次本地证据（位于任务 worktree `.local/`，不提交包含连接状态的原始记录）：
+
+- `datalayer-live-03/report.json`：完整组件探针，17 项中 12 项通过、5 项失败/不支持；`completed` 只表示探针执行结束。
+- `datalayer-live-03/fresh-node-recovery.json`：另一个 Node 进程恢复原 51 的终态，无重新提交。
+- `datalayer-live-03/nbconvert-export.json`、`nbconvert-report.html`、`chart.png`：最终官方 nbconvert 导出及实际 PNG 图表。
+- `datalayer-model-03/report.json`、`report.html`：真实 DSH 两轮续行和最终 HTML 导出，17 次工具调用。实际两轮路由均为 `openai-codex` / `gpt-5.6-luna` / low，原生 session 恢复、人工参数/正文保留、凭据不进入历史均通过。
+- 主仓库 `.local/063-jupyter/datalayer-mvp-notebook-test.json` 和 `datalayer-mvp-installed-source.json`：安装元数据、MCP 共享写入/执行、落盘读取滞后及任务接口调查。
+
+原有 9 个 kernel 和 9 个 session 在探针清理后仍在，日常飞书服务及模型默认配置未动。`gpt-5.6-luna` 仅作为 #5215/#5219 指定验收覆盖；日常/候选默认仍为 `gpt-6-luna`。
+
+前两轮探针暴露的 RTC 路径编码、旧版输出格式、DSH schema 子集和 HTML GET 的 XSRF 差异已经修正，失败证据保留。最终导出走官方 POST `/nbconvert/html`，不依赖手写 Notebook HTML 渲染。
+
+## 后续接入判断
+
+这些实测不足以说明 Datalayer 本身永远无法满足要求，也不足以支持继续重写整个执行层。优先保留本 MVP 的 RTC、nbmodel、nbconvert 和薄宿主适配。先针对当前失败补齐或验证文档生命周期/输出保存、持久且可重复读取的原请求结果、准确的请求级取消，再决定是否需要小范围 upstream 扩展。
+
+历史独立栈实验曾用 `YDocExtension.document_cleanup_delay = None` 通过保留文档的后台保存场景，详见 [原证据](./jupyter-harness-evidence.md) 和 [实验指南](../../tests/jupyter/README.md#server-retention-comparison)。它不是当前远端已经通过的证据；未更改用户配置，也不能据此宣称服务端重启恢复成立。任何版本升级或保留设置仍需在用户实例上重新验收并评估现有 Notebook 影响。
+
+2026-10-06 按用户要求，发行目标已调整为 [Datalayer 研究闭环](./jupyter-harness.md)：后台保存、结果留存、目标取消、源码/输出关联和 display/clear 修复分别由 [#5262](https://github.com/hs3180/disclaude/issues/5262)–[#5266](https://github.com/hs3180/disclaude/issues/5266) 跟踪，仍是本版必过条件。多控制方 owner generation、服务端原子源码检查和永久迟到提交 fence 改由 [#5267](https://github.com/hs3180/disclaude/issues/5267) 按实际用例评估，不纳入 0.6.3 milestone。
+
+该范围调整没有改变本轮实验结果或把失败记为通过。完整飞书、原生 UI、用户设备访问和远端重启仍是独立未完成验收。后续开发已增加默认 Datalayer 选择与安全连接诊断；引用兼容、Lab Run 入口和修复验收仍按当前任务逐项完成。

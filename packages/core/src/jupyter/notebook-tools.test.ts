@@ -58,6 +58,21 @@ function fixture() {
 }
 
 describe('Harness-independent Notebook tools', () => {
+  it('does not interrupt a permanently fenced unsubmitted attempt or invent a handle', async () => {
+    const f = fixture();
+    const { requestId: _requestId, ...target } = f.handle;
+    vi.mocked(f.binding.executions.getStatus).mockResolvedValue({
+      runId: target.runId,
+      state: 'not_started',
+      target,
+      submissionFenced: true,
+    });
+    expect(await f.execute('notebook_stop_execution', { runId: target.runId })).toEqual({
+      state: 'not_found',
+    });
+    expect(f.binding.executions.stop).not.toHaveBeenCalled();
+    expect(f.binding.controller).not.toHaveBeenCalled();
+  });
   it('reads the authorized live cell with stable service and document identity', async () => {
     const f = fixture();
     await f.execute('notebook_read_cell', { cellId: 'cell-1' });

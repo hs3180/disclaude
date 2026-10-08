@@ -24,6 +24,7 @@ export * from './utils/index.js';
 export * from './channel-api/index.js';
 
 // Jupyter identity, revision, and execution ownership contracts (#5217/#5218)
+export { notebookSnapshotHash } from './jupyter/notebook-fingerprint.js';
 export type {
   JupyterServiceIdentity,
   JupyterNotebookIdentity,
@@ -42,11 +43,32 @@ export type {
   JupyterExecutionObservation,
   JupyterExecutionStopResult,
   JupyterExecutionPort,
+  JupyterUnsubmittedExecution,
+  JupyterExecutionReconciliationResult,
 } from './jupyter/contracts.js';
+export { JupyterCoordinatorClient, createJupyterCookieJar } from './jupyter/coordinator-client.js';
+export { JupyterHttpConnection } from './jupyter/http-connection.js';
+export type { JupyterHttpOptions } from './jupyter/http-connection.js';
+export { DatalayerJupyterClient } from './jupyter/datalayer-client.js';
+export type {
+  DatalayerConnectionInspection,
+  DatalayerTool,
+  DatalayerToolResult,
+  DatalayerExecutionHandle,
+  DatalayerExecutionPolicy,
+  DatalayerExecutionObservation,
+} from './jupyter/datalayer-client.js';
+export type {
+  JupyterCoordinatorOptions,
+  JupyterCoordinatorStatus,
+  JupyterConnectionInspection,
+  JupyterNotebookOverview,
+} from './jupyter/coordinator-client.js';
 
 export { createNotebookTools } from './jupyter/notebook-tools.js';
 export type { NotebookToolBinding } from './jupyter/notebook-tools.js';
 export type { ToolDefinition, ToolContext } from './sdk/tools.js';
+export type { ToolMediaResult, ToolImage } from './sdk/tool-result.js';
 
 // Config
 export * from './config/index.js';

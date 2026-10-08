@@ -20,6 +20,25 @@ function definition(
 }
 
 describe('Pi host tool adapter', () => {
+  it('keeps image data in native image content rather than JSON text', async () => {
+    const data = Buffer.from('png bytes').toString('base64');
+    const [tool] = adaptPiTools([
+      definition(() =>
+        Promise.resolve({
+          format: 'disclaude.tool-result.v1',
+          data: { cellId: 'plot' },
+          images: [{ mimeType: 'image/png', data }],
+        })
+      ),
+    ]);
+    expect(await tool.execute('call', { x: 1 }, undefined, undefined, undefined)).toMatchObject({
+      content: [
+        { type: 'text', text: '{"cellId":"plot"}' },
+        { type: 'image', mimeType: 'image/png', data },
+      ],
+    });
+  });
+
   it('preserves model-facing schema and structured results', async () => {
     const execute = vi.fn<ToolDefinition['execute']>().mockResolvedValue({ doubled: 42 });
     const source = definition(execute);

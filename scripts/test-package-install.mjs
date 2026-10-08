@@ -132,6 +132,40 @@ async function verifyPackage() {
   const cli = join(prefix, 'bin/disclaude');
   assert.equal(run(cli, ['--version']).trim(), `disclaude v${pkg.version}`);
   assert.match(run(cli, ['browser', '--help']), /automatically serializes calls/u);
+  assert.match(run(cli, ['jupyter', '--help']), /Kernel memory stays on remote Jupyter/u);
+  const notebookTools = JSON.parse(run(cli, ['jupyter', 'tools', '--no-interactive']));
+  assert.equal(notebookTools.ok, true);
+  assert(notebookTools.data.some((tool) => tool.command === 'execute'));
+  assert(notebookTools.data.some((tool) => tool.command === 'download-report'));
+  assert.deepEqual(JSON.parse(run(cli, ['jupyter', 'list', '--project-dir', temp, '--no-interactive'])), {
+    ok: true, command: 'list', data: { notebooks: [], recentRuns: [] },
+  });
+  assert(existsSync(join(installed, 'skills/jupyter/SKILL.md')));
+  assert(existsSync(join(installed, 'skills/jupyter/README.md')));
+  assert.match(run(cli, ['jupyter', 'patch', '--help']), /Generation uses Node only/u);
+  assert.match(run(cli, ['jupyter', 'patch', '--help']), /--jupyter URL/u);
+  assert.match(run(cli, ['jupyter', 'patch', '--help']), /--interactive/u);
+  assert.match(run(cli, ['jupyter', 'patch', '--help']), /--no-interactive/u);
+  assert.doesNotMatch(run(cli, ['jupyter', 'patch', '--help']), /--ssh|--container|--service|--restart|--stopped/u);
+  assert.equal(existsSync(join(installed, 'jupyter/datalayer/Dockerfile')), false);
+  assert(existsSync(join(installed, 'bin/jupyter-terminal.js')));
+  assert(existsSync(join(installed, 'bin/jupyter-auth.js')));
+  run(process.execPath, ['--input-type=module', '-e', `
+    const { resolveJupyterAuth } = await import(${JSON.stringify(join(installed, 'bin/jupyter-auth.js'))});
+    const auth = await resolveJupyterAuth({ jupyter: 'configured', interactive: false }, {
+      cwd: ${JSON.stringify(temp)}, environment: { JUPYTERLAB_HOST: 'https://fixture.invalid/prefix/', JUPYTERLAB_TOKEN: 'fixture-token' }
+    });
+    if (auth.mode !== 'token' || auth.secret !== 'fixture-token') throw new Error('Installed Jupyter auth resolution failed');
+  `]);
+  assert(existsSync(join(installed, 'packages/core/dist/jupyter/http-connection.js')));
+  const patchInfo = JSON.parse(run(cli, ['jupyter', 'patch', 'info']));
+  assert.equal(patchInfo.target, 'jupyter_server_nbmodel');
+  assert.equal(patchInfo.activation.hotApplySupported, false);
+  const patchArtifact = join(temp, 'nbmodel-repair.pyz');
+  const generatedPatch = JSON.parse(run(cli, ['jupyter', 'patch', 'generate', '--output', patchArtifact]));
+  assert.equal(generatedPatch.manifestSha256, patchInfo.manifestSha256);
+  assert(existsSync(patchArtifact));
+  assert.equal(readFileSync(patchArtifact + '.sha256', 'utf8').split(' ')[0], generatedPatch.sha256);
   for (const removed of ['coordinator.mjs', 'harness-session.mjs', 'python-runtime.mjs']) {
     assert(!existsSync(join(prefix, 'lib/node_modules/disclaude/packages/service/dist/browser-control', removed)), `Obsolete browser layer shipped: ${removed}`);
   }
@@ -159,9 +193,14 @@ async function verifyPackage() {
     const installed = ${JSON.stringify(installed)};
     const modulesRoot = ${JSON.stringify(isPrebuilt ? 'packages' : 'node_modules/@disclaude')};
     const load = (name, file = 'index.js') => import(pathToFileURL(join(installed, modulesRoot, name, 'dist', file)).href);
+    await load('core', 'sdk/providers/deepseek/native-app.js');
     for (const name of ['core', 'service', 'channel-cli']) {
       await load(name);
     }
+    // Exercise lazy RTC dependencies in the installed archive.
+    await load('core', 'jupyter/rtc-document.js');
+    const { createJupyterCookieJar } = await load('core');
+    await createJupyterCookieJar();
     const { DisclaudeService } = await load('service', 'service.js');
     const { Config } = await load('core');
     if (${isPrebuilt} && realpathSync(Config.getBuiltinsDir()) !== realpathSync(installed)) throw new Error('Builtins do not resolve to installed release');

@@ -1,0 +1,45 @@
+diff --git a/extension.py b/extension.py
+index 0f36675ca..255a365e9 100644
+--- a/extension.py
++++ b/extension.py
+@@ -8,6 +8,7 @@ import asyncio
+ 
+ from jupyter_server.extension.application import ExtensionApp
+ from jupyter_server.services.kernels.handlers import _kernel_id_regex
++from traitlets import Float, Int
+ 
+ from jupyter_server_nbmodel.execution_stack import ExecutionStack
+ from jupyter_server_nbmodel.handlers import (
+@@ -29,6 +30,13 @@ class Extension(ExtensionApp):
+ 
+     name = "jupyter_server_nbmodel"
+ 
++    result_ttl = Float(86400, min=1, config=True,
++                       help="Seconds to retain terminal request results; GET never consumes them.")
++    result_max_records = Int(256, min=1, config=True,
++                             help="Global request admission quota; unexpired results are not evicted.")
++    result_inline_bytes = Int(1048576, min=1024, config=True,
++                              help="Inline result limit; larger results use native Contents artifacts.")
++
+ 
+     def initialize_handlers(self):
+         rtc_extension = None
+@@ -43,6 +51,10 @@ class Extension(ExtensionApp):
+         self.__execution_stack = ExecutionStack(
+             manager=self.settings["kernel_manager"],
+             ydoc_extension=rtc_extension,
++            contents_manager=self.settings["contents_manager"],
++            result_ttl=self.result_ttl,
++            result_max_records=self.result_max_records,
++            result_inline_bytes=self.result_inline_bytes,
+         )
+         self.handlers.extend(
+             [
+@@ -71,6 +83,6 @@ class Extension(ExtensionApp):
+ 
+ 
+     async def stop_extension(self):
+-        if hasattr(self, "__execution_stack"):
++        if hasattr(self, "_Extension__execution_stack"):
+             get_logger().info("Disposing the execution stack…")
+             await asyncio.wait_for(self.__execution_stack.dispose(), timeout=3)

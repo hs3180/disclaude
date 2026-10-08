@@ -117,3 +117,22 @@ success or failure.
 This is a stack-selection experiment. It does not verify Disclaude adapters,
 atomic cell edits, controller generations, kernel ownership handoff, Feishu,
 model continuation, report quality or access from a user's actual device.
+
+## Patch deployment portability
+
+`node --test tests/jupyter/patch-cli-test.mjs` checks Node-only generation and
+the sole Jupyter Terminal transport: framing, streaming, permissions, owned
+cleanup and failure handling. Removed transport/lifecycle options are refused
+before authentication. These protocol fixtures do not contact a live service.
+
+`python3 tests/jupyter/datalayer-package-test.py -v` checks archive integrity,
+reversible filesystem updates, custom Python/JSON config, nonstandard discovery
+paths, partial-update rollback and the distinction between installed files and
+running Server code. They do not stop/restart a Server or hot-reload modules.
+These component tests do not replace configured Jupyter or product acceptance.
+
+Configured-server Terminal checks use the existing login/REST/WebSocket service.
+Owned staging directories can verify apply/rollback without changing the running
+installation. Record disk installation, external restart and running-code/product
+verification as separate evidence. Older SSH/Compose experiments are historical;
+those deployment adapters and their fixtures have been removed.

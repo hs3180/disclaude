@@ -1,0 +1,149 @@
+diff --git a/src/executionMetadata.ts b/src/executionMetadata.ts
+index f973dee5c..dc32686fa 100644
+--- a/src/executionMetadata.ts
++++ b/src/executionMetadata.ts
+@@ -8,6 +8,38 @@ import type { CodeCell } from '@jupyterlab/cells';
+ 
+ export const EXECUTION_METADATA_KEY = 'jupyter_server_nbmodel';
+ 
++/** Verify a response still belongs to this live cell before client recovery. */
++export function canApplyServerSnapshot(cell: CodeCell, payload: Record<string, unknown>): boolean {
++  if (cell.isDisposed || !payload || typeof payload.source !== 'string' || payload.outputs_truncated === true) {
++    return false;
++  }
++  const shared = cell.model.sharedModel;
++  if (payload.cell_id !== shared.getId() || payload.source !== shared.getSource() ||
++      payload.source_matches === false || payload.output_attachment === 'historical') {
++    return false;
++  }
++  const active = getServerExecutionMetadata(cell);
++  const provenance = cell.model.getMetadata('jupyter_server_nbmodel_provenance') as Record<string, unknown> | undefined;
++  const target = active?.requestId ?? provenance?.requestId;
++  if (target && target !== payload.request_id) {
++    return payload.request_status === 'queued' && !active;
++  }
++  if (provenance?.requestId === payload.request_id && provenance?.kernelIncarnation &&
++      provenance.kernelIncarnation !== payload.kernel_incarnation) {
++    return false;
++  }
++  if (provenance?.requestId === payload.request_id) {
++    if (provenance.displayUpdatedByRequestId && provenance.displayUpdatedByRequestId !== payload.request_id) {
++      return false;
++    }
++    if (typeof provenance.outputVersion === 'number' && typeof payload.output_version === 'number' &&
++        provenance.outputVersion > payload.output_version) {
++      return false;
++    }
++  }
++  return true;
++}
++
+ const clientOwnedExecutions = new WeakSet<CodeCell>();
+ 
+ export interface IServerExecutionMetadata {
+diff --git a/src/executor.ts b/src/executor.ts
+index f9041309a..ce462c973 100644
+--- a/src/executor.ts
++++ b/src/executor.ts
+@@ -13,6 +13,7 @@ import { ServerConnection } from '@jupyterlab/services';
+ import { nullTranslator } from '@jupyterlab/translation';
+ import { JSONExt } from '@lumino/coreutils';
+ import {
++  canApplyServerSnapshot,
+   clearServerExecutionMetadata,
+   markClientOwnedExecution,
+   unmarkClientOwnedExecution
+@@ -245,7 +246,8 @@ export class NotebookCellServerExecutor implements INotebookCellExecutor {
+             );
+             const data = await response.json();
+             success = data['status'] === 'ok';
+-            if (recoverOutputs) {
++            const applySnapshot = canApplyServerSnapshot(cell as CodeCell, data);
++            if (recoverOutputs && applySnapshot) {
+               clearServerExecutionMetadata(cell as CodeCell);
+             }
+ 
+@@ -296,6 +298,7 @@ export class NotebookCellServerExecutor implements INotebookCellExecutor {
+             // completes it.
+             const sharedPathSilent = sharedModelUpdates === 0;
+             if (
++              applySnapshot &&
+               (recoverOutputs || sharedPathSilent) &&
+               (outputsMissing || executionCountMissing)
+             ) {
+@@ -374,6 +377,15 @@ export async function resumeCellServerExecution(
+       true
+     );
+     const data = await response.json();
++    if (!canApplyServerSnapshot(cell, data)) {
++      const current = (cell.model.getMetadata('jupyter_server_nbmodel') ??
++        cell.model.getMetadata('jupyter_server_nbmodel_provenance')) as Record<string, unknown> | undefined;
++      if (!current || current.requestId === data['request_id']) {
++        sharedCodeCell.executionState = 'idle';
++        clearServerExecutionMetadata(cell);
++      }
++      return false;
++    }
+     const serverOutputs = normalizeServerOutputs(data['outputs'] ?? '[]');
+     reconcileOutputSnapshot(cell, serverOutputs);
+     sharedCodeCell.execution_count = data['execution_count'] ?? null;
+diff --git a/src/requestServer.ts b/src/requestServer.ts
+index bbbfd7fbf..a2433ed06 100644
+--- a/src/requestServer.ts
++++ b/src/requestServer.ts
+@@ -12,7 +12,7 @@ import { IHeader, IInputReply } from '@jupyterlab/services/lib/kernel/messages';
+ import type { ITranslator } from '@jupyterlab/translation';
+ import { PromiseDelegate } from '@lumino/coreutils';
+ import { Panel } from '@lumino/widgets';
+-import { setServerExecutionMetadata } from './executionMetadata';
++import { canApplyServerSnapshot, setServerExecutionMetadata } from './executionMetadata';
+ import {
+   normalizeServerOutputs,
+   reconcileOutputSnapshot
+@@ -43,6 +43,7 @@ interface IOutputReconciliationState {
+ }
+ 
+ interface IRequestProgressPayload {
++  [key: string]: unknown;
+   kernel_id?: string;
+   outputs?: string | unknown[];
+   request_id?: string;
+@@ -67,7 +68,7 @@ async function reconcilePendingOutputs(
+     }
+     // The metadata is what a reloaded page resumes from; it is only written
+     // when that recovery is in use.
+-    if (requestUrl && state.recoverOutputs) {
++    if (requestUrl && state.recoverOutputs && canApplyServerSnapshot(cell, payload)) {
+       setServerExecutionMetadata(cell, {
+         kernelId: payload.kernel_id,
+         requestId: payload.request_id,
+@@ -80,7 +81,7 @@ async function reconcilePendingOutputs(
+     }
+   }
+ 
+-  if (payload.outputs === undefined || !state.recoverOutputs) {
++  if (payload.outputs === undefined || !state.recoverOutputs || !canApplyServerSnapshot(cell, payload)) {
+     return;
+   }
+   const serverOutputs = normalizeServerOutputs(payload.outputs);
+diff --git a/src/plugin.ts b/src/plugin.ts
+index 5b89d7098..69cc72f81 100644
+--- a/src/plugin.ts
++++ b/src/plugin.ts
+@@ -18,6 +18,7 @@ import {
+ import { ServerConnection } from '@jupyterlab/services';
+ import { ISettingRegistry } from '@jupyterlab/settingregistry';
+ import {
++  canApplyServerSnapshot,
+   getServerExecutionMetadata,
+   isClientOwnedExecution,
+   setServerExecutionMetadata
+@@ -173,7 +174,7 @@ async function watchNotebookExecutions(
+           widget instanceof CodeCell &&
+           widget.model.sharedModel.getId() === execution.cell_id
+       );
+-      if (!(cell instanceof CodeCell)) {
++      if (!(cell instanceof CodeCell) || !canApplyServerSnapshot(cell, execution as unknown as Record<string, unknown>)) {
+         continue;
+       }
+       setServerExecutionMetadata(cell, {

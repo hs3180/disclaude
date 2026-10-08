@@ -1,5 +1,12 @@
 # 0.6.3：在现有 Project 中持续使用 Notebook
 
+> Current integration: [optional Jupyter CLI/Skill](../jupyter-service.md).
+> ChatAgent and service lifecycle have no Notebook integration. This document
+> retains the stricter coordinator design goals; its historical checklist is
+> not a claim about the Datalayer CLI or a 0.6.3 acceptance result. Remote stop
+> is explicit through `jupyter stop`; manual Lab editing is outside the user's
+> 0.6.3 acceptance scope.
+
 [综合 issue #5214](https://github.com/hs3180/disclaude/issues/5214) 跟踪产品验收。当前已有候选实现和组件证据，完整飞书/远程 Notebook 体验尚未通过。历史实验与失败保留在 [证据记录](./jupyter-harness-evidence.md)及对应 PR 中。
 
 ## 用户体验
