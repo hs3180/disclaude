@@ -1,5 +1,11 @@
 # Project-local Jupyter configuration
 
+Remote Notebook operations are provided by the optional
+[Jupyter CLI Skill](../../../../skills/jupyter/README.md). `cli.ts` owns one
+command invocation, and `notebook-tools.ts` owns its temporary RTC connections
+and Project-local run facts. Neither module is imported by ChatAgent or service
+startup. Report files are delivered separately through the channel CLI.
+
 Jupyter reference metadata belongs to the Jupyter integration. It is stored at
 `<workingDir>/.jupyter/config.json`, independently of the generic ProjectManager
 and its chat-to-directory bindings.

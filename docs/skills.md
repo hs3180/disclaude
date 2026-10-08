@@ -52,4 +52,6 @@ state is shared across invocations unless that behavior is implemented.
 
 See [`skills/channel/README.md`](../skills/channel/README.md) for the packaged
 channel CLI and [`skills/browser-use/SKILL.md`](../skills/browser-use/SKILL.md)
-for browser automation.
+for browser automation. The [Jupyter CLI Skill](../skills/jupyter/README.md)
+adds optional remote Notebook research through `disclaude jupyter`, using the
+agent's existing shell tool without extending ChatAgent's session lifecycle.

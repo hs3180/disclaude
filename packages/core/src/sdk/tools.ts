@@ -1,4 +1,5 @@
 import Ajv, { type ValidateFunction } from 'ajv';
+import { renderToolResult } from './tool-result.js';
 
 /** A host-owned business tool. Registration and result rendering belong to the Harness adapter. */
 export interface ToolDefinition {
@@ -95,6 +96,7 @@ export function prepareTools(tools: readonly ToolDefinition[] = []): ToolDefinit
         const result = await execute(args, context);
         context.signal.throwIfAborted();
         validate(output, result, 'result', ajv);
+        renderToolResult(result);
         return result;
       },
     };

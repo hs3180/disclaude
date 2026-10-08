@@ -1,0 +1,116 @@
+diff --git a/static/lib_index_js.385efdae00a63983.js b/static/lib_index_js.0b698b27bf2a9945.js
+index 3a9646c00..59a67c3a1 100644
+--- a/static/lib_index_js.385efdae00a63983.js
++++ b/static/lib_index_js.0b698b27bf2a9945.js
+@@ -3,6 +3,7 @@
+ "./lib/executionMetadata.js"(__unused_rspack_module, __webpack_exports__, __webpack_require__) {
+ __webpack_require__.r(__webpack_exports__);
+ __webpack_require__.d(__webpack_exports__, {
++  canApplyServerSnapshot: () => (canApplyServerSnapshot),
+   EXECUTION_METADATA_KEY: () => (EXECUTION_METADATA_KEY),
+   clearServerExecutionMetadata: () => (clearServerExecutionMetadata),
+   getServerExecutionMetadata: () => (getServerExecutionMetadata),
+@@ -16,6 +17,36 @@ __webpack_require__.d(__webpack_exports__, {
+  *
+  * Distributed under the terms of the Modified BSD License.
+  */
++function canApplyServerSnapshot(cell, payload) {
++    if (cell.isDisposed || !payload || typeof payload.source !== 'string' || payload.outputs_truncated === true) {
++        return false;
++    }
++    const shared = cell.model.sharedModel;
++    if (payload.cell_id !== shared.getId() || payload.source !== shared.getSource() ||
++        payload.source_matches === false || payload.output_attachment === 'historical') {
++        return false;
++    }
++    const active = getServerExecutionMetadata(cell);
++    const provenance = cell.model.getMetadata('jupyter_server_nbmodel_provenance');
++    const target = active?.requestId ?? provenance?.requestId;
++    if (target && target !== payload.request_id) {
++        return payload.request_status === 'queued' && !active;
++    }
++    if (provenance?.requestId === payload.request_id && provenance?.kernelIncarnation &&
++        provenance.kernelIncarnation !== payload.kernel_incarnation) {
++        return false;
++    }
++    if (provenance?.requestId === payload.request_id) {
++        if (provenance.displayUpdatedByRequestId && provenance.displayUpdatedByRequestId !== payload.request_id) {
++            return false;
++        }
++        if (typeof provenance.outputVersion === 'number' && typeof payload.output_version === 'number' &&
++            provenance.outputVersion > payload.output_version) {
++            return false;
++        }
++    }
++    return true;
++}
+ const EXECUTION_METADATA_KEY = 'jupyter_server_nbmodel';
+ const clientOwnedExecutions = new WeakSet();
+ /**
+@@ -271,7 +302,8 @@ class NotebookCellServerExecutor {
+                         const response = await (0,_requestServer__rspack_import_8.requestServer)(cell, executeApiURL, init, this._serverSettings, translator, 100, releaseSubmission, recoverOutputs);
+                         const data = await response.json();
+                         success = data['status'] === 'ok';
+-                        if (recoverOutputs) {
++                        const applySnapshot = (0,_executionMetadata__rspack_import_7.canApplyServerSnapshot)(cell, data);
++                        if (recoverOutputs && applySnapshot) {
+                             (0,_executionMetadata__rspack_import_7.clearServerExecutionMetadata)(cell);
+                         }
+                         const serverOutputs = (0,_outputReconciliation__rspack_import_9.normalizeServerOutputs)(data['outputs'] ?? '[]');
+@@ -310,7 +342,7 @@ class NotebookCellServerExecutor {
+                         // case where the shared path delivered and the reply merely
+                         // completes it.
+                         const sharedPathSilent = sharedModelUpdates === 0;
+-                        if ((recoverOutputs || sharedPathSilent) &&
++                        if (applySnapshot && (recoverOutputs || sharedPathSilent) &&
+                             (outputsMissing || executionCountMissing)) {
+                             console.warn('[jupyter-server-nbmodel] Reconciling missing server execution update', {
+                                 cellId,
+@@ -374,6 +406,14 @@ async function resumeCellServerExecution(cell, requestUrl, serverSettings) {
+         // outputs it missed can only come from the answers of the server.
+         true);
+         const data = await response.json();
++        if (!(0,_executionMetadata__rspack_import_7.canApplyServerSnapshot)(cell, data)) {
++            const current = cell.model.getMetadata('jupyter_server_nbmodel') ?? cell.model.getMetadata('jupyter_server_nbmodel_provenance');
++            if (!current || current.requestId === data['request_id']) {
++                sharedCodeCell.executionState = 'idle';
++                (0,_executionMetadata__rspack_import_7.clearServerExecutionMetadata)(cell);
++            }
++            return false;
++        }
+         const serverOutputs = (0,_outputReconciliation__rspack_import_9.normalizeServerOutputs)(data['outputs'] ?? '[]');
+         (0,_outputReconciliation__rspack_import_9.reconcileOutputSnapshot)(cell, serverOutputs);
+         sharedCodeCell.execution_count = data['execution_count'] ?? null;
+@@ -775,7 +815,7 @@ async function watchNotebookExecutions(panel, app) {
+             }
+             const cell = panel.content.widgets.find(widget => widget instanceof _jupyterlab_cells__rspack_import_0.CodeCell &&
+                 widget.model.sharedModel.getId() === execution.cell_id);
+-            if (!(cell instanceof _jupyterlab_cells__rspack_import_0.CodeCell)) {
++            if (!(cell instanceof _jupyterlab_cells__rspack_import_0.CodeCell) || !(0,_executionMetadata__rspack_import_6.canApplyServerSnapshot)(cell, execution)) {
+                 continue;
+             }
+             (0,_executionMetadata__rspack_import_6.setServerExecutionMetadata)(cell, {
+@@ -887,7 +927,7 @@ async function reconcilePendingOutputs(cell, response, state) {
+         }
+         // The metadata is what a reloaded page resumes from; it is only written
+         // when that recovery is in use.
+-        if (requestUrl && state.recoverOutputs) {
++        if (requestUrl && state.recoverOutputs && (0,_executionMetadata__rspack_import_5.canApplyServerSnapshot)(cell, payload)) {
+             (0,_executionMetadata__rspack_import_5.setServerExecutionMetadata)(cell, {
+                 kernelId: payload.kernel_id,
+                 requestId: payload.request_id,
+@@ -899,7 +939,7 @@ async function reconcilePendingOutputs(cell, response, state) {
+             state.onAccepted?.();
+         }
+     }
+-    if (payload.outputs === undefined || !state.recoverOutputs) {
++    if (payload.outputs === undefined || !state.recoverOutputs || !(0,_executionMetadata__rspack_import_5.canApplyServerSnapshot)(cell, payload)) {
+         return;
+     }
+     const serverOutputs = (0,_outputReconciliation__rspack_import_6.normalizeServerOutputs)(payload.outputs);
+@@ -1140,4 +1180,3 @@ class KernelSubmissionQueue {
+ },
+ 
+ }]);
+-//# sourceMappingURL=lib_index_js.385efdae00a63983.js.map
+\ No newline at end of file
