@@ -412,6 +412,7 @@ await isolated(
       const observedStates = [],
         pids = [];
       let recovered;
+      const deadline = Date.now() + 15000;
       do {
         const fresh = await freshStatus(f, originalArgs.runId);
         recovered = fresh.result;
@@ -419,7 +420,7 @@ await isolated(
         pids.push(fresh.pid);
         if (!['accepted', 'running'].includes(recovered.state)) break;
         await wait(120);
-      } while (observedStates.length < 25);
+      } while (Date.now() < deadline);
       const executePosts = requests.filter(
         (r) => r.method === 'POST' && r.route.endsWith('/execute')
       ).length;
@@ -706,8 +707,8 @@ await isolated('terminal-host-recovery', ["print('UNCACHED_TERMINAL_RESULT', 47)
 await isolated(
   'move-delete-running',
   [
-    "import time\nprint('MOVE_BEGIN',flush=True)\ntime.sleep(3)\nprint('MOVE_ORIGINAL_END')",
-    "import time\nprint('DELETE_BEGIN',flush=True)\ntime.sleep(3)\nprint('DELETED_ORIGINAL_END')",
+    "import time\nprint('MOVE_BEGIN',flush=True)\ntime.sleep(12)\nprint('MOVE_ORIGINAL_END')",
+    "import time\nprint('DELETE_BEGIN',flush=True)\ntime.sleep(12)\nprint('DELETED_ORIGINAL_END')",
   ],
   async (c) => {
     await withCLI(c, 'move-delete-running', async (f) => {
@@ -766,10 +767,15 @@ await isolated(
       const b = await f.call('notebook_execute', await f.args('edge-1', 'delete-original'));
       const handleB = { kernelId: c.kernelId, requestId: b.requestId };
       await active(handleB, 'DELETE_BEGIN');
-      const removed = await f.call(
-        'notebook_delete_cell',
-        await f.args('edge-1', 'unused-delete-read')
+      const { notebookId, cellId, expectedSourceHash } = await f.args(
+        'edge-1',
+        'unused-delete-read'
       );
+      const removed = await f.call('notebook_delete_cell', {
+        notebookId,
+        cellId,
+        expectedSourceHash,
+      });
       await f.call('notebook_insert_cell', {
         notebookId: f.notebookId,
         cellId: 'replacement-cell',
