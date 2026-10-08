@@ -163,23 +163,14 @@ describe('createChannelCallbacksFactory', () => {
     );
   });
 
-  it('sends a file in the original thread and returns the delivered message ID', async () => {
-    vi.mocked(channel.getCapabilities).mockReturnValue({ supportsFile: true } as never);
-    vi.mocked(channel.sendMessage).mockResolvedValue('delivered-file');
+  it('sendFile should log a warning (not fully implemented)', async () => {
     const factory = createChannelCallbacksFactory(channel, mockLogger);
     const callbacks = factory('chat-001');
-    expect(await callbacks.sendFile('chat-001', '/path/to/file.pdf', 'original-thread')).toBe('delivered-file');
-    expect(channel.sendMessage).toHaveBeenCalledWith({ chatId: 'chat-001', type: 'file', filePath: '/path/to/file.pdf', threadId: 'original-thread' });
-  });
-
-  it('rejects unsupported files and propagates a channel failure without retrying', async () => {
-    const callbacks = createChannelCallbacksFactory(channel, mockLogger)('chat-001');
-    await expect(callbacks.sendFile('chat-001', '/path/to/file.pdf')).rejects.toThrow('does not support');
-    expect(channel.sendMessage).not.toHaveBeenCalled();
-    vi.mocked(channel.getCapabilities).mockReturnValue({ supportsFile: true } as never);
-    vi.mocked(channel.sendMessage).mockRejectedValue(new Error('unknown delivery'));
-    await expect(callbacks.sendFile('chat-001', '/path/to/file.pdf')).rejects.toThrow('unknown delivery');
-    expect(channel.sendMessage).toHaveBeenCalledOnce();
+    await callbacks.sendFile('chat-001', '/path/to/file.pdf');
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      { chatId: 'chat-001', filePath: '/path/to/file.pdf' },
+      'File sending not fully implemented',
+    );
   });
 
   it('onDone should log completion when sendDoneSignal is false', async () => {

@@ -1,15 +1,10 @@
 # Project-local Jupyter configuration
 
-For the existing Datalayer RTC/nbmodel backend, select `backend: "datalayer"`
-in the host connection catalog. The same Project reference format is used.
-See [MVP setup, actual tests and unsupported requirements](../../../../docs/designs/datalayer-mvp.md).
-The Datalayer session's conversation journal is separate from reference metadata;
-this store does not acquire a server owner generation or promise atomic cell edits.
-
-`agent-integration.ts` composes Notebook support at the Service boundary through
-the generic Agent session-extension contract. It owns Notebook tool/context
-injection and stop recovery; `ChatAgent`, its factory and session pool do not
-depend on Jupyter types. See [Service composition](../../../../docs/jupyter-service.md#service-composition).
+Remote Notebook operations are provided by the optional
+[Jupyter CLI Skill](../../../../skills/jupyter/README.md). `cli.ts` owns one
+command invocation, and `notebook-tools.ts` owns its temporary RTC connections
+and Project-local run facts. Neither module is imported by ChatAgent or service
+startup. Report files are delivered separately through the channel CLI.
 
 Jupyter reference metadata belongs to the Jupyter integration. It is stored at
 `<workingDir>/.jupyter/config.json`, independently of the generic ProjectManager
@@ -52,7 +47,7 @@ collaboration/execution contract before operations on a remote document. Renamin
 a reference with a stable ID updates it in place; distinct server namespaces,
 connections and document IDs remain separate.
 
-`JupyterProjectConfigStore` only reads and writes local reference metadata. It does not connect
+This module only reads and writes local reference metadata. It does not connect
 to Jupyter, manage authentication, synchronize RTC state, edit cells, coordinate
 ownership or execute kernels. Unlinking a reference does not delete the remote
 notebook or stop a kernel. The previous unmerged PR's workspace-wide

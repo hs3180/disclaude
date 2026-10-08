@@ -44,9 +44,6 @@ import net from 'node:net';
 import path from 'node:path';
 import { homedir } from 'node:os';
 import { statSync } from 'node:fs';
-import { JupyterConnections } from './jupyter/connections.js';
-import { notebookSessionFactory } from './jupyter/agent-session.js';
-import { NotebookAgentIntegration } from './jupyter/agent-integration.js';
 
 const logger = createLogger('DisclaudeServiceCLI');
 
@@ -344,21 +341,7 @@ export async function main(): Promise<void> {
   });
   logger.info({ workspaceDir }, 'ProjectManager initialized');
 
-  const notebooks = new NotebookAgentIntegration(
-    notebookSessionFactory(new JupyterConnections(
-      process.env.JUPYTER_CONNECTIONS_FILE ?? path.join(homedir(), '.disclaude', 'jupyter', 'connections.json'),
-      () => process.env,
-    )),
-    (chatId) => {
-      const resolution = projectManager.resolveCwd(chatId);
-      if (resolution.reason === 'bound-missing') {
-        throw new Error('Project directory unavailable');
-      }
-      return resolution.effectiveCwd ?? workspaceDir;
-    },
-  );
   const agentPool = new ChatSessionPool({
-    sessionExtensionFactory: notebooks.createExtension,
     agentPresets: Config.getAgentPresets(),
     messageBuilderOptions: createFeishuMessageBuilderOptions(),
     cwdProvider: projectManager.createCwdProvider(),
@@ -403,7 +386,6 @@ export async function main(): Promise<void> {
       resetThread: (chatId, skipContext, threadRootId) =>
         agentPool.reset(chatId, skipContext, threadRootId),
       stopThread: (chatId, threadRootId) => agentPool.stop(chatId, threadRootId),
-      stopNotebook: (chatId, threadRootId) => notebooks.stop(chatId, threadRootId),
       listAgentPresets: () => agentPool.listAgentPresets(),
       getActiveAgentPreset: (chatId, threadRootId) =>
         agentPool.getActiveAgentPreset(chatId, threadRootId),

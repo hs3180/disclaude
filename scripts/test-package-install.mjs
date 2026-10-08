@@ -132,6 +132,16 @@ async function verifyPackage() {
   const cli = join(prefix, 'bin/disclaude');
   assert.equal(run(cli, ['--version']).trim(), `disclaude v${pkg.version}`);
   assert.match(run(cli, ['browser', '--help']), /automatically serializes calls/u);
+  assert.match(run(cli, ['jupyter', '--help']), /Kernel memory stays on remote Jupyter/u);
+  const notebookTools = JSON.parse(run(cli, ['jupyter', 'tools', '--no-interactive']));
+  assert.equal(notebookTools.ok, true);
+  assert(notebookTools.data.some((tool) => tool.command === 'execute'));
+  assert(notebookTools.data.some((tool) => tool.command === 'download-report'));
+  assert.deepEqual(JSON.parse(run(cli, ['jupyter', 'list', '--project-dir', temp, '--no-interactive'])), {
+    ok: true, command: 'list', data: { notebooks: [], recentRuns: [] },
+  });
+  assert(existsSync(join(installed, 'skills/jupyter/SKILL.md')));
+  assert(existsSync(join(installed, 'skills/jupyter/README.md')));
   assert.match(run(cli, ['jupyter', 'patch', '--help']), /Generation uses Node only/u);
   assert.match(run(cli, ['jupyter', 'patch', '--help']), /--jupyter URL/u);
   assert.match(run(cli, ['jupyter', 'patch', '--help']), /--interactive/u);

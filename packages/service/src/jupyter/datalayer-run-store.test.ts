@@ -28,15 +28,15 @@ const target = {
 describe('Datalayer original-request journal', () => {
   it('retains a pre-submit reservation across a new host instance without claiming it never started', () => {
     const root = directory();
-    new DatalayerRunStore(root, 'conversation').reserve('lost-response', target);
-    const recovered = new DatalayerRunStore(root, 'conversation').get('lost-response');
+    new DatalayerRunStore(root).reserve('lost-response', target);
+    const recovered = new DatalayerRunStore(root).get('lost-response');
     expect(recovered).toMatchObject({ state: 'submitting', target });
     expect(recovered?.handle).toBeUndefined();
   });
 
   it('persists a consumed terminal result and refuses to replace it with a later 404', () => {
     const root = directory();
-    const store = new DatalayerRunStore(root, 'conversation');
+    const store = new DatalayerRunStore(root);
     store.reserve('original', target);
     store.update('original', {
       state: 'accepted',
@@ -49,7 +49,7 @@ describe('Datalayer original-request journal', () => {
         result: { outputs: [{ output_type: 'stream', text: '42' }] },
       },
     });
-    new DatalayerRunStore(root, 'conversation').update('original', { state: 'unknown' });
+    new DatalayerRunStore(root).update('original', { state: 'unknown' });
     expect(store.get('original')).toMatchObject({
       state: 'completed',
       handle: { requestId: 'original-request' },
@@ -59,7 +59,7 @@ describe('Datalayer original-request journal', () => {
   });
 
   it('does not let a run ID designate different source or a different notebook', () => {
-    const store = new DatalayerRunStore(directory(), 'conversation');
+    const store = new DatalayerRunStore(directory());
     store.reserve('run', target);
     expect(() => store.reserve('run', { ...target, documentId: 'another' })).toThrow(
       'another execution target'
@@ -73,7 +73,7 @@ describe('Datalayer original-request journal', () => {
     const root = directory();
     const outside = directory();
     fs.symlinkSync(outside, path.join(root, '.jupyter'));
-    const store = new DatalayerRunStore(root, 'conversation');
+    const store = new DatalayerRunStore(root);
     expect(() => store.reserve('run', target)).toThrow('Unsafe Notebook journal directory');
     expect(fs.readdirSync(outside)).toEqual([]);
   });

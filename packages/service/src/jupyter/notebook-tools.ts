@@ -1,20 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
-import {
-  notebookSnapshotHash,
-  type DatalayerJupyterClient,
-  type ToolDefinition,
-  type ToolContext,
-  type FileRef,
-} from '@disclaude/core';
-import type {
-  NotebookAgentContext,
-  NotebookSession,
-  NotebookStopObservation,
-} from './agent-session.js';
-import { JupyterConnections } from './connections.js';
+import { notebookSnapshotHash, type DatalayerJupyterClient } from '@disclaude/core/jupyter';
+import type { ToolDefinition, ToolContext } from '@disclaude/core';
 import {
   JupyterProjectConfigStore,
   type JupyterNotebookReference,
@@ -26,38 +14,56 @@ type Bound = { ref: JupyterNotebookReference; client: DatalayerJupyterClient; do
 const terminal = new Set(['completed', 'failed', 'cancelled', 'rejected']);
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 const hash = (text: string): string => createHash('sha256').update(text).digest('hex');
-const key = (ref: JupyterNotebookReference): string =>
+export const notebookIdentifier = (ref: JupyterNotebookReference): string =>
   hash(JSON.stringify([ref.connectionId, ref.serverNamespace, ref.documentId ?? ref.contentPath]));
+const key = notebookIdentifier;
 const text = { type: 'string' };
 const notebookId = { notebookId: text };
 const cellId = { ...notebookId, cellId: text };
 const inputLimit = 2_000_000;
-type InputAttachment = { file: FileRef; localPath: string; identity: fs.Stats; name: string };
+export interface NotebookToolOptions {
+  projectDir: string;
+  useClient<T>(
+    connectionId: string,
+    namespace: string,
+    operation: (client: DatalayerJupyterClient) => Promise<T>
+  ): Promise<T>;
+}
+type StopObservation = { runId: string; state: 'cancelled' | 'already_terminal' | 'unknown' };
 
 /** MVP over existing RTC/nbmodel APIs. Reports unsupported guarantees explicitly. */
-export class DatalayerNotebookAgentSession implements NotebookSession {
+export class NotebookTools {
   readonly tools: ToolDefinition[];
   private readonly root: string;
   private readonly config: JupyterProjectConfigStore;
   private readonly journal: DatalayerRunStore;
   private readonly documents = new Map<string, Promise<Bound>>();
-  private readonly executions = new Map<string, { target: string; pending: Promise<unknown> }>();
-  private paused = false;
-  private readonly attachments = new Map<string, InputAttachment>();
+  private closed = false;
 
-  constructor(
-    private readonly context: NotebookAgentContext,
-    private readonly connections: JupyterConnections
-  ) {
-    this.root = fs.realpathSync(context.workingDir);
+  constructor(private readonly options: NotebookToolOptions) {
+    this.root = fs.realpathSync(options.projectDir);
+    try {
+      const state = fs.lstatSync(path.join(this.root, '.jupyter'));
+      if (!state.isDirectory() || state.isSymbolicLink()) {
+        throw new Error('Unsafe Project Jupyter directory');
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error;
+      }
+    }
     this.config = new JupyterProjectConfigStore(this.root);
-    this.journal = new DatalayerRunStore(this.root, context.conversationKey);
+    this.journal = new DatalayerRunStore(this.root);
     this.tools = [
       this.tool(
         'notebook_list',
         'List this Project’s authorized remote Notebooks and persisted run IDs.',
         {},
-        async () => ({ notebooks: await this.overviews(0), recentRuns: this.recentRuns() })
+        () =>
+          Promise.resolve({
+            notebooks: this.refs().map((ref) => ({ ...ref, notebookId: key(ref) })),
+            recentRuns: this.recentRuns(),
+          })
       ),
       this.tool(
         'notebook_describe',
@@ -301,15 +307,15 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
       ),
       this.tool(
         'notebook_import_file',
-        'Copy a host-registered incoming attachment to this remote Notebook’s input directory. Use an attachmentId from message context; host paths are not accepted. Return a kernel-relative path, SHA-256 and size; limit 2 MB.',
-        { ...notebookId, attachmentId: text },
+        'Copy an explicitly selected Project-local file to the remote Notebook input directory. Return its kernel-relative path, SHA-256 and size; limit 2 MB.',
+        { ...notebookId, filePath: text },
         (input, invocation) => this.importFile(input, invocation)
       ),
       this.tool(
-        'notebook_deliver_report',
-        'Export and send matching ipynb/HTML and up to four bounded PNG/JPEG previews to the current channel/thread. Returns snapshot revision, file SHA-256 and confirmed message IDs. Uses temporary host copies only; never replay an unknown delivery.',
+        'notebook_download_report',
+        'Export and download matching ipynb/HTML and up to four bounded PNG/JPEG previews into Project artifacts. Return file paths, revision and hashes. Delivery uses the independent channel tool.',
         notebookId,
-        (input, invocation) => this.deliver(String(input.notebookId), invocation)
+        (input, invocation) => this.downloadReport(String(input.notebookId), invocation)
       ),
       this.tool(
         'notebook_export',
@@ -339,6 +345,24 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
       execute: async (input, invocation) => {
         invocation.signal.throwIfAborted();
         this.assertActive();
+        if (
+          !input ||
+          typeof input !== 'object' ||
+          Array.isArray(input) ||
+          Object.keys(input).some((field) => !Object.hasOwn(properties, field)) ||
+          Object.entries(properties).some(([field, raw]) => {
+            const schema = raw as { type: string; enum?: string[] };
+            return (
+              !Object.hasOwn(input, field) ||
+              (schema.type === 'integer'
+                ? !Number.isSafeInteger(input[field])
+                : typeof input[field] !== schema.type) ||
+              (schema.enum !== undefined && !schema.enum.includes(input[field] as string))
+            );
+          })
+        ) {
+          throw new Error('Invalid Notebook command input; read its schema with jupyter tools');
+        }
         // DSH supports a small schema subset; keep limits in the host boundary too.
         if (
           Buffer.byteLength(JSON.stringify(input)) > 300000 ||
@@ -368,73 +392,44 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
   }
 
   private assertActive(): void {
-    if (this.paused || fs.realpathSync(this.context.currentWorkingDir()) !== this.root) {
-      throw new Error('Notebook operation stopped or Project changed');
+    if (this.closed) {
+      throw new Error('Notebook tool invocation is closed');
     }
   }
-  get inactive(): boolean {
-    return this.paused;
-  }
-  pause(): void {
-    this.paused = true;
-  }
-  dispose(): void {
-    this.pause();
-    for (const document of this.documents.values()) {
-      void document.then((bound) => bound.doc.close()).catch(() => {});
-    }
+  async close(): Promise<void> {
+    this.closed = true;
+    await Promise.allSettled(
+      [...new Set(this.documents.values())].map(async (pending) => (await pending).doc.close())
+    );
     this.documents.clear();
-    this.attachments.clear();
-  }
-  redactEnvironment(environment: Record<string, string | undefined>): void {
-    this.connections.redactEnvironment(environment);
-  }
-
-  registerAttachments(files: readonly FileRef[]): void {
-    this.assertActive();
-    for (const file of files) {
-      if (file.source !== 'user' || !file.localPath || !/^[A-Za-z0-9_-]{1,200}$/.test(file.id)) {
-        continue;
-      }
-      try {
-        const identity = fs.lstatSync(file.localPath);
-        if (!identity.isFile() || identity.size > inputLimit) {
-          continue;
-        }
-        const name =
-          path
-            .basename(file.fileName.replace(/\\/g, '/'))
-            .replace(/[^A-Za-z0-9._-]/g, '_')
-            .replace(/^\.+/, '')
-            .slice(-120) || 'input';
-        if (!this.attachments.has(file.id)) {
-          this.attachments.set(file.id, {
-            file: { ...file },
-            localPath: file.localPath,
-            identity,
-            name,
-          });
-        }
-        while (this.attachments.size > 32) {
-          const first = this.attachments.keys().next().value;
-          if (first !== undefined) {
-            this.attachments.delete(first);
-          }
-        }
-      } catch {
-        // Undownloaded or expired attachments remain unavailable, never model-selected paths.
-      }
-    }
   }
 
   private async importFile(
     input: Record<string, unknown>,
     invocation: ToolContext
   ): Promise<unknown> {
-    const attachment = this.attachments.get(String(input.attachmentId));
-    if (!attachment) {
-      throw new Error('Attachment is not registered, unavailable or exceeds the 2 MB input limit');
+    const localPath = path.resolve(this.root, String(input.filePath));
+    const relative = path.relative(this.root, fs.realpathSync(localPath));
+    const identity = fs.lstatSync(localPath);
+    if (
+      relative.startsWith('..') ||
+      path.isAbsolute(relative) ||
+      !identity.isFile() ||
+      identity.isSymbolicLink() ||
+      identity.size > inputLimit
+    ) {
+      throw new Error('Input must be a regular file inside this Project, at most 2 MB');
     }
+    const attachment = {
+      localPath,
+      identity,
+      name:
+        path
+          .basename(localPath)
+          .replace(/[^A-Za-z0-9._-]/g, '_')
+          .replace(/^\.+/, '')
+          .slice(-120) || 'input',
+    };
     const bound = await this.bound(String(input.notebookId));
     const descriptor = fs.openSync(
       attachment.localPath,
@@ -452,7 +447,7 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
         current.size !== original.size ||
         current.mtimeMs !== original.mtimeMs
       ) {
-        throw new Error('Registered attachment changed; send it again before importing');
+        throw new Error('Input file changed before importing');
       }
       data = fs.readFileSync(descriptor);
       const after = fs.fstatSync(descriptor);
@@ -461,7 +456,7 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
         after.mtimeMs !== original.mtimeMs ||
         after.size !== original.size
       ) {
-        throw new Error('Registered attachment changed during reading');
+        throw new Error('Input file changed during reading');
       }
     } finally {
       fs.closeSync(descriptor);
@@ -525,7 +520,7 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
     }
     return {
       state,
-      attachmentId: input.attachmentId,
+      filePath: path.relative(this.root, localPath),
       remotePath,
       kernelRelativePath: path.posix.relative(
         path.posix.dirname(bound.ref.contentPath),
@@ -547,7 +542,7 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
   private async bind(ref: JupyterNotebookReference): Promise<Bound> {
     if (ref.documentId) {
       const { documentId } = ref;
-      const contentPath = await this.connections.useDatalayer(
+      const contentPath = await this.options.useClient(
         ref.connectionId,
         ref.serverNamespace,
         (client) => client.documentPath(documentId)
@@ -564,31 +559,27 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
     const identifier = key(ref);
     let pending = this.documents.get(identifier);
     if (!pending) {
-      pending = this.connections.useDatalayer(
-        ref.connectionId,
-        ref.serverNamespace,
-        async (client) => {
-          const capabilities = await client.inspectConnection();
-          if (
-            capabilities.mcp.state !== 'available' ||
-            capabilities.nbmodel.state !== 'available' ||
-            capabilities.rtc.state !== 'configured' ||
-            capabilities.nbconvert.state !== 'available'
-          ) {
-            throw new Error(
-              'Required remote Notebook interfaces could not be verified; inspect the host connection'
-            );
-          }
-          this.assertActive();
-          const doc = await client.openDocument(ref.contentPath, ref.documentId);
-          const resolved = this.config.resolveNotebook(ref, doc.documentId);
-          if (!resolved.ok) {
-            doc.close();
-            throw new Error('Notebook reference changed while resolving');
-          }
-          return { client, doc, ref: resolved.data };
+      pending = this.options.useClient(ref.connectionId, ref.serverNamespace, async (client) => {
+        const capabilities = await client.inspectConnection();
+        if (
+          capabilities.mcp.state !== 'available' ||
+          capabilities.nbmodel.state !== 'available' ||
+          capabilities.rtc.state !== 'configured' ||
+          capabilities.nbconvert.state !== 'available'
+        ) {
+          throw new Error(
+            'Required remote Notebook interfaces could not be verified; inspect the host connection'
+          );
         }
-      );
+        this.assertActive();
+        const doc = await client.openDocument(ref.contentPath, ref.documentId);
+        const resolved = this.config.resolveNotebook(ref, doc.documentId);
+        if (!resolved.ok) {
+          doc.close();
+          throw new Error('Notebook reference changed while resolving');
+        }
+        return { client, doc, ref: resolved.data };
+      });
       this.documents.set(identifier, pending);
     }
     try {
@@ -720,14 +711,6 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
     };
   }
 
-  private async overviews(limit: number): Promise<Record<string, unknown>[]> {
-    this.assertActive();
-    const results = [];
-    for (const ref of this.refs().slice(0, 8)) {
-      results.push(await this.describe(await this.bind(ref), limit));
-    }
-    return results;
-  }
   private recentRuns(): Array<Record<string, unknown>> {
     return this.journal
       .records()
@@ -739,10 +722,6 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
         contentPath: r.target.contentPath,
       }));
   }
-  async messageContext(): Promise<string> {
-    return `\n\n[Notebook resources — Datalayer]\nRead current live cells by ID, preserve human edits, and keep analysis/conclusions in the Notebook. Kernel/data paths belong to Jupyter, not this host. Import registered incoming attachments with notebook_import_file before using their kernelRelativePath. Reuse runId to query an original attempt; never replay unknown work. Source checks are client-side. Confirm cancellation on the original request. Report links from notebook_export refer to one snapshot. Use notebook_deliver_report for matching report files/static images in this channel; cite its revision in the summary and report unconfirmed delivery without retry.\n${JSON.stringify({ notebooks: await this.overviews(8), recentRuns: this.recentRuns(), attachments: [...this.attachments.entries()].map(([attachmentId, value]) => ({ attachmentId, fileName: value.name, size: value.identity.size, ...(value.file.mimeType ? { mimeType: value.file.mimeType } : {}) })) })}`;
-  }
-
   private async kernel(bound: Bound): Promise<string> {
     const sessions = (await bound.client.json('api/sessions')) as Array<{
       path: string;
@@ -806,26 +785,14 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
   }
 
   private execute(input: Record<string, unknown>, invocation: ToolContext): Promise<unknown> {
-    const runId = String(input.runId);
-    const target = JSON.stringify([input.notebookId, input.cellId, input.expectedSourceHash]);
-    const existing = this.executions.get(runId);
-    if (existing) {
-      if (existing.target !== target) {
-        throw new Error('Notebook runId conflicts with a pending attempt');
-      }
-      return existing.pending;
-    }
-    const pending = this.submit(input, invocation).finally(() => this.executions.delete(runId));
-    this.executions.set(runId, { target, pending });
-    return pending;
+    return this.submit(input, invocation);
   }
   private async submit(input: Record<string, unknown>, invocation: ToolContext): Promise<unknown> {
-    const bound = await this.bound(String(input.notebookId));
     const runId = String(input.runId);
     const previous = this.journal.get(runId);
     if (previous) {
+      this.record(String(input.notebookId), runId);
       if (
-        previous.target.documentId !== bound.ref.documentId ||
         previous.target.cellId !== input.cellId ||
         previous.target.sourceHash !== input.expectedSourceHash
       ) {
@@ -833,6 +800,7 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
       }
       return this.observe(previous);
     }
+    const bound = await this.bound(String(input.notebookId));
     await bound.doc.flush();
     const cell = this.cell(bound, String(input.cellId));
     if (cell.cell_type !== 'code' || hash(cell.source) !== input.expectedSourceHash) {
@@ -915,7 +883,7 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
       record.target.connectionId !== ref.connectionId ||
       record.target.serverNamespace !== ref.serverNamespace
     ) {
-      throw new Error('Notebook run does not belong to this conversation/resource');
+      throw new Error('Notebook run does not belong to this Project/resource');
     }
     return record;
   }
@@ -932,7 +900,7 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
     if (!ref) {
       throw new Error('Notebook run reference is no longer authorized');
     }
-    return this.connections.useDatalayer(ref.connectionId, ref.serverNamespace, operation);
+    return this.options.useClient(ref.connectionId, ref.serverNamespace, operation);
   }
   private async observe(record: DatalayerRunRecord): Promise<unknown> {
     let current = record;
@@ -1034,18 +1002,10 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
     };
   }
 
-  private async deliver(
+  private async downloadReport(
     notebookId: string,
     invocation: ToolContext
   ): Promise<Record<string, unknown>> {
-    const delivery = this.context.delivery?.();
-    if (!delivery) {
-      return {
-        state: 'unsupported',
-        reason: 'This channel cannot deliver Notebook files',
-        use: 'notebook_export',
-      };
-    }
     const bound = await this.bound(notebookId);
     const report = await this.export(bound);
     const notebookResponse = await bound.client.response(
@@ -1126,80 +1086,25 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
         });
       }
     }
-    const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'disclaude-notebook-delivery-'));
-    fs.chmodSync(temporary, 0o700);
-    const artifacts: Array<Record<string, unknown>> = [];
-    const finish = async (result: Record<string, unknown>): Promise<Record<string, unknown>> => {
-      await bound.doc.flush();
+    const directory = createArtifactDirectory(this.root);
+    const artifacts = [];
+    for (const copy of copies) {
+      invocation.signal.throwIfAborted();
       this.assertBound(bound);
-      const liveRevision = notebookSnapshotHash(bound.doc.notebook.toJSON());
-      return {
-        ...report,
-        ...result,
-        liveRevision,
-        liveChangedDuringDelivery: liveRevision !== report.revision,
-        snapshotState: liveRevision === report.revision ? 'current' : 'historical',
-      };
-    };
-    try {
-      for (const copy of copies) {
-        invocation.signal.throwIfAborted();
-        this.assertBound(bound);
-        const file = path.join(temporary, copy.name);
-        fs.writeFileSync(file, copy.bytes, { mode: 0o600, flag: 'wx' });
-        const artifact = {
-          ...copy.metadata,
-          fileName: copy.name,
-          bytes: copy.bytes.length,
-          sha256: createHash('sha256').update(copy.bytes).digest('hex'),
-        };
-        let messageId: string | void;
-        try {
-          messageId = await delivery.sendFile(file, invocation.signal);
-        } catch {
-          return await finish({
-            state: 'partial_or_unknown',
-            artifacts,
-            unconfirmedArtifact: artifact,
-            omittedImages,
-            reason: 'Channel did not confirm this artifact. Do not automatically resend.',
-          });
-        }
-        artifacts.push({
-          ...artifact,
-          ...(messageId ? { messageId } : {}),
-          delivery: messageId ? 'confirmed' : 'acknowledged_without_message_id',
-        });
-      }
-      return await finish({
-        state: artifacts.every((a) => a.messageId)
-          ? 'delivered'
-          : 'acknowledged_without_message_ids',
-        artifacts,
-        omittedImages,
+      const filePath = path.join(directory, copy.name);
+      fs.writeFileSync(filePath, copy.bytes, { mode: 0o600, flag: 'wx' });
+      artifacts.push({
+        ...copy.metadata,
+        filePath,
+        bytes: copy.bytes.length,
+        sha256: createHash('sha256').update(copy.bytes).digest('hex'),
       });
-    } finally {
-      fs.rmSync(temporary, { recursive: true });
     }
+    return { ...report, state: 'downloaded', artifacts, omittedImages };
   }
 
-  async stop(): Promise<NotebookStopObservation[]> {
-    this.pause();
-    // A POST already sent may settle after pause. Reconcile its original
-    // handle before stopping; a timed-out/unknown submission is never replayed.
-    const deadline = Date.now() + 15000;
-    while (this.executions.size > 0 && Date.now() < deadline) {
-      await wait(100);
-    }
-    const results: NotebookStopObservation[] = [];
-    for (const record of this.journal.records().filter((r) => !terminal.has(r.state))) {
-      results.push(await this.requestStop(record));
-    }
-    return results;
-  }
-
-  private async requestStop(record: DatalayerRunRecord): Promise<NotebookStopObservation> {
-    const result: NotebookStopObservation = { runId: record.runId, state: 'unknown' };
+  private async requestStop(record: DatalayerRunRecord): Promise<StopObservation> {
+    const result: StopObservation = { runId: record.runId, state: 'unknown' };
     if (terminal.has(record.state)) {
       return { ...result, state: 'already_terminal' };
     }
@@ -1231,4 +1136,24 @@ export class DatalayerNotebookAgentSession implements NotebookSession {
     }
     return result;
   }
+}
+
+/** Caller-owned, persistent artifacts; no callbacks or channel state. */
+export function createArtifactDirectory(root: string): string {
+  let directory = fs.realpathSync(root);
+  for (const segment of ['.jupyter', 'artifacts']) {
+    directory = path.join(directory, segment);
+    try {
+      fs.mkdirSync(directory, { mode: 0o700 });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+        throw error;
+      }
+    }
+    const state = fs.lstatSync(directory);
+    if (!state.isDirectory() || state.isSymbolicLink()) {
+      throw new Error('Unsafe Jupyter artifact directory');
+    }
+  }
+  return fs.mkdtempSync(path.join(directory, 'report-'));
 }

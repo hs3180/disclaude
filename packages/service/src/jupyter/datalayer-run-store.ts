@@ -1,7 +1,10 @@
 import fs from 'node:fs';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import type { DatalayerExecutionHandle, DatalayerExecutionObservation } from '@disclaude/core';
+import type {
+  DatalayerExecutionHandle,
+  DatalayerExecutionObservation,
+} from '@disclaude/core/jupyter';
 
 export interface DatalayerRunTarget {
   connectionId: string;
@@ -32,12 +35,9 @@ export class DatalayerRunStore {
   readonly path: string;
   private readonly directory: string;
 
-  constructor(root: string, conversation: string) {
+  constructor(root: string) {
     this.directory = join(fs.realpathSync(root), '.jupyter');
-    this.path = join(
-      this.directory,
-      `datalayer-runs-${createHash('sha256').update(conversation).digest('hex')}.json`
-    );
+    this.path = join(this.directory, 'datalayer-runs.json');
   }
 
   private directoryState(create = false): void {
@@ -129,7 +129,7 @@ export class DatalayerRunStore {
     const records = this.records();
     const index = records.findIndex((r) => r.runId === runId);
     if (index < 0) {
-      throw new Error('Notebook runId is not in this conversation');
+      throw new Error('Notebook runId is not in this Project');
     }
     const previous = records[index];
     if (terminal.has(previous.state)) {

@@ -10,7 +10,6 @@
  */
 
 import type { FeishuCard, ChannelCapabilities, BaseAgentConfig, ChatAgentHooks, MessageBuilderOptions, CwdProvider, CwdResolution } from '@disclaude/core';
-import type { AgentSessionExtensionFactory } from './session-extension.js';
 
 // ============================================================================
 // ChatAgentCallbacks
@@ -48,7 +47,7 @@ export interface ChatAgentCallbacks {
    * @param chatId - Platform-specific chat identifier
    * @param filePath - Local file path to send
    */
-  sendFile: (chatId: string, filePath: string, parentMessageId?: string) => Promise<string | void>;
+  sendFile: (chatId: string, filePath: string) => Promise<void>;
 
   /**
    * Called when the Agent query completes (result message received).
@@ -207,7 +206,6 @@ export interface ChatAgentConfig extends BaseAgentConfig, ChatAgentHooks {
   skipHistory?: boolean;
   /** Native provider identity independent of the real delivery/history chat ID. */
   sdkSessionKey?: string;
-  sessionExtensionFactory?: AgentSessionExtensionFactory;
 
 }
 

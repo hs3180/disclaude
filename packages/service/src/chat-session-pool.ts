@@ -24,7 +24,6 @@ import type { ChatAgent } from './agents/chat-agent.js';
  * at pool creation time.
  */
 export interface ChatSessionPoolOptions {
-  sessionExtensionFactory?: import('./agents/session-extension.js').AgentSessionExtensionFactory;
   /** Named runtime presets. Defaults to Config.getAgentPresets(). */
   agentPresets?: AgentPresets;
   /** Backend availability probe; injectable for deterministic tests. */
@@ -382,7 +381,6 @@ export class ChatSessionPool {
       cwdResolver,
       skipHistory,
       sdkSessionKey,
-      sessionExtensionFactory: this.options.sessionExtensionFactory,
       ...(preset ? {
         agentBackend: preset.agentBackend,
         model: preset.model,

@@ -4,16 +4,11 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { YNotebook } from '@jupyter/ydoc';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-  notebookSnapshotHash,
-  type DatalayerJupyterClient,
-  type ToolContext,
-} from '@disclaude/core';
-import type { NotebookAgentContext } from './agent-session.js';
-import { DatalayerNotebookAgentSession } from './datalayer-agent-session.js';
+import { notebookSnapshotHash, type DatalayerJupyterClient } from '@disclaude/core/jupyter';
+import type { ToolContext } from '@disclaude/core';
+import { NotebookTools, type NotebookToolOptions } from './notebook-tools.js';
 import { DatalayerRunStore } from './datalayer-run-store.js';
 import { JupyterProjectConfigStore } from './project-config-store.js';
-import type { JupyterConnections } from './connections.js';
 
 const roots: string[] = [];
 afterEach(() => {
@@ -25,12 +20,13 @@ afterEach(() => {
 const invocation: ToolContext = { signal: new AbortController().signal };
 
 async function fixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'disclaude-datalayer-session-'));
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'disclaude-datalayer-tool-')));
   roots.push(root);
   new JupyterProjectConfigStore(root).linkNotebook({
     connectionId: 'configured',
     serverNamespace: 'host-bound',
     contentPath: 'analysis.ipynb',
+    documentId: 'doc-id',
   });
   const notebook = new YNotebook();
   notebook.fromJSON({
@@ -113,29 +109,20 @@ async function fixture() {
     stopRequest: vi.fn(() => Promise.resolve('unsupported')),
   };
   const connections = {
-    useDatalayer: <T>(
+    useClient: <T>(
       _id: string,
       _namespace: string,
       operation: (value: DatalayerJupyterClient) => Promise<T>
     ) => operation(client as unknown as DatalayerJupyterClient),
-    redactEnvironment: vi.fn(),
-  } as unknown as JupyterConnections;
-  const create = (delivery?: NotebookAgentContext['delivery']) =>
-    new DatalayerNotebookAgentSession(
-      {
-        workingDir: root,
-        conversationKey: 'conversation',
-        currentWorkingDir: () => root,
-        delivery,
-      },
-      connections
-    );
+  } satisfies Pick<NotebookToolOptions, 'useClient'>;
+  const create = () =>
+    new NotebookTools({
+      projectDir: root,
+      useClient: (id, namespace, operation) => connections.useClient(id, namespace, operation),
+    });
   const session = create();
-  const call = (
-    owner: DatalayerNotebookAgentSession,
-    name: string,
-    input: Record<string, unknown>
-  ) => owner.tools.find((t) => t.name === name)!.execute(input, invocation);
+  const call = (owner: NotebookTools, name: string, input: Record<string, unknown>) =>
+    owner.tools.find((t) => t.name === name)!.execute(input, invocation);
   const list = (await call(session, 'notebook_list', {})) as {
     notebooks: Array<{ notebookId: string }>;
   };
@@ -159,12 +146,12 @@ async function fixture() {
     create,
     call,
     args,
-    journal: new DatalayerRunStore(root, 'conversation'),
+    journal: new DatalayerRunStore(root),
   };
 }
 
-describe('Datalayer MVP service boundaries', () => {
-  function deliveryFixture(
+describe('Optional Datalayer Notebook tools', () => {
+  function exportFixture(
     f: Awaited<ReturnType<typeof fixture>>,
     serializeNotebook = (content: unknown) => JSON.stringify(content, null, 2)
   ): Map<string, Record<string, unknown>> {
@@ -200,203 +187,6 @@ describe('Datalayer MVP service boundaries', () => {
     });
     return saved;
   }
-
-  it('delivers one verified snapshot and image in temporary copies, retaining a concurrent human edit', async () => {
-    const f = await fixture();
-    deliveryFixture(f);
-    const image = Buffer.from('verified image bytes');
-    (f.notebook.cells[0] as (typeof f.notebook.cells)[0] & { outputs: unknown[] }).outputs = [
-      {
-        output_type: 'display_data',
-        data: { 'image/png': image.toString('base64') },
-        metadata: {},
-      },
-    ];
-    const expected = notebookSnapshotHash(f.notebook.toJSON());
-    const delivered: Array<{ file: string; bytes: Buffer }> = [];
-    const sendFile = vi.fn((file: string) => {
-      expect(fs.statSync(file).mode & 0o777).toBe(0o600);
-      delivered.push({ file, bytes: fs.readFileSync(file) });
-      f.notebook.cells[1].source = 'New human note while files upload.';
-      return Promise.resolve(`message-${delivered.length}`);
-    });
-    const result = (await f.call(
-      f.create(() => ({ sendFile })),
-      'notebook_deliver_report',
-      { notebookId: f.args.notebookId }
-    )) as {
-      state: string;
-      revision: string;
-      artifacts: Array<{ messageId: string; sha256: string }>;
-      snapshotState: string;
-      liveChangedDuringDelivery: boolean;
-    };
-    expect(result).toMatchObject({
-      state: 'delivered',
-      revision: expected,
-      snapshotState: 'historical',
-      liveChangedDuringDelivery: true,
-    });
-    expect(result.artifacts.map((a) => a.messageId)).toEqual([
-      'message-1',
-      'message-2',
-      'message-3',
-    ]);
-    expect(notebookSnapshotHash(JSON.parse(delivered[0].bytes.toString()))).toBe(expected);
-    expect(delivered[1].bytes.toString()).toContain(`content="${expected}"`);
-    expect(delivered[2].bytes).toEqual(image);
-    expect(result.artifacts[2].sha256).toBe(createHash('sha256').update(image).digest('hex'));
-    expect(
-      delivered.every((d) => !fs.existsSync(d.file) && !fs.existsSync(path.dirname(d.file)))
-    ).toBe(true);
-    expect(fs.readdirSync(f.root).some((name) => name.endsWith('.ipynb'))).toBe(false);
-    expect(f.notebook.cells[1].source).toContain('New human note');
-    expect(f.client.submitCell).not.toHaveBeenCalled();
-  });
-
-  it('delivers the exact saved Notebook bytes after native serialization changes', async () => {
-    const f = await fixture();
-    f.notebook.cells[0].setMetadata('trusted', true);
-    const image = Buffer.from('native image bytes');
-    (f.notebook.cells[0] as (typeof f.notebook.cells)[0] & { outputs: unknown[] }).outputs = [
-      { output_type: 'stream', name: 'stdout', text: '42\nDone\n' },
-      {
-        output_type: 'display_data',
-        metadata: {},
-        data: { 'image/png': image.toString('base64') },
-      },
-    ];
-    let raw = '';
-    deliveryFixture(f, (content: unknown) => {
-      const saved = structuredClone(content) as { cells: Array<Record<string, unknown>> };
-      const [code] = saved.cells;
-      delete (code.metadata as Record<string, unknown>).trusted;
-      code.source = ['print(', '42)'];
-      const outputs = code.outputs as Array<Record<string, unknown>>;
-      outputs[0].text = ['42\n', 'Done\n'];
-      outputs[1].data = { 'image/png': [image.toString('base64')] };
-      raw = `${JSON.stringify(saved, null, 1)}\n`;
-      return raw;
-    });
-    const received: Buffer[] = [];
-    const sendFile = vi.fn((file: string) => {
-      received.push(fs.readFileSync(file));
-      return Promise.resolve(`message-${received.length}`);
-    });
-    const result = await f.call(
-      f.create(() => ({ sendFile })),
-      'notebook_deliver_report',
-      {
-        notebookId: f.args.notebookId,
-      }
-    );
-    expect(result).toMatchObject({
-      state: 'delivered',
-      revisionAlgorithm: 'nbformat-content-sha256-v2',
-    });
-    expect(received[0]).toEqual(Buffer.from(raw));
-    expect(received[2]).toEqual(image);
-    expect(f.notebook.cells[0].getMetadata('trusted')).toBe(true);
-    expect(f.client.submitCell).not.toHaveBeenCalled();
-  });
-
-  it('retains confirmed delivery IDs, stops on an uncertain send, and never retries it', async () => {
-    const f = await fixture();
-    deliveryFixture(f);
-    const files: string[] = [];
-    const sendFile = vi.fn((file: string) => {
-      files.push(file);
-      return files.length === 1
-        ? Promise.resolve('confirmed-ipynb')
-        : Promise.reject(new Error('accepted reply lost'));
-    });
-    const result = await f.call(
-      f.create(() => ({ sendFile })),
-      'notebook_deliver_report',
-      { notebookId: f.args.notebookId }
-    );
-    expect(result).toMatchObject({
-      state: 'partial_or_unknown',
-      artifacts: [{ kind: 'ipynb', messageId: 'confirmed-ipynb' }],
-      unconfirmedArtifact: { kind: 'html' },
-    });
-    expect(sendFile).toHaveBeenCalledTimes(2);
-    expect(files.every((file) => !fs.existsSync(path.dirname(file)))).toBe(true);
-  });
-
-  it('bounds raster previews while preserving complete outputs and does not invent delivery IDs', async () => {
-    const f = await fixture();
-    deliveryFixture(f);
-    const outputs = [
-      ...Array.from({ length: 6 }, () => ({
-        output_type: 'display_data',
-        data: { 'image/png': Buffer.from('small image').toString('base64') },
-        metadata: {},
-      })),
-      {
-        output_type: 'display_data',
-        data: { 'image/png': Buffer.alloc(1_500_003).toString('base64') },
-        metadata: {},
-      },
-    ];
-    (f.notebook.cells[0] as (typeof f.notebook.cells)[0] & { outputs: unknown[] }).outputs =
-      outputs;
-    const sendFile = vi.fn((file: string) => {
-      if (file.endsWith('.ipynb')) {
-        expect(JSON.parse(fs.readFileSync(file, 'utf8')).cells[0].outputs).toHaveLength(7);
-      }
-      return Promise.resolve();
-    });
-    const result = await f.call(
-      f.create(() => ({ sendFile })),
-      'notebook_deliver_report',
-      { notebookId: f.args.notebookId }
-    );
-    expect(result).toMatchObject({ state: 'acknowledged_without_message_ids', omittedImages: 3 });
-    expect(sendFile).toHaveBeenCalledTimes(6);
-    expect(JSON.stringify(result)).not.toContain('messageId');
-  });
-
-  it('reports unavailable channel delivery before exporting and rejects altered snapshots before sending', async () => {
-    const f = await fixture();
-    expect(
-      await f.call(f.session, 'notebook_deliver_report', { notebookId: f.args.notebookId })
-    ).toMatchObject({ state: 'unsupported' });
-    deliveryFixture(f, () => JSON.stringify({ metadata: { changed: true }, cells: [] }));
-    const sendFile = vi.fn();
-    await expect(
-      f.call(
-        f.create(() => ({ sendFile })),
-        'notebook_deliver_report',
-        { notebookId: f.args.notebookId }
-      )
-    ).rejects.toThrow('snapshot cannot be verified');
-    expect(sendFile).not.toHaveBeenCalled();
-  });
-
-  it('does not send artifacts when the saved Notebook download fails', async () => {
-    const f = await fixture();
-    deliveryFixture(f);
-    Object.assign(f.client, {
-      response: vi.fn((route: string) =>
-        Promise.resolve(
-          route === 'nbconvert/html'
-            ? new Response('<html><head></head><body>Report</body></html>', {
-                headers: { 'content-type': 'text/html' },
-              })
-            : new Response('Unavailable', { status: 503 })
-        )
-      ),
-    });
-    const sendFile = vi.fn();
-    await expect(
-      f.call(f.create(() => ({ sendFile })), 'notebook_deliver_report', {
-        notebookId: f.args.notebookId,
-      })
-    ).rejects.toThrow('Exported Notebook cannot be downloaded');
-    expect(sendFile).not.toHaveBeenCalled();
-    expect(f.client.submitCell).not.toHaveBeenCalled();
-  });
 
   it('observes a native image with provenance and marks a later source edit historical', async () => {
     const f = await fixture();
@@ -438,14 +228,11 @@ describe('Datalayer MVP service boundaries', () => {
     ).rejects.toThrow('index');
   });
 
-  it('imports only registered user attachments with a remote path and verified repeat lookup', async () => {
+  it('imports a Project-local file and verifies a repeated lookup without overwriting remote input', async () => {
     const f = await fixture();
     const localPath = path.join(f.root, 'data.csv');
     const content = 'value\n3\n7\n';
     fs.writeFileSync(localPath, content);
-    f.session.registerAttachments([
-      { id: 'input-csv', fileName: '../../data.csv', localPath, source: 'user', createdAt: 1 },
-    ]);
     const files = new Map<string, Record<string, unknown>>();
     const response = vi.fn((route: string) => {
       const value = files.get(route.split('?')[0]);
@@ -461,7 +248,7 @@ describe('Datalayer MVP service boundaries', () => {
         return Promise.resolve({ path: route });
       }),
     });
-    const input = { notebookId: f.args.notebookId, attachmentId: 'input-csv' };
+    const input = { notebookId: f.args.notebookId, filePath: 'data.csv' };
     const imported = (await f.call(f.session, 'notebook_import_file', input)) as {
       remotePath: string;
       kernelRelativePath: string;
@@ -479,12 +266,6 @@ describe('Datalayer MVP service boundaries', () => {
       remotePath: imported.remotePath,
     });
     expect(f.client.json).toHaveBeenCalledTimes(2);
-    const context = await f.session.messageContext();
-    expect(context).toContain('input-csv');
-    expect(context).not.toContain(localPath);
-    await expect(
-      f.call(f.session, 'notebook_import_file', { ...input, attachmentId: localPath })
-    ).rejects.toThrow('not registered');
     files.set(`api/contents/${imported.remotePath}`, {
       type: 'file',
       format: 'base64',
@@ -496,38 +277,17 @@ describe('Datalayer MVP service boundaries', () => {
     expect(f.client.json).toHaveBeenCalledTimes(2);
   });
 
-  it('refuses changed files, symlinks, agent files and oversized input before remote writes', async () => {
+  it('refuses symlinks, files outside the Project and oversized input before remote writes', async () => {
     const f = await fixture();
-    const localPath = path.join(f.root, 'data.csv');
-    fs.writeFileSync(localPath, 'original');
-    const file = {
-      id: 'csv',
-      fileName: 'data.csv',
-      localPath,
-      source: 'user' as const,
-      createdAt: 1,
-    };
-    f.session.registerAttachments([file]);
-    fs.writeFileSync(localPath, 'changed content');
-    await expect(
-      f.call(f.session, 'notebook_import_file', {
-        notebookId: f.args.notebookId,
-        attachmentId: 'csv',
-      })
-    ).rejects.toThrow('changed');
-    const link = path.join(f.root, 'link');
-    fs.symlinkSync(localPath, link);
-    const large = path.join(f.root, 'large');
-    fs.writeFileSync(large, Buffer.alloc(2_000_001));
-    f.session.registerAttachments([
-      { ...file, id: 'symlink', localPath: link },
-      { ...file, id: 'agent', source: 'agent' },
-      { ...file, id: 'large', localPath: large },
-    ]);
-    for (const attachmentId of ['symlink', 'agent', 'large']) {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'disclaude-outside-input-'));
+    roots.push(outside);
+    fs.writeFileSync(path.join(outside, 'data.csv'), 'outside');
+    fs.symlinkSync(path.join(outside, 'data.csv'), path.join(f.root, 'link'));
+    fs.writeFileSync(path.join(f.root, 'large'), Buffer.alloc(2_000_001));
+    for (const filePath of ['link', path.join(outside, 'data.csv'), 'large']) {
       await expect(
-        f.call(f.session, 'notebook_import_file', { notebookId: f.args.notebookId, attachmentId })
-      ).rejects.toThrow('not registered');
+        f.call(f.session, 'notebook_import_file', { notebookId: f.args.notebookId, filePath })
+      ).rejects.toThrow('regular file inside this Project');
     }
     expect(f.client.json).not.toHaveBeenCalled();
   });
@@ -536,9 +296,6 @@ describe('Datalayer MVP service boundaries', () => {
     const f = await fixture();
     const localPath = path.join(f.root, 'data.csv');
     fs.writeFileSync(localPath, 'value\n1');
-    f.session.registerAttachments([
-      { id: 'csv', fileName: 'data.csv', localPath, source: 'user', createdAt: 1 },
-    ]);
     Object.assign(f.client, {
       response: vi.fn(() => {
         new JupyterProjectConfigStore(f.root).unlinkNotebook({
@@ -553,47 +310,24 @@ describe('Datalayer MVP service boundaries', () => {
     await expect(
       f.call(f.session, 'notebook_import_file', {
         notebookId: f.args.notebookId,
-        attachmentId: 'csv',
+        filePath: 'data.csv',
       })
     ).rejects.toThrow('no longer authorized');
     expect(f.client.json).not.toHaveBeenCalled();
   });
 
-  it('persists before POST and never replays an unknown attempt after session recreation', async () => {
+  it('persists before POST and never replays an unknown attempt after a new command', async () => {
     const f = await fixture();
     f.client.submitCell.mockImplementation(() => {
       expect(f.journal.get('original')?.state).toBe('submitting');
       return Promise.resolve({ state: 'unknown' });
     });
     expect(await f.call(f.session, 'notebook_execute', f.args)).toMatchObject({ state: 'unknown' });
-    f.session.dispose();
+    await f.session.close();
     expect(await f.call(f.create(), 'notebook_execute', f.args)).toMatchObject({
       state: 'unknown',
     });
     expect(f.client.submitCell).toHaveBeenCalledTimes(1);
-  });
-
-  it('keeps the accepted original handle when the turn is paused while POST settles', async () => {
-    const f = await fixture();
-    let accept!: (value: {
-      state: string;
-      handle: { kernelId: string; requestId: string };
-    }) => void;
-    f.client.submitCell.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          accept = resolve;
-        })
-    );
-    const pending = f.call(f.session, 'notebook_execute', f.args);
-    await vi.waitFor(() => expect(f.client.submitCell).toHaveBeenCalledOnce());
-    f.session.pause();
-    accept({ state: 'accepted', handle: { kernelId: 'kernel', requestId: 'original-request' } });
-    await expect(pending).rejects.toThrow('stopped');
-    expect(f.journal.get('original')).toMatchObject({
-      state: 'accepted',
-      handle: { requestId: 'original-request' },
-    });
   });
 
   it('preserves a confirmed terminal result after another consumer makes upstream GET unavailable', async () => {
@@ -608,7 +342,7 @@ describe('Datalayer MVP service boundaries', () => {
       state: 'completed',
       result: { outputs: [{ text: '42' }] },
     });
-    f.session.dispose();
+    await f.session.close();
     expect(await f.call(f.create(), 'notebook_status', input)).toMatchObject({
       state: 'completed',
       result: { outputs: [{ text: '42' }] },
@@ -649,7 +383,9 @@ describe('Datalayer MVP service boundaries', () => {
       handle: { kernelId: 'kernel', requestId: 'original-request' },
     } as never);
     await f.call(f.session, 'notebook_execute', f.args);
-    expect(await f.session.stop()).toEqual([{ runId: 'original', state: 'unknown' }]);
+    expect(
+      await f.call(f.session, 'notebook_stop', { notebookId: f.args.notebookId, runId: 'original' })
+    ).toMatchObject({ runId: 'original', state: 'unknown' });
     expect(f.client.stopRequest).toHaveBeenCalledWith({
       kernelId: 'kernel',
       requestId: 'original-request',
@@ -673,7 +409,7 @@ describe('Datalayer MVP service boundaries', () => {
       handle: { kernelId: 'kernel', requestId: 'original-request' },
     } as never);
     await f.call(f.session, 'notebook_execute', f.args);
-    vi.spyOn(f.connections, 'useDatalayer').mockRejectedValueOnce(
+    vi.spyOn(f.connections, 'useClient').mockRejectedValueOnce(
       new Error('private connection preparation error')
     );
     const result = await f.call(f.session, 'notebook_status', {
@@ -697,7 +433,9 @@ describe('Datalayer MVP service boundaries', () => {
       result: { error: { ename: 'KeyboardInterrupt' } },
     } as never);
     await f.call(f.session, 'notebook_execute', f.args);
-    expect(await f.call(f.session, 'notebook_stop', f.args)).toMatchObject({
+    expect(
+      await f.call(f.session, 'notebook_stop', { notebookId: f.args.notebookId, runId: 'original' })
+    ).toMatchObject({
       state: 'cancelled',
       runId: 'original',
       stopConfirmed: true,
@@ -714,7 +452,9 @@ describe('Datalayer MVP service boundaries', () => {
     } as never);
     f.client.stopRequest.mockResolvedValue('requested');
     await f.call(f.session, 'notebook_execute', f.args);
-    expect(await f.call(f.session, 'notebook_stop', f.args)).toMatchObject({
+    expect(
+      await f.call(f.session, 'notebook_stop', { notebookId: f.args.notebookId, runId: 'original' })
+    ).toMatchObject({
       state: 'already_terminal',
       stopConfirmed: false,
     });
@@ -730,32 +470,10 @@ describe('Datalayer MVP service boundaries', () => {
     f.client.stopRequest.mockResolvedValue('requested');
     f.client.observe.mockResolvedValue({ state: 'unknown' } as never);
     await f.call(f.session, 'notebook_execute', f.args);
-    expect(await f.session.stop()).toEqual([{ runId: 'original', state: 'unknown' }]);
+    expect(
+      await f.call(f.session, 'notebook_stop', { notebookId: f.args.notebookId, runId: 'original' })
+    ).toMatchObject({ runId: 'original', state: 'unknown' });
     expect(f.client.observe).toHaveBeenCalledOnce();
-    expect(f.client.submitCell).toHaveBeenCalledOnce();
-  });
-
-  it('reconciles a settling POST handle after pausing before confirming its stop', async () => {
-    const f = await fixture();
-    let accept!: (value: unknown) => void;
-    f.client.submitCell.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          accept = resolve;
-        }) as never
-    );
-    f.client.stopRequest.mockResolvedValue('requested');
-    f.client.observe.mockResolvedValue({ state: 'cancelled' } as never);
-    const attempt = f.call(f.session, 'notebook_execute', f.args).catch((error) => error);
-    await vi.waitFor(() => expect(f.client.submitCell).toHaveBeenCalledOnce());
-    const stopping = f.session.stop();
-    accept({ state: 'accepted', handle: { kernelId: 'kernel', requestId: 'original-request' } });
-    expect(await attempt).toBeInstanceOf(Error);
-    expect(await stopping).toEqual([{ runId: 'original', state: 'cancelled' }]);
-    expect(f.client.stopRequest).toHaveBeenCalledWith({
-      kernelId: 'kernel',
-      requestId: 'original-request',
-    });
     expect(f.client.submitCell).toHaveBeenCalledOnce();
   });
 
@@ -769,9 +487,12 @@ describe('Datalayer MVP service boundaries', () => {
     f.client.observe.mockResolvedValue({ state: 'running' } as never);
     await f.call(f.session, 'notebook_execute', f.args);
     vi.useFakeTimers();
-    const stopping = f.session.stop();
+    const stopping = f.call(f.session, 'notebook_stop', {
+      notebookId: f.args.notebookId,
+      runId: 'original',
+    });
     await vi.advanceTimersByTimeAsync(15000);
-    expect(await stopping).toEqual([{ runId: 'original', state: 'unknown' }]);
+    expect(await stopping).toMatchObject({ runId: 'original', state: 'unknown' });
     expect(f.journal.get('original')).toMatchObject({ state: 'running' });
     expect(f.client.stopRequest).toHaveBeenCalledOnce();
   });
@@ -873,7 +594,13 @@ describe('Datalayer MVP service boundaries', () => {
     });
     expect(f.notebook.cells.map((c) => c.id)).toEqual(['code', 'human']);
     f.notebook.getCell(0).source = 'new human code';
-    expect(await f.call(f.session, 'notebook_delete_cell', f.args)).toMatchObject({
+    expect(
+      await f.call(f.session, 'notebook_delete_cell', {
+        notebookId: f.args.notebookId,
+        cellId: f.args.cellId,
+        expectedSourceHash: f.args.expectedSourceHash,
+      })
+    ).toMatchObject({
       state: 'conflict',
     });
     const next = (await f.call(f.session, 'notebook_read_cell', {
@@ -906,7 +633,12 @@ describe('Datalayer MVP service boundaries', () => {
       execution_count: null,
     });
     await expect(
-      f.call(f.session, 'notebook_edit_cell', { ...f.args, source: 'overwrite' })
+      f.call(f.session, 'notebook_edit_cell', {
+        notebookId: f.args.notebookId,
+        cellId: f.args.cellId,
+        expectedSourceHash: f.args.expectedSourceHash,
+        source: 'overwrite',
+      })
     ).rejects.toThrow('ambiguous');
     expect(f.notebook.cells.map((c) => c.source)).toEqual([
       'print(42)',
@@ -926,7 +658,12 @@ describe('Datalayer MVP service boundaries', () => {
       return Promise.resolve();
     });
     await expect(
-      f.call(f.session, 'notebook_edit_cell', { ...f.args, source: 'unauthorized overwrite' })
+      f.call(f.session, 'notebook_edit_cell', {
+        notebookId: f.args.notebookId,
+        cellId: f.args.cellId,
+        expectedSourceHash: f.args.expectedSourceHash,
+        source: 'unauthorized overwrite',
+      })
     ).rejects.toThrow('no longer authorized');
     expect(f.notebook.getCell(0).source).toBe('print(42)');
   });
@@ -978,7 +715,7 @@ describe('Datalayer MVP service boundaries', () => {
       notebookId: f.args.notebookId,
       runId: 'original',
     });
-    f.session.dispose();
+    await f.session.close();
     f.client.openDocument.mockRejectedValue(new Error('network down'));
     f.client.documentPath.mockRejectedValue(new Error('network down'));
     f.client.observe.mockRejectedValue(new Error('network down'));
@@ -1019,5 +756,102 @@ describe('Datalayer MVP service boundaries', () => {
       result: { outputsTruncated: true, omittedOutputs: 4 },
     });
     expect(value.result.outputs).toHaveLength(16);
+  });
+  it('downloads verified snapshot files and bounded image previews without a delivery callback', async () => {
+    const f = await fixture();
+    exportFixture(f);
+    const image = Buffer.from('png bytes');
+    (f.notebook.cells[0] as (typeof f.notebook.cells)[0] & { outputs: unknown[] }).outputs = [
+      {
+        output_type: 'display_data',
+        data: { 'image/png': image.toString('base64') },
+        metadata: {},
+      },
+    ];
+    const expected = notebookSnapshotHash(f.notebook.toJSON());
+    const result = (await f.call(f.session, 'notebook_download_report', {
+      notebookId: f.args.notebookId,
+    })) as { revision: string; artifacts: Array<{ filePath: string; sha256: string }> };
+    expect(result).toMatchObject({ state: 'downloaded', revision: expected });
+    expect(result.artifacts).toHaveLength(3);
+    for (const artifact of result.artifacts) {
+      expect(artifact.filePath.startsWith(path.join(f.root, '.jupyter', 'artifacts'))).toBe(true);
+      expect(createHash('sha256').update(fs.readFileSync(artifact.filePath)).digest('hex')).toBe(
+        artifact.sha256
+      );
+      expect(fs.statSync(artifact.filePath).mode & 0o077).toBe(0);
+    }
+    await f.session.close();
+    expect(f.doc.close).toHaveBeenCalled();
+    expect(fs.existsSync(result.artifacts[0].filePath)).toBe(true);
+    expect(f.client.json.mock.calls.some(([route]) => route.endsWith('/interrupt'))).toBe(false);
+  });
+
+  it('refuses altered exported snapshots before writing local report copies', async () => {
+    const f = await fixture();
+    exportFixture(f, () => JSON.stringify({ metadata: {}, cells: [] }));
+    await expect(
+      f.call(f.session, 'notebook_download_report', { notebookId: f.args.notebookId })
+    ).rejects.toThrow('snapshot cannot be verified');
+    expect(fs.existsSync(path.join(f.root, '.jupyter', 'artifacts'))).toBe(false);
+  });
+
+  it('lists references and command schemas without a remote connection', async () => {
+    const f = await fixture();
+    f.client.openDocument.mockClear();
+    const connect = vi.fn(() => {
+      throw new Error('must not connect');
+    });
+    const tools = new NotebookTools({ projectDir: f.root, useClient: connect });
+    expect(await f.call(tools, 'notebook_list', {})).toMatchObject({
+      notebooks: [{ documentId: 'doc-id' }],
+    });
+    expect(connect).not.toHaveBeenCalled();
+    await tools.close();
+    expect(f.client.openDocument).not.toHaveBeenCalled();
+  });
+
+  it('validates CLI arguments before opening RTC or mutating the Notebook', async () => {
+    const f = await fixture();
+    for (const input of [
+      {},
+      { ...f.args, extra: true },
+      { ...f.args, expectedSourceHash: 'wrong' },
+      { ...f.args, cellId: 42 },
+    ]) {
+      await expect(f.call(f.session, 'notebook_execute', input)).rejects.toThrow('Invalid');
+    }
+    expect(f.client.submitCell).not.toHaveBeenCalled();
+  });
+
+  it('retains the original handle when a CLI signal aborts while POST settles', async () => {
+    const f = await fixture();
+    let accept!: (value: unknown) => void;
+    f.client.submitCell.mockImplementation(
+      () =>
+        new Promise((done) => {
+          accept = done;
+        }) as never
+    );
+    const controller = new AbortController();
+    const attempt = f.session.tools
+      .find((tool) => tool.name === 'notebook_execute')!
+      .execute(f.args, { signal: controller.signal });
+    await vi.waitFor(() => expect(f.client.submitCell).toHaveBeenCalledOnce());
+    controller.abort();
+    accept({ state: 'accepted', handle: { kernelId: 'kernel', requestId: 'original-request' } });
+    await expect(attempt).rejects.toThrow();
+    expect(f.journal.get('original')).toMatchObject({
+      state: 'accepted',
+      handle: { requestId: 'original-request' },
+    });
+    await f.session.close();
+    expect(
+      await f.call(f.create(), 'notebook_status', {
+        notebookId: f.args.notebookId,
+        runId: 'original',
+      })
+    ).toMatchObject({ state: 'completed', requestId: 'original-request' });
+    expect(f.client.submitCell).toHaveBeenCalledOnce();
   });
 });
