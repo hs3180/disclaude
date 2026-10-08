@@ -704,108 +704,158 @@ await isolated('terminal-host-recovery', ["print('UNCACHED_TERMINAL_RESULT', 47)
   });
 });
 
+// CLI startup/RTC teardown has observable latency. Keep these executions busy
+// until the test explicitly releases its own marker through Contents API.
+const moveRelease = 'disclaude-cli-move-release-' + randomUUID() + '.txt';
+const deleteRelease = 'disclaude-cli-delete-release-' + randomUUID() + '.txt';
+const gatedSource = (marker, release, finished) =>
+  'import pathlib,time\nprint(' +
+  JSON.stringify(marker) +
+  ',flush=True)\ndeadline=time.monotonic()+90\nwhile not pathlib.Path(' +
+  JSON.stringify(release) +
+  ').exists():\n    if time.monotonic()>deadline: raise TimeoutError("Probe release was not received")\n    time.sleep(0.05)\nprint(' +
+  JSON.stringify(finished) +
+  ')';
 await isolated(
   'move-delete-running',
   [
-    "import time\nprint('MOVE_BEGIN',flush=True)\ntime.sleep(12)\nprint('MOVE_ORIGINAL_END')",
-    "import time\nprint('DELETE_BEGIN',flush=True)\ntime.sleep(12)\nprint('DELETED_ORIGINAL_END')",
+    gatedSource('MOVE_BEGIN', moveRelease, 'MOVE_ORIGINAL_END'),
+    gatedSource('DELETE_BEGIN', deleteRelease, 'DELETED_ORIGINAL_END'),
   ],
   async (c) => {
-    await withCLI(c, 'move-delete-running', async (f) => {
-      const a = await f.call('notebook_execute', await f.args('edge-0', 'move-original'));
-      const handleA = { kernelId: c.kernelId, requestId: a.requestId };
-      await active(handleA, 'MOVE_BEGIN');
-      const source = await f.call('notebook_read_cell', {
-        notebookId: f.notebookId,
-        cellId: 'edge-0',
+    for (const file of [moveRelease, deleteRelease]) {
+      const absent = await client.response('api/contents/' + file);
+      const missing = absent.status === 404;
+      await absent.body?.cancel();
+      if (!missing) throw new Error('Release marker is not an owned absent file');
+    }
+    report.ownedFiles ??= [];
+    report.ownedFiles.push(moveRelease, deleteRelease);
+    try {
+      await withCLI(c, 'move-delete-running', async (f) => {
+        const a = await f.call('notebook_execute', await f.args('edge-0', 'move-original'));
+        const handleA = { kernelId: c.kernelId, requestId: a.requestId };
+        await active(handleA, 'MOVE_BEGIN');
+        const source = await f.call('notebook_read_cell', {
+          notebookId: f.notebookId,
+          cellId: 'edge-0',
+        });
+        const moved = await f.call('notebook_move_cell', {
+          notebookId: f.notebookId,
+          cellId: 'edge-0',
+          expectedSourceHash: source.sourceHash,
+          beforeCellId: '',
+        });
+        await wait(120);
+        const edited = await f.call('notebook_edit_cell', {
+          notebookId: f.notebookId,
+          cellId: 'edge-0',
+          expectedSourceHash: source.sourceHash,
+          source: "print('MOVE_NEW_SOURCE')",
+        });
+        await wait(120);
+        await c.doc.flush();
+        const immediate = c.doc.snapshot().cells.find((cell) => cell.id === 'edge-0');
+        const pending = await peek(handleA);
+        check(
+          'Native cell move rebinds source observation and clears edited outputs while still running',
+          moved.state === 'moved' &&
+            edited.state === 'edited' &&
+            pending.httpStatus === 202 &&
+            immediate.source === "print('MOVE_NEW_SOURCE')" &&
+            immediate.outputs.length === 0,
+          { moved, edited, immediate, pending }
+        );
+        await client.json('api/contents/' + moveRelease, 'PUT', {
+          type: 'file',
+          format: 'text',
+          content: 'release',
+        });
+        const original = await f.status('move-original');
+        const currentAccepted = await f.call(
+          'notebook_execute',
+          await f.args('edge-0', 'move-new')
+        );
+        const current = await f.status('move-new');
+        const retained = await peek(handleA);
+        await c.doc.flush();
+        const newCell = c.doc.snapshot().cells.find((cell) => cell.id === 'edge-0');
+        check(
+          'Next run owns the moved cell while the original source/result remains historical',
+          original.state === 'completed' &&
+            original.result.sourceMatches === false &&
+            original.result.outputAttachment === 'historical' &&
+            currentAccepted.state === 'accepted' &&
+            current.state === 'completed' &&
+            stdout(newCell).includes('MOVE_NEW_SOURCE') &&
+            !stdout(newCell).includes('MOVE_ORIGINAL_END') &&
+            stdout(retained.result).includes('MOVE_ORIGINAL_END') &&
+            retained.result.source === c.sources[0],
+          { original, current, retained, newCell }
+        );
+        const b = await f.call('notebook_execute', await f.args('edge-1', 'delete-original'));
+        const handleB = { kernelId: c.kernelId, requestId: b.requestId };
+        await active(handleB, 'DELETE_BEGIN');
+        const { notebookId, cellId, expectedSourceHash } = await f.args(
+          'edge-1',
+          'unused-delete-read'
+        );
+        const removed = await f.call('notebook_delete_cell', {
+          notebookId,
+          cellId,
+          expectedSourceHash,
+        });
+        await f.call('notebook_insert_cell', {
+          notebookId: f.notebookId,
+          cellId: 'replacement-cell',
+          beforeCellId: '',
+          cellType: 'code',
+          source: "print('REPLACEMENT_RESULT')",
+        });
+        const deletePending = await peek(handleB);
+        await c.doc.flush();
+        check(
+          'Stable cell deletion happens while the original execution is pending',
+          deletePending.httpStatus === 202 &&
+            !c.doc.snapshot().cells.some((cell) => cell.id === 'edge-1'),
+          { removed, deletePending }
+        );
+        await client.json('api/contents/' + deleteRelease, 'PUT', {
+          type: 'file',
+          format: 'text',
+          content: 'release',
+        });
+        const deleted = await f.status('delete-original');
+        const replacementAccepted = await f.call(
+          'notebook_execute',
+          await f.args('replacement-cell', 'replacement-run')
+        );
+        const replacement = await f.status('replacement-run');
+        await c.doc.flush();
+        const snapshot = c.doc.snapshot();
+        const note = snapshot.cells.find((cell) => cell.id === 'edge-note');
+        check(
+          'Deleting a running stable cell retains original history and isolates its replacement',
+          removed.state === 'deleted' &&
+            deleted.state === 'completed' &&
+            deleted.result.sourceMatches === false &&
+            replacementAccepted.state === 'accepted' &&
+            replacement.state === 'completed' &&
+            !snapshot.cells.some((cell) => cell.id === 'edge-1') &&
+            !snapshot.cells.some((cell) => stdout(cell).includes('DELETED_ORIGINAL_END')) &&
+            JSON.stringify(note.metadata) === JSON.stringify(markdown.metadata) &&
+            JSON.stringify(note.attachments) === JSON.stringify(markdown.attachments),
+          { removed, deleted, replacement, snapshot }
+        );
       });
-      const moved = await f.call('notebook_move_cell', {
-        notebookId: f.notebookId,
-        cellId: 'edge-0',
-        expectedSourceHash: source.sourceHash,
-        beforeCellId: '',
-      });
-      await wait(120);
-      const edited = await f.call('notebook_edit_cell', {
-        notebookId: f.notebookId,
-        cellId: 'edge-0',
-        expectedSourceHash: source.sourceHash,
-        source: "print('MOVE_NEW_SOURCE')",
-      });
-      await wait(120);
-      await c.doc.flush();
-      const immediate = c.doc.snapshot().cells.find((cell) => cell.id === 'edge-0');
-      const pending = await peek(handleA);
-      check(
-        'Native cell move rebinds source observation and clears edited outputs while still running',
-        moved.state === 'moved' &&
-          edited.state === 'edited' &&
-          pending.httpStatus === 202 &&
-          immediate.source === "print('MOVE_NEW_SOURCE')" &&
-          immediate.outputs.length === 0,
-        { moved, edited, immediate, pending }
-      );
-      const original = await f.status('move-original');
-      const currentAccepted = await f.call('notebook_execute', await f.args('edge-0', 'move-new'));
-      const current = await f.status('move-new');
-      const retained = await peek(handleA);
-      await c.doc.flush();
-      const newCell = c.doc.snapshot().cells.find((cell) => cell.id === 'edge-0');
-      check(
-        'Next run owns the moved cell while the original source/result remains historical',
-        original.state === 'completed' &&
-          original.result.sourceMatches === false &&
-          original.result.outputAttachment === 'historical' &&
-          currentAccepted.state === 'accepted' &&
-          current.state === 'completed' &&
-          stdout(newCell).includes('MOVE_NEW_SOURCE') &&
-          !stdout(newCell).includes('MOVE_ORIGINAL_END') &&
-          stdout(retained.result).includes('MOVE_ORIGINAL_END') &&
-          retained.result.source === c.sources[0],
-        { original, current, retained, newCell }
-      );
-      const b = await f.call('notebook_execute', await f.args('edge-1', 'delete-original'));
-      const handleB = { kernelId: c.kernelId, requestId: b.requestId };
-      await active(handleB, 'DELETE_BEGIN');
-      const { notebookId, cellId, expectedSourceHash } = await f.args(
-        'edge-1',
-        'unused-delete-read'
-      );
-      const removed = await f.call('notebook_delete_cell', {
-        notebookId,
-        cellId,
-        expectedSourceHash,
-      });
-      await f.call('notebook_insert_cell', {
-        notebookId: f.notebookId,
-        cellId: 'replacement-cell',
-        beforeCellId: '',
-        cellType: 'code',
-        source: "print('REPLACEMENT_RESULT')",
-      });
-      const deleted = await f.status('delete-original');
-      const replacementAccepted = await f.call(
-        'notebook_execute',
-        await f.args('replacement-cell', 'replacement-run')
-      );
-      const replacement = await f.status('replacement-run');
-      await c.doc.flush();
-      const snapshot = c.doc.snapshot();
-      const note = snapshot.cells.find((cell) => cell.id === 'edge-note');
-      check(
-        'Deleting a running stable cell retains original history and isolates its replacement',
-        removed.state === 'deleted' &&
-          deleted.state === 'completed' &&
-          deleted.result.sourceMatches === false &&
-          replacementAccepted.state === 'accepted' &&
-          replacement.state === 'completed' &&
-          !snapshot.cells.some((cell) => cell.id === 'edge-1') &&
-          !snapshot.cells.some((cell) => stdout(cell).includes('DELETED_ORIGINAL_END')) &&
-          JSON.stringify(note.metadata) === JSON.stringify(markdown.metadata) &&
-          JSON.stringify(note.attachments) === JSON.stringify(markdown.attachments),
-        { removed, deleted, replacement, snapshot }
-      );
-    });
+    } finally {
+      for (const file of [moveRelease, deleteRelease]) {
+        const response = await client.response('api/contents/' + file, 'DELETE');
+        const ok = [204, 404].includes(response.status);
+        await response.body?.cancel();
+        if (!ok) throw new Error('Owned release marker cleanup failed');
+      }
+    }
   }
 );
 
