@@ -199,8 +199,7 @@ export function generateRelease(root, output) {
       .split('\0')
       .filter(Boolean);
     for (const file of tracked) {
-      // Remote build recipes also belong to a full source checkout. Keeping
-      // their optional runtime payload must not add Docker assets to npm installs.
+      // Deployment recipes belong to a full source checkout.
       if (file.split('/').at(-1).startsWith('Dockerfile')) continue;
       assert(
         !lstatSync(join(root, file)).isSymbolicLink(),
@@ -209,15 +208,6 @@ export function generateRelease(root, output) {
       mkdirSync(dirname(join(output, file)), { recursive: true });
       cpSync(join(root, file), join(output, file));
     }
-  }
-  // The upstream Jupyter repair CLI generates an image on the remote host.
-  // Include its one pinned build input explicitly, even when the generic
-  // source-only Docker filter excludes recipes for disclaude deployments.
-  if (existsSync(join(root, 'bin/jupyter-patch.js'))) {
-    const recipe = 'jupyter/datalayer/Dockerfile';
-    assert(!lstatSync(join(root, recipe)).isSymbolicLink());
-    mkdirSync(dirname(join(output, recipe)), { recursive: true });
-    cpSync(join(root, recipe), join(output, recipe));
   }
   function rewriteTree(dir) {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {

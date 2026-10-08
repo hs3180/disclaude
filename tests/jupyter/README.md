@@ -120,21 +120,19 @@ model continuation, report quality or access from a user's actual device.
 
 ## Patch deployment portability
 
-`node --test tests/jupyter/patch-cli-test.mjs` checks Node-only generation, SSH
-quoting, explicit target/lifecycle selection and Jupyter Terminal framing,
-streaming, permissions, cleanup and failure handling. It uses owned protocol
-fixtures and does not contact a live service.
+`node --test tests/jupyter/patch-cli-test.mjs` checks Node-only generation and
+the sole Jupyter Terminal transport: framing, streaming, permissions, owned
+cleanup and failure handling. Removed transport/lifecycle options are refused
+before authentication. These protocol fixtures do not contact a live service.
 
 `python3 tests/jupyter/datalayer-package-test.py -v` checks archive integrity,
-Compose preservation/drift and reversible plain-environment filesystem updates,
-custom Python/JSON config, nonstandard discovery paths, a running-server refusal,
-partial-update rollback and service-start failure. These are component tests,
-not a replacement for configured Jupyter or product acceptance.
+reversible filesystem updates, custom Python/JSON config, nonstandard discovery
+paths, partial-update rollback and the distinction between installed files and
+running Server code. They do not stop/restart a Server or hot-reload modules.
+These component tests do not replace configured Jupyter or product acceptance.
 
-The configured-server Terminal probe used the existing login/REST/WebSocket
-service to discover the actual Server interpreter and prepare privately. It did
-not patch or restart the daily service. Separate owned remote bare-host venv and
-Compose fixtures verified apply/rollback, arbitrary paths and exact original
-file/image/config restoration. The venv fixture copied only pinned package/Lab
-and path-discovery files; it did not launch a Jupyter server or install science
-dependencies. Record these evidence scopes separately from product acceptance.
+Configured-server Terminal checks use the existing login/REST/WebSocket service.
+Owned staging directories can verify apply/rollback without changing the running
+installation. Record disk installation, external restart and running-code/product
+verification as separate evidence. Older SSH/Compose experiments are historical;
+those deployment adapters and their fixtures have been removed.

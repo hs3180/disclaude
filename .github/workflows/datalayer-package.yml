@@ -56,9 +56,9 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Install locked dependencies for the host .env parser
         run: npm ci --ignore-scripts --include=dev
-      - name: Verify CLI generation, authentication and transport boundaries
+      - name: Verify CLI generation, authentication and Terminal-only transport
         run: node --test tests/jupyter/patch-cli-test.mjs tests/jupyter/auth-input-test.mjs
-      - name: Verify generated artifact and deployment guards
+      - name: Verify artifact integrity, file rollback and activation reporting
         run: python tests/jupyter/datalayer-package-test.py -v
       - name: Verify hidden authentication in a real terminal
         run: python tests/jupyter/auth-tty-test.py -v

@@ -1,4 +1,4 @@
-"""Stdlib packaging/deployment regressions; no Jupyter server or Docker daemon required."""
+"""Stdlib artifact and file-installation regressions; no Jupyter server required."""
 
 from __future__ import annotations
 
@@ -52,10 +52,12 @@ class PackageTests(unittest.TestCase):
                 names = archive.namelist()
                 self.assertIn("payload/LICENSE.nbmodel", names)
                 self.assertIn("payload/patches/lab-bundle.patch", names)
+                self.assertFalse(any("Dockerfile" in name or "compose" in name for name in names))
+                self.assertNotIn("payload/reporting-requirements.txt", names)
                 self.assertFalse(any(".env" in name or "plan.json" in name or "config-restore" in name for name in names))
             self.assertEqual((root / "first.pyz.sha256").read_text().split()[0], first["sha256"])
 
-    def test_damaged_payload_is_refused_before_docker(self):
+    def test_damaged_payload_is_refused_before_installation(self):
         with tempfile.TemporaryDirectory() as temporary:
             archive = Path(temporary) / "damaged.pyz"
             build(archive)
@@ -85,127 +87,15 @@ class PackageTests(unittest.TestCase):
                 self.assertFalse(any("private-debug" in name or "config-restore" in name for name in archive.namelist()))
 
 
-class DeploymentTests(unittest.TestCase):
-    def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temporary.cleanup)
-        self.state = Path(self.temporary.name)
-        self.config = self.state / "original.json"
-        self.config.write_text('{"custom":{"keep":true}}\n')
-        self.candidate = self.state / "candidate.json"
-        self.candidate.write_text('{"custom":{"keep":true},"Extension":{"result_ttl":3600}}\n')
-        self.base = self.state / "compose.json"
-        self.base.write_text('{"services":{"jupyter":{},"sentinel":{}}}\n')
-        self.plan = {"project": "owned-fixture", "service": "jupyter", "directory": str(self.state),
-                     "container": "owned-jupyter", "configTarget": "/arbitrary/config/shared.json", "composeFiles": [str(self.base)],
-                     "originalImage": "sha256:original", "candidateImage": "sha256:patched",
-                     "inputs": {str(self.config): deploy.sha(self.config), str(self.base): deploy.sha(self.base)},
-                     "outputs": {}, "phase": "prepared", "manifestSha256": deploy.sha(SOURCE / "manifest.json")}
-        self.current = {"image": "sha256:original", "state": {"Status": "running"},
-                        "labels": {"com.docker.compose.project": "owned-fixture", "com.docker.compose.service": "jupyter"},
-                        "mounts": [{"Destination": self.plan["configTarget"], "Source": str(self.config)}]}
-        for action, image, config in [("apply", "sha256:patched", self.candidate), ("rollback", "sha256:original", self.config)]:
-            path = self.state / (action + ".json")
-            deploy.write_json(path, deploy.override(self.plan, image, str(config)))
-            self.plan[action + "Override"] = str(path)
-            self.plan["outputs"][str(path)] = deploy.sha(path)
-
-    def test_explicit_restart_is_required_before_any_service_operation(self):
-        with patch.object(deploy, "docker") as docker:
-            with self.assertRaisesRegex(deploy.DeploymentError, "--restart"):
-                deploy.transition(self.plan, self.state, "apply", False)
-            docker.assert_not_called()
-
-    def test_original_config_drift_refuses_transition(self):
-        self.config.write_text('{"human":"new setting"}\n')
-        with patch.object(deploy, "docker") as docker:
-            with self.assertRaisesRegex(deploy.DeploymentError, "input changed"):
-                deploy.transition(self.plan, self.state, "apply", True)
-            docker.assert_not_called()
-
-    def test_prepared_config_drift_refuses_transition(self):
-        path = Path(self.plan["applyOverride"])
-        path.write_text('{}\n')
-        with patch.object(deploy, "docker") as docker:
-            with self.assertRaisesRegex(deploy.DeploymentError, "file changed"):
-                deploy.transition(self.plan, self.state, "apply", True)
-            docker.assert_not_called()
-
-    def test_resolved_environment_drift_is_refused_without_exposing_values(self):
-        self.plan["composeConfigSha256"] = "the-original-resolved-config"
-        with patch.object(deploy, "docker", return_value='{"environment":{"value":"fixture-secret"}}') as docker:
-            with self.assertRaisesRegex(deploy.DeploymentError, "interpolation") as caught:
-                deploy.transition(self.plan, self.state, "apply", True)
-            self.assertNotIn("fixture-secret", str(caught.exception))
-            self.assertEqual(docker.call_count, 1)
-
-    def test_foreign_image_is_refused(self):
-        self.current["image"] = "sha256:foreign"
-        with patch.object(deploy, "inspect_container", return_value=self.current), patch.object(deploy, "docker") as docker:
-            with self.assertRaisesRegex(deploy.DeploymentError, "outside this deployment"):
-                deploy.transition(self.plan, self.state, "apply", True)
-            docker.assert_not_called()
-
-    def test_writable_layer_and_file_only_database_mount_are_refused(self):
-        config = {"BaseFileIdManager": {"db_path": "/ids/file_id_manager.db"}}
-        container = {"mounts": []}
-        with self.assertRaisesRegex(deploy.DeploymentError, "persistent directory"):
-            deploy.check_file_ids(config, container)
-        container["mounts"] = [{"Type": "bind", "Source": "/owned/db", "Destination": "/ids/file_id_manager.db", "RW": True}]
-        with self.assertRaises(deploy.DeploymentError):
-            deploy.check_file_ids(config, container)
-        container["mounts"][0]["Destination"] = "/ids"
-        deploy.check_file_ids(config, container)
-
-    def test_changed_data_mount_refuses_transition(self):
-        self.current["mounts"].append({"Type": "bind", "Source": "/old-data", "Destination": "/notebooks", "RW": True})
-        self.plan["originalMounts"] = deploy.stable_mounts(self.current, self.plan["configTarget"])
-        self.current["mounts"][-1]["Source"] = "/new-data"
-        with patch.object(deploy, "inspect_container", return_value=self.current), patch.object(deploy, "docker") as docker:
-            with self.assertRaisesRegex(deploy.DeploymentError, "data mounts changed"):
-                deploy.transition(self.plan, self.state, "apply", True)
-            docker.assert_not_called()
-
-    def test_repeated_apply_does_not_recreate_a_running_candidate(self):
-        self.current["image"] = "sha256:patched"
-        self.current["mounts"][0]["Source"] = str(self.candidate)
-        with patch.object(deploy, "inspect_container", return_value=self.current), patch.object(deploy, "docker") as docker:
-            result = deploy.transition(self.plan, self.state, "apply", True)
-            self.assertFalse(result["changed"])
-            docker.assert_not_called()
-
-    def test_unknown_up_result_retains_rollback_and_does_not_replay(self):
-        with patch.object(deploy, "inspect_container", return_value=self.current), patch.object(deploy, "check_compose_merge"), \
-             patch.object(deploy, "docker", side_effect=deploy.DeploymentError("lost reply")) as docker:
-            with self.assertRaisesRegex(deploy.DeploymentError, "lost reply"):
-                deploy.transition(self.plan, self.state, "apply", True)
-            self.assertEqual(docker.call_count, 1)
-        saved = json.loads((self.state / "plan.json").read_text())
-        self.assertEqual(saved["phase"], "apply_requested")
-        self.assertEqual(saved["originalImage"], "sha256:original")
-        self.assertTrue(Path(saved["rollbackOverride"]).is_file())
-
-    def test_override_must_preserve_other_services_and_notebook_mount(self):
-        baseline = {"services": {"jupyter": {"image": "original", "environment": {"keep": "fixture"},
-                                             "volumes": [{"target": "/notebooks", "source": "/owned-data"},
-                                                         {"target": self.plan["configTarget"], "source": "/old"}]},
-                                 "sentinel": {"image": "original"}}}
-        candidate = json.loads(json.dumps(baseline))
-        candidate["services"]["jupyter"]["image"] = "patched"
-        candidate["services"]["jupyter"]["volumes"][1]["source"] = "/new"
-        with patch.object(deploy, "docker", side_effect=[json.dumps(baseline), json.dumps(candidate)]):
-            deploy.check_compose_merge(self.plan, self.plan["applyOverride"])
-        candidate["services"]["sentinel"]["image"] = "unexpected"
-        with patch.object(deploy, "docker", side_effect=[json.dumps(baseline), json.dumps(candidate)]):
-            with self.assertRaisesRegex(deploy.DeploymentError, "other than"):
-                deploy.check_compose_merge(self.plan, self.plan["applyOverride"])
-
-    def test_existing_plan_is_reused_without_replacing_rollback(self):
-        deploy.write_json(self.state / "plan.json", self.plan)
-        with patch.object(deploy, "inspect_container", return_value=self.current), patch.object(deploy, "docker") as docker:
-            result = deploy.prepare(SOURCE, self.plan["manifestSha256"], self.plan["container"], self.state)
-        self.assertEqual(result["originalImage"], "sha256:original")
-        docker.assert_not_called()
+    def test_removed_options_are_refused_by_the_generated_artifact(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "repair.pyz"
+            build(archive)
+            for option in ("--container", "--ssh", "--service", "--system", "--restart", "--stopped"):
+                result = subprocess.run([sys.executable, str(archive), "info", option, "fixture"],
+                                        capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("unrecognized arguments", result.stderr)
 
 
 class EnvironmentTests(unittest.TestCase):
@@ -219,6 +109,7 @@ class EnvironmentTests(unittest.TestCase):
         self.frontend.mkdir(parents=True)
         self.original = self.package / "source.py"
         self.original.write_text("original = True\n")
+        self.original.chmod(0o640)
         self.config = self.root / "custom-config.py"
         self.config.write_text("c = get_config()\nc.ServerApp.port = 9999\n")
         self.state = self.root / "private state"
@@ -232,68 +123,74 @@ class EnvironmentTests(unittest.TestCase):
         self.addCleanup(self.planner.stop)
         self.plan = environment.prepare(SOURCE, deploy.sha(SOURCE / "manifest.json"), self.state, self.target)
 
-    def test_prepare_and_offline_apply_rollback_preserve_custom_python_config_and_modes(self):
+    def test_prepare_leaves_installed_files_unchanged(self):
         self.assertEqual(self.original.read_bytes(), b"original = True\n")
         self.assertFalse((self.frontend / "new.js").exists())
         self.assertEqual(self.config.read_text(), "c = get_config()\nc.ServerApp.port = 9999\n")
         self.assertEqual(self.state.stat().st_mode & 0o777, 0o700)
-        with patch.object(environment, "require_stopped"):
-            applied = environment.transition(self.plan, self.state, "apply", False, True)
-            self.assertTrue(applied["changed"])
-            self.assertEqual(self.original.read_bytes(), b"patched = True\n")
-            policy = self.config.read_text()
-            self.assertIn("c.ServerApp.port = 9999", policy)
-            self.assertIn("c.YDocExtension.document_cleanup_delay = None", policy)
-            self.assertFalse(environment.transition(self.plan, self.state, "apply", False, True)["changed"])
-            environment.transition(self.plan, self.state, "rollback", False, True)
+        status = environment.status(self.plan, self.state)
+        self.assertEqual(status["activation"], "not_installed")
+        self.assertFalse(status["applicationVerified"])
+
+    def test_apply_and_rollback_preserve_exact_bytes_modes_and_report_restart_required(self):
+        applied = environment.transition(self.plan, self.state, "apply")
+        self.assertTrue(applied["changed"])
+        self.assertEqual(applied["activation"], "server_restart_required")
+        self.assertTrue(applied["serverRestartRequired"])
+        self.assertFalse(applied["runningCodeVerified"])
+        self.assertEqual(self.original.read_bytes(), b"patched = True\n")
+        self.assertEqual(self.original.stat().st_mode & 0o777, 0o640)
+        self.assertIn("c.ServerApp.port = 9999", self.config.read_text())
+        self.assertIn("c.YDocExtension.document_cleanup_delay = None", self.config.read_text())
+        self.assertFalse(environment.transition(self.plan, self.state, "apply")["changed"])
+        status = environment.status(self.plan, self.state)
+        self.assertTrue(status["serverRestartRequired"])
+        self.assertFalse(status["applicationVerified"])
+        rolled_back = environment.transition(self.plan, self.state, "rollback")
+        self.assertTrue(rolled_back["serverRestartRequired"])
         self.assertEqual(self.original.read_bytes(), b"original = True\n")
+        self.assertEqual(self.original.stat().st_mode & 0o777, 0o640)
         self.assertFalse((self.frontend / "new.js").exists())
         self.assertFalse((self.package / "disclaude-repair.json").exists())
         self.assertEqual(self.config.read_text(), "c = get_config()\nc.ServerApp.port = 9999\n")
+        self.assertFalse(environment.transition(self.plan, self.state, "rollback")["changed"])
 
-    def test_running_server_refuses_all_target_writes(self):
+    def test_runtime_record_does_not_trigger_server_control_or_hot_reload(self):
         runtime = Path(self.target["runtimeDir"])
         runtime.mkdir()
         (runtime / "jpserver-owned.json").write_text(json.dumps({"pid": 4321}))
-        with patch.object(environment, "alive", return_value=True):
-            with self.assertRaisesRegex(environment.EnvironmentError, "still running"):
-                environment.transition(self.plan, self.state, "apply", False, True)
-        self.assertEqual(self.original.read_bytes(), b"original = True\n")
+        with patch.object(subprocess, "run") as commands:
+            result = environment.transition(self.plan, self.state, "apply")
+            commands.assert_not_called()
+        self.assertTrue(result["serverRestartRequired"])
+        self.assertFalse(result["runningCodeVerified"])
+        self.assertTrue((runtime / "jpserver-owned.json").exists())
 
-    def test_foreign_edit_and_corrupt_backup_refuse_before_service_stop(self):
+    def test_foreign_edit_and_corrupt_backup_refuse_before_any_target_write(self):
         self.original.write_text("human edit\n")
-        with patch.object(environment, "systemctl") as lifecycle:
+        with patch.object(environment, "atomic") as writes:
             with self.assertRaisesRegex(environment.EnvironmentError, "outside this deployment"):
-                environment.transition(self.plan, self.state, "apply", False, True)
-            lifecycle.assert_not_called()
+                environment.transition(self.plan, self.state, "apply")
+            writes.assert_not_called()
         self.original.write_text("original = True\n")
         (self.state / self.plan["files"][0]["original"]).write_text("corrupt backup\n")
         with self.assertRaisesRegex(environment.EnvironmentError, "rollback file changed"):
-            environment.transition(self.plan, self.state, "rollback", False, True)
+            environment.transition(self.plan, self.state, "rollback")
 
-    def test_partial_write_failure_can_be_explicitly_rolled_back(self):
-        # An interrupted update may have both before/after files. Keep backups
-        # and permit a deliberate rollback without silently replaying anything.
-        self.original.write_text("patched = True\n")
-        self.plan["phase"] = "apply_requested"
-        with patch.object(environment, "require_stopped"):
-            environment.transition(self.plan, self.state, "rollback", False, True)
+    def test_partial_write_failure_keeps_state_for_explicit_rollback(self):
+        atomic = environment.atomic
+        def fail_second_target(path, *args, **kwargs):
+            if path == self.frontend / "new.js":
+                raise OSError("injected write failure")
+            return atomic(path, *args, **kwargs)
+        with patch.object(environment, "atomic", side_effect=fail_second_target):
+            with self.assertRaisesRegex(OSError, "injected write failure"):
+                environment.transition(self.plan, self.state, "apply")
+        self.assertEqual(self.original.read_bytes(), b"patched = True\n")
+        self.assertEqual(json.loads((self.state / "plan.json").read_text())["phase"], "apply_requested")
+        environment.transition(self.plan, self.state, "rollback")
         self.assertEqual(self.original.read_bytes(), b"original = True\n")
-
-    def test_service_start_failure_is_not_reported_as_success_or_replayed(self):
-        self.plan["service"] = {"unit": "owned-jupyter.service", "system": False}
-        self.plan["serviceSha256"] = "owned"
-        with patch.object(environment, "service_signature", return_value="owned"), \
-             patch.object(environment, "require_stopped"), \
-             patch.object(environment, "systemctl", side_effect=["", "inactive", environment.EnvironmentError("start failed")]) as lifecycle:
-            with self.assertRaisesRegex(environment.EnvironmentError, "start failed"):
-                environment.transition(self.plan, self.state, "apply", True, False)
-        self.assertEqual([call.args[1] for call in lifecycle.call_args_list], ["stop", "show", "start"])
-        self.assertEqual(json.loads((self.state / "plan.json").read_text())["phase"], "apply_start_requested")
-
-    def test_plain_restart_without_lifecycle_is_refused(self):
-        with self.assertRaisesRegex(environment.EnvironmentError, "--service"):
-            environment.transition(self.plan, self.state, "apply", True, False)
+        self.assertFalse((self.frontend / "new.js").exists())
 
     def test_existing_identical_policy_does_not_prevent_apply_or_idempotence(self):
         config = self.root / "already-configured.json"
@@ -302,11 +199,21 @@ class EnvironmentTests(unittest.TestCase):
         target = {**self.target, "configFile": str(config)}
         state = self.root / "another state"
         plan = environment.prepare(SOURCE, deploy.sha(SOURCE / "manifest.json"), state, target)
-        with patch.object(environment, "require_stopped"):
-            self.assertTrue(environment.transition(plan, state, "apply", False, True)["changed"])
-            self.assertFalse(environment.transition(plan, state, "apply", False, True)["changed"])
-            environment.transition(plan, state, "rollback", False, True)
+        self.assertTrue(environment.transition(plan, state, "apply")["changed"])
+        self.assertFalse(environment.transition(plan, state, "apply")["changed"])
+        environment.transition(plan, state, "rollback")
         self.assertEqual(json.loads(config.read_text()), policy)
+
+    def test_legacy_managed_state_is_refused_without_writes(self):
+        for legacy in ({"deployment": "compose"}, {"service": {"unit": "old.service"}}):
+            plan = {**self.plan, **legacy}
+            environment.save(self.state, plan)
+            with self.assertRaisesRegex(environment.EnvironmentError, "another patch/environment"):
+                environment.prepare(SOURCE, deploy.sha(SOURCE / "manifest.json"), self.state, self.target)
+            with patch.object(environment, "atomic") as writes:
+                with self.assertRaisesRegex(environment.EnvironmentError, "another installation"):
+                    environment.transition(plan, self.state, "apply")
+                writes.assert_not_called()
 
     def test_search_paths_and_explicit_selection_do_not_depend_on_prefix_or_home(self):
         paths = types.ModuleType("jupyter_core.paths")

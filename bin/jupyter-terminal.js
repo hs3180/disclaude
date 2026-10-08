@@ -1,4 +1,4 @@
-/** Authenticated Jupyter Terminal transport; no SSH, kernel code or live package writes. */
+/** Install files through authenticated Jupyter Terminal; activation requires a restart. */
 import { createHash, randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
@@ -29,10 +29,8 @@ export async function terminalSession(options) {
 }
 
 export async function deployTerminal(options, patch, forwarded, injected) {
-  if (!['prepare', 'status'].includes(options.action))
-    throw new Error(
-      'Terminal cannot stop/restart its own Jupyter Server; use an external deployment channel'
-    );
+  if (!['prepare', 'apply', 'rollback', 'status'].includes(options.action))
+    throw new Error('Expected a Jupyter Terminal installation action');
   const { client, WebSocket } = injected || (await terminalSession(options));
   async function request(route, method = 'GET', body) {
     const response = await client.response(route, method, body);
@@ -117,7 +115,7 @@ print('${receipt}' + json.dumps(value), flush=True)
     const command =
       'stty -echo; ' + quote(options.python || 'python3') + ' -u -c ' + quote(bootstrap) + '\r';
     if (Buffer.byteLength(command) > 3500)
-      throw new Error('Terminal bootstrap exceeds PTY input limits; use SSH for this target');
+      throw new Error('Terminal bootstrap exceeds PTY input limits; shorten target paths');
     const address = await client.socket('terminals/websocket/' + encodeURIComponent(terminal.name));
     socket = new WebSocket(address.url, { headers: address.headers });
     const result = await new Promise((done, fail) => {

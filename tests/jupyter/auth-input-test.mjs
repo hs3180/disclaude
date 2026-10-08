@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import { promptJupyterValue, resolveJupyterAuth } from '../../bin/jupyter-auth.js';
-import { remoteArguments } from '../../bin/jupyter-patch.js';
+import { terminalArguments } from '../../bin/jupyter-patch.js';
 
 const baseUrl = 'https://jupyter.invalid/proxy/user/';
 const cli = new URL('../../bin/disclaude.js', import.meta.url);
@@ -138,7 +138,7 @@ test('password/token environment and custom names work without .env; literal URL
       { baseUrl, mode: 'password', secret: 'custom-password' }
     );
     assert.deepEqual(
-      remoteArguments({
+      terminalArguments({
         action: 'status',
         ...options,
         envFile: '/private/secret.env',

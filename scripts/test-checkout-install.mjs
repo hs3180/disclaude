@@ -18,9 +18,6 @@ const report = { suite: 'package-install', status: 'preparing', checks: [], clea
 let cleanupSafe = true;
 function isDockerDeploymentEntry(value) {
   const path = value.replaceAll('\\', '/').replace(/\/$/, '');
-  // The Jupyter repair CLI needs this pinned recipe to generate the remote
-  // upstream image. It is not a Docker deployment recipe for disclaude itself.
-  if (path === 'jupyter/datalayer/Dockerfile') return false;
   const name = path.split('/').at(-1);
   return (
     path === 'docker' ||

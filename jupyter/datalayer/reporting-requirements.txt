@@ -1,4 +1,0 @@
-# Optional remote report fixture dependencies; PyPI universal wheels, 2026-10-06.
-# Install with --no-deps --require-hashes; preserve the saved scientific environment.
-plotly==7.1.0 --hash=sha256:dbb7fa18afce40d0a8e80d1bf162eceb3faa0ce5a77fe741ad09a74cf78f53f3
-narwhals==2.22.1 --hash=sha256:60567d774edf77db53906f89d9fbd164e66e56d66d388e1e6990f17ac33cfb53

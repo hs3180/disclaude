@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 /** Generate and deploy the pinned upstream Jupyter/nbmodel repair from disclaude. */
 import { createHash } from 'node:crypto';
-import { spawn } from 'node:child_process';
 import { lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -53,7 +52,6 @@ export function buildPatch(source = SOURCE) {
   const manifestBytes = readSource(source, 'manifest.json');
   const manifest = JSON.parse(manifestBytes);
   const names = [
-    'Dockerfile',
     'install.py',
     'configure.py',
     'discovery.py',
@@ -61,7 +59,6 @@ export function buildPatch(source = SOURCE) {
     'manifest.json',
     'runtime.py',
     'server-config.json',
-    'reporting-requirements.txt',
     'LICENSE.nbmodel',
     'frontend-source.patch',
     ...manifest.changes.map((item) => item.patch),
@@ -125,45 +122,39 @@ function help() {
 
 Actions:
   info       Show the upstream repair revision and activation requirements
-  generate   Generate a Jupyter repair artifact and SHA-256 (--output FILE)
-  prepare    Generate, transfer and prepare remotely; keep Jupyter running
-  apply      Generate and deploy remotely (--restart required)
-  rollback   Restore the saved original deployment (--restart required)
-  status     Read the saved phase and observed deployment
+  generate   Export the same repair artifact and SHA-256 (--output FILE)
+  prepare    Stage verified originals and patched files through Jupyter Terminal
+  apply      Install the prepared files; restart Jupyter externally to activate
+  rollback   Restore saved original files; restart Jupyter externally to activate
+  status     Inspect saved installation state and file fingerprints
 
 Options:
-  --ssh HOST          Remote host or SSH config alias
-  --jupyter URL       Use Jupyter Terminal for prepare/status (or 'configured')
+  --jupyter URL       Jupyter endpoint (or 'configured')
   --env-file FILE     Host-private .env (default: .env in the current directory)
   --password-env NAME Password environment key (default: JUPYTERLAB_PASS)
   --token-env NAME    API token environment key (default: JUPYTERLAB_TOKEN)
   --interactive       Enter credentials even when already configured; no secret echo
   --no-interactive    Require configured credentials; never prompt (for scripts)
-  --python PATH       Target Jupyter Python (default: python3); venv/conda supported
-  --container NAME    Select an existing Compose container instead of plain Python
+  --python PATH       Jupyter Server Python when ancestry discovery is ambiguous
   --config-file PATH  Target .py/.json config; default uses Jupyter search paths
   --frontend-dir PATH Select a Lab bundle when discovery is ambiguous
-  --service UNIT      Existing systemd .service for plain-environment stop/start
-  --system            Use system systemd rather than user systemd
-  --state-dir PATH    Absolute remote state directory; retain it for rollback
-  --restart           Restart the selected Compose/systemd service
-  --stopped           Apply to an externally stopped plain Python deployment
+  --state-dir PATH    Absolute Jupyter-side state directory; retain for rollback
   --output FILE       Local artifact path, only for generate
 
-Generation uses Node only. Deployment uses the selected remote Python 3.9+.
-Docker Compose v2 is needed only with --container; there is no default container.
-Terminal uses the existing Jupyter login and needs no SSH. Stop/restart is external.
+Generation uses Node only. Installation uses authenticated Jupyter Terminal
+and the Server's existing Python 3.9+ environment.
 Authentication: environment > .env > prompts for missing values in a TTY.
 Password wins over token in the same source; --token-env selects token explicitly.
-Save notebooks and close kernels before --restart; this repair cannot activate hot.`);
+Installation changes files on disk. Running Server code is not hot-reloaded.
+Save notebooks, close kernels and restart with the existing deployment manager,
+then refresh Lab. The CLI does not control the Server's lifecycle.`);
 }
 
 function parse(args) {
   if (args[0] !== 'patch') throw new Error("Use 'disclaude jupyter patch --help'");
   const options = { action: args[1] };
-  if (!['info', 'generate', 'prepare', 'apply', 'rollback', 'status'].includes(options.action)) {
+  if (!['info', 'generate', 'prepare', 'apply', 'rollback', 'status'].includes(options.action))
     throw new Error('Expected info, generate, prepare, apply, rollback or status');
-  }
   for (let i = 2; i < args.length; i++) {
     const key = args[i];
     if (['--interactive', '--no-interactive'].includes(key)) {
@@ -171,88 +162,41 @@ function parse(args) {
       options.interactive = key === '--interactive';
       continue;
     }
-    if (['--restart', '--stopped', '--system'].includes(key)) {
-      const property = key.slice(2);
-      if (Object.hasOwn(options, property)) throw new Error('Repeated option: ' + key);
-      options[property] = true;
-      continue;
-    }
-    if (key === '--hot')
-      throw new Error(
-        'Hot activation is unavailable for this Jupyter repair; no service operation performed'
-      );
-    if (
-      ![
-        '--ssh',
-        '--jupyter',
-        '--env-file',
-        '--password-env',
-        '--token-env',
-        '--container',
-        '--python',
-        '--config-file',
-        '--frontend-dir',
-        '--service',
-        '--state-dir',
-        '--output',
-      ].includes(key) ||
-      !args[i + 1] ||
-      args[i + 1].startsWith('--')
-    ) {
-      throw new Error('Unknown option or missing value: ' + key);
-    }
+    if (key === '--hot') throw new Error('Hot activation is unavailable for this Jupyter repair');
     const property = {
-      '--ssh': 'ssh',
       '--jupyter': 'jupyter',
       '--env-file': 'envFile',
       '--password-env': 'passwordEnv',
       '--token-env': 'tokenEnv',
-      '--container': 'container',
       '--python': 'python',
       '--config-file': 'configFile',
       '--frontend-dir': 'frontendDir',
-      '--service': 'service',
       '--state-dir': 'stateDir',
       '--output': 'output',
     }[key];
+    if (typeof property !== 'string' || !args[i + 1] || args[i + 1].startsWith('--'))
+      throw new Error('Unknown option or missing value: ' + key);
     if (Object.hasOwn(options, property)) throw new Error('Repeated option: ' + key);
     options[property] = args[++i];
   }
-  if (options.container && !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(options.container))
-    throw new Error('Invalid container name or ID');
   if (options.python && (/[\0\r\n]/.test(options.python) || options.python.startsWith('-')))
     throw new Error('Invalid target Python executable');
-  for (const property of ['stateDir', 'configFile', 'frontendDir']) {
+  for (const property of ['stateDir', 'configFile', 'frontendDir'])
     if (
       options[property] &&
       (!options[property].startsWith('/') || /[\0\r\n]/.test(options[property]))
     )
       throw new Error('Target paths must be absolute');
-  }
-  if (options.service && !/^[A-Za-z0-9][A-Za-z0-9_.@-]*\.service$/.test(options.service))
-    throw new Error('Expected a systemd .service unit name');
-  if (
-    (options.container && (options.service || options.system || options.stopped)) ||
-    (options.system && !options.service)
-  )
-    throw new Error('Service/stopped options target plain Python; --system requires --service');
-  if (options.restart && options.stopped) throw new Error('Choose --restart or --stopped');
   const deploymentOptions = [
-    'ssh',
     'jupyter',
     'envFile',
     'passwordEnv',
     'tokenEnv',
     'interactive',
-    'container',
     'python',
     'configFile',
     'frontendDir',
-    'service',
     'stateDir',
-    'restart',
-    'stopped',
-    'system',
   ];
   if (options.action === 'generate') {
     if (!options.output || deploymentOptions.some((key) => Object.hasOwn(options, key)))
@@ -262,138 +206,25 @@ function parse(args) {
     if (deploymentOptions.some((key) => Object.hasOwn(options, key)))
       throw new Error('info does not use deployment options');
   } else if (options.action !== 'generate') {
-    if (!!options.ssh === !!options.jupyter) throw new Error('Choose --jupyter URL or --ssh HOST');
-    for (const key of ['passwordEnv', 'tokenEnv']) {
+    options.jupyter ||= 'configured';
+    for (const key of ['passwordEnv', 'tokenEnv'])
       if (options[key] && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(options[key]))
         throw new Error('Invalid credential environment key');
-    }
     if (options.passwordEnv && options.tokenEnv)
       throw new Error('Choose password or token authentication');
-    if (
-      options.jupyter &&
-      (!['prepare', 'status'].includes(options.action) ||
-        options.container ||
-        options.service ||
-        options.system ||
-        options.restart ||
-        options.stopped)
-    )
-      throw new Error(
-        'Jupyter Terminal supports prepare/status; apply/rollback requires an external stop/restart channel'
-      );
-    if (
-      !options.jupyter &&
-      (options.envFile ||
-        options.passwordEnv ||
-        options.tokenEnv ||
-        Object.hasOwn(options, 'interactive'))
-    )
-      throw new Error('Jupyter authentication options require --jupyter');
-    if (options.ssh && !/^(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9][A-Za-z0-9._-]*$/.test(options.ssh))
-      throw new Error(
-        '--ssh requires a host or user@host (use SSH config aliases for custom ports/IPv6)'
-      );
-    if (
-      ['apply', 'rollback'].includes(options.action) &&
-      !(
-        (options.container && options.restart) ||
-        (!options.container &&
-          ((options.service && options.restart) || (!options.service && options.stopped)))
-      )
-    )
-      throw new Error(
-        'Use --container/--service with --restart, or stop Jupyter externally and use --stopped; no SSH or service operation performed'
-      );
-    if (!['apply', 'rollback'].includes(options.action) && (options.restart || options.stopped))
-      throw new Error('--restart/--stopped is only for apply/rollback');
   }
   return options;
 }
 
-const quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
-
-export function remoteArguments(options) {
+export function terminalArguments(options) {
   const forwarded = [options.action];
   for (const [property, key] of [
-    ['container', '--container'],
     ['configFile', '--config-file'],
     ['frontendDir', '--frontend-dir'],
-    ['service', '--service'],
     ['stateDir', '--state-dir'],
-  ]) {
+  ])
     if (options[property]) forwarded.push(key, options[property]);
-  }
-  if (options.container && options.python) forwarded.push('--python', options.python);
-  for (const key of ['restart', 'stopped', 'system']) if (options[key]) forwarded.push('--' + key);
   return forwarded;
-}
-
-export function remoteCommand(options, digest) {
-  const forwarded = remoteArguments(options);
-  // Artifact bytes travel on stdin; deployment configuration and credentials
-  // never enter them. Do not retry an SSH failure after an unknown switch result.
-  const code = `import hashlib, os, pathlib, sys, tempfile
-data = sys.stdin.buffer.read()
-expected = ${JSON.stringify(digest)}
-if hashlib.sha256(data).hexdigest() != expected:
-    raise SystemExit('Jupyter patch transfer checksum differs')
-root = pathlib.Path.home() / '.local/share/disclaude/jupyter-patches' / expected
-root.mkdir(parents=True, exist_ok=True)
-if root.is_symlink():
-    raise SystemExit('Refuse a symlinked patch directory')
-root.chmod(0o700)
-artifact = root / 'nbmodel-repair.pyz'
-if artifact.exists() or artifact.is_symlink():
-    if artifact.is_symlink() or not artifact.is_file() or hashlib.sha256(artifact.read_bytes()).hexdigest() != expected:
-        raise SystemExit('Existing Jupyter patch artifact differs')
-else:
-    with tempfile.NamedTemporaryFile(dir=root, delete=False) as stream:
-        temporary = pathlib.Path(stream.name)
-        stream.write(data)
-    temporary.chmod(0o600)
-    temporary.replace(artifact)
-os.execv(sys.executable, [sys.executable, str(artifact)] + ${JSON.stringify(forwarded)})
-`;
-  return quote(options.container ? 'python3' : options.python || 'python3') + ' -c ' + quote(code);
-}
-
-async function deployRemote(options, patch) {
-  const child = spawn(
-    'ssh',
-    [
-      '-o',
-      'BatchMode=yes',
-      '-o',
-      'ConnectTimeout=15',
-      '--',
-      options.ssh,
-      remoteCommand(options, sha(patch.bytes)),
-    ],
-    { stdio: ['pipe', 'inherit', 'inherit'] }
-  );
-  // A failed connection may close stdin early; its exit/error remains authoritative.
-  child.stdin.on('error', () => {});
-  child.stdin.end(patch.bytes);
-  const forward = (signal) => child.kill(signal);
-  const interrupt = () => forward('SIGINT'),
-    terminate = () => forward('SIGTERM');
-  process.on('SIGINT', interrupt);
-  process.on('SIGTERM', terminate);
-  try {
-    await new Promise((done, fail) => {
-      child.once('error', fail);
-      child.once('close', (code) =>
-        code === 0
-          ? done()
-          : fail(
-              new Error(`SSH patch command failed (exit ${code}); inspect status before any retry`)
-            )
-      );
-    });
-  } finally {
-    process.removeListener('SIGINT', interrupt);
-    process.removeListener('SIGTERM', terminate);
-  }
 }
 
 export async function main(args = process.argv.slice(2)) {
@@ -434,10 +265,10 @@ export async function main(args = process.argv.slice(2)) {
         activation,
       })
     );
-  } else if (options.jupyter) {
+  } else {
     const { deployTerminal } = await import('./jupyter-terminal.js');
-    console.log(JSON.stringify(await deployTerminal(options, patch, remoteArguments(options))));
-  } else await deployRemote(options, patch);
+    console.log(JSON.stringify(await deployTerminal(options, patch, terminalArguments(options))));
+  }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

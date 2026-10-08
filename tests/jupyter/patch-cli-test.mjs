@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -53,135 +53,100 @@ test('public CLI generates reproducible artifacts outside the checkout with no h
   }
 });
 
-test('invalid hosts, hot activation and missing restart are refused before SSH', () => {
-  const path = fixture(),
-    receipt = join(path, 'ssh-called');
+test('removed transports and lifecycle options are refused before authentication or any external command', () => {
+  const path = fixture();
   try {
-    writeFileSync(
-      join(path, 'bin/ssh'),
-      `#!${process.execPath}\nrequire('fs').writeFileSync(${JSON.stringify(receipt)}, 'called');`,
-      { mode: 0o755 }
-    );
-    for (const args of [
-      ['apply', '--ssh', 'fixture'],
-      ['rollback', '--ssh', 'fixture'],
-      ['apply', '--ssh', 'fixture', '--hot', '--restart'],
-      ['prepare', '--ssh', '-oProxyCommand=touch injected'],
-      ['prepare', '--ssh', 'fixture;touch injected'],
-      ['prepare', '--ssh', 'fixture', '--restart'],
-      ['prepare', '--ssh', 'fixture', '--state-dir', 'relative-state'],
-      ['apply', '--jupyter', 'configured', '--restart'],
-      ['rollback', '--jupyter', 'configured', '--stopped'],
-      ['prepare', '--jupyter', 'configured', '--ssh', 'fixture'],
-      ['prepare', '--jupyter', 'configured', '--container', 'chosen'],
-    ]) {
-      const result = spawnSync(process.execPath, [cli, 'jupyter', 'patch', ...args], {
-        encoding: 'utf8',
-        cwd: path,
-        env: { ...process.env, PATH: join(path, 'bin') },
-      });
-      assert.notEqual(result.status, 0, args.join(' '));
-      assert.equal(existsSync(receipt), false);
+    for (const action of ['prepare', 'apply', 'rollback', 'status'])
+      for (const option of [
+        '--ssh',
+        '--container',
+        '--service',
+        '--system',
+        '--restart',
+        '--stopped',
+        'constructor',
+        '__proto__',
+      ]) {
+        const result = spawnSync(
+          process.execPath,
+          [cli, 'jupyter', 'patch', action, option, 'fixture'],
+          { encoding: 'utf8', cwd: path, env: { ...process.env, PATH: '' } }
+        );
+        assert.notEqual(result.status, 0);
+        assert(result.stderr.includes('Unknown option or missing value: ' + option));
+      }
+    const help = run(['--help'], { cwd: path, env: { ...process.env, PATH: '' } });
+    assert.match(help, /authenticated Jupyter Terminal/);
+    assert(!/--ssh|--container|--service|--restart|--stopped/.test(help));
+  } finally {
+    rmSync(path, { recursive: true, force: true });
+  }
+});
+
+test('hot activation and relative target paths are refused before login', () => {
+  for (const args of [
+    ['apply', '--hot'],
+    ['prepare', '--state-dir', 'relative'],
+    ['prepare', '--python', '-invalid'],
+  ]) {
+    const result = spawnSync(process.execPath, [cli, 'jupyter', 'patch', ...args], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: '' },
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Hot activation|Target paths|Unknown option|Invalid target/);
+  }
+});
+
+test('Terminal arguments preserve selected paths as data', async () => {
+  const { terminalArguments } = await import('../../bin/jupyter-patch.js');
+  const state = "/chosen path/'$(touch literal)";
+  assert.deepEqual(
+    terminalArguments({
+      action: 'apply',
+      stateDir: state,
+      configFile: '/custom/config.py',
+      frontendDir: '/custom/lab',
+    }),
+    [
+      'apply',
+      '--config-file',
+      '/custom/config.py',
+      '--frontend-dir',
+      '/custom/lab',
+      '--state-dir',
+      state,
+    ]
+  );
+});
+
+test('valid Python paths with spaces reach authentication while control characters are refused', () => {
+  const path = fixture();
+  try {
+    for (const python of ['/custom/env/bin/python', '/chosen Python with spaces']) {
+      const result = spawnSync(
+        process.execPath,
+        [cli, 'jupyter', 'patch', 'prepare', '--python', python, '--no-interactive'],
+        { cwd: path, encoding: 'utf8', env: { PATH: '' } }
+      );
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /missing.*URL|\.env\/environment variables/i);
+      assert.doesNotMatch(result.stderr, /Invalid target Python executable/);
+    }
+    for (const python of ['/env/bin/py\nthon', '/env/bin/py\rthon']) {
+      const result = spawnSync(
+        process.execPath,
+        [cli, 'jupyter', 'patch', 'prepare', '--python', python],
+        { cwd: path, encoding: 'utf8', env: { PATH: '' } }
+      );
+      assert.match(result.stderr, /Invalid target Python executable/);
     }
   } finally {
     rmSync(path, { recursive: true, force: true });
   }
 });
 
-test('SSH transport streams the generated bytes and quotes a remote state path without shell evaluation', () => {
-  const path = fixture(),
-    receipt = join(path, 'received.json'),
-    marker = join(path, 'injected');
-  try {
-    writeFileSync(
-      join(path, 'bin/ssh'),
-      `#!${process.execPath}
-const fs=require('fs'), cp=require('child_process');
-const result=cp.spawnSync('/bin/sh', ['-c', process.argv.at(-1)], {input:fs.readFileSync(0),stdio:['pipe','pipe','pipe']});
-process.stdout.write(result.stdout); process.stderr.write(result.stderr); process.exit(result.status);
-`,
-      { mode: 0o755 }
-    );
-    writeFileSync(
-      join(path, 'bin/python3'),
-      `#!${process.execPath}
-const fs=require('fs'), crypto=require('crypto');
-const data=fs.readFileSync(0), args=process.argv.slice(2);
-fs.writeFileSync(${JSON.stringify(receipt)}, JSON.stringify({args,sha256:crypto.createHash('sha256').update(data).digest('hex')}));
-console.log(JSON.stringify({transported:true}));
-`,
-      { mode: 0o755 }
-    );
-    const state = `/owned/path with spaces/'$(touch ${marker})`;
-    const options = { cwd: path, env: { ...process.env, PATH: join(path, 'bin') } };
-    assert.equal(
-      JSON.parse(run(['prepare', '--ssh', 'fixture', '--state-dir', state], options)).transported,
-      true
-    );
-    const received = JSON.parse(readFileSync(receipt, 'utf8'));
-    assert.equal(received.args.length, 2);
-    assert.equal(received.args[0], '-c');
-    assert(received.args[1].includes(JSON.stringify(state)));
-    const generated = JSON.parse(run(['generate', '--output', join(path, 'same.pyz')], options));
-    assert.equal(received.sha256, generated.sha256);
-    assert.equal(existsSync(marker), false);
-  } finally {
-    rmSync(path, { recursive: true, force: true });
-  }
-});
-
-test('unknown SSH switch results are reported without automatic retry', () => {
-  const path = fixture(),
-    receipt = join(path, 'ssh-count');
-  try {
-    writeFileSync(
-      join(path, 'bin/ssh'),
-      `#!${process.execPath}
-require('fs').appendFileSync(${JSON.stringify(receipt)}, 'attempt\\n');process.exit(74);
-`,
-      { mode: 0o755 }
-    );
-    const result = spawnSync(
-      process.execPath,
-      [
-        cli,
-        'jupyter',
-        'patch',
-        'apply',
-        '--ssh',
-        'fixture',
-        '--container',
-        'owned-fixture',
-        '--restart',
-      ],
-      { encoding: 'utf8', cwd: path, env: { ...process.env, PATH: join(path, 'bin') } }
-    );
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /inspect status before any retry/);
-    assert.equal(readFileSync(receipt, 'utf8'), 'attempt\n');
-  } finally {
-    rmSync(path, { recursive: true, force: true });
-  }
-});
-
-test('deployment selects an explicit environment or container, with no machine-specific defaults', async () => {
-  const { remoteCommand } = await import('../../bin/jupyter-patch.js');
-  const plain = remoteCommand(
-    { action: 'prepare', python: '/custom/venv with spaces/bin/python' },
-    '0'.repeat(64)
-  );
-  assert(plain.startsWith("'/custom/venv with spaces/bin/python' -c "));
-  assert(!plain.includes('--container'));
-  assert(!plain.includes('jupyter-gpu-1'));
-  const compose = remoteCommand(
-    { action: 'prepare', container: 'chosen', python: '/custom/python' },
-    '0'.repeat(64)
-  );
-  assert(compose.startsWith("'python3' -c "));
-  assert(compose.includes('["prepare","--container","chosen","--python","/custom/python"]'));
-});
-
-function terminalFixture(closeEarly = false, forbidden = false) {
+function terminalFixture(closeEarly = false, forbidden = false, action = 'prepare') {
   const calls = [],
     commands = [];
   let received, socketHeaders;
@@ -213,7 +178,16 @@ function terminalFixture(closeEarly = false, forbidden = false) {
         received = Buffer.from(commands.slice(1, -1).join('').replaceAll('\n', ''), 'base64');
         const output =
           this.receipt +
-          JSON.stringify({ ok: true, result: { phase: 'prepared', deployment: 'environment' } }) +
+          JSON.stringify({
+            ok: true,
+            result: {
+              phase:
+                action === 'apply' ? 'applied' : action === 'rollback' ? 'rolled_back' : 'prepared',
+              deployment: 'environment',
+              serverRestartRequired: ['apply', 'rollback'].includes(action),
+              runningCodeVerified: false,
+            },
+          }) +
           '\r\n';
         const middle = Math.floor(output.length / 2);
         queueMicrotask(() => {
@@ -293,4 +267,29 @@ test('Disabled/unauthorized terminals fail without a socket or deleting an unkno
   );
   assert.deepEqual(fixture.calls, [['api/terminals', 'POST']]);
   assert.equal(fixture.commands.length, 0);
+});
+
+test('Terminal apply and rollback install files without managing Server lifecycle', async () => {
+  for (const action of ['apply', 'rollback']) {
+    const fixture = terminalFixture(false, false, action);
+    const result = await deployTerminal({ action }, buildPatch(), [action], fixture);
+    assert.equal(result.phase, action === 'apply' ? 'applied' : 'rolled_back');
+    assert.equal(result.serverRestartRequired, true);
+    assert.equal(result.runningCodeVerified, false);
+    assert.deepEqual(
+      fixture.calls.map(([route]) => route),
+      ['api/terminals', 'terminals/websocket/owned-terminal', 'api/terminals/owned-terminal']
+    );
+  }
+});
+
+test('an unknown apply result is not replayed and only its own Terminal is closed', async () => {
+  const fixture = terminalFixture(true);
+  await assert.rejects(
+    deployTerminal({ action: 'apply' }, buildPatch(), ['apply'], fixture),
+    /before a verified receipt/
+  );
+  assert.equal(fixture.commands.length, 1);
+  assert.equal(fixture.calls.filter(([, method]) => method === 'POST').length, 1);
+  assert.deepEqual(fixture.calls.at(-1), ['api/terminals/owned-terminal', 'DELETE']);
 });

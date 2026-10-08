@@ -136,6 +136,8 @@ async function verifyPackage() {
   assert.match(run(cli, ['jupyter', 'patch', '--help']), /--jupyter URL/u);
   assert.match(run(cli, ['jupyter', 'patch', '--help']), /--interactive/u);
   assert.match(run(cli, ['jupyter', 'patch', '--help']), /--no-interactive/u);
+  assert.doesNotMatch(run(cli, ['jupyter', 'patch', '--help']), /--ssh|--container|--service|--restart|--stopped/u);
+  assert.equal(existsSync(join(installed, 'jupyter/datalayer/Dockerfile')), false);
   assert(existsSync(join(installed, 'bin/jupyter-terminal.js')));
   assert(existsSync(join(installed, 'bin/jupyter-auth.js')));
   run(process.execPath, ['--input-type=module', '-e', `
