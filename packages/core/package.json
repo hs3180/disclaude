@@ -10,6 +10,10 @@
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
     },
+    "./jupyter": {
+      "import": "./dist/jupyter/index.js",
+      "types": "./dist/jupyter/index.d.ts"
+    },
     "./config-discovery": {
       "import": "./dist/config/discovery.js",
       "types": "./dist/config/discovery.d.ts"

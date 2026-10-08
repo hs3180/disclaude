@@ -47,7 +47,7 @@ function showHelp() {
       '  start [options]    Start disclaude',
       '  channel <command>  Send channel messages through the service',
       '  browser <cmd>      Inspect coordinated browser control',
-      '  jupyter patch <action> Generate or deploy the upstream Jupyter repair',
+      '  jupyter <command> Work with remote Notebooks; patch installs the upstream repair',
       '  chromium-cdp <cmd> Manage or diagnose the persistent Chromium CDP service (Issue #4807)',
       '',
       'Global Options:',
@@ -66,7 +66,7 @@ function showHelp() {
 }
 
 const ROUTES = {
-  jupyter: { file: resolve(ROOT, 'bin/jupyter-patch.js') },
+  jupyter: { file: resolve(ROOT, args[1] === 'patch' ? 'bin/jupyter-patch.js' : 'bin/jupyter.js') },
   browser: { file: resolve(ROOT, 'node_modules/@disclaude/service/dist/browser-control/cli.mjs') },
   start: {
     file: resolve(ROOT, 'node_modules/@disclaude/service/dist/cli.js'),

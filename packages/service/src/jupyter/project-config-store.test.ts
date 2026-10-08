@@ -140,6 +140,17 @@ describe('JupyterProjectConfigStore', () => {
     expect(store.listNotebookReferences()).toEqual({ ok: true, data: [refreshed] });
   });
 
+  it('resolves stable identity while preserving current version metadata and rejecting stale paths', () => {
+    const store = new JupyterProjectConfigStore(root);
+    const unresolved = reference({ documentId: undefined });
+    store.linkNotebook(unresolved);
+    store.linkNotebook({ ...unresolved, lastKnownVersion: 'fresh-revision' });
+    expect(store.resolveNotebook(unresolved, 'resolved-doc')).toMatchObject({ ok: true, data: { documentId: 'resolved-doc', lastKnownVersion: 'fresh-revision' } });
+    expect(store.listNotebookReferences()).toMatchObject({ ok: true, data: [{ documentId: 'resolved-doc' }] });
+    expect(store.resolveNotebook(unresolved, 'wrong-doc')).toMatchObject({ ok: false });
+    expect(store.resolveNotebook(reference({ documentId: 'resolved-doc', contentPath: 'old.ipynb' }), 'resolved-doc')).toMatchObject({ ok: false });
+  });
+
   it('allowlists reference fields on both read and write', () => {
     const store = new JupyterProjectConfigStore(root);
     const extra = {

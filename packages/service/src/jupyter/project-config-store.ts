@@ -74,6 +74,68 @@ export class JupyterProjectConfigStore {
     return saved.ok ? { ok: true, data: sanitized } : saved;
   }
 
+  /** Replace an unresolved path only while its original reference still matches. */
+  resolveNotebook(
+    reference: NotebookIdentity,
+    documentId: string
+  ): JupyterConfigResult<JupyterNotebookReference> {
+    const resolved = { ...reference, documentId };
+    const error = validateReference(resolved);
+    if (error) {
+      return { ok: false, error };
+    }
+    const loaded = this.load();
+    if (!loaded.ok) {
+      return loaded;
+    }
+    const index = loaded.data.notebooks.findIndex(
+      (item) => referenceKey(item) === referenceKey(reference)
+    );
+    const existing = loaded.data.notebooks[index];
+    if (!existing || existing.contentPath !== reference.contentPath) {
+      return { ok: false, error: 'Notebook reference changed while resolving its identity' };
+    }
+    if (reference.documentId && reference.documentId !== documentId) {
+      return { ok: false, error: 'Notebook stable identity changed' };
+    }
+    const current = cloneReference({ ...existing, documentId });
+    loaded.data.notebooks[index] = current;
+    loaded.data.notebooks = loaded.data.notebooks.filter(
+      (item, position) => position === index || referenceKey(item) !== referenceKey(current)
+    );
+    const saved = this.persist(loaded.data);
+    return saved.ok ? { ok: true, data: current } : saved;
+  }
+
+  /** Update only the path of the original, still-authorized stable document. */
+  updateNotebookPath(
+    reference: NotebookIdentity,
+    contentPath: string
+  ): JupyterConfigResult<JupyterNotebookReference> {
+    if (!reference.documentId) {
+      return { ok: false, error: 'A stable document ID is required to follow a rename' };
+    }
+    const next = { ...reference, contentPath };
+    const error = validateReference(next);
+    if (error) {
+      return { ok: false, error };
+    }
+    const loaded = this.load();
+    if (!loaded.ok) {
+      return loaded;
+    }
+    const index = loaded.data.notebooks.findIndex(
+      (item) => referenceKey(item) === referenceKey(reference)
+    );
+    if (index < 0 || loaded.data.notebooks[index].contentPath !== reference.contentPath) {
+      return { ok: false, error: 'Notebook reference changed while following its identity' };
+    }
+    const current = cloneReference({ ...loaded.data.notebooks[index], contentPath });
+    loaded.data.notebooks[index] = current;
+    const saved = this.persist(loaded.data);
+    return saved.ok ? { ok: true, data: current } : saved;
+  }
+
   /** Remove only the local reference; never delete a notebook or stop a kernel. */
   unlinkNotebook(reference: NotebookIdentity): JupyterConfigResult<boolean> {
     const error = validateReference(reference);

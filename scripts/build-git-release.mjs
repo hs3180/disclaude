@@ -123,6 +123,7 @@ export function generateRelease(root, output) {
     output,
     'packages/core/dist/utils/browser-env.js'
   );
+  targets['@disclaude/core/jupyter'] = join(output, 'packages/core/dist/jupyter/index.js');
   const dependencies = {};
   const optionalDependencies = {};
   const manifests = [
