@@ -134,9 +134,11 @@ Actions:
 Options:
   --ssh HOST          Remote host or SSH config alias
   --jupyter URL       Use Jupyter Terminal for prepare/status (or 'configured')
-  --env-file FILE     Host-private .env for JUPYTERLAB_HOST/JUPYTERLAB_PASS
+  --env-file FILE     Host-private .env (default: .env in the current directory)
   --password-env NAME Password environment key (default: JUPYTERLAB_PASS)
-  --token-env NAME    Use an API token environment key instead of password
+  --token-env NAME    API token environment key (default: JUPYTERLAB_TOKEN)
+  --interactive       Enter credentials even when already configured; no secret echo
+  --no-interactive    Require configured credentials; never prompt (for scripts)
   --python PATH       Target Jupyter Python (default: python3); venv/conda supported
   --container NAME    Select an existing Compose container instead of plain Python
   --config-file PATH  Target .py/.json config; default uses Jupyter search paths
@@ -151,6 +153,8 @@ Options:
 Generation uses Node only. Deployment uses the selected remote Python 3.9+.
 Docker Compose v2 is needed only with --container; there is no default container.
 Terminal uses the existing Jupyter login and needs no SSH. Stop/restart is external.
+Authentication: environment > .env > prompts for missing values in a TTY.
+Password wins over token in the same source; --token-env selects token explicitly.
 Save notebooks and close kernels before --restart; this repair cannot activate hot.`);
 }
 
@@ -162,6 +166,11 @@ function parse(args) {
   }
   for (let i = 2; i < args.length; i++) {
     const key = args[i];
+    if (['--interactive', '--no-interactive'].includes(key)) {
+      if (Object.hasOwn(options, 'interactive')) throw new Error('Choose one interactive option');
+      options.interactive = key === '--interactive';
+      continue;
+    }
     if (['--restart', '--stopped', '--system'].includes(key)) {
       const property = key.slice(2);
       if (Object.hasOwn(options, property)) throw new Error('Repeated option: ' + key);
@@ -234,6 +243,7 @@ function parse(args) {
     'envFile',
     'passwordEnv',
     'tokenEnv',
+    'interactive',
     'container',
     'python',
     'configFile',
@@ -271,7 +281,13 @@ function parse(args) {
       throw new Error(
         'Jupyter Terminal supports prepare/status; apply/rollback requires an external stop/restart channel'
       );
-    if (!options.jupyter && (options.envFile || options.passwordEnv || options.tokenEnv))
+    if (
+      !options.jupyter &&
+      (options.envFile ||
+        options.passwordEnv ||
+        options.tokenEnv ||
+        Object.hasOwn(options, 'interactive'))
+    )
       throw new Error('Jupyter authentication options require --jupyter');
     if (options.ssh && !/^(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9][A-Za-z0-9._-]*$/.test(options.ssh))
       throw new Error(

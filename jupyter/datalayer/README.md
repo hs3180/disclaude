@@ -32,17 +32,40 @@ When Jupyter's POSIX Terminal is enabled, the CLI can use the existing password
 or API token login, Terminal REST API and authenticated WebSocket without SSH:
 
 ```sh
-disclaude jupyter patch prepare --jupyter configured --env-file /your/private/.env
-disclaude jupyter patch status --jupyter configured --env-file /your/private/.env
+# .env in the current directory, or already-exported environment variables
+disclaude jupyter patch prepare --jupyter configured
+# Select a private file explicitly; scripts can forbid all prompts
+disclaude jupyter patch status --jupyter configured --env-file /your/private/.env --no-interactive
+# Enter password or token in the terminal, without secret echo
+disclaude jupyter patch prepare --jupyter configured --interactive
 ```
 
-`configured` reads host-private `JUPYTERLAB_HOST` / `JUPYTERLAB_PASS`. A literal
-`--jupyter URL` also works. Real environment variables take precedence over
-`--env-file` (Node 20.12+); without a file, environment variables work directly.
-`--password-env NAME` selects another password key; `--token-env NAME` selects
-token authentication. Credentials/cookies stay on the host and are not included
-in shell commands, artifacts, state or output. The existing HTTP client supplies
-cookie/XSRF/origin and redirect rules, respecting reverse-proxy URL prefixes.
+`configured` resolves `JUPYTERLAB_HOST` plus `JUPYTERLAB_PASS` (password) or
+`JUPYTERLAB_TOKEN` (API token). A literal `--jupyter URL` overrides the configured
+host. The CLI reads `.env` only in the current directory, or the exact
+`--env-file`; it does not search deployment/container directories. All three
+input methods work on the repository's supported Node 18+ runtimes.
+Values are not shell-expanded, executed, copied to `process.env` or saved back.
+
+Actual environment variables override the same keys in `.env`, including empty
+values. Environment credentials are preferred over file credentials across both
+auth modes. If both password/token are present in the same source, password is the
+default. `--password-env NAME` / `--token-env NAME` explicitly select one mode and
+allow custom keys; for example `--token-env JUPYTERLAB_TOKEN` always uses a token.
+
+By default, an interactive terminal prompts only for missing URL/authentication;
+if credentials are missing, choose password or token and enter the secret without
+echo. `--interactive` requests fresh credentials even when configured, retaining
+the selected URL; an explicit auth key skips the mode question. `--no-interactive`
+requires complete configuration for scripts. Missing values without a TTY fail
+before any connection, and Ctrl-C/Ctrl-D cancel input and restore the terminal.
+Prompts use stderr, preserving JSON stdout. Invalid credentials do not trigger
+automatic login retries or a different transport.
+
+Credentials/cookies stay on the host and are not included in shell commands,
+artifacts, state, output or persistent prompt history. The existing HTTP client
+supplies cookie/XSRF/origin and redirect rules, respecting reverse-proxy URL
+prefixes. Do not place passwords/tokens in CLI arguments or URL query parameters.
 
 The CLI creates/closes only its own terminal, transfers the verified artifact in
 bounded PTY lines, and discovers the Server interpreter from the terminal's

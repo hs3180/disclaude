@@ -7,12 +7,16 @@ on:
       - 'bin/disclaude.js'
       - 'bin/jupyter-patch.js'
       - 'bin/jupyter-terminal.js'
+      - 'bin/jupyter-auth.js'
       - 'package.json'
+      - 'package-lock.json'
       - 'scripts/build-git-release.mjs'
       - 'scripts/test-checkout-install.mjs'
       - 'scripts/test-package-install.mjs'
       - 'tests/jupyter/datalayer-package-test.py'
       - 'tests/jupyter/patch-cli-test.mjs'
+      - 'tests/jupyter/auth-input-test.mjs'
+      - 'tests/jupyter/auth-tty-test.py'
       - '.github/workflows/datalayer-package.yml'
   push:
     branches: [main]
@@ -21,12 +25,16 @@ on:
       - 'bin/disclaude.js'
       - 'bin/jupyter-patch.js'
       - 'bin/jupyter-terminal.js'
+      - 'bin/jupyter-auth.js'
       - 'package.json'
+      - 'package-lock.json'
       - 'scripts/build-git-release.mjs'
       - 'scripts/test-checkout-install.mjs'
       - 'scripts/test-package-install.mjs'
       - 'tests/jupyter/datalayer-package-test.py'
       - 'tests/jupyter/patch-cli-test.mjs'
+      - 'tests/jupyter/auth-input-test.mjs'
+      - 'tests/jupyter/auth-tty-test.py'
       - '.github/workflows/datalayer-package.yml'
 
 jobs:
@@ -46,7 +54,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - name: Verify CLI generation and SSH boundaries
-        run: node --test tests/jupyter/patch-cli-test.mjs
+      - name: Install locked dependencies for the host .env parser
+        run: npm ci --ignore-scripts --include=dev
+      - name: Verify CLI generation, authentication and transport boundaries
+        run: node --test tests/jupyter/patch-cli-test.mjs tests/jupyter/auth-input-test.mjs
       - name: Verify generated artifact and deployment guards
         run: python tests/jupyter/datalayer-package-test.py -v
+      - name: Verify hidden authentication in a real terminal
+        run: python tests/jupyter/auth-tty-test.py -v

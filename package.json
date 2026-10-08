@@ -98,6 +98,7 @@
     "@disclaude/channel-cli": "*",
     "@disclaude/core": "*",
     "@disclaude/service": "*",
+    "dotenv": "18.0.6",
     "qrcode": "1.5.4"
   },
   "bundledDependencies": [

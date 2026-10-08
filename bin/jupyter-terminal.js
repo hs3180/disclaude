@@ -1,29 +1,16 @@
 /** Authenticated Jupyter Terminal transport; no SSH, kernel code or live package writes. */
 import { createHash, randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import * as util from 'node:util';
 import { deflateSync } from 'node:zlib';
+import { resolveJupyterAuth } from './jupyter-auth.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
 
 export async function terminalSession(options) {
-  let environment = process.env;
-  if (options.envFile) {
-    if (!util.parseEnv)
-      throw new Error('--env-file requires Node 20.12+; otherwise use environment variables');
-    try {
-      environment = { ...util.parseEnv(readFileSync(options.envFile, 'utf8')), ...process.env };
-    } catch {
-      throw new Error('Host-private Jupyter environment file could not be read');
-    }
-  }
-  const baseUrl = options.jupyter === 'configured' ? environment.JUPYTERLAB_HOST : options.jupyter;
-  const secret = environment[options.tokenEnv || options.passwordEnv || 'JUPYTERLAB_PASS'];
-  if (!baseUrl || !secret) throw new Error('Configured Jupyter URL/authentication is unavailable');
+  const { baseUrl, mode, secret } = await resolveJupyterAuth(options);
   // Reuse the main client's cookie, XSRF, origin and redirect rules. Secrets stay
   // in this host session, never in terminal commands, artifacts or printed output.
   const { JupyterHttpConnection } =
@@ -32,7 +19,7 @@ export async function terminalSession(options) {
   return {
     client: new JupyterHttpConnection({
       baseUrl,
-      ...(options.tokenEnv
+      ...(mode === 'token'
         ? { authorization: async () => 'token ' + secret }
         : { password: async () => secret }),
       allowInsecureHttp: baseUrl.startsWith('http://'),
