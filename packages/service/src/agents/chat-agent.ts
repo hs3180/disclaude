@@ -1470,6 +1470,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     let userVisibleOutputCount = 0;
     let turnResultText = '';
     let turnResultTruncated = false;
+    const bufferGroupAssistantText = this.chatType === 'group' || this.chatType === 'topic';
+    let pendingAssistantChunks: string[] = [];
     // 2026-09-08: 本轮是否收到 proxy 的 mid-stream 中断标记(带 MIDSTREAM_MARKER 的
     // assistant 正文)。turn 收尾 accounting 用;与其它 per-turn 计数一起清零。
     let sawMidstreamInterrupt = false;
@@ -1508,16 +1510,32 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const resolveReplyThreadRoot = (): string | undefined =>
       consumeTurnAnchor() ?? this.conversationOrchestrator.getThreadRoot(chatId);
 
+    const flushPendingAssistant = async (partial = false): Promise<void> => {
+      if (pendingAssistantChunks.length === 0) { return; }
+      const content = pendingAssistantChunks.join('');
+      pendingAssistantChunks = [];
+      const delivered = await this.deliverUserVisible(
+        chatId,
+        partial ? `⚠️ 中断前的部分回复（本轮未确认完成）：\n\n${content}` : content,
+        resolveReplyThreadRoot(),
+        partial ? undefined : (id) => { finalDeliveryId = id; },
+      );
+      if (!delivered) {
+        finalDeliveryId = undefined;
+        turnDeliveryFailed = true;
+      }
+      userVisibleOutputCount++;
+    };
+
     // Issue #4399 (#4208 P2-b): streaming-card state machine. Only constructed
     // when the channel advertises supportsStreaming AND provides all three
-    // streaming callbacks; otherwise `streamDriver` is null and the assistant
-    // dispatch below is bit-identical to today (sendMessage per chunk). The
+    // streaming callbacks; otherwise `streamDriver` is null. The
     // driver owns the reply-never-lost guarantee (start-decline / flush-failure
     // → sendMessage fallback) and is finalized on every turn-exit path below.
     // Issue #4510 (part 2): the p2p-first gray rollout is built-in, not a
     // config option — streaming cards are only constructed for single chats;
-    // group/topic turns skip the driver entirely and keep the per-chunk
-    // sendMessage path, so the rollout never changes group behavior.
+    // group/topic turns skip the driver and buffer assistant rounds until
+    // a final answer or result confirms delivery (#5239).
     // `this.chatType` is set by processMessage (#3641, with #4401/#4428 topic
     // normalization), so an unset value degrades to non-streaming
     // (fail-safe: unknown type → no card).
@@ -1581,6 +1599,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
         // Issue #3003: Track tool call timing
         if (parsed.type === 'tool_use') {
+          // A following tool proves the unphased text belonged to an
+          // intermediate model round. Do not publish it as a group message.
+          pendingAssistantChunks = [];
           // Text preceding another tool call is intermediate commentary, not
           // the terminal answer consumed by structured internal workflows.
           turnResultText = '';
@@ -1622,6 +1643,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             parsed.type === 'tool_use' ||
             parsed.type === 'tool_result' ||
             parsed.type === 'tool_progress' ||
+            (bufferGroupAssistantText && parsed.type === 'text' && parsed.metadata?.phase === 'commentary') ||
             parsed.metadata?.transientStatus === true;
           // #4774: tool traces are internal for every harness and chat type.
           // Preserve debug forwarding and accounting without publishing raw
@@ -1690,15 +1712,20 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             if (parsed.type === 'result' && visibleContent.startsWith('✅ Complete')) {
               toDeliver = '';
             }
-            // Keep progress visible in chat, but never concatenate it into a structured result.
+            // Preserve terminal text for structured results independently of
+            // the channel's delivery timing; commentary is excluded.
             if (this.callbacks.onTurnResult && isAssistantReplyText && toDeliver && parsed.metadata?.phase !== 'commentary') {
               const nextText = turnResultText + toDeliver;
               turnResultTruncated ||= nextText.length > 65_536;
               turnResultText = nextText.slice(0, 65_536);
             }
             let delivered = false;
+            const bufferAssistant = bufferGroupAssistantText && isAssistantReplyText;
             if (toDeliver) {
-              if (streamDriver && isAssistantReplyText) {
+              if (bufferAssistant) {
+                pendingAssistantChunks.push(toDeliver);
+                if (parsed.metadata?.phase === 'final_answer') { await flushPendingAssistant(); }
+              } else if (streamDriver && isAssistantReplyText) {
                 delivered = await streamDriver.pushText(toDeliver, threadRoot);
               } else {
                 // Issue #4626: route through the isolation wrapper — a channel
@@ -1708,14 +1735,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                 delivered = await this.deliverUserVisible(chatId, toDeliver, threadRoot,
                   isAssistantReplyText ? (id) => { finalDeliveryId = id; } : undefined);
               }
-              if (isAssistantReplyText && !delivered) {
+              if (isAssistantReplyText && !bufferAssistant && !delivered) {
                 finalDeliveryId = undefined;
                 turnDeliveryFailed = true;
               }
             }
             // Preserve attempted-output accounting for empty-turn recovery;
             // delivery failures independently prevent a completion reaction.
-            if (toDeliver && !visibleContent.startsWith('✅ Complete')) {
+            if (toDeliver && !bufferAssistant && !visibleContent.startsWith('✅ Complete')) {
               userVisibleOutputCount++;
             }
           }
@@ -1723,6 +1750,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
         // Check for completion
         if (parsed.type === 'result') {
+          await flushPendingAssistant(Boolean(parsed.terminatedReason || parsed.upstreamApiError || turnHadError || sawMidstreamInterrupt));
           if (streamDriver && !(await streamDriver.finish(resolveReplyThreadRoot()))) {
             turnDeliveryFailed = true;
             finalDeliveryId = undefined;
@@ -2434,6 +2462,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         }
       }
     } finally {
+      // Preserve unconfirmed output as partial only for this live generation.
+      // Stop/reset/dispose must not publish a stale buffered reply.
+      if (this.sessionGeneration === myGeneration && !this.disposed &&
+          !this.abortController?.signal.aborted && !this.stoppedQueryGenerations.has(myGeneration)) {
+        await flushPendingAssistant(true);
+      }
       // Issue #4399 (#4208 P2-b): finalize the in-place streaming card on every
       // turn-exit path (normal result, stall, abort, iterator error). No-op
       // when streaming never started or the channel doesn't stream — the

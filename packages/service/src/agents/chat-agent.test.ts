@@ -2229,6 +2229,140 @@ describe('ChatAgent (service)', () => {
     });
   });
 
+  describe('group assistant delivery (#5239)', () => {
+    function ownedAgent(chatType: string = 'group') {
+      const callbacks = createMockCallbacks();
+      const agent = new ChatAgent({ chatId: 'owned-delivery', callbacks, apiKey: 'test', model: 'test' });
+      (agent as any).isAgentTeamsEnabled = vi.fn(() => false);
+      (agent as any).chatType = chatType;
+      return { agent, callbacks };
+    }
+
+    it.each(['group', 'topic'])('waits for a %s text round to finish and discards text followed by tools', async chatType => {
+      const { agent, callbacks } = ownedAgent(chatType);
+      const iterator = (async function* () {
+        yield { parsed: { type: 'text', content: 'opaque pre-tool narration' } };
+        expect(callbacks.sendMessage).not.toHaveBeenCalled();
+        yield { parsed: { type: 'tool_use', content: 'Read', metadata: { toolName: 'Read' } } };
+        yield { parsed: { type: 'tool_result', content: 'read result' } };
+        yield { parsed: { type: 'text', content: 'opaque verification narration' } };
+        expect(callbacks.sendMessage).not.toHaveBeenCalled();
+        yield { parsed: { type: 'tool_use', content: 'Verify' } };
+        yield { parsed: { type: 'tool_result', content: 'verified' } };
+        yield { parsed: { type: 'text', content: 'Sent and verified.' } };
+        yield { parsed: { type: 'text', content: '\n\nFinal count: 14.' } };
+        expect(callbacks.sendMessage).not.toHaveBeenCalled();
+        yield { parsed: { type: 'result', content: '✅ Complete' } };
+      })();
+      await (agent as any).processIterator(iterator);
+      expect(callbacks.sendMessage).toHaveBeenCalledExactlyOnceWith('owned-delivery', 'Sent and verified.\n\nFinal count: 14.', expect.anything());
+    });
+
+    it('suppresses declared commentary but delivers a declared final answer and necessary status', async () => {
+      const { agent, callbacks } = ownedAgent();
+      await (agent as any).processIterator((async function* () {
+        yield { parsed: { type: 'text', content: 'Internal next action', metadata: { phase: 'commentary' } } };
+        yield { parsed: { type: 'status', content: 'Please authorize the required operation.' } };
+        yield { parsed: { type: 'tool_use', content: 'hidden tool' } };
+        yield { parsed: { type: 'text', content: 'Final reply', metadata: { phase: 'final_answer' } } };
+        yield { parsed: { type: 'result', content: '' } };
+      })());
+      expect(callbacks.sendMessage.mock.calls.map(call => call[1])).toEqual(['Please authorize the required operation.', 'Final reply']);
+    });
+
+    it('keeps non-streaming private-chat delivery unchanged', async () => {
+      const { agent, callbacks } = ownedAgent('p2p');
+      await (agent as any).processIterator((async function* () {
+        yield { parsed: { type: 'text', content: 'Private progress', metadata: { phase: 'commentary' } } };
+        yield { parsed: { type: 'text', content: 'Private answer', metadata: { phase: 'final_answer' } } };
+        yield { parsed: { type: 'result', content: '' } };
+      })());
+      expect(callbacks.sendMessage.mock.calls.map(call => call[1])).toEqual(['Private progress', 'Private answer']);
+    });
+
+    it('preserves the frozen source-thread anchors across two buffered turns', async () => {
+      const { agent, callbacks } = ownedAgent('topic');
+      (agent as any).pendingTurnAnchors = ['root-A', 'root-B'];
+      (agent as any).pendingTurnMessageIds = ['source-A', 'source-B'];
+      await (agent as any).processIterator((async function* () {
+        yield { parsed: { type: 'text', content: 'Answer A' } };
+        yield { parsed: { type: 'result', content: '' } };
+        yield { parsed: { type: 'text', content: 'Answer B' } };
+        yield { parsed: { type: 'result', content: '' } };
+      })());
+      expect(callbacks.sendMessage.mock.calls.map(call => [call[1], call[2]])).toEqual([['Answer A', 'root-A'], ['Answer B', 'root-B']]);
+    });
+
+    it('preserves an explicitly formatted answer across raw text chunks', async () => {
+      const { agent, callbacks } = ownedAgent();
+      await (agent as any).processIterator((async function* () {
+        yield { parsed: { type: 'text', content: '{"count":' } };
+        yield { parsed: { type: 'text', content: '14,"ok":true}' } };
+        yield { parsed: { type: 'result', content: '✅ Complete' } };
+      })());
+      expect(callbacks.sendMessage).toHaveBeenCalledExactlyOnceWith('owned-delivery', '{"count":14,"ok":true}', expect.anything());
+    });
+
+    it('keeps declared commentary available in the configured debug group', async () => {
+      const { agent, callbacks } = ownedAgent();
+      mockGetDebugGroup.mockReturnValue({ chatId: 'owned-debug', setAt: 1 });
+      try {
+        await (agent as any).processIterator((async function* () {
+          yield { parsed: { type: 'text', content: 'Internal next action', metadata: { phase: 'commentary' } } };
+          yield { parsed: { type: 'text', content: 'Answer', metadata: { phase: 'final_answer' } } };
+          yield { parsed: { type: 'result', content: '' } };
+        })());
+        expect(callbacks.sendMessage.mock.calls.map(call => [call[0], call[1]])).toEqual([
+          ['owned-debug', '[text] Internal next action'], ['owned-delivery', 'Answer'],
+        ]);
+      } finally { mockGetDebugGroup.mockReturnValue(null); }
+    });
+
+    it('marks failed-turn output as partial and preserves the failed structured result', async () => {
+      const { agent, callbacks } = ownedAgent();
+      const onTurnResult = vi.fn().mockResolvedValue(undefined);
+      (agent as any).callbacks.onTurnResult = onTurnResult;
+      await (agent as any).processIterator((async function* () {
+        yield { parsed: { type: 'text', content: 'Work observed before failure' } };
+        yield { parsed: { type: 'result', content: '', terminatedReason: 'turn_failed' } };
+      })());
+      expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('未确认完成');
+      expect(onTurnResult).toHaveBeenCalledWith({ success: false, text: 'Work observed before failure', truncated: false });
+    });
+
+    it('does not report a successful turn after final-answer delivery fails', async () => {
+      const { agent, callbacks } = ownedAgent();
+      const onTurnResult = vi.fn().mockResolvedValue(undefined);
+      (agent as any).callbacks.onTurnResult = onTurnResult;
+      callbacks.sendMessage.mockRejectedValue(new Error('owned delivery failed'));
+      await (agent as any).processIterator((async function* () {
+        yield { parsed: { type: 'text', content: 'Final output' } };
+        yield { parsed: { type: 'result', content: '' } };
+      })());
+      expect(callbacks.sendMessage).toHaveBeenCalledTimes(1);
+      expect(onTurnResult).toHaveBeenCalledWith({ success: false, text: 'Final output', truncated: false });
+    });
+
+    it('labels an unconfirmed buffered reply as partial when the iterator ends', async () => {
+      const { agent, callbacks } = ownedAgent();
+      await (agent as any).processIterator((async function* () {
+        yield { parsed: { type: 'text', content: 'Unconfirmed partial content' } };
+      })());
+      const partial = callbacks.sendMessage.mock.calls.find(call => String(call[1]).includes('Unconfirmed partial content'));
+      expect(partial?.[1]).toContain('部分回复');
+      expect(partial?.[1]).toContain('未确认完成');
+    });
+
+    it('drops buffered text when a reset supersedes the iterator', async () => {
+      const { agent, callbacks } = ownedAgent();
+      await (agent as any).processIterator((async function* () {
+        yield { parsed: { type: 'text', content: 'Superseded text' } };
+        agent.reset();
+      })());
+      expect(callbacks.sendMessage.mock.calls.some(call => String(call[1]).includes('Superseded text'))).toBe(false);
+    });
+  });
+
   describe('structured internal turn results', () => {
     it.each([false, true])('bounds terminal output and resets the bound at a tool call (tool=%s)', async tool => {
       const callbacks = { ...createMockCallbacks(), onTurnResult: vi.fn().mockResolvedValue(undefined) };
@@ -2904,13 +3038,17 @@ describe('ChatAgent (service)', () => {
 
       (agent as any).chatType = 'topic';
 
-      // Thread A's iterator: first chunk goes out, then a real async gap
-      // (timeout) during which thread B's processMessage lands, then A's
-      // second chunk + result.
+      // Pause after A's first buffered chunk so B arrives before A's final
+      // delivery. The gate makes the cross-thread ordering deterministic.
+      let firstChunkObserved!: () => void;
+      let resumeA!: () => void;
+      const observed = new Promise<void>(resolve => { firstChunkObserved = resolve; });
+      const paused = new Promise<void>(resolve => { resumeA = resolve; });
       async function* threadAIterator() {
         yield { parsed: { type: 'text', content: 'A chunk 1' } };
-        await new Promise<void>((r) => setTimeout(r, 50));
-        yield { parsed: { type: 'text', content: 'A chunk 2 after B arrived' } };
+        firstChunkObserved();
+        await paused;
+        yield { parsed: { type: 'text', content: '\nA chunk 2 after B arrived' } };
         yield { parsed: { type: 'result', content: 'Done A' } };
       }
 
@@ -2928,16 +3066,8 @@ describe('ChatAgent (service)', () => {
         threadRootId: 'omt_thread_a',
       });
 
-      await vi.waitFor(
-        () => {
-          expect(
-            localCallbacks.sendMessage.mock.calls.some(
-              (call: any[]) => call[1] === 'A chunk 1'
-            )
-          ).toBe(true);
-        },
-        { timeout: 1000, interval: 10 }
-      );
+      await observed;
+      expect(localCallbacks.sendMessage).not.toHaveBeenCalled();
 
       // Thread B's message arrives MID-TURN of A (same chat-scoped agent).
       // This overwrites currentThreadRootId synchronously.
@@ -2949,33 +3079,33 @@ describe('ChatAgent (service)', () => {
         handle: { close: vi.fn(), cancel: vi.fn() },
         iterator: threadBIterator(),
       });
-      void agent.processMessage({
+      await agent.processMessage({
         chatId: 'oc_topic_chat',
         payload: 'question in thread B',
         messageId: 'msg_b_1',
         chatType: 'topic',
         threadRootId: 'omt_thread_b',
       });
+      resumeA();
 
       // Wait for A's post-B chunk and let everything settle.
       await vi.waitFor(
         () => {
           expect(
             localCallbacks.sendMessage.mock.calls.some(
-              (call: any[]) => call[1] === 'A chunk 2 after B arrived'
+              (call: any[]) => call[1] === 'A chunk 1\nA chunk 2 after B arrived'
             )
           ).toBe(true);
         },
         { timeout: 1000, interval: 10 }
       );
-      await new Promise((r) => setTimeout(r, 100));
-
       const a2 = localCallbacks.sendMessage.mock.calls.find(
-        (call: any[]) => call[1] === 'A chunk 2 after B arrived'
+        (call: any[]) => call[1] === 'A chunk 1\nA chunk 2 after B arrived'
       );
       expect(a2).toBeDefined();
       // A's post-B output must still anchor to A's thread root — not B's.
       expect(a2![2]).toBe('omt_thread_a');
+      agent.dispose();
     });
   });
 
