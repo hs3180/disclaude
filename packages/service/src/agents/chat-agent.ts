@@ -60,6 +60,7 @@ import {
 } from '@disclaude/core';
 import { getDebugGroupService } from '../services/debug-group-service.js';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
+import type { InterruptedServiceTurn, ServiceTurnRecoveryStore } from '../service-turn-recovery.js';
 import { HistoryManager } from './history-manager.js';
 import crypto from 'node:crypto';
 
@@ -276,6 +277,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
   // History loading (Issue #955, #1230, #3996) — extracted into HistoryManager (Issue #4125 part 2)
   private readonly historyManager: HistoryManager;
+  private readonly turnRecovery?: ServiceTurnRecoveryStore;
+  private serviceClosing = false;
+  private restartInterruptionInProgress = false;
+  private readonly recoveryRunIds = new Map<string, string>();
+  private readonly serviceRestartInterruptedGenerations = new Set<number>();
 
   /**
    * Chat type for the current conversation (e.g., 'p2p', 'group', 'topic').
@@ -330,6 +336,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     this.boundChatId = config.chatId;
     this.sdkSessionKey = config.sdkSessionKey ?? config.chatId;
     this.callbacks = config.callbacks;
+    this.turnRecovery = config.turnRecovery;
     this.cwdProvider = config.cwdProvider;
     // Issue #4448 (direction #1)
     this.cwdResolver = config.cwdResolver;
@@ -538,10 +545,48 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
     const entry = this.turnCompletions.get(messageId);
     if (entry && !entry.settled) {
+      this.completeRecoveryInput(messageId);
       entry.settled = true;
       entry.settle(error);
     }
   }
+
+  private completeRecoveryInput(messageId: string): void {
+    const runId = this.recoveryRunIds.get(messageId);
+    if (!runId) { return; }
+    // If persisting the restart marker failed, preserve the previously
+    // durable active record for startup reconciliation as well.
+    if (this.restartInterruptionInProgress) { return; }
+    try {
+      this.turnRecovery?.completeTurn(runId);
+      this.recoveryRunIds.delete(messageId);
+    } catch (error) {
+      this.logger.error({ err: error, runId, sourceMessageId: messageId }, 'Could not persist terminal turn cleanup');
+    }
+  }
+
+  private removePendingTurn(runId: string): void {
+    const index = this.pendingLifecycleContexts.findIndex(context => context.runId === runId);
+    if (index >= 0) {
+      this.pendingLifecycleContexts.splice(index, 1);
+      this.pendingTurnMessageIds.splice(index, 1);
+      this.pendingTurnAnchors.splice(index, 1);
+    }
+    if (this.activeLifecycleContext?.runId === runId && !this.isProcessingMessage) {
+      this.activeLifecycleContext = undefined;
+    }
+  }
+
+  private reconcilePendingServiceRestartNotices(timeoutMs = 3_000): Promise<void> | undefined {
+    if (!this.turnRecovery?.getPendingNotifications(this.sdkSessionKey).length) { return undefined; }
+    return this.turnRecovery?.deliverPendingNotifications(
+      (chatId, content, threadRootId) => this.callbacks.sendMessage(chatId, content, threadRootId),
+      { sessionKey: this.sdkSessionKey, timeoutMs },
+    );
+  }
+
+  /** Block new admissions while existing accepted inputs drain. */
+  beginServiceShutdown(): void { this.serviceClosing = true; }
 
   /**
    * Reject every unsettled turn completion (Issue #4063; all-entries
@@ -552,8 +597,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    * own entry (see the channel-closed push path in processMessage).
    */
   private rejectTurn(error: Error): void {
-    for (const entry of this.turnCompletions.values()) {
+    for (const [messageId, entry] of this.turnCompletions) {
       if (!entry.settled) {
+        this.completeRecoveryInput(messageId);
         entry.settled = true;
         entry.settle(error);
       }
@@ -572,6 +618,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    */
   get isBusy(): boolean {
     return this.isProcessingMessage;
+  }
+
+  /** True while this agent has an active turn or messages queued for its iterator. */
+  get hasPendingWork(): boolean {
+    return this.isProcessingMessage || this.pendingTurnMessageIds.length > 0;
   }
 
   /**
@@ -844,6 +895,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       return;
     }
 
+    // A previous process may have durably recorded an interrupted turn. Send
+    // that outcome before accepting new work in this session; never replay the
+    // old input because its tool-side effects are unknown.
+    if (this.serviceClosing) { throw new Error('Service is shutting down; request was not accepted'); }
+    const restartNotice = this.reconcilePendingServiceRestartNotices();
+    if (restartNotice) { await restartNotice; }
+    if (this.serviceClosing) { throw new Error('Service is shutting down; request was not accepted'); }
+
     // S03: a message arriving during a live turn is ordinary queued input,
     // never an implicit stop/steer. Acknowledge that boundary before pushing
     // it into the existing serial channel; notification failure must not drop
@@ -922,11 +981,47 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.pendingTurnMessageIds.splice(0, this.pendingTurnMessageIds.length - 50);
     }
 
+    this.createTurnCompletion(messageId);
+    const acceptedGeneration = this.sessionGeneration;
+    try {
+      this.turnRecovery?.startTurn({
+        chatId,
+        sessionKey: this.sdkSessionKey,
+        traceId: lifecycleContext.traceId,
+        runId: lifecycleContext.runId,
+        sourceMessageId: messageId,
+        threadRootId: this.pendingTurnAnchors[this.pendingTurnAnchors.length - 1],
+        startedAt: Date.now(),
+      });
+      this.recoveryRunIds.set(messageId, lifecycleContext.runId);
+    } catch (error) {
+      this.resolveTurn(messageId, error instanceof Error ? error : new Error(String(error)));
+      this.removePendingTurn(lifecycleContext.runId);
+      this.logger.error(
+        { err: error, ...lifecycleContext },
+        'Refusing to start an unjournaled turn (Issue #5273)'
+      );
+      await this.deliverUserVisible(
+        chatId,
+        '⚠️ 请求未启动：服务无法保存安全恢复记录。请稍后重试。',
+        threadRootId
+      );
+      return;
+    }
+
     // Issue #1863: Wait for first message history to load before building content.
     // This fixes the race condition where processMessage() checks firstMessageHistoryContext
     // before the async loadFirstMessageHistory() in startAgentLoop() completes.
     if (!this.historyManager.firstMessageHistoryLoaded) {
       await this.historyManager.loadFirstMessageHistory();
+    }
+
+    // Shutdown/reset may have interrupted this input while history was loading.
+    if (this.disposed || this.sessionGeneration !== acceptedGeneration ||
+        this.stoppedQueryGenerations.has(acceptedGeneration)) {
+      this.resolveTurn(messageId, new Error('Session interrupted before input could be processed'));
+      this.removePendingTurn(lifecycleContext.runId);
+      return;
     }
 
     // One bounded snapshot per instance/recovery session (#4795). Explicit
@@ -981,7 +1076,6 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // it. On push rejection only THIS entry is settled — rejectTurn()
       // settles ALL pending entries and would misattribute a channel close
       // to unrelated live turns' awaiters.
-      const turnEntry = this.createTurnCompletion(messageId);
       const accepted = this.channel.push(userMessage);
       if (!accepted) {
         // Issue #2007: Channel is closed — message would be silently dropped.
@@ -989,8 +1083,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         // Issue #3985: Reset isProcessingMessage since the message was not actually processed.
         // Issue #4063: Reject turn completion since message was not processed.
         this.isProcessingMessage = false;
-        turnEntry.settled = true;
-        turnEntry.settle(new Error('Channel closed — message not processed'));
+        this.resolveTurn(messageId, new Error('Channel closed — message not processed'));
+        this.removePendingTurn(lifecycleContext.runId);
         this.logger.warn({ chatId, messageId }, 'Message rejected: channel is closed');
         this.callbacks
           .sendMessage(chatId, '⚠️ 消息未能送达，会话可能已结束。请发送 /reset 重置会话后重试。')
@@ -1015,6 +1109,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         });
       }
     } else {
+      this.resolveTurn(messageId, new Error('No channel — message not processed'));
+      this.removePendingTurn(lifecycleContext.runId);
       this.logger.error({ chatId, messageId }, 'No channel found after session creation');
       // Issue #1357: Notify user — message would otherwise be silently lost
       this.callbacks
@@ -1456,6 +1552,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const myGeneration = this.sessionGeneration;
     const diagnosticId = crypto.randomUUID();
     let iteratorError: Error | null = null;
+    let unexpectedTerminated = false;
+    let interruptedTurnCount = 0;
+    let interruptedLifecycleContext: NonNullable<StreamingUserMessage['correlation']> | undefined;
     let backendInterrupted = false;
     let evictedTerminated = false;
     let messageCount = 0;
@@ -1483,17 +1582,21 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // (loop head below), and re-armed after each result so the next turn
     // (next queued message) picks up its own anchor.
     let turnAnchorConsumed = false;
+    let turnHasTerminal = false;
     let currentTurnAnchor: string | undefined;
     let currentTurnMessageId: string | undefined;
+    let currentTurnLifecycleContext: NonNullable<StreamingUserMessage['correlation']> | undefined;
     let finalDeliveryId: string | undefined;
     let turnDeliveryFailed = false;
     let turnHadError = false;
     const consumeTurnAnchor = (): string | undefined => {
       if (!turnAnchorConsumed && this.pendingTurnMessageIds.length > 0) {
         turnAnchorConsumed = true;
+        turnHasTerminal = false;
         currentTurnAnchor = this.pendingTurnAnchors.shift();
         currentTurnMessageId = this.pendingTurnMessageIds.shift();
-        this.activeLifecycleContext = this.pendingLifecycleContexts.shift();
+        currentTurnLifecycleContext = this.pendingLifecycleContexts.shift();
+        this.activeLifecycleContext = currentTurnLifecycleContext;
         this.didDeliverUserVisibleThisTurn = false;
         finalDeliveryId = undefined;
         turnDeliveryFailed = false;
@@ -1507,6 +1610,51 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Issue #4587 (part 1, review fix): resolve this turn's reply anchor once.
     const resolveReplyThreadRoot = (): string | undefined =>
       consumeTurnAnchor() ?? this.conversationOrchestrator.getThreadRoot(chatId);
+    const finishUnexpectedTurns = async (error: Error, startupCategory?: string): Promise<void> => {
+      if (this.sessionGeneration !== myGeneration || this.stoppedQueryGenerations.has(myGeneration)) { return; }
+      // An iterator can end before its first event or between queued turns.
+      // Never attribute that failure to the preceding completed request.
+      if (!turnHasTerminal && !currentTurnLifecycleContext) { consumeTurnAnchor(); }
+      const affected = [
+        ...(!turnHasTerminal && currentTurnLifecycleContext
+          ? [{ context: currentTurnLifecycleContext, anchor: currentTurnAnchor }] : []),
+        ...this.pendingLifecycleContexts.map((context, index) => ({ context, anchor: this.pendingTurnAnchors[index] })),
+      ];
+      unexpectedTerminated = true;
+      interruptedTurnCount = affected.length;
+      interruptedLifecycleContext = affected[0]?.context;
+      this.isSessionActive = false;
+      this.isProcessingMessage = false;
+      this.channel?.close();
+      this.queryHandle?.close();
+      this.channel = undefined;
+      this.queryHandle = undefined;
+      this.rejectTurn(error);
+      this.taskCompletionReject?.(error);
+      this.clearTaskCompletion();
+      this.pendingLifecycleContexts = [];
+      this.pendingTurnMessageIds = [];
+      this.pendingTurnAnchors = [];
+      this.activeTurnMessageId = undefined;
+      const classification = tagErrorCategory(error);
+      for (const { context, anchor } of affected) {
+        const prefix = startupCategory ? `❌ Agent 启动失败（${startupCategory}）。` : '❌ 本次请求中断，结果可能不完整。';
+        const guidance = startupCategory ? '请检查配置、权限和运行环境，修复后发送 /reset。' :
+          '请先核对已经执行的操作，再决定是否重新提交或发送消息继续；系统没有自动重放工具。';
+        const notice = `${prefix}消息 ID: ${context.sourceMessageId}。诊断 ID: ${diagnosticId}。${guidance}`;
+        const delivered = await this.deliverUserVisible(chatId, notice, anchor);
+        this.logger.warn({ ...context, diagnosticId, event: 'agent_turn',
+          state: startupCategory ? 'failed' : 'interrupted',
+          interruptionCause: iteratorError ? 'iterator_error' : 'iterator_ended',
+          errorCategory: classification.category, transient: classification.transient,
+          errorMessage: error.message, user_visible: delivered,
+        }, 'Terminal outcome for request whose iterator ended without a result (#5288)');
+      }
+      turnHasTerminal = true;
+      if (affected.length > 0 && this.sessionGeneration === myGeneration) {
+        await this.callbacks.onDone?.(chatId, affected[0]?.anchor);
+      }
+    };
 
     // Issue #4399 (#4208 P2-b): streaming-card state machine. Only constructed
     // when the channel advertises supportsStreaming AND provides all three
@@ -2280,6 +2428,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             this.logger.debug({ chatId, messageId, outcome }, 'Completion reaction outcome');
           }
 
+          turnHasTerminal = true;
           this.logger.info({
             event: 'agent_turn', state: 'completed', chatId, user_visible: this.didDeliverUserVisibleThisTurn,
             circuitState: this.sendCircuitOpen ? 'open' : 'closed', ...this.activeLifecycleContext,
@@ -2300,7 +2449,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
               truncated: turnResultTruncated,
             });
           }
-          if (this.callbacks.onDone) {
+          if (this.sessionGeneration === myGeneration && this.callbacks.onDone) {
             const threadRoot = resolveReplyThreadRoot();
             await this.callbacks.onDone(chatId, threadRoot);
           }
@@ -2335,7 +2484,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           {
             err: iteratorError,
             diagnosticId,
-            ...this.activeLifecycleContext,
+            ...((!turnHasTerminal ? currentTurnLifecycleContext : undefined) ?? this.pendingLifecycleContexts[0]),
             chatId,
             messageCount,
             elapsedMs,
@@ -2356,8 +2505,6 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         const classification = tagErrorCategory(iteratorError);
         if (isStartupFailure(messageCount, elapsedMs) && !classification.transient && classification.category !== 'UNKNOWN') {
           const stderr = getErrorStderr(iteratorError);
-          const threadRoot = resolveReplyThreadRoot();
-
           this.logger.error(
             {
               chatId,
@@ -2369,69 +2516,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             'Startup failure detected — skipping retry/circuit-breaker'
           );
 
-          // Issue #4626: isolated delivery — this catch-path notice throwing
-          // used to escape processIterator into the outer "Agent loop error"
-          // handler, which was the second kill in the incident chain (the same
-          // invalid target rejects the error notice too).
-          await this.deliverUserVisible(
-            chatId,
-            `❌ Agent 启动失败（${classification.category}）。诊断 ID: ${diagnosticId}\n\n` +
-              '请检查配置、权限和运行环境。\n' +
-              '请检查上述错误信息，修复后发送 /reset 重置会话。',
-            threadRoot
-          );
+          await finishUnexpectedTurns(iteratorError, classification.category);
 
-          // 启动失败不触发重试，直接标记会话为非活跃
-          this.isSessionActive = false;
-          this.isProcessingMessage = false;
-
-          // Issue #4063: Reject per-turn completion on startup failure.
-          // Issue #4649 (review ③): generation guard — a superseded iterator
-          // (its session was replaced via reset / replay / restart) must not
-          // settle the NEW session's entries; its own entries died with its
-          // session and the replacement already settled them.
-          if (this.sessionGeneration === myGeneration) {
-            this.rejectTurn(iteratorError);
-          }
-
-          // Issue #3124: Reject completion promise on startup failure
-          this.taskCompletionReject?.(iteratorError);
-          this.clearTaskCompletion();
-
-          if (this.callbacks.onDone) {
-            await this.callbacks.onDone(chatId, threadRoot);
-          }
           return; // 直接返回，不进入重启逻辑
         }
 
-        // Notify user about the error
-        {
-          const threadRoot = resolveReplyThreadRoot();
-          // Issue #4626: isolated delivery (see the startup-failure notice above
-          // for why a throwing error-notice must not escape processIterator).
-          await this.deliverUserVisible(
-            chatId,
-            `❌ 本次请求中断，结果可能不完整。诊断 ID: ${diagnosticId}。请先核对已经执行的操作，再决定是否重新提交。`,
-            threadRoot
-          );
-        }
+        await finishUnexpectedTurns(iteratorError);
 
-        // Issue #4063: Reject per-turn completion on runtime error.
-        // Issue #4649 (review ③): generation guard — see the startup-failure
-        // branch above for why a superseded iterator must not settle the
-        // replacement session's entries.
-        if (this.sessionGeneration === myGeneration) {
-          this.rejectTurn(iteratorError);
-        }
-
-        // Issue #3124: Reject completion promise on runtime error
-        this.taskCompletionReject?.(iteratorError);
-        this.clearTaskCompletion();
-
-        if (this.callbacks.onDone) {
-          const threadRoot = resolveReplyThreadRoot();
-          await this.callbacks.onDone(chatId, threadRoot);
-        }
       }
     } finally {
       // Issue #4399 (#4208 P2-b): finalize the in-place streaming card on every
@@ -2454,6 +2545,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Keep the generation check so late teardown cannot finish a replacement
     // session's REST request or turn-completion promises.
     if (this.stoppedQueryGenerations.delete(myGeneration)) {
+      const interruptedByServiceRestart = this.serviceRestartInterruptedGenerations.delete(myGeneration);
       if (this.sessionGeneration === myGeneration) {
         const threadRoot = resolveReplyThreadRoot();
         const error = new Error(backendInterrupted ? 'Agent turn interrupted by backend' : 'Agent turn cancelled by stop');
@@ -2466,7 +2558,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         this.isSessionActive = false;
         this.isProcessingMessage = false;
         this.activeTurnMessageId = undefined;
-        await this.deliverUserVisible(chatId, '⏹️ 本轮已停止。', threadRoot);
+        if (!interruptedByServiceRestart) {
+          await this.deliverUserVisible(chatId, '⏹️ 本轮已停止。', threadRoot);
+        }
         if (this.sessionGeneration !== myGeneration) { return; }
         await this.callbacks.onDone?.(chatId, threadRoot);
       }
@@ -2495,7 +2589,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
 
     // Check if this was an explicit close (reset cleared the session)
-    const wasExplicitClose = !this.isSessionActive;
+    const wasExplicitClose = !this.isSessionActive && !unexpectedTerminated;
 
     // Issue #3706 (GLM stall): the provider watchdog terminated the stream.
     // isSessionActive is still true here (we didn't flip it), so wasExplicitClose
@@ -2572,6 +2666,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       return;
     }
 
+    if (!iteratorError && this.hasPendingWork) {
+      await finishUnexpectedTurns(new Error('Agent iterator ended without a terminal result'));
+    }
+    if (this.sessionGeneration !== myGeneration) { return; }
+
     // Iterator ended without explicit close - this is unexpected
     this.isSessionActive = false;
     this.isProcessingMessage = false;
@@ -2631,7 +2730,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     if (!decision.allowed) {
       // Circuit breaker opened - notify user and stop
       this.logger.error(
-        { chatId, diagnosticId, reason: decision.reason, restartCount: decision.restartCount },
+        { chatId, diagnosticId, ...interruptedLifecycleContext, reason: decision.reason, restartCount: decision.restartCount },
         'Restart blocked by circuit breaker'
       );
 
@@ -2643,14 +2742,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           : `🚫 自动恢复次数已用完，会话已暂停。请核对上次操作后发送 /reset。诊断 ID: ${diagnosticId}`;
         // Issue #4626: isolated delivery — a failing channel here must not
         // throw processIterator into the outer "Agent loop error" handler.
-        await this.deliverUserVisible(chatId, blockMessage, threadRoot);
+        if (interruptedTurnCount === 0) { await this.deliverUserVisible(chatId, blockMessage, threadRoot); }
       }
       return;
     }
 
     // Restart allowed - apply backoff
     this.logger.warn(
-      { chatId, diagnosticId, error: errorMessage, restartCount: decision.restartCount, waitMs: decision.waitMs },
+      { chatId, diagnosticId, ...interruptedLifecycleContext, error: errorMessage, restartCount: decision.restartCount, waitMs: decision.waitMs },
       'Agent loop ended unexpectedly, attempting restart with backoff'
     );
 
@@ -2664,7 +2763,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const threadRoot = resolveReplyThreadRoot();
     const restartMessage = `⚠️ 会话正在重新连接，后续消息可继续处理。上次请求不会自动重放。诊断 ID: ${diagnosticId}`;
     // Issue #4626: isolated delivery (same rationale as the notices above).
-    await this.deliverUserVisible(chatId, restartMessage, threadRoot);
+    if (interruptedTurnCount === 0) { await this.deliverUserVisible(chatId, restartMessage, threadRoot); }
 
     // Restart the agent loop to preserve context for future messages
     if (this.sessionGeneration !== myGeneration || this.isSessionActive || this.stoppedQueryGenerations.has(myGeneration)) {return;}
@@ -2876,6 +2975,63 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // The next user message starts a fresh query through startAgentLoop().
 
     return true;
+  }
+
+  /** Persist, notify, and stop a turn that outlived the service drain window. */
+  async interruptForServiceRestart(noticeTimeoutMs = 2_000): Promise<void> {
+    if (!this.hasPendingWork) { return; }
+    this.restartInterruptionInProgress = true;
+    const generation = this.sessionGeneration;
+    let interrupted: InterruptedServiceTurn[] = [];
+    try {
+      interrupted = this.turnRecovery?.interruptSession(this.sdkSessionKey) ?? [];
+    } catch (error) {
+      this.logger.error(
+        { err: error, chatId: this.boundChatId, sessionKey: this.sdkSessionKey },
+        'Could not persist service-restart interruption state (Issue #5273)'
+      );
+    }
+    for (const turn of interrupted) {
+      this.logger.warn({
+        event: 'agent_turn',
+        state: turn.state,
+        interruptionCause: turn.interruptionCause,
+        user_visible: false,
+        chatId: turn.chatId,
+        sessionKey: turn.sessionKey,
+        traceId: turn.traceId,
+        runId: turn.runId,
+        sourceMessageId: turn.sourceMessageId,
+      }, 'Agent turn interrupted by service restart after bounded drain (Issue #5273)');
+    }
+
+    // Mark before closing the iterator so its terminal path suppresses the
+    // ordinary /stop notice and preserves this distinct restart outcome.
+    this.serviceClosing = true;
+    this.serviceRestartInterruptedGenerations.add(generation);
+    const error = new Error('Agent turn interrupted by service restart');
+    this.rejectTurn(error);
+    this.taskCompletionReject?.(error);
+    this.clearTaskCompletion();
+    this.stoppedQueryGenerations.add(generation);
+    // These inputs are no longer eligible to run in this process. Their
+    // durable journal entries carry the IDs into startup reconciliation.
+    this.pendingTurnAnchors = [];
+    this.pendingTurnMessageIds = [];
+    this.pendingLifecycleContexts = [];
+    this.abortController?.abort();
+    try { this.channel?.close(); } catch (error) {
+      this.logger.warn({ err: error, chatId: this.boundChatId }, 'Could not close channel during service restart');
+    }
+    this.channel = undefined;
+    try { this.queryHandle?.close(); } catch (error) {
+      this.logger.warn({ err: error, chatId: this.boundChatId }, 'Could not close query during service restart');
+    }
+    this.queryHandle = undefined;
+
+    if (this.turnRecovery) {
+      await this.reconcilePendingServiceRestartNotices(noticeTimeoutMs);
+    }
   }
 
   /** Apply an instruction to the currently executing native turn after backend acknowledgement. */

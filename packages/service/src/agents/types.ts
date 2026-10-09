@@ -10,6 +10,7 @@
  */
 
 import type { FeishuCard, ChannelCapabilities, BaseAgentConfig, ChatAgentHooks, MessageBuilderOptions, CwdProvider, CwdResolution } from '@disclaude/core';
+import type { ServiceTurnRecoveryStore } from '../service-turn-recovery.js';
 
 // ============================================================================
 // ChatAgentCallbacks
@@ -206,6 +207,8 @@ export interface ChatAgentConfig extends BaseAgentConfig, ChatAgentHooks {
   skipHistory?: boolean;
   /** Native provider identity independent of the real delivery/history chat ID. */
   sdkSessionKey?: string;
+  /** Durable restart-interruption journal shared by service-managed agents. */
+  turnRecovery?: ServiceTurnRecoveryStore;
 
 }
 
