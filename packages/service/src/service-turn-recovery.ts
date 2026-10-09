@@ -208,7 +208,10 @@ export class ServiceTurnRecoveryStore {
       const operation = Promise.resolve()
         .then(() => send(record.chatId, content, record.threadRootId))
         .then(receipt => {
-          if (typeof receipt !== 'string' || !receipt) {
+          // REST's buffered reply uses the incoming request ID, not a
+          // delivery acknowledgement. Its buffer disappears at shutdown;
+          // keep the outcome for the next live response path instead.
+          if (typeof receipt !== 'string' || !receipt || receipt === record.sourceMessageId) {
             throw new Error('Channel returned no delivery receipt for the restart notice');
           }
           this.markNotificationsDelivered([record.runId], Date.now(), receipt);

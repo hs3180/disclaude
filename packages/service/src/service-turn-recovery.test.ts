@@ -142,6 +142,8 @@ describe('ServiceTurnRecoveryStore (#5273)', () => {
     await withAsyncJournal(async store => {
       await store.deliverPendingNotifications(vi.fn().mockResolvedValue(undefined));
       expect(store.getPendingNotifications()).toHaveLength(1);
+      await store.deliverPendingNotifications(vi.fn().mockResolvedValue(turn.sourceMessageId));
+      expect(store.getPendingNotifications()).toHaveLength(1);
       await store.deliverPendingNotifications(vi.fn().mockResolvedValue('visible-notice-id'));
       expect(store.getPendingNotifications()).toEqual([]);
     });
