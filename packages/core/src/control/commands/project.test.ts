@@ -160,19 +160,18 @@ describe('handleProject', () => {
     it('should warn when the bound directory does not exist (Issue #4448)', async () => {
       const ctx = createTestContext();
       const workspaceDir = ctx.projectManager!.getWorkspaceDir();
-      // Bind to a directory that does NOT exist on disk
-      ctx.projectManager!.use('chat-1', '/nonexistent/project-dir-4448');
+      const removedDir = join(workspaceDir, 'vanished');
+      mkdirSync(removedDir);
+      ctx.projectManager!.use('chat-1', removedDir);
+      rmSync(removedDir, { recursive: true });
 
       const result = await invoke(makeCommand('chat-1', 'info'), ctx);
 
-      // The command ran; the warning is delivered via `message` (the chat
-      // command router only relays `message`, never `error`).
       expect(result.success).toBe(true);
       expect(result.message).toContain('绑定目录不存在');
-      expect(result.message).toContain('/nonexistent/project-dir-4448');
-      // Surface the workspace fallback so the mismatch is visible
-      expect(result.message).toContain(workspaceDir);
-      expect(result.message).toContain('回退');
+      expect(result.message).toContain(removedDir);
+      expect(result.message).toContain('拒绝执行');
+      expect(result.message).not.toContain('回退');
     });
 
     it('should show effective cwd confirmation when bound dir exists', async () => {

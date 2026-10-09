@@ -3,8 +3,11 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { tryHandleSlashCommand } from './command-router.js';
-import { createControlCommand, type ControlResponse } from '@disclaude/core';
+import { createControlCommand, createControlHandler, ProjectManager, type ControlResponse } from '@disclaude/core';
 
 // Spy on createControlCommand so we can assert on the rawData the router builds
 // (input.args), while delegating to the real impl so the other tests keep their
@@ -26,8 +29,65 @@ function makeDeps(opts: { hasControlHandler?: boolean; controlResponse?: Control
 }
 
 const input = (text: string) => ({ textWithoutMentions: text, chatId: 'oc_x' });
+const mentions = [{
+  key: '@_user_1', name: '机器人',
+  id: { open_id: 'ou_bot', union_id: 'on_bot', user_id: 'ut_bot' }, tenant_key: 'tenant',
+}];
 
 describe('tryHandleSlashCommand', () => {
+  it.each([
+    '/project use my project@home @_user_1',
+    '/project use my project@home ${@_user_1}',
+    '/project use my project@home @机器人',
+    '/project use my project@home <at user_id="ou_bot">@机器人</at>',
+    '/project @_user_1 use my project@home',
+  ])('binds a real directory without persisting mention entities: %s', async (text) => {
+    const workspaceDir = mkdtempSync(join(tmpdir(), 'command-project-'));
+    try {
+      const projectDir = join(workspaceDir, 'my project@home');
+      mkdirSync(projectDir);
+      const pm = new ProjectManager({ workspaceDir });
+      const reset = vi.fn();
+      const deps = {
+        hasControlHandler: true,
+        emitControl: createControlHandler({
+          projectManager: pm,
+          agentPool: { reset, stop: () => false },
+          debugGroups: { getDebugGroup: () => null, setDebugGroup: () => {}, clearDebugGroup: () => null },
+        }),
+        sendMessage: vi.fn().mockResolvedValue(undefined),
+      };
+      expect(await tryHandleSlashCommand({ ...input(text), mentions, threadRootId: 'om_root' }, deps)).toBe(true);
+      expect(new ProjectManager({ workspaceDir }).resolveCwd('oc_x').effectiveCwd).toBe(projectDir);
+      const persisted = readFileSync(pm.getPersistPath(), 'utf8');
+      expect(persisted).not.toContain('@_user_1');
+      expect(deps.sendMessage).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        chatId: 'oc_x', threadId: 'om_root', text: expect.stringContaining('已切换工作目录'),
+      }));
+
+      // Invalid binding reports its error, leaves the old cwd intact, and does not reset it.
+      deps.sendMessage.mockClear();
+      expect(await tryHandleSlashCommand({ ...input('/project use missing @_user_1'), mentions }, deps)).toBe(true);
+      expect(deps.sendMessage).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ text: expect.stringContaining('不存在') }));
+      expect(readFileSync(pm.getPersistPath(), 'utf8')).toBe(persisted);
+      expect(reset).toHaveBeenCalledTimes(1);
+
+      expect(await tryHandleSlashCommand({ ...input('/project reset@_user_1'), mentions }, deps)).toBe(true);
+      expect(pm.resolveCwd('oc_x').reason).toBe('unbound');
+      expect(reset).toHaveBeenCalledTimes(2);
+    } finally {
+      rmSync(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not strip conversation mentions or literal @ path characters', async () => {
+    const { deps } = makeDeps({ hasControlHandler: true, controlResponse: { success: true } });
+    expect(await tryHandleSlashCommand({ ...input('请让 @机器人 看一下'), mentions }, deps)).toBe(false);
+    expect(deps.emitControl).not.toHaveBeenCalled();
+    await tryHandleSlashCommand({ ...input('/project use project@机器人 @_user_1'), mentions }, deps);
+    expect(deps.emitControl).toHaveBeenCalledWith(expect.objectContaining({ data: { subcommand: 'use', workingDir: 'project@机器人' } }));
+  });
+
   it('returns false for non-command text', async () => {
     const { deps } = makeDeps();
     expect(await tryHandleSlashCommand(input('hello'), deps)).toBe(false);

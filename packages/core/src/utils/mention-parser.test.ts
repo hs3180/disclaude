@@ -12,6 +12,7 @@ import {
   extractMentionedOpenIds,
   normalizeMentionPlaceholders,
   stripLeadingMentions,
+  stripCommandMentions,
 } from './mention-parser.js';
 import type { FeishuMessageEvent } from '../types/platform.js';
 
@@ -33,6 +34,18 @@ function makeMention(overrides: Partial<NonNullable<MentionsArray>[number]> = {}
 }
 
 describe('mention-parser', () => {
+  describe('stripCommandMentions', () => {
+    it('retains unknown @ names, tags and longer keys', () => {
+      const text = '/project use name@TestUser @_user_10 <at user_id="ou_other">@TestUser</at>';
+      expect(stripCommandMentions(text, [makeMention()])).toBe(text);
+      expect(stripCommandMentions('/project use @literal', undefined)).toBe('/project use @literal');
+    });
+
+    it('handles regex characters and display names containing spaces', () => {
+      expect(stripCommandMentions('/project use my app @Bot (test) @_user_1', [makeMention({ name: 'Bot (test)' })])).toBe('/project use my app');
+    });
+  });
+
   describe('parseMentions', () => {
     it('should return empty array when mentions is undefined', () => {
       expect(parseMentions(undefined)).toEqual([]);

@@ -1125,11 +1125,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           .sendMessage(
             chatId,
             [
-              `⚠️ **项目绑定目录不存在**: \`${resolution.boundWorkingDir}\``,
+              `⚠️ **项目绑定目录不存在或不可用**: \`${resolution.boundWorkingDir}\``,
               '',
               '本次消息已停止，**不会回退到工作空间根目录运行**。',
-              '可能原因：容器重启时 volume 尚未就绪 / 目录被移动或卸载 / 路径大小写或规范化差异。',
-              '可用 `/project reset` 回到默认，或 `/project use <dir>` 重新绑定。',
+              '请检查路径是否正确、是否存在且为目录，以及当前服务是否可以访问。',
+              ...(/\s@/.test(resolution.boundWorkingDir) ? ['若旧绑定含尾随 @mention，请先 `/project reset`，再绑定实际目录。'] : []),
+              '可用 `/project reset` 回到默认，或 `/project use <已存在目录>` 重新绑定。',
             ].join('\n')
           )
           .catch((err) => {
