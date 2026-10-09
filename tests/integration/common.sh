@@ -595,17 +595,17 @@ check_curl() {
 # Issue #4689: the monorepo builds with `tsc -b` (CLAUDE.md), which emits to
 # each workspace package's own dist/, not a root dist/. The integration runner
 # previously probed "$PROJECT_ROOT/dist" — a dir that only an empty `mkdir`
-# bypass could create — so a clean `npm run build` still "failed" the check.
+# bypass could create — so a clean `pnpm run build` still "failed" the check.
 # Check the actual service launch entrypoint and the core build output.
 check_build() {
     local cli_js="$PROJECT_ROOT/packages/service/dist/cli.js"
     local core_dist="$PROJECT_ROOT/packages/core/dist"
     if [ ! -f "$cli_js" ]; then
-        log_error "Project not built. Run 'npm run build' first (missing $cli_js)."
+        log_error "Project not built. Run 'pnpm run build' first (missing $cli_js)."
         return 1
     fi
     if [ ! -d "$core_dist" ]; then
-        log_error "Project not built. Run 'npm run build' first (missing $core_dist)."
+        log_error "Project not built. Run 'pnpm run build' first (missing $core_dist)."
         return 1
     fi
     return 0

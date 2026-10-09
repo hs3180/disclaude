@@ -15,7 +15,7 @@
 //
 // Scope notes (why adding this file is safe — mirrors the precedent set by
 // the import-safe script contract):
-//  - `npm run lint` only targets packages/*/src, so this file is NOT linted.
+//  - `pnpm run lint` only targets packages/*/src, so this file is NOT linted.
 //  - root tsconfig has an empty `files` list + package references only, so
 //    scripts/ is NOT type-checked; importing a .mjs without type decls is fine.
 //  - vitest.config.ts `include` covers `packages/**/*.test.ts` and

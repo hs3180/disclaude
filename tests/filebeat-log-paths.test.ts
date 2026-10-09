@@ -17,7 +17,7 @@
 // nothing.
 //
 // Scope notes (mirroring tests/launchd.test.ts):
-//  - `npm run lint` only targets packages/*/src, so this file is NOT linted.
+//  - `pnpm run lint` only targets packages/*/src, so this file is NOT linted.
 //  - coverage `include` covers only src/ and packages/ ts files, so this test
 //    is NOT measured and cannot move the 70% thresholds.
 //  - vitest `include` covers tests/**/*.test.ts.

@@ -3,7 +3,6 @@ node_modules/
 npm-lock.yaml
 npm-debug.log*
 yarn.lock
-pnpm-lock.yaml
 
 # Git
 .git/
