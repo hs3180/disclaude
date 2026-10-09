@@ -24,7 +24,8 @@ export function sourceFingerprint(root) {
       '-z',
       '--',
       'package.json',
-      'package-lock.json',
+      'pnpm-lock.yaml',
+      'pnpm-workspace.yaml',
       'README.md',
       'CHANGELOG.md',
       'docs',
@@ -157,7 +158,7 @@ export function generateRelease(root, output) {
   }
   for (const name of names) {
     const source = join(root, 'packages', name, 'dist');
-    assert(existsSync(join(source, 'index.js')), 'Run npm ci and npm run build first');
+    assert(existsSync(join(source, 'index.js')), 'Run pnpm install --frozen-lockfile and pnpm run build first');
     cpSync(source, join(output, 'packages', name, 'dist'), {
       recursive: true,
       filter: (path) => !/\.(?:test|spec)\.|\.map$|\.d\.ts$/.test(path),

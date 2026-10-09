@@ -6,13 +6,22 @@ Anthropic Messages 协议配置。默认后端仍是 `claude`；选择 pi 后不
 
 ## 安装与配置
 
-pi 运行包需要 **Node.js >= 22.19.0**。在安装 disclaude 的主机/工作区执行：
+pi 运行包需要 **Node.js >= 22.19.0**。对通过 npm 安装的预构建分发包，
+在安装目录执行：
 
 ```sh
 npm install --no-save --package-lock=false @earendil-works/pi-agent-core@0.83.0 @earendil-works/pi-ai@0.83.0
 ```
 
-这些包是可选运行依赖，`npm ci` 后需要重新安装；其他后端不依赖它们。
+源码 worktree 使用 pnpm；将所需运行包声明为 core 的可选依赖，并一并提交
+manifest 和唯一的 pnpm lockfile：
+
+```sh
+pnpm --filter @disclaude/core add --save-optional --save-exact @earendil-works/pi-agent-core@0.83.0 @earendil-works/pi-ai@0.83.0
+```
+
+这些包是可选运行依赖；其他后端不依赖它们。不要在源码 worktree 中运行
+`npm install` 或生成第二套 lockfile。
 本次生产适配以 0.83.0 为验证版本，升级 pi 时须重新验证。
 
 ```yaml

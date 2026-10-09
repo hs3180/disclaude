@@ -4,26 +4,23 @@
   "description": "Multi-platform agent bot supporting Feishu/Lark and CLI",
   "private": true,
   "type": "module",
-  "workspaces": [
-    "packages/*"
-  ],
   "bin": {
     "disclaude": "./bin/disclaude.js"
   },
   "scripts": {
     "build": "node scripts/prune-build-artifacts.mjs && tsc -b",
-    "build:packages": "npm run build",
-    "prepack": "npm run build",
-    "build:core": "npm run build --workspace=@disclaude/core",
-    "build:service": "npm run build --workspace=@disclaude/service",
-    "type-check": "npm run build && tsc --noEmit",
+    "build:packages": "pnpm run build",
+    "prepack": "pnpm run build",
+    "build:core": "pnpm --filter @disclaude/core run build",
+    "build:service": "pnpm --filter @disclaude/service run build",
+    "type-check": "pnpm run build && tsc --noEmit",
     "lint": "eslint packages/*/src --max-warnings=0",
     "lint:fix": "eslint packages/*/src --fix",
     "format": "prettier --write \"packages/*/src/**/*.ts\"",
     "format:check": "prettier --check \"packages/*/src/**/*.ts\"",
-    "test": "npm run build && vitest --run",
+    "test": "pnpm run build && vitest --run",
     "test:watch": "vitest",
-    "test:coverage": "npm run build && vitest --run --coverage",
+    "test:coverage": "pnpm run build && vitest --run --coverage",
     "test:integration": "./tests/integration/run-all-tests.sh",
     "test:integration:rest": "./tests/integration/rest-channel-test.sh",
     "test:integration:use-case-1": "./tests/integration/use-case-1-basic-reply.sh",
@@ -53,7 +50,7 @@
     "hooks:install": "husky",
     "test:install": "node scripts/run-isolated-test.mjs -- node scripts/test-package-install.mjs",
     "test:install:checkout": "node scripts/run-isolated-test.mjs -- node scripts/test-checkout-install.mjs",
-    "test:e2e": "npm run build && vitest --run --config vitest.e2e.config.ts"
+    "test:e2e": "pnpm run build && vitest --run --config vitest.e2e.config.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
@@ -69,10 +66,10 @@
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.19.1",
     "vitest": "^4.1.11",
-    "vitest-tsconfig-paths": "^3.4.1"
-  },
-  "overrides": {
-    "esbuild": "^0.28.2"
+    "vitest-tsconfig-paths": "^3.4.1",
+    "@larksuiteoapi/node-sdk": "^1.34.0",
+    "js-yaml": "^4.1.0",
+    "pino-roll": "4.0.0"
   },
   "lint-staged": {
     "packages/*/src/**/*.ts": [
@@ -84,7 +81,7 @@
   },
   "engines": {
     "node": ">=18.0.0",
-    "npm": ">=9.0.0"
+    "pnpm": "10.33.0"
   },
   "repository": {
     "type": "git",
@@ -95,9 +92,9 @@
   },
   "homepage": "https://github.com/hs3180/disclaude#readme",
   "dependencies": {
-    "@disclaude/channel-cli": "*",
-    "@disclaude/core": "*",
-    "@disclaude/service": "*",
+    "@disclaude/channel-cli": "workspace:*",
+    "@disclaude/core": "workspace:*",
+    "@disclaude/service": "workspace:*",
     "dotenv": "18.0.6",
     "qrcode": "1.5.4"
   },
@@ -128,5 +125,6 @@
     "vitest.config.ts",
     "vitest.e2e.config.ts",
     "eslint.config.*"
-  ]
+  ],
+  "packageManager": "pnpm@10.33.0"
 }

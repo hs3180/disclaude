@@ -91,7 +91,7 @@ a tenant access token with `cardkit:card:write` and the card/element IDs:
 LARKSUITE_CLI_TENANT_ACCESS_TOKEN=... \
 CARDKIT_BENCH_CARD_ID=... \
 CARDKIT_BENCH_ELEMENT_ID=... \
-npx tsx scripts/feishu-cardkit-rate-limit-bench.mts
+pnpm exec tsx scripts/feishu-cardkit-rate-limit-bench.mts
 ```
 
 Keep credentials and tenant-specific measurements outside the repository.
