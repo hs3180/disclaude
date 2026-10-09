@@ -11,13 +11,13 @@ import {
   probeKernel,
 } from './cli-probe-client.mjs';
 import { notebookSnapshotHash } from '../../packages/core/dist/jupyter/notebook-fingerprint.js';
+import { reportStudySource, reportInteraction } from './display-fixtures.mjs';
 
 const { values } = parseArgs({
   options: {
     'env-file': { type: 'string' },
     output: { type: 'string' },
     'kernel-name': { type: 'string' },
-    'python-path': { type: 'string' },
   },
 });
 if (!values.output) {
@@ -40,7 +40,7 @@ const report = {
   source: probeSource(),
   startedAt: new Date().toISOString(),
   scope:
-    'Configured remote CSV input, PNG/SVG/HTML/inline Plotly artifacts and two clean kernel numerical reproductions; native device rendering/Feishu remain separate',
+    'Configured remote CSV input, standard-library PNG/SVG/HTML artifacts and two clean kernel numerical reproductions; native device rendering/Feishu remain separate',
   checks: [],
   ownedNotebooks: [],
   runs: [],
@@ -67,7 +67,7 @@ report.dataset = {
   seed: 63,
   rows: 3,
   reproducibility:
-    'Numerical results with these input bytes and recorded package versions. SVG dates, runtime IDs and report paths are not byte reproducibility claims.',
+    'Numerical results with these input bytes, seed and recorded Python version. Runtime IDs and report paths are not byte reproducibility claims.',
 };
 const sessions = [];
 const run = async (owner, id, runId) => {
@@ -97,7 +97,6 @@ try {
     name: kernelName,
     displayName: spec.display_name,
     language: spec.language,
-    pythonPath: values['python-path'],
   };
   const reproductions = [];
   for (let trial = 0; trial < 2; trial++) {
@@ -174,10 +173,7 @@ try {
         imported.sha256 === report.dataset.sha256,
       { imported, repeated }
     );
-    const pythonPath = values['python-path']
-      ? `import sys\nsys.path.insert(0,${JSON.stringify(values['python-path'])})\n`
-      : '';
-    const source = `${pythonPath}import csv,json,random,importlib.metadata as metadata\nimport numpy as np\nimport matplotlib.pyplot as plt\nfrom IPython.display import display,SVG,HTML\nimport plotly.graph_objects as go\nrandom.seed(63)\nrng=np.random.default_rng(63)\nwith open(${JSON.stringify(imported.kernelRelativePath)},newline='') as stream:\n    rows=list(csv.DictReader(stream))\nx=np.array([float(row['value']) for row in rows])\nsummary={'mean':float(x.mean()),'sample_std':float(x.std(ddof=1)),'seeded_mean':float(rng.normal(size=1000).mean()),'seed':63,'versions':{name:metadata.version(name) for name in ['numpy','matplotlib','plotly','narwhals']}}\nprint('STUDY_RESULT '+json.dumps(summary,sort_keys=True),flush=True)\nplt.figure(figsize=(5,3))\nplt.bar([row['group'] for row in rows],x,color=['royalblue','seagreen','tomato'])\nplt.xlabel('category');plt.ylabel('value');plt.title('Synthetic CSV study');plt.tight_layout();plt.show()\ndisplay(SVG('<svg xmlns="http://www.w3.org/2000/svg" width="180" height="50"><circle cx="25" cy="25" r="15" fill="green"/><text x="50" y="30">SVG_REPORT_MARKER</text></svg>'))\ndisplay(HTML('<table><tr><th>Mean</th><td>4.0</td></tr></table>'))\nfigure=go.Figure(go.Bar(x=[row['group'] for row in rows],y=x.tolist()))\nfigure.update_layout(title='PLOTLY_REPORT_MARKER')\ndisplay(HTML(figure.to_html(full_html=False,include_plotlyjs=True,div_id='disclaude-synthetic-plot')))\n`;
+    const source = reportStudySource(imported.kernelRelativePath);
     const initial = await invoke('notebook_read_cell', {
       notebookId: id,
       cellId: 'study-analysis',
@@ -254,9 +250,11 @@ try {
     );
   }
   check(
-    'Two clean kernels reproduce the recorded numerical range',
+    'Two clean kernels reproduce the expected CSV statistics and seeded result',
     JSON.stringify(reproductions[0]) === JSON.stringify(reproductions[1]) &&
       reproductions[0].mean === 4 &&
+      Math.abs(reproductions[0].sample_std - Math.sqrt(7)) < 1e-12 &&
+      Number.isFinite(reproductions[0].seeded_mean) &&
       report.runs[0].kernelId !== report.runs[1].kernelId,
     {
       reproductions,
@@ -275,12 +273,13 @@ try {
   const html = await client.responseText(response);
   const csp = response.headers.get('content-security-policy');
   check(
-    'HTML/ipynb snapshot, inline Plotly and output artifacts are consistent',
+    'HTML/ipynb snapshot, inline interaction and output artifacts are consistent',
     response.ok &&
       revision === exported.revision &&
       html.includes(`content="${revision}"`) &&
-      html.includes('PLOTLY_REPORT_MARKER') &&
-      html.includes('Plotly.newPlot') &&
+      html.includes('HTML_REPORT_MARKER') &&
+      html.includes('data-report-values="[3.0, 7.0, 2.0]"') &&
+      html.includes(reportInteraction) &&
       html.includes('SVG_REPORT_MARKER') &&
       html.includes('data:image/png;base64'),
     {

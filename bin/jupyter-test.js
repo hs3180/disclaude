@@ -32,8 +32,8 @@ export const testSuites = [
   {
     name: 'report',
     file: 'datalayer-report-probe.mjs',
-    description: 'CSV, two clean kernels, PNG/SVG/Plotly reports and authentication',
-    options: ['kernel-name', 'python-path'],
+    description: 'CSV, two clean kernels, PNG/SVG/HTML reports and authentication',
+    options: ['kernel-name'],
   },
   {
     name: 'dsh',
@@ -79,14 +79,14 @@ restart, SSH/container management, automatic package installation or bot connect
   --cases NAME[,NAME]   Edge case selection
   --long-seconds N      Core background wait, 2–120 seconds (default 67)
   --kernel-name NAME    Existing remote Python kernelspec for scratch kernels
-  --python-path PATH    Explicit owned remote test dependency directory for report checks
   --oauth-auth-file PATH --model gpt-5.6-luna   Required for dsh/image suites
   --binary PATH         DSH executable (default: dsh)
   --project PATH --cell-id ID [--output-index N]  Existing owned image-probe Project
   --project PATH --chat-id ID --root-message-id ID  Authorized fresh delivery thread
 
-Report kernels need NumPy, Matplotlib, Plotly and Narwhals. Missing dependencies
-remain failures. JSON stdout summarizes checks, source and evidence paths;
+Default suites use Python's standard library and the existing IPython display
+interface; no extra plotting packages are required. JSON stdout summarizes
+checks, source and evidence paths;
 failed checks and unverified conditions are preserved. A nonzero exit means a
 failed/incomplete suite. SIGINT/SIGTERM stops further suites after the active
 suite finishes its bounded work and owned-resource cleanup.

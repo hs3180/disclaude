@@ -3,6 +3,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import { DatalayerJupyterClient } from '../../packages/core/dist/jupyter/datalayer-client.js';
+import { lineChartSource } from './display-fixtures.mjs';
 import {
   createCLIProbe,
   probeSource,
@@ -222,8 +223,7 @@ try {
     cellId: 'mvp-plot',
     beforeCellId: '',
     cellType: 'code',
-    source:
-      'import matplotlib.pyplot as plt\nplt.figure(figsize=(5, 3))\nplt.plot([1, 2, 3], [mvp_value, mvp_value * 2, mvp_value * 3], marker="o")\nplt.title("Datalayer MVP: edited parameter")\nplt.xlabel("step")\nplt.ylabel("value")\nplt.tight_layout()\nplt.show()',
+    source: lineChartSource,
   });
   const plot = await call('notebook_read_cell', { notebookId, cellId: 'mvp-plot' });
   await call('notebook_execute', {
@@ -235,7 +235,7 @@ try {
   const plotted = await poll(notebookId, 'mvp-plot');
   const plotCell = await call('notebook_read_cell', { notebookId, cellId: 'mvp-plot' });
   check(
-    'Remote scientific plot persists as image/png',
+    'Remote standard-library plot persists as image/png',
     plotted.state === 'completed' && JSON.stringify(plotCell.outputs).includes('image/png'),
     { result: plotted, outputs: plotCell.outputs }
   );

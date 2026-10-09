@@ -91,18 +91,21 @@ remains `not_verified`; this script provides no deployment/restart options.
 `disclaude jupyter test --suite report --env-file /private/host.env --output /private/new-report-results --no-interactive`
 
 Imports exact synthetic CSV bytes through the CLI, runs two fresh remote
-kernels, compares numerical results, and checks PNG/SVG/HTML/inline Plotly,
+kernels, compares numerical results, and checks PNG/SVG/HTML with a small inline interaction,
 formula/table sources, bounded image files, matching HTML/ipynb revisions,
 authentication and sandbox headers. Source/header checks do not establish
 rendering on the user's actual device.
 
 The report suite selects the advertised remote default or sole available Python
 kernelspec. Use `--kernel-name <existing-name>` to bind an explicit fresh scratch
-kernel. That remote environment needs NumPy, Matplotlib, Plotly and Narwhals;
-missing packages remain failed execution evidence. `--python-path <remote-dir>`
-can load an explicitly prepared, owned test dependency directory in the two
-scratch kernels. Its path and package versions are recorded. The probe does not
-install packages or change existing kernelspecs or server settings.
+kernel. Default suites use only Python's standard library and the existing
+IPython display interface. The core chart and report PNG are generated in the
+remote kernel with `struct` and `zlib`; CSV statistics use `statistics` and a
+seeded `random.Random`. No NumPy, Matplotlib, Plotly, Narwhals, dependency path
+or package installation is required. The input, seed and Python version are
+recorded. The inline HTML button tests script preservation without a plotting
+library or CDN; it does not certify Plotly compatibility or device interaction.
+The probes do not change existing kernelspecs or server settings.
 
 ## Explicit model and outbound component probes
 

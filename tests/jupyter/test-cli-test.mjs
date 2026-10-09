@@ -4,9 +4,15 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { runInNewContext } from 'node:vm';
 import { test } from 'node:test';
 import { parseTestOptions, runTests, suiteResult } from '../../bin/jupyter-test.js';
 import { probeAuth, probeConnection, probeKernel } from '../../jupyter/probes/cli-probe-client.mjs';
+import {
+  lineChartSource,
+  reportStudySource,
+  reportInteraction,
+} from '../../jupyter/probes/display-fixtures.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const cli = path.join(root, 'bin/disclaude.js');
@@ -38,6 +44,8 @@ test('public help/list discover all packaged suites without login, a model or a 
     const help = run(['--help']);
     assert.equal(help.status, 0);
     assert.match(help.stdout, /Default: core, edge, fault, report/);
+    assert.match(help.stdout, /no extra plotting packages are required/);
+    assert(!help.stdout.includes('--python-path'));
     assert(!help.stdout.includes(credential));
     const listed = run(['--list']);
     assert.equal(listed.status, 0);
@@ -64,6 +72,7 @@ test('invalid suites, model/outbound inputs and removed transports fail before a
       ['--suite', 'delivery'],
       ['--ssh', 'host'],
       ['--container', 'name'],
+      ['--python-path', '/remote/extra-packages'],
       ['--suite', 'core', '--chat-id', 'oc_fixture'],
       ['--interactive', '--no-interactive'],
     ]) {
@@ -79,6 +88,46 @@ test('invalid suites, model/outbound inputs and removed transports fail before a
     }
   } finally {
     cleanup(cwd);
+  }
+});
+
+test('default kernel fixtures import only standard-library modules and the existing IPython display interface', () => {
+  const allowed = new Set([
+    'struct',
+    'zlib',
+    'csv',
+    'html',
+    'json',
+    'random',
+    'statistics',
+    'sys',
+    'IPython.display',
+  ]);
+  for (const source of [lineChartSource, reportStudySource('synthetic-input.csv')]) {
+    const imports = [...source.matchAll(/^(?:import (.+)|from (\S+) import .+)$/gm)];
+    assert(imports.length > 0);
+    for (const match of imports)
+      for (const module of match[1]?.split(',') ?? [match[2]])
+        assert(allowed.has(module), 'Unexpected kernel dependency: ' + module);
+    assert(!/sys\.path|pip|importlib/.test(source));
+  }
+});
+
+test('the self-contained report interaction computes the sum from its actual CSV-derived values', () => {
+  for (const values of [
+    [3, 7, 2],
+    [4, 1, 6],
+  ]) {
+    const button = {};
+    const summary = { textContent: 'Mean' };
+    const element = {
+      dataset: { reportValues: JSON.stringify(values) },
+      querySelector: (selector) => (selector === 'button' ? button : summary),
+    };
+    runInNewContext(reportInteraction, { document: { currentScript: { parentElement: element } } });
+    assert.equal(summary.textContent, 'Mean');
+    button.onclick();
+    assert.equal(summary.textContent, 'Sum: ' + values.reduce((sum, value) => sum + value, 0));
   }
 });
 
