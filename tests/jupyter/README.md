@@ -1,9 +1,28 @@
-# G0-B Jupyter stack experiment
+# Jupyter component tests and historical experiments
+
+## Configured Datalayer MVP probes
+
+Configured remote acceptance uses the packaged `disclaude jupyter test` command.
+See the [test command guide](../../jupyter/probes/README.md) for suites, authentication,
+private evidence and model/outbound opt-in inputs.
+
+Local command/authentication/Terminal protocol fixtures:
+
+`node --test tests/jupyter/test-cli-test.mjs tests/jupyter/auth-input-test.mjs tests/jupyter/patch-cli-test.mjs`
+
+These fixtures do not connect to a configured Jupyter or establish product acceptance.
+
+## Historical G0-B Jupyter stack experiment
+
+The following commands/results document earlier isolated component experiments
+and server-side CI fixtures. They do not define host runtime setup or current
+product acceptance. Do not recreate their local environment for this task.
 
 This opt-in probe for #5216 launches its own authenticated localhost server,
 Notebook, kernel, browser and Jupyter configuration. It uses no Project mount,
-existing server, Notebook or kernel. Normal Disclaude installation and CI do not
-install these Python dependencies.
+existing server, Notebook or kernel. Normal Disclaude installation and regular
+Node checks do not install Python. The earlier managed-coordinator CI installed
+its pinned server stack for backend checks, without this browser probe.
 
 Use Python 3.13 and a separate virtual environment:
 

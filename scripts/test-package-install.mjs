@@ -150,6 +150,20 @@ async function verifyPackage() {
   assert.equal(existsSync(join(installed, 'jupyter/datalayer/Dockerfile')), false);
   assert(existsSync(join(installed, 'bin/jupyter-terminal.js')));
   assert(existsSync(join(installed, 'bin/jupyter-auth.js')));
+  assert(existsSync(join(installed, 'bin/jupyter-test.js')));
+  assert.match(run(cli, ['jupyter', 'test', '--help']), /Default: core, edge, fault, report/u);
+  assert.match(run(cli, ['jupyter', 'test', '--help']), /no extra plotting packages are required/u);
+  assert.doesNotMatch(run(cli, ['jupyter', 'test', '--help']), /--python-path/u);
+  const jupyterTests = JSON.parse(run(cli, ['jupyter', 'test', '--list']));
+  assert.equal(jupyterTests.ok, true);
+  assert.deepEqual(jupyterTests.data.defaultSuites, ['core', 'edge', 'fault', 'report']);
+  assert.equal(jupyterTests.data.suites.length, 7);
+  for (const suite of ['core', 'edge', 'fault', 'report', 'dsh', 'image', 'delivery']) {
+    const filename = suite === 'core' ? 'datalayer-probe.mjs' : `datalayer-${suite}-probe.mjs`;
+    assert(existsSync(join(installed, 'jupyter/probes', filename)));
+  }
+  assert(existsSync(join(installed, 'jupyter/probes/cli-probe-client.mjs')));
+  assert(existsSync(join(installed, 'jupyter/probes/display-fixtures.mjs')));
   run(process.execPath, ['--input-type=module', '-e', `
     const { resolveJupyterAuth } = await import(${JSON.stringify(join(installed, 'bin/jupyter-auth.js'))});
     const auth = await resolveJupyterAuth({ jupyter: 'configured', interactive: false }, {

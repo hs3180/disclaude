@@ -4,10 +4,12 @@ on:
   pull_request:
     paths:
       - 'jupyter/datalayer/**'
+      - 'jupyter/probes/**'
       - 'bin/disclaude.js'
       - 'bin/jupyter-patch.js'
       - 'bin/jupyter-terminal.js'
       - 'bin/jupyter-auth.js'
+      - 'bin/jupyter-test.js'
       - 'package.json'
       - 'package-lock.json'
       - 'scripts/build-git-release.mjs'
@@ -15,6 +17,7 @@ on:
       - 'scripts/test-package-install.mjs'
       - 'tests/jupyter/datalayer-package-test.py'
       - 'tests/jupyter/patch-cli-test.mjs'
+      - 'tests/jupyter/test-cli-test.mjs'
       - 'tests/jupyter/auth-input-test.mjs'
       - 'tests/jupyter/auth-tty-test.py'
       - '.github/workflows/datalayer-package.yml'
@@ -22,10 +25,12 @@ on:
     branches: [main]
     paths:
       - 'jupyter/datalayer/**'
+      - 'jupyter/probes/**'
       - 'bin/disclaude.js'
       - 'bin/jupyter-patch.js'
       - 'bin/jupyter-terminal.js'
       - 'bin/jupyter-auth.js'
+      - 'bin/jupyter-test.js'
       - 'package.json'
       - 'package-lock.json'
       - 'scripts/build-git-release.mjs'
@@ -33,6 +38,7 @@ on:
       - 'scripts/test-package-install.mjs'
       - 'tests/jupyter/datalayer-package-test.py'
       - 'tests/jupyter/patch-cli-test.mjs'
+      - 'tests/jupyter/test-cli-test.mjs'
       - 'tests/jupyter/auth-input-test.mjs'
       - 'tests/jupyter/auth-tty-test.py'
       - '.github/workflows/datalayer-package.yml'
@@ -57,7 +63,7 @@ jobs:
       - name: Install locked dependencies for the host .env parser
         run: npm ci --ignore-scripts --include=dev
       - name: Verify CLI generation, authentication and Terminal-only transport
-        run: node --test tests/jupyter/patch-cli-test.mjs tests/jupyter/auth-input-test.mjs
+        run: node --test tests/jupyter/patch-cli-test.mjs tests/jupyter/auth-input-test.mjs tests/jupyter/test-cli-test.mjs
       - name: Verify artifact integrity, file rollback and activation reporting
         run: python tests/jupyter/datalayer-package-test.py -v
       - name: Verify hidden authentication in a real terminal
