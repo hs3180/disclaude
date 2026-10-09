@@ -187,6 +187,7 @@ export function suiteResult(name, receipt, exitCode) {
     (resourceFlags.length > 0
       ? resourceFlags.every((key) => receipt[key] === true)
       : name === 'image') &&
+    !receipt.cleanupFailed &&
     !receipt.cleanupErrors &&
     !receipt.cleanupError;
   const assertionsPresent = !api.includes(name) || checks.some((c) => c.required);

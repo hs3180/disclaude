@@ -117,6 +117,11 @@ test('default API suites exclude model/outbound and failed assertions are not co
 test('absence of assertions, failed exit codes and resource loss never pass; unconfirmed cleanup stops further suites', async () => {
   assert.equal(suiteResult('edge', { ...good(), checks: [] }, 0).state, 'failed');
   assert.equal(suiteResult('core', { ...good(), requiredChecksPassed: false }, 0).state, 'failed');
+  assert.equal(
+    suiteResult('core', { ...good(), originalResourcesPreserved: false }, 0).state,
+    'failed'
+  );
+  assert.equal(suiteResult('core', { ...good(), cleanupFailed: true }, 0).state, 'failed');
   assert.equal(suiteResult('edge', good(), 1).state, 'failed');
   assert.equal(
     suiteResult('image', { completed: true, noKernelOrSessionChanges: false }, 0).state,
@@ -129,7 +134,7 @@ test('absence of assertions, failed exit codes and resource loss never pass; unc
       authenticate: async () => auth,
       runSuite: async () => {
         calls++;
-        return { receipt: { ...good(), originalResourcesPreserved: false }, exitCode: 0 };
+        return { receipt: { ...good(), cleanupFailed: true }, exitCode: 1 };
       },
     });
     assert.equal(result.ok, false);
