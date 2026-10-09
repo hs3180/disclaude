@@ -168,7 +168,6 @@ To enable daily soul questions, create a schedule file:
 name: "每日灵魂拷问"
 cron: "0 10 * * *"  # Every day at 10:00 AM
 enabled: true
-blocking: true
 chatId: "{your_topic_group_chat_id}"
 ---
 

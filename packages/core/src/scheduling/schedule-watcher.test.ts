@@ -74,7 +74,6 @@ function makeScheduleContent(overrides: Record<string, string> = {}): string {
     cron: '0 9 * * *',
     chatId: 'oc_test123',
     enabled: 'true',
-    blocking: 'true',
   };
   const merged = { ...defaults, ...overrides };
   const lines = ['---'];
@@ -109,6 +108,29 @@ describe('ScheduleFileScanner', () => {
   });
 
   describe('parseFile', () => {
+    it.each(['true', 'false', 'legacy-private-value'])('ignores obsolete concurrency configuration with a deduplicated migration warning: %s', async (value) => {
+      const onDiagnostic = vi.fn();
+      scanner = new ScheduleFileScanner({ schedulesDir: MOCK_DIR, onDiagnostic });
+      const filePath = `${MOCK_DIR}/legacy/SCHEDULE.md`;
+      mockReadFile.mockResolvedValue(makeScheduleContent({ blocking: value }));
+
+      const task = await scanner.parseFile(filePath);
+      await scanner.parseFile(filePath);
+
+      expect(task).not.toBeNull();
+      expect(task).not.toHaveProperty('blocking');
+      expect(onDiagnostic).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        action: 'report',
+        code: 'unknown-frontmatter-fields',
+        severity: 'warning',
+        message: expect.stringContaining('blocking'),
+      }));
+      expect(JSON.stringify(onDiagnostic.mock.calls)).not.toContain('legacy-private-value');
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+      await scanner.parseFile(filePath);
+      expect(onDiagnostic).toHaveBeenLastCalledWith(expect.objectContaining({ action: 'clear' }));
+    });
+
     it('reports unknown frontmatter fields once and clears the warning after correction', async () => {
       const onDiagnostic = vi.fn();
       scanner = new ScheduleFileScanner({ schedulesDir: MOCK_DIR, onDiagnostic });
@@ -233,7 +255,6 @@ describe('ScheduleFileScanner', () => {
       expect(task!.cron).toBe('0 9 * * *');
       expect(task!.chatId).toBe('oc_test123');
       expect(task!.enabled).toBe(true);
-      expect(task!.blocking).toBe(true);
       expect(task!.prompt).toContain('Execute the daily report task');
     });
 
@@ -307,7 +328,6 @@ describe('ScheduleFileScanner', () => {
         'cron: "*/30 * * * *"',
         'chatId: "oc_custom"',
         'enabled: false',
-        'blocking: false',
         'cooldownPeriod: 3600000',
         'createdBy: "ou_user123"',
         'createdAt: "2026-01-15T10:00:00Z"',
@@ -321,7 +341,6 @@ describe('ScheduleFileScanner', () => {
       const task = await scanner.parseFile(`${MOCK_DIR}/custom-task/SCHEDULE.md`);
       expect(task).not.toBeNull();
       expect(task!.enabled).toBe(false);
-      expect(task!.blocking).toBe(false);
       expect(task!.cooldownPeriod).toBe(3600000);
       expect(task!.createdBy).toBe('ou_user123');
       expect(task!.createdAt).toBe('2026-01-15T10:00:00Z');
@@ -619,7 +638,6 @@ describe('ScheduleFileScanner', () => {
         prompt: 'Execute daily report',
         chatId: 'oc_test',
         enabled: true,
-        blocking: true,
         createdAt: '2026-01-01T00:00:00Z',
       };
 
@@ -629,6 +647,7 @@ describe('ScheduleFileScanner', () => {
       expect(mockWriteFile).toHaveBeenCalledTimes(1);
 
       const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).not.toContain('blocking:');
       expect(writtenContent).toContain('name: "Daily Report"');
       expect(writtenContent).toContain('cron: "0 9 * * *"');
       expect(writtenContent).toContain('chatId: oc_test');
@@ -643,7 +662,6 @@ describe('ScheduleFileScanner', () => {
         prompt: 'Custom task',
         chatId: 'oc_test',
         enabled: false,
-        blocking: false,
         cooldownPeriod: 3600000,
         createdBy: 'ou_user',
         createdAt: '2026-03-01',

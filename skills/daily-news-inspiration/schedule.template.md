@@ -2,7 +2,6 @@
 name: "每日新闻灵感提问"
 cron: "{cron}"
 enabled: true
-blocking: true
 chatId: "{controlChannelChatId}"
 ---
 

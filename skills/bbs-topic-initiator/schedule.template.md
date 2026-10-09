@@ -2,7 +2,6 @@
 name: "BBS 话题发起"
 cron: "{cron}"
 enabled: true
-blocking: true
 chatId: "{controlChannelChatId}"
 ---
 
