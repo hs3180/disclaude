@@ -562,7 +562,6 @@ export class NotebookTools {
       pending = this.options.useClient(ref.connectionId, ref.serverNamespace, async (client) => {
         const capabilities = await client.inspectConnection();
         if (
-          capabilities.mcp.state !== 'available' ||
           capabilities.nbmodel.state !== 'available' ||
           capabilities.rtc.state !== 'configured' ||
           capabilities.nbconvert.state !== 'available'

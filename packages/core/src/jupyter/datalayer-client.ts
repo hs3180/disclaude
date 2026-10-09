@@ -17,12 +17,6 @@ type InterfaceState = 'available' | 'missing' | 'incompatible' | 'unverified';
 export interface DatalayerConnectionInspection {
   backend: 'datalayer';
   serverVersion: string;
-  mcp: {
-    state: InterfaceState;
-    httpStatus?: number;
-    protocolVersion?: string;
-    tools?: string[];
-  };
   nbmodel: { state: InterfaceState; httpStatus?: number };
   rtc: {
     state: 'configured' | 'disabled' | 'unverified';
@@ -72,7 +66,7 @@ function id(value: string): string {
   return encodeURIComponent(value);
 }
 
-/** Existing remote Datalayer MCP protocol. Does not require disclaude_jupyter. */
+/** Existing remote RTC/nbmodel interfaces. Does not require a Jupyter MCP extension. */
 export class DatalayerJupyterClient extends JupyterHttpConnection {
   private nextId = 0;
 
@@ -108,39 +102,6 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
     }
   }
 
-  private async inspectMcp(): Promise<DatalayerConnectionInspection['mcp']> {
-    try {
-      const initialized = await this.initialize();
-      if (
-        !initialized ||
-        typeof initialized.protocolVersion !== 'string' ||
-        !/^\d{4}-\d{2}-\d{2}$/.test(initialized.protocolVersion)
-      ) {
-        return { state: 'incompatible' };
-      }
-      const tools = await this.listTools();
-      return {
-        state: 'available',
-        protocolVersion: initialized.protocolVersion,
-        tools: tools.map((tool) => tool.name),
-      };
-    } catch (error) {
-      return {
-        state:
-          error instanceof DatalayerProtocolError
-            ? error.httpStatus === 404 || error.rpcCode === -32601
-              ? 'missing'
-              : error.httpStatus === undefined && error.rpcCode === undefined
-                ? 'incompatible'
-                : 'unverified'
-            : 'unverified',
-        ...(error instanceof DatalayerProtocolError && error.httpStatus !== undefined
-          ? { httpStatus: error.httpStatus }
-          : {}),
-      };
-    }
-  }
-
   private async inspectRtc(): Promise<DatalayerConnectionInspection['rtc']> {
     try {
       const response = await this.response('lab');
@@ -170,7 +131,7 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
     }
   }
 
-  /** Authenticated reads and MCP discovery only: no document, kernel or execution is created. */
+  /** Authenticated reads only: no MCP request, document, kernel or execution is created. */
   async inspectConnection(): Promise<DatalayerConnectionInspection> {
     const server = await this.inspectJson('api');
     const version = (server.data as Record<string, unknown> | undefined)?.version;
@@ -185,8 +146,7 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
     // The installed nbmodel GET lists a queue without creating a client or task.
     // An unowned random ID avoids opening or inspecting any user's kernel.
     const probeKernel = randomUUID();
-    const [mcp, queue, rtc, exported] = await Promise.all([
-      this.inspectMcp(),
+    const [queue, rtc, exported] = await Promise.all([
       this.inspectJson(`api/kernels/${probeKernel}/execute`),
       this.inspectRtc(),
       this.inspectJson('api/nbconvert'),
@@ -199,7 +159,6 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
     return {
       backend: 'datalayer',
       serverVersion: version,
-      mcp,
       nbmodel: {
         state:
           queue.state !== 'available'
