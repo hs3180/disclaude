@@ -268,7 +268,9 @@ describe('ClaudeSDKProvider', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    getAgentConfig.mockReset().mockImplementation(() => ({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' }));
+    getAgentConfig.mockReset().mockImplementation(() => ({
+      apiKey: process.env.ANTHROPIC_API_KEY ?? '', model: 'test-model', provider: 'anthropic',
+    }));
     originalApiKey = process.env.ANTHROPIC_API_KEY;
     provider = new ClaudeSDKProvider();
   });
@@ -303,7 +305,7 @@ describe('ClaudeSDKProvider', () => {
   describe('validateConfig', () => {
     it.each(['anthropic', 'glm'])('accepts resolved YAML-only %s credentials', (apiProvider) => {
       delete process.env.ANTHROPIC_API_KEY;
-      getAgentConfig.mockReturnValue({ apiKey: 'yaml-only-key', provider: apiProvider });
+      getAgentConfig.mockReturnValue({ apiKey: 'yaml-only-key', model: 'yaml-model', apiBaseUrl: 'https://selected.example', provider: apiProvider });
       expect(provider.getInfo().available).toBe(true);
     });
 
@@ -338,6 +340,26 @@ describe('ClaudeSDKProvider', () => {
   // --------------------------------------------------------------------------
 
   describe('getInfo', () => {
+    it('validates an explicit target without consulting the default agent', () => {
+      getAgentConfig.mockImplementation(() => { throw new Error('unrelated default config'); });
+      const info = provider.getInfo({ apiKey: 'selected-key', model: 'selected-model', provider: 'glm', apiBaseUrl: 'http://127.0.0.1:1' });
+      expect(info.available).toBe(true);
+      expect(getAgentConfig).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [{ apiKey: '', model: 'glm-model', provider: 'glm' as const, apiBaseUrl: 'https://selected.example' }, 'glm.apiKey'],
+      [{ apiKey: 'secret-canary', model: '', provider: 'anthropic' as const }, 'model'],
+      [{ apiKey: 'secret-canary', model: 'glm-model', provider: 'glm' as const }, 'apiBaseUrl'],
+      [{ apiKey: 'secret-canary', model: 'glm-model', provider: 'glm' as const, apiBaseUrl: 'file:///secret-canary' }, 'HTTP'],
+    ])('rejects a target with its own missing/invalid field without exposing values', (config, field) => {
+      const info = provider.getInfo(config);
+      expect(info.available).toBe(false);
+      expect(info.unavailableReason).toContain(field);
+      expect(info.unavailableReason).not.toContain('secret-canary');
+      expect(getAgentConfig).not.toHaveBeenCalled();
+    });
+
     it('reports the installed Claude Agent SDK version', () => {
       const require = createRequire(import.meta.url);
       const sdkEntry = require.resolve('@anthropic-ai/claude-agent-sdk');

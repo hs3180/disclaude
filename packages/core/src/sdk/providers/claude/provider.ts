@@ -20,6 +20,7 @@ import { createLogger } from '../../../utils/logger.js';
 import { tagErrorCategory } from '../../../utils/error-handler.js';
 import { computeBackoffDelay } from '../../../utils/retry.js';
 import { Config } from '../../../config/index.js';
+import type { BaseAgentConfig } from '../../../agents/types.js';
 import { withDiscoveredCompaction } from './compaction.js';
 import { buildClaudeDisallowedTools } from './disallowed-tools.js';
 
@@ -273,13 +274,14 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     };
   }
 
-  getInfo(): ProviderInfo {
-    const available = this.validateConfig();
+  getInfo(config?: BaseAgentConfig): ProviderInfo {
+    const reason = this.configurationError(config);
+    const available = reason === undefined;
     return {
       name: this.name,
       version: this.version,
       available,
-      unavailableReason: available ? undefined : 'Claude API configuration is missing or invalid; check anthropic.apiKey / glm.apiKey and the selected model',
+      unavailableReason: available ? undefined : `Claude API configuration is missing or invalid: ${reason}`,
     };
   }
 
@@ -717,12 +719,33 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
   }
 
   validateConfig(): boolean {
-    // Use the same resolved credentials as agent requests (YAML, env, GLM).
-    // Looking only at process.env incorrectly rejects YAML-only credentials.
+    return this.configurationError() === undefined;
+  }
+
+  private configurationError(target?: BaseAgentConfig): string | undefined {
+    if (this.disposed) { return 'provider has been disposed'; }
     try {
-      return !!Config.getAgentConfig().apiKey.trim();
+      const config = target ?? Config.getAgentConfig();
+      const service = config.provider === 'glm' ? 'glm' : 'anthropic';
+      if (!config.apiKey?.trim()) {
+        return service === 'glm' ? 'glm.apiKey is required for the selected preset'
+          : 'anthropic.apiKey or ANTHROPIC_API_KEY is required for the selected preset';
+      }
+      if (!config.model?.trim()) { return 'the selected preset model is required'; }
+      if (service === 'glm' && !config.apiBaseUrl?.trim()) {
+        return 'glm.apiBaseUrl or the selected preset apiBaseUrl is required';
+      }
+      if (config.apiBaseUrl !== undefined) {
+        try {
+          const url = new URL(config.apiBaseUrl);
+          if (!['http:', 'https:'].includes(url.protocol)) { return 'the selected preset apiBaseUrl must use HTTP or HTTPS'; }
+        } catch {
+          return 'the selected preset apiBaseUrl must be an HTTP or HTTPS URL';
+        }
+      }
+      return undefined;
     } catch {
-      return false;
+      return 'check the selected API service credentials, model and endpoint';
     }
   }
 

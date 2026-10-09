@@ -11,7 +11,7 @@
  * @see Issue #1040 - Separate disclaude service code to @disclaude/service
  */
 
-import { type MessageBuilderOptions, type CwdProvider, type CwdResolution, type AgentPreset, type AgentSessionOptions, type AgentPresets, buildSessionKey, chatIdOfSessionKey, createLogger, getProvider, Config, resolveAgentPreset } from '@disclaude/core';
+import { type MessageBuilderOptions, type CwdProvider, type CwdResolution, type AgentPreset, type AgentSessionOptions, type AgentPresets, type BaseAgentConfig, buildSessionKey, chatIdOfSessionKey, createLogger, getProvider, Config, resolveAgentPreset } from '@disclaude/core';
 import { statSync } from 'node:fs';
 import { AgentFactory } from './agents/factory.js';
 import type { ChatAgentCallbacks } from './agents/types.js';
@@ -27,7 +27,7 @@ export interface ChatSessionPoolOptions {
   /** Named runtime presets. Defaults to Config.getAgentPresets(). */
   agentPresets?: AgentPresets;
   /** Backend availability probe; injectable for deterministic tests. */
-  validatePresetBackend?: (backend: AgentPreset['agentBackend']) =>
+  validatePresetBackend?: (backend: AgentPreset['agentBackend'], config: BaseAgentConfig) =>
     { available: boolean; unavailableReason?: string };
   /**
    * Channel-specific MessageBuilderOptions.
@@ -292,9 +292,10 @@ export class ChatSessionPool {
 
     let info: { available: boolean; unavailableReason?: string };
     try {
+      const config = AgentFactory.resolveConfig(resolved.preset);
       info = this.options.validatePresetBackend
-        ? this.options.validatePresetBackend(resolved.preset.agentBackend)
-        : getProvider(resolved.preset.agentBackend).getInfo();
+        ? this.options.validatePresetBackend(resolved.preset.agentBackend, config)
+        : getProvider(resolved.preset.agentBackend).getInfo(config);
     } catch {
       return { ok: false, error: `Could not validate agent preset "${resolved.name}". Check backend configuration and availability; the current session is unchanged.` };
     }

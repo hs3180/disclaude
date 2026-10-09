@@ -18,6 +18,26 @@ persistent configuration.
 | `DISCLAUDE_QUERY_MAX_RETRIES` | Override Claude SDK query retries. | Positive integer; otherwise the provider default is used. |
 | `DISCLAUDE_SYSTEM_FLOOD_THRESHOLD` | Set Claude system-message flood threshold. | Positive integer; defaults to 50. |
 | `DISCLAUDE_MIDSTREAM_RETRY_DELAY_MS` | Set the delay used by mid-stream retry handling. | Internal reliability tuning; omit unless diagnosing or testing provider behavior. |
+| `ANTHROPIC_MODEL` | Fallback primary model for Claude/API backends. | Explicit model configuration wins; an empty or whitespace-only value does not satisfy model validation. |
+
+For Anthropic/API model selection, the priority is the selected named preset's
+`model`, `agent.model`, `anthropic.model`, then `ANTHROPIC_MODEL`. For GLM,
+the selected named preset's `model` wins, followed by `glm.model`, then
+`ANTHROPIC_MODEL`. The fallback uses the service process environment first,
+then `env.ANTHROPIC_MODEL` in `disclaude.config.yaml`; surrounding whitespace is
+removed. The API key and GLM endpoint remain required. Codex continues to use
+its own `CODEX_MODEL`/Codex configuration rules.
+
+Claude Code `settingSources: ['user', 'project', 'local']` loads settings into
+the SDK subprocess. It does not export `model` or `env.ANTHROPIC_MODEL` from
+those files into the Disclaude service process. The service validates its
+configuration before launching that subprocess, and passes the resolved model
+explicitly to the SDK. Set `ANTHROPIC_MODEL` in the service's launch environment
+or YAML `env` block to use the fallback; a Claude Code settings file alone
+cannot satisfy the service's required model. Explicit SDK model selection
+also takes priority over the subprocess's model settings. See the official
+[Claude Code settings](https://code.claude.com/docs/en/settings) and
+[model configuration](https://code.claude.com/docs/en/model-config) references.
 
 `disclaude start` generates a fresh API token for each run by default and
 supplies it to managed child processes. If `--api-token` is set, use that

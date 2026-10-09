@@ -30,6 +30,8 @@ vi.mock('@disclaude/core', () => ({
     AGENT_BACKEND: 'claude',
     ANTHROPIC_API_KEY: 'anthropic-service-key',
     GLM_API_KEY: 'glm-service-key',
+    ANTHROPIC_API_BASE_URL: 'https://anthropic.service.example',
+    GLM_API_BASE_URL: 'https://glm.service.example',
     getAgentConfig: vi.fn(() => ({
       apiKey: 'default-api-key',
       model: 'default-model',
@@ -117,6 +119,7 @@ describe('AgentFactory', () => {
       ['codex', 'pi', 'anthropic', 'anthropic-service-key'],
       ['deepseek', 'claude', 'anthropic', 'anthropic-service-key'],
       ['deepseek', 'pi', 'glm', 'glm-service-key'],
+      ['claude', 'claude', 'glm', 'glm-service-key'],
     ] as const)('resolves %s -> %s credentials for %s', (defaultBackend, backend, provider, expected) => {
       const prior = Config.AGENT_BACKEND;
       Object.defineProperty(Config, 'AGENT_BACKEND', { configurable: true, value: defaultBackend });
@@ -124,6 +127,7 @@ describe('AgentFactory', () => {
       try {
         AgentFactory.createAgent('chat-credential-switch', createMockCallbacks(), { agentBackend: backend, provider });
         expect(getLastConfig().apiKey).toBe(expected);
+        expect(getLastConfig().apiBaseUrl).toBe(provider === 'glm' ? 'https://glm.service.example' : 'https://anthropic.service.example');
       } finally {
         Object.defineProperty(Config, 'AGENT_BACKEND', { configurable: true, value: prior });
       }
@@ -141,6 +145,16 @@ describe('AgentFactory', () => {
       } finally {
         Object.defineProperty(Config, 'AGENT_BACKEND', { configurable: true, value: prior });
       }
+    });
+
+    it('uses the same resolved config for preflight and construction, including preset endpoint priority', () => {
+      const options: AgentCreateOptions = {
+        agentBackend: 'claude', provider: 'glm', model: 'selected-model', apiBaseUrl: 'https://preset.example',
+      };
+      const resolved = AgentFactory.resolveConfig(options);
+      AgentFactory.createAgent('chat-selected', createMockCallbacks(), options);
+      expect(getLastConfig()).toMatchObject(resolved);
+      expect(resolved).toMatchObject({ apiKey: 'glm-service-key', model: 'selected-model', apiBaseUrl: 'https://preset.example' });
     });
 
     it('should accept callbacks without the optional streaming fields (Issue #4397 P2-a)', () => {

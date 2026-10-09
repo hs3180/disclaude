@@ -309,7 +309,8 @@ export async function main(): Promise<void> {
   } catch (error) {
     logger.error({ err: error }, 'Failed to get agent configuration');
     console.error(
-      'Error: No API key configured. Please set up disclaude.config.yaml with glm or anthropic settings.'
+      `Error: 配置校验未通过，服务无法启动。\n${error instanceof Error ? error.message : 'Unknown configuration error'}\n` +
+      '请检查 disclaude.config.yaml 中的 agent / glm / anthropic 配置及相关环境变量。'
     );
     processLock?.release();
     process.exit(1);

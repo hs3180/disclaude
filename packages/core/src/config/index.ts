@@ -200,9 +200,10 @@ export class Config {
   })();
 
   // GLM configuration (from config file)
-  // No fallback defaults - model must be explicitly configured
+  // Explicit model settings precede the host environment fallback (#5284).
   static readonly GLM_API_KEY = fileConfigOnly.glm?.apiKey || '';
-  static readonly GLM_MODEL = fileConfigOnly.glm?.model || '';
+  static readonly GLM_MODEL = fileConfigOnly.glm?.model ||
+    process.env.ANTHROPIC_MODEL?.trim() || fileConfigOnly.env?.ANTHROPIC_MODEL?.trim() || '';
   static readonly GLM_API_BASE_URL = fileConfigOnly.glm?.apiBaseUrl || '';
 
   // DeepSeek harness configuration (Issue #4741).
@@ -246,7 +247,8 @@ export class Config {
   static readonly CLAUDE_MODEL = this.AGENT_BACKEND === 'codex'
     ? this.CODEX_MODEL
     : (this.DEFAULT_AGENT_PRESET?.ok ? this.DEFAULT_AGENT_PRESET.preset.model : undefined) ||
-      fileConfigOnly.agent?.model || fileConfigOnly.anthropic?.model || '';
+      fileConfigOnly.agent?.model || fileConfigOnly.anthropic?.model ||
+      process.env.ANTHROPIC_MODEL?.trim() || fileConfigOnly.env?.ANTHROPIC_MODEL?.trim() || '';
 
   // Codex exec sandbox override (Issue #4631, S4 of #4627). Only
   // meaningful with AGENT_BACKEND === 'codex'; consumed by the
@@ -543,11 +545,7 @@ export class Config {
       logger.error({ errors }, 'Configuration validation failed');
       throw new Error(
         `Configuration validation failed:\n\n${messages}\n\n` +
-          'Please update your disclaude.config.yaml file:\n' +
-          '  anthropic:\n' +
-          '    apiKey: "your-key"\n' +
-          '    model: "your-model"\n' +
-          '    apiBaseUrl: "https://your-anthropic-compatible-proxy.example"'
+          'Please update the missing fields in disclaude.config.yaml or the service environment.'
       );
     }
   }
