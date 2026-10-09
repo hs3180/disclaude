@@ -38,6 +38,134 @@ afterEach(() => {
 });
 
 describe('CodexAgentProvider app-server transport', () => {
+  it.each(['active', 'lost-ack', 'unsupported'] as const)('handles native async answers without replay (%s)', async mode => {
+    const { provider, dir } = providerFixture('exit 0');
+    writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
+const fs=require('node:fs');const send=m=>console.log(JSON.stringify(m));
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line);
+ if(m.method==='initialize')send({id:m.id,result:{}});
+ else if(m.method==='thread/start')send({id:m.id,result:{thread:{id:'async-thread'}}});
+ else if(m.method==='turn/start'){
+  fs.appendFileSync(process.env.CODEX_HOME+'/writes','start\\n');
+  send({id:m.id,result:{turn:{id:'async-turn'}}});
+  send({method:'item/completed',params:{threadId:'async-thread',turnId:'async-turn',item:{id:'question',type:'agentMessage',text:'Which scope?',delivery:'async',questions:[{title:'Which scope?'}]}}});
+  if(${JSON.stringify(mode)}==='unsupported')send({method:'turn/completed',params:{threadId:'async-thread',turn:{id:'async-turn',status:'completed'}}});
+ } else if(m.method==='turn/steer'){
+  fs.appendFileSync(process.env.CODEX_HOME+'/writes','steer\\n');
+  if(${JSON.stringify(mode)}==='lost-ack'){process.exit(1);return;}
+  send({id:m.id,result:{turnId:'async-turn'}});
+  send({method:'turn/completed',params:{threadId:'async-thread',turn:{id:'async-turn',status:'completed'}}});
+ }
+});`);
+    const onUserInput = vi.fn<(request: AgentInputRequest) => Promise<void>>().mockResolvedValue();
+    const onAsyncUserInputAnswer = vi.fn().mockResolvedValue(undefined);
+    const stream = provider.queryStream((async function* (): AsyncGenerator<UserInput> {
+      yield { role: 'user', content: 'Original task', inputContext: { actorId: 'owner', chatId: 'chat', sourceMessageId: 'source' } };
+    })(), { sessionKey: `async-${mode}`, settingSources: [], onUserInput,
+      ...(mode === 'unsupported' ? {} : { onAsyncUserInputAnswer }),
+    });
+    const messages: AgentMessage[] = [];
+    const collecting = (async () => { for await (const message of stream.iterator) { messages.push(message); } })();
+    try {
+      if (mode === 'unsupported') {
+        await collecting;
+        expect(onUserInput).not.toHaveBeenCalled();
+        expect(messages.some(m => m.metadata?.terminatedReason === 'turn_failed')).toBe(true);
+        expect(messages.some(m => m.type === 'error' && m.content.includes('Async question'))).toBe(true);
+      } else {
+        await vi.waitFor(() => expect(onUserInput).toHaveBeenCalledOnce());
+        const [[request]] = onUserInput.mock.calls;
+        const response = request.respond({ 'question-1': { answers: ['Original scope'] } });
+        if (mode === 'lost-ack') { await expect(response).rejects.toThrow(/delivery failed/); }
+        else { await response; }
+        await collecting;
+        expect(readFileSync(join(dir, 'home/writes'), 'utf8')).toBe('start\nsteer\n');
+      }
+      expect(onAsyncUserInputAnswer).not.toHaveBeenCalled();
+    } finally { stream.handle.close(); await collecting; provider.dispose(); }
+  });
+
+  it('delivers an async question before reporting a simultaneous completion and keeps its delayed answer in the originating conversation', async () => {
+    const { provider, dir } = providerFixture('exit 0');
+    writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
+const send=m=>console.log(JSON.stringify(m));
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line);
+ if(m.method==='initialize')send({id:m.id,result:{}});
+ else if(m.method==='thread/start')send({id:m.id,result:{thread:{id:'async-thread'}}});
+ else if(m.method==='turn/start'){
+  process.stdout.write(JSON.stringify({id:m.id,result:{turn:{id:'async-turn'}}})+'\\n'+
+   JSON.stringify({method:'item/completed',params:{threadId:'async-thread',turnId:'async-turn',item:{id:'async-question',type:'agentMessage',text:'Any constraint?',delivery:'async',questions:[{title:'Any constraint?'}]}}})+'\\n'+
+   JSON.stringify({method:'turn/completed',params:{threadId:'async-thread',turn:{id:'async-turn',status:'completed'}}})+'\\n');
+  setTimeout(()=>process.exit(0),10);
+ }
+});`);
+    const context = { actorId: 'owner', chatId: 'original-chat', sourceMessageId: 'original-message', threadRootId: 'original-root' };
+    let confirmDelivery!: () => void;
+    const onUserInput = vi.fn<(request: AgentInputRequest, context: AgentInputContext | undefined) => Promise<void>>()
+      .mockImplementation(() => new Promise<void>(resolve => { confirmDelivery = resolve; }));
+    const onAsyncUserInputAnswer = vi.fn().mockResolvedValue(undefined);
+    let release!: () => void;
+    const input = (async function* (): AsyncGenerator<UserInput> {
+      yield { role: 'user', content: 'Original task', inputContext: context };
+      await new Promise<void>(resolve => { release = resolve; });
+    })();
+    const stream = provider.queryStream(input, { sessionKey: 'async-delayed', settingSources: [], onUserInput, onAsyncUserInputAnswer } as AgentQueryOptions);
+    const messages: AgentMessage[] = [];
+    const collecting = (async () => { for await (const message of stream.iterator) { messages.push(message); } })();
+    try {
+      await vi.waitFor(() => expect(onUserInput).toHaveBeenCalledOnce());
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(messages.some(m => m.type === 'result')).toBe(false);
+      expect(messages.some(m => m.type === 'error')).toBe(false);
+      confirmDelivery();
+      await vi.waitFor(() => expect(messages.some(m => m.type === 'result')).toBe(true));
+      expect(onUserInput).toHaveBeenCalledOnce();
+      const [[question, originalContext]] = onUserInput.mock.calls;
+      expect(originalContext).toEqual(context);
+      expect(question.signal.aborted).toBe(false);
+      await new Promise(resolve => setTimeout(resolve, 50));
+      await question.respond({ 'question-1': { answers: ['No extensions'] } });
+      expect(onAsyncUserInputAnswer).toHaveBeenCalledOnce();
+      expect(onAsyncUserInputAnswer.mock.calls[0]).toEqual([
+        expect.objectContaining({ threadId: 'async-thread', turnId: 'async-turn', itemId: 'async-question' }),
+        'Submitted answers to your questions:\n[{"question":"Any constraint?","answers":["No extensions"]}]', context,
+      ]);
+      await expect(question.respond({ 'question-1': { answers: ['Again'] } })).rejects.toThrow(/no longer active/);
+    } finally { confirmDelivery?.(); release?.(); stream.handle.close(); await collecting; provider.dispose(); }
+  });
+
+  it('reports a rejected async-question delivery as failure rather than a successful turn', async () => {
+    const { provider, dir } = providerFixture('exit 0');
+    writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
+const send=m=>console.log(JSON.stringify(m));
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line);
+ if(m.method==='initialize')send({id:m.id,result:{}});
+ else if(m.method==='thread/start')send({id:m.id,result:{thread:{id:'async-thread'}}});
+ else if(m.method==='turn/start'){
+  send({id:m.id,result:{turn:{id:'async-turn'}}});
+  send({method:'item/completed',params:{threadId:'async-thread',turnId:'async-turn',item:{id:'async-question',type:'agentMessage',text:'Any constraint?',delivery:'async',questions:[{title:'Any constraint?'}]}}});
+  send({method:'turn/completed',params:{threadId:'async-thread',turn:{id:'async-turn',status:'completed'}}});
+ }
+});`);
+    const onUserInput = vi.fn().mockRejectedValue(new Error('private transport detail'));
+    const stream = provider.queryStream((async function* (): AsyncGenerator<UserInput> {
+      yield { role: 'user', content: 'Original task', inputContext: { actorId: 'owner', chatId: 'chat', sourceMessageId: 'message' } };
+    })(), { sessionKey: 'async-failed', settingSources: [], onUserInput, onAsyncUserInputAnswer: vi.fn() } as AgentQueryOptions);
+    const messages: AgentMessage[] = [];
+    try {
+      for await (const message of stream.iterator) { messages.push(message); }
+      expect(onUserInput).toHaveBeenCalledOnce();
+      expect(messages.filter(m => m.type === 'result')).toEqual([
+        expect.objectContaining({ metadata: expect.objectContaining({ terminatedReason: 'turn_failed' }) }),
+      ]);
+      expect(messages.map(m => m.content).join('\n')).toContain('Async question');
+      expect(messages.map(m => m.content).join('\n')).not.toContain('private transport detail');
+    } finally { provider.dispose(); }
+  });
+
   it('rejects host tools before starting codex exec', () => {
     const { provider } = providerFixture('exit 0', 'exec');
     const tools: ToolDefinition[] = [{ name: 'read_notebook', description: 'Read', inputSchema: { type: 'object' }, outputSchema: { type: 'object' }, execute: () => Promise.resolve({}) }];

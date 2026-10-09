@@ -118,6 +118,7 @@ interface TurnCompletionEntry {
   promise: Promise<void>;
   settle: (error?: Error) => void;
   settled: boolean;
+  admitted?: boolean;
 }
 
 /**
@@ -983,6 +984,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // to unrelated live turns' awaiters.
       const turnEntry = this.createTurnCompletion(messageId);
       const accepted = this.channel.push(userMessage);
+      turnEntry.admitted = accepted;
       if (!accepted) {
         // Issue #2007: Channel is closed — message would be silently dropped.
         // Notify the user so they know the action was not processed.
@@ -1155,10 +1157,33 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       sessionKey: this.sdkSessionKey,
     });
 
-    if (this.callbacks.requestAgentInput) { sdkOptions.onUserInput = async (request, context) => {
-      if (!context || context.chatId !== chatId || !this.callbacks.requestAgentInput) { throw new Error('This channel cannot answer SDK input requests'); }
-      await this.callbacks.requestAgentInput(request, context);
-    }; }
+    const inputGeneration = this.sessionGeneration + 1;
+    if (this.callbacks.requestAgentInput) {
+      sdkOptions.onUserInput = async (request, context) => {
+        if (!context || context.chatId !== chatId || !this.callbacks.requestAgentInput) {
+          throw new Error('This channel cannot answer SDK input requests');
+        }
+        if (request.kind === 'async-message' && (this.onceMode || this.sessionGeneration !== inputGeneration)) {
+          throw Object.assign(new Error('This channel cannot answer SDK input requests'), { code: 'AGENT_ASYNC_INPUT_UNSUPPORTED' });
+        }
+        await this.callbacks.requestAgentInput(request, context);
+      };
+      sdkOptions.onAsyncUserInputAnswer = async (request, text, context) => {
+        if (request.signal.aborted || context.chatId !== chatId || this.onceMode || !this.isSessionActive
+          || this.sessionGeneration !== inputGeneration) { throw new Error('The originating conversation is no longer available'); }
+        // Use the existing synthetic prefix: this is new input, never a
+        // replay or a platform message ID. Its original topic stays explicit.
+        const messageId = `msg-async-${crypto.createHash('sha256').update(JSON.stringify([
+          request.threadId, request.turnId, request.itemId,
+        ])).digest('hex')}`;
+        if (this.turnCompletions.get(messageId)?.admitted) { return; }
+        await this.processMessage({ chatId, payload: text, messageId, senderOpenId: context.actorId,
+          threadRootId: context.threadRootId ?? context.sourceMessageId, chatType: this.chatType });
+        if (this.sessionGeneration !== inputGeneration || this.turnCompletions.get(messageId)?.admitted !== true) {
+          throw new Error('Async answer was not admitted to its originating conversation');
+        }
+      };
+    }
     this.logger.info({ chatId }, 'Starting SDK query with message channel');
 
     // Issue #2926: Create fresh AbortController for this agent loop
@@ -2281,7 +2306,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           }
 
           this.logger.info({
-            event: 'agent_turn', state: 'completed', chatId, user_visible: this.didDeliverUserVisibleThisTurn,
+            event: 'agent_turn', state: parsed.terminatedReason === 'turn_failed' ? 'failed' : 'completed',
+            chatId, user_visible: this.didDeliverUserVisibleThisTurn,
             circuitState: this.sendCircuitOpen ? 'open' : 'closed', ...this.activeLifecycleContext,
           }, 'agent_turn');
 
@@ -2290,7 +2316,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           this.isProcessingMessage = false;
 
           // Issue #4063: Resolve per-turn completion promise (works in persistent mode)
-          this.resolveTurn(currentTurnMessageId);
+          const turnError = parsed.terminatedReason === 'turn_failed'
+            ? Object.assign(new Error(parsed.terminationDetail || parsed.content || 'Provider turn failed'),
+              this.activeLifecycleContext, { name: 'ProviderTurnFailedError', backend: this.agentBackend, provider: this.sdkProvider.name })
+            : undefined;
+          this.resolveTurn(currentTurnMessageId, turnError);
 
           if (this.callbacks.onTurnResult) {
             await this.callbacks.onTurnResult({
@@ -2320,7 +2350,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             this.logger.info({ chatId }, 'Once-mode: closing channel after result');
             this.isSessionActive = false;
             this.channel?.close();
-            this.taskCompletionResolve?.();
+            if (turnError) { this.taskCompletionReject?.(turnError); }
+            else { this.taskCompletionResolve?.(); }
             this.clearTaskCompletion();
           }
         }

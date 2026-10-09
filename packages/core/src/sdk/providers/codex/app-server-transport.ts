@@ -108,9 +108,9 @@ export class CodexAppServerTransport {
       ...(options.onUserInput ? [
         '--enable', 'default_mode_request_user_input',
         // The feature flag alone exposes the protocol surface. Codex 0.155
-        // also requires the experimental tool config to expose async input to
-        // the model; keep this scoped to app-server children with a host
-        // input callback instead of mutating the user's global config.
+        // also requires the experimental tool config for synchronous input.
+        // Native async-question registration is separately model-catalog
+        // controlled in 0.162. Keep these flags scoped to this child.
         '-c', 'tools.experimental_request_user_input={enabled=true}',
       ] : [])], {
       env: browserAgentEnv(options.env),
