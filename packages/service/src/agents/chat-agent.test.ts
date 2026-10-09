@@ -195,7 +195,7 @@ describe('ChatAgent (service)', () => {
       const original = (agent as any).createSdkOptions.mock.results[0].value;
       expect(configureQueryOptions).toHaveBeenCalledExactlyOnceWith(original);
       expect((agent as any).createQueryStream).toHaveBeenCalledWith(
-        expect.anything(), { ...original, model: 'configured-model' },
+        expect.anything(), { ...original, model: 'configured-model', onActivity: expect.any(Function) },
       );
       expect(original).not.toHaveProperty('model');
       ChatAgent.prototype.dispose.call(agent);

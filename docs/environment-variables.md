@@ -31,3 +31,17 @@ The launchd script has deployment-specific `DISCLAUDE_LAUNCHD_*` overrides.
 Prefer its documented CLI workflow instead of setting those low-level values
 directly. `DISCLAUDE_SCHEDULE_ID`, `DISCLAUDE_SCHEDULE_NAME`, and
 `DISCLAUDE_CHAT_ID` are injected as task context, not service configuration.
+
+The service pool uses `agent.busyTurnStallTimeoutMs` in the YAML configuration
+to bound pending work without SDK, tool, or input activity. It defaults to
+1,800,000 ms (30 minutes) and must be an integer of at least 300,000 ms, the
+service sweep interval. SDK events include thinking and retry events, even
+when they have no user-visible text. Live non-ambient Claude background tasks
+and admitted/queued messages are protected from ordinary idle reclamation.
+
+`agent.busyTurnHardCapMs` is an optional absolute turn limit; its default `0`
+disables wall-clock stops. A positive integer imposes that additional limit
+even on progressing work. Stops report `no-progress` or `wall-clock`, elapsed
+time, and time since the last activity. Decisions are checked every five
+minutes and do not replay interrupted tools. These pool settings are separate
+from the provider watchdog environment variables above.

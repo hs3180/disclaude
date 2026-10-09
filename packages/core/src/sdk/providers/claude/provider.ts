@@ -439,6 +439,13 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
 
         for await (const message of queryResult) {
           if (cancelled) {return;}
+          try {
+            options.onActivity?.(message.type === 'stream_event'
+              ? `claude:${message.event.type}`
+              : `claude:${message.type === 'system' ? message.subtype : message.type}`);
+          } catch {
+            logger.debug('Host activity observer failed');
+          }
           // Partial stream events are provider-internal and are not user messages.
           // Claude SDK/CLI owns stream-level retry and liveness; disclaude must not
           // terminate a turn merely because content deltas pause during backoff.

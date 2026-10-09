@@ -557,6 +557,27 @@ describe('BaseAgent', () => {
       expect(messages[0].parsed.metadata?.phase).toBe(phase);
     });
 
+    it('preserves background-task lifecycle through the SDK adapter and legacy bridge', async () => {
+      const rawMessages = [
+        { type: 'system', subtype: 'background_tasks_changed', tasks: [{ task_id: 'research-1' }, { task_id: 'watcher', ambient: true }] },
+        { type: 'system', subtype: 'background_tasks_changed', tasks: [] },
+        { type: 'system', subtype: 'task_started', task_id: 'legacy-1' },
+        { type: 'system', subtype: 'task_notification', task_id: 'legacy-1', status: 'completed' },
+      ];
+      mockSdkProvider.queryStream.mockImplementation(() => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          for (const raw of rawMessages) { yield adaptSDKMessage(raw as Parameters<typeof adaptSDKMessage>[0]); }
+        })(),
+      }));
+      const messages: IteratorYieldResult[] = [];
+      for await (const item of agent.testCreateQueryStream(createMockInput([]), defaultOptions).iterator) { messages.push(item); }
+      expect(messages[0].parsed.metadata).toMatchObject({ systemSubtype: 'background_tasks_changed', backgroundTaskIds: ['research-1'] });
+      expect(messages[1].parsed.metadata?.backgroundTaskIds).toEqual([]);
+      expect(messages[2].parsed.metadata?.backgroundTask).toEqual({ id: 'legacy-1', state: 'running' });
+      expect(messages[3].parsed.metadata?.backgroundTask).toEqual({ id: 'legacy-1', state: 'completed' });
+    });
+
     it('should propagate stopReason through convertToLegacyFormat (Issue #4320, Gap C)', async () => {
       const mockHandle: QueryHandle = { close: vi.fn(), cancel: vi.fn() };
 

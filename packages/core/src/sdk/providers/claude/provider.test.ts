@@ -731,10 +731,12 @@ describe('ClaudeSDKProvider', () => {
         async function* testInput(): AsyncGenerator<UserInput> {
           yield { role: 'user', content: 'Hi' };
         }
+        const onActivity = vi.fn();
         const result = provider.queryStream(testInput(), {
           settingSources: ['user', 'project', 'local'],
           cwd: '/workspace',
           env: { ANTHROPIC_API_KEY: 'sk-test-key' },
+          onActivity,
         });
         const messages: AgentMessage[] = [];
         const drained = (async () => {
@@ -745,6 +747,9 @@ describe('ClaudeSDKProvider', () => {
         expect(interruptSpy).not.toHaveBeenCalled();
         expect(closeSpy).not.toHaveBeenCalled();
         expect(messages.some((message) => message.role === 'assistant')).toBe(true);
+        expect(onActivity).toHaveBeenCalledWith('claude:content_block_delta');
+        expect(onActivity).toHaveBeenCalledWith('claude:api_retry');
+        expect(messages.some(message => message.content.includes('working'))).toBe(false);
       } finally {
         vi.useRealTimers();
       }
@@ -773,6 +778,24 @@ describe('ClaudeSDKProvider', () => {
       expect(mockQuery).toHaveBeenCalledTimes(1);
       expect(interruptSpy).not.toHaveBeenCalled();
       expect(closeSpy).not.toHaveBeenCalled();
+    });
+
+    it('continues processing the SDK stream if a host activity observer throws', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      mockQuery.mockReturnValue((async function* () {
+        yield { type: 'stream_event', event: { type: 'message_start' } };
+        yield { type: 'assistant', message: { content: [{ type: 'text', text: 'Final reply' }] } };
+        yield { type: 'result', subtype: 'success' };
+      })());
+      async function* input(): AsyncGenerator<UserInput> { yield { role: 'user', content: 'Hi' }; }
+      const stream = provider.queryStream(input(), {
+        settingSources: [], cwd: '/workspace', env: { ANTHROPIC_API_KEY: 'sk-test-key' },
+        onActivity: () => { throw new Error('observer failed'); },
+      });
+      const messages: AgentMessage[] = [];
+      for await (const message of stream.iterator) { messages.push(message); }
+      expect(messages.map(message => message.type)).toEqual(['text', 'result']);
+      expect(messages[0].content).toBe('Final reply');
     });
 
     // 根因记录(D2):Agent Teams 并发触发上游限流(GLM 1302)时,卡住的 teammate 会

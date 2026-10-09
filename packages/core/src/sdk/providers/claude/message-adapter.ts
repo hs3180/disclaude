@@ -262,6 +262,18 @@ export function adaptSDKMessage(message: SDKMessage, taskRegistry?: TaskSubjectR
     }
 
     case 'system': {
+      if (message.subtype === 'background_tasks_changed' && Array.isArray(message.tasks)) {
+        metadata.backgroundTaskIds = message.tasks
+          .filter(task => task && !task.ambient && typeof task.task_id === 'string' && task.task_id.trim().length > 0)
+          .map(task => task.task_id);
+      } else if ((message.subtype === 'task_started' || message.subtype === 'task_progress') &&
+          typeof message.task_id === 'string' && message.task_id.trim() &&
+          !('ambient' in message && message.ambient) && !('skip_transcript' in message && message.skip_transcript)) {
+        metadata.backgroundTask = { id: message.task_id, state: 'running' };
+      } else if (message.subtype === 'task_notification' && typeof message.task_id === 'string' && message.task_id.trim() &&
+          ['completed', 'failed', 'stopped'].includes(message.status)) {
+        metadata.backgroundTask = { id: message.task_id, state: message.status };
+      }
       if (message.subtype === 'status') {
         // 瞬态进度占位:content 保留给 debug 群 / 日志,但打上 transientStatus
         // 让 ChatAgent 当中间消息过滤 —— SDK 每个请求都发一次 requesting,不过滤

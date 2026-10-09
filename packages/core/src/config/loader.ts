@@ -156,6 +156,14 @@ export function validateConfig(config: DisclaudeConfig): boolean {
     return false;
   }
 
+  for (const [field, minimum] of [['busyTurnHardCapMs', 0], ['busyTurnStallTimeoutMs', 5 * 60_000]] as const) {
+    const value = config.agent?.[field];
+    if (value !== undefined && (!Number.isSafeInteger(value) || value < minimum)) {
+      logger.error(`agent.${field} must be an integer >= ${minimum} milliseconds`);
+      return false;
+    }
+  }
+
   if (
     config.agent?.autoCompactWindow !== undefined &&
     (!Number.isInteger(config.agent.autoCompactWindow) || config.agent.autoCompactWindow < 0)

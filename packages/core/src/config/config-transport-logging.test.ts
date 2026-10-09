@@ -56,6 +56,10 @@ vi.mock('./loader.js', () => ({
 
 import { Config } from './index.js';
 
+it('defaults to no absolute cap and a 30-minute inactivity limit', () => {
+  expect(Config.getBusyTurnPolicy()).toEqual({ busyTurnHardCapMs: 0, busyTurnStallTimeoutMs: 1_800_000 });
+});
+
 // ─── Logging Defaults (no logging section) ─────────────────────────────────
 
 describe('Config.getLoggingConfig — defaults when section absent', () => {
