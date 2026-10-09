@@ -38,6 +38,10 @@ function connection() {
   const doc = { documentId: 'document-1', close: vi.fn() };
   const client = {
     openDocument: vi.fn(() => Promise.resolve(doc)),
+    documentPath: vi.fn(() => Promise.resolve('research.ipynb')),
+    interruptKernel: vi.fn((kernelId: string) =>
+      Promise.resolve({ kernelId, state: 'accepted', executionState: 'unknown', httpStatus: 204 })
+    ),
     response: vi.fn(() => Promise.resolve(new Response('{}', { status: 404 }))),
     json: vi.fn(() => Promise.resolve({})),
     notebookEntry: () => 'https://remote.invalid/lab/tree/research.ipynb',
@@ -53,6 +57,147 @@ function connection() {
 }
 
 describe('Optional Jupyter CLI boundary', () => {
+  it('publishes the interrupt target alternatives without requiring credentials', async () => {
+    const f = connection();
+    const commands = (await runNotebookCommand(
+      parseNotebookOptions(['tools', '--project-dir', root()]),
+      f.resolve,
+      signal
+    )) as Array<{ command: string; inputSchema: Record<string, unknown> }>;
+    expect(commands.find((entry) => entry.command === 'interrupt')?.inputSchema).toMatchObject({
+      anyOf: [{ required: ['kernelId'] }, { required: ['notebookId'] }],
+      additionalProperties: false,
+    });
+    expect(f.resolve).not.toHaveBeenCalled();
+  });
+
+  it('interrupts an explicit kernel with no Notebook reference, run ID, journal or RTC', async () => {
+    const directory = root();
+    const f = connection();
+    expect(
+      await runNotebookCommand(
+        parseNotebookOptions(['interrupt', '--project-dir', directory, '--input-file', '-']),
+        f.resolve,
+        signal,
+        () => JSON.stringify({ kernelId: 'selected-kernel' })
+      )
+    ).toMatchObject({ kernelId: 'selected-kernel', state: 'accepted', executionState: 'unknown' });
+    expect(f.client.interruptKernel).toHaveBeenCalledExactlyOnceWith('selected-kernel', signal);
+    expect(f.client.openDocument).not.toHaveBeenCalled();
+    expect(f.client.json).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(directory, '.jupyter', 'datalayer-runs.json'))).toBe(false);
+    expect(fs.existsSync(path.join(directory, '.jupyter', 'config.json'))).toBe(false);
+  });
+
+  it.each([
+    [[], undefined, 'missing_kernel'],
+    [
+      [
+        { path: 'research.ipynb', kernel: { id: 'a' } },
+        { path: 'research.ipynb', kernel: { id: 'b' } },
+      ],
+      undefined,
+      'ambiguous_binding',
+    ],
+    [
+      [
+        { path: 'research.ipynb', kernel: { id: 'a' } },
+        { path: 'other.ipynb', kernel: { id: 'a' } },
+      ],
+      undefined,
+      'shared_kernel',
+    ],
+    [[{ path: 'research.ipynb', kernel: { id: 'new' } }], 'original', 'binding_changed'],
+  ])('refuses unsafe existing Notebook bindings: %s', async (sessions, kernelId, state) => {
+    const directory = root();
+    const f = connection();
+    const ref = {
+      connectionId: 'configured',
+      serverNamespace: 'endpoint-fingerprint',
+      documentId: 'document-1',
+      contentPath: 'research.ipynb',
+    };
+    new JupyterProjectConfigStore(directory).linkNotebook(ref);
+    f.client.json.mockResolvedValue(sessions);
+    expect(
+      await runNotebookCommand(
+        parseNotebookOptions(['interrupt', '--project-dir', directory, '--input-file', '-']),
+        f.resolve,
+        signal,
+        () =>
+          JSON.stringify({ notebookId: notebookIdentifier(ref), ...(kernelId ? { kernelId } : {}) })
+      )
+    ).toMatchObject({ state, executionState: 'unknown' });
+    expect(f.client.interruptKernel).not.toHaveBeenCalled();
+    expect(f.client.openDocument).not.toHaveBeenCalled();
+    expect(f.client.json).toHaveBeenCalledExactlyOnceWith('api/sessions');
+  });
+
+  it('resolves an exclusively bound existing Notebook without opening RTC or starting a kernel', async () => {
+    const directory = root();
+    const f = connection();
+    const ref = {
+      connectionId: 'configured',
+      serverNamespace: 'endpoint-fingerprint',
+      documentId: 'document-1',
+      contentPath: 'research.ipynb',
+    };
+    new JupyterProjectConfigStore(directory).linkNotebook(ref);
+    f.client.json.mockResolvedValue([{ path: 'research.ipynb', kernel: { id: 'busy-kernel' } }]);
+    expect(
+      await runNotebookCommand(
+        parseNotebookOptions(['interrupt', '--project-dir', directory, '--input-file', '-']),
+        f.resolve,
+        signal,
+        () => JSON.stringify({ notebookId: notebookIdentifier(ref) })
+      )
+    ).toMatchObject({ kernelId: 'busy-kernel', state: 'accepted', executionState: 'unknown' });
+    expect(f.client.interruptKernel).toHaveBeenCalledExactlyOnceWith('busy-kernel', signal);
+    expect(f.client.openDocument).not.toHaveBeenCalled();
+    expect(f.client.json).toHaveBeenCalledExactlyOnceWith('api/sessions');
+  });
+
+  it('refuses a moved document and does not update the Project binding or select its new kernel', async () => {
+    const directory = root();
+    const f = connection();
+    const ref = {
+      connectionId: 'configured',
+      serverNamespace: 'endpoint-fingerprint',
+      documentId: 'document-1',
+      contentPath: 'research.ipynb',
+    };
+    const store = new JupyterProjectConfigStore(directory);
+    store.linkNotebook(ref);
+    f.client.documentPath.mockResolvedValue('moved.ipynb');
+    expect(
+      await runNotebookCommand(
+        parseNotebookOptions(['interrupt', '--project-dir', directory, '--input-file', '-']),
+        f.resolve,
+        signal,
+        () => JSON.stringify({ notebookId: notebookIdentifier(ref) })
+      )
+    ).toMatchObject({ state: 'notebook_moved' });
+    expect(f.client.json).not.toHaveBeenCalled();
+    expect(f.client.interruptKernel).not.toHaveBeenCalled();
+    expect(store.listNotebookReferences()).toMatchObject({ ok: true, data: [ref] });
+  });
+
+  it.each([{}, { runId: 'old', kernelId: 'kernel' }, { kernelId: '../other' }, { notebookId: '' }])(
+    'rejects invalid interrupt input before connection',
+    async (input) => {
+      const f = connection();
+      await expect(
+        runNotebookCommand(
+          parseNotebookOptions(['interrupt', '--project-dir', root(), '--input-file', '-']),
+          f.resolve,
+          signal,
+          () => JSON.stringify(input)
+        )
+      ).rejects.toThrow('interrupt');
+      expect(f.resolve).not.toHaveBeenCalled();
+    }
+  );
+
   it('discovers the shipped Skill using the existing registry', () => {
     const resolution = new SkillsRegistry([{ kind: 'builtin', root: repository }]).resolve();
     expect(resolution.skills.find((skill) => skill.name === 'jupyter')).toMatchObject({

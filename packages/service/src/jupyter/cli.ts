@@ -15,6 +15,7 @@ const commands = [
   'execute',
   'status',
   'stop',
+  'interrupt',
   'observe-image',
   'import-file',
   'export',
@@ -48,6 +49,9 @@ Options:
 Credentials: environment > .env > interactive input. Connection is lazy.
 Each command closes its RTC sockets. Kernel memory stays on remote Jupyter.
 execute submits once and returns runId; use status/stop for the original run.
+interrupt targets an existing kernelId, or a uniquely bound notebookId; no runId.
+It affects that kernel's current execution. HTTP 204 means accepted only;
+executionState remains unknown. It does not confirm termination or queue clearing.
 Chat /stop stops inference only. It does not confirm remote kernel cancellation.
 Reports/images become persistent Project artifacts; send them with channel.
 patch <action> remains the separate Jupyter Terminal repair installer.`;
@@ -68,6 +72,114 @@ export interface NotebookCLIConnection {
   client: DatalayerJupyterClient;
   connectionId: string;
   namespace: string;
+}
+
+const interruptCommand = {
+  command: 'interrupt',
+  description:
+    'Interrupt an explicitly selected existing kernel, preserving its identity and memory. No runId required. HTTP 204 only acknowledges the request; query the original execution separately. Never a fallback for stop.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      kernelId: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,256}$' },
+      notebookId: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+    },
+    anyOf: [{ required: ['kernelId'] }, { required: ['notebookId'] }],
+    additionalProperties: false,
+  },
+};
+
+/** Resolve only existing bindings. No RTC connection, execution journal or kernel creation. */
+async function interruptKernel(
+  root: string,
+  input: unknown,
+  connection: () => Promise<NotebookCLIConnection>,
+  signal: AbortSignal
+): Promise<unknown> {
+  if (
+    !input ||
+    typeof input !== 'object' ||
+    Array.isArray(input) ||
+    Object.keys(input).some((field) => !['kernelId', 'notebookId'].includes(field))
+  ) {
+    throw new Error('Invalid kernel interrupt input; read its schema with jupyter tools');
+  }
+  const args = input as { kernelId?: unknown; notebookId?: unknown };
+  if (
+    (!args.kernelId && !args.notebookId) ||
+    (args.kernelId !== undefined &&
+      (typeof args.kernelId !== 'string' || !/^[A-Za-z0-9_-]{1,256}$/.test(args.kernelId))) ||
+    (args.notebookId !== undefined &&
+      (typeof args.notebookId !== 'string' || !/^[a-f0-9]{64}$/.test(args.notebookId)))
+  ) {
+    throw new Error('Invalid kernel interrupt target; read its schema with jupyter tools');
+  }
+  signal.throwIfAborted();
+  const { client, connectionId, namespace } = await connection();
+  const refused = (state: string): unknown => ({
+    state,
+    executionState: 'unknown',
+    phase: 'resolve_notebook',
+    ...(typeof args.kernelId === 'string' ? { kernelId: args.kernelId } : {}),
+  });
+  let kernelId = args.kernelId as string | undefined;
+  if (typeof args.notebookId === 'string') {
+    const loaded = new JupyterProjectConfigStore(root).listNotebookReferences();
+    if (!loaded.ok) {
+      throw new Error('Project Notebook references cannot be verified');
+    }
+    const ref = loaded.data.find((value) => notebookIdentifier(value) === args.notebookId);
+    if (!ref) {
+      return refused('missing_notebook');
+    }
+    if (ref.connectionId !== connectionId || ref.serverNamespace !== namespace) {
+      return refused('endpoint_changed');
+    }
+    try {
+      if (ref.documentId && (await client.documentPath(ref.documentId)) !== ref.contentPath) {
+        return refused('notebook_moved');
+      }
+      const data = await client.json('api/sessions');
+      if (
+        !Array.isArray(data) ||
+        data.some(
+          (session: { path?: unknown; kernel?: { id?: unknown } } | null) =>
+            !session ||
+            typeof session.path !== 'string' ||
+            typeof session.kernel?.id !== 'string' ||
+            !/^[A-Za-z0-9_-]{1,256}$/.test(session.kernel.id)
+        )
+      ) {
+        return refused('unknown');
+      }
+      const sessions = data as Array<{ path: string; kernel: { id: string } }>;
+      const ids = [
+        ...new Set(sessions.filter((s) => s.path === ref.contentPath).map((s) => s.kernel.id)),
+      ];
+      if (!ids.length) {
+        return refused('missing_kernel');
+      }
+      if (ids.length !== 1) {
+        return refused('ambiguous_binding');
+      }
+      const [selected] = ids;
+      if (kernelId && kernelId !== selected) {
+        return refused('binding_changed');
+      }
+      if (sessions.some((s) => s.kernel.id === selected && s.path !== ref.contentPath)) {
+        return refused('shared_kernel');
+      }
+      kernelId = selected;
+    } catch {
+      signal.throwIfAborted();
+      return refused('unknown');
+    }
+  }
+  signal.throwIfAborted();
+  if (!kernelId) {
+    throw new Error('Kernel interrupt needs an explicit existing target');
+  }
+  return client.interruptKernel(kernelId, signal);
 }
 
 export function parseNotebookOptions(args: string[]): NotebookCLIOptions {
@@ -167,11 +279,14 @@ export async function runNotebookCommand(
   });
   try {
     if (options.command === 'tools') {
-      return tools.tools.map(({ name, description, inputSchema }) => ({
-        command: name.replace(/^notebook_/, '').replaceAll('_', '-'),
-        description,
-        inputSchema,
-      }));
+      return [
+        ...tools.tools.map(({ name, description, inputSchema }) => ({
+          command: name.replace(/^notebook_/, '').replaceAll('_', '-'),
+          description,
+          inputSchema,
+        })),
+        interruptCommand,
+      ];
     }
     if (options.command === 'list') {
       const raw = options.inputFile ? readInput(options.inputFile) : '{}';
@@ -256,14 +371,17 @@ export async function runNotebookCommand(
           doc.close();
         }
       }
+      const raw = options.inputFile ? readInput(options.inputFile) : '{}';
+      if (Buffer.byteLength(raw) > 300000) {
+        throw new Error('Notebook input exceeds its limit');
+      }
+      if (options.command === 'interrupt') {
+        return interruptKernel(root, JSON.parse(raw) as unknown, connection, signal);
+      }
       const name = `notebook_${options.command.replaceAll('-', '_')}`;
       const tool = tools.tools.find((t) => t.name === name);
       if (!tool) {
         throw new Error('Unknown Notebook operation');
-      }
-      const raw = options.inputFile ? readInput(options.inputFile) : '{}';
-      if (Buffer.byteLength(raw) > 300000) {
-        throw new Error('Notebook input exceeds its limit');
       }
       const result = await tool.execute(JSON.parse(raw) as Record<string, unknown>, { signal });
       return materializeImages(root, result);
