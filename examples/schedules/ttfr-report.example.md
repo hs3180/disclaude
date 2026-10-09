@@ -2,7 +2,6 @@
 name: "TTFR 统计报告"
 cron: "0 0 * * *"
 enabled: false
-blocking: true
 chatId: "oc_REPLACE_WITH_YOUR_CHAT_ID"
 ---
 

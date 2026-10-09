@@ -39,7 +39,6 @@ async function writeScheduleFile(
     chatId?: string;
     enabled?: boolean;
     createdBy?: string;
-    blocking?: boolean;
     cooldownPeriod?: number;
     model?: string;
     lastExecutedAt?: string;
@@ -52,7 +51,6 @@ async function writeScheduleFile(
     chatId = 'oc_test',
     enabled = true,
     createdBy,
-    blocking,
     cooldownPeriod,
     model,
     lastExecutedAt,
@@ -65,7 +63,6 @@ prompt: "${prompt}"
 chatId: ${chatId}
 enabled: ${enabled}
 ${createdBy ? `createdBy: "${createdBy}"` : ''}
-${blocking !== undefined ? `blocking: ${blocking}` : ''}
 ${cooldownPeriod !== undefined ? `cooldownPeriod: ${cooldownPeriod}` : ''}
 ${model ? `model: "${model}"` : ''}
 ${lastExecutedAt ? `lastExecutedAt: "${lastExecutedAt}"` : ''}
@@ -139,7 +136,6 @@ describe('ScheduleManager', () => {
         chatId: 'oc_chat2',
         enabled: true,
         createdBy: 'user-123',
-        blocking: true,
         cooldownPeriod: 3600000,
         model: 'claude-sonnet-4-20250514',
         lastExecutedAt: '2026-03-01T09:00:00Z',
@@ -148,7 +144,6 @@ describe('ScheduleManager', () => {
       const result = await manager.get(taskId('full-task'));
       expect(result).toBeDefined();
       expect(result!.createdBy).toBe('user-123');
-      expect(result!.blocking).toBe(true);
       expect(result!.cooldownPeriod).toBe(3600000);
       expect(result!.model).toBe('claude-sonnet-4-20250514');
       expect(result!.lastExecutedAt).toBe('2026-03-01T09:00:00Z');

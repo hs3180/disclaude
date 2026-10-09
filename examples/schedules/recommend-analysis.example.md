@@ -2,7 +2,6 @@
 name: "智能推荐分析"
 cron: "0 3 * * *"
 enabled: false
-blocking: true
 chatId: "REPLACE_WITH_ACTUAL_CHAT_ID"
 createdAt: "2026-03-01T00:00:00.000Z"
 ---

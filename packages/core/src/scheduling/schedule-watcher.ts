@@ -12,7 +12,6 @@
  * name: Daily Report
  * cron: "0 9 * * *"
  * enabled: true
- * blocking: true
  * chatId: oc_xxx
  * createdBy: ou_xxx
  * ---
@@ -111,7 +110,6 @@ function parseScheduleFrontmatter(content: string): {
         frontmatter[key] = value === null ? '' : String(value);
         break;
       case 'enabled':
-      case 'blocking':
         if (typeof value !== 'boolean') {
           throw new ScheduleFileParseError('invalid-boolean', `${key} must be true or false.`);
         }
@@ -397,7 +395,6 @@ export class ScheduleFileScanner {
         prompt: prompt || undefined,
         command,
         enabled: (frontmatter['enabled'] as boolean) ?? true,
-        blocking: (frontmatter['blocking'] as boolean) ?? true,
         clearContext: frontmatter['clearContext'] as boolean | undefined,
         freshSession,
         skipHistory,
@@ -494,7 +491,6 @@ export class ScheduleFileScanner {
       `name: "${task.name}"`,
       `cron: "${task.cron}"`,
       `enabled: ${task.enabled}`,
-      `blocking: ${task.blocking ?? true}`,
       `chatId: ${task.chatId}`,
     ];
 
