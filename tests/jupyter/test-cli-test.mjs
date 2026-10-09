@@ -33,7 +33,7 @@ const good = () => ({
   resourceCounts: { kernels: [0, 0], sessions: [0, 0] },
 });
 
-test('CLI-backed model tools pass the shared host registry and validate an actual CLI result', async () => {
+test('CLI-backed model tools validate JSON and image results with the shared host registry', async () => {
   const directory = fixture();
   let probe;
   try {
@@ -46,6 +46,30 @@ test('CLI-backed model tools pass the shared host registry and validate an actua
       }
     );
     probe = await createCLIProbe({ envFile, project: directory, directory });
+    const image = path.join(probe.project, 'fixture.png');
+    const png =
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRfcAAAAASUVORK5CYII=';
+    fs.writeFileSync(image, Buffer.from(png, 'base64'));
+    // Control the CLI boundary so this registry regression needs no compiled CLI,
+    // credentials, remote server or model in the Node 18/24 patch matrix.
+    probe.command = async (command, input) => {
+      if (command === 'tools') {
+        return ['list', 'observe-image'].map((command) => ({
+          command,
+          description: 'Controlled CLI result fixture',
+          inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+        }));
+      }
+      assert.deepEqual(input, {});
+      if (command === 'observe-image') {
+        return {
+          data: { sourceHash: 'fixture' },
+          images: [{ mimeType: 'image/png', filePath: image }],
+        };
+      }
+      assert.equal(command, 'list');
+      return { notebooks: [], recentRuns: [] };
+    };
     // Read the real TypeScript registry without requiring a build in the CLI matrix.
     const { tsImport } = await import('tsx/esm/api');
     const { prepareTools } = await tsImport(
@@ -59,6 +83,13 @@ test('CLI-backed model tools pass the shared host registry and validate an actua
     assert.deepEqual(await list.execute({}, { signal: new AbortController().signal }), {
       notebooks: [],
       recentRuns: [],
+    });
+    const observe = tools.find((tool) => tool.name === 'notebook_observe_image');
+    assert(observe);
+    assert.deepEqual(await observe.execute({}, { signal: new AbortController().signal }), {
+      format: 'disclaude.tool-result.v1',
+      data: { sourceHash: 'fixture' },
+      images: [{ mimeType: 'image/png', data: png }],
     });
   } finally {
     await probe?.close();
