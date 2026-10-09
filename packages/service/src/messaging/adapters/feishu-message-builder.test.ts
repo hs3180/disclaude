@@ -36,6 +36,23 @@ describe('MessageBuilder with Feishu sections', () => {
   });
 
   describe('buildEnhancedContent with Feishu header', () => {
+    it('provides one tool/metadata block and keeps the current reply attribution on follow-ups', () => {
+      const data = { text: 'JSON only', messageId: 'current-message', senderOpenId: 'current-sender' };
+      const initial = messageBuilder.buildEnhancedContent(data, 'current-chat', withTools(['send_text', 'send_interactive']));
+      expect(initial.match(/^## Tools$/gm)).toHaveLength(1);
+      expect(initial.match(/\*\*Chat ID:\*\*/g)).toHaveLength(1);
+      expect(initial.match(/\*\*Message ID:\*\*/g)).toHaveLength(1);
+      expect(initial).not.toContain('parentMessageId:');
+      expect(initial).not.toContain('--options');
+      const followUp = messageBuilder.buildEnhancedContent({ ...data, includeStableContext: false }, 'current-chat');
+      expect(followUp).not.toContain('## Tools');
+      expect(followUp).not.toContain('Shared Runtime Environment');
+      expect(followUp).toContain('<at user_id="current-sender">');
+      expect(followUp).toContain('Keep the answer outside </at>');
+      expect(followUp).toContain('current-message');
+      expect(followUp).toContain('JSON only');
+    });
+
     it('should include Feishu platform header', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
@@ -114,9 +131,10 @@ describe('MessageBuilder with Feishu sections', () => {
       } as MessageData, 'chat-123');
 
       // Issue #3679: Simple image attachment info, no MCP tool guidance
-      expect(result).toContain('Image Attachments');
+      expect(result).toContain('Images listed above');
       expect(result).toContain('test.png');
       expect(result).toContain('/tmp/test.png');
+      expect(result.match(/\/tmp\/test\.png/g)).toHaveLength(1);
       expect(result).toContain('Read tool');
       // Should NOT contain old MCP tool guidance
       expect(result).not.toContain('mcp__4_5v_mcp__analyze_image');
@@ -153,7 +171,7 @@ describe('MessageBuilder with Feishu sections', () => {
         attachments: imageAttachments,
       } as MessageData, 'chat-123');
 
-      expect(result).toContain('2 images');
+      expect(result.match(/MIME type: image\//g)).toHaveLength(2);
       expect(result).toContain('photo1.jpg');
       expect(result).toContain('photo2.png');
     });
@@ -197,7 +215,7 @@ describe('MessageBuilder with Feishu sections', () => {
         messageId: 'msg-123',
       }, 'chat-123', withTools(['send_text']));
 
-      expect(result).toContain(`${channelCli} send_text`);
+      expect(result).toContain('`send_text`');
       expect(result).toContain('chat-123');
     });
 
@@ -207,7 +225,7 @@ describe('MessageBuilder with Feishu sections', () => {
         messageId: 'msg-123',
       }, 'chat-123', withTools(['send_text', 'send_card']));
 
-      expect(result).toContain(`${channelCli} send_card`);
+      expect(result).toContain('`send_card`');
     });
 
     it('should omit send_card help when legacy capabilities disable cards', () => {
@@ -219,7 +237,7 @@ describe('MessageBuilder with Feishu sections', () => {
         supportedMcpTools: undefined,
         supportsCard: false,
       });
-      expect(result).not.toContain(`${channelCli} send_card`);
+      expect(result).not.toContain('`send_card`');
     });
 
     it('should include send_interactive when available', () => {
@@ -228,7 +246,7 @@ describe('MessageBuilder with Feishu sections', () => {
         messageId: 'msg-123',
       }, 'chat-123', withTools(['send_text', 'send_interactive']));
 
-      expect(result).toContain(`${channelCli} send_interactive`);
+      expect(result).toContain('`send_interactive`');
     });
 
     it('should explain automatic final delivery and CLI use for extra messages', () => {
@@ -237,8 +255,8 @@ describe('MessageBuilder with Feishu sections', () => {
         messageId: 'msg-123',
       }, 'chat-123', withTools(['send_text']));
 
-      expect(result).toContain('**IMPORTANT**');
-      expect(result).toContain('normal final response is delivered by ChatAgent automatically');
+      expect(result).toContain(`${channelCli} help`);
+      expect(result).toContain('ChatAgent delivers your final reply automatically');
     });
 
     it('should include the send_file CLI command when available', () => {
@@ -247,7 +265,7 @@ describe('MessageBuilder with Feishu sections', () => {
         messageId: 'msg-123',
       }, 'chat-123', withTools(['send_text', 'send_file']));
 
-      expect(result).toContain(`${channelCli} send_file`);
+      expect(result).toContain('`send_file`');
     });
 
     it('should not include send_file when not in supportedMcpTools', () => {
@@ -268,7 +286,7 @@ describe('MessageBuilder with Feishu sections', () => {
       }, 'chat-123');
 
       expect(result).toContain('Output Format Requirements');
-      expect(result).toContain('Never output raw JSON');
+      expect(result).toContain('including raw JSON or code-only output');
     });
 
     it('should include correct and wrong format examples', () => {
@@ -277,8 +295,8 @@ describe('MessageBuilder with Feishu sections', () => {
         messageId: 'msg-123',
       }, 'chat-123');
 
-      expect(result).toContain('✅ Correct Format');
-      expect(result).toContain('❌ Wrong Format');
+      expect(result).not.toContain('✅ Correct Format');
+      expect(result).not.toContain('❌ Wrong Format');
     });
 
     it('should not include output format guidance for skill commands', () => {
@@ -327,16 +345,11 @@ describe('MessageBuilder with Feishu sections', () => {
 // Issue #4705: the appended canonical CLI help must respect the same
 // capability gate as the tool list above it, or the prompt contradicts itself.
 describe('channel CLI guidance capability gating', () => {
-  const build = (capabilities: unknown): string => {
-    const options = createFeishuMessageBuilderOptions();
-    const stable = (options.buildStableToolsSection as (c: unknown) => string)({ capabilities });
-    const dynamic = (options.buildToolsSection as (c: unknown) => string)({
-      chatId: 'oc_00000000000000000000000000000000000',
-      msg: { messageId: 'm1' },
-      capabilities,
-    });
-    return `${stable}\n${dynamic}`;
-  };
+  const build = (capabilities: Partial<ChannelCapabilities>): string =>
+    new MessageBuilder(createFeishuMessageBuilderOptions()).buildEnhancedContent(
+      { text: 'Question', messageId: 'm1' }, 'oc_owned_chat',
+      { ...DEFAULT_CHANNEL_CAPABILITIES, ...capabilities },
+    );
 
   it('does not advertise send_file when the channel says it is unsupported', () => {
     const out = build({ supportsFile: false, supportedMcpTools: ['send_text'] });

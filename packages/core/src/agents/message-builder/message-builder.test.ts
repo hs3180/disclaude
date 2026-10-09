@@ -68,6 +68,31 @@ describe('MessageBuilder', () => {
   });
 
   describe('buildEnhancedContent - guidance sections', () => {
+    it('keeps current routing, user input and attachments without repeating stable context', () => {
+      const builder = new MessageBuilder({
+        buildHeader: () => 'Stable channel header',
+        buildStableToolsSection: () => 'Stable command instructions',
+        buildPostHistory: ctx => `Current sender: ${ctx.msg.senderOpenId}`,
+      });
+      const sections = builder.buildSections({
+        text: 'Return JSON only', messageId: 'm2', senderOpenId: 'u2',
+        includeStableContext: false, chatType: 'topic', threadRootId: 'root-2',
+        threadContext: 'Current thread reply',
+        attachments: [{ id: 'a2', fileName: 'photo.png', localPath: '/owned/photo.png',
+          mimeType: 'image/png', source: 'user', createdAt: 0 }],
+      }, 'chat-2');
+      const prompt = builder.renderSections(sections);
+      expect(sections.every(section => section.stability === 'dynamic')).toBe(true);
+      for (const value of ['Return JSON only', 'm2', 'u2', 'root-2', 'chat-2', '/owned/photo.png', 'Current thread reply']) {
+        expect(prompt).toContain(value);
+      }
+      expect(prompt).not.toContain('Stable command instructions');
+      expect(prompt).not.toContain('Shared Runtime Environment');
+      expect(prompt).not.toContain('Topic-thread context before replying');
+      expect(builder.buildEnhancedContent({ text: 'Fresh query', messageId: 'm3' }, 'chat-2'))
+        .toContain('Stable command instructions');
+    });
+
     it('should include next-step guidance for regular messages', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
@@ -84,7 +109,7 @@ describe('MessageBuilder', () => {
       }, 'chat-456');
 
       expect(result).toContain('Output Format Requirements');
-      expect(result).toContain('Never output raw JSON');
+      expect(result).toContain('including raw JSON or code-only output');
     });
 
     it('should include location awareness guidance for regular messages', () => {
@@ -624,8 +649,8 @@ describe('MessageBuilder', () => {
         messageId: 'msg-123',
       }, 'chat-456', undefined);
 
-      expect(result).toContain('actionPrompts');
-      expect(result).toContain('interactive card');
+      expect(result).toContain('send_interactive');
+      expect(result).toContain('materially benefits from buttons');
     });
 
     it('should combine attachments and skill command extra for skill commands', () => {
@@ -690,8 +715,8 @@ describe('MessageBuilder', () => {
       expect(result).toContain('Topic-thread context before replying');
       expect(result).toContain('lark-cli');
       expect(result).toContain('+threads-messages-list');
-      expect(result).toContain('After responding in this exact thread');
-      expect(result).toContain('--action-prompts');
+      expect(result).toContain('current Thread Root ID');
+      expect(result).toContain('Channel CLI guidance');
       expect(result).not.toContain('Codex follow-up');
     });
 
@@ -769,7 +794,7 @@ describe('MessageBuilder', () => {
       }, 'chat-456');
 
       expect(result).toContain('Next Steps After Response');
-      expect(result).toContain('proactively identify the most useful next step');
+      expect(result).toContain('proactively offer one concrete, optional next step');
     });
 
     it('should include next-step guidance when chatType is undefined', () => {
@@ -847,11 +872,15 @@ describe('MessageBuilder', () => {
         attachments: [{ id: 'a1', fileName: 'report.txt', localPath: '/tmp/report.txt', source: 'user', createdAt: 1 }],
       }, 'topic-chat');
       expect(sections.filter(section => section.stability === 'dynamic').map(section => section.kind))
-        .toEqual(expect.arrayContaining(['metadata', 'thread-context', 'channel-context', 'user-message', 'attachments']));
+        .toEqual(expect.arrayContaining(['metadata', 'thread-context', 'user-message', 'attachments']));
       const rendered = messageBuilder.renderSections(sections);
       expect(rendered).toContain('thread history');
       expect(rendered).toContain('report.txt');
       expect(rendered).not.toContain('Next Steps After Response');
+      const stableContext = messageBuilder.buildStableContext({ text: 'Other input', chatType: 'topic', messageId: 'm2' }, 'topic-chat');
+      expect(stableContext).toContain('Topic-thread context before replying');
+      expect(stableContext).not.toContain('m2');
+      expect(stableContext).not.toContain('Other input');
     });
 
     it('keeps skill commands minimal and omits empty optional sections', () => {

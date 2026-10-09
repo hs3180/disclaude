@@ -78,13 +78,14 @@ JSONL
 /** Collect everything a queryStream iterator yields, then end the input. */
 async function drainStream(
   provider: CodexAgentProvider,
-  prompts: string[],
+  prompts: Array<string | UserInput>,
   extraOptions: Partial<AgentQueryOptions> = {},
 ): Promise<{ messages: unknown[]; sessionId?: string }> {
   const queue = [...prompts];
   async function* input(): AsyncGenerator<UserInput> {
     while (queue.length > 0) {
-      yield { role: 'user', content: queue.shift() as string };
+      const next = queue.shift() as string | UserInput;
+      yield typeof next === 'string' ? { role: 'user', content: next } : next;
     }
   }
   const result = provider.queryStream(input(), {
@@ -511,9 +512,17 @@ fi
         env: { PATH: `${fixtures.binDir}:${process.env.PATH ?? ''}`, CODEX_HOME: fixtures.codexHome },
         maxResumeInputTokens: 100,
       });
-      const { messages } = await drainStream(provider, ['a', 'b', 'c']);
+      const { messages } = await drainStream(provider, [
+        { role: 'user', content: 'Stable shared guidance\nfirst request' },
+        { role: 'user', content: 'second request', continuationContext: 'Stable shared guidance' },
+        { role: 'user', content: 'third request', continuationContext: 'Stable shared guidance' },
+      ]);
       expect(argvOf(fixtures, 2)).toContain('exec resume');
       expect(argvOf(fixtures, 3)).not.toContain('exec resume');
+      expect(argvOf(fixtures, 2)).not.toContain('Stable shared guidance');
+      expect(argvOf(fixtures, 3)).toContain('Stable shared guidance');
+      expect(argvOf(fixtures, 3)).toContain('third request');
+      expect(argvOf(fixtures, 3)).not.toContain('first request');
       expect((messages as Array<{ type: string; content: string }>)
         .filter((m) => m.type === 'text').map((m) => m.content))
        .toEqual(['first', 'large', 'fresh']);

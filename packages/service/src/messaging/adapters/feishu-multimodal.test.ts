@@ -68,7 +68,7 @@ describe('Multimodal Message Handling (Issue #808)', () => {
       expect(result).toContain('image/png');
 
       // Issue #3679: Should include image attachment info (no MCP guidance)
-      expect(result).toContain('## 📎 Image Attachments');
+      expect(result).toContain('Images listed above');
       expect(result).toContain('Read tool');
       expect(result).not.toContain('mcp__4_5v_mcp__analyze_image');
     });
@@ -144,8 +144,8 @@ describe('Multimodal Message Handling (Issue #808)', () => {
       expect(result).toContain('2 file(s)');
 
       // Issue #3679: Should include image attachment info (no MCP guidance)
-      expect(result).toContain('## 📎 Image Attachments');
-      expect(result).toContain('2 images');
+      expect(result).toContain('Images listed above');
+      expect(result.match(/MIME type: image\//g)).toHaveLength(2);
     });
 
     it('should handle multiple images with different formats', () => {
@@ -305,7 +305,7 @@ console.log(data.value);
         } as MessageData, 'chat-789');
 
         // Issue #3679: Shows image attachment info, not MCP guidance
-        expect(result).toContain('## 📎 Image Attachments');
+        expect(result).toContain('Images listed above');
         expect(result).toContain(fileName);
       }
     });
