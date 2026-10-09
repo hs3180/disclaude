@@ -1,8 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { parseArgs, parseEnv } from 'node:util';
-import { createCLIProbe, probeSource } from './cli-probe-client.mjs';
+import { parseArgs } from 'node:util';
+import {
+  createCLIProbe,
+  probeSource,
+  probeAuth,
+  probeConnection,
+  probeKernel,
+} from './cli-probe-client.mjs';
 import { DatalayerJupyterClient } from '../../packages/core/dist/jupyter/datalayer-client.js';
 
 const { values } = parseArgs({
@@ -10,10 +16,10 @@ const { values } = parseArgs({
     'env-file': { type: 'string' },
     output: { type: 'string' },
     cases: { type: 'string' },
+    'kernel-name': { type: 'string' },
   },
 });
-if (!values['env-file'] || !values.output)
-  throw new Error('Explicit environment file and new output directory required');
+if (!values.output) throw new Error('A new output directory required');
 const selected = values.cases ? new Set(values.cases.split(',')) : undefined;
 const knownCases = new Set([
   'queued-cancel',
@@ -36,12 +42,11 @@ if (selected && [...selected].some((name) => !knownCases.has(name)))
   throw new Error('Unknown edge case selection');
 const root = path.resolve(values.output);
 fs.mkdirSync(root, { mode: 0o700 });
-const env = parseEnv(fs.readFileSync(values['env-file'], 'utf8'));
-if (!env.JUPYTERLAB_HOST || !env.JUPYTERLAB_PASS)
+const auth = await probeAuth(values['env-file']);
+if (!auth.baseUrl || !auth.secret)
   throw new Error('Configured remote Jupyter credentials unavailable');
 const client = new DatalayerJupyterClient({
-  baseUrl: env.JUPYTERLAB_HOST,
-  password: async () => env.JUPYTERLAB_PASS,
+  ...probeConnection(auth),
   allowInsecureHttp: true,
   timeoutMs: 12000,
 });
@@ -56,10 +61,11 @@ const report = {
   ownedNotebooks: [],
   selectedCases: selected ? [...selected] : [...knownCases],
 };
+report.kernel = await probeKernel(client, values['kernel-name']);
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const persist = () => {
   const text = JSON.stringify(report, null, 2);
-  if (text.includes(env.JUPYTERLAB_PASS)) throw new Error('Credential reached evidence');
+  if (text.includes(auth.secret)) throw new Error('Credential reached evidence');
   fs.writeFileSync(path.join(root, 'report.json'), text + '\n', { mode: 0o600 });
 };
 const check = (name, passed, evidence) => {
@@ -241,11 +247,7 @@ async function isolated(name, sources, work) {
         nbformat: 4,
         nbformat_minor: 5,
         metadata: {
-          kernelspec: {
-            name: 'conda-base-py',
-            display_name: 'Python (conda base)',
-            language: 'python',
-          },
+          kernelspec: report.kernel,
         },
         cells: [...cells, markdown],
       },
@@ -256,7 +258,7 @@ async function isolated(name, sources, work) {
       path: file,
       name: file,
       type: 'notebook',
-      kernel: { name: 'conda-base-py' },
+      kernel: { name: report.kernel.name },
     });
     const kernelId = session.kernel.id;
     const incarnation = await client.kernelInfo(kernelId);
@@ -266,7 +268,7 @@ async function isolated(name, sources, work) {
     report.operationErrors ??= [];
     report.operationErrors.push(name);
     check(name + ' probe completed', false, {
-      error: error.message.replaceAll(env.JUPYTERLAB_PASS, '[REDACTED]'),
+      error: error.message.replaceAll(auth.secret, '[REDACTED]'),
     });
   } finally {
     doc?.close();

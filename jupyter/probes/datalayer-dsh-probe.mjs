@@ -2,9 +2,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { parseArgs, parseEnv } from 'node:util';
+import { parseArgs } from 'node:util';
 import { DatalayerJupyterClient } from '../../packages/core/dist/jupyter/datalayer-client.js';
-import { createCLIProbe, probeSource } from './cli-probe-client.mjs';
+import {
+  createCLIProbe,
+  probeSource,
+  probeAuth,
+  probeConnection,
+  probeKernel,
+} from './cli-probe-client.mjs';
 import { DeepSeekHarnessProvider } from '../../packages/core/dist/sdk/providers/deepseek/provider.js';
 
 const { values } = parseArgs({
@@ -14,9 +20,10 @@ const { values } = parseArgs({
     output: { type: 'string' },
     model: { type: 'string' },
     binary: { type: 'string', default: 'dsh' },
+    'kernel-name': { type: 'string' },
   },
 });
-for (const field of ['env-file', 'oauth-auth-file', 'output', 'model']) {
+for (const field of ['oauth-auth-file', 'output', 'model']) {
   if (!values[field]) {
     throw new Error(`Explicit --${field} required`);
   }
@@ -29,18 +36,17 @@ fs.mkdirSync(path.dirname(root), { recursive: true });
 fs.mkdirSync(root, { mode: 0o700 });
 const project = path.join(root, 'project');
 fs.mkdirSync(project, { mode: 0o700 });
-const env = parseEnv(fs.readFileSync(values['env-file'], 'utf8'));
+const auth = await probeAuth(values['env-file']);
 const access = JSON.parse(fs.readFileSync(values['oauth-auth-file'], 'utf8')).tokens?.access_token;
 const exp = access && JSON.parse(Buffer.from(access.split('.')[1], 'base64url').toString()).exp;
 if (!access || !exp || exp * 1000 < Date.now() + 15 * 60_000) {
   throw new Error('Existing OAuth credential unavailable or near expiry');
 }
-const secrets = [access, env.JUPYTERLAB_PASS];
+const secrets = [access, auth.secret];
 const sanitize = (text) =>
   secrets.reduce((value, secret) => value.replaceAll(secret, '[REDACTED]'), text);
 const client = new DatalayerJupyterClient({
-  baseUrl: env.JUPYTERLAB_HOST,
-  password: async () => env.JUPYTERLAB_PASS,
+  ...probeConnection(auth),
   allowInsecureHttp: true,
 });
 const originalKernels = await client.json('api/kernels');
@@ -148,6 +154,7 @@ async function phase(name, prompt) {
   return result;
 }
 try {
+  report.kernel = await probeKernel(client, values['kernel-name']);
   report.dshVersion = execFileSync(values.binary, ['--version'], { encoding: 'utf8' }).trim();
   if (report.dshVersion !== '0.1.2-rc.1') {
     throw new Error('Expected DSH 0.1.2-rc.1');
@@ -164,11 +171,7 @@ try {
       nbformat: 4,
       nbformat_minor: 5,
       metadata: {
-        kernelspec: {
-          name: 'conda-base-py',
-          display_name: 'Python (conda base)',
-          language: 'python',
-        },
+        kernelspec: report.kernel,
       },
       cells: [
         {
@@ -203,6 +206,13 @@ try {
     },
   });
   const linked = await probe.command('link', undefined, ['--path', notebook]);
+  if (values['kernel-name'])
+    await client.json('api/sessions', 'POST', {
+      path: notebook,
+      name: notebook,
+      type: 'notebook',
+      kernel: { name: report.kernel.name },
+    });
   await phase(
     'Initial model turn',
     'Read the bound live Notebook. Set only model-params to exactly `mvp_value = 23` using a fresh sourceHash. Execute model-params, then model-analysis, each with a distinct runId, and query until terminal. Report the printed MODEL_RESULT. Keep all Markdown unchanged.'

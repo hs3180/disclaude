@@ -2,9 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { parseArgs, parseEnv, promisify } from 'node:util';
+import { parseArgs, promisify } from 'node:util';
 import { DatalayerJupyterClient } from '../../packages/core/dist/jupyter/datalayer-client.js';
-import { createCLIProbe, probeSource } from './cli-probe-client.mjs';
+import { createCLIProbe, probeSource, probeAuth, probeConnection } from './cli-probe-client.mjs';
 import { createChannelCallbacksFactory } from '../../packages/service/dist/utils/channel-handlers.js';
 
 // Explicitly opted-in real outbound component check. No model, incoming-event
@@ -17,7 +17,7 @@ const { values } = parseArgs({
     ])
   ),
 });
-for (const name of ['env-file', 'project', 'chat-id', 'root-message-id', 'output']) {
+for (const name of ['project', 'chat-id', 'root-message-id', 'output']) {
   if (!values[name]) {
     throw new Error(`Explicit --${name} required`);
   }
@@ -33,10 +33,9 @@ const project = fs.realpathSync(values.project);
 fs.mkdirSync(output, { mode: 0o700 });
 const files = path.join(output, 'sent-files');
 fs.mkdirSync(files, { mode: 0o700 });
-const env = parseEnv(fs.readFileSync(values['env-file'], 'utf8'));
+const auth = await probeAuth(values['env-file']);
 const client = new DatalayerJupyterClient({
-  baseUrl: env.JUPYTERLAB_HOST,
-  password: async () => env.JUPYTERLAB_PASS,
+  ...probeConnection(auth),
   allowInsecureHttp: true,
 });
 const resources = async () => ({
@@ -75,7 +74,7 @@ const cli = async (args, cwd, evidence) => {
     throw new Error('Feishu did not confirm the component request');
   }
   const raw = JSON.stringify(data, null, 2) + '\n';
-  if (raw.includes(env.JUPYTERLAB_PASS)) {
+  if (raw.includes(auth.secret)) {
     throw new Error('Credential reached evidence');
   }
   fs.writeFileSync(path.join(output, evidence), raw, { mode: 0o600 });

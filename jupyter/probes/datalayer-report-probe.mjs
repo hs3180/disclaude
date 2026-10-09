@@ -1,9 +1,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { parseArgs, parseEnv } from 'node:util';
+import { parseArgs } from 'node:util';
 import { DatalayerJupyterClient } from '../../packages/core/dist/jupyter/datalayer-client.js';
-import { createCLIProbe, probeSource } from './cli-probe-client.mjs';
+import {
+  createCLIProbe,
+  probeSource,
+  probeAuth,
+  probeConnection,
+  probeKernel,
+} from './cli-probe-client.mjs';
 import { notebookSnapshotHash } from '../../packages/core/dist/jupyter/notebook-fingerprint.js';
 
 const { values } = parseArgs({
@@ -14,15 +20,14 @@ const { values } = parseArgs({
     'python-path': { type: 'string' },
   },
 });
-if (!values['env-file'] || !values.output) {
-  throw new Error('Explicit environment and fresh private output directory required');
+if (!values.output) {
+  throw new Error('A fresh private output directory required');
 }
 const root = path.resolve(values.output);
 fs.mkdirSync(root, { mode: 0o700 });
-const env = parseEnv(fs.readFileSync(values['env-file'], 'utf8'));
+const auth = await probeAuth(values['env-file']);
 const client = new DatalayerJupyterClient({
-  baseUrl: env.JUPYTERLAB_HOST,
-  password: async () => env.JUPYTERLAB_PASS,
+  ...probeConnection(auth),
   allowInsecureHttp: true,
   maxResponseBytes: 8_000_000,
 });
@@ -43,7 +48,7 @@ const report = {
 };
 const persist = () => {
   const content = JSON.stringify(report, null, 2);
-  if (content.includes(env.JUPYTERLAB_PASS)) {
+  if (content.includes(auth.secret)) {
     throw new Error('Credential reached evidence');
   }
   fs.writeFileSync(path.join(root, 'report.json'), content + '\n', { mode: 0o600 });
@@ -86,14 +91,8 @@ const run = async (owner, id, runId) => {
   throw new Error('Study original request did not finish');
 };
 try {
-  const specs = await client.json('api/kernelspecs');
-  const names = Object.keys(specs.kernelspecs);
-  const kernelName =
-    values['kernel-name'] ??
-    (names.includes(specs.default) ? specs.default : names.length === 1 ? names[0] : undefined);
-  const spec = specs.kernelspecs[kernelName]?.spec;
-  if (!spec || spec.language !== 'python')
-    throw new Error('Select an existing remote Python kernelspec with --kernel-name');
+  const spec = await probeKernel(client, values['kernel-name']);
+  const kernelName = spec.name;
   report.kernel = {
     name: kernelName,
     displayName: spec.display_name,
@@ -103,7 +102,6 @@ try {
   const reproductions = [];
   for (let trial = 0; trial < 2; trial++) {
     const notebook = `disclaude-datalayer-report-${nonce}-${trial}.ipynb`;
-    report.ownedNotebooks.push(notebook);
     const absent = await client.response(`api/contents/${notebook}`);
     if (absent.status !== 404) {
       throw new Error('Owned scratch Notebook name collision');
@@ -141,6 +139,7 @@ try {
         ],
       },
     });
+    report.ownedNotebooks.push(notebook);
     if (values['kernel-name'])
       await client.json('api/sessions', 'POST', {
         path: notebook,

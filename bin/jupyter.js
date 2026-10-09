@@ -9,7 +9,7 @@ export async function main(args = process.argv.slice(2)) {
   const { notebookHelp, parseNotebookOptions, runNotebookCommand } =
     await import('../packages/service/dist/jupyter/cli.js');
   if (!args.length || args.includes('--help') || args.includes('-h')) {
-    console.log(notebookHelp);
+    console.log(notebookHelp + '\n\nConfigured-server tests: disclaude jupyter test --help');
     return;
   }
   const options = parseNotebookOptions(args);

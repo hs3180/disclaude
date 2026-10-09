@@ -1,19 +1,26 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { parseArgs, parseEnv } from 'node:util';
+import { parseArgs } from 'node:util';
 import { DatalayerJupyterClient } from '../../packages/core/dist/jupyter/datalayer-client.js';
-import { createCLIProbe, probeSource } from './cli-probe-client.mjs';
+import {
+  createCLIProbe,
+  probeSource,
+  probeAuth,
+  probeConnection,
+  probeKernel,
+} from './cli-probe-client.mjs';
 
 const { values } = parseArgs({
   options: {
     'env-file': { type: 'string' },
     output: { type: 'string' },
     'long-seconds': { type: 'string', default: '67' },
+    'kernel-name': { type: 'string' },
   },
 });
-if (!values['env-file'] || !values.output) {
-  throw new Error('Explicit --env-file and a new --output directory required');
+if (!values.output) {
+  throw new Error('A new --output directory required');
 }
 const longSeconds = Number(values['long-seconds']);
 if (!Number.isSafeInteger(longSeconds) || longSeconds < 2 || longSeconds > 120) {
@@ -22,13 +29,12 @@ if (!Number.isSafeInteger(longSeconds) || longSeconds < 2 || longSeconds > 120) 
 const directory = path.resolve(values.output);
 fs.mkdirSync(path.dirname(directory), { recursive: true, mode: 0o700 });
 fs.mkdirSync(directory, { mode: 0o700 });
-const env = parseEnv(fs.readFileSync(values['env-file'], 'utf8'));
-if (!env.JUPYTERLAB_HOST || !env.JUPYTERLAB_PASS) {
+const auth = await probeAuth(values['env-file']);
+if (!auth.baseUrl || !auth.secret) {
   throw new Error('Configured remote environment unavailable');
 }
 const client = new DatalayerJupyterClient({
-  baseUrl: env.JUPYTERLAB_HOST,
-  password: async () => env.JUPYTERLAB_PASS,
+  ...probeConnection(auth),
   allowInsecureHttp: true,
 });
 const project = path.join(directory, 'project');
@@ -50,7 +56,7 @@ const check = (name, passed, evidence) => {
 };
 const persist = () => {
   const data = JSON.stringify(report, null, 2);
-  if (data.includes(env.JUPYTERLAB_PASS)) {
+  if (data.includes(auth.secret)) {
     throw new Error('Credential reached report');
   }
   fs.writeFileSync(path.join(directory, 'report.json'), data + '\n', { mode: 0o600 });
@@ -78,6 +84,7 @@ const poll = async (notebookId, runId, seconds = 25) => {
   throw new Error('Scratch execution exceeded its bounded wait');
 };
 try {
+  report.kernel = await probeKernel(client, values['kernel-name']);
   report.initialize = await client.initialize();
   report.tools = (await client.listTools()).map((t) => t.name);
   try {
@@ -129,17 +136,20 @@ try {
       nbformat: 4,
       nbformat_minor: 5,
       metadata: {
-        kernelspec: {
-          name: 'conda-base-py',
-          display_name: 'Python (conda base)',
-          language: 'python',
-        },
+        kernelspec: report.kernel,
       },
       cells,
     },
   });
   report.ownedNotebooks.push(notebook);
   report.notebookEntry = client.notebookEntry(notebook);
+  if (values['kernel-name'])
+    await client.json('api/sessions', 'POST', {
+      path: notebook,
+      name: notebook,
+      type: 'notebook',
+      kernel: { name: report.kernel.name },
+    });
   const linked = await probe.command('link', undefined, ['--path', notebook]);
   const notebookId = linked.notebookId;
   report.notebookId = notebookId;
@@ -376,9 +386,9 @@ try {
   const descriptor = fs.readFileSync(path.join(project, '.jupyter', 'config.json'), 'utf8');
   check(
     'Credentials stay outside Project and CLI outputs',
-    !descriptor.includes(env.JUPYTERLAB_PASS) &&
-      !descriptor.includes(env.JUPYTERLAB_HOST) &&
-      !JSON.stringify(probe.commands).includes(env.JUPYTERLAB_PASS),
+    !descriptor.includes(auth.secret) &&
+      !descriptor.includes(auth.baseUrl) &&
+      !JSON.stringify(probe.commands).includes(auth.secret),
     {}
   );
   check(
@@ -391,7 +401,7 @@ try {
   report.completed = true;
 } catch (error) {
   report.completed = false;
-  report.error = error.message.replaceAll(env.JUPYTERLAB_PASS, '[REDACTED]');
+  report.error = error.message.replaceAll(auth.secret, '[REDACTED]');
 } finally {
   peer?.close();
   await probe.close();

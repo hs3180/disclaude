@@ -48,6 +48,15 @@ DSH service-composition probe are removed from this PR. The discarded historical
 coordinator integration is outside delivery scope; this integration uses Datalayer only.
 The existing `jupyter patch` installer remains Jupyter Terminal only.
 
+`disclaude jupyter test` runs the configured-server core, edge, fault and report
+suites and returns one JSON summary with source/check counts and private evidence
+paths. `--suite` selects a subset; `--list` and `--help` need no authentication.
+It reuses environment, `.env` and hidden interactive authentication. Model/image
+and real Feishu delivery suites require explicit selection and their own inputs.
+See the [test command guide](../jupyter/probes/README.md). Probes ship with the
+standalone package, create only owned test resources, and do not start local
+Jupyter, install packages or manage server deployment.
+
 The CLI is an access mechanism for a persistent Project and live remote
 Notebook. Installing a Skill by itself is not Project/workspace product
 acceptance. Protocol fixtures, configured-server experiments, model research,

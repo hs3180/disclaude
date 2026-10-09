@@ -9,6 +9,28 @@ import { resolveJupyterAuth } from '../../bin/jupyter-auth.js';
 
 const cli = fileURLToPath(new URL('../../bin/disclaude.js', import.meta.url));
 
+export const probeAuth = (envFile) =>
+  resolveJupyterAuth({ jupyter: 'configured', envFile, interactive: false });
+
+export const probeConnection = (auth) => ({
+  baseUrl: auth.baseUrl,
+  ...(auth.mode === 'token'
+    ? { authorization: async () => 'token ' + auth.secret }
+    : { password: async () => auth.secret }),
+});
+
+export async function probeKernel(client, selectedName) {
+  const specs = await client.json('api/kernelspecs');
+  const names = Object.keys(specs.kernelspecs);
+  const name =
+    selectedName ??
+    (names.includes(specs.default) ? specs.default : names.length === 1 ? names[0] : undefined);
+  const spec = specs.kernelspecs[name]?.spec;
+  if (!spec || spec.language !== 'python')
+    throw new Error('Select an existing remote Python kernelspec with --kernel-name');
+  return { name, display_name: spec.display_name, language: spec.language };
+}
+
 export function probeSource() {
   const root = path.dirname(path.dirname(cli));
   const git = (args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' });
@@ -26,6 +48,9 @@ export function probeSource() {
   return {
     commit: checkout ? git(['rev-parse', 'HEAD']).stdout.trim() : null,
     dirty: checkout ? Boolean(git(['status', '--porcelain']).stdout.trim()) : null,
+    release: fs.existsSync(path.join(root, 'release-source.json'))
+      ? JSON.parse(fs.readFileSync(path.join(root, 'release-source.json'), 'utf8'))
+      : undefined,
     cliSha256: createHash('sha256').update(fs.readFileSync(cli)).digest('hex'),
     probeSha256: digest.digest('hex'),
   };
@@ -145,26 +170,18 @@ export async function observeTransport(baseUrl) {
 }
 
 export async function createCLIProbe({ envFile, project, directory, observe = false }) {
-  envFile = fs.realpathSync(envFile);
+  if (envFile) envFile = fs.realpathSync(envFile);
   project = fs.realpathSync(project);
   directory = fs.realpathSync(directory);
-  const auth = await resolveJupyterAuth({ jupyter: 'configured', envFile, interactive: false });
+  const auth = await probeAuth(envFile);
   const traffic = observe ? await observeTransport(auth.baseUrl) : undefined;
   const commands = [];
   const children = new Set();
   const probe = { project, commands, traffic, requests: traffic?.requests ?? [] };
   probe.command = async (command, input, extra = [], { signal, timeoutMs = 65000 } = {}) => {
     signal?.throwIfAborted();
-    const args = [
-      cli,
-      'jupyter',
-      command,
-      '--project-dir',
-      project,
-      '--env-file',
-      envFile,
-      '--no-interactive',
-    ];
+    const args = [cli, 'jupyter', command, '--project-dir', project, '--no-interactive'];
+    if (envFile) args.push('--env-file', envFile);
     if (traffic) args.push('--jupyter', traffic.baseUrl);
     let inputFile;
     if (input !== undefined) {
@@ -179,6 +196,12 @@ export async function createCLIProbe({ envFile, project, directory, observe = fa
       const child = spawn(process.execPath, args, {
         cwd: project,
         stdio: ['ignore', 'pipe', 'pipe'],
+        env: {
+          ...process.env,
+          JUPYTERLAB_HOST: auth.baseUrl,
+          JUPYTERLAB_PASS: auth.mode === 'password' ? auth.secret : '',
+          JUPYTERLAB_TOKEN: auth.mode === 'token' ? auth.secret : '',
+        },
       });
       children.add(child);
       entry.pid = child.pid;

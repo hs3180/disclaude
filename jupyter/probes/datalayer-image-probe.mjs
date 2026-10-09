@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { parseArgs, parseEnv } from 'node:util';
-import { createCLIProbe, probeSource } from './cli-probe-client.mjs';
+import { parseArgs } from 'node:util';
+import { createCLIProbe, probeSource, probeAuth } from './cli-probe-client.mjs';
 import { DeepSeekHarnessProvider } from '../../packages/core/dist/sdk/providers/deepseek/provider.js';
 
 const { values } = parseArgs({
@@ -17,7 +17,7 @@ const { values } = parseArgs({
     output: { type: 'string' },
   },
 });
-for (const key of ['env-file', 'oauth-auth-file', 'project', 'cell-id', 'model', 'output']) {
+for (const key of ['oauth-auth-file', 'project', 'cell-id', 'model', 'output']) {
   if (!values[key]) {
     throw new Error(`Explicit --${key} required`);
   }
@@ -27,13 +27,13 @@ if (values.model !== 'gpt-5.6-luna') {
 }
 const root = path.resolve(values.output);
 fs.mkdirSync(root, { mode: 0o700 });
-const env = parseEnv(fs.readFileSync(values['env-file'], 'utf8'));
+const auth = await probeAuth(values['env-file']);
 const access = JSON.parse(fs.readFileSync(values['oauth-auth-file'], 'utf8')).tokens?.access_token;
 const expiry = access && JSON.parse(Buffer.from(access.split('.')[1], 'base64url').toString()).exp;
 if (!access || !expiry || expiry * 1000 < Date.now() + 900000) {
   throw new Error('Existing OAuth credential unavailable or near expiry');
 }
-const secrets = [access, env.JUPYTERLAB_PASS].filter(Boolean);
+const secrets = [access, auth.secret].filter(Boolean);
 const report = {
   source: probeSource(),
   startedAt: new Date().toISOString(),

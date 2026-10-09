@@ -1,120 +1,14 @@
-# Configured Jupyter CLI acceptance probes
+# Jupyter component tests and historical experiments
 
-These opt-in probes exercise the public `disclaude jupyter` CLI merged in
-[#5282](https://github.com/hs3180/disclaude/pull/5282). Build this checkout with
-`npm ci` and `npm run build`. Every Notebook operation launches a fresh Node
-CLI process with `--no-interactive`; Project references and the original-run
-journal survive between commands. No Notebook session factory, ChatAgent hook,
-service lifecycle owner or host Python is needed.
+Configured remote acceptance uses the packaged `disclaude jupyter test` command.
+See the [test command guide](../../jupyter/probes/README.md) for suites, authentication,
+private evidence and model/outbound opt-in inputs.
 
-Use the existing remote server from a host-private `.env` containing
-`JUPYTERLAB_HOST` / `JUPYTERLAB_PASS`. The shared CLI authentication helper
-also supports environment credentials and tokens. These automated probes never
-prompt; interactive authentication is checked separately by the auth tests.
-The repair installer is `disclaude jupyter patch` through Jupyter Terminal;
-see the [patch guide](../../jupyter/datalayer/README.md). Probes do not install
-patches or manage remote machines, containers or Jupyter service restarts.
+Local command/authentication/Terminal protocol fixtures:
 
-Probe runners require Node 22 or newer (the public CLI has separate compatibility checks).
-Receipts record the Git commit/dirty state and probe/CLI source hashes.
-All output directories must be new and are created with private permissions.
-Reports preserve failed checks and distinguish phase completion from success.
-`cli-commands.json` records command, actual child PID, result and exit status;
-raw stderr, authentication headers and credentials are not stored. Cleanup
-closes only sessions/kernels created for each uniquely named scratch Notebook,
-retains Notebook/report/Project evidence and verifies pre-existing resources.
-UI operation budget for these scripts is zero. Independent RTC participants
-are protocol fixtures, not manual Lab editing acceptance.
+`node --test tests/jupyter/test-cli-test.mjs tests/jupyter/auth-input-test.mjs tests/jupyter/patch-cli-test.mjs`
 
-## Execution, recovery and explicit cancellation
-
-`node tests/jupyter/datalayer-probe.mjs --env-file /private/host.env --output /private/new-cli-results`
-
-Checks live RTC reads, persistent calculations, original run-ID deduplication
-and recovery in new CLI processes, raster output, matching native exports,
-browser/client-closed output persistence and explicit `jupyter stop`.
-The default background wait is 67 seconds; `--long-seconds` may choose 2–120,
-but a shorter wait is not evidence beyond document cleanup. An owned kernel's
-direct API interrupt is a separate protocol check and does not implement the
-future [CLI interrupt command #5286](https://github.com/hs3180/disclaude/issues/5286).
-
-Chat `/stop` stops inference. Remote cancellation requires the original
-`notebookId` and `runId` through `jupyter stop`; only an observed cancelled
-terminal gives `stopConfirmed: true`. CLI exit, an accepted HTTP response and
-phase completion do not prove remote cancellation.
-
-`node tests/jupyter/datalayer-edge-probe.mjs --env-file /private/host.env --output /private/new-edge-results`
-
-The default suite runs target cancellation, source/output attribution,
-original pending/terminal recovery in new CLI processes, document identity,
-MIME display/clear behavior, moves/deletes during execution, large outputs and
-stdin rejection, cancellation races, `cli-stop-continuation` and concurrent
-export revisions. `--cases` selects comma-separated names from the script's
-explicit case list. Kernel restart applies only to a verified scratch kernel.
-
-The edge and fault suites use a temporary host HTTP observer forwarding to the
-configured remote endpoint. It counts actual execute POSTs and introduces
-labelled transport failures or concurrent edits. The observer is not a Jupyter
-server and creates no local kernel. Its Project references belong to that
-short-lived observer endpoint; use the core/report probe's direct-endpoint
-Project for subsequent image or delivery checks.
-
-`node tests/jupyter/datalayer-fault-probe.mjs --env-file /private/host.env --output /private/new-fault-results`
-
-Checks injected HTTP denial/reply loss, recovery of an original request,
-a genuinely accepted but dropped 202 reply with no replay, and refusal to
-silently continue after an owned native kernel restart. Injection is not
-physical network outage or an expired credential. Jupyter service restart
-remains `not_verified`; this script provides no deployment/restart options.
-
-## Reports and numerical reproduction
-
-`node tests/jupyter/datalayer-report-probe.mjs --env-file /private/host.env --output /private/new-report-results`
-
-Imports exact synthetic CSV bytes through the CLI, runs two fresh remote
-kernels, compares numerical results, and checks PNG/SVG/HTML/inline Plotly,
-formula/table sources, bounded image files, matching HTML/ipynb revisions,
-authentication and sandbox headers. Source/header checks do not establish
-rendering on the user's actual device.
-
-The report probe selects the advertised remote default or sole available Python
-kernelspec. Use `--kernel-name <existing-name>` to bind an explicit fresh scratch
-kernel. That remote environment needs NumPy, Matplotlib, Plotly and Narwhals;
-missing packages remain failed execution evidence. `--python-path <remote-dir>`
-can load an explicitly prepared, owned test dependency directory in the two
-scratch kernels. Its path and package versions are recorded. The probe does not
-install packages or change existing kernelspecs or server settings.
-
-## Explicit model and outbound component probes
-
-The DSH probes expose optional CLI-backed tools only within their test harness;
-they do not create Notebook state in ChatAgent or certify Skill discovery.
-Supply the existing host-private OAuth auth file and the explicit
-`gpt-5.6-luna` override required by #5215/#5219. Daily service configuration
-is unaffected. Credentials are removed from the model environment and checked
-against native history; these probes do not open a competing bot connection.
-
-`node tests/jupyter/datalayer-dsh-probe.mjs --env-file /private/host.env --oauth-auth-file /private/auth.json --model gpt-5.6-luna --output /private/new-dsh-results`
-
-`node tests/jupyter/datalayer-image-probe.mjs --env-file /private/host.env --oauth-auth-file /private/auth.json --model gpt-5.6-luna --project /private/core-results/project --cell-id mvp-plot --output /private/new-image-results`
-
-Image observation converts the CLI's verified local raster artifact into the
-native SDK image result. The image probe is read-only. DSH/model validation is
-separate from real Feishu Agent acceptance and native-device rendering.
-
-The outbound probe requires an explicitly authorized fresh Feishu thread; it
-uses `download-report` and the generic file callback/channel path, records
-actual message identities and checks the original thread. It does not send on
-ordinary test invocation or retry an ambiguous write. Run only when separately
-authorized to send into that chat:
-
-`node tests/jupyter/datalayer-delivery-probe.mjs --env-file /private/host.env --project /private/core-results/project --chat-id oc_AUTHORIZED --root-message-id om_OWNED --output /private/new-delivery-results`
-
-Historical results remain pinned to
-[0dee0fa16](https://github.com/hs3180/disclaude/blob/0dee0fa16ff4ca3118ed7c5fb96f03f85a23004a/docs/releases/0.6.3-acceptance.md).
-The updated probes must be run on their own committed source before recording
-new evidence. Final merged-source installation and release checks remain
-required; neither syntax checks nor earlier candidate passes replace them.
+These fixtures do not connect to a configured Jupyter or establish product acceptance.
 
 ## Historical G0-B Jupyter stack experiment
 
@@ -125,7 +19,7 @@ product acceptance. Do not recreate their local environment for this task.
 This opt-in probe for #5216 launches its own authenticated localhost server,
 Notebook, kernel, browser and Jupyter configuration. It uses no Project mount,
 existing server, Notebook or kernel. Normal Disclaude installation and regular
-Node checks do not install Python. The separate managed-coordinator CI installs
+Node checks do not install Python. The earlier managed-coordinator CI installed
 its pinned server stack for backend checks, without this browser probe.
 
 Use Python 3.13 and a separate virtual environment:

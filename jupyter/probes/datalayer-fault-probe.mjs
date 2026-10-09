@@ -1,25 +1,32 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { parseArgs, parseEnv } from 'node:util';
+import { parseArgs } from 'node:util';
 import { DatalayerJupyterClient } from '../../packages/core/dist/jupyter/datalayer-client.js';
-import { createCLIProbe, probeSource } from './cli-probe-client.mjs';
+import {
+  createCLIProbe,
+  probeSource,
+  probeAuth,
+  probeConnection,
+  probeKernel,
+} from './cli-probe-client.mjs';
 
 const { values } = parseArgs({
-  options: { 'env-file': { type: 'string' }, output: { type: 'string' } },
+  options: {
+    'env-file': { type: 'string' },
+    output: { type: 'string' },
+    'kernel-name': { type: 'string' },
+  },
 });
-if (!values['env-file'] || !values.output)
-  throw new Error('Explicit environment file and fresh output required');
+if (!values.output) throw new Error('A fresh output directory required');
 const directory = path.resolve(values.output);
 fs.mkdirSync(directory, { mode: 0o700 });
 const project = path.join(directory, 'project');
 fs.mkdirSync(project, { mode: 0o700 });
-const env = parseEnv(fs.readFileSync(values['env-file'], 'utf8'));
-if (!env.JUPYTERLAB_HOST || !env.JUPYTERLAB_PASS)
-  throw new Error('Configured credentials unavailable');
+const auth = await probeAuth(values['env-file']);
+if (!auth.baseUrl || !auth.secret) throw new Error('Configured credentials unavailable');
 const client = new DatalayerJupyterClient({
-  baseUrl: env.JUPYTERLAB_HOST,
-  password: async () => env.JUPYTERLAB_PASS,
+  ...probeConnection(auth),
   allowInsecureHttp: true,
 });
 const before = {
@@ -45,7 +52,7 @@ const report = {
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const persist = () => {
   const text = JSON.stringify(report, null, 2);
-  if (text.includes(env.JUPYTERLAB_PASS)) throw new Error('Credential reached evidence');
+  if (text.includes(auth.secret)) throw new Error('Credential reached evidence');
   fs.writeFileSync(path.join(directory, 'report.json'), text + '\n', { mode: 0o600 });
 };
 const check = (name, passed, evidence) => {
@@ -84,8 +91,16 @@ async function terminal(handle) {
   throw new Error('Original native request did not finish');
 }
 try {
+  report.kernel = await probeKernel(client, values['kernel-name']);
   const linked = await probe.command('create', undefined, ['--path', file]);
   report.ownedNotebooks.push(file);
+  if (values['kernel-name'])
+    await client.json('api/sessions', 'POST', {
+      path: file,
+      name: file,
+      type: 'notebook',
+      kernel: { name: report.kernel.name },
+    });
   notebookId = linked.notebookId;
   await call('notebook_insert_cell', {
     notebookId,
@@ -215,7 +230,7 @@ try {
       'Service restart is outside this API-only probe; no SSH or container operation is supported',
   };
 } catch (error) {
-  report.operationError = error.message.replaceAll(env.JUPYTERLAB_PASS, '[REDACTED]');
+  report.operationError = error.message.replaceAll(auth.secret, '[REDACTED]');
 } finally {
   probe.traffic.fault = undefined;
   await probe.close();
