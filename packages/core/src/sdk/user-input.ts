@@ -1,4 +1,4 @@
-/** Host-only input requests: answers return to the existing SDK request. */
+/** Host-only input requests: RPC answers resolve their request; async answers retain their conversation. */
 export interface AgentInputQuestion {
   id: string;
   header: string;
@@ -16,12 +16,12 @@ export interface AgentInputParams {
 }
 export type AgentInputAnswers = Record<string, { answers: string[] }>;
 export interface AgentInputRequest extends AgentInputParams {
-  /** Async messages are answered by steering their live turn, not by an RPC result. */
+  /** Async messages use their live turn or new host-admitted input after normal completion. */
   kind?: 'rpc' | 'async-message';
   /** RPC request ID, or the message item ID when kind is async-message. */
   requestId: string | number;
   signal: AbortSignal;
-  /** Resolves when the response is written; never starts or steers a turn. */
+  /** RPC: response written. Async: live-turn acknowledgement or new-input admission; never replay the original request. */
   respond(answers: AgentInputAnswers): Promise<void>;
 }
 export interface AgentInputContext {

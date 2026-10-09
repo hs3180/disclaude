@@ -10,6 +10,12 @@ import type { CodexReasoningEffort } from '../../../config/types.js';
 import { CodexAsyncUserInput } from './async-user-input.js';
 export type CodexAppServerSessionState = 'idle' | 'active' | 'waiting-user' | 'uncertain';
 
+interface CodexAppServerLifecycleOptions extends CodexAppServerTransportOptions {
+  /** Query-owned questions survive normal per-turn transport teardown. */
+  asyncInputs?: CodexAsyncUserInput;
+  onAsyncAnswer?: (request: AgentInputRequest, text: string) => Promise<void>;
+}
+
 export interface CodexAppServerSessionSnapshot {
   sessionKey: string;
   threadId?: string;
@@ -80,9 +86,11 @@ export class CodexAppServerLifecycle {
   private initializeFlight?: Promise<void>;
   private readonly pendingInputs = new Set<AgentInputRequest>();
   private readonly asyncInputs: CodexAsyncUserInput;
+  private readonly ownsAsyncInputs: boolean;
+  private closing = false;
   private readonly reasoningEffortsByModel = new Map<string, Set<string>>();
 
-  constructor(options: CodexAppServerTransportOptions = {}) {
+  constructor(options: CodexAppServerLifecycleOptions = {}) {
     this.interruptTimeoutMs = options.requestTimeoutMs ?? 10000;
     const onUserInput = options.onUserInput ? async (request: AgentInputRequest): Promise<void> => {
       this.pendingInputs.add(request);
@@ -92,7 +100,8 @@ export class CodexAppServerLifecycle {
         this.pendingInputs.delete(request);
       } });
     } : undefined;
-    this.asyncInputs = new CodexAsyncUserInput(onUserInput, async (threadId, turnId, text) => {
+    this.ownsAsyncInputs = !options.asyncInputs;
+    this.asyncInputs = options.asyncInputs ?? new CodexAsyncUserInput(onUserInput, async (threadId, turnId, text) => {
       const response = await this.transport.request('turn/steer', {
         threadId, expectedTurnId: turnId, input: [{ type: 'text', text }],
       }) as TurnResponse;
@@ -102,11 +111,21 @@ export class CodexAppServerLifecycle {
       ...options, onUserInput,
       onNotification: (method, params) => {
         this.receive(method, params);
-        const handled = method === 'item/completed' && this.asyncInputs.receive(params);
+        const handled = method === 'item/completed' && this.asyncInputs.receive(params, {
+          deliver: onUserInput, submit: options.onAsyncAnswer,
+          onError: error => options.onNotification?.('input/deliveryFailed', {
+            ...(params as Record<string, unknown>), deliveryError: error,
+          }),
+        });
         options.onNotification?.(method, handled ? { ...(params as Record<string, unknown>), agentInputHandled: true } : params);
       },
       onExit: (exit) => {
-        this.asyncInputs.close();
+        if (this.ownsAsyncInputs) { this.asyncInputs.close(); }
+        else if (!this.closing) {
+          for (const session of this.sessions.values()) {
+            if (session.state !== 'idle') { this.asyncInputs.cancel('unavailable', session.threadId, session.activeTurnId); }
+          }
+        }
         for (const waiter of this.turnWaiters.values()) {
           waiter.reject(new Error('codex app-server exited before interruption completed'));
         }
@@ -354,7 +373,8 @@ export class CodexAppServerLifecycle {
   }
 
   close(): Promise<CodexAppServerExit> {
-    this.asyncInputs.close();
+    this.closing = true;
+    if (this.ownsAsyncInputs) { this.asyncInputs.close(); }
     return this.transport.close();
   }
 
@@ -362,11 +382,11 @@ export class CodexAppServerLifecycle {
     if (method !== 'turn/completed') {
       return;
     }
-    const event = params as { threadId?: string; turn?: { id?: string } };
+    const event = params as { threadId?: string; turn?: { id?: string; status?: string } };
     const { threadId } = event;
     const turnId = event.turn?.id;
     if (threadId && turnId) {
-      this.asyncInputs.cancel('turn-ended', threadId, turnId);
+      if (this.ownsAsyncInputs || event.turn?.status !== 'completed') { this.asyncInputs.cancel('turn-ended', threadId, turnId); }
       this.completedTurns.add(`${threadId}:${turnId}`);
       this.turnWaiters.get(`${threadId}:${turnId}`)?.resolve();
     }

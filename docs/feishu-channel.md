@@ -69,8 +69,15 @@ Structured user-input cards are available when the backend is Codex and its
 transport is `app-server`:
 
 - A blocking request resumes the originating request with its question IDs.
-- A supported non-blocking request is returned as a user message in the
-  originating turn; it is not a second request.
+- Native asynchronous questions remain answerable for 15 minutes after
+  creation, including after normal turn completion. An answer steers the
+  originating active turn; after it completes, the answer is admitted once as
+  new input in the same conversation and topic. The original task is not
+  replayed. The card's submitted state confirms admission, not completion of
+  the follow-up work.
+- Cancellation, reset, session closure, failed/interrupted turns, and expiry
+  invalidate pending questions. One-shot tasks and channels without the
+  asynchronous answer path report an explicit delivery failure.
 - `exec` transport has no interactive request/response path.
 
 Cards are bound to the originating actor, chat, topic, and turn. Stale,
@@ -80,6 +87,15 @@ are masked and bypass ordinary message logging, prompt generation, conversation
 history, and persistent configuration. This cannot constrain how the model
 later uses or emits an answer. Never collect credentials in an ordinary,
 non-secret question.
+
+Codex CLI 0.162's [native async tool](https://github.com/openai/codex/blob/rust-v0.162.0/codex-rs/core/src/tools/handlers/request_user_input_async.rs)
+returns `accepted: true` without waiting for host delivery. That value is not a
+Feishu delivery receipt.
+Disclaude waits for the card sender before reporting the host turn as complete;
+unsupported requests and failed sends produce an explicit failure. An
+uncertain answer acknowledgement is never automatically queued or resent.
+Structured `requestUserInput` RPC responses, including secret answers, retain
+their original request/response path.
 
 ## Maintainer rate-limit check
 

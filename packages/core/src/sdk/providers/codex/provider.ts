@@ -81,6 +81,7 @@ import type {
 } from './app-server-transport.js';
 import { createCodexDynamicToolRegistry } from './dynamic-tools.js';
 import type { AgentInputRequest } from '../../user-input.js';
+import { CodexAsyncUserInput, CodexAsyncInputDeliveryError } from './async-user-input.js';
 import {
   adaptCodexEvent,
   classifyCodexEvent,
@@ -1147,6 +1148,10 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     let turnDone: ((error?: Error) => void) | undefined;
     let stallTimer: ReturnType<typeof setTimeout> | undefined;
     const pendingInputs = new Set<AgentInputRequest>();
+    const hasPendingInput = (): boolean => [...pendingInputs].some(request => request.turnId === activeTurnId);
+    const asyncInputs = new CodexAsyncUserInput(undefined, () => Promise.reject(new Error('Async answer has no host')));
+    let asyncDeliveryFailure: Error | undefined;
+    let completingTurnId: string | undefined;
     let openToolItems = 0;
     const { timeoutMs: stallTimeoutMs } = readStallPolicy(this.env);
     let interruptFlight: Promise<void> | undefined;
@@ -1155,7 +1160,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     const fireStall = (): void => {
       stallTimer = undefined;
       if (stopped || !activeTurnId) { return; }
-      if (pendingInputs.size > 0 || openToolItems > 0) {
+      if (hasPendingInput() || openToolItems > 0) {
         // Silence belongs to a user-input request or a running tool, not the
         // transport. Mirror the exec bridge's exemption instead of killing a
         // long-running app-server command after one quiet watchdog window.
@@ -1196,7 +1201,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     };
     const armStall = (): void => {
       if (stallTimer) {clearTimeout(stallTimer);}
-      if (pendingInputs.size > 0 || !activeTurnId) { return; }
+      if (hasPendingInput() || !activeTurnId || completingTurnId === activeTurnId) { return; }
       stallTimer = setTimeout(fireStall, stallTimeoutMs);
       stallTimer.unref?.();
     };
@@ -1213,6 +1218,9 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     };
     const onNotification = (method: string, params: unknown): void => {
       if (method === 'transport/exited') {
+        // The matching native terminal event is already authoritative while
+        // the independent channel delivery is still settling.
+        if (activeTurnId && completingTurnId === activeTurnId) { return; }
         turnDone?.((params as { error?: Error }).error ?? new Error('codex app-server exited'));
         turnDone = undefined;
         return;
@@ -1220,6 +1228,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       if (stopped) {return;}
       const event = params as {
         agentInputHandled?: boolean;
+        deliveryError?: Error;
         turnId?: string;
         item?: { id?: string; type?: string; text?: string; phase?: string | null; command?: string; aggregatedOutput?: string };
         turn?: { id?: string; status?: string; error?: { message?: string } };
@@ -1230,6 +1239,11 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         return;
       }
       if (eventTurnId !== activeTurnId) {return;}
+      if (method === 'input/deliveryFailed') {
+        asyncDeliveryFailure ??= event.deliveryError ?? new CodexAsyncInputDeliveryError();
+        push({ type: 'error', role: 'system', content: asyncDeliveryFailure.message });
+        return;
+      }
       if (method === 'item/completed' && event.item?.id) {
         const key = `${activeTurnId}:${event.item.id}`;
         if (deliveredItems.has(key)) {return;}
@@ -1267,26 +1281,39 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           metadata: { messageId: event.item.id },
         });
       } else if (method === 'turn/completed') {
-        const status = event.turn?.status;
-        const failed = status === 'failed';
-        const interrupted = status === 'interrupted' || status === 'cancelled';
-        push({
-          type: 'result',
-          content: failed ? `❌ Codex turn failed: ${event.turn?.error?.message ?? 'unknown error'}` : interrupted ? '⏹️ Codex turn interrupted' : '✅ Complete',
-          role: 'assistant',
-          ...(failed ? { metadata: { terminatedReason: 'turn_failed' as const } }
-            : interrupted ? { metadata: { terminatedReason: 'interrupted' as const } } : {}),
-        });
-        turnDone?.();
+        const finishingTurn = activeTurnId;
+        if (completingTurnId === finishingTurn) { return; }
+        completingTurnId = finishingTurn;
         if (stallTimer) {clearTimeout(stallTimer);}
-        turnDone = undefined;
-        activeTurnId = undefined;
+        // Native accepted:true and turn/completed prove no channel delivery.
+        // Let the card sender finish before settling this host turn.
+        void (async () => {
+          try { await asyncInputs.waitForDelivery(threadId as string, finishingTurn); }
+          catch (error) { asyncDeliveryFailure ??= error as Error; }
+          asyncInputs.releaseDelivery(threadId as string, finishingTurn);
+          if (stopped || activeTurnId !== finishingTurn) { return; }
+          const status = event.turn?.status;
+          const failed = status === 'failed' || !!asyncDeliveryFailure;
+          const interrupted = status === 'interrupted' || status === 'cancelled';
+          const detail = asyncDeliveryFailure?.message ?? event.turn?.error?.message ?? 'unknown error';
+          push({
+            type: 'result',
+            content: failed ? `❌ Codex turn failed: ${detail}` : interrupted ? '⏹️ Codex turn interrupted' : '✅ Complete',
+            role: 'assistant',
+            ...(failed ? { metadata: { terminatedReason: 'turn_failed' as const, terminationDetail: detail, messageId: finishingTurn } }
+              : interrupted ? { metadata: { terminatedReason: 'interrupted' as const } } : {}),
+          });
+          turnDone?.();
+          turnDone = undefined;
+          activeTurnId = undefined;
+        })();
       }
     };
 
     const stopHandle = (reason: string): void => {
       if (stopped || done) {return;}
       stopped = true;
+      asyncInputs.close();
       admissionAbort.abort();
       stopInput();
       void input.return?.(undefined);
@@ -1359,7 +1386,12 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             lifecycle = this.createAppServerLifecycle(binary, sessionKey, next.value.correlation, options.onUserInput ? async request => {
               const boundTurn = await turnBinding;
               if (!boundTurn || stopped || request.signal.aborted || request.threadId !== threadId || request.turnId !== boundTurn
-                || activeTurnId !== boundTurn || !options.onUserInput) { throw new Error('Input request has no active channel turn'); }
+                || activeTurnId !== boundTurn || !options.onUserInput) {
+                throw new Error('Input request has no active channel turn');
+              }
+              if (request.kind === 'async-message' && (!next.value.inputContext || !options.onAsyncUserInputAnswer)) {
+                throw new CodexAsyncInputDeliveryError('unsupported');
+              }
               // Even a non-blocking question can leave the model idle while the
               // user answers. Its own bounded input deadline governs that wait.
               pendingInputs.add(request);
@@ -1373,9 +1405,28 @@ export class CodexAgentProvider implements IAgentSDKProvider {
                 if (!stopped && activeTurnId === boundTurn) { armStall(); }
               };
               request.signal.addEventListener('abort', finish, { once: true });
-              push({ type: 'status', role: 'system', content: request.isBlocking ? '等待你回答卡片中的问题。' : '有问题等待回答；任务仍在继续。' });
               await options.onUserInput({ ...request, respond: async answers => { await request.respond(answers); finish(); } }, next.value.inputContext);
-            } : undefined, onDynamicToolCall);
+              push({ type: 'status', role: 'system', content: request.isBlocking ? '等待你回答卡片中的问题。' : '提问卡片已发送；可在有效期内补充回答。' });
+            } : undefined, onDynamicToolCall, asyncInputs, async (request, text) => {
+              const boundTurn = await turnBinding;
+              const context = next.value.inputContext;
+              if (!boundTurn || stopped || request.signal.aborted || request.threadId !== threadId
+                || request.turnId !== boundTurn || !context || !options.onAsyncUserInputAnswer) {
+                throw new Error('Async answer no longer belongs to this conversation');
+              }
+              if (activeTurnId === boundTurn && lifecycle?.snapshot(sessionKey)?.activeTurnId === boundTurn) {
+                try {
+                  const acknowledgedTurn = await lifecycle.steer(sessionKey, text);
+                  if (acknowledgedTurn !== boundTurn) { throw new Error('Async answer acknowledgement changed turn'); }
+                  return;
+                } catch (error) {
+                  // Only this pre-RPC guard proves no answer was sent. A lost
+                  // acknowledgement must never fall through to a new input.
+                  if (!(error instanceof CodexNoActiveTurnError)) { throw error; }
+                }
+              }
+              await options.onAsyncUserInputAnswer(request, text, context);
+            });
             threadId = await lifecycle.ensureThread(sessionKey, {
               threadId,
               cwd: options.cwd,
@@ -1390,6 +1441,8 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             if (stopped || this.disposed) {break;}
             this.appServerRoutes.set(threadId, onNotification);
             deliveredItems.clear();
+            asyncDeliveryFailure = undefined;
+            completingTurnId = undefined;
             openToolItems = 0;
             this.governor.touchSession(sessionKey);
             const userInput = userInputText(next.value);
@@ -1447,6 +1500,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           });
         }
       } finally {
+        asyncInputs.close();
         await interruptFlight;
         if (stallTimer) {clearTimeout(stallTimer);}
         registration?.unregister();
@@ -1498,6 +1552,8 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     correlation?: UserInput['correlation'],
     onUserInput?: (request: AgentInputRequest) => Promise<void>,
     onDynamicToolCall?: (request: CodexAppServerDynamicToolCallRequest) => Promise<CodexAppServerDynamicToolCallResult>,
+    asyncInputs?: CodexAsyncUserInput,
+    onAsyncAnswer?: (request: AgentInputRequest, text: string) => Promise<void>,
   ): CodexAppServerLifecycle {
     const lifecycle = new CodexAppServerLifecycle({
       binary,
@@ -1505,6 +1561,8 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       correlation,
       onUserInput,
       onDynamicToolCall,
+      asyncInputs,
+      onAsyncAnswer,
       env: this.env,
       onNotification: (method, params) => {
         const threadId = (params as { threadId?: string } | null)?.threadId;

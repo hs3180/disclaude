@@ -170,6 +170,78 @@ describe('ChatAgent (service)', () => {
   });
 
   describe('constructor', () => {
+    it.each([false, true])('rejects the owning completion on async delivery failure (once=%s)', async once => {
+      const agent = new ChatAgent({ chatId: 'failed-input-chat', callbacks: createMockCallbacks(), apiKey: 'test', model: 'test' });
+      (agent as any).isAgentTeamsEnabled = () => false;
+      let emit!: () => void;
+      (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          await new Promise<void>(resolve => { emit = resolve; });
+          yield { parsed: { type: 'result', content: 'Async question was not delivered',
+            terminationDetail: 'Async question was not delivered', terminatedReason: 'turn_failed' }, raw: {} };
+        })(),
+      });
+      try {
+        const run = once ? agent.runOnce('failed-input-chat', 'Ask a question', 'original-failed-message')
+          : agent.processMessage({ chatId: 'failed-input-chat', payload: 'Ask a question', messageId: 'original-failed-message' });
+        await vi.waitFor(() => expect(agent.turnCompleteFor('original-failed-message')).toBeDefined());
+        const outcome = expect(once ? run : agent.turnCompleteFor('original-failed-message'))
+          .rejects.toMatchObject({ name: 'ProviderTurnFailedError', message: 'Async question was not delivered' });
+        emit();
+        await outcome;
+        expect((agent as any).restartManager.recordSuccess).not.toHaveBeenCalled();
+        const failedLog = (agent as any).logger.info.mock.calls.find(([entry]: any[]) => entry?.event === 'agent_turn' && entry.state === 'failed');
+        expect(failedLog).toBeDefined();
+      } finally { emit?.(); agent.reset(); ChatAgent.prototype.dispose.call(agent); }
+    });
+
+    it.each([true, false])('keeps delayed async-answer admission in the original generation/topic (channel accepts=%s)', async accepts => {
+      const localCallbacks = { ...createMockCallbacks(), requestAgentInput: vi.fn().mockResolvedValue(undefined) };
+      const agent = new ChatAgent({ chatId: 'async-chat', callbacks: localCallbacks, apiKey: 'test', model: 'test' });
+      let finish!: () => void;
+      const query = vi.fn((_input, _options) => ({ handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () { await new Promise<void>(resolve => { finish = resolve; }); })() }));
+      (agent as any).createQueryStream = query;
+      const context = { chatId: 'async-chat', actorId: 'original-actor', sourceMessageId: 'om-original', threadRootId: 'om-topic' };
+      const request = { kind: 'async-message', requestId: 'question', threadId: 'native-thread', turnId: 'original-turn', itemId: 'question',
+        isBlocking: false, signal: new AbortController().signal, questions: [], respond: vi.fn() } as import('@disclaude/core').AgentInputRequest;
+      try {
+        await agent.processMessage({ chatId: 'async-chat', payload: 'Original task', messageId: 'om-original', senderOpenId: context.actorId,
+          threadRootId: context.threadRootId });
+        const options = query.mock.calls[0][1] as import('@disclaude/core').AgentQueryOptions;
+        await options.onUserInput!(request, context);
+        expect(localCallbacks.requestAgentInput).toHaveBeenCalledExactlyOnceWith(request, context);
+        const { channel } = agent as any;
+        channel.push.mockReturnValue(accepts);
+        const submission = options.onAsyncUserInputAnswer!(request, 'Submitted answers', context);
+        if (accepts) {
+          await submission;
+          const [input] = channel.push.mock.calls.at(-1);
+          expect(input.message.content).toContain('Submitted answers');
+          expect(input.correlation.sourceMessageId).toMatch(/^msg-async-/);
+          expect(input.inputContext).toMatchObject({ actorId: context.actorId, chatId: context.chatId, threadRootId: context.threadRootId });
+          expect((agent as any).pendingTurnAnchors.at(-1)).toBe('om-topic');
+          await options.onAsyncUserInputAnswer!(request, 'Duplicate answer', context);
+          expect(channel.push).toHaveBeenCalledTimes(2);
+        } else { await expect(submission).rejects.toThrow(/not admitted/); }
+        agent.reset();
+        await expect(options.onAsyncUserInputAnswer!(request, 'Stale answer', context)).rejects.toThrow(/no longer available/);
+      } finally { finish?.(); agent.reset(); ChatAgent.prototype.dispose.call(agent); }
+    });
+
+    it('rejects asynchronous questions for a one-shot task before claiming card delivery', async () => {
+      const localCallbacks = { ...createMockCallbacks(), requestAgentInput: vi.fn().mockResolvedValue(undefined) };
+      const agent = new ChatAgent({ chatId: 'once-chat', callbacks: localCallbacks, apiKey: 'test', model: 'test' });
+      (agent as any).onceMode = true;
+      (agent as any).startAgentLoop();
+      const options = (agent as any).createSdkOptions.mock.results[0].value as import('@disclaude/core').AgentQueryOptions;
+      try {
+        await expect(options.onUserInput!({ kind: 'async-message' } as import('@disclaude/core').AgentInputRequest,
+          { chatId: 'once-chat', actorId: 'owner', sourceMessageId: 'source' })).rejects.toThrow(/cannot answer/);
+        expect(localCallbacks.requestAgentInput).not.toHaveBeenCalled();
+      } finally { agent.reset(); ChatAgent.prototype.dispose.call(agent); }
+    });
+
     it('uses injected message callbacks without selecting a backend policy', async () => {
       const core = await import('@disclaude/core');
       const actual = await vi.importActual<typeof core>('@disclaude/core');
@@ -2267,7 +2339,9 @@ describe('ChatAgent (service)', () => {
       }
       (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: output() });
       try {
-        await agent.runOnce('research-result', 'Plan the research');
+        const run = agent.runOnce('research-result', 'Plan the research');
+        if (reason) { await expect(run).rejects.toMatchObject({ name: 'ProviderTurnFailedError' }); }
+        else { await run; }
         expect(callbacks.onTurnResult).toHaveBeenCalledWith({ success: !reason, text: '{"directions":["costs"]}', truncated: false });
         expect(callbacks.sendMessage.mock.calls.some(call => call[1] === 'Still waiting for the tool.')).toBe(true);
       } finally { agent.dispose(); }
