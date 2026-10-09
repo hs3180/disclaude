@@ -1,5 +1,7 @@
 # Jupyter component tests and historical experiments
 
+## Configured Datalayer MVP probes
+
 Configured remote acceptance uses the packaged `disclaude jupyter test` command.
 See the [test command guide](../../jupyter/probes/README.md) for suites, authentication,
 private evidence and model/outbound opt-in inputs.
