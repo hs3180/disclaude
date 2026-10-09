@@ -39,9 +39,7 @@ export function probeSource() {
   const digest = createHash('sha256');
   for (const name of fs
     .readdirSync(new URL('.', import.meta.url))
-    .filter(
-      (n) => n.endsWith('.mjs') && (n.startsWith('datalayer-') || n === 'cli-probe-client.mjs')
-    )
+    .filter((n) => n.endsWith('.mjs'))
     .sort()) {
     digest.update(name).update(fs.readFileSync(new URL(name, import.meta.url)));
   }
