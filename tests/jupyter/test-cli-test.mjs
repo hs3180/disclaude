@@ -7,7 +7,12 @@ import { fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
 import { test } from 'node:test';
 import { parseTestOptions, runTests, suiteResult } from '../../bin/jupyter-test.js';
-import { probeAuth, probeConnection, probeKernel } from '../../jupyter/probes/cli-probe-client.mjs';
+import {
+  createCLIProbe,
+  probeAuth,
+  probeConnection,
+  probeKernel,
+} from '../../jupyter/probes/cli-probe-client.mjs';
 import {
   lineChartSource,
   reportStudySource,
@@ -26,6 +31,39 @@ const good = () => ({
   originalResourcesPreserved: true,
   source: { commit: 'fixture' },
   resourceCounts: { kernels: [0, 0], sessions: [0, 0] },
+});
+
+test('CLI-backed model tools pass the shared host registry and validate an actual CLI result', async () => {
+  const directory = fixture();
+  let probe;
+  try {
+    const envFile = path.join(directory, '.env');
+    fs.writeFileSync(
+      envFile,
+      'JUPYTERLAB_HOST=https://example.invalid/\nJUPYTERLAB_PASS=' + credential,
+      {
+        mode: 0o600,
+      }
+    );
+    probe = await createCLIProbe({ envFile, project: directory, directory });
+    // Read the real TypeScript registry without requiring a build in the CLI matrix.
+    const { tsImport } = await import('tsx/esm/api');
+    const { prepareTools } = await tsImport(
+      path.join(root, 'packages/core/src/sdk/tools.ts'),
+      import.meta.url
+    );
+    const tools = prepareTools(await probe.modelTools());
+    assert(tools.length > 0);
+    const list = tools.find((tool) => tool.name === 'notebook_list');
+    assert(list);
+    assert.deepEqual(await list.execute({}, { signal: new AbortController().signal }), {
+      notebooks: [],
+      recentRuns: [],
+    });
+  } finally {
+    await probe?.close();
+    cleanup(directory);
+  }
 });
 
 test('public help/list discover all packaged suites without login, a model or a remote call', () => {
