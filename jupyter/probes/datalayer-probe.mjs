@@ -86,14 +86,6 @@ const poll = async (notebookId, runId, seconds = 25) => {
 };
 try {
   report.kernel = await probeKernel(client, values['kernel-name']);
-  report.initialize = await client.initialize();
-  report.tools = (await client.listTools()).map((t) => t.name);
-  try {
-    await client.rpc('tasks/list');
-    check('MCP Tasks protocol', true, {});
-  } catch (error) {
-    check('MCP Tasks protocol', false, { reason: error.message });
-  }
   const notebook = `disclaude-datalayer-mvp-${randomUUID().slice(0, 8)}.ipynb`;
   const cells = [
     {
@@ -435,9 +427,7 @@ try {
     sessions: [originalSessions.length, sessions.length],
   };
   report.finishedAt = new Date().toISOString();
-  report.requiredChecksPassed = report.checks
-    .filter((check) => check.name !== 'MCP Tasks protocol')
-    .every((check) => check.passed);
+  report.requiredChecksPassed = report.checks.every((check) => check.passed);
   persist();
   console.log(
     JSON.stringify({

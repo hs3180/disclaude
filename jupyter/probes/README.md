@@ -28,7 +28,7 @@ the host temporary directory. JSON stdout includes suite states, required check
 counts, source and receipt paths; stderr prints short progress messages. Failed
 assertions, nonzero probe exits, missing receipts or unconfirmed cleanup produce
 a nonzero command exit. Phase completion is not success. Failed receipts remain
-available; MCP Tasks is recorded as optional/outside scope. SIGINT/SIGTERM stops
+available. The default suites do not call MCP or require a Jupyter MCP extension. SIGINT/SIGTERM stops
 further suites after the active suite finishes its bounded work and owned cleanup.
 
 Receipts record checkout commit/dirty state, CLI/probe hashes and declared release

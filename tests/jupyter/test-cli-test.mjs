@@ -44,7 +44,7 @@ test('public help/list discover all packaged suites without login, a model or a 
     const help = run(['--help']);
     assert.equal(help.status, 0);
     assert.match(help.stdout, /Default: core, edge, fault, report/);
-    assert.match(help.stdout, /no extra plotting packages are required/);
+    assert.match(help.stdout, /no extra plotting packages or Jupyter MCP extension are required/);
     assert(!help.stdout.includes('--python-path'));
     assert(!help.stdout.includes(credential));
     const listed = run(['--list']);
@@ -145,8 +145,6 @@ test('default API suites exclude model/outbound and failed assertions are not co
         assert.equal(args[0], '--output');
         assert.equal(directory, path.join(output, suite.name));
         const receipt = good();
-        if (suite.name === 'core')
-          receipt.checks.push({ name: 'MCP Tasks protocol', passed: false });
         if (suite.name === 'edge') receipt.checks[0].passed = false;
         return { receipt, exitCode: 0 };
       },

@@ -85,7 +85,7 @@ restart, SSH/container management, automatic package installation or bot connect
   --project PATH --chat-id ID --root-message-id ID  Authorized fresh delivery thread
 
 Default suites use Python's standard library and the existing IPython display
-interface; no extra plotting packages are required. JSON stdout summarizes
+interface; no extra plotting packages or Jupyter MCP extension are required. JSON stdout summarizes
 checks, source and evidence paths;
 failed checks and unverified conditions are preserved. A nonzero exit means a
 failed/incomplete suite. SIGINT/SIGTERM stops further suites after the active
@@ -175,7 +175,7 @@ export function suiteResult(name, receipt, exitCode) {
   const checks = (receipt.checks ?? []).map((c) => ({
     name: c.name,
     passed: c.passed === true,
-    required: !(name === 'core' && c.name === 'MCP Tasks protocol'),
+    required: true,
   }));
   const resourceFlags = [
     'originalResourcesPreserved',
