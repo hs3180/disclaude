@@ -1,0 +1,460 @@
+import { assertToolOptions } from '../../tools.js';
+import { readStallPolicy } from '../stall-policy.js';
+/** pi Agent runtime with optional, per-query Anthropic-compatible production wiring. */
+import { loadPiProduction, resolvePiModel } from './production-runtime.js';
+import { createRequire } from 'node:module';
+import { createLogger } from '../../../utils/logger.js';
+import { adaptPiEvent } from './event-adapter.js';
+import { adaptPiTools } from './tool-adapter.js';
+import { adaptPiOptions } from './options-adapter.js';
+import { loadPiRuntime, toPiUserMessage } from './pi-runtime.js';
+const logger = createLogger('PiAgentProvider');
+// Issue #4386 (part 5): terminal notice synthesized when the no-content-progress
+// watchdog fires — same shape/wording as the Claude provider's #3706 notice so
+// the two backends read identically in chat and in logs.
+const STALL_TERMINATE_NOTICE = '⚠️ 上游模型响应超时（疑似 stall），已自动取消本次响应。请稍后重试。';
+/**
+ * pi.dev Agent Provider (skeleton)
+ *
+ * Parent issue: #4383 (Add pi.dev as IAgentSDKProvider backend)
+ * This issue: #4385 (skeleton wiring)
+ */
+export class PiAgentProvider {
+    name = 'pi';
+    version = '0.83.0';
+    disposed = false;
+    // --------------------------------------------------------------------------
+    // Provider information
+    // --------------------------------------------------------------------------
+    getInfo() {
+        const available = this.validateConfig();
+        const info = {
+            name: this.name,
+            version: this.version,
+            available,
+        };
+        if (!available) {
+            info.unavailableReason = 'pi-agent-core package not installed or not configured';
+        }
+        return info;
+    }
+    // --------------------------------------------------------------------------
+    // Query — Issue #4386 (S3, part 3): the agent loop behind queryStream
+    // --------------------------------------------------------------------------
+    /**
+     * Optional test/custom stream injection. The default resolves per-query model,
+     * credentials and native tools through the optional pi runtime.
+     */
+    streamFn = null;
+    queryStream(input, options) {
+        assertToolOptions(options);
+        if (this.disposed) {
+            throw new Error('Provider has been disposed');
+        }
+        const tools = adaptPiTools(options.tools);
+        if (!this.streamFn) {
+            resolvePiModel(options);
+        }
+        // Abort plumbing: pi's Agent.abort() cancels the active run; the handle's
+        // cancel() maps onto it (spike §4 — AbortController pass-through applies
+        // to the bare agentLoop API; the Agent class owns its own controller).
+        // The bridge constructs the Agent only after `await loadPiRuntime()`
+        // resolves, so cancel()/close() can fire BEFORE the agent exists (the
+        // handle is returned synchronously). `cancelRequested` latches that early
+        // call; the iterator applies it as soon as the agent is constructed, and
+        // skips starting the run entirely — an early cancel is never dropped.
+        let agent = null;
+        let cancelRequested = false;
+        // Armed by the iterator once its wake machinery exists, so a cancel()
+        // landing mid-stream both aborts the run and unblocks the consumer loop.
+        let onAbort = null;
+        const requestAbort = () => {
+            if (agent) {
+                agent.abort();
+            }
+            else {
+                cancelRequested = true;
+            }
+            onAbort?.();
+        };
+        const { streamFn } = this;
+        const adaptIterator = async function* () {
+            const { Agent } = await loadPiRuntime();
+            const production = streamFn ? null : await loadPiProduction(options);
+            // Event bridge: pi AgentEvent → disclaude AgentMessage. The listener is
+            // async (pi awaits listeners as part of run settlement) but the queue
+            // push happens synchronously so no event can be dropped between the
+            // await-points of the consumer's for-await.
+            const queue = [];
+            const notify = [];
+            // Bridge lifecycle: the stream ends only when the input generator is
+            // exhausted AND no run is in flight, or when cancel()/close() aborts.
+            // A settled run alone does NOT end the stream — the session stays
+            // alive between turns (the ClaudeSDKProvider contract: one long-lived
+            // query per chat; chat-agent keeps its MessageChannel open across
+            // turns and closes it to end the query).
+            let inputDone = false;
+            let runActive = false;
+            let aborted = false;
+            const wakeAll = () => {
+                for (const wake of notify.splice(0)) {
+                    wake();
+                }
+            };
+            const enqueue = (event) => {
+                queue.push(event);
+                // Issue #4386 (part 5): any enqueued event is progress — advance the
+                // stall deadline (a no-op re-arm when the run is not active).
+                touchStallWatchdog();
+                // Issue #4568 (direction 2): track the open-tool-call window so the
+                // watchdog can exempt it (see fireStallWatchdog). tool_execution_update
+                // deliberately does NOT count as closing — it is progress emitted
+                // mid-execution; the tool is still running afterwards.
+                if (event.type === 'tool_execution_start') {
+                    openToolCalls++;
+                }
+                else if (event.type === 'tool_execution_end') {
+                    openToolCalls = Math.max(0, openToolCalls - 1);
+                }
+                wakeAll();
+            };
+            onAbort = () => {
+                aborted = true;
+                wakeAll();
+            };
+            // ── Issue #4386 (part 5): no-content-progress stall watchdog ──
+            // The pi bridge gets the same protection the Claude provider has
+            // (#3706): a run that stops producing events while still active is a
+            // stall (pi keeps the run pending on a hung upstream streamFn — the
+            // symmetric case of GLM's zero-content_block_delta SSE stall). The
+            // watchdog is armed when a run starts and re-armed on EVERY enqueued
+            // event (any progress — text, thinking, tool — counts; only a fully
+            // silent run fires), disarmed when the run settles. EXCEPTION (#4568
+            // direction 2): while a tool call is open (start seen, end pending) the
+            // silence is attributed to the tool, not the stream — the watchdog
+            // re-arms instead of firing (see openToolCalls below). Firing aborts the
+            // agent, wakes the consumer, and synthesizes a terminal result with
+            // terminatedReason 'stall' so ChatAgent recordFailure('stall')s like
+            // it does for Claude. Timeout is env-tunable per-call
+            // (DISCLAUDE_STALL_TIMEOUT_MS) — the same knob #3706 uses — so tests
+            // drive it deterministically. Between-turn idle (runActive === false,
+            // the input generator parked) is excluded: the watchdog only covers
+            // in-flight runs, mirroring #3706's message_start→message_stop arming.
+            const { timeoutMs: STALL_TIMEOUT_MS, graceMs: STALL_FORCE_CLOSE_GRACE_MS } = readStallPolicy();
+            // Grace after abort() before force-closing the consumer loop, in case
+            // abort() alone cannot settle a run parked on a never-resolving
+            // streamFn promise (#3706 review — same rationale as force-close there).
+            let stalled = false;
+            let stallWatchdog = null;
+            let stallForceCloseTimer = null;
+            // Issue #4568 (direction 2): count of tool calls whose tool_execution_start
+            // has been enqueued without a matching tool_execution_end. Maintained in
+            // enqueue() so it advances in lockstep with the watchdog's own event view.
+            // The stall watchdog counts the WHOLE run as its timing window (unlike
+            // #3706's message_start→message_stop request window, which structurally
+            // excludes tool execution); without an exemption a silently-running tool
+            // (long build/test, big file processing — no onUpdate wired yet, cf.
+            // direction 1 / PR #4569) exhausts STALL_TIMEOUT_MS and is misjudged as
+            // a stall. While openToolCalls > 0 the watchdog re-arms instead of
+            // firing. Tool deadlocks stay detectable in principle through the tool's
+            // own abort signal (wired in tool-adapter) — the same residual
+            // #3706 accepts for its request-level exemption.
+            // Scope guard: the counter is reset when a run settles (runInput's
+            // finally). pi 0.82.1 pairs every start with an end before settlement
+            // (executePreparedToolCall/finalizeExecutedToolCall convert throws into
+            // isError ends; abort breaks happen after the end), but that is an
+            // implementation detail of a pre-1.0 package, not a contract. A run
+            // that settled leaving starts unmatched (a future pi emitting start
+            // then erroring in emit, a run-level listener failure) would otherwise
+            // leak the count into every LATER run of the same session — and the
+            // exemption would suppress the watchdog for the session's lifetime.
+            let openToolCalls = 0;
+            const armStallTimer = (fn, ms) => {
+                const t = setTimeout(fn, ms);
+                t.unref?.();
+                return t;
+            };
+            const clearStallWatchdog = () => {
+                if (stallWatchdog) {
+                    clearTimeout(stallWatchdog);
+                    stallWatchdog = null;
+                }
+            };
+            const clearStallTimers = () => {
+                clearStallWatchdog();
+                if (stallForceCloseTimer) {
+                    clearTimeout(stallForceCloseTimer);
+                    stallForceCloseTimer = null;
+                }
+            };
+            // Abort through the closure-level `agent` so the watchdog also works
+            // in the (impossible-today but structural) window where `piAgent` is
+            // not yet assigned to it.
+            const piAgentSafeAbort = () => {
+                agent?.abort();
+            };
+            const fireStallWatchdog = () => {
+                stallWatchdog = null;
+                if (!runActive || stalled) {
+                    return;
+                }
+                // Issue #4568 (direction 2): a tool is mid-execution (start seen, end
+                // not) — the silence is the tool itself, not the agent stream. Re-arm
+                // for another window instead of firing; when tool_execution_end (or
+                // any other event) lands, enqueue's touch re-arms as usual.
+                if (openToolCalls > 0) {
+                    stallWatchdog = armStallTimer(fireStallWatchdog, STALL_TIMEOUT_MS);
+                    return;
+                }
+                stalled = true;
+                logger.error({ stallTimeoutMs: STALL_TIMEOUT_MS }, `pi stall: no agent events for ${STALL_TIMEOUT_MS}ms during an active run; ` +
+                    'aborting the agent (Issue #4386, cf. #3706)');
+                // Same escalation order as #3706: abort first; if the run still does
+                // not settle (a hung streamFn promise never resolves, so runInput's
+                // finally never runs), the bridge's own session-lifetime wait would
+                // park forever — force the consumer loop closed after a grace by
+                // flipping the abort flag directly.
+                piAgentSafeAbort();
+                stallForceCloseTimer = armStallTimer(() => {
+                    stallForceCloseTimer = null;
+                    onAbort?.();
+                }, STALL_FORCE_CLOSE_GRACE_MS);
+            };
+            const touchStallWatchdog = () => {
+                if (!runActive || stalled) {
+                    return;
+                }
+                clearStallWatchdog();
+                stallWatchdog = armStallTimer(fireStallWatchdog, STALL_TIMEOUT_MS);
+            };
+            const inputIterator = input[Symbol.asyncIterator]();
+            const adaptedOptions = adaptPiOptions(options);
+            const inherited = new Set((production?.tools ?? []).map((tool) => tool.name));
+            for (const tool of tools) {
+                if (inherited.has(tool.name)) {
+                    throw new TypeError(`Host tool conflicts with Pi built-in tool: ${tool.name}`);
+                }
+            }
+            agent = new Agent({
+                streamFn: (streamFn ?? production?.streamFn),
+                initialState: {
+                    ...(production ? { model: production.model } : {}),
+                    systemPrompt: adaptedOptions.systemPrompt ?? '',
+                    tools: [...(production?.tools ?? []), ...tools],
+                },
+            });
+            const piAgent = agent;
+            if (cancelRequested) {
+                // cancel()/close() arrived while loadPiRuntime() was still pending.
+                // Abort immediately and end the bridge without starting a run. No
+                // subscribe/pumpInput was set up, so the early-return path has
+                // nothing to clean up (the finally block below belongs to the main
+                // try that starts after this guard).
+                piAgent.abort();
+                return;
+            }
+            const unsubscribe = piAgent.subscribe((event) => {
+                enqueue(event);
+            });
+            // Turn runner. The first input seeds the transcript via prompt();
+            // later inputs go through pi's follow-up queue. followUp() only
+            // ENQUEUES — the queue is drained at a run's stop checkpoint, so a
+            // follow-up arriving after the previous run settled would strand in
+            // the queue forever. waitForIdle() + continue() drains it into a new
+            // run (continue() throws when the active run already consumed the
+            // message at its checkpoint, or when there is nothing to continue
+            // from — expected, swallowed below).
+            const runInput = async (message, first) => {
+                runActive = true;
+                // Issue #4386 (part 5): arm the stall watchdog for the run's whole
+                // lifetime (prompt/continue settle = disarm in the finally below).
+                touchStallWatchdog();
+                try {
+                    if (first) {
+                        await piAgent.prompt(message);
+                    }
+                    else {
+                        void piAgent.followUp(message);
+                        await piAgent.waitForIdle();
+                        await piAgent.continue();
+                    }
+                }
+                catch {
+                    // Run failures surface through the event stream (error / aborted
+                    // stopReason → error message); the bridge, not this pump, owns
+                    // stream termination.
+                }
+                finally {
+                    runActive = false;
+                    // Issue #4568 (direction 2, review): the settled run's tool windows
+                    // close with it — any tool_execution_start it left unmatched must
+                    // not leak the exemption into the session's later runs (see the
+                    // openToolCalls declaration for the pi-version rationale).
+                    openToolCalls = 0;
+                    clearStallTimers();
+                    wakeAll();
+                }
+            };
+            // Input pump: pulls user inputs as they arrive; each becomes a run.
+            // Between turns it parks in inputIterator.next() — NOT in aborting the
+            // agent: an idle agent stays alive for the next turn. The input
+            // generator is the session's lifetime; it ending (chat-agent closes
+            // its MessageChannel on /reset, retry, and once-mode completion) is
+            // what winds the bridge down.
+            let terminated = false;
+            void (async () => {
+                let first = true;
+                try {
+                    while (true) {
+                        const { value, done } = await inputIterator.next();
+                        if (done || terminated) {
+                            return;
+                        }
+                        await runInput(toPiUserMessage(userInputText(value)), first);
+                        first = false;
+                    }
+                }
+                finally {
+                    inputDone = true;
+                    wakeAll();
+                }
+            })().catch(() => {
+                // The input generator may reject (producer error). The session ends
+                // the same way (inputDone); swallow so this detached pump never
+                // surfaces an unhandled rejection — teardown no longer awaits it.
+            });
+            let pendingText = '';
+            try {
+                while (true) {
+                    // Issue #4386 (part 5, review): the watchdog fired and the run has
+                    // settled — abort() WORKED (real pi 0.82.1 semantics: abort() trips
+                    // the run's AbortController, runLoop exits with stopReason
+                    // 'aborted', prompt() resolves, runInput's finally clears the
+                    // force-close timer). Without this break the loop parks forever:
+                    // `aborted` is still false (only the force-close path flips it) and
+                    // ChatAgent keeps the input channel open (inputDone false) — the
+                    // stall result below would never be synthesized.
+                    if (stalled && (aborted || !runActive)) {
+                        break;
+                    }
+                    if (queue.length === 0) {
+                        if (aborted || (inputDone && !runActive)) {
+                            break;
+                        }
+                        await new Promise((resolve) => notify.push(resolve));
+                        continue;
+                    }
+                    const event = queue.shift();
+                    // Issue #4386 (part 5, review): once the watchdog has fired, events
+                    // emitted by the aborting run (real pi synthesizes message_start /
+                    // message_end / turn_end / agent_end for an aborted run) must not
+                    // reach the consumer — ChatAgent would treat the empty agent_end
+                    // `result` as a normal turn completion (recordSuccess / ✅ Complete /
+                    // empty-turn retry) ahead of the stall terminator. Drop everything
+                    // after the stall; the synthesized result below is the sole
+                    // terminator.
+                    if (stalled) {
+                        continue;
+                    }
+                    // Native pi deltas are transport fragments; deliver complete messages.
+                    if (production && event.type === 'message_update' && event.assistantMessageEvent.type === 'text_delta') {
+                        pendingText += event.assistantMessageEvent.delta;
+                        continue;
+                    }
+                    if (production && (event.type === 'message_end' || event.type === 'agent_end') && pendingText) {
+                        yield { type: 'text', role: 'assistant', content: pendingText };
+                        pendingText = '';
+                    }
+                    const adapted = adaptPiEvent(event);
+                    if (adapted) {
+                        yield adapted;
+                    }
+                }
+                // Issue #4386 (part 5): watchdog fired during the session → the
+                // stream would otherwise end without a terminator. Synthesize the
+                // same terminal result the Claude provider's #3706 stall path yields
+                // (terminatedReason 'stall'), so ChatAgent's result branch surfaces
+                // ⚠️ to the user and recordFailure('stall') runs — instead of the
+                // turn completing as if nothing happened.
+                if (stalled) {
+                    yield {
+                        type: 'result',
+                        content: STALL_TERMINATE_NOTICE,
+                        role: 'system',
+                        metadata: { terminatedReason: 'stall' },
+                    };
+                    return;
+                }
+            }
+            finally {
+                // Teardown — the session is over (input exhausted, the consumer
+                // broke out of its for-await, or cancel()/close() aborted). Unlike
+                // the between-turns park, aborting here is correct: it kills any
+                // in-flight run and releases the agent. pumpInput is deliberately
+                // NOT awaited: with the input generator still open (chat-agent keeps
+                // its MessageChannel open for the whole session) it parks inside
+                // inputIterator.next() indefinitely — awaiting it here would hang
+                // the consumer's own break (its for-await awaits this generator's
+                // return(), Bug A). `terminated` makes any input that arrives later
+                // a no-op, so no zombie run starts on the aborted agent.
+                terminated = true;
+                unsubscribe();
+                clearStallTimers();
+                piAgent.abort();
+            }
+        };
+        return {
+            handle: {
+                close: () => {
+                    requestAbort();
+                },
+                cancel: () => {
+                    requestAbort();
+                },
+                sessionId: undefined,
+            },
+            iterator: adaptIterator(),
+        };
+    }
+    /** Check optional runtime packages and model configuration without starting a query. */
+    validateConfig() {
+        if (this.disposed) {
+            return false;
+        }
+        // Dynamic import check — if the package isn't installed, return false.
+        // We don't actually import at module load time; this is called on demand
+        // by getInfo() / isProviderAvailable().
+        try {
+            // pi 0.83 exports its entry only under the ESM import condition. Probe
+            // the explicit package.json export so require resolution does not report
+            // an installed ESM-only runtime as missing.
+            // Resolve the pi-agent-core package without importing it (avoids the
+            // side-effects of a full import). This file is ESM, so bare `require`
+            // is undefined here — using createRequire() gives us a working
+            // require.resolve(). (import.meta.resolve is an alternative but only
+            // became synchronous/unflagged in Node 20.6+; createRequire is stable
+            // across our >=18 floor.)
+            createRequire(import.meta.url).resolve('@earendil-works/pi-agent-core/package.json');
+            return true;
+        }
+        catch {
+            return false;
+        }
+    }
+    dispose() {
+        this.disposed = true;
+    }
+}
+/**
+ * Extract the plain-text content of a disclaude `UserInput`. Block content
+ * (ContentBlock[]) beyond text is stringified defensively for the MVP —
+ * event-adapter's scope note applies symmetrically here.
+ */
+function userInputText(input) {
+    if (typeof input.content === 'string') {
+        return input.content;
+    }
+    return input.content
+        .map((block) => (block.type === 'text' ? block.text : JSON.stringify(block)))
+        .join('\n');
+}
