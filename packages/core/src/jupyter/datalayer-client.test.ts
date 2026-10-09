@@ -179,19 +179,13 @@ describe('existing Datalayer HTTP interfaces', () => {
     expect(await f.client.inspectConnection()).toEqual({
       backend: 'datalayer',
       serverVersion: '2.21.1',
-      mcp: { state: 'available', protocolVersion: '2024-11-05', tools: ['read_cell'] },
       nbmodel: { state: 'available', httpStatus: 200 },
       rtc: { state: 'configured', httpStatus: 200, serverSideExecution: true },
       nbconvert: { state: 'available', httpStatus: 200, formats: ['html', 'notebook'] },
       productAcceptance: 'not_verified',
     });
-    expect(
-      f.requests.every(
-        (r) =>
-          r.method === 'GET' ||
-          (r.path === '/prefix/mcp' && ['initialize', 'tools/list'].includes(String(r.body.method)))
-      )
-    ).toBe(true);
+    expect(f.requests.every((r) => r.method === 'GET')).toBe(true);
+    expect(f.requests.some((r) => r.path.endsWith('/mcp'))).toBe(false);
     expect(f.requests.some((r) => r.path.includes('/api/disclaude'))).toBe(false);
   });
 
@@ -201,27 +195,23 @@ describe('existing Datalayer HTTP interfaces', () => {
     );
     expect(await f.client.inspectConnection()).toMatchObject({
       serverVersion: '2.21.1',
-      mcp: { state: 'missing', httpStatus: 404 },
       nbmodel: { state: 'missing', httpStatus: 404 },
       nbconvert: { state: 'available' },
       productAcceptance: 'not_verified',
     });
   });
 
-  it('refuses an incompatible tool schema without calling any tool', async () => {
+  it('discovers required interfaces when the MCP extension is absent', async () => {
     const f = await fixture((p, m, b) =>
-      b.method === 'tools/list'
-        ? {
-            data: {
-              jsonrpc: '2.0',
-              id: b.id,
-              result: { tools: [{ name: 'read_cell', inputSchema: [] }] },
-            },
-          }
-        : discoveryReply(p, m, b)
+      p.endsWith('/mcp') ? { status: 404 } : discoveryReply(p, m, b)
     );
-    expect(await f.client.inspectConnection()).toMatchObject({ mcp: { state: 'incompatible' } });
-    expect(f.requests.some((r) => r.body.method === 'tools/call')).toBe(false);
+    expect(await f.client.inspectConnection()).toMatchObject({
+      nbmodel: { state: 'available' },
+      rtc: { state: 'configured' },
+      nbconvert: { state: 'available' },
+      productAcceptance: 'not_verified',
+    });
+    expect(f.requests.some((r) => r.path.endsWith('/mcp'))).toBe(false);
   });
 
   it('does not expose reflected credentials in remote JSON-RPC failures', async () => {

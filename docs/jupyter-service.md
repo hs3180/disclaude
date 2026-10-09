@@ -5,6 +5,9 @@ and `disclaude jupyter` CLI. The CLI calls the existing remote Datalayer,
 RTC, Contents and nbconvert interfaces through Node clients. It can also run
 outside disclaude's chat service. See the [CLI contract and setup](../skills/jupyter/README.md).
 
+The Jupyter MCP extension is not required. Connection discovery reads the native
+Jupyter, RTC, nbmodel and nbconvert interfaces without calling `/mcp`.
+
 ```text
 Agent's existing shell tool
   -> jupyter Skill / disclaude jupyter command

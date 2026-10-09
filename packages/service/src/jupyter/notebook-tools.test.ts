@@ -65,7 +65,6 @@ async function fixture() {
   const client = {
     inspectConnection: vi.fn(() =>
       Promise.resolve({
-        mcp: { state: 'available' },
         nbmodel: { state: 'available' },
         rtc: { state: 'configured' },
         nbconvert: { state: 'available' },
@@ -686,7 +685,6 @@ describe('Optional Datalayer Notebook tools', () => {
   it('checks interface capabilities before creating a new shared document session', async () => {
     const f = await fixture();
     f.client.inspectConnection.mockResolvedValue({
-      mcp: { state: 'available' },
       nbmodel: { state: 'available' },
       rtc: { state: 'disabled' },
       nbconvert: { state: 'available' },
