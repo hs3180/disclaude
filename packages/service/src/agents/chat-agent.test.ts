@@ -66,6 +66,8 @@ vi.mock('@disclaude/core', async (importOriginal) => {
     // setTurnPending and the tests below assert instanceof on the exact
     // class the production import resolves to.
     TurnSupersededError: actual.TurnSupersededError,
+    CodexNoActiveTurnError: actual.CodexNoActiveTurnError,
+    CodexAppServerRpcError: actual.CodexAppServerRpcError,
     REACTIONS: actual.REACTIONS,
     // Issue #4391: real policy — the reset+replay bounding under test.
     EmptyTurnRetryPolicy: actual.EmptyTurnRetryPolicy,
@@ -339,6 +341,7 @@ describe('ChatAgent (service)', () => {
       (chatAgent as any).channel = { push, close: vi.fn() };
       (chatAgent as any).isSessionActive = true;
       (chatAgent as any).isProcessingMessage = true;
+      (chatAgent as any).sdkProvider.name = 'codex';
 
       await chatAgent.processMessage({
         chatId: 'oc_test_chat',
@@ -434,6 +437,7 @@ describe('ChatAgent (service)', () => {
       });
 
       (chatAgent as any).queryHandle = { close: vi.fn() };
+      (chatAgent as any).sdkProvider.name = 'codex';
       await expect(ChatAgent.prototype.steer.call(chatAgent, 'change')).resolves.toMatchObject({
         ok: false,
         error: expect.stringContaining('unsupported'),
@@ -473,6 +477,175 @@ describe('ChatAgent (service)', () => {
         ok: false,
         error: expect.stringContaining('turn changed'),
       });
+    });
+  });
+
+  describe('ordinary busy input (#5240/#5260)', () => {
+    function owned(backend = 'codex') {
+      const callbacks = createMockCallbacks();
+      const agent = new ChatAgent({ chatId: 'owned-steer', callbacks, agentBackend: backend as any, apiKey: 'test', model: 'test' });
+      const push = vi.fn().mockReturnValue(true);
+      const steer = vi.fn().mockResolvedValue({ turnId: 'native-A' });
+      const handle = { close: vi.fn(), cancel: vi.fn(), ...(backend === 'codex' ? { steer } : {}) };
+      Object.assign(agent as any, { channel: { push, close: vi.fn() }, queryHandle: handle, isSessionActive: true,
+        isProcessingMessage: true, activeTurnMessageId: 'owner-A', isAgentTeamsEnabled: () => false,
+        lastTurnMessage: { chatId: 'owned-steer', payload: 'original', messageId: 'owner-A' } });
+      (agent as any).historyManager.firstMessageHistoryLoaded = true;
+      (agent as any).createTurnCompletion('owner-A');
+      return { agent, callbacks, push, steer, handle };
+    }
+    const input = (messageId = 'follow-B') => ({ chatId: 'owned-steer', payload: messageId, messageId, threadRootId: 'root-B' });
+    const dispose = (agent: ChatAgent) => ChatAgent.prototype.dispose.call(agent);
+
+    it('defaults to one acknowledged steer and settles the input with its original turn', async () => {
+      const { agent, callbacks, push, steer } = owned();
+      try {
+        await agent.processMessage(input());
+        expect(steer).toHaveBeenCalledExactlyOnceWith('follow-B');
+        expect(push).not.toHaveBeenCalled();
+        expect((agent as any).pendingTurnMessageIds).toEqual([]);
+        expect((agent as any).lastTurnMessage.messageId).toBe('owner-A');
+        expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('后端已确认接收');
+        let finished = false;
+        const completion = agent.turnCompleteFor('follow-B')!.then(() => { finished = true; });
+        await Promise.resolve();
+        expect(finished).toBe(false);
+        (agent as any).resolveTurn('owner-A');
+        await completion;
+        expect(finished).toBe(true);
+      } finally { dispose(agent); }
+    });
+
+    it('steers consecutive inputs once each without creating queued turns', async () => {
+      const { agent, steer, push } = owned();
+      try {
+        await Promise.all([agent.processMessage(input('follow-B')), agent.processMessage(input('follow-C'))]);
+        expect(steer.mock.calls.map(call => call[0])).toEqual(['follow-B', 'follow-C']);
+        expect(push).not.toHaveBeenCalled();
+        (agent as any).resolveTurn('owner-A');
+        await Promise.all([agent.turnCompleteFor('follow-B'), agent.turnCompleteFor('follow-C')]);
+      } finally { dispose(agent); }
+    });
+
+    it('deduplicates a repeated source message while its ACK is pending and after acceptance', async () => {
+      const { agent, steer, push } = owned();
+      let acknowledge!: (value: { turnId: string }) => void;
+      steer.mockImplementation(() => new Promise(resolve => { acknowledge = resolve; }));
+      try {
+        const first = agent.processMessage(input());
+        const duplicate = agent.processMessage(input());
+        expect(steer).toHaveBeenCalledTimes(1);
+        acknowledge({ turnId: 'native-A' });
+        await Promise.all([first, duplicate]);
+        const completion = agent.turnCompleteFor('follow-B');
+        await agent.processMessage(input());
+        expect(agent.turnCompleteFor('follow-B')).toBe(completion);
+        expect(steer).toHaveBeenCalledTimes(1);
+        expect(push).not.toHaveBeenCalled();
+      } finally { dispose(agent); }
+    });
+
+    it('keeps a late successful ACK attached to the completed original turn', async () => {
+      const { agent, steer, push } = owned();
+      let acknowledge!: (value: { turnId: string }) => void;
+      steer.mockImplementation(() => new Promise(resolve => { acknowledge = resolve; }));
+      try {
+        const admission = agent.processMessage(input());
+        expect(steer).toHaveBeenCalledTimes(1);
+        (agent as any).resolveTurn('owner-A');
+        (agent as any).activeTurnMessageId = 'owner-C';
+        acknowledge({ turnId: 'native-A' });
+        await admission;
+        await agent.turnCompleteFor('follow-B');
+        expect(push).not.toHaveBeenCalled();
+        expect((agent as any).pendingTurnMessageIds).toEqual([]);
+      } finally { dispose(agent); }
+    });
+
+    it.each([-32600, -32601, -32602])('queues exactly once after a received definite RPC rejection (%s)', async code => {
+      const { CodexAppServerRpcError } = await import('@disclaude/core');
+      const { agent, callbacks, steer, push } = owned();
+      steer.mockRejectedValue(new CodexAppServerRpcError(code, 'Request not submitted'));
+      try {
+        await agent.processMessage(input());
+        expect(steer).toHaveBeenCalledTimes(1);
+        expect(push).toHaveBeenCalledTimes(1);
+        expect((agent as any).pendingTurnMessageIds).toEqual(['follow-B']);
+        expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('已排队');
+      } finally { dispose(agent); }
+    });
+
+    it('queues when native preflight confirms no control request was sent', async () => {
+      const { CodexNoActiveTurnError } = await import('@disclaude/core');
+      const { agent, steer, push } = owned();
+      steer.mockRejectedValue(new CodexNoActiveTurnError('steer', { sessionKey: 'owned', state: 'idle' }));
+      try { await agent.processMessage(input()); expect(push).toHaveBeenCalledTimes(1); }
+      finally { dispose(agent); }
+    });
+
+    it.each(['timeout', 'internal'])('preserves an unconfirmed %s as failure without duplicate submission', async mode => {
+      const { CodexAppServerRpcError } = await import('@disclaude/core');
+      const { agent, callbacks, steer, push } = owned();
+      steer.mockRejectedValue(mode === 'timeout' ? new Error('request timed out') : new CodexAppServerRpcError(-32603, 'Internal error'));
+      try {
+        await agent.processMessage(input());
+        expect(push).not.toHaveBeenCalled();
+        await expect(agent.turnCompleteFor('follow-B')).rejects.toThrow('unconfirmed');
+        expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('未自动重复发送');
+        expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('诊断 ID');
+      } finally { dispose(agent); }
+    });
+
+    it.each(['reset', 'stop'] as const)('does not enqueue or confirm old input after %s supersedes the ACK', async action => {
+      const { agent, callbacks, steer, push } = owned();
+      let acknowledge!: (value: { turnId: string }) => void;
+      steer.mockImplementation(() => new Promise(resolve => { acknowledge = resolve; }));
+      try {
+        const admission = agent.processMessage(input());
+        expect(steer).toHaveBeenCalledTimes(1);
+        agent[action]();
+        acknowledge({ turnId: 'native-A' });
+        await admission;
+        expect(push).not.toHaveBeenCalled();
+        await expect(agent.turnCompleteFor('follow-B')).rejects.toThrow(/supersed/i);
+        expect(callbacks.sendMessage.mock.calls.some(call => String(call[1]).includes('后端已确认接收'))).toBe(false);
+      } finally { dispose(agent); }
+    });
+
+    it('keeps acknowledged input accepted when its user-facing notice fails', async () => {
+      const { agent, callbacks, steer, push } = owned();
+      callbacks.sendMessage.mockRejectedValue(new Error('owned notice unavailable'));
+      try {
+        await agent.processMessage(input());
+        expect(steer).toHaveBeenCalledTimes(1);
+        expect(push).not.toHaveBeenCalled();
+        (agent as any).resolveTurn('owner-A');
+        await agent.turnCompleteFor('follow-B');
+      } finally { dispose(agent); }
+    });
+
+    it('describes Claude streaming input accurately and guides explicit steer to ordinary messages', async () => {
+      const { agent, callbacks, push } = owned('claude');
+      try {
+        await agent.processMessage(input());
+        expect(push).toHaveBeenCalledTimes(1);
+        expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('输入流');
+        expect(callbacks.sendMessage.mock.calls[0]?.[1]).not.toContain('已排队');
+        await expect(agent.steer('instruction')).resolves.toMatchObject({ ok: false, error: expect.stringContaining('normal message') });
+      } finally { dispose(agent); }
+    });
+
+    it('does not automatically replay an empty original turn after accepting live input', async () => {
+      const { agent } = owned();
+      try {
+        (agent as any).pendingTurnMessageIds = ['owner-A'];
+        (agent as any).pendingTurnAnchors = ['root-A'];
+        const retry = vi.spyOn((agent as any).emptyTurnRetryPolicy, 'markRetried');
+        await agent.processMessage(input());
+        await (agent as any).processIterator((async function* () { yield { parsed: { type: 'result', content: '✅ Complete' } }; })());
+        expect(retry).not.toHaveBeenCalled();
+        await agent.turnCompleteFor('follow-B');
+      } finally { dispose(agent); }
     });
   });
 

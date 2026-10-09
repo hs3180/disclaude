@@ -139,6 +139,7 @@ export type {
 
 export type { AgentInputRequest, AgentInputParams, AgentInputQuestion, AgentInputAnswers, AgentInputContext } from './sdk/user-input.js';
 export { validateAgentInputAnswers } from './sdk/user-input.js';
+export { CodexNoActiveTurnError, CodexAppServerRpcError } from './sdk/index.js';
 
 // Agent Infrastructure (Issue #1040, Issue #1501: Simplified to ChatAgent-only)
 // Types and interfaces

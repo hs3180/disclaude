@@ -3,7 +3,7 @@
  */
 export { CodexAgentProvider } from './provider.js';
 export type { CodexAgentProviderOptions } from './provider.js';
-export { CodexAppServerTransport } from './app-server-transport.js';
+export { CodexAppServerTransport, CodexAppServerRpcError } from './app-server-transport.js';
 export type {
   CodexAppServerTransportOptions,
   CodexAppServerDynamicToolSpec,

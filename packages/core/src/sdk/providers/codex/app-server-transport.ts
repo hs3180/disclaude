@@ -12,6 +12,14 @@ import { parseAgentInputParams, validateAgentInputAnswers, type AgentInputReques
 
 type JsonRpcId = number | string;
 
+/** A received RPC error is distinct from a missing or timed-out response. */
+export class CodexAppServerRpcError extends Error {
+  constructor(readonly code: number, message: string) {
+    super(`Codex app-server error ${code}: ${message}`);
+    this.name = 'CodexAppServerRpcError';
+  }
+}
+
 interface JsonRpcMessage {
   id?: JsonRpcId;
   method?: string;
@@ -293,7 +301,7 @@ export class CodexAppServerTransport {
       this.pending.delete(message.id);
       clearTimeout(waiter.timer);
       if (message.error) {
-        waiter.reject(new Error(`Codex app-server error ${message.error.code}: ${message.error.message}`));
+        waiter.reject(new CodexAppServerRpcError(message.error.code, message.error.message));
       } else {
         waiter.resolve(message.result);
       }
