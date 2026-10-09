@@ -7,7 +7,12 @@ import { fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
 import { test } from 'node:test';
 import { parseTestOptions, runTests, suiteResult } from '../../bin/jupyter-test.js';
-import { probeAuth, probeConnection, probeKernel } from '../../jupyter/probes/cli-probe-client.mjs';
+import {
+  createCLIProbe,
+  probeAuth,
+  probeConnection,
+  probeKernel,
+} from '../../jupyter/probes/cli-probe-client.mjs';
 import {
   lineChartSource,
   reportStudySource,
@@ -26,6 +31,70 @@ const good = () => ({
   originalResourcesPreserved: true,
   source: { commit: 'fixture' },
   resourceCounts: { kernels: [0, 0], sessions: [0, 0] },
+});
+
+test('CLI-backed model tools validate JSON and image results with the shared host registry', async () => {
+  const directory = fixture();
+  let probe;
+  try {
+    const envFile = path.join(directory, '.env');
+    fs.writeFileSync(
+      envFile,
+      'JUPYTERLAB_HOST=https://example.invalid/\nJUPYTERLAB_PASS=' + credential,
+      {
+        mode: 0o600,
+      }
+    );
+    probe = await createCLIProbe({ envFile, project: directory, directory });
+    const image = path.join(probe.project, 'fixture.png');
+    const png =
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRfcAAAAASUVORK5CYII=';
+    fs.writeFileSync(image, Buffer.from(png, 'base64'));
+    // Control the CLI boundary so this registry regression needs no compiled CLI,
+    // credentials, remote server or model in the Node 18/24 patch matrix.
+    probe.command = async (command, input) => {
+      if (command === 'tools') {
+        return ['list', 'observe-image'].map((command) => ({
+          command,
+          description: 'Controlled CLI result fixture',
+          inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+        }));
+      }
+      assert.deepEqual(input, {});
+      if (command === 'observe-image') {
+        return {
+          data: { sourceHash: 'fixture' },
+          images: [{ mimeType: 'image/png', filePath: image }],
+        };
+      }
+      assert.equal(command, 'list');
+      return { notebooks: [], recentRuns: [] };
+    };
+    // Read the real TypeScript registry without requiring a build in the CLI matrix.
+    const { tsImport } = await import('tsx/esm/api');
+    const { prepareTools } = await tsImport(
+      path.join(root, 'packages/core/src/sdk/tools.ts'),
+      import.meta.url
+    );
+    const tools = prepareTools(await probe.modelTools());
+    assert(tools.length > 0);
+    const list = tools.find((tool) => tool.name === 'notebook_list');
+    assert(list);
+    assert.deepEqual(await list.execute({}, { signal: new AbortController().signal }), {
+      notebooks: [],
+      recentRuns: [],
+    });
+    const observe = tools.find((tool) => tool.name === 'notebook_observe_image');
+    assert(observe);
+    assert.deepEqual(await observe.execute({}, { signal: new AbortController().signal }), {
+      format: 'disclaude.tool-result.v1',
+      data: { sourceHash: 'fixture' },
+      images: [{ mimeType: 'image/png', data: png }],
+    });
+  } finally {
+    await probe?.close();
+    cleanup(directory);
+  }
 });
 
 test('public help/list discover all packaged suites without login, a model or a remote call', () => {

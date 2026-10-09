@@ -267,6 +267,7 @@ export async function createCLIProbe({ envFile, project, directory, observe = fa
       name: 'notebook_' + schema.command.replaceAll('-', '_'),
       description: schema.description,
       inputSchema: schema.inputSchema,
+      outputSchema: { type: 'object', additionalProperties: true },
       execute: async (input, invocation) => {
         const result = await probe.call(
           'notebook_' + schema.command.replaceAll('-', '_'),
