@@ -44,7 +44,8 @@ test('public help/list discover all packaged suites without login, a model or a 
     const help = run(['--help']);
     assert.equal(help.status, 0);
     assert.match(help.stdout, /Default: core, edge, fault, report/);
-    assert.match(help.stdout, /no extra plotting packages or Jupyter MCP extension are required/);
+    assert.match(help.stdout, /no extra plotting packages are required/);
+    assert.match(help.stdout, /Jupyter MCP extension\s+is not required/);
     assert(!help.stdout.includes('--python-path'));
     assert(!help.stdout.includes(credential));
     const listed = run(['--list']);
