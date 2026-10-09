@@ -331,6 +331,19 @@ describe('validateConfig', () => {
     expect(validateConfig(config2 as unknown as Record<string, unknown>)).toBe(false);
   });
 
+  it('allows disabling the absolute cap while keeping bounded inactivity', () => {
+    expect(validateConfig({ agent: { busyTurnHardCapMs: 0, busyTurnStallTimeoutMs: 300_000 } })).toBe(true);
+    expect(validateConfig({ agent: { busyTurnHardCapMs: 7_200_000, busyTurnStallTimeoutMs: 1_800_000 } })).toBe(true);
+  });
+
+  it.each([-1, 1.5, NaN, Infinity, '900000'])('rejects an invalid absolute cap: %s', value => {
+    expect(validateConfig({ agent: { busyTurnHardCapMs: value } } as never)).toBe(false);
+  });
+
+  it.each([-1, 0, 299_999, 300_000.5, NaN, Infinity, '1800000'])('rejects invalid/sub-sweep inactivity: %s', value => {
+    expect(validateConfig({ agent: { busyTurnStallTimeoutMs: value } } as never)).toBe(false);
+  });
+
   it('should reject invalid logging.level', () => {
     const config1 = { logging: { level: 123 } };
     const config2 = { logging: { level: ['array'] } };

@@ -282,10 +282,8 @@ export abstract class BaseAgent implements Disposable {
       options.autoCompactWindow = Config.getAutoCompactWindow() ?? 'auto';
     }
 
-    // Issue #3706 (GLM stall): enable partial (stream_event) messages so the provider
-    // can observe content_block_delta / message_start / message_stop and run a
-    // no-content-progress watchdog. stream_events are filtered in adaptIterator
-    // (not yielded to ChatAgent), so this only adds watchdog visibility, not downstream volume.
+    // Partial events expose thinking/token activity to the host activity clock.
+    // The provider filters them from user output; SDK/CLI still owns retries.
     if ((this.agentBackend ?? 'claude') === 'claude') {
       options.includePartialMessages = true;
     }
@@ -369,6 +367,9 @@ export abstract class BaseAgent implements Disposable {
             durationApiMs: message.metadata.durationApiMs,
             transientStatus: message.metadata.transientStatus,
             phase: message.metadata.phase,
+            systemSubtype: message.metadata.systemSubtype,
+            backgroundTaskIds: message.metadata.backgroundTaskIds,
+            backgroundTask: message.metadata.backgroundTask,
           }
         : undefined,
       sessionId: message.metadata?.sessionId,

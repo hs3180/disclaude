@@ -71,28 +71,23 @@ export interface ChatSessionPoolOptions {
   idleSweepIntervalMs?: number;
 
   /**
-   * Issue #4577: Hard cap on a single busy turn, in ms.
-   *
-   * The busy exemption in `evictIdleAgents()` is correct (never kill a
-   * mid-turn agent) but previously had NO upper bound — a 2h10m runaway
-   * turn (13,903 SDK messages / $18.90 in the issue's evidence A) kept its
-   * full subprocess tree (claude binary + 2 MCP servers + stray LSP)
-   * uncollectable for the whole window. When a busy agent's turn exceeds
-   * this cap, the sweep stops the query (abort + channel close, same as
-   * the /stop command) and notifies the chat instead of silently waiting.
-   *
-   * Default: 90 minutes. Set to 0 to disable the busy-turn cap.
+   * Optional absolute turn limit, in ms. Default: 0 (disabled).
+   * Pending work is normally bounded by the no-progress timeout; an explicit
+   * positive cap additionally stops work even when it is still progressing.
    */
   busyTurnHardCapMs?: number;
 
+  /** Maximum time without SDK/tool/input activity. Default: 30 minutes. */
+  busyTurnStallTimeoutMs?: number;
+
   /**
-   * Issue #4577: user-facing notice hook, fired after a busy turn is stopped
-   * by the hard cap. Fire-and-forget by contract — a failing notify must not
+   * User-facing notice hook, fired after pending work is stopped by either
+   * activity policy. Fire-and-forget by contract — a failing notify must not
    * break the sweep for other agents (errors are logged, not thrown).
    *
    * When omitted, only the structured warn log is emitted.
    */
-  onBusyCapExceeded?: (chatId: string, busyMinutes: number) => Promise<void> | void;
+  onBusyCapExceeded?: (chatId: string, busyMinutes: number, decision: BusyTurnStopDecision) => Promise<void> | void;
 
   /**
    * Issue #4644: provider-session forgetter invoked by reset() — clears the
@@ -107,19 +102,27 @@ export interface ChatSessionPoolOptions {
 
 const logger = createLogger('ChatSessionPool');
 
+export interface BusyTurnStopDecision {
+  kind: 'no-progress' | 'wall-clock';
+  sessionKey: string;
+  elapsedMs: number;
+  noProgressMs: number;
+  limitMs: number;
+  lastActivityAt: number;
+  lastActivityType: string;
+  runId?: string;
+  sourceMessageId?: string;
+  traceId?: string;
+  threadRootId?: string;
+}
+
 /** Issue #4169: Default idle timeout before an inactive agent is evicted. */
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 /** Issue #4169: Default idle-sweep interval. */
 const DEFAULT_IDLE_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
-/**
- * Issue #4577: Default hard cap on a single busy turn before the sweep stops
- * the query. The issue's evidence A — a 2h10m turn / 13,903 SDK messages /
- * $18.90 — was judged a runaway loop, not an expected turn, and its P1
- * recommendation caps busy turns at 60~90min; 90min is the lenient end of
- * that band, so normal long research turns pass while the runaway class is
- * bounded.
- */
-const DEFAULT_BUSY_TURN_HARD_CAP_MS = 90 * 60 * 1000;
+/** Issue #5272: progressing work has no default wall-clock limit. */
+const DEFAULT_BUSY_TURN_HARD_CAP_MS = 0;
+const DEFAULT_BUSY_TURN_STALL_TIMEOUT_MS = 30 * 60_000;
 
 /**
  * Issue #4620 (review fix): composite guard key for `busyTurnStoppedFor`.
@@ -243,6 +246,10 @@ export class ChatSessionPool {
   private readonly forgetProviderSession: (chatId: string) => void;
 
   constructor(options: ChatSessionPoolOptions = {}) {
+    if (options.busyTurnStallTimeoutMs !== undefined && options.busyTurnStallTimeoutMs > 0 &&
+        options.busyTurnStallTimeoutMs < (options.idleSweepIntervalMs ?? DEFAULT_IDLE_SWEEP_INTERVAL_MS)) {
+      throw new Error('busyTurnStallTimeoutMs must be at least idleSweepIntervalMs');
+    }
     this.options = options;
     this.forgetProviderSession =
       options.forgetProviderSession ??
@@ -676,13 +683,10 @@ export class ChatSessionPool {
   /**
    * Issue #4169: Evict (dispose) agents idle longer than the idle timeout.
    *
-   * Issue #4577: busy agents are still never *evicted* mid-turn, but the
-   * exemption now has a hard cap — a busy turn running longer than
-   * `busyTurnHardCapMs` is stopped (abort + channel close, same path as the
-   * /stop command) and the chat is notified, bounding how long a runaway
-   * turn (2h10m / 13k SDK messages in the issue's evidence) can hold its
-   * subprocess tree uncollectable. The stopped agent itself stays in the
-   * pool and is reclaimed by the normal idle path once the turn unwinds.
+   * Active turns, admitted/queued requests, and live background tasks are
+   * protected from idle disposal. Work exceeding the inactivity policy or
+   * an explicitly configured absolute cap is stopped with a user notice,
+   * then becomes eligible for ordinary reclamation after it unwinds.
    *
    * The busy cap runs even when idle eviction is disabled (`idleTimeoutMs`
    * <= 0) — same principle as #4256's always-on snapshot: the
@@ -698,12 +702,9 @@ export class ChatSessionPool {
     const timeout = this.options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
     const evicted: string[] = [];
     for (const [sessionKey, agent] of this.agents) {
-      // Never evict an agent mid-turn...
-      if (agent.isBusy) {
-        // ...but Issue #4577: cap how long a busy turn can run. Track when
-        // this busy turn was first observed; if it exceeds the hard cap,
-        // stop the query so the turn unwinds and the agent becomes
-        // evictable on a later sweep.
+      // An admitted message or a live background task is work even when the
+      // main SDK turn has not started or has already returned its result.
+      if (agent.isBusy || agent.hasPendingWork) {
         this.enforceBusyTurnCap(sessionKey, agent, now);
         continue;
       }
@@ -711,14 +712,18 @@ export class ChatSessionPool {
       // busy turn starts a fresh cap window. Issue #4620: also forget the
       // stop-guard for this agent's last authoritative turn-start, so a
       // future turn that happens to reuse a timestamp isn't skipped.
+      const stoppedFor = agent.turnStartedAtMs || this.busySince.get(sessionKey);
       this.busySince.delete(sessionKey);
-      const stoppedFor = agent.turnStartedAtMs;
       if (typeof stoppedFor === 'number' && stoppedFor > 0) {
         this.busyTurnStoppedFor.delete(busyTurnGuardKey(sessionKey, stoppedFor));
       }
       if (timeout <= 0) { continue; }
-      const last = this.lastUsedAt.get(sessionKey) ?? now;
+      const last = Math.max(this.lastUsedAt.get(sessionKey) ?? now, agent.lastActivityAt ?? 0);
       if (now - last >= timeout) {
+        logger.info({ sessionKey, isBusy: agent.isBusy, hasPendingWork: agent.hasPendingWork,
+          backgroundTaskCount: agent.activeBackgroundTaskCount ?? 0, turnStartedAtMs: agent.turnStartedAtMs,
+          lastUsedAt: last, lastActivityAt: agent.lastActivityAt, lastActivityType: agent.lastActivityType,
+          idleTimeoutMs: timeout, idleMs: now - last }, 'Evicting inactive agent');
         this.agents.delete(sessionKey);
         this.lastUsedAt.delete(sessionKey);
         // Do not retain channel closures after the owning agent is evicted.
@@ -734,14 +739,10 @@ export class ChatSessionPool {
   }
 
   /**
-   * Issue #4577: enforce the busy-turn hard cap for one busy agent.
-   *
-   * Records the first-observed busy timestamp (the sweep runs every
-   * `idleSweepIntervalMs`, so the effective measurement granularity is one
-   * sweep interval — acceptable for a 90-minute cap). When the current busy
-   * turn exceeds `busyTurnHardCapMs`, stops the agent's query (same path as
-   * the /stop command: abort + channel close, session preserved) and fires
-   * the `onBusyCapExceeded` hook (user notice). Notification is
+   * Bound pending work by inactivity and an optional absolute turn cap.
+   * Decisions run at the sweep interval and retain the authoritative turn
+   * clock and once-per-turn stop guard. Stops use the /stop path, preserving
+   * conversation context, then fire `onBusyCapExceeded`. Notification is
    * fire-and-forget — a failing channel must not break the sweep for other
    * agents.
    *
@@ -753,11 +754,11 @@ export class ChatSessionPool {
    */
   private enforceBusyTurnCap(
     sessionKey: string,
-    agent: Pick<ChatAgent, 'isBusy' | 'turnStartedAtMs' | 'stop'>,
+    agent: Pick<ChatAgent, 'isBusy' | 'hasPendingWork' | 'turnStartedAtMs' | 'lastActivityAt' | 'lastActivityType' | 'pendingWorkContext' | 'stop'>,
     now: number
   ): void {
     const cap = this.options.busyTurnHardCapMs ?? DEFAULT_BUSY_TURN_HARD_CAP_MS;
-    if (cap <= 0) { return; } // Cap disabled — no tracking, never stop.
+    const stall = this.options.busyTurnStallTimeoutMs ?? DEFAULT_BUSY_TURN_STALL_TIMEOUT_MS;
     // Issue #4620: measure the CURRENT turn from the agent's authoritative
     // turn-start timestamp, not from when the sweep first observed isBusy.
     // The observation-based marker survived turn boundaries whenever every
@@ -766,42 +767,51 @@ export class ChatSessionPool {
     // does not expose the timestamp (older implementation), fall back to the
     // observation-based marker for compatibility.
     const turnStarted = typeof agent.turnStartedAtMs === 'number' ? agent.turnStartedAtMs : 0;
-    const since = turnStarted > 0 ? turnStarted : this.busySince.get(sessionKey);
+    let since = turnStarted > 0 ? turnStarted : this.busySince.get(sessionKey);
     if (since === undefined) {
       this.busySince.set(sessionKey, now);
-      return;
+      since = now;
     }
-    if (now - since < cap) { return; }
+    const lastActivityAt = agent.lastActivityAt > 0 ? agent.lastActivityAt : since;
+    const noProgressMs = Math.max(0, now - lastActivityAt);
+    const elapsedMs = Math.max(0, now - since);
+    const kind = cap > 0 && elapsedMs >= cap ? 'wall-clock'
+      : stall > 0 && noProgressMs >= stall ? 'no-progress' : undefined;
+    if (!kind) { return; }
     // Issue #4620: the authoritative timestamp is constant for the whole
     // (stopped) turn — without this guard every subsequent sweep tick would
     // re-stop the same turn. Keyed by sessionKey+timestamp so concurrent
     // turns in different chats that start within the same millisecond
     // (group broadcast) don't collide. Observation fallback re-arms via
     // marker delete (same value can't repeat across turns).
-    if (turnStarted > 0) {
-      const guardKey = busyTurnGuardKey(sessionKey, turnStarted);
-      if (this.busyTurnStoppedFor.has(guardKey)) { return; }
-      this.busyTurnStoppedFor.add(guardKey);
-    }
+    const guardKey = busyTurnGuardKey(sessionKey, since);
+    if (this.busyTurnStoppedFor.has(guardKey)) { return; }
+    this.busyTurnStoppedFor.add(guardKey);
+    const decision: BusyTurnStopDecision = { ...agent.pendingWorkContext, kind, sessionKey, elapsedMs, noProgressMs,
+      limitMs: kind === 'wall-clock' ? cap : stall, lastActivityAt,
+      lastActivityType: agent.lastActivityType ?? 'busy-observation' };
     const busyMin = Math.round((now - since) / 60000);
     // Issue #4587 (part 2): strip the `::threadRoot` suffix for everything
     // that addresses the chat (agent boundChatId guard + user notification).
     const chatId = chatIdOfSessionKey(sessionKey);
     logger.warn(
-      { chatId, sessionKey, busyMinutes: busyMin, capMs: cap },
-      'Busy turn exceeded hard cap (Issue #4577) — stopping query'
+      { chatId, ...decision, busyMinutes: busyMin, isBusy: agent.isBusy, hasPendingWork: agent.hasPendingWork },
+      'Pending work exceeded activity policy — stopping query'
     );
-    agent.stop(chatId);
-    // Clear the marker so the next busy turn (if any) gets a fresh window
-    // rather than being re-stopped on every sweep tick.
-    this.busySince.delete(sessionKey);
+    if (agent.stop(chatId) === false) {
+      this.busyTurnStoppedFor.delete(guardKey);
+      logger.warn({ chatId, ...decision }, 'No live query accepted the activity-policy stop');
+      return;
+    }
     // Notify the user fire-and-forget: channel failure must not propagate
     // into the sweep loop.
     const notify = this.options.onBusyCapExceeded;
     if (notify) {
-      void Promise.resolve(notify(chatId, busyMin)).catch((err) => {
+      const reportFailure = (err: unknown): void => {
         logger.error({ err, chatId, sessionKey }, 'Failed to send busy-cap notification');
-      });
+      };
+      try { void Promise.resolve(notify(chatId, busyMin, decision)).catch(reportFailure); }
+      catch (err) { reportFailure(err); }
     }
   }
 

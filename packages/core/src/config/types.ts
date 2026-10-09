@@ -130,6 +130,10 @@ export interface AgentConfig {
    * @see Issue #2992
    */
   sdkTimeoutMs?: number;
+  /** Absolute turn cap in milliseconds. Default 0 disables wall-clock stops. */
+  busyTurnHardCapMs?: number;
+  /** Stop pending work after this much time without activity. Default 30 minutes. */
+  busyTurnStallTimeoutMs?: number;
 }
 
 /**

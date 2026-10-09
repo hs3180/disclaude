@@ -908,3 +908,22 @@ it('does not label SDK success-envelope API errors as complete', () => {
     result: 'Authentication failed', usage: {}, total_cost_usd: 0,
   }))).toMatchObject({ type: 'result', content: 'Authentication failed', metadata: { terminatedReason: 'turn_failed' } });
 });
+
+it('preserves non-ambient background-task snapshots, including an empty replacement', () => {
+  const message = adaptSDKMessage(asMsg({ type: 'system', subtype: 'background_tasks_changed', tasks: [
+    { task_id: 'research-1', task_type: 'local_agent' },
+    { task_id: 'watcher-1', task_type: 'local_agent', ambient: true },
+  ] }));
+  expect(message.content).toBe('');
+  expect(message.metadata?.backgroundTaskIds).toEqual(['research-1']);
+  expect(adaptSDKMessage(asMsg({ type: 'system', subtype: 'background_tasks_changed', tasks: [] })).metadata?.backgroundTaskIds).toEqual([]);
+});
+
+it('preserves older task edges without inventing identities for malformed messages', () => {
+  expect(adaptSDKMessage(asMsg({ type: 'system', subtype: 'task_started', task_id: 'task-1' })).metadata?.backgroundTask).toEqual({ id: 'task-1', state: 'running' });
+  expect(adaptSDKMessage(asMsg({ type: 'system', subtype: 'task_notification', task_id: 'task-1', status: 'completed' })).metadata?.backgroundTask).toEqual({ id: 'task-1', state: 'completed' });
+  expect(adaptSDKMessage(asMsg({ type: 'system', subtype: 'task_started' })).metadata?.backgroundTask).toBeUndefined();
+  expect(adaptSDKMessage(asMsg({ type: 'system', subtype: 'task_notification', task_id: 'task-1' })).metadata?.backgroundTask).toBeUndefined();
+  expect(adaptSDKMessage(asMsg({ type: 'system', subtype: 'task_started', task_id: 'watcher', ambient: true })).metadata?.backgroundTask).toBeUndefined();
+  expect(adaptSDKMessage(asMsg({ type: 'system', subtype: 'task_started', task_id: 'housekeeping', skip_transcript: true })).metadata?.backgroundTask).toBeUndefined();
+});

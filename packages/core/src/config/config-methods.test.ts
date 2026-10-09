@@ -32,7 +32,7 @@ const { mockGetConfigFromFile, mockGetPreloadedConfig } = vi.hoisted(() => ({
         checkIntervalMinutes: 10,
       },
     },
-    agent: { provider: 'glm' as const, enableAgentTeams: true },
+    agent: { provider: 'glm' as const, enableAgentTeams: true, busyTurnHardCapMs: 10_800_000, busyTurnStallTimeoutMs: 2_400_000 },
     glm: {
       apiKey: 'test-glm-key',
       model: 'glm-4',
@@ -65,6 +65,9 @@ vi.mock('./loader.js', () => ({
 import { Config, createDefaultRuntimeContext } from './index.js';
 
 describe('Config', () => {
+  it('loads the operator activity policy from the service configuration', () => {
+    expect(Config.getBusyTurnPolicy()).toEqual({ busyTurnHardCapMs: 10_800_000, busyTurnStallTimeoutMs: 2_400_000 });
+  });
   describe('getSessionRestoreConfig', () => {
     it('should return configured values', () => {
       const config = Config.getSessionRestoreConfig();

@@ -54,7 +54,7 @@ vi.mock('@disclaude/core', async (importOriginal) => {
 // Track mock agent instances for assertions
 // Issue #4620: mock now carries turnStartedAtMs (0 = not set; tests that
 // exercise the observation-based fallback leave it 0/undefined).
-const mockAgents: Map<string, { dispose: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; steer: ReturnType<typeof vi.fn>; updateCallbacks: ReturnType<typeof vi.fn>; taskComplete?: Promise<void>; isBusy: boolean; turnStartedAtMs?: number }> = new Map();
+const mockAgents: Map<string, { dispose: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; steer: ReturnType<typeof vi.fn>; updateCallbacks: ReturnType<typeof vi.fn>; taskComplete?: Promise<void>; isBusy: boolean; turnStartedAtMs?: number; lastActivityAt?: number; lastActivityType?: string; hasPendingWork?: boolean; pendingWorkContext?: { runId?: string; sourceMessageId?: string; traceId?: string; threadRootId?: string } }> = new Map();
 
 // Mock AgentFactory
 vi.mock('./agents/factory.js', () => ({
@@ -843,6 +843,74 @@ describe('ChatSessionPool', () => {
   // ==========================================================================
 
   describe('busy-turn hard cap (Issue #4577)', () => {
+    it('stops a silent pending turn once with activity evidence and original topic identity', () => {
+      const notify = vi.fn();
+      const pool = new ChatSessionPool({ idleTimeoutMs: 0, onBusyCapExceeded: notify });
+      pool.getOrCreateChatAgent('owned-chat', createMockCallbacks(), 'owned-root');
+      const agent = mockAgents.get('owned-chat')!;
+      const started = Date.now();
+      agent.hasPendingWork = true;
+      agent.turnStartedAtMs = started;
+      agent.lastActivityAt = started + 60_000;
+      agent.lastActivityType = 'claude:api_retry';
+      agent.pendingWorkContext = { runId: 'owned-run', sourceMessageId: 'owned-source', traceId: 'owned-trace', threadRootId: 'owned-root' };
+      pool.evictIdleAgents(started + 30 * 60_000);
+      expect(agent.stop).not.toHaveBeenCalled();
+      pool.evictIdleAgents(started + 31 * 60_000);
+      pool.evictIdleAgents(started + 40 * 60_000);
+      expect(agent.stop).toHaveBeenCalledOnce();
+      expect(agent.dispose).not.toHaveBeenCalled();
+      expect(notify).toHaveBeenCalledExactlyOnceWith('owned-chat', 31, {
+        ...agent.pendingWorkContext, kind: 'no-progress', sessionKey: 'owned-chat::owned-root',
+        elapsedMs: 31 * 60_000, noProgressMs: 30 * 60_000, limitMs: 30 * 60_000,
+        lastActivityAt: agent.lastActivityAt, lastActivityType: 'claude:api_retry',
+      });
+    });
+
+    it('enforces an explicit absolute cap even when activity is recent', () => {
+      const notify = vi.fn();
+      const pool = new ChatSessionPool({ idleTimeoutMs: 0, busyTurnHardCapMs: 600_000, onBusyCapExceeded: notify });
+      pool.getOrCreateChatAgent('active-chat', createMockCallbacks());
+      const agent = mockAgents.get('active-chat')!;
+      const started = Date.now();
+      agent.isBusy = true;
+      agent.turnStartedAtMs = started;
+      agent.lastActivityAt = started + 600_000;
+      pool.evictIdleAgents(started + 600_000);
+      expect(agent.stop).toHaveBeenCalledOnce();
+      expect(notify).toHaveBeenCalledWith('active-chat', 10, expect.objectContaining({ kind: 'wall-clock', noProgressMs: 0 }));
+    });
+
+    it('does not announce a stop when there is no live query to stop', () => {
+      const notify = vi.fn();
+      const pool = new ChatSessionPool({ idleTimeoutMs: 0, onBusyCapExceeded: notify });
+      pool.getOrCreateChatAgent('missing-query', createMockCallbacks());
+      const agent = mockAgents.get('missing-query')!;
+      agent.isBusy = true;
+      agent.stop.mockReturnValue(false);
+      agent.turnStartedAtMs = Date.now();
+      pool.evictIdleAgents(agent.turnStartedAtMs + 30 * 60_000);
+      expect(agent.stop).toHaveBeenCalledOnce();
+      expect(notify).not.toHaveBeenCalled();
+    });
+
+    it('a synchronous notification failure does not prevent stopping another silent turn', () => {
+      const pool = new ChatSessionPool({ idleTimeoutMs: 0, onBusyCapExceeded: () => { throw new Error('channel rejected'); } });
+      const started = Date.now();
+      for (const chat of ['first-silent', 'second-silent']) {
+        pool.getOrCreateChatAgent(chat, createMockCallbacks());
+        Object.assign(mockAgents.get(chat)!, { isBusy: true, turnStartedAtMs: started });
+      }
+      expect(() => pool.evictIdleAgents(started + 30 * 60_000)).not.toThrow();
+      expect(mockAgents.get('first-silent')!.stop).toHaveBeenCalledOnce();
+      expect(mockAgents.get('second-silent')!.stop).toHaveBeenCalledOnce();
+    });
+
+    it('rejects an inactivity interval shorter than its sweep', () => {
+      expect(() => new ChatSessionPool({ busyTurnStallTimeoutMs: 299_999 })).toThrow('at least idleSweepIntervalMs');
+      expect(() => new ChatSessionPool({ busyTurnStallTimeoutMs: 60_000, idleSweepIntervalMs: 120_000 })).toThrow('at least idleSweepIntervalMs');
+    });
+
     it('should stop (not evict) a busy agent whose turn exceeds the hard cap', () => {
       const pool = new ChatSessionPool({ idleTimeoutMs: 1000, busyTurnHardCapMs: 5000 });
       const callbacks = createMockCallbacks();
@@ -943,13 +1011,14 @@ describe('ChatSessionPool', () => {
 
       const t0 = Date.now();
       pool.evictIdleAgents(t0);
+      agent.lastActivityAt = t0 + 10_000_000;
       pool.evictIdleAgents(t0 + 10_000_000);
 
       expect(agent.stop).not.toHaveBeenCalled();
       expect(agent.dispose).not.toHaveBeenCalled();
     });
 
-    it('default cap (90 min) applies when the option is omitted', () => {
+    it('does not stop a progressing turn after 90 minutes when no absolute cap is configured', () => {
       const pool = new ChatSessionPool({ idleTimeoutMs: 1000 });
       const callbacks = createMockCallbacks();
       pool.getOrCreateChatAgent('chat-default', callbacks);
@@ -959,11 +1028,13 @@ describe('ChatSessionPool', () => {
       const t0 = Date.now();
       pool.evictIdleAgents(t0);
       // Just under 90 min: untouched.
+      agent.lastActivityAt = t0 + 89 * 60 * 1000;
       pool.evictIdleAgents(t0 + 89 * 60 * 1000);
       expect(agent.stop).not.toHaveBeenCalled();
-      // Past 90 min: stopped.
+      // Past 90 min with recent SDK activity: still untouched.
+      agent.lastActivityAt = t0 + 91 * 60 * 1000;
       pool.evictIdleAgents(t0 + 91 * 60 * 1000);
-      expect(agent.stop).toHaveBeenCalledOnce();
+      expect(agent.stop).not.toHaveBeenCalled();
     });
 
     it('should still enforce the busy cap when idle eviction is disabled (idleTimeoutMs=0)', () => {
@@ -1007,7 +1078,7 @@ describe('ChatSessionPool', () => {
       await vi.waitFor(() => {
         expect(onBusyCapExceeded).toHaveBeenCalledOnce();
       });
-      expect(onBusyCapExceeded).toHaveBeenCalledWith('chat-notify', 5);
+      expect(onBusyCapExceeded).toHaveBeenCalledWith('chat-notify', 5, expect.objectContaining({ kind: 'wall-clock', limitMs: 5 * 60_000 }));
     });
 
     it('should not fire onBusyCapExceeded when not wired (log-only, no crash)', () => {
@@ -1432,7 +1503,7 @@ describe('ChatSessionPool', () => {
       // agent.stop() and the user-facing hook both get the plain chatId —
       // the agent's boundChatId guard and the channel key on chatId.
       expect(agent.stop).toHaveBeenCalledWith('oc_topic');
-      expect(onBusyCapExceeded).toHaveBeenCalledWith('oc_topic', expect.any(Number));
+      expect(onBusyCapExceeded).toHaveBeenCalledWith('oc_topic', expect.any(Number), expect.objectContaining({ sessionKey: 'oc_topic::om_threadA', kind: 'wall-clock' }));
     });
 
     it('chatIdOfSessionKey inverts buildSessionKey', () => {

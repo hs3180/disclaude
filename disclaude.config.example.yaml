@@ -83,6 +83,14 @@ agent:
   # Default: 1
   maxConcurrentTasks: 1
 
+  # Pending turns, queued messages, and non-ambient background tasks survive
+  # idle cleanup. Stop only after 30 minutes without SDK/tool/input activity.
+  # Minimum inactivity limit: 300000 ms (the service's 5-minute sweep).
+  # busyTurnStallTimeoutMs: 1800000
+  # Optional absolute turn limit. Default 0 disables wall-clock stops;
+  # a positive value also stops work that is still making progress.
+  # busyTurnHardCapMs: 0
+
   # Enable Claude Code Agent Teams mode
   # When enabled, the agent can spawn and coordinate multiple teammate sessions
   # for parallel work on complex tasks.

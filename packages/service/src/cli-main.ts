@@ -349,22 +349,18 @@ export async function main(): Promise<void> {
     // provider, so ChatAgent can warn the chat when the bound directory is
     // missing and the agent falls back to the workspace.
     cwdResolver: (chatId: string) => projectManager.resolveCwd(chatId),
-    // Issue #4577: busy-turn hard cap. The idle sweep this pool runs never
-    // evicts mid-turn agents — correct, but unbounded: a runaway 2h+ turn
-    // held its whole subprocess tree uncollectable (issue evidence A/B).
-    // With the cap, an over-long busy turn is stopped (same path as /stop)
-    // and the chat notified. 90 min sits in the 60~90min band the issue
-    // recommends for its runaway evidence (2h10m / 13k SDK messages /
-    // $18.90 — judged a runaway loop, not an expected turn). Set 0 to
-    // disable.
-    busyTurnHardCapMs: 90 * 60 * 1000,
-    // Issue #4577: user-facing notice after a hard-cap stop — same feedback
-    // the /stop command gives, so the chat isn't silently cut off.
-    onBusyCapExceeded: async (chatId, busyMinutes) => {
+    ...Config.getBusyTurnPolicy(),
+    // A policy stop reports its actual basis in the originating topic.
+    onBusyCapExceeded: async (chatId, busyMinutes, decision) => {
+      const basis = decision.kind === 'no-progress'
+        ? `连续 ${Math.round(decision.noProgressMs / 60_000)} 分钟无 SDK/工具活动`
+        : `达到配置的绝对上限 ${Math.round(decision.limitMs / 60_000)} 分钟`;
       await service.sendMessage(
         chatId,
-        `⏹️ **响应已超过时长上限被停止**（已运行 ${busyMinutes} 分钟，上限 90 分钟）\n\n` +
-          '会话保持活跃，您可以继续发送消息。'
+        `⏹️ **响应已停止**（${decision.kind}；已运行 ${busyMinutes} 分钟；${basis}；` +
+          `最近活动距今 ${Math.round(decision.noProgressMs / 60_000)} 分钟）\n\n` +
+          '请先检查已有结果，再发送消息继续。',
+        decision.threadRootId
       );
     },
   });
