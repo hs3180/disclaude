@@ -26,7 +26,7 @@ import { TaskFailureStore } from './task-failure-store.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
 import type { CooldownManager } from './cooldown-manager.js';
-import type { MessageRouter } from '../messaging/message-router.js';
+import { MessageRouter, MessageRoutingError } from '../messaging/message-router.js';
 import type { SystemMessage } from '../types/message.js';
 
 /**
@@ -718,6 +718,47 @@ describe('Scheduler', () => {
   });
 
   describe('executeTask (via cron job trigger)', () => {
+    it('surfaces the original provider cause and correlation through the real message router', async () => {
+      const providerError = Object.assign(new Error('codex app-server: thread/read control probe timed out'), {
+        name: 'ProviderStallError', runId: 'actual-run', traceId: 'actual-trace',
+      });
+      let source: string | undefined;
+      const handler = {
+        handleUserMessage: vi.fn().mockResolvedValue(undefined),
+        handleSystemMessage: vi.fn((_chatId: string, _payload: string, messageId: string) => {
+          source = messageId;
+          return Promise.reject(Object.assign(providerError, { sourceMessageId: messageId }));
+        }),
+      };
+      const actualRouter = new MessageRouter({ handler });
+      const actualScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager, callbacks: mockCallbacks,
+        inputMessageRouter: actualRouter, jobFactory: testJobFactory,
+      });
+      const task = createTask({ id: 'provider-stall', name: 'Owned provider failure' });
+      try {
+        actualScheduler.addTask(task);
+        fireJob(actualScheduler.getActiveJobs());
+        await vi.waitFor(() => expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(task.chatId,
+          expect.stringContaining('thread/read control probe timed out')));
+        const failures = vi.mocked(mockCallbacks.sendMessage).mock.calls.filter(([, text]) => text.startsWith('❌'));
+        expect(failures).toHaveLength(1);
+        for (const value of [task.name, source, 'actual-run', 'actual-trace']) {
+          expect(failures[0]?.[1]).toContain(value);
+        }
+        expect(handler.handleSystemMessage).toHaveBeenCalledOnce();
+        expect(mockCallbacks.resetAgent).not.toHaveBeenCalled();
+      } finally { await actualScheduler.stop(); }
+    });
+
+    it('keeps a routed supersession neutral instead of announcing a provider failure', async () => {
+      mockRouterAsMock.route.mockRejectedValueOnce(new MessageRoutingError('routing wrapper', new TurnSupersededError()));
+      scheduler.addTask(createTask());
+      fireJob(scheduler.getActiveJobs());
+      await flushPending();
+      expect(vi.mocked(mockCallbacks.sendMessage).mock.calls.some(([, text]) => text.startsWith('❌'))).toBe(false);
+    });
+
     /** Helper: fire a cron job trigger (sync, use vi.waitFor for assertions) */
     function fireJob(jobs: ReturnType<typeof scheduler.getActiveJobs>) {
       void jobs[0].job.fireOnTick();

@@ -787,8 +787,8 @@ describe('ChatAgent (service)', () => {
     });
   });
 
-  describe('GLM stall termination (Issue #3706)', () => {
-    it('should send notice, record failure, suppress restart, preserve context', async () => {
+  describe('Provider stall termination (Issues #3706, #5283)', () => {
+    it.each(['claude', 'codex'] as const)('sends notice, retains the %s cause and suppresses restart', async backend => {
       const localCallbacks = createMockCallbacks();
       const agent = new ChatAgent({
         chatId: 'oc_stall',
@@ -796,6 +796,7 @@ describe('ChatAgent (service)', () => {
         apiKey: 'key',
         model: 'model',
         provider: 'anthropic',
+        agentBackend: backend,
       });
 
       let releaseStall!: () => void;
@@ -844,10 +845,21 @@ describe('ChatAgent (service)', () => {
       expect(rm.recordFailure).toHaveBeenCalledWith('oc_stall', 'stall');
       expect(rm.shouldRestart).not.toHaveBeenCalled();
       await expect(agent.turnCompleteFor('msg_1')!).rejects.toThrow('codex app-server stalled for 30ms');
+      const failure = await agent.turnCompleteFor('msg_1')!.catch(error => error);
+      expect(failure).toMatchObject({ name: 'ProviderStallError', sourceMessageId: 'msg_1', provider: backend });
+      expect(failure.runId).toEqual(expect.any(String));
+      expect(failure.traceId).toEqual(expect.any(String));
       // Session inactive (restart suppressed)
       expect(agent.hasActiveSession()).toBe(false);
       // Context preserved (deleteThreadRoot NOT called)
       expect((agent as any).conversationOrchestrator.deleteThreadRoot).not.toHaveBeenCalled();
+      const records = [...(agent as any).logger.warn.mock.calls, ...(agent as any).logger.info.mock.calls]
+        .filter(([, message]: any[]) => String(message).startsWith('Provider stall:'));
+      expect(records).toHaveLength(2);
+      for (const [context, message] of records) {
+        expect(context.provider).toBe(backend);
+        expect(message).not.toContain('GLM');
+      }
     });
   });
 

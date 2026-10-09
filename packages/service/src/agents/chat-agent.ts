@@ -28,7 +28,7 @@
  * Extends BaseAgent to inherit:
  * - SDK configuration building
  * - Iterator timeout handling
- * - GLM logging
+ * - Provider diagnostics
  * - Error handling
  *
  * Issue #2717: Migrated from @disclaude/worker-node to @disclaude/service.
@@ -199,7 +199,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   /** Message identity of the turn currently consumed by the persistent iterator. */
   private activeTurnMessageId?: string;
 
-  // Issue #3706 (GLM stall): set when the provider's no-content-progress watchdog
+  // Provider stall (#3706, #5283): set when the provider's watchdog
   // terminated the stream. Checked at the iterator-end/restart decision point to
   // suppress the auto-restart (would immediately re-stall) while keeping context.
   private stalledTerminated = false;
@@ -1742,7 +1742,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
               resolveReplyThreadRoot()
             );
           }
-          // Issue #3706 (GLM stall): provider watchdog terminated the stream.
+          // Provider watchdog terminated the stream (#3706, #5283).
           // The generic content-send block above already delivered the notice
           // (parsed.content carries STALL_TERMINATE_NOTICE). Here we only do
           // control flow: record failure (repeated stalls trip the circuit),
@@ -1752,14 +1752,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           if (parsed.terminatedReason === 'stall') {
             this.stalledTerminated = true;
             this.logger.warn(
-              { chatId, messageCount },
-              'GLM stall: stream terminated by no-content-progress watchdog; recording failure, resolving turn'
+              { chatId, messageCount, backend: this.agentBackend, provider: this.sdkProvider.name,
+                terminationDetail: parsed.terminationDetail, ...this.activeLifecycleContext },
+              'Provider stall: watchdog terminated the stream; recording failure, resolving turn'
             );
             this.restartManager.recordFailure(chatId, 'stall');
             this.isProcessingMessage = false;
-            const stallError = new Error(
+            const stallError = Object.assign(new Error(
               parsed.terminationDetail ?? 'Provider stall watchdog terminated the turn'
-            );
+            ), this.activeLifecycleContext, { backend: this.agentBackend, provider: this.sdkProvider.name });
             stallError.name = 'ProviderStallError';
             this.resolveTurn(currentTurnMessageId, stallError);
             if (this.callbacks.onDone) {
@@ -1777,7 +1778,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
           // Issue #4442 (part 3): provider exhausted the in-request retries on
           // an empty stream (200-OK-zero-content) and synthesized a terminal
-          // result. Same interception shape as the GLM-stall branch above: the
+          // result. Same interception shape as the provider-stall branch above: the
           // generic content-send block already delivered the ❌ notice
           // (parsed.content carries EMPTY_STREAM_TERMINATE_NOTICE), so here we
           // only do control flow — record failure (chronic empty streams trip
@@ -2234,7 +2235,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // permanently unresponsive (#4194). recordFailure records the
           // failure and trips the circuit after maxRestarts, but — per its
           // contract (packages/core/.../restart-manager.ts) — does NOT trigger
-          // an actual restart, so this is bounded and safe. Mirrors the GLM
+          // an actual restart, so this is bounded and safe. Mirrors the provider
           // stall handling above (recordFailure('stall')). Reset/retry (②)
           // remains a larger follow-up needing session-lifecycle design.
           // Record the most specific failure cause. When a turn is BOTH empty
@@ -2281,7 +2282,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           }
 
           this.logger.info({
-            event: 'agent_turn', state: 'completed', chatId, user_visible: this.didDeliverUserVisibleThisTurn,
+            event: 'agent_turn', state: parsed.terminatedReason === 'turn_failed' ? 'failed' : 'completed',
+            chatId, user_visible: this.didDeliverUserVisibleThisTurn,
             circuitState: this.sendCircuitOpen ? 'open' : 'closed', ...this.activeLifecycleContext,
           }, 'agent_turn');
 
@@ -2290,7 +2292,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           this.isProcessingMessage = false;
 
           // Issue #4063: Resolve per-turn completion promise (works in persistent mode)
-          this.resolveTurn(currentTurnMessageId);
+          const turnError = parsed.terminatedReason === 'turn_failed'
+            ? Object.assign(new Error(parsed.terminationDetail || parsed.content || 'Provider turn failed'),
+              this.activeLifecycleContext, { name: 'ProviderTurnFailedError', backend: this.agentBackend, provider: this.sdkProvider.name })
+            : undefined;
+          this.resolveTurn(currentTurnMessageId, turnError);
 
           if (this.callbacks.onTurnResult) {
             await this.callbacks.onTurnResult({
@@ -2497,7 +2503,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Check if this was an explicit close (reset cleared the session)
     const wasExplicitClose = !this.isSessionActive;
 
-    // Issue #3706 (GLM stall): the provider watchdog terminated the stream.
+    // Provider watchdog terminated the stream (#3706, #5283).
     // isSessionActive is still true here (we didn't flip it), so wasExplicitClose
     // is false — intercept BEFORE the "unexpected end" warn + auto-restart path
     // (a restart would immediately re-stall). Flip isSessionActive=false so the
@@ -2507,8 +2513,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.isSessionActive = false;
       this.isProcessingMessage = false;
       this.logger.info(
-        { chatId, messageCount },
-        'GLM stall: terminated turn ended; suppressing auto-restart, context preserved'
+        { chatId, messageCount, backend: this.agentBackend, provider: this.sdkProvider.name },
+        'Provider stall: terminated turn ended; suppressing auto-restart, context preserved'
       );
       return;
     }
@@ -2540,7 +2546,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // circuit-breaker notice per empty turn, plus clobbering the replay's
     // fresh session). Detect it structurally — the generation bumped past
     // myGeneration — and exit silently, the same interception shape as the
-    // GLM-stall stalledTerminated path above. Touch no session state: the
+    // Provider-stall stalledTerminated path above. Touch no session state: the
     // replay's loop already owns it (isSessionActive, isProcessingMessage,
     // queryHandle, channel).
     if (this.sessionGeneration !== myGeneration && !wasExplicitClose) {
@@ -2685,7 +2691,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    * intercepted via the sessionGeneration check in processIterator, because
    * the replay's startAgentLoop() re-sets isSessionActive=true before the
    * parked iterator wakes, so the wasExplicitClose read alone would race;
-   * same interception shape as the GLM-stall path, `stalledTerminated`).
+   * same interception shape as the provider-stall path, `stalledTerminated`).
    * startAgentLoop() rebuilds everything it needs on the replay.
    */
   private endEmptyTurnSession(): void {

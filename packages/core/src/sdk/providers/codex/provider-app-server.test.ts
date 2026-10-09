@@ -310,9 +310,75 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
       for await (const message of result.iterator) { messages.push(message); }
       const stallResults = messages.filter(message => message.metadata?.terminatedReason === 'stall');
       expect(stallResults).toHaveLength(1);
-      expect(stallResults[0]?.content).toContain('疑似 stall');
-      expect(stallResults[0]?.metadata?.terminationDetail).toContain('codex app-server stalled for 30ms');
+      expect(stallResults[0]?.content).toContain('Codex 控制通道无响应');
+      expect(stallResults[0]?.metadata?.terminationDetail).toContain('thread/read control probe timed out after 30ms');
+      expect(stallResults[0]?.metadata?.terminationDetail).toContain('stall-turn');
       expect(messages.filter(message => message.type === 'error')).toEqual([]);
+    } finally { provider.dispose(); }
+  });
+
+  it.each(['active', 'unavailable'])('preserves a quiet model wait with %s runtime status', async status => {
+    const { provider, dir } = providerFixture('exit 0', 'app-server', { DISCLAUDE_STALL_TIMEOUT_MS: '50' });
+    writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
+const fs=require('node:fs');const send=m=>console.log(JSON.stringify(m));let probes=0,starts=0;
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line);
+ if(m.method==='initialize')send({id:m.id,result:{}});
+ else if(m.method==='thread/start')send({id:m.id,result:{thread:{id:'quiet-thread'}}});
+ else if(m.method==='turn/start'){
+  fs.writeFileSync(process.env.CODEX_HOME+'/starts',String(++starts));send({id:m.id,result:{turn:{id:'quiet-turn'}}});
+  send({method:'item/reasoning/textDelta',params:{threadId:'quiet-thread',turnId:'quiet-turn',delta:'owned thinking'}});
+  setTimeout(()=>{send({method:'item/completed',params:{threadId:'quiet-thread',turnId:'quiet-turn',item:{id:'final',type:'agentMessage',text:'quiet wait completed'}}});send({method:'turn/completed',params:{threadId:'quiet-thread',turn:{id:'quiet-turn',status:'completed'}}});},350);
+ } else if(m.method==='thread/read'){
+  fs.writeFileSync(process.env.CODEX_HOME+'/probe',JSON.stringify({...m.params,count:++probes}));
+  send({id:m.id,result:{thread:{id:'quiet-thread',status:${status === 'active' ? "{type:'active',activeFlags:[]}" : 'undefined'}}}});
+ }
+});`);
+    const onActivity = vi.fn(() => { throw new Error('owned observer failure'); });
+    const stream = provider.queryStream((async function* (): AsyncGenerator<UserInput> {
+      yield { role: 'user', content: 'owned quiet wait' };
+    })(), { sessionKey: 'quiet-model', settingSources: [], onActivity } as AgentQueryOptions);
+    const messages: AgentMessage[] = [];
+    try {
+      for await (const message of stream.iterator) { messages.push(message); }
+      expect(messages).toContainEqual(expect.objectContaining({ type: 'text', content: 'quiet wait completed' }));
+      expect(messages.some(m => m.metadata?.terminatedReason === 'stall')).toBe(false);
+      expect(onActivity).toHaveBeenCalledWith('codex:app-server:item/reasoning/textDelta');
+      const probe = JSON.parse(readFileSync(join(dir, 'home/probe'), 'utf8'));
+      expect(probe).toMatchObject({ threadId: 'quiet-thread', includeTurns: false });
+      expect(probe.count).toBeGreaterThanOrEqual(2);
+      expect(readFileSync(join(dir, 'home/starts'), 'utf8')).toBe('1');
+    } finally { provider.dispose(); }
+  });
+
+  it('settles a process exit during an open tool as one correlated stall without replay', async () => {
+    const { provider, dir } = providerFixture('exit 0', 'app-server');
+    writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
+const fs=require('node:fs');const send=m=>console.log(JSON.stringify(m));
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line);
+ if(m.method==='initialize')send({id:m.id,result:{}});
+ else if(m.method==='thread/start')send({id:m.id,result:{thread:{id:'dead-thread'}}});
+ else if(m.method==='turn/start'){
+  fs.writeFileSync(process.env.CODEX_HOME+'/started','once');send({id:m.id,result:{turn:{id:'dead-turn'}}});
+  send({method:'item/started',params:{threadId:'dead-thread',turnId:'dead-turn',item:{id:'tool',type:'commandExecution',command:'owned tool'}}});
+  setTimeout(()=>process.exit(7),50);
+ }
+});`);
+    const correlation = { runId: 'original-run', chatId: 'original-chat', sourceMessageId: 'original-source', traceId: 'original-trace' };
+    const stream = provider.queryStream((async function* (): AsyncGenerator<UserInput> {
+      yield { role: 'user', content: 'owned process exit', correlation };
+    })(), { sessionKey: 'dead-model', settingSources: [] } as AgentQueryOptions);
+    const messages: AgentMessage[] = [];
+    try {
+      for await (const message of stream.iterator) { messages.push(message); }
+      const terminal = messages.filter(m => m.type === 'result');
+      expect(terminal).toHaveLength(1);
+      expect(terminal[0]?.metadata?.terminatedReason).toBe('stall');
+      expect(terminal[0]?.metadata?.terminationDetail).toContain('exited (code=7');
+      for (const value of Object.values(correlation)) { expect(terminal[0]?.metadata?.terminationDetail).toContain(value); }
+      expect(readFileSync(join(dir, 'home/started'), 'utf8')).toBe('once');
+      expect(messages.some(m => m.content.includes('Session replaced'))).toBe(false);
     } finally { provider.dispose(); }
   });
 
@@ -559,8 +625,9 @@ exit 7
     for await (const message of result.iterator) {
       messages.push(message);
     }
-    const error = messages.find((message) => message.type === 'error');
-    expect(error?.content).toContain('exited (code=7');
+    const terminal = messages.find((message) => message.type === 'result');
+    expect(terminal?.metadata?.terminatedReason).toBe('stall');
+    expect(terminal?.metadata?.terminationDetail).toContain('exited (code=7');
     provider.dispose();
   });
 
