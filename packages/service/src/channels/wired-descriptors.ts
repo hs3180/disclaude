@@ -214,9 +214,10 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         title?: string;
         context?: string;
         threadId?: string;
+        threadRootId?: string;
         actionPrompts?: Record<string, string>;
       }) => {
-        const { question, options, title, context: cardContext, threadId, actionPrompts } = params;
+        const { question, options, title, context: cardContext, threadId, threadRootId, actionPrompts } = params;
 
         // Validate params at REST API boundary
         const validationError = validateInteractiveParams(params);
@@ -228,10 +229,14 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         // Build card using extracted builder (disclaude service owns the full card lifecycle)
         const card = buildInteractiveCard({ question, options, title, context: cardContext });
 
-        // Issue #1619: sendMessage now returns real messageId from Feishu API.
-        // Use real messageId for action prompt matching; fall back to synthetic ID.
-        const realMessageId = await feishuChannel.sendMessage({ chatId, type: 'card', card, threadId });
-        const messageId = realMessageId || `interactive_${chatId}_${Date.now()}`;
+        const messageId = await feishuChannel.sendMessage({
+          chatId, type: 'card', card, threadId, ...(threadRootId ? { threadRootId } : {}),
+        });
+        // A queued or unacknowledged send cannot support button registration or
+        // prove delivery. Never manufacture a successful receipt (Issue #5259).
+        if (typeof messageId !== 'string' || !messageId.trim()) {
+          throw new Error('Interactive card delivery returned no message_id; delivery is unconfirmed');
+        }
 
         // Preserve explicit instructions and fill unmapped buttons with their
         // visible labels and the original card context, never just route IDs.

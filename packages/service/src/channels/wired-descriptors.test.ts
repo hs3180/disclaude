@@ -205,6 +205,38 @@ describe('WiredChannelDescriptors', () => {
       expect(FEISHU_WIRED_DESCRIPTOR.setup).toBeDefined();
       expect(typeof FEISHU_WIRED_DESCRIPTOR.setup).toBe('function');
     });
+
+    it('passes an explicit topic root through the interactive-card handler', async () => {
+      const mockChannel = Object.assign(createMockChannel('feishu'), {
+        getTriggerModeManager: () => ({ getMode: vi.fn(), setMode: vi.fn() }),
+      });
+      vi.mocked(mockChannel.sendMessage).mockResolvedValue('om_real_card');
+      const context = createMockContext();
+      await FEISHU_WIRED_DESCRIPTOR.setup!(mockChannel, { appId: 'test', appSecret: 'test' }, context);
+      const [handlers] = vi.mocked(context.service.registerFeishuHandlers).mock.calls.at(-1)!;
+
+      const result = await handlers.sendInteractive('chat_123', {
+        question: 'Choose a direction', options: [{ text: 'Continue', value: 'continue' }],
+        threadId: 'card_action_trigger', threadRootId: 'om_topic_root',
+      });
+      expect(mockChannel.sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+        threadId: 'card_action_trigger', threadRootId: 'om_topic_root', type: 'card',
+      }));
+      expect(result.messageId).toBe('om_real_card');
+    });
+
+    it('does not manufacture a successful interactive receipt without a delivered message ID', async () => {
+      const mockChannel = Object.assign(createMockChannel('feishu'), {
+        getTriggerModeManager: () => ({ getMode: vi.fn(), setMode: vi.fn() }),
+      });
+      const context = createMockContext();
+      await FEISHU_WIRED_DESCRIPTOR.setup!(mockChannel, { appId: 'test', appSecret: 'test' }, context);
+      const [handlers] = vi.mocked(context.service.registerFeishuHandlers).mock.calls.at(-1)!;
+
+      await expect(handlers.sendInteractive('chat_123', {
+        question: 'Choose', options: [{ text: 'Continue', value: 'continue' }],
+      })).rejects.toThrow('message_id');
+    });
   });
 
   describe('WECHAT_WIRED_DESCRIPTOR (Issue #1554)', () => {
