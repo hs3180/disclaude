@@ -474,15 +474,15 @@ describe('FeishuChannel getCapabilities', () => {
     expect(caps.supportsMarkdown).toBe(true);
     expect(caps.supportsMention).toBe(true);
     expect(caps.supportsUpdate).toBe(true);
-    expect(caps.supportedMcpTools).toContain('send_text');
-    expect(caps.supportedMcpTools).toContain('send_card');
-    expect(caps.supportedMcpTools).toContain('send_interactive');
-    expect(caps.supportedMcpTools).toContain('send_file');
+    expect(caps.supportedChannelTools).toContain('send_text');
+    expect(caps.supportedChannelTools).toContain('send_card');
+    expect(caps.supportedChannelTools).toContain('send_interactive');
+    expect(caps.supportedChannelTools).toContain('send_file');
   });
 
   it('does not advertise Feishu send tools when credentials are missing', () => {
     const channel = new FeishuChannel({ appId: '', appSecret: '' });
-    expect(channel.getCapabilities().supportedMcpTools).toEqual([]);
+    expect(channel.getCapabilities().supportedChannelTools).toEqual([]);
   });
 
   // Issue #4400 / #4208: streamingCard flag gates the supportsStreaming

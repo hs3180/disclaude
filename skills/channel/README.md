@@ -6,48 +6,19 @@ The discoverable agent entrypoint is [SKILL.md](./SKILL.md). The executable is
 This README retains migration background and examples; the historical
 README-only CLI-skill format does not replace the registry's `SKILL.md` entrypoint.
 
-> **Transport switch ([#4532](https://github.com/hs3180/disclaude/issues/4532)
-> part 1, owner ruling 2026-08-18):** the CLI now reaches the DisclaudeService over
-> the **REST API** (HttpApiServer `/api/send-message`, `/api/send-card`,
-> `/api/upload-file`, `/api/send-interactive`, `/api/push`) — it no longer opens
-> a Unix socket, and there is **no REST API fallback** on the CLI path. REST is the
-> only transport (unconditional — `DISCLAUDE_REST_IPC_ENABLED` is ignored).
-> Base URL comes from `--base-url` or the managed `DISCLAUDE_API_BASE_URL`.
-> The CLI supports `--api-token` and managed `DISCLAUDE_API_TOKEN` bearer
-> authentication ([#4804](https://github.com/hs3180/disclaude/pull/4804)). When the REST face
-> is unreachable, the CLI emits an actionable "start the main service" hint
-> instead of a raw `fetch` ECONNREFUSED (#4532 scope 3). The #4521 chatId
-> pre-check substance was re-landed on the REST CLI by part 11 (see §Parity).
-> The Unix-socket REST API face itself is
-> deprecated for this consumer and will be removed in #4280 (Phase 3).
+Channel delivery uses one boundary: `disclaude channel` → `ChannelApiClient` →
+DisclaudeService HTTP API → the target channel. There is no channel MCP server,
+manifest, automatic injection, or fallback transport. Managed agents inherit the
+current service URL and token; other callers supply `--base-url` and `--api-token`.
 
-> **Status (parts 3–7 + 11 of [#4459](https://github.com/hs3180/disclaude/issues/4459)):**
-> `send_text` (part 3, [#4467](https://github.com/hs3180/disclaude/pull/4467)),
-> `send_file` (part 4, [#4494](https://github.com/hs3180/disclaude/pull/4494)),
-> `send_card` (part 5), `push` (part 6,
-> [#4501](https://github.com/hs3180/disclaude/pull/4501)), and
-> `send_interactive` (part 7) — **all 5 channel tools** migrated as CLI
-> subcommands. **Part 11** (REST re-land of rejected
-> [#4521](https://github.com/hs3180/disclaude/pull/4521)) closed the last code
-> parity delta: the chatId _format_ pre-check the former MCP entry handler ran
-> (#1641) now runs in every subcommand too, before any module import. All reuse
-> the first-party implementations from `packages/channel-cli`; `send_card`
-> additionally replicates the MCP entry handler's card preprocessing
-> (GFM-table conversion, local-image auto-upload) for feature parity. **Live
-> end-to-end parity** against the inline MCP tool is **deferred** (requires a
-> running DisclaudeService) — these parts verify the command
-> surface, validation, and graceful-degradation paths, mirroring how
-> [#4464](https://github.com/hs3180/disclaude/pull/4464) part 1 deferred live
-> browser parity. This README does **not** auto-close the parent issue.
-
-A **CLI Skill** under disclaude's "reduce MCP" direction
-([#4383](https://github.com/hs3180/disclaude/issues/4383), owner decision
-2026-08-07). It is the Skills (CLI + README) replacement for the inline
-`channel-mcp` MCP server (the retired S1 surface), which
-exposes the 5 first-party channel tools (`send_text`, `send_card`,
-`send_interactive`, `send_file`, `push`). The agent drives this CLI via
-`Bash` instead of the runtime dispatching an in-process MCP tool — see
-[`docs/skills.md`](../../docs/skills.md) for the contract.
+Runtime `ChannelCapabilities.supportedChannelTools` scopes the send-command
+vocabulary shown in agent prompts. An explicit empty list enables no outbound
+send command; an omitted list uses the channel's format flags conservatively.
+REST conversations return buffered responses directly and advertise no send
+commands. This metadata is not an authorization grant: API handlers and native
+platform permissions still determine whether delivery succeeds. The old
+`supportedMcpTools` field and unused channel-server creation hook are removed;
+there is no compatibility alias or silently enabled channel MCP surface.
 
 The agent discovers `SKILL.md` and shells out to `disclaude channel ...`.
 The CLI implements delivery; the skill explains when and how to use it.
@@ -236,7 +207,55 @@ not open), `send_text` / `send_file` / `send_card` / `push` /
 the actionable hint `DisclaudeService REST <url> unreachable — start the main service
 …` (#4532 scope 3) instead of a bare `fetch` ECONNREFUSED.
 
-## Parity / migration notes
+## Historical migration record
+
+The following records the original migration decisions and evidence. Its deferred
+items describe the status at that time, not current runtime capabilities or new
+product acceptance. The active API/CLI boundary is described above.
+
+> **Transport switch ([#4532](https://github.com/hs3180/disclaude/issues/4532)
+> part 1, owner ruling 2026-08-18):** the CLI now reaches the DisclaudeService over
+> the **REST API** (HttpApiServer `/api/send-message`, `/api/send-card`,
+> `/api/upload-file`, `/api/send-interactive`, `/api/push`) — it no longer opens
+> a Unix socket, and there is **no REST API fallback** on the CLI path. REST is the
+> only transport (unconditional — `DISCLAUDE_REST_IPC_ENABLED` is ignored).
+> Base URL comes from `--base-url` or the managed `DISCLAUDE_API_BASE_URL`.
+> The CLI supports `--api-token` and managed `DISCLAUDE_API_TOKEN` bearer
+> authentication ([#4804](https://github.com/hs3180/disclaude/pull/4804)). When the REST face
+> is unreachable, the CLI emits an actionable "start the main service" hint
+> instead of a raw `fetch` ECONNREFUSED (#4532 scope 3). The #4521 chatId
+> pre-check substance was re-landed on the REST CLI by part 11 (see §Parity).
+> The Unix-socket REST API face itself is
+> deprecated for this consumer and will be removed in #4280 (Phase 3).
+
+> **Status (parts 3–7 + 11 of [#4459](https://github.com/hs3180/disclaude/issues/4459)):**
+> `send_text` (part 3, [#4467](https://github.com/hs3180/disclaude/pull/4467)),
+> `send_file` (part 4, [#4494](https://github.com/hs3180/disclaude/pull/4494)),
+> `send_card` (part 5), `push` (part 6,
+> [#4501](https://github.com/hs3180/disclaude/pull/4501)), and
+> `send_interactive` (part 7) — **all 5 channel tools** migrated as CLI
+> subcommands. **Part 11** (REST re-land of rejected
+> [#4521](https://github.com/hs3180/disclaude/pull/4521)) closed the last code
+> parity delta: the chatId _format_ pre-check the former MCP entry handler ran
+> (#1641) now runs in every subcommand too, before any module import. All reuse
+> the first-party implementations from `packages/channel-cli`; `send_card`
+> additionally replicates the MCP entry handler's card preprocessing
+> (GFM-table conversion, local-image auto-upload) for feature parity. **Live
+> end-to-end parity** against the inline MCP tool is **deferred** (requires a
+> running DisclaudeService) — these parts verify the command
+> surface, validation, and graceful-degradation paths, mirroring how
+> [#4464](https://github.com/hs3180/disclaude/pull/4464) part 1 deferred live
+> browser parity. This README does **not** auto-close the parent issue.
+
+A **CLI Skill** under disclaude's "reduce MCP" direction
+([#4383](https://github.com/hs3180/disclaude/issues/4383), owner decision
+2026-08-07). It is the Skills (CLI + README) replacement for the inline
+`channel-mcp` MCP server (the retired S1 surface), which
+exposes the 5 first-party channel tools (`send_text`, `send_card`,
+`send_interactive`, `send_file`, `push`). The agent drives this CLI via
+`Bash` instead of the runtime dispatching an in-process MCP tool — see
+[`docs/skills.md`](../../docs/skills.md) for the contract.
+
 
 Recorded explicitly per #4459 acceptance ("迁移/下线不静默"):
 
@@ -262,14 +281,12 @@ this one-shot CLI — the CLI never starts an REST API server or owns a button h
 exactly like `send_text`. Parameters map 1:1 via `--chat`/`--question`/
 `--question-file`/`--options`/`--title`/`--context`/`--action-prompts`/`--parent`.
 
-**Open item deferred to a later part / owner input (not resolved here):** the MCP
-`channel-mcp` surface is gated per-chat on `supportedMcpTools`
-(`packages/service/src/channels/channel-descriptors.ts`). A CLI is invoked at the
-agent's discretion, so moving to a CLI loses that per-chat capability filter
-unless it is re-imposed elsewhere. The `send_text` / `send_file` / `send_card` /
-`push` migrations do **not** re-impose it; the current capability table flags this
-as an open question. Resolving it consistently across all 5 tools is
-left to a later part of #4459 once the full surface is migrated.
+**Historical deferred item:** the retired `channel-mcp` layer filtered tools
+per chat using `supportedMcpTools`; the initial CLI migration deferred how to
+represent that capability metadata. Current prompt guidance uses
+`supportedChannelTools`, and API/native permissions govern actual delivery.
+The table above records the earlier migration state rather than an active MCP
+compatibility path. No channel MCP compatibility implementation is retained.
 
 **`push` (part 6) parity** — its MCP entry handler
 the former channel-mcp entry handler was the bare first-party

@@ -980,7 +980,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
   /**
    * Upload an image to Feishu and return the image_key for card embedding.
-   * Issue #2951: Used by MCP send_card to auto-translate local image paths.
+   * Issue #2951: Used by channel send_card to auto-translate local image paths.
    *
    * @param filePath - Local file path to upload
    * @returns Feishu image_key (e.g., "img_v3_xxx")
@@ -1035,7 +1035,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       // Do not advertise channel-send tools to an agent when the channel
       // cannot authenticate. This prevents Codex from discovering a tool that
       // can only fail later with "Feishu credentials not configured".
-      supportedMcpTools: credentialsConfigured
+      supportedChannelTools: credentialsConfigured
         ? ['send_text', 'send_card', 'send_interactive', 'send_file']
         : [],
     };

@@ -103,7 +103,7 @@ export type UploadFileResponse = {
  * capability — REST parity with the REST API method (Issue #4279).
  *
  * Uses a local `filePath` (not multipart) because the REST face is localhost-
- * bound: the MCP server and disclaude service are co-located, so the file is already
+ * bound: the channel CLI and disclaude service are co-located, so the file is already
  * readable on the host — exact REST API parity without multipart overhead.
  */
 export type UploadFileHandler = (
@@ -776,7 +776,7 @@ export class HttpApiServer {
    * Accepts `{ chatId, filePath, threadId? }` and delegates to the channel's
    * uploadFile capability (reads the local file and uploads it). Uses a local
    * filePath rather than multipart because the REST face is localhost-bound —
-   * the caller (MCP server) and disclaude service are co-located, so the file is
+   * the channel CLI and disclaude service are co-located, so the file is
    * already readable on the host (exact REST API parity, no transfer needed).
    * Response: `{ ok: true, success, fileKey?, fileType?, fileName?, fileSize? }`.
    */

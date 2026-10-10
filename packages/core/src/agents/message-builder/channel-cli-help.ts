@@ -1,3 +1,5 @@
+import type { ChannelCapabilities } from '../../types/channel.js';
+
 /**
  * Canonical channel CLI help — single source of truth.
  *
@@ -50,6 +52,17 @@ Output: one JSON result object on stdout; diagnostics are written to stderr.`;
 /** The full send_* command vocabulary, used when a caller does not narrow it. */
 const ALL_SEND_COMMANDS = ['send_text', 'send_file', 'send_card', 'send_interactive'];
 
+/** Explicit CLI vocabulary wins; absent lists use the channel's format flags, never an MCP surface. */
+export function getSupportedChannelSendCommands(capabilities?: ChannelCapabilities): string[] {
+  const supported = capabilities?.supportedChannelTools;
+  return ALL_SEND_COMMANDS.filter(command => {
+    if (supported !== undefined) { return supported.includes(command); }
+    if (command === 'send_file') { return capabilities?.supportsFile === true; }
+    if (command === 'send_card' || command === 'send_interactive') { return capabilities?.supportsCard === true; }
+    return true;
+  });
+}
+
 /**
  * Build the in-prompt channel CLI guidance section.
  *
@@ -80,6 +93,13 @@ export function buildChannelCliHelpGuidance(
   const fileHint = sendCommands.includes('send_file')
     ? '; \`send_file\` needs \`--file <path>\`'
     : '';
+  const interactiveHints = sendCommands.includes('send_interactive') ? `
+- For an interactive card in a topic thread, also pass \`--thread-root <id>\` using the Thread Root ID in the current message context; keep \`--parent\` set to the triggering Message ID. Omit \`--thread-root\` outside topic threads.
+- Use \`--idempotency-key <stable-key>\` when retries must not send the same card twice; with this flag, include \`--action-prompts\` so the original button action remains routable.` : '';
+  const privateInputHints = sendCommands.includes('send_card') ? `
+- For a Feishu task needing private input, use \`${invoke} request_private_input --chat <chat-id> --actor <initiator-open-id> --source <source-message-id> --workflow-file <path>\`. The file contains your task's workflow definition: \`{title, description, command, args?, cwd?, env?, timeoutMs?}\`. JSON may also come from \`--workflow\` or stdin. Use the current conversation's IDs; no preconfigured action is required.
+- This command uses the same managed API address and token as other channel commands; service API authentication is required. It opens a one-use, five-minute input card and returns an \`actionId\`; successful CLI completion means the card was requested, not that the workflow finished. Never submit the private value through CLI flags, files, stdin or ordinary chat: the workflow definition is public metadata, while the private value is entered only in the card.
+- Your workflow reads the private value from its process stdin and verified actor/chat/source metadata from \`DISCLAUDE_PRIVATE_CONTEXT\`; its stdout/stderr are suppressed. You own provider, endpoint, authorization policy and credential use.` : '';
   return `
 ---
 
@@ -92,13 +112,9 @@ Send outbound channel messages with the channel CLI.
 - Supported commands: ${commandList}.
 - Text/content inputs accept a value, a file (\`--{x}-file <path>\`), or stdin${fileHint}.
 - Pass \`--chat <id>\` (feishu group \`oc_...\`, p2p \`ou_...\`, or \`cli-...\` session).
-- Pass \`--parent <id>\` to keep a topic/thread reply in-thread.
-- For an interactive card in a topic thread, also pass \`--thread-root <id>\` using the Thread Root ID in the current message context; keep \`--parent\` set to the triggering Message ID. Omit \`--thread-root\` outside topic threads.
-- Use \`--idempotency-key <stable-key>\` when retries must not send the same card twice; with this flag, include \`--action-prompts\` so the original button action remains routable.
+- Pass \`--parent <id>\` to keep a topic/thread reply in-thread.${interactiveHints}
 - The CLI talks to the DisclaudeService REST API: pass \`--base-url\` / \`DISCLAUDE_API_BASE_URL\` unless the CLI is launched by a managed agent process; pass \`--api-token\` / \`DISCLAUDE_API_TOKEN\` for authenticated requests. The service generates a fresh token at startup; managed agents inherit the current address/token and must not reuse values from previous sessions.
-- For a Feishu task needing private input, use \`${invoke} request_private_input --chat <chat-id> --actor <initiator-open-id> --source <source-message-id> --workflow-file <path>\`. The file contains your task's workflow definition: \`{title, description, command, args?, cwd?, env?, timeoutMs?}\`. JSON may also come from \`--workflow\` or stdin. Use the current conversation's IDs; no preconfigured action is required.
-- This command uses the same managed API address and token as other channel commands; service API authentication is required. It opens a one-use, five-minute input card and returns an \`actionId\`; successful CLI completion means the card was requested, not that the workflow finished. Never submit the private value through CLI flags, files, stdin or ordinary chat: the workflow definition is public metadata, while the private value is entered only in the card.
-- Your workflow reads the private value from its process stdin and verified actor/chat/source metadata from \`DISCLAUDE_PRIVATE_CONTEXT\`; its stdout/stderr are suppressed. You own provider, endpoint, authorization policy and credential use.
+${privateInputHints}
 - One JSON result on stdout; diagnostics on stderr.
 
 ---`;

@@ -1,5 +1,5 @@
 /**
- * MCP utilities.
+ * Channel CLI utilities.
  *
  * @module channel-cli/utils
  */

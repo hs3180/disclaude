@@ -17,7 +17,7 @@ describe('Codex source guidance composition', () => {
     const prompt = builder.buildEnhancedContent({ text: 'Research', messageId: 'm1' }, 'chat', {
       ...DEFAULT_CHANNEL_CAPABILITIES,
       supportsCard: false,
-      supportedMcpTools: ['send_text'],
+      supportedChannelTools: ['send_text'],
     });
 
     expect(prompt).toContain('numbered markers such as [1] and [2]');

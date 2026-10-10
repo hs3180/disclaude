@@ -1,5 +1,5 @@
 /**
- * Callback manager for MCP tools.
+ * Callback manager for channel API operations.
  *
  * Centralized management of message sent callbacks.
  * This allows multiple tools to share the same callback mechanism.

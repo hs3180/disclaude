@@ -16,10 +16,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MessageBuilder, DEFAULT_CHANNEL_CAPABILITIES, type MessageData, type ChannelCapabilities } from '@disclaude/core';
 import { createFeishuMessageBuilderOptions } from './feishu-message-builder.js';
 
-/** Helper to create capabilities with specific supportedMcpTools */
+/** Helper to create capabilities with specific supportedChannelTools */
 const withTools = (tools: string[]): ChannelCapabilities => ({
   ...DEFAULT_CHANNEL_CAPABILITIES,
-  supportedMcpTools: tools,
+  supportedChannelTools: tools,
 });
 
 
@@ -216,7 +216,7 @@ describe('MessageBuilder with Feishu sections', () => {
         messageId: 'msg-123',
       }, 'chat-123', {
         ...DEFAULT_CHANNEL_CAPABILITIES,
-        supportedMcpTools: undefined,
+        supportedChannelTools: undefined,
         supportsCard: false,
       });
       expect(result).not.toContain(`${channelCli} send_card`);
@@ -250,7 +250,7 @@ describe('MessageBuilder with Feishu sections', () => {
       expect(result).toContain(`${channelCli} send_file`);
     });
 
-    it('should not include send_file when not in supportedMcpTools', () => {
+    it('should not include send_file when not in supportedChannelTools', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
         messageId: 'msg-123',
@@ -339,7 +339,7 @@ describe('channel CLI guidance capability gating', () => {
   };
 
   it('does not advertise send_file when the channel says it is unsupported', () => {
-    const out = build({ supportsFile: false, supportedMcpTools: ['send_text'] });
+    const out = build({ supportsFile: false, supportedChannelTools: ['send_text'] });
     expect(out).toContain('send_file is NOT supported');
     expect(out).not.toMatch(/Supported commands:.*send_file/);
     expect(out).toMatch(/Supported commands:.*send_text/);
@@ -348,9 +348,29 @@ describe('channel CLI guidance capability gating', () => {
   it('advertises the full vocabulary when every tool is supported', () => {
     const out = build({
       supportsFile: true,
-      supportedMcpTools: ['send_text', 'send_card', 'send_interactive', 'send_file'],
+      supportedChannelTools: ['send_text', 'send_card', 'send_interactive', 'send_file'],
     });
     expect(out).toMatch(/Supported commands:.*send_file/);
     expect(out).not.toContain('send_file is NOT supported');
+  });
+
+  it('honors an explicit empty channel-CLI command list even when format capabilities are true', () => {
+    const out = build({ supportsFile: true, supportsCard: true, supportedChannelTools: [] });
+    expect(out).not.toMatch(/Supported commands:.*(?:send_file|send_card|send_interactive|send_text)/);
+    expect(out).not.toContain('request_private_input');
+    expect(out).not.toContain('--thread-root');
+  });
+
+  it('derives the same conservative send commands for stable and dynamic guidance when no list is supplied', () => {
+    const out = build({ supportsFile: false, supportsCard: false });
+    expect(out).not.toMatch(/Supported commands:.*(?:send_file|send_card|send_interactive)/);
+    expect(out).not.toContain('`disclaude channel send_interactive`');
+    expect(out).toMatch(/Supported commands:.*send_text/);
+  });
+
+  it('narrows CLI guidance to explicitly supported commands without enabling unrelated format flags', () => {
+    const out = build({ supportsFile: true, supportsCard: true, supportedChannelTools: ['send_text'] });
+    expect(out).not.toMatch(/Supported commands:.*(?:send_file|send_card|send_interactive)/);
+    expect(out).toMatch(/Supported commands:.*send_text/);
   });
 });

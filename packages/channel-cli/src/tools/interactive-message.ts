@@ -25,12 +25,12 @@ const logger = createLogger('InteractiveMessage');
 /**
  * Send an interactive message by forwarding raw parameters to disclaude service.
  *
- * Issue #1571: MCP Server no longer builds cards. It passes raw parameters
+ * Issue #1571: The channel client forwards raw parameters
  * (question, options) via sendInteractive REST API. disclaude service builds the card,
  * sends it, and registers action prompts.
  *
  * Issue #1572: Action prompt management is handled by disclaude service's
- * InteractiveContextStore. MCP Server is a pure forwarding client.
+ * InteractiveContextStore. The channel CLI is a forwarding client.
  *
  * @example
  * ```typescript

@@ -10,7 +10,7 @@
  * @module messaging/adapters/feishu-message-builder
  */
 
-import { buildChannelCliHelpGuidance, type MessageBuilderContext, type MessageBuilderOptions, type MessageBuilderStableContext } from '@disclaude/core';
+import { buildChannelCliHelpGuidance, getSupportedChannelSendCommands, type MessageBuilderContext, type MessageBuilderOptions, type MessageBuilderStableContext } from '@disclaude/core';
 
 /**
  * Build Feishu platform header.
@@ -54,30 +54,14 @@ To notify the user in your FINAL response, use:
  * Build Feishu capability-aware tools section.
  *
  * Issue #582: Dynamically includes available channel operations based on capabilities.
- * Issue #4652: Uses the runtime-agnostic channel CLI Skill after ChatAgent's
- * default MCP injection was removed.
+ * Uses the runtime-agnostic channel CLI Skill for additional deliveries.
  */
 function buildFeishuToolsSection(ctx: MessageBuilderContext): string {
   const { chatId, msg, capabilities } = ctx;
   const channelCli = 'disclaude channel';
   const parts: string[] = [];
-  const supportedTools = capabilities?.supportedMcpTools;
-
-  // If supportedMcpTools is defined, use it for dynamic tool filtering
-  const hasTool = (toolName: string): boolean => {
-    if (supportedTools === undefined) {
-      // Legacy behavior: check individual capability flags
-      if (toolName === 'send_file') {
-        return capabilities?.supportsFile !== false;
-      }
-      if (toolName === 'send_card') {
-        return capabilities?.supportsCard !== false;
-      }
-      // For backward compatibility with old configs, assume messaging tools are available
-      return true;
-    }
-    return supportedTools.includes(toolName);
-  };
+  const supportedTools = getSupportedChannelSendCommands(capabilities);
+  const hasTool = (toolName: string): boolean => supportedTools.includes(toolName);
 
   // Build messaging tools section
   const messagingTools: string[] = [];
@@ -107,7 +91,7 @@ ${messagingTools.join('\n')}
   if (hasTool('send_file')) {
     parts.push(`
 - **File sending**: Use \`${channelCli} send_file --chat ${chatId} --file <path>\` for sending files to Feishu`);
-  } else if (supportedTools !== undefined) {
+  } else {
     parts.push(`
 - Note: send_file is NOT supported on this channel. Files will not be sent.`);
   }
@@ -125,22 +109,14 @@ ${messagingTools.join('\n')}
 /** Capability-scoped help with no chat/message identity, safe as a reusable prefix. */
 function buildFeishuStableToolsSection(ctx: MessageBuilderStableContext): string {
   const channelCli = 'disclaude channel';
-  const supported = ctx.capabilities?.supportedMcpTools;
-  const sendCommands = ['send_text', 'send_file', 'send_card', 'send_interactive']
-    .filter(command =>
-      supported === undefined
-        ? command !== 'send_card' || ctx.capabilities?.supportsCard !== false
-        : supported.includes(command),
-    );
+  const sendCommands = getSupportedChannelSendCommands(ctx.capabilities);
   return `For the current channel feature list and command options, run \`${channelCli} help\`.\n${buildChannelCliHelpGuidance(channelCli, { sendCommands })}`;
 }
 
 /**
  * Build Feishu-specific extra attachment info.
  *
- * Issue #3679: Removed hardcoded MCP tool usage guidance.
- * Modern models support native multimodal input and can use the Read tool
- * to view images directly. MCP tool discovery is handled by the SDK automatically.
+ * Models with image support can use the Read tool to view images directly.
  */
 function buildFeishuAttachmentExtra(ctx: MessageBuilderContext): string {
   const { msg: { attachments } } = ctx;
