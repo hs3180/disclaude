@@ -35,18 +35,22 @@ process.exit(Number(process.env.DISSOLVE_FIXTURE_EXIT));
   return {
     mapping, workdir, chatId,
     run(response: unknown, exitCode = 0, extraEnv: Record<string, string> = {}) {
-      return spawnSync(process.execPath, [
+      const result = spawnSync(process.execPath, [
         path.resolve('node_modules/tsx/dist/cli.mjs'),
         path.resolve('skills/dissolve-group/dissolve-group.ts'),
       ], {
         cwd: process.cwd(), encoding: 'utf8', timeout: 15000,
-        env: { ...process.env, PATH: bin + path.delimiter + process.env.PATH,
+        // tsx's Unix IPC socket must fit even when the outer runner has a long TMPDIR.
+        env: { ...process.env, TMPDIR: root, TMP: root, TEMP: root,
+          PATH: bin + path.delimiter + process.env.PATH,
           DISSOLVE_KEY: 'owned', DISSOLVE_CHAT_ID: '', DISSOLVE_SKIP_LARK: '',
           MAPPING_FILE: mapping, DISSOLVE_FIXTURE_CALLS: calls,
           DISSOLVE_FIXTURE_RESPONSE: JSON.stringify(response),
           DISSOLVE_FIXTURE_PRETTY: options.pretty ? '1' : '0',
           DISSOLVE_FIXTURE_EXIT: String(exitCode), ...extraEnv },
       });
+      expect(result.stderr, result.error?.message).toContain('[dissolve-group]');
+      return result;
     },
     table: () => JSON.parse(fs.readFileSync(mapping, 'utf8')) as Record<string, unknown>,
     calls: () => fs.existsSync(calls)
