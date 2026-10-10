@@ -26,7 +26,7 @@ import type {
 } from './types.js';
 import { resolveAgentPreset } from './agent-presets.js';
 import { resolveCodexModelSetting, resolveCodexReasoningEffort } from './codex-settings.js';
-import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
+import { type AgentProvider, type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 
 // Re-export sub-modules
 export * from './types.js';
@@ -634,12 +634,16 @@ export class Config {
    * Resolution priority: tier-specific model → default model (fallback).
    *
    * @param tier - Model tier (high, low, multimodal)
+   * @param selected - Active agent provider/model, when different from the service default
    * @returns Model identifier string, or undefined if tier is not set
    * @see Issue #3059
    */
-  static getModelForTier(tier: 'high' | 'low' | 'multimodal'): string | undefined {
+  static getModelForTier(
+    tier: 'high' | 'low' | 'multimodal',
+    selected?: { provider: AgentProvider; model: string },
+  ): string | undefined {
     // Check GLM tier models first (if GLM is configured)
-    const provider = this.getConfiguredApiProvider();
+    const provider = selected?.provider ?? this.getConfiguredApiProvider();
     if (provider === 'glm' || (!provider && this.GLM_API_KEY)) {
       const glmTierMap: Record<string, string> = {
         high: this.GLM_HIGH_MODEL,
@@ -651,12 +655,12 @@ export class Config {
         logger.debug({ provider: 'GLM', tier, model: tierModel }, 'Using GLM tier model');
         return tierModel;
       }
-      // Fallback to GLM default model
+      const fallback = selected?.model || this.GLM_MODEL;
       logger.debug(
-        { provider: 'GLM', tier, fallback: this.GLM_MODEL },
+        { provider: 'GLM', tier, fallback },
         'Tier model not set, using GLM default'
       );
-      return this.GLM_MODEL || undefined;
+      return fallback || undefined;
     }
 
     // Anthropic tier models
@@ -670,12 +674,12 @@ export class Config {
       logger.debug({ provider: 'Anthropic', tier, model: tierModel }, 'Using Anthropic tier model');
       return tierModel;
     }
-    // Fallback to Anthropic default model
+    const fallback = selected?.model || this.CLAUDE_MODEL;
     logger.debug(
-      { provider: 'Anthropic', tier, fallback: this.CLAUDE_MODEL },
+      { provider: 'Anthropic', tier, fallback },
       'Tier model not set, using Anthropic default'
     );
-    return this.CLAUDE_MODEL || undefined;
+    return fallback || undefined;
   }
 
   /**

@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { StderrCapture, getErrorStderr, isStartupFailure, attachStderrToError, ClaudeSDKProvider, stderrIndicatesUpstreamApiError } from './provider.js';
@@ -457,6 +457,70 @@ describe('ClaudeSDKProvider', () => {
       expect(messages.length).toBe(1);
       expect(messages[0].role).toBe('assistant');
       expect(mockQuery).toHaveBeenCalledWith(expect.objectContaining({ options: expect.objectContaining({ allowedTools: ['Read'], disallowedTools: ['CronCreate'] }) }));
+    });
+
+    it('keeps credentials in a private settings file and removes it after completion', async () => {
+      let file = '';
+      mockQuery.mockImplementation(({ options }: { options: { settings: string } }) => {
+        file = options.settings;
+        expect(typeof file).toBe('string');
+        expect(file).not.toContain('owned-selected-key');
+        expect(statSync(file).mode & 0o777).toBe(0o600);
+        expect(statSync(dirname(file)).mode & 0o777).toBe(0o700);
+        expect(JSON.parse(readFileSync(file, 'utf8')).env.ANTHROPIC_API_KEY).toBe('owned-selected-key');
+        return Object.assign((async function* () {
+          yield { type: 'assistant', message: { content: [{ type: 'text', text: 'Ok' }] } };
+        })(), { close: vi.fn() });
+      });
+      const result = provider.queryStream((async function* () { yield { role: 'user' as const, content: 'Hi' }; })(), {
+        settingSources: ['user', 'project', 'local'], env: { ANTHROPIC_API_KEY: 'owned-selected-key' },
+      });
+      for await (const _ of result.iterator) { /* consume */ }
+      expect(existsSync(dirname(file))).toBe(false);
+      result.handle.close();
+    });
+
+    it.each(['close', 'cancel'] as const)('removes private credentials on %s before iteration starts', action => {
+      mockQuery.mockReturnValue(Object.assign((async function* () {})(), {
+        close: vi.fn(), interrupt: vi.fn().mockResolvedValue(undefined),
+      }));
+      const result = provider.queryStream((async function* () { yield { role: 'user' as const, content: 'Hi' }; })(), {
+        settingSources: [], env: { ANTHROPIC_API_KEY: 'owned-selected-key' },
+      });
+      const file = mockQuery.mock.calls[0][0].options.settings as string;
+      expect(existsSync(file)).toBe(true);
+      result.handle[action]();
+      expect(existsSync(dirname(file))).toBe(false);
+    });
+
+    it('removes private credentials when SDK construction throws', () => {
+      let file = '';
+      mockQuery.mockImplementation(({ options }: { options: { settings: string } }) => {
+        file = options.settings;
+        throw new Error('owned SDK startup failure');
+      });
+      expect(() => provider.queryStream((async function* () {})(), {
+        settingSources: [], env: { ANTHROPIC_API_KEY: 'owned-selected-key' },
+      })).toThrow('owned SDK startup failure');
+      expect(existsSync(dirname(file))).toBe(false);
+    });
+
+    it('retains private credential settings across an empty pre-output retry', async () => {
+      const files: string[] = [];
+      mockQuery.mockImplementation(({ options }: { options: { settings: string } }) => {
+        files.push(options.settings);
+        expect(JSON.parse(readFileSync(options.settings, 'utf8')).env.ANTHROPIC_API_KEY).toBe('owned-selected-key');
+        return Object.assign((async function* () {
+          if (files.length > 1) { yield { type: 'assistant', message: { content: [{ type: 'text', text: 'Ok' }] } }; }
+        })(), { close: vi.fn() });
+      });
+      const result = provider.queryStream((async function* () { yield { role: 'user' as const, content: 'Hi' }; })(), {
+        settingSources: [], env: { ANTHROPIC_API_KEY: 'owned-selected-key' },
+      });
+      for await (const _ of result.iterator) { /* consume */ }
+      expect(files).toHaveLength(2);
+      expect(new Set(files).size).toBe(1);
+      expect(existsSync(dirname(files[0]))).toBe(false);
     });
 
     // Issue #4442 (part 2 + part 3): empty stream — the SDK yields zero messages

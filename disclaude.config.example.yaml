@@ -198,6 +198,8 @@ ruliu:
 # -----------------------------------------------------------------------------
 anthropic:
   # API key supplied by your Anthropic-compatible service
+  # With a non-empty key, Claude uses the selected service's key and endpoint
+  # ahead of global bearer/OAuth tokens and user/project/local settings.
   apiKey: "your_api_key_here"
 
   # Model exposed by your proxy
@@ -208,6 +210,8 @@ anthropic:
   apiBaseUrl: "https://your-anthropic-compatible-proxy.example"
 
   # Three-level model configuration (Issue #3059)
+  # Unset tiers follow the selected Claude preset's model. Explicit tier models
+  # and ANTHROPIC_DEFAULT_*_MODEL overrides remain authoritative.
   # highModel: "glm-5.1"
   # lowModel: "glm-4-flash"
   # multimodalModel: "glm-4v"

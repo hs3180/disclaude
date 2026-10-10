@@ -232,9 +232,10 @@ export abstract class BaseAgent implements Disposable {
     // non-Anthropic endpoints don't recognize, causing sub-agents to fail
     // with 400 Invalid model name errors.
     if ((this.agentBackend ?? 'claude') === 'claude') {
-      const opusModel = Config.getModelForTier('high');
-      const haikuModel = Config.getModelForTier('low');
-      const sonnetModel = Config.getModelForTier('multimodal');
+      const selectedModel = { provider: this.provider, model: this.model };
+      const opusModel = Config.getModelForTier('high', selectedModel);
+      const haikuModel = Config.getModelForTier('low', selectedModel);
+      const sonnetModel = Config.getModelForTier('multimodal', selectedModel);
 
       if (opusModel && !globalEnv.ANTHROPIC_DEFAULT_OPUS_MODEL) {
         globalEnv.ANTHROPIC_DEFAULT_OPUS_MODEL = opusModel;
