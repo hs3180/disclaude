@@ -11,13 +11,14 @@ docker compose --profile chromium build chromium
 docker compose --profile chromium up -d chromium
 ```
 
-The image includes nginx, Xvfb, optional noVNC components, and readiness
+The image includes nginx, Xvfb, password-protected noVNC, and readiness
 utilities. `CHROMIUM_IMAGE_TAG` selects the official Playwright browser image
 used as its base. This starts Chromium; it does not install or select a
 Playwright agent.
 
 By default, Chromium runs with Xvfb at 1920×1080. Set `CHROMIUM_HEADLESS=1` for
-headless mode. The process supervisor stops Chromium, the proxy and display
+headless mode; VNC/noVNC is then skipped with an info log, even when
+`CHROMIUM_VNC_ENABLED=1`. The process supervisor stops Chromium, the proxy and display
 together if any exits. Compose publishes the CDP endpoint on loopback only; see
 the [service-internal CDP contract](cdp-endpoint.md).
 
@@ -44,19 +45,22 @@ third-party anti-bot acceptance, a GPU renderer, or site login persistence.
 
 ## Human-assisted page verification
 
-For a site that presents a visible verification page, the tracked Compose
-override can expose a temporary, password-protected noVNC view of the same
-headed browser. The normal Compose file does not publish a VNC port.
+The normal Compose command above enables VNC/noVNC for the headed browser;
+no `.env` or overlay is required. Port 6080 is published on `0.0.0.0` so the
+same browser is visible from the LAN. The CDP port stays on `127.0.0.1`.
 
-Set an exactly 8-character printable ASCII password through a secret manager or
-the environment, then start the override:
+When `CHROMIUM_VNC_PASSWORD` is empty, startup generates an eight-character
+random password and prints `INFO: generated VNC password: ...` in the container
+log. Read it with `docker compose logs chromium`. A new password is generated
+on each start; the persistent browser profile is retained. Authentication is
+required. An explicit password must be exactly eight printable, non-space
+ASCII characters and is not printed. For a fixed password or loopback-only view:
 
 ```sh
 export CHROMIUM_VNC_PASSWORD='Ab3!xY7?'
-export CHROMIUM_VNC_BIND=0.0.0.0
+export CHROMIUM_VNC_BIND=127.0.0.1
 export CHROMIUM_VNC_HOST_PORT=6080
-docker compose -f docker-compose.yml -f docker-compose.chromium-vnc.yml \
-  --profile chromium up -d --build chromium
+docker compose --profile chromium up -d chromium
 ```
 
 Open this URL from the same LAN, replacing `<browser-host>` with the Docker host:
@@ -68,14 +72,16 @@ http://<browser-host>:6080/vnc.html?autoconnect=true&resize=scale&reconnect=true
 Enter the password when noVNC asks for it. Navigate the existing browser to the
 target site and complete only visible human verification. Do not automate
 CAPTCHA input, record the password, or publish the CDP port. On macOS
-Docker/Colima, publish the VNC port on `0.0.0.0` if the backend rejects a
+Docker/Colima, the default `0.0.0.0` bind works when the backend rejects a
 specific host-interface address.
 
-Stop the override cleanly so Chromium can flush its profile:
+Set `CHROMIUM_VNC_ENABLED=0` to disable the headed VNC/noVNC processes.
+Headless mode always skips them. The former `docker-compose.chromium-vnc.yml`
+overlay remains compatible with existing operator commands and is optional.
+Stop the browser cleanly so Chromium can flush its profile:
 
 ```sh
-docker compose -f docker-compose.yml -f docker-compose.chromium-vnc.yml \
-  --profile chromium stop chromium
+docker compose --profile chromium stop chromium
 ```
 
 The `chromium_profile` volume is retained. It has one owner: do not start a
