@@ -151,181 +151,54 @@ ${threadContext}
  * content is shared topic-thread interpretation, card, and on-demand
  * attachment/context guidance (lark-cli) for every connected agent backend.
  */
-export function buildThreadSelfServiceGuidance(): string {
+export function buildThreadSelfServiceGuidance(supportsCards?: boolean): string {
   return `
 
----
+## Topic-thread context before replying
 
-## Topic-thread context before replying (Issue #5190)
+Use only the current Thread Root ID and this thread's messages to interpret the request, not flat group history or another thread. The injected context may be partial. For follow-ups such as “那这个呢？” or “继续”, proactively retrieve missing replies and relevant attachments before answering; skip retrieval when the supplied context is sufficient. If retrieval fails, say what is missing and ask rather than guessing.
 
-You are responding inside one specific topic-group thread. Use \`lark-cli\` to inspect missing conversation context. Anchor your interpretation to the supplied Thread Root ID and use only this thread—not flat group history, another thread, or unrelated persisted chat history—to resolve the current message.
+Use lark-cli on demand:
+- \`npx @larksuite/cli im +threads-messages-list --thread <current-message-id> --as bot --download-resources\`
+- \`npx @larksuite/cli im +messages-mget --message-ids <ids> --as bot --download-resources\`
+- \`npx @larksuite/cli im +messages-resources-download --message-id <id> --file-key <key> --type image|file --as bot --output ./lark-im-resources/<name>\`
 
-The injected Thread Context may be absent, partial, or limited to the parent chain; it is not proof that every earlier reply or attachment is present. First inspect it. If the current message depends on missing earlier context (including short follow-ups such as “那这个呢？” or “继续”), proactively retrieve the current thread's messages and relevant replies before answering; the user does not need to explicitly say “look at this thread.” Do not fetch the full thread when the supplied context already contains everything needed.
+Read downloaded resources before relying on them. The --thread value must belong to this same thread. Keep any follow-up card in this thread using the current Message ID and Thread Root ID, as described in Channel CLI guidance.
 
-Use a concise feedback card when it helps the user make a specific decision or give concrete feedback. This is separate from the proactive Next Step guidance below: a useful contextual follow-through can be suggested even when the current answer leaves no decision or unresolved blocker. If send_interactive is unavailable, state the optional recommendation in chat; ask a question only when a real ambiguity or decision blocks progress. Do not rely on harness-specific rules, regex triggers, or post-response rewriting. Do not add generic menus, repeat a question already answered, or begin optional work before the user chooses.
-
-After responding in this exact thread, proactively look for the most useful next step by considering the user's stated goal, constraints, preferences, prior decisions, and relevant messages, findings, and artifacts in this thread. When a concrete continuation would help, offer one concise Next Step card in the triggering thread—even when the immediate request is complete and nothing failed. Tie it to a specific detail from the thread and briefly explain how it advances the user's goal. Do not wait for an unresolved condition, failed verification, or uncertainty; do not import unrelated history, invent unstated goals, repeat an answered question, or begin optional work before the user chooses. If no useful contextual continuation is apparent, finish naturally.
-
-- List messages and replies in this exact thread; download resources only when relevant:
-  \`npx @larksuite/cli im +threads-messages-list --thread <current-message-id> --as bot --download-resources\`
-- Fetch specific messages by id (up to 50), optionally downloading their attachments too:
-  \`npx @larksuite/cli im +messages-mget --message-ids <om_xxx>,<om_yyy> --as bot --download-resources\`
-- Download one relevant attachment:
-  \`npx @larksuite/cli im +messages-resources-download --message-id <om_xxx> --file-key <key> --type image|file --as bot --output ./lark-im-resources/<name>\`
-
-The \`--thread\` flag accepts the current Message ID (or another message ID known to belong to this same thread) and resolves its thread. Read any downloaded resource before relying on it. If required context or an attachment cannot be retrieved, state what is missing and ask the user rather than guessing.
-
-When sending a follow-up/feedback card from a topic thread, keep \`--parent <current-Message-ID>\` for reply attribution and also pass \`--thread-root <Thread-Root-ID>\` so a button click resumes the existing agent session for this same thread. Never substitute the card's own ID for the thread root. Supply an \`--action-prompts\` entry for every button; each should record the selected choice and continue in this same chat/thread context, not start a separate task or session.
-
-Use \`--idempotency-key "followup:<current-message-id>"\` for the card and reuse the same key if sending is retried; the service coalesces concurrent retries and reuses the registered card for the same chat/key.
-
-`;
+${buildContextualNextStepGuidance(supportsCards)}`;
 }
 
-/**
- * Build the next-step guidance section.
- *
- * Issue #893: Provides in-prompt guidance for suggesting next steps
- * to the user after responding, using interactive cards when supported.
- *
- * @param supportsCards - Whether the channel supports interactive cards
- * @returns Formatted next-step guidance section
- */
+/** Shared policy for ordinary chats and topic threads; each prompt includes it once. */
+function buildContextualNextStepGuidance(supportsCards?: boolean): string {
+  const delivery = supportsCards === false
+    ? 'Offer the recommendation briefly in chat; ask a question only when a real decision or ambiguity needs an answer.'
+    : 'Use one concise send_interactive card when a concrete choice or feedback request materially benefits from buttons; otherwise recommend it briefly in chat.';
+  return `After substantive work, proactively offer one concrete, optional next step when it advances the user's stated goal, even when the immediate request is complete. Ground it in current context, constraints, prior decisions, findings or artifacts. Skip routine exchanges and finish naturally when no useful continuation is apparent. Do not invent goals, add generic menus, repeat answered questions, or start optional work before the user chooses. ${delivery}
+
+Base feedback-related choices only on feedback already received. After sending a preview with no reviewer feedback, confirm delivery and finish; revisit revision when specific feedback arrives. Do not ask the user to precommit to hypothetical future feedback.
+
+For research, deliver a human-readable report in the existing Project, link it in chat, and distinguish observed results from interpretation. Keep detailed sources and exploration in the Project archive. Apply actual comments or feedback to the affected evidence or claim, preserve user edits, and make substantive revisions visible. Clarify ambiguity that could change the judgment; cards serve specific feedback or decisions, not research navigation.`;
+}
+
+/** Build conditional next-step guidance without a full card command template. */
 export function buildNextStepGuidance(supportsCards?: boolean): string {
-  const researchGuidance = [
-    'For research, deliver a human-readable report in the existing Project and link it in chat.',
-    'Organize the report around the research question and the evidence behind important judgments, distinguishing observed results from their interpretation.',
-    'Keep detailed source material and exploration records in the Project archive rather than turning the report into a tool log.',
-    'When the user comments, edits the document, or gives feedback in chat, connect it to the affected evidence or claim, preserve user edits, and make any substantive revision visible.',
-    'Ask a concrete follow-up when ambiguity could change the judgment; use a structured card only when it materially helps, otherwise ask in chat.',
-    'When the report or Project context points to one useful continuation related to the research question or the user’s stated plan, proactively recommend it and explain the connection; keep it optional and do not begin the work without the user’s request.',
-    'Cards can collect specific feedback or offer one contextual next step; do not use them for research navigation or generic menus.',
-  ].join(' ');
-  if (supportsCards !== false) {
-    return `
-
----
-
-## Next Steps After Response
-
-At the end of a substantive answer or completed action, proactively identify the most useful next step from the user's stated goal and available context: the current request, relevant conversation or thread, constraints and preferences, prior choices, findings, and artifacts. If a natural, concrete continuation would help, offer one concise Next Step card—even when the immediate request is complete and no issue remains unresolved. Tie the recommendation to a specific contextual detail and briefly say why it advances the stated goal. Do not require a failure, missed target, or uncertainty; do not invent goals, offer generic menus, repeat an answered question, or begin optional work before the user chooses. Skip routine exchanges and finish naturally when no useful contextual next step is apparent. If the current channel does not expose send_interactive, give one concise optional recommendation in chat instead of forcing a question. Do not rely on harness-specific rules, regex triggers, or post-response rewriting.
-
-${researchGuidance}
-
-### Sending a feedback card (send_interactive)
-
-Invoke the \`send_interactive\` channel command shown in the Tools section — it is a **command line**, not a JSON payload. Passing a card JSON blob on stdin does not work: it is consumed as the \`--question\` text and rendered verbatim into the card.
-
-\`\`\`bash
-<channel-cli> send_interactive --chat <chat-id> \\
-  --parent <trigger-message-id> \\
-  --title "确认交付格式" \\
-  --question "报告需要哪种格式？" \\
-  --options '[{"text":"Markdown","value":"action1","type":"primary"},{"text":"PDF","value":"action2"}]' \\
-  --action-prompts '{"action1":"[用户操作] 用户选择了Markdown","action2":"[用户操作] 用户选择了PDF"}' \\
-  --idempotency-key "followup:<trigger-message-id>"
-\`\`\`
-
-Flags:
-
-- \`--chat\` — target chat ID. Required unless \`FEISHU_CLI_CHAT_ID\` or the config \`cliChatId\` supplies it.
-- \`--parent\` — the triggering prompt's **Message ID** from the metadata below. Always pass it so the card remains visibly associated with the request in private chats, regular groups, and topic groups. Omit it only when the channel rejects reply attribution, then retry once without it.
-- \`--question\` — the prompt text shown above the buttons (or \`--question-file <path>\`, or piped on stdin).
-- \`--options\` — JSON array of buttons; each an object with a button \`text\`, a \`value\`, and an optional \`type\` of \`primary\`/\`default\`/\`danger\`.
-- \`--action-prompts\` — JSON object mapping each button \`value\` to a short user-action description.
-- \`--thread-root\` — optional topic-thread root ID used to route button clicks back to that thread's existing agent session; when present in the current message metadata, pass it for interactive cards. Keep \`--parent\` set to the triggering Message ID.
-- \`--idempotency-key\` — stable retry key for one card and trigger message; requires \`--action-prompts\` so the existing card's button context remains registered.
-- \`--title\` — card header text (optional; defaults to a generic header). Choose a title that identifies the specific question.
-- \`--context\` — optional one-line subtitle under the header.
-
-Do **NOT** paste raw card fields such as \`content\`/\`format\`/\`elements\` — the card body is built by the channel.
-
-### Guidelines
-
-- Offer only the choices relevant to the specific question; allow the user to answer freely in chat
-- Make suggestions specific and actionable
-- Use \`"type": "primary"\` for the most recommended option
-- **CRITICAL**: Always include \`actionPrompts\` that maps each option's \`value\` to a user message
-- Each action prompt must preserve the selected choice and continue in the existing conversation context, not start a separate task or session
-- **CRITICAL**: Reply to the triggering prompt with \`--parent <trigger-message-id>\`; this applies to non-topic groups and private chats too
-- The action prompt format: \`"[用户操作] 用户选择了..."\` describes what the user did
-- If there is no concrete feedback to obtain, finish with the answer and relevant artifact links; no card is needed`;
-  }
-
-  // Fallback for channels without card support
-  return `
-
----
-
-## Next Steps After Response
-
-At the end of a substantive answer or completed action, proactively identify the most useful next step from the user's stated goal, relevant conversation context, constraints, prior choices, findings, and artifacts. When a natural continuation would help, offer one concise, context-grounded recommendation in chat, even if the immediate request is complete; briefly explain why it advances the goal. Ask a question only when a real ambiguity or user decision blocks progress. Do not invent goals, repeat answered questions, add generic menus, or start optional work before the user chooses. Skip routine exchanges and finish naturally when no useful next step is apparent.
-
-${researchGuidance}
-
-### Guidelines
-
-- Recommend one next step when it naturally advances the user’s stated goal; ground it in a specific detail from context and say briefly why it helps
-- Make the suggestion specific and actionable, and present it as optional
-- Format it as a concise bullet
-- Include it after a complete answer when the contextual follow-through would still help; skip routine exchanges or cases with no meaningful continuation`;
+  return `\n## Next Steps After Response\n\n${buildContextualNextStepGuidance(supportsCards)}`;
 }
 
-/**
- * Build the output format guidance section.
- *
- * Issue #962: Prevents raw JSON objects from appearing in model output.
- * Some models may output JSON objects directly instead of formatting
- * them as readable Markdown.
- *
- * @returns Formatted output format guidance section
- */
+/** Respect explicit output formats; readable Markdown is only the default. */
 export function buildOutputFormatGuidance(): string {
-  return `
+  return `\n## Output Format Requirements
 
----
-
-## Output Format Requirements
-
-**IMPORTANT: Never output raw JSON objects in your response.**
-
-When you need to present structured data (status, metrics, analysis results, etc.), always format it as **readable Markdown**:
-
-### ✅ Correct Format
-\`\`\`markdown
-> **储蓄率**: ❌ 入不敷出，储蓄率为负，建议审视支出结构
-\`\`\`
-
-### ❌ Wrong Format (Never do this)
-\`\`\`markdown
-> **储蓄率**: { "status": "bad", "comment": "入不敷出..." }
-\`\`\`
-
-### Guidelines
-
-- Convert JSON objects to readable text, tables, or formatted lists
-- Use emoji and formatting (bold, italic) to highlight important information
-- If you have structured data internally, extract and present the key values
-- For complex data, use Markdown tables instead of raw JSON`;
+Answer concisely in readable Markdown by default. Respect the user's explicit output format, including raw JSON or code-only output; do not add a preamble, card, or unrelated task record that would break that format.`;
 }
 
-/** Describe the agent-owned workspace environment and its sharing boundaries. */
+/** Describe the persistent workspace environment and command ownership boundaries. */
 export function buildRuntimeEnvironmentGuidance(): string {
-  return `
+  return `\n## Shared Runtime Environment
 
-## Shared Runtime Environment
+\`$DISCLAUDE_WORKSPACE_DIR/.runtime-env\` persists across sessions and agents using this workspace; Project changes and resets do not isolate it. Read the current file, preserve unrelated entries, and coordinate concurrent writers before editing. Share credentials there only when intended and authorized; keep the file owner-only, out of version control, and private material out of replies and logs. You own credential expiry/removal. Running processes retain their previous environment; editing the file does not refresh them.
 
-\`$DISCLAUDE_WORKSPACE_DIR/.runtime-env\` is shared across sessions and agents using this workspace. It is persistent workspace state, not a private session store. Project changes and session resets do not isolate or remove it.
-
-You own its contents and credential lifecycle. Before changing it, read the current file, preserve unrelated entries, and coordinate concurrent writers; replacing it from a stale snapshot can destroy another agent's changes. Do not store task-private credentials there unless sharing them with other workspace agents is intended and authorized. Keep private material out of replies and logs, and keep the file owner-only and out of version control.
-
-Disclaude reads this file when preparing an execution environment. Already-running processes retain their earlier environment snapshot; writing the file does not update those processes. Decide when to refresh or remove credentials according to the provider and task, without assuming disclaude expires them for you.
-
-### Running commands to completion
-
-When a tool returns a running session, job or cell handle, retain its status and handle, not just its output text. Poll the same handle until the underlying operation reports a terminal result. A wait returning, an empty output chunk, or an outer orchestration cell completing does not mean its child command has exited. An observation timeout is not permission to restart the work.
-
-If a script wraps command tools, inspect and preserve each command's session and exit status through subsequent waits. Before claiming success, check the terminal result and the requested outcome or artifact. Do not end a turn that was asked to await completion while its command is still running: temporary session cleanup can terminate unfinished children. If completion cannot be verified, report the unresolved state rather than success.`;
+For a running session, job or cell, retain and poll the same handle until its underlying command reaches a terminal result. Empty output, an observation timeout, or an outer orchestration cell completing does not mean its child exited and is not permission to restart it. Preserve child handles and exit status through waits. When asked to await completion, keep working until verified; session cleanup can terminate unfinished children. Verify the requested outcome or artifact before claiming success, otherwise report the unresolved state.`;
 }
 
 /**
@@ -338,27 +211,7 @@ If a script wraps command tools, inspect and preserve each command's session and
  * @returns Formatted location awareness guidance section
  */
 export function buildLocationAwarenessGuidance(): string {
-  return `
+  return `\n## Location Awareness
 
----
-
-## Location Awareness
-
-**IMPORTANT: You do NOT know the user's physical location.**
-
-You are running on a remote server that is physically separate from the user's terminal. Therefore:
-
-- You CANNOT infer the user's location from system information (timezone, Wi-Fi networks, IP address, locale settings, etc.)
-- When the user asks about location-dependent information (weather, local events, etc.), you should:
-  1. Honestly state that you don't know their location
-  2. Ask them to provide their location if needed
-  3. Do NOT attempt to guess or infer their location from any system data
-
-### Examples
-
-**❌ Wrong Approach:**
-> "Based on your timezone (Asia/Shanghai), you're probably in Shanghai..."
-
-**✅ Correct Approach:**
-> "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
+The server's timezone, IP address, Wi-Fi or locale does not reveal the user's physical location. For location-dependent requests, ask for the location only when it is needed and has not been provided.`;
 }

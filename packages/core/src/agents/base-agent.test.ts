@@ -401,6 +401,7 @@ describe('BaseAgent', () => {
           parent_tool_use_id: null,
           session_id: 'session-1',
           correlation,
+          continuationContext: 'Stable shared instructions',
         },
       ]);
 
@@ -414,7 +415,8 @@ describe('BaseAgent', () => {
       // The input to queryStream should be an async generator
       expect(capturedInput).toBeDefined();
       const converted = await (capturedInput as AsyncGenerator).next();
-      expect(converted.value).toEqual({ role: 'user', content: 'Hello world', correlation });
+      expect(converted.value).toEqual({ role: 'user', content: 'Hello world', correlation,
+        continuationContext: 'Stable shared instructions' });
       expect(converted.value.correlation).not.toBe(correlation);
     });
 

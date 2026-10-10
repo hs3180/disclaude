@@ -14,6 +14,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildRuntimeEnvironmentGuidance,
 } from './guidance.js';
 import { CHANNEL_CLI_HELP, buildChannelCliHelpGuidance } from './channel-cli-help.js';
 
@@ -108,154 +109,94 @@ describe('buildThreadContextSection', () => {
   });
 });
 
-describe('buildThreadSelfServiceGuidance (Issue #4402)', () => {
-  // Issue #5190: the injected parent chain may omit relevant replies, so the
-  // agent must retrieve only the current thread when the user's question needs it.
-  it('should proactively resolve missing context from the current thread, including terse follow-ups', () => {
+describe('topic-thread context', () => {
+  it('retrieves missing context only from the current thread, even without injected history', () => {
     const result = buildThreadSelfServiceGuidance();
-    expect(result).toContain('lark-cli');
     expect(result).toContain('Thread Root ID');
     expect(result).toContain('partial');
-    expect(result).toContain('那这个呢？');
-    expect(result).toContain('proactively retrieve');
+    expect(result).toContain('proactively retrieve missing');
+    expect(result).toContain('skip retrieval when the supplied context is sufficient');
     expect(result).toContain('another thread');
     expect(result).toContain('rather than guessing');
-    expect(result).toContain('Use a concise feedback card');
-    expect(result).toContain('same chat/thread context');
-    expect(result).toContain('--action-prompts');
-    expect(result).not.toContain('Codex');
-    expect(result).toContain('+threads-messages-list');
-    expect(result).toContain('--download-resources');
-    expect(result).toContain('+messages-mget');
-    expect(result).toContain('+messages-resources-download');
-    expect(result).toContain('--thread-root <Thread-Root-ID>');
-    expect(result).toContain('followup:<current-message-id>');
-    expect(result).toContain('coalesces concurrent retries');
-    expect(result).toContain('Never substitute the card\'s own ID');
-  });
-
-  // Issue #4306 nit fixes: mget also advertises its own --download-resources,
-  // and the single-attachment example lands under ./lark-im-resources/ — the
-  // same default dir as the other two commands (no ./downloads/ drift).
-  it('should keep lark-cli download paths consistent across the three commands', () => {
-    const result = buildThreadSelfServiceGuidance();
-    // mget bullet itself mentions --download-resources (scoped to the mget
-    // command via regex — --download-resources also appears on the list line).
+    for (const command of ['+threads-messages-list', '+messages-mget', '+messages-resources-download']) {
+      expect(result).toContain(command);
+    }
     expect(result).toMatch(/\+messages-mget\b[^`]*--download-resources/);
-    // Single-attachment download example uses ./lark-im-resources/<name>,
-    // matching the default dir stated in the prose (no ./downloads/ drift).
     expect(result).toContain('./lark-im-resources/<name>');
     expect(result).not.toContain('./downloads/');
   });
-
-  it('always returns the guidance (caller gates on isTopicThread)', () => {
-    // No threadContext parameter — injection is the caller's responsibility.
-    expect(buildThreadSelfServiceGuidance()).toContain('Topic-thread context before replying');
-  });
 });
 
-describe('buildNextStepGuidance', () => {
-  it('frames research as an evidence-led report with a real feedback loop', () => {
-    for (const supportsCards of [true, false]) {
-      const result = buildNextStepGuidance(supportsCards);
-      expect(result).toContain('human-readable report in the existing Project');
-      expect(result).toContain('distinguishing observed results from their interpretation');
-      expect(result).toContain('exploration records in the Project archive');
-      expect(result).toContain('preserve user edits');
-      expect(result).toContain('ambiguity could change the judgment');
+describe('contextual next steps', () => {
+  it('keeps meaningful recommendations optional and skips routine exchanges', () => {
+    for (const result of [buildNextStepGuidance(true), buildNextStepGuidance(false), buildThreadSelfServiceGuidance()]) {
+      expect(result).toContain('one concrete, optional next step');
+      expect(result).toContain('even when the immediate request is complete');
+      expect(result).toContain('Skip routine exchanges');
+      expect(result).toContain('finish naturally');
+      expect(result).toContain('before the user chooses');
+      expect(result).not.toContain('Always');
     }
   });
 
-  it('anchors next-step cards to the triggering prompt in every chat type', () => {
-    const result = buildNextStepGuidance(true);
-    expect(result).toContain('--parent <trigger-message-id>');
-    expect(result).toContain('private chats, regular groups, and topic groups');
-    expect(result).toContain('retry once without it');
+  it('requires actual feedback before offering revision, including topic threads (#5238)', () => {
+    for (const result of [buildNextStepGuidance(true), buildNextStepGuidance(false), buildThreadSelfServiceGuidance()]) {
+      expect(result).toContain('only on feedback already received');
+      expect(result).toContain('no reviewer feedback, confirm delivery and finish');
+      expect(result).toContain('revisit revision when specific feedback arrives');
+      expect(result).toContain('Do not ask the user to precommit');
+    }
   });
 
-  it('proactively recommends one contextual next step without requiring unresolved work', () => {
-    const result = buildNextStepGuidance(true);
-    expect(result).toContain('proactively identify the most useful next step');
-    expect(result).toContain('constraints and preferences, prior choices, findings, and artifacts');
-    expect(result).toContain('even when the immediate request is complete');
-    expect(result).toContain('Tie the recommendation to a specific contextual detail');
-    expect(result).toContain('Do not require a failure, missed target, or uncertainty');
+  it('preserves the Project report and evidence/user-edit boundaries', () => {
+    const result = buildNextStepGuidance();
+    expect(result).toContain('human-readable report in the existing Project');
+    expect(result).toContain('distinguish observed results from interpretation');
+    expect(result).toContain('exploration in the Project archive');
+    expect(result).toContain('preserve user edits');
+    expect(result).toContain('make substantive revisions visible');
   });
 
-  it('grounds topic-thread next steps in this thread and allows useful follow-through', () => {
-    const result = buildThreadSelfServiceGuidance();
-    expect(result).toContain('most useful next step');
-    expect(result).toContain('in this exact thread');
-    expect(result).toContain('even when the immediate request is complete and nothing failed');
-    expect(result).toContain('specific detail from the thread');
-  });
-
-  it('should include interactive card template when cards are supported', () => {
-    const result = buildNextStepGuidance(true);
-    expect(result).toContain('Next Steps After Response');
-    expect(result).toContain('actionPrompts');
-    expect(result).toContain('interactive card');
-    expect(result).toContain('--idempotency-key');
-    expect(result).toContain('proactively identify the most useful next step');
-    expect(result).not.toContain('Codex');
-  });
-
-  it('should include one contextual recommendation when cards are not supported', () => {
-    const result = buildNextStepGuidance(false);
-    expect(result).toContain('Next Steps After Response');
-    expect(result).not.toContain('actionPrompts');
-    expect(result).not.toContain('interactive card');
-    expect(result).toContain('concise bullet');
-    expect(result).toContain('one concise, context-grounded recommendation');
-    expect(result).toContain('even if the immediate request is complete');
-    expect(result).not.toContain('Codex');
-  });
-
-  it('should default to card template when supportsCards is undefined', () => {
-    const result = buildNextStepGuidance(undefined);
-    expect(result).toContain('actionPrompts');
-    expect(result).toContain('interactive card');
+  it('uses cards only when supported and useful, without injecting their full parameter template', () => {
+    expect(buildNextStepGuidance(true)).toContain('send_interactive');
+    expect(buildNextStepGuidance()).toContain('send_interactive');
+    expect(buildNextStepGuidance(true)).toContain('materially benefits from buttons');
+    expect(buildNextStepGuidance(false)).not.toContain('send_interactive');
+    expect(buildThreadSelfServiceGuidance(false)).not.toContain('send_interactive');
+    expect(buildNextStepGuidance(false)).toContain('briefly in chat');
+    expect(buildNextStepGuidance(true)).not.toContain('--options');
+    expect(buildNextStepGuidance(true)).not.toContain('--action-prompts');
   });
 });
 
-describe('buildOutputFormatGuidance', () => {
-  it('should include output format requirements', () => {
+describe('output and environment boundaries', () => {
+  it('respects explicit JSON and code-only formats instead of enforcing Markdown (#5019)', () => {
     const result = buildOutputFormatGuidance();
-    expect(result).toContain('Output Format Requirements');
-    expect(result).toContain('Never output raw JSON');
+    expect(result).toContain('Markdown by default');
+    expect(result).toContain('including raw JSON or code-only output');
+    expect(result).toContain('do not add a preamble, card, or unrelated task record');
+    expect(result).not.toContain('Never output raw JSON');
+    expect(result).not.toContain('Correct Format');
   });
 
-  it('should include correct and wrong format examples', () => {
-    const result = buildOutputFormatGuidance();
-    expect(result).toContain('✅ Correct Format');
-    expect(result).toContain('❌ Wrong Format');
-  });
-
-  it('should include guidance for converting JSON to readable format', () => {
-    const result = buildOutputFormatGuidance();
-    expect(result).toContain('Convert JSON objects to readable text');
-    expect(result).toContain('Markdown tables instead of raw JSON');
-  });
-});
-
-describe('buildLocationAwarenessGuidance', () => {
-  it('should include location awareness warning', () => {
+  it('does not infer the user location from server metadata', () => {
     const result = buildLocationAwarenessGuidance();
-    expect(result).toContain('Location Awareness');
-    expect(result).toContain("do NOT know the user's physical location");
+    expect(result).toContain('timezone, IP address, Wi-Fi or locale');
+    expect(result).toContain('does not reveal');
+    expect(result).toContain('only when it is needed and has not been provided');
   });
 
-  it('should include examples of wrong and correct approaches', () => {
-    const result = buildLocationAwarenessGuidance();
-    expect(result).toContain('❌ Wrong Approach');
-    expect(result).toContain('✅ Correct Approach');
-  });
-
-  it('should mention not inferring from system information', () => {
-    const result = buildLocationAwarenessGuidance();
-    expect(result).toContain('timezone');
-    expect(result).toContain('IP address');
-    expect(result).toContain('Wi-Fi');
+  it('retains shared credential state and running-child verification safeguards', () => {
+    const result = buildRuntimeEnvironmentGuidance();
+    expect(result).toContain('.runtime-env');
+    expect(result).toContain('preserve unrelated entries');
+    expect(result).toContain('intended and authorized');
+    expect(result).toContain('owner-only');
+    expect(result).toContain('previous environment');
+    expect(result).toContain('poll the same handle');
+    expect(result).toContain('underlying command reaches a terminal result');
+    expect(result).toContain('outer orchestration cell completing');
+    expect(result).toContain('not permission to restart');
   });
 });
 

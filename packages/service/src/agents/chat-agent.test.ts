@@ -70,6 +70,7 @@ vi.mock('@disclaude/core', async (importOriginal) => {
     // Issue #4391: real policy — the reset+replay bounding under test.
     EmptyTurnRetryPolicy: actual.EmptyTurnRetryPolicy,
     MessageBuilder: vi.fn(class {
+      buildStableContext = vi.fn(() => 'Stable shared instructions');
       // Issue #4391 (§6 history re-injection): append the chat-history
       // context (when present) to the built content so tests can verify the
       // consume-once stash actually flowed into the pushed payload.
@@ -291,6 +292,54 @@ describe('ChatAgent (service)', () => {
   });
 
   describe('processMessage', () => {
+    it('sends stable guidance once per admitted query and refreshes it for changed capabilities/reset (#5019)', async () => {
+      let release!: () => void;
+      const parked = new Promise<void>(resolve => { release = resolve; });
+      (chatAgent as any).createQueryStream.mockImplementation(() => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () { await parked; })(),
+      }));
+      try {
+        await chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'First', messageId: 'context-1' });
+        await chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'Second', messageId: 'context-2' });
+        const pushed = (chatAgent as any).channel.push.mock.calls;
+        expect(pushed[0][0].continuationContext).toBeUndefined();
+        expect(pushed[1][0].continuationContext).toBe('Stable shared instructions');
+        callbacks.getCapabilities.mockReturnValue({ supportsCard: false });
+        await chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'Third', messageId: 'context-3' });
+        await chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'Fourth', messageId: 'context-4' });
+        chatAgent.reset();
+        await chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'Fresh query', messageId: 'context-5' });
+        const { calls } = (chatAgent as any).messageBuilder.buildEnhancedContent.mock;
+        expect(calls.map((call: any[]) => call[0].includeStableContext)).toEqual([true, false, true, false, true]);
+      } finally {
+        ChatAgent.prototype.dispose.call(chatAgent);
+        release();
+      }
+    });
+
+    it('does not consume stable guidance on a rejected push or a minimal skill command', async () => {
+      let release!: () => void;
+      const parked = new Promise<void>(resolve => { release = resolve; });
+      (chatAgent as any).createQueryStream.mockImplementation(() => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () { await parked; })(),
+      }));
+      try {
+        (chatAgent as any).startAgentLoop();
+        (chatAgent as any).channel.push.mockReturnValueOnce(false);
+        await chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'Rejected', messageId: 'context-rejected' });
+        await chatAgent.processMessage({ chatId: 'oc_test_chat', payload: '/example', messageId: 'context-skill' });
+        await chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'Ordinary', messageId: 'context-accepted' });
+        await chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'Follow-up', messageId: 'context-followup' });
+        const { calls } = (chatAgent as any).messageBuilder.buildEnhancedContent.mock;
+        expect(calls.map((call: any[]) => call[0].includeStableContext)).toEqual([true, true, true, false]);
+      } finally {
+        ChatAgent.prototype.dispose.call(chatAgent);
+        release();
+      }
+    });
+
     it('injects one bounded history section on the first message and none on later turns (#4795)', async () => {
       callbacks.getChatHistory.mockResolvedValue('stored snapshot' as never);
       await chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'first', messageId: 'history-1', chatHistoryContext: 'explicit first snapshot' });

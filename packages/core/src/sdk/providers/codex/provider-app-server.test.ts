@@ -128,6 +128,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
  } else if(m.method==='model/list')send({id:m.id,result:{data:[{id:'gpt-6-luna',model:'gpt-6-luna',supportedReasoningEfforts:[{reasoningEffort:'max'}]}]}});
  else if(m.method==='turn/start'){
   turnId=marker+'-turn';requestId=marker+'-request';
+  fs.appendFileSync(process.env.CODEX_HOME+'/turn-inputs',JSON.stringify(m.params.input)+String.fromCharCode(10));
   send({id:m.id,result:{turn:{id:turnId}}});
   send({method:'item/started',params:{threadId:'continued-thread',turnId,item:{id:marker+'-tool',type:'dynamicToolCall'}}});
   send({id:requestId,method:'item/tool/call',params:{callId:marker+'-call',threadId:'continued-thread',turnId,namespace:'disclaude',tool:'emit_marker',arguments:{marker}}});
@@ -140,8 +141,8 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     const handler = vi.fn((params: Record<string, unknown>) => Promise.resolve({ accepted: true, marker: params.marker }));
     const tools: ToolDefinition[] = [{ name: 'emit_marker', description: 'Record a turn marker', inputSchema: { type: 'object', properties: { marker: { type: 'string' } }, required: ['marker'] }, outputSchema: { type: 'object' }, execute: handler }];
     const result = provider.queryStream((async function* (): AsyncGenerator<UserInput> {
-      yield { role: 'user', content: 'Record the first marker' };
-      yield { role: 'user', content: 'Record the second marker' };
+      yield { role: 'user', content: 'Record the first marker', continuationContext: 'Stable channel guidance' };
+      yield { role: 'user', content: 'Record the second marker', continuationContext: 'Stable channel guidance' };
     })(), {
       sessionKey: 'dynamic-tool-resume', settingSources: [], tools,
     } as AgentQueryOptions);
@@ -150,6 +151,9 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       for await (const message of result.iterator) { messages.push(message); }
       const threadRequests = readFileSync(join(dir, 'home/methods'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
       expect(threadRequests.map(request => request.method)).toEqual(['thread/start', 'thread/resume']);
+      const turnInputs = readFileSync(join(dir, 'home/turn-inputs'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      expect(turnInputs[0]).toEqual([{ type: 'text', text: 'Stable channel guidance\nRecord the first marker' }]);
+      expect(turnInputs[1]).toEqual([{ type: 'text', text: 'Record the second marker' }]);
       expect(threadRequests[0].params.dynamicTools).toMatchObject([
         { type: 'namespace', name: 'disclaude', tools: [{ type: 'function', name: 'emit_marker' }] },
       ]);
