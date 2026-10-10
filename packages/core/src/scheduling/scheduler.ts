@@ -20,13 +20,36 @@ import { CooldownManager } from './cooldown-manager.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import { DEFAULT_TIMEZONE, type ScheduledTask } from './scheduled-task.js';
 import type { TaskFailureStore } from './task-failure-store.js';
-import type { MessageRouter as InputMessageRouter } from '../messaging/message-router.js';
+import { MessageRoutingError, type MessageRouter as InputMessageRouter } from '../messaging/message-router.js';
 import { TurnSupersededError } from '../messaging/turn-superseded-error.js';
 import type { SystemMessage } from '../types/message.js';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
 const logger = createLogger('Scheduler');
+
+/** Routing adds context while retaining the original turn outcome. */
+function routingCause(error: unknown): unknown {
+  let current = error;
+  const seen = new Set<unknown>([current]);
+  for (let depth = 0; depth < 8 && current instanceof MessageRoutingError; depth++) {
+    const {cause} = current;
+    if (cause === undefined || seen.has(cause)) { break; }
+    seen.add(cause);
+    current = cause;
+  }
+  return current;
+}
+
+function turnCorrelation(error: unknown): { runId?: string; traceId?: string; sourceMessageId?: string } {
+  if (!(error instanceof Error)) { return {}; }
+  const context = error as Error & { runId?: unknown; traceId?: unknown; sourceMessageId?: unknown };
+  return {
+    ...(typeof context.runId === 'string' ? { runId: context.runId } : {}),
+    ...(typeof context.traceId === 'string' ? { traceId: context.traceId } : {}),
+    ...(typeof context.sourceMessageId === 'string' ? { sourceMessageId: context.sourceMessageId } : {}),
+  };
+}
 
 /**
  * Format timeout duration for display.
@@ -812,6 +835,7 @@ ${task.prompt ?? ''}`;
     // logs below (previously "completed" was logged at routing time, ~0.3s
     // BEFORE the agent even produced its first token).
     const taskStartedAt = Date.now();
+    let sourceMessageId: string | undefined;
 
     try {
       if ((!task.prompt && !task.command) || (task.prompt && task.command)) {
@@ -922,6 +946,7 @@ ${task.prompt ?? ''}`;
           // branch in the catch); long-running tasks should set timeoutMs.
           waitForCompletion: true,
         };
+        sourceMessageId = systemMessage.id;
 
         logger.debug({ taskId: task.id, chatId: task.chatId }, 'Routing scheduled task via InputMessageRouter');
 
@@ -969,15 +994,21 @@ ${task.prompt ?? ''}`;
       }
 
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const cause = routingCause(error);
+      const outerMessage = error instanceof Error ? error.message : String(error);
+      const causeMessage = cause instanceof Error ? cause.message : String(cause);
+      const errorMessage = cause !== error && causeMessage !== outerMessage
+        ? `${outerMessage}\n原因: ${causeMessage}` : outerMessage;
       const outcomeContext = {
         taskId: task.id,
         name: task.name,
         chatId: task.chatId,
         elapsedMs: Date.now() - taskStartedAt,
+        sourceMessageId,
+        ...turnCorrelation(cause),
       };
 
-      if (error instanceof TurnSupersededError) {
+      if (cause instanceof TurnSupersededError) {
         // Issue #4649 (review ①): a newer message (typically a user reply
         // landing mid-turn in the same chat) superseded this turn's
         // completion promise. That is normal concurrency in an active chat,
@@ -1004,12 +1035,12 @@ ${task.prompt ?? ''}`;
         return;
       }
 
-      if (error instanceof CommandCancelledError) {
+      if (cause instanceof CommandCancelledError) {
         logger.info(outcomeContext, 'Scheduled command cancelled during scheduler shutdown (neutral)');
         return;
       }
 
-      if (error instanceof TaskTimeoutError) {
+      if (cause instanceof TaskTimeoutError) {
         // Issue #4649 (review ②): this timeout bounds the WAIT — the agent
         // is not cancelled (#4648 wording), so the outcome is UNKNOWN: the
         // turn may still complete successfully after the bound. Counting it
@@ -1023,7 +1054,7 @@ ${task.prompt ?? ''}`;
         //   this wait timeout must not dispose a turn that may still run,
         // - the notification keeps the honest wording and teaches the knob.
         logger.warn(
-          { ...outcomeContext, timeoutMs: error.timeoutMs },
+          { ...outcomeContext, timeoutMs: cause.timeoutMs },
           'Scheduled task timed out waiting for the agent turn (turn not cancelled, outcome unknown — not counted as failure)',
         );
         // Issue #4648 residual ⑧: channel I/O inside a catch must not throw —
@@ -1033,7 +1064,7 @@ ${task.prompt ?? ''}`;
         try {
           await this.callbacks.sendMessage(
             task.chatId,
-            `⏱️ 定时任务「${task.name}」执行超时 (${formatTimeout(error.timeoutMs)})，已停止等待` +
+            `⏱️ 定时任务「${task.name}」执行超时 (${formatTimeout(cause.timeoutMs)})，已停止等待` +
               '（agent 轮次可能仍在后台继续）。若该任务确需更长运行时间，请在 SCHEDULE.md 设置 timeoutMs。',
           );
         } catch (notifyErr) {
@@ -1057,7 +1088,7 @@ ${task.prompt ?? ''}`;
         consecutiveFailures,
       };
       logger.error(
-        { err: error, ...failureContext },
+        { err: error, providerCause: causeMessage, ...failureContext },
         'Scheduled task failed (agent turn ended with an error)'
       );
       if (consecutiveFailures >= CONSECUTIVE_FAILURE_ALERT_THRESHOLD) {
@@ -1088,7 +1119,10 @@ ${task.prompt ?? ''}`;
       try {
         await this.callbacks.sendMessage(
           task.chatId,
-          `❌ 定时任务「${task.name}」执行失败: ${errorMessage}`
+          `❌ 定时任务「${task.name}」执行失败: ${errorMessage}${
+            outcomeContext.sourceMessageId ? `\n请求: ${outcomeContext.sourceMessageId}` : ''
+            }${outcomeContext.runId ? `\nrunId: ${outcomeContext.runId}` : ''
+            }${outcomeContext.traceId ? `\ntraceId: ${outcomeContext.traceId}` : ''}`
         );
       } catch (notifyErr) {
         logger.warn(

@@ -99,13 +99,6 @@ const logger = createLogger('CodexAgentProvider');
 export const DEFAULT_MAX_RESUME_INPUT_TOKENS = 100_000;
 
 /**
- * Same user-facing stall notice the Claude (#3706) and pi (#4386 part 5)
- * bridges yield, so all three backends read identically in chat and logs.
- */
-const STALL_TERMINATE_NOTICE =
-  '⚠️ 上游模型响应超时（疑似 stall），已自动取消本次响应。请稍后重试。';
-
-/**
  * Actionable re-auth notice (#4628): codex's ChatGPT login expired/revoked —
  * only a human re-running the interactive `codex login` can fix it, so the
  * message says exactly that (disclaude never touches credentials itself).
@@ -586,17 +579,25 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       };
 
       // ── Stall watchdog (#4630, reusing the #4550/#3706 seam) ──────────
-      // Armed for the whole run, re-armed on EVERY stdout event (any JSONL
-      // line is progress), exempt while a tool item is open (started
-      // without completed — a long build/test legitimately stays silent).
+      // Silence schedules an owned-process probe, not an unconditional kill.
+      // A live model/tool wait survives; confirmed stopped/exited children
+      // receive one terminal failure with the original input correlation.
       // Env knob DISCLAUDE_STALL_TIMEOUT_MS matches the Claude/pi bridges.
-      const { timeoutMs: STALL_TIMEOUT_MS, graceMs: STALL_FORCE_CLOSE_GRACE_MS } = readStallPolicy();
+      const { timeoutMs: STALL_TIMEOUT_MS, graceMs: STALL_FORCE_CLOSE_GRACE_MS } = readStallPolicy({
+        ...process.env, ...providerEnv, ...options.env,
+      });
       let stalled = false;
       let stallWatchdog: ReturnType<typeof setTimeout> | null = null;
       let stallForceCloseTimer: ReturnType<typeof setTimeout> | null = null;
       let openToolItems = 0;
       let sawTurnTerminator = false;
       let sawTurnFailed = false;
+      let lastEventAt = Date.now();
+      let lastEventType = 'run.started';
+      let eventRevision = 0;
+      let probingRun: CodexExecRunHandle | undefined;
+      let activeCorrelation: UserInput['correlation'];
+      let stallDetail: string | undefined;
       // S3 (#4628): completed-turn marker (vs. sawTurnTerminator, which
       // turn.failed also sets) + raw failure text for the detectors. The
       // adapter downgrades transient "Reconnecting..." errors to status,
@@ -604,6 +605,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       // messages.
       let sawTurnCompleted = false;
       let runFailureText = '';
+      let runDiagnostic = '';
       const armTimer = (fn: () => void, ms: number): ReturnType<typeof setTimeout> => {
         const t = setTimeout(fn, ms);
         t.unref?.();
@@ -619,23 +621,41 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           stallForceCloseTimer = null;
         }
       };
-      const fireStallWatchdog = (): void => {
+      const fireStallWatchdog = async (): Promise<void> => {
         stallWatchdog = null;
-        if (!runActive || stalled) {
+        const inspectedRun = currentRun;
+        if (!runActive || stalled || aborted || !inspectedRun) {
           return;
         }
-        if (openToolItems > 0) {
-          // Silence belongs to the running tool, not the stream — re-arm.
-          stallWatchdog = armTimer(fireStallWatchdog, STALL_TIMEOUT_MS);
+        if (probingRun === inspectedRun) {
+          stallWatchdog = armTimer(() => { void fireStallWatchdog(); }, STALL_TIMEOUT_MS);
+          return;
+        }
+        const observedRevision = eventRevision;
+        probingRun = inspectedRun;
+        const liveness = await inspectedRun.inspectLiveness();
+        if (probingRun === inspectedRun) { probingRun = undefined; }
+        // Events, cancellation, completion or another run can win the probe.
+        if (currentRun !== inspectedRun || !runActive || stalled || aborted
+          || eventRevision !== observedRevision || sawTurnTerminator) { return; }
+        const evidence = {
+          sessionKey, threadId: latestSessionId, ...activeCorrelation,
+          lastEventAt, lastEventType, quietMs: Date.now() - lastEventAt,
+          stallTimeoutMs: STALL_TIMEOUT_MS, openToolItems,
+          childPid: liveness.pid, liveness: liveness.state,
+        };
+        if (liveness.state === 'alive' || liveness.state === 'unknown') {
+          // A live process can be waiting on a model or child. A failed ps
+          // observation is not evidence of death either. Pool inactivity and
+          // explicit operator cancellation remain separate policies.
+          logger.info(evidence, 'codex exec quiet; liveness does not justify termination');
+          stallWatchdog = armTimer(() => { void fireStallWatchdog(); }, STALL_TIMEOUT_MS);
           return;
         }
         stalled = true;
-        logger.error(
-          { stallTimeoutMs: STALL_TIMEOUT_MS },
-          `codex stall: no exec events for ${STALL_TIMEOUT_MS}ms during an active run; ` +
-            'killing the codex process (Issue #4630, cf. #3706)'
-        );
-        currentRun?.abort();
+        stallDetail = `codex exec process is ${liveness.state}; ${JSON.stringify(evidence)}`;
+        logger.error(evidence, 'codex exec liveness failure; terminating the owned run');
+        inspectedRun.abort();
         stallForceCloseTimer = armTimer(() => {
           stallForceCloseTimer = null;
           onAbort?.();
@@ -646,7 +666,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           return;
         }
         clearStallTimers();
-        stallWatchdog = armTimer(fireStallWatchdog, STALL_TIMEOUT_MS);
+        stallWatchdog = armTimer(() => { void fireStallWatchdog(); }, STALL_TIMEOUT_MS);
       };
 
       /** Push a bridge-synthesized message (post-run failure mapping). */
@@ -654,11 +674,18 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         if (stalled) {
           return;
         }
+        if (message.type === 'error') { runDiagnostic = message.content.slice(-500); }
         queue.push(message);
         wakeAll();
       };
 
       const enqueue = (event: CodexThreadEvent): void => {
+        if (stalled || aborted) { return; }
+        try { options.onActivity?.(`codex:exec:${event.type}`); }
+        catch { logger.debug({ sessionKey, eventType: event.type }, 'Host activity observer failed'); }
+        lastEventAt = Date.now();
+        lastEventType = event.type;
+        eventRevision++;
         if (event.type === 'turn.started') {
           // Item IDs are scoped to a Codex turn; a resumed turn may reuse
           // the same fixture/runtime ID, so dedupe only within one turn.
@@ -751,6 +778,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         logger.debug({ eventType: event.type, presentation }, 'codex JSONL event classified');
         const adapted = adaptCodexEvent(event);
         if (adapted) {
+          if (adapted.type === 'error') { runDiagnostic = adapted.content.slice(-500); }
           const messageId = adapted.metadata?.messageId;
           const eventKey = messageId ? `${adapted.type}:${messageId}` : undefined;
           if (eventKey && deliveredEventKeys.has(eventKey)) {
@@ -777,6 +805,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       // maxConcurrentRuns codex exec children process-wide; excess turns
       // queue FIFO across chats with a backpressure notice.
       const runInput = async (prompt: string, correlation?: UserInput['correlation']): Promise<void> => {
+        if (stalled || aborted || terminated) { return; }
         // Item IDs are scoped to one exec invocation. Clear before every
         // run because older Codex versions (and test doubles) may omit
         // `turn.started` on resumed executions.
@@ -806,7 +835,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           });
         }
         const lease = await governorSink.acquireRun();
-        if (aborted || terminated) {
+        if (stalled || aborted || terminated) {
           // Cancelled/finished while queued — don't spawn a zombie run.
           lease.release();
           return;
@@ -816,6 +845,11 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         sawTurnFailed = false;
         sawTurnCompleted = false;
         runFailureText = '';
+        runDiagnostic = '';
+        activeCorrelation = correlation;
+        lastEventAt = Date.now();
+        lastEventType = 'run.started';
+        eventRevision++;
         touchStallWatchdog();
         const { promise, handle } = runner.run(
           {
@@ -978,7 +1012,9 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               content: '',
               role: 'assistant',
               ...(runFailed || sawTurnFailed
-                ? { metadata: { terminatedReason: 'turn_failed' } }
+                ? { metadata: { terminatedReason: 'turn_failed',
+                  terminationDetail: `codex exec: ${runDiagnostic || 'run ended without a successful terminal event'}; ${
+                    JSON.stringify({ sessionKey, threadId: latestSessionId, ...activeCorrelation, lastEventAt, lastEventType })}` } }
                 : {}),
             });
           }
@@ -1020,6 +1056,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               return;
             }
             await runInput(userInputText(value), value.correlation);
+            if (stalled || aborted) { return; }
           }
         } finally {
           inputDone = true;
@@ -1053,9 +1090,9 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         if (stalled) {
           yield {
             type: 'result',
-            content: STALL_TERMINATE_NOTICE,
+            content: '⚠️ Codex 进程已停止或退出，本轮已中断。请先检查已有结果，再发送消息继续。',
             role: 'system',
-            metadata: { terminatedReason: 'stall' },
+            metadata: { terminatedReason: 'stall', terminationDetail: stallDetail },
           };
           return;
         }
@@ -1148,23 +1185,24 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     let stallTimer: ReturnType<typeof setTimeout> | undefined;
     const pendingInputs = new Set<AgentInputRequest>();
     let openToolItems = 0;
-    const { timeoutMs: stallTimeoutMs } = readStallPolicy(this.env);
+    let lastEventAt = Date.now();
+    let lastEventType = 'turn/start';
+    let eventRevision = 0;
+    let activeCorrelation: UserInput['correlation'];
+    let probingLifecycle: CodexAppServerLifecycle | undefined;
+    const { timeoutMs: stallTimeoutMs } = readStallPolicy({ ...process.env, ...this.env, ...options.env });
     let interruptFlight: Promise<void> | undefined;
     const isToolItem = (type: string | undefined): boolean =>
       type === 'commandExecution' || type === 'mcpToolCall' || type === 'dynamicToolCall';
-    const fireStall = (): void => {
-      stallTimer = undefined;
-      if (stopped || !activeTurnId) { return; }
-      if (pendingInputs.size > 0 || openToolItems > 0) {
-        // Silence belongs to a user-input request or a running tool, not the
-        // transport. Mirror the exec bridge's exemption instead of killing a
-        // long-running app-server command after one quiet watchdog window.
-        stallTimer = setTimeout(fireStall, stallTimeoutMs);
-        stallTimer.unref?.();
-        return;
-      }
-
-      const stalledTurnId = activeTurnId;
+    const terminateStall = (detail: string, expectedTurnId: string): void => {
+      if (stopped || activeTurnId !== expectedTurnId) { return; }
+      const stalledTurnId = expectedTurnId;
+      const evidence = {
+        sessionKey, threadId, turnId: stalledTurnId, ...activeCorrelation,
+        lastEventAt, lastEventType, quietMs: Date.now() - lastEventAt,
+        stallTimeoutMs, openToolItems, cause: detail,
+      };
+      logger.error(evidence, 'codex app-server liveness failure; settling the original turn');
       activeTurnId = undefined;
       openToolItems = 0;
       stopped = true;
@@ -1173,12 +1211,12 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       void input.return?.(undefined);
       push({
         type: 'result',
-        content: STALL_TERMINATE_NOTICE,
+        content: '⚠️ Codex 控制通道无响应或线程已失活，本轮已中断。请先检查已有结果，再发送消息继续。',
         role: 'system',
         metadata: {
           messageId: stalledTurnId,
           terminatedReason: 'stall',
-          terminationDetail: `codex app-server stalled for ${stallTimeoutMs}ms`,
+          terminationDetail: `codex app-server: ${detail}; ${JSON.stringify(evidence)}`,
         },
       });
       void lifecycle?.interrupt(sessionKey).catch((error: unknown) => {
@@ -1194,10 +1232,38 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       turnDone?.();
       turnDone = undefined;
     };
+    const fireStall = async (): Promise<void> => {
+      stallTimer = undefined;
+      const inspectedLifecycle = lifecycle;
+      const inspectedTurnId = activeTurnId;
+      if (stopped || !inspectedTurnId || !inspectedLifecycle) { return; }
+      if (pendingInputs.size > 0 || openToolItems > 0 || probingLifecycle === inspectedLifecycle) {
+        // Human-input deadlines and demonstrably running tools own their wait.
+        armStall();
+        return;
+      }
+      const observedRevision = eventRevision;
+      probingLifecycle = inspectedLifecycle;
+      const result = await inspectedLifecycle.probeActiveTurn(sessionKey, inspectedTurnId, Math.min(stallTimeoutMs, 5000));
+      if (probingLifecycle === inspectedLifecycle) { probingLifecycle = undefined; }
+      if (stopped || lifecycle !== inspectedLifecycle || activeTurnId !== inspectedTurnId) { return; }
+      if (eventRevision !== observedRevision || pendingInputs.size > 0 || openToolItems > 0) {
+        armStall();
+        return;
+      }
+      if (result.state === 'inactive' || result.state === 'unresponsive') {
+        terminateStall(result.detail, inspectedTurnId);
+        return;
+      }
+      logger.info({ sessionKey, threadId, turnId: inspectedTurnId, ...activeCorrelation,
+        lastEventAt, lastEventType, quietMs: Date.now() - lastEventAt, probeState: result.state },
+      'codex app-server quiet; runtime probe does not justify termination');
+      armStall();
+    };
     const armStall = (): void => {
       if (stallTimer) {clearTimeout(stallTimer);}
       if (pendingInputs.size > 0 || !activeTurnId) { return; }
-      stallTimer = setTimeout(fireStall, stallTimeoutMs);
+      stallTimer = setTimeout(() => { void fireStall(); }, stallTimeoutMs);
       stallTimer.unref?.();
     };
     const earlyEvents: Array<{ method: string; params: unknown }> = [];
@@ -1213,8 +1279,9 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     };
     const onNotification = (method: string, params: unknown): void => {
       if (method === 'transport/exited') {
-        turnDone?.((params as { error?: Error }).error ?? new Error('codex app-server exited'));
-        turnDone = undefined;
+        if (activeTurnId) {
+          terminateStall((params as { error?: Error }).error?.message ?? 'codex app-server process exited', activeTurnId);
+        }
         return;
       }
       if (stopped) {return;}
@@ -1235,6 +1302,11 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         if (deliveredItems.has(key)) {return;}
         deliveredItems.add(key);
       }
+      lastEventAt = Date.now();
+      lastEventType = method;
+      eventRevision++;
+      try { options.onActivity?.(`codex:app-server:${method}`); }
+      catch { logger.debug({ sessionKey, eventType: method }, 'Host activity observer failed'); }
       if (method === 'item/started' && isToolItem(event.item?.type)) {
         openToolItems++;
       } else if (method === 'item/completed' && isToolItem(event.item?.type)) {
@@ -1274,7 +1346,9 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           type: 'result',
           content: failed ? `❌ Codex turn failed: ${event.turn?.error?.message ?? 'unknown error'}` : interrupted ? '⏹️ Codex turn interrupted' : '✅ Complete',
           role: 'assistant',
-          ...(failed ? { metadata: { terminatedReason: 'turn_failed' as const } }
+          ...(failed ? { metadata: { terminatedReason: 'turn_failed' as const,
+            terminationDetail: `codex app-server turn failed: ${event.turn?.error?.message ?? 'unknown error'}; ${
+              JSON.stringify({ threadId, turnId: activeTurnId })}` } }
             : interrupted ? { metadata: { terminatedReason: 'interrupted' as const } } : {}),
         });
         turnDone?.();
@@ -1356,6 +1430,10 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           } : undefined;
           try {
             if (stopped) {break;}
+            activeCorrelation = next.value.correlation;
+            lastEventAt = Date.now();
+            lastEventType = 'turn/start';
+            eventRevision++;
             lifecycle = this.createAppServerLifecycle(binary, sessionKey, next.value.correlation, options.onUserInput ? async request => {
               const boundTurn = await turnBinding;
               if (!boundTurn || stopped || request.signal.aborted || request.threadId !== threadId || request.turnId !== boundTurn

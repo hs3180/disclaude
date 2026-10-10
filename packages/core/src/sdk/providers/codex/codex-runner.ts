@@ -19,7 +19,8 @@ import { CODEX_BROWSER_DISABLE_ARGS } from './browser-policy.js';
  * an injected PATH exercises the actual spawn/readline/timer/kill machinery.
  */
 
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import type { UserInput } from '../../types.js';
 import { createInterface } from 'node:readline';
@@ -111,6 +112,8 @@ export interface CodexExecRunResult {
 /** Handle for aborting an in-flight run (maps onto QueryHandle cancel/close). */
 export interface CodexExecRunHandle {
   abort(): void;
+  /** Read only the owned child's state; an unavailable observation is not death. */
+  inspectLiveness(): Promise<{ state: 'alive' | 'stopped' | 'exited' | 'unknown'; pid?: number }>;
 }
 
 export class CodexExecRunner {
@@ -161,7 +164,7 @@ export class CodexExecRunner {
           stderrTail: '',
           durationMs: 0,
         }),
-        handle: { abort: (): void => {} },
+        handle: { abort: (): void => {}, inspectLiveness: () => Promise.resolve({ state: 'exited' }) },
       };
     }
 
@@ -232,7 +235,14 @@ export class CodexExecRunner {
 
     /** SIGTERM now, SIGKILL after the grace if the child ignores it. */
     const killWithEscalation = (target: NonNullable<typeof child>): void => {
-      if (target.killed || target.exitCode !== null) {
+      if (target.exitCode !== null || target.signalCode !== null) {
+        // Descendants can hold these pipes after the owned child exits.
+        // Close our readers; do not signal a reparented or reused PID.
+        target.stdout?.destroy();
+        target.stderr?.destroy();
+        return;
+      }
+      if (killTimer) {
         return;
       }
       try {
@@ -241,6 +251,7 @@ export class CodexExecRunner {
         /* already gone */
       }
       killTimer = setTimeout(() => {
+        if (settled || target.exitCode !== null || target.signalCode !== null) { return; }
         try {
           target.kill('SIGKILL');
         } catch {
@@ -415,6 +426,31 @@ export class CodexExecRunner {
     });
 
     const handle: CodexExecRunHandle = {
+      inspectLiveness: async () => {
+        const target = child;
+        const pid = target?.pid;
+        const exited = (): boolean => !target || settled || target.exitCode !== null || target.signalCode !== null;
+        if (exited()) { return { state: 'exited', pid }; }
+        if (!pid || process.platform === 'win32') { return { state: 'unknown', pid }; }
+        try {
+          // No argv or environment columns. Bound both the probe and its output.
+          const { stdout } = await promisify(execFile)('ps', ['-p', String(pid), '-o', 'stat='], {
+            timeout: 1000, maxBuffer: 1024, encoding: 'utf8',
+          });
+          if (exited()) { return { state: 'exited', pid }; }
+          const status = stdout.trim();
+          if (status.includes('T')) { return { state: 'stopped', pid }; }
+          if (status.startsWith('Z')) { return { state: 'exited', pid }; }
+          return { state: /^[RSIDW]/.test(status) ? 'alive' : 'unknown', pid };
+        } catch {
+          if (exited()) { return { state: 'exited', pid }; }
+          try { process.kill(pid, 0); }
+          catch (error) {
+            if ((error as NodeJS.ErrnoException).code === 'ESRCH') { return { state: 'exited', pid }; }
+          }
+          return { state: 'unknown', pid };
+        }
+      },
       abort: () => {
         if (settled || !child) {
           return;

@@ -81,6 +81,32 @@ JSONL
 `;
 
 describe('CodexExecRunner (Issue #4630)', () => {
+  it('observes the owned live, stopped and exited process without treating exit-zero abort as success', async () => {
+    const binary = makeScriptedBinary('exit 0');
+    writeFileSync(binary.binaryPath, `#!${process.execPath}
+process.on('SIGTERM',()=>process.exit(0));setInterval(()=>{},1000);
+require('node:fs').writeFileSync(${JSON.stringify(binary.readyPath)},'ready');
+`);
+    const run = new CodexExecRunner({ binary: binary.binaryPath }).run({ prompt: 'owned fixture' }, () => {});
+    let pid: number | undefined;
+    try {
+      await waitFor(() => existsSync(binary.readyPath));
+      const alive = await run.handle.inspectLiveness();
+      expect(alive.state).toBe('alive');
+      ({ pid } = alive);
+      process.kill(pid as number, 'SIGSTOP');
+      await expect.poll(async () => (await run.handle.inspectLiveness()).state).toBe('stopped');
+      run.handle.abort();
+      process.kill(pid as number, 'SIGCONT');
+      await expect(run.promise).resolves.toMatchObject({ exitCode: 0, aborted: true, timedOut: false });
+      await expect(run.handle.inspectLiveness()).resolves.toMatchObject({ state: 'exited', pid });
+    } finally {
+      run.handle.abort();
+      await run.promise;
+      binary.cleanup();
+    }
+  });
+
   it.each([undefined, 'existing-thread'])('removes direct CDP and preserves coordinated socket with browser features disabled (resume=%s)', async resumeSessionId => {
     const fixture = makeScriptedBinary('echo "argv:$*" >&2\necho "cdp:$BU_CDP_URL socket:$DISCLAUDE_BROWSER_RUNTIME" >&2\nexit 0');
     try {
