@@ -624,6 +624,27 @@ describe('ChatAgent (service)', () => {
       } finally { dispose(agent); }
     });
 
+    it.each(['acknowledged', 'unconfirmed'])('finishes %s input admission while its notice is still pending', async mode => {
+      const { agent, callbacks, steer, push } = owned();
+      let finishNotice!: () => void;
+      callbacks.sendMessage.mockReturnValue(new Promise<void>(resolve => { finishNotice = resolve; }));
+      if (mode === 'unconfirmed') { steer.mockRejectedValue(new Error('request timed out')); }
+      let admitted = false;
+      const admission = agent.processMessage(input()).then(() => { admitted = true; });
+      try {
+        await vi.waitFor(() => expect(admitted).toBe(true), { timeout: 200, interval: 10 });
+        expect(callbacks.sendMessage).toHaveBeenCalledTimes(1);
+        expect(steer).toHaveBeenCalledTimes(1);
+        expect(push).not.toHaveBeenCalled();
+        if (mode === 'unconfirmed') {
+          await expect(agent.turnCompleteFor('follow-B')).rejects.toThrow('unconfirmed');
+        } else {
+          (agent as any).resolveTurn('owner-A');
+          await agent.turnCompleteFor('follow-B');
+        }
+      } finally { finishNotice(); await admission; dispose(agent); }
+    });
+
     it('describes Claude streaming input accurately and guides explicit steer to ordinary messages', async () => {
       const { agent, callbacks, push } = owned('claude');
       try {

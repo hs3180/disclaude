@@ -1110,7 +1110,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       const diagnosticId = crypto.randomUUID();
       settleRejectedInput(new Error(`Busy input delivery is unconfirmed; diagnostic ID ${diagnosticId}`, { cause: error }));
       this.logger.error({ err: error, chatId: params.chatId, messageId: params.messageId, sourceMessageId, generation, diagnosticId }, 'Steer outcome is unknown; refusing duplicate channel submission');
-      await notify(`⚠️ 插话未收到后端确认，未自动重复发送。请先核对当前回合结果，再决定是否补充；诊断 ID: ${diagnosticId}。`);
+      void notify(`⚠️ 插话未收到后端确认，未自动重复发送。请先核对当前回合结果，再决定是否补充；诊断 ID: ${diagnosticId}。`);
       return true;
     }
 
@@ -1128,7 +1128,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     });
     this.logger.info({ chatId: params.chatId, messageId: params.messageId, sourceMessageId,
       nativeTurnId: acknowledgement.turnId, generation }, 'Busy input acknowledged for its original turn');
-    await notify('🎯 后端已确认接收这条补充信息，结果随原回合交付；正在运行的工具会继续执行。');
+    void notify('🎯 后端已确认接收这条补充信息，结果随原回合交付；正在运行的工具会继续执行。');
     return true;
   }
 
