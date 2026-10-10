@@ -844,10 +844,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         senderOpenId,
       });
 
-      // Wait for the task to complete via the unified streaming path
-      if (this.taskCompletionPromise) {
-        await this.taskCompletionPromise;
-      }
+      // A fast terminal can clear the session-wide promise before admission
+      // returns. The retained per-message record still owns the real outcome.
+      const completion = this.turnCompleteFor(effectiveMessageId);
+      if (!completion) { throw new Error('One-shot request was not accepted into a turn'); }
+      await completion;
 
       this.logger.info({ chatId }, 'One-shot task completed normally');
     } finally {
@@ -990,7 +991,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         traceId: lifecycleContext.traceId,
         runId: lifecycleContext.runId,
         sourceMessageId: messageId,
-        threadRootId: this.pendingTurnAnchors[this.pendingTurnAnchors.length - 1],
+        threadRootId: threadRootId ?? this.conversationOrchestrator.getThreadRoot(chatId),
         startedAt: Date.now(),
       });
       this.recoveryRunIds.set(messageId, lifecycleContext.runId);
@@ -1015,6 +1016,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     if (!this.historyManager.firstMessageHistoryLoaded) {
       await this.historyManager.loadFirstMessageHistory();
     }
+
+    // A confirmed stop already owns settlement, including its original cause.
+    // Admission must not replace it with a generic interrupted-input failure.
+    if (this.stoppedQueryGenerations.has(acceptedGeneration) && this.turnCompletions.has(messageId)) { return; }
 
     // Shutdown/reset may have interrupted this input while history was loading.
     if (this.disposed || this.sessionGeneration !== acceptedGeneration ||

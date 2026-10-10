@@ -361,6 +361,28 @@ describe('ChatAgent (service)', () => {
   });
 
   describe('runOnce', () => {
+    async function completeOwnedOnce(): Promise<void> {
+      let publish!: () => void;
+      (chatAgent as any).isAgentTeamsEnabled = () => false;
+      (chatAgent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          await new Promise<void>(resolve => { publish = resolve; });
+          yield { parsed: { type: 'text', content: 'Owned successful result' }, raw: {} };
+          yield { parsed: { type: 'result', content: '✅ Complete' }, raw: {} };
+        })(),
+      });
+      const run = chatAgent.runOnce('oc_test_chat', 'hello', 'msg_1');
+      await vi.waitFor(() => expect((chatAgent as any).channel.push).toHaveBeenCalled());
+      publish();
+      await run;
+    }
+
+    it('rejects a fast iterator end instead of reporting one-shot success', async () => {
+      await expect(chatAgent.runOnce('oc_test_chat', 'hello', 'fast-empty')).rejects.toThrow();
+      expect((chatAgent as any).onceMode).toBe(false);
+    });
+
     it('should throw when chatId does not match bound chatId', async () => {
       await expect(chatAgent.runOnce('oc_wrong', 'hello', 'msg_1')).rejects.toThrow(
         'cannot execute for oc_wrong'
@@ -368,12 +390,12 @@ describe('ChatAgent (service)', () => {
     });
 
     it('should complete successfully for matching chatId', async () => {
-      await expect(chatAgent.runOnce('oc_test_chat', 'hello', 'msg_1')).resolves.toBeUndefined();
+      await expect(completeOwnedOnce()).resolves.toBeUndefined();
     });
 
     it('should set onceMode during execution', async () => {
       // Verify onceMode is cleaned up after execution
-      await chatAgent.runOnce('oc_test_chat', 'hello', 'msg_1');
+      await completeOwnedOnce();
       expect((chatAgent as any).onceMode).toBe(false);
     });
   });
