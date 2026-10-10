@@ -170,8 +170,8 @@ describe('runRateLimitBench — 429 throttle + cooldown', () => {
     // call#0 at t=0 (success); sleep 500 → t=500; call#1 at t=500 (429).
     expect(c.firstThrottleAtMs).toBe(500);
     expect(c.firstRetryAfterMs).toBe(5_000);
-    // Probe: sleep 1000 → t=1500; call#2 success → cooldown = 1500-500 = 1000.
-    expect(c.cooldownMs).toBe(1_000);
+    // Retry-After 5s is a lower bound even though the configured probe interval is 1s.
+    expect(c.cooldownMs).toBe(5_000);
     expect(result.maxObservedBackoffMs).toBe(5_000); // Retry-After dominates the cooldown.
     // A throttle occurred → this cadence is not clean → maxSustainedPerSec drops to 0.
     expect(result.maxSustainedPerSec).toBe(0);
@@ -240,7 +240,7 @@ describe('runRateLimitBench — business-code rejection (no cooldown probe)', ()
 });
 
 describe('runRateLimitBench — burst test', () => {
-  it('tallies applied / throttled / rejected across burst rounds', async () => {
+  it('tallies the burst and stops on its first throttle', async () => {
     // Every 3rd burst PUT is throttled.
     const caller = scriptedCaller((idx) => (idx % 3 === 2 ? throttle429() : SUCCESS));
     const { now, sleep } = fakeClock();
@@ -250,11 +250,11 @@ describe('runRateLimitBench — burst test', () => {
     });
     const result = await runRateLimitBench({ caller, config, now, sleep });
 
-    expect(result.burst.rounds).toBe(2);
-    expect(result.burst.totalSent).toBe(6); // 3 × 2
-    // Indices 2 and 5 throttle → 2 throttled, 4 applied.
-    expect(result.burst.totalThrottled).toBe(2);
-    expect(result.burst.totalApplied).toBe(4);
+    expect(result.burst.rounds).toBe(1);
+    expect(result.burst.totalSent).toBe(3);
+    expect(result.burst.totalThrottled).toBe(1);
+    expect(result.burst.totalApplied).toBe(2);
+    expect(caller.calls).toHaveLength(3);
   });
 });
 
@@ -406,5 +406,118 @@ describe('DEFAULT_BENCH_CONFIG', () => {
   it('matches the methodology doc procedure (2 → 20 PUT/s ramp)', () => {
     expect(DEFAULT_BENCH_CONFIG.cadencesPerSec).toEqual([2, 5, 10, 20]);
     expect(DEFAULT_BENCH_CONFIG.burst.count).toBeGreaterThanOrEqual(5);
+  });
+});
+
+describe('live measurement regressions', () => {
+  it('measures serial HTTP throughput instead of reporting the requested rate', async () => {
+    const clock = fakeClock();
+    const starts: number[] = [];
+    const caller: BenchCaller = async () => {
+      starts.push(clock.now());
+      await clock.sleep(250);
+      return SUCCESS;
+    };
+    const result = await runRateLimitBench({
+      caller, ...clock,
+      config: smallConfig({
+        cadencesPerSec: [20],
+        burst: { count: 0, windowMs: 50, rounds: 0, idleMs: 1000 },
+      }),
+    });
+    expect(starts).toEqual([0, 250, 500, 750]);
+    expect(result.cadences[0]).toMatchObject({
+      elapsedMs: 1000, actualRequestsPerSec: 4, actualSuccessesPerSec: 4,
+    });
+    expect(result.maxSustainedPerSec).toBe(4);
+    expect(result.suggestedMinIntervalMs).toBe(250);
+  });
+
+  it('does not probe before the server Retry-After delay', async () => {
+    const clock = fakeClock();
+    const starts: number[] = [];
+    const caller: BenchCaller = () => {
+      starts.push(clock.now());
+      return Promise.resolve(starts.length === 1 ? throttle429(5000) : SUCCESS);
+    };
+    const result = await runRateLimitBench({
+      caller, ...clock,
+      config: smallConfig({
+        probeBudgetMs: 6000,
+        burst: { count: 0, windowMs: 50, rounds: 0, idleMs: 1000 },
+      }),
+    });
+    expect(starts).toEqual([0, 5000]);
+    expect(result.cadences[0]?.cooldownMs).toBe(5000);
+  });
+
+  it('does not bypass a recovery header longer than the probe budget', async () => {
+    const clock = fakeClock();
+    let calls = 0;
+    const caller: BenchCaller = () => {
+      calls += 1;
+      return Promise.resolve({ status: 429, code: 99991400, rateLimitResetMs: 52000 });
+    };
+    const result = await runRateLimitBench({ caller, ...clock,
+      config: smallConfig({ cadencesPerSec: [2, 10], probeBudgetMs: 5000 }) });
+    expect(calls).toBe(1);
+    expect(result.cadences[0]?.firstRateLimitResetMs).toBe(52000);
+    expect(result.cadences[0]?.cooldownMs).toBeUndefined();
+    expect(result.maxObservedBackoffMs).toBe(52000);
+    expect(result.burst.totalSent).toBe(0);
+  });
+
+  it('captures the documented x-ogw-ratelimit-reset header in milliseconds', async () => {
+    const caller = createFeishuBenchCaller({ tenantAccessToken: 'test-token',
+      cardId: 'card-1', elementId: 'element-1',
+      fetchImpl: (() => Promise.resolve(new Response(JSON.stringify({ code: 99991400 }), {
+        status: 429, headers: { 'x-ogw-ratelimit-reset': '52' },
+      }))) as typeof fetch });
+    expect(await caller({ sequence: 1, content: 'test' })).toMatchObject({
+      status: 429, code: 99991400, rateLimitResetMs: 52000, rateLimitResetRaw: '52',
+    });
+  });
+
+  it('recognizes only the documented frequency-limit business code', () => {
+    expect(classifyOutcome(bizReject(99991400))).toBe('throttled');
+    expect(classifyOutcome(bizReject(99991672))).toBe('rejected');
+    expect(classifyOutcome(bizReject(300317))).toBe('rejected');
+  });
+
+  it('keeps an unobserved backoff distinct from a zero-backoff recommendation', async () => {
+    const clock = fakeClock();
+    const result = await runRateLimitBench({ caller: scriptedCaller(() => SUCCESS), ...clock,
+      config: smallConfig() });
+    const findings = formatFindingsTable(result);
+    expect(findings).toContain('not observed');
+    expect(findings).not.toContain('`StreamingThrottle.maxBackoffMs` ≈ 0 ms');
+  });
+
+  it('records the actual burst window when HTTP latency exceeds the requested window', async () => {
+    const clock = fakeClock();
+    const caller: BenchCaller = async () => { await clock.sleep(250); return SUCCESS; };
+    const result = await runRateLimitBench({ caller, ...clock,
+      config: smallConfig({ cadencesPerSec: [],
+        burst: { count: 3, windowMs: 50, rounds: 1, idleMs: 1000 } }) });
+    expect(result.burst.roundWindowsMs).toEqual([500]);
+  });
+
+  it('can measure the documented PATCH settings endpoint without closing streaming', async () => {
+    let request: { url: string; init: RequestInit } | undefined;
+    const caller = createFeishuBenchCaller({
+      tenantAccessToken: 'test-token', cardId: 'card-1', elementId: 'unused',
+      operation: 'settings',
+      fetchImpl: ((url: string | URL | Request, init?: RequestInit) => {
+        request = { url: String(url), init: init ?? {} };
+        return Promise.resolve(new Response(JSON.stringify({ code: 0 }), { status: 200 }));
+      }) as typeof fetch,
+    });
+    expect(await caller({ sequence: 3, content: 'unused' })).toMatchObject({ status: 200, code: 0 });
+    expect(request?.url).toBe('https://open.feishu.cn/open-apis/cardkit/v1/cards/card-1/settings');
+    expect(request?.init.method).toBe('PATCH');
+    const body = JSON.parse(request!.init.body as string);
+    expect(JSON.parse(body.settings)).toEqual({ config: { streaming_mode: true } });
+    expect(body.sequence).toBe(3);
+    expect(body).not.toHaveProperty('content');
   });
 });
