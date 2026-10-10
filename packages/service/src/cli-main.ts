@@ -350,19 +350,6 @@ export async function main(): Promise<void> {
     // missing and the agent falls back to the workspace.
     cwdResolver: (chatId: string) => projectManager.resolveCwd(chatId),
     ...Config.getBusyTurnPolicy(),
-    // A policy stop reports its actual basis in the originating topic.
-    onBusyCapExceeded: async (chatId, busyMinutes, decision) => {
-      const basis = decision.kind === 'no-progress'
-        ? `连续 ${Math.round(decision.noProgressMs / 60_000)} 分钟无 SDK/工具活动`
-        : `达到配置的绝对上限 ${Math.round(decision.limitMs / 60_000)} 分钟`;
-      await service.sendMessage(
-        chatId,
-        `⏹️ **响应已停止**（${decision.kind}；已运行 ${busyMinutes} 分钟；${basis}；` +
-          `最近活动距今 ${Math.round(decision.noProgressMs / 60_000)} 分钟）\n\n` +
-          '请先检查已有结果，再发送消息继续。',
-        decision.threadRootId
-      );
-    },
   });
   // Issue #4169: Reclaim inactive agents (releasing their query handle, channel,
   // MCP connections, listeners) so the per-chatId pool doesn't grow unbounded.

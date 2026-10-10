@@ -230,6 +230,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   // next to the stalledTerminated check in processIterator.
   private sessionGeneration = 0;
   private readonly stoppedQueryGenerations = new Set<number>();
+  private readonly stopReasons = new Map<number, string>();
 
   // Issue #4626: user-visible delivery isolation state. A channel sendMessage
   // failure (invalid receive_id → 400, transient 5xx, network blip) used to
@@ -2511,9 +2512,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Keep the generation check so late teardown cannot finish a replacement
     // session's REST request or turn-completion promises.
     if (this.stoppedQueryGenerations.delete(myGeneration)) {
+      const stopReason = this.stopReasons.get(myGeneration);
+      this.stopReasons.delete(myGeneration);
       if (this.sessionGeneration === myGeneration) {
         const threadRoot = resolveReplyThreadRoot();
-        const error = new Error(backendInterrupted ? 'Agent turn interrupted by backend' : 'Agent turn cancelled by stop');
+        const error = new Error(stopReason ? `Agent turn stopped by activity policy: ${stopReason}`
+          : backendInterrupted ? 'Agent turn interrupted by backend' : 'Agent turn cancelled by stop');
         this.rejectTurn(error);
         this.taskCompletionReject?.(error);
         this.clearTaskCompletion();
@@ -2523,7 +2527,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         this.isSessionActive = false;
         this.isProcessingMessage = false;
         this.activeTurnMessageId = undefined;
-        await this.deliverUserVisible(chatId, '⏹️ 本轮已停止。', threadRoot);
+        await this.deliverUserVisible(chatId, stopReason ?? '⏹️ 本轮已停止。', threadRoot);
         if (this.sessionGeneration !== myGeneration) { return; }
         await this.callbacks.onDone?.(chatId, threadRoot);
       }
@@ -2889,9 +2893,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    * The user can continue the conversation after stopping.
    *
    * @param chatId - Optional chat ID (must match bound chatId if provided)
+   * @param reason - Activity-policy notice delivered through the original turn's channel
    * @returns true if a query was stopped, false if no active query
    */
-  stop(chatId?: string): boolean {
+  stop(chatId?: string, reason?: string): boolean {
     // Issue #644: If chatId is provided, it must match bound chatId
     if (chatId && chatId !== this.boundChatId) {
       this.logger.warn(
@@ -2909,6 +2914,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     this.logger.info({ chatId: this.boundChatId }, 'Stopping current query');
     this.stoppedQueryGenerations.add(this.sessionGeneration);
+    if (reason) { this.stopReasons.set(this.sessionGeneration, reason); }
 
     // Issue #2926: Abort the running iterator so processIterator breaks
     // immediately instead of continuing to process buffered messages.

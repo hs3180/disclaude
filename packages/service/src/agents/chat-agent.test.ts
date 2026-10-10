@@ -2007,6 +2007,66 @@ describe('ChatAgent (service)', () => {
       await agent.dispose();
     });
 
+    it.each(['wall-clock', 'no-progress'])('delivers the %s policy cause once to the original turn', async kind => {
+      const callbacks = createMockCallbacks();
+      const agent = new ChatAgent({ chatId: 'policy-chat', callbacks, apiKey: 'key', model: 'model' });
+      let release!: () => void;
+      const parked = new Promise<void>(resolve => { release = resolve; });
+      (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(release), cancel: vi.fn() },
+        iterator: (async function* () { await parked; })() });
+      const reason = `⏹️ **响应已停止**（${kind}；达到配置的上限 5 分钟）`;
+      try {
+        await agent.processMessage({ chatId: 'policy-chat', payload: 'work', messageId: 'policy-source', threadRootId: 'policy-root' });
+        const rejected = expect(agent.turnCompleteFor('policy-source')).rejects.toThrow(reason);
+        expect(agent.stop('another-chat', 'wrong owner')).toBe(false);
+        expect(agent.stop('policy-chat', reason)).toBe(true);
+        expect(agent.stop('policy-chat', 'duplicate reason')).toBe(false);
+        await rejected;
+        await vi.waitFor(() => expect(callbacks.onDone).toHaveBeenCalledExactlyOnceWith('policy-chat', 'policy-root'));
+        expect(callbacks.sendMessage).toHaveBeenCalledExactlyOnceWith('policy-chat', reason, 'policy-root');
+        expect(agent.isBusy).toBe(false);
+        expect(agent.hasActiveSession()).toBe(false);
+        expect((agent as any).stopReasons.size).toBe(0);
+      } finally { release(); agent.dispose(); }
+    });
+
+    it('keeps a pending policy notice from completing an explicit replacement turn', async () => {
+      const callbacks = createMockCallbacks();
+      const reason = '⏹️ **响应已停止**（wall-clock；达到配置的绝对上限 5 分钟）';
+      let releaseNotice!: () => void;
+      const notice = new Promise<void>(resolve => { releaseNotice = resolve; });
+      callbacks.sendMessage.mockImplementation(async (_chat, text) => { if (text === reason) { await notice; } });
+      const agent = new ChatAgent({ chatId: 'policy-replace', callbacks, apiKey: 'key', model: 'model' });
+      (agent as any).isAgentTeamsEnabled = () => false;
+      let releaseOld!: () => void, releaseNew!: () => void;
+      const old = new Promise<void>(resolve => { releaseOld = resolve; });
+      const next = new Promise<void>(resolve => { releaseNew = resolve; });
+      const create = vi.fn().mockReturnValueOnce({ handle: { close: vi.fn(releaseOld), cancel: vi.fn() },
+        iterator: (async function* () { await old; })() })
+        .mockReturnValueOnce({ handle: { close: vi.fn(releaseNew), cancel: vi.fn() }, iterator: (async function* () {
+          await next;
+          yield { parsed: { type: 'text', content: 'Explicit continuation finished' } };
+          yield { parsed: { type: 'result', content: '✅ Complete' } };
+        })() });
+      (agent as any).createQueryStream = create;
+      try {
+        await agent.processMessage({ chatId: 'policy-replace', payload: 'old', messageId: 'old-source', threadRootId: 'old-root' });
+        const rejected = expect(agent.turnCompleteFor('old-source')).rejects.toThrow('wall-clock');
+        expect(agent.stop('policy-replace', reason)).toBe(true);
+        await rejected;
+        await vi.waitFor(() => expect(callbacks.sendMessage).toHaveBeenCalledWith('policy-replace', reason, 'old-root'));
+        await agent.processMessage({ chatId: 'policy-replace', payload: 'continue', messageId: 'new-source', threadRootId: 'new-root' });
+        releaseNotice();
+        expect(agent.isBusy).toBe(true);
+        releaseNew();
+        await agent.turnCompleteFor('new-source');
+        await vi.waitFor(() => expect(callbacks.onDone).toHaveBeenCalledExactlyOnceWith('policy-replace', 'new-root'));
+        expect(callbacks.sendMessage.mock.calls.filter(([, text]) => text === reason)).toHaveLength(1);
+        expect(callbacks.sendMessage).toHaveBeenCalledWith('policy-replace', 'Explicit continuation finished', 'new-root');
+        expect(create).toHaveBeenCalledTimes(2);
+      } finally { releaseOld(); releaseNotice(); releaseNew(); agent.dispose(); }
+    });
+
     it('should abort AbortController on reset()', () => {
       const agent = new ChatAgent({
         chatId: 'oc_reset_abort_test',

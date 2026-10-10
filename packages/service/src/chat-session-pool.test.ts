@@ -865,6 +865,7 @@ describe('ChatSessionPool', () => {
         elapsedMs: 31 * 60_000, noProgressMs: 30 * 60_000, limitMs: 30 * 60_000,
         lastActivityAt: agent.lastActivityAt, lastActivityType: 'claude:api_retry',
       });
+      expect(agent.stop).toHaveBeenCalledWith('owned-chat', expect.stringContaining('no-progress；已运行 31 分钟；连续 30 分钟无 SDK/工具活动'));
     });
 
     it('enforces an explicit absolute cap even when activity is recent', () => {
@@ -878,6 +879,7 @@ describe('ChatSessionPool', () => {
       agent.lastActivityAt = started + 600_000;
       pool.evictIdleAgents(started + 600_000);
       expect(agent.stop).toHaveBeenCalledOnce();
+      expect(agent.stop).toHaveBeenCalledWith('active-chat', expect.stringContaining('wall-clock；已运行 10 分钟；达到配置的绝对上限 10 分钟'));
       expect(notify).toHaveBeenCalledWith('active-chat', 10, expect.objectContaining({ kind: 'wall-clock', noProgressMs: 0 }));
     });
 
@@ -931,7 +933,7 @@ describe('ChatSessionPool', () => {
       const evicted = pool.evictIdleAgents(t0 + 5100);
       expect(evicted).toEqual([]);
       expect(agent.stop).toHaveBeenCalledOnce();
-      expect(agent.stop).toHaveBeenCalledWith('chat-runaway');
+      expect(agent.stop).toHaveBeenCalledWith('chat-runaway', expect.stringContaining('wall-clock'));
       expect(agent.dispose).not.toHaveBeenCalled();
     });
 
@@ -1081,7 +1083,7 @@ describe('ChatSessionPool', () => {
       expect(onBusyCapExceeded).toHaveBeenCalledWith('chat-notify', 5, expect.objectContaining({ kind: 'wall-clock', limitMs: 5 * 60_000 }));
     });
 
-    it('should not fire onBusyCapExceeded when not wired (log-only, no crash)', () => {
+    it('stops with the policy notice when no observer is wired', () => {
       // Default construction (no hook): the stop still happens and the
       // sweep completes without throwing.
       const pool = new ChatSessionPool({ idleTimeoutMs: 1000, busyTurnHardCapMs: 5000 });
@@ -1158,7 +1160,7 @@ describe('ChatSessionPool', () => {
       // And a genuinely over-long turn IS still capped (cap still enforced).
       pool.evictIdleAgents(newTurnStart + cap + 1000);
       expect(agent.stop).toHaveBeenCalledOnce();
-      expect(agent.stop).toHaveBeenCalledWith('chat-b2b');
+      expect(agent.stop).toHaveBeenCalledWith('chat-b2b', expect.stringContaining('wall-clock'));
     });
 
     it('Issue #4620: a genuine single runaway turn still trips the cap via turnStartedAtMs', () => {
@@ -1218,9 +1220,9 @@ describe('ChatSessionPool', () => {
       // identical turnStartedAtMs.
       pool.evictIdleAgents(t0 + 5100);
       expect(agentA.stop).toHaveBeenCalledOnce();
-      expect(agentA.stop).toHaveBeenCalledWith('chat-collide-a');
+      expect(agentA.stop).toHaveBeenCalledWith('chat-collide-a', expect.stringContaining('wall-clock'));
       expect(agentB.stop).toHaveBeenCalledOnce();
-      expect(agentB.stop).toHaveBeenCalledWith('chat-collide-b');
+      expect(agentB.stop).toHaveBeenCalledWith('chat-collide-b', expect.stringContaining('wall-clock'));
 
       // The guard must also not leak across chats: A going idle must not
       // clear B's guard (B still busy → repeated sweeps must not re-stop B).
@@ -1502,7 +1504,7 @@ describe('ChatSessionPool', () => {
 
       // agent.stop() and the user-facing hook both get the plain chatId —
       // the agent's boundChatId guard and the channel key on chatId.
-      expect(agent.stop).toHaveBeenCalledWith('oc_topic');
+      expect(agent.stop).toHaveBeenCalledWith('oc_topic', expect.stringContaining('wall-clock'));
       expect(onBusyCapExceeded).toHaveBeenCalledWith('oc_topic', expect.any(Number), expect.objectContaining({ sessionKey: 'oc_topic::om_threadA', kind: 'wall-clock' }));
     });
 

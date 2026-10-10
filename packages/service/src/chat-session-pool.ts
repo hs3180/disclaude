@@ -81,11 +81,12 @@ export interface ChatSessionPoolOptions {
   busyTurnStallTimeoutMs?: number;
 
   /**
-   * User-facing notice hook, fired after pending work is stopped by either
+   * Optional observer, fired after pending work is stopped by either
    * activity policy. Fire-and-forget by contract — a failing notify must not
    * break the sweep for other agents (errors are logged, not thrown).
    *
-   * When omitted, only the structured warn log is emitted.
+   * ChatAgent delivers the policy notice through the original turn's channel,
+   * whether or not this observer is configured.
    */
   onBusyCapExceeded?: (chatId: string, busyMinutes: number, decision: BusyTurnStopDecision) => Promise<void> | void;
 
@@ -798,7 +799,13 @@ export class ChatSessionPool {
       { chatId, ...decision, busyMinutes: busyMin, isBusy: agent.isBusy, hasPendingWork: agent.hasPendingWork },
       'Pending work exceeded activity policy — stopping query'
     );
-    if (agent.stop(chatId) === false) {
+    const basis = decision.kind === 'no-progress'
+      ? `连续 ${Math.round(decision.noProgressMs / 60_000)} 分钟无 SDK/工具活动`
+      : `达到配置的绝对上限 ${Math.round(decision.limitMs / 60_000)} 分钟`;
+    const stopNotice = `⏹️ **响应已停止**（${decision.kind}；已运行 ${busyMin} 分钟；${basis}；` +
+      `最近活动距今 ${Math.round(decision.noProgressMs / 60_000)} 分钟）\n\n` +
+      '请先检查已有结果，再发送消息继续。';
+    if (agent.stop(chatId, stopNotice) === false) {
       this.busyTurnStoppedFor.delete(guardKey);
       logger.warn({ chatId, ...decision }, 'No live query accepted the activity-policy stop');
       return;
