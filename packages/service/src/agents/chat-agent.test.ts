@@ -789,7 +789,7 @@ describe('ChatAgent (service)', () => {
 
   describe('Provider stall termination (Issues #3706, #5283)', () => {
     it.each(['claude', 'codex'] as const)('sends notice, retains the %s cause and suppresses restart', async backend => {
-      const localCallbacks = createMockCallbacks();
+      const localCallbacks = { ...createMockCallbacks(), onTurnResult: vi.fn() };
       const agent = new ChatAgent({
         chatId: 'oc_stall',
         callbacks: localCallbacks,
@@ -820,7 +820,7 @@ describe('ChatAgent (service)', () => {
         iterator: stallResultIterator(),
       });
 
-      void agent.processMessage({ chatId: 'oc_stall', payload: 'hello', messageId: 'msg_1' });
+      void agent.processMessage({ chatId: 'oc_stall', payload: 'hello', messageId: 'msg_1', threadRootId: 'om_stall_root' });
 
       await vi.waitFor(
         () => expect(agent.turnCompleteFor('msg_1')).toBeDefined(),
@@ -849,6 +849,19 @@ describe('ChatAgent (service)', () => {
       expect(failure).toMatchObject({ name: 'ProviderStallError', sourceMessageId: 'msg_1', provider: backend });
       expect(failure.runId).toEqual(expect.any(String));
       expect(failure.traceId).toEqual(expect.any(String));
+      const terminal = (agent as any).logger.warn.mock.calls
+        .filter(([context]: any[]) => context?.event === 'agent_turn' && context.sourceMessageId === 'msg_1');
+      expect(terminal).toHaveLength(1);
+      expect(terminal[0][0]).toMatchObject({ state: 'failed', user_visible: true, provider: backend,
+        sourceMessageId: 'msg_1', diagnosticId: expect.any(String), terminationDetail: 'codex app-server stalled for 30ms' });
+      expect(failure.diagnosticId).toBe(terminal[0][0].diagnosticId);
+      const notices = localCallbacks.sendMessage.mock.calls.filter(([, text]) => text.includes('诊断 ID'));
+      expect(notices).toHaveLength(1);
+      expect(notices[0][1]).toContain('msg_1');
+      expect(notices[0][1]).toContain(failure.diagnosticId);
+      expect(notices[0][1]).toContain('没有自动重放工具');
+      expect(notices[0][2]).toBe('om_stall_root');
+      expect(localCallbacks.onTurnResult).toHaveBeenCalledExactlyOnceWith({ success: false, text: '', truncated: false });
       // Session inactive (restart suppressed)
       expect(agent.hasActiveSession()).toBe(false);
       // Context preserved (deleteThreadRoot NOT called)
@@ -860,6 +873,36 @@ describe('ChatAgent (service)', () => {
         expect(context.provider).toBe(backend);
         expect(message).not.toContain('GLM');
       }
+    });
+
+    it.each([false, true])('rejects one-shot stall waiters when notice delivery fails=%s, including empty provider notices', async deliveryFails => {
+      const localCallbacks = { ...createMockCallbacks(), onTurnResult: vi.fn() };
+      if (deliveryFails) { localCallbacks.sendMessage.mockRejectedValue(new Error('Channel unavailable')); }
+      const agent = new ChatAgent({ chatId: 'oc_once_stall', callbacks: localCallbacks,
+        apiKey: 'key', model: 'model', agentBackend: 'codex' });
+      let release!: () => void;
+      const ready = new Promise<void>(resolve => { release = resolve; });
+      (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          await ready;
+          yield { parsed: { type: 'result', content: '', terminatedReason: 'stall',
+            terminationDetail: 'codex app-server exited during an active tool' }, raw: {} };
+        })() });
+      const task = agent.runOnce('oc_once_stall', 'one scheduled request', 'msg_once_stall');
+      void task.catch(() => {});
+      await vi.waitFor(() => expect(agent.turnCompleteFor('msg_once_stall')).toBeDefined());
+      release();
+      await expect(task).rejects.toMatchObject({ name: 'ProviderStallError', sourceMessageId: 'msg_once_stall',
+        message: 'codex app-server exited during an active tool', diagnosticId: expect.any(String) });
+      expect(localCallbacks.sendMessage).toHaveBeenCalledTimes(1);
+      const terminal = (agent as any).logger.warn.mock.calls
+        .filter(([context]: any[]) => context?.event === 'agent_turn' && context.sourceMessageId === 'msg_once_stall');
+      expect(terminal).toHaveLength(1);
+      expect(terminal[0][0]).toMatchObject({ state: 'failed', user_visible: !deliveryFails });
+      expect(localCallbacks.onTurnResult).toHaveBeenCalledExactlyOnceWith({ success: false, text: '', truncated: false });
+      expect((agent as any).restartManager.shouldRestart).not.toHaveBeenCalled();
+      expect((agent as any).onceMode).toBe(false);
+      ChatAgent.prototype.dispose.call(agent);
     });
   });
 

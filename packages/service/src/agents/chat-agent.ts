@@ -1611,7 +1611,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         // Issue #3641: In topic group threads, filter intermediate messages
         // (tool_use, tool_result, tool_progress) to reduce noise.
         // Issue #3809: Forward intermediate messages to debug group.
-        if (parsed.content && parsed.terminatedReason !== 'turn_failed') {
+        if (parsed.content && parsed.terminatedReason !== 'turn_failed' && parsed.terminatedReason !== 'stall') {
           // 瞬态进度占位("🤔 Thinking..." / "🔄 Compacting…")同样
           // 属于内部进度,不能当用户消息发。SDK 每个请求都发一次 requesting,
           // 群聊没有流式卡片(见下方 streamDriver 仅在 p2p 构建),每步都会单蹦
@@ -1742,27 +1742,32 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
               resolveReplyThreadRoot()
             );
           }
-          // Provider watchdog terminated the stream (#3706, #5283).
-          // The generic content-send block above already delivered the notice
-          // (parsed.content carries STALL_TERMINATE_NOTICE). Here we only do
-          // control flow: record failure (repeated stalls trip the circuit),
-          // settle the turn as a provider failure, and skip the normal
-          // recordSuccess / restart path. The scheduler must observe the
-          // failure instead of clearing its streak as if this were success.
+          // Provider watchdog/process loss is a terminal failure, including
+          // when the provider supplies no notice. Keep its message/diagnostic
+          // association in both the native reply and the scheduled-task error.
           if (parsed.terminatedReason === 'stall') {
             this.stalledTerminated = true;
+            const lifecycleContext = this.activeLifecycleContext;
+            const sourceMessageId = lifecycleContext?.sourceMessageId ?? currentTurnMessageId;
+            const providerNotice = parsed.content?.trim() || `⚠️ ${this.sdkProvider.name} 响应已中断，结果可能不完整。`;
+            const delivered = await this.deliverUserVisible(chatId,
+              `${providerNotice}\n消息 ID: ${sourceMessageId ?? 'unknown'}。诊断 ID: ${diagnosticId}。` +
+                '请先核对已经执行的操作，再决定是否继续；系统没有自动重放工具。',
+              resolveReplyThreadRoot());
             this.logger.warn(
               { chatId, messageCount, backend: this.agentBackend, provider: this.sdkProvider.name,
-                terminationDetail: parsed.terminationDetail, ...this.activeLifecycleContext },
+                terminationDetail: parsed.terminationDetail, ...lifecycleContext,
+                event: 'agent_turn', state: 'failed', diagnosticId, user_visible: delivered },
               'Provider stall: watchdog terminated the stream; recording failure, resolving turn'
             );
             this.restartManager.recordFailure(chatId, 'stall');
             this.isProcessingMessage = false;
             const stallError = Object.assign(new Error(
               parsed.terminationDetail ?? 'Provider stall watchdog terminated the turn'
-            ), this.activeLifecycleContext, { backend: this.agentBackend, provider: this.sdkProvider.name });
+            ), lifecycleContext, { backend: this.agentBackend, provider: this.sdkProvider.name, diagnosticId });
             stallError.name = 'ProviderStallError';
             this.resolveTurn(currentTurnMessageId, stallError);
+            await this.callbacks.onTurnResult?.({ success: false, text: turnResultText, truncated: turnResultTruncated });
             if (this.callbacks.onDone) {
               const threadRoot = resolveReplyThreadRoot();
               await this.callbacks.onDone(chatId, threadRoot);
@@ -1770,7 +1775,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             if (this.onceMode) {
               this.isSessionActive = false;
               this.channel?.close();
-              this.taskCompletionResolve?.();
+              this.taskCompletionReject?.(stallError);
               this.clearTaskCompletion();
             }
             continue;
