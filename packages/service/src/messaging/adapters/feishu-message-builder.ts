@@ -16,7 +16,7 @@ function buildFeishuStableToolsSection({ capabilities }: MessageBuilderStableCon
     return true;
   });
   const notes = [
-    'Answer ordinary questions and present text previews in your final reply; ChatAgent delivers your final reply automatically. Use the channel CLI for a separately requested message or destination. For a content-only preview, return the preview without an added acknowledgment or mention.',
+    'Answer ordinary questions and present text previews in your final reply; ChatAgent delivers your final reply automatically, including requests to send or post a preview in this chat or topic. Do not call send_text for that preview. Use the channel CLI only for a delivery requested in addition to this reply (such as another chat), or for attachments/cards. For a content-only preview, return it once without an added acknowledgment or mention.',
     buildChannelCliHelpGuidance('disclaude channel', { sendCommands }),
   ];
   if (!sendCommands.includes('send_file')) { notes.push('send_file is NOT supported on this channel.'); }
