@@ -117,11 +117,9 @@ export type {
   ToolResultBlock as SdkToolResultBlock,
   ToolProgressPayload as SdkToolProgressPayload,
   ToolProgressCallback as SdkToolProgressCallback,
-  // #4568: also exported unprefixed — consumers (mcp-server tools) import the
-  // callback by its own name, matching how they already consume zod etc.
+  // Also exported without a prefix for callback consumers (#4568).
   ToolProgressPayload,
   ToolProgressCallback,
-  // MCP types
   // Query types
   AgentQueryOptions,
   PermissionMode,

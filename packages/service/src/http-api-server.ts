@@ -3,7 +3,7 @@ import { isPrivateWorkflowRequest, type PrivateWorkflowRequest } from './channel
  * HTTP API Server for disclaude service.
  *
  * Provides a lightweight HTTP server for external tools (CLI, scripts) to
- * interact with disclaude service without going through Channel MCP.
+ * interact with disclaude service through the Channel API boundary.
  *
  * Phase 2 of Issue #3857: disclaude service HTTP API.
  *
