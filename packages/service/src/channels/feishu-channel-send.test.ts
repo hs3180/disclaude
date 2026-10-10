@@ -167,6 +167,34 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
     vi.clearAllMocks();
   });
 
+  it.each([['ou_user', 'p2p', 'open_id'], ['oc_private', 'p2p', 'chat_id'], ['oc_group', 'group', 'chat_id'] ] as const)(
+    'delivers welcome to %s using the native address type and confirmed receipt', async (chatId, chatType, addressType) => {
+      const { client, mocks } = createMockClient();
+      mocks.createMock.mockResolvedValueOnce({ code: 0, data: { message_id: 'welcome' } } as any);
+      const channel = createTestChannel(client);
+      await channel.sendWelcomeMessage(chatId, 'brief help', chatType);
+      expect(mocks.createMock).toHaveBeenCalledExactlyOnceWith({ params: { receive_id_type: addressType }, data: { receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text: 'brief help' }) } });
+      expect(mockLogOutgoingMessage).toHaveBeenCalledWith('welcome', chatId, 'brief help', 'text');
+    });
+
+  it.each([{ code: 99991672, msg: 'permission denied' }, { code: 0, data: {} }])('rejects unconfirmed welcome receipts without another send', async response => {
+    const { client, mocks } = createMockClient();
+    mocks.createMock.mockResolvedValueOnce(response as any);
+    const channel = createTestChannel(client);
+    await expect(channel.sendWelcomeMessage('oc_group', 'brief help', 'group')).rejects.toThrow('not confirmed');
+    expect(mocks.createMock).toHaveBeenCalledTimes(1);
+    expect(mocks.replyMock).not.toHaveBeenCalled();
+    expect(mockLogOutgoingMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not queue welcome when the channel is offline', async () => {
+    const { client, mocks } = createMockClient();
+    const channel = createTestChannel(client);
+    (channel as any)._status = 'stopped';
+    await expect(channel.sendWelcomeMessage('oc_group', 'brief help', 'group')).rejects.toThrow('unavailable');
+    expect(mocks.createMock).not.toHaveBeenCalled();
+  });
+
   describe('text messages', () => {
     it('should use message.create when no threadId is provided', async () => {
       const { client, mocks } = createMockClient();

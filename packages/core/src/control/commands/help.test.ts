@@ -2,13 +2,22 @@
  * Tests for /help command handler (packages/core/src/control/commands/help.ts)
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { handleHelp } from './help.js';
 import type { ControlCommand } from '../../types/channel.js';
 import type { ControlHandlerContext } from '../types.js';
 
 describe('handleHelp', () => {
-  const mockContext = {} as ControlHandlerContext;
+  const mockContext: ControlHandlerContext = {
+    agentPool: {
+      reset: vi.fn(), stop: vi.fn(), steer: vi.fn(),
+      listAgentPresets: () => [{ name: 'default', agentBackend: 'codex', model: 'gpt-6-luna' }],
+      getActiveAgentPreset: vi.fn(), switchAgentPreset: vi.fn(),
+    },
+    debugGroups: { getDebugGroup: () => null, setDebugGroup: vi.fn(), clearDebugGroup: () => null },
+    triggerMode: { getMode: () => 'mention', setMode: vi.fn() },
+    shutdown: vi.fn(), projectManager: {} as ControlHandlerContext['projectManager'],
+  };
   const mockCommand: ControlCommand = { type: 'help', chatId: 'test-chat' };
 
   it('should return success response', async () => {

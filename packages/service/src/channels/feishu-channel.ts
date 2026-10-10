@@ -28,6 +28,7 @@ import {
   type OutgoingMessage,
   type ChannelCapabilities,
   DEFAULT_CHANNEL_CAPABILITIES,
+  type ChatType,
   attachmentManager,
 } from '@disclaude/core';
 import {
@@ -1293,6 +1294,20 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
    */
   setWelcomeService(service: WelcomeService): void {
     this.welcomeHandler.setWelcomeService(service);
+    this.feishuMessageHandler.setWelcomeService(service);
+  }
+
+  /** Welcome events have no reply anchor; validate a real native receipt and never enqueue/retry. */
+  async sendWelcomeMessage(chatId: string, text: string, _chatType: ChatType): Promise<void> {
+    if (!this.client || !this.isRunning) { throw new Error('Welcome channel is unavailable'); }
+    const response = await this.client.im.message.create({
+      params: { receive_id_type: chatId.startsWith('ou_') ? 'open_id' : 'chat_id' },
+      data: { receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text }) },
+    });
+    if (response.code !== 0 || !response.data?.message_id) { throw new Error('Welcome delivery was not confirmed'); }
+    await messageLogger.logOutgoingMessage(response.data.message_id, chatId, text, 'text').catch(error => {
+      logger.warn({ error, chatId }, 'Failed to record welcome receipt');
+    });
   }
 
   /**

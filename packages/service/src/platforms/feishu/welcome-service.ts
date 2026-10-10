@@ -22,22 +22,29 @@ const logger = createLogger('WelcomeService');
  */
 export interface WelcomeServiceConfig {
   /** Function to generate welcome message */
-  generateWelcomeMessage: () => string;
+  generateWelcomeMessage: (chatId: string, chatType: ChatType) => string | undefined;
 
   /** Function to generate help message for new users joining group */
-  generateHelpMessage?: () => string;
+  generateHelpMessage?: (chatId: string, chatType: ChatType) => string | undefined;
 
   /** Function to send a message */
   sendMessage: (chatId: string, text: string) => Promise<void>;
+  /** Native event delivery can address a P2P user before a chat ID is known. */
+  sendWelcomeMessage?: (chatId: string, text: string, chatType: ChatType) => Promise<void>;
 }
 
 /**
  * Welcome Service - Manages welcome messages for new chats.
  */
 export class WelcomeService {
-  private generateWelcomeMessage: () => string;
-  private generateHelpMessage?: () => string;
+  private generateWelcomeMessage: WelcomeServiceConfig['generateWelcomeMessage'];
+  private generateHelpMessage?: WelcomeServiceConfig['generateHelpMessage'];
   private sendMessage: (chatId: string, text: string) => Promise<void>;
+  private sendWelcomeMessage?: WelcomeServiceConfig['sendWelcomeMessage'];
+  private readonly automaticPrompts = new Map<string, number>();
+  private readonly disabledChats = new Set<string>();
+  private readonly privateChatIds = new Map<string, string>();
+  private readonly maxChats = 1000;
 
   /** Track first-time private chats (memory-only, resets on restart) */
   private firstTimePrivateChats = new Set<string>();
@@ -46,6 +53,49 @@ export class WelcomeService {
     this.generateWelcomeMessage = config.generateWelcomeMessage;
     this.generateHelpMessage = config.generateHelpMessage;
     this.sendMessage = config.sendMessage;
+    this.sendWelcomeMessage = config.sendWelcomeMessage;
+  }
+
+  isEnabled(chatId: string): boolean {
+    return !this.disabledChats.has(this.privateChatIds.get(chatId) ?? chatId);
+  }
+
+  setEnabled(chatId: string, enabled: boolean): void {
+    const key = this.privateChatIds.get(chatId) ?? chatId;
+    if (enabled) { this.disabledChats.delete(key); }
+    else {
+      if (!this.disabledChats.has(key) && this.disabledChats.size >= this.maxChats) { throw new Error('Guidance preference capacity reached'); }
+      this.disabledChats.add(key);
+    }
+  }
+
+  /** Join the P2P entered-event address to the actual inbound chat's preference/rate state. */
+  registerPrivateChat(userId: string, chatId: string): void {
+    if (!this.privateChatIds.has(userId) && this.privateChatIds.size >= this.maxChats) { return; }
+    this.privateChatIds.set(userId, chatId);
+    const previous = this.automaticPrompts.get(userId);
+    if (previous !== undefined) { this.automaticPrompts.set(chatId, Math.max(previous, this.automaticPrompts.get(chatId) ?? 0)); this.automaticPrompts.delete(userId); }
+    if (this.disabledChats.delete(userId)) { this.disabledChats.add(chatId); }
+    if (this.firstTimePrivateChats.delete(userId)) { this.firstTimePrivateChats.add(chatId); }
+  }
+
+  /** Reserve before any await, including failed/uncertain delivery; explicit /help bypasses this gate. */
+  claimPrompt(chatId: string, cooldownMs = 5 * 60 * 1000): boolean {
+    const key = this.privateChatIds.get(chatId) ?? chatId;
+    if (!this.isEnabled(key)) { return false; }
+    const now = Date.now();
+    for (const [id, time] of this.automaticPrompts) {
+      if (now - time >= 24 * 60 * 60 * 1000) { this.automaticPrompts.delete(id); }
+    }
+    const previous = this.automaticPrompts.get(key);
+    if (previous !== undefined && now - previous < cooldownMs) { return false; }
+    if (previous === undefined && this.automaticPrompts.size >= this.maxChats) { return false; }
+    this.automaticPrompts.set(key, now);
+    return true;
+  }
+
+  private deliver(chatId: string, text: string, chatType: ChatType): Promise<void> {
+    return this.sendWelcomeMessage ? this.sendWelcomeMessage(chatId, text, chatType) : this.sendMessage(chatId, text);
   }
 
   /**
@@ -60,11 +110,14 @@ export class WelcomeService {
       logger.warn({ chatId, chatType }, 'handleBotAddedToGroup called with non-group chat type');
       return;
     }
+    if (!this.claimPrompt(chatId, 24 * 60 * 60 * 1000)) { return; }
 
     logger.info({ chatId }, 'Bot added to group, sending welcome message');
 
     try {
-      await this.sendMessage(chatId, this.generateWelcomeMessage());
+      const text = this.generateWelcomeMessage(chatId, chatType);
+      if (!text) { return; }
+      await this.deliver(chatId, text, chatType);
       logger.info({ chatId }, 'Welcome message sent to group');
     } catch (error) {
       logger.error({ err: error, chatId }, 'Failed to send welcome message to group');
@@ -86,16 +139,16 @@ export class WelcomeService {
       logger.warn({ chatId, chatType }, 'handleUserJoinedGroup called with non-group chat type');
       return;
     }
-
-    // Use help message if available, otherwise use welcome message
-    const message = this.generateHelpMessage
-      ? this.generateHelpMessage()
-      : this.generateWelcomeMessage();
+    if (!this.claimPrompt(chatId, 24 * 60 * 60 * 1000)) { return; }
 
     logger.info({ chatId, userCount: userIds?.length }, 'Users joined group, sending help message');
 
     try {
-      await this.sendMessage(chatId, message);
+      const message = this.generateHelpMessage
+        ? this.generateHelpMessage(chatId, chatType)
+        : this.generateWelcomeMessage(chatId, chatType);
+      if (!message) { return; }
+      await this.deliver(chatId, message, chatType);
       logger.info({ chatId }, 'Help message sent to group for new users');
     } catch (error) {
       logger.error({ err: error, chatId }, 'Failed to send help message to group');
@@ -119,12 +172,14 @@ export class WelcomeService {
       logger.debug({ chatId, chatType }, 'handleFirstPrivateChat called with non-private chat type');
       return 'skipped';
     }
+    chatId = this.privateChatIds.get(chatId) ?? chatId;
 
     // Check if this is the first time
     if (this.firstTimePrivateChats.has(chatId)) {
       logger.debug({ chatId }, 'Already sent welcome to this private chat');
       return 'already_sent';
     }
+    if (this.firstTimePrivateChats.size >= this.maxChats || !this.claimPrompt(chatId)) { return 'skipped'; }
 
     // Mark as sent
     this.firstTimePrivateChats.add(chatId);
@@ -132,7 +187,9 @@ export class WelcomeService {
     logger.info({ chatId }, 'First private chat, sending welcome message');
 
     try {
-      await this.sendMessage(chatId, this.generateWelcomeMessage());
+      const text = this.generateWelcomeMessage(chatId, chatType);
+      if (!text) { this.firstTimePrivateChats.delete(chatId); return 'skipped'; }
+      await this.deliver(chatId, text, chatType);
       logger.info({ chatId }, 'Welcome message sent to private chat');
       return 'sent';
     } catch (error) {

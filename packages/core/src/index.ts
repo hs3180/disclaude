@@ -373,6 +373,8 @@ export {
   createControlHandler,
   commandRegistry,
   getHandler,
+  getAvailableCommands,
+  buildHelpMessage,
   createControlCommand,
   normalizeCommandData,
   type ControlHandlerContext,

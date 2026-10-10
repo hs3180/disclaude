@@ -21,7 +21,8 @@ features.
 3. Under event subscriptions, select **receive events through a persistent
    connection** and subscribe to `im.message.receive_v1`. Subscribe to
    `im.chat.updated_v1` when the app needs group metadata changes to take effect
-   immediately.
+   immediately. For welcome messages, also subscribe to
+   `im.chat.access_event.bot_p2p_chat_entered_v1` and `im.chat.member.added_v1`.
 4. Publish the app version, then add the bot to the target chat.
 5. Put the App ID and App Secret in `disclaude.config.yaml` and start the service:
 
@@ -37,6 +38,40 @@ features.
 
 Send `@bot 你好` in a chat to verify the connection. The [root README
 quickstart](../README.md#quickstart) covers installation and backend setup.
+
+## Welcome and command help
+
+`/help` lists the registered commands whose runtime dependencies and host access
+policy allow them in this conversation. Private chats omit group trigger controls;
+topic commands and help replies stay in the current topic. `/agent list` and
+`/agent use <name>` appear when named backend/model presets are configured. A
+switch starts a new native session. `/steer` appears only when an active query
+actually exposes native steer. Attachment guidance reflects the channel's support;
+reading or processing a file still requires the model and Feishu permissions.
+
+With the welcome events subscribed, opening a private chat sends a short welcome
+once per service run. Bot or member joins share a per-group 24-hour cooldown.
+Exact onboarding requests such as `怎么用？`, `不知道怎么开始` or `help` receive
+short command guidance, at most once per chat per five minutes across topics.
+Normal tasks, ambiguous greetings, quoted messages, attachments, code and explicit
+output-format requests continue to the agent. Already actionable task-failure
+notices retain their recovery advice. A control-command exception gets a generic
+failure notice and, within the same cooldown, a `/help` suggestion; raw exception
+details are not sent to the chat.
+
+`/help off` disables automatic welcome and guidance for the whole chat, including
+its topics; `/help on` enables them. Explicit `/help` always remains available
+subject to the host's access policy. Preferences and rate state are local to the
+channel's service run and reset on restart, as the command confirmation states.
+State is bounded to 1,000 chats; new automatic prompts are skipped at capacity,
+and existing disabled preferences are retained. Failed or uncertain welcome
+delivery consumes its cooldown and is not automatically retried.
+
+The optional host `isCommandAllowed` callback uses the same actor/chat/topic
+context for command dispatch and help. This does not add user roles or change the
+default service permission policy. Anonymous group-join events cannot infer an
+individual member's privileges; hosts requiring actor-specific authorization can
+deny such automatic help. Native API permission rejection is still authoritative.
 
 ## Messages and cards
 

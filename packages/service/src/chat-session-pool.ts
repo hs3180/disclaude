@@ -602,6 +602,10 @@ export class ChatSessionPool {
     return false;
   }
 
+  canSteer(chatId: string, threadRootId?: string): boolean {
+    return this.agents.get(this.sessionKeyOf(chatId, threadRootId))?.canSteer() ?? false;
+  }
+
   async steer(chatId: string, prompt: string, threadRootId?: string): Promise<
     { ok: true; message: string } | { ok: false; error: string }
   > {
