@@ -22,7 +22,10 @@ features.
    connection** and subscribe to `im.message.receive_v1`. Subscribe to
    `im.chat.updated_v1` when the app needs group metadata changes to take effect
    immediately. For welcome messages, also subscribe to
-   `im.chat.access_event.bot_p2p_chat_entered_v1` and `im.chat.member.added_v1`.
+   `im.chat.access_event.bot_p2p_chat_entered_v1`,
+   `im.chat.member.bot.added_v1` and `im.chat.member.user.added_v1`.
+   These are separate private-chat, bot-join and user-join subscriptions; the
+   legacy `im.chat.member.added_v1` handler is retained for older integrations.
 4. Publish the app version, then add the bot to the target chat.
 5. Put the App ID and App Secret in `disclaude.config.yaml` and start the service:
 

@@ -6,7 +6,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
-import type { WelcomeService } from '../../platforms/feishu/welcome-service.js';
+import { WelcomeService } from '../../platforms/feishu/welcome-service.js';
+import { EventDispatcher, LoggerLevel } from '@larksuiteoapi/node-sdk';
 import type {
   FeishuChatMemberAddedEventData,
   FeishuP2PChatEnteredEventData,
@@ -30,6 +31,7 @@ import { WelcomeHandler } from './welcome-handler.js';
 
 function createMockWelcomeService(): WelcomeService {
   return {
+    registerPrivateChat: vi.fn(),
     handleP2PChatEntered: vi.fn().mockResolvedValue('sent'),
     handleBotAddedToGroup: vi.fn().mockResolvedValue(undefined),
     handleUserJoinedGroup: vi.fn().mockResolvedValue(undefined),
@@ -55,6 +57,55 @@ describe('WelcomeHandler', () => {
     });
   });
 
+  it('handles native bot-added events without requiring the legacy members array', async () => {
+    await handler.handleBotAdded({ app_id: 'test_app_id', chat_id: 'oc_native_group' });
+    expect(mockService.handleBotAddedToGroup).toHaveBeenCalledWith('oc_native_group', 'group');
+    expect(mockService.handleUserJoinedGroup).not.toHaveBeenCalled();
+  });
+
+  it('handles native user-added IDs and ignores unavailable identity entries', async () => {
+    await handler.handleUserAdded({
+      chat_id: 'oc_native_group',
+      users: [
+        { user_id: { open_id: 'ou_joiner' } },
+        { user_id: { union_id: 'on_unavailable' } },
+        { user_id: { open_id: 'ou_joiner' } },
+      ],
+    });
+    expect(mockService.handleUserJoinedGroup).toHaveBeenCalledWith('oc_native_group', 'group', ['ou_joiner']);
+    expect(mockService.handleBotAddedToGroup).not.toHaveBeenCalled();
+  });
+
+  it('preserves guidance off and welcome deduplication through real SDK P2P parsing', async () => {
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    const service = new WelcomeService({ generateWelcomeMessage: () => 'Brief welcome', sendMessage });
+    const nativeHandler = new WelcomeHandler('test_app_id', () => true);
+    nativeHandler.setWelcomeService(service);
+    const dispatcher = new EventDispatcher({ loggerLevel: LoggerLevel.error }).register({
+      'im.chat.access_event.bot_p2p_chat_entered_v1': data => nativeHandler.handleP2PChatEntered(data),
+    });
+    const envelope = { schema: '2.0', header: { event_type: 'im.chat.access_event.bot_p2p_chat_entered_v1' },
+      event: { chat_id: 'oc_private', operator_id: { open_id: 'ou_user' } } };
+    service.setEnabled('oc_private', false);
+    await dispatcher.invoke(envelope, { needCheck: false });
+    expect(sendMessage).not.toHaveBeenCalled();
+    service.setEnabled('oc_private', true);
+    await dispatcher.invoke(envelope, { needCheck: false });
+    await dispatcher.invoke(envelope, { needCheck: false });
+    expect(sendMessage).toHaveBeenCalledExactlyOnceWith('oc_private', 'Brief welcome');
+  });
+
+  it('skips native joins while stopped or addressed to a different app', async () => {
+    isRunning.mockReturnValue(false);
+    await handler.handleBotAdded({ chat_id: 'oc_group' });
+    await handler.handleUserAdded({ chat_id: 'oc_group', users: [{ user_id: { open_id: 'ou_user' } }] });
+    isRunning.mockReturnValue(true);
+    await handler.handleBotAdded({ chat_id: 'oc_group', app_id: 'other_app' });
+    await handler.handleUserAdded({ chat_id: 'oc_group', app_id: 'other_app', users: [{ user_id: { open_id: 'ou_user' } }] });
+    expect(mockService.handleBotAddedToGroup).not.toHaveBeenCalled();
+    expect(mockService.handleUserJoinedGroup).not.toHaveBeenCalled();
+  });
+
   describe('setWelcomeService', () => {
     it('should set the welcome service and enable event handling', async () => {
       const h = new WelcomeHandler('app', () => true);
@@ -70,6 +121,15 @@ describe('WelcomeHandler', () => {
   });
 
   describe('handleP2PChatEntered', () => {
+    it('handles the flattened SDK P2P event and joins its native chat to guidance preferences', async () => {
+      await handler.handleP2PChatEntered({
+        chat_id: 'oc_private',
+        operator_id: { open_id: 'ou_user' },
+      });
+
+      expect(mockService.registerPrivateChat).toHaveBeenCalledWith('ou_user', 'oc_private');
+      expect(mockService.handleP2PChatEntered).toHaveBeenCalledWith('oc_private', 'p2p');
+    });
     it('should call welcomeService.handleP2PChatEntered with user open_id', async () => {
       const data: FeishuP2PChatEnteredEventData = {
         event: {

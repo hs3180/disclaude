@@ -103,7 +103,7 @@ export function extractChatIdFromEvent(data: unknown): string | undefined {
   }
 
   // Try message event format: data.event.message.chat_id
-  const event = raw.event as Record<string, unknown> | undefined;
+  const event = (raw.event ?? raw) as Record<string, unknown>;
   if (event?.message) {
     const message = event.message as Record<string, unknown>;
     if (typeof message.chat_id === 'string') {
@@ -424,6 +424,22 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
             extractChatIdFromEvent(data) ?? '',
             '⚠️ 欢迎消息发送失败，但这不影响正常使用。'
           );
+        }
+      },
+      'im.chat.member.bot.added_v1': async (data) => {
+        try {
+          await this.welcomeHandler.handleBotAdded(data);
+        } catch (error) {
+          logger.error({ err: error }, 'Failed to handle bot added');
+          await this.notifyUserDirectly(extractChatIdFromEvent(data) ?? '', '⚠️ 欢迎消息发送失败，但这不影响正常使用。');
+        }
+      },
+      'im.chat.member.user.added_v1': async (data) => {
+        try {
+          await this.welcomeHandler.handleUserAdded(data);
+        } catch (error) {
+          logger.error({ err: error }, 'Failed to handle user added');
+          await this.notifyUserDirectly(extractChatIdFromEvent(data) ?? '', '⚠️ 欢迎消息发送失败，但这不影响正常使用。');
         }
       },
       'im.chat.updated_v1': (data: unknown) => {
