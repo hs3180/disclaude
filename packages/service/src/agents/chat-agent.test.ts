@@ -516,6 +516,23 @@ describe('ChatAgent (service)', () => {
       } finally { dispose(agent); }
     });
 
+    it('preserves a completion already published before the steer acknowledgement', async () => {
+      const { agent, steer } = owned();
+      let acknowledge!: (value: { turnId: string }) => void;
+      steer.mockImplementation(() => new Promise(resolve => { acknowledge = resolve; }));
+      try {
+        const admission = agent.processMessage(input());
+        await vi.waitFor(() => expect(steer).toHaveBeenCalledTimes(1));
+        if (!agent.turnCompleteFor('follow-B')) { (agent as any).createTurnCompletion('follow-B'); }
+        const original = agent.turnCompleteFor('follow-B');
+        acknowledge({ turnId: 'native-A' });
+        await admission;
+        expect(agent.turnCompleteFor('follow-B')).toBe(original);
+        (agent as any).resolveTurn('owner-A');
+        await expect(original).resolves.toBeUndefined();
+      } finally { dispose(agent); }
+    });
+
     it('steers consecutive inputs once each without creating queued turns', async () => {
       const { agent, steer, push } = owned();
       try {
@@ -607,7 +624,7 @@ describe('ChatAgent (service)', () => {
         acknowledge({ turnId: 'native-A' });
         await admission;
         expect(push).not.toHaveBeenCalled();
-        await expect(agent.turnCompleteFor('follow-B')).rejects.toThrow(/supersed/i);
+        await expect(agent.turnCompleteFor('follow-B')).rejects.toThrow(/reset|supersed/i);
         expect(callbacks.sendMessage.mock.calls.some(call => String(call[1]).includes('后端已确认接收'))).toBe(false);
       } finally { dispose(agent); }
     });

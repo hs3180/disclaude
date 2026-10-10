@@ -120,6 +120,7 @@ interface TurnCompletionEntry {
   promise: Promise<void>;
   settle: (error?: Error) => void;
   settled: boolean;
+  admitted?: boolean;
 }
 
 /**
@@ -950,9 +951,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
     if (this.sessionGeneration !== admissionGeneration || this.disposed ||
         this.abortController?.signal.aborted || this.stoppedQueryGenerations.has(admissionGeneration)) {
-      const entry = this.createTurnCompletion(messageId);
-      entry.settled = true;
-      entry.settle(new TurnSupersededError());
+      if (!this.turnCompletions.has(messageId)) { this.createTurnCompletion(messageId); }
+      this.resolveTurn(messageId, new TurnSupersededError());
       return;
     }
 
@@ -1005,7 +1005,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // belongs to the original turn and must not consume the next anchor.
       this.lastTurnMessage = params;
       enqueueTurnAnchor();
-      const busyBeforePush = this.isBusy;
+      const busyBeforePush = queuedBehindActiveTurn && this.isBusy;
       // Issue #3985: Mark as processing when a user message is pushed to the channel.
       this.isProcessingMessage = true;
       // Issue #4620: authoritative turn-start timestamp for the pool's
@@ -1080,9 +1080,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       !!this.abortController?.signal.aborted || this.stoppedQueryGenerations.has(generation) ||
       (this.queryHandle !== handle && !owner.settled);
     const settleRejectedInput = (error: Error): void => {
-      const entry = this.createTurnCompletion(params.messageId);
-      entry.settled = true;
-      entry.settle(error);
+      if (!this.turnCompletions.has(params.messageId)) { this.createTurnCompletion(params.messageId); }
+      this.resolveTurn(params.messageId, error);
     };
     const notify = async (text: string): Promise<void> => {
       try { await this.callbacks.sendMessage(params.chatId, text, params.threadRootId); }
@@ -1118,13 +1117,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       settleRejectedInput(new TurnSupersededError());
       return true;
     }
-    const entry = this.createTurnCompletion(params.messageId);
+    const entry = this.turnCompletions.get(params.messageId) ?? this.createTurnCompletion(params.messageId);
+    entry.admitted = true;
     // Capture the original completion before the RPC. A late successful ACK
     // still belongs to that turn, even if another turn has since started.
     void owner.promise.then(() => {
-      if (!entry.settled) { entry.settled = true; entry.settle(); }
+      this.resolveTurn(params.messageId);
     }, (error: unknown) => {
-      if (!entry.settled) { entry.settled = true; entry.settle(error instanceof Error ? error : new Error(String(error))); }
+      this.resolveTurn(params.messageId, error instanceof Error ? error : new Error(String(error)));
     });
     this.logger.info({ chatId: params.chatId, messageId: params.messageId, sourceMessageId,
       nativeTurnId: acknowledgement.turnId, generation }, 'Busy input acknowledged for its original turn');
