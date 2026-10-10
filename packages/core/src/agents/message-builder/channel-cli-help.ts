@@ -72,6 +72,7 @@ export function buildChannelCliHelpGuidance(
     ? '\nFor private input, use request_private_input with a public workflow definition and current actor/chat/source IDs. Enter the private value only in the one-use card, never CLI arguments, files, stdin, chat or logs. Successful request creation does not mean the workflow finished; read the full help before defining it.'
     : '';
   return `\n## Channel CLI\n\nSupported commands: ${commandList}. For flags and input schemas, run \`${invoke} help\` only when using a command.
+This list describes channel delivery, not all backend tools. For local Project files, use available native file or execution tools (Codex: exec_command) in the current working directory. /project use selects that directory; local-file requests do not require a cloud Project link.
 Use the current Chat ID and Message ID from metadata for --chat and --parent. Managed agents inherit the current API address/token through DISCLAUDE_API_BASE_URL / DISCLAUDE_API_TOKEN. Do not reuse credentials from another session.${cardRouting}${privateInput}
 The CLI returns one JSON result on stdout and diagnostics on stderr; verify the requested outcome.`;
 }
