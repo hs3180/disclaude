@@ -1259,6 +1259,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     if (this.callbacks.requestAgentInput) { sdkOptions.onUserInput = async (request, context) => {
       if (!context || context.chatId !== chatId || !this.callbacks.requestAgentInput) { throw new Error('This channel cannot answer SDK input requests'); }
       await this.callbacks.requestAgentInput(request, context);
+      if (this.activeLifecycleContext?.sourceMessageId === context.sourceMessageId) {
+        this.didDeliverUserVisibleThisTurn = true;
+      }
     }; }
     this.logger.info({ chatId }, 'Starting SDK query with message channel');
 
@@ -2049,6 +2052,24 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // produced no reliable work product, so it must be reported as failed,
           // not masked as ✅ Complete.
           const upstreamApiError = parsed.upstreamApiError === true;
+          // Tools may already have changed external state. A missing reply is
+          // a terminal failure, never an empty-turn reset/replay opportunity.
+          // An acknowledged input card is itself a visible delivery.
+          const missingToolReply = toolCallCount > 0 && userVisibleOutputCount === 0 &&
+            !this.didDeliverUserVisibleThisTurn && !parsed.terminatedReason &&
+            !upstreamApiError && !sawMidstreamInterrupt && !turnHadError && !turnDeliveryFailed;
+          let missingToolReplyError: Error | undefined;
+          if (missingToolReply) {
+            missingToolReplyError = new Error('Provider ended after tools with no user-visible reply');
+            missingToolReplyError.name = 'ProviderMissingReplyError';
+            const context = currentTurnLifecycleContext;
+            const delivered = await this.deliverUserVisible(chatId,
+              `❌ 本轮工具调用后未收到最终回复，结果可能不完整。消息 ID: ${context?.sourceMessageId ?? currentTurnMessageId}。诊断 ID: ${diagnosticId}。请先核对已执行的操作，再决定是否继续；系统不会自动重放工具。`,
+              resolveReplyThreadRoot());
+            this.logger.warn({ event: 'agent_turn', state: 'failed', ...context, diagnosticId,
+              failureCause: 'missing_tool_reply', toolCallCount, user_visible: delivered,
+            }, 'Terminal outcome for tool-only turn with no visible reply (#5288)');
+          }
           // Issue #4391 (#4194 follow-up ②): on a real-user empty turn, decide
           // whether to consume this chat's single reset+replay attempt. The
           // policy returns false for synthetic IDs (sched-*/push_* — not valid
@@ -2406,6 +2427,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             // 会由下一 turn 的 recordSuccess 重置电路计数;中断本身不重置。与 #4322 同款
             // bounded、non-restarting 契约。
             this.restartManager.recordFailure(chatId, 'midstream-interrupt');
+          } else if (missingToolReply) {
+            this.restartManager.recordFailure(chatId, 'missing-tool-reply');
           } else if (isEmptyTurn && parsed.terminatedReason !== 'turn_failed') {
             this.restartManager.recordFailure(chatId, 'empty-turn');
           } else if (parsed.terminatedReason !== 'turn_failed') {
@@ -2434,21 +2457,23 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           }
 
           turnHasTerminal = true;
-          this.logger.info({
-            event: 'agent_turn', state: 'completed', chatId, user_visible: this.didDeliverUserVisibleThisTurn,
-            circuitState: this.sendCircuitOpen ? 'open' : 'closed', ...this.activeLifecycleContext,
-          }, 'agent_turn');
+          if (!missingToolReply) {
+            this.logger.info({
+              event: 'agent_turn', state: 'completed', chatId, user_visible: this.didDeliverUserVisibleThisTurn,
+              circuitState: this.sendCircuitOpen ? 'open' : 'closed', ...this.activeLifecycleContext,
+            }, 'agent_turn');
+          }
 
           // Issue #3985: Mark as not processing after receiving result.
           // The agent is now idle between turns — blocking tasks can execute.
           this.isProcessingMessage = false;
 
           // Issue #4063: Resolve per-turn completion promise (works in persistent mode)
-          this.resolveTurn(currentTurnMessageId);
+          this.resolveTurn(currentTurnMessageId, missingToolReplyError);
 
           if (this.callbacks.onTurnResult) {
             await this.callbacks.onTurnResult({
-              success: !isEmptyTurn && !upstreamApiError && !midstreamInterrupted &&
+              success: !isEmptyTurn && !missingToolReply && !upstreamApiError && !midstreamInterrupted &&
                 !parsed.terminatedReason && !turnHadError && !turnDeliveryFailed && !turnResultTruncated,
               text: turnResultText,
               truncated: turnResultTruncated,
@@ -2474,7 +2499,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             this.logger.info({ chatId }, 'Once-mode: closing channel after result');
             this.isSessionActive = false;
             this.channel?.close();
-            this.taskCompletionResolve?.();
+            if (missingToolReplyError) { this.taskCompletionReject?.(missingToolReplyError); }
+            else { this.taskCompletionResolve?.(); }
             this.clearTaskCompletion();
           }
         }

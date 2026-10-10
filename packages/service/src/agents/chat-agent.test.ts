@@ -2531,6 +2531,104 @@ describe('ChatAgent (service)', () => {
     });
   });
 
+  describe('tool-only terminal outcome (#5288)', () => {
+    it.each(['executed', 'shell-error'])('reports a missing reply without replaying tools (%s)', async outcome => {
+      const directory = mkdtempSync(join(tmpdir(), 'tool-only-terminal-'));
+      const checkpoint = join(directory, 'effects.json');
+      const localCallbacks = {
+        ...createMockCallbacks(),
+        onTurnResult: vi.fn().mockResolvedValue(undefined),
+        addReaction: vi.fn().mockResolvedValue(undefined),
+      };
+      const agent = new ChatAgent({ chatId: 'tool-only-chat', callbacks: localCallbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+      let toolAttempts = 0;
+      async function* output() {
+        yield { parsed: { type: 'tool_use' as const, content: 'execute owned command' }, raw: {} };
+        toolAttempts++;
+        if (outcome === 'executed') {
+          const { writeFileSync } = await import('node:fs');
+          writeFileSync(checkpoint, JSON.stringify({ attempts: toolAttempts }));
+        }
+        yield { parsed: { type: 'tool_result' as const, content: outcome === 'executed' ? 'owned command completed' : "zsh: unmatched '\nexit code 1" }, raw: {} };
+        yield { parsed: { type: 'result' as const, content: '✅ Complete' }, raw: {} };
+      }
+      const create = vi.fn(() => ({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: output() }));
+      (agent as any).createQueryStream = create;
+      try {
+        await agent.processMessage({ chatId: 'tool-only-chat', payload: 'Execute once and report the result', messageId: 'tool-only-source', threadRootId: 'tool-only-root' });
+        await expect(agent.turnCompleteFor('tool-only-source')).rejects.toThrow('no user-visible reply');
+        await vi.waitFor(() => expect(localCallbacks.onTurnResult).toHaveBeenCalledWith({ success: false, text: '', truncated: false }));
+        const notices = localCallbacks.sendMessage.mock.calls.filter(([, text]) => String(text).includes('未收到最终回复'));
+        expect(notices).toHaveLength(1);
+        expect(notices[0]).toEqual(['tool-only-chat', expect.stringContaining('tool-only-source'), 'tool-only-root']);
+        expect(notices[0][1]).toContain('诊断 ID:');
+        expect(notices[0][1]).toContain('不会自动重放');
+        expect((agent as any).logger.warn).toHaveBeenCalledWith(expect.objectContaining({ event: 'agent_turn', state: 'failed', sourceMessageId: 'tool-only-source', runId: expect.any(String), diagnosticId: expect.any(String), user_visible: true }), expect.any(String));
+        expect((agent as any).logger.info).not.toHaveBeenCalledWith(expect.objectContaining({ event: 'agent_turn', state: 'completed', sourceMessageId: 'tool-only-source' }), expect.any(String));
+        expect(create).toHaveBeenCalledTimes(1);
+        expect(toolAttempts).toBe(1);
+        if (outcome === 'executed') { expect(JSON.parse(readFileSync(checkpoint, 'utf8'))).toEqual({ attempts: 1 }); }
+        expect(localCallbacks.addReaction).not.toHaveBeenCalled();
+      } finally { agent.dispose(); rmSync(directory, { recursive: true, force: true }); }
+    });
+
+    it('preserves a successfully delivered asynchronous question without a redundant notice', async () => {
+      const localCallbacks = {
+        ...createMockCallbacks(),
+        requestAgentInput: vi.fn().mockResolvedValue(undefined),
+        onTurnResult: vi.fn().mockResolvedValue(undefined),
+      };
+      const agent = new ChatAgent({ chatId: 'question-chat', callbacks: localCallbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const request = { requestId: 'owned-question', params: { questions: [{ id: 'choice', header: 'Choice', question: 'Which option?', options: [{ label: 'One', description: 'First option' }, { label: 'Two', description: 'Second option' }] }] } };
+      const context = { chatId: 'question-chat', sourceMessageId: 'question-source', threadRootId: 'question-root' };
+      (agent as any).createQueryStream = (_input: unknown, options: any) => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          yield { parsed: { type: 'tool_use', content: 'request user input' }, raw: {} };
+          await options.onUserInput(request, context);
+          yield { parsed: { type: 'result', content: '✅ Complete' }, raw: {} };
+        })(),
+      });
+      try {
+        await agent.processMessage({ chatId: 'question-chat', payload: 'Ask me a question', messageId: 'question-source', threadRootId: 'question-root' });
+        await agent.turnCompleteFor('question-source');
+        await vi.waitFor(() => expect(localCallbacks.onTurnResult).toHaveBeenCalledWith({ success: true, text: '', truncated: false }));
+        expect(localCallbacks.requestAgentInput).toHaveBeenCalledWith(request, context);
+        expect(localCallbacks.sendMessage.mock.calls.some(([, text]) => String(text).includes('未收到最终回复'))).toBe(false);
+      } finally { agent.dispose(); }
+    });
+
+    it('rejects one-shot completion after tool execution without a final reply', async () => {
+      const agent = new ChatAgent({ chatId: 'tool-only-once', callbacks: createMockCallbacks(), apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const create = vi.fn(() => ({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: (async function* () {
+        yield { parsed: { type: 'tool_use', content: 'owned command' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete' }, raw: {} };
+      })() }));
+      (agent as any).createQueryStream = create;
+      try {
+        await expect(agent.runOnce('tool-only-once', 'Execute once', 'once-source')).rejects.toThrow('no user-visible reply');
+        expect(create).toHaveBeenCalledTimes(1);
+      } finally { agent.dispose(); }
+    });
+
+    it('retains failure when the missing-reply notification cannot be delivered', async () => {
+      const localCallbacks = { ...createMockCallbacks(), sendMessage: vi.fn().mockRejectedValue(new Error('channel unavailable')) };
+      const agent = new ChatAgent({ chatId: 'tool-only-undelivered', callbacks: localCallbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const create = vi.fn(() => ({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: (async function* () {
+        yield { parsed: { type: 'tool_use', content: 'owned command' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete' }, raw: {} };
+      })() }));
+      (agent as any).createQueryStream = create;
+      try {
+        await agent.processMessage({ chatId: 'tool-only-undelivered', payload: 'Execute once', messageId: 'undelivered-source', threadRootId: 'undelivered-root' });
+        await expect(agent.turnCompleteFor('undelivered-source')).rejects.toThrow('no user-visible reply');
+        expect((agent as any).logger.warn).toHaveBeenCalledWith(expect.objectContaining({ event: 'agent_turn', state: 'failed', sourceMessageId: 'undelivered-source', user_visible: false }), expect.any(String));
+        expect(create).toHaveBeenCalledTimes(1);
+        expect(localCallbacks.sendMessage.mock.calls.filter(([chatId, text]) => chatId === 'tool-only-undelivered' && String(text).includes('未收到最终回复'))).toHaveLength(1);
+      } finally { agent.dispose(); }
+    });
+  });
+
   describe('structured internal turn results', () => {
     it.each([false, true])('bounds terminal output and resets the bound at a tool call (tool=%s)', async tool => {
       const callbacks = { ...createMockCallbacks(), onTurnResult: vi.fn().mockResolvedValue(undefined) };
