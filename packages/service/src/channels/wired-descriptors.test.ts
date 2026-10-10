@@ -209,6 +209,7 @@ describe('WiredChannelDescriptors', () => {
     it('passes an explicit topic root through the interactive-card handler', async () => {
       const mockChannel = Object.assign(createMockChannel('feishu'), {
         getTriggerModeManager: () => ({ getMode: vi.fn(), setMode: vi.fn() }),
+        setWelcomeService: vi.fn(),
       });
       vi.mocked(mockChannel.sendMessage).mockResolvedValue('om_real_card');
       const context = createMockContext();
@@ -228,6 +229,7 @@ describe('WiredChannelDescriptors', () => {
     it('does not manufacture a successful interactive receipt without a delivered message ID', async () => {
       const mockChannel = Object.assign(createMockChannel('feishu'), {
         getTriggerModeManager: () => ({ getMode: vi.fn(), setMode: vi.fn() }),
+        setWelcomeService: vi.fn(),
       });
       const context = createMockContext();
       await FEISHU_WIRED_DESCRIPTOR.setup!(mockChannel, { appId: 'test', appSecret: 'test' }, context);
