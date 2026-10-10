@@ -3,7 +3,7 @@ import { buildChannelCliHelpGuidance, type MessageBuilderContext, type MessageBu
 
 function buildFeishuMentionSection({ msg, capabilities }: MessageBuilderContext): string {
   if (!msg.senderOpenId || capabilities?.supportsMention === false) { return ''; }
-  return `\n## @ Mention the User\n\nWhen compatible with the requested output format, notify the sender in the final response only with <at user_id="${msg.senderOpenId}">@用户</at>. Keep the answer outside </at>; the tag contains only the mention label, which Feishu replaces with the account name.`;
+  return `\n## @ Mention the User\n\nWhen compatible with the requested output format and the sender has not already been successfully notified through the channel in this turn, notify the sender in the final response only with <at user_id="${msg.senderOpenId}">@用户</at>. Keep the answer outside </at>; the tag contains only the mention label, which Feishu replaces with the account name.`;
 }
 
 /** Capability-scoped instructions contain no chat/message identity and appear once per query. */
