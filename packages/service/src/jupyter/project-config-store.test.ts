@@ -57,6 +57,8 @@ describe('JupyterProjectConfigStore', () => {
     const pm = new ProjectManager({ workspaceDir: root });
     const firstDir = join(root, 'first');
     const secondDir = join(root, 'second');
+    fs.mkdirSync(firstDir);
+    fs.mkdirSync(secondDir);
     pm.use('chat-1', firstDir);
     pm.use('chat-2', firstDir);
     const bindingsPath = join(root, '.disclaude', 'project-bindings.json');

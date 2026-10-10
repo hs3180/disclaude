@@ -1383,7 +1383,7 @@ export class MessageHandler {
     // /reset or /stop typed inside a topic-group thread addresses that
     // thread's agent slot rather than the chat-scoped one.
     const commandHandled = await tryHandleSlashCommand(
-      { textWithoutMentions, chatId: chat_id, threadRootId },
+      { textWithoutMentions, mentions, chatId: chat_id, threadRootId },
       {
         hasControlHandler: this.controlHandler,
         emitControl: (command) => this.callbacks.emitControl(command),

@@ -30,8 +30,7 @@ type ProjectCommand = ControlCommand<'project'>;
  *
  * Issue #4448: resolve the *effective* cwd (what the agent will actually run
  * in), not just the bound target. When the bound directory is missing the
- * agent silently falls back to the workspace; surface that mismatch here
- * instead of reporting only the (stale) target.
+ * agent rejects the request; surface that boundary and a recovery command.
  */
 function handleInfo(command: ProjectCommand, context: ControlHandlerContext): ControlResponse {
   const pm = context.projectManager;
@@ -56,23 +55,19 @@ function handleInfo(command: ProjectCommand, context: ControlHandlerContext): Co
   const boundDir = resolution.boundWorkingDir as string;
 
   if (resolution.reason === 'bound-missing') {
-    // Issue #4448: bound dir gone → agent silently falls back to workspace.
-    // Show both the (stale) target and the actual run dir so the mismatch is
-    // visible. Delivered via `message` (not `error`) because the chat command
-    // router only relays `message` to the user.
+    // ChatAgent rejects unavailable bindings instead of running in another cwd.
     return {
       success: true,
       projectContext: { workingDir: boundDir, available: false },
       message: [
-        `⚠️ **绑定目录不存在**: \`${boundDir}\``,
+        `⚠️ **绑定目录不存在或不可用**: \`${boundDir}\``,
         '',
         `当前 chat 已绑定 \`${basename(boundDir)}\`，但该目录在磁盘上不可用，`,
-        'Agent 实际将**回退到工作空间根目录**运行：',
-        `- 绑定目标: \`${boundDir}\``,
-        `- 实际运行: \`${pm.getWorkspaceDir()}\`（回退）`,
+        '目录恢复或重新绑定前，本 chat 的消息将被拒绝执行。',
         '',
-        '可能原因：容器重启时 volume 尚未就绪 / 目录被移动或卸载 / 路径大小写或规范化差异。',
-        '可用 `/project reset` 回到默认，或 `/project use <dir>` 重新绑定。',
+        '请检查路径是否正确、是否存在且为目录，以及当前服务是否可以访问。',
+        ...(/\s@/.test(boundDir) ? ['若旧绑定含尾随 @mention，请先 `/project reset`，再绑定实际目录。'] : []),
+        '可用 `/project reset` 回到默认，或 `/project use <已存在目录>` 重新绑定。',
       ].join('\n'),
     };
   }
@@ -120,6 +115,10 @@ function handleUse(command: ProjectCommand, context: ControlHandlerContext): Con
     };
   }
 
+  if (context.agentPool.isProjectBusy?.(command.chatId)) {
+    return { success: false, error: '当前聊天或话题仍有任务在执行，工作目录未改变。请等待任务完成，或在对应话题使用 /stop 后重试。' };
+  }
+
   const result = pm.use(command.chatId, workingDir);
   if (!result.ok) {
     return {
@@ -129,7 +128,11 @@ function handleUse(command: ProjectCommand, context: ControlHandlerContext): Con
   }
 
   // Reset the agent session so the next message uses the new cwd
-  context.agentPool.reset(command.chatId);
+  if (context.agentPool.resetProjectSessions) {
+    context.agentPool.resetProjectSessions(command.chatId);
+  } else {
+    context.agentPool.reset(command.chatId);
+  }
 
   return {
     success: true,
@@ -153,6 +156,10 @@ function handleReset(command: ProjectCommand, context: ControlHandlerContext): C
     };
   }
 
+  if (context.agentPool.isProjectBusy?.(command.chatId)) {
+    return { success: false, error: '当前聊天或话题仍有任务在执行，工作目录未改变。请等待任务完成，或在对应话题使用 /stop 后重试。' };
+  }
+
   const result = pm.reset(command.chatId);
   if (!result.ok) {
     return {
@@ -162,7 +169,11 @@ function handleReset(command: ProjectCommand, context: ControlHandlerContext): C
   }
 
   // Reset the agent session so the next message uses the default cwd
-  context.agentPool.reset(command.chatId);
+  if (context.agentPool.resetProjectSessions) {
+    context.agentPool.resetProjectSessions(command.chatId);
+  } else {
+    context.agentPool.reset(command.chatId);
+  }
 
   return {
     success: true,
