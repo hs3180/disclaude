@@ -26,7 +26,7 @@ import type {
 } from './types.js';
 import { resolveAgentPreset } from './agent-presets.js';
 import { resolveCodexModelSetting, resolveCodexReasoningEffort } from './codex-settings.js';
-import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
+import { type AgentProvider, type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 
 // Re-export sub-modules
 export * from './types.js';
@@ -200,9 +200,10 @@ export class Config {
   })();
 
   // GLM configuration (from config file)
-  // No fallback defaults - model must be explicitly configured
+  // Explicit model settings precede the host environment fallback (#5284).
   static readonly GLM_API_KEY = fileConfigOnly.glm?.apiKey || '';
-  static readonly GLM_MODEL = fileConfigOnly.glm?.model || '';
+  static readonly GLM_MODEL = fileConfigOnly.glm?.model ||
+    process.env.ANTHROPIC_MODEL?.trim() || fileConfigOnly.env?.ANTHROPIC_MODEL?.trim() || '';
   static readonly GLM_API_BASE_URL = fileConfigOnly.glm?.apiBaseUrl || '';
 
   // DeepSeek harness configuration (Issue #4741).
@@ -246,7 +247,8 @@ export class Config {
   static readonly CLAUDE_MODEL = this.AGENT_BACKEND === 'codex'
     ? this.CODEX_MODEL
     : (this.DEFAULT_AGENT_PRESET?.ok ? this.DEFAULT_AGENT_PRESET.preset.model : undefined) ||
-      fileConfigOnly.agent?.model || fileConfigOnly.anthropic?.model || '';
+      fileConfigOnly.agent?.model || fileConfigOnly.anthropic?.model ||
+      process.env.ANTHROPIC_MODEL?.trim() || fileConfigOnly.env?.ANTHROPIC_MODEL?.trim() || '';
 
   // Codex exec sandbox override (Issue #4631, S4 of #4627). Only
   // meaningful with AGENT_BACKEND === 'codex'; consumed by the
@@ -543,11 +545,7 @@ export class Config {
       logger.error({ errors }, 'Configuration validation failed');
       throw new Error(
         `Configuration validation failed:\n\n${messages}\n\n` +
-          'Please update your disclaude.config.yaml file:\n' +
-          '  anthropic:\n' +
-          '    apiKey: "your-key"\n' +
-          '    model: "your-model"\n' +
-          '    apiBaseUrl: "https://your-anthropic-compatible-proxy.example"'
+          'Please update the missing fields in disclaude.config.yaml or the service environment.'
       );
     }
   }
@@ -636,12 +634,16 @@ export class Config {
    * Resolution priority: tier-specific model → default model (fallback).
    *
    * @param tier - Model tier (high, low, multimodal)
+   * @param selected - Active agent provider/model, when different from the service default
    * @returns Model identifier string, or undefined if tier is not set
    * @see Issue #3059
    */
-  static getModelForTier(tier: 'high' | 'low' | 'multimodal'): string | undefined {
+  static getModelForTier(
+    tier: 'high' | 'low' | 'multimodal',
+    selected?: { provider: AgentProvider; model: string },
+  ): string | undefined {
     // Check GLM tier models first (if GLM is configured)
-    const provider = this.getConfiguredApiProvider();
+    const provider = selected?.provider ?? this.getConfiguredApiProvider();
     if (provider === 'glm' || (!provider && this.GLM_API_KEY)) {
       const glmTierMap: Record<string, string> = {
         high: this.GLM_HIGH_MODEL,
@@ -653,12 +655,12 @@ export class Config {
         logger.debug({ provider: 'GLM', tier, model: tierModel }, 'Using GLM tier model');
         return tierModel;
       }
-      // Fallback to GLM default model
+      const fallback = selected?.model || this.GLM_MODEL;
       logger.debug(
-        { provider: 'GLM', tier, fallback: this.GLM_MODEL },
+        { provider: 'GLM', tier, fallback },
         'Tier model not set, using GLM default'
       );
-      return this.GLM_MODEL || undefined;
+      return fallback || undefined;
     }
 
     // Anthropic tier models
@@ -672,12 +674,12 @@ export class Config {
       logger.debug({ provider: 'Anthropic', tier, model: tierModel }, 'Using Anthropic tier model');
       return tierModel;
     }
-    // Fallback to Anthropic default model
+    const fallback = selected?.model || this.CLAUDE_MODEL;
     logger.debug(
-      { provider: 'Anthropic', tier, fallback: this.CLAUDE_MODEL },
+      { provider: 'Anthropic', tier, fallback },
       'Tier model not set, using Anthropic default'
     );
-    return this.CLAUDE_MODEL || undefined;
+    return fallback || undefined;
   }
 
   /**

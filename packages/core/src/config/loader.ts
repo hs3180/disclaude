@@ -356,7 +356,9 @@ export function validateRequiredConfig(config: DisclaudeConfig): {
   const preset = selected?.ok ? selected.preset : undefined;
   const backend = preset?.agentBackend ?? config.agent?.agentBackend;
   const provider = preset?.provider ?? config.agent?.provider ?? (config.anthropic ? 'anthropic' : undefined);
-  const model = preset?.model || config.agent?.model || config.anthropic?.model;
+  const environmentModel = process.env.ANTHROPIC_MODEL?.trim() || config.env?.ANTHROPIC_MODEL?.trim();
+  const model = preset?.model || config.agent?.model || config.anthropic?.model || environmentModel;
+  const glmModel = config.glm?.model || environmentModel;
   if (backend === 'codex') {
     return { valid: true, errors };
   }
@@ -382,7 +384,7 @@ export function validateRequiredConfig(config: DisclaudeConfig): {
   }
 
   // If GLM API key is configured, model must also be configured
-  if (config.glm?.apiKey && !config.glm?.model) {
+  if (config.glm?.apiKey && !glmModel) {
     errors.push({
       field: 'glm.model',
       message: 'glm.model is required when glm.apiKey is set',
@@ -390,7 +392,7 @@ export function validateRequiredConfig(config: DisclaudeConfig): {
   }
 
   // If GLM model is configured, API key must also be configured
-  if (config.glm?.model && !config.glm?.apiKey) {
+  if ((config.glm?.model || (explicitlyUsesGlm && glmModel)) && !config.glm?.apiKey) {
     errors.push({
       field: 'glm.apiKey',
       message: 'glm.apiKey is required when glm.model is set',

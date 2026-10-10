@@ -12,6 +12,7 @@ import type {
   UserInput,
 } from './types.js';
 import type { MessageBuilderOptions } from '../agents/message-builder/types.js';
+import type { BaseAgentConfig } from '../agents/types.js';
 
 /** Host callbacks that a provider may compose for a chat session. */
 export interface ChatAgentHooks {
@@ -36,8 +37,8 @@ export interface IAgentSDKProvider {
   /** Provider 版本 */
   readonly version: string;
 
-  /** 获取 Provider 信息 */
-  getInfo(): ProviderInfo;
+  /** Provider availability; API backends may validate a resolved target config. */
+  getInfo(config?: BaseAgentConfig): ProviderInfo;
 
   // ==========================================================================
   // 查询方法

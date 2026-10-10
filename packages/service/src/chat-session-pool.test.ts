@@ -59,6 +59,9 @@ const mockAgents: Map<string, { dispose: ReturnType<typeof vi.fn>; stop: ReturnT
 // Mock AgentFactory
 vi.mock('./agents/factory.js', () => ({
   AgentFactory: {
+    resolveConfig: vi.fn((options: { model: string; provider?: 'anthropic' | 'glm' }) => ({
+      apiKey: 'test-key', model: options.model, provider: options.provider ?? 'anthropic',
+    })),
     createChatAgent: vi.fn((_name: string, chatId: string, _callbacks: unknown, _options?: unknown) => {
       const agent = {
         dispose: vi.fn(),
@@ -193,6 +196,17 @@ describe('ChatSessionPool', () => {
       default: { agentBackend: 'claude' as const, model: 'claude-sonnet' },
       fast: { agentBackend: 'claude' as const, model: 'claude-haiku' },
     };
+
+    it('passes the resolved target configuration into the backend preflight', () => {
+      const validatePresetBackend = vi.fn().mockReturnValue({ available: true });
+      const pool = new ChatSessionPool({ agentPresets: presets, validatePresetBackend });
+      try {
+        expect(pool.switchAgentPreset('chat-selected', 'fast')).toMatchObject({ ok: true });
+        expect(validatePresetBackend).toHaveBeenCalledExactlyOnceWith('claude', {
+          apiKey: 'test-key', model: 'claude-haiku', provider: 'anthropic',
+        });
+      } finally { pool.disposeAll(); }
+    });
 
     it('passes the default preset through the real pool-to-factory creation path', () => {
       const pool = new ChatSessionPool({ agentPresets: presets, validatePresetBackend: () => ({ available: true }) });

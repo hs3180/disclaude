@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { StderrCapture, getErrorStderr, isStartupFailure, attachStderrToError, ClaudeSDKProvider, stderrIndicatesUpstreamApiError } from './provider.js';
@@ -268,7 +268,9 @@ describe('ClaudeSDKProvider', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    getAgentConfig.mockReset().mockImplementation(() => ({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' }));
+    getAgentConfig.mockReset().mockImplementation(() => ({
+      apiKey: process.env.ANTHROPIC_API_KEY ?? '', model: 'test-model', provider: 'anthropic',
+    }));
     originalApiKey = process.env.ANTHROPIC_API_KEY;
     provider = new ClaudeSDKProvider();
   });
@@ -303,7 +305,7 @@ describe('ClaudeSDKProvider', () => {
   describe('validateConfig', () => {
     it.each(['anthropic', 'glm'])('accepts resolved YAML-only %s credentials', (apiProvider) => {
       delete process.env.ANTHROPIC_API_KEY;
-      getAgentConfig.mockReturnValue({ apiKey: 'yaml-only-key', provider: apiProvider });
+      getAgentConfig.mockReturnValue({ apiKey: 'yaml-only-key', model: 'yaml-model', apiBaseUrl: 'https://selected.example', provider: apiProvider });
       expect(provider.getInfo().available).toBe(true);
     });
 
@@ -338,6 +340,26 @@ describe('ClaudeSDKProvider', () => {
   // --------------------------------------------------------------------------
 
   describe('getInfo', () => {
+    it('validates an explicit target without consulting the default agent', () => {
+      getAgentConfig.mockImplementation(() => { throw new Error('unrelated default config'); });
+      const info = provider.getInfo({ apiKey: 'selected-key', model: 'selected-model', provider: 'glm', apiBaseUrl: 'http://127.0.0.1:1' });
+      expect(info.available).toBe(true);
+      expect(getAgentConfig).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [{ apiKey: '', model: 'glm-model', provider: 'glm' as const, apiBaseUrl: 'https://selected.example' }, 'glm.apiKey'],
+      [{ apiKey: 'secret-canary', model: '', provider: 'anthropic' as const }, 'model'],
+      [{ apiKey: 'secret-canary', model: 'glm-model', provider: 'glm' as const }, 'apiBaseUrl'],
+      [{ apiKey: 'secret-canary', model: 'glm-model', provider: 'glm' as const, apiBaseUrl: 'file:///secret-canary' }, 'HTTP'],
+    ])('rejects a target with its own missing/invalid field without exposing values', (config, field) => {
+      const info = provider.getInfo(config);
+      expect(info.available).toBe(false);
+      expect(info.unavailableReason).toContain(field);
+      expect(info.unavailableReason).not.toContain('secret-canary');
+      expect(getAgentConfig).not.toHaveBeenCalled();
+    });
+
     it('reports the installed Claude Agent SDK version', () => {
       const require = createRequire(import.meta.url);
       const sdkEntry = require.resolve('@anthropic-ai/claude-agent-sdk');
@@ -435,6 +457,70 @@ describe('ClaudeSDKProvider', () => {
       expect(messages.length).toBe(1);
       expect(messages[0].role).toBe('assistant');
       expect(mockQuery).toHaveBeenCalledWith(expect.objectContaining({ options: expect.objectContaining({ allowedTools: ['Read'], disallowedTools: ['CronCreate'] }) }));
+    });
+
+    it('keeps credentials in a private settings file and removes it after completion', async () => {
+      let file = '';
+      mockQuery.mockImplementation(({ options }: { options: { settings: string } }) => {
+        file = options.settings;
+        expect(typeof file).toBe('string');
+        expect(file).not.toContain('owned-selected-key');
+        expect(statSync(file).mode & 0o777).toBe(0o600);
+        expect(statSync(dirname(file)).mode & 0o777).toBe(0o700);
+        expect(JSON.parse(readFileSync(file, 'utf8')).env.ANTHROPIC_API_KEY).toBe('owned-selected-key');
+        return Object.assign((async function* () {
+          yield { type: 'assistant', message: { content: [{ type: 'text', text: 'Ok' }] } };
+        })(), { close: vi.fn() });
+      });
+      const result = provider.queryStream((async function* () { yield { role: 'user' as const, content: 'Hi' }; })(), {
+        settingSources: ['user', 'project', 'local'], env: { ANTHROPIC_API_KEY: 'owned-selected-key' },
+      });
+      for await (const _ of result.iterator) { /* consume */ }
+      expect(existsSync(dirname(file))).toBe(false);
+      result.handle.close();
+    });
+
+    it.each(['close', 'cancel'] as const)('removes private credentials on %s before iteration starts', action => {
+      mockQuery.mockReturnValue(Object.assign((async function* () {})(), {
+        close: vi.fn(), interrupt: vi.fn().mockResolvedValue(undefined),
+      }));
+      const result = provider.queryStream((async function* () { yield { role: 'user' as const, content: 'Hi' }; })(), {
+        settingSources: [], env: { ANTHROPIC_API_KEY: 'owned-selected-key' },
+      });
+      const file = mockQuery.mock.calls[0][0].options.settings as string;
+      expect(existsSync(file)).toBe(true);
+      result.handle[action]();
+      expect(existsSync(dirname(file))).toBe(false);
+    });
+
+    it('removes private credentials when SDK construction throws', () => {
+      let file = '';
+      mockQuery.mockImplementation(({ options }: { options: { settings: string } }) => {
+        file = options.settings;
+        throw new Error('owned SDK startup failure');
+      });
+      expect(() => provider.queryStream((async function* () {})(), {
+        settingSources: [], env: { ANTHROPIC_API_KEY: 'owned-selected-key' },
+      })).toThrow('owned SDK startup failure');
+      expect(existsSync(dirname(file))).toBe(false);
+    });
+
+    it('retains private credential settings across an empty pre-output retry', async () => {
+      const files: string[] = [];
+      mockQuery.mockImplementation(({ options }: { options: { settings: string } }) => {
+        files.push(options.settings);
+        expect(JSON.parse(readFileSync(options.settings, 'utf8')).env.ANTHROPIC_API_KEY).toBe('owned-selected-key');
+        return Object.assign((async function* () {
+          if (files.length > 1) { yield { type: 'assistant', message: { content: [{ type: 'text', text: 'Ok' }] } }; }
+        })(), { close: vi.fn() });
+      });
+      const result = provider.queryStream((async function* () { yield { role: 'user' as const, content: 'Hi' }; })(), {
+        settingSources: [], env: { ANTHROPIC_API_KEY: 'owned-selected-key' },
+      });
+      for await (const _ of result.iterator) { /* consume */ }
+      expect(files).toHaveLength(2);
+      expect(new Set(files).size).toBe(1);
+      expect(existsSync(dirname(files[0]))).toBe(false);
     });
 
     // Issue #4442 (part 2 + part 3): empty stream — the SDK yields zero messages

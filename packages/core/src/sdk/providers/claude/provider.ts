@@ -20,8 +20,10 @@ import { createLogger } from '../../../utils/logger.js';
 import { tagErrorCategory } from '../../../utils/error-handler.js';
 import { computeBackoffDelay } from '../../../utils/retry.js';
 import { Config } from '../../../config/index.js';
+import type { BaseAgentConfig } from '../../../agents/types.js';
 import { withDiscoveredCompaction } from './compaction.js';
 import { buildClaudeDisallowedTools } from './disallowed-tools.js';
+import { privateSdkSettings } from './private-settings.js';
 
 const logger = createLogger('ClaudeSDKProvider');
 
@@ -273,13 +275,14 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     };
   }
 
-  getInfo(): ProviderInfo {
-    const available = this.validateConfig();
+  getInfo(config?: BaseAgentConfig): ProviderInfo {
+    const reason = this.configurationError(config);
+    const available = reason === undefined;
     return {
       name: this.name,
       version: this.version,
       available,
-      unavailableReason: available ? undefined : 'Claude API configuration is missing or invalid; check anthropic.apiKey / glm.apiKey and the selected model',
+      unavailableReason: available ? undefined : `Claude API configuration is missing or invalid: ${reason}`,
     };
   }
 
@@ -308,7 +311,8 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     // Issue #2920: 创建 stderr 捕获器
     const stderrCapture = new StderrCapture();
 
-    const sdkOptions = adaptOptions(commonOptions, { allowedTools, disallowedTools });
+    const privateSettings = privateSdkSettings(adaptOptions(commonOptions, { allowedTools, disallowedTools }));
+    const sdkOptions = privateSettings.options;
     // 将 stderr 回调注入 SDK 选项
     sdkOptions.stderr = (data: string) => {
       stderrCapture.append(data);
@@ -352,10 +356,17 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     // retry before the first SDK message. Created eagerly here so handle.close
     // works even before iteration starts.
     let cancelled = false;
-    let queryResult = query({
-      prompt: adaptInputStream(),
-      options: sdkOptions as Parameters<typeof query>[0]['options'],
-    });
+    let queryResult: ReturnType<typeof query>;
+    try {
+      queryResult = query({
+        prompt: adaptInputStream(),
+        options: sdkOptions as Parameters<typeof query>[0]['options'],
+      });
+    } catch (error) {
+      privateSettings.cleanup();
+      cleanupNewProcessListeners(listenerSnapshot);
+      throw error;
+    }
 
     // Issue #3003: Track SDK query timing for diagnostics
     const queryStartMs = Date.now();
@@ -690,39 +701,71 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     return {
       handle: {
         close: () => {
-          if ('close' in queryResult && typeof queryResult.close === 'function') {
-            queryResult.close();
-          }
+          try {
+            if ('close' in queryResult && typeof queryResult.close === 'function') {
+              queryResult.close();
+            }
+          } finally {
           // Issue #3378: Also clean up listeners when handle is explicitly closed,
           // in case the iterator wasn't fully consumed.
-          cleanupListeners();
+            cleanupListeners();
+            privateSettings.cleanup();
+          }
         },
         cancel: () => {
-          cancelled = true;
+          try {
+            cancelled = true;
           // cancel ends this query; interrupt alone may leave SDK background
           // tools/follow-ups running. close tears down the owned subprocess.
-          if (typeof queryResult.interrupt === 'function') {
-            void queryResult.interrupt().catch((err: unknown) => {
-              logger.debug({ err }, 'Interrupt settled after cancellation');
-            });
-          }
-          queryResult.close?.();
+            if (typeof queryResult.interrupt === 'function') {
+              void queryResult.interrupt().catch((err: unknown) => {
+                logger.debug({ err }, 'Interrupt settled after cancellation');
+              });
+            }
+            queryResult.close?.();
+          } finally {
           // Issue #3378: Clean up listeners on cancel as well.
-          cleanupListeners();
+            cleanupListeners();
+            privateSettings.cleanup();
+          }
         },
         sessionId: undefined,
       },
-      iterator: adaptIterator(),
+      iterator: (async function* () {
+        try { yield* adaptIterator(); }
+        finally { privateSettings.cleanup(); }
+      })(),
     };
   }
 
   validateConfig(): boolean {
-    // Use the same resolved credentials as agent requests (YAML, env, GLM).
-    // Looking only at process.env incorrectly rejects YAML-only credentials.
+    return this.configurationError() === undefined;
+  }
+
+  private configurationError(target?: BaseAgentConfig): string | undefined {
+    if (this.disposed) { return 'provider has been disposed'; }
     try {
-      return !!Config.getAgentConfig().apiKey.trim();
+      const config = target ?? Config.getAgentConfig();
+      const service = config.provider === 'glm' ? 'glm' : 'anthropic';
+      if (!config.apiKey?.trim()) {
+        return service === 'glm' ? 'glm.apiKey is required for the selected preset'
+          : 'anthropic.apiKey or ANTHROPIC_API_KEY is required for the selected preset';
+      }
+      if (!config.model?.trim()) { return 'the selected preset model is required'; }
+      if (service === 'glm' && !config.apiBaseUrl?.trim()) {
+        return 'glm.apiBaseUrl or the selected preset apiBaseUrl is required';
+      }
+      if (config.apiBaseUrl !== undefined) {
+        try {
+          const url = new URL(config.apiBaseUrl);
+          if (!['http:', 'https:'].includes(url.protocol)) { return 'the selected preset apiBaseUrl must use HTTP or HTTPS'; }
+        } catch {
+          return 'the selected preset apiBaseUrl must be an HTTP or HTTPS URL';
+        }
+      }
+      return undefined;
     } catch {
-      return false;
+      return 'check the selected API service credentials, model and endpoint';
     }
   }
 
