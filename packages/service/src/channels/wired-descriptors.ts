@@ -14,6 +14,9 @@
 
 import {
   createInboundAttachment,
+  createControlHandler,
+  buildHelpMessage,
+  type ControlHandlerContext,
   type IChannel,
   type IncomingMessage,
   type FileRef,
@@ -27,6 +30,7 @@ import { FeishuChannel, type FeishuChannelConfig } from './feishu-channel.js';
 import { WeChatChannel, type WeChatChannelConfig } from './wechat/index.js';
 import crypto from 'crypto';
 import { messageLogger } from '../utils/message-logger.js';
+import { WelcomeService } from '../platforms/feishu/welcome-service.js';
 import type {
   ChannelSetupContext,
   WiredChannelDescriptor,
@@ -189,7 +193,25 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
       setMode: (chatId: string, mode: 'mention' | 'always' | 'auto') =>
         triggerModeManager.setMode(chatId, mode),
     };
-    context.controlHandlerContext.triggerMode = triggerModeAdapter;
+    const helpContext: ControlHandlerContext = {
+      ...context.controlHandlerContext as unknown as ControlHandlerContext,
+      triggerMode: triggerModeAdapter,
+      getHelpCapabilities: () => feishuChannel.getCapabilities(),
+    };
+    const generateWelcomeMessage = (chatId: string, chatType: import('@disclaude/core').ChatType): string | undefined => {
+      const command = { type: 'help' as const, chatId, chatType, ...(chatId.startsWith('ou_') ? { actorId: chatId } : {}) };
+      if (helpContext.isCommandAllowed && !helpContext.isCommandAllowed(command)) { return undefined; }
+      return buildHelpMessage(command, helpContext, true);
+    };
+    const welcomeService = new WelcomeService({
+      generateWelcomeMessage,
+      generateHelpMessage: generateWelcomeMessage,
+      sendMessage: async (chatId, text) => { await feishuChannel.sendMessage({ chatId, type: 'text', text }); },
+      sendWelcomeMessage: (chatId, text, chatType) => feishuChannel.sendWelcomeMessage(chatId, text, chatType),
+    });
+    helpContext.guidance = welcomeService;
+    feishuChannel.setWelcomeService(welcomeService);
+    feishuChannel.onControl(createControlHandler(helpContext));
 
     // 3. Register REST API handlers for MCP Server connections
     // Base handlers reuse the same channel.sendMessage pattern as ChatAgentCallbacks

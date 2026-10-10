@@ -541,6 +541,8 @@ describe('WiredChannelDescriptors', () => {
           setMode: vi.fn(),
         }),
         uploadImage: vi.fn().mockResolvedValue('img_key_123'),
+        setWelcomeService: vi.fn(),
+        sendWelcomeMessage: vi.fn().mockResolvedValue(undefined),
       } as any;
     }
 
@@ -558,6 +560,23 @@ describe('WiredChannelDescriptors', () => {
       expect(registeredHandlers).toBeDefined();
       expect(registeredHandlers!.pushToAgent).toBeDefined();
       expect(typeof registeredHandlers!.pushToAgent).toBe('function');
+    });
+
+    it('wires welcome events and per-channel help using the actual capabilities and host access policy', async () => {
+      const channel = createMockFeishuChannel();
+      const policy = vi.fn((command: { type: string; actorId?: string }) => command.type === 'help' && command.actorId === 'actor');
+      const context = createFeishuSetupContext({ controlHandlerContext: { isCommandAllowed: policy } as any });
+      await FEISHU_WIRED_DESCRIPTOR.setup!(channel, {}, context);
+      expect(channel.setWelcomeService).toHaveBeenCalledTimes(1);
+      expect(channel.onControl).toHaveBeenCalledTimes(1);
+      const [[welcome]] = channel.setWelcomeService.mock.calls;
+      await welcome.handleBotAddedToGroup('group', 'group');
+      expect(channel.sendWelcomeMessage).not.toHaveBeenCalled();
+      const [[handler]] = channel.onControl.mock.calls;
+      const help = await handler({ type: 'help', chatId: 'chat', chatType: 'p2p', actorId: 'actor' });
+      expect(help.success).toBe(true);
+      expect(help.message).not.toMatch(/\/reset|\/agent|附件|\/trigger/);
+      expect(policy).toHaveBeenCalledWith(expect.objectContaining({ actorId: 'actor', chatId: 'chat' }));
     });
 
     it('should push instruction to agent via InputMessageRouter', async () => {

@@ -11,6 +11,7 @@
  */
 
 import type { AgentInputRequest, AgentInputContext } from '../sdk/user-input.js';
+import type { ChatType } from '../utils/chat-type-utils.js';
 
 /**
  * Generic message structure received from any channel.
@@ -136,6 +137,8 @@ export type ControlCommandType =
  * Commands without entries accept no data (`undefined`).
  */
 export interface CommandDataMap {
+  /** /help — explicit help or automatic-guidance preference */
+  help: { mode?: string };
   /** /trigger — trigger mode toggle */
   trigger: { mode?: string };
   /** /project — project management */
@@ -185,6 +188,9 @@ export interface ControlCommand<T extends ControlCommandType = ControlCommandTyp
    * addressing the chat-scoped agent, bit-identical to today.
    */
   threadRootId?: string;
+  /** Inbound channel context, supplied by the channel rather than command arguments. */
+  chatType?: ChatType;
+  actorId?: string;
 }
 
 /**

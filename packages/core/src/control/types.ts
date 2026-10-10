@@ -4,7 +4,7 @@
  * @module control/types
  */
 
-import type { ControlCommand, ControlResponse, ControlCommandType } from '../types/channel.js';
+import type { ControlCommand, ControlResponse, ControlCommandType, ChannelCapabilities } from '../types/channel.js';
 import type { Logger } from '../utils/logger.js';
 import type { TriggerMode } from '../config/types.js';
 import type { ProjectManager } from '../project/project-manager.js';
@@ -22,6 +22,14 @@ export interface DebugGroup {
  * 控制命令处理器上下文
  */
 export interface ControlHandlerContext {
+  /** Optional host access policy; help uses exactly the same decision as dispatch. */
+  isCommandAllowed?: (command: ControlCommand) => boolean;
+  getHelpCapabilities?: () => ChannelCapabilities;
+  guidance?: {
+    isEnabled(chatId: string): boolean;
+    setEnabled(chatId: string, enabled: boolean): void;
+    claimPrompt?(chatId: string): boolean;
+  };
   /** AgentPool 实例 */
   agentPool: {
     /** Issue #3696: skipContext=true skips history loading on next agent creation (when honored by the pool implementation) */
@@ -49,6 +57,7 @@ export interface ControlHandlerContext {
       | { ok: false; error: string };
     steer?(chatId: string, prompt: string, threadRootId?: string):
       Promise<{ ok: true; message: string } | { ok: false; error: string }>;
+    canSteer?(chatId: string, threadRootId?: string): boolean;
   };
 
   /** Debug group settings, independent of any execution-node role. */
@@ -96,4 +105,7 @@ export interface CommandDefinition<T extends ControlCommandType = ControlCommand
   handler: CommandHandler<T>;
   description: string;
   usage?: string;
+  isAvailable?: (context: ControlHandlerContext, command: ControlCommand) => boolean;
+  /** A transient capability can be hidden in help without changing the command's error path. */
+  showInHelp?: (context: ControlHandlerContext, command: ControlCommand) => boolean;
 }

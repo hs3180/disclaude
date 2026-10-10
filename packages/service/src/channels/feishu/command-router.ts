@@ -14,7 +14,9 @@ import {
   type ControlCommand,
   type ControlCommandType,
   type ControlResponse,
+  type ChatType,
 } from '@disclaude/core';
+import type { WelcomeService } from '../../platforms/feishu/welcome-service.js';
 
 /** A message to send back to the chat. */
 export interface CommandReply {
@@ -45,6 +47,8 @@ export interface CommandRouterInput {
    * slot instead of the chat-scoped one. Absent elsewhere.
    */
   threadRootId?: string;
+  chatType?: ChatType;
+  actorId?: string;
 }
 
 /**
@@ -84,7 +88,11 @@ export async function tryHandleSlashCommand(
     const rawData = { args };
     const response = await deps.emitControl(
       createControlCommand(cmd as ControlCommandType, input.chatId, rawData,
-        input.threadRootId ? { threadRootId: input.threadRootId } : undefined),
+        input.threadRootId || input.chatType || input.actorId ? {
+          ...(input.threadRootId ? { threadRootId: input.threadRootId } : {}),
+          ...(input.chatType ? { chatType: input.chatType } : {}),
+          ...(input.actorId ? { actorId: input.actorId } : {}),
+        } : undefined),
     );
 
     // Issue #1562: relay both success and error messages from the control handler.
@@ -126,4 +134,23 @@ export async function tryHandleSlashCommand(
   }
 
   return false;
+}
+
+/** Exact onboarding requests only: task descriptions, attachments, quotations and code pass through. */
+export async function tryHandleGuidance(
+  input: CommandRouterInput,
+  deps: CommandRouterDeps,
+  welcome?: WelcomeService,
+): Promise<boolean> {
+  if (!welcome || !deps.hasControlHandler || !/^(?:帮助|怎么用|如何使用|不知道怎么开始|不知道该做什么|help|how do i (?:start|use this))[?？!！。\.]*$/i.test(input.textWithoutMentions.trim())) { return false; }
+  if (!welcome.claimPrompt(input.chatId)) { return false; }
+  const response = await deps.emitControl(createControlCommand('help', input.chatId, { mode: 'brief' }, {
+    ...(input.threadRootId ? { threadRootId: input.threadRootId } : {}),
+    ...(input.chatType ? { chatType: input.chatType } : {}),
+    ...(input.actorId ? { actorId: input.actorId } : {}),
+  }));
+  // A denied help command is consumed with the same denial as explicit /help.
+  if (!response.message || !welcome.isEnabled(input.chatId)) { return false; }
+  await deps.sendMessage({ chatId: input.chatId, ...(input.threadRootId ? { threadId: input.threadRootId } : {}), type: 'text', text: response.message });
+  return true;
 }

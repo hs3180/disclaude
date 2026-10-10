@@ -22,6 +22,11 @@ export function normalizeCommandData<T extends ControlCommandType>(
   if (!rawData) {return undefined;}
 
   switch (type) {
+    case 'help': {
+      const args = Array.isArray(rawData.args) ? rawData.args as string[] : [];
+      const mode = (rawData.mode as string | undefined) ?? args[0];
+      return mode ? { mode } : undefined;
+    }
     case 'project': {
       const args = rawData.args as string[] | undefined;
       const subcommand = (rawData.subcommand as string) ?? args?.[0] ?? 'info';
@@ -68,7 +73,7 @@ export function createControlCommand<T extends ControlCommandType>(
   type: T,
   chatId: string,
   rawData: Record<string, unknown> | undefined,
-  extra?: { threadRootId?: string },
+  extra?: Pick<ControlCommand, 'threadRootId' | 'chatType' | 'actorId'>,
 ): ControlCommand<T> {
   return {
     type,

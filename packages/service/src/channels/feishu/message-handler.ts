@@ -44,7 +44,8 @@ import { evaluateMessageFilters } from './message-filters.js';
 import { FeishuPrivateInput } from './private-input.js';
 import { FeishuAgentInput } from './agent-input.js';
 import { FeishuPrivateWorkflows, type PrivateWorkflowRequest } from './private-workflows.js';
-import { tryHandleSlashCommand } from './command-router.js';
+import { tryHandleSlashCommand, tryHandleGuidance } from './command-router.js';
+import type { WelcomeService } from '../../platforms/feishu/welcome-service.js';
 import {
   extractOpenId,
   parsePostContent,
@@ -205,6 +206,9 @@ export class MessageHandler {
   private tenantAccessToken: string;
   private readonly privateInput?: FeishuPrivateInput;
   private agentInput?: FeishuAgentInput;
+  private welcomeService?: WelcomeService;
+
+  setWelcomeService(service: WelcomeService): void { this.welcomeService = service; }
 
   async requestAgentInput(request: import('@disclaude/core').AgentInputRequest, context: import('@disclaude/core').AgentInputContext): Promise<void> {
     if (!this.agentInput) { throw new Error('Feishu input channel is unavailable'); }
@@ -1020,6 +1024,10 @@ export class MessageHandler {
       // Issue #4401: Resolve the effective topic chat type after dedup. Falls
       // back to the event value on lookup errors so processing never blocks.
       const chat_type = await this.resolveTopicChatType(chat_id, rawChatType);
+      const senderId = extractOpenId(sender);
+      if (chat_type === 'p2p' && sender?.sender_type === 'user' && senderId) {
+        this.welcomeService?.registerPrivateChat(senderId, chat_id);
+      }
 
     // Bot-to-bot @mention messages that passed the filter are allowed through (#1742).
     if (sender?.sender_type === 'app') {
@@ -1382,19 +1390,23 @@ export class MessageHandler {
     // Issue #4587 (part 3): resolve thread identity BEFORE dispatching, so a
     // /reset or /stop typed inside a topic-group thread addresses that
     // thread's agent slot rather than the chat-scoped one.
-    const commandHandled = await tryHandleSlashCommand(
-      { textWithoutMentions, chatId: chat_id, threadRootId },
-      {
+    const commandInput: import('./command-router.js').CommandRouterInput = {
+      textWithoutMentions, chatId: chat_id, threadRootId,
+      ...(chat_type === 'p2p' || chat_type === 'group' || chat_type === 'topic' ? { chatType: chat_type } : {}),
+      actorId: extractOpenId(sender),
+    };
+    const commandDeps = {
         hasControlHandler: this.controlHandler,
         emitControl: (command) => this.callbacks.emitControl(command),
         sendMessage: async (reply) => {
           await this.callbacks.sendMessage(reply);
         },
-      },
-    );
+      } satisfies import('./command-router.js').CommandRouterDeps;
+    const commandHandled = await tryHandleSlashCommand(commandInput, commandDeps);
     if (commandHandled) {
       return;
     }
+    if (message_type === 'text' && (!parent_id || chat_type === 'topic') && await tryHandleGuidance(commandInput, commandDeps, this.welcomeService)) { return; }
 
     // Issue #4587 (part 3) review fix: the router declined — this is an
     // unrecognized `/xxx` (e.g. a skill invocation) processed as a normal

@@ -392,6 +392,7 @@ export async function main(): Promise<void> {
       switchAgentPreset: (chatId, presetName, threadRootId) =>
         agentPool.switchAgentPreset(chatId, presetName, threadRootId),
       steer: (chatId, prompt, threadRootId) => agentPool.steer(chatId, prompt, threadRootId),
+      canSteer: (chatId, threadRootId) => agentPool.canSteer(chatId, threadRootId),
     },
     debugGroups: {
       getDebugGroup: () => service.getDebugGroupService().getDebugGroup(),

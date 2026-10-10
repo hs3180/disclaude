@@ -2879,6 +2879,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   }
 
   /** Apply an instruction to the currently executing native turn after backend acknowledgement. */
+  canSteer(): boolean {
+    return this.isBusy && !!this.activeTurnMessageId &&
+      typeof (this.queryHandle as (QueryHandle & { steer?: unknown }) | undefined)?.steer === 'function';
+  }
+
   async steer(prompt: string): Promise<{ ok: true; turnId: string } | { ok: false; error: string }> {
     type SteerCapableQueryHandle = QueryHandle & {
       steer(text: string): Promise<{ turnId: string }>;

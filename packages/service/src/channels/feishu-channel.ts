@@ -28,6 +28,7 @@ import {
   type OutgoingMessage,
   type ChannelCapabilities,
   DEFAULT_CHANNEL_CAPABILITIES,
+  type ChatType,
   attachmentManager,
 } from '@disclaude/core';
 import {
@@ -102,7 +103,7 @@ export function extractChatIdFromEvent(data: unknown): string | undefined {
   }
 
   // Try message event format: data.event.message.chat_id
-  const event = raw.event as Record<string, unknown> | undefined;
+  const event = (raw.event ?? raw) as Record<string, unknown>;
   if (event?.message) {
     const message = event.message as Record<string, unknown>;
     if (typeof message.chat_id === 'string') {
@@ -423,6 +424,22 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
             extractChatIdFromEvent(data) ?? '',
             '⚠️ 欢迎消息发送失败，但这不影响正常使用。'
           );
+        }
+      },
+      'im.chat.member.bot.added_v1': async (data) => {
+        try {
+          await this.welcomeHandler.handleBotAdded(data);
+        } catch (error) {
+          logger.error({ err: error }, 'Failed to handle bot added');
+          await this.notifyUserDirectly(extractChatIdFromEvent(data) ?? '', '⚠️ 欢迎消息发送失败，但这不影响正常使用。');
+        }
+      },
+      'im.chat.member.user.added_v1': async (data) => {
+        try {
+          await this.welcomeHandler.handleUserAdded(data);
+        } catch (error) {
+          logger.error({ err: error }, 'Failed to handle user added');
+          await this.notifyUserDirectly(extractChatIdFromEvent(data) ?? '', '⚠️ 欢迎消息发送失败，但这不影响正常使用。');
         }
       },
       'im.chat.updated_v1': (data: unknown) => {
@@ -1293,6 +1310,20 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
    */
   setWelcomeService(service: WelcomeService): void {
     this.welcomeHandler.setWelcomeService(service);
+    this.feishuMessageHandler.setWelcomeService(service);
+  }
+
+  /** Welcome events have no reply anchor; validate a real native receipt and never enqueue/retry. */
+  async sendWelcomeMessage(chatId: string, text: string, _chatType: ChatType): Promise<void> {
+    if (!this.client || !this.isRunning) { throw new Error('Welcome channel is unavailable'); }
+    const response = await this.client.im.message.create({
+      params: { receive_id_type: chatId.startsWith('ou_') ? 'open_id' : 'chat_id' },
+      data: { receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text }) },
+    });
+    if (response.code !== 0 || !response.data?.message_id) { throw new Error('Welcome delivery was not confirmed'); }
+    await messageLogger.logOutgoingMessage(response.data.message_id, chatId, text, 'text').catch(error => {
+      logger.warn({ error, chatId }, 'Failed to record welcome receipt');
+    });
   }
 
   /**

@@ -140,7 +140,8 @@ describe('createControlHandler', () => {
     const result = await handler(command);
 
     expect(result.success).toBe(false);
-    expect(result.message).toBeUndefined();
+    expect(result.message).toContain('/help');
+    expect(result.message).not.toContain('Agent pool unavailable');
     expect(result.error).toContain('Command failed');
     expect(result.error).toContain('Agent pool unavailable');
   });
