@@ -76,6 +76,12 @@ disclaude channel send_interactive --chat oc_xxx \
               {"text":"Reject","value":"reject","type":"danger"}]' \
   --title "Code Review"
 
+# Keep a follow-up card in its originating topic, including after a card action
+disclaude channel send_interactive --chat oc_xxx \
+  --parent om_trigger --thread-root om_topic_root \
+  --question "Continue with this direction?" \
+  --options '[{"text":"Continue","value":"continue"},{"text":"Revise","value":"revise"}]'
+
 # Pipe a longer question on stdin + custom action prompts
 echo "Deploy to prod?" | disclaude channel send_interactive --chat oc_xxx \
   --options '[{"text":"yes","value":"yes"},{"text":"no","value":"no"}]' \
@@ -100,6 +106,15 @@ disclaude channel send_card --chat oc_xxx --card-file ./card.json
 echo '{"elements":[{"tag":"markdown","content":"hi"}]}' \
   | disclaude channel send_card --chat oc_xxx
 ```
+
+For topic cards, `--thread-root` is the root **message** ID (`om_...`). A real
+parent in that topic remains the reply target; an unavailable, synthetic, or
+different-topic parent uses the explicit root. The service verifies the returned
+chat/topic metadata, reading the sent message back when necessary. A rejected
+topic or an unconfirmed delivery returns an error; it does not create a card at
+the chat root or automatically resend after a timeout. Card sends require a real
+`message_id`; an offline queue entry is not a successful receipt.
+
 
 **Runtime (host deps, not bundled):** reuses `send_text` / `send_file` /
 `send_card` (and the card preprocessing helpers) / `push` /

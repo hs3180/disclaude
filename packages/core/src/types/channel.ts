@@ -94,8 +94,11 @@ export interface OutgoingMessage {
   /** Optional description for logging */
   description?: string;
 
-  /** Thread root message ID for thread replies */
+  /** Message to reply to (may be a trigger inside a topic). */
   threadId?: string;
+
+  /** Explicit topic root; takes precedence over an unsuitable reply parent. */
+  threadRootId?: string;
 
   /**
    * Mention targets for @mentioning users/bots in text messages.
