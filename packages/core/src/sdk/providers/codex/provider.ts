@@ -1481,7 +1481,9 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           ? Promise.reject(new Error('codex app-server stream is closed'))
           : lifecycle?.interrupt(sessionKey) ?? Promise.reject(new Error('No active app-server turn')),
         steer: async (text) => {
-          if (stopped || !lifecycle) {throw new Error('No active app-server turn');}
+          if (stopped || !lifecycle) {
+            throw new CodexNoActiveTurnError('steer', lifecycle?.snapshot(sessionKey) ?? { sessionKey, state: 'idle' });
+          }
           return { turnId: await lifecycle.steer(sessionKey, text) };
         },
         get sessionId(): string | undefined {

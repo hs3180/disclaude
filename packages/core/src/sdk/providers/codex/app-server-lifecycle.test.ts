@@ -162,6 +162,23 @@ echo '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"t
     }
   });
 
+  it.each([{}, { turnId: 'different-turn' }])('refuses a missing or mismatched steer receipt (%j)', async result => {
+    const binary = fixture(`
+read initialize; echo '{"id":1,"result":{}}'
+read initialized
+read thread; echo '{"id":2,"result":{"thread":{"id":"thread-1"}}}'
+read start; echo '{"id":3,"result":{"turn":{"id":"turn-1"}}}'
+read steer; echo '${JSON.stringify({ id: 4, result })}'
+while read remainder; do :; done
+`);
+    const lifecycle = new CodexAppServerLifecycle({ binary });
+    try {
+      await lifecycle.ensureThread('owned');
+      await lifecycle.startTurn('owned', 'first');
+      await expect(lifecycle.steer('owned', 'correction')).rejects.toThrow('did not match');
+    } finally { await lifecycle.close(); }
+  });
+
   it('marks a turn uncertain after disconnect and refuses automatic replay', async () => {
     const binary = fixture(`
 read initialize; echo '{"id":1,"result":{}}'

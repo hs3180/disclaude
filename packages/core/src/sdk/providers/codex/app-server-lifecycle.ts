@@ -332,12 +332,16 @@ export class CodexAppServerLifecycle {
 
   async steer(sessionKey: string, input: string): Promise<string> {
     const session = this.requireActive(sessionKey, 'steer');
+    const turnId = session.activeTurnId as string;
     const response = (await this.transport.request('turn/steer', {
       threadId: session.threadId,
-      expectedTurnId: session.activeTurnId,
+      expectedTurnId: turnId,
       input: [{ type: 'text', text: input }],
     })) as TurnResponse;
-    return response.turnId ?? session.activeTurnId as string;
+    if (response.turnId !== turnId) {
+      throw new Error('Steer acknowledgement did not match its targeted turn');
+    }
+    return turnId;
   }
 
   snapshot(sessionKey: string): CodexAppServerSessionSnapshot | undefined {
