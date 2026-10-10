@@ -54,7 +54,7 @@ vi.mock('@disclaude/core', async (importOriginal) => {
 // Track mock agent instances for assertions
 // Issue #4620: mock now carries turnStartedAtMs (0 = not set; tests that
 // exercise the observation-based fallback leave it 0/undefined).
-const mockAgents: Map<string, { dispose: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; steer: ReturnType<typeof vi.fn>; updateCallbacks: ReturnType<typeof vi.fn>; taskComplete?: Promise<void>; isBusy: boolean; turnStartedAtMs?: number }> = new Map();
+const mockAgents: Map<string, { dispose: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; steer: ReturnType<typeof vi.fn>; updateCallbacks: ReturnType<typeof vi.fn>; interruptForServiceRestart: ReturnType<typeof vi.fn>; taskComplete?: Promise<void>; isBusy: boolean; hasPendingWork: boolean; turnStartedAtMs?: number }> = new Map();
 
 // Mock AgentFactory
 vi.mock('./agents/factory.js', () => ({
@@ -66,8 +66,11 @@ vi.mock('./agents/factory.js', () => ({
         stop: vi.fn().mockReturnValue(true),
         steer: vi.fn().mockResolvedValue({ ok: false, error: 'unsupported' }),
         updateCallbacks: vi.fn().mockReturnValue(true),
+        interruptForServiceRestart: vi.fn().mockResolvedValue(undefined),
+        beginServiceShutdown: vi.fn(),
         taskComplete: undefined as Promise<void> | undefined,
         isBusy: false,
+        hasPendingWork: false,
         // Issue #4620: default 0 = agent does not report a turn-start
         // timestamp → pool falls back to observation-based tracking.
         turnStartedAtMs: 0,
@@ -770,6 +773,35 @@ describe('ChatSessionPool', () => {
 
       const agent = mockAgents.get('chat-1')!;
       // dispose should have been called only once (from first disposeAll)
+      expect(agent.dispose).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('shutdownForServiceRestart()', () => {
+    it('stops admission and interrupts remaining work after the bounded drain', async () => {
+      const pool = new ChatSessionPool();
+      const callbacks = createMockCallbacks();
+      pool.getOrCreateChatAgent('shutdown-chat', callbacks);
+      const agent = mockAgents.get('shutdown-chat')!;
+      agent.hasPendingWork = true;
+
+      await pool.shutdownForServiceRestart({ drainTimeoutMs: 0, noticeTimeoutMs: 1 });
+
+      expect(agent.interruptForServiceRestart).toHaveBeenCalledWith(1);
+      expect(agent.dispose).toHaveBeenCalledOnce();
+      expect(() => pool.getOrCreateChatAgent('shutdown-chat', callbacks)).toThrow('shutting down');
+    });
+
+    it('lets an active turn finish inside the drain window without marking it interrupted', async () => {
+      const pool = new ChatSessionPool();
+      pool.getOrCreateChatAgent('drained-chat', createMockCallbacks());
+      const agent = mockAgents.get('drained-chat')!;
+      agent.hasPendingWork = true;
+      setTimeout(() => { agent.hasPendingWork = false; }, 5);
+
+      await pool.shutdownForServiceRestart({ drainTimeoutMs: 100, noticeTimeoutMs: 1 });
+
+      expect(agent.interruptForServiceRestart).not.toHaveBeenCalled();
       expect(agent.dispose).toHaveBeenCalledOnce();
     });
   });

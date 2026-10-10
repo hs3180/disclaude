@@ -11,6 +11,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 // Mock all @disclaude/core dependencies
 vi.mock('@disclaude/core', async (importOriginal) => {
@@ -53,6 +56,7 @@ vi.mock('@disclaude/core', async (importOriginal) => {
     this.initialized = false;
   };
   return {
+    createLogger: actual.createLogger,
     Config: {
       getSessionRestoreConfig: vi.fn(() => ({
         historyDays: 1,
@@ -142,6 +146,7 @@ vi.mock('../services/debug-group-service.js', () => ({
 }));
 
 import { ChatAgent } from './chat-agent.js';
+import { ServiceTurnRecoveryStore } from '../service-turn-recovery.js';
 
 const createMockCallbacks = () => ({
   sendMessage: vi.fn().mockResolvedValue(undefined),
@@ -356,6 +361,28 @@ describe('ChatAgent (service)', () => {
   });
 
   describe('runOnce', () => {
+    async function completeOwnedOnce(): Promise<void> {
+      let publish!: () => void;
+      (chatAgent as any).isAgentTeamsEnabled = () => false;
+      (chatAgent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          await new Promise<void>(resolve => { publish = resolve; });
+          yield { parsed: { type: 'text', content: 'Owned successful result' }, raw: {} };
+          yield { parsed: { type: 'result', content: '✅ Complete' }, raw: {} };
+        })(),
+      });
+      const run = chatAgent.runOnce('oc_test_chat', 'hello', 'msg_1');
+      await vi.waitFor(() => expect((chatAgent as any).channel.push).toHaveBeenCalled());
+      publish();
+      await run;
+    }
+
+    it('rejects a fast iterator end instead of reporting one-shot success', async () => {
+      await expect(chatAgent.runOnce('oc_test_chat', 'hello', 'fast-empty')).rejects.toThrow();
+      expect((chatAgent as any).onceMode).toBe(false);
+    });
+
     it('should throw when chatId does not match bound chatId', async () => {
       await expect(chatAgent.runOnce('oc_wrong', 'hello', 'msg_1')).rejects.toThrow(
         'cannot execute for oc_wrong'
@@ -363,12 +390,12 @@ describe('ChatAgent (service)', () => {
     });
 
     it('should complete successfully for matching chatId', async () => {
-      await expect(chatAgent.runOnce('oc_test_chat', 'hello', 'msg_1')).resolves.toBeUndefined();
+      await expect(completeOwnedOnce()).resolves.toBeUndefined();
     });
 
     it('should set onceMode during execution', async () => {
       // Verify onceMode is cleaned up after execution
-      await chatAgent.runOnce('oc_test_chat', 'hello', 'msg_1');
+      await completeOwnedOnce();
       expect((chatAgent as any).onceMode).toBe(false);
     });
   });
@@ -1638,14 +1665,18 @@ describe('ChatAgent (service)', () => {
     const agent = new ChatAgent({ chatId: 'unknown-recovery', callbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
     const internals = agent as any;
     internals.restartManager = new RealRestartManager({ logger: internals.logger, initialBackoffMs: 5 });
+    let fail!: () => void;
+    const requestAccepted = new Promise<void>(resolve => { fail = resolve; });
     internals.createQueryStream = vi.fn(() => ({
       handle: { close: vi.fn(), cancel: vi.fn() },
       iterator: (async function* () {
+        await requestAccepted;
         if (toolEmitted) {yield { parsed: { type: 'tool_use', content: 'operation already submitted' } };}
         throw new Error('opaque failure token=synthetic-credential');
       })(),
     }));
-    void agent.processMessage({ chatId: 'unknown-recovery', payload: 'do work', messageId: 'source-123' });
+    await agent.processMessage({ chatId: 'unknown-recovery', payload: 'do work', messageId: 'source-123' });
+    fail();
     await vi.waitFor(() => expect(JSON.stringify(callbacks.sendMessage.mock.calls)).toContain('自动恢复次数已用完'));
     expect(internals.createQueryStream).toHaveBeenCalledTimes(2);
     const { MessageChannel } = await import('@disclaude/core');
@@ -1653,7 +1684,7 @@ describe('ChatAgent (service)', () => {
     expect(pushes.filter(call => JSON.stringify(call).includes('do work'))).toHaveLength(1);
     const output = JSON.stringify(callbacks.sendMessage.mock.calls);
     expect(output).not.toContain('synthetic-credential');
-    expect(output).toContain('不会自动重放');
+    expect(output).toContain('系统没有自动重放工具');
     const [diagnostic] = internals.logger.error.mock.calls.find((call: any[]) => call[1] === 'Iterator error');
     expect(output).toContain(diagnostic.diagnosticId);
     agent.reset();
@@ -2144,6 +2175,7 @@ describe('ChatAgent (service)', () => {
         const run = once ? agent.runOnce('backend-stop', 'Continue the task', 'interrupt-msg')
           : agent.processMessage({ chatId: 'backend-stop', payload: 'Continue the task', messageId: 'interrupt-msg' });
         await vi.waitFor(() => expect(agent.turnCompleteFor('interrupt-msg')).toBeDefined());
+        if (!once) { await run; } // Publish only after the original input was accepted.
         const rejected = expect(once ? run : agent.turnCompleteFor('interrupt-msg')).rejects.toThrow('interrupted');
         publish();
         await rejected;
@@ -2157,6 +2189,276 @@ describe('ChatAgent (service)', () => {
         expect(callbacks.sendMessage.mock.calls.some(call => call[1] === '⏹️ 本轮已停止。')).toBe(true);
         expect(callbacks.sendMessage.mock.calls.some(call => String(call[1]).includes('Late output'))).toBe(false);
       } finally { agent.dispose(); }
+    });
+  });
+
+  describe('service restart interruption (#5273)', () => {
+    it('delivers a prior-process interruption before accepting the next session turn', async () => {
+      const directory = mkdtempSync(join(tmpdir(), 'chat-agent-reconcile-'));
+      const journalPath = join(directory, 'turns.json');
+      const previousProcess = new ServiceTurnRecoveryStore(journalPath);
+      previousProcess.initialize(100);
+      previousProcess.startTurn({
+        chatId: 'reconcile-chat',
+        sessionKey: 'reconcile-chat',
+        traceId: 'reconcile-chat:old-message',
+        runId: 'old-run',
+        sourceMessageId: 'old-message',
+        startedAt: 100,
+      });
+      const nextProcess = new ServiceTurnRecoveryStore(journalPath);
+      nextProcess.initialize(200);
+      const localCallbacks = createMockCallbacks();
+      localCallbacks.sendMessage.mockResolvedValue('restart-notice-receipt');
+      const agent = new ChatAgent({
+        chatId: 'reconcile-chat', callbacks: localCallbacks, apiKey: 'key', model: 'model',
+        provider: 'anthropic', turnRecovery: nextProcess,
+      });
+      (agent as any).isAgentTeamsEnabled = () => false;
+      (agent as any).createQueryStream = vi.fn(() => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          yield { parsed: { type: 'text', content: 'New request response.' } };
+          yield { parsed: { type: 'result', content: '✅ Complete' } };
+        })(),
+      }));
+
+      try {
+        await agent.processMessage({ chatId: 'reconcile-chat', payload: 'new request', messageId: 'new-message' });
+        await agent.turnCompleteFor('new-message');
+        expect(localCallbacks.sendMessage.mock.calls[0]?.[1]).toContain('old-message');
+        expect(localCallbacks.sendMessage.mock.calls[0]?.[1]).toContain('系统没有自动重放');
+        expect(localCallbacks.sendMessage.mock.calls[1]?.[1]).toBe('New request response.');
+        expect(nextProcess.getPendingNotifications('reconcile-chat')).toEqual([]);
+      } finally {
+        agent.dispose();
+        rmSync(directory, { recursive: true, force: true });
+      }
+    });
+
+    it('persists and delivers a distinct interruption without replaying the Codex turn', async () => {
+      const directory = mkdtempSync(join(tmpdir(), 'chat-agent-restart-'));
+      const journalPath = join(directory, 'turns.json');
+      const store = new ServiceTurnRecoveryStore(journalPath);
+      store.initialize();
+      const localCallbacks = createMockCallbacks();
+      localCallbacks.sendMessage.mockResolvedValue('restart-notice-receipt');
+      const agent = new ChatAgent({
+        chatId: 'restart-chat',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'gpt-5.6-luna',
+        agentBackend: 'codex',
+        sdkSessionKey: 'restart-chat::topic-root',
+        turnRecovery: store,
+      });
+      (agent as any).isAgentTeamsEnabled = () => false;
+      let release!: () => void;
+      const parked = new Promise<void>(resolve => { release = resolve; });
+      async function* activeTurn() {
+        await parked;
+        yield { parsed: { type: 'text', content: 'This late output must be suppressed.' } };
+        yield { parsed: { type: 'result', content: '✅ Complete' } };
+      }
+      const close = vi.fn();
+      const createQueryStream = vi.fn(() => ({ handle: { close, cancel: vi.fn() }, iterator: activeTurn() }));
+      (agent as any).createQueryStream = createQueryStream;
+
+      try {
+        await agent.processMessage({
+          chatId: 'restart-chat',
+          payload: 'Continue the research task',
+          messageId: 'source-message-1',
+          threadRootId: 'topic-root',
+        });
+        expect(agent.isBusy).toBe(true);
+        expect(JSON.parse(readFileSync(journalPath, 'utf8')).turns[0]).toMatchObject({
+          runId: expect.any(String),
+          sourceMessageId: 'source-message-1',
+          state: 'active',
+        });
+
+        await agent.interruptForServiceRestart(100);
+        const { turns } = JSON.parse(readFileSync(journalPath, 'utf8'));
+        const [persisted] = turns;
+        expect(persisted).toMatchObject({
+          sourceMessageId: 'source-message-1',
+          state: 'interrupted_by_service_restart',
+          interruptionCause: 'service_restart',
+          noticeDeliveredAt: expect.any(Number),
+        });
+        expect(localCallbacks.sendMessage).toHaveBeenCalledWith(
+          'restart-chat',
+          expect.stringContaining('系统没有自动重放'),
+          'topic-root'
+        );
+
+        release();
+        await vi.waitFor(() => expect(agent.hasActiveSession()).toBe(false));
+        expect(createQueryStream).toHaveBeenCalledTimes(1);
+        expect(localCallbacks.sendMessage).toHaveBeenCalledTimes(1);
+        expect(localCallbacks.sendMessage).not.toHaveBeenCalledWith(
+          'restart-chat', '⏹️ 本轮已停止。', expect.anything()
+        );
+      } finally {
+        release();
+        agent.dispose();
+        rmSync(directory, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it('keeps the last durable active record if persisting restart interruption fails', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'restart-journal-failure-'));
+    const filePath = join(directory, 'turns.json');
+    const store = new ServiceTurnRecoveryStore(filePath);
+    store.initialize();
+    const callbacks = createMockCallbacks();
+    callbacks.sendMessage.mockResolvedValue('restart-notice-receipt');
+    const agent = new ChatAgent({ chatId: 'restart-disk-failure', callbacks, apiKey: 'key', model: 'model', turnRecovery: store });
+    let release!: () => void;
+    const parked = new Promise<void>(resolve => { release = resolve; });
+    (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(), cancel: vi.fn() },
+      iterator: (async function* () { await parked; })() });
+    try {
+      await agent.processMessage({ chatId: 'restart-disk-failure', payload: 'work', messageId: 'durable-input' });
+      const rejected = expect(agent.turnCompleteFor('durable-input')).rejects.toThrow('service restart');
+      vi.spyOn(store, 'interruptSession').mockImplementation(() => { throw new Error('Disk full'); });
+      await agent.interruptForServiceRestart(1);
+      await rejected;
+      agent.dispose();
+      expect(JSON.parse(readFileSync(filePath, 'utf8')).turns[0].state).toBe('active');
+      const recovered = new ServiceTurnRecoveryStore(filePath).initialize();
+      expect(recovered).toEqual([expect.objectContaining({ sourceMessageId: 'durable-input', state: 'interrupted_by_service_restart' })]);
+    } finally { release(); agent.dispose(); rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  it('reconciles an input accepted before history loading without later pushing or replaying it', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'restart-history-loading-'));
+    const filePath = join(directory, 'turns.json');
+    const store = new ServiceTurnRecoveryStore(filePath);
+    store.initialize();
+    const callbacks = createMockCallbacks();
+    callbacks.sendMessage.mockResolvedValue('restart-notice-receipt');
+    const agent = new ChatAgent({ chatId: 'restart-history', callbacks, apiKey: 'key', model: 'model', turnRecovery: store });
+    let releaseHistory!: () => void;
+    const history = new Promise<void>(resolve => { releaseHistory = resolve; });
+    let releaseIterator!: () => void;
+    const parked = new Promise<void>(resolve => { releaseIterator = resolve; });
+    (agent as any).historyManager.loadFirstMessageHistory = () => history;
+    (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(), cancel: vi.fn() },
+      iterator: (async function* () { await parked; })() });
+    try {
+      const processing = agent.processMessage({ chatId: 'restart-history', payload: 'work', messageId: 'history-input' });
+      const { channel } = agent as any;
+      const rejected = expect(agent.turnCompleteFor('history-input')).rejects.toThrow('service restart');
+      expect(JSON.parse(readFileSync(filePath, 'utf8')).turns[0].state).toBe('active');
+      await agent.interruptForServiceRestart(100);
+      await rejected;
+      releaseHistory();
+      await processing;
+      expect(channel.push).not.toHaveBeenCalled();
+      expect(callbacks.sendMessage).toHaveBeenCalledExactlyOnceWith('restart-history', expect.stringContaining('history-input'), 'thread-root-123');
+    } finally { releaseHistory(); releaseIterator(); agent.dispose(); rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  describe('unexpected iterator terminal outcomes (#5288)', () => {
+    it.each([false, true])('settles active and queued requests once without replay (throws=%s)', async throws => {
+      const callbacks = createMockCallbacks();
+      const agent = new ChatAgent({ chatId: 'iterator-end', callbacks, apiKey: 'key', model: 'model' });
+      let finish!: () => void;
+      const ready = new Promise<void>(resolve => { finish = resolve; });
+      async function* events() {
+        await ready;
+        yield { parsed: { type: 'text', content: 'Partial evidence' } };
+        yield { parsed: { type: 'tool_use', content: 'Operation may already have happened' } };
+        if (throws) { throw new Error('Connection closed mid-operation'); }
+      }
+      const create = vi.fn(() => ({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: events() }));
+      (agent as any).createQueryStream = create;
+      try {
+        await agent.processMessage({ chatId: 'iterator-end', payload: 'first', messageId: 'original', threadRootId: 'first-thread' });
+        await agent.processMessage({ chatId: 'iterator-end', payload: 'second', messageId: 'queued', threadRootId: 'second-thread' });
+        const first = expect(agent.turnCompleteFor('original')).rejects.toThrow();
+        const second = expect(agent.turnCompleteFor('queued')).rejects.toThrow();
+        finish();
+        await Promise.all([first, second]);
+        await vi.waitFor(() => expect((agent as any).restartManager.shouldRestart).toHaveBeenCalled());
+        const notices = callbacks.sendMessage.mock.calls.filter(([, content]) => String(content).includes('本次请求中断'));
+        expect(notices).toHaveLength(2);
+        expect(notices[0]).toEqual(['iterator-end', expect.stringContaining('消息 ID: original'), 'first-thread']);
+        expect(notices[1]).toEqual(['iterator-end', expect.stringContaining('消息 ID: queued'), 'second-thread']);
+        expect(notices.every(([, content]) => String(content).includes('诊断 ID:') && String(content).includes('重新提交'))).toBe(true);
+        expect(create).toHaveBeenCalledTimes(1);
+        expect((agent as any).restartManager.recordSuccess).not.toHaveBeenCalled();
+        const outcomes = (agent as any).logger.warn.mock.calls.filter(([fields]: any[]) => fields.state === 'interrupted');
+        expect(outcomes.map(([fields]: any[]) => fields.sourceMessageId)).toEqual(['original', 'queued']);
+        expect(outcomes.every(([fields]: any[]) => fields.diagnosticId && fields.runId && fields.traceId)).toBe(true);
+      } finally { finish(); agent.dispose(); }
+    });
+
+    it('does not overwrite a replacement session while the old terminal notice is pending', async () => {
+      const callbacks = createMockCallbacks();
+      const agent = new ChatAgent({ chatId: 'iterator-replace', callbacks, apiKey: 'key', model: 'model' });
+      (agent as any).isAgentTeamsEnabled = () => false;
+      let finishOld!: () => void;
+      const old = new Promise<void>(resolve => { finishOld = resolve; });
+      let finishNotice!: () => void;
+      const notice = new Promise<void>(resolve => { finishNotice = resolve; });
+      let finishNew!: () => void;
+      const current = new Promise<void>(resolve => { finishNew = resolve; });
+      callbacks.sendMessage.mockImplementation((_, text) => String(text).includes('本次请求中断') ? notice : Promise.resolve());
+      const create = vi.fn().mockReturnValueOnce({ handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () { await old; })() })
+        .mockReturnValueOnce({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: (async function* () {
+          await current;
+          yield { parsed: { type: 'text', content: 'Explicit recovery completed' } };
+          yield { parsed: { type: 'result', content: '✅ Complete' } };
+        })() });
+      (agent as any).createQueryStream = create;
+      try {
+        await agent.processMessage({ chatId: 'iterator-replace', payload: 'old', messageId: 'old', threadRootId: 'old-thread' });
+        const rejected = expect(agent.turnCompleteFor('old')).rejects.toThrow();
+        finishOld();
+        await rejected;
+        await vi.waitFor(() => expect(callbacks.sendMessage.mock.calls.some(([, text]) => String(text).includes('本次请求中断'))).toBe(true));
+        await agent.processMessage({ chatId: 'iterator-replace', payload: 'continue after inspection', messageId: 'new', threadRootId: 'new-thread' });
+        finishNotice();
+        await vi.waitFor(() => expect((agent as any).logger.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ state: 'interrupted', sourceMessageId: 'old' }), expect.any(String)));
+        expect((agent as any).pendingTurnMessageIds).toEqual(['new']);
+        expect(agent.isBusy).toBe(true);
+        expect(agent.hasActiveSession()).toBe(true);
+        finishNew();
+        await agent.turnCompleteFor('new');
+        expect(callbacks.sendMessage).toHaveBeenCalledWith('iterator-replace', 'Explicit recovery completed', 'new-thread');
+        expect(create).toHaveBeenCalledTimes(2);
+      } finally { finishOld(); finishNotice(); finishNew(); agent.dispose(); }
+    });
+
+    it('does not mark a completed request interrupted when its queued successor has no events', async () => {
+      const callbacks = createMockCallbacks();
+      const agent = new ChatAgent({ chatId: 'iterator-between', callbacks, apiKey: 'key', model: 'model' });
+      (agent as any).isAgentTeamsEnabled = () => false;
+      let finish!: () => void;
+      const ready = new Promise<void>(resolve => { finish = resolve; });
+      async function* events() {
+        await ready;
+        yield { parsed: { type: 'text', content: 'First request completed' } };
+        yield { parsed: { type: 'result', content: '✅ Complete' } };
+      }
+      (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: events() });
+      try {
+        await agent.processMessage({ chatId: 'iterator-between', payload: 'first', messageId: 'completed', threadRootId: 'old-thread' });
+        await agent.processMessage({ chatId: 'iterator-between', payload: 'second', messageId: 'unstarted', threadRootId: 'new-thread' });
+        const rejected = expect(agent.turnCompleteFor('unstarted')).rejects.toThrow();
+        finish();
+        await agent.turnCompleteFor('completed');
+        await rejected;
+        await vi.waitFor(() => expect(callbacks.sendMessage.mock.calls.some(([, text]) => String(text).includes('消息 ID: unstarted'))).toBe(true));
+        const notices = callbacks.sendMessage.mock.calls.filter(([, text]) => String(text).includes('本次请求中断'));
+        expect(notices).toEqual([['iterator-between', expect.stringContaining('消息 ID: unstarted'), 'new-thread']]);
+      } finally { finish(); agent.dispose(); }
     });
   });
 
@@ -2226,6 +2528,104 @@ describe('ChatAgent (service)', () => {
         finishFollowUp();
         agent.dispose();
       }
+    });
+  });
+
+  describe('tool-only terminal outcome (#5288)', () => {
+    it.each(['executed', 'shell-error'])('reports a missing reply without replaying tools (%s)', async outcome => {
+      const directory = mkdtempSync(join(tmpdir(), 'tool-only-terminal-'));
+      const checkpoint = join(directory, 'effects.json');
+      const localCallbacks = {
+        ...createMockCallbacks(),
+        onTurnResult: vi.fn().mockResolvedValue(undefined),
+        addReaction: vi.fn().mockResolvedValue(undefined),
+      };
+      const agent = new ChatAgent({ chatId: 'tool-only-chat', callbacks: localCallbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+      let toolAttempts = 0;
+      async function* output() {
+        yield { parsed: { type: 'tool_use' as const, content: 'execute owned command' }, raw: {} };
+        toolAttempts++;
+        if (outcome === 'executed') {
+          const { writeFileSync } = await import('node:fs');
+          writeFileSync(checkpoint, JSON.stringify({ attempts: toolAttempts }));
+        }
+        yield { parsed: { type: 'tool_result' as const, content: outcome === 'executed' ? 'owned command completed' : "zsh: unmatched '\nexit code 1" }, raw: {} };
+        yield { parsed: { type: 'result' as const, content: '✅ Complete' }, raw: {} };
+      }
+      const create = vi.fn(() => ({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: output() }));
+      (agent as any).createQueryStream = create;
+      try {
+        await agent.processMessage({ chatId: 'tool-only-chat', payload: 'Execute once and report the result', messageId: 'tool-only-source', threadRootId: 'tool-only-root' });
+        await expect(agent.turnCompleteFor('tool-only-source')).rejects.toThrow('no user-visible reply');
+        await vi.waitFor(() => expect(localCallbacks.onTurnResult).toHaveBeenCalledWith({ success: false, text: '', truncated: false }));
+        const notices = localCallbacks.sendMessage.mock.calls.filter(([, text]) => String(text).includes('未收到最终回复'));
+        expect(notices).toHaveLength(1);
+        expect(notices[0]).toEqual(['tool-only-chat', expect.stringContaining('tool-only-source'), 'tool-only-root']);
+        expect(notices[0][1]).toContain('诊断 ID:');
+        expect(notices[0][1]).toContain('不会自动重放');
+        expect((agent as any).logger.warn).toHaveBeenCalledWith(expect.objectContaining({ event: 'agent_turn', state: 'failed', sourceMessageId: 'tool-only-source', runId: expect.any(String), diagnosticId: expect.any(String), user_visible: true }), expect.any(String));
+        expect((agent as any).logger.info).not.toHaveBeenCalledWith(expect.objectContaining({ event: 'agent_turn', state: 'completed', sourceMessageId: 'tool-only-source' }), expect.any(String));
+        expect(create).toHaveBeenCalledTimes(1);
+        expect(toolAttempts).toBe(1);
+        if (outcome === 'executed') { expect(JSON.parse(readFileSync(checkpoint, 'utf8'))).toEqual({ attempts: 1 }); }
+        expect(localCallbacks.addReaction).not.toHaveBeenCalled();
+      } finally { agent.dispose(); rmSync(directory, { recursive: true, force: true }); }
+    });
+
+    it('preserves a successfully delivered asynchronous question without a redundant notice', async () => {
+      const localCallbacks = {
+        ...createMockCallbacks(),
+        requestAgentInput: vi.fn().mockResolvedValue(undefined),
+        onTurnResult: vi.fn().mockResolvedValue(undefined),
+      };
+      const agent = new ChatAgent({ chatId: 'question-chat', callbacks: localCallbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const request = { requestId: 'owned-question', params: { questions: [{ id: 'choice', header: 'Choice', question: 'Which option?', options: [{ label: 'One', description: 'First option' }, { label: 'Two', description: 'Second option' }] }] } };
+      const context = { chatId: 'question-chat', sourceMessageId: 'question-source', threadRootId: 'question-root' };
+      (agent as any).createQueryStream = (_input: unknown, options: any) => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          yield { parsed: { type: 'tool_use', content: 'request user input' }, raw: {} };
+          await options.onUserInput(request, context);
+          yield { parsed: { type: 'result', content: '✅ Complete' }, raw: {} };
+        })(),
+      });
+      try {
+        await agent.processMessage({ chatId: 'question-chat', payload: 'Ask me a question', messageId: 'question-source', threadRootId: 'question-root' });
+        await agent.turnCompleteFor('question-source');
+        await vi.waitFor(() => expect(localCallbacks.onTurnResult).toHaveBeenCalledWith({ success: true, text: '', truncated: false }));
+        expect(localCallbacks.requestAgentInput).toHaveBeenCalledWith(request, context);
+        expect(localCallbacks.sendMessage.mock.calls.some(([, text]) => String(text).includes('未收到最终回复'))).toBe(false);
+      } finally { agent.dispose(); }
+    });
+
+    it('rejects one-shot completion after tool execution without a final reply', async () => {
+      const agent = new ChatAgent({ chatId: 'tool-only-once', callbacks: createMockCallbacks(), apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const create = vi.fn(() => ({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: (async function* () {
+        yield { parsed: { type: 'tool_use', content: 'owned command' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete' }, raw: {} };
+      })() }));
+      (agent as any).createQueryStream = create;
+      try {
+        await expect(agent.runOnce('tool-only-once', 'Execute once', 'once-source')).rejects.toThrow('no user-visible reply');
+        expect(create).toHaveBeenCalledTimes(1);
+      } finally { agent.dispose(); }
+    });
+
+    it('retains failure when the missing-reply notification cannot be delivered', async () => {
+      const localCallbacks = { ...createMockCallbacks(), sendMessage: vi.fn().mockRejectedValue(new Error('channel unavailable')) };
+      const agent = new ChatAgent({ chatId: 'tool-only-undelivered', callbacks: localCallbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const create = vi.fn(() => ({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: (async function* () {
+        yield { parsed: { type: 'tool_use', content: 'owned command' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete' }, raw: {} };
+      })() }));
+      (agent as any).createQueryStream = create;
+      try {
+        await agent.processMessage({ chatId: 'tool-only-undelivered', payload: 'Execute once', messageId: 'undelivered-source', threadRootId: 'undelivered-root' });
+        await expect(agent.turnCompleteFor('undelivered-source')).rejects.toThrow('no user-visible reply');
+        expect((agent as any).logger.warn).toHaveBeenCalledWith(expect.objectContaining({ event: 'agent_turn', state: 'failed', sourceMessageId: 'undelivered-source', user_visible: false }), expect.any(String));
+        expect(create).toHaveBeenCalledTimes(1);
+        expect(localCallbacks.sendMessage.mock.calls.filter(([chatId, text]) => chatId === 'tool-only-undelivered' && String(text).includes('未收到最终回复'))).toHaveLength(1);
+      } finally { agent.dispose(); }
     });
   });
 

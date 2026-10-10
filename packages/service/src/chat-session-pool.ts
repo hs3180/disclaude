@@ -16,6 +16,7 @@ import { statSync } from 'node:fs';
 import { AgentFactory } from './agents/factory.js';
 import type { ChatAgentCallbacks } from './agents/types.js';
 import type { ChatAgent } from './agents/chat-agent.js';
+import type { ServiceTurnRecoveryStore } from './service-turn-recovery.js';
 
 /**
  * Options for ChatSessionPool initialization.
@@ -93,6 +94,9 @@ export interface ChatSessionPoolOptions {
    * When omitted, only the structured warn log is emitted.
    */
   onBusyCapExceeded?: (chatId: string, busyMinutes: number) => Promise<void> | void;
+
+  /** Durable journal for interrupted turns caused by a service restart. */
+  turnRecovery?: ServiceTurnRecoveryStore;
 
   /**
    * Issue #4644: provider-session forgetter invoked by reset() — clears the
@@ -241,6 +245,7 @@ export class ChatSessionPool {
    * agent resolves) so pool resets and agent-level resets hit one provider.
    */
   private readonly forgetProviderSession: (chatId: string) => void;
+  private isShuttingDown = false;
 
   constructor(options: ChatSessionPoolOptions = {}) {
     this.options = options;
@@ -381,6 +386,7 @@ export class ChatSessionPool {
       cwdResolver,
       skipHistory,
       sdkSessionKey,
+      turnRecovery: this.options.turnRecovery,
       ...(preset ? {
         agentBackend: preset.agentBackend,
         model: preset.model,
@@ -462,6 +468,9 @@ export class ChatSessionPool {
     threadRootId?: string,
     session?: AgentSessionOptions,
   ): ChatAgent {
+    if (this.isShuttingDown) {
+      throw new Error('Disclaude service is shutting down; the message was not started');
+    }
     if (session && (!session.id.trim() || (threadRootId && threadRootId !== session.id))) {
       throw new Error('Agent session must have a nonempty, unambiguous scope');
     }
@@ -638,6 +647,37 @@ export class ChatSessionPool {
     this.busyTurnStoppedFor.clear();
     this.callbacksBySession.clear();
     this.selectedPresetBySession.clear();
+  }
+
+  /**
+   * Stop accepting new turns, allow a bounded drain, then persist and report
+   * any remaining turns as interrupted before releasing their agents.
+   */
+  async shutdownForServiceRestart(options: {
+    drainTimeoutMs?: number;
+    noticeTimeoutMs?: number;
+  } = {}): Promise<void> {
+    this.isShuttingDown = true;
+    this.stopIdleSweep();
+    for (const agent of this.agents.values()) { agent.beginServiceShutdown(); }
+    const drainTimeoutMs = Math.max(0, options.drainTimeoutMs ?? 10_000);
+    const noticeTimeoutMs = Math.max(0, options.noticeTimeoutMs ?? 2_000);
+    const deadline = Date.now() + drainTimeoutMs;
+    const hasPendingWork = (): boolean => [...this.agents.values()].some(agent => agent.hasPendingWork);
+
+    while (hasPendingWork() && Date.now() < deadline) {
+      await new Promise<void>(resolve => setTimeout(resolve, Math.min(25, deadline - Date.now())));
+    }
+
+    const remaining = [...this.agents.entries()].filter(([, agent]) => agent.hasPendingWork);
+    if (remaining.length > 0) {
+      logger.warn(
+        { count: remaining.length, sessionKeys: remaining.map(([sessionKey]) => sessionKey), drainTimeoutMs },
+        'Service shutdown drain expired; interrupting remaining agent turns (Issue #5273)'
+      );
+      await Promise.allSettled(remaining.map(([, agent]) => agent.interruptForServiceRestart(noticeTimeoutMs)));
+    }
+    this.disposeAll();
   }
 
   /**
