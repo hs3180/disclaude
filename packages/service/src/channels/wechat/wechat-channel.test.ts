@@ -104,7 +104,7 @@ describe('WeChatChannel', () => {
         supportsMention: false,
         supportsUpdate: false,
         supportsStreaming: false,
-        supportedMcpTools: ['send_text', 'send_file'],
+        supportedChannelTools: ['send_text', 'send_file'],
       });
     });
   });

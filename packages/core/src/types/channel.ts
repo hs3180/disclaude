@@ -225,7 +225,7 @@ export type ChannelStatus = 'starting' | 'running' | 'stopping' | 'stopped' | 'e
  * Channel capabilities interface.
  * Describes what features a channel supports.
  * Used for capability-aware prompt generation (Issue #582).
- * Extended with supportedMcpTools for Issue #590 Phase 3.
+ * Channel-send vocabulary describes CLI/API operations independently of SDK tool transports.
  */
 export interface ChannelCapabilities {
   /** Whether the channel supports interactive cards */
@@ -248,11 +248,11 @@ export interface ChannelCapabilities {
    */
   supportsStreaming: boolean;
   /**
-   * Supported MCP tools for this channel.
-   * Issue #590 Phase 3: Agent Prompt 动态适配
-   * Used to filter available tools in the prompt based on channel capabilities.
+   * Channel CLI send_* commands advertised to the agent. An explicit empty
+   * list disables additional-delivery guidance; an omitted list derives from
+   * format flags. This is capability metadata, not an authorization grant.
    */
-  supportedMcpTools?: string[];
+  supportedChannelTools?: string[];
 }
 
 /**
@@ -266,7 +266,7 @@ export const DEFAULT_CHANNEL_CAPABILITIES: ChannelCapabilities = {
   supportsMention: false,
   supportsUpdate: false,
   supportsStreaming: false,
-  supportedMcpTools: [],
+  supportedChannelTools: [],
 };
 
 /**
@@ -441,7 +441,7 @@ export type ChannelFactory<TConfig extends ChannelConfig = ChannelConfig> = (
  *     supportsMarkdown: true,
  *     supportsMention: false,
  *     supportsUpdate: false,
- *     supportedMcpTools: ['send_text', 'send_card'],
+ *     supportedChannelTools: ['send_text', 'send_card'],
  *   },
  * };
  * ```

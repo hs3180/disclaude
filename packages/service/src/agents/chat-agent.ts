@@ -2679,7 +2679,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    * replay runs against a clean session instead of the corrupted one.
    *
    * Deliberately narrower than `reset()`: history context, the restartManager
-   * accounting, the thread root, and the inline MCP instances all survive, and
+   * accounting and the thread root survive, and
    * the still-running processIterator is NOT aborted (its channel closes, so
    * its generator drains and the iterator ends as a superseded session —
    * intercepted via the sessionGeneration check in processIterator, because

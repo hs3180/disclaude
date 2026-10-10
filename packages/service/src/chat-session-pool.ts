@@ -501,8 +501,8 @@ export class ChatSessionPool {
     // Issue #4169: Track usage for idle eviction.
     this.lastUsedAt.set(sessionKey, Date.now());
     // Issue #4256: Track peak concurrent agents for leak diagnostics. Each
-    // agent holds a query handle + inline MCP connections (incl. stdio child
-    // processes for configured external MCP servers), so the active count is
+    // agent holds a query handle and SDK resources (including child processes
+    // for explicitly configured external tools), so the active count is
     // the observable proxy for the per-process resource/subprocess ceiling.
     if (this.agents.size > this.peakActive) {
       this.peakActive = this.agents.size;
@@ -522,7 +522,7 @@ export class ChatSessionPool {
    * agent, we dispose it completely and remove it from the pool. The next
    * getOrCreateChatAgent() call will create a fresh agent instance.
    *
-   * This ensures all resources (MCP connections, event listeners, transports,
+   * This ensures all resources (SDK connections, event listeners, transports,
    * AbortControllers) are properly released rather than accumulated across
    * multiple /reset operations.
    *
@@ -667,7 +667,7 @@ export class ChatSessionPool {
       // Issue #4256 (part 2): periodic pool-state snapshot for leak
       // diagnostics. A monotonic active/peak growth despite eviction, or a
       // busy count that never returns to zero, signals agents (and their
-      // inline MCP subprocesses) are not being released — see #4169/#4256.
+      // configured tool subprocesses) are not being released — see #4169/#4256.
       this.logPoolSnapshot('idle-sweep');
     }, interval);
     this.idleSweepTimer.unref?.();
@@ -808,9 +808,8 @@ export class ChatSessionPool {
   /**
    * Issue #4256 (part 2): snapshot of pool state for leak diagnostics.
    *
-   * Each active agent holds a query handle, channel, and inline MCP
-   * connections (including stdio child processes for configured external MCP
-   * servers). The active/peak/eviction counts are the observable per-process
+   * Each active agent holds a query handle, input channel, and SDK resources
+   * (including child processes for explicitly configured external tools). The active/peak/eviction counts are the observable per-process
    * proxy for that resource footprint, letting operators spot a leak (e.g.
    * active grows monotonically, or busy never returns to zero) without
    * enumerating live subprocesses.

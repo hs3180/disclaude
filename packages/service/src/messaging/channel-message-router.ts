@@ -1,7 +1,7 @@
 /**
  * Channel Message Router - Routes messages to appropriate channels based on chatId.
  *
- * This module provides channel-type detection and message routing for MCP tools,
+ * This module provides channel-type detection and message routing for channel API operations,
  * allowing them to work seamlessly across Feishu, CLI, and REST channels.
  *
  * Issue #513: Multi-channel message routing layer (Phase 1)
