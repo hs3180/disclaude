@@ -6,7 +6,7 @@ CDP_INTERNAL_PORT=${CDP_INTERNAL_PORT:-9221}
 CHROMIUM_CDP_PROFILE_DIR=${CHROMIUM_CDP_PROFILE_DIR:-/data/chrome-profile}
 CHROMIUM_HEADLESS=${CHROMIUM_HEADLESS:-0}
 CHROMIUM_ACCEPT_LANG=${CHROMIUM_ACCEPT_LANG:-en-US,en}
-CHROMIUM_VNC_ENABLED=${CHROMIUM_VNC_ENABLED:-0}
+CHROMIUM_VNC_ENABLED=${CHROMIUM_VNC_ENABLED:-1}
 CHROMIUM_VNC_PASSWORD=${CHROMIUM_VNC_PASSWORD:-}
 CHROMIUM_VNC_PORT=${CHROMIUM_VNC_PORT:-6080}
 CHROMIUM_VNC_INTERNAL_PORT=${CHROMIUM_VNC_INTERNAL_PORT:-5900}
@@ -35,9 +35,13 @@ case "$CHROMIUM_VNC_ENABLED" in 0|1) ;; *) echo 'FATAL: CHROMIUM_VNC_ENABLED mus
 case "$CHROMIUM_CDP_PROFILE_DIR" in /*) ;; *) echo 'FATAL: CHROMIUM_CDP_PROFILE_DIR must be absolute' >&2; exit 1 ;; esac
 if [[ "$CHROMIUM_VNC_ENABLED" == 1 ]]; then
     if [[ "$CHROMIUM_HEADLESS" == 1 ]]; then
-        echo 'FATAL: CHROMIUM_VNC_ENABLED requires headed Chromium (CHROMIUM_HEADLESS=0)' >&2; exit 1
+        echo 'INFO: headless Chromium skips VNC/noVNC' >&2
+        CHROMIUM_VNC_ENABLED=0
+        unset CHROMIUM_VNC_PASSWORD
     fi
-    if [[ ! "$CHROMIUM_VNC_PASSWORD" =~ ^[!-~]{8}$ ]]; then
+fi
+if [[ "$CHROMIUM_VNC_ENABLED" == 1 ]]; then
+    if [[ -n "$CHROMIUM_VNC_PASSWORD" && ! "$CHROMIUM_VNC_PASSWORD" =~ ^[!-~]{8}$ ]]; then
         echo 'FATAL: CHROMIUM_VNC_PASSWORD must be exactly 8 printable ASCII characters' >&2; exit 1
     fi
     if [[ "$CHROMIUM_VNC_PORT" == "$CHROMIUM_VNC_INTERNAL_PORT" || "$CHROMIUM_VNC_PORT" == "$CDP_PORT" ||
@@ -112,9 +116,20 @@ if [[ "$CHROMIUM_VNC_ENABLED" == 1 ]]; then
         }
     done
     [[ -d /usr/share/novnc ]] || { echo 'FATAL: /usr/share/novnc is required when CHROMIUM_VNC_ENABLED=1' >&2; exit 1; }
+    generated_vnc_password=0
+    if [[ -z "$CHROMIUM_VNC_PASSWORD" ]]; then
+        CHROMIUM_VNC_PASSWORD=$(node -e "process.stdout.write(require('node:crypto').randomBytes(6).toString('base64'))")
+        generated_vnc_password=1
+    fi
+    if [[ ! "$CHROMIUM_VNC_PASSWORD" =~ ^[!-~]{8}$ ]]; then
+        echo 'FATAL: could not generate a valid VNC password' >&2; exit 1
+    fi
     vnc_password_file=$(mktemp /tmp/disclaude-vnc-password.XXXXXX)
     chmod 600 "$vnc_password_file"
     x11vnc -storepasswd "$CHROMIUM_VNC_PASSWORD" "$vnc_password_file" >/dev/null
+    if [[ "$generated_vnc_password" == 1 ]]; then
+        echo "INFO: generated VNC password: $CHROMIUM_VNC_PASSWORD" >&2
+    fi
     unset CHROMIUM_VNC_PASSWORD
     x11vnc -display "$DISPLAY" -localhost -rfbport "$CHROMIUM_VNC_INTERNAL_PORT" \
         -rfbauth "$vnc_password_file" -forever -shared -xkb -noxrecord -noxfixes -noxdamage \
