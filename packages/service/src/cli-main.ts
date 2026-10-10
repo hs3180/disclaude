@@ -379,6 +379,8 @@ export async function main(): Promise<void> {
   const controlHandlerContext: ControlHandlerContext = {
     agentPool: {
       reset: (chatId: string, skipContext?: boolean) => agentPool.reset(chatId, skipContext),
+      resetProjectSessions: (chatId: string) => agentPool.resetProjectSessions(chatId),
+      isProjectBusy: (chatId: string) => agentPool.isProjectBusy(chatId),
       stop: (chatId: string) => agentPool.stop(chatId),
       // Issue #4587 (part 3): thread-scoped reset/stop for commands typed
       // inside a topic-group thread — the pool's part-2 slots, previously

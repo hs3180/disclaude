@@ -115,6 +115,10 @@ function handleUse(command: ProjectCommand, context: ControlHandlerContext): Con
     };
   }
 
+  if (context.agentPool.isProjectBusy?.(command.chatId)) {
+    return { success: false, error: '当前聊天或话题仍有任务在执行，工作目录未改变。请等待任务完成，或在对应话题使用 /stop 后重试。' };
+  }
+
   const result = pm.use(command.chatId, workingDir);
   if (!result.ok) {
     return {
@@ -124,7 +128,11 @@ function handleUse(command: ProjectCommand, context: ControlHandlerContext): Con
   }
 
   // Reset the agent session so the next message uses the new cwd
-  context.agentPool.reset(command.chatId);
+  if (context.agentPool.resetProjectSessions) {
+    context.agentPool.resetProjectSessions(command.chatId);
+  } else {
+    context.agentPool.reset(command.chatId);
+  }
 
   return {
     success: true,
@@ -148,6 +156,10 @@ function handleReset(command: ProjectCommand, context: ControlHandlerContext): C
     };
   }
 
+  if (context.agentPool.isProjectBusy?.(command.chatId)) {
+    return { success: false, error: '当前聊天或话题仍有任务在执行，工作目录未改变。请等待任务完成，或在对应话题使用 /stop 后重试。' };
+  }
+
   const result = pm.reset(command.chatId);
   if (!result.ok) {
     return {
@@ -157,7 +169,11 @@ function handleReset(command: ProjectCommand, context: ControlHandlerContext): C
   }
 
   // Reset the agent session so the next message uses the default cwd
-  context.agentPool.reset(command.chatId);
+  if (context.agentPool.resetProjectSessions) {
+    context.agentPool.resetProjectSessions(command.chatId);
+  } else {
+    context.agentPool.reset(command.chatId);
+  }
 
   return {
     success: true,
