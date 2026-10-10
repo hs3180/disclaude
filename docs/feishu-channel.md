@@ -94,6 +94,23 @@ CARDKIT_BENCH_ELEMENT_ID=... \
 npx tsx scripts/feishu-cardkit-rate-limit-bench.mts
 ```
 
+The default measures element-content `PUT`. Set `CARDKIT_BENCH_METHOD=PATCH`
+to measure the settings endpoint; it keeps `streaming_mode` enabled and does
+not require an element ID. Both operations share one per-card sequence. See
+the official [content PUT](https://open.feishu.cn/document/cardkit-v1/card-element/content)
+and [settings PATCH](https://open.feishu.cn/document/cardkit-v1/card/settings)
+contracts.
+
+The caller is serial. Requested cadence and actual requests/second are reported
+separately; HTTP latency may prevent reaching the requested rate or burst
+window. A clean run provides an observed lower bound, not the maximum tenant
+capacity. HTTP 429 and the documented frequency-limit business code `99991400`
+are counted separately from other rejections. Cooldown probes respect
+`Retry-After` and Feishu's `x-ogw-ratelimit-reset` within their bounded budget
+(see [frequency control](https://open.feishu.cn/document/ukTMukTMukTM/uUzN04SN3QjL1cDN)).
+When backoff is not observed, keep
+the existing defaults rather than interpreting zero as a measured safe value.
+
 Keep credentials and tenant-specific measurements outside the repository.
 Measured limits vary by tenant and should not be treated as a universal
 service quota.
