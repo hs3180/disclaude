@@ -611,6 +611,37 @@ describe('ScheduleFileScanner', () => {
   });
 
   describe('writeTask', () => {
+    it.each([
+      'Daily "quote" # report',
+      'Report at C:\\reports\\nightly',
+      'Report\n---\ntimeoutMs: 0',
+    ])('preserves a name through write and YAML reload: %s', async (name) => {
+      const task: ScheduledTask = {
+        id: 'schedule-roundtrip', name, cron: '9 9 * * 1-5',
+        prompt: 'Keep the task body.', chatId: 'oc_test123', enabled: true,
+        createdAt: '2026-10-10T00:00:00Z', timeoutMs: 1500000,
+      };
+      const filePath = await scanner.writeTask(task);
+      mockReadFile.mockResolvedValue(mockWriteFile.mock.calls[0][1]);
+
+      expect(await scanner.parseFile(filePath)).toMatchObject({
+        name, cron: task.cron, prompt: task.prompt, enabled: true, timeoutMs: 1500000,
+      });
+    });
+
+    it('preserves command quotes, backslashes and newlines through YAML reload', async () => {
+      const command = 'node "C:\\reports\\refresh-cache.js"\n# Keep this command comment';
+      const task: ScheduledTask = {
+        id: 'schedule-command-roundtrip', name: 'Command roundtrip',
+        cron: '*/5 * * * *', command, chatId: 'oc_test123', enabled: true,
+        createdAt: '2026-10-10T00:00:00Z',
+      };
+      const filePath = await scanner.writeTask(task);
+      mockReadFile.mockResolvedValue(mockWriteFile.mock.calls[0][1]);
+
+      expect(await scanner.parseFile(filePath)).toMatchObject({ command, name: task.name });
+    });
+
     it('should write a task to <slug>/SCHEDULE.md (Issue #2526)', async () => {
       const task: ScheduledTask = {
         id: 'schedule-daily-report',

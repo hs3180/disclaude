@@ -489,10 +489,11 @@ export class ScheduleFileScanner {
     await fsPromises.mkdir(dirPath, { recursive: true });
     const filePath = path.join(dirPath, 'SCHEDULE.md');
 
+    // JSON-quoted scalars are valid YAML and preserve quotes, backslashes and newlines.
     const frontmatter = [
       '---',
-      `name: "${task.name}"`,
-      `cron: "${task.cron}"`,
+      `name: ${JSON.stringify(task.name)}`,
+      `cron: ${JSON.stringify(task.cron)}`,
       `enabled: ${task.enabled}`,
       `blocking: ${task.blocking ?? true}`,
       `chatId: ${task.chatId}`,
@@ -508,16 +509,16 @@ export class ScheduleFileScanner {
       frontmatter.push(`createdBy: ${task.createdBy}`);
     }
     if (task.createdAt) {
-      frontmatter.push(`createdAt: "${task.createdAt}"`);
+      frontmatter.push(`createdAt: ${JSON.stringify(task.createdAt)}`);
     }
     if (task.timezone) {
-      frontmatter.push(`timezone: "${task.timezone}"`);
+      frontmatter.push(`timezone: ${JSON.stringify(task.timezone)}`);
     }
     if (task.model) {
-      frontmatter.push(`model: "${task.model}"`);
+      frontmatter.push(`model: ${JSON.stringify(task.model)}`);
     }
     if (task.command) {
-      frontmatter.push(`command: "${task.command.replaceAll('"', '\\"')}"`);
+      frontmatter.push(`command: ${JSON.stringify(task.command)}`);
     }
 
     frontmatter.push('---', '');
