@@ -551,7 +551,7 @@ export async function main(): Promise<void> {
       async (chatId, content, threadRootId) => {
         const channel = channelManager.resolveChannelForChatId(chatId);
         if (!channel) { throw new Error('No available channel for interrupted request'); }
-        return await channel.sendMessage({ chatId, type: 'text', text: content, threadId: threadRootId });
+        return await channel.sendMessage({ chatId, type: 'text', text: content, threadId: threadRootId, threadRootId });
       },
       { timeoutMs: 3_000 },
     );
