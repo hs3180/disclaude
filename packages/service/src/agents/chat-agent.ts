@@ -1470,7 +1470,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     let userVisibleOutputCount = 0;
     let turnResultText = '';
     let turnResultTruncated = false;
-    const bufferGroupAssistantText = this.chatType === 'group' || this.chatType === 'topic';
+    const bufferAssistantText = this.callbacks.finalReplyOnly === true ||
+      this.chatType === 'group' || this.chatType === 'topic';
     let pendingAssistantChunks: string[] = [];
     // 2026-09-08: 本轮是否收到 proxy 的 mid-stream 中断标记(带 MIDSTREAM_MARKER 的
     // assistant 正文)。turn 收尾 accounting 用;与其它 per-turn 计数一起清零。
@@ -1643,7 +1644,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             parsed.type === 'tool_use' ||
             parsed.type === 'tool_result' ||
             parsed.type === 'tool_progress' ||
-            (bufferGroupAssistantText && parsed.type === 'text' && parsed.metadata?.phase === 'commentary') ||
+            (bufferAssistantText && parsed.type === 'text' && parsed.metadata?.phase === 'commentary') ||
             parsed.metadata?.transientStatus === true;
           // #4774: tool traces are internal for every harness and chat type.
           // Preserve debug forwarding and accounting without publishing raw
@@ -1720,7 +1721,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
               turnResultText = nextText.slice(0, 65_536);
             }
             let delivered = false;
-            const bufferAssistant = bufferGroupAssistantText && isAssistantReplyText;
+            const bufferAssistant = bufferAssistantText && isAssistantReplyText;
             if (toDeliver) {
               if (bufferAssistant) {
                 pendingAssistantChunks.push(toDeliver);

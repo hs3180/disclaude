@@ -125,6 +125,7 @@ vi.mock('@disclaude/core', async (importOriginal) => {
       return undefined;
     },
     tagErrorCategory: actual.tagErrorCategory,
+    createLogger: actual.createLogger,
   };
 });
 
@@ -142,6 +143,9 @@ vi.mock('../services/debug-group-service.js', () => ({
 }));
 
 import { ChatAgent } from './chat-agent.js';
+import { createChannelCallbacksFactory } from '../utils/channel-handlers.js';
+import type { IChannel, OutgoingMessage } from '@disclaude/core';
+import type { Logger } from 'pino';
 
 const createMockCallbacks = () => ({
   sendMessage: vi.fn().mockResolvedValue(undefined),
@@ -2230,6 +2234,35 @@ describe('ChatAgent (service)', () => {
   });
 
   describe('group assistant delivery (#5239)', () => {
+    it.each(['native commentary', 'unphased pre-tool text'])('keeps %s out of a final-only REST JSON response', async kind => {
+      const sent: OutgoingMessage[] = [];
+      const channel = {
+        sendMessage: vi.fn((message: OutgoingMessage) => {
+          sent.push(message);
+          return Promise.resolve('owned-rest-receipt');
+        }),
+        getCapabilities: () => ({ supportsStreaming: false }),
+      } as unknown as IChannel;
+      const callbacks = createChannelCallbacksFactory(channel, {
+        info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+      } as unknown as Logger, { sendDoneSignal: true, finalReplyOnly: true })('owned-rest');
+      const agent = new ChatAgent({ chatId: 'owned-rest', callbacks, apiKey: 'test', model: 'test', agentBackend: 'codex' });
+      (agent as any).isAgentTeamsEnabled = vi.fn(() => false);
+      await (agent as any).processIterator((async function* () {
+        yield { parsed: { type: 'text', content: 'I will keep waiting.',
+          ...(kind === 'native commentary' ? { metadata: { phase: 'commentary' } } : {}) } };
+        yield { parsed: { type: 'tool_use', content: 'exec_command' } };
+        yield { parsed: { type: 'tool_result', content: 'finished' } };
+        yield { parsed: { type: 'text', content: '{"stage":' } };
+        yield { parsed: { type: 'text', content: '"finished"}', metadata: { phase: 'final_answer' } } };
+        yield { parsed: { type: 'result', content: '' } };
+      })());
+      const texts = sent.filter(message => message.type === 'text').map(message => message.text);
+      expect(texts).toEqual(['{"stage":"finished"}']);
+      expect(JSON.parse(texts.join('\n'))).toEqual({ stage: 'finished' });
+      expect(sent.filter(message => message.type === 'done')).toHaveLength(1);
+    });
+
     function ownedAgent(chatType: string = 'group') {
       const callbacks = createMockCallbacks();
       const agent = new ChatAgent({ chatId: 'owned-delivery', callbacks, apiKey: 'test', model: 'test' });
