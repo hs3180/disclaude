@@ -17,7 +17,13 @@ async function fixture(
     path: string,
     method: string,
     body: Record<string, unknown>
-  ) => { status?: number; headers?: Record<string, string>; data?: unknown; raw?: string }
+  ) => {
+    status?: number;
+    headers?: Record<string, string>;
+    data?: unknown;
+    raw?: string;
+    disconnect?: boolean;
+  }
 ) {
   const requests: Array<{ path: string; method: string; body: Record<string, unknown> }> = [];
   const server = createServer(async (request, response) => {
@@ -30,6 +36,10 @@ async function fixture(
     const row = { path: request.url!, method: request.method!, body };
     requests.push(row);
     const result = reply(row.path, row.method, body);
+    if (result.disconnect) {
+      response.destroy();
+      return;
+    }
     response.writeHead(result.status ?? 200, {
       'content-type': 'application/json',
       ...result.headers,
@@ -46,6 +56,104 @@ async function fixture(
   });
   return { client, requests, baseUrl };
 }
+
+describe('explicit kernel interrupt', () => {
+  it('acknowledges one POST without claiming execution completion or querying a shell', async () => {
+    const f = await fixture((path, method) =>
+      method === 'GET'
+        ? { data: { id: 'kernel', execution_state: 'busy' } }
+        : path === '/prefix/api/kernels/kernel/interrupt'
+          ? { status: 204 }
+          : { status: 404 }
+    );
+    expect(await f.client.interruptKernel('kernel')).toEqual({
+      kernelId: 'kernel',
+      state: 'accepted',
+      executionState: 'unknown',
+      phase: 'interrupt',
+      httpStatus: 204,
+    });
+    expect(f.requests.map(({ path, method }) => [method, path])).toEqual([
+      ['GET', '/prefix/api/kernels/kernel'],
+      ['POST', '/prefix/api/kernels/kernel/interrupt'],
+    ]);
+  });
+
+  it.each([
+    [404, 'missing'],
+    [401, 'rejected'],
+    [403, 'rejected'],
+    [405, 'unsupported'],
+    [501, 'unsupported'],
+    [500, 'unknown'],
+  ])('refuses inspection HTTP %s before any mutation', async (status, state) => {
+    const f = await fixture(() => ({ status: Number(status), raw: 'private server response' }));
+    expect(await f.client.interruptKernel('kernel')).toMatchObject({
+      state,
+      httpStatus: status,
+      executionState: 'unknown',
+      phase: 'inspect_kernel',
+    });
+    expect(f.requests).toHaveLength(1);
+    expect(f.requests[0].method).toBe('GET');
+  });
+
+  it('refuses a changed kernel identity without selecting a replacement', async () => {
+    const f = await fixture(() => ({ data: { id: 'replacement', execution_state: 'idle' } }));
+    expect(await f.client.interruptKernel('kernel')).toMatchObject({ state: 'identity_changed' });
+    expect(f.requests).toHaveLength(1);
+  });
+
+  it.each([
+    [404, 'missing'],
+    [403, 'rejected'],
+    [405, 'unsupported'],
+    [501, 'unsupported'],
+    [200, 'unknown'],
+    [500, 'unknown'],
+  ])('preserves interrupt HTTP %s without interpreting it as accepted', async (status, state) => {
+    const f = await fixture((_path, method) =>
+      method === 'GET'
+        ? { data: { id: 'kernel' } }
+        : { status: Number(status), raw: 'private server response' }
+    );
+    const result = await f.client.interruptKernel('kernel');
+    expect(result).toMatchObject({ state, httpStatus: status, phase: 'interrupt' });
+    expect(JSON.stringify(result)).not.toContain('private server response');
+    expect(f.requests.filter((r) => r.method === 'POST')).toHaveLength(1);
+  });
+
+  it('reports a lost POST acknowledgement as unknown without replay', async () => {
+    const f = await fixture((_path, method) =>
+      method === 'GET' ? { data: { id: 'kernel' } } : { disconnect: true }
+    );
+    expect(await f.client.interruptKernel('kernel')).toEqual({
+      kernelId: 'kernel',
+      state: 'unknown',
+      executionState: 'unknown',
+      phase: 'interrupt',
+    });
+    expect(f.requests.filter((r) => r.method === 'POST')).toHaveLength(1);
+  });
+
+  it('does not interrupt after cancellation during the identity check', async () => {
+    const controller = new AbortController();
+    const f = await fixture(() => {
+      controller.abort();
+      return { data: { id: 'kernel' } };
+    });
+    await expect(f.client.interruptKernel('kernel', controller.signal)).rejects.toThrow();
+    expect(f.requests).toHaveLength(1);
+  });
+
+  it('rejects an invalid explicit target without network access', async () => {
+    const f = await fixture(() => ({ data: {} }));
+    await expect(f.client.interruptKernel('../other')).rejects.toThrow(
+      'Invalid Jupyter resource ID'
+    );
+    expect(f.requests).toHaveLength(0);
+  });
+});
 
 function discoveryReply(path: string, _method: string, body: Record<string, unknown>) {
   if (path === '/prefix/api') {
