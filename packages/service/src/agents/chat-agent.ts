@@ -357,7 +357,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       maxBackoffMs: 60000, // Max 1 minute
     });
 
-    this.messageBuilder = new MessageBuilder(config.messageBuilderOptions);
+    this.messageBuilder = new MessageBuilder(this.agentBackend === 'codex' ? {
+      ...config.messageBuilderOptions,
+      buildStableToolsSection: ctx => [
+        config.messageBuilderOptions?.buildStableToolsSection?.(ctx),
+        'For Codex Code Mode, "Script running with cell ID" means the execution and its pending tool call are still running. Resume that same cell with wait until it completes or fails before polling the same process again with write_stdin; do not abandon the cell and start a concurrent poll that can consume its final result.',
+      ].filter(Boolean).join('\n'),
+    } : config.messageBuilderOptions);
     this.configureQueryOptions = config.configureQueryOptions;
 
     this.logger.info(
