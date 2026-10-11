@@ -375,7 +375,7 @@ describe('channel CLI guidance capability gating', () => {
   });
 
   it('derives the same conservative send commands for stable and dynamic guidance when no list is supplied', () => {
-    const out = build({ supportsFile: false, supportsCard: false });
+    const out = build({ supportsFile: false, supportsCard: false, supportedChannelTools: undefined });
     expect(out).not.toMatch(/Supported commands:.*(?:send_file|send_card|send_interactive)/);
     expect(out).not.toContain('`disclaude channel send_interactive`');
     expect(out).toMatch(/Supported commands:.*send_text/);
