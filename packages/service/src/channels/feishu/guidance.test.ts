@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createControlHandler, type ControlHandlerContext } from '@disclaude/core';
+import { createControlHandler, ProjectManager, type ControlHandlerContext } from '@disclaude/core';
+import { mkdtempSync, mkdirSync, readFileSync, renameSync, rmdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { tryHandleGuidance, tryHandleSlashCommand } from './command-router.js';
 import { WelcomeService } from '../../platforms/feishu/welcome-service.js';
 
@@ -14,9 +17,54 @@ function setup() {
   return { welcome, ctx, deps };
 }
 
-afterEach(() => vi.useRealTimers());
+const ownedWorkspaces: string[] = [];
+afterEach(() => {
+  vi.useRealTimers();
+  for (const workspace of ownedWorkspaces.splice(0)) { rmSync(workspace, { recursive: true, force: true }); }
+});
 
 describe('Feishu onboarding guidance', () => {
+  it.each([
+    ['use', 'write'], ['use', 'rename'], ['reset', 'write'], ['reset', 'rename'],
+  ] as const)('keeps %s %s failures private and recovers without losing the binding', async (subcommand, failurePoint) => {
+    const workspace = mkdtempSync(join(tmpdir(), 'owned-project-guidance-'));
+    ownedWorkspaces.push(workspace);
+    const previous = join(workspace, 'previous'), next = join(workspace, 'next');
+    mkdirSync(previous); mkdirSync(next);
+    const manager = new ProjectManager({ workspaceDir: workspace });
+    expect(manager.use('chat', previous).ok).toBe(true);
+    const persist = manager.getPersistPath(), saved = readFileSync(persist, 'utf8');
+    const blocker = failurePoint === 'write' ? `${persist}.tmp` : persist;
+    if (failurePoint === 'rename') { renameSync(persist, `${persist}.backup`); }
+    mkdirSync(blocker);
+    const { ctx, deps } = setup();
+    ctx.projectManager = manager;
+    try {
+      expect(await tryHandleSlashCommand({
+        textWithoutMentions: subcommand === 'use' ? `/project use ${next}` : '/project reset',
+        chatId: 'chat', chatType: 'topic', threadRootId: 'root', actorId: 'actor',
+      }, deps)).toBe(true);
+      const [[reply]] = deps.sendMessage.mock.calls;
+      expect(reply.text).not.toContain(workspace);
+      expect(reply.text).not.toMatch(/EISDIR|ENOTDIR|project-bindings\.json|rename|open '/);
+      expect(reply.text).toContain('项目绑定');
+      expect(reply.text).toContain('存储配置与权限');
+      expect(reply.threadId).toBe('root');
+      expect(manager.getActive('chat').workingDir).toBe(previous);
+      expect(readFileSync(failurePoint === 'rename' ? `${persist}.backup` : persist, 'utf8')).toBe(saved);
+      expect(ctx.agentPool.reset).not.toHaveBeenCalled();
+    } finally {
+      rmdirSync(blocker);
+      if (failurePoint === 'rename') { renameSync(`${persist}.backup`, persist); }
+    }
+    deps.sendMessage.mockClear();
+    expect(await tryHandleSlashCommand({ textWithoutMentions: '/project reset', chatId: 'chat', chatType: 'topic', threadRootId: 'root' }, deps)).toBe(true);
+    expect(deps.sendMessage.mock.calls[0][0].text).toContain('已重置为默认项目');
+    expect(manager.getActive('chat').workingDir).toBe(workspace);
+    expect(ctx.agentPool.reset).toHaveBeenCalledExactlyOnceWith('chat');
+    expect(new ProjectManager({ workspaceDir: workspace }).getActive('chat').workingDir).toBe(workspace);
+  });
+
   it('answers an exact help request in the original topic, with actor context', async () => {
     const { deps, welcome } = setup();
     expect(await tryHandleGuidance({ textWithoutMentions: '不知道怎么开始？', chatId: 'chat', chatType: 'topic', threadRootId: 'root', actorId: 'actor' }, deps, welcome)).toBe(true);

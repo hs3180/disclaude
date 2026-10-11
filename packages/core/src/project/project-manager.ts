@@ -30,6 +30,7 @@ import type {
 } from './types.js';
 
 const logger = createLogger('ProjectManager');
+const PERSISTENCE_FAILURE_MESSAGE = '项目绑定保存失败，请联系服务维护者核对存储配置与权限。';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Internal Types
@@ -311,17 +312,19 @@ export class ProjectManager {
         } catch {
           // Ignore cleanup failure
         }
+        logger.error({ err: renameErr, stage: 'rename' }, 'Project binding persistence failed');
         return {
           ok: false,
-          error: `持久化写入失败: ${renameErr instanceof Error ? renameErr.message : String(renameErr)}`,
+          error: PERSISTENCE_FAILURE_MESSAGE,
         };
       }
 
       return { ok: true, data: undefined };
     } catch (err) {
+      logger.error({ err, stage: 'persist' }, 'Project binding persistence failed');
       return {
         ok: false,
-        error: `持久化失败: ${err instanceof Error ? err.message : String(err)}`,
+        error: PERSISTENCE_FAILURE_MESSAGE,
       };
     }
   }

@@ -96,9 +96,10 @@ export async function tryHandleSlashCommand(
     );
 
     // Issue #1562: relay both success and error messages from the control handler.
-    if (response.success || response.message) {
-      if (response.message) {
-        await deps.sendMessage({ ...replyTarget, type: 'text', text: response.message });
+    const message = response.message ?? (cmd === 'project' ? response.error : undefined);
+    if (response.success || message) {
+      if (message) {
+        await deps.sendMessage({ ...replyTarget, type: 'text', text: message });
       }
       return true;
     }
