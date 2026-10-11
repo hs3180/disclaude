@@ -608,6 +608,56 @@ describe('ChatAgent (service)', () => {
       expect((agent as any).channel).toBeUndefined();
     });
 
+    it('finishes a rejected request only after its recovery notice is delivered', async () => {
+      let deliver!: () => void;
+      callbacks.sendMessage.mockReturnValueOnce(new Promise<void>(resolve => { deliver = resolve; }));
+      const agent = mkAgent('bound-missing');
+      const admission = agent.processMessage({
+        chatId: 'oc_test_chat', payload: 'must stay in the bound project',
+        messageId: 'om_missing_pending', threadRootId: 'owned-topic',
+      });
+      expect(callbacks.onDone).not.toHaveBeenCalled();
+      deliver();
+      await admission;
+      expect(callbacks.onDone).toHaveBeenCalledExactlyOnceWith('oc_test_chat', 'owned-topic');
+      expect((agent as any).createQueryStream).not.toHaveBeenCalled();
+    });
+
+    it('settles each rejected input with its own missing-project cause and terminal', async () => {
+      const agent = mkAgent('bound-missing');
+      for (const messageId of ['om_missing_first', 'om_missing_second']) {
+        await agent.processMessage({ chatId: 'oc_test_chat', payload: 'do not run elsewhere', messageId });
+        const completion = agent.turnCompleteFor(messageId);
+        expect(completion).toBeDefined();
+        await expect(completion).rejects.toThrow('bound project directory is unavailable');
+      }
+      expect(callbacks.onDone).toHaveBeenCalledTimes(2);
+      expect(callbacks.sendMessage).toHaveBeenCalledTimes(2);
+      expect(callbacks.sendMessage.mock.calls[1][1]).toContain('/project reset');
+      const terminals = (agent as any).logger.warn.mock.calls
+        .map((call: unknown[]) => call[0] as Record<string, unknown>)
+        .filter((entry: Record<string, unknown>) => entry.event === 'agent_turn' && entry.state === 'failed');
+      expect(terminals.map((entry: Record<string, unknown>) => entry.sourceMessageId))
+        .toEqual(['om_missing_first', 'om_missing_second']);
+      expect(terminals.every((entry: Record<string, unknown>) => entry.user_visible === true && typeof entry.diagnosticId === 'string')).toBe(true);
+      expect((agent as any).createQueryStream).not.toHaveBeenCalled();
+    });
+
+    it('signals rejection completion even when its recovery notice cannot be delivered', async () => {
+      callbacks.sendMessage.mockRejectedValueOnce(new Error('channel down'));
+      const agent = mkAgent('bound-missing');
+      await agent.processMessage({ chatId: 'oc_test_chat', payload: 'do not run elsewhere', messageId: 'om_missing_channel_failure' });
+      expect(callbacks.onDone).toHaveBeenCalledTimes(1);
+      const completion = agent.turnCompleteFor('om_missing_channel_failure');
+      expect(completion).toBeDefined();
+      await expect(completion).rejects.toThrow('bound project directory is unavailable');
+      const terminal = (agent as any).logger.warn.mock.calls
+        .map((call: unknown[]) => call[0] as Record<string, unknown>)
+        .find((entry: Record<string, unknown>) => entry.event === 'agent_turn' && entry.state === 'failed');
+      expect(terminal).toMatchObject({ sourceMessageId: 'om_missing_channel_failure', user_visible: false });
+      expect((agent as any).createQueryStream).not.toHaveBeenCalled();
+    });
+
     it('does not warn when the binding resolves cleanly (bound)', () => {
       const agent = mkAgent('bound');
       (agent as any).startAgentLoop();

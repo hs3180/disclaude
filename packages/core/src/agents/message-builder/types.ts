@@ -88,8 +88,8 @@ export interface MessageBuilderSection {
  * Channel-specific content:
  * - Platform header (e.g., "You are responding in a Feishu chat.")
  * - @ Mention section (e.g., Feishu <at> tag guidance)
- * - Tools section (e.g., MCP tool names and usage)
- * - Extra attachment info (e.g., image analyzer MCP hints)
+ * - Tools section (e.g., channel CLI commands and usage)
+ * - Extra attachment info (e.g., image Read-tool hints)
  */
 export interface MessageBuilderOptions {
   /**
@@ -115,7 +115,7 @@ export interface MessageBuilderOptions {
    * Build channel-specific tools/commands section.
    * Inserted after the "## Tools" heading.
    *
-   * Example: MCP tool list for Feishu channel.
+   * Example: channel CLI command list for Feishu channel.
    */
   buildToolsSection?: (ctx: MessageBuilderContext) => string;
 
@@ -123,7 +123,7 @@ export interface MessageBuilderOptions {
    * Build extra attachment information.
    * Appended to the basic attachment info section.
    *
-   * Example: Image analyzer MCP hints.
+   * Example: Image Read-tool hints.
    */
   buildAttachmentExtra?: (ctx: MessageBuilderContext) => string;
 

@@ -1,3 +1,5 @@
+import type { ChannelCapabilities } from '../../types/channel.js';
+
 /** Channel CLI usage is loaded on demand; message prompts expose only routing and safety boundaries. */
 export const CHANNEL_CLI_HELP = `channel Skill / Disclaude channel CLI
 
@@ -54,6 +56,17 @@ flags plus the common ones above.
 Output: one JSON result object on stdout; diagnostics are written to stderr.`;
 
 const ALL_SEND_COMMANDS = ['send_text', 'send_file', 'send_card', 'send_interactive'];
+
+/** Explicit CLI vocabulary wins; absent lists use the channel's format flags, never an MCP surface. */
+export function getSupportedChannelSendCommands(capabilities?: ChannelCapabilities): string[] {
+  const supported = capabilities?.supportedChannelTools;
+  return ALL_SEND_COMMANDS.filter(command => {
+    if (supported !== undefined) { return supported.includes(command); }
+    if (command === 'send_file') { return capabilities?.supportsFile === true; }
+    if (command === 'send_card' || command === 'send_interactive') { return capabilities?.supportsCard === true; }
+    return true;
+  });
+}
 
 /** A concise capability-aware help pointer; complete flags/examples stay in CLI help. */
 export function buildChannelCliHelpGuidance(

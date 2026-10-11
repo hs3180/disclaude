@@ -1,5 +1,5 @@
 /** Feishu-specific prompt sections. Shared CLI guidance owns the tool contract. */
-import { buildChannelCliHelpGuidance, type MessageBuilderContext, type MessageBuilderOptions, type MessageBuilderStableContext } from '@disclaude/core';
+import { buildChannelCliHelpGuidance, getSupportedChannelSendCommands, type MessageBuilderContext, type MessageBuilderOptions, type MessageBuilderStableContext } from '@disclaude/core';
 
 function buildFeishuMentionSection({ msg, capabilities }: MessageBuilderContext): string {
   if (!msg.senderOpenId || capabilities?.supportsMention === false) { return ''; }
@@ -8,13 +8,7 @@ function buildFeishuMentionSection({ msg, capabilities }: MessageBuilderContext)
 
 /** Capability-scoped instructions contain no chat/message identity and appear once per query. */
 function buildFeishuStableToolsSection({ capabilities }: MessageBuilderStableContext): string {
-  const supported = capabilities?.supportedMcpTools;
-  const sendCommands = ['send_text', 'send_file', 'send_card', 'send_interactive'].filter(command => {
-    if (supported !== undefined) { return supported.includes(command); }
-    if (command === 'send_file' && capabilities?.supportsFile === false) { return false; }
-    if ((command === 'send_card' || command === 'send_interactive') && capabilities?.supportsCard === false) { return false; }
-    return true;
-  });
+  const sendCommands = getSupportedChannelSendCommands(capabilities);
   const notes = [
     'Answer ordinary questions and present text previews in your final reply; ChatAgent delivers your final reply automatically, including requests to send or post a preview in this chat or topic. Do not call send_text for that preview. Use the channel CLI only for a delivery requested in addition to this reply (such as another chat), or for attachments/cards. For a content-only preview, return it once without an added acknowledgment or mention.',
     buildChannelCliHelpGuidance('disclaude channel', { sendCommands }),
