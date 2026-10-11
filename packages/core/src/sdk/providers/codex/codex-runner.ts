@@ -44,15 +44,16 @@ export const DEFAULT_TIMEOUT_MS = 0;
 const MAX_PROMPT_CHARS = 120_000;
 
 /**
- * Codex keeps network policy alongside the selected sandbox profile. The
- * workspace-write key was historically the only one used here, which meant
- * `read-only` runs silently ignored the requested network setting. That is
- * precisely the mode used by permissionMode=default and by browser-use when
- * the agent only needs to attach to an existing local CDP endpoint.
+ * Legacy Codex exec configuration only exposes a network override for
+ * workspace-write. Read-only runs retain Codex's native policy: sending a
+ * made-up sandbox_read_only table does not enable networking and produces
+ * duplicate non-fatal configuration warnings in current native CLI output.
+ * A custom read-only/network policy requires Codex permission profiles,
+ * rather than an unsupported override or a broader filesystem sandbox.
  */
-function networkAccessConfigKey(sandboxMode?: CodexSandboxLevel): string {
+function networkAccessConfigKey(sandboxMode?: CodexSandboxLevel): string | undefined {
   return sandboxMode === 'read-only'
-    ? 'sandbox_read_only.network_access'
+    ? undefined
     : 'sandbox_workspace_write.network_access';
 }
 
@@ -82,7 +83,7 @@ export interface CodexExecRunOptions {
   sandboxMode?: CodexSandboxLevel;
   /** Full-access mode also disables Codex approval prompts for unattended runs. */
   fullAccess?: boolean;
-  /** Explicit Codex workspace network policy. */
+  /** Workspace-write network override; read-only retains Codex's native policy. */
   networkAccess?: boolean;
   /** Environment for the child (merged over the provider env). */
   env?: Record<string, string | undefined>;
@@ -174,6 +175,11 @@ export class CodexExecRunner {
     // (--json / -m / --skip-git-repo-check all verified on resume's help),
     // EXCEPT sandbox: fresh exec has the dedicated -s flag, while resume only
     // accepts the config override form (codex-cli 0.151.0).
+    const networkAccess = options.networkAccess ?? this.defaultNetworkAccess;
+    const networkConfigKey = networkAccessConfigKey(options.sandboxMode);
+    const networkArgs = networkAccess !== undefined && networkConfigKey !== undefined
+      ? ['-c', `${networkConfigKey}=${networkAccess}`]
+      : [];
     const args: string[] = options.resumeSessionId
       ? [
           'exec',
@@ -185,12 +191,7 @@ export class CodexExecRunner {
           ...(options.model ? ['-m', options.model] : []),
           ...(options.reasoningEffort ? ['-c', `model_reasoning_effort="${options.reasoningEffort}"`] : []),
           ...(options.sandboxMode ? ['-c', `sandbox_mode=${options.sandboxMode}`] : []),
-          ...((options.networkAccess ?? this.defaultNetworkAccess) !== undefined
-            ? [
-                '-c',
-                `${networkAccessConfigKey(options.sandboxMode)}=${options.networkAccess ?? this.defaultNetworkAccess}`,
-              ]
-            : []),
+          ...networkArgs,
           options.resumeSessionId,
           '--',
           options.prompt,
@@ -204,12 +205,7 @@ export class CodexExecRunner {
           ...(options.model ? ['-m', options.model] : []),
           ...(options.reasoningEffort ? ['-c', `model_reasoning_effort="${options.reasoningEffort}"`] : []),
           ...(options.sandboxMode ? ['-s', options.sandboxMode] : []),
-          ...((options.networkAccess ?? this.defaultNetworkAccess) !== undefined
-            ? [
-                '-c',
-                `${networkAccessConfigKey(options.sandboxMode)}=${options.networkAccess ?? this.defaultNetworkAccess}`,
-              ]
-            : []),
+          ...networkArgs,
           '--',
           options.prompt,
         ];

@@ -334,20 +334,24 @@ echo 'diagnostic' >&2`);
     expect(resumed.stderrTail).toContain(`-c ${setting}`);
   });
 
-  it('keeps network access available in read-only mode for external CDP clients', async () => {
+  it.each([true, false])('preserves native read-only policy without unsupported networking overrides (%s)', async (networkAccess) => {
     fixture.cleanup();
     fixture = makeScriptedBinary('echo "argv:$*" >&2\nexit 0');
     const runner = new CodexExecRunner({ binary: fixture.binaryPath });
     const fresh = await runner.run(
-      { prompt: 'attach to browser', sandboxMode: 'read-only', networkAccess: true },
+      { prompt: 'read file', sandboxMode: 'read-only', networkAccess },
       () => {},
     ).promise;
-    expect(fresh.stderrTail).toContain('-c sandbox_read_only.network_access=true');
+    expect(fresh.stderrTail).toContain('-s read-only');
+    expect(fresh.stderrTail).not.toContain('sandbox_read_only');
+    expect(fresh.stderrTail).not.toContain('network_access');
     const resumed = await runner.run(
-      { prompt: 'read page', resumeSessionId: 't-cdp', sandboxMode: 'read-only', networkAccess: true },
+      { prompt: 'read file', resumeSessionId: 't-readonly', sandboxMode: 'read-only', networkAccess },
       () => {},
     ).promise;
-    expect(resumed.stderrTail).toContain('-c sandbox_read_only.network_access=true');
+    expect(resumed.stderrTail).toContain('-c sandbox_mode=read-only');
+    expect(resumed.stderrTail).not.toContain('sandbox_read_only');
+    expect(resumed.stderrTail).not.toContain('network_access');
   });
 
   it('uses -s for fresh runs and -c sandbox_mode= for resume runs', async () => {
