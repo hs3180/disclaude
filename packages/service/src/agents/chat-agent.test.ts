@@ -673,6 +673,60 @@ describe('ChatAgent (service)', () => {
       } finally { dispose(agent); }
     });
 
+    it.each([true, false])('completes only Claude inputs consumed by the result (folded=%s)', async (folded) => {
+      const { agent, callbacks } = owned('claude');
+      const a = agent as any;
+      const owner = { runId: 'run-A', chatId: 'owned-steer', sourceMessageId: 'owner-A', traceId: 'trace-A' };
+      a.pendingTurnMessageIds = ['owner-A']; a.pendingTurnAnchors = ['root-A']; a.pendingLifecycleContexts = [owner];
+      try {
+        await a.processIterator((async function* () {
+          yield { parsed: { type: 'tool_use', content: '' } };
+          await agent.processMessage(input('follow-B'));
+          await agent.processMessage({ ...input('follow-C'), threadRootId: 'root-C' });
+          const b = a.pendingLifecycleContexts.find((x: any) => x.sourceMessageId === 'follow-B');
+          const ids = folded ? [owner.runId, b.runId, b.runId, 'unknown-run'] : [owner.runId];
+          expect(a.turnCompletions.get('follow-B').settled).toBe(false);
+          yield { parsed: { type: 'text', content: 'original result' } };
+          yield { parsed: { type: 'result', content: '', metadata: { consumedInputIds: ids } } };
+          expect(a.turnCompletions.get('owner-A').settled).toBe(true);
+          expect(a.turnCompletions.get('follow-B').settled).toBe(folded);
+          expect(a.turnCompletions.get('follow-C').settled).toBe(false);
+          expect(a.pendingTurnMessageIds).toEqual(folded ? ['follow-C'] : ['follow-B', 'follow-C']);
+          const terminalB = a.logger.info.mock.calls.filter(([x]: any[]) => x?.event === 'agent_turn' &&
+            x.sourceMessageId === 'follow-B' && x.state === 'completed');
+          expect(terminalB).toHaveLength(folded ? 1 : 0);
+          if (!folded) {
+            yield { parsed: { type: 'text', content: 'separate B result' } };
+            yield { parsed: { type: 'result', content: '', metadata: { consumedInputIds: [b.runId] } } };
+          }
+          yield { parsed: { type: 'text', content: 'separate C result' } };
+          yield { parsed: { type: 'result', content: '' } };
+        })());
+        await agent.turnCompleteFor('follow-B'); await agent.turnCompleteFor('follow-C');
+        expect(callbacks.sendMessage).toHaveBeenCalledWith('owned-steer', 'original result', 'root-A');
+        expect(callbacks.sendMessage).toHaveBeenCalledWith('owned-steer', 'separate C result', 'root-C');
+        if (!folded) { expect(callbacks.sendMessage).toHaveBeenCalledWith('owned-steer', 'separate B result', 'root-B'); }
+      } finally { dispose(agent); }
+    });
+
+    it('fails a consumed Claude supplement with the owner when the provider stalls', async () => {
+      const { agent } = owned('claude'); const a = agent as any;
+      a.pendingTurnMessageIds = ['owner-A']; a.pendingTurnAnchors = ['root-A'];
+      a.pendingLifecycleContexts = [{ runId: 'run-A', chatId: 'owned-steer', sourceMessageId: 'owner-A', traceId: 'trace-A' }];
+      try {
+        await a.processIterator((async function* () {
+          yield { parsed: { type: 'tool_use', content: '' } };
+          await agent.processMessage(input());
+          const [{ runId }] = a.pendingLifecycleContexts;
+          yield { parsed: { type: 'result', content: 'stalled', terminatedReason: 'stall',
+            terminationDetail: 'owned provider stall', metadata: { consumedInputIds: ['run-A', runId] } } };
+        })());
+        await expect(agent.turnCompleteFor('follow-B')).rejects.toThrow('owned provider stall');
+        expect(a.pendingTurnMessageIds).toEqual([]);
+        expect(a.logger.info.mock.calls.filter(([x]: any[]) => x?.sourceMessageId === 'follow-B' && x.state === 'completed')).toEqual([]);
+      } finally { dispose(agent); }
+    });
+
     it('does not automatically replay an empty original turn after accepting live input', async () => {
       const { agent } = owned();
       try {

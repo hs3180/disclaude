@@ -549,6 +549,36 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
   }
 
+  /** Join only inputs the SDK result confirms were folded into this turn. */
+  private joinConsumedInputs(inputIds: unknown, ownerMessageId: string | undefined): void {
+    const owner = ownerMessageId ? this.turnCompletions.get(ownerMessageId) : undefined;
+    if (!owner || !Array.isArray(inputIds)) { return; }
+    for (const runId of new Set(inputIds.filter((id): id is string => typeof id === 'string'))) {
+      const contextIndex = this.pendingLifecycleContexts.findIndex(context => context.runId === runId);
+      const context = this.pendingLifecycleContexts[contextIndex];
+      if (!context) { continue; }
+      const messageIndex = this.pendingTurnMessageIds.indexOf(context.sourceMessageId);
+      const entry = this.turnCompletions.get(context.sourceMessageId);
+      if (messageIndex < 0 || !entry || entry.settled) { continue; }
+      this.pendingLifecycleContexts.splice(contextIndex, 1);
+      this.pendingTurnMessageIds.splice(messageIndex, 1);
+      this.pendingTurnAnchors.splice(messageIndex, 1);
+      // A folded instruction changes the original input: never automatically
+      // replay an apparently empty turn with unknown tool-side effects.
+      this.turnsWithLiveInput.add(ownerMessageId as string);
+      const finish = (error?: Error): void => {
+        if (entry.settled) { return; }
+        this.resolveTurn(context.sourceMessageId, error);
+        this.logger.info({ event: 'agent_turn', ...context,
+          state: error ? 'failed' : 'completed', user_visible: this.didDeliverUserVisibleThisTurn,
+          consumedBySourceMessageId: ownerMessageId,
+        }, 'Terminal outcome for input consumed by the original SDK turn');
+      };
+      void owner.promise.then(() => finish(), (error: unknown) =>
+        finish(error instanceof Error ? error : new Error(String(error))));
+    }
+  }
+
   /**
    * Reject every unsettled turn completion (Issue #4063; all-entries
    * semantics from #4649 review ③). Every call site is a whole-session death
@@ -1827,6 +1857,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
         // Check for completion
         if (parsed.type === 'result') {
+          this.joinConsumedInputs(parsed.metadata?.consumedInputIds, currentTurnMessageId);
           if (streamDriver && !(await streamDriver.finish(resolveReplyThreadRoot()))) {
             turnDeliveryFailed = true;
             finalDeliveryId = undefined;

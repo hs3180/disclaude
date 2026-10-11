@@ -69,6 +69,8 @@ export type MessageRole = 'user' | 'assistant' | 'system';
 
 /** Agent 消息元数据 */
 export interface AgentMessageMetadata {
+  /** Host input UUIDs the provider confirms were consumed by this result. */
+  consumedInputIds?: string[];
   /** Provider-declared assistant phase; commentary is visible progress, not a final result. */
   phase?: 'commentary' | 'final_answer';
   /** 工具名称 */
