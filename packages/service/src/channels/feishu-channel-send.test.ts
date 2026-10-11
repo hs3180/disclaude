@@ -18,6 +18,12 @@ import * as os from 'os';
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import { FeishuChannel, extractFeishuApiError } from './feishu-channel.js';
 import { FEISHU_RETRY_MESSAGE_BYTES } from './feishu-message-chunker.js';
+import { createChannelCallbacksFactory, createDefaultMessageHandler } from '../utils/channel-handlers.js';
+import { AgentPoolMessageHandler } from '../messaging/agent-pool-handler.js';
+import type { ChatAgent } from '../agents/chat-agent.js';
+import type { ChatAgentCallbacks } from '../agents/types.js';
+import type { WiredContext } from '../channel-lifecycle-manager.js';
+import type { Logger } from 'pino';
 
 // ─── Mock Logger ────────────────────────────────────────────────────────────
 
@@ -167,6 +173,75 @@ function createTestChannel(mockClient: ReturnType<typeof createMockClient>['clie
 describe('FeishuChannel doSendMessage — Issue #1619', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it.each(['router', 'direct'] as const)('keeps captured topic ownership through the %s callback path', async route => {
+    const { client, mocks } = createMockClient();
+    const roots = new Map([['child_a', 'root_a'], ['child_b', 'root_b']]);
+    mocks.getMock.mockImplementation(({ path: target }) => Promise.resolve({
+      code: 0, data: { items: [{
+        message_id: target.message_id, chat_id: 'chat_123', root_id: roots.get(target.message_id),
+      }] },
+    }));
+    mocks.replyMock.mockImplementation(({ path: target }) => Promise.resolve({
+      code: 0, data: {
+        message_id: `reply_${target.message_id}`, chat_id: 'chat_123',
+        root_id: roots.get(target.message_id), thread_id: `thread_${roots.get(target.message_id)}`,
+      },
+    }));
+    const channel = createTestChannel(client);
+    const callbacksFactory = createChannelCallbacksFactory(channel, mockLogger as unknown as Logger);
+    const captured = new Map<string, ChatAgentCallbacks>();
+    const agentPool = {
+      getOrCreateChatAgent: vi.fn((_chatId: string, callbacks: ChatAgentCallbacks, root?: string) => {
+        captured.set(root!, callbacks);
+        return { processMessage: vi.fn().mockResolvedValue(undefined) } as unknown as ChatAgent;
+      }),
+    };
+    for (const suffix of ['a', 'b']) {
+      if (route === 'router') {
+        await new AgentPoolMessageHandler({ agentPool, callbacksFactory }).handleUserMessage({
+          chatId: 'chat_123', messageId: `child_${suffix}`, payload: 'continue', threadRootId: `root_${suffix}`,
+        });
+      } else {
+        const handler = createDefaultMessageHandler(channel, {
+          agentPool, callbacks: callbacksFactory, logger: mockLogger,
+        } as unknown as WiredContext, { channelName: 'Feishu' });
+        await handler({
+          chatId: 'chat_123', messageId: `child_${suffix}`, userId: 'user', content: 'continue',
+          messageType: 'text', timestamp: Date.now(), metadata: { threadRootId: `root_${suffix}` },
+        });
+      }
+    }
+    const first = captured.get('root_a')!;
+    await first.sendMessage('chat_123', 'response stopped', 'child_a');
+    await captured.get('root_b')!.sendCard('chat_123', {
+      config: {}, header: { title: { tag: 'plain_text', content: 'Question' } }, elements: [],
+    }, 'question', 'child_b');
+    await first.sendMessage('chat_123', 'late result', 'child_a');
+    expect(mocks.replyMock.mock.calls.map(([request]) => ({
+      parent: request.path.message_id, inTopic: request.data.reply_in_thread,
+    }))).toEqual([
+      { parent: 'child_a', inTopic: true },
+      { parent: 'child_b', inTopic: true },
+      { parent: 'child_a', inTopic: true },
+    ]);
+    expect(mocks.getMock).toHaveBeenCalledWith({ path: { message_id: 'child_a' } });
+    expect(mocks.getMock).toHaveBeenCalledWith({ path: { message_id: 'child_b' } });
+    expect(mocks.createMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps an ordinary parent-only text reply inline through the callback factory', async () => {
+    const { client, mocks } = createMockClient();
+    const channel = createTestChannel(client);
+    const callbacks = createChannelCallbacksFactory(channel, mockLogger as unknown as Logger)('chat_123');
+    await callbacks.sendMessage('chat_123', 'ordinary reply', 'ordinary_parent');
+    expect(mocks.replyMock).toHaveBeenCalledExactlyOnceWith({
+      path: { message_id: 'ordinary_parent' },
+      data: { msg_type: 'text', content: JSON.stringify({ text: 'ordinary reply' }) },
+    });
+    expect(mocks.getMock).not.toHaveBeenCalled();
+    expect(mocks.createMock).not.toHaveBeenCalled();
   });
 
   describe('text messages', () => {
