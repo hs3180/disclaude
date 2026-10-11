@@ -642,7 +642,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
       // Start session if needed
       if (!this.isSessionActive) {
-        this.startAgentLoop();
+        void this.startAgentLoop();
       }
 
       // Get capabilities for message building
@@ -709,7 +709,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           'handleInput: first push failed, attempting session restart'
         );
         try {
-          this.startAgentLoop();
+          void this.startAgentLoop();
         } catch (restartErr) {
           this.logger.error(
             { err: restartErr, chatId, messageId },
@@ -889,12 +889,34 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Start session if needed
     if (!this.isSessionActive) {
       this.logger.info({ chatId }, 'No active session, starting agent loop');
-      this.startAgentLoop();
+      const startupNotice = this.startAgentLoop();
       if (!this.isSessionActive) {
-        this.logger.error(
-          { chatId, messageId },
-          'Message rejected because the bound project directory is unavailable'
-        );
+        const error = new Error('Message rejected because the bound project directory is unavailable');
+        this.createTurnCompletion(messageId);
+        this.resolveTurn(messageId, error);
+        let userVisible = false;
+        if (startupNotice) {
+          userVisible = await startupNotice;
+        } else {
+          // Automatic restarts suppress the repeated full warning. A new
+          // rejected input still needs its own short outcome and completion.
+          try {
+            await this.callbacks.sendMessage(chatId,
+              '⚠️ 项目绑定目录仍不可用，本次请求未执行。请 `/project reset` 或重新绑定已有目录。',
+              threadRootId ?? messageId);
+            userVisible = true;
+          } catch (err) {
+            this.logger.error({ err, chatId, messageId }, 'Failed to send missing-project rejection');
+          }
+        }
+        try {
+          await this.callbacks.onDone?.(chatId, threadRootId ?? messageId);
+        } catch (err) {
+          this.logger.error({ err, chatId, messageId }, 'Failed to signal missing-project rejection completion');
+        }
+        this.logger.warn({ event: 'agent_turn', state: 'failed', ...lifecycleContext,
+          diagnosticId: crypto.randomUUID(), errorMessage: error.message, user_visible: userVisible,
+        }, 'Message rejected because the bound project directory is unavailable');
         return;
       }
     }
@@ -1066,7 +1088,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    * Issue #4652: ChatAgent no longer creates or injects MCP servers. Channel
    * operations are exposed through the runtime-agnostic channel CLI Skill.
    */
-  private startAgentLoop(): void {
+  private startAgentLoop(): void | Promise<boolean> {
     const chatId = this.boundChatId;
     const startMs = Date.now(); // Issue #3292: timing for agent startup diagnostics
     this.logger.info({ chatId, timing: 'agent:startLoop', elapsedMs: 0 });
@@ -1113,6 +1135,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // resolveCwd() (existsSync + map lookup) twice per spawn.
     const resolution = this.cwdResolver?.(chatId);
     if (resolution?.reason === 'bound-missing' && resolution.boundWorkingDir) {
+      this.isSessionActive = false;
       // Nit: startAgentLoop() re-runs on restart cycles (processIterator →
       // startAgentLoop once the previous query ends), which would re-announce
       // the same missing directory to a chat that already saw the warning.
@@ -1121,22 +1144,25 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // and warns again, matching the "re-resolve on restart" semantics.
       if (this.warnedMissingWorkingDir !== resolution.boundWorkingDir) {
         this.warnedMissingWorkingDir = resolution.boundWorkingDir;
-        this.callbacks
+        return this.callbacks
           .sendMessage(
             chatId,
             [
-              `⚠️ **项目绑定目录不存在**: \`${resolution.boundWorkingDir}\``,
+              `⚠️ **项目绑定目录不存在或不可用**: \`${resolution.boundWorkingDir}\``,
               '',
               '本次消息已停止，**不会回退到工作空间根目录运行**。',
-              '可能原因：容器重启时 volume 尚未就绪 / 目录被移动或卸载 / 路径大小写或规范化差异。',
-              '可用 `/project reset` 回到默认，或 `/project use <dir>` 重新绑定。',
-            ].join('\n')
+              '请检查路径是否正确、是否存在且为目录，以及当前服务是否可以访问。',
+              ...(/\s@/.test(resolution.boundWorkingDir) ? ['若旧绑定含尾随 @mention，请先 `/project reset`，再绑定实际目录。'] : []),
+              '可用 `/project reset` 回到默认，或 `/project use <已存在目录>` 重新绑定。',
+            ].join('\n'),
+            this.conversationOrchestrator.getThreadRoot(chatId)
           )
+          .then(() => true)
           .catch((err) => {
             this.logger.error({ err, chatId }, 'Failed to send bound-missing cwd rejection');
+            return false;
           });
       }
-      this.isSessionActive = false;
       return;
     } else if (this.warnedMissingWorkingDir !== undefined) {
       // Binding recovered (bound or unbound now) — allow a future
@@ -2668,7 +2694,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Restart the agent loop to preserve context for future messages
     if (this.sessionGeneration !== myGeneration || this.isSessionActive || this.stoppedQueryGenerations.has(myGeneration)) {return;}
-    this.startAgentLoop();
+    void this.startAgentLoop();
     this.logger.info({ chatId, diagnosticId }, 'Agent loop restarted');
   }
 

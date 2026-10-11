@@ -526,6 +526,50 @@ describe('ChatSessionPool', () => {
   // reset()
   // ==========================================================================
 
+  describe('Project session boundaries', () => {
+    it('clears all persistent scopes including evicted topics, preserving other chats and pinned tasks', () => {
+      const forgetProviderSession = vi.fn();
+      const pool = new ChatSessionPool({ idleTimeoutMs: 1, forgetProviderSession });
+      const callbacks = createMockCallbacks();
+      try {
+        pool.getOrCreateChatAgent('project-chat', callbacks);
+        pool.getOrCreateChatAgent('project-chat', callbacks, 'old-topic');
+        expect(pool.evictIdleAgents(Date.now() + 100)).toEqual(['project-chat', 'project-chat::old-topic']);
+        pool.getOrCreateChatAgent('project-chat', callbacks, 'live-topic');
+        const other = pool.getOrCreateChatAgent('other-chat', callbacks, 'other-topic');
+        const task = pool.getOrCreateChatAgent('project-chat', callbacks, undefined, { id: 'execution:pinned' });
+
+        pool.resetProjectSessions('project-chat');
+
+        expect(forgetProviderSession.mock.calls.map(call => call[0]).sort()).toEqual([
+          'project-chat', 'project-chat::live-topic', 'project-chat::old-topic',
+        ]);
+        expect(pool.get('project-chat', 'live-topic')).toBeUndefined();
+        expect(pool.get('other-chat', 'other-topic')).toBe(other);
+        expect(pool.get('project-chat', 'execution:pinned')).toBe(task);
+        expect(other.dispose).not.toHaveBeenCalled();
+        expect(task.dispose).not.toHaveBeenCalled();
+      } finally { pool.disposeAll(); }
+    });
+
+    it('guards busy or pending work across persistent topics while excluding isolated tasks', () => {
+      const pool = new ChatSessionPool();
+      const callbacks = createMockCallbacks();
+      try {
+        const topic = pool.getOrCreateChatAgent('project-chat', callbacks, 'topic') as unknown as { isBusy: boolean };
+        const task = pool.getOrCreateChatAgent('project-chat', callbacks, undefined, { id: 'execution:pinned' }) as unknown as { isBusy: boolean };
+        task.isBusy = true;
+        expect(pool.isProjectBusy('project-chat')).toBe(false);
+        topic.isBusy = true;
+        expect(pool.isProjectBusy('project-chat')).toBe(true);
+        expect(pool.isProjectBusy('other-chat')).toBe(false);
+        topic.isBusy = false;
+        Object.defineProperty(topic, 'hasPendingWork', { value: true });
+        expect(pool.isProjectBusy('project-chat')).toBe(true);
+      } finally { pool.disposeAll(); }
+    });
+  });
+
   describe('reset()', () => {
     it('should dispose and remove the agent for a given chatId', () => {
       const pool = new ChatSessionPool();

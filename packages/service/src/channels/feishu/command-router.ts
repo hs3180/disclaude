@@ -11,9 +11,11 @@
 
 import {
   createControlCommand,
+  stripCommandMentions,
   type ControlCommand,
   type ControlCommandType,
   type ControlResponse,
+  type FeishuMessageEvent,
 } from '@disclaude/core';
 
 /** A message to send back to the chat. */
@@ -38,6 +40,8 @@ export interface CommandRouterDeps {
 export interface CommandRouterInput {
   /** Message text with leading @mentions stripped. */
   textWithoutMentions: string;
+  /** Actual entities, used to remove trailing mentions from command arguments. */
+  mentions?: FeishuMessageEvent['message']['mentions'];
   chatId: string;
   /**
    * Thread root when the command is typed inside a topic-group thread
@@ -70,7 +74,8 @@ export async function tryHandleSlashCommand(
     return false;
   }
 
-  const [command, ...args] = input.textWithoutMentions.slice(1).split(/\s+/);
+  const text = stripCommandMentions(input.textWithoutMentions, input.mentions);
+  const [command, ...args] = text.slice(1).split(/\s+/);
   const cmd = command.toLowerCase();
   const replyTarget = {
     chatId: input.chatId,
@@ -88,9 +93,10 @@ export async function tryHandleSlashCommand(
     );
 
     // Issue #1562: relay both success and error messages from the control handler.
-    if (response.success || response.message) {
-      if (response.message) {
-        await deps.sendMessage({ ...replyTarget, type: 'text', text: response.message });
+    const message = response.message ?? (cmd === 'project' ? response.error : undefined);
+    if (response.success || message) {
+      if (message) {
+        await deps.sendMessage({ ...replyTarget, type: 'text', text: message });
       }
       return true;
     }
