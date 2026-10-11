@@ -96,14 +96,17 @@ async function fixture() {
     kernelInfo: vi.fn(() =>
       Promise.resolve({ kernelId: 'kernel', incarnation: 'native-instance' })
     ),
-    observe: vi.fn(() =>
-      Promise.resolve({
-        state: 'completed',
-        result: {
-          execution_count: 1,
-          outputs: [{ output_type: 'stream', name: 'stdout', text: '42' }],
-        },
-      })
+    observe: vi.fn(
+      (
+        _handle: Parameters<DatalayerJupyterClient['observe']>[0]
+      ): ReturnType<DatalayerJupyterClient['observe']> =>
+        Promise.resolve({
+          state: 'completed',
+          result: {
+            execution_count: 1,
+            outputs: [{ output_type: 'stream', name: 'stdout', text: '42' }],
+          },
+        })
     ),
     stopRequest: vi.fn(() => Promise.resolve('unsupported')),
   };
@@ -321,10 +324,12 @@ describe('Optional Datalayer Notebook tools', () => {
       expect(f.journal.get('original')?.state).toBe('submitting');
       return Promise.resolve({ state: 'unknown' });
     });
-    expect(await f.call(f.session, 'notebook_execute', f.args)).toMatchObject({ state: 'unknown' });
+    expect(await f.call(f.session, 'notebook_execute', f.args)).toMatchObject({
+      state: 'client-error',
+    });
     await f.session.close();
     expect(await f.call(f.create(), 'notebook_execute', f.args)).toMatchObject({
-      state: 'unknown',
+      state: 'client-error',
     });
     expect(f.client.submitCell).toHaveBeenCalledTimes(1);
   });
@@ -415,7 +420,11 @@ describe('Optional Datalayer Notebook tools', () => {
       notebookId: f.args.notebookId,
       runId: 'original',
     });
-    expect(result).toMatchObject({ state: 'unknown', requestId: 'original-request' });
+    expect(result).toMatchObject({
+      state: 'client-error',
+      source: 'local-journal',
+      requestId: 'original-request',
+    });
     expect(JSON.stringify(result)).not.toContain('private connection preparation error');
     expect(f.client.submitCell).toHaveBeenCalledOnce();
   });
@@ -695,6 +704,114 @@ describe('Optional Datalayer Notebook tools', () => {
     expect(f.client.openDocument).toHaveBeenCalledOnce();
   });
 
+  it('preserves confirmed running facts through credential loss and reconciles after restoration', async () => {
+    const f = await fixture();
+    f.client.submitCell.mockResolvedValue({
+      state: 'accepted',
+      handle: { kernelId: 'kernel', requestId: 'request' },
+    } as never);
+    await f.call(f.session, 'notebook_execute', f.args);
+    f.client.observe.mockResolvedValue({ state: 'running', httpStatus: 202 } as never);
+    const input = { notebookId: f.args.notebookId, runId: 'original' };
+    const running = (await f.call(f.session, 'notebook_status', input)) as Record<string, unknown>;
+    expect(running).toMatchObject({ state: 'running', source: 'live' });
+    const confirmed = f.journal.get('original')!;
+    expect(confirmed.lastConfirmedRunningAt).toEqual(expect.any(Number));
+    f.connections.useClient = () => Promise.reject(new Error('credential-secret-must-not-leak'));
+    const disconnected = await f.call(f.create(), 'notebook_status', input);
+    expect(disconnected).toMatchObject({
+      state: 'client-error',
+      source: 'local-journal',
+      lastKnownState: 'running',
+      lastConfirmedRunningAt: confirmed.lastConfirmedRunningAt,
+      lostAt: expect.any(Number),
+    });
+    expect(JSON.stringify(disconnected)).not.toContain('credential-secret-must-not-leak');
+    expect(f.journal.get('original')).toMatchObject({
+      state: 'running',
+      observedAt: confirmed.observedAt,
+      observation: { state: 'running', httpStatus: 202 },
+    });
+    f.connections.useClient = (_id, _namespace, operation) =>
+      operation(f.client as unknown as DatalayerJupyterClient);
+    f.client.observe.mockResolvedValue({
+      state: 'completed',
+      result: { outputs: [{ output_type: 'stream', text: 'original result' }] },
+    } as never);
+    expect(await f.call(f.create(), 'notebook_status', input)).toMatchObject({
+      state: 'completed',
+      source: 'live',
+      lastConfirmedRunningAt: confirmed.lastConfirmedRunningAt,
+    });
+    expect(f.client.submitCell).toHaveBeenCalledOnce();
+  });
+
+  it('reconciles every nonterminal run without replay and distinguishes missing server records', async () => {
+    const f = await fixture();
+    f.client.submitCell.mockResolvedValue({
+      state: 'accepted',
+      handle: { kernelId: 'kernel', requestId: 'request' },
+    } as never);
+    await f.call(f.session, 'notebook_execute', f.args);
+    f.client.observe.mockResolvedValue({
+      state: 'running',
+      httpStatus: 202,
+      result: { outputs: [{ output_type: 'stream', text: 'cached partial output' }] },
+    } as never);
+    await f.call(f.session, 'notebook_status', {
+      notebookId: f.args.notebookId,
+      runId: 'original',
+    });
+    const original = f.journal.get('original')!;
+    f.journal.reserve('other', original.target);
+    f.journal.update('other', {
+      state: 'accepted',
+      handle: { kernelId: 'kernel', requestId: 'other' },
+    });
+    f.journal.reserve('cached', original.target);
+    f.journal.update('cached', { state: 'failed', observation: { state: 'failed' } });
+    f.client.observe.mockImplementation((handle) =>
+      Promise.resolve(
+        handle.requestId === 'request'
+          ? {
+              state: 'unknown',
+              httpStatus: 404,
+              failure: { kind: 'server-unknown', reason: 'request-not-found' },
+            }
+          : ({ state: 'completed', httpStatus: 200 } as never)
+      )
+    );
+    const reconciled = (await f.call(f.create(), 'notebook_reconcile', {})) as {
+      runs: Array<Record<string, unknown>>;
+    };
+    expect(reconciled).toMatchObject({
+      state: 'reconciled',
+      runs: [
+        {
+          runId: 'original',
+          state: 'server-unknown',
+          source: 'live',
+          lastKnownState: 'running',
+          checkedAt: expect.any(Number),
+          lastConfirmedRunningAt: original.lastConfirmedRunningAt,
+          lastKnownResult: {
+            source: 'local-journal',
+            result: { outputs: [{ text: 'cached partial output' }] },
+          },
+        },
+        { runId: 'other', state: 'completed', source: 'live' },
+      ],
+    });
+    expect(reconciled.runs[0].result).toBeUndefined();
+    expect(f.journal.get('original')?.state).toBe('running');
+    expect(f.client.observe.mock.calls.map(([handle]) => handle.requestId)).toEqual([
+      'request',
+      'request',
+      'other',
+    ]);
+    expect(f.client.submitCell).toHaveBeenCalledOnce();
+  });
+
   it('reads cached terminal history without network or an RTC document', async () => {
     const f = await fixture();
     f.client.submitCell.mockResolvedValue({
@@ -724,6 +841,7 @@ describe('Optional Datalayer Notebook tools', () => {
       })
     ).toMatchObject({
       state: 'completed',
+      source: 'local-journal',
       originalResultEntry: 'https://configured.invalid/api/kernels/kernel/requests/request',
       result: { outputs: [{ text: 'original result' }] },
     });

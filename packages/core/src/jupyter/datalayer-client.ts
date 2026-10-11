@@ -62,10 +62,29 @@ export interface DatalayerExecutionPolicy {
   inlineResultBytes: number;
 }
 
+export interface DatalayerObservationFailure {
+  kind: 'client-error' | 'server-unknown';
+  reason:
+    | 'authentication-required'
+    | 'permission-denied'
+    | 'connection-unavailable'
+    | 'http-error'
+    | 'request-not-found'
+    | 'request-expired'
+    | 'invalid-response'
+    | 'result-provenance-mismatch'
+    | 'kernel-incarnation-changed'
+    | 'request-handle-unavailable'
+    | 'submission-unverified'
+    | 'legacy-unknown';
+}
+
 export type DatalayerExecutionObservation = {
   state: 'running' | 'input_required' | 'completed' | 'failed' | 'cancelled' | 'unknown';
   httpStatus?: number;
   result?: Record<string, unknown>;
+  /** A failed lookup is separate from the last confirmed execution state. */
+  failure?: DatalayerObservationFailure;
 };
 
 function id(value: string): string {
@@ -387,34 +406,71 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
 
   /** Read only the original request. Missing lookup never proves non-execution. */
   async observe(handle: DatalayerExecutionHandle): Promise<DatalayerExecutionObservation> {
+    let responded = false;
     try {
       const response = await this.response(
         `api/kernels/${id(handle.kernelId)}/requests/${id(handle.requestId)}`
       );
+      responded = true;
       if ([404, 410].includes(response.status)) {
         await response.body?.cancel();
-        return { state: 'unknown', httpStatus: response.status };
+        return {
+          state: 'unknown',
+          httpStatus: response.status,
+          failure: {
+            kind: 'server-unknown',
+            reason: response.status === 410 ? 'request-expired' : 'request-not-found',
+          },
+        };
       }
       if (![200, 202, 300, 500].includes(response.status)) {
         await response.body?.cancel();
-        return { state: 'unknown', httpStatus: response.status };
+        return {
+          state: 'unknown',
+          httpStatus: response.status,
+          failure: {
+            kind: 'client-error',
+            reason:
+              response.status === 401
+                ? 'authentication-required'
+                : response.status === 403
+                  ? 'permission-denied'
+                  : 'http-error',
+          },
+        };
       }
       const result = JSON.parse(await this.responseText(response)) as Record<string, unknown>;
       if (
         (result.request_id !== undefined && result.request_id !== handle.requestId) ||
-        (result.kernel_id !== undefined && result.kernel_id !== handle.kernelId) ||
-        (handle.kernelIncarnation &&
-          result.kernel_incarnation !== undefined &&
-          result.kernel_incarnation !== handle.kernelIncarnation)
+        (result.kernel_id !== undefined && result.kernel_id !== handle.kernelId)
       ) {
-        return { state: 'unknown', httpStatus: response.status };
+        return {
+          state: 'unknown',
+          httpStatus: response.status,
+          failure: { kind: 'client-error', reason: 'result-provenance-mismatch' },
+        };
+      }
+      if (
+        handle.kernelIncarnation &&
+        result.kernel_incarnation !== undefined &&
+        result.kernel_incarnation !== handle.kernelIncarnation
+      ) {
+        return {
+          state: 'unknown',
+          httpStatus: response.status,
+          failure: { kind: 'server-unknown', reason: 'kernel-incarnation-changed' },
+        };
       }
       const artifact = result.result_artifact;
       if (
         artifact !== undefined &&
         artifact !== `nbmodel-results/${handle.kernelId}/${handle.requestId}.json`
       ) {
-        return { state: 'unknown', httpStatus: response.status };
+        return {
+          state: 'unknown',
+          httpStatus: response.status,
+          failure: { kind: 'client-error', reason: 'result-provenance-mismatch' },
+        };
       }
       const entries = {
         original_result_entry: this.requestEntry(handle),
@@ -434,12 +490,26 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
           ? (JSON.parse(result.outputs) as unknown)
           : result.outputs;
       if (outputs !== undefined && !Array.isArray(outputs)) {
-        return { state: 'unknown', httpStatus: response.status };
+        return {
+          state: 'unknown',
+          httpStatus: response.status,
+          failure: { kind: 'client-error', reason: 'invalid-response' },
+        };
       }
       const error = (result.error ??
         (Array.isArray(outputs) ? outputs.find((o) => o?.output_type === 'error') : undefined)) as
         | Record<string, unknown>
         | undefined;
+      if (
+        response.status === 500 &&
+        (typeof error !== 'object' || typeof error?.ename !== 'string')
+      ) {
+        return {
+          state: 'unknown',
+          httpStatus: 500,
+          failure: { kind: 'client-error', reason: 'http-error' },
+        };
+      }
       const normalized = {
         ...result,
         ...entries,
@@ -456,8 +526,19 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
         httpStatus: response.status,
         result: normalized,
       };
-    } catch {
-      return { state: 'unknown' };
+    } catch (error) {
+      return {
+        state: 'unknown',
+        failure: {
+          kind: 'client-error',
+          reason: responded
+            ? 'invalid-response'
+            : error instanceof Error &&
+                /authentication|credential|password|token/i.test(error.message)
+              ? 'authentication-required'
+              : 'connection-unavailable',
+        },
+      };
     }
   }
 

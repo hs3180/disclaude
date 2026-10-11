@@ -57,6 +57,18 @@ function connection() {
 }
 
 describe('Optional Jupyter CLI boundary', () => {
+  it('reconciles an empty Project without credentials or an input file', async () => {
+    const f = connection();
+    expect(
+      await runNotebookCommand(
+        parseNotebookOptions(['reconcile', '--project-dir', root()]),
+        f.resolve,
+        signal
+      )
+    ).toEqual({ state: 'reconciled', runs: [] });
+    expect(f.resolve).not.toHaveBeenCalled();
+  });
+
   it('publishes the interrupt target alternatives without requiring credentials', async () => {
     const f = connection();
     const commands = (await runNotebookCommand(
