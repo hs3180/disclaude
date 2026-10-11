@@ -53,6 +53,7 @@ vi.mock('@disclaude/core', async (importOriginal) => {
     this.initialized = false;
   };
   return {
+    createLogger: actual.createLogger,
     Config: {
       getSessionRestoreConfig: vi.fn(() => ({
         historyDays: 1,
@@ -125,7 +126,6 @@ vi.mock('@disclaude/core', async (importOriginal) => {
       return undefined;
     },
     tagErrorCategory: actual.tagErrorCategory,
-    createLogger: actual.createLogger,
   };
 });
 
