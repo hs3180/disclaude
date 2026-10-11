@@ -11,10 +11,12 @@
 
 import {
   createControlCommand,
+  stripCommandMentions,
   type ControlCommand,
   type ControlCommandType,
   type ControlResponse,
   type ChatType,
+  type FeishuMessageEvent,
 } from '@disclaude/core';
 import type { WelcomeService } from '../../platforms/feishu/welcome-service.js';
 
@@ -40,6 +42,8 @@ export interface CommandRouterDeps {
 export interface CommandRouterInput {
   /** Message text with leading @mentions stripped. */
   textWithoutMentions: string;
+  /** Actual entities, used to remove trailing mentions from command arguments. */
+  mentions?: FeishuMessageEvent['message']['mentions'];
   chatId: string;
   /**
    * Thread root when the command is typed inside a topic-group thread
@@ -74,7 +78,8 @@ export async function tryHandleSlashCommand(
     return false;
   }
 
-  const [command, ...args] = input.textWithoutMentions.slice(1).split(/\s+/);
+  const text = stripCommandMentions(input.textWithoutMentions, input.mentions);
+  const [command, ...args] = text.slice(1).split(/\s+/);
   const cmd = command.toLowerCase();
   const replyTarget = {
     chatId: input.chatId,

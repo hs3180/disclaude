@@ -7,7 +7,7 @@
  * - Type definitions (platform, websocket, file)
  * - Constants (deduplication, dialogue, api config)
  * - Utility functions (logger, error-handler, retry)
- * - REST API Protocol (shared between disclaude service and MCP Server)
+ * - REST API Protocol (shared between disclaude service and channel clients)
  * - Agent SDK abstraction layer
  */
 
@@ -20,7 +20,7 @@ export * from './constants/index.js';
 // Utils
 export * from './utils/index.js';
 
-// REST API Protocol (shared between disclaude service and MCP Server)
+// REST API Protocol (shared between disclaude service and channel clients)
 export * from './channel-api/index.js';
 
 // Jupyter identity, revision, and execution ownership contracts (#5217/#5218)
@@ -117,11 +117,9 @@ export type {
   ToolResultBlock as SdkToolResultBlock,
   ToolProgressPayload as SdkToolProgressPayload,
   ToolProgressCallback as SdkToolProgressCallback,
-  // #4568: also exported unprefixed — consumers (mcp-server tools) import the
-  // callback by its own name, matching how they already consume zod etc.
+  // Also exported without a prefix for callback consumers (#4568).
   ToolProgressPayload,
   ToolProgressCallback,
-  // MCP types
   // Query types
   AgentQueryOptions,
   PermissionMode,
@@ -221,6 +219,7 @@ export {
   buildLocationAwarenessGuidance,
   CHANNEL_CLI_HELP,
   buildChannelCliHelpGuidance,
+  getSupportedChannelSendCommands,
   type MessageData,
   type MessageBuilderContext,
   type MessageBuilderOptions,

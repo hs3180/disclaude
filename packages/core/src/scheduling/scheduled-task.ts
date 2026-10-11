@@ -42,8 +42,6 @@ export interface ScheduledTask {
   createdBy?: string;
   /** Whether task is enabled */
   enabled: boolean;
-  /** Whether to block concurrent executions (skip if previous still running) */
-  blocking?: boolean;
   /**
    * Legacy alias: true means freshSession:true + skipHistory:true; explicit
    * false opts into live-chat reuse unless freshSession is specified. Omitted

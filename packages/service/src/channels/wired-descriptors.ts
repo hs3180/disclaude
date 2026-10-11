@@ -70,6 +70,7 @@ export const REST_WIRED_DESCRIPTOR: WiredChannelDescriptor<RestChannelConfig> = 
     supportsMention: false,
     supportsUpdate: false,
     supportsStreaming: false,
+    supportedChannelTools: [],
   },
 
   createCallbacks: (channel, context) =>
@@ -213,7 +214,7 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
     feishuChannel.setWelcomeService(welcomeService);
     feishuChannel.onControl(createControlHandler(helpContext));
 
-    // 3. Register REST API handlers for MCP Server connections
+    // 3. Register REST API handlers for channel CLI requests
     // Base handlers reuse the same channel.sendMessage pattern as ChatAgentCallbacks
     // (Issue #1555: unified handler injection — avoids duplication)
     const baseHandlers = createChannelApiHandlers(feishuChannel, {
@@ -335,7 +336,7 @@ export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig
     supportsMention: false,
     supportsUpdate: false,
     supportsStreaming: false,
-    supportedMcpTools: ['send_text', 'send_file'],
+    supportedChannelTools: ['send_text', 'send_file'],
   },
 
   createCallbacks: (channel, context) =>
@@ -353,7 +354,7 @@ export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig
 
   /**
    * Post-registration setup for WeChat channel.
-   * Issue #3814: Register REST API handlers for MCP Server tool routing.
+   * Issue #3814: Register REST API handlers for channel CLI requests.
    *
    * Registers handlers for:
    * - sendMessage (base: delegates to channel.sendMessage)

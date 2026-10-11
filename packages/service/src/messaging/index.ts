@@ -39,7 +39,7 @@
  *   sender: feishuMessageSender,
  * });
  *
- * // Create channel router for MCP tools
+ * // Create channel router for API operations
  * const channelRouter = new ChannelMessageRouter({
  *   sendToFeishu: async (chatId, msg) => { ... },
  * });
