@@ -2516,6 +2516,16 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.stopReasons.delete(myGeneration);
       if (this.sessionGeneration === myGeneration) {
         const threadRoot = resolveReplyThreadRoot();
+        // Snapshot before rejecting waiters or awaiting the notice: a new
+        // input may replace the active context while delivery is pending.
+        // Settled inputs (including a completed turn with background work)
+        // already have a terminal and must not be recorded again.
+        const interruptedContexts = new Map(
+          [this.activeLifecycleContext, ...this.pendingLifecycleContexts]
+            .filter((context): context is NonNullable<StreamingUserMessage['correlation']> =>
+              !!context && this.turnCompletions.get(context.sourceMessageId)?.settled === false)
+            .map(context => [context.sourceMessageId, context]),
+        );
         const error = new Error(stopReason ? `Agent turn stopped by activity policy: ${stopReason}`
           : backendInterrupted ? 'Agent turn interrupted by backend' : 'Agent turn cancelled by stop');
         this.rejectTurn(error);
@@ -2527,7 +2537,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         this.isSessionActive = false;
         this.isProcessingMessage = false;
         this.activeTurnMessageId = undefined;
-        await this.deliverUserVisible(chatId, stopReason ?? '⏹️ 本轮已停止。', threadRoot);
+        const delivered = await this.deliverUserVisible(chatId, stopReason ?? '⏹️ 本轮已停止。', threadRoot);
+        for (const context of interruptedContexts.values()) {
+          this.logger.warn({
+            ...context, diagnosticId, event: 'agent_turn', state: 'interrupted',
+            interruptionCause: stopReason ? 'activity_policy' : backendInterrupted ? 'backend_interrupted' : 'user_stop',
+            stopReason, errorMessage: error.message,
+            user_visible: delivered && context.sourceMessageId === currentTurnMessageId,
+          }, 'Terminal outcome for stopped request');
+        }
         if (this.sessionGeneration !== myGeneration) { return; }
         await this.callbacks.onDone?.(chatId, threadRoot);
       }
