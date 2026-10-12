@@ -11,7 +11,7 @@
  * @see Issue #3519 (simplify /project command)
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -90,6 +90,33 @@ async function invoke(
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 describe('handleProject', () => {
+  it.each(['use', 'reset'])('rejects a busy %s before changing the binding or disposing sessions', async subcommand => {
+    const reset = vi.fn(), resetProjectSessions = vi.fn();
+    const ctx = createTestContext({ agentPool: { reset, resetProjectSessions, isProjectBusy: () => true, stop: () => false } });
+    const first = join(ctx.projectManager!.getWorkspaceDir(), 'first');
+    const second = join(ctx.projectManager!.getWorkspaceDir(), 'second');
+    mkdirSync(first); mkdirSync(second);
+    ctx.projectManager!.use('chat-1', first);
+    const result = await invoke(makeCommand('chat-1', subcommand, { workingDir: second }), ctx);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('工作目录未改变');
+    expect(ctx.projectManager!.resolveCwd('chat-1').effectiveCwd).toBe(first);
+    expect(reset).not.toHaveBeenCalled();
+    expect(resetProjectSessions).not.toHaveBeenCalled();
+  });
+
+  it('does not reset persistent sessions when a new binding fails validation', async () => {
+    const reset = vi.fn(), resetProjectSessions = vi.fn();
+    const ctx = createTestContext({ agentPool: { reset, resetProjectSessions, stop: () => false } });
+    const first = join(ctx.projectManager!.getWorkspaceDir(), 'first');
+    mkdirSync(first); ctx.projectManager!.use('chat-1', first);
+    const result = await invoke(makeCommand('chat-1', 'use', { workingDir: join(first, 'missing') }), ctx);
+    expect(result.success).toBe(false);
+    expect(ctx.projectManager!.resolveCwd('chat-1').effectiveCwd).toBe(first);
+    expect(reset).not.toHaveBeenCalled();
+    expect(resetProjectSessions).not.toHaveBeenCalled();
+  });
+
   it('returns the effective project boundary without hiding a missing bound directory', async () => {
     const ctx = createTestContext();
     const workspace = ctx.projectManager!.getWorkspaceDir();
@@ -160,19 +187,18 @@ describe('handleProject', () => {
     it('should warn when the bound directory does not exist (Issue #4448)', async () => {
       const ctx = createTestContext();
       const workspaceDir = ctx.projectManager!.getWorkspaceDir();
-      // Bind to a directory that does NOT exist on disk
-      ctx.projectManager!.use('chat-1', '/nonexistent/project-dir-4448');
+      const removedDir = join(workspaceDir, 'vanished');
+      mkdirSync(removedDir);
+      ctx.projectManager!.use('chat-1', removedDir);
+      rmSync(removedDir, { recursive: true });
 
       const result = await invoke(makeCommand('chat-1', 'info'), ctx);
 
-      // The command ran; the warning is delivered via `message` (the chat
-      // command router only relays `message`, never `error`).
       expect(result.success).toBe(true);
       expect(result.message).toContain('绑定目录不存在');
-      expect(result.message).toContain('/nonexistent/project-dir-4448');
-      // Surface the workspace fallback so the mismatch is visible
-      expect(result.message).toContain(workspaceDir);
-      expect(result.message).toContain('回退');
+      expect(result.message).toContain(removedDir);
+      expect(result.message).toContain('拒绝执行');
+      expect(result.message).not.toContain('回退');
     });
 
     it('should show effective cwd confirmation when bound dir exists', async () => {

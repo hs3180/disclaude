@@ -2,7 +2,6 @@
 name: "智能推荐分析"
 cron: "{cron}"
 enabled: true
-blocking: true
 chatId: "{controlChannelChatId}"
 ---
 

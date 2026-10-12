@@ -17,7 +17,7 @@
  *   ├── Channel sections (via options callbacks)
  *   │   ├── buildHeader() - Platform label
  *   │   ├── buildPostHistory() - @ mention section
- *   │   ├── buildToolsSection() - MCP tools
+ *   │   ├── buildToolsSection() - channel CLI/API guidance
  *   │   └── buildAttachmentExtra() - Image analyzer hints
  *   ├── Guidance sections (next-step, output format, location awareness)
  *   └── User message + attachments
@@ -29,6 +29,7 @@
 import type { FileRef } from '../../types/file.js';
 import type { ChannelCapabilities } from '../../types/channel.js';
 import type { MessageData, MessageBuilderContext, MessageBuilderOptions, MessageBuilderSection } from './types.js';
+import { getSupportedChannelSendCommands } from './channel-cli-help.js';
 import {
   buildChatHistorySection,
   buildPersistedHistorySection,
@@ -175,8 +176,7 @@ export class MessageBuilder {
 
     // Core guidance sections (framework-agnostic)
     // Issue #3641: Skip next-step guidance in topic threads to reduce noise
-    const supportsInteractiveCards = capabilities?.supportsCard !== false &&
-      (capabilities?.supportedMcpTools === undefined || capabilities.supportedMcpTools.includes('send_interactive'));
+    const supportsInteractiveCards = getSupportedChannelSendCommands(capabilities).includes('send_interactive');
     const nextStepGuidance = isTopicThread ? '' : buildNextStepGuidance(supportsInteractiveCards);
     const outputFormatGuidance = buildOutputFormatGuidance();
     const locationAwarenessGuidance = buildLocationAwarenessGuidance();

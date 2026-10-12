@@ -368,7 +368,6 @@ export interface AgentConfig {
  *   getLoggingConfig: () => Config.getLoggingConfig(),
  *   getGlobalEnv: () => Config.getGlobalEnv(),
  *   isAgentTeamsEnabled: () => Config.isAgentTeamsEnabled(),
- *   createMcpServer: (chatId) => createChannelMcpServer(chatId),
  * });
  * ```
  */
@@ -386,8 +385,6 @@ export interface AgentRuntimeContext {
   isAgentTeamsEnabled(): boolean;
 
   // Platform adapters (optional - only needed for ChatAgent)
-  /** Create MCP server instance for a chatId */
-  createMcpServer?(chatId: string): Promise<unknown>;
   /** Send a text message to a chat */
   sendMessage?(chatId: string, text: string, parentMessageId?: string): Promise<void>;
   /** Send an interactive card to a chat */

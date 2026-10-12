@@ -2,7 +2,7 @@
  * Tests for Scheduler.
  *
  * Verifies cron-based task execution via InputMessageRouter,
- * cooldown handling, blocking mechanism, and lifecycle management.
+ * cooldown handling, concurrency policy, and lifecycle management.
  *
  * Issue #1617: Phase 2 - scheduling module test coverage.
  * Issue #3901: All tests use InputMessageRouter.
@@ -75,8 +75,8 @@ const testJobFactory = (
  * `await new Promise(r => setTimeout(r, N))` wall-clock waits.
  *
  * Why this is safe for the "tick should have been SKIPPED" assertions below:
- * `executeTask` makes every skip decision (blocking-already-running,
- * same-chatId blocking, isChatBusy) SYNCHRONOUSLY, before its first `await`
+ * `executeTask` makes every skip decision (task-already-running,
+ * same-chatId ownership, isChatBusy) SYNCHRONOUSLY, before its first `await`
  * (`scheduleManager.get`, whose mock resolves on the microtask queue), and the
  * route mock also resolves on the microtask queue. A few `setImmediate`
  * (macrotask) boundaries therefore let all pending microtasks settle —
@@ -346,7 +346,7 @@ describe('Scheduler', () => {
       );
     });
 
-    it('cancels every concurrent non-blocking execution of the same command task', async () => {
+    it('cancels admitted commands in different chats and skips a duplicate tick', async () => {
       const commandRunner = vi.fn<CommandRunner>((_command, options) => new Promise((_resolve, reject) => {
         options.signal.addEventListener('abort', () => reject(new CommandCancelledError()), { once: true });
       }));
@@ -360,12 +360,18 @@ describe('Scheduler', () => {
         id: 'command-concurrent-stop',
         prompt: undefined,
         command: 'sleep 30',
-        blocking: false,
+      }));
+      commandScheduler.addTask(createTask({
+        id: 'command-other-chat',
+        chatId: 'oc_other',
+        prompt: undefined,
+        command: 'sleep 30',
       }));
 
-      const [{ job }] = commandScheduler.getActiveJobs();
-      void job.fireOnTick();
-      void job.fireOnTick();
+      const jobs = commandScheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+      void jobs[0].job.fireOnTick();
+      void jobs[1].job.fireOnTick();
       await vi.waitFor(() => expect(commandRunner).toHaveBeenCalledTimes(2));
       const signals = commandRunner.mock.calls.map((call) => call[1].signal);
       await commandScheduler.stop();
@@ -373,6 +379,7 @@ describe('Scheduler', () => {
       expect(signals).toHaveLength(2);
       expect(signals.every((signal) => signal.aborted)).toBe(true);
       expect(commandScheduler.isTaskRunning('command-concurrent-stop')).toBe(false);
+      expect(commandScheduler.isTaskRunning('command-other-chat')).toBe(false);
     });
   });
 
@@ -781,20 +788,25 @@ describe('Scheduler', () => {
       expect(getRoutedMessage().agentSession).toMatchObject({ releaseAfterTurn: true, skipHistory: false });
     });
 
-    it('retains blocking ownership after wait timeout until the isolated turn actually settles', async () => {
-      const task = createTask({ id: 'isolated-timeout', blocking: true, timeoutMs: 20 });
+    it.each(['completed', 'failed'])('retains task/chat ownership after wait timeout until the pending turn is %s', async (outcome) => {
+      const task = createTask({ id: 'isolated-timeout', timeoutMs: 20 });
       let finish!: () => void;
-      mockRouterAsMock.route.mockReturnValueOnce(new Promise<void>(resolve => { finish = resolve; }));
+      mockRouterAsMock.route.mockReturnValueOnce(new Promise<void>((resolve, reject) => {
+        finish = () => outcome === 'completed' ? resolve() : reject(new Error('late native failure'));
+      }));
       scheduler.addTask(task);
-      fireJob(scheduler.getActiveJobs());
+      scheduler.addTask(createTask({ id: 'same-chat-later' }));
+      const jobs = scheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
       await vi.waitFor(() => expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1));
       await vi.waitFor(() => expect(scheduler.isTaskRunning(task.id)).toBe(false));
-      fireJob(scheduler.getActiveJobs());
-      await new Promise(resolve => setTimeout(resolve, 30));
+      void jobs[0].job.fireOnTick();
+      void jobs[1].job.fireOnTick();
+      await flushPending();
       expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
       finish();
-      await Promise.resolve();
-      fireJob(scheduler.getActiveJobs());
+      await flushPending();
+      void jobs[1].job.fireOnTick();
       await vi.waitFor(() => expect(mockRouterAsMock.route).toHaveBeenCalledTimes(2));
       expect(mockCallbacks.resetAgent).not.toHaveBeenCalled();
     });
@@ -1139,7 +1151,8 @@ describe('Scheduler', () => {
         const task = createTask({ id: 'timeout-neutral', timeoutMs: 50 });
         scheduler.addTask(task);
 
-        mockRouterAsMock.route.mockReturnValueOnce(new Promise(() => {})); // turn never settles
+        let finish!: () => void;
+        mockRouterAsMock.route.mockReturnValueOnce(new Promise<void>(resolve => { finish = resolve; }));
         fireJob(scheduler.getActiveJobs());
         await vi.waitFor(() => {
           expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
@@ -1152,6 +1165,9 @@ describe('Scheduler', () => {
           expect.stringContaining('timeoutMs'),
         );
         expect(streakMap().has('timeout-neutral')).toBe(false);
+        // A later tick is admitted only after the original turn actually ends.
+        finish();
+        await flushPending();
 
         // …and the timeout didn't mask real failures either: the next real
         // error counts as 1, not 2.
@@ -1569,89 +1585,49 @@ describe('Scheduler', () => {
     });
   });
 
-  describe('executeTask blocking mechanism', () => {
-    it('should skip execution when blocking=true and task already running', async () => {
-      // First execution never completes
-      mockRouterAsMock.route.mockReturnValueOnce(new Promise(() => {}));
-
-      const task = createTask({ id: 'blocking-1', blocking: true });
-      scheduler.addTask(task);
-
-      const jobs = scheduler.getActiveJobs();
-
-      // First trigger starts execution
-      void jobs[0].job.fireOnTick();
-      await vi.waitFor(() => {
-        expect(scheduler.isTaskRunning('blocking-1')).toBe(true);
-      }, { timeout: 2000 });
-
-      // Second trigger while still running should be skipped
-      void jobs[0].job.fireOnTick();
-      // Deterministic drain instead of a fixed 100ms wait (Issue #4394 part 3).
-      await flushPending();
-
-      // Router should only be called once (second trigger was skipped)
-      expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
+  describe('executeTask concurrency policy', () => {
+    it('uses one non-overlap policy without a concurrency option', async () => {
+      let finish!: () => void;
+      mockRouterAsMock.route.mockReturnValueOnce(new Promise<void>(resolve => { finish = resolve; }));
+      scheduler.addTask(createTask({ id: 'single-policy' }));
+      const [{ job }] = scheduler.getActiveJobs();
+      try {
+        void job.fireOnTick();
+        await vi.waitFor(() => expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1));
+        void job.fireOnTick();
+        await flushPending();
+        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
+      } finally {
+        finish();
+        await flushPending();
+      }
+      void job.fireOnTick();
+      await vi.waitFor(() => expect(mockRouterAsMock.route).toHaveBeenCalledTimes(2));
     });
 
-    it('should allow execution when blocking=false even if previous still running', async () => {
-      // Issue #4394 (part 25): this used `new Promise(r => setTimeout(r, 200))`
-      // for every route call, but the test only asserts that both executions
-      // are *initiated* (route called twice) — it never awaits completion, so
-      // the two real timers just leaked past the test boundary. A
-      // never-resolving promise provides the same "previous still running"
-      // state with zero real timers; the shared afterEach teardown uses
-      // stop(0), which skips the drain and so is not blocked by it.
-      mockRouterAsMock.route.mockImplementation(() => new Promise<void>(() => {}));
-
-      const task = createTask({ id: 'non-blocking', blocking: false });
-      scheduler.addTask(task);
-
+    it('skips another scheduled task for the same chat without a concurrency option', async () => {
+      let finish!: () => void;
+      mockRouterAsMock.route.mockReturnValueOnce(new Promise<void>(resolve => { finish = resolve; }));
+      scheduler.addTask(createTask({ id: 'first-shared-chat' }));
+      scheduler.addTask(createTask({ id: 'second-shared-chat' }));
       const jobs = scheduler.getActiveJobs();
-
-      void jobs[0].job.fireOnTick();
-      await vi.waitFor(() => {
-        expect(scheduler.isTaskRunning('non-blocking')).toBe(true);
-      }, { timeout: 2000 });
-
-      // Second trigger while running - should start since blocking=false
-      void jobs[0].job.fireOnTick();
-
-      // Both executions should have been initiated. The second route lands
-      // after executeTask's first await, so wait for it deterministically
-      // instead of a fixed 100ms wall-clock wait (Issue #4394 part 3).
-      await vi.waitFor(() => {
-        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(2);
-      }, { timeout: 1000 });
+      try {
+        void jobs[0].job.fireOnTick();
+        await vi.waitFor(() => expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1));
+        void jobs[1].job.fireOnTick();
+        await flushPending();
+        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
+        expect(scheduler.getRunningTaskIds()).toEqual(['first-shared-chat']);
+      } finally {
+        finish();
+        await flushPending();
+      }
     });
 
-    it('should allow execution after previous blocking task completes', async () => {
-      // First execution completes quickly
-      mockRouterAsMock.route.mockResolvedValueOnce(undefined);
-      // Second execution also succeeds
-      mockRouterAsMock.route.mockResolvedValueOnce(undefined);
-
-      const task = createTask({ id: 'blocking-done', blocking: true });
-      scheduler.addTask(task);
-
-      const jobs = scheduler.getActiveJobs();
-
-      // First trigger
-      void jobs[0].job.fireOnTick();
-      await vi.waitFor(() => {
-        expect(scheduler.isTaskRunning('blocking-done')).toBe(false);
-      }, { timeout: 2000 });
-
-      // Second trigger after completion — should execute
-      void jobs[0].job.fireOnTick();
-      await vi.waitFor(() => {
-        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(2);
-      }, { timeout: 2000 });
-    });
   });
 
   describe('executeTask busy-chat gate (Issue #4199)', () => {
-    it('should skip a blocking task when its chat is busy', async () => {
+    it('should skip a scheduled task when its chat is busy', async () => {
       mockRouterAsMock.route.mockResolvedValue(undefined);
       const busyScheduler = new Scheduler({
         scheduleManager: mockScheduleManager,
@@ -1659,7 +1635,7 @@ describe('Scheduler', () => {
         inputMessageRouter: mockRouter,
         jobFactory: testJobFactory,
       });
-      busyScheduler.addTask(createTask({ id: 'blocking-busy', blocking: true, chatId: 'oc_busy' }));
+      busyScheduler.addTask(createTask({ id: 'user-busy', chatId: 'oc_busy' }));
 
       void busyScheduler.getActiveJobs()[0].job.fireOnTick();
       // Deterministic drain instead of a fixed 100ms wait (Issue #4394 part 3):
@@ -1671,7 +1647,7 @@ describe('Scheduler', () => {
       expect(mockRouterAsMock.route).not.toHaveBeenCalled();
     });
 
-    it('should execute a blocking task when its chat is not busy', async () => {
+    it('should execute a scheduled task when its chat is not busy', async () => {
       mockRouterAsMock.route.mockResolvedValueOnce(undefined);
       const busyScheduler = new Scheduler({
         scheduleManager: mockScheduleManager,
@@ -1679,7 +1655,7 @@ describe('Scheduler', () => {
         inputMessageRouter: mockRouter,
         jobFactory: testJobFactory,
       });
-      busyScheduler.addTask(createTask({ id: 'blocking-idle', blocking: true, chatId: 'oc_other' }));
+      busyScheduler.addTask(createTask({ id: 'user-idle', chatId: 'oc_other' }));
 
       void busyScheduler.getActiveJobs()[0].job.fireOnTick();
       await vi.waitFor(() => {
@@ -1687,7 +1663,7 @@ describe('Scheduler', () => {
       }, { timeout: 2000 });
     });
 
-    it('should skip a non-blocking task when its chat is busy', async () => {
+    it('should skip a scheduled task and retry after the chat becomes idle when its chat is busy', async () => {
       mockRouterAsMock.route.mockResolvedValueOnce(undefined);
       let busy = true;
       const busyScheduler = new Scheduler({
@@ -1696,7 +1672,7 @@ describe('Scheduler', () => {
         inputMessageRouter: mockRouter,
         jobFactory: testJobFactory,
       });
-      busyScheduler.addTask(createTask({ id: 'nonblocking-busy', blocking: false, chatId: 'oc_busy' }));
+      busyScheduler.addTask(createTask({ id: 'retry-on-idle', chatId: 'oc_busy' }));
 
       void busyScheduler.getActiveJobs()[0].job.fireOnTick();
       await flushPending();
@@ -1714,7 +1690,7 @@ describe('Scheduler', () => {
     it('should not gate when no isChatBusy callback is wired (unchanged behavior)', async () => {
       mockRouterAsMock.route.mockResolvedValueOnce(undefined);
       // beforeEach `scheduler` uses mockCallbacks (no isChatBusy)
-      scheduler.addTask(createTask({ id: 'blocking-no-cb', blocking: true, chatId: 'oc_test' }));
+      scheduler.addTask(createTask({ id: 'no-busy-callback', chatId: 'oc_test' }));
 
       void scheduler.getActiveJobs()[0].job.fireOnTick();
       await vi.waitFor(() => {
@@ -1827,7 +1803,7 @@ describe('Scheduler', () => {
     it('should clear running state after timeout', async () => {
       mockRouterAsMock.route.mockReturnValueOnce(new Promise(() => {}));
 
-      const task = createTask({ id: 'timeout-cleanup', timeoutMs: 50, blocking: true });
+      const task = createTask({ id: 'timeout-cleanup', timeoutMs: 50 });
       scheduler.addTask(task);
 
       const jobs = scheduler.getActiveJobs();
@@ -1839,24 +1815,31 @@ describe('Scheduler', () => {
       }, { timeout: 2000 });
     });
 
-    it('preserves legacy explicit live-session reuse after wait timeout', async () => {
-      // First call hangs (will timeout)
-      mockRouterAsMock.route.mockReturnValueOnce(new Promise(() => {}));
+    it('retains live-session turn ownership after wait timeout until its actual completion', async () => {
+      let finish!: () => void;
+      mockRouterAsMock.route.mockReturnValueOnce(new Promise<void>(resolve => { finish = resolve; }));
       // Second call succeeds
       mockRouterAsMock.route.mockResolvedValueOnce(undefined);
 
-      const task = createTask({ id: 'timeout-retry', timeoutMs: 50, blocking: true, freshSession: false });
+      const task = createTask({ id: 'timeout-retry', timeoutMs: 50, freshSession: false });
       scheduler.addTask(task);
 
       const jobs = scheduler.getActiveJobs();
 
       // First trigger — will timeout
       void jobs[0].job.fireOnTick();
+      await vi.waitFor(() => expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1));
       await vi.waitFor(() => {
         expect(scheduler.isTaskRunning('timeout-retry')).toBe(false);
       }, { timeout: 2000 });
 
-      // Second trigger — should execute since timeout cleared the running state
+      // Timeout ended the caller's wait, while the original turn still owns the task.
+      void jobs[0].job.fireOnTick();
+      await flushPending();
+      expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
+      expect(mockRouterAsMock.route.mock.calls[0][0].agentSession).toBeUndefined();
+      finish();
+      await flushPending();
       void jobs[0].job.fireOnTick();
       await vi.waitFor(() => {
         expect(mockRouterAsMock.route).toHaveBeenCalledTimes(2);
@@ -1927,8 +1910,8 @@ describe('Scheduler', () => {
   });
 
   describe('executeTask agent busy check (Issue #3931, #4102)', () => {
-    it('should skip blocking task when another blocking task is running for same chatId', async () => {
-      const blockScheduler = new Scheduler({
+    it('skips a scheduled task when another scheduled execution owns the same chat', async () => {
+      const concurrentScheduler = new Scheduler({
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         inputMessageRouter: mockRouter,
@@ -1939,34 +1922,34 @@ describe('Scheduler', () => {
       const hangingRoute: Promise<void> = new Promise(() => {}); // never resolves
       mockRouterAsMock.route.mockReturnValueOnce(hangingRoute);
 
-      const task1 = createTask({ id: 'block-running', blocking: true });
-      const task2 = createTask({ id: 'block-skip', blocking: true });
-      blockScheduler.addTask(task1);
-      blockScheduler.addTask(task2);
+      const task1 = createTask({ id: 'block-running' });
+      const task2 = createTask({ id: 'block-skip' });
+      concurrentScheduler.addTask(task1);
+      concurrentScheduler.addTask(task2);
 
       // Fire task1 first
-      const jobs = blockScheduler.getActiveJobs();
+      const jobs = concurrentScheduler.getActiveJobs();
       void jobs[0].job.fireOnTick();
 
       // Wait for task1 to start running
       await vi.waitFor(() => {
-        expect(blockScheduler.isTaskRunning('block-running')).toBe(true);
+        expect(concurrentScheduler.isTaskRunning('block-running')).toBe(true);
       }, { timeout: 2000 });
 
-      // Fire task2 — should be skipped because task1 is blocking and same chatId
+      // Fire task2 while task1 owns the same chat.
       void jobs[1].job.fireOnTick();
 
       // Deterministic drain instead of a fixed 200ms wait (Issue #4394 part 3):
-      // the same-chatId blocking skip is decided synchronously in executeTask.
+      // the same-chat admission decision is synchronous in executeTask.
       await flushPending();
 
       // Task2 should not have been routed
       expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
-      expect(blockScheduler.isTaskRunning('block-skip')).toBe(false);
+      expect(concurrentScheduler.isTaskRunning('block-skip')).toBe(false);
     });
 
-    it('should execute blocking task when no other blocking task is running', async () => {
-      const task = createTask({ id: 'idle-1', blocking: true });
+    it('executes when no other scheduled execution owns the chat', async () => {
+      const task = createTask({ id: 'idle-1' });
       scheduler.addTask(task);
 
       const jobs = scheduler.getActiveJobs();
@@ -1977,32 +1960,32 @@ describe('Scheduler', () => {
       }, { timeout: 2000 });
     });
 
-    it('should not skip non-blocking tasks even when blocking task is running', async () => {
-      const blockScheduler = new Scheduler({
+    it('allows tasks for different chats to run concurrently', async () => {
+      const concurrentScheduler = new Scheduler({
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         inputMessageRouter: mockRouter,
         jobFactory: testJobFactory,
       });
 
-      // Make route hang for the first call (blocking task)
+      // Keep the first chat's task running.
       const hangingRoute: Promise<void> = new Promise(() => {}); // never resolves
       mockRouterAsMock.route.mockReturnValueOnce(hangingRoute);
 
-      const blockTask = createTask({ id: 'block-1', blocking: true });
-      const nonBlockTask = createTask({ id: 'nonblock-1', blocking: false });
-      blockScheduler.addTask(blockTask);
-      blockScheduler.addTask(nonBlockTask);
+      const firstChatTask = createTask({ id: 'block-1' });
+      const otherChatTask = createTask({ id: 'other-chat-1', chatId: 'oc_other' });
+      concurrentScheduler.addTask(firstChatTask);
+      concurrentScheduler.addTask(otherChatTask);
 
-      const jobs = blockScheduler.getActiveJobs();
-      // Fire blocking task first
+      const jobs = concurrentScheduler.getActiveJobs();
+      // Fire the first chat's task.
       void jobs[0].job.fireOnTick();
 
       await vi.waitFor(() => {
-        expect(blockScheduler.isTaskRunning('block-1')).toBe(true);
+        expect(concurrentScheduler.isTaskRunning('block-1')).toBe(true);
       }, { timeout: 2000 });
 
-      // Fire non-blocking task — should still execute
+      // The second chat can execute independently.
       void jobs[1].job.fireOnTick();
 
       await vi.waitFor(() => {
