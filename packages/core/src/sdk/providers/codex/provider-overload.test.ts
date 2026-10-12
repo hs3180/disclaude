@@ -11,7 +11,7 @@ interface Scenario {
   prefix?: 'text' | 'command' | 'unknown' | 'plan' | 'diagnostic';
   error?: { message: string; codexErrorInfo: string };
   retryAfter?: string;
-  special?: 'host-tool' | 'question' | 'steer' | 'missing-terminal';
+  special?: 'host-tool' | 'question' | 'async-question' | 'steer' | 'missing-terminal';
   lateProgress?: boolean;
   internallyRecovered?: boolean;
 }
@@ -65,6 +65,10 @@ else require('node:readline').createInterface({input:process.stdin}).on('line',l
   currentTurn='owned-turn-'+Date.now();send({id:m.id,result:{turn:{id:currentTurn}}});
   if(scenario.special==='host-tool')send({id:'owned-host',method:'item/tool/call',params:{callId:'owned-host-call',threadId:'owned-overload-thread',turnId:currentTurn,namespace:'disclaude',tool:'owned_effect',arguments:{}}});
   else if(scenario.special==='question')send({id:'owned-question',method:'item/tool/requestUserInput',params:{threadId:'owned-overload-thread',turnId:currentTurn,itemId:'owned-input-item',isBlocking:true,questions:[{id:'choice',header:'Choice',question:'Which?',options:[{label:'Alpha',description:'Owned choice'}]}]}});
+  else if(scenario.special==='async-question'){
+   send({method:'item/completed',params:{threadId:'owned-overload-thread',turnId:currentTurn,item:{id:'owned-async-question',type:'agentMessage',text:'Which scope?',delivery:'async',questions:[{title:'Which scope?'}]}}});
+   setTimeout(()=>run(currentTurn),150);
+  }
   else if(scenario.special==='steer')setTimeout(()=>run(currentTurn),200);
   else run(currentTurn);
  }
@@ -77,8 +81,8 @@ else require('node:readline').createInterface({input:process.stdin}).on('line',l
   const provider = new CodexAgentProvider({ transport, model: 'gpt-6-luna', reasoningEffort: 'low', builtinsDir: dir,
     env: { PATH: bin, CODEX_HOME: home, CODEX_REASONING_EFFORT: '' } });
   const resource = { provider, dir }; owned.push(resource);
-  const query = (extra: Partial<AgentQueryOptions> = {}) => provider.queryStream((async function* (): AsyncGenerator<UserInput> {
-    yield { role: 'user', content: 'Complete the owned task', correlation: { runId: 'owned-run', chatId: 'owned-chat', sourceMessageId: 'owned-overload-source', traceId: 'owned-trace' } };
+  const query = (extra: Partial<AgentQueryOptions> = {}, extraInput: Partial<UserInput> = {}) => provider.queryStream((async function* (): AsyncGenerator<UserInput> {
+    yield { role: 'user', content: 'Complete the owned task', correlation: { runId: 'owned-run', chatId: 'owned-chat', sourceMessageId: 'owned-overload-source', traceId: 'owned-trace' }, ...extraInput };
   })(), { sessionKey: 'owned-overload', settingSources: [], ...extra });
   return { ...resource, query, attempts: () => Number(readFileSync(join(home, 'attempts'), 'utf8')),
     effects: () => readFileSync(join(home, 'effects'), 'utf8').trim().split('\n'),
@@ -207,6 +211,23 @@ describe('Codex overload preserves host-side input and effects', () => {
     expect(onUserInput).toHaveBeenCalledTimes(1);
     expect(fx.attempts()).toBe(1);
     expect(messages.some(m => m.metadata?.terminatedReason === 'turn_failed')).toBe(true);
+  });
+
+  it.each([false, true])('does not replay an async question after overload (delivery fails=%s)', async deliveryFails => {
+    const fx = fixture('app-server', { failures: 1, special: 'async-question' });
+    const onUserInput = vi.fn(() => deliveryFails
+      ? Promise.reject(new Error('Owned card delivery failed')) : Promise.resolve());
+    const onAsyncUserInputAnswer = vi.fn().mockResolvedValue(undefined);
+    const messages = await collect(fx.query({ onUserInput, onAsyncUserInputAnswer }, {
+      inputContext: { actorId: 'owned-actor', chatId: 'owned-chat', sourceMessageId: 'owned-overload-source' },
+    }));
+    expect(fx.attempts()).toBe(1);
+    expect(onUserInput).toHaveBeenCalledOnce();
+    expect(onAsyncUserInputAnswer).not.toHaveBeenCalled();
+    const results = messages.filter(message => message.type === 'result');
+    expect(results).toHaveLength(1);
+    expect(results[0].metadata?.terminatedReason).toBe('turn_failed');
+    expect(results[0].metadata?.terminationDetail).toContain(deliveryFails ? 'Async question was not delivered' : 'server_overloaded');
   });
 
   it('does not replay the original input after a live steer', async () => {
