@@ -16,6 +16,7 @@ import { statSync } from 'node:fs';
 import { AgentFactory } from './agents/factory.js';
 import type { ChatAgentCallbacks } from './agents/types.js';
 import type { ChatAgent } from './agents/chat-agent.js';
+import type { ServiceTurnRecoveryStore } from './service-turn-recovery.js';
 
 /**
  * Options for ChatSessionPool initialization.
@@ -89,6 +90,9 @@ export interface ChatSessionPoolOptions {
    * whether or not this observer is configured.
    */
   onBusyCapExceeded?: (chatId: string, busyMinutes: number, decision: BusyTurnStopDecision) => Promise<void> | void;
+
+  /** Durable journal for interrupted turns caused by a service restart. */
+  turnRecovery?: ServiceTurnRecoveryStore;
 
   /**
    * Issue #4644: provider-session forgetter invoked by reset() — clears the
@@ -195,6 +199,10 @@ export class ChatSessionPool {
 
   /** Keyed by buildSessionKey(chatId, threadRootId) — see class doc (Issue #4587 part 2). */
   private readonly agents = new Map<string, ChatAgent>();
+  // Remember persistent topics after idle eviction too, so a Project change
+  // forgets their native provider state. Isolated execution scopes pin their
+  // own directory and never enter this registry.
+  private readonly projectSessions = new Map<string, { chatId: string; threadRootId?: string }>();
   private readonly callbacksBySession = new Map<string, ChatAgentCallbacks>();
   private readonly selectedPresetBySession = new Map<string, string>();
   private readonly presets?: AgentPresets;
@@ -245,6 +253,7 @@ export class ChatSessionPool {
    * agent resolves) so pool resets and agent-level resets hit one provider.
    */
   private readonly forgetProviderSession: (chatId: string) => void;
+  private isShuttingDown = false;
 
   constructor(options: ChatSessionPoolOptions = {}) {
     if (options.busyTurnStallTimeoutMs !== undefined && options.busyTurnStallTimeoutMs > 0 &&
@@ -389,6 +398,7 @@ export class ChatSessionPool {
       cwdResolver,
       skipHistory,
       sdkSessionKey,
+      turnRecovery: this.options.turnRecovery,
       ...(preset ? {
         agentBackend: preset.agentBackend,
         model: preset.model,
@@ -470,6 +480,9 @@ export class ChatSessionPool {
     threadRootId?: string,
     session?: AgentSessionOptions,
   ): ChatAgent {
+    if (this.isShuttingDown) {
+      throw new Error('Disclaude service is shutting down; the message was not started');
+    }
     if (session && (!session.id.trim() || (threadRootId && threadRootId !== session.id))) {
       throw new Error('Agent session must have a nonempty, unambiguous scope');
     }
@@ -506,11 +519,12 @@ export class ChatSessionPool {
     }
     // Rejected requests must not replace the delivery owner used by preset switches.
     this.callbacksBySession.set(sessionKey, callbacks);
+    if (!session) { this.projectSessions.set(sessionKey, { chatId, threadRootId }); }
     // Issue #4169: Track usage for idle eviction.
     this.lastUsedAt.set(sessionKey, Date.now());
     // Issue #4256: Track peak concurrent agents for leak diagnostics. Each
-    // agent holds a query handle + inline MCP connections (incl. stdio child
-    // processes for configured external MCP servers), so the active count is
+    // agent holds a query handle and SDK resources (including child processes
+    // for explicitly configured external tools), so the active count is
     // the observable proxy for the per-process resource/subprocess ceiling.
     if (this.agents.size > this.peakActive) {
       this.peakActive = this.agents.size;
@@ -523,6 +537,27 @@ export class ChatSessionPool {
     return agent;
   }
 
+  /** Whether any persistent session affected by a Project change still owns work. */
+  isProjectBusy(chatId: string): boolean {
+    for (const [key, scope] of this.projectSessions) {
+      if (scope.chatId !== chatId) { continue; }
+      const agent = this.agents.get(key);
+      // The pending-work signal also covers history admission and background
+      // tasks in runtimes that expose it, beyond the current visible turn.
+      if (agent && (agent.isBusy || ('hasPendingWork' in agent && agent.hasPendingWork === true))) { return true; }
+    }
+    return false;
+  }
+
+  /** Refresh the chat-wide binding without resetting directory-pinned executions. */
+  resetProjectSessions(chatId: string): void {
+    const roots = new Set([undefined, ...[...this.projectSessions.values()]
+      .filter(scope => scope.chatId === chatId).map(scope => scope.threadRootId)]);
+    for (const threadRootId of roots) {
+      this.reset(chatId, undefined, threadRootId);
+    }
+  }
+
   /**
    * Reset the ChatAgent for a chatId by disposing the old instance.
    *
@@ -530,7 +565,7 @@ export class ChatSessionPool {
    * agent, we dispose it completely and remove it from the pool. The next
    * getOrCreateChatAgent() call will create a fresh agent instance.
    *
-   * This ensures all resources (MCP connections, event listeners, transports,
+   * This ensures all resources (SDK connections, event listeners, transports,
    * AbortControllers) are properly released rather than accumulated across
    * multiple /reset operations.
    *
@@ -551,6 +586,7 @@ export class ChatSessionPool {
    */
   reset(chatId: string, skipContext?: boolean, threadRootId?: string): void {
     const sessionKey = this.sessionKeyOf(chatId, threadRootId);
+    this.projectSessions.delete(sessionKey);
     // Callbacks capture channel/request state and are only needed while an
     // agent occupies this slot. Preset selection intentionally survives reset.
     this.callbacksBySession.delete(sessionKey);
@@ -639,6 +675,7 @@ export class ChatSessionPool {
       agent.dispose();
     }
     this.agents.clear();
+    this.projectSessions.clear();
     this.lastUsedAt.clear();
     // Issue #4577: clear busy-turn markers along with the agents.
     this.busySince.clear();
@@ -646,6 +683,37 @@ export class ChatSessionPool {
     this.busyTurnStoppedFor.clear();
     this.callbacksBySession.clear();
     this.selectedPresetBySession.clear();
+  }
+
+  /**
+   * Stop accepting new turns, allow a bounded drain, then persist and report
+   * any remaining turns as interrupted before releasing their agents.
+   */
+  async shutdownForServiceRestart(options: {
+    drainTimeoutMs?: number;
+    noticeTimeoutMs?: number;
+  } = {}): Promise<void> {
+    this.isShuttingDown = true;
+    this.stopIdleSweep();
+    for (const agent of this.agents.values()) { agent.beginServiceShutdown(); }
+    const drainTimeoutMs = Math.max(0, options.drainTimeoutMs ?? 10_000);
+    const noticeTimeoutMs = Math.max(0, options.noticeTimeoutMs ?? 2_000);
+    const deadline = Date.now() + drainTimeoutMs;
+    const hasPendingWork = (): boolean => [...this.agents.values()].some(agent => agent.hasPendingWork);
+
+    while (hasPendingWork() && Date.now() < deadline) {
+      await new Promise<void>(resolve => setTimeout(resolve, Math.min(25, deadline - Date.now())));
+    }
+
+    const remaining = [...this.agents.entries()].filter(([, agent]) => agent.hasPendingWork);
+    if (remaining.length > 0) {
+      logger.warn(
+        { count: remaining.length, sessionKeys: remaining.map(([sessionKey]) => sessionKey), drainTimeoutMs },
+        'Service shutdown drain expired; interrupting remaining agent turns (Issue #5273)'
+      );
+      await Promise.allSettled(remaining.map(([, agent]) => agent.interruptForServiceRestart(noticeTimeoutMs)));
+    }
+    this.disposeAll();
   }
 
   /**
@@ -675,7 +743,7 @@ export class ChatSessionPool {
       // Issue #4256 (part 2): periodic pool-state snapshot for leak
       // diagnostics. A monotonic active/peak growth despite eviction, or a
       // busy count that never returns to zero, signals agents (and their
-      // inline MCP subprocesses) are not being released — see #4169/#4256.
+      // configured tool subprocesses) are not being released — see #4169/#4256.
       this.logPoolSnapshot('idle-sweep');
     }, interval);
     this.idleSweepTimer.unref?.();
@@ -825,9 +893,8 @@ export class ChatSessionPool {
   /**
    * Issue #4256 (part 2): snapshot of pool state for leak diagnostics.
    *
-   * Each active agent holds a query handle, channel, and inline MCP
-   * connections (including stdio child processes for configured external MCP
-   * servers). The active/peak/eviction counts are the observable per-process
+   * Each active agent holds a query handle, input channel, and SDK resources
+   * (including child processes for explicitly configured external tools). The active/peak/eviction counts are the observable per-process
    * proxy for that resource footprint, letting operators spot a leak (e.g.
    * active grows monotonically, or busy never returns to zero) without
    * enumerating live subprocesses.

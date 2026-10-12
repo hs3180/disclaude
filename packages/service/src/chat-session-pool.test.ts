@@ -54,7 +54,7 @@ vi.mock('@disclaude/core', async (importOriginal) => {
 // Track mock agent instances for assertions
 // Issue #4620: mock now carries turnStartedAtMs (0 = not set; tests that
 // exercise the observation-based fallback leave it 0/undefined).
-const mockAgents: Map<string, { dispose: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; steer: ReturnType<typeof vi.fn>; updateCallbacks: ReturnType<typeof vi.fn>; taskComplete?: Promise<void>; isBusy: boolean; turnStartedAtMs?: number; lastActivityAt?: number; lastActivityType?: string; hasPendingWork?: boolean; pendingWorkContext?: { runId?: string; sourceMessageId?: string; traceId?: string; threadRootId?: string } }> = new Map();
+const mockAgents: Map<string, { dispose: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; steer: ReturnType<typeof vi.fn>; updateCallbacks: ReturnType<typeof vi.fn>; interruptForServiceRestart: ReturnType<typeof vi.fn>; taskComplete?: Promise<void>; isBusy: boolean; turnStartedAtMs?: number; lastActivityAt?: number; lastActivityType?: string; hasPendingWork?: boolean; pendingWorkContext?: { runId?: string; sourceMessageId?: string; traceId?: string; threadRootId?: string } }> = new Map();
 
 // Mock AgentFactory
 vi.mock('./agents/factory.js', () => ({
@@ -66,8 +66,11 @@ vi.mock('./agents/factory.js', () => ({
         stop: vi.fn().mockReturnValue(true),
         steer: vi.fn().mockResolvedValue({ ok: false, error: 'unsupported' }),
         updateCallbacks: vi.fn().mockReturnValue(true),
+        interruptForServiceRestart: vi.fn().mockResolvedValue(undefined),
+        beginServiceShutdown: vi.fn(),
         taskComplete: undefined as Promise<void> | undefined,
         isBusy: false,
+        hasPendingWork: false,
         // Issue #4620: default 0 = agent does not report a turn-start
         // timestamp → pool falls back to observation-based tracking.
         turnStartedAtMs: 0,
@@ -526,6 +529,50 @@ describe('ChatSessionPool', () => {
   // reset()
   // ==========================================================================
 
+  describe('Project session boundaries', () => {
+    it('clears all persistent scopes including evicted topics, preserving other chats and pinned tasks', () => {
+      const forgetProviderSession = vi.fn();
+      const pool = new ChatSessionPool({ idleTimeoutMs: 1, forgetProviderSession });
+      const callbacks = createMockCallbacks();
+      try {
+        pool.getOrCreateChatAgent('project-chat', callbacks);
+        pool.getOrCreateChatAgent('project-chat', callbacks, 'old-topic');
+        expect(pool.evictIdleAgents(Date.now() + 100)).toEqual(['project-chat', 'project-chat::old-topic']);
+        pool.getOrCreateChatAgent('project-chat', callbacks, 'live-topic');
+        const other = pool.getOrCreateChatAgent('other-chat', callbacks, 'other-topic');
+        const task = pool.getOrCreateChatAgent('project-chat', callbacks, undefined, { id: 'execution:pinned' });
+
+        pool.resetProjectSessions('project-chat');
+
+        expect(forgetProviderSession.mock.calls.map(call => call[0]).sort()).toEqual([
+          'project-chat', 'project-chat::live-topic', 'project-chat::old-topic',
+        ]);
+        expect(pool.get('project-chat', 'live-topic')).toBeUndefined();
+        expect(pool.get('other-chat', 'other-topic')).toBe(other);
+        expect(pool.get('project-chat', 'execution:pinned')).toBe(task);
+        expect(other.dispose).not.toHaveBeenCalled();
+        expect(task.dispose).not.toHaveBeenCalled();
+      } finally { pool.disposeAll(); }
+    });
+
+    it('guards busy or pending work across persistent topics while excluding isolated tasks', () => {
+      const pool = new ChatSessionPool();
+      const callbacks = createMockCallbacks();
+      try {
+        const topic = pool.getOrCreateChatAgent('project-chat', callbacks, 'topic') as unknown as { isBusy: boolean };
+        const task = pool.getOrCreateChatAgent('project-chat', callbacks, undefined, { id: 'execution:pinned' }) as unknown as { isBusy: boolean };
+        task.isBusy = true;
+        expect(pool.isProjectBusy('project-chat')).toBe(false);
+        topic.isBusy = true;
+        expect(pool.isProjectBusy('project-chat')).toBe(true);
+        expect(pool.isProjectBusy('other-chat')).toBe(false);
+        topic.isBusy = false;
+        Object.defineProperty(topic, 'hasPendingWork', { value: true });
+        expect(pool.isProjectBusy('project-chat')).toBe(true);
+      } finally { pool.disposeAll(); }
+    });
+  });
+
   describe('reset()', () => {
     it('should dispose and remove the agent for a given chatId', () => {
       const pool = new ChatSessionPool();
@@ -770,6 +817,35 @@ describe('ChatSessionPool', () => {
 
       const agent = mockAgents.get('chat-1')!;
       // dispose should have been called only once (from first disposeAll)
+      expect(agent.dispose).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('shutdownForServiceRestart()', () => {
+    it('stops admission and interrupts remaining work after the bounded drain', async () => {
+      const pool = new ChatSessionPool();
+      const callbacks = createMockCallbacks();
+      pool.getOrCreateChatAgent('shutdown-chat', callbacks);
+      const agent = mockAgents.get('shutdown-chat')!;
+      agent.hasPendingWork = true;
+
+      await pool.shutdownForServiceRestart({ drainTimeoutMs: 0, noticeTimeoutMs: 1 });
+
+      expect(agent.interruptForServiceRestart).toHaveBeenCalledWith(1);
+      expect(agent.dispose).toHaveBeenCalledOnce();
+      expect(() => pool.getOrCreateChatAgent('shutdown-chat', callbacks)).toThrow('shutting down');
+    });
+
+    it('lets an active turn finish inside the drain window without marking it interrupted', async () => {
+      const pool = new ChatSessionPool();
+      pool.getOrCreateChatAgent('drained-chat', createMockCallbacks());
+      const agent = mockAgents.get('drained-chat')!;
+      agent.hasPendingWork = true;
+      setTimeout(() => { agent.hasPendingWork = false; }, 5);
+
+      await pool.shutdownForServiceRestart({ drainTimeoutMs: 100, noticeTimeoutMs: 1 });
+
+      expect(agent.interruptForServiceRestart).not.toHaveBeenCalled();
       expect(agent.dispose).toHaveBeenCalledOnce();
     });
   });

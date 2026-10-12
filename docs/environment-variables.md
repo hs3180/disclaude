@@ -13,7 +13,7 @@ persistent configuration.
 | `DISCLAUDE_API_BASE_URL` | Address the local DisclaudeService HTTP API used by channel commands. | Managed child processes receive the active address. |
 | `DISCLAUDE_API_TOKEN` | Bearer token for write requests to that API. | The service generates a fresh value by default, or uses an explicit `--api-token`; managed children receive the active value. Do not persist or reuse an old token. |
 | `DISCLAUDE_ALLOW_BUILTIN_CRON` | Re-enable the backend's built-in cron/loop tools. | Disabled by default; `1` or `true` enables them. The persistent `schedule` feature is separate. |
-| `DISCLAUDE_STALL_TIMEOUT_MS` | Override the local stall timeout for providers that still use a stall watchdog. | Defaults to 180,000 ms; Claude delegates stream-level retries and liveness to its SDK/CLI. |
+| `DISCLAUDE_STALL_TIMEOUT_MS` | Set the quiet interval for provider watchdogs. | Defaults to 180,000 ms. Codex checks liveness before terminating; silence alone is insufficient. See [Codex liveness](codex-backend.md#quiet-turns-and-liveness). Claude delegates liveness to its SDK/CLI. |
 | `DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS` | Grace period before force-closing a stalled provider process when its provider watchdog is active. | Defaults to 5,000 ms; Claude does not use this watchdog. |
 | `DISCLAUDE_QUERY_MAX_RETRIES` | Override Claude SDK query retries. | Positive integer; otherwise the provider default is used. |
 | `DISCLAUDE_SYSTEM_FLOOD_THRESHOLD` | Set Claude system-message flood threshold. | Positive integer; defaults to 50. |
