@@ -68,6 +68,13 @@ export interface CodexAppServerExit {
   stderrTail: string;
 }
 
+export class CodexAppServerRequestTimeoutError extends Error {
+  constructor(readonly method: string) {
+    super(`codex app-server request timed out: ${method}`);
+    this.name = 'CodexAppServerRequestTimeoutError';
+  }
+}
+
 /**
  * Experimental persistent stdio transport for the Codex app-server protocol.
  * CodexAgentProvider selects it only when explicitly configured; `codex exec`
@@ -153,7 +160,7 @@ export class CodexAppServerTransport {
     return result;
   }
 
-  request(method: string, params?: unknown): Promise<unknown> {
+  request(method: string, params?: unknown, timeoutMs?: number): Promise<unknown> {
     if (!this.acceptingRequests) {
       return Promise.reject(new Error('codex app-server transport is closed'));
     }
@@ -161,8 +168,8 @@ export class CodexAppServerTransport {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`codex app-server request timed out: ${method}`));
-      }, this.options.requestTimeoutMs ?? 30_000);
+        reject(new CodexAppServerRequestTimeoutError(method));
+      }, timeoutMs ?? this.options.requestTimeoutMs ?? 30_000);
       timer.unref();
       this.pending.set(id, { resolve, reject, timer });
       this.write({ jsonrpc: '2.0', id, method, params });
