@@ -392,8 +392,8 @@ export interface SchedulerOptions {
  * ```
  */
 export class Scheduler {
-  /** Blocking isolated turns remain owned after their caller stops waiting. */
-  private readonly isolatedBlockingTurns = new Map<string, string>();
+  /** Pending agent turns remain owned after their caller stops waiting. */
+  private readonly pendingAgentTurns = new Map<string, string>();
   private scheduleManager: ScheduleManager;
   private callbacks: SchedulerCallbacks;
   private cooldownManager?: CooldownManager;
@@ -401,24 +401,18 @@ export class Scheduler {
   /** Issue #4218 (fix A): injectable job factory; undefined → real CronJob. */
   private jobFactory?: SchedulerJobFactory;
   private commandRunner: CommandRunner;
-  /** Every non-blocking tick owns its controller; task IDs are not execution IDs. */
+  /** Every admitted command owns its cancellation controller. */
   private activeCommandControllers = new Map<string, Set<AbortController>>();
   /** Stop barrier captured before preflight awaits; explicit later executions remain supported. */
   private commandStopGeneration = 0;
   private activeJobs: Map<string, ActiveJob> = new Map();
   private running = false;
-  /** Tracks tasks currently being executed (for blocking mechanism) */
-  private runningTasks: Set<string> = new Set();
-  /**
-   * Issue #4102: Tracks chatIds that currently have a blocking scheduled task running.
-   * Blocking tasks only skip when ANOTHER blocking scheduled task is running for the
-   * same chatId — not when the agent is busy with user messages.
-   */
-  private runningBlockingTaskChatIds = new Set<string>();
+  /** Admitted executions keyed by task ID, with their chat ownership. */
+  private activeExecutions = new Map<string, string>();
   /**
    * Resolves when all running tasks have completed.
    * Created lazily when the first task starts; resolved and cleared when
-   * runningTasks drains to zero. Used by stop() for graceful shutdown
+   * activeExecutions drains to zero. Used by stop() for graceful shutdown
    * without polling.
    *
    * Issue #3415.
@@ -520,15 +514,15 @@ export class Scheduler {
     const waitTimeout = timeoutMs ?? Scheduler.GRACEFUL_SHUTDOWN_TIMEOUT_MS;
     if (this._drainPromise && waitTimeout > 0) {
       logger.info(
-        { taskIds: Array.from(this.runningTasks), timeoutMs: waitTimeout },
+        { taskIds: Array.from(this.activeExecutions.keys()), timeoutMs: waitTimeout },
         'Waiting for running tasks to complete...'
       );
 
       const timeoutPromise = new Promise<void>((resolve) => {
         setTimeout(() => {
-          if (this.runningTasks.size > 0) {
+          if (this.activeExecutions.size > 0) {
             logger.warn(
-              { taskIds: Array.from(this.runningTasks) },
+              { taskIds: Array.from(this.activeExecutions.keys()) },
               'Graceful shutdown timed out, abandoning running tasks'
             );
           }
@@ -599,7 +593,7 @@ export class Scheduler {
    * Extracted to avoid duplication between stale-job cleanup and finally block.
    */
   private resolveDrainIfNeeded(): void {
-    if (this.runningTasks.size === 0 && this._drainResolve) {
+    if (this.activeExecutions.size === 0 && this._drainResolve) {
       this._drainResolve();
       this._drainPromise = null;
       this._drainResolve = null;
@@ -608,16 +602,12 @@ export class Scheduler {
 
   /**
    * Clean up task tracking state after a task finishes or is aborted.
-   * Issue #4102: Also cleans up per-chatId blocking task tracking.
    */
   private cleanupTaskTracking(task: ScheduledTask): void {
     if ((this.activeCommandControllers.get(task.id)?.size ?? 0) > 0) {
       return;
     }
-    this.runningTasks.delete(task.id);
-    if (task.blocking && task.chatId) {
-      this.runningBlockingTaskChatIds.delete(task.chatId);
-    }
+    this.activeExecutions.delete(task.id);
   }
 
   /**
@@ -730,8 +720,9 @@ ${task.prompt ?? ''}`;
       }
     }
 
-    // Check blocking mechanism
-    if (task.blocking && (this.runningTasks.has(task.id) || this.isolatedBlockingTurns.has(task.id))) {
+    // Every schedule uses the same policy: one execution per task and chat.
+    // A timed-out caller does not release ownership of a still-pending turn.
+    if (this.activeExecutions.has(task.id) || this.pendingAgentTurns.has(task.id)) {
       logger.info(
         { taskId: task.id, name: task.name },
         'Task skipped - previous execution still running'
@@ -739,14 +730,10 @@ ${task.prompt ?? ''}`;
       return;
     }
 
-    // Issue #4102: Check if another blocking scheduled task is running for this chatId.
-    // Previously used isAgentBusy() which also blocked on user-initiated conversations,
-    // causing scheduled tasks to be indefinitely skipped in active chats.
-    // Now we only block on OTHER scheduled blocking tasks for the same chatId.
-    if (task.blocking && task.chatId && (this.runningBlockingTaskChatIds.has(task.chatId) || [...this.isolatedBlockingTurns.values()].includes(task.chatId))) {
+    if (task.chatId && ([...this.activeExecutions.values()].includes(task.chatId) || [...this.pendingAgentTurns.values()].includes(task.chatId))) {
       logger.info(
         { taskId: task.id, name: task.name, chatId: task.chatId },
-        'Task skipped - another blocking scheduled task is running for this chatId'
+        'Task skipped - another scheduled execution is active for this chatId'
       );
       return;
     }
@@ -768,12 +755,8 @@ ${task.prompt ?? ''}`;
     logger.info({ taskId: task.id, name: task.name }, 'Executing scheduled task');
 
     // Mark task as running
-    this.runningTasks.add(task.id);
+    this.activeExecutions.set(task.id, task.chatId);
     const commandExecutionGeneration = this.commandStopGeneration;
-    // Issue #4102: Track blocking tasks by chatId for per-chat serialization
-    if (task.blocking && task.chatId) {
-      this.runningBlockingTaskChatIds.add(task.chatId);
-    }
     // Create drain promise if this is the first running task
     if (!this._drainPromise) {
       this._drainPromise = new Promise<void>((resolve) => {
@@ -782,8 +765,8 @@ ${task.prompt ?? ''}`;
     }
 
     // Issue #3929: Verify the schedule file still exists before executing.
-    // Placed after runningTasks.add() so that the blocking mechanism still
-    // works synchronously. fs.watch may miss deletion events on Linux and
+    // Ownership is registered before this await, so duplicate ticks cannot
+    // both pass admission. fs.watch may miss deletion events on Linux and
     // the periodic fullRescan may not have run yet.
     try {
       const currentTask = await this.scheduleManager.get(task.id);
@@ -926,7 +909,7 @@ ${task.prompt ?? ''}`;
         logger.debug({ taskId: task.id, chatId: task.chatId }, 'Routing scheduled task via InputMessageRouter');
 
         // Issue #3894: Timeout protection for InputMessageRouter route.
-        // Prevents hung routes from keeping task in runningTasks forever.
+        // Bounds the caller's wait while retaining pending-turn ownership.
         const timeoutMs = task.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
         let timeoutId: ReturnType<typeof setTimeout> | undefined;
         const timeoutPromise = new Promise<never>((_, reject) => {
@@ -934,14 +917,12 @@ ${task.prompt ?? ''}`;
         });
         try {
           const turn = this.inputMessageRouter.route(systemMessage);
-          if (freshSession && task.blocking) {
-            this.isolatedBlockingTurns.set(task.id, task.chatId);
-            // Observe both outcomes without creating an unhandled rejection.
-            void turn.then(
-              () => { this.isolatedBlockingTurns.delete(task.id); },
-              () => { this.isolatedBlockingTurns.delete(task.id); },
-            );
-          }
+          this.pendingAgentTurns.set(task.id, task.chatId);
+          // Observe both outcomes without creating an unhandled rejection.
+          void turn.then(
+            () => { this.pendingAgentTurns.delete(task.id); },
+            () => { this.pendingAgentTurns.delete(task.id); },
+          );
           await Promise.race([
             turn,
             timeoutPromise,
@@ -1132,7 +1113,7 @@ ${task.prompt ?? ''}`;
    * @returns true if the task is currently running
    */
   isTaskRunning(taskId: string): boolean {
-    return this.runningTasks.has(taskId);
+    return this.activeExecutions.has(taskId);
   }
 
   /**
@@ -1142,7 +1123,7 @@ ${task.prompt ?? ''}`;
    * @returns true if any scheduled task is currently running
    */
   isAnyTaskRunning(): boolean {
-    return this.runningTasks.size > 0;
+    return this.activeExecutions.size > 0;
   }
 
   /**
@@ -1151,7 +1132,7 @@ ${task.prompt ?? ''}`;
    * @returns Array of running task IDs
    */
   getRunningTaskIds(): string[] {
-    return Array.from(this.runningTasks);
+    return Array.from(this.activeExecutions.keys());
   }
 
   /**

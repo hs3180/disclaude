@@ -293,7 +293,7 @@ describe('RestChannel', () => {
       // Issue #4397 (P2-a): REST channel does not support streaming; ChatAgent
       // degrades to sendMessage. Asserted explicitly to lock the contract.
       expect(capabilities.supportsStreaming).toBe(false);
-      expect(capabilities.supportedMcpTools).toEqual([]);
+      expect(capabilities.supportedChannelTools).toEqual([]);
     });
   });
 

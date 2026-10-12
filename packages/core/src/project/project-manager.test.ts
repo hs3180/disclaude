@@ -45,6 +45,12 @@ function createOptions(overrides?: Partial<ProjectManagerOptions>): ProjectManag
   return { workspaceDir, ...overrides };
 }
 
+function createProjectDir(workspaceDir: string, name = 'project'): string {
+  const dir = join(workspaceDir, name);
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
 beforeEach(() => {
   tempDirs.length = 0;
 });
@@ -75,7 +81,7 @@ describe('ProjectManager', () => {
     it('should restore bindings from persisted file', () => {
       const opts = createOptions();
       const pm1 = new ProjectManager(opts);
-      pm1.use('chat-1', '/some/dir');
+      pm1.use('chat-1', createProjectDir(opts.workspaceDir, 'dir'));
 
       // Create a new instance pointing to the same workspace
       const pm2 = new ProjectManager(opts);
@@ -96,10 +102,10 @@ describe('ProjectManager', () => {
     it('should return bound workingDir for bound chatId', () => {
       const opts = createOptions();
       const pm = new ProjectManager(opts);
-      pm.use('chat-1', '/some/project');
+      pm.use('chat-1', createProjectDir(opts.workspaceDir, 'project'));
 
       const active = pm.getActive('chat-1');
-      expect(active.workingDir).toBe('/some/project');
+      expect(active.workingDir).toBe(join(opts.workspaceDir, 'project'));
     });
   });
 
@@ -108,10 +114,10 @@ describe('ProjectManager', () => {
       const opts = createOptions();
       const pm = new ProjectManager(opts);
 
-      const result = pm.use('chat-1', '/absolute/path');
+      const result = pm.use('chat-1', createProjectDir(opts.workspaceDir, 'absolute/path'));
       expect(result.ok).toBe(true);
       if (result.ok) {
-        expect(result.data.workingDir).toBe('/absolute/path');
+        expect(result.data.workingDir).toBe(join(opts.workspaceDir, 'absolute/path'));
       }
     });
 
@@ -119,6 +125,7 @@ describe('ProjectManager', () => {
       const opts = createOptions();
       const pm = new ProjectManager(opts);
 
+      createProjectDir(opts.workspaceDir, 'projects/my-app');
       const result = pm.use('chat-1', 'projects/my-app');
       expect(result.ok).toBe(true);
       if (result.ok) {
@@ -130,11 +137,43 @@ describe('ProjectManager', () => {
       const opts = createOptions();
       const pm = new ProjectManager(opts);
 
-      pm.use('chat-1', '/first');
-      const result = pm.use('chat-1', '/second');
+      pm.use('chat-1', createProjectDir(opts.workspaceDir, 'first'));
+      const result = pm.use('chat-1', createProjectDir(opts.workspaceDir, 'second'));
 
       expect(result.ok).toBe(true);
-      expect(pm.getActive('chat-1').workingDir).toBe('/second');
+      expect(pm.getActive('chat-1').workingDir).toBe(join(opts.workspaceDir, 'second'));
+    });
+
+    it.each(['missing', 'file'])('rejects a %s target without altering the previous binding or disk', (kind) => {
+      const opts = createOptions();
+      const pm = new ProjectManager(opts);
+      const original = createProjectDir(opts.workspaceDir, 'original');
+      expect(pm.use('chat-1', original).ok).toBe(true);
+      const before = readFileSync(pm.getPersistPath(), 'utf8');
+      const target = join(opts.workspaceDir, kind);
+      if (kind === 'file') { writeFileSync(target, 'not a directory'); }
+
+      const result = pm.use('chat-1', target);
+      expect(result.ok).toBe(false);
+      if (!result.ok) { expect(result.error).toContain(kind === 'file' ? '不是目录' : '不存在'); }
+      expect(pm.getActive('chat-1').workingDir).toBe(original);
+      expect(readFileSync(pm.getPersistPath(), 'utf8')).toBe(before);
+    });
+
+    it('does not create persistence when a new binding targets a missing directory', () => {
+      const opts = createOptions();
+      const pm = new ProjectManager(opts);
+      expect(pm.use('chat-1', 'missing @_user_1').ok).toBe(false);
+      expect(pm.listBindings()).toEqual([]);
+      expect(existsSync(pm.getPersistPath())).toBe(false);
+    });
+
+    it('supports existing directory names containing spaces and literal @ characters', () => {
+      const opts = createOptions();
+      const pm = new ProjectManager(opts);
+      const projectDir = createProjectDir(opts.workspaceDir, 'my project@home');
+      expect(pm.use('chat-1', projectDir).ok).toBe(true);
+      expect(pm.resolveCwd('chat-1').effectiveCwd).toBe(projectDir);
     });
 
     it('should reject empty workingDir', () => {
@@ -196,14 +235,14 @@ describe('ProjectManager', () => {
       const opts = createOptions();
       const pm = new ProjectManager(opts);
 
-      pm.use('chat-1', '/my-project');
+      pm.use('chat-1', createProjectDir(opts.workspaceDir, 'my-project'));
 
       const persistPath = pm.getPersistPath();
       expect(existsSync(persistPath)).toBe(true);
 
       const data = JSON.parse(readFileSync(persistPath, 'utf8'));
       expect(data.version).toBe(1);
-      expect(data.bindings['chat-1']).toBe('/my-project');
+      expect(data.bindings['chat-1']).toBe(join(opts.workspaceDir, 'my-project'));
     });
   });
 
@@ -212,7 +251,7 @@ describe('ProjectManager', () => {
       const opts = createOptions();
       const pm = new ProjectManager(opts);
 
-      pm.use('chat-1', '/project');
+      pm.use('chat-1', createProjectDir(opts.workspaceDir, 'project'));
       const result = pm.reset('chat-1');
 
       expect(result.ok).toBe(true);
@@ -248,13 +287,13 @@ describe('ProjectManager', () => {
       const opts = createOptions();
       const pm = new ProjectManager(opts);
 
-      pm.use('chat-1', '/project-a');
-      pm.use('chat-2', '/project-b');
+      pm.use('chat-1', createProjectDir(opts.workspaceDir, 'project-a'));
+      pm.use('chat-2', createProjectDir(opts.workspaceDir, 'project-b'));
 
       const bindings = pm.listBindings();
       expect(bindings).toHaveLength(2);
-      expect(bindings.find((b) => b.chatId === 'chat-1')?.workingDir).toBe('/project-a');
-      expect(bindings.find((b) => b.chatId === 'chat-2')?.workingDir).toBe('/project-b');
+      expect(bindings.find((b) => b.chatId === 'chat-1')?.workingDir).toBe(join(opts.workspaceDir, 'project-a'));
+      expect(bindings.find((b) => b.chatId === 'chat-2')?.workingDir).toBe(join(opts.workspaceDir, 'project-b'));
     });
   });
 
@@ -281,7 +320,9 @@ describe('ProjectManager', () => {
     it('should return undefined when bound directory does not exist (Issue #3977)', () => {
       const opts = createOptions();
       const pm = new ProjectManager(opts);
-      pm.use('chat-1', '/nonexistent/project-dir');
+      const removedDir = createProjectDir(opts.workspaceDir, 'vanished');
+      pm.use('chat-1', removedDir);
+      rmSync(removedDir, { recursive: true });
 
       const cwdProvider = pm.createCwdProvider();
       expect(cwdProvider('chat-1')).toBeUndefined();
@@ -301,6 +342,25 @@ describe('ProjectManager', () => {
   });
 
   describe('resolveCwd() (Issue #4448)', () => {
+    it('keeps a directory named default bound', () => {
+      const opts = createOptions();
+      const pm = new ProjectManager(opts);
+      const projectDir = createProjectDir(opts.workspaceDir, 'default');
+      expect(pm.use('chat-1', projectDir).ok).toBe(true);
+      expect(pm.resolveCwd('chat-1')).toEqual({ reason: 'bound', boundWorkingDir: projectDir, effectiveCwd: projectDir });
+    });
+
+    it('rejects a legacy binding replaced by a file', () => {
+      const opts = createOptions();
+      const pm = new ProjectManager(opts);
+      const projectDir = createProjectDir(opts.workspaceDir);
+      expect(pm.use('chat-1', projectDir).ok).toBe(true);
+      rmSync(projectDir, { recursive: true });
+      writeFileSync(projectDir, 'file replacement');
+      expect(pm.resolveCwd('chat-1').reason).toBe('bound-missing');
+      expect(pm.getActive('chat-1').workingDir).toBe(projectDir);
+    });
+
     it('should report unbound for default chatId', () => {
       const opts = createOptions();
       const pm = new ProjectManager(opts);
@@ -327,14 +387,15 @@ describe('ProjectManager', () => {
     it('should report bound-missing when the bound directory does not exist', () => {
       const opts = createOptions();
       const pm = new ProjectManager(opts);
-      // A path that is almost certainly absent on disk
-      pm.use('chat-1', '/nonexistent/project-dir-4448');
+      const removedDir = createProjectDir(opts.workspaceDir, 'vanished');
+      pm.use('chat-1', removedDir);
+      rmSync(removedDir, { recursive: true });
 
       const resolution = pm.resolveCwd('chat-1');
       // Distinguishable from unbound — this is the core of #4448
       expect(resolution.reason).toBe('bound-missing');
       expect(resolution.effectiveCwd).toBeUndefined();
-      expect(resolution.boundWorkingDir).toBe('/nonexistent/project-dir-4448');
+      expect(resolution.boundWorkingDir).toBe(removedDir);
     });
 
     it('createCwdProvider should stay consistent with resolveCwd', () => {
@@ -344,7 +405,9 @@ describe('ProjectManager', () => {
       const pm = new ProjectManager(opts);
       const cwdProvider = pm.createCwdProvider();
 
-      pm.use('chat-missing', '/nonexistent/project-dir-4448');
+      const removedDir = createProjectDir(opts.workspaceDir, 'vanished');
+      pm.use('chat-missing', removedDir);
+      rmSync(removedDir, { recursive: true });
       pm.use('chat-bound', projectDir);
 
       // unbound
@@ -357,16 +420,31 @@ describe('ProjectManager', () => {
   });
 
   describe('persistence', () => {
+    it('preserves a legacy polluted binding until reset and supports rebinding an existing directory', () => {
+      const opts = createOptions();
+      const persistPath = join(opts.workspaceDir, '.disclaude', 'project-bindings.json');
+      mkdirSync(join(opts.workspaceDir, '.disclaude'));
+      const actualDir = createProjectDir(opts.workspaceDir);
+      const polluted = `${actualDir} @_user_1`;
+      writeFileSync(persistPath, JSON.stringify({ version: 1, bindings: { 'chat-1': polluted } }));
+      const pm = new ProjectManager(opts);
+      expect(pm.resolveCwd('chat-1')).toEqual({ reason: 'bound-missing', boundWorkingDir: polluted, effectiveCwd: undefined });
+      expect(pm.reset('chat-1').ok).toBe(true);
+      expect(pm.resolveCwd('chat-1').reason).toBe('unbound');
+      expect(pm.use('chat-1', actualDir).ok).toBe(true);
+      expect(new ProjectManager(opts).resolveCwd('chat-1').effectiveCwd).toBe(actualDir);
+    });
+
     it('should persist and restore bindings', () => {
       const opts = createOptions();
       const pm1 = new ProjectManager(opts);
-      pm1.use('chat-1', '/project-a');
-      pm1.use('chat-2', '/project-b');
+      pm1.use('chat-1', createProjectDir(opts.workspaceDir, 'project-a'));
+      pm1.use('chat-2', createProjectDir(opts.workspaceDir, 'project-b'));
 
       // Create new instance with same workspace
       const pm2 = new ProjectManager(opts);
-      expect(pm2.getActive('chat-1').workingDir).toBe('/project-a');
-      expect(pm2.getActive('chat-2').workingDir).toBe('/project-b');
+      expect(pm2.getActive('chat-1').workingDir).toBe(join(opts.workspaceDir, 'project-a'));
+      expect(pm2.getActive('chat-2').workingDir).toBe(join(opts.workspaceDir, 'project-b'));
       expect(pm2.getActive('chat-3').name).toBe('default');
     });
 
@@ -429,7 +507,7 @@ describe('ProjectManager', () => {
     it('should use atomic write-then-rename pattern', () => {
       const opts = createOptions();
       const pm = new ProjectManager(opts);
-      pm.use('chat-1', '/project');
+      pm.use('chat-1', createProjectDir(opts.workspaceDir, 'project'));
 
       // .tmp file should not remain
       const tmpPath = `${pm.getPersistPath()}.tmp`;
@@ -452,7 +530,7 @@ describe('ProjectManager', () => {
       chmodSync(dataDir, 0o444);
 
       try {
-        const result = pm.use('chat-1', '/project');
+        const result = pm.use('chat-1', createProjectDir(opts.workspaceDir, 'project'));
         if (!result.ok) {
           // In-memory state should be rolled back
           expect(pm.getActive('chat-1').name).toBe('default');
