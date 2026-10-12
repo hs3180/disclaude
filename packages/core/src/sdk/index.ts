@@ -121,7 +121,7 @@ export type {
 
 export { ClaudeSDKProvider, StderrCapture, getErrorStderr, isStartupFailure, snapshotProcessListeners, cleanupNewProcessListeners, SDK_PROCESS_EVENTS } from './providers/index.js';
 export type { ProcessListenerSnapshot, ProcessEventListener } from './providers/index.js';
-export { CodexNoActiveTurnError, CodexAppServerRpcError } from './providers/codex/index.js';
+export { LiveInputRejectedError } from './live-input.js';
 
 // ============================================================================
 // 工厂函数导出

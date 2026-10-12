@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { AgentQueryOptions, StreamQueryResult, UserInput } from '../../types.js';
+import type { AgentQueryOptions, QueryHandle, StreamQueryResult, UserInput } from '../../types.js';
 import { createLogger } from '../../../utils/logger.js';
 
 const logger = createLogger('ModelContextDiscovery');
@@ -135,12 +135,16 @@ export async function discoverCompactionWindow(
 export function withDiscoveredCompaction(
   input: AsyncGenerator<UserInput>,
   options: AgentQueryOptions,
-  start: (input: AsyncGenerator<UserInput>, options: AgentQueryOptions) => StreamQueryResult
+  start: (input: AsyncGenerator<UserInput>, options: AgentQueryOptions) => StreamQueryResult,
+  inputDelivery?: QueryHandle['inputDelivery'],
 ): StreamQueryResult {
   const abort = new AbortController();
   let active: StreamQueryResult | undefined;
   return {
     handle: {
+      get inputDelivery() {
+        return active?.handle.inputDelivery ?? inputDelivery;
+      },
       close() {
         abort.abort();
         active?.handle.close();

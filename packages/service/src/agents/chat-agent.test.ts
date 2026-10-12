@@ -70,8 +70,7 @@ vi.mock('@disclaude/core', async (importOriginal) => {
     // setTurnPending and the tests below assert instanceof on the exact
     // class the production import resolves to.
     TurnSupersededError: actual.TurnSupersededError,
-    CodexNoActiveTurnError: actual.CodexNoActiveTurnError,
-    CodexAppServerRpcError: actual.CodexAppServerRpcError,
+    LiveInputRejectedError: actual.LiveInputRejectedError,
     REACTIONS: actual.REACTIONS,
     // Issue #4391: real policy — the reset+replay bounding under test.
     EmptyTurnRetryPolicy: actual.EmptyTurnRetryPolicy,
@@ -585,7 +584,10 @@ describe('ChatAgent (service)', () => {
       const agent = new ChatAgent({ chatId: 'owned-steer', callbacks, agentBackend: backend as any, apiKey: 'test', model: 'test', turnRecovery });
       const push = vi.fn().mockReturnValue(true);
       const steer = vi.fn().mockResolvedValue({ turnId: 'native-A' });
-      const handle = { close: vi.fn(), cancel: vi.fn(), ...(backend === 'codex' ? { steer } : {}) };
+      const handle = { close: vi.fn(), cancel: vi.fn(),
+        ...(backend === 'codex' ? { steer } : {}),
+        ...(backend === 'claude' ? { inputDelivery: 'streaming' as const } : {}),
+      };
       Object.assign(agent as any, { channel: { push, close: vi.fn() }, queryHandle: handle, isSessionActive: true,
         isProcessingMessage: true, activeTurnMessageId: 'owner-A', isAgentTeamsEnabled: () => false,
         lastTurnMessage: { chatId: 'owned-steer', payload: 'original', messageId: 'owner-A' } });
@@ -808,10 +810,10 @@ describe('ChatAgent (service)', () => {
       } finally { dispose(agent); }
     });
 
-    it.each([-32600, -32601, -32602])('queues exactly once after a received definite RPC rejection (%s)', async code => {
-      const { CodexAppServerRpcError } = await import('@disclaude/core');
+    it('queues exactly once after a provider confirms input was rejected', async () => {
+      const { LiveInputRejectedError } = await import('@disclaude/core');
       const { agent, callbacks, steer, push } = owned();
-      steer.mockRejectedValue(new CodexAppServerRpcError(code, 'Request not submitted'));
+      steer.mockRejectedValue(new LiveInputRejectedError('Input was rejected'));
       try {
         await agent.processMessage(input());
         expect(steer).toHaveBeenCalledTimes(1);
@@ -822,17 +824,16 @@ describe('ChatAgent (service)', () => {
     });
 
     it('queues when native preflight confirms no control request was sent', async () => {
-      const { CodexNoActiveTurnError } = await import('@disclaude/core');
+      const { LiveInputRejectedError } = await import('@disclaude/core');
       const { agent, steer, push } = owned();
-      steer.mockRejectedValue(new CodexNoActiveTurnError('steer', { sessionKey: 'owned', state: 'idle' }));
+      steer.mockRejectedValue(new LiveInputRejectedError('No control request was sent'));
       try { await agent.processMessage(input()); expect(push).toHaveBeenCalledTimes(1); }
       finally { dispose(agent); }
     });
 
     it.each(['timeout', 'internal'])('preserves an unconfirmed %s as failure without duplicate submission', async mode => {
-      const { CodexAppServerRpcError } = await import('@disclaude/core');
       const { agent, callbacks, steer, push } = owned();
-      steer.mockRejectedValue(mode === 'timeout' ? new Error('request timed out') : new CodexAppServerRpcError(-32603, 'Internal error'));
+      steer.mockRejectedValue(mode === 'timeout' ? new Error('request timed out') : new Error('Internal backend error'));
       try {
         await agent.processMessage(input());
         expect(push).not.toHaveBeenCalled();
@@ -899,6 +900,41 @@ describe('ChatAgent (service)', () => {
         expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('输入流');
         expect(callbacks.sendMessage.mock.calls[0]?.[1]).not.toContain('已排队');
         await expect(agent.steer('instruction')).resolves.toMatchObject({ ok: false, error: expect.stringContaining('normal message') });
+      } finally { dispose(agent); }
+    });
+
+    it('queues once after a provider-neutral confirmed live-input rejection', async () => {
+      const { LiveInputRejectedError } = await import('@disclaude/core');
+      const { agent, callbacks, steer, push } = owned();
+      (agent as any).sdkProvider.name = 'other-steering-provider';
+      const cause = new Error('The target turn ended before submission');
+      steer.mockRejectedValue(new LiveInputRejectedError('Input was not accepted', { cause }));
+      try {
+        await agent.processMessage(input());
+        expect(steer).toHaveBeenCalledTimes(1);
+        expect(push).toHaveBeenCalledTimes(1);
+        expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('已排队');
+        expect(liveTerminals(agent, 'follow-B')).toHaveLength(0);
+      } finally { dispose(agent); }
+    });
+
+    it.each(['streaming', 'queued'] as const)('uses provider-neutral input delivery (%s) for notices and steer guidance', async inputDelivery => {
+      const { agent, callbacks, push, handle } = owned('other-provider');
+      Object.assign(handle, { inputDelivery });
+      try {
+        await agent.processMessage(input());
+        expect(push).toHaveBeenCalledTimes(1);
+        const notice = String(callbacks.sendMessage.mock.calls[0]?.[1]);
+        const guidance = await agent.steer('instruction');
+        expect(guidance.ok).toBe(false);
+        if (inputDelivery === 'streaming') {
+          expect(notice).toContain('输入流');
+          expect(notice).not.toContain('已排队');
+          expect(guidance).toMatchObject({ error: expect.stringContaining('normal message') });
+        } else {
+          expect(notice).toContain('已排队');
+          expect(guidance).toMatchObject({ error: expect.stringContaining('unsupported') });
+        }
       } finally { dispose(agent); }
     });
 

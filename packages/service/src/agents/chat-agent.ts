@@ -49,8 +49,7 @@ import {
   StreamingReplyDriver,
   REACTIONS,
   TurnSupersededError,
-  CodexNoActiveTurnError,
-  CodexAppServerRpcError,
+  LiveInputRejectedError,
   type StreamingUserMessage,
   type QueryHandle,
   type ChatAgent as ChatAgentInterface,
@@ -1198,8 +1197,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       if (busyBeforePush) {
         void this.callbacks.sendMessage(
           chatId,
-          this.sdkProvider.name === 'claude'
-            ? '💬 已送入当前 Claude 会话的输入流；模型可在执行中接收补充信息，正在运行的工具会继续执行。'
+          this.queryHandle?.inputDelivery === 'streaming'
+            ? '💬 已送入当前会话的输入流；模型可在执行中接收补充信息，正在运行的工具会继续执行。'
             : '⏳ 这条消息已排队，将在当前回合结束后处理。',
           threadRootId
         ).catch((error) => {
@@ -1225,7 +1224,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
   }
 
-  /** Confirm a busy input once, or fall back only when it was not submitted. */
+  /** Confirm a busy input once, or fall back only after confirmed non-acceptance. */
   private async tryLiveInput(params: UserMessageParams, content: string,
     lifecycleContext: NonNullable<StreamingUserMessage['correlation']>): Promise<boolean> {
     const handle = this.queryHandle;
@@ -1281,13 +1280,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         settleRejectedInput(new TurnSupersededError());
         return true;
       }
-      // Native preflight sends no request. Standard invalid request/params
-      // and missing-method responses explicitly reject the new input;
-      // internal errors and transport timeouts can have an unknown outcome.
-      if (error instanceof CodexNoActiveTurnError ||
-          (error instanceof CodexAppServerRpcError && [-32600, -32601, -32602].includes(error.code))) {
+      // Providers classify confirmed non-acceptance. All other failures may
+      // have delivered the input, so the host must not submit it again.
+      if (error instanceof LiveInputRejectedError) {
         if (!alreadyHadLiveInput) { this.turnsWithLiveInput.delete(sourceMessageId); }
-        this.logger.info({ chatId: params.chatId, messageId: params.messageId, sourceMessageId, generation }, 'Steer was not submitted; queueing input once');
+        this.logger.info({ chatId: params.chatId, messageId: params.messageId, sourceMessageId, generation }, 'Live input was not accepted; queueing input once');
         return false;
       }
       const diagnosticId = crypto.randomUUID();
@@ -3305,8 +3302,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     if (typeof (handle as Partial<SteerCapableQueryHandle>).steer !== 'function') {
       return {
         ok: false,
-        error: this.sdkProvider.name === 'claude'
-          ? 'Claude accepts ordinary messages through its live input stream. Send the instruction as a normal message; running tools continue.'
+        error: handle.inputDelivery === 'streaming'
+          ? 'This session accepts ordinary messages through its live input stream. Send the instruction as a normal message; running tools continue.'
           : 'Immediate steer is unsupported by this backend. The instruction was not queued.',
       };
     }
