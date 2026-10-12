@@ -618,14 +618,14 @@ describe('MessageBuilder', () => {
       expect(result).toBe(defaultResult);
     });
 
-    it('should default to card template when capabilities is undefined', () => {
+    it('should use text next-step guidance when channel capabilities are unknown', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
         messageId: 'msg-123',
       }, 'chat-456', undefined);
 
-      expect(result).toContain('actionPrompts');
-      expect(result).toContain('interactive card');
+      expect(result).not.toContain('actionPrompts');
+      expect(result).not.toContain('send_interactive');
     });
 
     it('should combine attachments and skill command extra for skill commands', () => {
@@ -867,11 +867,11 @@ it('does not instruct REST agents to send unsupported interactive cards', () => 
   const builder = new MessageBuilder();
   const input = { text: 'calculate 25 * 17', messageId: 'm' };
   const rest = builder.buildEnhancedContent(input, 'rest-test', {
-    ...DEFAULT_CHANNEL_CAPABILITIES, supportsCard: true, supportedMcpTools: [],
+    ...DEFAULT_CHANNEL_CAPABILITIES, supportsCard: true, supportedChannelTools: [],
   });
   expect(rest).not.toContain('send_interactive');
   const feishu = builder.buildEnhancedContent(input, 'oc_test', {
-    ...DEFAULT_CHANNEL_CAPABILITIES, supportsCard: true, supportedMcpTools: ['send_interactive'],
+    ...DEFAULT_CHANNEL_CAPABILITIES, supportsCard: true, supportedChannelTools: ['send_interactive'],
   });
   expect(feishu).toContain('send_interactive');
 });

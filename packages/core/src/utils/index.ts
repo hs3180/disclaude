@@ -69,6 +69,7 @@ export {
   extractMentionedOpenIds,
   normalizeMentionPlaceholders,
   stripLeadingMentions,
+  stripCommandMentions,
 } from './mention-parser.js';
 
 // Timing (Issue #3292)
