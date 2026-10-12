@@ -22,7 +22,7 @@ import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { CodexAgentProvider, type CodexQuotaStats } from './provider.js';
-import type { AgentQueryOptions, UserInput } from '../../types.js';
+import type { AgentMessage, AgentQueryOptions, UserInput } from '../../types.js';
 
 /** Temp fixtures: a bin dir with a fake executable `codex`, and a CODEX_HOME. */
 interface Fixtures {
@@ -929,27 +929,68 @@ exit 1
     expect(collected).toEqual([]); // stream ends, nothing parks forever
   }, 15_000);
 
-  it('fires the stall watchdog on a silent run and terminates with reason stall', async () => {
-    // S2 review: the watchdog's control flow had zero direct coverage.
-    process.env.DISCLAUDE_STALL_TIMEOUT_MS = '800';
-    process.env.DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS = '400';
-    fixtures = makeFixtures({
-      withBinary: true,
-      withAuth: true,
-      // thread.started then silence forever.
-      body: `cat <<'JSONL'
-{"type":"thread.started","thread_id":"t-s"}
-{"type":"turn.started"}
-JSONL
-sleep 30 &\nwait $!`,
-    });
-    const { messages } = await drainStream(makeProvider(fixtures), ['hi']);
-    const last = (messages as Array<{ type: string; content: string; metadata?: { terminatedReason?: string } }>)
-      .at(-1);
-    expect(last?.type).toBe('result');
-    expect(last?.metadata?.terminatedReason).toBe('stall');
-    expect(last?.content).toMatch(/超时/);
-  }, 20_000);
+  it('preserves a live child across multiple quiet windows after tool progress', async () => {
+    process.env.DISCLAUDE_STALL_TIMEOUT_MS = '150';
+    fixtures = makeFixtures({ withBinary: true, withAuth: true });
+    writeFileSync(join(fixtures.binDir, 'codex'), `#!${process.execPath}
+const send=m=>console.log(JSON.stringify(m));
+process.on('SIGTERM',()=>{require('node:fs').writeFileSync(process.env.CODEX_HOME+'/killed','yes');process.exit(0);});
+send({type:'thread.started',thread_id:'live-thread'});send({type:'turn.started'});
+send({type:'item.started',item:{id:'tool',type:'command_execution',command:'owned operation'}});
+send({type:'item.completed',item:{id:'tool',type:'command_execution',aggregated_output:'progress',exit_code:0}});
+send({type:'owned.reasoning'});
+setTimeout(()=>{send({type:'item.completed',item:{id:'final',type:'agent_message',text:'still alive'}});send({type:'turn.completed'});},900);
+`);
+    const onActivity = vi.fn((type: string) => { if (type.endsWith('owned.reasoning')) { throw new Error('owned observer failure'); } });
+    const { messages } = await drainStream(makeProvider(fixtures), ['hi'], { onActivity });
+    expect(messages).toContainEqual(expect.objectContaining({ type: 'text', content: 'still alive' }));
+    expect(onActivity).toHaveBeenCalledWith('codex:exec:owned.reasoning');
+    expect(messages.some(m => (m as AgentMessage).metadata?.terminatedReason === 'stall')).toBe(false);
+    expect(existsSync(join(fixtures.codexHome, 'killed'))).toBe(false);
+  }, 15_000);
+
+  it('settles a stopped child once and rejects its late exit-zero completion', async () => {
+    process.env.DISCLAUDE_STALL_TIMEOUT_MS = '150';
+    process.env.DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS = '100';
+    fixtures = makeFixtures({ withBinary: true, withAuth: true });
+    writeFileSync(join(fixtures.binDir, 'codex'), `#!${process.execPath}
+const fs=require('node:fs');const send=m=>console.log(JSON.stringify(m));
+process.on('SIGTERM',()=>{send({type:'turn.completed'});fs.writeFileSync(process.env.CODEX_HOME+'/exit','0');process.exit(0);});
+fs.writeFileSync(process.env.CODEX_HOME+'/pid',String(process.pid));
+fs.appendFileSync(process.env.CODEX_HOME+'/starts','1');
+send({type:'thread.started',thread_id:'stopped-thread'});send({type:'turn.started'});
+setInterval(()=>{},1000);process.kill(process.pid,'SIGSTOP');
+`);
+    const provider = makeProvider(fixtures);
+    const correlation = { runId: 'owned-run', chatId: 'owned-chat', sourceMessageId: 'owned-source', traceId: 'owned-trace' };
+    const stream = provider.queryStream((async function* (): AsyncGenerator<UserInput> {
+      yield { role: 'user', content: 'owned stopped fixture', correlation };
+      yield { role: 'user', content: 'queued owned fixture', correlation: { ...correlation, sourceMessageId: 'queued-source' } };
+    })(), { settingSources: [], sessionKey: 'stopped-session' } as AgentQueryOptions);
+    const messages: AgentMessage[] = [];
+    let pid: number | undefined;
+    try {
+      for await (const message of stream.iterator) { messages.push(message); }
+      pid = Number(readFileSync(join(fixtures.codexHome, 'pid'), 'utf8'));
+      const results = messages.filter(m => m.type === 'result');
+      expect(results).toHaveLength(1);
+      expect(results[0]?.metadata?.terminatedReason).toBe('stall');
+      expect(results[0]?.metadata?.terminationDetail).toContain('process is stopped');
+      for (const value of Object.values(correlation)) { expect(results[0]?.metadata?.terminationDetail).toContain(value); }
+      expect(results[0]?.metadata?.terminationDetail).toContain('turn.started');
+      // Continue only our fixture so its pending TERM handler can exit zero.
+      process.kill(pid, 'SIGCONT');
+      await vi.waitFor(() => expect(readFileSync(join(fixtures.codexHome, 'exit'), 'utf8')).toBe('0'));
+      await vi.waitFor(() => expect(() => process.kill(pid as number, 0)).toThrow());
+      expect(readFileSync(join(fixtures.codexHome, 'starts'), 'utf8')).toBe('1');
+      expect(results).toHaveLength(1);
+    } finally {
+      provider.dispose();
+      if (pid) {
+        await vi.waitFor(() => expect(() => process.kill(pid as number, 0)).toThrow(), { timeout: 6000 });
+      }
+    }
+  }, 15_000);
 });
 
 // ---------------------------------------------------------------------------

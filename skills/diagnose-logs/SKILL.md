@@ -10,8 +10,14 @@ Diagnose the disclaude launchd service by analyzing pino JSON logs.
 
 ## Log Locations
 
-- **stdout**: `/tmp/disclaude-stdout.log` (all structured JSON logs)
-- **stderr**: `/tmp/disclaude-stderr.log` (typically empty)
+- Resolve the running service's `StandardOutPath` / `StandardErrorPath` from its LaunchAgent. `/tmp/disclaude-stdout.log` and `/tmp/disclaude-stderr.log` are legacy examples, not guaranteed locations. Inspect only those path fields; do not dump configuration or environment secrets.
+- File logging uses the configured `logging.logDir` / `LOG_DIR`; rotated Pino logs include `current.log` and `disclaude-combined.*.log`. Search the actual configured files or authorized ES source within a bounded incident window. Do not attribute missing legacy files to absent diagnostics.
+
+### Interrupted requests
+
+- Correlate `diagnosticId`, `chatId`, `traceId`, `runId` and `sourceMessageId`. Unexpected iterator exits record `interrupted` / `failed`, `interruptionCause` (`iterator_ended` or `iterator_error`), error category and restart decision. An iterator ending without an exception does not establish a provider/network root cause.
+- `<workspace>/.disclaude/service-turn-recovery.json` durably tracks accepted inputs and `interrupted_by_service_restart`. Startup reconciles active records; `noticeDeliveredAt` is written after channel acknowledgement. Pending notices retain their original topic and retry on the next available delivery path.
+- Service-restart interruption is distinct from idle eviction, provider stall, explicit stop and busy-turn cap. It never automatically replays tools. Completed inputs are removed; delivered restart outcomes are retained for up to 90 days / 1,000 records. Undelivered outcomes are never pruned by that retention bound.
 
 ## Elasticsearch Source (optional)
 

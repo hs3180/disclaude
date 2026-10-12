@@ -49,7 +49,6 @@ Exactly one mode is required: `command` XOR a non-empty Markdown body. Never con
 name: Refresh cache
 cron: "*/15 * * * *"
 enabled: true
-blocking: true
 chatId: oc_xxx
 command: "node /absolute/workspace/scripts/refresh-cache.mjs"
 timeoutMs: 60000
@@ -65,7 +64,6 @@ The command receives `DISCLAUDE_SCHEDULE_ID`, `DISCLAUDE_SCHEDULE_NAME`, and `DI
 name: Daily metrics review
 cron: "0 9 * * 1-5"
 enabled: true
-blocking: true
 chatId: oc_xxx
 freshSession: true
 ---
@@ -143,7 +141,6 @@ echo "${DISCLAUDE_WORKSPACE_DIR:-$(pwd)}/schedules"
 name: Schedule Name
 cron: "0 9 * * *"
 enabled: true
-blocking: true
 chatId: oc_xxx
 createdAt: 2024-01-01T00:00:00.000Z
 ---
@@ -157,7 +154,6 @@ Schedule content prompt here
 | `name` | Yes | - | Schedule display name |
 | `cron` | Yes | - | Cron expression for timing |
 | `enabled` | No | `true` | Whether schedule is active |
-| `blocking` | No | `true` | Skip execution if previous run still in progress |
 | `chatId` | Yes | - | Chat ID for execution context |
 | `createdAt` | No | - | Creation timestamp |
 | `model` | No | - | Model to use for execution (e.g., "sonnet", "opus") |
@@ -175,8 +171,19 @@ use `freshSession: true` and `skipHistory: true` for a blank session; retain
 Existing `clearContext: true` remains blank but leaves the user's live agent intact.
 Conflicting/non-boolean options are rejected. Per-task model overrides require
 fresh sessions; they are never silently applied to a running user session. On a
-wait timeout, an isolated turn may continue; blocking ownership remains until that
-turn settles, and cleanup disposes only its own agent/provider session.
+wait timeout, a turn may continue; its execution ownership remains until that
+turn settles, and isolated-session cleanup disposes only its own agent/provider.
+
+Every schedule uses one concurrency policy: at most one execution per task and
+per chat. A tick is skipped while an earlier scheduled execution or pending
+agent turn owns that task/chat, or while the user's chat session is busy. Tasks
+in different chats can run concurrently. A skipped tick is not queued; a later
+cron tick can run after the execution ends. Timeout, cooldown and failure
+counting retain their separate meanings.
+
+The former `blocking` field is obsolete. Existing files load with the usual
+unknown-field warning; the field's value is ignored and serialization omits it.
+Remove that line when editing a legacy file.
 
 ---
 
@@ -223,7 +230,6 @@ enabled: false
 - `cron`: Execution time
 - `name`: Schedule name
 - `enabled`: Enable/disable
-- `blocking`: Blocking mode
 - `model`: Model selection
 - `timezone`: Cron timezone (IANA)
 - `timeoutMs`: Turn-wait timeout (ms; default 2 h — set higher for long-running tasks)
@@ -311,13 +317,12 @@ Use `command` in frontmatter when a task should run a shell command directly, wi
 name: Refresh cache
 cron: "*/5 * * * *"
 enabled: true
-blocking: true
 chatId: oc_xxx
 command: "node scripts/refresh-cache.js"
 ---
 ```
 
-The markdown body is omitted for command schedules. `prompt` (the body) and `command` are mutually exclusive, and exactly one is required. The command receives `DISCLAUDE_SCHEDULE_ID`, `DISCLAUDE_SCHEDULE_NAME`, and `DISCLAUDE_CHAT_ID`; non-zero exit status and `timeoutMs` expiry are recorded as failed runs and participate in cooldown/blocking/failure-streak handling. Scheduler shutdown cancels an active command and waits for bounded process-group cleanup. Stdout and stderr are diagnostics only (not automatically sent to the chat), and each retained stream is limited to 64 KiB with an explicit truncation marker in structured logs. A command that intentionally daemonizes into another session/process group is outside this cleanup guarantee and must manage its own lifecycle.
+The markdown body is omitted for command schedules. `prompt` (the body) and `command` are mutually exclusive, and exactly one is required. The command receives `DISCLAUDE_SCHEDULE_ID`, `DISCLAUDE_SCHEDULE_NAME`, and `DISCLAUDE_CHAT_ID`; non-zero exit status and `timeoutMs` expiry are recorded as failed runs and participate in cooldown/failure-streak handling. Commands use the same task/chat concurrency policy. Scheduler shutdown cancels an active command and waits for bounded process-group cleanup. Stdout and stderr are diagnostics only (not automatically sent to the chat), and each retained stream is limited to 64 KiB with an explicit truncation marker in structured logs. A command that intentionally daemonizes into another session/process group is outside this cleanup guarantee and must manage its own lifecycle.
 
 ### 2. Avoid Creating New Schedules
 
@@ -448,7 +453,6 @@ Create `$DISCLAUDE_WORKSPACE_DIR/schedules/daily-soul-question/SCHEDULE.md`:
 name: 每日灵魂拷问
 cron: "0 21 * * *"
 enabled: true
-blocking: true
 # Replace with your topic group's chatId
 chatId: oc_your_topic_group_chat_id
 createdAt: 2026-03-06T00:00:00.000Z

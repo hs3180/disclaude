@@ -333,14 +333,9 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
 
   /**
    * Get the capabilities of REST channel.
-   * REST channel supports cards and markdown, but not threads or files via MCP tools.
-   *
-   * Issue #3530: Removed send_text/send_card/send_interactive/send_file from
-   * supportedMcpTools. These channel tools route through the Feishu HTTP API (request →
-   * Feishu API), which fails when Feishu channel is unavailable or has invalid
-   * credentials (e.g., integration test environment). REST channel handles
-   * responses through its own text buffering — the agent should output text
-   * directly, not via send_text MCP tool.
+   * REST supports buffered card and markdown responses, without separate
+   * outbound channel CLI operations. The agent returns its response directly;
+   * it must not use Feishu delivery commands for a REST conversation (#3530).
    */
   getCapabilities(): ChannelCapabilities {
     return {
@@ -351,7 +346,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
       supportsMention: false,
       supportsUpdate: false,
       supportsStreaming: false,
-      supportedMcpTools: [],
+      supportedChannelTools: [],
     };
   }
 

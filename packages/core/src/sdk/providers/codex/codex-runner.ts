@@ -19,7 +19,8 @@ import { CODEX_BROWSER_DISABLE_ARGS } from './browser-policy.js';
  * an injected PATH exercises the actual spawn/readline/timer/kill machinery.
  */
 
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import type { UserInput } from '../../types.js';
 import { createInterface } from 'node:readline';
@@ -43,15 +44,16 @@ export const DEFAULT_TIMEOUT_MS = 0;
 const MAX_PROMPT_CHARS = 120_000;
 
 /**
- * Codex keeps network policy alongside the selected sandbox profile. The
- * workspace-write key was historically the only one used here, which meant
- * `read-only` runs silently ignored the requested network setting. That is
- * precisely the mode used by permissionMode=default and by browser-use when
- * the agent only needs to attach to an existing local CDP endpoint.
+ * Legacy Codex exec configuration only exposes a network override for
+ * workspace-write. Read-only runs retain Codex's native policy: sending a
+ * made-up sandbox_read_only table does not enable networking and produces
+ * duplicate non-fatal configuration warnings in current native CLI output.
+ * A custom read-only/network policy requires Codex permission profiles,
+ * rather than an unsupported override or a broader filesystem sandbox.
  */
-function networkAccessConfigKey(sandboxMode?: CodexSandboxLevel): string {
+function networkAccessConfigKey(sandboxMode?: CodexSandboxLevel): string | undefined {
   return sandboxMode === 'read-only'
-    ? 'sandbox_read_only.network_access'
+    ? undefined
     : 'sandbox_workspace_write.network_access';
 }
 
@@ -81,7 +83,7 @@ export interface CodexExecRunOptions {
   sandboxMode?: CodexSandboxLevel;
   /** Full-access mode also disables Codex approval prompts for unattended runs. */
   fullAccess?: boolean;
-  /** Explicit Codex workspace network policy. */
+  /** Workspace-write network override; read-only retains Codex's native policy. */
   networkAccess?: boolean;
   /** Environment for the child (merged over the provider env). */
   env?: Record<string, string | undefined>;
@@ -111,6 +113,8 @@ export interface CodexExecRunResult {
 /** Handle for aborting an in-flight run (maps onto QueryHandle cancel/close). */
 export interface CodexExecRunHandle {
   abort(): void;
+  /** Read only the owned child's state; an unavailable observation is not death. */
+  inspectLiveness(): Promise<{ state: 'alive' | 'stopped' | 'exited' | 'unknown'; pid?: number }>;
 }
 
 export class CodexExecRunner {
@@ -161,7 +165,7 @@ export class CodexExecRunner {
           stderrTail: '',
           durationMs: 0,
         }),
-        handle: { abort: (): void => {} },
+        handle: { abort: (): void => {}, inspectLiveness: () => Promise.resolve({ state: 'exited' }) },
       };
     }
 
@@ -171,6 +175,11 @@ export class CodexExecRunner {
     // (--json / -m / --skip-git-repo-check all verified on resume's help),
     // EXCEPT sandbox: fresh exec has the dedicated -s flag, while resume only
     // accepts the config override form (codex-cli 0.151.0).
+    const networkAccess = options.networkAccess ?? this.defaultNetworkAccess;
+    const networkConfigKey = networkAccessConfigKey(options.sandboxMode);
+    const networkArgs = networkAccess !== undefined && networkConfigKey !== undefined
+      ? ['-c', `${networkConfigKey}=${networkAccess}`]
+      : [];
     const args: string[] = options.resumeSessionId
       ? [
           'exec',
@@ -182,12 +191,7 @@ export class CodexExecRunner {
           ...(options.model ? ['-m', options.model] : []),
           ...(options.reasoningEffort ? ['-c', `model_reasoning_effort="${options.reasoningEffort}"`] : []),
           ...(options.sandboxMode ? ['-c', `sandbox_mode=${options.sandboxMode}`] : []),
-          ...((options.networkAccess ?? this.defaultNetworkAccess) !== undefined
-            ? [
-                '-c',
-                `${networkAccessConfigKey(options.sandboxMode)}=${options.networkAccess ?? this.defaultNetworkAccess}`,
-              ]
-            : []),
+          ...networkArgs,
           options.resumeSessionId,
           '--',
           options.prompt,
@@ -201,12 +205,7 @@ export class CodexExecRunner {
           ...(options.model ? ['-m', options.model] : []),
           ...(options.reasoningEffort ? ['-c', `model_reasoning_effort="${options.reasoningEffort}"`] : []),
           ...(options.sandboxMode ? ['-s', options.sandboxMode] : []),
-          ...((options.networkAccess ?? this.defaultNetworkAccess) !== undefined
-            ? [
-                '-c',
-                `${networkAccessConfigKey(options.sandboxMode)}=${options.networkAccess ?? this.defaultNetworkAccess}`,
-              ]
-            : []),
+          ...networkArgs,
           '--',
           options.prompt,
         ];
@@ -232,7 +231,14 @@ export class CodexExecRunner {
 
     /** SIGTERM now, SIGKILL after the grace if the child ignores it. */
     const killWithEscalation = (target: NonNullable<typeof child>): void => {
-      if (target.killed || target.exitCode !== null) {
+      if (target.exitCode !== null || target.signalCode !== null) {
+        // Descendants can hold these pipes after the owned child exits.
+        // Close our readers; do not signal a reparented or reused PID.
+        target.stdout?.destroy();
+        target.stderr?.destroy();
+        return;
+      }
+      if (killTimer) {
         return;
       }
       try {
@@ -241,6 +247,7 @@ export class CodexExecRunner {
         /* already gone */
       }
       killTimer = setTimeout(() => {
+        if (settled || target.exitCode !== null || target.signalCode !== null) { return; }
         try {
           target.kill('SIGKILL');
         } catch {
@@ -415,6 +422,31 @@ export class CodexExecRunner {
     });
 
     const handle: CodexExecRunHandle = {
+      inspectLiveness: async () => {
+        const target = child;
+        const pid = target?.pid;
+        const exited = (): boolean => !target || settled || target.exitCode !== null || target.signalCode !== null;
+        if (exited()) { return { state: 'exited', pid }; }
+        if (!pid || process.platform === 'win32') { return { state: 'unknown', pid }; }
+        try {
+          // No argv or environment columns. Bound both the probe and its output.
+          const { stdout } = await promisify(execFile)('ps', ['-p', String(pid), '-o', 'stat='], {
+            timeout: 1000, maxBuffer: 1024, encoding: 'utf8',
+          });
+          if (exited()) { return { state: 'exited', pid }; }
+          const status = stdout.trim();
+          if (status.includes('T')) { return { state: 'stopped', pid }; }
+          if (status.startsWith('Z')) { return { state: 'exited', pid }; }
+          return { state: /^[RSIDW]/.test(status) ? 'alive' : 'unknown', pid };
+        } catch {
+          if (exited()) { return { state: 'exited', pid }; }
+          try { process.kill(pid, 0); }
+          catch (error) {
+            if ((error as NodeJS.ErrnoException).code === 'ESRCH') { return { state: 'exited', pid }; }
+          }
+          return { state: 'unknown', pid };
+        }
+      },
       abort: () => {
         if (settled || !child) {
           return;

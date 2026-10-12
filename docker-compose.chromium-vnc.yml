@@ -1,10 +1,9 @@
-# Optional, operator-assisted browser verification.
-# Keep this override out of the normal compose command: it publishes a
-# password-protected noVNC endpoint for a short-lived manual bootstrap.
+# Compatibility override for existing operator commands.
+# Headed VNC/noVNC is now enabled in docker-compose.yml without an overlay.
 services:
   chromium:
     environment:
       CHROMIUM_VNC_ENABLED: "1"
-      CHROMIUM_VNC_PASSWORD: "${CHROMIUM_VNC_PASSWORD:?required}"
+      CHROMIUM_VNC_PASSWORD: "${CHROMIUM_VNC_PASSWORD:-}"
     ports:
       - "${CHROMIUM_VNC_BIND:-0.0.0.0}:${CHROMIUM_VNC_HOST_PORT:-6080}:6080"

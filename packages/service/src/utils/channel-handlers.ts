@@ -164,8 +164,8 @@ export function createChannelCallbacksFactory(
     getChatLogFilePaths: options?.getChatLogFilePaths,
     // Issue #3530: Wire getCapabilities so message construction can correctly
     // include/exclude channel operations based on actual channel support.
-    // Since #4652 ChatAgent no longer injects channel-mcp; this capability now
-    // governs channel CLI Skill guidance only.
+    // These capabilities scope channel CLI guidance; API handlers enforce
+    // actual transport availability and the native platform's permissions.
     getCapabilities: (_chatId: string) => channel.getCapabilities(),
     // Issue #4400 (#4208 P2-c): wire the IChannel streaming callbacks when the
     // channel exposes them. The ChatAgent gate additionally requires
@@ -329,7 +329,7 @@ export interface ChannelApiHandlersOptions {
  * delegation pattern used by `createChannelCallbacksFactory`.
  *
  * @see createChannelCallbacksFactory — for ChatAgentCallbacks (worker-to-channel),
- *      this function creates ChannelApiHandlers (MCP server-to-channel).
+ *      this function creates ChannelApiHandlers (CLI/API-to-channel).
  *
  * @param channel - The channel instance to send messages through
  * @param options - Options for handler creation

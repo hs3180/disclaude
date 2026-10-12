@@ -42,6 +42,7 @@ import {
 import type { ChatAgent } from './chat-agent.js';
 import { createChatAgent } from './create-chat-agent.js';
 import type { ChatAgentConfig, ChatAgentCallbacks } from './types.js';
+import type { ServiceTurnRecoveryStore } from '../service-turn-recovery.js';
 
 const logger = createLogger('AgentFactory');
 
@@ -128,6 +129,8 @@ export interface AgentCreateOptions {
    * Used by /reset --no-context to create a truly fresh agent.
    */
   skipHistory?: boolean;
+  /** Durable restart-interruption journal for service-managed agents. */
+  turnRecovery?: ServiceTurnRecoveryStore;
 }
 
 /**
@@ -257,6 +260,7 @@ export class AgentFactory {
         cwdResolver: options.cwdResolver,
         skipHistory: options.skipHistory,
         sdkSessionKey: options.sdkSessionKey,
+        turnRecovery: options.turnRecovery,
       };
 
       return createChatAgent(config);
@@ -318,6 +322,7 @@ export class AgentFactory {
       cwdResolver: options.cwdResolver,
       skipHistory: options.skipHistory,
       sdkSessionKey: options.sdkSessionKey,
+      turnRecovery: options.turnRecovery,
     };
 
     return createChatAgent(config);
