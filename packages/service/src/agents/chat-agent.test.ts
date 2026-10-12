@@ -524,6 +524,108 @@ describe('ChatAgent (service)', () => {
     const input = (messageId = 'follow-B') => ({ chatId: 'owned-steer', payload: messageId, messageId, threadRootId: 'root-B' });
     const dispose = (agent: ChatAgent) => ChatAgent.prototype.dispose.call(agent);
 
+    const liveTerminals = (agent: ChatAgent, messageId: string) =>
+      ['info', 'warn', 'error'].flatMap(level => (agent as any).logger[level].mock.calls)
+        .map(([record]: any[]) => record)
+        .filter(record => record?.event === 'agent_turn' && record.sourceMessageId === messageId && record.state !== 'started');
+
+    it.each([true, false])('records the steered input terminal and original visibility once (success=%s)', async success => {
+      const { agent } = owned();
+      const failure = new Error('Original native turn failed');
+      try {
+        await agent.processMessage(input());
+        const started = (agent as any).logger.info.mock.calls.map(([record]: any[]) => record)
+          .find((record: any) => record?.event === 'agent_turn' && record.sourceMessageId === 'follow-B');
+        const completion = agent.turnCompleteFor('follow-B')!.then(() => undefined, error => error);
+        (agent as any).didDeliverUserVisibleThisTurn = true;
+        (agent as any).resolveTurn('owner-A', success ? undefined : failure);
+        // The next turn can reset output state before the settled owner's callbacks run.
+        (agent as any).didDeliverUserVisibleThisTurn = false;
+        expect(await completion).toBe(success ? undefined : failure);
+        await vi.waitFor(() => expect(liveTerminals(agent, 'follow-B')).toHaveLength(1));
+        expect(liveTerminals(agent, 'follow-B')[0]).toMatchObject({
+          state: success ? 'completed' : 'failed', user_visible: true,
+          sourceMessageId: 'follow-B', runId: started.runId, traceId: started.traceId,
+          ownerSourceMessageId: 'owner-A', nativeTurnId: 'native-A',
+          ...(success ? {} : { errorMessage: failure.message }),
+        });
+      } finally { dispose(agent); }
+    });
+
+    it('records a late acknowledged input with the already completed owner visibility', async () => {
+      const { agent, steer } = owned();
+      let acknowledge!: (value: { turnId: string }) => void;
+      steer.mockImplementation(() => new Promise(resolve => { acknowledge = resolve; }));
+      try {
+        const admission = agent.processMessage(input());
+        await vi.waitFor(() => expect(steer).toHaveBeenCalledTimes(1));
+        (agent as any).didDeliverUserVisibleThisTurn = true;
+        (agent as any).resolveTurn('owner-A');
+        (agent as any).didDeliverUserVisibleThisTurn = false;
+        acknowledge({ turnId: 'native-A' });
+        await admission;
+        await agent.turnCompleteFor('follow-B');
+        await vi.waitFor(() => expect(liveTerminals(agent, 'follow-B')).toHaveLength(1));
+        expect(liveTerminals(agent, 'follow-B')[0]).toMatchObject({ state: 'completed', user_visible: true,
+          ownerSourceMessageId: 'owner-A', nativeTurnId: 'native-A' });
+      } finally { dispose(agent); }
+    });
+
+    it('records uncertain steer delivery as a terminal failure without queue replay', async () => {
+      const { agent, steer, push } = owned();
+      steer.mockRejectedValue(new Error('Native ACK timed out'));
+      try {
+        await agent.processMessage(input());
+        await expect(agent.turnCompleteFor('follow-B')).rejects.toThrow('delivery is unconfirmed');
+        await vi.waitFor(() => expect(liveTerminals(agent, 'follow-B')).toHaveLength(1));
+        expect(liveTerminals(agent, 'follow-B')[0]).toMatchObject({ state: 'failed', user_visible: false,
+          ownerSourceMessageId: 'owner-A', diagnosticId: expect.any(String) });
+        expect(push).not.toHaveBeenCalled();
+      } finally { dispose(agent); }
+    });
+
+    it('records the admitted input terminal if reset supersedes a pending steer ACK', async () => {
+      const { agent, steer, push } = owned();
+      let acknowledge!: (value: { turnId: string }) => void;
+      steer.mockImplementation(() => new Promise(resolve => { acknowledge = resolve; }));
+      try {
+        const admission = agent.processMessage(input());
+        await vi.waitFor(() => expect(steer).toHaveBeenCalledTimes(1));
+        const completion = agent.turnCompleteFor('follow-B')!.catch(error => error);
+        agent.reset();
+        acknowledge({ turnId: 'native-A' });
+        await admission;
+        expect((await completion).message).toContain('Agent reset');
+        await vi.waitFor(() => expect(liveTerminals(agent, 'follow-B')).toHaveLength(1));
+        expect(liveTerminals(agent, 'follow-B')[0]).toMatchObject({ state: 'failed', user_visible: false,
+          errorMessage: 'Agent reset', ownerSourceMessageId: 'owner-A' });
+        expect(push).not.toHaveBeenCalled();
+      } finally { dispose(agent); }
+    });
+
+    it('keeps a replacement waiter intact when an old steer ACK arrives after reset', async () => {
+      const { agent, steer } = owned();
+      let acknowledge!: (value: { turnId: string }) => void;
+      steer.mockImplementation(() => new Promise(resolve => { acknowledge = resolve; }));
+      try {
+        const admission = agent.processMessage(input());
+        await vi.waitFor(() => expect(steer).toHaveBeenCalledTimes(1));
+        const original = agent.turnCompleteFor('follow-B')!.catch(error => error);
+        agent.reset();
+        (agent as any).createTurnCompletion('follow-B');
+        let replacementSettled = false;
+        const replacement = agent.turnCompleteFor('follow-B')!.then(
+          () => { replacementSettled = true; }, () => { replacementSettled = true; });
+        acknowledge({ turnId: 'native-A' });
+        await admission;
+        expect((await original).message).toContain('Agent reset');
+        await vi.waitFor(() => expect(liveTerminals(agent, 'follow-B')).toHaveLength(1));
+        expect(replacementSettled).toBe(false);
+        (agent as any).resolveTurn('follow-B');
+        await replacement;
+      } finally { dispose(agent); }
+    });
+
     it('defaults to one acknowledged steer and settles the input with its original turn', async () => {
       const { agent, callbacks, push, steer } = owned();
       try {

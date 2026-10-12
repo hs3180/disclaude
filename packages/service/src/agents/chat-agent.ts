@@ -122,6 +122,8 @@ interface TurnCompletionEntry {
   settle: (error?: Error) => void;
   settled: boolean;
   admitted?: boolean;
+  userVisible?: boolean;
+  terminalObserverAttached?: boolean;
 }
 
 /**
@@ -543,7 +545,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    * turn end (result / stall / empty-stream / evicted terminations). Settled
    * entries stay registered for late awaiters until evicted by the bound.
    */
-  private resolveTurn(messageId: string | undefined, error?: Error): void {
+  private resolveTurn(messageId: string | undefined, error?: Error, userVisible = this.didDeliverUserVisibleThisTurn): void {
     if (!messageId) {
       this.logger.warn('Cannot settle turn completion without a messageId');
       return;
@@ -552,6 +554,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const entry = this.turnCompletions.get(messageId);
     if (entry && !entry.settled) {
       this.completeRecoveryInput(messageId);
+      entry.userVisible = userVisible;
       entry.settled = true;
       entry.settle(error);
     }
@@ -638,6 +641,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     for (const [messageId, entry] of this.turnCompletions) {
       if (!entry.settled) {
         this.completeRecoveryInput(messageId);
+        entry.userVisible = false;
         entry.settled = true;
         entry.settle(error);
       }
@@ -1143,7 +1147,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Push message to channel
     if (this.channel) {
       if (this.isBusy && typeof this.queryHandle?.steer === 'function' &&
-          await this.tryLiveInput(params, enhancedContent)) { return; }
+          await this.tryLiveInput(params, enhancedContent, lifecycleContext)) { return; }
 
       // Only a new channel input gets a new turn's FIFO anchor. A steer
       // belongs to the original turn and must not consume the next anchor.
@@ -1211,12 +1215,35 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   }
 
   /** Confirm a busy input once, or fall back only when it was not submitted. */
-  private async tryLiveInput(params: UserMessageParams, content: string): Promise<boolean> {
+  private async tryLiveInput(params: UserMessageParams, content: string,
+    lifecycleContext: NonNullable<StreamingUserMessage['correlation']>): Promise<boolean> {
     const handle = this.queryHandle;
     const steer = handle?.steer;
     const sourceMessageId = this.activeTurnMessageId;
     const owner = sourceMessageId ? this.turnCompletions.get(sourceMessageId) : undefined;
     if (!handle || !this.isBusy || typeof steer !== 'function' || !sourceMessageId || !owner) { return false; }
+
+    const inputEntry = this.turnCompletions.get(params.messageId) ?? this.createTurnCompletion(params.messageId);
+    const settleInput = (error?: Error, userVisible = false): void => {
+      if (this.turnCompletions.get(params.messageId) === inputEntry) {
+        this.resolveTurn(params.messageId, error, userVisible);
+      }
+    };
+    let nativeTurnId: string | undefined;
+    const observeTerminal = (): void => {
+      if (inputEntry.terminalObserverAttached) { return; }
+      inputEntry.terminalObserverAttached = true;
+      const finish = (error?: Error): void => {
+        this.logger.info({ event: 'agent_turn', ...lifecycleContext,
+          state: error ? 'failed' : 'completed', user_visible: inputEntry.userVisible ?? false,
+          ownerSourceMessageId: sourceMessageId, nativeTurnId,
+          ...(error ? { errorMessage: sanitizeLifecycleReason(error.message),
+            diagnosticId: (error as Error & { diagnosticId?: string }).diagnosticId ?? crypto.randomUUID() } : {}),
+        }, 'Terminal outcome for input handled by native steer');
+      };
+      void inputEntry.promise.then(() => finish(), (error: unknown) =>
+        finish(error instanceof Error ? error : new Error(String(error))));
+    };
 
     const generation = this.sessionGeneration;
     const alreadyHadLiveInput = this.turnsWithLiveInput.has(sourceMessageId);
@@ -1225,8 +1252,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       !!this.abortController?.signal.aborted || this.stoppedQueryGenerations.has(generation) ||
       (this.queryHandle !== handle && !owner.settled);
     const settleRejectedInput = (error: Error): void => {
-      if (!this.turnCompletions.has(params.messageId)) { this.createTurnCompletion(params.messageId); }
-      this.resolveTurn(params.messageId, error);
+      settleInput(error);
+      observeTerminal();
     };
     const notify = async (text: string): Promise<void> => {
       try { await this.callbacks.sendMessage(params.chatId, text, params.threadRootId); }
@@ -1237,6 +1264,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     try {
       acknowledgement = await steer.call(handle, content);
       if (!acknowledgement?.turnId) { throw new Error('Backend omitted its steer acknowledgement'); }
+      nativeTurnId = acknowledgement.turnId;
     } catch (error) {
       if (superseded()) {
         settleRejectedInput(new TurnSupersededError());
@@ -1252,7 +1280,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         return false;
       }
       const diagnosticId = crypto.randomUUID();
-      settleRejectedInput(new Error(`Busy input delivery is unconfirmed; diagnostic ID ${diagnosticId}`, { cause: error }));
+      settleRejectedInput(Object.assign(new Error(`Busy input delivery is unconfirmed; diagnostic ID ${diagnosticId}`, { cause: error }), { diagnosticId }));
       this.logger.error({ err: error, chatId: params.chatId, messageId: params.messageId, sourceMessageId, generation, diagnosticId }, 'Steer outcome is unknown; refusing duplicate channel submission');
       void notify(`⚠️ 插话未收到后端确认，未自动重复发送。请先核对当前回合结果，再决定是否补充；诊断 ID: ${diagnosticId}。`);
       return true;
@@ -1262,14 +1290,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       settleRejectedInput(new TurnSupersededError());
       return true;
     }
-    const entry = this.turnCompletions.get(params.messageId) ?? this.createTurnCompletion(params.messageId);
-    entry.admitted = true;
+    inputEntry.admitted = true;
+    observeTerminal();
     // Capture the original completion before the RPC. A late successful ACK
     // still belongs to that turn, even if another turn has since started.
     void owner.promise.then(() => {
-      this.resolveTurn(params.messageId);
+      settleInput(undefined, owner.userVisible ?? false);
     }, (error: unknown) => {
-      this.resolveTurn(params.messageId, error instanceof Error ? error : new Error(String(error)));
+      settleInput(error instanceof Error ? error : new Error(String(error)), owner.userVisible ?? false);
     });
     this.logger.info({ chatId: params.chatId, messageId: params.messageId, sourceMessageId,
       nativeTurnId: acknowledgement.turnId, generation }, 'Busy input acknowledged for its original turn');
