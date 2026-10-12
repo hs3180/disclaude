@@ -213,7 +213,9 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         options: Array<{ text: string; value: string; type?: 'primary' | 'default' | 'danger' }>;
         title?: string;
         context?: string;
+        /** Reply parent message ID (om_...); legacy name, not Feishu's omt_... thread_id. */
         threadId?: string;
+        /** Requested topic root message ID (om_...); verifies the parent and anchors fallback. */
         threadRootId?: string;
         actionPrompts?: Record<string, string>;
       }) => {
