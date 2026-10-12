@@ -26,6 +26,10 @@ export interface ControlHandlerContext {
   agentPool: {
     /** Issue #3696: skipContext=true skips history loading on next agent creation (when honored by the pool implementation) */
     reset(chatId: string, skipContext?: boolean): void;
+    /** Chat-wide Project bindings affect ordinary and persistent topic sessions. */
+    resetProjectSessions?(chatId: string): void;
+    /** Refuse a binding change while any affected session still owns work. */
+    isProjectBusy?(chatId: string): boolean;
     /** Issue #1349: Stop current query without resetting session */
     stop(chatId: string): boolean;
     /**

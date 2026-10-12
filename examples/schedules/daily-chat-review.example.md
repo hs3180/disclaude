@@ -2,7 +2,6 @@
 name: "每日聊天回顾分析"
 cron: "0 20 * * *"
 enabled: false
-blocking: true
 chatId: "REPLACE_WITH_ACTUAL_CHAT_ID"
 createdAt: "2026-03-06T00:00:00.000Z"
 ---

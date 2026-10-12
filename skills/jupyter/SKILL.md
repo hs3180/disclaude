@@ -25,6 +25,16 @@ for the current JSON input schemas and [README.md](./README.md) for setup.
    `stopConfirmed: true` confirms cancellation. Chat `/stop` stops inference;
    remote executions remain independent. Do not claim the kernel stopped
    from a cancelled tool invocation or a stopped chat.
+   For work started in JupyterLab or without an available run journal, use
+   `interrupt` only with the explicitly selected existing `kernelId`, or a
+   Project `notebookId` whose existing kernel binding is unique and unshared.
+   Supplying both IDs checks the observed binding against the selected kernel.
+   This affects that kernel's current execution and preserves the kernel;
+   it does not cancel one named run or confirm that queued work was cleared.
+   `state: accepted` / HTTP 204 acknowledges the request only. Its
+   `executionState: unknown` requires separate evidence from the original
+   execution, or a subsequent kernel observation. Do not automatically retry an
+   unknown interrupt or substitute it for a failed `stop`.
 5. To use an incoming attachment, copy the supplied local attachment into this
    Project, then `import-file` with its Project-relative path. Read the returned
    hash/size and use `kernelRelativePath` in remote code. Host and kernel paths

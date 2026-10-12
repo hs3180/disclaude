@@ -1,5 +1,6 @@
 import {
   CodexAppServerTransport,
+  CodexAppServerRequestTimeoutError,
   type CodexAppServerDynamicToolSpec,
   type CodexAppServerExit,
   type CodexAppServerTransportOptions,
@@ -47,7 +48,7 @@ export class CodexNoActiveTurnError extends Error {
 }
 
 interface ThreadResponse {
-  thread?: { id?: string };
+  thread?: { id?: string; status?: { type?: string } };
 }
 
 interface TurnResponse {
@@ -351,6 +352,37 @@ export class CodexAppServerLifecycle {
     if (session?.threadId) { this.asyncInputs.cancel('closed', session.threadId); }
     this.sessions.delete(sessionKey);
     this.threadFlights.delete(sessionKey);
+  }
+
+  /** Metadata-only, read-only runtime probe. Never resume or replay a turn. */
+  async probeActiveTurn(sessionKey: string, expectedTurnId: string, timeoutMs: number): Promise<{
+    state: 'active' | 'inactive' | 'unresponsive' | 'unknown' | 'changed';
+    detail: string;
+  }> {
+    const session = this.sessions.get(sessionKey);
+    const stillCurrent = (): boolean => this.sessions.get(sessionKey) === session
+      && session?.activeTurnId === expectedTurnId;
+    if (!stillCurrent() || !session?.threadId) { return { state: 'changed', detail: 'turn changed before probe' }; }
+    try {
+      const response = await this.transport.request('thread/read', {
+        threadId: session.threadId, includeTurns: false,
+      }, timeoutMs) as ThreadResponse;
+      if (!stillCurrent()) { return { state: 'changed', detail: 'turn changed during probe' }; }
+      if (response?.thread?.id !== session.threadId) {
+        return { state: 'unknown', detail: 'thread/read did not identify the expected thread' };
+      }
+      const status = response.thread.status?.type;
+      if (status === 'active') { return { state: 'active', detail: 'thread/read reports active' }; }
+      if (status === 'idle' || status === 'notLoaded' || status === 'systemError') {
+        return { state: 'inactive', detail: `thread/read reports ${status}; turn completion was not received` };
+      }
+      return { state: 'unknown', detail: 'thread/read runtime status unavailable; update Codex CLI' };
+    } catch (error) {
+      if (!stillCurrent()) { return { state: 'changed', detail: 'turn changed during probe' }; }
+      return error instanceof CodexAppServerRequestTimeoutError
+        ? { state: 'unresponsive', detail: `thread/read control probe timed out after ${timeoutMs}ms` }
+        : { state: 'unknown', detail: 'thread/read probe unavailable; runtime status is unknown' };
+    }
   }
 
   close(): Promise<CodexAppServerExit> {
