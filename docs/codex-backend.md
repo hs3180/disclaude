@@ -84,6 +84,32 @@ The default `exec` transport runs non-interactive turns. Set
 Concurrency limits are per service process; extra work waits rather than
 starting unlimited Codex sessions or child processes.
 
+## Quiet turns and liveness
+
+`DISCLAUDE_STALL_TIMEOUT_MS` defaults to 180,000 ms. For Codex it schedules a
+liveness check after a quiet interval; silence alone does not cancel a turn.
+The `exec` bridge checks only its own child process. A live or unobservable
+child keeps running; a confirmed stopped or exited child receives a terminal
+`stall` failure. POSIX process inspection is bounded and reads state without
+command arguments or environment values. An unavailable inspection, including
+on Windows, remains unknown. Process health does not prove semantic progress;
+session time limits and an explicit `/stop` remain separate controls.
+
+The `app-server` bridge protects open tool items and pending human questions.
+Other quiet turns use a read-only `thread/read` request with `includeTurns:
+false`, bounded by the smaller of the quiet interval and five seconds. A
+matching active thread continues. Unsupported or missing runtime status is
+logged as unknown and continues; current status was verified with Codex CLI
+0.162.0. A probe timeout, process exit, or a thread reported inactive without
+its matching completion settles the original turn as failure. It does not
+invent success or automatically replay work. Events and completion arriving
+during a probe take precedence over its late result.
+
+Failure diagnostics retain the last event, native thread/turn identity and
+host request correlation. Scheduled-job failure notifications preserve the
+provider cause alongside the request/run identifiers. A watchdog abort remains
+failure even if the child exits with code zero.
+
 ## Real-model acceptance
 
 Live acceptance scripts require an explicit model available to the signed-in

@@ -21,6 +21,32 @@ afterEach(() => {
 });
 
 describe('CodexAppServerLifecycle', () => {
+  it('ignores an inactive probe response when the originating turn completed during the read', async () => {
+    const binary = fixture('exit 0');
+    writeFileSync(binary, `#!${process.execPath}
+const fs=require('node:fs');const send=m=>console.log(JSON.stringify(m));
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line);
+ if(m.method==='initialize')send({id:m.id,result:{}});
+ else if(m.method==='thread/start')send({id:m.id,result:{thread:{id:'probe-thread'}}});
+ else if(m.method==='turn/start')send({id:m.id,result:{turn:{id:'probe-turn'}}});
+ else if(m.method==='thread/read'){
+  fs.writeFileSync(${JSON.stringify(join(dirname(binary), 'probe'))},JSON.stringify(m.params));
+  send({method:'turn/completed',params:{threadId:'probe-thread',turn:{id:'probe-turn',status:'completed'}}});
+  setTimeout(()=>send({id:m.id,result:{thread:{id:'probe-thread',status:{type:'systemError'}}}}),20);
+ }
+});`);
+    const lifecycle = new CodexAppServerLifecycle({ binary });
+    try {
+      await lifecycle.ensureThread('owned');
+      await lifecycle.startTurn('owned', 'owned probe race');
+      await expect(lifecycle.probeActiveTurn('owned', 'probe-turn', 500)).resolves.toMatchObject({ state: 'changed' });
+      expect(lifecycle.snapshot('owned')?.state).toBe('idle');
+      expect(JSON.parse(readFileSync(join(dirname(binary), 'probe'), 'utf8'))).toEqual({ threadId: 'probe-thread', includeTurns: false });
+      await expect(lifecycle.probeActiveTurn('owned', 'probe-turn', 500)).resolves.toMatchObject({ state: 'changed' });
+    } finally { await lifecycle.close(); }
+  });
+
   it('registers dynamic host tools when starting a new thread', async () => {
     const binary = fixture(`
 read initialize; echo '{"id":1,"result":{}}'
