@@ -849,6 +849,7 @@ describe('ChatAgent (service)', () => {
           expect(a.turnCompletions.get('follow-B').settled).toBe(folded);
           expect(a.turnCompletions.get('follow-C').settled).toBe(false);
           expect(a.pendingTurnMessageIds).toEqual(folded ? ['follow-C'] : ['follow-B', 'follow-C']);
+          if (folded) { await agent.turnCompleteFor('follow-B'); }
           const terminalB = a.logger.info.mock.calls.filter(([x]: any[]) => x?.event === 'agent_turn' &&
             x.sourceMessageId === 'follow-B' && x.state === 'completed');
           expect(terminalB).toHaveLength(folded ? 1 : 0);
@@ -863,6 +864,46 @@ describe('ChatAgent (service)', () => {
         expect(callbacks.sendMessage).toHaveBeenCalledWith('owned-steer', 'original result', 'root-A');
         expect(callbacks.sendMessage).toHaveBeenCalledWith('owned-steer', 'separate C result', 'root-C');
         if (!folded) { expect(callbacks.sendMessage).toHaveBeenCalledWith('owned-steer', 'separate B result', 'root-B'); }
+      } finally { dispose(agent); }
+    });
+
+    it.each([true, false])('retains consumed Claude input visibility when the next turn resets it (success=%s)', async success => {
+      const { agent } = owned('claude'); const a = agent as any;
+      const failure = new Error('Original Claude turn failed');
+      try {
+        await agent.processMessage(input());
+        const context = a.pendingLifecycleContexts.find((x: any) => x.sourceMessageId === 'follow-B');
+        a.joinConsumedInputs([context.runId], 'owner-A');
+        const completion = agent.turnCompleteFor('follow-B')!.then(() => undefined, error => error);
+        a.didDeliverUserVisibleThisTurn = true;
+        a.resolveTurn('owner-A', success ? undefined : failure);
+        a.didDeliverUserVisibleThisTurn = false;
+        expect(await completion).toBe(success ? undefined : failure);
+        await vi.waitFor(() => expect(liveTerminals(agent, 'follow-B')).toHaveLength(1));
+        expect(liveTerminals(agent, 'follow-B')[0]).toMatchObject({
+          state: success ? 'completed' : 'failed', user_visible: true,
+          sourceMessageId: 'follow-B', runId: context.runId, traceId: context.traceId,
+          consumedBySourceMessageId: 'owner-A',
+          ...(success ? {} : { errorMessage: failure.message }),
+        });
+      } finally { dispose(agent); }
+    });
+
+    it('records a consumed Claude input terminal when reset rejects the session', async () => {
+      const { agent } = owned('claude'); const a = agent as any;
+      try {
+        await agent.processMessage(input());
+        const context = a.pendingLifecycleContexts.find((x: any) => x.sourceMessageId === 'follow-B');
+        a.joinConsumedInputs([context.runId], 'owner-A');
+        const completion = agent.turnCompleteFor('follow-B')!.catch(error => error);
+        agent.reset();
+        expect((await completion).message).toContain('Agent reset');
+        await vi.waitFor(() => expect(liveTerminals(agent, 'follow-B')).toHaveLength(1));
+        expect(liveTerminals(agent, 'follow-B')[0]).toMatchObject({
+          state: 'failed', user_visible: false, errorMessage: 'Agent reset',
+          sourceMessageId: 'follow-B', runId: context.runId, traceId: context.traceId,
+          consumedBySourceMessageId: 'owner-A',
+        });
       } finally { dispose(agent); }
     });
 

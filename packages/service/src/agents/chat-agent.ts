@@ -577,16 +577,26 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // A folded instruction changes the original input: never automatically
       // replay an apparently empty turn with unknown tool-side effects.
       this.turnsWithLiveInput.add(ownerMessageId as string);
-      const finish = (error?: Error): void => {
-        if (entry.settled) { return; }
-        this.resolveTurn(context.sourceMessageId, error);
-        this.logger.info({ event: 'agent_turn', ...context,
-          state: error ? 'failed' : 'completed', user_visible: this.didDeliverUserVisibleThisTurn,
-          consumedBySourceMessageId: ownerMessageId,
-        }, 'Terminal outcome for input consumed by the original SDK turn');
+      if (!entry.terminalObserverAttached) {
+        entry.terminalObserverAttached = true;
+        const finish = (error?: Error): void => {
+          this.logger.info({ event: 'agent_turn', ...context,
+            state: error ? 'failed' : 'completed', user_visible: entry.userVisible ?? false,
+            consumedBySourceMessageId: ownerMessageId,
+            ...(error ? { errorMessage: sanitizeLifecycleReason(error.message),
+              diagnosticId: (error as Error & { diagnosticId?: string }).diagnosticId ?? crypto.randomUUID() } : {}),
+          }, 'Terminal outcome for input consumed by the original SDK turn');
+        };
+        void entry.promise.then(() => finish(), (error: unknown) =>
+          finish(error instanceof Error ? error : new Error(String(error))));
+      }
+      const settle = (error?: Error): void => {
+        if (!entry.settled && this.turnCompletions.get(context.sourceMessageId) === entry) {
+          this.resolveTurn(context.sourceMessageId, error, owner.userVisible ?? false);
+        }
       };
-      void owner.promise.then(() => finish(), (error: unknown) =>
-        finish(error instanceof Error ? error : new Error(String(error))));
+      void owner.promise.then(() => settle(), (error: unknown) =>
+        settle(error instanceof Error ? error : new Error(String(error))));
     }
   }
 
