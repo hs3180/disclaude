@@ -251,6 +251,8 @@ export interface AgentQueryOptions {
   onActivity?: (type: string) => void;
   /** Host interaction callback; never serialized into model input or tool traces. */
   onUserInput?: (request: AgentInputRequest, context: AgentInputContext | undefined) => Promise<void>;
+  /** Admit a delayed, non-secret async answer as new input in its original conversation. */
+  onAsyncUserInputAnswer?: (request: AgentInputRequest, text: string, context: AgentInputContext) => Promise<void>;
   /** 工作目录 */
   cwd?: string;
   /**
