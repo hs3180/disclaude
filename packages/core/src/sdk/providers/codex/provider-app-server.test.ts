@@ -318,7 +318,9 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
   });
 
   it.each(['active', 'unavailable'])('preserves a quiet model wait with %s runtime status', async status => {
-    const { provider, dir } = providerFixture('exit 0', 'app-server', { DISCLAUDE_STALL_TIMEOUT_MS: '50' });
+    // Give the fixture RPC time under coverage; completion depends on two
+    // received probes rather than a wall-clock race with the runner.
+    const { provider, dir } = providerFixture('exit 0', 'app-server', { DISCLAUDE_STALL_TIMEOUT_MS: '1000' });
     writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
 const fs=require('node:fs');const send=m=>console.log(JSON.stringify(m));let probes=0,starts=0;
 require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
@@ -328,10 +330,10 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
  else if(m.method==='turn/start'){
   fs.writeFileSync(process.env.CODEX_HOME+'/starts',String(++starts));send({id:m.id,result:{turn:{id:'quiet-turn'}}});
   send({method:'item/reasoning/textDelta',params:{threadId:'quiet-thread',turnId:'quiet-turn',delta:'owned thinking'}});
-  setTimeout(()=>{send({method:'item/completed',params:{threadId:'quiet-thread',turnId:'quiet-turn',item:{id:'final',type:'agentMessage',text:'quiet wait completed'}}});send({method:'turn/completed',params:{threadId:'quiet-thread',turn:{id:'quiet-turn',status:'completed'}}});},350);
  } else if(m.method==='thread/read'){
   fs.writeFileSync(process.env.CODEX_HOME+'/probe',JSON.stringify({...m.params,count:++probes}));
   send({id:m.id,result:{thread:{id:'quiet-thread',status:${status === 'active' ? "{type:'active',activeFlags:[]}" : 'undefined'}}}});
+  if(probes===2)setTimeout(()=>{send({method:'item/completed',params:{threadId:'quiet-thread',turnId:'quiet-turn',item:{id:'final',type:'agentMessage',text:'quiet wait completed'}}});send({method:'turn/completed',params:{threadId:'quiet-thread',turn:{id:'quiet-turn',status:'completed'}}});},50);
  }
 });`);
     const onActivity = vi.fn(() => { throw new Error('owned observer failure'); });
