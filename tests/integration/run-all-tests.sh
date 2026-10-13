@@ -7,7 +7,7 @@
 #
 # Prerequisites:
 # - Node.js installed
-# - disclaude built (npm run build)
+# - disclaude built (pnpm run build)
 # - Valid disclaude.config.yaml with AI provider configured
 #
 # Usage:
@@ -121,7 +121,7 @@ show_test_plan_body() {
     echo ""
     echo "Prerequisites:"
     echo "  - Node.js installed"
-    echo "  - disclaude built (npm run build)"
+    echo "  - disclaude built (pnpm run build)"
     echo "  - Valid disclaude.config.yaml"
     echo "  - API key configured in config file"
     echo ""

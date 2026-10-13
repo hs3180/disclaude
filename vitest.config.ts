@@ -8,8 +8,8 @@ import { defineConfig } from 'vitest/config';
  *   worker processes (the default can fan out workers in low-memory environments)
  * - This reduces memory from 500MB-2GB per worker to ~100-200MB total
  *
- * For coverage reports, use `npm run test:coverage` which enables coverage collection.
- * The default `npm test` runs without coverage to minimize memory footprint.
+ * For coverage reports, use `pnpm run test:coverage` which enables coverage collection.
+ * The default `pnpm test` runs without coverage to minimize memory footprint.
  *
  * @see https://vitest.dev/guide/cli.html#options
  * @see Issue #80 - OOM issue with child processes

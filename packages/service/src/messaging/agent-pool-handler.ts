@@ -12,7 +12,7 @@ export interface AgentPoolHandlerOptions {
     getOrCreateChatAgent: (chatId: string, callbacks: ChatAgentCallbacks, threadRootId?: string, session?: AgentSessionOptions) => ChatAgent;
     releaseChatAgent?: (chatId: string, sessionId: string, agent: ChatAgent) => void;
   };
-  callbacksFactory: (chatId: string) => ChatAgentCallbacks;
+  callbacksFactory: (chatId: string, threadRootId?: string) => ChatAgentCallbacks;
   logger?: Logger;
 }
 
@@ -82,7 +82,7 @@ export class AgentPoolMessageHandler implements IAgentMessageHandler {
   }
 
   private getAgentSafely(chatId: string, messageId: string, context: string, threadRootId?: string, session?: AgentSessionOptions): ChatAgent | null {
-    const callbacks = this.callbacksFactory(chatId);
+    const callbacks = threadRootId ? this.callbacksFactory(chatId, threadRootId) : this.callbacksFactory(chatId);
     try {
       return session
         ? this.agentPool.getOrCreateChatAgent(chatId, callbacks, threadRootId, session)

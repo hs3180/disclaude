@@ -147,7 +147,9 @@ export type SendInteractiveParams = {
   options: Array<{ text: string; value: string; type?: 'primary' | 'default' | 'danger' }>;
   title?: string;
   context?: string;
+  /** Reply parent message ID (om_...); legacy name, not Feishu's omt_... thread_id. */
   threadId?: string;
+  /** Requested topic root message ID (om_...); used to validate placement and fallback. */
   threadRootId?: string;
   idempotencyKey?: string;
   actionPrompts?: Record<string, string>;

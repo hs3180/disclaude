@@ -1,0 +1,16 @@
+packages:
+  - 'packages/*'
+
+# Keep every worktree's workspace links local. Share dependency contents through
+# pnpm's same-filesystem store (APFS clones, or hardlinks where cloning is absent).
+packageImportMethod: auto
+nodeLinker: isolated
+enableGlobalVirtualStore: false
+
+overrides:
+  esbuild: ^0.28.2
+
+onlyBuiltDependencies:
+  - esbuild
+  - fsevents
+  - protobufjs

@@ -451,7 +451,7 @@ export async function main(): Promise<void> {
   // Each WiredChannelDescriptor declares its own callback options (e.g., sendDoneSignal),
   // so the routerCallbacksFactory looks up the descriptor by channel type.
   const descriptorMap = new Map(BUILTIN_WIRED_DESCRIPTORS.map((d) => [d.type, d]));
-  const routerCallbacksFactory = (chatId: string) => {
+  const routerCallbacksFactory = (chatId: string, threadRootId?: string) => {
     // Issue #3824: Use resolveChannelForChatId for ownership query fallback.
     // After restart, chatIdChannelMap is empty. resolveChannelForChatId queries
     // all channels via ownsChatId() to find the correct one.
@@ -461,10 +461,10 @@ export async function main(): Promise<void> {
     }
     const descriptor = descriptorMap.get(channel.id);
     if (descriptor) {
-      return descriptor.createCallbacks(channel, channelSetupContext)(chatId);
+      return descriptor.createCallbacks(channel, channelSetupContext)(chatId, threadRootId);
     }
     // Fallback for channels without a registered descriptor
-    return createChannelCallbacksFactory(channel, logger)(chatId);
+    return createChannelCallbacksFactory(channel, logger)(chatId, threadRootId);
   };
   service.initInputMessageRouter(agentPool, routerCallbacksFactory);
 

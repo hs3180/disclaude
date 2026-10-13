@@ -119,6 +119,7 @@ interface TurnCompletionEntry {
   promise: Promise<void>;
   settle: (error?: Error) => void;
   settled: boolean;
+  admitted?: boolean;
 }
 
 /**
@@ -1004,7 +1005,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.pendingTurnMessageIds.splice(0, this.pendingTurnMessageIds.length - 50);
     }
 
-    this.createTurnCompletion(messageId);
+    const turnEntry = this.createTurnCompletion(messageId);
     const acceptedGeneration = this.sessionGeneration;
     try {
       this.turnRecovery?.startTurn({
@@ -1104,6 +1105,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // settles ALL pending entries and would misattribute a channel close
       // to unrelated live turns' awaiters.
       const accepted = this.channel.push(userMessage);
+      turnEntry.admitted = accepted;
       if (!accepted) {
         // Issue #2007: Channel is closed — message would be silently dropped.
         // Notify the user so they know the action was not processed.
@@ -1282,13 +1284,36 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       sessionKey: this.sdkSessionKey,
     });
 
-    if (this.callbacks.requestAgentInput) { sdkOptions.onUserInput = async (request, context) => {
-      if (!context || context.chatId !== chatId || !this.callbacks.requestAgentInput) { throw new Error('This channel cannot answer SDK input requests'); }
-      await this.callbacks.requestAgentInput(request, context);
-      if (this.activeLifecycleContext?.sourceMessageId === context.sourceMessageId) {
-        this.didDeliverUserVisibleThisTurn = true;
-      }
-    }; }
+    const inputGeneration = this.sessionGeneration + 1;
+    if (this.callbacks.requestAgentInput) {
+      sdkOptions.onUserInput = async (request, context) => {
+        if (!context || context.chatId !== chatId || !this.callbacks.requestAgentInput) {
+          throw new Error('This channel cannot answer SDK input requests');
+        }
+        if (request.kind === 'async-message' && (this.onceMode || this.sessionGeneration !== inputGeneration)) {
+          throw Object.assign(new Error('This channel cannot answer SDK input requests'), { code: 'AGENT_ASYNC_INPUT_UNSUPPORTED' });
+        }
+        await this.callbacks.requestAgentInput(request, context);
+        if (this.activeLifecycleContext?.sourceMessageId === context.sourceMessageId) {
+          this.didDeliverUserVisibleThisTurn = true;
+        }
+      };
+      sdkOptions.onAsyncUserInputAnswer = async (request, text, context) => {
+        if (request.signal.aborted || context.chatId !== chatId || this.onceMode || !this.isSessionActive
+          || this.sessionGeneration !== inputGeneration) { throw new Error('The originating conversation is no longer available'); }
+        // Use the existing synthetic prefix: this is new input, never a
+        // replay or a platform message ID. Its original topic stays explicit.
+        const messageId = `msg-async-${crypto.createHash('sha256').update(JSON.stringify([
+          request.threadId, request.turnId, request.itemId,
+        ])).digest('hex')}`;
+        if (this.turnCompletions.get(messageId)?.admitted) { return; }
+        await this.processMessage({ chatId, payload: text, messageId, senderOpenId: context.actorId,
+          threadRootId: context.threadRootId ?? context.sourceMessageId, chatType: this.chatType });
+        if (this.sessionGeneration !== inputGeneration || this.turnCompletions.get(messageId)?.admitted !== true) {
+          throw new Error('Async answer was not admitted to its originating conversation');
+        }
+      };
+    }
     this.logger.info({ chatId }, 'Starting SDK query with message channel');
 
     // Issue #2926: Create fresh AbortController for this agent loop
