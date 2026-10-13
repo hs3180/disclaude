@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentMessage, AgentQueryOptions, ToolDefinition, ToolContext, UserInput } from '../../types.js';
 import { CodexAgentProvider } from './provider.js';
 import type { AgentInputRequest, AgentInputContext } from '../../user-input.js';
+import { LiveInputRejectedError } from '../../live-input.js';
 
 const dirs: string[] = [];
 function providerFixture(
@@ -38,6 +39,66 @@ afterEach(() => {
 });
 
 describe('CodexAgentProvider app-server transport', () => {
+  it.each([-32600, -32601, -32602, -32603, 'lost-ack', 'mismatched-ack'] as const)('maps live-input RPC outcomes through the provider-neutral contract (%s)', async code => {
+    const { provider, dir } = providerFixture('exit 0');
+    writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
+const fs=require('node:fs');const send=m=>console.log(JSON.stringify(m));
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line);
+ if(m.method==='initialize')send({id:m.id,result:{}});
+ else if(m.method==='thread/start')send({id:m.id,result:{thread:{id:'owned-thread'}}});
+ else if(m.method==='turn/start'){fs.appendFileSync(process.env.CODEX_HOME+'/writes','start\\n');send({id:m.id,result:{turn:{id:'owned-turn'}}});}
+ else if(m.method==='turn/steer'){
+  fs.appendFileSync(process.env.CODEX_HOME+'/writes','steer\\n');
+  const mode=${JSON.stringify(code)};
+  if(mode==='lost-ack')process.exit(7);
+  else if(mode==='mismatched-ack')send({id:m.id,result:{turnId:'other-turn'}});
+  else send({id:m.id,error:{code:mode,message:'Owned RPC rejection'}});
+ }
+ else if(m.method==='turn/interrupt'){send({id:m.id,result:{}});send({method:'turn/completed',params:{threadId:'owned-thread',turn:{id:'owned-turn',status:'interrupted'}}});}
+});`);
+    const stream = provider.queryStream((async function* () { yield { role: 'user', content: 'owned input' } as UserInput; })(), {
+      sessionKey: 'rejection-contract', settingSources: [],
+    });
+    const collecting = (async () => { for await (const _message of stream.iterator) { /* drain */ } })();
+    try {
+      await vi.waitFor(() => expect((provider as any).appServerLifecycles.get('rejection-contract')?.snapshot('rejection-contract')?.activeTurnId).toBe('owned-turn'));
+      const error = await stream.handle.steer!('owned correction').catch(error => error);
+      if (typeof code === 'string' || code === -32603) {
+        expect(error).not.toBeInstanceOf(LiveInputRejectedError);
+        expect(error).toBeInstanceOf(Error);
+        if (code === -32603) { expect(error).toMatchObject({ name: 'CodexAppServerRpcError', code }); }
+        if (code === 'mismatched-ack') { expect(error.message).toContain('did not match'); }
+      } else {
+        expect(error).toBeInstanceOf(LiveInputRejectedError);
+        expect(error.cause).toMatchObject({ name: 'CodexAppServerRpcError', code });
+      }
+      expect(readFileSync(join(dir, 'home/writes'), 'utf8')).toBe('start\nsteer\n');
+    } finally { stream.handle.cancel(); await collecting; provider.dispose(); }
+  });
+
+  it('maps completed-turn preflight through the provider-neutral contract without sending a control request', async () => {
+    const { provider, dir } = providerFixture('exit 0');
+    writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
+const fs=require('node:fs');const send=m=>console.log(JSON.stringify(m));
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line);fs.appendFileSync(process.env.CODEX_HOME+'/requests',m.method+'\\n');
+ if(m.method==='initialize')send({id:m.id,result:{}});
+ else if(m.method==='thread/start')send({id:m.id,result:{thread:{id:'finished-thread'}}});
+ else if(m.method==='turn/start'){send({id:m.id,result:{turn:{id:'finished-turn'}}});send({method:'turn/completed',params:{threadId:'finished-thread',turn:{id:'finished-turn',status:'completed'}}});}
+});`);
+    const stream = provider.queryStream((async function* () { yield { role: 'user', content: 'owned input' } as UserInput; })(), {
+      sessionKey: 'finished-contract', settingSources: [],
+    });
+    try {
+      for await (const _message of stream.iterator) { /* drain */ }
+      const error = await stream.handle.steer!('late correction').catch(error => error);
+      expect(error).toBeInstanceOf(LiveInputRejectedError);
+      expect(error.cause).toMatchObject({ name: 'CodexNoActiveTurnError', operation: 'steer' });
+      expect(readFileSync(join(dir, 'home/requests'), 'utf8')).not.toContain('turn/steer');
+    } finally { stream.handle.close(); provider.dispose(); }
+  });
+
   it.each(['active', 'lost-ack', 'unsupported'] as const)('handles native async answers without replay (%s)', async mode => {
     const { provider, dir } = providerFixture('exit 0');
     writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
