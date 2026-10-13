@@ -9,7 +9,9 @@ on:
       - '.dockerignore'
       - 'docker-entrypoint.sh'
       - 'bin/**'
-      - 'package*.json'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
       - 'packages/**'
       - '!packages/**/*.test.ts'
       - 'tests/e2e/docker-service.test.ts'
@@ -26,7 +28,9 @@ on:
       - '.dockerignore'
       - 'docker-entrypoint.sh'
       - 'bin/**'
-      - 'package*.json'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
       - 'packages/**'
       - '!packages/**/*.test.ts'
       - 'tests/e2e/docker-service.test.ts'
@@ -43,14 +47,15 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-          cache: npm
+          cache: pnpm
       - name: Build the actual production service image
         run: docker build --progress=plain -f Dockerfile.service -t disclaude-service:e2e .
       - name: Install test runner
-        run: npm ci --include=dev
+        run: pnpm install --frozen-lockfile
       - name: Run container startup, channel storage and recreation use case
         env:
           DISCLAUDE_E2E_DOCKER_IMAGE: disclaude-service:e2e
