@@ -38,6 +38,8 @@ export interface UserInput {
   /** Host-only identifiers; adapters must not append these to model content. */
   correlation?: { runId: string; chatId: string; sourceMessageId: string; traceId: string };
   inputContext?: AgentInputContext;
+  /** Stable prompt instructions omitted on this continuation. Apply only if starting a fresh native conversation. */
+  continuationContext?: string;
 }
 
 /** API 消息格式（用于流式输入） */
@@ -58,6 +60,7 @@ export interface StreamingUserMessage {
   session_id: string;
   correlation?: UserInput['correlation'];
   inputContext?: AgentInputContext;
+  continuationContext?: UserInput['continuationContext'];
 }
 
 // ============================================================================

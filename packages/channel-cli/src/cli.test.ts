@@ -18,6 +18,10 @@ describe('@disclaude/channel-cli', () => {
   it('exposes the packaged command surface in help', () => {
     expect(HELP).toContain('send_interactive');
     expect(HELP).toContain('disclaude channel');
+    for (const flag of ['--question-file', '--options', '--action-prompts', '--thread-root', '--idempotency-key', '--workflow-file']) {
+      expect(HELP).toContain(flag);
+    }
+    expect(HELP).toContain('Private values enter only through that card');
   });
 
   it('advertises `push`, not the internal push_to_agent spelling', () => {

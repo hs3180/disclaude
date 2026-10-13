@@ -280,6 +280,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
   // Message builder (Issue #697)
   private readonly messageBuilder: MessageBuilder;
+  // Stable guidance belongs once to an admitted query/capability context (#5019).
+  // Rejected input must not consume it; new queries get it again.
+  private deliveredMessageContext?: { signature: string; content: string };
   private readonly configureQueryOptions: ChatAgentConfig['configureQueryOptions'];
 
   // History loading (Issue #955, #1230, #3996) — extracted into HistoryManager (Issue #4125 part 2)
@@ -370,7 +373,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       maxBackoffMs: 60000, // Max 1 minute
     });
 
-    this.messageBuilder = new MessageBuilder(config.messageBuilderOptions);
+    this.messageBuilder = new MessageBuilder(this.agentBackend === 'codex' ? {
+      ...config.messageBuilderOptions,
+      buildStableToolsSection: ctx => [
+        config.messageBuilderOptions?.buildStableToolsSection?.(ctx),
+        'For Codex Code Mode, "Script running with cell ID" means the execution and its pending tool call are still running. Resume that same cell with wait until it completes or fails before polling the same process again with write_stdin; do not abandon the cell and start a concurrent poll that can consume its final result.',
+      ].filter(Boolean).join('\n'),
+    } : config.messageBuilderOptions);
     this.configureQueryOptions = config.configureQueryOptions;
 
     this.logger.info(
@@ -1166,28 +1175,41 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Get capabilities for message building
     const capabilities = this.callbacks.getCapabilities?.(chatId);
 
+    const messageContext = JSON.stringify([this.sessionGeneration, this.chatType, capabilities]);
+    // Other providers keep the concise instructions until their native
+    // conversation-retention contract is known. Codex restores this memo on
+    // a fresh thread; Claude retains it in its persistent SDK query.
+    const canRetainContext = this.sdkProvider.name === 'claude' || this.sdkProvider.name === 'codex';
+    const includeStableContext = !canRetainContext || this.deliveredMessageContext?.signature !== messageContext;
+
     // Build the user message using MessageBuilder (Issue #697)
     // Issue #955: Include persisted history context for session restoration
+    const messageData = {
+      text,
+      includeStableContext,
+      messageId,
+      senderOpenId,
+      attachments,
+      chatHistoryContext: effectiveChatHistoryContext,
+      pendingQuestionEligible,
+      chatLogFilePaths: this.historyManager.chatLogFilePaths,
+      chatType: this.chatType,
+      threadContext,
+      threadRootId: threadRootId ?? this.conversationOrchestrator.getThreadRoot(chatId),
+    };
     const enhancedContent = this.messageBuilder.buildEnhancedContent(
-      {
-        text,
-        messageId,
-        senderOpenId,
-        attachments,
-        chatHistoryContext: effectiveChatHistoryContext,
-        pendingQuestionEligible,
-        chatLogFilePaths: this.historyManager.chatLogFilePaths,
-        chatType: this.chatType,
-        threadContext,
-        threadRootId: threadRootId ?? this.conversationOrchestrator.getThreadRoot(chatId),
-      },
+      messageData,
       chatId,
       capabilities,
     );
+    const stableContext = includeStableContext && !text.trimStart().startsWith('/')
+      ? this.messageBuilder.buildStableContext(messageData, chatId, capabilities) : '';
 
     const userMessage: StreamingUserMessage = {
       type: 'user',
       correlation: lifecycleContext,
+      ...(!includeStableContext && this.deliveredMessageContext
+        ? { continuationContext: this.deliveredMessageContext.content } : {}),
       ...(senderOpenId ? { inputContext: { actorId: senderOpenId, chatId, sourceMessageId: messageId,
         threadRootId: threadRootId ?? this.conversationOrchestrator.getThreadRoot(chatId) } } : {}),
       message: {
@@ -1236,6 +1258,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             );
           });
         return;
+      }
+      if (!text.trimStart().startsWith('/')) {
+        if (includeStableContext) {
+          this.deliveredMessageContext = {
+            signature: messageContext,
+            content: stableContext,
+          };
+        }
       }
       if (busyBeforePush) {
         void this.callbacks.sendMessage(
@@ -1537,6 +1567,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Create message channel
     this.channel = new MessageChannel();
+    this.deliveredMessageContext = undefined;
 
     // Create streaming query using channel's generator
     const queryOptions = this.configureQueryOptions?.(sdkOptions) ?? sdkOptions;

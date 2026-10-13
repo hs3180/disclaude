@@ -858,7 +858,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       // S7 (#4634): each run holds a global lease — at most
       // maxConcurrentRuns codex exec children process-wide; excess turns
       // queue FIFO across chats with a backpressure notice.
-      const runInput = async (prompt: string, correlation?: UserInput['correlation']): Promise<void> => {
+      const runInput = async (prompt: string, correlation?: UserInput['correlation'], continuationContext?: string): Promise<void> => {
         if (stalled || aborted || terminated) { return; }
         // Item IDs are scoped to one exec invocation. Clear before every
         // run because older Codex versions (and test doubles) may omit
@@ -911,11 +911,13 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           overloadFailure = undefined;
           deferredOverloadMessage = undefined;
           touchStallWatchdog();
+          const contextualPrompt = resumeTarget === undefined && continuationContext
+            ? `${continuationContext}\n${prompt}` : prompt;
           const { promise, handle } = runner.run(
             {
               prompt: skillsManifest
-                ? `${skillsManifest}\n\nUser request:\n${prompt}`
-                : prompt,
+                ? `${skillsManifest}\n\nUser request:\n${contextualPrompt}`
+                : contextualPrompt,
               correlation,
               resumeSessionId: resumeTarget,
               sandboxMode: sandboxDecision.sandbox,
@@ -1131,7 +1133,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             if (done || terminated) {
               return;
             }
-            await runInput(userInputText(value), value.correlation);
+            await runInput(userInputText(value), value.correlation, value.continuationContext);
             if (stalled || aborted) { return; }
           }
         } finally {
@@ -1601,6 +1603,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
                 }
                 await options.onAsyncUserInputAnswer(request, text, context);
               }, options.env);
+              const requestedThreadId = threadId;
               threadId = await lifecycle.ensureThread(sessionKey, {
                 threadId,
                 cwd: options.cwd,
@@ -1619,7 +1622,9 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               completingTurnId = undefined;
               openToolItems = 0;
               sessionGovernor.touchSession(sessionKey);
-              const userInput = userInputText(next.value);
+              const currentInput = userInputText(next.value);
+              const userInput = next.value.continuationContext && (!requestedThreadId || requestedThreadId !== threadId)
+                ? `${next.value.continuationContext}\n${currentInput}` : currentInput;
               activeTurnId = await lifecycle.startTurn(
                 sessionKey,
                 skillsManifest ? `${skillsManifest}\n\nUser request:\n${userInput}` : userInput,
