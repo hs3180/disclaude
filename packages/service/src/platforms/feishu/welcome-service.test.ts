@@ -26,7 +26,52 @@ describe('WelcomeService', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     resetWelcomeService();
+  });
+
+  it('coalesces concurrent bot/member joins and retains the group cooldown after failure', async () => {
+    vi.useFakeTimers();
+    sendMessageMock.mockRejectedValueOnce(new Error('delivery outcome unknown'));
+    await Promise.all([
+      service.handleBotAddedToGroup('group', 'group'),
+      service.handleUserJoinedGroup('group', 'group', ['user']),
+      service.handleBotAddedToGroup('group', 'group'),
+    ]);
+    expect(sendMessageMock).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(23 * 60 * 60 * 1000);
+    await service.handleUserJoinedGroup('group', 'group', ['user']);
+    expect(sendMessageMock).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(60 * 60 * 1000);
+    await service.handleUserJoinedGroup('group', 'group', ['user']);
+    expect(sendMessageMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('sends no automatic message when generation denies access or guidance is off', async () => {
+    const denied = new WelcomeService({ generateWelcomeMessage: () => undefined, sendMessage: sendMessageMock });
+    expect(await denied.handleFirstPrivateChat('user', 'p2p')).toBe('skipped');
+    await denied.handleBotAddedToGroup('group', 'group');
+    await denied.handleUserJoinedGroup('other', 'topic', ['user']);
+    service.setEnabled('group', false);
+    await service.handleBotAddedToGroup('group', 'group');
+    expect(sendMessageMock).not.toHaveBeenCalled();
+  });
+
+  it('passes the actual chat type and identity to runtime help generation', async () => {
+    const generate = vi.fn(() => 'brief');
+    const sender = vi.fn().mockResolvedValue(undefined);
+    const scoped = new WelcomeService({ generateWelcomeMessage: generate, sendMessage: sendMessageMock, sendWelcomeMessage: sender });
+    await scoped.handleBotAddedToGroup('topic', 'topic');
+    expect(generate).toHaveBeenCalledExactlyOnceWith('topic', 'topic');
+    expect(sender).toHaveBeenCalledExactlyOnceWith('topic', 'brief', 'topic');
+    expect(sendMessageMock).not.toHaveBeenCalled();
+  });
+
+  it('bounds automatic state without forgetting disabled preferences at capacity', () => {
+    for (let i = 0; i < 1000; i++) { expect(service.claimPrompt(`chat-${i}`)).toBe(true); service.setEnabled(`chat-${i}`, false); }
+    expect(service.claimPrompt('new-chat')).toBe(false);
+    expect(() => service.setEnabled('new-chat', false)).toThrow('capacity');
+    expect(service.isEnabled('chat-0')).toBe(false);
   });
 
   // Note: isGroupChat/isPrivateChat classification is covered by
@@ -142,19 +187,23 @@ describe('WelcomeService', () => {
       expect(sendMessageMock).toHaveBeenCalledTimes(1);
     });
 
-    it('should allow retry after failed send', async () => {
+    it('should allow a later interaction after cooldown following failed/uncertain send', async () => {
+      vi.useFakeTimers();
       // Issue #1357: After failure, chatId should be removed from tracked set
       sendMessageMock.mockRejectedValueOnce(new Error('Send failed'));
 
       const result1 = await service.handleFirstPrivateChat('ou_user123', 'p2p');
       expect(result1).toBe('failed');
 
-      // Next call should retry since it was removed from the set
+      expect(await service.handleFirstPrivateChat('ou_user123', 'p2p')).toBe('skipped');
+      expect(sendMessageMock).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(5 * 60 * 1000);
       sendMessageMock.mockResolvedValueOnce(undefined);
       const result2 = await service.handleFirstPrivateChat('ou_user123', 'p2p');
       expect(result2).toBe('sent');
 
       expect(sendMessageMock).toHaveBeenCalledTimes(2);
+      vi.useRealTimers();
     });
   });
 

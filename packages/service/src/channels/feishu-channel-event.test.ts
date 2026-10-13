@@ -19,7 +19,8 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { FeishuChannel, extractChatIdFromEvent, type FeishuChannelConfig } from './feishu-channel.js';
-import { MessageHandler } from './feishu/index.js';
+import { MessageHandler, WelcomeHandler, WsConnectionManager } from './feishu/index.js';
+import type { EventDispatcher } from '@larksuiteoapi/node-sdk';
 
 // ─── Mock Logger ────────────────────────────────────────────────────────────
 
@@ -93,6 +94,8 @@ vi.mock('./feishu/index.js', () => ({
   WelcomeHandler: vi.fn(class {
     handleP2PChatEntered = vi.fn();
     handleChatMemberAdded = vi.fn();
+    handleBotAdded = vi.fn();
+    handleUserAdded = vi.fn();
     setWelcomeService = vi.fn();
   }),
   MessageHandler: vi.fn(class {
@@ -135,6 +138,24 @@ function createTestChannel(mockClient: ReturnType<typeof createMockClient>['clie
   return channel;
 }
 
+describe('native welcome event dispatch through the actual SDK parser', () => {
+  it.each([
+    ['im.chat.member.bot.added_v1', 'handleBotAdded', { chat_id: 'oc_group' }],
+    ['im.chat.member.user.added_v1', 'handleUserAdded', { chat_id: 'oc_group', users: [{ user_id: { open_id: 'ou_joiner' } }] }],
+  ] as const)('routes %s to the welcome handler', async (eventType, method, event) => {
+    const channel = new FeishuChannel({ appId: 'test-app', appSecret: 'test-secret' });
+    await channel.start();
+    try {
+      const connection = vi.mocked(WsConnectionManager).mock.results.at(-1)?.value;
+      const dispatcher = connection.start.mock.calls[0][0] as EventDispatcher;
+      const welcome = vi.mocked(WelcomeHandler).mock.results.at(-1)?.value;
+      await dispatcher.invoke({ schema: '2.0', header: { event_type: eventType, event_id: 'native-contract' }, event }, { needCheck: false });
+      expect(welcome[method]).toHaveBeenCalledWith(expect.objectContaining(event));
+      expect(welcome.handleChatMemberAdded).not.toHaveBeenCalled();
+    } finally { await channel.stop(); }
+  });
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // extractChatIdFromEvent
 // ═══════════════════════════════════════════════════════════════════════════
@@ -148,6 +169,12 @@ describe('extractChatIdFromEvent — Issue #1357', () => {
     };
 
     expect(extractChatIdFromEvent(data)).toBe('oc_chat_001');
+  });
+
+  it('extracts the native chat from flattened SDK welcome events', () => {
+    expect(extractChatIdFromEvent({ chat_id: 'oc_native_group' })).toBe('oc_native_group');
+    expect(extractChatIdFromEvent({ chat_id: 'oc_private', operator_id: { open_id: 'ou_user' } })).toBe('oc_private');
+    expect(extractChatIdFromEvent({ message: { chat_id: 'oc_message' } })).toBe('oc_message');
   });
 
   it('should extract open_chat_id from card.action.trigger event', () => {
