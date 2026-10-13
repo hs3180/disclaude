@@ -49,11 +49,11 @@ with socket.socket() as probe:
     rest_port = probe.getsockname()[1]
 config = state / 'config.json'
 config.write_text(json.dumps({'workspace': {'dir': str(workspace)},
-    'agent': {'agentBackend': 'claude', 'provider': 'anthropic', 'model': 'claude-sonnet-4'},
-    'anthropic': {'apiKey': 'offline-test-placeholder'},
+    'agents': {'default': {'backend': 'claude', 'llm': 'launchd-smoke'}},
+    'llms': {'launchd-smoke': {'model': 'claude-sonnet-4', 'api': {'protocol': 'anthropic', 'apiKeyEnv': 'LAUNCHD_SMOKE_API_KEY'}}},
     'channels': {'rest': {'port': rest_port, 'host': '127.0.0.1', 'fileStorageDir': str(state / 'files')}},
     'logging': {'level': 'info', 'pretty': False}}))
-env = {**os.environ, 'DISCLAUDE_LAUNCHD_ISOLATED': '1',
+env = {**os.environ, 'LAUNCHD_SMOKE_API_KEY': 'offline-test-placeholder', 'DISCLAUDE_LAUNCHD_ISOLATED': '1',
     'DISCLAUDE_LAUNCHD_LABEL': label, 'DISCLAUDE_LAUNCHD_STATE_DIR': str(state),
     'DISCLAUDE_LAUNCHD_CONFIG_PATH': str(config), 'DISCLAUDE_LAUNCHD_API_PORT': '0'}
 # Do not inherit address or auth overrides intended for an existing service.
