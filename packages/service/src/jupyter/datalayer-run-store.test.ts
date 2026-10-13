@@ -69,6 +69,65 @@ describe('Datalayer original-request journal', () => {
     );
   });
 
+  it('keeps the last successful running observation when a lookup loses connection', () => {
+    const root = directory();
+    const store = new DatalayerRunStore(root);
+    store.reserve('run', target);
+    const confirmed = store.update('run', {
+      state: 'running',
+      observation: { state: 'running', httpStatus: 202 },
+    });
+    store.update('run', {
+      state: 'unknown',
+      observation: {
+        state: 'unknown',
+        failure: { kind: 'client-error', reason: 'connection-unavailable' },
+      },
+    });
+    const restored = new DatalayerRunStore(root).get('run');
+    expect(restored).toMatchObject({
+      state: 'running',
+      observedAt: confirmed.observedAt,
+      lastConfirmedRunningAt: confirmed.observedAt,
+      lostAt: expect.any(Number),
+      observation: { state: 'running', httpStatus: 202 },
+      loss: { kind: 'client-error', reason: 'connection-unavailable' },
+      lossEvents: [{ kind: 'client-error' }],
+    });
+    store.update('run', { state: 'completed', observation: { state: 'completed' } });
+    expect(store.get('run')?.loss).toBeUndefined();
+    expect(store.get('run')?.lastConfirmedRunningAt).toBe(confirmed.observedAt);
+  });
+
+  it('reads legacy unknown records without inventing lost running history', () => {
+    const store = new DatalayerRunStore(directory());
+    store.reserve('legacy', target);
+    fs.writeFileSync(
+      store.path,
+      JSON.stringify({
+        version: 1,
+        records: [
+          {
+            runId: 'legacy',
+            target,
+            state: 'unknown',
+            observedAt: 123,
+            handle: { kernelId: 'kernel', requestId: 'request' },
+            observation: { state: 'unknown', httpStatus: 404 },
+          },
+        ],
+      }),
+      { mode: 0o600 }
+    );
+    const legacy = store.get('legacy');
+    expect(legacy).toMatchObject({
+      state: 'accepted',
+      lostAt: 123,
+      loss: { kind: 'server-unknown', reason: 'request-not-found', checkedAt: 123 },
+    });
+    expect(legacy?.lastConfirmedRunningAt).toBeUndefined();
+  });
+
   it('does not read or write journals through a Project symlink', () => {
     const root = directory();
     const outside = directory();

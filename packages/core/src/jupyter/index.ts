@@ -5,6 +5,7 @@ export type {
   DatalayerExecutionHandle,
   DatalayerExecutionObservation,
   DatalayerExecutionPolicy,
+  DatalayerObservationFailure,
   JupyterKernelInterruptResult,
 } from './datalayer-client.js';
 export { JupyterHttpConnection, createJupyterCookieJar } from './http-connection.js';

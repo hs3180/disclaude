@@ -53,3 +53,25 @@ ownership or execute kernels. Unlinking a reference does not delete the remote
 notebook or stop a kernel. The previous unmerged PR's workspace-wide
 `.disclaude/project-jupyter-references.json` prototype is no longer read or written;
 there is no automatic migration of that prototype file.
+
+`disclaude jupyter status` queries the original request handle and reports
+`source: live`; a cached terminal result or failed client lookup instead reports
+`source: local-journal`. A connection/authentication failure returns `client-error`.
+An actual missing/expired request or changed kernel incarnation returns
+`server-unknown` with its query time and reason. Neither state proves that the
+original code did not execute.
+
+The journal retains the last confirmed execution state and observation across
+failed lookups. `lastConfirmedRunningAt`, `lostAt`, `checkedAt`, and up to 32 loss
+diagnostics distinguish the last running fact from a later connection problem.
+Cached partial output is explicitly labelled `lastKnownResult` rather than a live
+result. Old journals remain readable; a legacy unknown record cannot reconstruct
+running facts that the older client already overwrote.
+
+After restoring connection credentials, `disclaude jupyter reconcile --project-dir
+DIR` reads every nonterminal original handle in that Project. Individual `status`
+queries also retry the same lookup. Reconciliation never submits cells, restarts
+kernels, or replays uncertain executions. A reservation without a trustworthy
+request handle reports `client-error / request-handle-unavailable`; it cannot
+claim a live query or safely infer non-execution. Confirmed terminal results stay
+available from the journal even when the remote result has expired.

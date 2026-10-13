@@ -14,6 +14,7 @@ const commands = [
   'delete-cell',
   'execute',
   'status',
+  'reconcile',
   'stop',
   'interrupt',
   'observe-image',
@@ -49,6 +50,8 @@ Options:
 Credentials: environment > .env > interactive input. Connection is lazy.
 Each command closes its RTC sockets. Kernel memory stays on remote Jupyter.
 execute submits once and returns runId; use status/stop for the original run.
+status labels source as live or local-journal; connection failures retain last-known facts.
+reconcile queries every nonterminal original handle after restoring credentials/connection.
 interrupt targets an existing kernelId, or a uniquely bound notebookId; no runId.
 It affects that kernel's current execution. HTTP 204 means accepted only;
 executionState remains unknown. It does not confirm termination or queue clearing.

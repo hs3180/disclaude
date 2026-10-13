@@ -57,6 +57,28 @@ async function fixture(
   return { client, requests, baseUrl };
 }
 
+describe('original request observation failures', () => {
+  it.each([
+    [401, 'client-error', 'authentication-required'],
+    [403, 'client-error', 'permission-denied'],
+    [404, 'server-unknown', 'request-not-found'],
+    [410, 'server-unknown', 'request-expired'],
+    [503, 'client-error', 'http-error'],
+    [500, 'client-error', 'http-error'],
+  ])(
+    'classifies HTTP %s without treating it as execution completion',
+    async (status, kind, reason) => {
+      const f = await fixture(() => ({ status: Number(status) }));
+      expect(await f.client.observe({ kernelId: 'kernel', requestId: 'request' })).toMatchObject({
+        state: 'unknown',
+        httpStatus: status,
+        failure: { kind, reason },
+      });
+      expect(f.requests.map(({ method }) => method)).toEqual(['GET']);
+    }
+  );
+});
+
 describe('explicit kernel interrupt', () => {
   it('acknowledges one POST without claiming execution completion or querying a shell', async () => {
     const f = await fixture((path, method) =>
@@ -77,6 +99,23 @@ describe('explicit kernel interrupt', () => {
       ['GET', '/prefix/api/kernels/kernel'],
       ['POST', '/prefix/api/kernels/kernel/interrupt'],
     ]);
+  });
+
+  it('separates connection failure and malformed server responses without leaking either body', async () => {
+    const disconnected = await fixture(() => ({ disconnect: true }));
+    expect(
+      await disconnected.client.observe({ kernelId: 'kernel', requestId: 'request' })
+    ).toMatchObject({
+      state: 'unknown',
+      failure: { kind: 'client-error', reason: 'connection-unavailable' },
+    });
+    const malformed = await fixture(() => ({ raw: 'private-malformed-body' }));
+    const result = await malformed.client.observe({ kernelId: 'kernel', requestId: 'request' });
+    expect(result).toMatchObject({
+      state: 'unknown',
+      failure: { kind: 'client-error', reason: 'invalid-response' },
+    });
+    expect(JSON.stringify(result)).not.toContain('private-malformed-body');
   });
 
   it.each([

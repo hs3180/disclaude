@@ -21,6 +21,13 @@ for the current JSON input schemas and [README.md](./README.md) for setup.
    Use a unique `runId` with `execute`; it submits once and returns promptly.
    Continue with `status` for the original run. Reuse the same ID after a lost
    response; never invent a new ID to replay an uncertain execution.
+   Check `source`: `live` is a current remote observation; `local-journal` is
+   a saved fact or a failed client lookup. `client-error` retains the last
+   confirmed state and loss time. `server-unknown` means the original record
+   was queried but is missing, expired or from a changed kernel incarnation;
+   it does not prove non-execution. Restore the configured connection, then
+   use `reconcile` to query every nonterminal original handle without replay.
+   Cached partial outputs are labelled `lastKnownResult`.
 4. Stop remote work with `stop` and its original `notebookId`/`runId`. Only
    `stopConfirmed: true` confirms cancellation. Chat `/stop` stops inference;
    remote executions remain independent. Do not claim the kernel stopped
