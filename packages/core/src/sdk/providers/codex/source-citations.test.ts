@@ -21,6 +21,8 @@ describe('Codex source guidance composition', () => {
     });
 
     expect(prompt).toContain('numbered markers such as [1] and [2]');
+    expect(prompt).toContain('For strict JSON or code-only replies');
+    expect(prompt).toContain('instead of appending a Markdown Sources section');
     expect(prompt).toContain('number. [title](direct URL)');
     expect(prompt).toContain(
       'Only cite a claim when the source content you actually read supports it.'

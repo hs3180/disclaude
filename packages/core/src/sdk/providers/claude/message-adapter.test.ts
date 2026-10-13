@@ -911,6 +911,7 @@ describe('adaptUserInput', () => {
     const input = {
       role: 'user' as const,
       content: 'Hello, Claude!',
+      continuationContext: 'Host-only context for a fresh native conversation',
     };
 
     const result = adaptUserInput(input);
@@ -919,6 +920,7 @@ describe('adaptUserInput', () => {
     expect(result.message.content).toBe('Hello, Claude!');
     expect(result.parent_tool_use_id).toBeNull();
     expect(result.session_id).toBe('');
+    expect(result).not.toHaveProperty('continuationContext');
   });
 
   it('should handle content array', () => {

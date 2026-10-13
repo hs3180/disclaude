@@ -20,6 +20,8 @@ import type { ChannelCapabilities } from '../../types/channel.js';
 export interface MessageData {
   /** User's message text */
   text: string;
+  /** False only after this query already accepted the same stable channel context. Defaults to true for standalone/one-shot prompts. */
+  includeStableContext?: boolean;
   /** Unique message identifier */
   messageId?: string;
   /** Sender's open ID (channel-specific, e.g., Feishu open_id) */
