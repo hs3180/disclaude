@@ -76,6 +76,7 @@ export const REST_WIRED_DESCRIPTOR: WiredChannelDescriptor<RestChannelConfig> = 
   createCallbacks: (channel, context) =>
     createChannelCallbacksFactory(channel, context.logger, {
       sendDoneSignal: true,
+      finalReplyOnly: true,
       getChatHistory: (chatId: string) => messageLogger.getChatHistory(chatId),
       getChatLogFilePaths: (chatId: string) => messageLogger.getChatLogFilePaths(chatId),
     }),

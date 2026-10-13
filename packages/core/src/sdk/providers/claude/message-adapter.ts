@@ -76,6 +76,13 @@ export function adaptSDKMessage(message: SDKMessage, taskRegistry?: TaskSubjectR
       const rawText = textBlocks.map((block) => block.text).join('');
       const assistantText = rawText.trim().length === 0 ? '' : rawText.replace(/^(?:[^\S\r\n]*\r?\n)+/, '');
 
+      // Some SDK rounds carry the text and tool call in separate assistant
+      // messages. Preserve the native stop reason rather than guessing from
+      // the text whether it is a user-facing answer.
+      if (toolBlocks.length === 0 && apiMessage.stop_reason === 'tool_use') {
+        metadata.phase = 'commentary';
+      }
+
       if (assistantText.length > 0) {
         contentParts.push(assistantText);
       }

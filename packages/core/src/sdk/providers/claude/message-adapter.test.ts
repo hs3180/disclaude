@@ -13,6 +13,20 @@ const asMsg = (m: object) => m as any;
 
 describe('adaptSDKMessage', () => {
   describe('assistant messages', () => {
+    it.each(['tool_use', 'end_turn', null])('preserves text and identifies the native %s stop reason', stopReason => {
+      const result = adaptSDKMessage(asMsg({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          stop_reason: stopReason,
+          content: [{ type: 'text', text: 'Opaque model text.  ' }],
+        },
+      }));
+      expect(result.type).toBe('text');
+      expect(result.content).toBe('Opaque model text.  ');
+      expect(result.metadata?.phase).toBe(stopReason === 'tool_use' ? 'commentary' : undefined);
+    });
+
     it('should handle text-only content', () => {
       const message = {
         type: 'assistant' as const,

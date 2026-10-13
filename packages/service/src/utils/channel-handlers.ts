@@ -49,6 +49,9 @@ export interface ChannelCallbacksOptions {
   /** Whether to send a 'done' signal on task completion (REST sync mode) */
   sendDoneSignal?: boolean;
 
+  /** Keep progress narration out of aggregated assistant responses (REST). */
+  finalReplyOnly?: boolean;
+
   /**
    * Optional callback to retrieve chat history for a given chat.
    * Wired to MessageLogger.getChatHistory() for channels that support message logging.
@@ -115,6 +118,7 @@ export function createChannelCallbacksFactory(
   options?: ChannelCallbacksOptions
 ): (chatId: string, threadRootId?: string) => ChatAgentCallbacks {
   return (_chatId: string, threadRootId?: string): ChatAgentCallbacks => ({
+    ...(options?.finalReplyOnly ? { finalReplyOnly: true } : {}),
     ...(channel.requestAgentInput ? { requestAgentInput: channel.requestAgentInput.bind(channel) } : {}),
     ...(channel.addReaction ? {
       addReaction: channel.addReaction.bind(channel),
