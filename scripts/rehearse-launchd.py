@@ -53,6 +53,15 @@ config.write_text(json.dumps({'workspace': {'dir': str(workspace)},
     'llms': {'launchd-smoke': {'model': 'claude-sonnet-4', 'api': {'protocol': 'anthropic', 'apiKeyEnv': 'LAUNCHD_SMOKE_API_KEY'}}},
     'channels': {'rest': {'port': rest_port, 'host': '127.0.0.1', 'fileStorageDir': str(state / 'files')}},
     'logging': {'level': 'info', 'pretty': False}}))
+# Baseline and rollback exercise an older CLI schema; keep a separate test
+# configuration while sharing the same owned workspace and communication port.
+baseline_config = state / 'baseline-config.json'
+canonical = json.loads(config.read_text())
+baseline_config.write_text(json.dumps({
+    'workspace': canonical['workspace'],
+    'agent': {'agentBackend': 'claude', 'provider': 'anthropic', 'model': 'claude-sonnet-4'},
+    'anthropic': {'apiKey': 'offline-test-placeholder'},
+    'channels': canonical['channels'], 'logging': canonical['logging']}))
 env = {**os.environ, 'LAUNCHD_SMOKE_API_KEY': 'offline-test-placeholder', 'DISCLAUDE_LAUNCHD_ISOLATED': '1',
     'DISCLAUDE_LAUNCHD_LABEL': label, 'DISCLAUDE_LAUNCHD_STATE_DIR': str(state),
     'DISCLAUDE_LAUNCHD_CONFIG_PATH': str(config), 'DISCLAUDE_LAUNCHD_API_PORT': '0'}
@@ -78,7 +87,8 @@ def runtime_identity(entry):
 
 def command(name, entry):
     result = subprocess.run(['node', str(root / 'scripts/launchd.mjs'), 'isolated', name],
-        env={**env, 'DISCLAUDE_LAUNCHD_ENTRY': str(baseline_launcher if entry == baseline else entry)}, cwd=root,
+        env={**env, 'DISCLAUDE_LAUNCHD_ENTRY': str(baseline_launcher if entry == baseline else entry),
+             'DISCLAUDE_LAUNCHD_CONFIG_PATH': str(baseline_config if entry == baseline else config)}, cwd=root,
         capture_output=True, text=True, timeout=45)
     (args.output / (str(len(record['stages'])) + '-' + name + '.log')).write_text(result.stdout + result.stderr)
     if result.returncode:
