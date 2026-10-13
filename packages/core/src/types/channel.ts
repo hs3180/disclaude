@@ -95,8 +95,17 @@ export interface OutgoingMessage {
   /** Optional description for logging */
   description?: string;
 
-  /** Thread root message ID for thread replies */
+  /**
+   * Reply parent message ID (om_...), possibly a trigger inside a topic.
+   * The legacy threadId name does not mean Feishu's omt_... thread_id.
+   */
   threadId?: string;
+
+  /**
+   * Explicit topic root message ID (om_...); verifies the parent and takes
+   * precedence when that parent cannot be confirmed in this topic.
+   */
+  threadRootId?: string;
 
   /**
    * Mention targets for @mentioning users/bots in text messages.

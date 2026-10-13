@@ -7,6 +7,24 @@ const event = { threadId: 'thread-1', turnId: 'turn-1', item: { id: 'question-it
 afterEach(() => vi.useRealTimers());
 
 describe('Codex asynchronous question notifications', () => {
+  it('awaits actual delivery, exposes rejection, and never retries duplicate rejected items', async () => {
+    let rejectSend!: () => void;
+    const deliver = vi.fn(() => new Promise<void>((_, reject) => { rejectSend = () => reject(new Error('private sender detail')); }));
+    const onError = vi.fn();
+    const handler = new CodexAsyncUserInput(deliver, vi.fn());
+    try {
+      expect(handler.receive(event, { onError })).toBe(true);
+      await Promise.resolve();
+      const rejected = expect(handler.waitForDelivery(event.threadId, event.turnId)).rejects.toThrow(/Async question was not delivered/);
+      rejectSend();
+      await rejected;
+      expect(onError).toHaveBeenCalledOnce();
+      expect(onError.mock.calls[0][0].message).not.toContain('private sender detail');
+      expect(handler.receive(event, { onError })).toBe(true);
+      expect(deliver).toHaveBeenCalledOnce();
+    } finally { handler.close(); }
+  });
+
   it('preserves question/option text and delivers one non-secret answer to the originating turn', async () => {
     const deliver = vi.fn<(request: AgentInputRequest) => Promise<void>>().mockResolvedValue();
     let release!: () => void;

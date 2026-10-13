@@ -1,0 +1,55 @@
+name: Chromium container acceptance
+
+on:
+  pull_request:
+    paths:
+      - docker/**
+      - scripts/test-chromium-container.mjs
+      - .github/workflows/chromium-acceptance.yml
+  push:
+    branches: [main, master]
+    paths:
+      - docker/**
+      - scripts/test-chromium-container.mjs
+      - .github/workflows/chromium-acceptance.yml
+
+permissions:
+  contents: read
+
+jobs:
+  chromium:
+    name: Chromium runtime (Linux amd64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Record native platform and checked out source
+        run: |
+          test "$(uname -m)" = x86_64
+          git rev-parse HEAD > chromium-source.txt
+          docker info --format '{{.OSType}}/{{.Architecture}}' >> chromium-source.txt
+          sha256sum docker/Dockerfile.chromium docker/start-chromium.sh docker/close-chromium.mjs docker/chromium-cdp-nginx.conf scripts/test-chromium-container.mjs >> chromium-source.txt
+
+      - name: Build existing Chromium distribution
+        run: |
+          docker build --label "org.opencontainers.image.revision=$(git rev-parse HEAD)" -f docker/Dockerfile.chromium -t disclaude-chromium:ci-runtime docker
+          docker image inspect --format '{{.Id}} {{.Os}}/{{.Architecture}}' disclaude-chromium:ci-runtime >> chromium-source.txt
+          test "$(docker image inspect --format '{{.Architecture}}' disclaude-chromium:ci-runtime)" = amd64
+          test "$(docker run --rm --entrypoint sha256sum disclaude-chromium:ci-runtime /usr/local/bin/disclaude-chromium | cut -d ' ' -f 1)" = "$(sha256sum docker/start-chromium.sh | cut -d ' ' -f 1)"
+
+      - name: Verify headed/headless, VNC authentication and lifecycle
+        run: node scripts/test-chromium-container.mjs disclaude-chromium:ci-runtime > chromium-runtime.json
+
+      - name: Retain source and runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chromium-runtime-linux-amd64
+          path: |
+            chromium-source.txt
+            chromium-runtime.json
+          retention-days: 7

@@ -38,6 +38,139 @@ afterEach(() => {
 });
 
 describe('CodexAgentProvider app-server transport', () => {
+  it.each(['active', 'lost-ack', 'unsupported'] as const)('handles native async answers without replay (%s)', async mode => {
+    const { provider, dir } = providerFixture('exit 0');
+    writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
+const fs=require('node:fs');const send=m=>console.log(JSON.stringify(m));
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line);
+ if(m.method==='initialize')send({id:m.id,result:{}});
+ else if(m.method==='thread/start')send({id:m.id,result:{thread:{id:'async-thread'}}});
+ else if(m.method==='turn/start'){
+  fs.appendFileSync(process.env.CODEX_HOME+'/writes','start\\n');
+  send({id:m.id,result:{turn:{id:'async-turn'}}});
+  send({method:'item/completed',params:{threadId:'async-thread',turnId:'async-turn',item:{id:'question',type:'agentMessage',text:'Which scope?',delivery:'async',questions:[{title:'Which scope?'}]}}});
+  if(${JSON.stringify(mode)}==='unsupported')send({method:'turn/completed',params:{threadId:'async-thread',turn:{id:'async-turn',status:'completed'}}});
+ } else if(m.method==='turn/steer'){
+  fs.appendFileSync(process.env.CODEX_HOME+'/writes','steer\\n');
+  if(${JSON.stringify(mode)}==='lost-ack'){process.exit(1);return;}
+  send({id:m.id,result:{turnId:'async-turn'}});
+  send({method:'turn/completed',params:{threadId:'async-thread',turn:{id:'async-turn',status:'completed'}}});
+ }
+});`);
+    const onUserInput = vi.fn<(request: AgentInputRequest) => Promise<void>>().mockResolvedValue();
+    const onAsyncUserInputAnswer = vi.fn().mockResolvedValue(undefined);
+    const stream = provider.queryStream((async function* (): AsyncGenerator<UserInput> {
+      yield { role: 'user', content: 'Original task', inputContext: { actorId: 'owner', chatId: 'chat', sourceMessageId: 'source' } };
+    })(), { sessionKey: `async-${mode}`, settingSources: [], onUserInput,
+      ...(mode === 'unsupported' ? {} : { onAsyncUserInputAnswer }),
+    });
+    const messages: AgentMessage[] = [];
+    const collecting = (async () => { for await (const message of stream.iterator) { messages.push(message); } })();
+    try {
+      if (mode === 'unsupported') {
+        await collecting;
+        expect(onUserInput).not.toHaveBeenCalled();
+        expect(messages.some(m => m.metadata?.terminatedReason === 'turn_failed')).toBe(true);
+        expect(messages.some(m => m.type === 'error' && m.content.includes('Async question'))).toBe(true);
+      } else {
+        await vi.waitFor(() => expect(onUserInput).toHaveBeenCalledOnce());
+        const [[request]] = onUserInput.mock.calls;
+        const response = request.respond({ 'question-1': { answers: ['Original scope'] } });
+        if (mode === 'lost-ack') { await expect(response).rejects.toThrow(/delivery failed/); }
+        else { await response; }
+        await collecting;
+        expect(readFileSync(join(dir, 'home/writes'), 'utf8')).toBe('start\nsteer\n');
+      }
+      expect(onAsyncUserInputAnswer).not.toHaveBeenCalled();
+    } finally { stream.handle.close(); await collecting; provider.dispose(); }
+  });
+
+  it('delivers an async question before reporting a simultaneous completion and keeps its delayed answer in the originating conversation', async () => {
+    const { provider, dir } = providerFixture('exit 0');
+    writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
+const send=m=>console.log(JSON.stringify(m));
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line);
+ if(m.method==='initialize')send({id:m.id,result:{}});
+ else if(m.method==='thread/start')send({id:m.id,result:{thread:{id:'async-thread'}}});
+ else if(m.method==='turn/start'){
+  process.stdout.write(JSON.stringify({id:m.id,result:{turn:{id:'async-turn'}}})+'\\n'+
+   JSON.stringify({method:'item/completed',params:{threadId:'async-thread',turnId:'async-turn',item:{id:'async-question',type:'agentMessage',text:'Any constraint?',delivery:'async',questions:[{title:'Any constraint?'}]}}})+'\\n'+
+   JSON.stringify({method:'turn/completed',params:{threadId:'async-thread',turn:{id:'async-turn',status:'completed'}}})+'\\n');
+  setTimeout(()=>process.exit(0),10);
+ }
+});`);
+    const context = { actorId: 'owner', chatId: 'original-chat', sourceMessageId: 'original-message', threadRootId: 'original-root' };
+    let confirmDelivery!: () => void;
+    const onUserInput = vi.fn<(request: AgentInputRequest, context: AgentInputContext | undefined) => Promise<void>>()
+      .mockImplementation(() => new Promise<void>(resolve => { confirmDelivery = resolve; }));
+    const onAsyncUserInputAnswer = vi.fn().mockResolvedValue(undefined);
+    let release!: () => void;
+    const input = (async function* (): AsyncGenerator<UserInput> {
+      yield { role: 'user', content: 'Original task', inputContext: context };
+      await new Promise<void>(resolve => { release = resolve; });
+    })();
+    const stream = provider.queryStream(input, {
+      sessionKey: 'async-delayed', settingSources: [], onUserInput, onAsyncUserInputAnswer,
+      // The completed turn's sender may still be pending after this short
+      // watchdog window and after its owned app-server exits.
+      env: { DISCLAUDE_STALL_TIMEOUT_MS: '25' },
+    } as AgentQueryOptions);
+    const messages: AgentMessage[] = [];
+    const collecting = (async () => { for await (const message of stream.iterator) { messages.push(message); } })();
+    try {
+      await vi.waitFor(() => expect(onUserInput).toHaveBeenCalledOnce());
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(messages.some(m => m.type === 'result')).toBe(false);
+      expect(messages.some(m => m.type === 'error')).toBe(false);
+      confirmDelivery();
+      await vi.waitFor(() => expect(messages.some(m => m.type === 'result')).toBe(true));
+      expect(onUserInput).toHaveBeenCalledOnce();
+      const [[question, originalContext]] = onUserInput.mock.calls;
+      expect(originalContext).toEqual(context);
+      expect(question.signal.aborted).toBe(false);
+      await new Promise(resolve => setTimeout(resolve, 50));
+      await question.respond({ 'question-1': { answers: ['No extensions'] } });
+      expect(onAsyncUserInputAnswer).toHaveBeenCalledOnce();
+      expect(onAsyncUserInputAnswer.mock.calls[0]).toEqual([
+        expect.objectContaining({ threadId: 'async-thread', turnId: 'async-turn', itemId: 'async-question' }),
+        'Submitted answers to your questions:\n[{"question":"Any constraint?","answers":["No extensions"]}]', context,
+      ]);
+      await expect(question.respond({ 'question-1': { answers: ['Again'] } })).rejects.toThrow(/no longer active/);
+    } finally { confirmDelivery?.(); release?.(); stream.handle.close(); await collecting; provider.dispose(); }
+  });
+
+  it('reports a rejected async-question delivery as failure rather than a successful turn', async () => {
+    const { provider, dir } = providerFixture('exit 0');
+    writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
+const send=m=>console.log(JSON.stringify(m));
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line);
+ if(m.method==='initialize')send({id:m.id,result:{}});
+ else if(m.method==='thread/start')send({id:m.id,result:{thread:{id:'async-thread'}}});
+ else if(m.method==='turn/start'){
+  send({id:m.id,result:{turn:{id:'async-turn'}}});
+  send({method:'item/completed',params:{threadId:'async-thread',turnId:'async-turn',item:{id:'async-question',type:'agentMessage',text:'Any constraint?',delivery:'async',questions:[{title:'Any constraint?'}]}}});
+  send({method:'turn/completed',params:{threadId:'async-thread',turn:{id:'async-turn',status:'completed'}}});
+ }
+});`);
+    const onUserInput = vi.fn().mockRejectedValue(new Error('private transport detail'));
+    const stream = provider.queryStream((async function* (): AsyncGenerator<UserInput> {
+      yield { role: 'user', content: 'Original task', inputContext: { actorId: 'owner', chatId: 'chat', sourceMessageId: 'message' } };
+    })(), { sessionKey: 'async-failed', settingSources: [], onUserInput, onAsyncUserInputAnswer: vi.fn() } as AgentQueryOptions);
+    const messages: AgentMessage[] = [];
+    try {
+      for await (const message of stream.iterator) { messages.push(message); }
+      expect(onUserInput).toHaveBeenCalledOnce();
+      expect(messages.filter(m => m.type === 'result')).toEqual([
+        expect.objectContaining({ metadata: expect.objectContaining({ terminatedReason: 'turn_failed' }) }),
+      ]);
+      expect(messages.map(m => m.content).join('\n')).toContain('Async question');
+      expect(messages.map(m => m.content).join('\n')).not.toContain('private transport detail');
+    } finally { provider.dispose(); }
+  });
+
   it('rejects host tools before starting codex exec', () => {
     const { provider } = providerFixture('exit 0', 'exec');
     const tools: ToolDefinition[] = [{ name: 'read_notebook', description: 'Read', inputSchema: { type: 'object' }, outputSchema: { type: 'object' }, execute: () => Promise.resolve({}) }];
@@ -310,9 +443,77 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
       for await (const message of result.iterator) { messages.push(message); }
       const stallResults = messages.filter(message => message.metadata?.terminatedReason === 'stall');
       expect(stallResults).toHaveLength(1);
-      expect(stallResults[0]?.content).toContain('疑似 stall');
-      expect(stallResults[0]?.metadata?.terminationDetail).toContain('codex app-server stalled for 30ms');
+      expect(stallResults[0]?.content).toContain('Codex 控制通道无响应');
+      expect(stallResults[0]?.metadata?.terminationDetail).toContain('thread/read control probe timed out after 30ms');
+      expect(stallResults[0]?.metadata?.terminationDetail).toContain('stall-turn');
       expect(messages.filter(message => message.type === 'error')).toEqual([]);
+    } finally { provider.dispose(); }
+  });
+
+  it.each(['active', 'unavailable'])('preserves a quiet model wait with %s runtime status', async status => {
+    // Give the fixture RPC time under coverage; completion depends on two
+    // received probes rather than a wall-clock race with the runner.
+    const { provider, dir } = providerFixture('exit 0', 'app-server', { DISCLAUDE_STALL_TIMEOUT_MS: '1000' });
+    writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
+const fs=require('node:fs');const send=m=>console.log(JSON.stringify(m));let probes=0,starts=0;
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line);
+ if(m.method==='initialize')send({id:m.id,result:{}});
+ else if(m.method==='thread/start')send({id:m.id,result:{thread:{id:'quiet-thread'}}});
+ else if(m.method==='turn/start'){
+  fs.writeFileSync(process.env.CODEX_HOME+'/starts',String(++starts));send({id:m.id,result:{turn:{id:'quiet-turn'}}});
+  send({method:'item/reasoning/textDelta',params:{threadId:'quiet-thread',turnId:'quiet-turn',delta:'owned thinking'}});
+ } else if(m.method==='thread/read'){
+  fs.writeFileSync(process.env.CODEX_HOME+'/probe',JSON.stringify({...m.params,count:++probes}));
+  send({id:m.id,result:{thread:{id:'quiet-thread',status:${status === 'active' ? "{type:'active',activeFlags:[]}" : 'undefined'}}}});
+  if(probes===2)setTimeout(()=>{send({method:'item/completed',params:{threadId:'quiet-thread',turnId:'quiet-turn',item:{id:'final',type:'agentMessage',text:'quiet wait completed'}}});send({method:'turn/completed',params:{threadId:'quiet-thread',turn:{id:'quiet-turn',status:'completed'}}});},50);
+ }
+});`);
+    const onActivity = vi.fn(() => { throw new Error('owned observer failure'); });
+    const stream = provider.queryStream((async function* (): AsyncGenerator<UserInput> {
+      yield { role: 'user', content: 'owned quiet wait' };
+    })(), { sessionKey: 'quiet-model', settingSources: [], onActivity } as AgentQueryOptions);
+    const messages: AgentMessage[] = [];
+    try {
+      for await (const message of stream.iterator) { messages.push(message); }
+      expect(messages).toContainEqual(expect.objectContaining({ type: 'text', content: 'quiet wait completed' }));
+      expect(messages.some(m => m.metadata?.terminatedReason === 'stall')).toBe(false);
+      expect(onActivity).toHaveBeenCalledWith('codex:app-server:item/reasoning/textDelta');
+      const probe = JSON.parse(readFileSync(join(dir, 'home/probe'), 'utf8'));
+      expect(probe).toMatchObject({ threadId: 'quiet-thread', includeTurns: false });
+      expect(probe.count).toBeGreaterThanOrEqual(2);
+      expect(readFileSync(join(dir, 'home/starts'), 'utf8')).toBe('1');
+    } finally { provider.dispose(); }
+  });
+
+  it('settles a process exit during an open tool as one correlated stall without replay', async () => {
+    const { provider, dir } = providerFixture('exit 0', 'app-server');
+    writeFileSync(join(dir, 'bin', 'codex'), `#!${process.execPath}
+const fs=require('node:fs');const send=m=>console.log(JSON.stringify(m));
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line);
+ if(m.method==='initialize')send({id:m.id,result:{}});
+ else if(m.method==='thread/start')send({id:m.id,result:{thread:{id:'dead-thread'}}});
+ else if(m.method==='turn/start'){
+  fs.writeFileSync(process.env.CODEX_HOME+'/started','once');send({id:m.id,result:{turn:{id:'dead-turn'}}});
+  send({method:'item/started',params:{threadId:'dead-thread',turnId:'dead-turn',item:{id:'tool',type:'commandExecution',command:'owned tool'}}});
+  setTimeout(()=>process.exit(7),50);
+ }
+});`);
+    const correlation = { runId: 'original-run', chatId: 'original-chat', sourceMessageId: 'original-source', traceId: 'original-trace' };
+    const stream = provider.queryStream((async function* (): AsyncGenerator<UserInput> {
+      yield { role: 'user', content: 'owned process exit', correlation };
+    })(), { sessionKey: 'dead-model', settingSources: [] } as AgentQueryOptions);
+    const messages: AgentMessage[] = [];
+    try {
+      for await (const message of stream.iterator) { messages.push(message); }
+      const terminal = messages.filter(m => m.type === 'result');
+      expect(terminal).toHaveLength(1);
+      expect(terminal[0]?.metadata?.terminatedReason).toBe('stall');
+      expect(terminal[0]?.metadata?.terminationDetail).toContain('exited (code=7');
+      for (const value of Object.values(correlation)) { expect(terminal[0]?.metadata?.terminationDetail).toContain(value); }
+      expect(readFileSync(join(dir, 'home/started'), 'utf8')).toBe('once');
+      expect(messages.some(m => m.content.includes('Session replaced'))).toBe(false);
     } finally { provider.dispose(); }
   });
 
@@ -559,8 +760,9 @@ exit 7
     for await (const message of result.iterator) {
       messages.push(message);
     }
-    const error = messages.find((message) => message.type === 'error');
-    expect(error?.content).toContain('exited (code=7');
+    const terminal = messages.find((message) => message.type === 'result');
+    expect(terminal?.metadata?.terminatedReason).toBe('stall');
+    expect(terminal?.metadata?.terminationDetail).toContain('exited (code=7');
     provider.dispose();
   });
 

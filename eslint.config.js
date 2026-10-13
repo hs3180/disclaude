@@ -4,8 +4,7 @@
  * This configuration uses ESLint v9 flat config format with TypeScript support.
  */
 
-import tsParser from '@typescript-eslint/parser';
-import tsPlugin from '@typescript-eslint/eslint-plugin';
+import tseslint from 'typescript-eslint';
 
 // Legacy test files that still use vi.mock() for external SDKs
 // These will be refactored to use nock or dependency injection instead
@@ -41,7 +40,7 @@ export default [
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',
-      parser: tsParser,
+      parser: tseslint.parser,
       parserOptions: {
         project: [
           './tsconfig.json',
@@ -51,7 +50,7 @@ export default [
       },
     },
     plugins: {
-      '@typescript-eslint': tsPlugin,
+      '@typescript-eslint': tseslint.plugin,
     },
     rules: {
       // TypeScript specific rules

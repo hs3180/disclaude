@@ -68,6 +68,13 @@ export interface CodexAppServerExit {
   stderrTail: string;
 }
 
+export class CodexAppServerRequestTimeoutError extends Error {
+  constructor(readonly method: string) {
+    super(`codex app-server request timed out: ${method}`);
+    this.name = 'CodexAppServerRequestTimeoutError';
+  }
+}
+
 /**
  * Experimental persistent stdio transport for the Codex app-server protocol.
  * CodexAgentProvider selects it only when explicitly configured; `codex exec`
@@ -108,9 +115,9 @@ export class CodexAppServerTransport {
       ...(options.onUserInput ? [
         '--enable', 'default_mode_request_user_input',
         // The feature flag alone exposes the protocol surface. Codex 0.155
-        // also requires the experimental tool config to expose async input to
-        // the model; keep this scoped to app-server children with a host
-        // input callback instead of mutating the user's global config.
+        // also requires the experimental tool config for synchronous input.
+        // Native async-question registration is separately model-catalog
+        // controlled in 0.162. Keep these flags scoped to this child.
         '-c', 'tools.experimental_request_user_input={enabled=true}',
       ] : [])], {
       env: browserAgentEnv(options.env),
@@ -153,7 +160,7 @@ export class CodexAppServerTransport {
     return result;
   }
 
-  request(method: string, params?: unknown): Promise<unknown> {
+  request(method: string, params?: unknown, timeoutMs?: number): Promise<unknown> {
     if (!this.acceptingRequests) {
       return Promise.reject(new Error('codex app-server transport is closed'));
     }
@@ -161,8 +168,8 @@ export class CodexAppServerTransport {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`codex app-server request timed out: ${method}`));
-      }, this.options.requestTimeoutMs ?? 30_000);
+        reject(new CodexAppServerRequestTimeoutError(method));
+      }, timeoutMs ?? this.options.requestTimeoutMs ?? 30_000);
       timer.unref();
       this.pending.set(id, { resolve, reject, timer });
       this.write({ jsonrpc: '2.0', id, method, params });

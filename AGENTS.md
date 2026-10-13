@@ -5,7 +5,11 @@
 - disclaude 只维护一个本地仓库作为 Git 对象库和分支来源。不要为任务重新 `git clone`、下载压缩包、复制完整仓库，或先拉取一份新目录再称为 worktree。
 - 需要分支隔离时，从现有仓库运行 `git worktree add <路径> <已有分支>`；新分支使用 `git worktree add -b <分支> <路径> <基准分支>`。worktree 共享同一仓库的对象和 refs，不是第二份 clone。
 - 创建前先运行 `git worktree list`。优先复用当前任务已有的 worktree；只有确实需要并行工作或隔离分支时才创建新的 worktree。不要让同一分支同时检出到多个 worktree。
-- 不要跨 worktree 链接整个 workspace 的 `node_modules`，以免依赖指向其他分支源码。按需安装依赖并复用包管理器缓存。
+- 仓库统一使用 `package.json` 固定版本的 pnpm、`pnpm-workspace.yaml` 中的 `packages/*` 和唯一的 `pnpm-lock.yaml`。源码检出运行 `pnpm install --frozen-lockfile`；不要生成 `package-lock.json` 或切换包管理器。旧分支仍按其自身提交的 lockfile 工作；通过合并或 cherry-pick 完整迁移提交升级，不能只替换依赖目录。
+- 源码直接导入的外部依赖必须在对应包的 manifest 中声明，不依赖其他 workspace 的传递依赖或 npm 提升布局。依赖变更同步提交 manifest 和 `pnpm-lock.yaml`。预构建分发包仍按发布文档使用 npm 安装；源码开发、CI 和 Docker 构建使用 pnpm。
+- worktree 共享同一文件系统上的 pnpm 内容 store，各自保留 `node_modules` 和本地 workspace 链接树。不要跨 worktree 链接、复制或 bind-mount 整个 `node_modules`，也不要共用 `virtualStoreDir`。默认保留 APFS clone / hardlink 自动选择；实验性全局虚拟 store 保持关闭，启用前须验证 ESM 解析、构建和测试。
+- 新 worktree 默认不安装依赖或构建。只有执行依赖相关任务时才安装；已有依赖且 lockfile 未变时直接复用。暂停使用的 worktree 在确认没有进程、运行配置或需要保留的生成内容后可单独清理自己的依赖和构建产物，不要删除仍需保留的 worktree。
+- 共享 store 不随单个 worktree 删除；`pnpm store prune` 是独立操作，会影响旧分支的离线安装缓存。具体配置和验证步骤见 `docs/worktree-dependencies.md`。
 - 任务结束清理前，检查每个候选目录的 `git status`、上游领先/落后、detached HEAD、忽略文件和运行进程。保留未提交或归属不明的改动、用户数据、运行配置和正在使用的服务目录；不要用 `--force` 掩盖这些状态。移除已结束且可安全清理的目录时使用 `git worktree remove`，保留所需本地分支或为 detached 提交建立 refs，最后运行 `git worktree prune`。临时依赖、构建产物和验证副本仅在确认归本任务所有后清理。
 
 ## 0.6.0 反馈与交付记录
@@ -22,6 +26,7 @@
 
 ## 飞书 Computer use 验收
 
+- Notebook 运行使用配置的远程 Jupyter；disclaude 宿主使用 Node 客户端，不依赖宿主的 Python、venv 或本地 Jupyter 启动。Python 扩展、科学计算依赖和 kernel 由远程 Jupyter 部署环境管理。
 - 真实 Jupyter 验收使用用户 `.env` 中的 `JUPYTERLAB_HOST` / `JUPYTERLAB_PASS`。不要新建或重建本地 JupyterLab 环境作为替代。连接检查、协议实验和完整产品验收分别记录；密码留在宿主，不写入模型上下文、日志或 Project 引用。
 - 每轮先设少量 UI 操作预算，控制调用次数与多模态 token。
 - API、日志、协议记录和文件可核验时优先使用这些证据；只有必要的原生交互或视觉状态检查才使用 UI，避免重复截图、完整无障碍树和盲目重试。

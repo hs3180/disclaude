@@ -4,7 +4,7 @@
 #
 # check_build() must probe the real per-package dist/ artifacts
 # (packages/service/dist/cli.js + packages/core/dist), NOT a root
-# dist/ dir. A clean `npm run build` emits to packages/*/dist, so probing
+# dist/ dir. A clean `pnpm run build` emits to packages/*/dist, so probing
 # "$PROJECT_ROOT/dist" misreports "not built" even after a successful build.
 #
 # This test sources common.sh but overrides PROJECT_ROOT to a throwaway

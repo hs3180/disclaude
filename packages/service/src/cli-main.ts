@@ -40,6 +40,7 @@ import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-m
 import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
 import { createChannelCallbacksFactory } from './utils/channel-handlers.js';
+import { ServiceTurnRecoveryStore } from './service-turn-recovery.js';
 import net from 'node:net';
 import path from 'node:path';
 import { homedir } from 'node:os';
@@ -336,6 +337,24 @@ export async function main(): Promise<void> {
     process.exit(1);
   }
 
+  const turnRecovery = new ServiceTurnRecoveryStore(
+    path.join(workspaceDir, '.disclaude', 'service-turn-recovery.json')
+  );
+  try {
+    const recoveredTurns = turnRecovery.initialize();
+    if (recoveredTurns.length > 0) {
+      logger.warn(
+        { count: recoveredTurns.length },
+        'Marked unfinished turns from the previous process for user-visible reconciliation (Issue #5273)'
+      );
+    }
+  } catch (error) {
+    logger.fatal({ err: error, journalPath: path.join(workspaceDir, '.disclaude', 'service-turn-recovery.json') },
+      'Cannot safely start with an invalid service turn recovery journal (Issue #5273)');
+    processLock?.release();
+    process.exit(1);
+  }
+
   const projectManager = new ProjectManager({
     workspaceDir,
   });
@@ -343,6 +362,7 @@ export async function main(): Promise<void> {
 
   const agentPool = new ChatSessionPool({
     agentPresets: Config.getAgentPresets(),
+    turnRecovery,
     messageBuilderOptions: createFeishuMessageBuilderOptions(),
     cwdProvider: projectManager.createCwdProvider(),
     // Issue #4448 (direction #1): structured resolver alongside the plain
@@ -432,7 +452,7 @@ export async function main(): Promise<void> {
   // Each WiredChannelDescriptor declares its own callback options (e.g., sendDoneSignal),
   // so the routerCallbacksFactory looks up the descriptor by channel type.
   const descriptorMap = new Map(BUILTIN_WIRED_DESCRIPTORS.map((d) => [d.type, d]));
-  const routerCallbacksFactory = (chatId: string) => {
+  const routerCallbacksFactory = (chatId: string, threadRootId?: string) => {
     // Issue #3824: Use resolveChannelForChatId for ownership query fallback.
     // After restart, chatIdChannelMap is empty. resolveChannelForChatId queries
     // all channels via ownsChatId() to find the correct one.
@@ -442,10 +462,10 @@ export async function main(): Promise<void> {
     }
     const descriptor = descriptorMap.get(channel.id);
     if (descriptor) {
-      return descriptor.createCallbacks(channel, channelSetupContext)(chatId);
+      return descriptor.createCallbacks(channel, channelSetupContext)(chatId, threadRootId);
     }
     // Fallback for channels without a registered descriptor
-    return createChannelCallbacksFactory(channel, logger)(chatId);
+    return createChannelCallbacksFactory(channel, logger)(chatId, threadRootId);
   };
   service.initInputMessageRouter(agentPool, routerCallbacksFactory);
 
@@ -481,7 +501,7 @@ export async function main(): Promise<void> {
     logger.info('Shutting down disclaude service...');
 
     try {
-      agentPool.disposeAll();
+      await agentPool.shutdownForServiceRestart({ drainTimeoutMs: 10_000, noticeTimeoutMs: 2_000 });
       await httpApiServer?.stop();
       await lifecycleManager.stopAll();
       await service.stop();
@@ -526,6 +546,18 @@ export async function main(): Promise<void> {
 
     // Start all registered channels via ChannelLifecycleManager (Issue #1594 Phase 2)
     await lifecycleManager.startAll();
+
+    // Channels are ready: report prior-process interruptions even if the
+    // user sends no further message. Failed delivery stays pending for that
+    // session's next available path; startup never replays model inputs.
+    await turnRecovery.deliverPendingNotifications(
+      async (chatId, content, threadRootId) => {
+        const channel = channelManager.resolveChannelForChatId(chatId);
+        if (!channel) { throw new Error('No available channel for interrupted request'); }
+        return await channel.sendMessage({ chatId, type: 'text', text: content, threadId: threadRootId, threadRootId });
+      },
+      { timeoutMs: 3_000 },
+    );
 
     // Log startup info
     for (const { type, config } of channelEntries) {
