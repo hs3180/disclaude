@@ -543,6 +543,20 @@ describe('adaptSDKMessage', () => {
   });
 
   describe('result messages', () => {
+    it.each(['success', 'error_during_execution'])('preserves consumed user IDs on %s results', (subtype) => {
+      const result = adaptSDKMessage(asMsg({ type: 'result', subtype,
+        user_message_uuid: 'run-A', user_message_uuids: ['run-A', 'run-B', 'run-B'],
+      }));
+      expect(result.metadata?.consumedInputIds).toEqual(['run-A', 'run-B']);
+    });
+
+    it('uses the single triggering ID without inferring other consumed messages', () => {
+      expect(adaptSDKMessage(asMsg({ type: 'result', subtype: 'success', user_message_uuid: 'run-A' }))
+        .metadata?.consumedInputIds).toEqual(['run-A']);
+      expect(adaptSDKMessage(asMsg({ type: 'result', subtype: 'success' }))
+        .metadata?.consumedInputIds).toBeUndefined();
+    });
+
     it('should format success result with cost', () => {
       const message = {
         type: 'result' as const,
@@ -882,6 +896,17 @@ describe('adaptSDKMessage', () => {
 });
 
 describe('adaptUserInput', () => {
+  it('stamps the host run ID as a transport UUID without adding it to model content', () => {
+    const runId = '1b9e7dea-84d2-4993-9bd8-274cbadf37ef';
+    const result = adaptUserInput({ role: 'user', content: 'ordinary supplement',
+      correlation: { runId, chatId: 'chat', sourceMessageId: 'source-B', traceId: 'trace-B' } });
+    expect(result.uuid).toBe(runId);
+    expect(result.message.content).toBe('ordinary supplement');
+    expect(adaptUserInput({ role: 'user', content: 'no correlation' }).uuid).toBeUndefined();
+    expect(adaptUserInput({ role: 'user', content: 'invalid host ID',
+      correlation: { runId: 'not-a-uuid', chatId: 'chat', sourceMessageId: 'source', traceId: 'trace' } }).uuid).toBeUndefined();
+  });
+
   it('should convert UserInput to SDKUserMessage', () => {
     const input = {
       role: 'user' as const,

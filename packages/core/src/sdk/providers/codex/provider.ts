@@ -75,9 +75,11 @@ import {
 import { resolveCodexSandboxPolicy, type CodexSandboxLevel } from './sandbox-policy.js';
 import { CodexSessionGovernor, type SessionRegistration } from './session-governor.js';
 import { CodexAppServerLifecycle, CodexNoActiveTurnError } from './app-server-lifecycle.js';
-import type {
-  CodexAppServerDynamicToolCallRequest,
-  CodexAppServerDynamicToolCallResult,
+import { LiveInputRejectedError } from '../../live-input.js';
+import {
+  CodexAppServerRpcError,
+  type CodexAppServerDynamicToolCallRequest,
+  type CodexAppServerDynamicToolCallResult,
 } from './app-server-transport.js';
 import { createCodexDynamicToolRegistry } from './dynamic-tools.js';
 import type { AgentInputRequest } from '../../user-input.js';
@@ -1689,9 +1691,22 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           ? Promise.reject(new Error('codex app-server stream is closed'))
           : lifecycle?.interrupt(sessionKey) ?? Promise.reject(new Error('No active app-server turn')),
         steer: async (text) => {
-          if (stopped || !lifecycle) {throw new Error('No active app-server turn');}
-          turnCanRetry = false;
-          return { turnId: await lifecycle.steer(sessionKey, text) };
+          try {
+            if (stopped || !lifecycle) {
+              throw new CodexNoActiveTurnError('steer', lifecycle?.snapshot(sessionKey) ?? { sessionKey, state: 'idle' });
+            }
+            turnCanRetry = false;
+            return { turnId: await lifecycle.steer(sessionKey, text) };
+          } catch (error) {
+            // Only explicit non-acceptance permits the host to enqueue once.
+            // Transport failures, internal errors and mismatched ACKs retain
+            // their original cause and unknown delivery outcome.
+            if (error instanceof CodexNoActiveTurnError ||
+                (error instanceof CodexAppServerRpcError && [-32600, -32601, -32602].includes(error.code))) {
+              throw new LiveInputRejectedError(error.message, { cause: error });
+            }
+            throw error;
+          }
         },
         get sessionId(): string | undefined {
           return threadId;
