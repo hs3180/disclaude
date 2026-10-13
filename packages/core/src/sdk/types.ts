@@ -69,6 +69,8 @@ export type MessageRole = 'user' | 'assistant' | 'system';
 
 /** Agent 消息元数据 */
 export interface AgentMessageMetadata {
+  /** Host input UUIDs the provider confirms were consumed by this result. */
+  consumedInputIds?: string[];
   /** Provider-declared assistant phase; commentary is visible progress, not a final result. */
   phase?: 'commentary' | 'final_answer';
   /** 工具名称 */
@@ -252,6 +254,8 @@ export interface AgentQueryOptions {
   onActivity?: (type: string) => void;
   /** Host interaction callback; never serialized into model input or tool traces. */
   onUserInput?: (request: AgentInputRequest, context: AgentInputContext | undefined) => Promise<void>;
+  /** Admit a delayed, non-secret async answer as new input in its original conversation. */
+  onAsyncUserInputAnswer?: (request: AgentInputRequest, text: string, context: AgentInputContext) => Promise<void>;
   /** 工作目录 */
   cwd?: string;
   /**
@@ -323,7 +327,13 @@ export interface QueryHandle {
   cancel(): void;
   /** 会话 ID */
   readonly sessionId?: string;
-  /** Live same-turn steering, when the selected transport supports it. */
+  /** Channel inputs can join an active turn; omission means they are queued. */
+  readonly inputDelivery?: 'streaming' | 'queued';
+  /**
+   * Live same-turn steering, when the selected transport supports it.
+   * Throw LiveInputRejectedError only for confirmed non-acceptance; all other
+   * failures have an unknown delivery outcome and must not be retried by hosts.
+   */
   steer?(input: string): Promise<{ turnId: string }>;
   /** Await acknowledgement that the active turn was interrupted. */
   interrupt?(): Promise<void>;

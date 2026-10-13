@@ -1,17 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
+import yaml from 'js-yaml';
 
 describe('single service public contract', () => {
   it('exports only the unified executable and service workspace', () => {
     const root = JSON.parse(readFileSync('package.json', 'utf8'));
-    const lock = JSON.parse(readFileSync('package-lock.json', 'utf8'));
+    const lock = yaml.load(readFileSync('pnpm-lock.yaml', 'utf8')) as { importers: Record<string, unknown> };
     const service = JSON.parse(readFileSync('packages/service/package.json', 'utf8'));
     expect(Object.keys(root.bin)).toEqual(['disclaude']);
     expect(root.dependencies['@disclaude/service']).toBeDefined();
     expect(service.bin).toBeUndefined();
     expect(root.dependencies['@disclaude/primary-node']).toBeUndefined();
-    expect(lock.packages['packages/primary-node']).toBeUndefined();
-    expect(lock.packages['packages/worker-node']).toBeUndefined();
+    expect(lock.importers['packages/primary-node']).toBeUndefined();
+    expect(lock.importers['packages/worker-node']).toBeUndefined();
     expect(existsSync('packages/primary-node')).toBe(false);
     expect(existsSync('packages/worker-node')).toBe(false);
     expect(existsSync('bin/disclaude-primary.js')).toBe(false);
@@ -23,7 +24,7 @@ describe('single service public contract', () => {
     }
   });
   it('keeps release-facing metadata and documentation on the unified entrypoint', () => {
-    const lockText = readFileSync('package-lock.json', 'utf8');
+    const lockText = readFileSync('pnpm-lock.yaml', 'utf8');
     expect(lockText).not.toMatch(/@disclaude\/(?:primary|worker)-node|disclaude-worker/u);
 
     const releaseDocs = [

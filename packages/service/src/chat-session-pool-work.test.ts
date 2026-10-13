@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 const repo = fileURLToPath(new URL('../../../', import.meta.url));
 
 describe('idle reclamation across real ChatAgent work boundaries', () => {
-  it.each(['history', 'tool', 'background', 'legacy-background', 'queued', 'stall'])('protects %s work using the actual pool and agent', (scenario) => {
+  it.each(['history', 'tool', 'background', 'legacy-background', 'queued'])('protects %s work using the actual pool and agent', (scenario) => {
     const root = mkdtempSync(join(tmpdir(), 'disclaude-pool-work-'));
     try {
       const configPath = join(root, 'config.json');
@@ -23,7 +23,7 @@ describe('idle reclamation across real ChatAgent work boundaries', () => {
         const first = defer(), next = defer(), history = defer(), done = defer(), finishing = defer();
         const parked = defer();
         let closed = 0, doneCount = 0;
-        const output = [], stopNotices = [];
+        const output = [];
         const sdk = getProvider('claude');
         sdk.queryStream = () => ({
           handle: { close: () => { closed++; parked.resolve(); next.resolve(); }, cancel: () => { parked.resolve(); } },
@@ -42,7 +42,7 @@ describe('idle reclamation across real ChatAgent work boundaries', () => {
               finishing.resolve(); await next.promise;
               yield { type: 'tool_result', content: '', role: 'tool', metadata: { toolName: 'Bash' } };
             }
-            if (scenario === 'queued' || scenario === 'stall') { finishing.resolve(); await next.promise; }
+            if (scenario === 'queued') { finishing.resolve(); await next.promise; }
             yield { type: 'result', content: '', metadata: { stopReason: 'end_turn' } };
             if (scenario === 'background') {
               await next.promise;
@@ -67,8 +67,7 @@ describe('idle reclamation across real ChatAgent work boundaries', () => {
             else { done.resolve(); }
           },
         };
-        const pool = new ChatSessionPool({ idleTimeoutMs: 1000, busyTurnHardCapMs: 0,
-          onBusyCapExceeded: (_chat, _minutes, decision) => { stopNotices.push(decision); } });
+        const pool = new ChatSessionPool({ idleTimeoutMs: 1000 });
         const agent = pool.getOrCreateChatAgent('owned-chat', callbacks, 'owned-root');
         try {
           const admitted = agent.processMessage({ chatId: 'owned-chat', payload: 'first', messageId: 'first-source', threadRootId: 'owned-root' });
@@ -85,21 +84,6 @@ describe('idle reclamation across real ChatAgent work boundaries', () => {
             await finishing.promise;
             await agent.processMessage({ chatId: 'owned-chat', payload: 'second', messageId: 'second-source', threadRootId: 'owned-root' });
             next.resolve();
-          } else if (scenario === 'stall') {
-            await finishing.promise;
-            const original = agent.pendingWorkContext;
-            assert.equal(original.sourceMessageId, 'first-source');
-            assert.equal(typeof original.runId, 'string');
-            const sweepAt = Date.now() + 30 * 60_000;
-            assert.deepEqual(pool.evictIdleAgents(sweepAt), []);
-            assert.deepEqual(pool.evictIdleAgents(sweepAt + 60_000), []);
-            assert.equal(closed, 1);
-            assert.equal(stopNotices.length, 1);
-            assert.equal(stopNotices[0].kind, 'no-progress');
-            assert.equal(stopNotices[0].runId, original.runId);
-            assert.equal(stopNotices[0].sourceMessageId, 'first-source');
-            assert.equal(stopNotices[0].traceId, original.traceId);
-            assert.equal(stopNotices[0].threadRootId, 'owned-root');
           } else if (scenario === 'tool') {
             await finishing.promise;
             assert.equal(agent.isBusy, true);
@@ -108,12 +92,11 @@ describe('idle reclamation across real ChatAgent work boundaries', () => {
               assert.equal(pool.get('owned-chat', 'owned-root'), agent);
               assert.equal(pool.getPoolStats().busy, 1);
               assert.equal(closed, 0);
-              assert.equal(stopNotices.length, 0);
             }
             next.resolve();
           }
           await done.promise;
-          if (scenario !== 'history' && scenario !== 'stall' && scenario !== 'tool') {
+          if (scenario !== 'history' && scenario !== 'tool') {
             assert.equal(agent.isBusy, false);
             assert.deepEqual(pool.evictIdleAgents(Date.now() + 1500), []);
             assert.equal(closed, 0);

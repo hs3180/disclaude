@@ -71,26 +71,6 @@ export interface ChatSessionPoolOptions {
    */
   idleSweepIntervalMs?: number;
 
-  /**
-   * Optional absolute turn limit, in ms. Default: 0 (disabled).
-   * Pending work is normally bounded by the no-progress timeout; an explicit
-   * positive cap additionally stops work even when it is still progressing.
-   */
-  busyTurnHardCapMs?: number;
-
-  /** Maximum time without SDK/tool/input activity. Default: 30 minutes. */
-  busyTurnStallTimeoutMs?: number;
-
-  /**
-   * Optional observer, fired after pending work is stopped by either
-   * activity policy. Fire-and-forget by contract — a failing notify must not
-   * break the sweep for other agents (errors are logged, not thrown).
-   *
-   * ChatAgent delivers the policy notice through the original turn's channel,
-   * whether or not this observer is configured.
-   */
-  onBusyCapExceeded?: (chatId: string, busyMinutes: number, decision: BusyTurnStopDecision) => Promise<void> | void;
-
   /** Durable journal for interrupted turns caused by a service restart. */
   turnRecovery?: ServiceTurnRecoveryStore;
 
@@ -107,38 +87,10 @@ export interface ChatSessionPoolOptions {
 
 const logger = createLogger('ChatSessionPool');
 
-export interface BusyTurnStopDecision {
-  kind: 'no-progress' | 'wall-clock';
-  sessionKey: string;
-  elapsedMs: number;
-  noProgressMs: number;
-  limitMs: number;
-  lastActivityAt: number;
-  lastActivityType: string;
-  runId?: string;
-  sourceMessageId?: string;
-  traceId?: string;
-  threadRootId?: string;
-}
-
 /** Issue #4169: Default idle timeout before an inactive agent is evicted. */
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 /** Issue #4169: Default idle-sweep interval. */
 const DEFAULT_IDLE_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
-/** Issue #5272: progressing work has no default wall-clock limit. */
-const DEFAULT_BUSY_TURN_HARD_CAP_MS = 0;
-const DEFAULT_BUSY_TURN_STALL_TIMEOUT_MS = 30 * 60_000;
-
-/**
- * Issue #4620 (review fix): composite guard key for `busyTurnStoppedFor`.
- * `\x00` can't appear in a sessionKey (chatId/threadRoot are Feishu IDs), so
- * the pair is unambiguous — a bare timestamp would collide across chats whose
- * turns start in the same millisecond (group broadcast).
- */
-function busyTurnGuardKey(sessionKey: string, turnStartedAtMs: number): string {
-  return `${sessionKey}\x00${turnStartedAtMs}`;
-}
-
 // Re-export so existing `./chat-session-pool.js` importers keep working; the
 // implementation now lives in core next to buildSessionKey (PR #4590 review N4
 // — the `::` separator had been hardcoded here and in the pool test mock).
@@ -184,7 +136,7 @@ export type AgentPresetSwitchResult =
  * Internally the pool keys agents on `buildSessionKey(chatId, threadRootId)`
  * (`chatId` for p2p/plain chats, `chatId::threadRoot` inside topic groups), so
  * each thread's context stays isolated. Everything user-facing — the agent's
- * `boundChatId`, callbacks, busy-cap notification — still receives the plain
+ * `boundChatId` and callbacks — still receives the plain
  * `chatId`, so replies route to the chat exactly as before. Lazy migration:
  * messages without a `threadRootId` keep using the chat-scoped key, so
  * existing sessions are unaffected until a thread message starts a new one.
@@ -217,28 +169,6 @@ export class ChatSessionPool {
   private readonly lastUsedAt = new Map<string, number>();
   /** Issue #4169: Periodic sweep timer (unref'd) for idle eviction. */
   private idleSweepTimer?: ReturnType<typeof setInterval>;
-  /**
-   * Issue #4577: When each chat's current busy turn started (ms epoch).
-   * Populated by the idle sweep when it first observes `isBusy`; cleared when
-   * the agent goes idle again (or is reset/disposed). Bounded by the pool
-   * size — one entry per currently-busy chat, deleted on turn end.
-   *
-   * Issue #4620: now a FALLBACK only — the primary measure is the agent's
-   * authoritative `turnStartedAtMs` (set at turn start, not at sweep
-   * observation), which cannot accumulate across back-to-back turns.
-   */
-  private readonly busySince = new Map<string, number>();
-  /**
-   * Issue #4620: turns already stopped by the busy cap, as composite
-   * `sessionKey\x00turnStartedAtMs` keys (review fix: a bare timestamp
-   * collides across chats — a group broadcast can start turns in several
-   * chats within the same millisecond). The authoritative
-   * `turnStartedAtMs` stays constant for the whole (stopped) turn, so the
-   * sweep needs a separate guard against re-stopping the same turn on every
-   * tick — this set holds the turns it has already acted on. Cleared when
-   * the turn ends (agent idle).
-   */
-  private readonly busyTurnStoppedFor = new Set<string>();
   /** Issue #4256: Peak concurrent agent count since pool start (leak diagnostics). */
   private peakActive = 0;
   /**
@@ -256,10 +186,6 @@ export class ChatSessionPool {
   private isShuttingDown = false;
 
   constructor(options: ChatSessionPoolOptions = {}) {
-    if (options.busyTurnStallTimeoutMs !== undefined && options.busyTurnStallTimeoutMs > 0 &&
-        options.busyTurnStallTimeoutMs < (options.idleSweepIntervalMs ?? DEFAULT_IDLE_SWEEP_INTERVAL_MS)) {
-      throw new Error('busyTurnStallTimeoutMs must be at least idleSweepIntervalMs');
-    }
     this.options = options;
     this.forgetProviderSession =
       options.forgetProviderSession ??
@@ -617,14 +543,6 @@ export class ChatSessionPool {
     if (agent) {
       this.agents.delete(sessionKey);
       this.lastUsedAt.delete(sessionKey);
-      // Issue #4577: clear the busy-turn marker along with the agent.
-      this.busySince.delete(sessionKey);
-      // Issue #4620: forget the stop-guard too — a disposed agent's
-      // turn-start timestamp must not suppress a future turn's cap.
-      const stoppedFor = agent.turnStartedAtMs;
-      if (typeof stoppedFor === 'number' && stoppedFor > 0) {
-        this.busyTurnStoppedFor.delete(busyTurnGuardKey(sessionKey, stoppedFor));
-      }
       agent.dispose();
     }
   }
@@ -677,10 +595,6 @@ export class ChatSessionPool {
     this.agents.clear();
     this.projectSessions.clear();
     this.lastUsedAt.clear();
-    // Issue #4577: clear busy-turn markers along with the agents.
-    this.busySince.clear();
-    // Issue #4620: clear the stop-guard set as well.
-    this.busyTurnStoppedFor.clear();
     this.callbacksBySession.clear();
     this.selectedPresetBySession.clear();
   }
@@ -753,14 +667,8 @@ export class ChatSessionPool {
    * Issue #4169: Evict (dispose) agents idle longer than the idle timeout.
    *
    * Active turns, admitted/queued requests, and live background tasks are
-   * protected from idle disposal. Work exceeding the inactivity policy or
-   * an explicitly configured absolute cap is stopped with a user notice,
-   * then becomes eligible for ordinary reclamation after it unwinds.
-   *
-   * The busy cap runs even when idle eviction is disabled (`idleTimeoutMs`
-   * <= 0) — same principle as #4256's always-on snapshot: the
-   * memory-bounding control must stay live precisely when the pool is
-   * unbounded.
+   * protected from idle disposal until the work completes or is explicitly
+   * stopped. The pool never stops pending work based on elapsed time.
    *
    * @param now - Injectable clock for deterministic testing (defaults to Date.now()).
    * @returns Session keys of the agents that were evicted. Issue #4587 (part 2):
@@ -774,17 +682,7 @@ export class ChatSessionPool {
       // An admitted message or a live background task is work even when the
       // main SDK turn has not started or has already returned its result.
       if (agent.isBusy || agent.hasPendingWork) {
-        this.enforceBusyTurnCap(sessionKey, agent, now);
         continue;
-      }
-      // Issue #4577: turn over — clear the busy-start marker so the next
-      // busy turn starts a fresh cap window. Issue #4620: also forget the
-      // stop-guard for this agent's last authoritative turn-start, so a
-      // future turn that happens to reuse a timestamp isn't skipped.
-      const stoppedFor = agent.turnStartedAtMs || this.busySince.get(sessionKey);
-      this.busySince.delete(sessionKey);
-      if (typeof stoppedFor === 'number' && stoppedFor > 0) {
-        this.busyTurnStoppedFor.delete(busyTurnGuardKey(sessionKey, stoppedFor));
       }
       if (timeout <= 0) { continue; }
       const last = Math.max(this.lastUsedAt.get(sessionKey) ?? now, agent.lastActivityAt ?? 0);
@@ -805,89 +703,6 @@ export class ChatSessionPool {
     // Issue #4256: tally evictions for the leak-diagnostics snapshot.
     this.totalEvictions += evicted.length;
     return evicted;
-  }
-
-  /**
-   * Bound pending work by inactivity and an optional absolute turn cap.
-   * Decisions run at the sweep interval and retain the authoritative turn
-   * clock and once-per-turn stop guard. Stops use the /stop path, preserving
-   * conversation context, then fire `onBusyCapExceeded`. Notification is
-   * fire-and-forget — a failing channel must not break the sweep for other
-   * agents.
-   *
-   * Issue #4587 (part 2): `sessionKey` is the pool map key (`chatId`, or
-   * `chatId::threadRoot` for a topic-group thread). Everything that talks to
-   * the OUTSIDE — `agent.stop()`, the notify hook — receives the plain
-   * chatId, derived here, because the agent's boundChatId and the channel
-   * both key on chatId, never on the composite session key.
-   */
-  private enforceBusyTurnCap(
-    sessionKey: string,
-    agent: Pick<ChatAgent, 'isBusy' | 'hasPendingWork' | 'turnStartedAtMs' | 'lastActivityAt' | 'lastActivityType' | 'pendingWorkContext' | 'stop'>,
-    now: number
-  ): void {
-    const cap = this.options.busyTurnHardCapMs ?? DEFAULT_BUSY_TURN_HARD_CAP_MS;
-    const stall = this.options.busyTurnStallTimeoutMs ?? DEFAULT_BUSY_TURN_STALL_TIMEOUT_MS;
-    // Issue #4620: measure the CURRENT turn from the agent's authoritative
-    // turn-start timestamp, not from when the sweep first observed isBusy.
-    // The observation-based marker survived turn boundaries whenever every
-    // sweep tick landed mid-turn of back-to-back turns — after 90 min of
-    // session wall-clock, a brand-new turn was insta-killed. When the agent
-    // does not expose the timestamp (older implementation), fall back to the
-    // observation-based marker for compatibility.
-    const turnStarted = typeof agent.turnStartedAtMs === 'number' ? agent.turnStartedAtMs : 0;
-    let since = turnStarted > 0 ? turnStarted : this.busySince.get(sessionKey);
-    if (since === undefined) {
-      this.busySince.set(sessionKey, now);
-      since = now;
-    }
-    const lastActivityAt = agent.lastActivityAt > 0 ? agent.lastActivityAt : since;
-    const noProgressMs = Math.max(0, now - lastActivityAt);
-    const elapsedMs = Math.max(0, now - since);
-    const kind = cap > 0 && elapsedMs >= cap ? 'wall-clock'
-      : stall > 0 && noProgressMs >= stall ? 'no-progress' : undefined;
-    if (!kind) { return; }
-    // Issue #4620: the authoritative timestamp is constant for the whole
-    // (stopped) turn — without this guard every subsequent sweep tick would
-    // re-stop the same turn. Keyed by sessionKey+timestamp so concurrent
-    // turns in different chats that start within the same millisecond
-    // (group broadcast) don't collide. Observation fallback re-arms via
-    // marker delete (same value can't repeat across turns).
-    const guardKey = busyTurnGuardKey(sessionKey, since);
-    if (this.busyTurnStoppedFor.has(guardKey)) { return; }
-    this.busyTurnStoppedFor.add(guardKey);
-    const decision: BusyTurnStopDecision = { ...agent.pendingWorkContext, kind, sessionKey, elapsedMs, noProgressMs,
-      limitMs: kind === 'wall-clock' ? cap : stall, lastActivityAt,
-      lastActivityType: agent.lastActivityType ?? 'busy-observation' };
-    const busyMin = Math.round((now - since) / 60000);
-    // Issue #4587 (part 2): strip the `::threadRoot` suffix for everything
-    // that addresses the chat (agent boundChatId guard + user notification).
-    const chatId = chatIdOfSessionKey(sessionKey);
-    logger.warn(
-      { chatId, ...decision, busyMinutes: busyMin, isBusy: agent.isBusy, hasPendingWork: agent.hasPendingWork },
-      'Pending work exceeded activity policy — stopping query'
-    );
-    const basis = decision.kind === 'no-progress'
-      ? `连续 ${Math.round(decision.noProgressMs / 60_000)} 分钟无 SDK/工具活动`
-      : `达到配置的绝对上限 ${Math.round(decision.limitMs / 60_000)} 分钟`;
-    const stopNotice = `⏹️ **响应已停止**（${decision.kind}；已运行 ${busyMin} 分钟；${basis}；` +
-      `最近活动距今 ${Math.round(decision.noProgressMs / 60_000)} 分钟）\n\n` +
-      '请先检查已有结果，再发送消息继续。';
-    if (agent.stop(chatId, stopNotice) === false) {
-      this.busyTurnStoppedFor.delete(guardKey);
-      logger.warn({ chatId, ...decision }, 'No live query accepted the activity-policy stop');
-      return;
-    }
-    // Notify the user fire-and-forget: channel failure must not propagate
-    // into the sweep loop.
-    const notify = this.options.onBusyCapExceeded;
-    if (notify) {
-      const reportFailure = (err: unknown): void => {
-        logger.error({ err, chatId, sessionKey }, 'Failed to send busy-cap notification');
-      };
-      try { void Promise.resolve(notify(chatId, busyMin, decision)).catch(reportFailure); }
-      catch (err) { reportFailure(err); }
-    }
   }
 
   /**

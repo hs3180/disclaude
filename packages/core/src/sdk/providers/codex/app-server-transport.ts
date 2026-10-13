@@ -12,6 +12,14 @@ import { parseAgentInputParams, validateAgentInputAnswers, type AgentInputReques
 
 type JsonRpcId = number | string;
 
+/** A received RPC error is distinct from a missing or timed-out response. */
+export class CodexAppServerRpcError extends Error {
+  constructor(readonly code: number, message: string) {
+    super(`Codex app-server error ${code}: ${message}`);
+    this.name = 'CodexAppServerRpcError';
+  }
+}
+
 interface JsonRpcMessage {
   id?: JsonRpcId;
   method?: string;
@@ -115,9 +123,9 @@ export class CodexAppServerTransport {
       ...(options.onUserInput ? [
         '--enable', 'default_mode_request_user_input',
         // The feature flag alone exposes the protocol surface. Codex 0.155
-        // also requires the experimental tool config to expose async input to
-        // the model; keep this scoped to app-server children with a host
-        // input callback instead of mutating the user's global config.
+        // also requires the experimental tool config for synchronous input.
+        // Native async-question registration is separately model-catalog
+        // controlled in 0.162. Keep these flags scoped to this child.
         '-c', 'tools.experimental_request_user_input={enabled=true}',
       ] : [])], {
       env: browserAgentEnv(options.env),
@@ -300,7 +308,7 @@ export class CodexAppServerTransport {
       this.pending.delete(message.id);
       clearTimeout(waiter.timer);
       if (message.error) {
-        waiter.reject(new Error(`Codex app-server error ${message.error.code}: ${message.error.message}`));
+        waiter.reject(new CodexAppServerRpcError(message.error.code, message.error.message));
       } else {
         waiter.resolve(message.result);
       }

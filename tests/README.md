@@ -1,8 +1,8 @@
 # Test entry points
 
-`npm test` runs core behavior checks through `vitest.config.ts`. `npm run test:coverage` runs the same assertions with coverage; CI uses this once, instead of running both commands in successive jobs. `tests/e2e/**` is excluded from this configuration. The RFC 3329 component checks remain in the unit suite under `tests/unit/rfc3329`; their fake message senders and direct component calls do not prove deployed channel behavior.
+`pnpm test` runs core behavior checks through `vitest.config.ts`. `pnpm run test:coverage` runs the same assertions with coverage; CI uses this once, instead of running both commands in successive jobs. `tests/e2e/**` is excluded from this configuration. The RFC 3329 component checks remain in the unit suite under `tests/unit/rfc3329`; their fake message senders and direct component calls do not prove deployed channel behavior.
 
-`npm run test:e2e -- <test-file>` builds the product and runs selected use cases through `vitest.e2e.config.ts`. The E2E configuration retains the shared resource cleanup setup and disables unit coverage. Skipped cases mean the required environment was not supplied, never that the use case passed. Select the case and supply its documented environment; a default run is not release acceptance.
+`pnpm run test:e2e <test-file>` builds the product and runs selected use cases through `vitest.e2e.config.ts`. The E2E configuration retains the shared resource cleanup setup and disables unit coverage. Skipped cases mean the required environment was not supplied, never that the use case passed. Select the case and supply its documented environment; a default run is not release acceptance.
 
 | Use case | Entry under `tests/e2e/` | Actual dependency and evidence boundary |
 | --- | --- | --- |
@@ -13,7 +13,7 @@
 | Static Feishu card delivery | `static-card-feishu.test.ts` | Explicit authorized test chat and credentials. Real outgoing API/readback with an in-process channel fixture; does not prove incoming WebSocket callbacks or desktop rendering. |
 | DeepSeek tool execution | `deepseek-mode.test.ts` | Explicit real model credentials and dsh; invokes the provider directly. This is bounded provider/artifact evidence, not the full deployed chat path. |
 
-Actual package installation remains the separate `npm run test:install:checkout -- --matrix` CI job. `tests/git-release-install.test.ts` checks the generator with local source fixtures; it does not install or start the distribution.
+Actual package installation remains the separate `pnpm run test:install:checkout --matrix` CI job. `tests/git-release-install.test.ts` checks the generator with local source fixtures; it does not install or start the distribution.
 
 This is the current separation of the Vitest suites, not completion of repository-wide test consolidation (#5016). Historical shell/deployment runners, opt-in model checks within packages, and the bounded provider/channel fixtures above still need review against real product entry points. Retain useful assertions while correcting their evidence labels; do not delete coverage solely because a test uses mocks. Historical release reports describe the candidates and paths used at the time and are not current execution instructions.
 
@@ -26,7 +26,7 @@ does not establish a release-level pass.
 Run the foreground-only installation check through the owned-resource runner:
 
 ```sh
-npm run test:install:checkout -- --matrix
+pnpm run test:install:checkout --matrix
 ```
 
 Use the 64-character source fingerprints from the independently verified

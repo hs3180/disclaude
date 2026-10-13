@@ -137,6 +137,13 @@ export function adaptSDKMessage(message: SDKMessage, taskRegistry?: TaskSubjectR
     }
 
     case 'result': {
+      // Streaming inputs may be folded into one turn. Only the native result
+      // can confirm which submitted UUIDs were consumed; an input replay or
+      // first assistant frame can precede later fold-ins.
+      const consumed = [...(Array.isArray(message.user_message_uuids) ? message.user_message_uuids : []),
+        ...(typeof message.user_message_uuid === 'string' ? [message.user_message_uuid] : [])];
+      const consumedInputIds = [...new Set(consumed.filter(id => typeof id === 'string' && id.length > 0))];
+      if (consumedInputIds.length > 0) { metadata.consumedInputIds = consumedInputIds; }
       // Issue #4320 (part 2): extract SDK result observability fields for ALL
       // result subtypes, not just success. A premature end via error_max_turns
       // (or error_max_budget_usd / error_max_structured_output_retries) is
@@ -382,6 +389,8 @@ export function adaptUserInput(input: UserInput): SDKUserMessage {
     },
     parent_tool_use_id: null,
     session_id: '',
+    ...(input.correlation && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(input.correlation.runId)
+      ? { uuid: input.correlation.runId as NonNullable<SDKUserMessage['uuid']> } : {}),
   };
 }
 

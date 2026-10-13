@@ -396,6 +396,17 @@ describe('ClaudeSDKProvider', () => {
   // --------------------------------------------------------------------------
 
   describe('queryStream', () => {
+    it.each([undefined, 'auto'] as const)('declares provider-neutral streaming input delivery before SDK startup (%s)', autoCompactWindow => {
+      mockQuery.mockReturnValue({ close: vi.fn(), async *[Symbol.asyncIterator]() {} });
+      const result = provider.queryStream((async function* () { yield { role: 'user', content: 'owned input' } as UserInput; })(), {
+        settingSources: [], autoCompactWindow,
+      });
+      try {
+        expect(result.handle.inputDelivery).toBe('streaming');
+        expect(result.handle.steer).toBeUndefined();
+      } finally { result.handle.close(); }
+    });
+
     it('should return handle and iterator from SDK query', async () => {
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
 

@@ -60,8 +60,7 @@ export interface ScheduledTask {
    *
    * The agent is NOT cancelled when the timeout fires — the scheduler stops
    * waiting and records a neutral timeout outcome (the turn may still finish
-   * in the background); genuinely stuck turns are killed separately by the
-   * agent pool's busy-turn hard cap (#4577).
+   * in the background).
    *
    * Defaults to DEFAULT_TASK_TIMEOUT_MS (2 hours) when not specified. Tasks
    * that legitimately run longer (long experiments, multi-step waits) should

@@ -812,12 +812,6 @@ export class Config {
     return fileConfigOnly.agent?.sdkTimeoutMs ?? 300_000;
   }
 
-  static getBusyTurnPolicy(): { busyTurnHardCapMs: number; busyTurnStallTimeoutMs: number } {
-    return {
-      busyTurnHardCapMs: fileConfigOnly.agent?.busyTurnHardCapMs ?? 0,
-      busyTurnStallTimeoutMs: fileConfigOnly.agent?.busyTurnStallTimeoutMs ?? 30 * 60_000,
-    };
-  }
 }
 
 // ============================================================================

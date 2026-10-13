@@ -296,7 +296,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
 
     if (options.autoCompactWindow === 'auto') {
       return withDiscoveredCompaction(input, options, (nextInput, nextOptions) =>
-        this.queryStream(nextInput, nextOptions));
+        this.queryStream(nextInput, nextOptions), 'streaming');
     }
 
     // Issue #3378: Snapshot process listeners BEFORE calling SDK query().
@@ -696,6 +696,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
 
     return {
       handle: {
+        inputDelivery: 'streaming',
         close: () => {
           if ('close' in queryResult && typeof queryResult.close === 'function') {
             queryResult.close();

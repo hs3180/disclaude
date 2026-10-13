@@ -1,21 +1,49 @@
 # CLAUDE.md
 
-Guidance for Claude Code when working in this repository. Disclaude is a multi-platform AI agent bot: it bridges messaging platforms (Feishu/Lark, REST) with agent-SDK runtimes (Claude Code CLI, pi, Codex CLI) and an on-prem scheduler. npm-workspaces monorepo.
+Guidance for Claude Code when working in this repository. Disclaude is a multi-platform AI agent bot: it bridges messaging platforms (Feishu/Lark, REST) with agent-SDK runtimes (Claude Code CLI, pi, Codex CLI) and an on-prem scheduler. pnpm-workspaces monorepo.
+
+## Package manager and worktrees
+
+Use the pnpm version pinned in `package.json` (`pnpm@10.33.0`), the
+`packages/*` workspace in `pnpm-workspace.yaml`, and the single
+`pnpm-lock.yaml`. Follow [AGENTS.md](AGENTS.md) for repository, feedback and
+service boundaries; see [worktree dependencies](docs/worktree-dependencies.md)
+for setup and cleanup commands.
+
+- Run `git worktree list` first and reuse the task's existing worktree. Create
+  isolated branches with `git worktree add` from this repository.
+- Install only for dependency-related work; reuse an existing installation when
+  its lockfile has not changed. Each worktree owns its `node_modules` and local
+  workspace links; dependency files share a same-filesystem pnpm store.
+- Do not link another worktree's `node_modules`, share `virtualStoreDir`, or
+  enable the experimental global virtual store without ESM/build/test validation.
+- Declare direct imports in the owning package's manifest and commit dependency
+  changes with `pnpm-lock.yaml`. Do not create an npm lockfile in a source checkout.
+- Keep old branches on their committed package manager until the full migration
+  commit is integrated. Prebuilt release packages still install with npm.
+- Before retiring a worktree, audit local changes, upstream divergence, detached
+  commits, ignored data and running processes; preserve branches and required
+  evidence. Remove with `git worktree remove`, then `git worktree prune`.
+  Shared-store pruning is a separate operation.
 
 ## Commands
 
 ```bash
+# Dependency-related work in a source checkout
+pnpm install --frozen-lockfile
+pnpm install --offline --frozen-lockfile  # warm shared store, no downloads
+
 # Build & verify
-npm run build            # tsc -b across project references (do this before running dist)
-npm run type-check       # build + tsc --noEmit
-npm run lint             # eslint packages/*/src --max-warnings=0
-npm test                 # build + vitest --run
-npm run test:coverage    # build + vitest --run --coverage (70% threshold, see Testing Rules)
-npm run format:check     # prettier --check (format auto-fixes)
+pnpm run build            # tsc -b across project references (do this before running dist)
+pnpm run type-check       # build + tsc --noEmit
+pnpm run lint             # eslint packages/*/src --max-warnings=0
+pnpm test                 # build + vitest --run
+pnpm run test:coverage    # build + vitest --run --coverage (70% threshold, see Testing Rules)
+pnpm run format:check     # prettier --check (format auto-fixes)
 
 # macOS launchd service (scripts/launchd.mjs)
-npm run launchd:start|stop|restart|logs|status|install|uninstall|generate
-npm run launchd:chromium:start|stop|restart|logs|status   # Chromium CDP sidecar
+pnpm run launchd:start|stop|restart|logs|status|install|uninstall|generate
+pnpm run launchd:chromium:start|stop|restart|logs|status   # Chromium CDP sidecar
 #   launchd:restart = build + reload plist. launchd:logs tails combined/stdout/stderr (--lines=N).
 
 # Docker (production, recommended) — builds inside the container, no local build needed
@@ -39,7 +67,7 @@ There is **no single-prompt CLI mode** (`--prompt`/`feishu` subcommands were rem
 | In-container user | `disclaude` (uid 1001); passwordless sudo limited to `apt-get` (audited to `/data/logs/sudo.log`). Base image pre-installs cmake, gcc/g++/make, python3-dev, gh, codex, lark CLI |
 | Log rotation | Pino JSON (`packages/core/src/utils/logger.ts`). `logging.rotate` (env `LOG_ROTATE`) off by default; pino-roll writes `disclaude-combined.<n>.log` + `current.log` symlink. Docker sets `LOG_ROTATE=true`. `initLogger()` is **async** — await it |
 
-Restart policy: only restart when the user asks. Prefer `npm run launchd:restart` (macOS) / `docker compose up -d --build` (Docker), after tests+lint+type-check pass.
+Restart policy: only restart when the user asks. Prefer `pnpm run launchd:restart` (macOS) / `docker compose up -d --build` (Docker), after tests+lint+type-check pass.
 
 ## Architecture
 
@@ -124,7 +152,7 @@ Vitest runs single-fork (OOM-safe), coverage via v8 with **70% thresholds** (lin
 
 ## Common Pitfalls
 
-1. **Forgetting to build** — after edits run `npx tsc -b` before tests against `dist/`. (Docker builds in-container.)
+1. **Forgetting to build** — after edits run `pnpm exec tsc -b` before tests against `dist/`. (Docker builds in-container.)
 2. **Bot echoes itself** — always reject `sender.sender_type === 'app'` (infinite-loop guard).
 3. **Feishu duplicate events** — dedup on processed `message_id`.
 4. **Stale docs** — this file and `disclaude.config.example.yaml` drift. Verify claims against source (`config/types.ts`, `cli-main.ts`, `scripts/launchd.mjs`) before trusting them.
@@ -140,4 +168,4 @@ Vitest runs single-fork (OOM-safe), coverage via v8 with **70% thresholds** (lin
 ## Deep-dive pointers
 
 - `README.md` quickstart, `docs/feishu-channel.md`, `docs/codex-backend.md`, `docs/logging.md`, `docs/skills.md`, `docs/cdp-endpoint.md`, `docs/environment-variables.md`
-- Debugging: `npm run launchd:logs`, `tail -f ~/Library/Logs/disclaude/disclaude-combined.log`, or Kibana/ES if a shipper is configured.
+- Debugging: `pnpm run launchd:logs`, `tail -f ~/Library/Logs/disclaude/disclaude-combined.log`, or Kibana/ES if a shipper is configured.
