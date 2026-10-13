@@ -19,31 +19,11 @@ export interface WorkspaceConfig {
 }
 
 /**
- * Model tier for three-level model configuration.
- * Allows different agent scenarios to use models with appropriate capability/cost trade-offs.
- *
- * - `'high'`: Complex analysis, high-capability tasks (e.g., claude-opus-4)
- * - `'low'`: Scheduled tasks, simple operations (e.g., claude-haiku-4)
- * - `'multimodal'`: Main dialogue, multimodal processing
- *
- * @see Issue #3059
- */
-export type ModelTier = 'high' | 'low' | 'multimodal';
-
-/**
- * Agent configuration section.
- *
- * Note: model is configured per-provider (glm.model for GLM, agent.model for Anthropic).
- * This avoids confusion about which model takes precedence.
- */
-/**
  * Codex backend governance caps (Issue #4634, S7).
  * Bounded so one busy chat / burst of chats cannot drain the shared
  * ChatGPT subscription or fork unbounded codex exec children.
  */
 export interface CodexAgentGovernanceConfig {
-  /** Canonical Codex GPT model. Legacy agent.model remains a fallback. */
-  model?: string;
   /** Explicit model reasoning effort; unset defers to Codex's model-specific default. */
   reasoningEffort?: CodexReasoningEffort;
   /** Codex process protocol. `exec` remains the compatibility default. */
@@ -58,18 +38,7 @@ export interface CodexAgentGovernanceConfig {
 export type CodexReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
 
 export interface AgentConfig {
-  /** API provider preference (anthropic, glm) */
-  provider?: 'anthropic' | 'glm';
-  /**
-   * Agent SDK backend — which agent runtime boots (Issue #4388).
-   * Orthogonal to the model-layer `provider` above: `agentBackend` selects the
-   * agent runtime (claude-code CLI vs pi.dev vs Codex CLI), `provider` selects
-   * the LLM API. The two compose (e.g. pi backend + GLM model). Default: 'claude'.
-   *
-   * 'codex' (Issue #4629, S1 of #4627): runs the official Codex CLI in exec
-   * mode, powering agents with the ChatGPT subscription quota instead of an
-   * API key. Currently a registered skeleton — queryStream lands in #4630.
-   */
+  /** Agent runtime. */
   agentBackend?: 'claude' | 'pi' | 'codex' | 'deepseek';
   /**
    * Codex exec sandbox level override (Issue #4631, S4 of #4627).
@@ -91,23 +60,6 @@ export interface AgentConfig {
   permissionMode?: 'default' | 'bypassPermissions';
   /** Maximum concurrent tasks */
   maxConcurrentTasks?: number;
-  /** Anthropic model, or the legacy Codex model fallback; prefer agent.codex.model for Codex. */
-  model?: string;
-  /**
-   * High-capability model for complex analysis (Issue #3059).
-   * Falls back to `model` if not set.
-   */
-  highModel?: string;
-  /**
-   * Low-cost model for scheduled tasks, simple operations (Issue #3059).
-   * Falls back to `model` if not set.
-   */
-  lowModel?: string;
-  /**
-   * Multimodal model for main dialogue, multimodal processing (Issue #3059).
-   * Falls back to `model` if not set.
-   */
-  multimodalModel?: string;
   /**
    * Enable Claude Code Agent Teams mode.
    * When enabled, passes teammateMode='in-process' to the SDK via Settings.
@@ -132,24 +84,43 @@ export interface AgentConfig {
   sdkTimeoutMs?: number;
 }
 
-/**
- * A named agent backend/model combination.
- *
- * Presets deliberately contain routing data only. Credentials remain in the
- * existing provider-specific configuration so selecting a preset cannot
- * accidentally turn a model choice into a secret-management mechanism.
- */
-export interface AgentPreset {
-  agentBackend: NonNullable<AgentConfig['agentBackend']>;
-  model: string;
-  provider?: AgentConfig['provider'];
-  apiBaseUrl?: string;
-  permissionMode?: AgentConfig['permissionMode'];
-  /** Optional explicit marker; the reserved `default` name is also accepted. */
-  default?: boolean;
+/** Supported LLM wire formats, independent of model vendor. */
+export type ApiProtocol = 'anthropic' | 'openai';
+
+/** A model and its optional API connection. Native CLI agents may omit api. */
+export interface LlmConfig {
+  model?: string;
+  api?: {
+    protocol: ApiProtocol;
+    baseUrl?: string;
+    /** Environment variable name, never a literal credential. */
+    apiKeyEnv?: string;
+  };
+  /** Native runtime settings, including ANTHROPIC_DEFAULT_*_MODEL aliases. */
+  env?: Record<string, string>;
 }
 
-/** Named backend/model presets declared under the top-level `agents:` key. */
+/** A named runtime bound to exactly one named LLM. */
+export interface AgentDefinition extends Omit<AgentConfig, 'agentBackend'> {
+  backend: NonNullable<AgentConfig['agentBackend']>;
+  llm: string;
+  default?: boolean;
+  deepseek?: DeepSeekConfig;
+}
+
+/** Internal resolved preset shared by validation and agent construction. */
+export interface AgentPreset extends AgentConfig {
+  agentBackend: NonNullable<AgentConfig['agentBackend']>;
+  model: string;
+  apiKey: string;
+  apiProtocol?: ApiProtocol;
+  apiBaseUrl?: string;
+  env?: Record<string, string>;
+  credentialEnvKeys?: string[];
+  default?: boolean;
+  llm: string;
+  deepseek?: DeepSeekConfig;
+}
 export type AgentPresets = Record<string, AgentPreset>;
 
 /**
@@ -160,6 +131,8 @@ export interface FeishuConfig {
   appId?: string;
   /** Application secret (overrides FEISHU_APP_SECRET env var) */
   appSecret?: string;
+  /** Environment variable containing the app secret. */
+  appSecretEnv?: string;
   /** CLI chat ID for testing */
   cliChatId?: string;
   /**
@@ -209,48 +182,14 @@ export interface FeishuConfig {
   };
 }
 
-/** Anthropic Messages API service configuration, including compatible providers. */
-export interface AnthropicConfig {
-  apiKey?: string;
-  model?: string;
-  /** Explicit endpoint for a compatible service; omitted for Anthropic's default endpoint. */
-  apiBaseUrl?: string;
-  highModel?: string;
-  lowModel?: string;
-  multimodalModel?: string;
-}
-
-/**
- * @deprecated Use anthropic for any Anthropic-compatible API service.
- * GLM (Zhipu AI) API configuration section.
- *
- * When using GLM provider, apiKey, model, and an explicit Anthropic-compatible
- * apiBaseUrl are REQUIRED.
- * Fallback defaults are intentionally removed for strict configuration.
- */
-export interface GlmConfig {
-  /** API key (overrides GLM_API_KEY env var) */
-  apiKey?: string;
-  /** Model identifier - REQUIRED when apiKey is set */
-  model?: string;
-  /** Explicit Anthropic-compatible proxy URL; there is no built-in endpoint default. */
-  apiBaseUrl?: string;
-  /** High-capability model for complex analysis (Issue #3059) */
-  highModel?: string;
-  /** Low-cost model for scheduled tasks (Issue #3059) */
-  lowModel?: string;
-  /** Multimodal model for dialogue (Issue #3059) */
-  multimodalModel?: string;
-}
-
 /** DeepSeek harness configuration (developer preview; Issue #4741). */
 export interface DeepSeekConfig {
   /** DSH model provider route. Omit to use the selected native profile's default. */
   provider?: string;
   /** Harness composition. Changes apply after service restart. Default: standard. */
   mode?: 'minimal' | 'standard';
-  /** API key consumed by dsh (overrides DEEPSEEK_API_KEY). */
-  apiKey?: string;
+  /** Environment variable holding the native harness credential. */
+  apiKeyEnv?: string;
   /** Optional isolated dsh home directory (overrides DSH_HOME). */
   dshHome?: string;
 }
@@ -443,20 +382,12 @@ export interface SessionTimeoutConfig {
 export interface DisclaudeConfig {
   /** Workspace settings */
   workspace?: WorkspaceConfig;
-  /** Agent/AI model settings */
-  agent?: AgentConfig;
-  /** Named backend/model presets; legacy `agent:` remains supported. */
-  agents?: AgentPresets;
-  /** Feishu platform settings */
-  feishu?: FeishuConfig;
-  /** Ruliu (如流) platform settings */
-  ruliu?: RuliuConfig;
-  /** Anthropic Messages API service settings (including compatible providers). */
-  anthropic?: AnthropicConfig;
-  /** @deprecated Use anthropic instead. */
-  glm?: GlmConfig;
-  /** DeepSeek harness settings */
-  deepseek?: DeepSeekConfig;
+  /** Named runtimes and their LLM bindings. */
+  agents?: Record<string, AgentDefinition>;
+  /** Named models and API connections. */
+  llms?: Record<string, LlmConfig>;
+  /** Channel settings. */
+  channels?: ChannelsConfig;
   /** Logging settings */
   logging?: LoggingConfig;
   /** Tool configuration */
@@ -508,7 +439,7 @@ export interface LoadedConfig extends DisclaudeConfig {
  * Configuration validation error.
  */
 export interface ConfigValidationError {
-  /** Field path that failed validation (e.g., 'glm.model') */
+  /** Field path that failed validation (e.g., 'llms.chat.model') */
   field: string;
   /** Human-readable error message */
   message: string;
@@ -521,6 +452,7 @@ export interface ConfigValidationError {
 export interface ConfigChannelConfig {
   /** Enable/disable channel */
   enabled?: boolean;
+  [key: string]: unknown;
 }
 
 /**
@@ -528,6 +460,8 @@ export interface ConfigChannelConfig {
  * Main project extends this with specific channel types.
  */
 export interface ChannelsConfig {
+  feishu?: ConfigChannelConfig & FeishuConfig;
+  ruliu?: ConfigChannelConfig & RuliuConfig;
   [channelName: string]: ConfigChannelConfig | undefined;
 }
 

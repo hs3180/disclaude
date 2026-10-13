@@ -15,14 +15,26 @@ describe('preset switching with real configuration and providers', () => {
       writeFileSync(configPath, JSON.stringify({
         workspace: { dir: root },
         logging: { level: 'silent' },
-        agent: { agentBackend: backend, model: 'gpt-6-luna' },
-        glm: { apiKey: 'selected-glm-key', apiBaseUrl: 'http://127.0.0.1:1' },
-        anthropic: { apiKey: 'selected-anthropic-key', apiBaseUrl: 'http://127.0.0.1:2' },
         agents: {
-          native: { default: true, agentBackend: backend, model: 'gpt-6-luna' },
-          glm: { agentBackend: 'claude', provider: 'glm', model: 'selected-glm-model' },
-          anthropic: { agentBackend: 'claude', provider: 'anthropic', model: 'selected-anthropic-model' },
-          invalid: { agentBackend: 'claude', provider: 'glm', model: 'selected-glm-model', apiBaseUrl: 'file:///invalid' },
+          native: { backend, llm: 'native', default: true },
+          proxy: { backend: 'claude', llm: 'proxy' },
+          direct: { backend: 'claude', llm: 'direct' },
+          missing: { backend: 'claude', llm: 'missing' },
+        },
+        llms: {
+          native: { model: backend === 'codex' ? 'gpt-6-luna' : 'native-model' },
+          proxy: {
+            model: 'glm-5.3',
+            api: { protocol: 'anthropic', baseUrl: 'http://127.0.0.1:1', apiKeyEnv: 'PROXY_KEY' },
+          },
+          direct: {
+            model: 'sonnet',
+            api: { protocol: 'anthropic', baseUrl: 'http://127.0.0.1:2', apiKeyEnv: 'DIRECT_KEY' },
+          },
+          missing: {
+            model: 'missing-model',
+            api: { protocol: 'anthropic', apiKeyEnv: 'MISSING_KEY' },
+          },
         },
       }));
       const script = `
@@ -35,14 +47,14 @@ describe('preset switching with real configuration and providers', () => {
         try {
           const original = pool.getOrCreateChatAgent('test-chat', callbacks);
           assert.equal(Config.getAgentConfig().apiKey, '');
-          const rejected = pool.switchAgentPreset('test-chat', 'invalid');
+          const rejected = pool.switchAgentPreset('test-chat', 'missing');
           assert.equal(rejected.ok, false);
-          assert.match(rejected.error, /apiBaseUrl/);
+          assert.match(rejected.error, /credential/);
           assert.equal(pool.getOrCreateChatAgent('test-chat', callbacks), original);
           assert.equal(pool.getActiveAgentPreset('test-chat').name, 'native');
           for (const [name, key, endpoint] of [
-            ['glm', 'selected-glm-key', 'http://127.0.0.1:1'],
-            ['anthropic', 'selected-anthropic-key', 'http://127.0.0.1:2'],
+            ['proxy', 'selected-proxy-key', 'http://127.0.0.1:1'],
+            ['direct', 'selected-direct-key', 'http://127.0.0.1:2'],
           ]) {
             const selected = AgentFactory.resolveConfig(Config.getAgentPresets()[name]);
             assert.equal(selected.apiKey, key);
@@ -52,18 +64,17 @@ describe('preset switching with real configuration and providers', () => {
             assert.equal(pool.getActiveAgentPreset('test-chat').name, name);
           }
           const current = pool.getOrCreateChatAgent('test-chat', callbacks);
-          Object.defineProperty(Config, 'GLM_API_KEY', { value: '' });
-          const missingKey = pool.switchAgentPreset('test-chat', 'glm');
+          const missingKey = pool.switchAgentPreset('test-chat', 'missing');
           assert.equal(missingKey.ok, false);
-          assert.match(missingKey.error, /glm.apiKey/);
+          assert.match(missingKey.error, /credential/);
           assert.equal(pool.getOrCreateChatAgent('test-chat', callbacks), current);
-          assert.equal(pool.getActiveAgentPreset('test-chat').name, 'anthropic');
+          assert.equal(pool.getActiveAgentPreset('test-chat').name, 'direct');
           console.log('target-config-and-session-preservation: passed');
         } finally { pool.disposeAll(); }
       `;
       const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
         cwd: repo,
-        env: { ...process.env, DISCLAUDE_CONFIG_PATH: configPath, ANTHROPIC_MODEL: '', CODEX_MODEL: '', LOG_LEVEL: 'silent' },
+        env: { ...process.env, DISCLAUDE_CONFIG_PATH: configPath, ANTHROPIC_MODEL: '', CODEX_MODEL: '', PROXY_KEY: 'selected-proxy-key', DIRECT_KEY: 'selected-direct-key', MISSING_KEY: '', LOG_LEVEL: 'silent' },
         encoding: 'utf8',
         timeout: 10_000,
       });

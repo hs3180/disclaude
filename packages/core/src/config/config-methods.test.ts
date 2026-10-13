@@ -20,7 +20,6 @@ import path from 'path';
 // Mock with sessionRestore config to test both branches
 const { mockGetConfigFromFile, mockGetPreloadedConfig } = vi.hoisted(() => ({
   mockGetConfigFromFile: vi.fn(() => ({
-    env: { TEST_VAR: 'test_value' },
     logging: { level: 'debug', pretty: false, rotate: true, sdkDebug: false },
     sessionRestore: {
       historyDays: 14,
@@ -32,13 +31,6 @@ const { mockGetConfigFromFile, mockGetPreloadedConfig } = vi.hoisted(() => ({
         checkIntervalMinutes: 10,
       },
     },
-    agent: { provider: 'glm' as const, enableAgentTeams: true },
-    glm: {
-      apiKey: 'test-glm-key',
-      model: 'glm-4',
-      apiBaseUrl: 'https://api.test.com',
-    },
-    feishu: { appId: 'test-app-id', appSecret: 'test-secret' },
     workspace: { dir: '/test/workspace' },
     messaging: { debug: { forwardPatterns: ['error.*'] } },
     tools: { disabled: ['WebSearch'] },
@@ -51,6 +43,19 @@ const { mockGetConfigFromFile, mockGetPreloadedConfig } = vi.hoisted(() => ({
         displayName: '读书助手',
       },
     },
+    agents: { default: { backend: 'claude', llm: 'default', enableAgentTeams: true } },
+    llms: {
+      default: {
+        model: 'glm-4',
+        api: {
+          protocol: 'anthropic',
+          apiKeyEnv: 'TEST_LLM_DEFAULT_KEY',
+          baseUrl: 'https://api.test.com',
+        },
+      },
+    },
+    env: { TEST_VAR: 'test_value', TEST_LLM_DEFAULT_KEY: 'test-glm-key' },
+    channels: { feishu: { appId: 'test-app-id', appSecret: 'test-secret' } },
   })),
   mockGetPreloadedConfig: vi.fn(() => null),
 }));
@@ -90,7 +95,7 @@ describe('Config', () => {
   describe('getAgentConfig', () => {
     it('should return GLM config when configured', () => {
       const config = Config.getAgentConfig();
-      expect(config.provider).toBe('glm');
+      expect(config.apiProtocol).toBe('anthropic');
       expect(config.apiKey).toBe('test-glm-key');
       expect(config.model).toBe('glm-4');
       expect(config.apiBaseUrl).toBe('https://api.test.com');
@@ -175,7 +180,7 @@ describe('Config', () => {
   describe('getRawConfig', () => {
     it('should return file config when no preloaded', () => {
       const raw = Config.getRawConfig();
-      expect(raw.glm?.apiKey).toBe('test-glm-key');
+      expect(raw.llms?.default.api?.apiKeyEnv).toBe('TEST_LLM_DEFAULT_KEY');
     });
   });
 
@@ -234,12 +239,6 @@ describe('Config', () => {
   });
 
   describe('static properties', () => {
-    it('should have GLM configuration from config file', () => {
-      expect(Config.GLM_API_KEY).toBe('test-glm-key');
-      expect(Config.GLM_MODEL).toBe('glm-4');
-      expect(Config.GLM_API_BASE_URL).toBe('https://api.test.com');
-    });
-
     it('should have Feishu configuration from config file', () => {
       expect(Config.FEISHU_APP_ID).toBe('test-app-id');
       expect(Config.FEISHU_APP_SECRET).toBe('test-secret');

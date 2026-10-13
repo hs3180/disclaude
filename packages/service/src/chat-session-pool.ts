@@ -16,6 +16,7 @@ import { statSync } from 'node:fs';
 import { AgentFactory } from './agents/factory.js';
 import type { ChatAgentCallbacks } from './agents/types.js';
 import type { ChatAgent } from './agents/chat-agent.js';
+import type { ServiceTurnRecoveryStore } from './service-turn-recovery.js';
 
 /**
  * Options for ChatSessionPool initialization.
@@ -70,29 +71,8 @@ export interface ChatSessionPoolOptions {
    */
   idleSweepIntervalMs?: number;
 
-  /**
-   * Issue #4577: Hard cap on a single busy turn, in ms.
-   *
-   * The busy exemption in `evictIdleAgents()` is correct (never kill a
-   * mid-turn agent) but previously had NO upper bound — a 2h10m runaway
-   * turn (13,903 SDK messages / $18.90 in the issue's evidence A) kept its
-   * full subprocess tree (claude binary + 2 MCP servers + stray LSP)
-   * uncollectable for the whole window. When a busy agent's turn exceeds
-   * this cap, the sweep stops the query (abort + channel close, same as
-   * the /stop command) and notifies the chat instead of silently waiting.
-   *
-   * Default: 90 minutes. Set to 0 to disable the busy-turn cap.
-   */
-  busyTurnHardCapMs?: number;
-
-  /**
-   * Issue #4577: user-facing notice hook, fired after a busy turn is stopped
-   * by the hard cap. Fire-and-forget by contract — a failing notify must not
-   * break the sweep for other agents (errors are logged, not thrown).
-   *
-   * When omitted, only the structured warn log is emitted.
-   */
-  onBusyCapExceeded?: (chatId: string, busyMinutes: number) => Promise<void> | void;
+  /** Durable journal for interrupted turns caused by a service restart. */
+  turnRecovery?: ServiceTurnRecoveryStore;
 
   /**
    * Issue #4644: provider-session forgetter invoked by reset() — clears the
@@ -111,26 +91,6 @@ const logger = createLogger('ChatSessionPool');
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 /** Issue #4169: Default idle-sweep interval. */
 const DEFAULT_IDLE_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
-/**
- * Issue #4577: Default hard cap on a single busy turn before the sweep stops
- * the query. The issue's evidence A — a 2h10m turn / 13,903 SDK messages /
- * $18.90 — was judged a runaway loop, not an expected turn, and its P1
- * recommendation caps busy turns at 60~90min; 90min is the lenient end of
- * that band, so normal long research turns pass while the runaway class is
- * bounded.
- */
-const DEFAULT_BUSY_TURN_HARD_CAP_MS = 90 * 60 * 1000;
-
-/**
- * Issue #4620 (review fix): composite guard key for `busyTurnStoppedFor`.
- * `\x00` can't appear in a sessionKey (chatId/threadRoot are Feishu IDs), so
- * the pair is unambiguous — a bare timestamp would collide across chats whose
- * turns start in the same millisecond (group broadcast).
- */
-function busyTurnGuardKey(sessionKey: string, turnStartedAtMs: number): string {
-  return `${sessionKey}\x00${turnStartedAtMs}`;
-}
-
 // Re-export so existing `./chat-session-pool.js` importers keep working; the
 // implementation now lives in core next to buildSessionKey (PR #4590 review N4
 // — the `::` separator had been hardcoded here and in the pool test mock).
@@ -176,7 +136,7 @@ export type AgentPresetSwitchResult =
  * Internally the pool keys agents on `buildSessionKey(chatId, threadRootId)`
  * (`chatId` for p2p/plain chats, `chatId::threadRoot` inside topic groups), so
  * each thread's context stays isolated. Everything user-facing — the agent's
- * `boundChatId`, callbacks, busy-cap notification — still receives the plain
+ * `boundChatId` and callbacks — still receives the plain
  * `chatId`, so replies route to the chat exactly as before. Lazy migration:
  * messages without a `threadRootId` keep using the chat-scoped key, so
  * existing sessions are unaffected until a thread message starts a new one.
@@ -191,6 +151,10 @@ export class ChatSessionPool {
 
   /** Keyed by buildSessionKey(chatId, threadRootId) — see class doc (Issue #4587 part 2). */
   private readonly agents = new Map<string, ChatAgent>();
+  // Remember persistent topics after idle eviction too, so a Project change
+  // forgets their native provider state. Isolated execution scopes pin their
+  // own directory and never enter this registry.
+  private readonly projectSessions = new Map<string, { chatId: string; threadRootId?: string }>();
   private readonly callbacksBySession = new Map<string, ChatAgentCallbacks>();
   private readonly selectedPresetBySession = new Map<string, string>();
   private readonly presets?: AgentPresets;
@@ -205,28 +169,6 @@ export class ChatSessionPool {
   private readonly lastUsedAt = new Map<string, number>();
   /** Issue #4169: Periodic sweep timer (unref'd) for idle eviction. */
   private idleSweepTimer?: ReturnType<typeof setInterval>;
-  /**
-   * Issue #4577: When each chat's current busy turn started (ms epoch).
-   * Populated by the idle sweep when it first observes `isBusy`; cleared when
-   * the agent goes idle again (or is reset/disposed). Bounded by the pool
-   * size — one entry per currently-busy chat, deleted on turn end.
-   *
-   * Issue #4620: now a FALLBACK only — the primary measure is the agent's
-   * authoritative `turnStartedAtMs` (set at turn start, not at sweep
-   * observation), which cannot accumulate across back-to-back turns.
-   */
-  private readonly busySince = new Map<string, number>();
-  /**
-   * Issue #4620: turns already stopped by the busy cap, as composite
-   * `sessionKey\x00turnStartedAtMs` keys (review fix: a bare timestamp
-   * collides across chats — a group broadcast can start turns in several
-   * chats within the same millisecond). The authoritative
-   * `turnStartedAtMs` stays constant for the whole (stopped) turn, so the
-   * sweep needs a separate guard against re-stopping the same turn on every
-   * tick — this set holds the turns it has already acted on. Cleared when
-   * the turn ends (agent idle).
-   */
-  private readonly busyTurnStoppedFor = new Set<string>();
   /** Issue #4256: Peak concurrent agent count since pool start (leak diagnostics). */
   private peakActive = 0;
   /**
@@ -241,6 +183,7 @@ export class ChatSessionPool {
    * agent resolves) so pool resets and agent-level resets hit one provider.
    */
   private readonly forgetProviderSession: (chatId: string) => void;
+  private isShuttingDown = false;
 
   constructor(options: ChatSessionPoolOptions = {}) {
     this.options = options;
@@ -292,7 +235,7 @@ export class ChatSessionPool {
 
     let info: { available: boolean; unavailableReason?: string };
     try {
-      const config = AgentFactory.resolveConfig(resolved.preset);
+      const config = AgentFactory.resolveConfig({ ...resolved.preset, settings: resolved.preset });
       info = this.options.validatePresetBackend
         ? this.options.validatePresetBackend(resolved.preset.agentBackend, config)
         : getProvider(resolved.preset.agentBackend).getInfo(config);
@@ -382,12 +325,10 @@ export class ChatSessionPool {
       cwdResolver,
       skipHistory,
       sdkSessionKey,
+      turnRecovery: this.options.turnRecovery,
       ...(preset ? {
-        agentBackend: preset.agentBackend,
-        model: preset.model,
-        provider: preset.provider,
-        apiBaseUrl: preset.apiBaseUrl,
-        permissionMode: preset.permissionMode,
+        ...preset,
+        settings: preset,
       } : {}),
       ...(modelOverride !== undefined ? { model: modelOverride } : {}),
     });
@@ -463,6 +404,9 @@ export class ChatSessionPool {
     threadRootId?: string,
     session?: AgentSessionOptions,
   ): ChatAgent {
+    if (this.isShuttingDown) {
+      throw new Error('Disclaude service is shutting down; the message was not started');
+    }
     if (session && (!session.id.trim() || (threadRootId && threadRootId !== session.id))) {
       throw new Error('Agent session must have a nonempty, unambiguous scope');
     }
@@ -499,11 +443,12 @@ export class ChatSessionPool {
     }
     // Rejected requests must not replace the delivery owner used by preset switches.
     this.callbacksBySession.set(sessionKey, callbacks);
+    if (!session) { this.projectSessions.set(sessionKey, { chatId, threadRootId }); }
     // Issue #4169: Track usage for idle eviction.
     this.lastUsedAt.set(sessionKey, Date.now());
     // Issue #4256: Track peak concurrent agents for leak diagnostics. Each
-    // agent holds a query handle + inline MCP connections (incl. stdio child
-    // processes for configured external MCP servers), so the active count is
+    // agent holds a query handle and SDK resources (including child processes
+    // for explicitly configured external tools), so the active count is
     // the observable proxy for the per-process resource/subprocess ceiling.
     if (this.agents.size > this.peakActive) {
       this.peakActive = this.agents.size;
@@ -516,6 +461,27 @@ export class ChatSessionPool {
     return agent;
   }
 
+  /** Whether any persistent session affected by a Project change still owns work. */
+  isProjectBusy(chatId: string): boolean {
+    for (const [key, scope] of this.projectSessions) {
+      if (scope.chatId !== chatId) { continue; }
+      const agent = this.agents.get(key);
+      // The pending-work signal also covers history admission and background
+      // tasks in runtimes that expose it, beyond the current visible turn.
+      if (agent && (agent.isBusy || ('hasPendingWork' in agent && agent.hasPendingWork === true))) { return true; }
+    }
+    return false;
+  }
+
+  /** Refresh the chat-wide binding without resetting directory-pinned executions. */
+  resetProjectSessions(chatId: string): void {
+    const roots = new Set([undefined, ...[...this.projectSessions.values()]
+      .filter(scope => scope.chatId === chatId).map(scope => scope.threadRootId)]);
+    for (const threadRootId of roots) {
+      this.reset(chatId, undefined, threadRootId);
+    }
+  }
+
   /**
    * Reset the ChatAgent for a chatId by disposing the old instance.
    *
@@ -523,7 +489,7 @@ export class ChatSessionPool {
    * agent, we dispose it completely and remove it from the pool. The next
    * getOrCreateChatAgent() call will create a fresh agent instance.
    *
-   * This ensures all resources (MCP connections, event listeners, transports,
+   * This ensures all resources (SDK connections, event listeners, transports,
    * AbortControllers) are properly released rather than accumulated across
    * multiple /reset operations.
    *
@@ -544,6 +510,7 @@ export class ChatSessionPool {
    */
   reset(chatId: string, skipContext?: boolean, threadRootId?: string): void {
     const sessionKey = this.sessionKeyOf(chatId, threadRootId);
+    this.projectSessions.delete(sessionKey);
     // Callbacks capture channel/request state and are only needed while an
     // agent occupies this slot. Preset selection intentionally survives reset.
     this.callbacksBySession.delete(sessionKey);
@@ -574,14 +541,6 @@ export class ChatSessionPool {
     if (agent) {
       this.agents.delete(sessionKey);
       this.lastUsedAt.delete(sessionKey);
-      // Issue #4577: clear the busy-turn marker along with the agent.
-      this.busySince.delete(sessionKey);
-      // Issue #4620: forget the stop-guard too — a disposed agent's
-      // turn-start timestamp must not suppress a future turn's cap.
-      const stoppedFor = agent.turnStartedAtMs;
-      if (typeof stoppedFor === 'number' && stoppedFor > 0) {
-        this.busyTurnStoppedFor.delete(busyTurnGuardKey(sessionKey, stoppedFor));
-      }
       agent.dispose();
     }
   }
@@ -601,6 +560,10 @@ export class ChatSessionPool {
       return agent.stop(chatId);
     }
     return false;
+  }
+
+  canSteer(chatId: string, threadRootId?: string): boolean {
+    return this.agents.get(this.sessionKeyOf(chatId, threadRootId))?.canSteer() ?? false;
   }
 
   async steer(chatId: string, prompt: string, threadRootId?: string): Promise<
@@ -632,13 +595,41 @@ export class ChatSessionPool {
       agent.dispose();
     }
     this.agents.clear();
+    this.projectSessions.clear();
     this.lastUsedAt.clear();
-    // Issue #4577: clear busy-turn markers along with the agents.
-    this.busySince.clear();
-    // Issue #4620: clear the stop-guard set as well.
-    this.busyTurnStoppedFor.clear();
     this.callbacksBySession.clear();
     this.selectedPresetBySession.clear();
+  }
+
+  /**
+   * Stop accepting new turns, allow a bounded drain, then persist and report
+   * any remaining turns as interrupted before releasing their agents.
+   */
+  async shutdownForServiceRestart(options: {
+    drainTimeoutMs?: number;
+    noticeTimeoutMs?: number;
+  } = {}): Promise<void> {
+    this.isShuttingDown = true;
+    this.stopIdleSweep();
+    for (const agent of this.agents.values()) { agent.beginServiceShutdown(); }
+    const drainTimeoutMs = Math.max(0, options.drainTimeoutMs ?? 10_000);
+    const noticeTimeoutMs = Math.max(0, options.noticeTimeoutMs ?? 2_000);
+    const deadline = Date.now() + drainTimeoutMs;
+    const hasPendingWork = (): boolean => [...this.agents.values()].some(agent => agent.hasPendingWork);
+
+    while (hasPendingWork() && Date.now() < deadline) {
+      await new Promise<void>(resolve => setTimeout(resolve, Math.min(25, deadline - Date.now())));
+    }
+
+    const remaining = [...this.agents.entries()].filter(([, agent]) => agent.hasPendingWork);
+    if (remaining.length > 0) {
+      logger.warn(
+        { count: remaining.length, sessionKeys: remaining.map(([sessionKey]) => sessionKey), drainTimeoutMs },
+        'Service shutdown drain expired; interrupting remaining agent turns (Issue #5273)'
+      );
+      await Promise.allSettled(remaining.map(([, agent]) => agent.interruptForServiceRestart(noticeTimeoutMs)));
+    }
+    this.disposeAll();
   }
 
   /**
@@ -668,7 +659,7 @@ export class ChatSessionPool {
       // Issue #4256 (part 2): periodic pool-state snapshot for leak
       // diagnostics. A monotonic active/peak growth despite eviction, or a
       // busy count that never returns to zero, signals agents (and their
-      // inline MCP subprocesses) are not being released — see #4169/#4256.
+      // configured tool subprocesses) are not being released — see #4169/#4256.
       this.logPoolSnapshot('idle-sweep');
     }, interval);
     this.idleSweepTimer.unref?.();
@@ -677,18 +668,9 @@ export class ChatSessionPool {
   /**
    * Issue #4169: Evict (dispose) agents idle longer than the idle timeout.
    *
-   * Issue #4577: busy agents are still never *evicted* mid-turn, but the
-   * exemption now has a hard cap — a busy turn running longer than
-   * `busyTurnHardCapMs` is stopped (abort + channel close, same path as the
-   * /stop command) and the chat is notified, bounding how long a runaway
-   * turn (2h10m / 13k SDK messages in the issue's evidence) can hold its
-   * subprocess tree uncollectable. The stopped agent itself stays in the
-   * pool and is reclaimed by the normal idle path once the turn unwinds.
-   *
-   * The busy cap runs even when idle eviction is disabled (`idleTimeoutMs`
-   * <= 0) — same principle as #4256's always-on snapshot: the
-   * memory-bounding control must stay live precisely when the pool is
-   * unbounded.
+   * Active turns, admitted/queued requests, and live background tasks are
+   * protected from idle disposal until the work completes or is explicitly
+   * stopped. The pool never stops pending work based on elapsed time.
    *
    * @param now - Injectable clock for deterministic testing (defaults to Date.now()).
    * @returns Session keys of the agents that were evicted. Issue #4587 (part 2):
@@ -699,27 +681,18 @@ export class ChatSessionPool {
     const timeout = this.options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
     const evicted: string[] = [];
     for (const [sessionKey, agent] of this.agents) {
-      // Never evict an agent mid-turn...
-      if (agent.isBusy) {
-        // ...but Issue #4577: cap how long a busy turn can run. Track when
-        // this busy turn was first observed; if it exceeds the hard cap,
-        // stop the query so the turn unwinds and the agent becomes
-        // evictable on a later sweep.
-        this.enforceBusyTurnCap(sessionKey, agent, now);
+      // An admitted message or a live background task is work even when the
+      // main SDK turn has not started or has already returned its result.
+      if (agent.isBusy || agent.hasPendingWork) {
         continue;
       }
-      // Issue #4577: turn over — clear the busy-start marker so the next
-      // busy turn starts a fresh cap window. Issue #4620: also forget the
-      // stop-guard for this agent's last authoritative turn-start, so a
-      // future turn that happens to reuse a timestamp isn't skipped.
-      this.busySince.delete(sessionKey);
-      const stoppedFor = agent.turnStartedAtMs;
-      if (typeof stoppedFor === 'number' && stoppedFor > 0) {
-        this.busyTurnStoppedFor.delete(busyTurnGuardKey(sessionKey, stoppedFor));
-      }
       if (timeout <= 0) { continue; }
-      const last = this.lastUsedAt.get(sessionKey) ?? now;
+      const last = Math.max(this.lastUsedAt.get(sessionKey) ?? now, agent.lastActivityAt ?? 0);
       if (now - last >= timeout) {
+        logger.info({ sessionKey, isBusy: agent.isBusy, hasPendingWork: agent.hasPendingWork,
+          backgroundTaskCount: agent.activeBackgroundTaskCount ?? 0, turnStartedAtMs: agent.turnStartedAtMs,
+          lastUsedAt: last, lastActivityAt: agent.lastActivityAt, lastActivityType: agent.lastActivityType,
+          idleTimeoutMs: timeout, idleMs: now - last }, 'Evicting inactive agent');
         this.agents.delete(sessionKey);
         this.lastUsedAt.delete(sessionKey);
         // Do not retain channel closures after the owning agent is evicted.
@@ -735,83 +708,10 @@ export class ChatSessionPool {
   }
 
   /**
-   * Issue #4577: enforce the busy-turn hard cap for one busy agent.
-   *
-   * Records the first-observed busy timestamp (the sweep runs every
-   * `idleSweepIntervalMs`, so the effective measurement granularity is one
-   * sweep interval — acceptable for a 90-minute cap). When the current busy
-   * turn exceeds `busyTurnHardCapMs`, stops the agent's query (same path as
-   * the /stop command: abort + channel close, session preserved) and fires
-   * the `onBusyCapExceeded` hook (user notice). Notification is
-   * fire-and-forget — a failing channel must not break the sweep for other
-   * agents.
-   *
-   * Issue #4587 (part 2): `sessionKey` is the pool map key (`chatId`, or
-   * `chatId::threadRoot` for a topic-group thread). Everything that talks to
-   * the OUTSIDE — `agent.stop()`, the notify hook — receives the plain
-   * chatId, derived here, because the agent's boundChatId and the channel
-   * both key on chatId, never on the composite session key.
-   */
-  private enforceBusyTurnCap(
-    sessionKey: string,
-    agent: Pick<ChatAgent, 'isBusy' | 'turnStartedAtMs' | 'stop'>,
-    now: number
-  ): void {
-    const cap = this.options.busyTurnHardCapMs ?? DEFAULT_BUSY_TURN_HARD_CAP_MS;
-    if (cap <= 0) { return; } // Cap disabled — no tracking, never stop.
-    // Issue #4620: measure the CURRENT turn from the agent's authoritative
-    // turn-start timestamp, not from when the sweep first observed isBusy.
-    // The observation-based marker survived turn boundaries whenever every
-    // sweep tick landed mid-turn of back-to-back turns — after 90 min of
-    // session wall-clock, a brand-new turn was insta-killed. When the agent
-    // does not expose the timestamp (older implementation), fall back to the
-    // observation-based marker for compatibility.
-    const turnStarted = typeof agent.turnStartedAtMs === 'number' ? agent.turnStartedAtMs : 0;
-    const since = turnStarted > 0 ? turnStarted : this.busySince.get(sessionKey);
-    if (since === undefined) {
-      this.busySince.set(sessionKey, now);
-      return;
-    }
-    if (now - since < cap) { return; }
-    // Issue #4620: the authoritative timestamp is constant for the whole
-    // (stopped) turn — without this guard every subsequent sweep tick would
-    // re-stop the same turn. Keyed by sessionKey+timestamp so concurrent
-    // turns in different chats that start within the same millisecond
-    // (group broadcast) don't collide. Observation fallback re-arms via
-    // marker delete (same value can't repeat across turns).
-    if (turnStarted > 0) {
-      const guardKey = busyTurnGuardKey(sessionKey, turnStarted);
-      if (this.busyTurnStoppedFor.has(guardKey)) { return; }
-      this.busyTurnStoppedFor.add(guardKey);
-    }
-    const busyMin = Math.round((now - since) / 60000);
-    // Issue #4587 (part 2): strip the `::threadRoot` suffix for everything
-    // that addresses the chat (agent boundChatId guard + user notification).
-    const chatId = chatIdOfSessionKey(sessionKey);
-    logger.warn(
-      { chatId, sessionKey, busyMinutes: busyMin, capMs: cap },
-      'Busy turn exceeded hard cap (Issue #4577) — stopping query'
-    );
-    agent.stop(chatId);
-    // Clear the marker so the next busy turn (if any) gets a fresh window
-    // rather than being re-stopped on every sweep tick.
-    this.busySince.delete(sessionKey);
-    // Notify the user fire-and-forget: channel failure must not propagate
-    // into the sweep loop.
-    const notify = this.options.onBusyCapExceeded;
-    if (notify) {
-      void Promise.resolve(notify(chatId, busyMin)).catch((err) => {
-        logger.error({ err, chatId, sessionKey }, 'Failed to send busy-cap notification');
-      });
-    }
-  }
-
-  /**
    * Issue #4256 (part 2): snapshot of pool state for leak diagnostics.
    *
-   * Each active agent holds a query handle, channel, and inline MCP
-   * connections (including stdio child processes for configured external MCP
-   * servers). The active/peak/eviction counts are the observable per-process
+   * Each active agent holds a query handle, input channel, and SDK resources
+   * (including child processes for explicitly configured external tools). The active/peak/eviction counts are the observable per-process
    * proxy for that resource footprint, letting operators spot a leak (e.g.
    * active grows monotonically, or busy never returns to zero) without
    * enumerating live subprocesses.

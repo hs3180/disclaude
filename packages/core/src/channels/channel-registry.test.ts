@@ -38,7 +38,7 @@ function createMockDescriptor(overrides?: Partial<ChannelDescriptor>): ChannelDe
         supportsMention: false,
         supportsUpdate: false,
         supportsStreaming: false,
-        supportedMcpTools: [],
+        supportedChannelTools: [],
       }),
     }),
     defaultCapabilities: {
@@ -49,7 +49,7 @@ function createMockDescriptor(overrides?: Partial<ChannelDescriptor>): ChannelDe
       supportsMention: false,
       supportsUpdate: false,
       supportsStreaming: false,
-      supportedMcpTools: [],
+      supportedChannelTools: [],
     },
     ...overrides,
   };
@@ -179,7 +179,7 @@ describe('ChannelRegistry', () => {
               supportsMention: false,
               supportsUpdate: false,
               supportsStreaming: false,
-              supportedMcpTools: [],
+              supportedChannelTools: [],
             }),
           };
         },
@@ -232,7 +232,7 @@ describe('ChannelRegistry', () => {
         supportsMention: false,
         supportsUpdate: false,
         supportsStreaming: false,
-        supportedMcpTools: ['send_text', 'send_card'],
+        supportedChannelTools: ['send_text', 'send_card'],
       };
 
       registry.register(createMockDescriptor({

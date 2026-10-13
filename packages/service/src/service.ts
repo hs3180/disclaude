@@ -781,7 +781,7 @@ export class DisclaudeService extends EventEmitter {
       reset: (chatId: string, skipContext?: boolean) => void;
       isAgentBusy?: (chatId: string) => boolean;
     },
-    callbacksFactory: (chatId: string) => import('./agents/types.js').ChatAgentCallbacks,
+    callbacksFactory: (chatId: string, threadRootId?: string) => import('./agents/types.js').ChatAgentCallbacks,
   ): void {
     // Issue #4206: keep the pool so scheduler callbacks can reset an agent
     // (clearContext) before a scheduled task runs.

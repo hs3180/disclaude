@@ -28,14 +28,10 @@ vi.mock('@disclaude/core', () => ({
   getProvider: vi.fn((backend?: string) => ({ name: backend ?? 'claude' })),
   Config: {
     AGENT_BACKEND: 'claude',
-    ANTHROPIC_API_KEY: 'anthropic-service-key',
-    GLM_API_KEY: 'glm-service-key',
-    ANTHROPIC_API_BASE_URL: 'https://anthropic.service.example',
-    GLM_API_BASE_URL: 'https://glm.service.example',
     getAgentConfig: vi.fn(() => ({
       apiKey: 'default-api-key',
       model: 'default-model',
-      provider: 'anthropic',
+      apiProtocol: 'anthropic',
       apiBaseUrl: 'https://default.api.com',
     })),
     getModelForTier: vi.fn(() => undefined),
@@ -95,51 +91,25 @@ describe('AgentFactory', () => {
   // ==========================================================================
 
   describe('createAgent()', () => {
-    it('should create a ChatAgent instance with default config', () => {
-      const callbacks = createMockCallbacks();
-      const agent = AgentFactory.createAgent('chat-123', callbacks);
 
-      expect(agent).toBeDefined();
-      expect(ChatAgent).toHaveBeenCalledOnce();
-
-      const config = getLastConfig();
-      expect(config.chatId).toBe('chat-123');
-      expect(config.callbacks).toBe(callbacks);
-      expect(config.apiKey).toBe('default-api-key');
-      expect(config.model).toBe('default-model');
-      expect(config.provider).toBe('anthropic');
-      expect(config.apiBaseUrl).toBe('https://default.api.com');
-      expect(config.permissionMode).toBe('bypassPermissions');
-      // Model tier resolution should not be invoked when no tier is specified
-      expect(Config.getModelForTier).not.toHaveBeenCalled();
-    });
-
-    it.each([
-      ['codex', 'claude', 'anthropic', 'anthropic-service-key'],
-      ['codex', 'pi', 'anthropic', 'anthropic-service-key'],
-      ['deepseek', 'claude', 'anthropic', 'anthropic-service-key'],
-      ['deepseek', 'pi', 'glm', 'glm-service-key'],
-      ['claude', 'claude', 'glm', 'glm-service-key'],
-    ] as const)('resolves %s -> %s credentials for %s', (defaultBackend, backend, provider, expected) => {
-      const prior = Config.AGENT_BACKEND;
-      Object.defineProperty(Config, 'AGENT_BACKEND', { configurable: true, value: defaultBackend });
-      vi.mocked(Config.getAgentConfig).mockReturnValueOnce({ apiKey: '', model: 'native-model', provider: 'anthropic' });
-      try {
-        AgentFactory.createAgent('chat-credential-switch', createMockCallbacks(), { agentBackend: backend, provider });
-        expect(getLastConfig().apiKey).toBe(expected);
-        expect(getLastConfig().apiBaseUrl).toBe(provider === 'glm' ? 'https://glm.service.example' : 'https://anthropic.service.example');
-      } finally {
-        Object.defineProperty(Config, 'AGENT_BACKEND', { configurable: true, value: prior });
-      }
+    it.each(['claude', 'pi'] as const)('uses the bound %s LLM credentials independently of the default', backend => {
+      vi.mocked(Config.getAgentConfig).mockImplementationOnce(() => { throw new Error('invalid default'); });
+      AgentFactory.createAgent('chat-selected', createMockCallbacks(), {
+        agentBackend: backend, model: 'selected-model', apiProtocol: 'anthropic',
+        apiKey: 'selected-key', apiBaseUrl: 'https://selected.example',
+      });
+      expect(getLastConfig()).toMatchObject({ apiKey: 'selected-key', model: 'selected-model', apiBaseUrl: 'https://selected.example' });
+      expect(Config.getAgentConfig).not.toHaveBeenCalled();
+      vi.mocked(Config.getAgentConfig).mockReset().mockReturnValue({ apiKey: 'default-api-key', model: 'default-model', apiProtocol: 'anthropic', apiBaseUrl: 'https://default.api.com' });
     });
 
     it('preserves an explicit key override when switching from Codex', () => {
       const prior = Config.AGENT_BACKEND;
       Object.defineProperty(Config, 'AGENT_BACKEND', { configurable: true, value: 'codex' });
-      vi.mocked(Config.getAgentConfig).mockReturnValueOnce({ apiKey: '', model: 'native-model', provider: 'anthropic' });
+      vi.mocked(Config.getAgentConfig).mockReturnValueOnce({ apiKey: '', model: 'native-model', apiProtocol: 'anthropic' });
       try {
         AgentFactory.createAgent('chat-credential-override', createMockCallbacks(), {
-          agentBackend: 'pi', provider: 'anthropic', apiKey: 'explicit-key',
+          agentBackend: 'pi', apiProtocol: 'anthropic', apiKey: 'explicit-key',
         });
         expect(getLastConfig().apiKey).toBe('explicit-key');
       } finally {
@@ -149,12 +119,12 @@ describe('AgentFactory', () => {
 
     it('uses the same resolved config for preflight and construction, including preset endpoint priority', () => {
       const options: AgentCreateOptions = {
-        agentBackend: 'claude', provider: 'glm', model: 'selected-model', apiBaseUrl: 'https://preset.example',
+        agentBackend: 'claude', apiProtocol: 'anthropic', apiKey: 'selected-key', model: 'selected-model', apiBaseUrl: 'https://preset.example',
       };
       const resolved = AgentFactory.resolveConfig(options);
       AgentFactory.createAgent('chat-selected', createMockCallbacks(), options);
       expect(getLastConfig()).toMatchObject(resolved);
-      expect(resolved).toMatchObject({ apiKey: 'glm-service-key', model: 'selected-model', apiBaseUrl: 'https://preset.example' });
+      expect(resolved).toMatchObject({ apiKey: 'selected-key', model: 'selected-model', apiBaseUrl: 'https://preset.example' });
     });
 
     it('should accept callbacks without the optional streaming fields (Issue #4397 P2-a)', () => {
@@ -177,7 +147,7 @@ describe('AgentFactory', () => {
       const callbacks = createMockCallbacks();
       const options: AgentCreateOptions = {
         apiKey: 'custom-key',
-        provider: 'glm',
+        apiProtocol: 'anthropic',
         apiBaseUrl: 'https://custom.api.com',
         permissionMode: 'default',
       };
@@ -186,7 +156,7 @@ describe('AgentFactory', () => {
 
       const config = getLastConfig();
       expect(config.apiKey).toBe('custom-key');
-      expect(config.provider).toBe('glm');
+      expect(config.apiProtocol).toBe('anthropic');
       expect(config.apiBaseUrl).toBe('https://custom.api.com');
       expect(config.permissionMode).toBe('default');
       // model should fall back to default when not overridden
@@ -196,47 +166,6 @@ describe('AgentFactory', () => {
     it('passes an explicit agent backend into the ChatAgent SDK binding', () => {
       AgentFactory.createAgent('chat-backend', createMockCallbacks(), { agentBackend: 'pi' });
       expect(getLastConfig().agentBackend).toBe('pi');
-    });
-
-    it('should use explicit model over tier and default', () => {
-      const callbacks = createMockCallbacks();
-      vi.mocked(Config.getModelForTier).mockReturnValue('tier-model');
-
-      AgentFactory.createAgent('chat-789', callbacks, {
-        model: 'explicit-model',
-        modelTier: 'high',
-      });
-
-      const config = getLastConfig();
-      expect(config.model).toBe('explicit-model');
-      // getModelForTier should NOT be called when explicit model is given
-      expect(Config.getModelForTier).not.toHaveBeenCalled();
-    });
-
-    it('should use tier model when no explicit model is given', () => {
-      const callbacks = createMockCallbacks();
-      vi.mocked(Config.getModelForTier).mockReturnValue('tier-model');
-
-      AgentFactory.createAgent('chat-tier', callbacks, {
-        modelTier: 'high',
-      });
-
-      const config = getLastConfig();
-      expect(config.model).toBe('tier-model');
-      expect(Config.getModelForTier).toHaveBeenCalledWith('high');
-    });
-
-    it('should fall back to default model when tier returns undefined', () => {
-      const callbacks = createMockCallbacks();
-      vi.mocked(Config.getModelForTier).mockReturnValue(undefined);
-
-      AgentFactory.createAgent('chat-fallback', callbacks, {
-        modelTier: 'low',
-      });
-
-      const config = getLastConfig();
-      expect(config.model).toBe('default-model');
-      expect(Config.getModelForTier).toHaveBeenCalledWith('low');
     });
 
     it('should pass messageBuilderOptions to ChatAgent config', () => {
@@ -451,7 +380,7 @@ describe('AgentFactory', () => {
       const config = getLastConfig();
       expect(config.apiKey).toBe('default-api-key');
       expect(config.model).toBe('default-model');
-      expect(config.provider).toBe('anthropic');
+      expect(config.apiProtocol).toBe('anthropic');
       expect(config.apiBaseUrl).toBe('https://default.api.com');
       expect(config.permissionMode).toBe('bypassPermissions');
     });
@@ -469,9 +398,9 @@ describe('AgentFactory', () => {
     it('should override provider when provided', () => {
       const callbacks = createMockCallbacks();
 
-      AgentFactory.createAgent('chat-override', callbacks, { provider: 'glm' });
+      AgentFactory.createAgent('chat-override', callbacks, { apiProtocol: 'anthropic' });
 
-      expect(getLastConfig().provider).toBe('glm');
+      expect(getLastConfig().apiProtocol).toBe('anthropic');
     });
 
     it('should override apiBaseUrl when provided', () => {

@@ -7,7 +7,7 @@
 #
 # Prerequisites:
 # - Node.js installed
-# - disclaude built (npm run build)
+# - disclaude built (pnpm run build)
 # - Valid disclaude.config.yaml with AI provider configured
 #
 # Usage:
@@ -109,7 +109,7 @@ show_test_plan_body() {
     echo "  6. REST Attachment Contract Tests (5 tests)"
     echo "     - Health check, single image, multi-image, mixed message, screenshot"
     echo ""
-    echo "  (Codex coverage: set agentBackend: codex in the config; the generic"
+    echo "  (Codex coverage: set agents.<name>.backend: codex in the config; the generic"
     echo "   suites above then run against the Codex backend. Issue #4737)"
     echo "Configuration:"
     echo "  - REST Port: $REST_PORT"
@@ -121,7 +121,7 @@ show_test_plan_body() {
     echo ""
     echo "Prerequisites:"
     echo "  - Node.js installed"
-    echo "  - disclaude built (npm run build)"
+    echo "  - disclaude built (pnpm run build)"
     echo "  - Valid disclaude.config.yaml"
     echo "  - API key configured in config file"
     echo ""
@@ -333,7 +333,7 @@ warmup_agent() {
                 show_server_logs
                 return 1
             fi
-            if [ -n "$CONFIG_PATH" ] && grep -qE '^[[:space:]]*agentBackend:.*codex' "$CONFIG_PATH" 2>/dev/null \
+            if [ -n "$CONFIG_PATH" ] && grep -qE '^[[:space:]]*backend:.*codex' "$CONFIG_PATH" 2>/dev/null \
                 && response_contains_provider_failure "$RESPONSE_BODY"; then
                 CODEX_ENV_BLOCKED=true
                 log_warn "Codex warm-up returned an embedded provider failure; marking Codex-dependent suites as SKIP (environmental, Issue #4671)"
@@ -550,7 +550,7 @@ main() {
         "multimodal-test.sh|REST Attachment Contract Tests|ai"; do
         # Issue #4737: the separate Codex Compatibility E2E suite was removed.
         # The generic suites above run under whatever backend the test
-        # environment is configured with (set `agentBackend: codex` in the
+        # environment is configured with (set `backend: codex` in the
         # config), which covers real Codex behavior without a redundant,
         # always-on Codex-specific suite.
         script="${spec%%|*}"

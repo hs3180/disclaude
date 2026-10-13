@@ -54,13 +54,13 @@ vi.mock('@disclaude/core', async (importOriginal) => {
 // Track mock agent instances for assertions
 // Issue #4620: mock now carries turnStartedAtMs (0 = not set; tests that
 // exercise the observation-based fallback leave it 0/undefined).
-const mockAgents: Map<string, { dispose: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; steer: ReturnType<typeof vi.fn>; updateCallbacks: ReturnType<typeof vi.fn>; taskComplete?: Promise<void>; isBusy: boolean; turnStartedAtMs?: number }> = new Map();
+const mockAgents: Map<string, { dispose: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; steer: ReturnType<typeof vi.fn>; updateCallbacks: ReturnType<typeof vi.fn>; interruptForServiceRestart: ReturnType<typeof vi.fn>; taskComplete?: Promise<void>; isBusy: boolean; turnStartedAtMs?: number; lastActivityAt?: number; lastActivityType?: string; hasPendingWork?: boolean; pendingWorkContext?: { runId?: string; sourceMessageId?: string; traceId?: string; threadRootId?: string } }> = new Map();
 
 // Mock AgentFactory
 vi.mock('./agents/factory.js', () => ({
   AgentFactory: {
-    resolveConfig: vi.fn((options: { model: string; provider?: 'anthropic' | 'glm' }) => ({
-      apiKey: 'test-key', model: options.model, provider: options.provider ?? 'anthropic',
+    resolveConfig: vi.fn((options: { model: string; apiProtocol?: 'anthropic' | 'openai' }) => ({
+      apiKey: 'test-key', model: options.model, apiProtocol: options.apiProtocol ?? 'anthropic',
     })),
     createChatAgent: vi.fn((_name: string, chatId: string, _callbacks: unknown, _options?: unknown) => {
       const agent = {
@@ -69,10 +69,11 @@ vi.mock('./agents/factory.js', () => ({
         stop: vi.fn().mockReturnValue(true),
         steer: vi.fn().mockResolvedValue({ ok: false, error: 'unsupported' }),
         updateCallbacks: vi.fn().mockReturnValue(true),
+        interruptForServiceRestart: vi.fn().mockResolvedValue(undefined),
+        beginServiceShutdown: vi.fn(),
         taskComplete: undefined as Promise<void> | undefined,
         isBusy: false,
-        // Issue #4620: default 0 = agent does not report a turn-start
-        // timestamp → pool falls back to observation-based tracking.
+        hasPendingWork: false,
         turnStartedAtMs: 0,
       };
       mockAgents.set(chatId, agent);
@@ -160,14 +161,14 @@ describe('ChatSessionPool', () => {
 
   it('applies temporary model/history overrides through the same preset-aware factory', () => {
     const pool = new ChatSessionPool({ agentPresets: {
-      default: { agentBackend: 'codex', model: 'gpt-5.6' },
+      default: {apiKey: 'test-key', llm: 'test',  agentBackend: 'codex', model: 'gpt-5.6' },
     } });
     const callbacks = createMockCallbacks();
     const user = pool.getOrCreateChatAgent('chat-1', callbacks);
     const task = pool.getOrCreateChatAgent('chat-1', callbacks, undefined, {
       id: 'execution:model-override', model: 'gpt-5.6-mini', skipHistory: true, releaseAfterTurn: true,
     });
-    expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith('pilot', 'chat-1', callbacks, expect.objectContaining({
+    expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith('pilot', 'chat-1', callbacks, expect.objectContaining({apiKey: 'test-key', llm: 'test',
       agentBackend: 'codex', model: 'gpt-5.6-mini', skipHistory: true, sdkSessionKey: 'chat-1::execution:model-override',
     }));
     expect(pool.getActiveAgentPreset('chat-1')).toMatchObject({ name: 'default', model: 'gpt-5.6' });
@@ -193,8 +194,8 @@ describe('ChatSessionPool', () => {
 
   describe('named runtime presets', () => {
     const presets = {
-      default: { agentBackend: 'claude' as const, model: 'claude-sonnet' },
-      fast: { agentBackend: 'claude' as const, model: 'claude-haiku' },
+      default: {apiKey: 'test-key', llm: 'test',  agentBackend: 'claude' as const, model: 'claude-sonnet' },
+      fast: {apiKey: 'test-key', llm: 'test',  agentBackend: 'claude' as const, model: 'claude-haiku' },
     };
 
     it('passes the resolved target configuration into the backend preflight', () => {
@@ -203,7 +204,7 @@ describe('ChatSessionPool', () => {
       try {
         expect(pool.switchAgentPreset('chat-selected', 'fast')).toMatchObject({ ok: true });
         expect(validatePresetBackend).toHaveBeenCalledExactlyOnceWith('claude', {
-          apiKey: 'test-key', model: 'claude-haiku', provider: 'anthropic',
+          apiKey: 'test-key', model: 'claude-haiku', apiProtocol: 'anthropic',
         });
       } finally { pool.disposeAll(); }
     });
@@ -215,7 +216,7 @@ describe('ChatSessionPool', () => {
 
       expect(AgentFactory.createChatAgent).toHaveBeenCalledWith(
         'pilot', 'chat-default', callbacks,
-        expect.objectContaining({ agentBackend: 'claude', model: 'claude-sonnet' })
+        expect.objectContaining({apiKey: 'test-key', llm: 'test',  agentBackend: 'claude', model: 'claude-sonnet' })
       );
       expect(pool.getActiveAgentPreset('chat-default')).toEqual({
         name: 'default', agentBackend: 'claude', model: 'claude-sonnet',
@@ -540,6 +541,50 @@ describe('ChatSessionPool', () => {
   // reset()
   // ==========================================================================
 
+  describe('Project session boundaries', () => {
+    it('clears all persistent scopes including evicted topics, preserving other chats and pinned tasks', () => {
+      const forgetProviderSession = vi.fn();
+      const pool = new ChatSessionPool({ idleTimeoutMs: 1, forgetProviderSession });
+      const callbacks = createMockCallbacks();
+      try {
+        pool.getOrCreateChatAgent('project-chat', callbacks);
+        pool.getOrCreateChatAgent('project-chat', callbacks, 'old-topic');
+        expect(pool.evictIdleAgents(Date.now() + 100)).toEqual(['project-chat', 'project-chat::old-topic']);
+        pool.getOrCreateChatAgent('project-chat', callbacks, 'live-topic');
+        const other = pool.getOrCreateChatAgent('other-chat', callbacks, 'other-topic');
+        const task = pool.getOrCreateChatAgent('project-chat', callbacks, undefined, { id: 'execution:pinned' });
+
+        pool.resetProjectSessions('project-chat');
+
+        expect(forgetProviderSession.mock.calls.map(call => call[0]).sort()).toEqual([
+          'project-chat', 'project-chat::live-topic', 'project-chat::old-topic',
+        ]);
+        expect(pool.get('project-chat', 'live-topic')).toBeUndefined();
+        expect(pool.get('other-chat', 'other-topic')).toBe(other);
+        expect(pool.get('project-chat', 'execution:pinned')).toBe(task);
+        expect(other.dispose).not.toHaveBeenCalled();
+        expect(task.dispose).not.toHaveBeenCalled();
+      } finally { pool.disposeAll(); }
+    });
+
+    it('guards busy or pending work across persistent topics while excluding isolated tasks', () => {
+      const pool = new ChatSessionPool();
+      const callbacks = createMockCallbacks();
+      try {
+        const topic = pool.getOrCreateChatAgent('project-chat', callbacks, 'topic') as unknown as { isBusy: boolean };
+        const task = pool.getOrCreateChatAgent('project-chat', callbacks, undefined, { id: 'execution:pinned' }) as unknown as { isBusy: boolean };
+        task.isBusy = true;
+        expect(pool.isProjectBusy('project-chat')).toBe(false);
+        topic.isBusy = true;
+        expect(pool.isProjectBusy('project-chat')).toBe(true);
+        expect(pool.isProjectBusy('other-chat')).toBe(false);
+        topic.isBusy = false;
+        Object.defineProperty(topic, 'hasPendingWork', { value: true });
+        expect(pool.isProjectBusy('project-chat')).toBe(true);
+      } finally { pool.disposeAll(); }
+    });
+  });
+
   describe('reset()', () => {
     it('should dispose and remove the agent for a given chatId', () => {
       const pool = new ChatSessionPool();
@@ -788,6 +833,35 @@ describe('ChatSessionPool', () => {
     });
   });
 
+  describe('shutdownForServiceRestart()', () => {
+    it('stops admission and interrupts remaining work after the bounded drain', async () => {
+      const pool = new ChatSessionPool();
+      const callbacks = createMockCallbacks();
+      pool.getOrCreateChatAgent('shutdown-chat', callbacks);
+      const agent = mockAgents.get('shutdown-chat')!;
+      agent.hasPendingWork = true;
+
+      await pool.shutdownForServiceRestart({ drainTimeoutMs: 0, noticeTimeoutMs: 1 });
+
+      expect(agent.interruptForServiceRestart).toHaveBeenCalledWith(1);
+      expect(agent.dispose).toHaveBeenCalledOnce();
+      expect(() => pool.getOrCreateChatAgent('shutdown-chat', callbacks)).toThrow('shutting down');
+    });
+
+    it('lets an active turn finish inside the drain window without marking it interrupted', async () => {
+      const pool = new ChatSessionPool();
+      pool.getOrCreateChatAgent('drained-chat', createMockCallbacks());
+      const agent = mockAgents.get('drained-chat')!;
+      agent.hasPendingWork = true;
+      setTimeout(() => { agent.hasPendingWork = false; }, 5);
+
+      await pool.shutdownForServiceRestart({ drainTimeoutMs: 100, noticeTimeoutMs: 1 });
+
+      expect(agent.interruptForServiceRestart).not.toHaveBeenCalled();
+      expect(agent.dispose).toHaveBeenCalledOnce();
+    });
+  });
+
   // ==========================================================================
   // idle eviction (Issue #4169)
   // ==========================================================================
@@ -852,325 +926,25 @@ describe('ChatSessionPool', () => {
     });
   });
 
-  // ==========================================================================
-  // busy-turn hard cap (Issue #4577)
-  // ==========================================================================
-
-  describe('busy-turn hard cap (Issue #4577)', () => {
-    it('should stop (not evict) a busy agent whose turn exceeds the hard cap', () => {
-      const pool = new ChatSessionPool({ idleTimeoutMs: 1000, busyTurnHardCapMs: 5000 });
-      const callbacks = createMockCallbacks();
-      pool.getOrCreateChatAgent('chat-runaway', callbacks);
-      const agent = mockAgents.get('chat-runaway')!;
-      agent.isBusy = true;
-
-      const t0 = Date.now();
-      // First sweep observes the busy turn and records its start.
-      pool.evictIdleAgents(t0);
-      expect(agent.stop).not.toHaveBeenCalled();
-      // Agent is still busy before the cap elapses — untouched.
-      pool.evictIdleAgents(t0 + 4000);
-      expect(agent.stop).not.toHaveBeenCalled();
-      expect(agent.dispose).not.toHaveBeenCalled();
-      // Past the cap: query is stopped, but the agent is NOT disposed
-      // mid-turn (the stop unwinds it; the normal idle path reclaims later).
-      const evicted = pool.evictIdleAgents(t0 + 5100);
-      expect(evicted).toEqual([]);
-      expect(agent.stop).toHaveBeenCalledOnce();
-      expect(agent.stop).toHaveBeenCalledWith('chat-runaway');
-      expect(agent.dispose).not.toHaveBeenCalled();
-    });
-
-    it('should NOT stop busy agents within the cap (existing behavior preserved)', () => {
-      const pool = new ChatSessionPool({ idleTimeoutMs: 1000, busyTurnHardCapMs: 60_000 });
-      const callbacks = createMockCallbacks();
-      pool.getOrCreateChatAgent('chat-legit', callbacks);
-      const agent = mockAgents.get('chat-legit')!;
-      agent.isBusy = true;
-
-      const t0 = Date.now();
-      pool.evictIdleAgents(t0);
-      pool.evictIdleAgents(t0 + 30_000);
-
-      expect(agent.stop).not.toHaveBeenCalled();
-      expect(agent.dispose).not.toHaveBeenCalled();
-    });
-
-    it('should give the next busy turn a fresh cap window after a stop', () => {
-      const pool = new ChatSessionPool({ idleTimeoutMs: 1000, busyTurnHardCapMs: 5000 });
-      const callbacks = createMockCallbacks();
-      pool.getOrCreateChatAgent('chat-again', callbacks);
-      const agent = mockAgents.get('chat-again')!;
-      agent.isBusy = true;
-
-      const t0 = Date.now();
-      pool.evictIdleAgents(t0); // observe busy start
-      pool.evictIdleAgents(t0 + 6000); // cap exceeded → stop, marker cleared
-      expect(agent.stop).toHaveBeenCalledOnce();
-      // Still busy (turn hasn't unwound yet) — the stop must not re-fire
-      // on every subsequent sweep tick.
-      pool.evictIdleAgents(t0 + 7000);
-      pool.evictIdleAgents(t0 + 8000);
-      expect(agent.stop).toHaveBeenCalledOnce();
-    });
-
-    it('should clear the busy marker when the turn ends, resetting the window', () => {
-      const pool = new ChatSessionPool({ idleTimeoutMs: 1000, busyTurnHardCapMs: 5000 });
-      const callbacks = createMockCallbacks();
-      pool.getOrCreateChatAgent('chat-cycle', callbacks);
-      const agent = mockAgents.get('chat-cycle')!;
-      const t0 = Date.now();
-
-      // Turn 1: busy for a while, ends before cap. The idle sweep at
-      // t0+4000 clears the busy marker; idle timeout is disabled for this
-      // agent's chat by keeping lastUsedAt fresh (a new message arrived
-      // between the two sweeps, which is exactly how a short turn-then-new-
-      // message cycle looks in production).
-      agent.isBusy = true;
-      pool.evictIdleAgents(t0);
-      agent.isBusy = false;
-      pool.evictIdleAgents(t0 + 500); // idle but recently used → marker cleared, not evicted
-      expect(agent.stop).not.toHaveBeenCalled();
-      expect(pool.get('chat-cycle')).toBeDefined();
-
-      // Turn 2 starts: busy again. If the turn-1 marker had leaked, the
-      // sweep at t0+4500 would compute busy-since = t0 (4500 < 5000, ok)
-      // but t0+5600 → 5600ms ≥ cap would stop early with the turn-2 window
-      // being only 1100ms. With the marker cleared, turn 2 is observed
-      // fresh at t0+4500 and nothing fires.
-      agent.isBusy = true;
-      pool.evictIdleAgents(t0 + 4500); // turn-2 start observed here
-      pool.evictIdleAgents(t0 + 5600); // 1100ms into turn 2 < 5000 cap → no stop
-      expect(agent.stop).not.toHaveBeenCalled();
-      // Cap measured from turn 2's first observation (t0+4500): at t0+9510
-      // the window is 5010ms ≥ 5000 → stop fires.
-      pool.evictIdleAgents(t0 + 9510);
-      expect(agent.stop).toHaveBeenCalledOnce();
-    });
-
-    it('should be disabled when busyTurnHardCapMs is 0', () => {
-      const pool = new ChatSessionPool({ idleTimeoutMs: 1000, busyTurnHardCapMs: 0 });
-      const callbacks = createMockCallbacks();
-      pool.getOrCreateChatAgent('chat-uncapped', callbacks);
-      const agent = mockAgents.get('chat-uncapped')!;
-      agent.isBusy = true;
-
-      const t0 = Date.now();
-      pool.evictIdleAgents(t0);
-      pool.evictIdleAgents(t0 + 10_000_000);
-
-      expect(agent.stop).not.toHaveBeenCalled();
-      expect(agent.dispose).not.toHaveBeenCalled();
-    });
-
-    it('default cap (90 min) applies when the option is omitted', () => {
+  describe('pending work protection', () => {
+    it.each(['busy', 'pending'] as const)('retains silent %s work across long idle sweeps, then reclaims it after completion', state => {
       const pool = new ChatSessionPool({ idleTimeoutMs: 1000 });
-      const callbacks = createMockCallbacks();
-      pool.getOrCreateChatAgent('chat-default', callbacks);
-      const agent = mockAgents.get('chat-default')!;
-      agent.isBusy = true;
-
-      const t0 = Date.now();
-      pool.evictIdleAgents(t0);
-      // Just under 90 min: untouched.
-      pool.evictIdleAgents(t0 + 89 * 60 * 1000);
-      expect(agent.stop).not.toHaveBeenCalled();
-      // Past 90 min: stopped.
-      pool.evictIdleAgents(t0 + 91 * 60 * 1000);
-      expect(agent.stop).toHaveBeenCalledOnce();
-    });
-
-    it('should still enforce the busy cap when idle eviction is disabled (idleTimeoutMs=0)', () => {
-      // The cap is the memory-bounding control for runaway turns; it must
-      // not be silently disabled along with idle eviction — an unbounded
-      // pool is exactly where a runaway turn hurts most (Issue #4577
-      // evidence A/B). Same always-on principle as the #4256 snapshot.
-      const pool = new ChatSessionPool({ idleTimeoutMs: 0, busyTurnHardCapMs: 5000 });
-      const callbacks = createMockCallbacks();
-      pool.getOrCreateChatAgent('chat-uncapped-pool', callbacks);
-      const agent = mockAgents.get('chat-uncapped-pool')!;
-      agent.isBusy = true;
-
-      const t0 = Date.now();
-      const evictedEarly = pool.evictIdleAgents(t0);
-      expect(evictedEarly).toEqual([]);
-      expect(agent.stop).not.toHaveBeenCalled();
-      // Past the cap with idle eviction off: the busy turn is still stopped
-      // (and nothing is evicted — the agent stays for the idle path that
-      // will never fire, but the runaway turn no longer holds its tree).
-      const evicted = pool.evictIdleAgents(t0 + 6000);
-      expect(evicted).toEqual([]);
-      expect(agent.stop).toHaveBeenCalledOnce();
-      expect(agent.dispose).not.toHaveBeenCalled();
-    });
-
-    it('should fire onBusyCapExceeded after a hard-cap stop', async () => {
-      const onBusyCapExceeded = vi.fn().mockResolvedValue(undefined);
-      const pool = new ChatSessionPool({ idleTimeoutMs: 1000, busyTurnHardCapMs: 5 * 60 * 1000, onBusyCapExceeded });
-      const callbacks = createMockCallbacks();
-      pool.getOrCreateChatAgent('chat-notify', callbacks);
-      const agent = mockAgents.get('chat-notify')!;
-      agent.isBusy = true;
-
-      const t0 = Date.now();
-      pool.evictIdleAgents(t0);
-      pool.evictIdleAgents(t0 + 5 * 60 * 1000 + 100);
-      expect(agent.stop).toHaveBeenCalledOnce();
-
-      // The hook is fire-and-forget; flush microtasks before asserting.
-      await vi.waitFor(() => {
-        expect(onBusyCapExceeded).toHaveBeenCalledOnce();
-      });
-      expect(onBusyCapExceeded).toHaveBeenCalledWith('chat-notify', 5);
-    });
-
-    it('should not fire onBusyCapExceeded when not wired (log-only, no crash)', () => {
-      // Default construction (no hook): the stop still happens and the
-      // sweep completes without throwing.
-      const pool = new ChatSessionPool({ idleTimeoutMs: 1000, busyTurnHardCapMs: 5000 });
-      const callbacks = createMockCallbacks();
-      pool.getOrCreateChatAgent('chat-silent', callbacks);
-      const agent = mockAgents.get('chat-silent')!;
-      agent.isBusy = true;
-
-      const t0 = Date.now();
-      pool.evictIdleAgents(t0);
-      expect(() => pool.evictIdleAgents(t0 + 5100)).not.toThrow();
-      expect(agent.stop).toHaveBeenCalledOnce();
-    });
-
-    it('should swallow onBusyCapExceeded rejection — a failing channel must not break the sweep', async () => {
-      const onBusyCapExceeded = vi.fn().mockRejectedValue(new Error('channel down'));
-      const pool = new ChatSessionPool({ idleTimeoutMs: 1000, busyTurnHardCapMs: 5000, onBusyCapExceeded });
-      const callbacks = createMockCallbacks();
-      pool.getOrCreateChatAgent('chat-flaky', callbacks);
-      const agent = mockAgents.get('chat-flaky')!;
-      agent.isBusy = true;
-
-      const t0 = Date.now();
-      pool.evictIdleAgents(t0);
-      // Must not throw synchronously (the sweep loop) nor emit unhandledRejection.
-      expect(() => pool.evictIdleAgents(t0 + 5100)).not.toThrow();
-      expect(agent.stop).toHaveBeenCalledOnce();
-      await vi.waitFor(() => {
-        expect(onBusyCapExceeded).toHaveBeenCalledOnce();
-      });
-      // The failure is logged (fire-and-forget contract), not propagated.
-      await vi.waitFor(() => {
-        expect(mockLogger.error).toHaveBeenCalledWith(
-          expect.objectContaining({ chatId: 'chat-flaky' }),
-          'Failed to send busy-cap notification'
-        );
-      });
-    });
-
-    it('Issue #4620: back-to-back turns never accumulate — a new turn after 90min of session wall-clock is not insta-killed', () => {
-      // Regression shape from the issue: many completed turns where every
-      // sweep tick lands mid-turn of SOME turn (short interactive-card
-      // turns arriving every few minutes). The observation-based marker
-      // never saw !isBusy, so it anchored to the first turn; the next turn
-      // was killed ~77s in with a false "running for 90 minutes" message.
-      const cap = 90 * 60 * 1000;
-      const pool = new ChatSessionPool({ idleTimeoutMs: 0, busyTurnHardCapMs: cap });
-      const callbacks = createMockCallbacks();
-      pool.getOrCreateChatAgent('chat-b2b', callbacks);
-      const agent = mockAgents.get('chat-b2b')!;
-
-      const t0 = Date.now();
-      const sweep = 5 * 60 * 1000; // production sweep interval
-      // Two hours of 5-minute turns, each reported by the agent with its
-      // own authoritative turnStartedAtMs (as ChatAgent now does).
-      for (let turnStart = t0; turnStart < t0 + 120 * 60 * 1000; turnStart += sweep) {
-        agent.isBusy = true;
-        agent.turnStartedAtMs = turnStart;
-        // Sweep lands mid-turn (turns span the full sweep interval).
-        pool.evictIdleAgents(turnStart + sweep / 2);
-        // Turn completes just before the next sweep would fire.
-        agent.isBusy = false;
-        agent.turnStartedAtMs = 0;
+      pool.getOrCreateChatAgent('owned-chat', createMockCallbacks(), 'owned-root');
+      const agent = mockAgents.get('owned-chat')!;
+      const started = Date.now();
+      agent.isBusy = state === 'busy';
+      agent.hasPendingWork = state === 'pending';
+      agent.lastActivityAt = started;
+      for (const minutes of [31, 96, 180]) {
+        expect(pool.evictIdleAgents(started + minutes * 60_000)).toEqual([]);
+        expect(pool.get('owned-chat', 'owned-root')).toBe(agent);
       }
       expect(agent.stop).not.toHaveBeenCalled();
-
-      // New turn starts (interactive-card click) — 120+ min after session
-      // start but only ~77s into THIS turn. Must NOT be insta-killed.
-      const newTurnStart = t0 + 125 * 60 * 1000;
-      agent.isBusy = true;
-      agent.turnStartedAtMs = newTurnStart;
-      pool.evictIdleAgents(newTurnStart + 77 * 1000);
-      expect(agent.stop).not.toHaveBeenCalled();
-      // And a genuinely over-long turn IS still capped (cap still enforced).
-      pool.evictIdleAgents(newTurnStart + cap + 1000);
-      expect(agent.stop).toHaveBeenCalledOnce();
-      expect(agent.stop).toHaveBeenCalledWith('chat-b2b');
-    });
-
-    it('Issue #4620: a genuine single runaway turn still trips the cap via turnStartedAtMs', () => {
-      const pool = new ChatSessionPool({ idleTimeoutMs: 1000, busyTurnHardCapMs: 5000 });
-      const callbacks = createMockCallbacks();
-      pool.getOrCreateChatAgent('chat-runaway4620', callbacks);
-      const agent = mockAgents.get('chat-runaway4620')!;
-
-      const t0 = Date.now();
-      agent.isBusy = true;
-      agent.turnStartedAtMs = t0;
-      // First sweep observes the busy agent — with the authoritative
-      // timestamp available, the cap is measured from t0 immediately.
-      pool.evictIdleAgents(t0 + 1000);
-      expect(agent.stop).not.toHaveBeenCalled();
-      pool.evictIdleAgents(t0 + 5100);
-      expect(agent.stop).toHaveBeenCalledOnce();
-    });
-
-    it('Issue #4620: agents without turnStartedAtMs keep the observation-based fallback', () => {
-      // Backward compatibility: a mock/older agent that reports isBusy but
-      // no turn-start timestamp falls back to the pre-#4620 marker logic.
-      const pool = new ChatSessionPool({ idleTimeoutMs: 1000, busyTurnHardCapMs: 5000 });
-      const callbacks = createMockCallbacks();
-      pool.getOrCreateChatAgent('chat-fallback', callbacks);
-      const agent = mockAgents.get('chat-fallback')!;
-      (agent as { turnStartedAtMs?: number }).turnStartedAtMs = undefined;
-
-      const t0 = Date.now();
-      agent.isBusy = true;
-      pool.evictIdleAgents(t0); // observe busy start
-      pool.evictIdleAgents(t0 + 4000);
-      expect(agent.stop).not.toHaveBeenCalled();
-      pool.evictIdleAgents(t0 + 5100);
-      expect(agent.stop).toHaveBeenCalledOnce();
-    });
-
-    it('Issue #4620 (review fix): same-millisecond turns in different chats do not collide on the stop-guard', () => {
-      // Group broadcast shape: two chats' turns start at the SAME epoch ms.
-      // With a bare-timestamp guard key, chat A's over-cap stop would mark
-      // the shared timestamp as handled, silently skipping chat B's stop
-      // (and A going idle could even delete B's guard → double stop).
-      const pool = new ChatSessionPool({ idleTimeoutMs: 1000, busyTurnHardCapMs: 5000 });
-      const callbacks = createMockCallbacks();
-      pool.getOrCreateChatAgent('chat-collide-a', callbacks);
-      pool.getOrCreateChatAgent('chat-collide-b', callbacks);
-      const agentA = mockAgents.get('chat-collide-a')!;
-      const agentB = mockAgents.get('chat-collide-b')!;
-
-      const t0 = Date.now();
-      agentA.isBusy = true;
-      agentA.turnStartedAtMs = t0;
-      agentB.isBusy = true;
-      agentB.turnStartedAtMs = t0; // same millisecond as A
-
-      // Both turns exceed the cap — BOTH must be stopped despite the
-      // identical turnStartedAtMs.
-      pool.evictIdleAgents(t0 + 5100);
-      expect(agentA.stop).toHaveBeenCalledOnce();
-      expect(agentA.stop).toHaveBeenCalledWith('chat-collide-a');
-      expect(agentB.stop).toHaveBeenCalledOnce();
-      expect(agentB.stop).toHaveBeenCalledWith('chat-collide-b');
-
-      // The guard must also not leak across chats: A going idle must not
-      // clear B's guard (B still busy → repeated sweeps must not re-stop B).
-      agentA.isBusy = false; // A's turn ended; B's (stopped) turn continues
-      pool.evictIdleAgents(t0 + 5100 + 60000);
-      expect(agentA.stop).toHaveBeenCalledOnce(); // unchanged
-      expect(agentB.stop).toHaveBeenCalledOnce(); // NOT re-stopped by idle-A cleanup
+      expect(agent.dispose).not.toHaveBeenCalled();
+      agent.isBusy = false;
+      agent.hasPendingWork = false;
+      expect(pool.evictIdleAgents(started + 181 * 60_000)).toEqual(['owned-chat::owned-root']);
+      expect(agent.dispose).toHaveBeenCalledOnce();
     });
   });
 
@@ -1426,27 +1200,6 @@ describe('ChatSessionPool', () => {
       expect(evicted).toEqual(['oc_topic', 'oc_topic::om_threadA']);
       expect(pool.get('oc_topic')).toBeUndefined();
       expect(pool.get('oc_topic', 'om_threadA')).toBeUndefined();
-    });
-
-    it('busy-cap stop and notification address the PLAIN chatId for a thread agent', () => {
-      const onBusyCapExceeded = vi.fn();
-      const pool = new ChatSessionPool({
-        idleTimeoutMs: 1000,
-        busyTurnHardCapMs: 5000,
-        onBusyCapExceeded,
-      });
-      const callbacks = createMockCallbacks();
-      const agent = pool.getOrCreateChatAgent('oc_topic', callbacks, 'om_threadA');
-      (agent as unknown as { isBusy: boolean }).isBusy = true;
-
-      const t0 = Date.now();
-      pool.evictIdleAgents(t0); // observe busy start
-      pool.evictIdleAgents(t0 + 5100); // cap exceeded
-
-      // agent.stop() and the user-facing hook both get the plain chatId —
-      // the agent's boundChatId guard and the channel key on chatId.
-      expect(agent.stop).toHaveBeenCalledWith('oc_topic');
-      expect(onBusyCapExceeded).toHaveBeenCalledWith('oc_topic', expect.any(Number));
     });
 
     it('chatIdOfSessionKey inverts buildSessionKey', () => {

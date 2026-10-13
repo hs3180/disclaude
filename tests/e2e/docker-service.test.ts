@@ -32,13 +32,13 @@ fs.appendFileSync('/data/workspace/schedule-runs.ndjson', JSON.stringify({boot, 
 
     let createdContainer = false;
     const config = {
-      agent: { agentBackend: 'deepseek', provider: 'anthropic', model: 'deepseek-flash' },
-      deepseek: { apiKey: 'offline-container-test-placeholder', mode: 'standard' },
+      agents: { default: { backend: 'deepseek', llm: 'native', deepseek: { mode: 'standard' } } },
+      llms: { native: { model: 'deepseek-flash' } },
       workspace: { dir: '/data/workspace' },
       channels: { feishu: { enabled: false }, rest: { enabled: true, host: '127.0.0.1', port: 13000, fileStorageDir: '/data/workspace/files' } },
       logging: { level: 'info' },
     };
-    if (withModel) { delete (config.deepseek as { apiKey?: string }).apiKey; }
+
     const inside = (code: string) => docker('exec', container, 'node', '--input-type=module', '-e', code);
     const dataOperation = (code: string) => docker('run', '--rm', '--label', label, '--entrypoint', 'node', '-v', `${volume}:/data`, image, '--input-type=module', '-e', code);
     const request = async (port: number, path: string, method = 'GET', body?: unknown, authenticated = false) => {
@@ -57,7 +57,7 @@ fs.appendFileSync('/data/workspace/schedule-runs.ndjson', JSON.stringify({boot, 
         await dataOperation(`import fs from 'node:fs'; fs.writeFileSync('/data/workspace/schedule-boot', ${JSON.stringify(boot)});`);
         await docker('run', '-d', '--label', label, '--name', container, '--health-interval=1s', '--health-start-period=1s', '--health-retries=5',
           '-v', `${volume}:/data`, '-e', 'DISCLAUDE_CONFIG_PATH=/data/config.json', '-e', 'LOCKFILE_PATH=/data/service.pid',
-          ...(withModel ? ['--env-file', modelEnvFile!] : []), image, 'disclaude', 'start', '--api-port', '19200', '--api-token', token);
+          ...(withModel ? ['--env-file', modelEnvFile!] : ['-e', 'DEEPSEEK_API_KEY=offline-container-test-placeholder']), image, 'disclaude', 'start', '--api-port', '19200', '--api-token', token);
         createdContainer = true;
         if (process.env.DISCLAUDE_E2E_DOCKER_FAIL_AFTER_START === '1') {
           throw new Error('Injected Docker E2E failure after owned container start');

@@ -75,12 +75,15 @@ import {
 import { resolveCodexSandboxPolicy, type CodexSandboxLevel } from './sandbox-policy.js';
 import { CodexSessionGovernor, type SessionRegistration } from './session-governor.js';
 import { CodexAppServerLifecycle, CodexNoActiveTurnError } from './app-server-lifecycle.js';
-import type {
-  CodexAppServerDynamicToolCallRequest,
-  CodexAppServerDynamicToolCallResult,
+import { LiveInputRejectedError } from '../../live-input.js';
+import {
+  CodexAppServerRpcError,
+  type CodexAppServerDynamicToolCallRequest,
+  type CodexAppServerDynamicToolCallResult,
 } from './app-server-transport.js';
 import { createCodexDynamicToolRegistry } from './dynamic-tools.js';
 import type { AgentInputRequest } from '../../user-input.js';
+import { CodexAsyncUserInput, CodexAsyncInputDeliveryError } from './async-user-input.js';
 import {
   adaptCodexEvent,
   classifyCodexEvent,
@@ -92,18 +95,13 @@ import {
 } from './exec-adapter.js';
 import type { SkillsRegistry } from '../../../skills/index.js';
 import { codexSkillsRegistry } from './skill-sources.js';
+import { CODEX_OVERLOAD_MAX_RETRIES, codexOverloadRetryDelay, readCodexOverloadFailure,
+  waitForCodexOverloadRetry, type CodexOverloadFailure } from './overload-policy.js';
 
 const logger = createLogger('CodexAgentProvider');
 
 /** Start a fresh thread before the next turn after a resume reaches this size. */
 export const DEFAULT_MAX_RESUME_INPUT_TOKENS = 100_000;
-
-/**
- * Same user-facing stall notice the Claude (#3706) and pi (#4386 part 5)
- * bridges yield, so all three backends read identically in chat and logs.
- */
-const STALL_TERMINATE_NOTICE =
-  '⚠️ 上游模型响应超时（疑似 stall），已自动取消本次响应。请稍后重试。';
 
 /**
  * Actionable re-auth notice (#4628): codex's ChatGPT login expired/revoked —
@@ -417,7 +415,8 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             ? 'environment'
             : this.modelSource;
     const rawEffort = options.reasoningEffort ?? options.env?.CODEX_REASONING_EFFORT?.trim() ??
-      this.env.CODEX_REASONING_EFFORT?.trim() ?? this.reasoningEffort;
+      this.env.CODEX_REASONING_EFFORT?.trim() ??
+      (Object.hasOwn(options, 'reasoningEffort') ? undefined : this.reasoningEffort);
     if (rawEffort && !isCodexReasoningEffort(rawEffort)) {
       throw new Error('Codex reasoning effort must be one of: minimal, low, medium, high, xhigh, max, ultra');
     }
@@ -443,10 +442,13 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     // an actionable message when the policy cannot be honored headlessly
     // (e.g. an invalid permissionMode) — same fail-fast contract as the
     // binary check above.
+    const native = options.codexRuntime;
+    const configuredFullAccess = native ? native.fullAccess ?? false : this.fullAccess;
+    const networkAccess = native ? native.networkAccess ?? true : this.networkAccess;
     const sandboxDecision = resolveCodexSandboxPolicy(
       options,
-      this.sandboxOverride,
-      this.fullAccess
+      native ? native.sandbox : this.sandboxOverride,
+      configuredFullAccess
     );
     logger.info(
       {
@@ -457,7 +459,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       },
       'codex sandbox policy resolved (Issue #4631): permission gate → codex exec sandbox'
     );
-    if (this.fullAccess) {
+    if (configuredFullAccess) {
       logger.warn(
         {
           permissionMode:
@@ -465,22 +467,22 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           sandbox: sandboxDecision.sandbox,
         },
         sandboxDecision.sandbox === 'danger-full-access'
-          ? 'Codex full-access mode is enabled by explicit agent.fullAccess=true; commands and workspace mutations are unrestricted'
+          ? 'Codex full-access mode is enabled by the selected agent.fullAccess=true; commands and workspace mutations are unrestricted'
           : 'Codex full-access was requested but the sandbox policy remains enforced'
       );
     }
 
     const skillsManifest = this.skillsManifestFor(options.projectRoot ?? options.cwd, options.cwd ?? process.cwd());
-    if (this.transportMode === 'app-server') {
+    if ((native ? native.transport ?? 'exec' : this.transportMode) === 'app-server') {
       return this.queryAppServer(input, options, sandboxDecision.sandbox, binary, skillsManifest, codexModel, requestedEffort);
     }
     if (options.tools?.length) {
-      throw new Error('Codex host tools require agent.codex.transport: app-server; codex exec cannot dispatch host tools.');
+      throw new Error('Codex host tools require agents.<name>.codex.transport: app-server; codex exec cannot dispatch host tools.');
     }
 
     const runner = new CodexExecRunner({
       binary,
-      networkAccess: this.networkAccess,
+      networkAccess,
     });
     // Captured at queryStream call time — the constructor-injected env the
     // binary was resolved from (tests: PATH fixtures; prod: process.env).
@@ -499,8 +501,10 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     // Abort plumbing (mirrors pi: early-cancel latch + late onAbort wake).
     let currentRun: CodexExecRunHandle | null = null;
     let cancelRequested = false;
+    const retryAbort = new AbortController();
     let onAbort: (() => void) | null = null;
     const requestAbort = (): void => {
+      retryAbort.abort();
       if (currentRun) {
         currentRun.abort();
       } else {
@@ -567,7 +571,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     // Keep the automatic no-approval flag aligned with the effective policy:
     // a mutation denylist can intentionally cap a requested full-access mode
     // back to read-only, in which case Codex must retain its safety gate.
-    const fullAccess = this.fullAccess && sandboxDecision.sandbox === 'danger-full-access';
+    const fullAccess = configuredFullAccess && sandboxDecision.sandbox === 'danger-full-access';
     const adaptIterator = async function* (this: void): AsyncGenerator<AgentMessage> {
       // ── Event bridge state (pi #4386 part 3 pattern) ──────────────────
       const queue: AgentMessage[] = [];
@@ -586,17 +590,25 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       };
 
       // ── Stall watchdog (#4630, reusing the #4550/#3706 seam) ──────────
-      // Armed for the whole run, re-armed on EVERY stdout event (any JSONL
-      // line is progress), exempt while a tool item is open (started
-      // without completed — a long build/test legitimately stays silent).
+      // Silence schedules an owned-process probe, not an unconditional kill.
+      // A live model/tool wait survives; confirmed stopped/exited children
+      // receive one terminal failure with the original input correlation.
       // Env knob DISCLAUDE_STALL_TIMEOUT_MS matches the Claude/pi bridges.
-      const { timeoutMs: STALL_TIMEOUT_MS, graceMs: STALL_FORCE_CLOSE_GRACE_MS } = readStallPolicy();
+      const { timeoutMs: STALL_TIMEOUT_MS, graceMs: STALL_FORCE_CLOSE_GRACE_MS } = readStallPolicy({
+        ...process.env, ...providerEnv, ...options.env,
+      });
       let stalled = false;
       let stallWatchdog: ReturnType<typeof setTimeout> | null = null;
       let stallForceCloseTimer: ReturnType<typeof setTimeout> | null = null;
       let openToolItems = 0;
       let sawTurnTerminator = false;
       let sawTurnFailed = false;
+      let lastEventAt = Date.now();
+      let lastEventType = 'run.started';
+      let eventRevision = 0;
+      let probingRun: CodexExecRunHandle | undefined;
+      let activeCorrelation: UserInput['correlation'];
+      let stallDetail: string | undefined;
       // S3 (#4628): completed-turn marker (vs. sawTurnTerminator, which
       // turn.failed also sets) + raw failure text for the detectors. The
       // adapter downgrades transient "Reconnecting..." errors to status,
@@ -604,6 +616,10 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       // messages.
       let sawTurnCompleted = false;
       let runFailureText = '';
+      let runDiagnostic = '';
+      let runCanRetry = true;
+      let overloadFailure: CodexOverloadFailure | undefined;
+      let deferredOverloadMessage: AgentMessage | undefined;
       const armTimer = (fn: () => void, ms: number): ReturnType<typeof setTimeout> => {
         const t = setTimeout(fn, ms);
         t.unref?.();
@@ -619,23 +635,41 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           stallForceCloseTimer = null;
         }
       };
-      const fireStallWatchdog = (): void => {
+      const fireStallWatchdog = async (): Promise<void> => {
         stallWatchdog = null;
-        if (!runActive || stalled) {
+        const inspectedRun = currentRun;
+        if (!runActive || stalled || aborted || !inspectedRun) {
           return;
         }
-        if (openToolItems > 0) {
-          // Silence belongs to the running tool, not the stream — re-arm.
-          stallWatchdog = armTimer(fireStallWatchdog, STALL_TIMEOUT_MS);
+        if (probingRun === inspectedRun) {
+          stallWatchdog = armTimer(() => { void fireStallWatchdog(); }, STALL_TIMEOUT_MS);
+          return;
+        }
+        const observedRevision = eventRevision;
+        probingRun = inspectedRun;
+        const liveness = await inspectedRun.inspectLiveness();
+        if (probingRun === inspectedRun) { probingRun = undefined; }
+        // Events, cancellation, completion or another run can win the probe.
+        if (currentRun !== inspectedRun || !runActive || stalled || aborted
+          || eventRevision !== observedRevision || sawTurnTerminator) { return; }
+        const evidence = {
+          sessionKey, threadId: latestSessionId, ...activeCorrelation,
+          lastEventAt, lastEventType, quietMs: Date.now() - lastEventAt,
+          stallTimeoutMs: STALL_TIMEOUT_MS, openToolItems,
+          childPid: liveness.pid, liveness: liveness.state,
+        };
+        if (liveness.state === 'alive' || liveness.state === 'unknown') {
+          // A live process can be waiting on a model or child. A failed ps
+          // observation is not evidence of death either. Pool inactivity and
+          // explicit operator cancellation remain separate policies.
+          logger.info(evidence, 'codex exec quiet; liveness does not justify termination');
+          stallWatchdog = armTimer(() => { void fireStallWatchdog(); }, STALL_TIMEOUT_MS);
           return;
         }
         stalled = true;
-        logger.error(
-          { stallTimeoutMs: STALL_TIMEOUT_MS },
-          `codex stall: no exec events for ${STALL_TIMEOUT_MS}ms during an active run; ` +
-            'killing the codex process (Issue #4630, cf. #3706)'
-        );
-        currentRun?.abort();
+        stallDetail = `codex exec process is ${liveness.state}; ${JSON.stringify(evidence)}`;
+        logger.error(evidence, 'codex exec liveness failure; terminating the owned run');
+        inspectedRun.abort();
         stallForceCloseTimer = armTimer(() => {
           stallForceCloseTimer = null;
           onAbort?.();
@@ -646,7 +680,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           return;
         }
         clearStallTimers();
-        stallWatchdog = armTimer(fireStallWatchdog, STALL_TIMEOUT_MS);
+        stallWatchdog = armTimer(() => { void fireStallWatchdog(); }, STALL_TIMEOUT_MS);
       };
 
       /** Push a bridge-synthesized message (post-run failure mapping). */
@@ -654,11 +688,26 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         if (stalled) {
           return;
         }
+        if (message.type === 'error') { runDiagnostic = message.content.slice(-500); }
         queue.push(message);
         wakeAll();
       };
 
       const enqueue = (event: CodexThreadEvent): void => {
+        if (stalled || aborted) { return; }
+        try { options.onActivity?.(`codex:exec:${event.type}`); }
+        catch { logger.debug({ sessionKey, eventType: event.type }, 'Host activity observer failed'); }
+        lastEventAt = Date.now();
+        lastEventType = event.type;
+        eventRevision++;
+        if ((event.type === 'item.started' || event.type === 'item.updated' || event.type === 'item.completed')
+          && !['reasoning', 'error'].includes(event.item?.type)) {
+          // Include future/unknown item kinds, not only the tools we render.
+          runCanRetry = false;
+        }
+        const eventFailure = event.type === 'turn.failed' ? readCodexOverloadFailure(event.error)
+          : event.type === 'error' ? readCodexOverloadFailure({ message: event.message })
+          : event.type === 'item.completed' && event.item?.type === 'error' ? readCodexOverloadFailure(event.item) : undefined;
         if (event.type === 'turn.started') {
           // Item IDs are scoped to a Codex turn; a resumed turn may reuse
           // the same fixture/runtime ID, so dedupe only within one turn.
@@ -739,6 +788,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           logger.warn({ threadId: latestSessionId, content: event.message }, 'codex error event');
         }
         if (event.type === 'turn.failed') {
+          overloadFailure = eventFailure;
           const turnFailure = event.error?.message ?? '';
           runFailureText += `\n${turnFailure}`;
           logger.warn(
@@ -751,6 +801,14 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         logger.debug({ eventType: event.type, presentation }, 'codex JSONL event classified');
         const adapted = adaptCodexEvent(event);
         if (adapted) {
+          if (adapted.type === 'error') { runDiagnostic = adapted.content.slice(-500); }
+          if (adapted.type === 'error' && eventFailure) {
+            // Decide only after the child has exited and the whole attempt is
+            // known. A recoverable failure must not become a user terminal.
+            deferredOverloadMessage = adapted;
+            return;
+          }
+          if (adapted.type === 'error') { runCanRetry = false; }
           const messageId = adapted.metadata?.messageId;
           const eventKey = messageId ? `${adapted.type}:${messageId}` : undefined;
           if (eventKey && deliveredEventKeys.has(eventKey)) {
@@ -777,6 +835,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       // maxConcurrentRuns codex exec children process-wide; excess turns
       // queue FIFO across chats with a backpressure notice.
       const runInput = async (prompt: string, correlation?: UserInput['correlation']): Promise<void> => {
+        if (stalled || aborted || terminated) { return; }
         // Item IDs are scoped to one exec invocation. Clear before every
         // run because older Codex versions (and test doubles) may omit
         // `turn.started` on resumed executions.
@@ -792,208 +851,237 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             'starting fresh codex session after resume input budget was reached'
           );
         }
-        governorSink.touchSession(sessionKey);
-        // Backpressure UX (#4634): announce the wait BEFORE it happens —
-        // never silence. (Also announce when merely joining the queue.)
-        const pre = governorSink.getStats();
-        if (pre.runningRuns >= pre.maxConcurrentRuns || pre.queuedRuns > 0) {
-          pushSynthetic({
-            type: 'status',
-            content:
-              `⏳ Codex 并发已满（${pre.runningRuns}/${pre.maxConcurrentRuns} 运行中）` +
-              `——排队等候，前面还有 ${pre.queuedRuns} 个任务…`,
-            role: 'assistant',
-          });
-        }
-        const lease = await governorSink.acquireRun();
-        if (aborted || terminated) {
-          // Cancelled/finished while queued — don't spawn a zombie run.
-          lease.release();
-          return;
-        }
-        runActive = true;
-        sawTurnTerminator = false;
-        sawTurnFailed = false;
-        sawTurnCompleted = false;
-        runFailureText = '';
-        touchStallWatchdog();
-        const { promise, handle } = runner.run(
-          {
-            prompt: skillsManifest
-              ? `${skillsManifest}\n\nUser request:\n${prompt}`
-              : prompt,
-            correlation,
-            resumeSessionId: resumeTarget,
-            sandboxMode: sandboxDecision.sandbox,
-            fullAccess,
-            cwd: options.cwd,
-            model: codexModel,
-            reasoningEffort: requestedEffort,
-            env: { ...providerEnv, ...options.env },
-            stderr: options.stderr,
-          },
-          enqueue
-        );
-        currentRun = handle;
-        if (cancelRequested) {
-          // cancel()/close() arrived before this run started (early latch).
-          handle.abort();
-        }
-        try {
-          const result: CodexExecRunResult = await promise;
-          if (stalled || result.aborted) {
-            logger.info(
-              { sessionKey, abortExitLatencyMs: result.abortExitLatencyMs },
-              'codex run aborted; late events and retry paths suppressed'
-            );
-            // Stall terminator is synthesized by the consumer loop; a user
-            // abort ends the stream without a turn terminator (pi parity).
+        let retryWaitedMs = 0;
+        for (let retryAttempt = 0; ; retryAttempt++) {
+          deliveredEventKeys.clear();
+          governorSink.touchSession(sessionKey);
+          // Backpressure UX (#4634): announce the wait BEFORE it happens —
+          // never silence. (Also announce when merely joining the queue.)
+          const pre = governorSink.getStats();
+          if (pre.runningRuns >= pre.maxConcurrentRuns || pre.queuedRuns > 0) {
+            pushSynthetic({
+              type: 'status',
+              content:
+                `⏳ Codex 并发已满（${pre.runningRuns}/${pre.maxConcurrentRuns} 运行中）` +
+                `——排队等候，前面还有 ${pre.queuedRuns} 个任务…`,
+              role: 'assistant',
+            });
+          }
+          const lease = await governorSink.acquireRun();
+          if (stalled || aborted || terminated) {
+            // Cancelled/finished while queued — don't spawn a zombie run.
+            lease.release();
             return;
           }
-          // Failure-signature detection (#4628/#4632, review hardened):
-          // - gated on runFailed — a SUCCESSFUL turn (exit 0 + terminator)
-          //   must never be followed by a spurious 401/limit notice just
-          //   because stderr carries unrelated text (e.g. an MCP server's
-          //   own 401 noise, or retry-and-recover 429 lines codex leaves
-          //   on stderr);
-          // - per-surface: a conjunction must hit WITHIN the raw-events
-          //   text OR within stderr, not across the splice of the two.
-          const runFailed =
-            Boolean(result.spawnError) ||
-            result.timedOut ||
-            result.exitCode !== 0 ||
-            !sawTurnTerminator;
-          const authFailed =
-            runFailed &&
-            (isCodexAuthFailure(runFailureText) || isCodexAuthFailure(result.stderrTail));
-          const usageLimited =
-            runFailed &&
-            (isCodexUsageLimit(runFailureText) || isCodexUsageLimit(result.stderrTail));
-          const resumeTargetGone =
-            runFailed &&
-            resumeTarget !== undefined &&
-            (isCodexResumeTargetMissing(runFailureText) ||
-              isCodexResumeTargetMissing(result.stderrTail));
-          if (authFailed) {
-            // Most actionable diagnosis wins: exit-code noise around a 401
-            // would bury the one thing the user can actually do.
-            pushSynthetic({
-              type: 'error',
-              content: REAUTH_NOTICE,
-              role: 'assistant',
-            });
-          } else if (usageLimited) {
-            // Friendly degrade (#4632): quote codex's own reset hint when
-            // present. Anchored to `try again (at|in)` — a bare "try
-            // again later" from unrelated stderr must not displace the
-            // real timestamp, and `[^.\n]+` after (at|in) tolerates
-            // decimals ("in 2.5 hours"). The failed turn latches nothing,
-            // so the conversation anchor survives into the next window —
-            // recovery needs no restart, only a resend after the reset.
-            const resetHint =
-              /try again (?:at|in) [^.\n]+/i.exec(runFailureText)?.[0] ??
-              /try again (?:at|in) [^.\n]+/i.exec(result.stderrTail)?.[0];
-            pushSynthetic({
-              type: 'error',
-              content: resetHint
-                ? `${USAGE_LIMIT_NOTICE}\n上游提示: ${resetHint}`
-                : USAGE_LIMIT_NOTICE,
-              role: 'assistant',
-            });
-          } else if (result.spawnError) {
-            pushSynthetic({
-              type: 'error',
-              content:
-                `codex exec failed to spawn (${result.spawnError.message}). ` +
-                'Is the codex CLI installed and on PATH?',
-              role: 'assistant',
-            });
-          } else if (result.timedOut) {
-            pushSynthetic({
-              type: 'error',
-              content: 'codex exec was terminated by the runner timeout policy.',
-              role: 'assistant',
-            });
-          } else if (resumeTargetGone) {
-            // Self-heal (#4628): the rollout vanished on codex's side —
-            // drop the dead id so the NEXT turn starts fresh instead of
-            // bricking this chat until /reset.
-            resumeThreadId = undefined;
-            logger.warn(
-              { threadId: resumeTarget },
-              'codex resume target missing (no rollout found); cleared — next turn starts a fresh session (Issue #4628)'
-            );
-            pushSynthetic({
-              type: 'error',
-              content: RESUME_TARGET_GONE_NOTICE,
-              role: 'assistant',
-            });
-          } else if (result.exitCode !== 0) {
-            pushSynthetic({
-              type: 'error',
-              content: `codex exec exited with code ${result.exitCode}${
-                result.stderrTail ? `: ${result.stderrTail.trim().slice(-500)}` : ''
-              }`,
-              role: 'assistant',
-            });
-          } else if (!sawTurnTerminator) {
-            pushSynthetic({
-              type: 'error',
-              content:
-                'codex exec exited 0 without completing a turn (no turn.completed event) — ' +
-                'possibly a CLI version mismatch; see exec-adapter.ts notes.',
-              role: 'assistant',
-            });
-          }
-          // Latch the resume anchor ONLY off a completed turn: thread.started
-          // fires even on a 401-failed run (verified 0.132.0), so a failed
-          // first turn must not become the conversation anchor; an already-
-          // latched conversation survives transient failures (retry resumes
-          // where it left off). turn.completed may carry a
-          // NEW thread_id if codex forks the thread on resume — latching
-          // latestSessionId handles both shapes.
-          if (sawTurnCompleted && latestSessionId) {
-            resumeThreadId = latestSessionId;
-          }
-          logger.debug(
+          runActive = true;
+          sawTurnTerminator = false;
+          sawTurnFailed = false;
+          sawTurnCompleted = false;
+          runFailureText = '';
+          runDiagnostic = '';
+          activeCorrelation = correlation;
+          lastEventAt = Date.now();
+          lastEventType = 'run.started';
+          eventRevision++;
+          runCanRetry = true;
+          overloadFailure = undefined;
+          deferredOverloadMessage = undefined;
+          touchStallWatchdog();
+          const { promise, handle } = runner.run(
             {
-              resumed: resumeTarget !== undefined,
-              threadId: resumeThreadId,
-              authFailed,
-              resumeTargetGone,
-              exitCode: result.exitCode,
+              prompt: skillsManifest
+                ? `${skillsManifest}\n\nUser request:\n${prompt}`
+                : prompt,
+              correlation,
+              resumeSessionId: resumeTarget,
+              sandboxMode: sandboxDecision.sandbox,
+              fullAccess,
+              cwd: options.cwd,
+              model: codexModel,
+              reasoningEffort: requestedEffort,
+              env: { ...providerEnv, ...options.env },
+              stderr: options.stderr,
             },
-            'codex turn boundary (exec run finished)'
+            enqueue
           );
-          // A failed run still ends the TURN so ChatAgent's turn accounting
-          // completes (synthetic result mirrors turn.completed) — and the
-          // result carries terminatedReason:'turn_failed' so ChatAgent
-          // records FAILURE (like 'stall'), never a masked success; this
-          // also covers turn.failed, whose adapter output is error-only
-          // and would otherwise leave the turn unresolved forever (#4378
-          // error_max_* pitfall, flagged in the S2 review).
-          if (!sawTurnTerminator || sawTurnFailed) {
-            pushSynthetic({
-              type: 'result',
-              content: '',
-              role: 'assistant',
-              ...(runFailed || sawTurnFailed
-                ? { metadata: { terminatedReason: 'turn_failed' } }
-                : {}),
-            });
+          currentRun = handle;
+          if (cancelRequested) {
+            // cancel()/close() arrived before this run started (early latch).
+            handle.abort();
           }
-        } finally {
-          // Release the run lease FIRST so the longest-queued run starts
-          // before this turn's post-processing finishes; touch AFTER so a
-          // session finishing a long run is never LRU-evicted as "idlest"
-          // based on its stale start timestamp (S7 review).
-          lease.release();
-          governorSink.touchSession(sessionKey);
-          currentRun = null;
-          runActive = false;
-          openToolItems = 0;
-          clearStallTimers();
-          wakeAll();
+          try {
+            const result: CodexExecRunResult = await promise;
+            if (stalled || result.aborted) {
+              logger.info(
+                { sessionKey, abortExitLatencyMs: result.abortExitLatencyMs },
+                'codex run aborted; late events and retry paths suppressed'
+              );
+              // Stall terminator is synthesized by the consumer loop; a user
+              // abort ends the stream without a turn terminator (pi parity).
+              return;
+            }
+            // Failure-signature detection (#4628/#4632, review hardened):
+            // - gated on runFailed — a SUCCESSFUL turn (exit 0 + terminator)
+            //   must never be followed by a spurious 401/limit notice just
+            //   because stderr carries unrelated text (e.g. an MCP server's
+            //   own 401 noise, or retry-and-recover 429 lines codex leaves
+            //   on stderr);
+            // - per-surface: a conjunction must hit WITHIN the raw-events
+            //   text OR within stderr, not across the splice of the two.
+            const runFailed =
+              sawTurnFailed ||
+              Boolean(result.spawnError) ||
+              result.timedOut ||
+              result.exitCode !== 0 ||
+              !sawTurnTerminator;
+            const failedOverload = overloadFailure as CodexOverloadFailure | undefined;
+            const authFailed =
+              runFailed &&
+              (isCodexAuthFailure(runFailureText) || isCodexAuthFailure(result.stderrTail));
+            const usageLimited =
+              runFailed &&
+              (isCodexUsageLimit(runFailureText) || isCodexUsageLimit(result.stderrTail));
+            const resumeTargetGone =
+              runFailed &&
+              resumeTarget !== undefined &&
+              (isCodexResumeTargetMissing(runFailureText) ||
+                isCodexResumeTargetMissing(result.stderrTail));
+            if (sawTurnFailed && failedOverload && runCanRetry && !result.timedOut && !result.spawnError) {
+              const delayMs = codexOverloadRetryDelay(failedOverload, retryAttempt, retryWaitedMs);
+              if (delayMs !== undefined) {
+                clearStallTimers();
+                logger.warn({ sessionKey, retryAttempt: retryAttempt + 1, delayMs, cause: failedOverload.message }, 'Retrying Codex overload before output or tools');
+                pushSynthetic({ type: 'status', role: 'system', content: `⏳ Codex 服务暂时过载，将在 ${(delayMs / 1000).toFixed(1)} 秒后重试（${retryAttempt + 1}/${CODEX_OVERLOAD_MAX_RETRIES}）。` });
+                if (!await waitForCodexOverloadRetry(delayMs, retryAbort.signal)) { return; }
+                retryWaitedMs += delayMs;
+                continue;
+              }
+            }
+            if (runFailed && deferredOverloadMessage) { pushSynthetic(deferredOverloadMessage); }
+            if (authFailed) {
+              // Most actionable diagnosis wins: exit-code noise around a 401
+              // would bury the one thing the user can actually do.
+              pushSynthetic({
+                type: 'error',
+                content: REAUTH_NOTICE,
+                role: 'assistant',
+              });
+            } else if (usageLimited) {
+              // Friendly degrade (#4632): quote codex's own reset hint when
+              // present. Anchored to `try again (at|in)` — a bare "try
+              // again later" from unrelated stderr must not displace the
+              // real timestamp, and `[^.\n]+` after (at|in) tolerates
+              // decimals ("in 2.5 hours"). The failed turn latches nothing,
+              // so the conversation anchor survives into the next window —
+              // recovery needs no restart, only a resend after the reset.
+              const resetHint =
+                /try again (?:at|in) [^.\n]+/i.exec(runFailureText)?.[0] ??
+                /try again (?:at|in) [^.\n]+/i.exec(result.stderrTail)?.[0];
+              pushSynthetic({
+                type: 'error',
+                content: resetHint
+                  ? `${USAGE_LIMIT_NOTICE}\n上游提示: ${resetHint}`
+                  : USAGE_LIMIT_NOTICE,
+                role: 'assistant',
+              });
+            } else if (result.spawnError) {
+              pushSynthetic({
+                type: 'error',
+                content:
+                  `codex exec failed to spawn (${result.spawnError.message}). ` +
+                  'Is the codex CLI installed and on PATH?',
+                role: 'assistant',
+              });
+            } else if (result.timedOut) {
+              pushSynthetic({
+                type: 'error',
+                content: 'codex exec was terminated by the runner timeout policy.',
+                role: 'assistant',
+              });
+            } else if (resumeTargetGone) {
+              // Self-heal (#4628): the rollout vanished on codex's side —
+              // drop the dead id so the NEXT turn starts fresh instead of
+              // bricking this chat until /reset.
+              resumeThreadId = undefined;
+              logger.warn(
+                { threadId: resumeTarget },
+                'codex resume target missing (no rollout found); cleared — next turn starts a fresh session (Issue #4628)'
+              );
+              pushSynthetic({
+                type: 'error',
+                content: RESUME_TARGET_GONE_NOTICE,
+                role: 'assistant',
+              });
+            } else if (result.exitCode !== 0) {
+              pushSynthetic({
+                type: 'error',
+                content: `codex exec exited with code ${result.exitCode}${
+                  result.stderrTail ? `: ${result.stderrTail.trim().slice(-500)}` : ''
+                }`,
+                role: 'assistant',
+              });
+            } else if (!sawTurnTerminator) {
+              pushSynthetic({
+                type: 'error',
+                content:
+                  'codex exec exited 0 without completing a turn (no turn.completed event) — ' +
+                  'possibly a CLI version mismatch; see exec-adapter.ts notes.',
+                role: 'assistant',
+              });
+            }
+            // Latch the resume anchor ONLY off a completed turn: thread.started
+            // fires even on a 401-failed run (verified 0.132.0), so a failed
+            // first turn must not become the conversation anchor; an already-
+            // latched conversation survives transient failures (retry resumes
+            // where it left off). turn.completed may carry a
+            // NEW thread_id if codex forks the thread on resume — latching
+            // latestSessionId handles both shapes.
+            if (sawTurnCompleted && latestSessionId) {
+              resumeThreadId = latestSessionId;
+            }
+            logger.debug(
+              {
+                resumed: resumeTarget !== undefined,
+                threadId: resumeThreadId,
+                authFailed,
+                resumeTargetGone,
+                exitCode: result.exitCode,
+              },
+              'codex turn boundary (exec run finished)'
+            );
+            // A failed run still ends the TURN so ChatAgent's turn accounting
+            // completes (synthetic result mirrors turn.completed) — and the
+            // result carries terminatedReason:'turn_failed' so ChatAgent
+            // records FAILURE (like 'stall'), never a masked success; this
+            // also covers turn.failed, whose adapter output is error-only
+            // and would otherwise leave the turn unresolved forever (#4378
+            // error_max_* pitfall, flagged in the S2 review).
+            if (!sawTurnTerminator || sawTurnFailed) {
+              pushSynthetic({
+                type: 'result',
+                content: '',
+                role: 'assistant',
+                ...(runFailed || sawTurnFailed
+                  ? { metadata: { terminatedReason: 'turn_failed',
+                    terminationDetail: `codex exec: ${failedOverload?.message || runDiagnostic || 'run ended without a successful terminal event'}; ${
+                      JSON.stringify({ sessionKey, threadId: latestSessionId, ...activeCorrelation, lastEventAt, lastEventType })}` } }
+                  : {}),
+              });
+            }
+            return;
+          } finally {
+            // Release the run lease FIRST so the longest-queued run starts
+            // before this turn's post-processing finishes; touch AFTER so a
+            // session finishing a long run is never LRU-evicted as "idlest"
+            // based on its stale start timestamp (S7 review).
+            lease.release();
+            governorSink.touchSession(sessionKey);
+            currentRun = null;
+            runActive = false;
+            openToolItems = 0;
+            clearStallTimers();
+            wakeAll();
+          }
         }
       };
 
@@ -1020,6 +1108,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               return;
             }
             await runInput(userInputText(value), value.correlation);
+            if (stalled || aborted) { return; }
           }
         } finally {
           inputDone = true;
@@ -1053,9 +1142,9 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         if (stalled) {
           yield {
             type: 'result',
-            content: STALL_TERMINATE_NOTICE,
+            content: '⚠️ Codex 进程已停止或退出，本轮已中断。请先检查已有结果，再发送消息继续。',
             role: 'system',
-            metadata: { terminatedReason: 'stall' },
+            metadata: { terminatedReason: 'stall', terminationDetail: stallDetail },
           };
           return;
         }
@@ -1147,24 +1236,32 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     let turnDone: ((error?: Error) => void) | undefined;
     let stallTimer: ReturnType<typeof setTimeout> | undefined;
     const pendingInputs = new Set<AgentInputRequest>();
+    const hasPendingInput = (): boolean => [...pendingInputs].some(request => request.turnId === activeTurnId);
+    const asyncInputs = new CodexAsyncUserInput(undefined, () => Promise.reject(new Error('Async answer has no host')));
+    let asyncDeliveryFailure: Error | undefined;
+    let completingTurnId: string | undefined;
     let openToolItems = 0;
-    const { timeoutMs: stallTimeoutMs } = readStallPolicy(this.env);
+    let lastEventAt = Date.now();
+    let lastEventType = 'turn/start';
+    let eventRevision = 0;
+    let activeCorrelation: UserInput['correlation'];
+    let probingLifecycle: CodexAppServerLifecycle | undefined;
+    const { timeoutMs: stallTimeoutMs } = readStallPolicy({ ...process.env, ...this.env, ...options.env });
+    let turnCanRetry = true;
+    let deferredTurnOverload: CodexOverloadFailure | undefined;
+    let deferredFailedTurnId: string | undefined;
     let interruptFlight: Promise<void> | undefined;
     const isToolItem = (type: string | undefined): boolean =>
       type === 'commandExecution' || type === 'mcpToolCall' || type === 'dynamicToolCall';
-    const fireStall = (): void => {
-      stallTimer = undefined;
-      if (stopped || !activeTurnId) { return; }
-      if (pendingInputs.size > 0 || openToolItems > 0) {
-        // Silence belongs to a user-input request or a running tool, not the
-        // transport. Mirror the exec bridge's exemption instead of killing a
-        // long-running app-server command after one quiet watchdog window.
-        stallTimer = setTimeout(fireStall, stallTimeoutMs);
-        stallTimer.unref?.();
-        return;
-      }
-
-      const stalledTurnId = activeTurnId;
+    const terminateStall = (detail: string, expectedTurnId: string): void => {
+      if (stopped || activeTurnId !== expectedTurnId) { return; }
+      const stalledTurnId = expectedTurnId;
+      const evidence = {
+        sessionKey, threadId, turnId: stalledTurnId, ...activeCorrelation,
+        lastEventAt, lastEventType, quietMs: Date.now() - lastEventAt,
+        stallTimeoutMs, openToolItems, cause: detail,
+      };
+      logger.error(evidence, 'codex app-server liveness failure; settling the original turn');
       activeTurnId = undefined;
       openToolItems = 0;
       stopped = true;
@@ -1173,12 +1270,12 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       void input.return?.(undefined);
       push({
         type: 'result',
-        content: STALL_TERMINATE_NOTICE,
+        content: '⚠️ Codex 控制通道无响应或线程已失活，本轮已中断。请先检查已有结果，再发送消息继续。',
         role: 'system',
         metadata: {
           messageId: stalledTurnId,
           terminatedReason: 'stall',
-          terminationDetail: `codex app-server stalled for ${stallTimeoutMs}ms`,
+          terminationDetail: `codex app-server: ${detail}; ${JSON.stringify(evidence)}`,
         },
       });
       void lifecycle?.interrupt(sessionKey).catch((error: unknown) => {
@@ -1194,10 +1291,38 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       turnDone?.();
       turnDone = undefined;
     };
+    const fireStall = async (): Promise<void> => {
+      stallTimer = undefined;
+      const inspectedLifecycle = lifecycle;
+      const inspectedTurnId = activeTurnId;
+      if (stopped || !inspectedTurnId || !inspectedLifecycle) { return; }
+      if (hasPendingInput() || openToolItems > 0 || completingTurnId === inspectedTurnId || probingLifecycle === inspectedLifecycle) {
+        // Human-input deadlines and demonstrably running tools own their wait.
+        armStall();
+        return;
+      }
+      const observedRevision = eventRevision;
+      probingLifecycle = inspectedLifecycle;
+      const result = await inspectedLifecycle.probeActiveTurn(sessionKey, inspectedTurnId, Math.min(stallTimeoutMs, 5000));
+      if (probingLifecycle === inspectedLifecycle) { probingLifecycle = undefined; }
+      if (stopped || lifecycle !== inspectedLifecycle || activeTurnId !== inspectedTurnId) { return; }
+      if (eventRevision !== observedRevision || hasPendingInput() || openToolItems > 0 || completingTurnId === inspectedTurnId) {
+        armStall();
+        return;
+      }
+      if (result.state === 'inactive' || result.state === 'unresponsive') {
+        terminateStall(result.detail, inspectedTurnId);
+        return;
+      }
+      logger.info({ sessionKey, threadId, turnId: inspectedTurnId, ...activeCorrelation,
+        lastEventAt, lastEventType, quietMs: Date.now() - lastEventAt, probeState: result.state },
+      'codex app-server quiet; runtime probe does not justify termination');
+      armStall();
+    };
     const armStall = (): void => {
       if (stallTimer) {clearTimeout(stallTimer);}
-      if (pendingInputs.size > 0 || !activeTurnId) { return; }
-      stallTimer = setTimeout(fireStall, stallTimeoutMs);
+      if (hasPendingInput() || !activeTurnId || completingTurnId === activeTurnId) { return; }
+      stallTimer = setTimeout(() => { void fireStall(); }, stallTimeoutMs);
       stallTimer.unref?.();
     };
     const earlyEvents: Array<{ method: string; params: unknown }> = [];
@@ -1213,28 +1338,49 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     };
     const onNotification = (method: string, params: unknown): void => {
       if (method === 'transport/exited') {
-        turnDone?.((params as { error?: Error }).error ?? new Error('codex app-server exited'));
-        turnDone = undefined;
+        // Native completion is authoritative while the independent channel sender settles.
+        if (activeTurnId && completingTurnId === activeTurnId) { return; }
+        if (activeTurnId) {
+          terminateStall((params as { error?: Error }).error?.message ?? 'codex app-server process exited', activeTurnId);
+        }
         return;
       }
       if (stopped) {return;}
       const event = params as {
         agentInputHandled?: boolean;
+        deliveryError?: Error;
         turnId?: string;
         item?: { id?: string; type?: string; text?: string; phase?: string | null; command?: string; aggregatedOutput?: string };
         turn?: { id?: string; status?: string; error?: { message?: string } };
       };
       const eventTurnId = event.turnId ?? event.turn?.id;
+      const unsafeItem = ((method === 'item/started' || method === 'item/completed') &&
+          !['reasoning', 'userMessage'].includes(event.item?.type ?? '')) ||
+          (method.startsWith('item/') && !['item/started', 'item/completed'].includes(method) && !method.startsWith('item/reasoning'));
       if (!activeTurnId) {
+        // Events already received after the terminal, before transport teardown,
+        // can still prove the failed attempt performed work. Do not replay it.
+        if (deferredTurnOverload && unsafeItem && (!eventTurnId || eventTurnId === deferredFailedTurnId)) { turnCanRetry = false; }
         earlyEvents.push({ method, params });
         return;
       }
       if (eventTurnId !== activeTurnId) {return;}
+      if (unsafeItem) { turnCanRetry = false; }
+      if (method === 'input/deliveryFailed') {
+        asyncDeliveryFailure ??= event.deliveryError ?? new CodexAsyncInputDeliveryError();
+        push({ type: 'error', role: 'system', content: asyncDeliveryFailure.message });
+        return;
+      }
       if (method === 'item/completed' && event.item?.id) {
         const key = `${activeTurnId}:${event.item.id}`;
         if (deliveredItems.has(key)) {return;}
         deliveredItems.add(key);
       }
+      lastEventAt = Date.now();
+      lastEventType = method;
+      eventRevision++;
+      try { options.onActivity?.(`codex:app-server:${method}`); }
+      catch { logger.debug({ sessionKey, eventType: method }, 'Host activity observer failed'); }
       if (method === 'item/started' && isToolItem(event.item?.type)) {
         openToolItems++;
       } else if (method === 'item/completed' && isToolItem(event.item?.type)) {
@@ -1267,26 +1413,44 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           metadata: { messageId: event.item.id },
         });
       } else if (method === 'turn/completed') {
-        const status = event.turn?.status;
-        const failed = status === 'failed';
-        const interrupted = status === 'interrupted' || status === 'cancelled';
-        push({
-          type: 'result',
-          content: failed ? `❌ Codex turn failed: ${event.turn?.error?.message ?? 'unknown error'}` : interrupted ? '⏹️ Codex turn interrupted' : '✅ Complete',
-          role: 'assistant',
-          ...(failed ? { metadata: { terminatedReason: 'turn_failed' as const } }
-            : interrupted ? { metadata: { terminatedReason: 'interrupted' as const } } : {}),
-        });
-        turnDone?.();
+        const finishingTurn = activeTurnId;
+        if (completingTurnId === finishingTurn) { return; }
+        completingTurnId = finishingTurn;
         if (stallTimer) {clearTimeout(stallTimer);}
-        turnDone = undefined;
-        activeTurnId = undefined;
+        // Native accepted:true and turn/completed prove no channel delivery.
+        // Let the card sender finish before settling this host turn.
+        void (async () => {
+          try { await asyncInputs.waitForDelivery(threadId as string, finishingTurn); }
+          catch (error) { asyncDeliveryFailure ??= error as Error; }
+          asyncInputs.releaseDelivery(threadId as string, finishingTurn);
+          if (stopped || activeTurnId !== finishingTurn) { return; }
+          const status = event.turn?.status;
+          const failed = status === 'failed' || !!asyncDeliveryFailure;
+          const interrupted = status === 'interrupted' || status === 'cancelled';
+          const detail = asyncDeliveryFailure?.message ?? event.turn?.error?.message ?? 'unknown error';
+          const overload = failed && !asyncDeliveryFailure && turnCanRetry
+            ? readCodexOverloadFailure(event.turn?.error) : undefined;
+          if (overload) { deferredTurnOverload = overload; deferredFailedTurnId = finishingTurn; }
+          else {
+            push({
+              type: 'result',
+              content: failed ? `❌ Codex turn failed: ${detail}` : interrupted ? '⏹️ Codex turn interrupted' : '✅ Complete',
+              role: 'assistant',
+              ...(failed ? { metadata: { terminatedReason: 'turn_failed' as const, terminationDetail: `codex app-server turn failed: ${detail}; ${JSON.stringify({ threadId, turnId: finishingTurn })}`, messageId: finishingTurn } }
+                : interrupted ? { metadata: { terminatedReason: 'interrupted' as const } } : {}),
+            });
+          }
+          turnDone?.();
+          turnDone = undefined;
+          activeTurnId = undefined;
+        })();
       }
     };
 
     const stopHandle = (reason: string): void => {
       if (stopped || done) {return;}
       stopped = true;
+      asyncInputs.close();
       admissionAbort.abort();
       stopInput();
       void input.return?.(undefined);
@@ -1338,105 +1502,154 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           // Pin before waiting for a run slot, through subprocess teardown.
           registration.setBusy(true);
           if (stopped) {break;}
-          const acquisition = this.governor.acquireRun();
-          const lease = await Promise.race([acquisition, stopSignal.then(() => undefined)]);
-          if (!lease) {
-            void acquisition.then((lateLease) => lateLease.release());
-            break;
-          }
-          let bindTurn!: (id: string | undefined) => void;
-          const turnBinding = new Promise<string | undefined>(resolve => { bindTurn = resolve; });
-          const onDynamicToolCall = dynamicToolRegistry.specs.length > 0 ? async (request: CodexAppServerDynamicToolCallRequest) => {
-            const boundTurn = await turnBinding;
-            if (!boundTurn || stopped || request.threadId !== threadId || request.turnId !== boundTurn
-              || activeTurnId !== boundTurn) {
-              throw new Error('Host tool request has no matching active Codex turn');
-            }
-            return dynamicToolRegistry.call(request);
-          } : undefined;
-          try {
-            if (stopped) {break;}
-            lifecycle = this.createAppServerLifecycle(binary, sessionKey, next.value.correlation, options.onUserInput ? async request => {
-              const boundTurn = await turnBinding;
-              if (!boundTurn || stopped || request.signal.aborted || request.threadId !== threadId || request.turnId !== boundTurn
-                || activeTurnId !== boundTurn || !options.onUserInput) { throw new Error('Input request has no active channel turn'); }
-              // Even a non-blocking question can leave the model idle while the
-              // user answers. Its own bounded input deadline governs that wait.
-              pendingInputs.add(request);
-              armStall();
-              let finished = false;
-              const finish = (): void => {
-                if (finished) { return; }
-                finished = true;
-                pendingInputs.delete(request);
-                request.signal.removeEventListener('abort', finish);
-                if (!stopped && activeTurnId === boundTurn) { armStall(); }
-              };
-              request.signal.addEventListener('abort', finish, { once: true });
-              push({ type: 'status', role: 'system', content: request.isBlocking ? '等待你回答卡片中的问题。' : '有问题等待回答；任务仍在继续。' });
-              await options.onUserInput({ ...request, respond: async answers => { await request.respond(answers); finish(); } }, next.value.inputContext);
-            } : undefined, onDynamicToolCall);
-            threadId = await lifecycle.ensureThread(sessionKey, {
-              threadId,
-              cwd: options.cwd,
-              model: codexModel,
-              sandbox,
-              dynamicTools: dynamicToolRegistry.specs,
-            });
-            if (this.appServerLifecycles.get(sessionKey) === lifecycle) {
-              this.appServerThreadIds.set(sessionKey, threadId);
-              this.appServerDynamicToolSignatures.set(sessionKey, dynamicToolSignature);
-            }
-            if (stopped || this.disposed) {break;}
-            this.appServerRoutes.set(threadId, onNotification);
-            deliveredItems.clear();
-            openToolItems = 0;
-            this.governor.touchSession(sessionKey);
-            const userInput = userInputText(next.value);
-            activeTurnId = await lifecycle.startTurn(
-              sessionKey,
-              skillsManifest ? `${skillsManifest}\n\nUser request:\n${userInput}` : userInput,
-              {
-              sandbox,
-              networkAccess: this.networkAccess,
-              cwd: options.cwd,
-              model: codexModel,
-              reasoningEffort,
-              }
-            );
-            bindTurn(activeTurnId);
-            logger.debug({ sessionKey, threadId, turnId: activeTurnId }, 'Codex turn started');
-            // Keep the lifecycle anchor available to control/steer consumers,
-            // but provide no user-facing content for this internal status.
-            push({
-              type: 'status',
-              content: '',
-              role: 'system',
-              metadata: { messageId: activeTurnId, sessionId: threadId },
-            });
-            if (stopped) {
-              await lifecycle.interrupt(sessionKey).catch(() => {});
+          let retryWaitedMs = 0;
+          for (let retryAttempt = 0; ; retryAttempt++) {
+            turnCanRetry = true;
+            deferredTurnOverload = undefined;
+            deferredFailedTurnId = undefined;
+            earlyEvents.length = 0;
+            const acquisition = this.governor.acquireRun();
+            const lease = await Promise.race([acquisition, stopSignal.then(() => undefined)]);
+            if (!lease) {
+              void acquisition.then((lateLease) => lateLease.release());
               break;
             }
-            const completed = new Promise<void>((resolveTurn, rejectTurn) => {
-              turnDone = (error) => error ? rejectTurn(error) : resolveTurn();
-            });
-            armStall();
-            for (const event of earlyEvents.splice(0)) {onNotification(event.method, event.params);}
-            await completed;
-            this.governor.touchSession(sessionKey);
-          } finally {
-            bindTurn(undefined);
-            await interruptFlight;
-            if (threadId && this.appServerRoutes.get(threadId) === onNotification) {this.appServerRoutes.delete(threadId);}
-            await lifecycle?.close();
-            if (this.appServerLifecycles.get(sessionKey) === lifecycle) {this.appServerLifecycles.delete(sessionKey);}
-            lifecycle = undefined;
-            if (stallTimer) {clearTimeout(stallTimer);}
-            openToolItems = 0;
-            lease.release();
-            registration.setBusy(false);
+            let bindTurn!: (id: string | undefined) => void;
+            const turnBinding = new Promise<string | undefined>(resolve => { bindTurn = resolve; });
+            const onDynamicToolCall = dynamicToolRegistry.specs.length > 0 ? async (request: CodexAppServerDynamicToolCallRequest) => {
+              const boundTurn = await turnBinding;
+              if (!boundTurn || stopped || request.threadId !== threadId || request.turnId !== boundTurn
+                || activeTurnId !== boundTurn) {
+                throw new Error('Host tool request has no matching active Codex turn');
+              }
+              turnCanRetry = false;
+              return dynamicToolRegistry.call(request);
+            } : undefined;
+            try {
+              if (stopped) {break;}
+              activeCorrelation = next.value.correlation;
+              lastEventAt = Date.now();
+              lastEventType = 'turn/start';
+              eventRevision++;
+              lifecycle = this.createAppServerLifecycle(binary, sessionKey, next.value.correlation, options.onUserInput ? async request => {
+                const boundTurn = await turnBinding;
+                if (!boundTurn || stopped || request.signal.aborted || request.threadId !== threadId || request.turnId !== boundTurn
+                  || activeTurnId !== boundTurn || !options.onUserInput) { throw new Error('Input request has no active channel turn'); }
+                turnCanRetry = false;
+                if (request.kind === 'async-message' && (!next.value.inputContext || !options.onAsyncUserInputAnswer)) {
+                  throw new CodexAsyncInputDeliveryError('unsupported');
+                }
+                // Even a non-blocking question can leave the model idle while the
+                // user answers. Its own bounded input deadline governs that wait.
+                pendingInputs.add(request);
+                armStall();
+                let finished = false;
+                const finish = (): void => {
+                  if (finished) { return; }
+                  finished = true;
+                  pendingInputs.delete(request);
+                  request.signal.removeEventListener('abort', finish);
+                  if (!stopped && activeTurnId === boundTurn) { armStall(); }
+                };
+                request.signal.addEventListener('abort', finish, { once: true });
+                await options.onUserInput({ ...request, respond: async answers => { await request.respond(answers); finish(); } }, next.value.inputContext);
+                push({ type: 'status', role: 'system', content: request.isBlocking ? '等待你回答卡片中的问题。' : '提问卡片已发送；可在有效期内补充回答。' });
+              } : undefined, onDynamicToolCall, asyncInputs, async (request, text) => {
+                const boundTurn = await turnBinding;
+                const context = next.value.inputContext;
+                if (!boundTurn || stopped || request.signal.aborted || request.threadId !== threadId
+                  || request.turnId !== boundTurn || !context || !options.onAsyncUserInputAnswer) {
+                  throw new Error('Async answer no longer belongs to this conversation');
+                }
+                if (activeTurnId === boundTurn && lifecycle?.snapshot(sessionKey)?.activeTurnId === boundTurn) {
+                  try {
+                    const acknowledgedTurn = await lifecycle.steer(sessionKey, text);
+                    if (acknowledgedTurn !== boundTurn) { throw new Error('Async answer acknowledgement changed turn'); }
+                    return;
+                  } catch (error) {
+                    // Only this pre-RPC guard proves no answer was sent. A lost
+                    // acknowledgement must never fall through to a new input.
+                    if (!(error instanceof CodexNoActiveTurnError)) { throw error; }
+                  }
+                }
+                await options.onAsyncUserInputAnswer(request, text, context);
+              }, options.env);
+              threadId = await lifecycle.ensureThread(sessionKey, {
+                threadId,
+                cwd: options.cwd,
+                model: codexModel,
+                sandbox,
+                dynamicTools: dynamicToolRegistry.specs,
+              });
+              if (this.appServerLifecycles.get(sessionKey) === lifecycle) {
+                this.appServerThreadIds.set(sessionKey, threadId);
+                this.appServerDynamicToolSignatures.set(sessionKey, dynamicToolSignature);
+              }
+              if (stopped || this.disposed) {break;}
+              this.appServerRoutes.set(threadId, onNotification);
+              deliveredItems.clear();
+              asyncDeliveryFailure = undefined;
+              completingTurnId = undefined;
+              openToolItems = 0;
+              this.governor.touchSession(sessionKey);
+              const userInput = userInputText(next.value);
+              activeTurnId = await lifecycle.startTurn(
+                sessionKey,
+                skillsManifest ? `${skillsManifest}\n\nUser request:\n${userInput}` : userInput,
+                {
+                sandbox,
+                networkAccess: options.codexRuntime ? options.codexRuntime.networkAccess ?? true : this.networkAccess,
+                cwd: options.cwd,
+                model: codexModel,
+                reasoningEffort,
+                }
+              );
+              bindTurn(activeTurnId);
+              logger.debug({ sessionKey, threadId, turnId: activeTurnId }, 'Codex turn started');
+              // Keep the lifecycle anchor available to control/steer consumers,
+              // but provide no user-facing content for this internal status.
+              push({
+                type: 'status',
+                content: '',
+                role: 'system',
+                metadata: { messageId: activeTurnId, sessionId: threadId },
+              });
+              if (stopped) {
+                await lifecycle.interrupt(sessionKey).catch(() => {});
+                break;
+              }
+              const completed = new Promise<void>((resolveTurn, rejectTurn) => {
+                turnDone = (error) => error ? rejectTurn(error) : resolveTurn();
+              });
+              armStall();
+              for (const event of earlyEvents.splice(0)) {onNotification(event.method, event.params);}
+              await completed;
+              this.governor.touchSession(sessionKey);
+            } finally {
+              bindTurn(undefined);
+              await interruptFlight;
+              if (threadId && this.appServerRoutes.get(threadId) === onNotification) {this.appServerRoutes.delete(threadId);}
+              await lifecycle?.close();
+              if (this.appServerLifecycles.get(sessionKey) === lifecycle) {this.appServerLifecycles.delete(sessionKey);}
+              lifecycle = undefined;
+              if (stallTimer) {clearTimeout(stallTimer);}
+              openToolItems = 0;
+              lease.release();
+            }
+            if (stopped || !deferredTurnOverload) { break; }
+            const failure = deferredTurnOverload as CodexOverloadFailure;
+            const delayMs = turnCanRetry ? codexOverloadRetryDelay(failure, retryAttempt, retryWaitedMs) : undefined;
+            if (delayMs === undefined) {
+              push({ type: 'result', role: 'assistant', content: `❌ Codex turn failed: ${failure.message}`,
+                metadata: { terminatedReason: 'turn_failed', terminationDetail: failure.message } });
+              break;
+            }
+            logger.warn({ sessionKey, retryAttempt: retryAttempt + 1, delayMs, cause: failure.message }, 'Retrying Codex overload before output or tools');
+            push({ type: 'status', role: 'system', content: `⏳ Codex 服务暂时过载，将在 ${(delayMs / 1000).toFixed(1)} 秒后重试（${retryAttempt + 1}/${CODEX_OVERLOAD_MAX_RETRIES}）。` });
+            if (!await waitForCodexOverloadRetry(delayMs, admissionAbort.signal)) { break; }
+            retryWaitedMs += delayMs;
           }
+          registration.setBusy(false);
         }
       } catch (error) {
         if (!stopped) {
@@ -1447,6 +1660,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           });
         }
       } finally {
+        asyncInputs.close();
         await interruptFlight;
         if (stallTimer) {clearTimeout(stallTimer);}
         registration?.unregister();
@@ -1481,8 +1695,22 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           ? Promise.reject(new Error('codex app-server stream is closed'))
           : lifecycle?.interrupt(sessionKey) ?? Promise.reject(new Error('No active app-server turn')),
         steer: async (text) => {
-          if (stopped || !lifecycle) {throw new Error('No active app-server turn');}
-          return { turnId: await lifecycle.steer(sessionKey, text) };
+          try {
+            if (stopped || !lifecycle) {
+              throw new CodexNoActiveTurnError('steer', lifecycle?.snapshot(sessionKey) ?? { sessionKey, state: 'idle' });
+            }
+            turnCanRetry = false;
+            return { turnId: await lifecycle.steer(sessionKey, text) };
+          } catch (error) {
+            // Only explicit non-acceptance permits the host to enqueue once.
+            // Transport failures, internal errors and mismatched ACKs retain
+            // their original cause and unknown delivery outcome.
+            if (error instanceof CodexNoActiveTurnError ||
+                (error instanceof CodexAppServerRpcError && [-32600, -32601, -32602].includes(error.code))) {
+              throw new LiveInputRejectedError(error.message, { cause: error });
+            }
+            throw error;
+          }
         },
         get sessionId(): string | undefined {
           return threadId;
@@ -1498,6 +1726,9 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     correlation?: UserInput['correlation'],
     onUserInput?: (request: AgentInputRequest) => Promise<void>,
     onDynamicToolCall?: (request: CodexAppServerDynamicToolCallRequest) => Promise<CodexAppServerDynamicToolCallResult>,
+    asyncInputs?: CodexAsyncUserInput,
+    onAsyncAnswer?: (request: AgentInputRequest, text: string) => Promise<void>,
+    environment?: Record<string, string | undefined>,
   ): CodexAppServerLifecycle {
     const lifecycle = new CodexAppServerLifecycle({
       binary,
@@ -1505,7 +1736,9 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       correlation,
       onUserInput,
       onDynamicToolCall,
-      env: this.env,
+      asyncInputs,
+      onAsyncAnswer,
+      env: environment ?? this.env,
       onNotification: (method, params) => {
         const threadId = (params as { threadId?: string } | null)?.threadId;
         if (threadId) {this.appServerRoutes.get(threadId)?.(method, params);}

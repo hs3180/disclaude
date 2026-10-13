@@ -13,6 +13,20 @@ const asMsg = (m: object) => m as any;
 
 describe('adaptSDKMessage', () => {
   describe('assistant messages', () => {
+    it.each(['tool_use', 'end_turn', null])('preserves text and identifies the native %s stop reason', stopReason => {
+      const result = adaptSDKMessage(asMsg({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          stop_reason: stopReason,
+          content: [{ type: 'text', text: 'Opaque model text.  ' }],
+        },
+      }));
+      expect(result.type).toBe('text');
+      expect(result.content).toBe('Opaque model text.  ');
+      expect(result.metadata?.phase).toBe(stopReason === 'tool_use' ? 'commentary' : undefined);
+    });
+
     it('should handle text-only content', () => {
       const message = {
         type: 'assistant' as const,
@@ -529,6 +543,20 @@ describe('adaptSDKMessage', () => {
   });
 
   describe('result messages', () => {
+    it.each(['success', 'error_during_execution'])('preserves consumed user IDs on %s results', (subtype) => {
+      const result = adaptSDKMessage(asMsg({ type: 'result', subtype,
+        user_message_uuid: 'run-A', user_message_uuids: ['run-A', 'run-B', 'run-B'],
+      }));
+      expect(result.metadata?.consumedInputIds).toEqual(['run-A', 'run-B']);
+    });
+
+    it('uses the single triggering ID without inferring other consumed messages', () => {
+      expect(adaptSDKMessage(asMsg({ type: 'result', subtype: 'success', user_message_uuid: 'run-A' }))
+        .metadata?.consumedInputIds).toEqual(['run-A']);
+      expect(adaptSDKMessage(asMsg({ type: 'result', subtype: 'success' }))
+        .metadata?.consumedInputIds).toBeUndefined();
+    });
+
     it('should format success result with cost', () => {
       const message = {
         type: 'result' as const,
@@ -868,6 +896,17 @@ describe('adaptSDKMessage', () => {
 });
 
 describe('adaptUserInput', () => {
+  it('stamps the host run ID as a transport UUID without adding it to model content', () => {
+    const runId = '1b9e7dea-84d2-4993-9bd8-274cbadf37ef';
+    const result = adaptUserInput({ role: 'user', content: 'ordinary supplement',
+      correlation: { runId, chatId: 'chat', sourceMessageId: 'source-B', traceId: 'trace-B' } });
+    expect(result.uuid).toBe(runId);
+    expect(result.message.content).toBe('ordinary supplement');
+    expect(adaptUserInput({ role: 'user', content: 'no correlation' }).uuid).toBeUndefined();
+    expect(adaptUserInput({ role: 'user', content: 'invalid host ID',
+      correlation: { runId: 'not-a-uuid', chatId: 'chat', sourceMessageId: 'source', traceId: 'trace' } }).uuid).toBeUndefined();
+  });
+
   it('should convert UserInput to SDKUserMessage', () => {
     const input = {
       role: 'user' as const,
@@ -907,4 +946,23 @@ it('does not label SDK success-envelope API errors as complete', () => {
   expect(adaptSDKMessage(asMsg({ type: 'result', subtype: 'success', is_error: true,
     result: 'Authentication failed', usage: {}, total_cost_usd: 0,
   }))).toMatchObject({ type: 'result', content: 'Authentication failed', metadata: { terminatedReason: 'turn_failed' } });
+});
+
+it('preserves non-ambient background-task snapshots, including an empty replacement', () => {
+  const message = adaptSDKMessage(asMsg({ type: 'system', subtype: 'background_tasks_changed', tasks: [
+    { task_id: 'research-1', task_type: 'local_agent' },
+    { task_id: 'watcher-1', task_type: 'local_agent', ambient: true },
+  ] }));
+  expect(message.content).toBe('');
+  expect(message.metadata?.backgroundTaskIds).toEqual(['research-1']);
+  expect(adaptSDKMessage(asMsg({ type: 'system', subtype: 'background_tasks_changed', tasks: [] })).metadata?.backgroundTaskIds).toEqual([]);
+});
+
+it('preserves older task edges without inventing identities for malformed messages', () => {
+  expect(adaptSDKMessage(asMsg({ type: 'system', subtype: 'task_started', task_id: 'task-1' })).metadata?.backgroundTask).toEqual({ id: 'task-1', state: 'running' });
+  expect(adaptSDKMessage(asMsg({ type: 'system', subtype: 'task_notification', task_id: 'task-1', status: 'completed' })).metadata?.backgroundTask).toEqual({ id: 'task-1', state: 'completed' });
+  expect(adaptSDKMessage(asMsg({ type: 'system', subtype: 'task_started' })).metadata?.backgroundTask).toBeUndefined();
+  expect(adaptSDKMessage(asMsg({ type: 'system', subtype: 'task_notification', task_id: 'task-1' })).metadata?.backgroundTask).toBeUndefined();
+  expect(adaptSDKMessage(asMsg({ type: 'system', subtype: 'task_started', task_id: 'watcher', ambient: true })).metadata?.backgroundTask).toBeUndefined();
+  expect(adaptSDKMessage(asMsg({ type: 'system', subtype: 'task_started', task_id: 'housekeeping', skip_transcript: true })).metadata?.backgroundTask).toBeUndefined();
 });

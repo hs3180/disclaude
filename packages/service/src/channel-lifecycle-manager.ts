@@ -113,7 +113,7 @@ export interface WiredContext extends ChannelSetupContext {
    * Callback factory for creating ChatAgentCallbacks.
    * Called per-message to match current agent pool usage pattern.
    */
-  callbacks: (chatId: string) => ChatAgentCallbacks;
+  callbacks: (chatId: string, threadRootId?: string) => ChatAgentCallbacks;
 }
 
 /**
@@ -130,14 +130,14 @@ export interface WiredChannelDescriptor<TConfig extends ChannelConfig = ChannelC
   /**
    * Create a ChatAgentCallbacks factory for this channel.
    *
-   * The returned function takes a chatId and returns ChatAgentCallbacks.
+   * The returned function takes a chatId and optional explicit topic root.
    * This pattern allows callbacks to capture channel-specific behavior
    * while being created per-message for agent pool compatibility.
    */
   createCallbacks: (
     channel: IChannel,
     context: ChannelSetupContext
-  ) => (chatId: string) => ChatAgentCallbacks;
+  ) => (chatId: string, threadRootId?: string) => ChatAgentCallbacks;
 
   /**
    * Create a message handler for incoming messages.

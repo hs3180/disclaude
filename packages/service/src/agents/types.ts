@@ -10,6 +10,7 @@
  */
 
 import type { FeishuCard, ChannelCapabilities, BaseAgentConfig, ChatAgentHooks, MessageBuilderOptions, CwdProvider, CwdResolution } from '@disclaude/core';
+import type { ServiceTurnRecoveryStore } from '../service-turn-recovery.js';
 
 // ============================================================================
 // ChatAgentCallbacks
@@ -56,6 +57,9 @@ export interface ChatAgentCallbacks {
    * @param parentMessageId - Optional parent message ID for thread replies
    */
   onDone?: (chatId: string, parentMessageId?: string) => Promise<void>;
+
+  /** Buffer assistant text until its terminal round, excluding progress from REST responses. */
+  finalReplyOnly?: boolean;
 
   /** Internal consumers receive bounded assistant text after the last tool call and the actual turn outcome,
    * without mixing user notifications, tool traces or SDK progress into results. */
@@ -206,6 +210,8 @@ export interface ChatAgentConfig extends BaseAgentConfig, ChatAgentHooks {
   skipHistory?: boolean;
   /** Native provider identity independent of the real delivery/history chat ID. */
   sdkSessionKey?: string;
+  /** Durable restart-interruption journal shared by service-managed agents. */
+  turnRecovery?: ServiceTurnRecoveryStore;
 
 }
 

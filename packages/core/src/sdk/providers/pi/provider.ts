@@ -5,6 +5,7 @@ import { readStallPolicy } from '../stall-policy.js';
 import { loadPiProduction, resolvePiModel } from './production-runtime.js';
 import { createRequire } from 'node:module';
 
+import type { BaseAgentConfig } from '../../../agents/types.js';
 import type { IAgentSDKProvider } from '../../interface.js';
 import type {
   AgentMessage,
@@ -53,15 +54,25 @@ export class PiAgentProvider implements IAgentSDKProvider {
   // Provider information
   // --------------------------------------------------------------------------
 
-  getInfo(): ProviderInfo {
-    const available = this.validateConfig();
+  getInfo(target?: BaseAgentConfig): ProviderInfo {
+    let configurationError: string | undefined;
+    if (target && !this.streamFn) {
+      try {
+        const protocol = target.apiProtocol ?? 'anthropic';
+        const keyName = protocol === 'openai' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY';
+        const urlName = protocol === 'openai' ? 'OPENAI_BASE_URL' : 'ANTHROPIC_BASE_URL';
+        resolvePiModel({ settingSources: [], model: target.model, apiProtocol: protocol,
+          env: { [keyName]: target.apiKey, [urlName]: target.apiBaseUrl } });
+      } catch { configurationError = 'check the selected LLM API credential, model and endpoint'; }
+    }
+    const available = !configurationError && this.validateConfig();
     const info: ProviderInfo = {
       name: this.name,
       version: this.version,
       available,
     };
     if (!available) {
-      info.unavailableReason = 'pi-agent-core package not installed or not configured';
+      info.unavailableReason = configurationError ?? 'pi-agent-core package not installed or not configured';
     }
     return info;
   }

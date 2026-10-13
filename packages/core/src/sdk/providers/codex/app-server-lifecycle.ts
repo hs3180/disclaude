@@ -1,5 +1,6 @@
 import {
   CodexAppServerTransport,
+  CodexAppServerRequestTimeoutError,
   type CodexAppServerDynamicToolSpec,
   type CodexAppServerExit,
   type CodexAppServerTransportOptions,
@@ -9,6 +10,12 @@ import type { AgentInputRequest } from '../../user-input.js';
 import type { CodexReasoningEffort } from '../../../config/types.js';
 import { CodexAsyncUserInput } from './async-user-input.js';
 export type CodexAppServerSessionState = 'idle' | 'active' | 'waiting-user' | 'uncertain';
+
+interface CodexAppServerLifecycleOptions extends CodexAppServerTransportOptions {
+  /** Query-owned questions survive normal per-turn transport teardown. */
+  asyncInputs?: CodexAsyncUserInput;
+  onAsyncAnswer?: (request: AgentInputRequest, text: string) => Promise<void>;
+}
 
 export interface CodexAppServerSessionSnapshot {
   sessionKey: string;
@@ -47,7 +54,7 @@ export class CodexNoActiveTurnError extends Error {
 }
 
 interface ThreadResponse {
-  thread?: { id?: string };
+  thread?: { id?: string; status?: { type?: string } };
 }
 
 interface TurnResponse {
@@ -80,9 +87,11 @@ export class CodexAppServerLifecycle {
   private initializeFlight?: Promise<void>;
   private readonly pendingInputs = new Set<AgentInputRequest>();
   private readonly asyncInputs: CodexAsyncUserInput;
+  private readonly ownsAsyncInputs: boolean;
+  private closing = false;
   private readonly reasoningEffortsByModel = new Map<string, Set<string>>();
 
-  constructor(options: CodexAppServerTransportOptions = {}) {
+  constructor(options: CodexAppServerLifecycleOptions = {}) {
     this.interruptTimeoutMs = options.requestTimeoutMs ?? 10000;
     const onUserInput = options.onUserInput ? async (request: AgentInputRequest): Promise<void> => {
       this.pendingInputs.add(request);
@@ -92,7 +101,8 @@ export class CodexAppServerLifecycle {
         this.pendingInputs.delete(request);
       } });
     } : undefined;
-    this.asyncInputs = new CodexAsyncUserInput(onUserInput, async (threadId, turnId, text) => {
+    this.ownsAsyncInputs = !options.asyncInputs;
+    this.asyncInputs = options.asyncInputs ?? new CodexAsyncUserInput(onUserInput, async (threadId, turnId, text) => {
       const response = await this.transport.request('turn/steer', {
         threadId, expectedTurnId: turnId, input: [{ type: 'text', text }],
       }) as TurnResponse;
@@ -102,11 +112,21 @@ export class CodexAppServerLifecycle {
       ...options, onUserInput,
       onNotification: (method, params) => {
         this.receive(method, params);
-        const handled = method === 'item/completed' && this.asyncInputs.receive(params);
+        const handled = method === 'item/completed' && this.asyncInputs.receive(params, {
+          deliver: onUserInput, submit: options.onAsyncAnswer,
+          onError: error => options.onNotification?.('input/deliveryFailed', {
+            ...(params as Record<string, unknown>), deliveryError: error,
+          }),
+        });
         options.onNotification?.(method, handled ? { ...(params as Record<string, unknown>), agentInputHandled: true } : params);
       },
       onExit: (exit) => {
-        this.asyncInputs.close();
+        if (this.ownsAsyncInputs) { this.asyncInputs.close(); }
+        else if (!this.closing) {
+          for (const session of this.sessions.values()) {
+            if (session.state !== 'idle') { this.asyncInputs.cancel('unavailable', session.threadId, session.activeTurnId); }
+          }
+        }
         for (const waiter of this.turnWaiters.values()) {
           waiter.reject(new Error('codex app-server exited before interruption completed'));
         }
@@ -332,12 +352,16 @@ export class CodexAppServerLifecycle {
 
   async steer(sessionKey: string, input: string): Promise<string> {
     const session = this.requireActive(sessionKey, 'steer');
+    const turnId = session.activeTurnId as string;
     const response = (await this.transport.request('turn/steer', {
       threadId: session.threadId,
-      expectedTurnId: session.activeTurnId,
+      expectedTurnId: turnId,
       input: [{ type: 'text', text: input }],
     })) as TurnResponse;
-    return response.turnId ?? session.activeTurnId as string;
+    if (response.turnId !== turnId) {
+      throw new Error('Steer acknowledgement did not match its targeted turn');
+    }
+    return turnId;
   }
 
   snapshot(sessionKey: string): CodexAppServerSessionSnapshot | undefined {
@@ -353,8 +377,40 @@ export class CodexAppServerLifecycle {
     this.threadFlights.delete(sessionKey);
   }
 
+  /** Metadata-only, read-only runtime probe. Never resume or replay a turn. */
+  async probeActiveTurn(sessionKey: string, expectedTurnId: string, timeoutMs: number): Promise<{
+    state: 'active' | 'inactive' | 'unresponsive' | 'unknown' | 'changed';
+    detail: string;
+  }> {
+    const session = this.sessions.get(sessionKey);
+    const stillCurrent = (): boolean => this.sessions.get(sessionKey) === session
+      && session?.activeTurnId === expectedTurnId;
+    if (!stillCurrent() || !session?.threadId) { return { state: 'changed', detail: 'turn changed before probe' }; }
+    try {
+      const response = await this.transport.request('thread/read', {
+        threadId: session.threadId, includeTurns: false,
+      }, timeoutMs) as ThreadResponse;
+      if (!stillCurrent()) { return { state: 'changed', detail: 'turn changed during probe' }; }
+      if (response?.thread?.id !== session.threadId) {
+        return { state: 'unknown', detail: 'thread/read did not identify the expected thread' };
+      }
+      const status = response.thread.status?.type;
+      if (status === 'active') { return { state: 'active', detail: 'thread/read reports active' }; }
+      if (status === 'idle' || status === 'notLoaded' || status === 'systemError') {
+        return { state: 'inactive', detail: `thread/read reports ${status}; turn completion was not received` };
+      }
+      return { state: 'unknown', detail: 'thread/read runtime status unavailable; update Codex CLI' };
+    } catch (error) {
+      if (!stillCurrent()) { return { state: 'changed', detail: 'turn changed during probe' }; }
+      return error instanceof CodexAppServerRequestTimeoutError
+        ? { state: 'unresponsive', detail: `thread/read control probe timed out after ${timeoutMs}ms` }
+        : { state: 'unknown', detail: 'thread/read probe unavailable; runtime status is unknown' };
+    }
+  }
+
   close(): Promise<CodexAppServerExit> {
-    this.asyncInputs.close();
+    this.closing = true;
+    if (this.ownsAsyncInputs) { this.asyncInputs.close(); }
     return this.transport.close();
   }
 
@@ -362,11 +418,11 @@ export class CodexAppServerLifecycle {
     if (method !== 'turn/completed') {
       return;
     }
-    const event = params as { threadId?: string; turn?: { id?: string } };
+    const event = params as { threadId?: string; turn?: { id?: string; status?: string } };
     const { threadId } = event;
     const turnId = event.turn?.id;
     if (threadId && turnId) {
-      this.asyncInputs.cancel('turn-ended', threadId, turnId);
+      if (this.ownsAsyncInputs || event.turn?.status !== 'completed') { this.asyncInputs.cancel('turn-ended', threadId, turnId); }
       this.completedTurns.add(`${threadId}:${turnId}`);
       this.turnWaiters.get(`${threadId}:${turnId}`)?.resolve();
     }

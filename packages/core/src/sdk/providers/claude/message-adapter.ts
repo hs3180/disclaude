@@ -76,6 +76,13 @@ export function adaptSDKMessage(message: SDKMessage, taskRegistry?: TaskSubjectR
       const rawText = textBlocks.map((block) => block.text).join('');
       const assistantText = rawText.trim().length === 0 ? '' : rawText.replace(/^(?:[^\S\r\n]*\r?\n)+/, '');
 
+      // Some SDK rounds carry the text and tool call in separate assistant
+      // messages. Preserve the native stop reason rather than guessing from
+      // the text whether it is a user-facing answer.
+      if (toolBlocks.length === 0 && apiMessage.stop_reason === 'tool_use') {
+        metadata.phase = 'commentary';
+      }
+
       if (assistantText.length > 0) {
         contentParts.push(assistantText);
       }
@@ -137,6 +144,13 @@ export function adaptSDKMessage(message: SDKMessage, taskRegistry?: TaskSubjectR
     }
 
     case 'result': {
+      // Streaming inputs may be folded into one turn. Only the native result
+      // can confirm which submitted UUIDs were consumed; an input replay or
+      // first assistant frame can precede later fold-ins.
+      const consumed = [...(Array.isArray(message.user_message_uuids) ? message.user_message_uuids : []),
+        ...(typeof message.user_message_uuid === 'string' ? [message.user_message_uuid] : [])];
+      const consumedInputIds = [...new Set(consumed.filter(id => typeof id === 'string' && id.length > 0))];
+      if (consumedInputIds.length > 0) { metadata.consumedInputIds = consumedInputIds; }
       // Issue #4320 (part 2): extract SDK result observability fields for ALL
       // result subtypes, not just success. A premature end via error_max_turns
       // (or error_max_budget_usd / error_max_structured_output_retries) is
@@ -262,6 +276,18 @@ export function adaptSDKMessage(message: SDKMessage, taskRegistry?: TaskSubjectR
     }
 
     case 'system': {
+      if (message.subtype === 'background_tasks_changed' && Array.isArray(message.tasks)) {
+        metadata.backgroundTaskIds = message.tasks
+          .filter(task => task && !task.ambient && typeof task.task_id === 'string' && task.task_id.trim().length > 0)
+          .map(task => task.task_id);
+      } else if ((message.subtype === 'task_started' || message.subtype === 'task_progress') &&
+          typeof message.task_id === 'string' && message.task_id.trim() &&
+          !('ambient' in message && message.ambient) && !('skip_transcript' in message && message.skip_transcript)) {
+        metadata.backgroundTask = { id: message.task_id, state: 'running' };
+      } else if (message.subtype === 'task_notification' && typeof message.task_id === 'string' && message.task_id.trim() &&
+          ['completed', 'failed', 'stopped'].includes(message.status)) {
+        metadata.backgroundTask = { id: message.task_id, state: message.status };
+      }
       if (message.subtype === 'status') {
         // 瞬态进度占位:content 保留给 debug 群 / 日志,但打上 transientStatus
         // 让 ChatAgent 当中间消息过滤 —— SDK 每个请求都发一次 requesting,不过滤
@@ -370,6 +396,8 @@ export function adaptUserInput(input: UserInput): SDKUserMessage {
     },
     parent_tool_use_id: null,
     session_id: '',
+    ...(input.correlation && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(input.correlation.runId)
+      ? { uuid: input.correlation.runId as NonNullable<SDKUserMessage['uuid']> } : {}),
   };
 }
 

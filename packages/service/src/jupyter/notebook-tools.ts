@@ -235,9 +235,22 @@ export class NotebookTools {
       ),
       this.tool(
         'notebook_status',
-        'Query the original runId without replay. Retained remote results and host snapshots preserve original execution provenance.',
+        'Query the original runId without replay. source distinguishes live lookup from local journal facts; client-error/server-unknown preserve the last confirmed state.',
         { ...notebookId, runId: text },
         (input) => this.observe(this.record(String(input.notebookId), String(input.runId)))
+      ),
+      this.tool(
+        'notebook_reconcile',
+        'Read the original handles of all nonterminal Project runs after connection recovery. Never submits or replays a cell; each result labels live versus local-journal evidence.',
+        {},
+        async (_input, invocation) => {
+          const runs: unknown[] = [];
+          for (const record of this.journal.records().filter((r) => !terminal.has(r.state))) {
+            invocation.signal.throwIfAborted();
+            runs.push(await this.observe(record));
+          }
+          return { state: 'reconciled', runs };
+        }
       ),
       this.tool(
         'notebook_stop',
@@ -716,7 +729,9 @@ export class NotebookTools {
       .slice(-10)
       .map((r) => ({
         runId: r.runId,
-        state: r.state,
+        state: r.loss?.kind ?? r.state,
+        source: 'local-journal',
+        ...(r.loss ? { lastKnownState: r.state, lostAt: r.lostAt, failure: r.loss } : {}),
         cellId: r.target.cellId,
         contentPath: r.target.contentPath,
       }));
@@ -863,11 +878,25 @@ export class NotebookTools {
       runId,
       result.state === 'accepted'
         ? { state: 'accepted', handle: result.handle }
-        : { state: result.state }
+        : {
+            state: result.state,
+            ...(result.state === 'unknown'
+              ? {
+                  observation: {
+                    state: 'unknown',
+                    httpStatus: result.httpStatus,
+                    failure: { kind: 'client-error', reason: 'submission-unverified' },
+                  },
+                }
+              : {}),
+          }
     );
     return {
       runId: record.runId,
-      state: saved.state,
+      state: saved.loss?.kind ?? saved.state,
+      ...(saved.loss
+        ? { source: 'local-journal', lastKnownState: saved.state, failure: saved.loss }
+        : {}),
       ...(saved.handle ? { requestId: saved.handle.requestId } : {}),
     };
   }
@@ -903,19 +932,51 @@ export class NotebookTools {
   }
   private async observe(record: DatalayerRunRecord): Promise<unknown> {
     let current = record;
+    let source: 'live' | 'local-journal' = 'local-journal';
     if (!terminal.has(record.state) && record.handle) {
       const { handle } = record;
       let observation: Awaited<ReturnType<DatalayerJupyterClient['observe']>>;
       try {
         observation = await this.useRecord(record, (client) => client.observe(handle));
-      } catch {
-        observation = { state: 'unknown' };
+      } catch (error) {
+        observation = {
+          state: 'unknown',
+          failure: {
+            kind: 'client-error',
+            reason:
+              error instanceof Error &&
+              /authentication|credential|password|token/i.test(error.message)
+                ? 'authentication-required'
+                : 'connection-unavailable',
+          },
+        };
       }
+      source =
+        observation.state !== 'unknown' || observation.failure?.kind === 'server-unknown'
+          ? 'live'
+          : 'local-journal';
       current = this.journal.update(record.runId, { state: observation.state, observation });
+    } else if (!terminal.has(record.state)) {
+      current = this.journal.update(record.runId, {
+        state: 'unknown',
+        observation: {
+          state: 'unknown',
+          failure: { kind: 'client-error', reason: 'request-handle-unavailable' },
+        },
+      });
     }
     return {
       runId: current.runId,
-      state: current.state === 'submitting' ? 'unknown' : current.state,
+      state: current.loss?.kind ?? current.state,
+      source,
+      observedAt: current.observedAt,
+      checkedAt: current.checkedAt,
+      remoteChecked: source === 'live',
+      ...(current.lastConfirmedRunningAt === undefined
+        ? {}
+        : { lastConfirmedRunningAt: current.lastConfirmedRunningAt }),
+      ...(current.lostAt === undefined ? {} : { lostAt: current.lostAt }),
+      ...(current.loss ? { lastKnownState: current.state, failure: current.loss } : {}),
       sourceHash: current.target.sourceHash,
       cellId: current.target.cellId,
       ...(current.handle ? { requestId: current.handle.requestId } : {}),
@@ -929,7 +990,17 @@ export class NotebookTools {
       ...(current.target.kernelIncarnation
         ? { kernelIncarnation: current.target.kernelIncarnation }
         : {}),
-      ...(current.observation?.result ? { result: this.summary(current.observation.result) } : {}),
+      ...(current.observation?.result
+        ? current.loss
+          ? {
+              lastKnownResult: {
+                source: 'local-journal',
+                observedAt: current.observedAt,
+                result: this.summary(current.observation.result),
+              },
+            }
+          : { result: this.summary(current.observation.result) }
+        : {}),
     };
   }
   private summary(result: Record<string, unknown>): Record<string, unknown> {

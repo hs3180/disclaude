@@ -20,7 +20,14 @@ import { tmpdir } from 'os';
 const { mockGetConfigFromFile, mockGetPreloadedConfig, mockLoadConfigFile } = vi.hoisted(() => ({
   mockGetConfigFromFile: vi.fn(() => ({
     workspace: { dir: '/test/workspace' },
-    glm: { apiKey: 'test-key', model: 'glm-4' },
+    agents: { default: { backend: 'claude', llm: 'default' } },
+    llms: {
+      default: {
+        model: 'glm-4',
+        api: { protocol: 'anthropic', apiKeyEnv: 'TEST_LLM_DEFAULT_KEY' },
+      },
+    },
+    env: { TEST_LLM_DEFAULT_KEY: 'test-key' },
   })),
   mockGetPreloadedConfig: vi.fn(() => null),
   mockLoadConfigFile: vi.fn(() => ({ _fromFile: false, _source: null })),

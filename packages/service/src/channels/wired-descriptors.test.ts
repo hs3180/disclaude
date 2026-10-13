@@ -92,6 +92,7 @@ describe('WiredChannelDescriptors', () => {
         supportsMention: false,
         supportsUpdate: false,
         supportsStreaming: false,
+        supportedChannelTools: [],
       });
     });
 
@@ -205,6 +206,40 @@ describe('WiredChannelDescriptors', () => {
       expect(FEISHU_WIRED_DESCRIPTOR.setup).toBeDefined();
       expect(typeof FEISHU_WIRED_DESCRIPTOR.setup).toBe('function');
     });
+
+    it('passes an explicit topic root through the interactive-card handler', async () => {
+      const mockChannel = Object.assign(createMockChannel('feishu'), {
+        getTriggerModeManager: () => ({ getMode: vi.fn(), setMode: vi.fn() }),
+        setWelcomeService: vi.fn(),
+      });
+      vi.mocked(mockChannel.sendMessage).mockResolvedValue('om_real_card');
+      const context = createMockContext();
+      await FEISHU_WIRED_DESCRIPTOR.setup!(mockChannel, { appId: 'test', appSecret: 'test' }, context);
+      const [handlers] = vi.mocked(context.service.registerFeishuHandlers).mock.calls.at(-1)!;
+
+      const result = await handlers.sendInteractive('chat_123', {
+        question: 'Choose a direction', options: [{ text: 'Continue', value: 'continue' }],
+        threadId: 'card_action_trigger', threadRootId: 'om_topic_root',
+      });
+      expect(mockChannel.sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+        threadId: 'card_action_trigger', threadRootId: 'om_topic_root', type: 'card',
+      }));
+      expect(result.messageId).toBe('om_real_card');
+    });
+
+    it('does not manufacture a successful interactive receipt without a delivered message ID', async () => {
+      const mockChannel = Object.assign(createMockChannel('feishu'), {
+        getTriggerModeManager: () => ({ getMode: vi.fn(), setMode: vi.fn() }),
+        setWelcomeService: vi.fn(),
+      });
+      const context = createMockContext();
+      await FEISHU_WIRED_DESCRIPTOR.setup!(mockChannel, { appId: 'test', appSecret: 'test' }, context);
+      const [handlers] = vi.mocked(context.service.registerFeishuHandlers).mock.calls.at(-1)!;
+
+      await expect(handlers.sendInteractive('chat_123', {
+        question: 'Choose', options: [{ text: 'Continue', value: 'continue' }],
+      })).rejects.toThrow('message_id');
+    });
   });
 
   describe('WECHAT_WIRED_DESCRIPTOR (Issue #1554)', () => {
@@ -222,7 +257,7 @@ describe('WiredChannelDescriptors', () => {
         supportsMention: false,
         supportsUpdate: false,
         supportsStreaming: false,
-        supportedMcpTools: ['send_text', 'send_file'],
+        supportedChannelTools: ['send_text', 'send_file'],
       });
     });
 
@@ -541,6 +576,8 @@ describe('WiredChannelDescriptors', () => {
           setMode: vi.fn(),
         }),
         uploadImage: vi.fn().mockResolvedValue('img_key_123'),
+        setWelcomeService: vi.fn(),
+        sendWelcomeMessage: vi.fn().mockResolvedValue(undefined),
       } as any;
     }
 
@@ -558,6 +595,23 @@ describe('WiredChannelDescriptors', () => {
       expect(registeredHandlers).toBeDefined();
       expect(registeredHandlers!.pushToAgent).toBeDefined();
       expect(typeof registeredHandlers!.pushToAgent).toBe('function');
+    });
+
+    it('wires welcome events and per-channel help using the actual capabilities and host access policy', async () => {
+      const channel = createMockFeishuChannel();
+      const policy = vi.fn((command: { type: string; actorId?: string }) => command.type === 'help' && command.actorId === 'actor');
+      const context = createFeishuSetupContext({ controlHandlerContext: { isCommandAllowed: policy } as any });
+      await FEISHU_WIRED_DESCRIPTOR.setup!(channel, {}, context);
+      expect(channel.setWelcomeService).toHaveBeenCalledTimes(1);
+      expect(channel.onControl).toHaveBeenCalledTimes(1);
+      const [[welcome]] = channel.setWelcomeService.mock.calls;
+      await welcome.handleBotAddedToGroup('group', 'group');
+      expect(channel.sendWelcomeMessage).not.toHaveBeenCalled();
+      const [[handler]] = channel.onControl.mock.calls;
+      const help = await handler({ type: 'help', chatId: 'chat', chatType: 'p2p', actorId: 'actor' });
+      expect(help.success).toBe(true);
+      expect(help.message).not.toMatch(/\/reset|\/agent|附件|\/trigger/);
+      expect(policy).toHaveBeenCalledWith(expect.objectContaining({ actorId: 'actor', chatId: 'chat' }));
     });
 
     it('should push instruction to agent via InputMessageRouter', async () => {

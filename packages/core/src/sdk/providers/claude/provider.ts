@@ -299,7 +299,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
 
     if (options.autoCompactWindow === 'auto') {
       return withDiscoveredCompaction(input, options, (nextInput, nextOptions) =>
-        this.queryStream(nextInput, nextOptions));
+        this.queryStream(nextInput, nextOptions), 'streaming');
     }
 
     // Issue #3378: Snapshot process listeners BEFORE calling SDK query().
@@ -450,6 +450,13 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
 
         for await (const message of queryResult) {
           if (cancelled) {return;}
+          try {
+            options.onActivity?.(message.type === 'stream_event'
+              ? `claude:${message.event.type}`
+              : `claude:${message.type === 'system' ? message.subtype : message.type}`);
+          } catch {
+            logger.debug('Host activity observer failed');
+          }
           // Partial stream events are provider-internal and are not user messages.
           // Claude SDK/CLI owns stream-level retry and liveness; disclaude must not
           // terminate a turn merely because content deltas pause during backoff.
@@ -700,6 +707,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
 
     return {
       handle: {
+        inputDelivery: 'streaming',
         close: () => {
           try {
             if ('close' in queryResult && typeof queryResult.close === 'function') {
@@ -746,15 +754,11 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     if (this.disposed) { return 'provider has been disposed'; }
     try {
       const config = target ?? Config.getAgentConfig();
-      const service = config.provider === 'glm' ? 'glm' : 'anthropic';
-      if (!config.apiKey?.trim()) {
-        return service === 'glm' ? 'glm.apiKey is required for the selected preset'
-          : 'anthropic.apiKey or ANTHROPIC_API_KEY is required for the selected preset';
+      if (config.apiProtocol && config.apiProtocol !== 'anthropic') {
+        return 'Claude requires an Anthropic API connection';
       }
-      if (!config.model?.trim()) { return 'the selected preset model is required'; }
-      if (service === 'glm' && !config.apiBaseUrl?.trim()) {
-        return 'glm.apiBaseUrl or the selected preset apiBaseUrl is required';
-      }
+      if (!config.apiKey?.trim()) { return 'the selected LLM API credential is required'; }
+      if (!config.model?.trim()) { return 'the selected LLM model is required'; }
       if (config.apiBaseUrl !== undefined) {
         try {
           const url = new URL(config.apiBaseUrl);

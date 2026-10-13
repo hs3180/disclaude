@@ -11,6 +11,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 // Mock all @disclaude/core dependencies
 vi.mock('@disclaude/core', async (importOriginal) => {
@@ -53,6 +56,7 @@ vi.mock('@disclaude/core', async (importOriginal) => {
     this.initialized = false;
   };
   return {
+    createLogger: actual.createLogger,
     Config: {
       getSessionRestoreConfig: vi.fn(() => ({
         historyDays: 1,
@@ -66,6 +70,7 @@ vi.mock('@disclaude/core', async (importOriginal) => {
     // setTurnPending and the tests below assert instanceof on the exact
     // class the production import resolves to.
     TurnSupersededError: actual.TurnSupersededError,
+    LiveInputRejectedError: actual.LiveInputRejectedError,
     REACTIONS: actual.REACTIONS,
     // Issue #4391: real policy — the reset+replay bounding under test.
     EmptyTurnRetryPolicy: actual.EmptyTurnRetryPolicy,
@@ -142,6 +147,10 @@ vi.mock('../services/debug-group-service.js', () => ({
 }));
 
 import { ChatAgent } from './chat-agent.js';
+import { createChannelCallbacksFactory } from '../utils/channel-handlers.js';
+import type { IChannel, OutgoingMessage } from '@disclaude/core';
+import type { Logger } from 'pino';
+import { ServiceTurnRecoveryStore } from '../service-turn-recovery.js';
 
 const createMockCallbacks = () => ({
   sendMessage: vi.fn().mockResolvedValue(undefined),
@@ -151,6 +160,13 @@ const createMockCallbacks = () => ({
   getCapabilities: vi.fn(),
   getChatHistory: vi.fn().mockResolvedValue(undefined),
 });
+
+const turnEvents = (agent: ChatAgent, state: string) => {
+  const { logger } = agent as any;
+  return [...logger.info.mock.calls, ...logger.warn.mock.calls, ...logger.error.mock.calls]
+    .map(([event]) => event)
+    .filter(event => event?.event === 'agent_turn' && event.state === state);
+};
 
 describe('ChatAgent (service)', () => {
   let chatAgent: InstanceType<typeof ChatAgent>;
@@ -164,12 +180,84 @@ describe('ChatAgent (service)', () => {
       callbacks,
       apiKey: 'test-key',
       model: 'test-model',
-      provider: 'anthropic',
+      apiProtocol: 'anthropic',
       apiBaseUrl: 'https://api.example.com',
     });
   });
 
   describe('constructor', () => {
+    it.each([false, true])('rejects the owning completion on async delivery failure (once=%s)', async once => {
+      const agent = new ChatAgent({ chatId: 'failed-input-chat', callbacks: createMockCallbacks(), apiKey: 'test', model: 'test' });
+      (agent as any).isAgentTeamsEnabled = () => false;
+      let emit!: () => void;
+      (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          await new Promise<void>(resolve => { emit = resolve; });
+          yield { parsed: { type: 'result', content: 'Async question was not delivered',
+            terminationDetail: 'Async question was not delivered', terminatedReason: 'turn_failed' }, raw: {} };
+        })(),
+      });
+      try {
+        const run = once ? agent.runOnce('failed-input-chat', 'Ask a question', 'original-failed-message')
+          : agent.processMessage({ chatId: 'failed-input-chat', payload: 'Ask a question', messageId: 'original-failed-message' });
+        await vi.waitFor(() => expect(agent.turnCompleteFor('original-failed-message')).toBeDefined());
+        const outcome = expect(once ? run : agent.turnCompleteFor('original-failed-message'))
+          .rejects.toMatchObject({ name: 'ProviderTurnFailedError', message: 'Async question was not delivered' });
+        emit();
+        await outcome;
+        expect((agent as any).restartManager.recordSuccess).not.toHaveBeenCalled();
+        const failedLog = (agent as any).logger.info.mock.calls.find(([entry]: any[]) => entry?.event === 'agent_turn' && entry.state === 'failed');
+        expect(failedLog).toBeDefined();
+      } finally { emit?.(); agent.reset(); ChatAgent.prototype.dispose.call(agent); }
+    });
+
+    it.each([true, false])('keeps delayed async-answer admission in the original generation/topic (channel accepts=%s)', async accepts => {
+      const localCallbacks = { ...createMockCallbacks(), requestAgentInput: vi.fn().mockResolvedValue(undefined) };
+      const agent = new ChatAgent({ chatId: 'async-chat', callbacks: localCallbacks, apiKey: 'test', model: 'test' });
+      let finish!: () => void;
+      const query = vi.fn((_input, _options) => ({ handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () { await new Promise<void>(resolve => { finish = resolve; }); })() }));
+      (agent as any).createQueryStream = query;
+      const context = { chatId: 'async-chat', actorId: 'original-actor', sourceMessageId: 'om-original', threadRootId: 'om-topic' };
+      const request = { kind: 'async-message', requestId: 'question', threadId: 'native-thread', turnId: 'original-turn', itemId: 'question',
+        isBlocking: false, signal: new AbortController().signal, questions: [], respond: vi.fn() } as import('@disclaude/core').AgentInputRequest;
+      try {
+        await agent.processMessage({ chatId: 'async-chat', payload: 'Original task', messageId: 'om-original', senderOpenId: context.actorId,
+          threadRootId: context.threadRootId });
+        const options = query.mock.calls[0][1] as import('@disclaude/core').AgentQueryOptions;
+        await options.onUserInput!(request, context);
+        expect(localCallbacks.requestAgentInput).toHaveBeenCalledExactlyOnceWith(request, context);
+        const { channel } = agent as any;
+        channel.push.mockReturnValue(accepts);
+        const submission = options.onAsyncUserInputAnswer!(request, 'Submitted answers', context);
+        if (accepts) {
+          await submission;
+          const [input] = channel.push.mock.calls.at(-1);
+          expect(input.message.content).toContain('Submitted answers');
+          expect(input.correlation.sourceMessageId).toMatch(/^msg-async-/);
+          expect(input.inputContext).toMatchObject({ actorId: context.actorId, chatId: context.chatId, threadRootId: context.threadRootId });
+          expect((agent as any).pendingTurnAnchors.at(-1)).toBe('om-topic');
+          await options.onAsyncUserInputAnswer!(request, 'Duplicate answer', context);
+          expect(channel.push).toHaveBeenCalledTimes(2);
+        } else { await expect(submission).rejects.toThrow(/not admitted/); }
+        agent.reset();
+        await expect(options.onAsyncUserInputAnswer!(request, 'Stale answer', context)).rejects.toThrow(/no longer available/);
+      } finally { finish?.(); agent.reset(); ChatAgent.prototype.dispose.call(agent); }
+    });
+
+    it('rejects asynchronous questions for a one-shot task before claiming card delivery', async () => {
+      const localCallbacks = { ...createMockCallbacks(), requestAgentInput: vi.fn().mockResolvedValue(undefined) };
+      const agent = new ChatAgent({ chatId: 'once-chat', callbacks: localCallbacks, apiKey: 'test', model: 'test' });
+      (agent as any).onceMode = true;
+      (agent as any).startAgentLoop();
+      const options = (agent as any).createSdkOptions.mock.results[0].value as import('@disclaude/core').AgentQueryOptions;
+      try {
+        await expect(options.onUserInput!({ kind: 'async-message' } as import('@disclaude/core').AgentInputRequest,
+          { chatId: 'once-chat', actorId: 'owner', sourceMessageId: 'source' })).rejects.toThrow(/cannot answer/);
+        expect(localCallbacks.requestAgentInput).not.toHaveBeenCalled();
+      } finally { agent.reset(); ChatAgent.prototype.dispose.call(agent); }
+    });
+
     it('uses injected message callbacks without selecting a backend policy', async () => {
       const core = await import('@disclaude/core');
       const actual = await vi.importActual<typeof core>('@disclaude/core');
@@ -195,14 +283,14 @@ describe('ChatAgent (service)', () => {
       const original = (agent as any).createSdkOptions.mock.results[0].value;
       expect(configureQueryOptions).toHaveBeenCalledExactlyOnceWith(original);
       expect((agent as any).createQueryStream).toHaveBeenCalledWith(
-        expect.anything(), { ...original, model: 'configured-model' },
+        expect.anything(), { ...original, model: 'configured-model', onActivity: expect.any(Function) },
       );
       expect(original).not.toHaveProperty('model');
       ChatAgent.prototype.dispose.call(agent);
     });
 
     it('uses an isolated provider session key while remaining bound to the real chat (#4812)', async () => {
-      const agent = new ChatAgent({ chatId: 'oc_test_chat', callbacks, apiKey: 'test', model: 'test', provider: 'anthropic', sdkSessionKey: 'oc_test_chat::schedule:tick-1' });
+      const agent = new ChatAgent({ chatId: 'oc_test_chat', callbacks, apiKey: 'test', model: 'test', apiProtocol: 'anthropic', sdkSessionKey: 'oc_test_chat::schedule:tick-1' });
       await agent.processMessage({ chatId: 'oc_test_chat', payload: 'run', messageId: 'tick-1' });
       expect((agent as any).createSdkOptions).toHaveBeenCalledWith(expect.objectContaining({ sessionKey: 'oc_test_chat::schedule:tick-1' }));
       expect(agent.getChatId()).toBe('oc_test_chat');
@@ -230,7 +318,7 @@ describe('ChatAgent (service)', () => {
         callbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
       expect(p.getChatId()).toBe('oc_another_chat');
     });
@@ -304,7 +392,7 @@ describe('ChatAgent (service)', () => {
       ChatAgent.prototype.dispose.call(chatAgent);
     });
     it('passes pending-question eligibility to the message builder', async () => {
-      const agent = new ChatAgent({ chatId: 'eligible-mention', callbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const agent = new ChatAgent({ chatId: 'eligible-mention', callbacks, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
       await agent.processMessage({
         chatId: 'eligible-mention',
         payload: '',
@@ -339,6 +427,7 @@ describe('ChatAgent (service)', () => {
       (chatAgent as any).channel = { push, close: vi.fn() };
       (chatAgent as any).isSessionActive = true;
       (chatAgent as any).isProcessingMessage = true;
+      (chatAgent as any).sdkProvider.name = 'codex';
 
       await chatAgent.processMessage({
         chatId: 'oc_test_chat',
@@ -356,6 +445,28 @@ describe('ChatAgent (service)', () => {
   });
 
   describe('runOnce', () => {
+    async function completeOwnedOnce(): Promise<void> {
+      let publish!: () => void;
+      (chatAgent as any).isAgentTeamsEnabled = () => false;
+      (chatAgent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          await new Promise<void>(resolve => { publish = resolve; });
+          yield { parsed: { type: 'text', content: 'Owned successful result' }, raw: {} };
+          yield { parsed: { type: 'result', content: '✅ Complete' }, raw: {} };
+        })(),
+      });
+      const run = chatAgent.runOnce('oc_test_chat', 'hello', 'msg_1');
+      await vi.waitFor(() => expect((chatAgent as any).channel.push).toHaveBeenCalled());
+      publish();
+      await run;
+    }
+
+    it('rejects a fast iterator end instead of reporting one-shot success', async () => {
+      await expect(chatAgent.runOnce('oc_test_chat', 'hello', 'fast-empty')).rejects.toThrow();
+      expect((chatAgent as any).onceMode).toBe(false);
+    });
+
     it('should throw when chatId does not match bound chatId', async () => {
       await expect(chatAgent.runOnce('oc_wrong', 'hello', 'msg_1')).rejects.toThrow(
         'cannot execute for oc_wrong'
@@ -363,12 +474,12 @@ describe('ChatAgent (service)', () => {
     });
 
     it('should complete successfully for matching chatId', async () => {
-      await expect(chatAgent.runOnce('oc_test_chat', 'hello', 'msg_1')).resolves.toBeUndefined();
+      await expect(completeOwnedOnce()).resolves.toBeUndefined();
     });
 
     it('should set onceMode during execution', async () => {
       // Verify onceMode is cleaned up after execution
-      await chatAgent.runOnce('oc_test_chat', 'hello', 'msg_1');
+      await completeOwnedOnce();
       expect((chatAgent as any).onceMode).toBe(false);
     });
   });
@@ -434,6 +545,7 @@ describe('ChatAgent (service)', () => {
       });
 
       (chatAgent as any).queryHandle = { close: vi.fn() };
+      (chatAgent as any).sdkProvider.name = 'codex';
       await expect(ChatAgent.prototype.steer.call(chatAgent, 'change')).resolves.toMatchObject({
         ok: false,
         error: expect.stringContaining('unsupported'),
@@ -476,6 +588,475 @@ describe('ChatAgent (service)', () => {
     });
   });
 
+  describe('ordinary busy input (#5240/#5260)', () => {
+    function owned(backend = 'codex', turnRecovery?: ServiceTurnRecoveryStore) {
+      const callbacks = createMockCallbacks();
+      const agent = new ChatAgent({ chatId: 'owned-steer', callbacks, agentBackend: backend as any, apiKey: 'test', model: 'test', turnRecovery });
+      const push = vi.fn().mockReturnValue(true);
+      const steer = vi.fn().mockResolvedValue({ turnId: 'native-A' });
+      const handle = { close: vi.fn(), cancel: vi.fn(),
+        ...(backend === 'codex' ? { steer } : {}),
+        ...(backend === 'claude' ? { inputDelivery: 'streaming' as const } : {}),
+      };
+      Object.assign(agent as any, { channel: { push, close: vi.fn() }, queryHandle: handle, isSessionActive: true,
+        isProcessingMessage: true, activeTurnMessageId: 'owner-A', isAgentTeamsEnabled: () => false,
+        lastTurnMessage: { chatId: 'owned-steer', payload: 'original', messageId: 'owner-A' } });
+      (agent as any).historyManager.firstMessageHistoryLoaded = true;
+      (agent as any).createTurnCompletion('owner-A');
+      return { agent, callbacks, push, steer, handle };
+    }
+    const input = (messageId = 'follow-B') => ({ chatId: 'owned-steer', payload: messageId, messageId, threadRootId: 'root-B' });
+    const dispose = (agent: ChatAgent) => ChatAgent.prototype.dispose.call(agent);
+
+    const liveTerminals = (agent: ChatAgent, messageId: string) =>
+      ['info', 'warn', 'error'].flatMap(level => (agent as any).logger[level].mock.calls)
+        .map(([record]: any[]) => record)
+        .filter(record => record?.event === 'agent_turn' && record.sourceMessageId === messageId && record.state !== 'started');
+
+    it.each([true, false])('records the steered input terminal and original visibility once (success=%s)', async success => {
+      const { agent } = owned();
+      const failure = new Error('Original native turn failed');
+      try {
+        await agent.processMessage(input());
+        const started = (agent as any).logger.info.mock.calls.map(([record]: any[]) => record)
+          .find((record: any) => record?.event === 'agent_turn' && record.sourceMessageId === 'follow-B');
+        const completion = agent.turnCompleteFor('follow-B')!.then(() => undefined, error => error);
+        (agent as any).didDeliverUserVisibleThisTurn = true;
+        (agent as any).resolveTurn('owner-A', success ? undefined : failure);
+        // The next turn can reset output state before the settled owner's callbacks run.
+        (agent as any).didDeliverUserVisibleThisTurn = false;
+        expect(await completion).toBe(success ? undefined : failure);
+        await vi.waitFor(() => expect(liveTerminals(agent, 'follow-B')).toHaveLength(1));
+        expect(liveTerminals(agent, 'follow-B')[0]).toMatchObject({
+          state: success ? 'completed' : 'failed', user_visible: true,
+          sourceMessageId: 'follow-B', runId: started.runId, traceId: started.traceId,
+          ownerSourceMessageId: 'owner-A', nativeTurnId: 'native-A',
+          ...(success ? {} : { errorMessage: failure.message }),
+        });
+      } finally { dispose(agent); }
+    });
+
+    it('records a late acknowledged input with the already completed owner visibility', async () => {
+      const { agent, steer } = owned();
+      let acknowledge!: (value: { turnId: string }) => void;
+      steer.mockImplementation(() => new Promise(resolve => { acknowledge = resolve; }));
+      try {
+        const admission = agent.processMessage(input());
+        await vi.waitFor(() => expect(steer).toHaveBeenCalledTimes(1));
+        (agent as any).didDeliverUserVisibleThisTurn = true;
+        (agent as any).resolveTurn('owner-A');
+        (agent as any).didDeliverUserVisibleThisTurn = false;
+        acknowledge({ turnId: 'native-A' });
+        await admission;
+        await agent.turnCompleteFor('follow-B');
+        await vi.waitFor(() => expect(liveTerminals(agent, 'follow-B')).toHaveLength(1));
+        expect(liveTerminals(agent, 'follow-B')[0]).toMatchObject({ state: 'completed', user_visible: true,
+          ownerSourceMessageId: 'owner-A', nativeTurnId: 'native-A' });
+      } finally { dispose(agent); }
+    });
+
+    it('records uncertain steer delivery as a terminal failure without queue replay', async () => {
+      const { agent, steer, push } = owned();
+      steer.mockRejectedValue(new Error('Native ACK timed out'));
+      try {
+        await agent.processMessage(input());
+        await expect(agent.turnCompleteFor('follow-B')).rejects.toThrow('delivery is unconfirmed');
+        await vi.waitFor(() => expect(liveTerminals(agent, 'follow-B')).toHaveLength(1));
+        expect(liveTerminals(agent, 'follow-B')[0]).toMatchObject({ state: 'failed', user_visible: false,
+          ownerSourceMessageId: 'owner-A', diagnosticId: expect.any(String) });
+        expect(push).not.toHaveBeenCalled();
+      } finally { dispose(agent); }
+    });
+
+    it('records the admitted input terminal if reset supersedes a pending steer ACK', async () => {
+      const { agent, steer, push } = owned();
+      let acknowledge!: (value: { turnId: string }) => void;
+      steer.mockImplementation(() => new Promise(resolve => { acknowledge = resolve; }));
+      try {
+        const admission = agent.processMessage(input());
+        await vi.waitFor(() => expect(steer).toHaveBeenCalledTimes(1));
+        const completion = agent.turnCompleteFor('follow-B')!.catch(error => error);
+        agent.reset();
+        acknowledge({ turnId: 'native-A' });
+        await admission;
+        expect((await completion).message).toContain('Agent reset');
+        await vi.waitFor(() => expect(liveTerminals(agent, 'follow-B')).toHaveLength(1));
+        expect(liveTerminals(agent, 'follow-B')[0]).toMatchObject({ state: 'failed', user_visible: false,
+          errorMessage: 'Agent reset', ownerSourceMessageId: 'owner-A' });
+        expect(push).not.toHaveBeenCalled();
+      } finally { dispose(agent); }
+    });
+
+    it('keeps a replacement waiter intact when an old steer ACK arrives after reset', async () => {
+      const { agent, steer } = owned();
+      let acknowledge!: (value: { turnId: string }) => void;
+      steer.mockImplementation(() => new Promise(resolve => { acknowledge = resolve; }));
+      try {
+        const admission = agent.processMessage(input());
+        await vi.waitFor(() => expect(steer).toHaveBeenCalledTimes(1));
+        const original = agent.turnCompleteFor('follow-B')!.catch(error => error);
+        agent.reset();
+        (agent as any).createTurnCompletion('follow-B');
+        let replacementSettled = false;
+        const replacement = agent.turnCompleteFor('follow-B')!.then(
+          () => { replacementSettled = true; }, () => { replacementSettled = true; });
+        acknowledge({ turnId: 'native-A' });
+        await admission;
+        expect((await original).message).toContain('Agent reset');
+        await vi.waitFor(() => expect(liveTerminals(agent, 'follow-B')).toHaveLength(1));
+        expect(replacementSettled).toBe(false);
+        (agent as any).resolveTurn('follow-B');
+        await replacement;
+      } finally { dispose(agent); }
+    });
+
+    it('defaults to one acknowledged steer and settles the input with its original turn', async () => {
+      const { agent, callbacks, push, steer } = owned();
+      try {
+        await agent.processMessage(input());
+        expect(steer).toHaveBeenCalledExactlyOnceWith('follow-B');
+        expect(push).not.toHaveBeenCalled();
+        expect((agent as any).pendingTurnMessageIds).toEqual([]);
+        expect((agent as any).lastTurnMessage.messageId).toBe('owner-A');
+        expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('后端已确认接收');
+        let finished = false;
+        const completion = agent.turnCompleteFor('follow-B')!.then(() => { finished = true; });
+        await Promise.resolve();
+        expect(finished).toBe(false);
+        (agent as any).resolveTurn('owner-A');
+        await completion;
+        expect(finished).toBe(true);
+      } finally { dispose(agent); }
+    });
+
+    it.each([true, false])('settles the durable steered input with its original outcome (success=%s)', async success => {
+      const directory = mkdtempSync(join(tmpdir(), 'steer-recovery-'));
+      const journalPath = join(directory, 'turns.json');
+      const store = new ServiceTurnRecoveryStore(journalPath);
+      store.initialize();
+      const { agent, push, steer } = owned('codex', store);
+      const failure = new Error('Original tool transport failed');
+      try {
+        store.startTurn({ chatId: 'owned-steer', sessionKey: 'owned-steer', traceId: 'trace-owner',
+          runId: 'run-owner', sourceMessageId: 'owner-A', threadRootId: 'root-A', startedAt: Date.now() });
+        (agent as any).recoveryRunIds.set('owner-A', 'run-owner');
+        steer.mockImplementation(() => {
+          const active = JSON.parse(readFileSync(journalPath, 'utf8')).turns;
+          expect(active.map((turn: { sourceMessageId: string }) => turn.sourceMessageId).sort()).toEqual(['follow-B', 'owner-A']);
+          expect(active.every((turn: { state: string }) => turn.state === 'active')).toBe(true);
+          return Promise.resolve({ turnId: 'native-A' });
+        });
+        await agent.processMessage(input());
+        const completed = agent.turnCompleteFor('follow-B')!.then(() => undefined, error => error);
+        expect(push).not.toHaveBeenCalled();
+        expect(JSON.parse(readFileSync(journalPath, 'utf8')).turns).toHaveLength(2);
+        (agent as any).resolveTurn('owner-A', success ? undefined : failure);
+        expect(await completed).toBe(success ? undefined : failure);
+        expect(JSON.parse(readFileSync(journalPath, 'utf8')).turns).toEqual([]);
+        expect(steer).toHaveBeenCalledTimes(1);
+      } finally { dispose(agent); rmSync(directory, { recursive: true, force: true }); }
+    });
+
+    it('preserves a completion already published before the steer acknowledgement', async () => {
+      const { agent, steer } = owned();
+      let acknowledge!: (value: { turnId: string }) => void;
+      steer.mockImplementation(() => new Promise(resolve => { acknowledge = resolve; }));
+      try {
+        const admission = agent.processMessage(input());
+        await vi.waitFor(() => expect(steer).toHaveBeenCalledTimes(1));
+        if (!agent.turnCompleteFor('follow-B')) { (agent as any).createTurnCompletion('follow-B'); }
+        const original = agent.turnCompleteFor('follow-B');
+        acknowledge({ turnId: 'native-A' });
+        await admission;
+        expect(agent.turnCompleteFor('follow-B')).toBe(original);
+        (agent as any).resolveTurn('owner-A');
+        await expect(original).resolves.toBeUndefined();
+      } finally { dispose(agent); }
+    });
+
+    it('steers consecutive inputs once each without creating queued turns', async () => {
+      const { agent, steer, push } = owned();
+      try {
+        await Promise.all([agent.processMessage(input('follow-B')), agent.processMessage(input('follow-C'))]);
+        expect(steer.mock.calls.map(call => call[0])).toEqual(['follow-B', 'follow-C']);
+        expect(push).not.toHaveBeenCalled();
+        (agent as any).resolveTurn('owner-A');
+        await Promise.all([agent.turnCompleteFor('follow-B'), agent.turnCompleteFor('follow-C')]);
+      } finally { dispose(agent); }
+    });
+
+    it('deduplicates a repeated source message while its ACK is pending and after acceptance', async () => {
+      const { agent, steer, push } = owned();
+      let acknowledge!: (value: { turnId: string }) => void;
+      steer.mockImplementation(() => new Promise(resolve => { acknowledge = resolve; }));
+      try {
+        const first = agent.processMessage(input());
+        const duplicate = agent.processMessage(input());
+        expect(steer).toHaveBeenCalledTimes(1);
+        acknowledge({ turnId: 'native-A' });
+        await Promise.all([first, duplicate]);
+        const completion = agent.turnCompleteFor('follow-B');
+        await agent.processMessage(input());
+        expect(agent.turnCompleteFor('follow-B')).toBe(completion);
+        expect(steer).toHaveBeenCalledTimes(1);
+        expect(push).not.toHaveBeenCalled();
+      } finally { dispose(agent); }
+    });
+
+    it('keeps a late successful ACK attached to the completed original turn', async () => {
+      const { agent, steer, push } = owned();
+      let acknowledge!: (value: { turnId: string }) => void;
+      steer.mockImplementation(() => new Promise(resolve => { acknowledge = resolve; }));
+      try {
+        const admission = agent.processMessage(input());
+        expect(steer).toHaveBeenCalledTimes(1);
+        (agent as any).resolveTurn('owner-A');
+        (agent as any).activeTurnMessageId = 'owner-C';
+        acknowledge({ turnId: 'native-A' });
+        await admission;
+        await agent.turnCompleteFor('follow-B');
+        expect(push).not.toHaveBeenCalled();
+        expect((agent as any).pendingTurnMessageIds).toEqual([]);
+      } finally { dispose(agent); }
+    });
+
+    it('queues exactly once after a provider confirms input was rejected', async () => {
+      const { LiveInputRejectedError } = await import('@disclaude/core');
+      const { agent, callbacks, steer, push } = owned();
+      steer.mockRejectedValue(new LiveInputRejectedError('Input was rejected'));
+      try {
+        await agent.processMessage(input());
+        expect(steer).toHaveBeenCalledTimes(1);
+        expect(push).toHaveBeenCalledTimes(1);
+        expect((agent as any).pendingTurnMessageIds).toEqual(['follow-B']);
+        expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('已排队');
+      } finally { dispose(agent); }
+    });
+
+    it('queues when native preflight confirms no control request was sent', async () => {
+      const { LiveInputRejectedError } = await import('@disclaude/core');
+      const { agent, steer, push } = owned();
+      steer.mockRejectedValue(new LiveInputRejectedError('No control request was sent'));
+      try { await agent.processMessage(input()); expect(push).toHaveBeenCalledTimes(1); }
+      finally { dispose(agent); }
+    });
+
+    it.each(['timeout', 'internal'])('preserves an unconfirmed %s as failure without duplicate submission', async mode => {
+      const { agent, callbacks, steer, push } = owned();
+      steer.mockRejectedValue(mode === 'timeout' ? new Error('request timed out') : new Error('Internal backend error'));
+      try {
+        await agent.processMessage(input());
+        expect(push).not.toHaveBeenCalled();
+        await expect(agent.turnCompleteFor('follow-B')).rejects.toThrow('unconfirmed');
+        expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('未自动重复发送');
+        expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('诊断 ID');
+      } finally { dispose(agent); }
+    });
+
+    it.each(['reset', 'stop'] as const)('does not enqueue or confirm old input after %s supersedes the ACK', async action => {
+      const { agent, callbacks, steer, push } = owned();
+      let acknowledge!: (value: { turnId: string }) => void;
+      steer.mockImplementation(() => new Promise(resolve => { acknowledge = resolve; }));
+      try {
+        const admission = agent.processMessage(input());
+        expect(steer).toHaveBeenCalledTimes(1);
+        agent[action]();
+        acknowledge({ turnId: 'native-A' });
+        await admission;
+        expect(push).not.toHaveBeenCalled();
+        await expect(agent.turnCompleteFor('follow-B')).rejects.toThrow(/reset|supersed/i);
+        expect(callbacks.sendMessage.mock.calls.some(call => String(call[1]).includes('后端已确认接收'))).toBe(false);
+      } finally { dispose(agent); }
+    });
+
+    it('keeps acknowledged input accepted when its user-facing notice fails', async () => {
+      const { agent, callbacks, steer, push } = owned();
+      callbacks.sendMessage.mockRejectedValue(new Error('owned notice unavailable'));
+      try {
+        await agent.processMessage(input());
+        expect(steer).toHaveBeenCalledTimes(1);
+        expect(push).not.toHaveBeenCalled();
+        (agent as any).resolveTurn('owner-A');
+        await agent.turnCompleteFor('follow-B');
+      } finally { dispose(agent); }
+    });
+
+    it.each(['acknowledged', 'unconfirmed'])('finishes %s input admission while its notice is still pending', async mode => {
+      const { agent, callbacks, steer, push } = owned();
+      let finishNotice!: () => void;
+      callbacks.sendMessage.mockReturnValue(new Promise<void>(resolve => { finishNotice = resolve; }));
+      if (mode === 'unconfirmed') { steer.mockRejectedValue(new Error('request timed out')); }
+      let admitted = false;
+      const admission = agent.processMessage(input()).then(() => { admitted = true; });
+      try {
+        await vi.waitFor(() => expect(admitted).toBe(true), { timeout: 200, interval: 10 });
+        expect(callbacks.sendMessage).toHaveBeenCalledTimes(1);
+        expect(steer).toHaveBeenCalledTimes(1);
+        expect(push).not.toHaveBeenCalled();
+        if (mode === 'unconfirmed') {
+          await expect(agent.turnCompleteFor('follow-B')).rejects.toThrow('unconfirmed');
+        } else {
+          (agent as any).resolveTurn('owner-A');
+          await agent.turnCompleteFor('follow-B');
+        }
+      } finally { finishNotice(); await admission; dispose(agent); }
+    });
+
+    it('describes Claude streaming input accurately and guides explicit steer to ordinary messages', async () => {
+      const { agent, callbacks, push } = owned('claude');
+      try {
+        await agent.processMessage(input());
+        expect(push).toHaveBeenCalledTimes(1);
+        expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('输入流');
+        expect(callbacks.sendMessage.mock.calls[0]?.[1]).not.toContain('已排队');
+        await expect(agent.steer('instruction')).resolves.toMatchObject({ ok: false, error: expect.stringContaining('normal message') });
+      } finally { dispose(agent); }
+    });
+
+    it('queues once after a provider-neutral confirmed live-input rejection', async () => {
+      const { LiveInputRejectedError } = await import('@disclaude/core');
+      const { agent, callbacks, steer, push } = owned();
+      (agent as any).sdkProvider.name = 'other-steering-provider';
+      const cause = new Error('The target turn ended before submission');
+      steer.mockRejectedValue(new LiveInputRejectedError('Input was not accepted', { cause }));
+      try {
+        await agent.processMessage(input());
+        expect(steer).toHaveBeenCalledTimes(1);
+        expect(push).toHaveBeenCalledTimes(1);
+        expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('已排队');
+        expect(liveTerminals(agent, 'follow-B')).toHaveLength(0);
+      } finally { dispose(agent); }
+    });
+
+    it.each(['streaming', 'queued'] as const)('uses provider-neutral input delivery (%s) for notices and steer guidance', async inputDelivery => {
+      const { agent, callbacks, push, handle } = owned('other-provider');
+      Object.assign(handle, { inputDelivery });
+      try {
+        await agent.processMessage(input());
+        expect(push).toHaveBeenCalledTimes(1);
+        const notice = String(callbacks.sendMessage.mock.calls[0]?.[1]);
+        const guidance = await agent.steer('instruction');
+        expect(guidance.ok).toBe(false);
+        if (inputDelivery === 'streaming') {
+          expect(notice).toContain('输入流');
+          expect(notice).not.toContain('已排队');
+          expect(guidance).toMatchObject({ error: expect.stringContaining('normal message') });
+        } else {
+          expect(notice).toContain('已排队');
+          expect(guidance).toMatchObject({ error: expect.stringContaining('unsupported') });
+        }
+      } finally { dispose(agent); }
+    });
+
+    it.each([true, false])('completes only Claude inputs consumed by the result (folded=%s)', async (folded) => {
+      const { agent, callbacks } = owned('claude');
+      const a = agent as any;
+      const owner = { runId: 'run-A', chatId: 'owned-steer', sourceMessageId: 'owner-A', traceId: 'trace-A' };
+      a.pendingTurnMessageIds = ['owner-A']; a.pendingTurnAnchors = ['root-A']; a.pendingLifecycleContexts = [owner];
+      try {
+        await a.processIterator((async function* () {
+          yield { parsed: { type: 'tool_use', content: '' } };
+          await agent.processMessage(input('follow-B'));
+          await agent.processMessage({ ...input('follow-C'), threadRootId: 'root-C' });
+          const b = a.pendingLifecycleContexts.find((x: any) => x.sourceMessageId === 'follow-B');
+          const ids = folded ? [owner.runId, b.runId, b.runId, 'unknown-run'] : [owner.runId];
+          expect(a.turnCompletions.get('follow-B').settled).toBe(false);
+          yield { parsed: { type: 'text', content: 'original result' } };
+          yield { parsed: { type: 'result', content: '', metadata: { consumedInputIds: ids } } };
+          expect(a.turnCompletions.get('owner-A').settled).toBe(true);
+          expect(a.turnCompletions.get('follow-B').settled).toBe(folded);
+          expect(a.turnCompletions.get('follow-C').settled).toBe(false);
+          expect(a.pendingTurnMessageIds).toEqual(folded ? ['follow-C'] : ['follow-B', 'follow-C']);
+          if (folded) { await agent.turnCompleteFor('follow-B'); }
+          const terminalB = a.logger.info.mock.calls.filter(([x]: any[]) => x?.event === 'agent_turn' &&
+            x.sourceMessageId === 'follow-B' && x.state === 'completed');
+          expect(terminalB).toHaveLength(folded ? 1 : 0);
+          if (!folded) {
+            yield { parsed: { type: 'text', content: 'separate B result' } };
+            yield { parsed: { type: 'result', content: '', metadata: { consumedInputIds: [b.runId] } } };
+          }
+          yield { parsed: { type: 'text', content: 'separate C result' } };
+          yield { parsed: { type: 'result', content: '' } };
+        })());
+        await agent.turnCompleteFor('follow-B'); await agent.turnCompleteFor('follow-C');
+        expect(callbacks.sendMessage).toHaveBeenCalledWith('owned-steer', 'original result', 'root-A');
+        expect(callbacks.sendMessage).toHaveBeenCalledWith('owned-steer', 'separate C result', 'root-C');
+        if (!folded) { expect(callbacks.sendMessage).toHaveBeenCalledWith('owned-steer', 'separate B result', 'root-B'); }
+      } finally { dispose(agent); }
+    });
+
+    it.each([true, false])('retains consumed Claude input visibility when the next turn resets it (success=%s)', async success => {
+      const { agent } = owned('claude'); const a = agent as any;
+      const failure = new Error('Original Claude turn failed');
+      try {
+        await agent.processMessage(input());
+        const context = a.pendingLifecycleContexts.find((x: any) => x.sourceMessageId === 'follow-B');
+        a.joinConsumedInputs([context.runId], 'owner-A');
+        const completion = agent.turnCompleteFor('follow-B')!.then(() => undefined, error => error);
+        a.didDeliverUserVisibleThisTurn = true;
+        a.resolveTurn('owner-A', success ? undefined : failure);
+        a.didDeliverUserVisibleThisTurn = false;
+        expect(await completion).toBe(success ? undefined : failure);
+        await vi.waitFor(() => expect(liveTerminals(agent, 'follow-B')).toHaveLength(1));
+        expect(liveTerminals(agent, 'follow-B')[0]).toMatchObject({
+          state: success ? 'completed' : 'failed', user_visible: true,
+          sourceMessageId: 'follow-B', runId: context.runId, traceId: context.traceId,
+          consumedBySourceMessageId: 'owner-A',
+          ...(success ? {} : { errorMessage: failure.message }),
+        });
+      } finally { dispose(agent); }
+    });
+
+    it('records a consumed Claude input terminal when reset rejects the session', async () => {
+      const { agent } = owned('claude'); const a = agent as any;
+      try {
+        await agent.processMessage(input());
+        const context = a.pendingLifecycleContexts.find((x: any) => x.sourceMessageId === 'follow-B');
+        a.joinConsumedInputs([context.runId], 'owner-A');
+        const completion = agent.turnCompleteFor('follow-B')!.catch(error => error);
+        agent.reset();
+        expect((await completion).message).toContain('Agent reset');
+        await vi.waitFor(() => expect(liveTerminals(agent, 'follow-B')).toHaveLength(1));
+        expect(liveTerminals(agent, 'follow-B')[0]).toMatchObject({
+          state: 'failed', user_visible: false, errorMessage: 'Agent reset',
+          sourceMessageId: 'follow-B', runId: context.runId, traceId: context.traceId,
+          consumedBySourceMessageId: 'owner-A',
+        });
+      } finally { dispose(agent); }
+    });
+
+    it('fails a consumed Claude supplement with the owner when the provider stalls', async () => {
+      const { agent } = owned('claude'); const a = agent as any;
+      a.pendingTurnMessageIds = ['owner-A']; a.pendingTurnAnchors = ['root-A'];
+      a.pendingLifecycleContexts = [{ runId: 'run-A', chatId: 'owned-steer', sourceMessageId: 'owner-A', traceId: 'trace-A' }];
+      try {
+        await a.processIterator((async function* () {
+          yield { parsed: { type: 'tool_use', content: '' } };
+          await agent.processMessage(input());
+          const [{ runId }] = a.pendingLifecycleContexts;
+          yield { parsed: { type: 'result', content: 'stalled', terminatedReason: 'stall',
+            terminationDetail: 'owned provider stall', metadata: { consumedInputIds: ['run-A', runId] } } };
+        })());
+        await expect(agent.turnCompleteFor('follow-B')).rejects.toThrow('owned provider stall');
+        expect(a.pendingTurnMessageIds).toEqual([]);
+        expect(a.logger.info.mock.calls.filter(([x]: any[]) => x?.sourceMessageId === 'follow-B' && x.state === 'completed')).toEqual([]);
+      } finally { dispose(agent); }
+    });
+
+    it('does not automatically replay an empty original turn after accepting live input', async () => {
+      const { agent } = owned();
+      try {
+        (agent as any).pendingTurnMessageIds = ['owner-A'];
+        (agent as any).pendingTurnAnchors = ['root-A'];
+        const retry = vi.spyOn((agent as any).emptyTurnRetryPolicy, 'markRetried');
+        await agent.processMessage(input());
+        await (agent as any).processIterator((async function* () { yield { parsed: { type: 'result', content: '✅ Complete' } }; })());
+        expect(retry).not.toHaveBeenCalled();
+        await agent.turnCompleteFor('follow-B');
+      } finally { dispose(agent); }
+    });
+  });
+
   describe('MCP-free startup (Issue #4652)', () => {
     it('starts the production query path without constructing or injecting mcpServers', () => {
       (chatAgent as any).startAgentLoop();
@@ -511,7 +1092,7 @@ describe('ChatAgent (service)', () => {
         callbacks,
         apiKey: 'test-key',
         model: 'test-model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
         apiBaseUrl: 'https://api.example.com',
         cwdProvider: (chatId: string) =>
           chatId === 'oc_test_chat' && stateAt() === 'bound' ? '/bound/project/dir' : undefined,
@@ -557,6 +1138,56 @@ describe('ChatAgent (service)', () => {
 
       expect((agent as any).createQueryStream).not.toHaveBeenCalled();
       expect((agent as any).channel).toBeUndefined();
+    });
+
+    it('finishes a rejected request only after its recovery notice is delivered', async () => {
+      let deliver!: () => void;
+      callbacks.sendMessage.mockReturnValueOnce(new Promise<void>(resolve => { deliver = resolve; }));
+      const agent = mkAgent('bound-missing');
+      const admission = agent.processMessage({
+        chatId: 'oc_test_chat', payload: 'must stay in the bound project',
+        messageId: 'om_missing_pending', threadRootId: 'owned-topic',
+      });
+      expect(callbacks.onDone).not.toHaveBeenCalled();
+      deliver();
+      await admission;
+      expect(callbacks.onDone).toHaveBeenCalledExactlyOnceWith('oc_test_chat', 'owned-topic');
+      expect((agent as any).createQueryStream).not.toHaveBeenCalled();
+    });
+
+    it('settles each rejected input with its own missing-project cause and terminal', async () => {
+      const agent = mkAgent('bound-missing');
+      for (const messageId of ['om_missing_first', 'om_missing_second']) {
+        await agent.processMessage({ chatId: 'oc_test_chat', payload: 'do not run elsewhere', messageId });
+        const completion = agent.turnCompleteFor(messageId);
+        expect(completion).toBeDefined();
+        await expect(completion).rejects.toThrow('bound project directory is unavailable');
+      }
+      expect(callbacks.onDone).toHaveBeenCalledTimes(2);
+      expect(callbacks.sendMessage).toHaveBeenCalledTimes(2);
+      expect(callbacks.sendMessage.mock.calls[1][1]).toContain('/project reset');
+      const terminals = (agent as any).logger.warn.mock.calls
+        .map((call: unknown[]) => call[0] as Record<string, unknown>)
+        .filter((entry: Record<string, unknown>) => entry.event === 'agent_turn' && entry.state === 'failed');
+      expect(terminals.map((entry: Record<string, unknown>) => entry.sourceMessageId))
+        .toEqual(['om_missing_first', 'om_missing_second']);
+      expect(terminals.every((entry: Record<string, unknown>) => entry.user_visible === true && typeof entry.diagnosticId === 'string')).toBe(true);
+      expect((agent as any).createQueryStream).not.toHaveBeenCalled();
+    });
+
+    it('signals rejection completion even when its recovery notice cannot be delivered', async () => {
+      callbacks.sendMessage.mockRejectedValueOnce(new Error('channel down'));
+      const agent = mkAgent('bound-missing');
+      await agent.processMessage({ chatId: 'oc_test_chat', payload: 'do not run elsewhere', messageId: 'om_missing_channel_failure' });
+      expect(callbacks.onDone).toHaveBeenCalledTimes(1);
+      const completion = agent.turnCompleteFor('om_missing_channel_failure');
+      expect(completion).toBeDefined();
+      await expect(completion).rejects.toThrow('bound project directory is unavailable');
+      const terminal = (agent as any).logger.warn.mock.calls
+        .map((call: unknown[]) => call[0] as Record<string, unknown>)
+        .find((entry: Record<string, unknown>) => entry.event === 'agent_turn' && entry.state === 'failed');
+      expect(terminal).toMatchObject({ sourceMessageId: 'om_missing_channel_failure', user_visible: false });
+      expect((agent as any).createQueryStream).not.toHaveBeenCalled();
     });
 
     it('does not warn when the binding resolves cleanly (bound)', () => {
@@ -611,7 +1242,7 @@ describe('ChatAgent (service)', () => {
         callbacks,
         apiKey: 'test-key',
         model: 'test-model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
         apiBaseUrl: 'https://api.example.com',
         cwdProvider,
         cwdResolver: () => ({
@@ -631,7 +1262,7 @@ describe('ChatAgent (service)', () => {
         callbacks,
         apiKey: 'test-key',
         model: 'test-model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
         apiBaseUrl: 'https://api.example.com',
         cwdResolver: () => ({
           effectiveCwd: '/bound/project/dir',
@@ -656,7 +1287,7 @@ describe('ChatAgent (service)', () => {
         callbacks,
         apiKey: 'test-key',
         model: 'test-model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
         apiBaseUrl: 'https://api.example.com',
         cwdResolver: () => {
           const workingDir = resolvedCwds[Math.min(resolutionIndex, resolvedCwds.length - 1)];
@@ -787,15 +1418,16 @@ describe('ChatAgent (service)', () => {
     });
   });
 
-  describe('GLM stall termination (Issue #3706)', () => {
-    it('should send notice, record failure, suppress restart, preserve context', async () => {
-      const localCallbacks = createMockCallbacks();
+  describe('Provider stall termination (Issues #3706, #5283)', () => {
+    it.each(['claude', 'codex'] as const)('sends notice, retains the %s cause and suppresses restart', async backend => {
+      const localCallbacks = { ...createMockCallbacks(), onTurnResult: vi.fn() };
       const agent = new ChatAgent({
         chatId: 'oc_stall',
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
+        agentBackend: backend,
       });
 
       let releaseStall!: () => void;
@@ -819,7 +1451,7 @@ describe('ChatAgent (service)', () => {
         iterator: stallResultIterator(),
       });
 
-      void agent.processMessage({ chatId: 'oc_stall', payload: 'hello', messageId: 'msg_1' });
+      void agent.processMessage({ chatId: 'oc_stall', payload: 'hello', messageId: 'msg_1', threadRootId: 'om_stall_root' });
 
       await vi.waitFor(
         () => expect(agent.turnCompleteFor('msg_1')).toBeDefined(),
@@ -844,10 +1476,64 @@ describe('ChatAgent (service)', () => {
       expect(rm.recordFailure).toHaveBeenCalledWith('oc_stall', 'stall');
       expect(rm.shouldRestart).not.toHaveBeenCalled();
       await expect(agent.turnCompleteFor('msg_1')!).rejects.toThrow('codex app-server stalled for 30ms');
+      const failure = await agent.turnCompleteFor('msg_1')!.catch(error => error);
+      expect(failure).toMatchObject({ name: 'ProviderStallError', sourceMessageId: 'msg_1', provider: backend });
+      expect(failure.runId).toEqual(expect.any(String));
+      expect(failure.traceId).toEqual(expect.any(String));
+      const terminal = (agent as any).logger.warn.mock.calls
+        .filter(([context]: any[]) => context?.event === 'agent_turn' && context.sourceMessageId === 'msg_1');
+      expect(terminal).toHaveLength(1);
+      expect(terminal[0][0]).toMatchObject({ state: 'failed', user_visible: true, provider: backend,
+        sourceMessageId: 'msg_1', diagnosticId: expect.any(String), terminationDetail: 'codex app-server stalled for 30ms' });
+      expect(failure.diagnosticId).toBe(terminal[0][0].diagnosticId);
+      const notices = localCallbacks.sendMessage.mock.calls.filter(([, text]) => text.includes('诊断 ID'));
+      expect(notices).toHaveLength(1);
+      expect(notices[0][1]).toContain('msg_1');
+      expect(notices[0][1]).toContain(failure.diagnosticId);
+      expect(notices[0][1]).toContain('没有自动重放工具');
+      expect(notices[0][2]).toBe('om_stall_root');
+      expect(localCallbacks.onTurnResult).toHaveBeenCalledExactlyOnceWith({ success: false, text: '', truncated: false });
       // Session inactive (restart suppressed)
       expect(agent.hasActiveSession()).toBe(false);
       // Context preserved (deleteThreadRoot NOT called)
       expect((agent as any).conversationOrchestrator.deleteThreadRoot).not.toHaveBeenCalled();
+      const records = [...(agent as any).logger.warn.mock.calls, ...(agent as any).logger.info.mock.calls]
+        .filter(([, message]: any[]) => String(message).startsWith('Provider stall:'));
+      expect(records).toHaveLength(2);
+      for (const [context, message] of records) {
+        expect(context.provider).toBe(backend);
+        expect(message).not.toContain('GLM');
+      }
+    });
+
+    it.each([false, true])('rejects one-shot stall waiters when notice delivery fails=%s, including empty provider notices', async deliveryFails => {
+      const localCallbacks = { ...createMockCallbacks(), onTurnResult: vi.fn() };
+      if (deliveryFails) { localCallbacks.sendMessage.mockRejectedValue(new Error('Channel unavailable')); }
+      const agent = new ChatAgent({ chatId: 'oc_once_stall', callbacks: localCallbacks,
+        apiKey: 'key', model: 'model', agentBackend: 'codex' });
+      let release!: () => void;
+      const ready = new Promise<void>(resolve => { release = resolve; });
+      (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          await ready;
+          yield { parsed: { type: 'result', content: '', terminatedReason: 'stall',
+            terminationDetail: 'codex app-server exited during an active tool' }, raw: {} };
+        })() });
+      const task = agent.runOnce('oc_once_stall', 'one scheduled request', 'msg_once_stall');
+      void task.catch(() => {});
+      await vi.waitFor(() => expect(agent.turnCompleteFor('msg_once_stall')).toBeDefined());
+      release();
+      await expect(task).rejects.toMatchObject({ name: 'ProviderStallError', sourceMessageId: 'msg_once_stall',
+        message: 'codex app-server exited during an active tool', diagnosticId: expect.any(String) });
+      expect(localCallbacks.sendMessage).toHaveBeenCalledTimes(1);
+      const terminal = (agent as any).logger.warn.mock.calls
+        .filter(([context]: any[]) => context?.event === 'agent_turn' && context.sourceMessageId === 'msg_once_stall');
+      expect(terminal).toHaveLength(1);
+      expect(terminal[0][0]).toMatchObject({ state: 'failed', user_visible: !deliveryFails });
+      expect(localCallbacks.onTurnResult).toHaveBeenCalledExactlyOnceWith({ success: false, text: '', truncated: false });
+      expect((agent as any).restartManager.shouldRestart).not.toHaveBeenCalled();
+      expect((agent as any).onceMode).toBe(false);
+      ChatAgent.prototype.dispose.call(agent);
     });
   });
 
@@ -859,7 +1545,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // Provider-level synthesized terminal result: the SDK query ended cleanly
@@ -925,7 +1611,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
       // One generator instance, reused for every session start (a finished async
       // generator stays finished, so a second startAgentLoop drains nothing).
@@ -1102,7 +1788,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
       async function* scriptedIterator() {
         for (const parsed of parsedMessages) {
@@ -1308,7 +1994,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // #4322 shape: the turn streamed partial user-visible work, THEN the SDK
@@ -1381,7 +2067,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       async function* okResultIterator() {
@@ -1430,7 +2116,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // Result-only stream (no assistant text / no tools) → isEmptyTurn becomes
@@ -1501,7 +2187,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       async function* resultIterator() {
@@ -1547,7 +2233,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       async function* resultIterator() {
@@ -1592,7 +2278,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       async function* resultIterator() {
@@ -1635,17 +2321,21 @@ describe('ChatAgent (service)', () => {
   it.each([false, true])('recovers UNKNOWN once without replaying input (tool emitted: %s)', async toolEmitted => {
     const { RestartManager: RealRestartManager } = await vi.importActual<typeof import('@disclaude/core')>('@disclaude/core');
     const callbacks = createMockCallbacks();
-    const agent = new ChatAgent({ chatId: 'unknown-recovery', callbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+    const agent = new ChatAgent({ chatId: 'unknown-recovery', callbacks, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
     const internals = agent as any;
     internals.restartManager = new RealRestartManager({ logger: internals.logger, initialBackoffMs: 5 });
+    let fail!: () => void;
+    const requestAccepted = new Promise<void>(resolve => { fail = resolve; });
     internals.createQueryStream = vi.fn(() => ({
       handle: { close: vi.fn(), cancel: vi.fn() },
       iterator: (async function* () {
+        await requestAccepted;
         if (toolEmitted) {yield { parsed: { type: 'tool_use', content: 'operation already submitted' } };}
         throw new Error('opaque failure token=synthetic-credential');
       })(),
     }));
-    void agent.processMessage({ chatId: 'unknown-recovery', payload: 'do work', messageId: 'source-123' });
+    await agent.processMessage({ chatId: 'unknown-recovery', payload: 'do work', messageId: 'source-123' });
+    fail();
     await vi.waitFor(() => expect(JSON.stringify(callbacks.sendMessage.mock.calls)).toContain('自动恢复次数已用完'));
     expect(internals.createQueryStream).toHaveBeenCalledTimes(2);
     const { MessageChannel } = await import('@disclaude/core');
@@ -1653,7 +2343,7 @@ describe('ChatAgent (service)', () => {
     expect(pushes.filter(call => JSON.stringify(call).includes('do work'))).toHaveLength(1);
     const output = JSON.stringify(callbacks.sendMessage.mock.calls);
     expect(output).not.toContain('synthetic-credential');
-    expect(output).toContain('不会自动重放');
+    expect(output).toContain('系统没有自动重放工具');
     const [diagnostic] = internals.logger.error.mock.calls.find((call: any[]) => call[1] === 'Iterator error');
     expect(output).toContain(diagnostic.diagnosticId);
     agent.reset();
@@ -1667,7 +2357,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // Iterator that throws immediately (0 messages = startup failure)
@@ -1725,7 +2415,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // Iterator that throws with stderr attached
@@ -1777,7 +2467,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       async function* failingIterator() {
@@ -1831,7 +2521,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // Iterator that yields messages before throwing (runtime error).
@@ -1894,7 +2584,7 @@ describe('ChatAgent (service)', () => {
         callbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // Iterator that parks after the first yield until close() is called.
@@ -1958,7 +2648,7 @@ describe('ChatAgent (service)', () => {
         callbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // Issue #4394: same parking-iterator shape as the reset() test above.
@@ -2004,7 +2694,143 @@ describe('ChatAgent (service)', () => {
       expect(callbacks.sendMessage).toHaveBeenCalledWith('oc_stop_test', '⏹️ 本轮已停止。', 'thread-root-123');
       expect(JSON.stringify(callbacks.sendMessage.mock.calls)).not.toMatch(/non_transient|会话已暂停/);
       expect(agent.hasActiveSession()).toBe(false);
+      const [started] = turnEvents(agent, 'started');
+      expect(turnEvents(agent, 'interrupted')).toEqual([expect.objectContaining({
+        chatId: 'oc_stop_test', sourceMessageId: 'msg_1', runId: started.runId,
+        traceId: started.traceId, diagnosticId: expect.any(String),
+        interruptionCause: 'user_stop', user_visible: true,
+      })]);
       await agent.dispose();
+    });
+
+    it.each(['wall-clock', 'no-progress'])('delivers the %s policy cause once to the original turn', async kind => {
+      const callbacks = createMockCallbacks();
+      const agent = new ChatAgent({ chatId: 'policy-chat', callbacks, apiKey: 'key', model: 'model' });
+      let release!: () => void;
+      const parked = new Promise<void>(resolve => { release = resolve; });
+      (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(release), cancel: vi.fn() },
+        iterator: (async function* () { await parked; })() });
+      const reason = `⏹️ **响应已停止**（${kind}；达到配置的上限 5 分钟）`;
+      try {
+        await agent.processMessage({ chatId: 'policy-chat', payload: 'work', messageId: 'policy-source', threadRootId: 'policy-root' });
+        const rejected = expect(agent.turnCompleteFor('policy-source')).rejects.toThrow(reason);
+        expect(agent.stop('another-chat', 'wrong owner')).toBe(false);
+        expect(agent.stop('policy-chat', reason)).toBe(true);
+        expect(agent.stop('policy-chat', 'duplicate reason')).toBe(false);
+        await rejected;
+        await vi.waitFor(() => expect(callbacks.onDone).toHaveBeenCalledExactlyOnceWith('policy-chat', 'policy-root'));
+        expect(callbacks.sendMessage).toHaveBeenCalledExactlyOnceWith('policy-chat', reason, 'policy-root');
+        expect(agent.isBusy).toBe(false);
+        expect(agent.hasActiveSession()).toBe(false);
+        expect((agent as any).stopReasons.size).toBe(0);
+        const [started] = turnEvents(agent, 'started');
+        expect(turnEvents(agent, 'interrupted')).toEqual([expect.objectContaining({
+          chatId: 'policy-chat', sourceMessageId: 'policy-source', runId: started.runId,
+          traceId: started.traceId, diagnosticId: expect.any(String),
+          interruptionCause: 'activity_policy', stopReason: reason,
+          errorMessage: expect.stringContaining(reason), user_visible: true,
+        })]);
+      } finally { release(); agent.dispose(); }
+    });
+
+    it('keeps a pending policy notice from completing an explicit replacement turn', async () => {
+      const callbacks = createMockCallbacks();
+      const reason = '⏹️ **响应已停止**（wall-clock；达到配置的绝对上限 5 分钟）';
+      let releaseNotice!: () => void;
+      const notice = new Promise<void>(resolve => { releaseNotice = resolve; });
+      callbacks.sendMessage.mockImplementation(async (_chat, text) => { if (text === reason) { await notice; } });
+      const agent = new ChatAgent({ chatId: 'policy-replace', callbacks, apiKey: 'key', model: 'model' });
+      (agent as any).isAgentTeamsEnabled = () => false;
+      let releaseOld!: () => void, releaseNew!: () => void;
+      const old = new Promise<void>(resolve => { releaseOld = resolve; });
+      const next = new Promise<void>(resolve => { releaseNew = resolve; });
+      const create = vi.fn().mockReturnValueOnce({ handle: { close: vi.fn(releaseOld), cancel: vi.fn() },
+        iterator: (async function* () { await old; })() })
+        .mockReturnValueOnce({ handle: { close: vi.fn(releaseNew), cancel: vi.fn() }, iterator: (async function* () {
+          await next;
+          yield { parsed: { type: 'text', content: 'Explicit continuation finished' } };
+          yield { parsed: { type: 'result', content: '✅ Complete' } };
+        })() });
+      (agent as any).createQueryStream = create;
+      try {
+        await agent.processMessage({ chatId: 'policy-replace', payload: 'old', messageId: 'old-source', threadRootId: 'old-root' });
+        const rejected = expect(agent.turnCompleteFor('old-source')).rejects.toThrow('wall-clock');
+        expect(agent.stop('policy-replace', reason)).toBe(true);
+        await rejected;
+        await vi.waitFor(() => expect(callbacks.sendMessage).toHaveBeenCalledWith('policy-replace', reason, 'old-root'));
+        await agent.processMessage({ chatId: 'policy-replace', payload: 'continue', messageId: 'new-source', threadRootId: 'new-root' });
+        releaseNotice();
+        expect(agent.isBusy).toBe(true);
+        releaseNew();
+        await agent.turnCompleteFor('new-source');
+        await vi.waitFor(() => expect(callbacks.onDone).toHaveBeenCalledExactlyOnceWith('policy-replace', 'new-root'));
+        expect(callbacks.sendMessage.mock.calls.filter(([, text]) => text === reason)).toHaveLength(1);
+        expect(callbacks.sendMessage).toHaveBeenCalledWith('policy-replace', 'Explicit continuation finished', 'new-root');
+        expect(create).toHaveBeenCalledTimes(2);
+        const oldStarted = turnEvents(agent, 'started').find(event => event.sourceMessageId === 'old-source');
+        expect(turnEvents(agent, 'interrupted')).toEqual([expect.objectContaining({
+          sourceMessageId: 'old-source', runId: oldStarted.runId,
+          traceId: oldStarted.traceId, interruptionCause: 'activity_policy', user_visible: true,
+        })]);
+        expect(turnEvents(agent, 'completed')).toEqual([expect.objectContaining({ sourceMessageId: 'new-source' })]);
+      } finally { releaseOld(); releaseNotice(); releaseNew(); agent.dispose(); }
+    });
+
+    it('records each queued unfinished input once when the session is stopped', async () => {
+      const callbacks = createMockCallbacks();
+      const agent = new ChatAgent({ chatId: 'queued-stop', callbacks, apiKey: 'key', model: 'model' });
+      let release!: () => void;
+      const parked = new Promise<void>(resolve => { release = resolve; });
+      (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(release), cancel: vi.fn() },
+        iterator: (async function* () {
+          yield { parsed: { type: 'text', content: 'Working on the first input' } };
+          await parked;
+        })() });
+      try {
+        await agent.processMessage({ chatId: 'queued-stop', payload: 'first', messageId: 'first-source', threadRootId: 'first-root' });
+        await vi.waitFor(() => expect(callbacks.sendMessage).toHaveBeenCalledWith('queued-stop', 'Working on the first input', 'first-root'));
+        await agent.processMessage({ chatId: 'queued-stop', payload: 'second', messageId: 'second-source', threadRootId: 'second-root' });
+        const rejected = ['first-source', 'second-source'].map(id => expect(agent.turnCompleteFor(id)).rejects.toThrow('cancelled by stop'));
+        expect(agent.stop()).toBe(true);
+        await Promise.all(rejected);
+        await vi.waitFor(() => expect(callbacks.onDone).toHaveBeenCalled());
+        const started = turnEvents(agent, 'started');
+        const interrupted = turnEvents(agent, 'interrupted');
+        expect(interrupted).toHaveLength(2);
+        for (const source of started) {
+          expect(interrupted).toContainEqual(expect.objectContaining({
+            sourceMessageId: source.sourceMessageId, runId: source.runId, traceId: source.traceId,
+            diagnosticId: expect.any(String), interruptionCause: 'user_stop',
+            user_visible: source.sourceMessageId === 'first-source',
+          }));
+        }
+        expect(callbacks.sendMessage.mock.calls.filter(([, text]) => text === '⏹️ 本轮已停止。')).toEqual([
+          ['queued-stop', '⏹️ 本轮已停止。', 'first-root'],
+        ]);
+      } finally { release(); agent.dispose(); }
+    });
+
+    it('does not give a completed input a second terminal when stopping idle background work', async () => {
+      const callbacks = createMockCallbacks();
+      const agent = new ChatAgent({ chatId: 'completed-stop', callbacks, apiKey: 'key', model: 'model' });
+      (agent as any).isAgentTeamsEnabled = () => false;
+      let release!: () => void;
+      const parked = new Promise<void>(resolve => { release = resolve; });
+      (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(release), cancel: vi.fn() },
+        iterator: (async function* () {
+          yield { parsed: { type: 'text', content: 'Completed answer' } };
+          yield { parsed: { type: 'result', content: '✅ Complete' } };
+          await parked;
+        })() });
+      try {
+        await agent.processMessage({ chatId: 'completed-stop', payload: 'work', messageId: 'completed-source' });
+        await agent.turnCompleteFor('completed-source');
+        await vi.waitFor(() => expect(agent.isBusy).toBe(false));
+        expect(agent.stop()).toBe(true);
+        await vi.waitFor(() => expect(agent.hasActiveSession()).toBe(false));
+        expect(turnEvents(agent, 'completed')).toHaveLength(1);
+        expect(turnEvents(agent, 'interrupted')).toEqual([]);
+      } finally { release(); agent.dispose(); }
     });
 
     it('should abort AbortController on reset()', () => {
@@ -2013,7 +2839,7 @@ describe('ChatAgent (service)', () => {
         callbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // Start a session to create AbortController
@@ -2041,7 +2867,7 @@ describe('ChatAgent (service)', () => {
         callbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       void agent.processMessage({
@@ -2061,7 +2887,7 @@ describe('ChatAgent (service)', () => {
         callbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       void agent.processMessage({
@@ -2086,7 +2912,7 @@ describe('ChatAgent (service)', () => {
       callbacks.sendMessage.mockImplementation(async (_chat, text) => {
         if (text === '⏹️ 本轮已停止。') { noticeStarted(); await notice; }
       });
-      const agent = new ChatAgent({ chatId: 'backend-resume', callbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const agent = new ChatAgent({ chatId: 'backend-resume', callbacks, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
       (agent as any).isAgentTeamsEnabled = () => false;
       let interrupt!: () => void, complete!: () => void;
       const interrupted = new Promise<void>(resolve => { interrupt = resolve; });
@@ -2127,7 +2953,7 @@ describe('ChatAgent (service)', () => {
 
     it.each([{ partial: false, once: false }, { partial: true, once: false }, { partial: false, once: true }, { partial: true, once: true }])('rejects interrupted work without success or automatic replay (%j)', async ({ partial, once }) => {
       const callbacks = { ...createMockCallbacks(), onTurnResult: vi.fn().mockResolvedValue(undefined) };
-      const agent = new ChatAgent({ chatId: 'backend-stop', callbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const agent = new ChatAgent({ chatId: 'backend-stop', callbacks, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
       (agent as any).isAgentTeamsEnabled = () => false;
       const close = vi.fn();
       let publish!: () => void;
@@ -2144,6 +2970,7 @@ describe('ChatAgent (service)', () => {
         const run = once ? agent.runOnce('backend-stop', 'Continue the task', 'interrupt-msg')
           : agent.processMessage({ chatId: 'backend-stop', payload: 'Continue the task', messageId: 'interrupt-msg' });
         await vi.waitFor(() => expect(agent.turnCompleteFor('interrupt-msg')).toBeDefined());
+        if (!once) { await run; } // Publish only after the original input was accepted.
         const rejected = expect(once ? run : agent.turnCompleteFor('interrupt-msg')).rejects.toThrow('interrupted');
         publish();
         await rejected;
@@ -2156,7 +2983,283 @@ describe('ChatAgent (service)', () => {
         expect((agent as any).restartManager.recordFailure).not.toHaveBeenCalled();
         expect(callbacks.sendMessage.mock.calls.some(call => call[1] === '⏹️ 本轮已停止。')).toBe(true);
         expect(callbacks.sendMessage.mock.calls.some(call => String(call[1]).includes('Late output'))).toBe(false);
+        await vi.waitFor(() => expect(turnEvents(agent, 'interrupted')).toHaveLength(1));
+        const [started] = turnEvents(agent, 'started');
+        expect(turnEvents(agent, 'interrupted')).toEqual([expect.objectContaining({
+          sourceMessageId: 'interrupt-msg', runId: started.runId, traceId: started.traceId,
+          diagnosticId: expect.any(String), interruptionCause: 'backend_interrupted', user_visible: true,
+        })]);
       } finally { agent.dispose(); }
+    });
+  });
+
+  describe('service restart interruption (#5273)', () => {
+    it('delivers a prior-process interruption before accepting the next session turn', async () => {
+      const directory = mkdtempSync(join(tmpdir(), 'chat-agent-reconcile-'));
+      const journalPath = join(directory, 'turns.json');
+      const previousProcess = new ServiceTurnRecoveryStore(journalPath);
+      previousProcess.initialize(100);
+      previousProcess.startTurn({
+        chatId: 'reconcile-chat',
+        sessionKey: 'reconcile-chat',
+        traceId: 'reconcile-chat:old-message',
+        runId: 'old-run',
+        sourceMessageId: 'old-message',
+        startedAt: 100,
+      });
+      const nextProcess = new ServiceTurnRecoveryStore(journalPath);
+      nextProcess.initialize(200);
+      const localCallbacks = createMockCallbacks();
+      localCallbacks.sendMessage.mockResolvedValue('restart-notice-receipt');
+      const agent = new ChatAgent({
+        chatId: 'reconcile-chat', callbacks: localCallbacks, apiKey: 'key', model: 'model',
+        apiProtocol: 'anthropic', turnRecovery: nextProcess,
+      });
+      (agent as any).isAgentTeamsEnabled = () => false;
+      (agent as any).createQueryStream = vi.fn(() => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          yield { parsed: { type: 'text', content: 'New request response.' } };
+          yield { parsed: { type: 'result', content: '✅ Complete' } };
+        })(),
+      }));
+
+      try {
+        await agent.processMessage({ chatId: 'reconcile-chat', payload: 'new request', messageId: 'new-message' });
+        await agent.turnCompleteFor('new-message');
+        expect(localCallbacks.sendMessage.mock.calls[0]?.[1]).toContain('old-message');
+        expect(localCallbacks.sendMessage.mock.calls[0]?.[1]).toContain('系统没有自动重放');
+        expect(localCallbacks.sendMessage.mock.calls[1]?.[1]).toBe('New request response.');
+        expect(nextProcess.getPendingNotifications('reconcile-chat')).toEqual([]);
+      } finally {
+        agent.dispose();
+        rmSync(directory, { recursive: true, force: true });
+      }
+    });
+
+    it('persists and delivers a distinct interruption without replaying the Codex turn', async () => {
+      const directory = mkdtempSync(join(tmpdir(), 'chat-agent-restart-'));
+      const journalPath = join(directory, 'turns.json');
+      const store = new ServiceTurnRecoveryStore(journalPath);
+      store.initialize();
+      const localCallbacks = createMockCallbacks();
+      localCallbacks.sendMessage.mockResolvedValue('restart-notice-receipt');
+      const agent = new ChatAgent({
+        chatId: 'restart-chat',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'gpt-5.6-luna',
+        agentBackend: 'codex',
+        sdkSessionKey: 'restart-chat::topic-root',
+        turnRecovery: store,
+      });
+      (agent as any).isAgentTeamsEnabled = () => false;
+      let release!: () => void;
+      const parked = new Promise<void>(resolve => { release = resolve; });
+      async function* activeTurn() {
+        await parked;
+        yield { parsed: { type: 'text', content: 'This late output must be suppressed.' } };
+        yield { parsed: { type: 'result', content: '✅ Complete' } };
+      }
+      const close = vi.fn();
+      const createQueryStream = vi.fn(() => ({ handle: { close, cancel: vi.fn() }, iterator: activeTurn() }));
+      (agent as any).createQueryStream = createQueryStream;
+
+      try {
+        await agent.processMessage({
+          chatId: 'restart-chat',
+          payload: 'Continue the research task',
+          messageId: 'source-message-1',
+          threadRootId: 'topic-root',
+        });
+        expect(agent.isBusy).toBe(true);
+        expect(JSON.parse(readFileSync(journalPath, 'utf8')).turns[0]).toMatchObject({
+          runId: expect.any(String),
+          sourceMessageId: 'source-message-1',
+          state: 'active',
+        });
+
+        await agent.interruptForServiceRestart(100);
+        const { turns } = JSON.parse(readFileSync(journalPath, 'utf8'));
+        const [persisted] = turns;
+        expect(persisted).toMatchObject({
+          sourceMessageId: 'source-message-1',
+          state: 'interrupted_by_service_restart',
+          interruptionCause: 'service_restart',
+          noticeDeliveredAt: expect.any(Number),
+        });
+        expect(localCallbacks.sendMessage).toHaveBeenCalledWith(
+          'restart-chat',
+          expect.stringContaining('系统没有自动重放'),
+          'topic-root'
+        );
+
+        release();
+        await vi.waitFor(() => expect(agent.hasActiveSession()).toBe(false));
+        expect(createQueryStream).toHaveBeenCalledTimes(1);
+        expect(localCallbacks.sendMessage).toHaveBeenCalledTimes(1);
+        expect(localCallbacks.sendMessage).not.toHaveBeenCalledWith(
+          'restart-chat', '⏹️ 本轮已停止。', expect.anything()
+        );
+      } finally {
+        release();
+        agent.dispose();
+        rmSync(directory, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it('keeps the last durable active record if persisting restart interruption fails', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'restart-journal-failure-'));
+    const filePath = join(directory, 'turns.json');
+    const store = new ServiceTurnRecoveryStore(filePath);
+    store.initialize();
+    const callbacks = createMockCallbacks();
+    callbacks.sendMessage.mockResolvedValue('restart-notice-receipt');
+    const agent = new ChatAgent({ chatId: 'restart-disk-failure', callbacks, apiKey: 'key', model: 'model', turnRecovery: store });
+    let release!: () => void;
+    const parked = new Promise<void>(resolve => { release = resolve; });
+    (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(), cancel: vi.fn() },
+      iterator: (async function* () { await parked; })() });
+    try {
+      await agent.processMessage({ chatId: 'restart-disk-failure', payload: 'work', messageId: 'durable-input' });
+      const rejected = expect(agent.turnCompleteFor('durable-input')).rejects.toThrow('service restart');
+      vi.spyOn(store, 'interruptSession').mockImplementation(() => { throw new Error('Disk full'); });
+      await agent.interruptForServiceRestart(1);
+      await rejected;
+      agent.dispose();
+      expect(JSON.parse(readFileSync(filePath, 'utf8')).turns[0].state).toBe('active');
+      const recovered = new ServiceTurnRecoveryStore(filePath).initialize();
+      expect(recovered).toEqual([expect.objectContaining({ sourceMessageId: 'durable-input', state: 'interrupted_by_service_restart' })]);
+    } finally { release(); agent.dispose(); rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  it('reconciles an input accepted before history loading without later pushing or replaying it', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'restart-history-loading-'));
+    const filePath = join(directory, 'turns.json');
+    const store = new ServiceTurnRecoveryStore(filePath);
+    store.initialize();
+    const callbacks = createMockCallbacks();
+    callbacks.sendMessage.mockResolvedValue('restart-notice-receipt');
+    const agent = new ChatAgent({ chatId: 'restart-history', callbacks, apiKey: 'key', model: 'model', turnRecovery: store });
+    let releaseHistory!: () => void;
+    const history = new Promise<void>(resolve => { releaseHistory = resolve; });
+    let releaseIterator!: () => void;
+    const parked = new Promise<void>(resolve => { releaseIterator = resolve; });
+    (agent as any).historyManager.loadFirstMessageHistory = () => history;
+    (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(), cancel: vi.fn() },
+      iterator: (async function* () { await parked; })() });
+    try {
+      const processing = agent.processMessage({ chatId: 'restart-history', payload: 'work', messageId: 'history-input' });
+      const { channel } = agent as any;
+      const rejected = expect(agent.turnCompleteFor('history-input')).rejects.toThrow('service restart');
+      expect(JSON.parse(readFileSync(filePath, 'utf8')).turns[0].state).toBe('active');
+      await agent.interruptForServiceRestart(100);
+      await rejected;
+      releaseHistory();
+      await processing;
+      expect(channel.push).not.toHaveBeenCalled();
+      expect(callbacks.sendMessage).toHaveBeenCalledExactlyOnceWith('restart-history', expect.stringContaining('history-input'), 'thread-root-123');
+    } finally { releaseHistory(); releaseIterator(); agent.dispose(); rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  describe('unexpected iterator terminal outcomes (#5288)', () => {
+    it.each([false, true])('settles active and queued requests once without replay (throws=%s)', async throws => {
+      const callbacks = createMockCallbacks();
+      const agent = new ChatAgent({ chatId: 'iterator-end', callbacks, apiKey: 'key', model: 'model' });
+      let finish!: () => void;
+      const ready = new Promise<void>(resolve => { finish = resolve; });
+      async function* events() {
+        await ready;
+        yield { parsed: { type: 'text', content: 'Partial evidence' } };
+        yield { parsed: { type: 'tool_use', content: 'Operation may already have happened' } };
+        if (throws) { throw new Error('Connection closed mid-operation'); }
+      }
+      const create = vi.fn(() => ({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: events() }));
+      (agent as any).createQueryStream = create;
+      try {
+        await agent.processMessage({ chatId: 'iterator-end', payload: 'first', messageId: 'original', threadRootId: 'first-thread' });
+        await agent.processMessage({ chatId: 'iterator-end', payload: 'second', messageId: 'queued', threadRootId: 'second-thread' });
+        const first = expect(agent.turnCompleteFor('original')).rejects.toThrow();
+        const second = expect(agent.turnCompleteFor('queued')).rejects.toThrow();
+        finish();
+        await Promise.all([first, second]);
+        await vi.waitFor(() => expect((agent as any).restartManager.shouldRestart).toHaveBeenCalled());
+        const notices = callbacks.sendMessage.mock.calls.filter(([, content]) => String(content).includes('本次请求中断'));
+        expect(notices).toHaveLength(2);
+        expect(notices[0]).toEqual(['iterator-end', expect.stringContaining('消息 ID: original'), 'first-thread']);
+        expect(notices[1]).toEqual(['iterator-end', expect.stringContaining('消息 ID: queued'), 'second-thread']);
+        expect(notices.every(([, content]) => String(content).includes('诊断 ID:') && String(content).includes('重新提交'))).toBe(true);
+        expect(create).toHaveBeenCalledTimes(1);
+        expect((agent as any).restartManager.recordSuccess).not.toHaveBeenCalled();
+        const outcomes = (agent as any).logger.warn.mock.calls.filter(([fields]: any[]) => fields.state === 'interrupted');
+        expect(outcomes.map(([fields]: any[]) => fields.sourceMessageId)).toEqual(['original', 'queued']);
+        expect(outcomes.every(([fields]: any[]) => fields.diagnosticId && fields.runId && fields.traceId)).toBe(true);
+      } finally { finish(); agent.dispose(); }
+    });
+
+    it('does not overwrite a replacement session while the old terminal notice is pending', async () => {
+      const callbacks = createMockCallbacks();
+      const agent = new ChatAgent({ chatId: 'iterator-replace', callbacks, apiKey: 'key', model: 'model' });
+      (agent as any).isAgentTeamsEnabled = () => false;
+      let finishOld!: () => void;
+      const old = new Promise<void>(resolve => { finishOld = resolve; });
+      let finishNotice!: () => void;
+      const notice = new Promise<void>(resolve => { finishNotice = resolve; });
+      let finishNew!: () => void;
+      const current = new Promise<void>(resolve => { finishNew = resolve; });
+      callbacks.sendMessage.mockImplementation((_, text) => String(text).includes('本次请求中断') ? notice : Promise.resolve());
+      const create = vi.fn().mockReturnValueOnce({ handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () { await old; })() })
+        .mockReturnValueOnce({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: (async function* () {
+          await current;
+          yield { parsed: { type: 'text', content: 'Explicit recovery completed' } };
+          yield { parsed: { type: 'result', content: '✅ Complete' } };
+        })() });
+      (agent as any).createQueryStream = create;
+      try {
+        await agent.processMessage({ chatId: 'iterator-replace', payload: 'old', messageId: 'old', threadRootId: 'old-thread' });
+        const rejected = expect(agent.turnCompleteFor('old')).rejects.toThrow();
+        finishOld();
+        await rejected;
+        await vi.waitFor(() => expect(callbacks.sendMessage.mock.calls.some(([, text]) => String(text).includes('本次请求中断'))).toBe(true));
+        await agent.processMessage({ chatId: 'iterator-replace', payload: 'continue after inspection', messageId: 'new', threadRootId: 'new-thread' });
+        finishNotice();
+        await vi.waitFor(() => expect((agent as any).logger.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ state: 'interrupted', sourceMessageId: 'old' }), expect.any(String)));
+        expect((agent as any).pendingTurnMessageIds).toEqual(['new']);
+        expect(agent.isBusy).toBe(true);
+        expect(agent.hasActiveSession()).toBe(true);
+        finishNew();
+        await agent.turnCompleteFor('new');
+        expect(callbacks.sendMessage).toHaveBeenCalledWith('iterator-replace', 'Explicit recovery completed', 'new-thread');
+        expect(create).toHaveBeenCalledTimes(2);
+      } finally { finishOld(); finishNotice(); finishNew(); agent.dispose(); }
+    });
+
+    it('does not mark a completed request interrupted when its queued successor has no events', async () => {
+      const callbacks = createMockCallbacks();
+      const agent = new ChatAgent({ chatId: 'iterator-between', callbacks, apiKey: 'key', model: 'model' });
+      (agent as any).isAgentTeamsEnabled = () => false;
+      let finish!: () => void;
+      const ready = new Promise<void>(resolve => { finish = resolve; });
+      async function* events() {
+        await ready;
+        yield { parsed: { type: 'text', content: 'First request completed' } };
+        yield { parsed: { type: 'result', content: '✅ Complete' } };
+      }
+      (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: events() });
+      try {
+        await agent.processMessage({ chatId: 'iterator-between', payload: 'first', messageId: 'completed', threadRootId: 'old-thread' });
+        await agent.processMessage({ chatId: 'iterator-between', payload: 'second', messageId: 'unstarted', threadRootId: 'new-thread' });
+        const rejected = expect(agent.turnCompleteFor('unstarted')).rejects.toThrow();
+        finish();
+        await agent.turnCompleteFor('completed');
+        await rejected;
+        await vi.waitFor(() => expect(callbacks.sendMessage.mock.calls.some(([, text]) => String(text).includes('消息 ID: unstarted'))).toBe(true));
+        const notices = callbacks.sendMessage.mock.calls.filter(([, text]) => String(text).includes('本次请求中断'));
+        expect(notices).toEqual([['iterator-between', expect.stringContaining('消息 ID: unstarted'), 'new-thread']]);
+      } finally { finish(); agent.dispose(); }
     });
   });
 
@@ -2229,10 +3332,271 @@ describe('ChatAgent (service)', () => {
     });
   });
 
+  describe('group assistant delivery (#5239)', () => {
+    it.each(['native commentary', 'unphased pre-tool text'])('keeps %s out of a final-only REST JSON response', async kind => {
+      const sent: OutgoingMessage[] = [];
+      const channel = {
+        sendMessage: vi.fn((message: OutgoingMessage) => {
+          sent.push(message);
+          return Promise.resolve('owned-rest-receipt');
+        }),
+        getCapabilities: () => ({ supportsStreaming: false }),
+      } as unknown as IChannel;
+      const callbacks = createChannelCallbacksFactory(channel, {
+        info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+      } as unknown as Logger, { sendDoneSignal: true, finalReplyOnly: true })('owned-rest');
+      const agent = new ChatAgent({ chatId: 'owned-rest', callbacks, apiKey: 'test', model: 'test', agentBackend: 'codex' });
+      (agent as any).isAgentTeamsEnabled = vi.fn(() => false);
+      await (agent as any).processIterator((async function* () {
+        yield { parsed: { type: 'text', content: 'I will keep waiting.',
+          ...(kind === 'native commentary' ? { metadata: { phase: 'commentary' } } : {}) } };
+        yield { parsed: { type: 'tool_use', content: 'exec_command' } };
+        yield { parsed: { type: 'tool_result', content: 'finished' } };
+        yield { parsed: { type: 'text', content: '{"stage":' } };
+        yield { parsed: { type: 'text', content: '"finished"}', metadata: { phase: 'final_answer' } } };
+        yield { parsed: { type: 'result', content: '' } };
+      })());
+      const texts = sent.filter(message => message.type === 'text').map(message => message.text);
+      expect(texts).toEqual(['{"stage":"finished"}']);
+      expect(JSON.parse(texts.join('\n'))).toEqual({ stage: 'finished' });
+      expect(sent.filter(message => message.type === 'done')).toHaveLength(1);
+    });
+
+    function ownedAgent(chatType: string = 'group') {
+      const callbacks = createMockCallbacks();
+      const agent = new ChatAgent({ chatId: 'owned-delivery', callbacks, apiKey: 'test', model: 'test' });
+      (agent as any).isAgentTeamsEnabled = vi.fn(() => false);
+      (agent as any).chatType = chatType;
+      return { agent, callbacks };
+    }
+
+    it.each(['group', 'topic'])('waits for a %s text round to finish and discards text followed by tools', async chatType => {
+      const { agent, callbacks } = ownedAgent(chatType);
+      const iterator = (async function* () {
+        yield { parsed: { type: 'text', content: 'opaque pre-tool narration' } };
+        expect(callbacks.sendMessage).not.toHaveBeenCalled();
+        yield { parsed: { type: 'tool_use', content: 'Read', metadata: { toolName: 'Read' } } };
+        yield { parsed: { type: 'tool_result', content: 'read result' } };
+        yield { parsed: { type: 'text', content: 'opaque verification narration' } };
+        expect(callbacks.sendMessage).not.toHaveBeenCalled();
+        yield { parsed: { type: 'tool_use', content: 'Verify' } };
+        yield { parsed: { type: 'tool_result', content: 'verified' } };
+        yield { parsed: { type: 'text', content: 'Sent and verified.' } };
+        yield { parsed: { type: 'text', content: '\n\nFinal count: 14.' } };
+        expect(callbacks.sendMessage).not.toHaveBeenCalled();
+        yield { parsed: { type: 'result', content: '✅ Complete' } };
+      })();
+      await (agent as any).processIterator(iterator);
+      expect(callbacks.sendMessage).toHaveBeenCalledExactlyOnceWith('owned-delivery', 'Sent and verified.\n\nFinal count: 14.', expect.anything());
+    });
+
+    it('suppresses declared commentary but delivers a declared final answer and necessary status', async () => {
+      const { agent, callbacks } = ownedAgent();
+      await (agent as any).processIterator((async function* () {
+        yield { parsed: { type: 'text', content: 'Internal next action', metadata: { phase: 'commentary' } } };
+        yield { parsed: { type: 'status', content: 'Please authorize the required operation.' } };
+        yield { parsed: { type: 'tool_use', content: 'hidden tool' } };
+        yield { parsed: { type: 'text', content: 'Final reply', metadata: { phase: 'final_answer' } } };
+        yield { parsed: { type: 'result', content: '' } };
+      })());
+      expect(callbacks.sendMessage.mock.calls.map(call => call[1])).toEqual(['Please authorize the required operation.', 'Final reply']);
+    });
+
+    it('keeps non-streaming private-chat delivery unchanged', async () => {
+      const { agent, callbacks } = ownedAgent('p2p');
+      await (agent as any).processIterator((async function* () {
+        yield { parsed: { type: 'text', content: 'Private progress', metadata: { phase: 'commentary' } } };
+        yield { parsed: { type: 'text', content: 'Private answer', metadata: { phase: 'final_answer' } } };
+        yield { parsed: { type: 'result', content: '' } };
+      })());
+      expect(callbacks.sendMessage.mock.calls.map(call => call[1])).toEqual(['Private progress', 'Private answer']);
+    });
+
+    it('preserves the frozen source-thread anchors across two buffered turns', async () => {
+      const { agent, callbacks } = ownedAgent('topic');
+      (agent as any).pendingTurnAnchors = ['root-A', 'root-B'];
+      (agent as any).pendingTurnMessageIds = ['source-A', 'source-B'];
+      await (agent as any).processIterator((async function* () {
+        yield { parsed: { type: 'text', content: 'Answer A' } };
+        yield { parsed: { type: 'result', content: '' } };
+        yield { parsed: { type: 'text', content: 'Answer B' } };
+        yield { parsed: { type: 'result', content: '' } };
+      })());
+      expect(callbacks.sendMessage.mock.calls.map(call => [call[1], call[2]])).toEqual([['Answer A', 'root-A'], ['Answer B', 'root-B']]);
+    });
+
+    it('preserves an explicitly formatted answer across raw text chunks', async () => {
+      const { agent, callbacks } = ownedAgent();
+      await (agent as any).processIterator((async function* () {
+        yield { parsed: { type: 'text', content: '{"count":' } };
+        yield { parsed: { type: 'text', content: '14,"ok":true}' } };
+        yield { parsed: { type: 'result', content: '✅ Complete' } };
+      })());
+      expect(callbacks.sendMessage).toHaveBeenCalledExactlyOnceWith('owned-delivery', '{"count":14,"ok":true}', expect.anything());
+    });
+
+    it('keeps declared commentary available in the configured debug group', async () => {
+      const { agent, callbacks } = ownedAgent();
+      mockGetDebugGroup.mockReturnValue({ chatId: 'owned-debug', setAt: 1 });
+      try {
+        await (agent as any).processIterator((async function* () {
+          yield { parsed: { type: 'text', content: 'Internal next action', metadata: { phase: 'commentary' } } };
+          yield { parsed: { type: 'text', content: 'Answer', metadata: { phase: 'final_answer' } } };
+          yield { parsed: { type: 'result', content: '' } };
+        })());
+        expect(callbacks.sendMessage.mock.calls.map(call => [call[0], call[1]])).toEqual([
+          ['owned-debug', '[text] Internal next action'], ['owned-delivery', 'Answer'],
+        ]);
+      } finally { mockGetDebugGroup.mockReturnValue(null); }
+    });
+
+    it('marks failed-turn output as partial and preserves the failed structured result', async () => {
+      const { agent, callbacks } = ownedAgent();
+      const onTurnResult = vi.fn().mockResolvedValue(undefined);
+      (agent as any).callbacks.onTurnResult = onTurnResult;
+      await (agent as any).processIterator((async function* () {
+        yield { parsed: { type: 'text', content: 'Work observed before failure' } };
+        yield { parsed: { type: 'result', content: '', terminatedReason: 'turn_failed' } };
+      })());
+      expect(callbacks.sendMessage.mock.calls[0]?.[1]).toContain('未确认完成');
+      expect(onTurnResult).toHaveBeenCalledWith({ success: false, text: 'Work observed before failure', truncated: false });
+    });
+
+    it('does not report a successful turn after final-answer delivery fails', async () => {
+      const { agent, callbacks } = ownedAgent();
+      const onTurnResult = vi.fn().mockResolvedValue(undefined);
+      (agent as any).callbacks.onTurnResult = onTurnResult;
+      callbacks.sendMessage.mockRejectedValue(new Error('owned delivery failed'));
+      await (agent as any).processIterator((async function* () {
+        yield { parsed: { type: 'text', content: 'Final output' } };
+        yield { parsed: { type: 'result', content: '' } };
+      })());
+      expect(callbacks.sendMessage).toHaveBeenCalledTimes(1);
+      expect(onTurnResult).toHaveBeenCalledWith({ success: false, text: 'Final output', truncated: false });
+    });
+
+    it('labels an unconfirmed buffered reply as partial when the iterator ends', async () => {
+      const { agent, callbacks } = ownedAgent();
+      await (agent as any).processIterator((async function* () {
+        yield { parsed: { type: 'text', content: 'Unconfirmed partial content' } };
+      })());
+      const partial = callbacks.sendMessage.mock.calls.find(call => String(call[1]).includes('Unconfirmed partial content'));
+      expect(partial?.[1]).toContain('部分回复');
+      expect(partial?.[1]).toContain('未确认完成');
+    });
+
+    it('drops buffered text when a reset supersedes the iterator', async () => {
+      const { agent, callbacks } = ownedAgent();
+      await (agent as any).processIterator((async function* () {
+        yield { parsed: { type: 'text', content: 'Superseded text' } };
+        agent.reset();
+      })());
+      expect(callbacks.sendMessage.mock.calls.some(call => String(call[1]).includes('Superseded text'))).toBe(false);
+    });
+  });
+
+  describe('tool-only terminal outcome (#5288)', () => {
+    it.each(['executed', 'shell-error'])('reports a missing reply without replaying tools (%s)', async outcome => {
+      const directory = mkdtempSync(join(tmpdir(), 'tool-only-terminal-'));
+      const checkpoint = join(directory, 'effects.json');
+      const localCallbacks = {
+        ...createMockCallbacks(),
+        onTurnResult: vi.fn().mockResolvedValue(undefined),
+        addReaction: vi.fn().mockResolvedValue(undefined),
+      };
+      const agent = new ChatAgent({ chatId: 'tool-only-chat', callbacks: localCallbacks, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
+      let toolAttempts = 0;
+      async function* output() {
+        yield { parsed: { type: 'tool_use' as const, content: 'execute owned command' }, raw: {} };
+        toolAttempts++;
+        if (outcome === 'executed') {
+          const { writeFileSync } = await import('node:fs');
+          writeFileSync(checkpoint, JSON.stringify({ attempts: toolAttempts }));
+        }
+        yield { parsed: { type: 'tool_result' as const, content: outcome === 'executed' ? 'owned command completed' : "zsh: unmatched '\nexit code 1" }, raw: {} };
+        yield { parsed: { type: 'result' as const, content: '✅ Complete' }, raw: {} };
+      }
+      const create = vi.fn(() => ({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: output() }));
+      (agent as any).createQueryStream = create;
+      try {
+        await agent.processMessage({ chatId: 'tool-only-chat', payload: 'Execute once and report the result', messageId: 'tool-only-source', threadRootId: 'tool-only-root' });
+        await expect(agent.turnCompleteFor('tool-only-source')).rejects.toThrow('no user-visible reply');
+        await vi.waitFor(() => expect(localCallbacks.onTurnResult).toHaveBeenCalledWith({ success: false, text: '', truncated: false }));
+        const notices = localCallbacks.sendMessage.mock.calls.filter(([, text]) => String(text).includes('未收到最终回复'));
+        expect(notices).toHaveLength(1);
+        expect(notices[0]).toEqual(['tool-only-chat', expect.stringContaining('tool-only-source'), 'tool-only-root']);
+        expect(notices[0][1]).toContain('诊断 ID:');
+        expect(notices[0][1]).toContain('不会自动重放');
+        expect((agent as any).logger.warn).toHaveBeenCalledWith(expect.objectContaining({ event: 'agent_turn', state: 'failed', sourceMessageId: 'tool-only-source', runId: expect.any(String), diagnosticId: expect.any(String), user_visible: true }), expect.any(String));
+        expect((agent as any).logger.info).not.toHaveBeenCalledWith(expect.objectContaining({ event: 'agent_turn', state: 'completed', sourceMessageId: 'tool-only-source' }), expect.any(String));
+        expect(create).toHaveBeenCalledTimes(1);
+        expect(toolAttempts).toBe(1);
+        if (outcome === 'executed') { expect(JSON.parse(readFileSync(checkpoint, 'utf8'))).toEqual({ attempts: 1 }); }
+        expect(localCallbacks.addReaction).not.toHaveBeenCalled();
+      } finally { agent.dispose(); rmSync(directory, { recursive: true, force: true }); }
+    });
+
+    it('preserves a successfully delivered asynchronous question without a redundant notice', async () => {
+      const localCallbacks = {
+        ...createMockCallbacks(),
+        requestAgentInput: vi.fn().mockResolvedValue(undefined),
+        onTurnResult: vi.fn().mockResolvedValue(undefined),
+      };
+      const agent = new ChatAgent({ chatId: 'question-chat', callbacks: localCallbacks, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
+      const request = { requestId: 'owned-question', params: { questions: [{ id: 'choice', header: 'Choice', question: 'Which option?', options: [{ label: 'One', description: 'First option' }, { label: 'Two', description: 'Second option' }] }] } };
+      const context = { chatId: 'question-chat', sourceMessageId: 'question-source', threadRootId: 'question-root' };
+      (agent as any).createQueryStream = (_input: unknown, options: any) => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          yield { parsed: { type: 'tool_use', content: 'request user input' }, raw: {} };
+          await options.onUserInput(request, context);
+          yield { parsed: { type: 'result', content: '✅ Complete' }, raw: {} };
+        })(),
+      });
+      try {
+        await agent.processMessage({ chatId: 'question-chat', payload: 'Ask me a question', messageId: 'question-source', threadRootId: 'question-root' });
+        await agent.turnCompleteFor('question-source');
+        await vi.waitFor(() => expect(localCallbacks.onTurnResult).toHaveBeenCalledWith({ success: true, text: '', truncated: false }));
+        expect(localCallbacks.requestAgentInput).toHaveBeenCalledWith(request, context);
+        expect(localCallbacks.sendMessage.mock.calls.some(([, text]) => String(text).includes('未收到最终回复'))).toBe(false);
+      } finally { agent.dispose(); }
+    });
+
+    it('rejects one-shot completion after tool execution without a final reply', async () => {
+      const agent = new ChatAgent({ chatId: 'tool-only-once', callbacks: createMockCallbacks(), apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
+      const create = vi.fn(() => ({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: (async function* () {
+        yield { parsed: { type: 'tool_use', content: 'owned command' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete' }, raw: {} };
+      })() }));
+      (agent as any).createQueryStream = create;
+      try {
+        await expect(agent.runOnce('tool-only-once', 'Execute once', 'once-source')).rejects.toThrow('no user-visible reply');
+        expect(create).toHaveBeenCalledTimes(1);
+      } finally { agent.dispose(); }
+    });
+
+    it('retains failure when the missing-reply notification cannot be delivered', async () => {
+      const localCallbacks = { ...createMockCallbacks(), sendMessage: vi.fn().mockRejectedValue(new Error('channel unavailable')) };
+      const agent = new ChatAgent({ chatId: 'tool-only-undelivered', callbacks: localCallbacks, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
+      const create = vi.fn(() => ({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: (async function* () {
+        yield { parsed: { type: 'tool_use', content: 'owned command' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete' }, raw: {} };
+      })() }));
+      (agent as any).createQueryStream = create;
+      try {
+        await agent.processMessage({ chatId: 'tool-only-undelivered', payload: 'Execute once', messageId: 'undelivered-source', threadRootId: 'undelivered-root' });
+        await expect(agent.turnCompleteFor('undelivered-source')).rejects.toThrow('no user-visible reply');
+        expect((agent as any).logger.warn).toHaveBeenCalledWith(expect.objectContaining({ event: 'agent_turn', state: 'failed', sourceMessageId: 'undelivered-source', user_visible: false }), expect.any(String));
+        expect(create).toHaveBeenCalledTimes(1);
+        expect(localCallbacks.sendMessage.mock.calls.filter(([chatId, text]) => chatId === 'tool-only-undelivered' && String(text).includes('未收到最终回复'))).toHaveLength(1);
+      } finally { agent.dispose(); }
+    });
+  });
+
   describe('structured internal turn results', () => {
     it.each([false, true])('bounds terminal output and resets the bound at a tool call (tool=%s)', async tool => {
       const callbacks = { ...createMockCallbacks(), onTurnResult: vi.fn().mockResolvedValue(undefined) };
-      const agent = new ChatAgent({ chatId: 'bounded-result', callbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const agent = new ChatAgent({ chatId: 'bounded-result', callbacks, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
       (agent as any).isAgentTeamsEnabled = () => false;
       async function* output() {
         yield { parsed: { type: 'text', content: 'x'.repeat(65_537) } };
@@ -2254,7 +3618,7 @@ describe('ChatAgent (service)', () => {
 
     it.each([undefined, 'turn_failed'])('separates assistant output from progress and preserves failure (reason=%s)', async reason => {
       const callbacks = { ...createMockCallbacks(), onTurnResult: vi.fn().mockResolvedValue(undefined) };
-      const agent = new ChatAgent({ chatId: 'research-result', callbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const agent = new ChatAgent({ chatId: 'research-result', callbacks, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
       async function* output() {
         yield { parsed: { type: 'status', content: '🤔 Thinking...' } };
         yield { parsed: { type: 'text', content: 'I will check the supplied report first.' } };
@@ -2263,12 +3627,23 @@ describe('ChatAgent (service)', () => {
         yield { parsed: { type: 'text', content: 'Still waiting for the tool.', metadata: { phase: 'commentary' } } };
         yield { parsed: { type: 'text', content: '{"directions":' } };
         yield { parsed: { type: 'text', content: '["costs"]}' } };
-        yield { parsed: { type: 'result', content: '✅ Complete', terminatedReason: reason } };
+        yield { parsed: { type: 'result', content: '✅ Complete', terminatedReason: reason,
+          terminationDetail: reason ? 'Owned provider failure after partial output' : undefined } };
       }
       (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: output() });
       try {
-        await agent.runOnce('research-result', 'Plan the research');
-        expect(callbacks.onTurnResult).toHaveBeenCalledWith({ success: !reason, text: '{"directions":["costs"]}', truncated: false });
+        const run = agent.runOnce('research-result', 'Plan the research', 'result-source');
+        if (reason) {
+          await expect(run).rejects.toMatchObject({ name: 'ProviderTurnFailedError',
+            message: 'Owned provider failure after partial output', sourceMessageId: 'result-source' });
+        } else {
+          await expect(run).resolves.toBeUndefined();
+        }
+        await vi.waitFor(() => expect(callbacks.onTurnResult).toHaveBeenCalledWith({ success: !reason, text: '{"directions":["costs"]}', truncated: false }));
+        const terminalLogs = (agent as any).logger.info.mock.calls
+          .filter(([data]: any[]) => data?.event === 'agent_turn' && ['completed', 'failed'].includes(data.state));
+        expect(terminalLogs).toHaveLength(1);
+        expect(terminalLogs[0][0].state).toBe(reason ? 'failed' : 'completed');
         expect(callbacks.sendMessage.mock.calls.some(call => call[1] === 'Still waiting for the tool.')).toBe(true);
       } finally { agent.dispose(); }
     });
@@ -2282,7 +3657,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // Set up debug group
@@ -2340,7 +3715,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       mockGetDebugGroup.mockReturnValue({ chatId: 'oc_debug_group', setAt: Date.now() });
@@ -2408,7 +3783,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
       (agent as any).sdkProvider = { name: backend };
 
@@ -2483,7 +3858,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       mockGetDebugGroup.mockReturnValue({ chatId: 'oc_debug_group', setAt: Date.now() });
@@ -2530,7 +3905,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       mockGetDebugGroup.mockReturnValue({ chatId: 'oc_debug_group', setAt: Date.now() });
@@ -2577,7 +3952,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       mockGetDebugGroup.mockReturnValue({ chatId: 'oc_debug_group', setAt: Date.now() });
@@ -2620,7 +3995,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // No debug group set (default mock returns null)
@@ -2665,7 +4040,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       mockGetDebugGroup.mockReturnValue({ chatId: 'oc_debug_group', setAt: Date.now() });
@@ -2708,7 +4083,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // Set as topic type
@@ -2768,7 +4143,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       (agent as any).chatType = 'topic';
@@ -2843,7 +4218,7 @@ describe('ChatAgent (service)', () => {
     it('keeps an attachment-only turn and its queued newer request separately correlated', async () => {
       const callbacks = createMockCallbacks();
       callbacks.sendMessage.mockImplementation((_chat: string, text: string) => Promise.resolve(`receipt:${text}`));
-      const agent = new ChatAgent({ chatId: 'chat', callbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const agent = new ChatAgent({ chatId: 'chat', callbacks, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
       (agent as any).isAgentTeamsEnabled = () => false;
       let resume!: () => void;
       const gate = new Promise<void>(resolve => {resume = resolve;});
@@ -2899,18 +4274,22 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       (agent as any).chatType = 'topic';
 
-      // Thread A's iterator: first chunk goes out, then a real async gap
-      // (timeout) during which thread B's processMessage lands, then A's
-      // second chunk + result.
+      // Pause after A's first buffered chunk so B arrives before A's final
+      // delivery. The gate makes the cross-thread ordering deterministic.
+      let firstChunkObserved!: () => void;
+      let resumeA!: () => void;
+      const observed = new Promise<void>(resolve => { firstChunkObserved = resolve; });
+      const paused = new Promise<void>(resolve => { resumeA = resolve; });
       async function* threadAIterator() {
         yield { parsed: { type: 'text', content: 'A chunk 1' } };
-        await new Promise<void>((r) => setTimeout(r, 50));
-        yield { parsed: { type: 'text', content: 'A chunk 2 after B arrived' } };
+        firstChunkObserved();
+        await paused;
+        yield { parsed: { type: 'text', content: '\nA chunk 2 after B arrived' } };
         yield { parsed: { type: 'result', content: 'Done A' } };
       }
 
@@ -2928,16 +4307,8 @@ describe('ChatAgent (service)', () => {
         threadRootId: 'omt_thread_a',
       });
 
-      await vi.waitFor(
-        () => {
-          expect(
-            localCallbacks.sendMessage.mock.calls.some(
-              (call: any[]) => call[1] === 'A chunk 1'
-            )
-          ).toBe(true);
-        },
-        { timeout: 1000, interval: 10 }
-      );
+      await observed;
+      expect(localCallbacks.sendMessage).not.toHaveBeenCalled();
 
       // Thread B's message arrives MID-TURN of A (same chat-scoped agent).
       // This overwrites currentThreadRootId synchronously.
@@ -2949,33 +4320,33 @@ describe('ChatAgent (service)', () => {
         handle: { close: vi.fn(), cancel: vi.fn() },
         iterator: threadBIterator(),
       });
-      void agent.processMessage({
+      await agent.processMessage({
         chatId: 'oc_topic_chat',
         payload: 'question in thread B',
         messageId: 'msg_b_1',
         chatType: 'topic',
         threadRootId: 'omt_thread_b',
       });
+      resumeA();
 
       // Wait for A's post-B chunk and let everything settle.
       await vi.waitFor(
         () => {
           expect(
             localCallbacks.sendMessage.mock.calls.some(
-              (call: any[]) => call[1] === 'A chunk 2 after B arrived'
+              (call: any[]) => call[1] === 'A chunk 1\nA chunk 2 after B arrived'
             )
           ).toBe(true);
         },
         { timeout: 1000, interval: 10 }
       );
-      await new Promise((r) => setTimeout(r, 100));
-
       const a2 = localCallbacks.sendMessage.mock.calls.find(
-        (call: any[]) => call[1] === 'A chunk 2 after B arrived'
+        (call: any[]) => call[1] === 'A chunk 1\nA chunk 2 after B arrived'
       );
       expect(a2).toBeDefined();
       // A's post-B output must still anchor to A's thread root — not B's.
       expect(a2![2]).toBe('omt_thread_a');
+      agent.dispose();
     });
   });
 
@@ -3083,7 +4454,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // Two turns within one persistent processIterator run. startAgentLoop is
@@ -3148,7 +4519,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // Single empty turn: only the ✅ Complete result marker, no real reply,
@@ -3219,7 +4590,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       async function* systemResultIterator() {
@@ -3280,7 +4651,7 @@ describe('ChatAgent (service)', () => {
         callbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
       (agent as any).isAgentTeamsEnabled = () => false;
       return agent;
@@ -3930,7 +5301,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // Yield one message first (so messageCount > 0 ⇒ not a startup failure),
@@ -3978,7 +5349,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       async function* yieldThenThrowIterator() {
@@ -4020,7 +5391,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // Single empty turn: only the ✅ Complete result marker, no real reply,
@@ -4062,7 +5433,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       async function* failedTurnIterator() {
@@ -4121,7 +5492,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       async function* systemResultIterator() {
@@ -4188,7 +5559,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       async function* replyIterator() {
@@ -4239,7 +5610,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       async function* noStreamIterator() {
@@ -4280,7 +5651,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       (agent as any).createQueryStream = () => ({
@@ -4337,7 +5708,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       async function* scopedIterator() {
@@ -4437,7 +5808,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
       (agent as any).isAgentTeamsEnabled = () => false;
       return { agent, localCallbacks };
@@ -4608,7 +5979,7 @@ describe('Issue #4907: completion feedback belongs to delivered output', () => {
       finalizeStreaming: opts.failFinalize ? vi.fn().mockRejectedValue(new Error('freeze failed'))
         : vi.fn().mockResolvedValue('om-streamed-reply'),
     };
-    const agent = new ChatAgent({ chatId: 'oc_delivery', callbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+    const agent = new ChatAgent({ chatId: 'oc_delivery', callbacks, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
     async function* events() {
       yield { parsed: { type: opts.statusOnly ? 'status' : 'text', content: 'final answer' }, raw: {} };
       if (opts.errorEvent) { yield { parsed: { type: 'error', content: 'upstream error' }, raw: {} }; }
@@ -4657,7 +6028,7 @@ describe('Issue #4907: completion feedback belongs to delivered output', () => {
       streamText: vi.fn().mockResolvedValue(undefined),
       finalizeStreaming: vi.fn().mockResolvedValueOnce('om-answer-1').mockResolvedValueOnce('om-answer-2'),
     };
-    const agent = new ChatAgent({ chatId: 'oc_queue', callbacks: cb, apiKey: 'key', model: 'model', provider: 'anthropic' });
+    const agent = new ChatAgent({ chatId: 'oc_queue', callbacks: cb, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     async function* events() {
@@ -4693,7 +6064,7 @@ describe('completion after asynchronous streaming delivery', () => {
       streamText: vi.fn().mockResolvedValue(undefined),
       finalizeStreaming: vi.fn(() => finalDelivery),
     };
-    const agent = new ChatAgent({ chatId: 'oc_async', callbacks: cb, apiKey: 'key', model: 'model', provider: 'anthropic' });
+    const agent = new ChatAgent({ chatId: 'oc_async', callbacks: cb, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
     async function* events() {
       yield { parsed: { type: 'text', content: 'answer' }, raw: {} };
       yield { parsed: { type: 'result', content: '✅ Complete' }, raw: {} };

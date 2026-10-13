@@ -31,7 +31,7 @@ vi.mock('../utils/logger.js', () => ({
 // Config reads getConfigFromFile() once at module import, so re-import per case.
 async function importConfigWith(streamingCard: unknown): Promise<boolean> {
   mockConfig.mockReturnValue({
-    feishu: { appId: 'app', appSecret: 'secret', ...(streamingCard === undefined ? {} : { streamingCard }) },
+    channels: { feishu: { appId: 'app', appSecret: 'secret', ...(streamingCard === undefined ? {} : { streamingCard }) } },
   });
   mockWarn.mockClear();
   vi.resetModules();

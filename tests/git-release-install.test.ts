@@ -137,22 +137,23 @@ test('generates a standalone manifest and excludes untracked resources', () => {
   assert.throws(() => generateRelease(root, join(root, 'other')), /committed source tree/);
 });
 
-test('release provenance fingerprint changes when bundled README or changelog changes', () => {
+test('release provenance fingerprint follows docs, dependency lock and workspace settings', () => {
   const root = mkdtempSync(join(tmpdir(), 'git-release-doc-fingerprint-'));
   roots.push(root);
   writeFileSync(join(root, 'README.md'), '# Initial README');
   writeFileSync(join(root, 'CHANGELOG.md'), '# Initial changelog');
+  writeFileSync(join(root, 'pnpm-lock.yaml'), "lockfileVersion: '9.0'\n");
+  writeFileSync(join(root, 'pnpm-workspace.yaml'), "packages: ['packages/*']\n");
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['add', 'README.md', 'CHANGELOG.md'], { cwd: root });
+  execFileSync('git', ['add', 'README.md', 'CHANGELOG.md', 'pnpm-lock.yaml', 'pnpm-workspace.yaml'], { cwd: root });
 
   let fingerprint = sourceFingerprint(root);
-  writeFileSync(join(root, 'README.md'), '# Updated README');
-  const afterReadme = sourceFingerprint(root);
-  assert.notEqual(afterReadme, fingerprint);
-
-  fingerprint = afterReadme;
-  writeFileSync(join(root, 'CHANGELOG.md'), '# Updated changelog');
-  assert.notEqual(sourceFingerprint(root), fingerprint);
+  for (const file of ['README.md', 'CHANGELOG.md', 'pnpm-lock.yaml', 'pnpm-workspace.yaml']) {
+    writeFileSync(join(root, file), readFileSync(join(root, file), 'utf8') + '\n# Changed');
+    const next = sourceFingerprint(root);
+    assert.notEqual(next, fingerprint, `${file} must affect release provenance`);
+    fingerprint = next;
+  }
 });
 
 

@@ -36,14 +36,15 @@ async function verifyPackage() {
   writeFileSync(
     config,
     JSON.stringify({
-      agent: { agentBackend: 'claude', provider: 'anthropic', model: 'claude-sonnet-4' },
-      anthropic: { apiKey: 'offline-test-placeholder' },
+      agents: { default: { backend: 'claude', llm: 'smoke' } },
+      llms: { smoke: { model: 'claude-sonnet-4', api: { protocol: 'anthropic', apiKeyEnv: 'SMOKE_API_KEY' } } },
       workspace: { dir: temp },
       channels: { feishu: { enabled: false } },
       logging: { level: 'silent' },
     })
   );
   env.DISCLAUDE_CONFIG_PATH = config;
+  env.SMOKE_API_KEY = 'offline-test-placeholder';
   delete env.NODE_PATH;
   delete env.NODE_OPTIONS;
   for (const key of Object.keys(env)) {

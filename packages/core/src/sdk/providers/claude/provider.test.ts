@@ -269,7 +269,7 @@ describe('ClaudeSDKProvider', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getAgentConfig.mockReset().mockImplementation(() => ({
-      apiKey: process.env.ANTHROPIC_API_KEY ?? '', model: 'test-model', provider: 'anthropic',
+      apiKey: process.env.ANTHROPIC_API_KEY ?? '', model: 'test-model', apiProtocol: 'anthropic',
     }));
     originalApiKey = process.env.ANTHROPIC_API_KEY;
     provider = new ClaudeSDKProvider();
@@ -342,16 +342,16 @@ describe('ClaudeSDKProvider', () => {
   describe('getInfo', () => {
     it('validates an explicit target without consulting the default agent', () => {
       getAgentConfig.mockImplementation(() => { throw new Error('unrelated default config'); });
-      const info = provider.getInfo({ apiKey: 'selected-key', model: 'selected-model', provider: 'glm', apiBaseUrl: 'http://127.0.0.1:1' });
+      const info = provider.getInfo({ apiKey: 'selected-key', model: 'selected-model', apiProtocol: 'anthropic', apiBaseUrl: 'http://127.0.0.1:1' });
       expect(info.available).toBe(true);
       expect(getAgentConfig).not.toHaveBeenCalled();
     });
 
     it.each([
-      [{ apiKey: '', model: 'glm-model', provider: 'glm' as const, apiBaseUrl: 'https://selected.example' }, 'glm.apiKey'],
-      [{ apiKey: 'secret-canary', model: '', provider: 'anthropic' as const }, 'model'],
-      [{ apiKey: 'secret-canary', model: 'glm-model', provider: 'glm' as const }, 'apiBaseUrl'],
-      [{ apiKey: 'secret-canary', model: 'glm-model', provider: 'glm' as const, apiBaseUrl: 'file:///secret-canary' }, 'HTTP'],
+      [{ apiKey: '', model: 'glm-model', apiProtocol: 'anthropic' as const, apiBaseUrl: 'https://selected.example' }, 'credential'],
+      [{ apiKey: 'secret-canary', model: '', apiProtocol: 'anthropic' as const }, 'model'],
+      [{ apiKey: 'secret-canary', model: 'alternate-model', apiProtocol: 'openai' as const }, 'Anthropic'],
+      [{ apiKey: 'secret-canary', model: 'glm-model', apiProtocol: 'anthropic' as const, apiBaseUrl: 'file:///secret-canary' }, 'HTTP'],
     ])('rejects a target with its own missing/invalid field without exposing values', (config, field) => {
       const info = provider.getInfo(config);
       expect(info.available).toBe(false);
@@ -418,6 +418,17 @@ describe('ClaudeSDKProvider', () => {
   // --------------------------------------------------------------------------
 
   describe('queryStream', () => {
+    it.each([undefined, 'auto'] as const)('declares provider-neutral streaming input delivery before SDK startup (%s)', autoCompactWindow => {
+      mockQuery.mockReturnValue({ close: vi.fn(), async *[Symbol.asyncIterator]() {} });
+      const result = provider.queryStream((async function* () { yield { role: 'user', content: 'owned input' } as UserInput; })(), {
+        settingSources: [], autoCompactWindow,
+      });
+      try {
+        expect(result.handle.inputDelivery).toBe('streaming');
+        expect(result.handle.steer).toBeUndefined();
+      } finally { result.handle.close(); }
+    });
+
     it('should return handle and iterator from SDK query', async () => {
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
 
@@ -817,10 +828,12 @@ describe('ClaudeSDKProvider', () => {
         async function* testInput(): AsyncGenerator<UserInput> {
           yield { role: 'user', content: 'Hi' };
         }
+        const onActivity = vi.fn();
         const result = provider.queryStream(testInput(), {
           settingSources: ['user', 'project', 'local'],
           cwd: '/workspace',
           env: { ANTHROPIC_API_KEY: 'sk-test-key' },
+          onActivity,
         });
         const messages: AgentMessage[] = [];
         const drained = (async () => {
@@ -831,6 +844,9 @@ describe('ClaudeSDKProvider', () => {
         expect(interruptSpy).not.toHaveBeenCalled();
         expect(closeSpy).not.toHaveBeenCalled();
         expect(messages.some((message) => message.role === 'assistant')).toBe(true);
+        expect(onActivity).toHaveBeenCalledWith('claude:content_block_delta');
+        expect(onActivity).toHaveBeenCalledWith('claude:api_retry');
+        expect(messages.some(message => message.content.includes('working'))).toBe(false);
       } finally {
         vi.useRealTimers();
       }
@@ -859,6 +875,24 @@ describe('ClaudeSDKProvider', () => {
       expect(mockQuery).toHaveBeenCalledTimes(1);
       expect(interruptSpy).not.toHaveBeenCalled();
       expect(closeSpy).not.toHaveBeenCalled();
+    });
+
+    it('continues processing the SDK stream if a host activity observer throws', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      mockQuery.mockReturnValue((async function* () {
+        yield { type: 'stream_event', event: { type: 'message_start' } };
+        yield { type: 'assistant', message: { content: [{ type: 'text', text: 'Final reply' }] } };
+        yield { type: 'result', subtype: 'success' };
+      })());
+      async function* input(): AsyncGenerator<UserInput> { yield { role: 'user', content: 'Hi' }; }
+      const stream = provider.queryStream(input(), {
+        settingSources: [], cwd: '/workspace', env: { ANTHROPIC_API_KEY: 'sk-test-key' },
+        onActivity: () => { throw new Error('observer failed'); },
+      });
+      const messages: AgentMessage[] = [];
+      for await (const message of stream.iterator) { messages.push(message); }
+      expect(messages.map(message => message.type)).toEqual(['text', 'result']);
+      expect(messages[0].content).toBe('Final reply');
     });
 
     // 根因记录(D2):Agent Teams 并发触发上游限流(GLM 1302)时,卡住的 teammate 会

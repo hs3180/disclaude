@@ -31,10 +31,8 @@ import {
   Config,
   createLogger,
   type BaseAgentConfig,
-  type AgentProvider,
   type SchedulerCallbacks,
   type MessageBuilderOptions,
-  type ModelTier,
   type CwdProvider,
   type CwdResolution,
   type AgentPreset,
@@ -42,6 +40,7 @@ import {
 import type { ChatAgent } from './chat-agent.js';
 import { createChatAgent } from './create-chat-agent.js';
 import type { ChatAgentConfig, ChatAgentCallbacks } from './types.js';
+import type { ServiceTurnRecoveryStore } from '../service-turn-recovery.js';
 
 const logger = createLogger('AgentFactory');
 
@@ -87,7 +86,7 @@ export function toChatAgentCallbacks(callbacks: SchedulerCallbacks): ChatAgentCa
  * Options for creating agents with custom configuration.
  * Uses unified configuration structure (Issue #327).
  */
-export interface AgentCreateOptions {
+export interface AgentCreateOptions extends Partial<BaseAgentConfig> {
   /** Agent SDK runtime override (normally supplied by a named preset). */
   agentBackend?: AgentPreset['agentBackend'];
   /** Native provider identity; defaults to the delivery chat ID. */
@@ -96,14 +95,6 @@ export interface AgentCreateOptions {
   apiKey?: string;
   /** Override model */
   model?: string;
-  /**
-   * Model tier for tier-based model resolution (Issue #3059).
-   * Resolved to a model name via Config.getModelForTier().
-   * Ignored when `model` is explicitly set.
-   */
-  modelTier?: ModelTier;
-  /** Override API provider */
-  provider?: AgentProvider;
   /** Override API base URL */
   apiBaseUrl?: string;
   /** Override permission mode */
@@ -128,6 +119,8 @@ export interface AgentCreateOptions {
    * Used by /reset --no-context to create a truly fresh agent.
    */
   skipHistory?: boolean;
+  /** Durable restart-interruption journal for service-managed agents. */
+  turnRecovery?: ServiceTurnRecoveryStore;
 }
 
 /**
@@ -149,40 +142,19 @@ export class AgentFactory {
    * @returns BaseAgentConfig with merged configuration
    */
   static resolveConfig(options: AgentCreateOptions = {}): BaseAgentConfig {
-    const defaultConfig = Config.getAgentConfig();
-
-    // Issue #3059: Model resolution priority:
-    // 1. Explicit model override (options.model) — highest priority
-    // 2. Tier-specific model (resolved from options.modelTier via Config.getModelForTier())
-    // 3. Default model (from Config.getAgentConfig())
-    let resolvedModel: string;
-    if (options.model) {
-      resolvedModel = options.model;
-    } else if (options.modelTier) {
-      const tierModel = Config.getModelForTier(options.modelTier);
-      resolvedModel = tierModel ?? defaultConfig.model;
-    } else {
-      resolvedModel = defaultConfig.model;
+    const completeSelection = options.agentBackend !== undefined && options.apiKey !== undefined && options.model !== undefined;
+    let defaultConfig: BaseAgentConfig = completeSelection
+      ? { apiKey: '', model: '' } : Config.getAgentConfig();
+    if (options.agentBackend && options.agentBackend !== (defaultConfig.agentBackend ?? Config.AGENT_BACKEND)) {
+      defaultConfig = { apiKey: '', model: '', agentBackend: options.agentBackend };
     }
 
-    // Resolve an explicit Claude/pi selection from its API service. A native
-    // default has no API key, and another API default may use a different service.
-    const provider = options.provider ?? defaultConfig.provider;
-    const selectingApiBackend = options.agentBackend === 'claude' || options.agentBackend === 'pi';
-    const apiKey = selectingApiBackend
-      ? (provider === 'glm' ? Config.GLM_API_KEY : Config.ANTHROPIC_API_KEY)
-      : defaultConfig.apiKey;
-    const apiBaseUrl = selectingApiBackend
-      ? (provider === 'glm' ? Config.GLM_API_BASE_URL : Config.ANTHROPIC_API_BASE_URL)
-      : defaultConfig.apiBaseUrl;
-
     return {
-      apiKey: options.apiKey ?? apiKey,
-      model: resolvedModel,
-      provider,
-      apiBaseUrl: options.apiBaseUrl ?? apiBaseUrl,
-      permissionMode: options.permissionMode ?? 'bypassPermissions',
-      agentBackend: options.agentBackend,
+      ...defaultConfig,
+      ...options,
+      apiKey: options.apiKey ?? defaultConfig.apiKey,
+      model: options.model ?? defaultConfig.model,
+      permissionMode: options.permissionMode ?? defaultConfig.permissionMode ?? 'bypassPermissions',
     };
   }
 
@@ -258,6 +230,7 @@ export class AgentFactory {
         cwdResolver: options.cwdResolver,
         skipHistory: options.skipHistory,
         sdkSessionKey: options.sdkSessionKey,
+        turnRecovery: options.turnRecovery,
       };
 
       return createChatAgent(config);
@@ -319,6 +292,7 @@ export class AgentFactory {
       cwdResolver: options.cwdResolver,
       skipHistory: options.skipHistory,
       sdkSessionKey: options.sdkSessionKey,
+      turnRecovery: options.turnRecovery,
     };
 
     return createChatAgent(config);

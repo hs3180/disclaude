@@ -21,6 +21,32 @@ afterEach(() => {
 });
 
 describe('CodexAppServerLifecycle', () => {
+  it('ignores an inactive probe response when the originating turn completed during the read', async () => {
+    const binary = fixture('exit 0');
+    writeFileSync(binary, `#!${process.execPath}
+const fs=require('node:fs');const send=m=>console.log(JSON.stringify(m));
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line);
+ if(m.method==='initialize')send({id:m.id,result:{}});
+ else if(m.method==='thread/start')send({id:m.id,result:{thread:{id:'probe-thread'}}});
+ else if(m.method==='turn/start')send({id:m.id,result:{turn:{id:'probe-turn'}}});
+ else if(m.method==='thread/read'){
+  fs.writeFileSync(${JSON.stringify(join(dirname(binary), 'probe'))},JSON.stringify(m.params));
+  send({method:'turn/completed',params:{threadId:'probe-thread',turn:{id:'probe-turn',status:'completed'}}});
+  setTimeout(()=>send({id:m.id,result:{thread:{id:'probe-thread',status:{type:'systemError'}}}}),20);
+ }
+});`);
+    const lifecycle = new CodexAppServerLifecycle({ binary });
+    try {
+      await lifecycle.ensureThread('owned');
+      await lifecycle.startTurn('owned', 'owned probe race');
+      await expect(lifecycle.probeActiveTurn('owned', 'probe-turn', 500)).resolves.toMatchObject({ state: 'changed' });
+      expect(lifecycle.snapshot('owned')?.state).toBe('idle');
+      expect(JSON.parse(readFileSync(join(dirname(binary), 'probe'), 'utf8'))).toEqual({ threadId: 'probe-thread', includeTurns: false });
+      await expect(lifecycle.probeActiveTurn('owned', 'probe-turn', 500)).resolves.toMatchObject({ state: 'changed' });
+    } finally { await lifecycle.close(); }
+  });
+
   it('registers dynamic host tools when starting a new thread', async () => {
     const binary = fixture(`
 read initialize; echo '{"id":1,"result":{}}'
@@ -160,6 +186,23 @@ echo '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"t
     } finally {
       await lifecycle.close();
     }
+  });
+
+  it.each([{}, { turnId: 'different-turn' }])('refuses a missing or mismatched steer receipt (%j)', async result => {
+    const binary = fixture(`
+read initialize; echo '{"id":1,"result":{}}'
+read initialized
+read thread; echo '{"id":2,"result":{"thread":{"id":"thread-1"}}}'
+read start; echo '{"id":3,"result":{"turn":{"id":"turn-1"}}}'
+read steer; echo '${JSON.stringify({ id: 4, result })}'
+while read remainder; do :; done
+`);
+    const lifecycle = new CodexAppServerLifecycle({ binary });
+    try {
+      await lifecycle.ensureThread('owned');
+      await lifecycle.startTurn('owned', 'first');
+      await expect(lifecycle.steer('owned', 'correction')).rejects.toThrow('did not match');
+    } finally { await lifecycle.close(); }
   });
 
   it('marks a turn uncertain after disconnect and refuses automatic replay', async () => {

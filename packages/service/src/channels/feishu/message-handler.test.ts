@@ -59,9 +59,7 @@ vi.mock('@disclaude/core', async () => {
     Config: {
       getWorkspaceDir: () => mockState.workspaceDir,
       getRawConfig: () => ({
-        feishu: {
-          topicNotify: { enabled: mockState.topicNotifyEnabled },
-        },
+        channels: { feishu: { topicNotify: { enabled: mockState.topicNotifyEnabled } } },
       }),
     },
     DEDUPLICATION: { MAX_MESSAGE_AGE: 300_000 },

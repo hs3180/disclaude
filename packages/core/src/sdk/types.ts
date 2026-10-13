@@ -69,6 +69,8 @@ export type MessageRole = 'user' | 'assistant' | 'system';
 
 /** Agent 消息元数据 */
 export interface AgentMessageMetadata {
+  /** Host input UUIDs the provider confirms were consumed by this result. */
+  consumedInputIds?: string[];
   /** Provider-declared assistant phase; commentary is visible progress, not a final result. */
   phase?: 'commentary' | 'final_answer';
   /** 工具名称 */
@@ -111,6 +113,10 @@ export interface AgentMessageMetadata {
    * 会产生海量未识别的空 system 消息,此前被无差别丢弃丢失了诊断信息。
    */
   systemSubtype?: string;
+  /** Full non-ambient background-task snapshot; replaces the previous set. */
+  backgroundTaskIds?: string[];
+  /** Edge fallback for SDKs that do not emit background-task snapshots. */
+  backgroundTask?: { id: string; state: 'running' | 'completed' | 'failed' | 'stopped' };
   /**
    * 终止标记:此 result 表示一次「非成功但合法」的 turn 终止 —— 不是崩溃,因此
    * ChatAgent 把流结束当成「turn 完成」而非「意外崩溃」,从而抑制虚假自动重启并
@@ -244,8 +250,12 @@ export interface SystemPromptPreset {
 
 /** 查询选项（Provider 无关） */
 export interface AgentQueryOptions {
+  /** Host-only liveness observation, including events filtered from user output. */
+  onActivity?: (type: string) => void;
   /** Host interaction callback; never serialized into model input or tool traces. */
   onUserInput?: (request: AgentInputRequest, context: AgentInputContext | undefined) => Promise<void>;
+  /** Admit a delayed, non-secret async answer as new input in its original conversation. */
+  onAsyncUserInputAnswer?: (request: AgentInputRequest, text: string, context: AgentInputContext) => Promise<void>;
   /** 工作目录 */
   cwd?: string;
   /**
@@ -253,8 +263,17 @@ export interface AgentQueryOptions {
    * separate from cwd: chat runtime state may execute in a shared workspace.
    */
   projectRoot?: string;
+  /** Selected LLM wire format, independent of the model name. */
+  apiProtocol?: import('../config/types.js').ApiProtocol;
   /** 使用的模型 */
   model?: string;
+  /** Resolved Codex binding; absent preserves direct SDK callers' provider defaults. */
+  codexRuntime?: {
+    sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+    fullAccess?: boolean;
+    networkAccess?: boolean;
+    transport?: 'exec' | 'app-server';
+  };
   /** Native adapter-owned reasoning selection; each provider validates its supported levels. */
   reasoningEffort?: string;
   /** 权限模式 */
@@ -299,8 +318,8 @@ export interface AgentQueryOptions {
   /**
    * Enable partial (stream_event) messages (Issue #3706 GLM stall).
    * When true, the SDK yields stream_event messages (content_block_delta,
-   * message_start, message_stop) that the provider uses for a no-content-progress
-   * watchdog. The provider filters these (not yielded to ChatAgent).
+   * message_start, message_stop) observed by the host activity clock.
+   * The provider filters these from normalized/user-visible messages.
    */
   includePartialMessages?: boolean;
 }
@@ -317,7 +336,13 @@ export interface QueryHandle {
   cancel(): void;
   /** 会话 ID */
   readonly sessionId?: string;
-  /** Live same-turn steering, when the selected transport supports it. */
+  /** Channel inputs can join an active turn; omission means they are queued. */
+  readonly inputDelivery?: 'streaming' | 'queued';
+  /**
+   * Live same-turn steering, when the selected transport supports it.
+   * Throw LiveInputRejectedError only for confirmed non-acceptance; all other
+   * failures have an unknown delivery outcome and must not be retried by hosts.
+   */
   steer?(input: string): Promise<{ turnId: string }>;
   /** Await acknowledgement that the active turn was interrupted. */
   interrupt?(): Promise<void>;

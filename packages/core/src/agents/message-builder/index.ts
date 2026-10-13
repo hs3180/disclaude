@@ -32,4 +32,5 @@ export {
 export {
   CHANNEL_CLI_HELP,
   buildChannelCliHelpGuidance,
+  getSupportedChannelSendCommands,
 } from './channel-cli-help.js';

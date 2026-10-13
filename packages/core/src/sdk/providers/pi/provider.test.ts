@@ -142,6 +142,13 @@ describe('PiAgentProvider (skeleton, Issue #4385)', () => {
   // --------------------------------------------------------------------------
 
   describe('getInfo', () => {
+    it('preflights the selected API connection without consulting host credentials', () => {
+      mockResolve.mockReturnValue('/fake/path');
+      expect(provider.getInfo({ apiKey: 'selected-key', model: 'alternate-model', apiProtocol: 'openai', apiBaseUrl: 'https://selected.example/v1' }).available).toBe(true);
+      const info = provider.getInfo({ apiKey: '', model: 'alternate-model', apiProtocol: 'openai' });
+      expect(info.available).toBe(false);
+      expect(info.unavailableReason).toContain('selected LLM');
+    });
     it('reports available when the package is resolvable', () => {
       mockResolve.mockReturnValue('/fake/path');
 

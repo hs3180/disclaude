@@ -7,6 +7,11 @@ describe('removed execution role settings', () => {
     expect(validateConfig({ [key]: true } as DisclaudeConfig)).toBe(false);
   });
   it('preserves agent, channel and workspace configuration', () => {
-    expect(validateConfig({ agent: { agentBackend: 'claude' }, channels: { feishu: { enabled: false } }, workspace: { dir: '/tmp/workspace' } } as DisclaudeConfig)).toBe(true);
+    expect(validateConfig({
+      workspace: { dir: '/tmp/workspace' },
+      agents: { default: { backend: 'claude', llm: 'default' } },
+      llms: { default: { model: 'sonnet', api: { protocol: 'anthropic' } } },
+      channels: { feishu: { enabled: false } },
+    } as DisclaudeConfig)).toBe(true);
   });
 });

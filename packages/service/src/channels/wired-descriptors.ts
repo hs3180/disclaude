@@ -14,6 +14,9 @@
 
 import {
   createInboundAttachment,
+  createControlHandler,
+  buildHelpMessage,
+  type ControlHandlerContext,
   type IChannel,
   type IncomingMessage,
   type FileRef,
@@ -27,6 +30,7 @@ import { FeishuChannel, type FeishuChannelConfig } from './feishu-channel.js';
 import { WeChatChannel, type WeChatChannelConfig } from './wechat/index.js';
 import crypto from 'crypto';
 import { messageLogger } from '../utils/message-logger.js';
+import { WelcomeService } from '../platforms/feishu/welcome-service.js';
 import type {
   ChannelSetupContext,
   WiredChannelDescriptor,
@@ -66,11 +70,13 @@ export const REST_WIRED_DESCRIPTOR: WiredChannelDescriptor<RestChannelConfig> = 
     supportsMention: false,
     supportsUpdate: false,
     supportsStreaming: false,
+    supportedChannelTools: [],
   },
 
   createCallbacks: (channel, context) =>
     createChannelCallbacksFactory(channel, context.logger, {
       sendDoneSignal: true,
+      finalReplyOnly: true,
       getChatHistory: (chatId: string) => messageLogger.getChatHistory(chatId),
       getChatLogFilePaths: (chatId: string) => messageLogger.getChatLogFilePaths(chatId),
     }),
@@ -189,9 +195,27 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
       setMode: (chatId: string, mode: 'mention' | 'always' | 'auto') =>
         triggerModeManager.setMode(chatId, mode),
     };
-    context.controlHandlerContext.triggerMode = triggerModeAdapter;
+    const helpContext: ControlHandlerContext = {
+      ...context.controlHandlerContext as unknown as ControlHandlerContext,
+      triggerMode: triggerModeAdapter,
+      getHelpCapabilities: () => feishuChannel.getCapabilities(),
+    };
+    const generateWelcomeMessage = (chatId: string, chatType: import('@disclaude/core').ChatType): string | undefined => {
+      const command = { type: 'help' as const, chatId, chatType, ...(chatId.startsWith('ou_') ? { actorId: chatId } : {}) };
+      if (helpContext.isCommandAllowed && !helpContext.isCommandAllowed(command)) { return undefined; }
+      return buildHelpMessage(command, helpContext, true);
+    };
+    const welcomeService = new WelcomeService({
+      generateWelcomeMessage,
+      generateHelpMessage: generateWelcomeMessage,
+      sendMessage: async (chatId, text) => { await feishuChannel.sendMessage({ chatId, type: 'text', text }); },
+      sendWelcomeMessage: (chatId, text, chatType) => feishuChannel.sendWelcomeMessage(chatId, text, chatType),
+    });
+    helpContext.guidance = welcomeService;
+    feishuChannel.setWelcomeService(welcomeService);
+    feishuChannel.onControl(createControlHandler(helpContext));
 
-    // 3. Register REST API handlers for MCP Server connections
+    // 3. Register REST API handlers for channel CLI requests
     // Base handlers reuse the same channel.sendMessage pattern as ChatAgentCallbacks
     // (Issue #1555: unified handler injection — avoids duplication)
     const baseHandlers = createChannelApiHandlers(feishuChannel, {
@@ -213,10 +237,13 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         options: Array<{ text: string; value: string; type?: 'primary' | 'default' | 'danger' }>;
         title?: string;
         context?: string;
+        /** Reply parent message ID (om_...); legacy name, not Feishu's omt_... thread_id. */
         threadId?: string;
+        /** Requested topic root message ID (om_...); verifies the parent and anchors fallback. */
+        threadRootId?: string;
         actionPrompts?: Record<string, string>;
       }) => {
-        const { question, options, title, context: cardContext, threadId, actionPrompts } = params;
+        const { question, options, title, context: cardContext, threadId, threadRootId, actionPrompts } = params;
 
         // Validate params at REST API boundary
         const validationError = validateInteractiveParams(params);
@@ -228,10 +255,14 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         // Build card using extracted builder (disclaude service owns the full card lifecycle)
         const card = buildInteractiveCard({ question, options, title, context: cardContext });
 
-        // Issue #1619: sendMessage now returns real messageId from Feishu API.
-        // Use real messageId for action prompt matching; fall back to synthetic ID.
-        const realMessageId = await feishuChannel.sendMessage({ chatId, type: 'card', card, threadId });
-        const messageId = realMessageId || `interactive_${chatId}_${Date.now()}`;
+        const messageId = await feishuChannel.sendMessage({
+          chatId, type: 'card', card, threadId, ...(threadRootId ? { threadRootId } : {}),
+        });
+        // A queued or unacknowledged send cannot support button registration or
+        // prove delivery. Never manufacture a successful receipt (Issue #5259).
+        if (typeof messageId !== 'string' || !messageId.trim()) {
+          throw new Error('Interactive card delivery returned no message_id; delivery is unconfirmed');
+        }
 
         // Preserve explicit instructions and fill unmapped buttons with their
         // visible labels and the original card context, never just route IDs.
@@ -313,7 +344,7 @@ export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig
     supportsMention: false,
     supportsUpdate: false,
     supportsStreaming: false,
-    supportedMcpTools: ['send_text', 'send_file'],
+    supportedChannelTools: ['send_text', 'send_file'],
   },
 
   createCallbacks: (channel, context) =>
@@ -331,7 +362,7 @@ export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig
 
   /**
    * Post-registration setup for WeChat channel.
-   * Issue #3814: Register REST API handlers for MCP Server tool routing.
+   * Issue #3814: Register REST API handlers for channel CLI requests.
    *
    * Registers handlers for:
    * - sendMessage (base: delegates to channel.sendMessage)

@@ -81,6 +81,32 @@ JSONL
 `;
 
 describe('CodexExecRunner (Issue #4630)', () => {
+  it('observes the owned live, stopped and exited process without treating exit-zero abort as success', async () => {
+    const binary = makeScriptedBinary('exit 0');
+    writeFileSync(binary.binaryPath, `#!${process.execPath}
+process.on('SIGTERM',()=>process.exit(0));setInterval(()=>{},1000);
+require('node:fs').writeFileSync(${JSON.stringify(binary.readyPath)},'ready');
+`);
+    const run = new CodexExecRunner({ binary: binary.binaryPath }).run({ prompt: 'owned fixture' }, () => {});
+    let pid: number | undefined;
+    try {
+      await waitFor(() => existsSync(binary.readyPath));
+      const alive = await run.handle.inspectLiveness();
+      expect(alive.state).toBe('alive');
+      ({ pid } = alive);
+      process.kill(pid as number, 'SIGSTOP');
+      await expect.poll(async () => (await run.handle.inspectLiveness()).state).toBe('stopped');
+      run.handle.abort();
+      process.kill(pid as number, 'SIGCONT');
+      await expect(run.promise).resolves.toMatchObject({ exitCode: 0, aborted: true, timedOut: false });
+      await expect(run.handle.inspectLiveness()).resolves.toMatchObject({ state: 'exited', pid });
+    } finally {
+      run.handle.abort();
+      await run.promise;
+      binary.cleanup();
+    }
+  });
+
   it.each([undefined, 'existing-thread'])('removes direct CDP and preserves coordinated socket with browser features disabled (resume=%s)', async resumeSessionId => {
     const fixture = makeScriptedBinary('echo "argv:$*" >&2\necho "cdp:$BU_CDP_URL socket:$DISCLAUDE_BROWSER_RUNTIME" >&2\nexit 0');
     try {
@@ -308,20 +334,24 @@ echo 'diagnostic' >&2`);
     expect(resumed.stderrTail).toContain(`-c ${setting}`);
   });
 
-  it('keeps network access available in read-only mode for external CDP clients', async () => {
+  it.each([true, false])('preserves native read-only policy without unsupported networking overrides (%s)', async (networkAccess) => {
     fixture.cleanup();
     fixture = makeScriptedBinary('echo "argv:$*" >&2\nexit 0');
     const runner = new CodexExecRunner({ binary: fixture.binaryPath });
     const fresh = await runner.run(
-      { prompt: 'attach to browser', sandboxMode: 'read-only', networkAccess: true },
+      { prompt: 'read file', sandboxMode: 'read-only', networkAccess },
       () => {},
     ).promise;
-    expect(fresh.stderrTail).toContain('-c sandbox_read_only.network_access=true');
+    expect(fresh.stderrTail).toContain('-s read-only');
+    expect(fresh.stderrTail).not.toContain('sandbox_read_only');
+    expect(fresh.stderrTail).not.toContain('network_access');
     const resumed = await runner.run(
-      { prompt: 'read page', resumeSessionId: 't-cdp', sandboxMode: 'read-only', networkAccess: true },
+      { prompt: 'read file', resumeSessionId: 't-readonly', sandboxMode: 'read-only', networkAccess },
       () => {},
     ).promise;
-    expect(resumed.stderrTail).toContain('-c sandbox_read_only.network_access=true');
+    expect(resumed.stderrTail).toContain('-c sandbox_mode=read-only');
+    expect(resumed.stderrTail).not.toContain('sandbox_read_only');
+    expect(resumed.stderrTail).not.toContain('network_access');
   });
 
   it('uses -s for fresh runs and -c sandbox_mode= for resume runs', async () => {

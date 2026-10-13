@@ -11,7 +11,8 @@ on:
       - 'bin/jupyter-auth.js'
       - 'bin/jupyter-test.js'
       - 'package.json'
-      - 'package-lock.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
       - 'scripts/build-git-release.mjs'
       - 'scripts/test-checkout-install.mjs'
       - 'scripts/test-package-install.mjs'
@@ -32,7 +33,8 @@ on:
       - 'bin/jupyter-auth.js'
       - 'bin/jupyter-test.js'
       - 'package.json'
-      - 'package-lock.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
       - 'scripts/build-git-release.mjs'
       - 'scripts/test-checkout-install.mjs'
       - 'scripts/test-package-install.mjs'
@@ -54,6 +56,7 @@ jobs:
           - { node: '24', python: '3.13' }
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
@@ -61,7 +64,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Install locked dependencies for the host .env parser
-        run: npm ci --ignore-scripts --include=dev
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Verify CLI generation, authentication and Terminal-only transport
         run: node --test tests/jupyter/patch-cli-test.mjs tests/jupyter/auth-input-test.mjs tests/jupyter/test-cli-test.mjs
       - name: Verify artifact integrity, file rollback and activation reporting

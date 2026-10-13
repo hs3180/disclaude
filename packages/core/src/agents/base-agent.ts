@@ -3,7 +3,7 @@
  *
  * Provides common functionality:
  * - SDK configuration building via abstraction layer
- * - GLM logging
+ * - API logging
  * - Error handling
  *
  * Uses Template Method pattern - subclasses implement specific logic.
@@ -29,7 +29,6 @@ import {
   hasRuntimeContext,
   type Disposable,
   type BaseAgentConfig,
-  type AgentProvider,
 } from './types.js';
 import { Config } from '../config/index.js';
 import { loadRuntimeEnv } from '../config/runtime-env.js';
@@ -137,7 +136,8 @@ export abstract class BaseAgent implements Disposable {
   readonly model: string;
   readonly apiBaseUrl?: string;
   readonly permissionMode: 'default' | 'bypassPermissions';
-  readonly provider: AgentProvider;
+  readonly apiProtocol?: BaseAgentConfig['apiProtocol'];
+  private readonly selectedConfig: BaseAgentConfig;
   readonly agentBackend?: BaseAgentConfig['agentBackend'];
 
   protected readonly logger: Logger;
@@ -150,10 +150,9 @@ export abstract class BaseAgent implements Disposable {
     this.apiBaseUrl = config.apiBaseUrl;
     this.permissionMode = config.permissionMode ?? 'bypassPermissions';
 
-    // Get provider from config, fallback to runtime context
-    // This allows agents to be created with explicit provider setting
-    // while maintaining backward compatibility
-    this.provider = config.provider ?? this.getDefaultProvider();
+    this.apiProtocol = config.apiProtocol ?? (['codex', 'deepseek'].includes(config.agentBackend ?? '')
+      ? undefined : hasRuntimeContext() ? getRuntimeContext().getAgentConfig().apiProtocol ?? 'anthropic' : 'anthropic');
+    this.selectedConfig = config;
 
     // Create logger with agent name
     this.logger = createLogger(this.getAgentName());
@@ -167,17 +166,6 @@ export abstract class BaseAgent implements Disposable {
       (['claude', 'codex', 'pi', 'deepseek'].includes(this.sdkProvider.name)
         ? (this.sdkProvider.name as BaseAgentConfig['agentBackend'])
         : undefined);
-  }
-
-  /**
-   * Get default provider from runtime context.
-   */
-  private getDefaultProvider(): AgentProvider {
-    if (hasRuntimeContext()) {
-      return getRuntimeContext().getAgentConfig().provider;
-    }
-    // Default to anthropic if no runtime context
-    return 'anthropic';
   }
 
   /**
@@ -225,28 +213,9 @@ export abstract class BaseAgent implements Disposable {
       ...this.getGlobalEnv(),
       ...loadRuntimeEnv(workspaceDir),
     };
-    // Issue #3770: Inject model tier env vars so SDK sub-agents (Task tool,
-    // Team workers) resolve opus/sonnet/haiku aliases to the correct model
-    // names for the active provider. Without this, the SDK resolves "haiku"
-    // to a Claude default (e.g., "claude-haiku-4-5-20251001") that
-    // non-Anthropic endpoints don't recognize, causing sub-agents to fail
-    // with 400 Invalid model name errors.
+    // Claude owns native aliases; pass configured ANTHROPIC_DEFAULT_*_MODEL
+    // through unchanged instead of inventing disclaude capability tiers.
     if ((this.agentBackend ?? 'claude') === 'claude') {
-      const selectedModel = { provider: this.provider, model: this.model };
-      const opusModel = Config.getModelForTier('high', selectedModel);
-      const haikuModel = Config.getModelForTier('low', selectedModel);
-      const sonnetModel = Config.getModelForTier('multimodal', selectedModel);
-
-      if (opusModel && !globalEnv.ANTHROPIC_DEFAULT_OPUS_MODEL) {
-        globalEnv.ANTHROPIC_DEFAULT_OPUS_MODEL = opusModel;
-      }
-      if (sonnetModel && !globalEnv.ANTHROPIC_DEFAULT_SONNET_MODEL) {
-        globalEnv.ANTHROPIC_DEFAULT_SONNET_MODEL = sonnetModel;
-      }
-      if (haikuModel && !globalEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL) {
-        globalEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL = haikuModel;
-      }
-
       // Issue #3532: Set CLAUDE_CONFIG_DIR to workspace .claude dir when project-bound.
       // This redirects SDK's user scope to workspace, making workspace skills always available.
       if (isProjectBound) {
@@ -263,9 +232,20 @@ export abstract class BaseAgent implements Disposable {
       this.apiBaseUrl,
       globalEnv,
       loggingConfig.sdkDebug,
-      this.getSdkTimeoutMs()
+      this.selectedConfig.settings ? this.selectedConfig.settings.sdkTimeoutMs ?? 300_000 : this.getSdkTimeoutMs(),
+      { protocol: this.apiProtocol, selectedEnv: this.selectedConfig.env,
+        credentialEnvKeys: this.selectedConfig.credentialEnvKeys }
     );
 
+    if (this.agentBackend === 'codex' && this.selectedConfig.settings) {
+      const {settings} = this.selectedConfig;
+      options.codexRuntime = {
+        sandbox: settings.codexSandbox, fullAccess: settings.fullAccess,
+        networkAccess: settings.codexNetworkAccess, transport: settings.codex?.transport,
+      };
+    }
+    options.apiProtocol = this.apiProtocol;
+    options.reasoningEffort = this.selectedConfig.settings?.codex?.reasoningEffort;
     // Set model
     if (this.model) {
       options.model = this.model;
@@ -273,20 +253,18 @@ export abstract class BaseAgent implements Disposable {
 
     // SDK 0.3.177+: Agent Teams is enabled via teammateMode Settings field,
     // replacing the deprecated CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS env var.
-    if ((this.agentBackend ?? 'claude') === 'claude' && this.isAgentTeamsEnabled()) {
+    if ((this.agentBackend ?? 'claude') === 'claude' && (this.selectedConfig.settings ? this.selectedConfig.settings.enableAgentTeams ?? false : this.isAgentTeamsEnabled())) {
       options.teammateMode = 'in-process';
     }
 
     // Explicit configuration wins for every Claude-backend model. Discovery is
     // asynchronous and runs in the provider before starting the SDK subprocess.
     if ((this.agentBackend ?? 'claude') === 'claude') {
-      options.autoCompactWindow = Config.getAutoCompactWindow() ?? 'auto';
+      options.autoCompactWindow = this.selectedConfig.settings ? this.selectedConfig.settings.autoCompactWindow ?? 'auto' : Config.getAutoCompactWindow() ?? 'auto';
     }
 
-    // Issue #3706 (GLM stall): enable partial (stream_event) messages so the provider
-    // can observe content_block_delta / message_start / message_stop and run a
-    // no-content-progress watchdog. stream_events are filtered in adaptIterator
-    // (not yielded to ChatAgent), so this only adds watchdog visibility, not downstream volume.
+    // Partial events expose thinking/token activity to the host activity clock.
+    // The provider filters them from user output; SDK/CLI still owns retries.
     if ((this.agentBackend ?? 'claude') === 'claude') {
       options.includePartialMessages = true;
     }
@@ -368,8 +346,12 @@ export abstract class BaseAgent implements Disposable {
             numTurns: message.metadata.numTurns,
             durationMs: message.metadata.durationMs,
             durationApiMs: message.metadata.durationApiMs,
+            consumedInputIds: message.metadata.consumedInputIds,
             transientStatus: message.metadata.transientStatus,
             phase: message.metadata.phase,
+            systemSubtype: message.metadata.systemSubtype,
+            backgroundTaskIds: message.metadata.backgroundTaskIds,
+            backgroundTask: message.metadata.backgroundTask,
           }
         : undefined,
       sessionId: message.metadata?.sessionId,
@@ -433,7 +415,7 @@ export abstract class BaseAgent implements Disposable {
           firstYieldMs = Date.now();
           self.logger.info(
             {
-              provider: self.provider,
+              provider: self.apiProtocol,
               ttftMs: firstYieldMs - streamStartMs,
               messageType: parsed.type,
             },
@@ -444,7 +426,7 @@ export abstract class BaseAgent implements Disposable {
         // Log SDK message with full details for debugging
         self.logger.debug(
           {
-            provider: self.provider,
+            provider: self.apiProtocol,
             messageType: parsed.type,
             contentLength: parsed.content?.length || 0,
             toolName: parsed.metadata?.toolName,
@@ -461,7 +443,7 @@ export abstract class BaseAgent implements Disposable {
       const totalMs = Date.now() - streamStartMs;
       self.logger.info(
         {
-          provider: self.provider,
+          provider: self.apiProtocol,
           totalMs,
           yieldCount,
           ttftMs: firstYieldMs ? firstYieldMs - streamStartMs : undefined,

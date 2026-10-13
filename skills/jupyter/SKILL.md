@@ -21,10 +21,27 @@ for the current JSON input schemas and [README.md](./README.md) for setup.
    Use a unique `runId` with `execute`; it submits once and returns promptly.
    Continue with `status` for the original run. Reuse the same ID after a lost
    response; never invent a new ID to replay an uncertain execution.
+   Check `source`: `live` is a current remote observation; `local-journal` is
+   a saved fact or a failed client lookup. `client-error` retains the last
+   confirmed state and loss time. `server-unknown` means the original record
+   was queried but is missing, expired or from a changed kernel incarnation;
+   it does not prove non-execution. Restore the configured connection, then
+   use `reconcile` to query every nonterminal original handle without replay.
+   Cached partial outputs are labelled `lastKnownResult`.
 4. Stop remote work with `stop` and its original `notebookId`/`runId`. Only
    `stopConfirmed: true` confirms cancellation. Chat `/stop` stops inference;
    remote executions remain independent. Do not claim the kernel stopped
    from a cancelled tool invocation or a stopped chat.
+   For work started in JupyterLab or without an available run journal, use
+   `interrupt` only with the explicitly selected existing `kernelId`, or a
+   Project `notebookId` whose existing kernel binding is unique and unshared.
+   Supplying both IDs checks the observed binding against the selected kernel.
+   This affects that kernel's current execution and preserves the kernel;
+   it does not cancel one named run or confirm that queued work was cleared.
+   `state: accepted` / HTTP 204 acknowledges the request only. Its
+   `executionState: unknown` requires separate evidence from the original
+   execution, or a subsequent kernel observation. Do not automatically retry an
+   unknown interrupt or substitute it for a failed `stop`.
 5. To use an incoming attachment, copy the supplied local attachment into this
    Project, then `import-file` with its Project-relative path. Read the returned
    hash/size and use `kernelRelativePath` in remote code. Host and kernel paths

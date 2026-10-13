@@ -11,9 +11,25 @@ const canary = 'test-credential-must-not-appear-in-errors';
 
 describe('CLI configuration error reporting', () => {
   it.each([
-    ['glm.model', { agent: { agentBackend: 'claude', provider: 'glm' }, glm: { apiKey: canary, apiBaseUrl: 'http://127.0.0.1:1' } }],
-    ['glm.apiBaseUrl', { agent: { agentBackend: 'claude', provider: 'glm' }, glm: { apiKey: canary, model: 'test-model' } }],
-    ['anthropic.apiKey', { agent: { agentBackend: 'claude', provider: 'anthropic', model: 'test-model' }, anthropic: { apiKey: '' } }],
+    ['llms.test.api.apiKeyEnv', {
+      agents: { test: { backend: 'claude', llm: 'test' } },
+      llms: {
+        test: {
+          model: 'test-model',
+          api: { protocol: 'anthropic', apiKeyEnv: 'MISSING_TEST_KEY' },
+        },
+      },
+    }],
+    ['llms.test.api.baseUrl', {
+      agents: { test: { backend: 'claude', llm: 'test' } },
+      llms: {
+        test: {
+          model: 'test-model',
+          api: { protocol: 'anthropic', baseUrl: `https://user:${canary}@example.com` },
+        },
+      },
+    }],
+    ['Unsupported configuration section', { glm: { apiKey: canary } }],
   ])('reports %s, exits unsuccessfully and releases the process lock', async (field, configuration) => {
     const root = mkdtempSync(join(tmpdir(), 'disclaude-cli-config-'));
     try {
@@ -48,7 +64,7 @@ describe('CLI configuration error reporting', () => {
           LOCKFILE_PATH: lockPath,
           LOG_DIR: join(root, 'logs'),
           LOG_TO_FILE: 'false',
-          ANTHROPIC_API_KEY: '', ANTHROPIC_AUTH_TOKEN: '', ANTHROPIC_MODEL: '', CODEX_MODEL: '',
+          MISSING_TEST_KEY: '', ANTHROPIC_API_KEY: '', ANTHROPIC_AUTH_TOKEN: '', ANTHROPIC_MODEL: '', CODEX_MODEL: '',
         },
         encoding: 'utf8',
         timeout: 10_000,

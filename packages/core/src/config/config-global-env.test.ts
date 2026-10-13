@@ -115,7 +115,7 @@ describe('createDefaultRuntimeContext()', () => {
     mockAgentConfig = vi.spyOn(Config, 'getAgentConfig').mockReturnValue({
       apiKey: 'test-key',
       model: 'test-model',
-      provider: 'glm',
+      apiProtocol: 'anthropic',
     });
   });
 
@@ -175,7 +175,7 @@ describe('createDefaultRuntimeContext()', () => {
     expect(agentConfig).toBeDefined();
     expect(agentConfig.apiKey).toBe('test-key');
     expect(agentConfig.model).toBe('test-model');
-    expect(agentConfig.provider).toBe('glm');
+    expect(agentConfig.apiProtocol).toBe('anthropic');
   });
 
   it('should support platform-specific overrides', () => {

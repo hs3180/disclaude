@@ -40,6 +40,7 @@ import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-m
 import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
 import { createChannelCallbacksFactory } from './utils/channel-handlers.js';
+import { ServiceTurnRecoveryStore } from './service-turn-recovery.js';
 import net from 'node:net';
 import path from 'node:path';
 import { homedir } from 'node:os';
@@ -300,8 +301,7 @@ export async function main(): Promise<void> {
     logger.info(
       {
         agentBackend: Config.AGENT_BACKEND ?? 'claude',
-        provider:
-          Config.AGENT_BACKEND === 'codex' ? 'codex' : agentConfig.apiBaseUrl ? 'glm' : 'anthropic',
+        apiProtocol: agentConfig.apiProtocol ?? 'native',
         model: agentConfig.model,
       },
       'Agent configuration loaded'
@@ -310,7 +310,7 @@ export async function main(): Promise<void> {
     logger.error({ err: error }, 'Failed to get agent configuration');
     console.error(
       `Error: 配置校验未通过，服务无法启动。\n${error instanceof Error ? error.message : 'Unknown configuration error'}\n` +
-      '请检查 disclaude.config.yaml 中的 agent / glm / anthropic 配置及相关环境变量。'
+      '请检查 disclaude.config.yaml 中的 agents / llms / channels 配置及相关环境变量。'
     );
     processLock?.release();
     process.exit(1);
@@ -337,6 +337,24 @@ export async function main(): Promise<void> {
     process.exit(1);
   }
 
+  const turnRecovery = new ServiceTurnRecoveryStore(
+    path.join(workspaceDir, '.disclaude', 'service-turn-recovery.json')
+  );
+  try {
+    const recoveredTurns = turnRecovery.initialize();
+    if (recoveredTurns.length > 0) {
+      logger.warn(
+        { count: recoveredTurns.length },
+        'Marked unfinished turns from the previous process for user-visible reconciliation (Issue #5273)'
+      );
+    }
+  } catch (error) {
+    logger.fatal({ err: error, journalPath: path.join(workspaceDir, '.disclaude', 'service-turn-recovery.json') },
+      'Cannot safely start with an invalid service turn recovery journal (Issue #5273)');
+    processLock?.release();
+    process.exit(1);
+  }
+
   const projectManager = new ProjectManager({
     workspaceDir,
   });
@@ -344,30 +362,13 @@ export async function main(): Promise<void> {
 
   const agentPool = new ChatSessionPool({
     agentPresets: Config.getAgentPresets(),
+    turnRecovery,
     messageBuilderOptions: createFeishuMessageBuilderOptions(),
     cwdProvider: projectManager.createCwdProvider(),
     // Issue #4448 (direction #1): structured resolver alongside the plain
     // provider, so ChatAgent can warn the chat when the bound directory is
     // missing and the agent falls back to the workspace.
     cwdResolver: (chatId: string) => projectManager.resolveCwd(chatId),
-    // Issue #4577: busy-turn hard cap. The idle sweep this pool runs never
-    // evicts mid-turn agents — correct, but unbounded: a runaway 2h+ turn
-    // held its whole subprocess tree uncollectable (issue evidence A/B).
-    // With the cap, an over-long busy turn is stopped (same path as /stop)
-    // and the chat notified. 90 min sits in the 60~90min band the issue
-    // recommends for its runaway evidence (2h10m / 13k SDK messages /
-    // $18.90 — judged a runaway loop, not an expected turn). Set 0 to
-    // disable.
-    busyTurnHardCapMs: 90 * 60 * 1000,
-    // Issue #4577: user-facing notice after a hard-cap stop — same feedback
-    // the /stop command gives, so the chat isn't silently cut off.
-    onBusyCapExceeded: async (chatId, busyMinutes) => {
-      await service.sendMessage(
-        chatId,
-        `⏹️ **响应已超过时长上限被停止**（已运行 ${busyMinutes} 分钟，上限 90 分钟）\n\n` +
-          '会话保持活跃，您可以继续发送消息。'
-      );
-    },
   });
   // Issue #4169: Reclaim inactive agents (releasing their query handle, channel,
   // MCP connections, listeners) so the per-chatId pool doesn't grow unbounded.
@@ -380,6 +381,8 @@ export async function main(): Promise<void> {
   const controlHandlerContext: ControlHandlerContext = {
     agentPool: {
       reset: (chatId: string, skipContext?: boolean) => agentPool.reset(chatId, skipContext),
+      resetProjectSessions: (chatId: string) => agentPool.resetProjectSessions(chatId),
+      isProjectBusy: (chatId: string) => agentPool.isProjectBusy(chatId),
       stop: (chatId: string) => agentPool.stop(chatId),
       // Issue #4587 (part 3): thread-scoped reset/stop for commands typed
       // inside a topic-group thread — the pool's part-2 slots, previously
@@ -393,6 +396,7 @@ export async function main(): Promise<void> {
       switchAgentPreset: (chatId, presetName, threadRootId) =>
         agentPool.switchAgentPreset(chatId, presetName, threadRootId),
       steer: (chatId, prompt, threadRootId) => agentPool.steer(chatId, prompt, threadRootId),
+      canSteer: (chatId, threadRootId) => agentPool.canSteer(chatId, threadRootId),
     },
     debugGroups: {
       getDebugGroup: () => service.getDebugGroupService().getDebugGroup(),
@@ -430,7 +434,7 @@ export async function main(): Promise<void> {
   // Each WiredChannelDescriptor declares its own callback options (e.g., sendDoneSignal),
   // so the routerCallbacksFactory looks up the descriptor by channel type.
   const descriptorMap = new Map(BUILTIN_WIRED_DESCRIPTORS.map((d) => [d.type, d]));
-  const routerCallbacksFactory = (chatId: string) => {
+  const routerCallbacksFactory = (chatId: string, threadRootId?: string) => {
     // Issue #3824: Use resolveChannelForChatId for ownership query fallback.
     // After restart, chatIdChannelMap is empty. resolveChannelForChatId queries
     // all channels via ownsChatId() to find the correct one.
@@ -440,10 +444,10 @@ export async function main(): Promise<void> {
     }
     const descriptor = descriptorMap.get(channel.id);
     if (descriptor) {
-      return descriptor.createCallbacks(channel, channelSetupContext)(chatId);
+      return descriptor.createCallbacks(channel, channelSetupContext)(chatId, threadRootId);
     }
     // Fallback for channels without a registered descriptor
-    return createChannelCallbacksFactory(channel, logger)(chatId);
+    return createChannelCallbacksFactory(channel, logger)(chatId, threadRootId);
   };
   service.initInputMessageRouter(agentPool, routerCallbacksFactory);
 
@@ -479,7 +483,7 @@ export async function main(): Promise<void> {
     logger.info('Shutting down disclaude service...');
 
     try {
-      agentPool.disposeAll();
+      await agentPool.shutdownForServiceRestart({ drainTimeoutMs: 10_000, noticeTimeoutMs: 2_000 });
       await httpApiServer?.stop();
       await lifecycleManager.stopAll();
       await service.stop();
@@ -524,6 +528,18 @@ export async function main(): Promise<void> {
 
     // Start all registered channels via ChannelLifecycleManager (Issue #1594 Phase 2)
     await lifecycleManager.startAll();
+
+    // Channels are ready: report prior-process interruptions even if the
+    // user sends no further message. Failed delivery stays pending for that
+    // session's next available path; startup never replays model inputs.
+    await turnRecovery.deliverPendingNotifications(
+      async (chatId, content, threadRootId) => {
+        const channel = channelManager.resolveChannelForChatId(chatId);
+        if (!channel) { throw new Error('No available channel for interrupted request'); }
+        return await channel.sendMessage({ chatId, type: 'text', text: content, threadId: threadRootId, threadRootId });
+      },
+      { timeoutMs: 3_000 },
+    );
 
     // Log startup info
     for (const { type, config } of channelEntries) {
@@ -813,7 +829,7 @@ export function resolveChannelConfigs(
         fileStorageDir?: string;
       }
     | undefined;
-  if (restChannelConfig?.port && restChannelConfig?.host && restChannelConfig?.fileStorageDir) {
+  if (rawConfig.channels?.rest?.enabled !== false && restChannelConfig?.port && restChannelConfig?.host && restChannelConfig?.fileStorageDir) {
     entries.push({
       type: 'rest',
       config: {
@@ -824,10 +840,10 @@ export function resolveChannelConfigs(
     });
   }
 
-  // Feishu channel: configured under top-level feishu.appId/appSecret
+  // Feishu channel: configured under channels.feishu
   const feishuAppId = config.FEISHU_APP_ID;
   const feishuAppSecret = config.FEISHU_APP_SECRET;
-  if (feishuAppId && feishuAppSecret) {
+  if (rawConfig.channels?.feishu?.enabled !== false && feishuAppId && feishuAppSecret) {
     entries.push({
       type: 'feishu',
       // Issue #4400 / #4208: plumb streamingCard through to FeishuChannelConfig
@@ -844,7 +860,7 @@ export function resolveChannelConfigs(
   // Note: WeChat is intentionally NOT in knownChannelKeys — it only supports
   // dynamic registration (Issue #1638), not config-driven creation.
   // If a user adds channels.wechat, they will get a warning.
-  const knownChannelKeys = new Set(['rest']);
+  const knownChannelKeys = new Set(['rest', 'feishu']);
   const channelKeys = Object.keys(rawConfig.channels || {});
   for (const key of channelKeys) {
     if (!knownChannelKeys.has(key)) {

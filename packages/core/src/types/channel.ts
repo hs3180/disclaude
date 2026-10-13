@@ -11,6 +11,7 @@
  */
 
 import type { AgentInputRequest, AgentInputContext } from '../sdk/user-input.js';
+import type { ChatType } from '../utils/chat-type-utils.js';
 
 /**
  * Generic message structure received from any channel.
@@ -94,8 +95,17 @@ export interface OutgoingMessage {
   /** Optional description for logging */
   description?: string;
 
-  /** Thread root message ID for thread replies */
+  /**
+   * Reply parent message ID (om_...), possibly a trigger inside a topic.
+   * The legacy threadId name does not mean Feishu's omt_... thread_id.
+   */
   threadId?: string;
+
+  /**
+   * Explicit topic root message ID (om_...); verifies the parent and takes
+   * precedence when that parent cannot be confirmed in this topic.
+   */
+  threadRootId?: string;
 
   /**
    * Mention targets for @mentioning users/bots in text messages.
@@ -136,6 +146,8 @@ export type ControlCommandType =
  * Commands without entries accept no data (`undefined`).
  */
 export interface CommandDataMap {
+  /** /help — explicit help or automatic-guidance preference */
+  help: { mode?: string };
   /** /trigger — trigger mode toggle */
   trigger: { mode?: string };
   /** /project — project management */
@@ -185,6 +197,9 @@ export interface ControlCommand<T extends ControlCommandType = ControlCommandTyp
    * addressing the chat-scoped agent, bit-identical to today.
    */
   threadRootId?: string;
+  /** Inbound channel context, supplied by the channel rather than command arguments. */
+  chatType?: ChatType;
+  actorId?: string;
 }
 
 /**
@@ -225,7 +240,7 @@ export type ChannelStatus = 'starting' | 'running' | 'stopping' | 'stopped' | 'e
  * Channel capabilities interface.
  * Describes what features a channel supports.
  * Used for capability-aware prompt generation (Issue #582).
- * Extended with supportedMcpTools for Issue #590 Phase 3.
+ * Channel-send vocabulary describes CLI/API operations independently of SDK tool transports.
  */
 export interface ChannelCapabilities {
   /** Whether the channel supports interactive cards */
@@ -248,11 +263,11 @@ export interface ChannelCapabilities {
    */
   supportsStreaming: boolean;
   /**
-   * Supported MCP tools for this channel.
-   * Issue #590 Phase 3: Agent Prompt 动态适配
-   * Used to filter available tools in the prompt based on channel capabilities.
+   * Channel CLI send_* commands advertised to the agent. An explicit empty
+   * list disables additional-delivery guidance; an omitted list derives from
+   * format flags. This is capability metadata, not an authorization grant.
    */
-  supportedMcpTools?: string[];
+  supportedChannelTools?: string[];
 }
 
 /**
@@ -266,7 +281,7 @@ export const DEFAULT_CHANNEL_CAPABILITIES: ChannelCapabilities = {
   supportsMention: false,
   supportsUpdate: false,
   supportsStreaming: false,
-  supportedMcpTools: [],
+  supportedChannelTools: [],
 };
 
 /**
@@ -441,7 +456,7 @@ export type ChannelFactory<TConfig extends ChannelConfig = ChannelConfig> = (
  *     supportsMarkdown: true,
  *     supportsMention: false,
  *     supportsUpdate: false,
- *     supportedMcpTools: ['send_text', 'send_card'],
+ *     supportedChannelTools: ['send_text', 'send_card'],
  *   },
  * };
  * ```

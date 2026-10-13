@@ -163,6 +163,42 @@ function escapeRegExp(string: string): string {
 }
 
 /**
+ * Remove Feishu mention entities from slash-command arguments (Issue #5261).
+ * Call only on the command path: mentions inside normal conversation are content.
+ * Literal @ characters in paths are retained unless they identify an entity.
+ */
+export function stripCommandMentions(
+  text: string,
+  mentions: MentionsArray | undefined | null,
+): string {
+  if (!mentions?.length) {
+    return text;
+  }
+
+  const names = new Set(mentions.map((mention) => mention.name).filter(Boolean));
+  const ids = new Set(mentions.flatMap((mention) => Object.values(mention.id ?? {})));
+  let result = text.replace(/<at\b([^>]*)>([^<]*)<\/at>/gi, (tag, attributes: string, label: string) => {
+    const id = attributes.match(/\b(?:user_id|open_id|union_id)=["']([^"']+)["']/)?.[1];
+    const isMention = id ? ids.has(id) : names.has(label.replace(/^@/, ''));
+    return isMention ? ' ' : tag;
+  });
+
+  for (const mention of mentions) {
+    if (mention.key) {
+      result = result.replace(new RegExp(`\\$\\{${escapeRegExp(mention.key)}\\}`, 'g'), ' ');
+      // Keys are entity placeholders, including the no-space reset@_user_1 form.
+      result = result.replace(new RegExp(`${escapeRegExp(mention.key)}(?=$|\\s)`, 'g'), ' ');
+    }
+    for (const name of [mention.name, ...Object.values(mention.id ?? {})]) {
+      if (name) {
+        result = result.replace(new RegExp(`(^|\\s)@${escapeRegExp(name)}(?=$|\\s)`, 'g'), '$1');
+      }
+    }
+  }
+  return result.trim();
+}
+
+/**
  * Strip leading mentions from text.
  *
  * This is used to detect commands in messages that start with @mentions.

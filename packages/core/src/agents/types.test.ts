@@ -124,7 +124,7 @@ describe('Runtime Context', () => {
   // Helper function to create a minimal valid context
   const createMockContext = (overrides: Partial<AgentRuntimeContext> = {}): AgentRuntimeContext => ({
     getWorkspaceDir: () => '/workspace',
-    getAgentConfig: () => ({ apiKey: 'test', model: 'test-model', provider: 'anthropic' as const }),
+    getAgentConfig: () => ({ apiKey: 'test', model: 'test-model', apiProtocol: 'anthropic' as const }),
     getLoggingConfig: () => ({ sdkDebug: false }),
     getGlobalEnv: () => ({}),
     isAgentTeamsEnabled: () => false,
@@ -158,7 +158,7 @@ describe('Runtime Context', () => {
     it('should return context with all methods', () => {
       const ctx: AgentRuntimeContext = {
         getWorkspaceDir: () => '/workspace',
-        getAgentConfig: () => ({ apiKey: 'test', model: 'test-model', provider: 'anthropic' }),
+        getAgentConfig: () => ({ apiKey: 'test', model: 'test-model', apiProtocol: 'anthropic' }),
         getLoggingConfig: () => ({ sdkDebug: true }),
         getGlobalEnv: () => ({ NODE_ENV: 'test' }),
         isAgentTeamsEnabled: () => true,
@@ -171,7 +171,7 @@ describe('Runtime Context', () => {
       const result = getRuntimeContext();
 
       expect(result.getWorkspaceDir()).toBe('/workspace');
-      expect(result.getAgentConfig()).toEqual({ apiKey: 'test', model: 'test-model', provider: 'anthropic' });
+      expect(result.getAgentConfig()).toEqual({ apiKey: 'test', model: 'test-model', apiProtocol: 'anthropic' });
       expect(result.getLoggingConfig()).toEqual({ sdkDebug: true });
       expect(result.getGlobalEnv()).toEqual({ NODE_ENV: 'test' });
       expect(result.isAgentTeamsEnabled()).toBe(true);

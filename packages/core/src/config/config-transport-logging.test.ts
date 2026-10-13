@@ -18,14 +18,6 @@ import { describe, it, expect, vi } from 'vitest';
 
 const { mockGetConfigFromFile } = vi.hoisted(() => ({
   mockGetConfigFromFile: vi.fn(() => ({
-    // No logging section — tests defaults
-    // No explicit logging field at all
-    agent: {
-      provider: 'glm' as const,
-      sdkTimeoutMs: 600_000,
-    },
-    glm: { apiKey: 'test-glm-key', model: 'glm-4' },
-    feishu: {},
     workspace: { dir: '/test/workspace' },
     messaging: {
       debug: {
@@ -44,6 +36,15 @@ const { mockGetConfigFromFile } = vi.hoisted(() => ({
         // Only enabled is set, others should use defaults
       },
     },
+    agents: { default: { backend: 'claude', llm: 'default', sdkTimeoutMs: 600_000 } },
+    llms: {
+      default: {
+        model: 'glm-4',
+        api: { protocol: 'anthropic', apiKeyEnv: 'TEST_LLM_DEFAULT_KEY' },
+      },
+    },
+    env: { TEST_LLM_DEFAULT_KEY: 'test-glm-key' },
+    channels: { feishu: {} },
   })),
 }));
 

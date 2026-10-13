@@ -8,7 +8,7 @@
  * - Normal message creation via client.im.message.create when no threadId
  * - Real messageId returned from both reply and create paths
  * - File upload (image/file) with thread reply
- * - Reply API failure fallback to message.create
+ * - Explicit topic routing and safe handling of rejected/ambiguous replies
  * - Edge cases: done signal, unsupported type, client not initialized
  */
 
@@ -18,6 +18,12 @@ import * as os from 'os';
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import { FeishuChannel, extractFeishuApiError } from './feishu-channel.js';
 import { FEISHU_RETRY_MESSAGE_BYTES } from './feishu-message-chunker.js';
+import { createChannelCallbacksFactory, createDefaultMessageHandler } from '../utils/channel-handlers.js';
+import { AgentPoolMessageHandler } from '../messaging/agent-pool-handler.js';
+import type { ChatAgent } from '../agents/chat-agent.js';
+import type { ChatAgentCallbacks } from '../agents/types.js';
+import type { WiredContext } from '../channel-lifecycle-manager.js';
+import type { Logger } from 'pino';
 
 // ─── Mock Logger ────────────────────────────────────────────────────────────
 
@@ -52,6 +58,7 @@ function createMockClient() {
   const replyMock = vi.fn().mockResolvedValue({
     data: { message_id: 'reply_msg_001' },
   });
+  const getMock = vi.fn().mockResolvedValue({ code: 0, data: { items: [] } });
 
   /**
    * Mock image upload that properly drains and closes the provided stream
@@ -84,6 +91,7 @@ function createMockClient() {
         message: {
           create: createMock,
           reply: replyMock,
+          get: getMock,
         },
         image: {
           create: imageCreateMock,
@@ -93,7 +101,7 @@ function createMockClient() {
         },
       },
     },
-    mocks: { createMock, replyMock, imageCreateMock, fileCreateMock },
+    mocks: { createMock, replyMock, getMock, imageCreateMock, fileCreateMock },
   };
 }
 
@@ -165,6 +173,103 @@ function createTestChannel(mockClient: ReturnType<typeof createMockClient>['clie
 describe('FeishuChannel doSendMessage — Issue #1619', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it.each([['ou_user', 'p2p', 'open_id'], ['oc_private', 'p2p', 'chat_id'], ['oc_group', 'group', 'chat_id'] ] as const)(
+    'delivers welcome to %s using the native address type and confirmed receipt', async (chatId, chatType, addressType) => {
+      const { client, mocks } = createMockClient();
+      mocks.createMock.mockResolvedValueOnce({ code: 0, data: { message_id: 'welcome' } } as any);
+      const channel = createTestChannel(client);
+      await channel.sendWelcomeMessage(chatId, 'brief help', chatType);
+      expect(mocks.createMock).toHaveBeenCalledExactlyOnceWith({ params: { receive_id_type: addressType }, data: { receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text: 'brief help' }) } });
+      expect(mockLogOutgoingMessage).toHaveBeenCalledWith('welcome', chatId, 'brief help', 'text');
+    });
+
+  it.each([{ code: 99991672, msg: 'permission denied' }, { code: 0, data: {} }])('rejects unconfirmed welcome receipts without another send', async response => {
+    const { client, mocks } = createMockClient();
+    mocks.createMock.mockResolvedValueOnce(response as any);
+    const channel = createTestChannel(client);
+    await expect(channel.sendWelcomeMessage('oc_group', 'brief help', 'group')).rejects.toThrow('not confirmed');
+    expect(mocks.createMock).toHaveBeenCalledTimes(1);
+    expect(mocks.replyMock).not.toHaveBeenCalled();
+    expect(mockLogOutgoingMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not queue welcome when the channel is offline', async () => {
+    const { client, mocks } = createMockClient();
+    const channel = createTestChannel(client);
+    (channel as any)._status = 'stopped';
+    await expect(channel.sendWelcomeMessage('oc_group', 'brief help', 'group')).rejects.toThrow('unavailable');
+    expect(mocks.createMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['router', 'direct'] as const)('keeps captured topic ownership through the %s callback path', async route => {
+    const { client, mocks } = createMockClient();
+    const roots = new Map([['child_a', 'root_a'], ['child_b', 'root_b']]);
+    mocks.getMock.mockImplementation(({ path: target }) => Promise.resolve({
+      code: 0, data: { items: [{
+        message_id: target.message_id, chat_id: 'chat_123', root_id: roots.get(target.message_id),
+      }] },
+    }));
+    mocks.replyMock.mockImplementation(({ path: target }) => Promise.resolve({
+      code: 0, data: {
+        message_id: `reply_${target.message_id}`, chat_id: 'chat_123',
+        root_id: roots.get(target.message_id), thread_id: `thread_${roots.get(target.message_id)}`,
+      },
+    }));
+    const channel = createTestChannel(client);
+    const callbacksFactory = createChannelCallbacksFactory(channel, mockLogger as unknown as Logger);
+    const captured = new Map<string, ChatAgentCallbacks>();
+    const agentPool = {
+      getOrCreateChatAgent: vi.fn((_chatId: string, callbacks: ChatAgentCallbacks, root?: string) => {
+        captured.set(root!, callbacks);
+        return { processMessage: vi.fn().mockResolvedValue(undefined) } as unknown as ChatAgent;
+      }),
+    };
+    for (const suffix of ['a', 'b']) {
+      if (route === 'router') {
+        await new AgentPoolMessageHandler({ agentPool, callbacksFactory }).handleUserMessage({
+          chatId: 'chat_123', messageId: `child_${suffix}`, payload: 'continue', threadRootId: `root_${suffix}`,
+        });
+      } else {
+        const handler = createDefaultMessageHandler(channel, {
+          agentPool, callbacks: callbacksFactory, logger: mockLogger,
+        } as unknown as WiredContext, { channelName: 'Feishu' });
+        await handler({
+          chatId: 'chat_123', messageId: `child_${suffix}`, userId: 'user', content: 'continue',
+          messageType: 'text', timestamp: Date.now(), metadata: { threadRootId: `root_${suffix}` },
+        });
+      }
+    }
+    const first = captured.get('root_a')!;
+    await first.sendMessage('chat_123', 'response stopped', 'child_a');
+    await captured.get('root_b')!.sendCard('chat_123', {
+      config: {}, header: { title: { tag: 'plain_text', content: 'Question' } }, elements: [],
+    }, 'question', 'child_b');
+    await first.sendMessage('chat_123', 'late result', 'child_a');
+    expect(mocks.replyMock.mock.calls.map(([request]) => ({
+      parent: request.path.message_id, inTopic: request.data.reply_in_thread,
+    }))).toEqual([
+      { parent: 'child_a', inTopic: true },
+      { parent: 'child_b', inTopic: true },
+      { parent: 'child_a', inTopic: true },
+    ]);
+    expect(mocks.getMock).toHaveBeenCalledWith({ path: { message_id: 'child_a' } });
+    expect(mocks.getMock).toHaveBeenCalledWith({ path: { message_id: 'child_b' } });
+    expect(mocks.createMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps an ordinary parent-only text reply inline through the callback factory', async () => {
+    const { client, mocks } = createMockClient();
+    const channel = createTestChannel(client);
+    const callbacks = createChannelCallbacksFactory(channel, mockLogger as unknown as Logger)('chat_123');
+    await callbacks.sendMessage('chat_123', 'ordinary reply', 'ordinary_parent');
+    expect(mocks.replyMock).toHaveBeenCalledExactlyOnceWith({
+      path: { message_id: 'ordinary_parent' },
+      data: { msg_type: 'text', content: JSON.stringify({ text: 'ordinary reply' }) },
+    });
+    expect(mocks.getMock).not.toHaveBeenCalled();
+    expect(mocks.createMock).not.toHaveBeenCalled();
   });
 
   describe('text messages', () => {
@@ -608,6 +713,187 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
   });
 
   describe('card messages (interactive)', () => {
+    const topicReceipt = {
+      code: 0,
+      data: {
+        message_id: 'om_topic_card', chat_id: 'chat_123',
+        root_id: 'om_topic_root', thread_id: 'omt_topic',
+      },
+    };
+    const topicCard = { config: { wide_screen_mode: true }, elements: [] };
+
+    it('uses the explicit topic root when the parent is a synthetic card-action ID', async () => {
+      const { client, mocks } = createMockClient();
+      mocks.getMock.mockRejectedValueOnce({ code: 230001, msg: 'message not found' });
+      mocks.replyMock.mockResolvedValueOnce(topicReceipt);
+      const channel = createTestChannel(client);
+
+      const result = await channel.sendMessage({
+        chatId: 'chat_123', type: 'card', card: topicCard,
+        threadId: 'card_action_trigger', threadRootId: 'om_topic_root',
+      });
+
+      expect(result).toBe('om_topic_card');
+      expect(mocks.replyMock).toHaveBeenCalledExactlyOnceWith({
+        path: { message_id: 'om_topic_root' },
+        data: { msg_type: 'interactive', content: JSON.stringify(topicCard), reply_in_thread: true },
+      });
+      expect(mocks.createMock).not.toHaveBeenCalled();
+    });
+
+    it('posts inside an explicit topic without requiring a parent', async () => {
+      const { client, mocks } = createMockClient();
+      mocks.replyMock.mockResolvedValueOnce(topicReceipt);
+      const channel = createTestChannel(client);
+
+      expect(await channel.sendMessage({
+        chatId: 'chat_123', type: 'card', card: topicCard, threadRootId: 'om_topic_root',
+      })).toBe('om_topic_card');
+      expect(mocks.replyMock).toHaveBeenCalledWith(expect.objectContaining({
+        path: { message_id: 'om_topic_root' },
+        data: expect.objectContaining({ reply_in_thread: true }),
+      }));
+      expect(mocks.createMock).not.toHaveBeenCalled();
+    });
+
+    it('preserves a real parent only after verifying its chat and topic', async () => {
+      const { client, mocks } = createMockClient();
+      mocks.getMock.mockResolvedValueOnce({ code: 0, data: { items: [{
+        message_id: 'om_trigger', chat_id: 'chat_123', root_id: 'om_topic_root', deleted: false,
+      }] } });
+      mocks.replyMock.mockResolvedValueOnce(topicReceipt);
+      const channel = createTestChannel(client);
+
+      await channel.sendMessage({
+        chatId: 'chat_123', type: 'card', card: topicCard,
+        threadId: 'om_trigger', threadRootId: 'om_topic_root',
+      });
+      expect(mocks.getMock).toHaveBeenCalledWith({ path: { message_id: 'om_trigger' } });
+      expect(mocks.replyMock).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        path: { message_id: 'om_trigger' },
+        data: expect.objectContaining({ reply_in_thread: true }),
+      }));
+    });
+
+    it.each([
+      { chat_id: 'chat_123', root_id: 'om_other_topic' },
+      { chat_id: 'another_chat', root_id: 'om_topic_root' },
+      { chat_id: 'chat_123', root_id: 'om_topic_root', deleted: true },
+    ])('keeps the explicit topic when the parent metadata is unsuitable: %j', async metadata => {
+      const { client, mocks } = createMockClient();
+      mocks.getMock.mockResolvedValueOnce({ code: 0, data: { items: [{
+        message_id: 'om_trigger', ...metadata,
+      }] } });
+      mocks.replyMock.mockResolvedValueOnce(topicReceipt);
+      const channel = createTestChannel(client);
+
+      await channel.sendMessage({
+        chatId: 'chat_123', type: 'card', card: topicCard,
+        threadId: 'om_trigger', threadRootId: 'om_topic_root',
+      });
+      expect(mocks.replyMock).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        path: { message_id: 'om_topic_root' },
+      }));
+      expect(mocks.createMock).not.toHaveBeenCalled();
+    });
+
+    it('uses the root once after a verified parent is definitely rejected', async () => {
+      const { client, mocks } = createMockClient();
+      mocks.getMock.mockResolvedValueOnce({ code: 0, data: { items: [{
+        message_id: 'om_trigger', chat_id: 'chat_123', root_id: 'om_topic_root',
+      }] } });
+      mocks.replyMock.mockResolvedValueOnce({ code: 230001, msg: 'parent deleted' })
+        .mockResolvedValueOnce(topicReceipt);
+      const channel = createTestChannel(client);
+
+      expect(await channel.sendMessage({
+        chatId: 'chat_123', type: 'card', card: topicCard,
+        threadId: 'om_trigger', threadRootId: 'om_topic_root',
+      })).toBe('om_topic_card');
+      expect(mocks.replyMock.mock.calls.map(call => call[0].path.message_id))
+        .toEqual(['om_trigger', 'om_topic_root']);
+      expect(mocks.createMock).not.toHaveBeenCalled();
+    });
+
+    it('does not resend a card after an ambiguous reply timeout', async () => {
+      const { client, mocks } = createMockClient();
+      mocks.replyMock.mockRejectedValueOnce(new Error('request timed out'));
+      const channel = createTestChannel(client);
+
+      await expect(channel.sendMessage({
+        chatId: 'chat_123', type: 'card', card: topicCard,
+        threadId: 'om_topic_root', threadRootId: 'om_topic_root',
+      })).rejects.toThrow('request timed out');
+      expect(mocks.replyMock).toHaveBeenCalledTimes(1);
+      expect(mocks.createMock).not.toHaveBeenCalled();
+    });
+
+    it('does not escape to the chat root when the topic reply is rejected', async () => {
+      const { client, mocks } = createMockClient();
+      mocks.replyMock.mockRejectedValueOnce({ code: 230001, msg: 'topic deleted' });
+      const channel = createTestChannel(client);
+
+      await expect(channel.sendMessage({
+        chatId: 'chat_123', type: 'card', card: topicCard,
+        threadRootId: 'om_topic_root',
+      })).rejects.toMatchObject({ code: 230001 });
+      expect(mocks.replyMock).toHaveBeenCalledTimes(1);
+      expect(mocks.createMock).not.toHaveBeenCalled();
+    });
+
+    it('reports a mismatched delivery location without a second send', async () => {
+      const { client, mocks } = createMockClient();
+      mocks.replyMock.mockResolvedValueOnce({ ...topicReceipt, data: {
+        ...topicReceipt.data, root_id: 'om_other_topic',
+      } });
+      const channel = createTestChannel(client);
+
+      await expect(channel.sendMessage({
+        chatId: 'chat_123', type: 'card', card: topicCard, threadRootId: 'om_topic_root',
+      })).rejects.toThrow('requested topic');
+      expect(mocks.replyMock).toHaveBeenCalledTimes(1);
+      expect(mocks.createMock).not.toHaveBeenCalled();
+    });
+
+    it('reads back an incomplete delivery receipt before reporting success', async () => {
+      const { client, mocks } = createMockClient();
+      mocks.replyMock.mockResolvedValueOnce({ code: 0, data: { message_id: 'om_topic_card' } });
+      mocks.getMock.mockResolvedValueOnce({ code: 0, data: { items: [topicReceipt.data] } });
+      const channel = createTestChannel(client);
+
+      expect(await channel.sendMessage({
+        chatId: 'chat_123', type: 'card', card: topicCard, threadRootId: 'om_topic_root',
+      })).toBe('om_topic_card');
+      expect(mocks.getMock).toHaveBeenCalledExactlyOnceWith({ path: { message_id: 'om_topic_card' } });
+      expect(mocks.createMock).not.toHaveBeenCalled();
+    });
+
+    it('does not treat a delivery readback rejection as permission to resend', async () => {
+      const { client, mocks } = createMockClient();
+      mocks.getMock.mockResolvedValueOnce({ code: 0, data: { items: [{
+        message_id: 'om_trigger', chat_id: 'chat_123', root_id: 'om_topic_root',
+      }] } }).mockRejectedValueOnce({ code: 230006, msg: 'read permission denied' });
+      mocks.replyMock.mockResolvedValueOnce({ code: 0, data: { message_id: 'om_topic_card' } });
+      const channel = createTestChannel(client);
+
+      await expect(channel.sendMessage({
+        chatId: 'chat_123', type: 'card', card: topicCard,
+        threadId: 'om_trigger', threadRootId: 'om_topic_root',
+      })).rejects.toThrow('could not be verified');
+      expect(mocks.replyMock).toHaveBeenCalledTimes(1);
+      expect(mocks.createMock).not.toHaveBeenCalled();
+    });
+
+    it('does not report card success when Feishu omits the message ID', async () => {
+      const { client, mocks } = createMockClient();
+      mocks.createMock.mockResolvedValueOnce({ code: 0, data: {} });
+      const channel = createTestChannel(client);
+
+      await expect(channel.sendMessage({ chatId: 'chat_123', type: 'card', card: topicCard }))
+        .rejects.toThrow('no message_id');
+      expect(mocks.createMock).toHaveBeenCalledTimes(1);
+    });
+
     it('restores escaped line breaks in Markdown elements before sending', async () => {
       const { client, mocks } = createMockClient();
       const channel = createTestChannel(client);
@@ -673,6 +959,7 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
         data: {
           msg_type: 'interactive',
           content: JSON.stringify(card),
+          reply_in_thread: true,
         },
       });
       expect(mocks.createMock).not.toHaveBeenCalled();
@@ -762,48 +1049,33 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
       expect(mocks.replyMock).toHaveBeenCalledTimes(1);
       // then fell back to create
       expect(mocks.createMock).toHaveBeenCalledTimes(1);
-      // Issue #4252: fallback create must keep the message in the thread
-      // (root_id), otherwise it escapes to the chat root.
+      // Legacy text-only fallback is chat-level; create does not accept root_id.
       expect(mocks.createMock).toHaveBeenCalledWith({
         params: { receive_id_type: 'chat_id' },
         data: {
           receive_id: 'chat_123',
           msg_type: 'text',
           content: JSON.stringify({ text: 'Fallback test' }),
-          root_id: 'deleted_msg_999',
         },
       });
       expect(result).toBe('new_msg_001');
     });
 
-    it('should fall back to create when reply fails for card messages', async () => {
+    it('rejects a failed card reply without an explicit root instead of creating outside the topic', async () => {
       const { client, mocks } = createMockClient();
       mocks.replyMock.mockRejectedValueOnce(new Error('Permission denied'));
       const channel = createTestChannel(client);
 
       const card = { config: { wide_screen_mode: true }, elements: [] };
-      const result = await channel.sendMessage({
+      await expect(channel.sendMessage({
         chatId: 'chat_123',
         type: 'card',
         card,
         threadId: 'root_msg_000',
-      });
+      })).rejects.toThrow('Permission denied');
 
       expect(mocks.replyMock).toHaveBeenCalledTimes(1);
-      expect(mocks.createMock).toHaveBeenCalledTimes(1);
-      // Issue #4252: when reply() fails for a card (send_interactive /
-      // send_card), the fallback create must carry root_id so the card stays
-      // in the thread instead of landing in the chat root.
-      expect(mocks.createMock).toHaveBeenCalledWith({
-        params: { receive_id_type: 'chat_id' },
-        data: {
-          receive_id: 'chat_123',
-          msg_type: 'interactive',
-          content: JSON.stringify(card),
-          root_id: 'root_msg_000',
-        },
-      });
-      expect(result).toBe('new_msg_001');
+      expect(mocks.createMock).not.toHaveBeenCalled();
     });
   });
 
@@ -1143,7 +1415,7 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
       // The warn log must carry the API-level detail, not just the axios message.
       const warnCalls = mockLogger.warn.mock.calls;
       const fallbackCall = warnCalls.find(
-        (c) => c[1] === 'Thread reply failed, falling back to message.create'
+        (c) => c[1] === 'Thread reply failed; using legacy chat-level message.create fallback'
       );
       expect(fallbackCall).toBeDefined();
       const [payload] = fallbackCall!;

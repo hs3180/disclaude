@@ -14,24 +14,24 @@ import {
   loadConfigFile,
   getConfigFromFile,
   validateConfig,
-  isCodexModel,
   getPreloadedConfig,
 } from './loader.js';
 import type {
   DisclaudeConfig,
   AgentPresets,
-  ConfigValidationError,
   DebugConfig,
   SessionTimeoutConfig,
 } from './types.js';
 import { resolveAgentPreset } from './agent-presets.js';
+import { resolveConfiguredAgents, validateResolvedAgent } from './resolved-agents.js';
 import { resolveCodexModelSetting, resolveCodexReasoningEffort } from './codex-settings.js';
-import { type AgentProvider, type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
+import { type BaseAgentConfig, type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 
 // Re-export sub-modules
 export * from './types.js';
 export * from './loader.js';
 export * from './agent-presets.js';
+export * from './resolved-agents.js';
 
 export { loadRuntimeEnv, setRuntimeEnv, deleteRuntimeEnv } from './runtime-env.js';
 
@@ -39,7 +39,11 @@ const logger = createLogger('Config');
 
 // Load configuration file (use preloaded config if available from CLI --config)
 const fileConfig = getPreloadedConfig() || loadConfigFile();
-const fileConfigOnly = validateConfig(fileConfig) ? getConfigFromFile(fileConfig) : {};
+const fileConfigOnly = getConfigFromFile(fileConfig);
+const resolvedAgents = resolveConfiguredAgents(fileConfigOnly);
+const agentPresets = resolvedAgents.ok ? resolvedAgents.presets : {};
+const defaultSelection = Object.keys(agentPresets).length ? resolveAgentPreset(agentPresets) : undefined;
+const defaultAgent = defaultSelection?.ok ? defaultSelection.preset : undefined;
 const configLoaded = fileConfig._fromFile;
 
 /**
@@ -177,9 +181,11 @@ export class Config {
   }
 
   // Feishu/Lark configuration (from config file)
-  static readonly FEISHU_APP_ID = fileConfigOnly.feishu?.appId || '';
-  static readonly FEISHU_APP_SECRET = fileConfigOnly.feishu?.appSecret || '';
-  static readonly FEISHU_CLI_CHAT_ID = fileConfigOnly.feishu?.cliChatId || '';
+  static readonly FEISHU_APP_ID = fileConfigOnly.channels?.feishu?.appId || '';
+  static readonly FEISHU_APP_SECRET = (fileConfigOnly.channels?.feishu?.appSecretEnv
+    ? process.env[fileConfigOnly.channels.feishu.appSecretEnv] ?? fileConfigOnly.env?.[fileConfigOnly.channels.feishu.appSecretEnv]
+    : fileConfigOnly.channels?.feishu?.appSecret) || '';
+  static readonly FEISHU_CLI_CHAT_ID = fileConfigOnly.channels?.feishu?.cliChatId || '';
   // Issue #4400 / #4208: gray-rollout flag for native streaming replies.
   // Plumbed through to FeishuChannelConfig.streamingCard in resolveChannelConfigs.
   // Issue #4510 (part 2): the 'p2p' scope enum was removed — streaming is
@@ -187,11 +193,11 @@ export class Config {
   // value (e.g. `streamingCard: 'p2p'` from the part-1 rollout) would
   // otherwise silently disable streaming, so warn and treat it as off.
   static readonly FEISHU_STREAMING_CARD = (() => {
-    const raw = fileConfigOnly.feishu?.streamingCard;
+    const raw = fileConfigOnly.channels?.feishu?.streamingCard;
     if (raw !== undefined && typeof raw !== 'boolean') {
       logger.warn(
         { streamingCard: raw },
-        "feishu.streamingCard must be a boolean — the 'p2p' scope was removed in #4510 part 2 " +
+        "channels.feishu.streamingCard must be a boolean — the 'p2p' scope was removed in #4510 part 2 " +
           '(p2p-first narrowing is built-in). Treating this value as false.'
       );
       return false;
@@ -199,76 +205,33 @@ export class Config {
     return raw ?? false;
   })();
 
-  // GLM configuration (from config file)
-  // Explicit model settings precede the host environment fallback (#5284).
-  static readonly GLM_API_KEY = fileConfigOnly.glm?.apiKey || '';
-  static readonly GLM_MODEL = fileConfigOnly.glm?.model ||
-    process.env.ANTHROPIC_MODEL?.trim() || fileConfigOnly.env?.ANTHROPIC_MODEL?.trim() || '';
-  static readonly GLM_API_BASE_URL = fileConfigOnly.glm?.apiBaseUrl || '';
+  // Native runtimes own authentication; API runtimes use the bound LLM.
+  static readonly DEEPSEEK_API_KEY = process.env[defaultAgent?.deepseek?.apiKeyEnv ?? 'DEEPSEEK_API_KEY'] ??
+    fileConfigOnly.env?.[defaultAgent?.deepseek?.apiKeyEnv ?? 'DEEPSEEK_API_KEY'] ?? '';
+  static readonly DSH_MODE = defaultAgent?.deepseek?.mode ?? 'standard';
+  static readonly DSH_PROVIDER = defaultAgent?.deepseek?.provider;
+  static readonly DSH_HOME = defaultAgent?.deepseek?.dshHome || process.env.DSH_HOME || '';
+  static readonly AGENT_BACKEND = defaultAgent?.agentBackend;
 
-  // DeepSeek harness configuration (Issue #4741).
-  static readonly DEEPSEEK_API_KEY =
-    fileConfigOnly.deepseek?.apiKey || process.env.DEEPSEEK_API_KEY || '';
-  static readonly DSH_MODE = fileConfigOnly.deepseek?.mode ?? 'standard';
-  static readonly DSH_PROVIDER = fileConfigOnly.deepseek?.provider;
-  static readonly DSH_HOME = fileConfigOnly.deepseek?.dshHome || process.env.DSH_HOME || '';
-
-  // Anthropic Messages API service; file credentials take precedence over env.
-  static readonly ANTHROPIC_API_KEY = fileConfigOnly.anthropic?.apiKey ?? process.env.ANTHROPIC_API_KEY ?? '';
-  static readonly ANTHROPIC_API_BASE_URL = fileConfigOnly.anthropic?.apiBaseUrl;
-  private static readonly DEFAULT_AGENT_PRESET = fileConfigOnly.agents
-    ? resolveAgentPreset(fileConfigOnly.agents)
-    : undefined;
-  // Agent SDK backend — which agent runtime boots (Issue #4388).
-  // Orthogonal to the model-layer provider (GLM vs Anthropic LLM API).
-  // Undefined is a startup error; DisclaudeService never silently chooses another backend.
-  static readonly AGENT_BACKEND =
-    (this.DEFAULT_AGENT_PRESET?.ok ? this.DEFAULT_AGENT_PRESET.preset.agentBackend : undefined) ||
-    fileConfigOnly.agent?.agentBackend;
-
-  // Codex model resolution (#5136): one canonical setting with compatibility
-  // fallbacks for existing agent.model and default-preset configurations.
   private static readonly CODEX_MODEL_SETTING = resolveCodexModelSetting({
     environment: process.env.CODEX_MODEL?.trim() || fileConfigOnly.env?.CODEX_MODEL,
-    configured: fileConfigOnly.agent?.codex?.model,
-    legacyAgent: fileConfigOnly.agent?.model,
-    legacyPreset: this.DEFAULT_AGENT_PRESET?.ok && this.DEFAULT_AGENT_PRESET.preset.agentBackend === 'codex'
-      ? this.DEFAULT_AGENT_PRESET.preset.model : undefined,
+    configured: defaultAgent?.agentBackend === 'codex' ? defaultAgent.model : undefined,
   });
   static readonly CODEX_MODEL = this.CODEX_MODEL_SETTING.value ?? '';
   static readonly CODEX_MODEL_SOURCE = this.CODEX_MODEL_SETTING.source;
   private static readonly CODEX_REASONING_EFFORT_SETTING = resolveCodexReasoningEffort({
     environment: process.env.CODEX_REASONING_EFFORT?.trim() || fileConfigOnly.env?.CODEX_REASONING_EFFORT,
-    configured: fileConfigOnly.agent?.codex?.reasoningEffort,
+    configured: defaultAgent?.codex?.reasoningEffort,
   });
   static readonly CODEX_REASONING_EFFORT = this.CODEX_REASONING_EFFORT_SETTING.value;
   static readonly CODEX_REASONING_EFFORT_SOURCE = this.CODEX_REASONING_EFFORT_SETTING.source;
-
-  static readonly CLAUDE_MODEL = this.AGENT_BACKEND === 'codex'
-    ? this.CODEX_MODEL
-    : (this.DEFAULT_AGENT_PRESET?.ok ? this.DEFAULT_AGENT_PRESET.preset.model : undefined) ||
-      fileConfigOnly.agent?.model || fileConfigOnly.anthropic?.model ||
-      process.env.ANTHROPIC_MODEL?.trim() || fileConfigOnly.env?.ANTHROPIC_MODEL?.trim() || '';
-
-  // Codex exec sandbox override (Issue #4631, S4 of #4627). Only
-  // meaningful with AGENT_BACKEND === 'codex'; consumed by the
-  // provider factory. undefined ⇒ normal workspace-write policy.
-  static readonly CODEX_SANDBOX = fileConfigOnly.agent?.codexSandbox;
-  static readonly FULL_ACCESS = fileConfigOnly.agent?.fullAccess;
-  static readonly CODEX_NETWORK_ACCESS = fileConfigOnly.agent?.codexNetworkAccess;
-
-  // Codex concurrency governance caps (Issue #4634, S7 of #4627).
-  static readonly CODEX_MAX_ACTIVE_SESSIONS = fileConfigOnly.agent?.codex?.maxActiveSessions;
-  static readonly CODEX_MAX_CONCURRENT_RUNS = fileConfigOnly.agent?.codex?.maxConcurrentRuns;
-  static readonly CODEX_TRANSPORT = fileConfigOnly.agent?.codex?.transport ?? 'exec';
-
-  // Tier model configuration (Issue #3059)
-  private static readonly CLAUDE_HIGH_MODEL = fileConfigOnly.agent?.highModel || fileConfigOnly.anthropic?.highModel || '';
-  private static readonly CLAUDE_LOW_MODEL = fileConfigOnly.agent?.lowModel || fileConfigOnly.anthropic?.lowModel || '';
-  private static readonly CLAUDE_MULTIMODAL_MODEL = fileConfigOnly.agent?.multimodalModel || fileConfigOnly.anthropic?.multimodalModel || '';
-  private static readonly GLM_HIGH_MODEL = fileConfigOnly.glm?.highModel || '';
-  private static readonly GLM_LOW_MODEL = fileConfigOnly.glm?.lowModel || '';
-  private static readonly GLM_MULTIMODAL_MODEL = fileConfigOnly.glm?.multimodalModel || '';
+  static readonly CLAUDE_MODEL = this.AGENT_BACKEND === 'codex' ? this.CODEX_MODEL : defaultAgent?.model ?? '';
+  static readonly CODEX_SANDBOX = defaultAgent?.codexSandbox;
+  static readonly FULL_ACCESS = defaultAgent?.fullAccess;
+  static readonly CODEX_NETWORK_ACCESS = defaultAgent?.codexNetworkAccess;
+  static readonly CODEX_MAX_ACTIVE_SESSIONS = defaultAgent?.codex?.maxActiveSessions;
+  static readonly CODEX_MAX_CONCURRENT_RUNS = defaultAgent?.codex?.maxConcurrentRuns;
+  static readonly CODEX_TRANSPORT = defaultAgent?.codex?.transport ?? 'exec';
 
   // Logging configuration
   static readonly LOG_LEVEL = fileConfigOnly.logging?.level || 'info';
@@ -356,31 +319,23 @@ export class Config {
   static getRawConfig(): DisclaudeConfig {
     // Check for preloaded config first (set via CLI --config)
     const preloaded = getPreloadedConfig();
-    if (preloaded && validateConfig(preloaded)) {
+    if (preloaded) {
       return getConfigFromFile(preloaded);
     }
     return fileConfigOnly;
   }
 
-  /** Keep provider selection identical for validation, runtime credentials and tiers. */
-  private static getConfiguredApiProvider(): 'anthropic' | 'glm' | undefined {
-    const presetProvider = this.DEFAULT_AGENT_PRESET?.ok ? this.DEFAULT_AGENT_PRESET.preset.provider : undefined;
-    return presetProvider ?? fileConfigOnly.agent?.provider ?? (fileConfigOnly.anthropic ? 'anthropic' : undefined);
-  }
-
-  /** Named runtime presets, when configured. Selection is managed per chat by the pool. */
+  /** Resolved presets shared by the session pool, preflight and construction. */
   static getAgentPresets(): AgentPresets | undefined {
-    const presets = this.getRawConfig().agents;
-    if (!presets) {
-      return undefined;
+    const resolved = resolveConfiguredAgents(this.getRawConfig());
+    if (!resolved.ok) { throw new Error(resolved.errors.join('\n')); }
+    if (!Object.keys(resolved.presets).length) { return undefined; }
+    const selected = resolveAgentPreset(resolved.presets);
+    if (selected.ok && selected.preset.agentBackend === 'codex') {
+      resolved.presets[selected.name] = { ...selected.preset, model: this.CODEX_MODEL,
+        codex: { ...selected.preset.codex, reasoningEffort: this.CODEX_REASONING_EFFORT } };
     }
-    const selected = resolveAgentPreset(presets);
-    if (!selected.ok || selected.preset.agentBackend !== 'codex' || !this.CODEX_MODEL) {
-      return presets;
-    }
-    // The selected default Codex preset is a compatibility alias for the
-    // canonical agent.codex.model. Named non-default presets remain explicit.
-    return { ...presets, [selected.name]: { ...selected.preset, model: this.CODEX_MODEL } };
+    return resolved.presets;
   }
 
   /**
@@ -437,249 +392,21 @@ export class Config {
     return path.dirname(this.getBuiltinDir('skills'));
   }
 
-  /**
-   * Validate required configuration fields.
-   * Ensures all required fields are present before returning config.
-   *
-   * Validation priority (config file takes precedence over environment variables):
-   * 1. If agent.provider is explicitly set, validate only that provider's config
-   * 2. If GLM is configured (apiKey in config file), validate GLM config
-   * 3. Otherwise, if Anthropic env var exists, validate Anthropic config
-   *
-   * @throws Error if required configuration is missing
-   */
-  private static validateRequiredConfig(): void {
-    const errors: ConfigValidationError[] = [];
-
-    // Codex owns authentication through the ChatGPT CLI session. Do not make
-    // unrelated GLM/Anthropic API keys a prerequisite for this backend.
-    if (this.AGENT_BACKEND === 'codex') {
-      if (this.CLAUDE_MODEL && !isCodexModel(this.CLAUDE_MODEL)) {
-        errors.push({
-          field: 'agent.model',
-          message: 'agent.model must be a Codex/ChatGPT model identifier',
-        });
-      }
-      if (errors.length > 0) {
-        const messages = errors.map((e) => `  ❌ ${e.field}: ${e.message}`).join('\n');
-        logger.error({ errors }, 'Configuration validation failed');
-        throw new Error(`Configuration validation failed:\n\n${messages}`);
-      }
-      return;
-    }
-
-    // Get provider preference from config file
-    const provider = this.getConfiguredApiProvider();
-
-    // Determine which provider to validate based on config priority
-    if (provider === 'glm') {
-      // User explicitly chose GLM - only validate GLM config
-      if (!this.GLM_API_KEY) {
-        errors.push({
-          field: 'glm.apiKey',
-          message: 'glm.apiKey is required when agent.provider is "glm"',
-        });
-      }
-      if (!this.GLM_MODEL) {
-        errors.push({
-          field: 'glm.model',
-          message: 'glm.model is required when using GLM provider',
-        });
-      }
-      if (!this.GLM_API_BASE_URL) {
-        errors.push({
-          field: 'glm.apiBaseUrl',
-          message:
-            'glm.apiBaseUrl is required when using GLM; set it to your supported Anthropic-compatible proxy endpoint',
-        });
-      }
-    } else if (provider === 'anthropic') {
-      // User explicitly chose Anthropic - only validate Anthropic config
-      if (!this.ANTHROPIC_API_KEY) {
-        errors.push({
-          field: 'ANTHROPIC_API_KEY',
-          message:
-            'anthropic.apiKey or ANTHROPIC_API_KEY is required for the Anthropic API service',
-        });
-      }
-      if (!this.CLAUDE_MODEL) {
-        errors.push({
-          field: 'agent.model',
-          message: 'anthropic.model or agent.model is required for the Anthropic API service',
-        });
-      }
-    } else if (this.GLM_API_KEY) {
-      // No explicit provider, but GLM is configured in config file - validate GLM
-      if (!this.GLM_MODEL) {
-        errors.push({
-          field: 'glm.model',
-          message: 'glm.model is required when GLM API key is configured',
-        });
-      }
-      if (!this.GLM_API_BASE_URL) {
-        errors.push({
-          field: 'glm.apiBaseUrl',
-          message:
-            'glm.apiBaseUrl is required when GLM is selected by glm.apiKey; the removed legacy default is no longer assumed',
-        });
-      }
-    } else if (this.ANTHROPIC_API_KEY) {
-      // Fallback to Anthropic (from environment variable)
-      if (!this.CLAUDE_MODEL) {
-        errors.push({
-          field: 'agent.model',
-          message: 'agent.model is required when using Anthropic (ANTHROPIC_API_KEY is set)',
-        });
-      }
-    } else {
-      // No provider configured at all
-      errors.push({
-        field: 'apiKey',
-        message:
-          'No API key configured. Set anthropic.apiKey in disclaude.config.yaml or ANTHROPIC_API_KEY environment variable',
-      });
-    }
-
-    if (errors.length > 0) {
-      const messages = errors.map((e) => `  ❌ ${e.field}: ${e.message}`).join('\n');
-      logger.error({ errors }, 'Configuration validation failed');
-      throw new Error(
-        `Configuration validation failed:\n\n${messages}\n\n` +
-          'Please update the missing fields in disclaude.config.yaml or the service environment.'
-      );
-    }
-  }
-
-  /**
-   * Get agent configuration based on available API keys.
-   * Uses the selected API service; anthropic is canonical and glm is a legacy fallback.
-   *
-   * @returns Agent configuration with API key and model
-   * @throws Error if no API key is configured or model is missing
-   */
-  static getAgentConfig(): {
-    apiKey: string;
-    model: string;
-    apiBaseUrl?: string;
-    provider: 'anthropic' | 'glm';
-  } {
-    // The dsh runtime resolves its own credentials and endpoint. Do not gate
-    // service startup on unrelated Anthropic/GLM configuration.
-    if (this.AGENT_BACKEND === 'deepseek') {
-      return { apiKey: '', model: this.CLAUDE_MODEL, provider: 'anthropic' };
-    }
-    // Codex uses ChatGPT OAuth and does not require an API key in disclaude.
-    if (this.AGENT_BACKEND === 'codex') {
-      this.validateRequiredConfig();
-      return {
-        apiKey: '',
-        // Leave model selection to the Codex CLI when no explicit model is
-        // configured.
-        model: this.CLAUDE_MODEL,
-        provider: 'anthropic',
-      };
-    }
-
-    // Validate required configuration first
-    this.validateRequiredConfig();
-
-    // Prefer GLM if configured
-    const provider = this.getConfiguredApiProvider();
-    if (provider === 'glm' || (!provider && this.GLM_API_KEY)) {
-      logger.debug({ provider: 'GLM', model: this.GLM_MODEL }, 'Using GLM API configuration');
-
-      // Issue #3706: Warn when GLM + Agent Teams is enabled.
-      // GLM models proxied through Anthropic-compatible API may not properly
-      // support tool_use blocks for in-process team workers, causing idle loops.
-      if (this.isAgentTeamsEnabled()) {
-        logger.warn(
-          { provider: 'GLM', model: this.GLM_MODEL, enableAgentTeams: true },
-          'GLM + Agent Teams enabled: GLM models may not emit tool_use blocks for ' +
-            'in-process team workers. If workers are stuck in idle loops, try ' +
-            'disabling Agent Teams or using Anthropic models for workers.'
-        );
-      }
-
-      return {
-        apiKey: this.GLM_API_KEY,
-        model: this.DEFAULT_AGENT_PRESET?.ok
-          ? this.DEFAULT_AGENT_PRESET.preset.model
-          : this.GLM_MODEL,
-        apiBaseUrl: this.DEFAULT_AGENT_PRESET?.ok
-          ? this.DEFAULT_AGENT_PRESET.preset.apiBaseUrl ?? this.GLM_API_BASE_URL
-          : this.GLM_API_BASE_URL,
-        provider: 'glm',
-      };
-    }
-
-    // Fallback to Anthropic
-    logger.debug(
-      { provider: 'Anthropic', model: this.CLAUDE_MODEL },
-      'Using Anthropic API configuration'
-    );
+  /** Get the validated default runtime and its bound LLM connection. */
+  static getAgentConfig(): BaseAgentConfig {
+    if (!resolvedAgents.ok) { throw new Error(resolvedAgents.errors.join('\n')); }
+    const selected = resolveAgentPreset(this.getAgentPresets() ?? {});
+    if (!selected.ok) { throw new Error(selected.error); }
+    const error = validateResolvedAgent(selected.preset);
+    if (error) { throw new Error(error); }
+    const {preset} = selected;
     return {
-      apiKey: this.ANTHROPIC_API_KEY,
-      apiBaseUrl: this.ANTHROPIC_API_BASE_URL,
-      model: this.CLAUDE_MODEL,
-      ...(this.DEFAULT_AGENT_PRESET?.ok && this.DEFAULT_AGENT_PRESET.preset.apiBaseUrl
-        ? { apiBaseUrl: this.DEFAULT_AGENT_PRESET.preset.apiBaseUrl }
-        : {}),
-      provider: 'anthropic',
+      apiKey: preset.apiKey, model: preset.model,
+      apiProtocol: preset.apiProtocol, apiBaseUrl: preset.apiBaseUrl,
+      agentBackend: preset.agentBackend, permissionMode: preset.permissionMode,
+      env: preset.env, credentialEnvKeys: preset.credentialEnvKeys,
+      settings: preset,
     };
-  }
-
-  /**
-   * Resolve a model name for the given tier.
-   *
-   * Resolution priority: tier-specific model → default model (fallback).
-   *
-   * @param tier - Model tier (high, low, multimodal)
-   * @param selected - Active agent provider/model, when different from the service default
-   * @returns Model identifier string, or undefined if tier is not set
-   * @see Issue #3059
-   */
-  static getModelForTier(
-    tier: 'high' | 'low' | 'multimodal',
-    selected?: { provider: AgentProvider; model: string },
-  ): string | undefined {
-    // Check GLM tier models first (if GLM is configured)
-    const provider = selected?.provider ?? this.getConfiguredApiProvider();
-    if (provider === 'glm' || (!provider && this.GLM_API_KEY)) {
-      const glmTierMap: Record<string, string> = {
-        high: this.GLM_HIGH_MODEL,
-        low: this.GLM_LOW_MODEL,
-        multimodal: this.GLM_MULTIMODAL_MODEL,
-      };
-      const tierModel = glmTierMap[tier];
-      if (tierModel) {
-        logger.debug({ provider: 'GLM', tier, model: tierModel }, 'Using GLM tier model');
-        return tierModel;
-      }
-      const fallback = selected?.model || this.GLM_MODEL;
-      logger.debug(
-        { provider: 'GLM', tier, fallback },
-        'Tier model not set, using GLM default'
-      );
-      return fallback || undefined;
-    }
-
-    // Anthropic tier models
-    const anthropicTierMap: Record<string, string> = {
-      high: this.CLAUDE_HIGH_MODEL,
-      low: this.CLAUDE_LOW_MODEL,
-      multimodal: this.CLAUDE_MULTIMODAL_MODEL,
-    };
-    const tierModel = anthropicTierMap[tier];
-    if (tierModel) {
-      logger.debug({ provider: 'Anthropic', tier, model: tierModel }, 'Using Anthropic tier model');
-      return tierModel;
-    }
-    const fallback = selected?.model || this.CLAUDE_MODEL;
-    logger.debug(
-      { provider: 'Anthropic', tier, fallback },
-      'Tier model not set, using Anthropic default'
-    );
-    return fallback || undefined;
   }
 
   /**
@@ -756,12 +483,12 @@ export class Config {
    * @returns true if Agent Teams mode is enabled
    */
   static isAgentTeamsEnabled(): boolean {
-    return fileConfigOnly.agent?.enableAgentTeams ?? false;
+    return defaultAgent?.enableAgentTeams ?? false;
   }
 
   /** Explicit override; absence means discover the current model's API limit. */
   static getAutoCompactWindow(): number | undefined {
-    return fileConfigOnly.agent?.autoCompactWindow;
+    return defaultAgent?.autoCompactWindow;
   }
 
   /**
@@ -811,8 +538,9 @@ export class Config {
    * @returns Timeout in milliseconds (default: 300000 = 5 minutes)
    */
   static getSdkTimeoutMs(): number {
-    return fileConfigOnly.agent?.sdkTimeoutMs ?? 300_000;
+    return defaultAgent?.sdkTimeoutMs ?? 300_000;
   }
+
 }
 
 // ============================================================================

@@ -1,33 +1,46 @@
 # Pi 后端（agentBackend）指南
 
-`agent.agentBackend: pi` 使用可选的 earendil-works/pi Agent 运行时，模型服务仍按
-Anthropic Messages 协议配置。默认后端仍是 `claude`；选择 pi 后不会因配置失败
-而静默回退到 Claude。
+`agents.<name>.backend: pi` 使用可选的 earendil-works/pi Agent 运行时。
+通过 `llm` 绑定模型与 API 连接；支持 Anthropic Messages 和 OpenAI chat
+completions 两种格式。配置失败会报错。
 
 ## 安装与配置
 
-pi 运行包需要 **Node.js >= 22.19.0**。在安装 disclaude 的主机/工作区执行：
+pi 运行包需要 **Node.js >= 22.19.0**。对通过 npm 安装的预构建分发包，
+在安装目录执行：
 
 ```sh
 npm install --no-save --package-lock=false @earendil-works/pi-agent-core@0.83.0 @earendil-works/pi-ai@0.83.0
 ```
 
-这些包是可选运行依赖，`npm ci` 后需要重新安装；其他后端不依赖它们。
+源码 worktree 使用 pnpm；将所需运行包声明为 core 的可选依赖，并一并提交
+manifest 和唯一的 pnpm lockfile：
+
+```sh
+pnpm --filter @disclaude/core add --save-optional --save-exact @earendil-works/pi-agent-core@0.83.0 @earendil-works/pi-ai@0.83.0
+```
+
+这些包是可选运行依赖；其他后端不依赖它们。不要在源码 worktree 中运行
+`npm install` 或生成第二套 lockfile。
 本次生产适配以 0.83.0 为验证版本，升级 pi 时须重新验证。
 
 ```yaml
-agent:
-  agentBackend: pi
-  provider: anthropic
-  model: your-model-id
+agents:
+  assistant:
+    backend: pi
+    llm: assistant
+llms:
+  assistant:
+    model: your-model-id
+    api:
+      protocol: openai
+      apiKeyEnv: ASSISTANT_API_KEY
+      # baseUrl: https://your-api.example/v1
 ```
 
-通过项目既有的私有配置或环境提供 `ANTHROPIC_API_KEY` 和
-`ANTHROPIC_BASE_URL`。省略地址时使用 Anthropic 官方地址；DeepSeek 可使用其
-Anthropic 兼容地址（以 `/anthropic` 结尾）。请勿将真实 key 写入仓库。
-运行时从每个 query 的 model/env 解析模型和认证，不修改全局环境，也不需要
-手工给 provider 注入 `streamFn`。显式缺失模型/key 或非 HTTP(S) 地址会报错。
-`validateConfig()` 仅探测可选包，不代表凭证已通过线上验证。
+`protocol: anthropic` 使用 Anthropic Messages。省略地址时使用该协议的官方
+地址。凭据由服务环境提供；每个 query 独立解析连接，不修改全局环境。
+可选包探测和配置校验不代表线上模型验收。
 
 ## 工具、会话与限制
 
@@ -44,3 +57,5 @@ Anthropic 兼容地址（以 `/anthropic` 结尾）。请勿将真实 key 写入
   这不是对模型实际容量的声明；零计价字段也不是免费声明，当前不提供可信费用统计。
 - Claude 的设置文件、插件和权限交互不自动迁移到 pi；本页不声称实现了
   Claude Code 的全部功能。
+
+OpenAI 适配接口来源：[Pi 0.83.0 OpenAI completions adapter](https://github.com/earendil-works/pi/blob/v0.83.0/packages/ai/src/api/openai-completions.ts)。

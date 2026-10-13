@@ -57,7 +57,7 @@ export function extractText(message: AgentMessage): string {
  * another Claude Code session (nested session detection).
  *
  * @param apiKey - API key for authentication
- * @param apiBaseUrl - Optional base URL for API requests (e.g., for GLM)
+ * @param apiBaseUrl - Optional base URL for API requests (for a compatible endpoint)
  * @param extraEnv - Optional extra environment variables to merge
  * @param sdkDebug - Enable SDK debug logging (default: true)
  * @param sdkTimeoutMs - SDK HTTP request timeout in ms (Issue #2992, default: 300000)
@@ -68,7 +68,12 @@ export function buildSdkEnv(
   apiBaseUrl?: string,
   extraEnv?: Record<string, string | undefined>,
   sdkDebug: boolean = true,
-  sdkTimeoutMs?: number
+  sdkTimeoutMs?: number,
+  selected?: {
+    protocol?: import('../config/types.js').ApiProtocol;
+    selectedEnv?: Record<string, string>;
+    credentialEnvKeys?: string[];
+  },
 ): Record<string, string | undefined> {
   const nodeBinDir = getNodeBinDir();
 
@@ -79,16 +84,11 @@ export function buildSdkEnv(
     ? originalPath
     : `${nodeBinDir}:${originalPath}`;
 
-  // Priority (highest to lowest):
-  // 1. Our forced values (API_KEY, PATH, BASE_URL, DEBUG)
-  // 2. process.env (system environment)
-  // 3. extraEnv (caller-provided defaults)
-  // This ensures system env vars can't be accidentally overridden by extraEnv,
-  // but our critical values always take precedence.
+  // Host environment overrides global defaults. Bound LLM settings and the
+  // selected API credential are applied below, after these shared values.
   const env: Record<string, string | undefined> = {
     ...extraEnv,
     ...(process.env as Record<string, string | undefined>),
-    ANTHROPIC_API_KEY: apiKey,
     PATH: newPath,
     // Enable SDK debug logging by default for better troubleshooting
     // SDK subprocess errors go to stderr and are critical for debugging
@@ -102,16 +102,24 @@ export function buildSdkEnv(
   // Must use delete to completely remove the key, not just set to undefined.
   delete env.CLAUDECODE;
 
-  // A selected API service must not also authenticate with a global account.
-  // Keep token-only callers unchanged when they do not select an API key.
-  if (apiKey) {
-    delete env.ANTHROPIC_AUTH_TOKEN;
-    delete env.CLAUDE_CODE_OAUTH_TOKEN;
+  // A named LLM supplies native settings and only its own credential. Remove
+  // all configured credential references before projecting the selected key.
+  Object.assign(env, selected?.selectedEnv);
+  for (const key of selected?.credentialEnvKeys ?? []) { env[key] = undefined; }
+  const protocol = selected ? selected.protocol : 'anthropic';
+  const apiVariables = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_AUTH_TOKEN',
+    'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'OPENAI_BASE_URL'];
+  if (selected || apiKey) {
+    for (const key of apiVariables) {
+      // Explicit undefined also masks credentials in adapters that merge env.
+      if (selected) { env[key] = undefined; } else { delete env[key]; }
+    }
   }
-
-  // Set base URL if provided (for GLM or custom endpoints)
-  if (apiBaseUrl) {
-    env.ANTHROPIC_BASE_URL = apiBaseUrl;
+  if (protocol) {
+    const keyName = protocol === 'openai' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY';
+    const urlName = protocol === 'openai' ? 'OPENAI_BASE_URL' : 'ANTHROPIC_BASE_URL';
+    env[keyName] = apiKey;
+    if (apiBaseUrl) { env[urlName] = apiBaseUrl; }
   }
 
   // Issue #2992: Set HTTP timeout for SDK→API connections.
