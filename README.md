@@ -75,9 +75,10 @@ upgrade and rollback instructions.
 ## Development
 
 ```sh
-npm ci --include=dev
-npm run build
-npm test
+corepack enable
+pnpm install --frozen-lockfile
+pnpm run build
+pnpm test
 ```
 
 Contributions should include focused tests and documentation updates for any
@@ -86,3 +87,5 @@ user-visible behavior change.
 ## License
 
 MIT
+
+See [worktree dependencies](docs/worktree-dependencies.md) for shared-store setup and safe cleanup.

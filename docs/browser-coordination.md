@@ -108,13 +108,13 @@ persistence fail. It does not test this coordination path or change Keychain/OS
 permissions.
 
 ```sh
-npm test
-npm run lint
-npm run build
+pnpm test
+pnpm run lint
+pnpm run build
 DISCLAUDE_E2E_CHROMIUM=/absolute/path/to/chromium \
 DISCLAUDE_E2E_BROWSER_PYTHON=/path/to/upstream-cli-environment/bin/python \
 DISCLAUDE_E2E_BROWSER_STRESS=1 \
-npx vitest run --config vitest.e2e.config.ts tests/e2e/browser-service.test.ts
+pnpm exec vitest run --config vitest.e2e.config.ts tests/e2e/browser-service.test.ts
 ```
 
 The Python variable above identifies the isolated test's upstream CLI installation,

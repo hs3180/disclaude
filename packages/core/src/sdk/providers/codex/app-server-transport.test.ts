@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resolveBrowserRuntimePath } from '../../../utils/browser-env.js';
 import {
   CodexAppServerTransport,
+  CodexAppServerRpcError,
   type CodexAppServerDynamicToolCallRequest,
   type CodexAppServerDynamicToolCallResult,
 } from './app-server-transport.js';
@@ -35,6 +36,27 @@ afterEach(() => {
 });
 
 describe('CodexAppServerTransport', () => {
+  it('distinguishes a received rejection from a timed-out RPC with unknown outcome', async () => {
+    const binary = inputFixture(`
+createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line);
+ if(m.method==='initialize') send({id:m.id,result:{}});
+ else if(m.method==='turn/steer') send({id:m.id,error:{code:-32600,message:'no active turn to steer'}});
+});`);
+    const transport = new CodexAppServerTransport({ binary, requestTimeoutMs: 1000 });
+    try {
+      await transport.initialize();
+      await expect(transport.request('turn/steer', {})).rejects.toMatchObject({
+        name: 'CodexAppServerRpcError', code: -32600,
+      });
+      const failure = await transport.request('no-response').catch(error => error);
+      expect(failure).toBeInstanceOf(Error);
+      expect(failure).not.toBeInstanceOf(CodexAppServerRpcError);
+      if (!(failure instanceof Error)) { throw new Error('Expected an RPC failure'); }
+      expect(failure.message).toContain('timed out');
+    } finally { await transport.close(); }
+  });
+
   const inputParams: Record<string, unknown> = { threadId: 'thread-1', turnId: 'turn-1', itemId: 'item-1', isBlocking: true,
     questions: [{ id: 'browser', header: 'Browser', question: 'Which browser?', options: [{ label: 'Chromium', description: 'Dedicated profile' }] },
       { id: 'note', header: 'Note', question: 'Any constraints?', isOther: true }] };

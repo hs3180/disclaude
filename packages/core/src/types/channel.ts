@@ -94,10 +94,16 @@ export interface OutgoingMessage {
   /** Optional description for logging */
   description?: string;
 
-  /** Message to reply to (may be a trigger inside a topic). */
+  /**
+   * Reply parent message ID (om_...), possibly a trigger inside a topic.
+   * The legacy threadId name does not mean Feishu's omt_... thread_id.
+   */
   threadId?: string;
 
-  /** Explicit topic root; takes precedence over an unsuitable reply parent. */
+  /**
+   * Explicit topic root message ID (om_...); verifies the parent and takes
+   * precedence when that parent cannot be confirmed in this topic.
+   */
   threadRootId?: string;
 
   /**
