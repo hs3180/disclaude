@@ -19,6 +19,16 @@ Dissolve a Feishu group chat via lark-cli API and clean up all associated resour
 
 ## Invocation
 
+Before invoking, verify that this bot created the target group using its native
+creation receipt or the lifecycle mapping written from that receipt. An absent
+`owner_id` does not identify a creator: Feishu omits that field for bot owners.
+Do not infer creation provenance from a group name or bot membership.
+
+The native DELETE API performs the authoritative permission check: the caller
+must be the bot owner, or the bot creator with `im:chat:operate_as_owner`, and
+have `im:chat` or `im:chat:delete`. A permission denial is a failure and retains
+the mapping and workdir. See the [official DELETE contract](https://open.feishu.cn/document/server-docs/group/chat/delete).
+
 Provide the chatId or mapping key to dissolve:
 
 ### By chatId
@@ -40,7 +50,7 @@ DISSOLVE_KEY="pr-123" npx tsx skills/dissolve-group/dissolve-group.ts
 | `DISSOLVE_CHAT_ID` | One of | Feishu group chat ID (oc_xxx format) |
 | `DISSOLVE_KEY` | one | Mapping key (e.g. `pr-123`) |
 | `MAPPING_FILE` | No | Path to mapping file (default: `workspace/bot-chat-mapping.json`) |
-| `DISSOLVE_SKIP_LARK` | No | Set to `1` to skip group dissolution (testing only) |
+| `DISSOLVE_SKIP_LARK` | No | Set to `1` for local cleanup simulation only; reports `dissolved: "skipped"`, not native success |
 
 ## Execution Flow
 
@@ -63,10 +73,12 @@ DISSOLVE_KEY="pr-123" npx tsx skills/dissolve-group/dissolve-group.ts
 
 ## Safety Guarantees
 
-- **Idempotent**: Re-running on already-dissolved group is safe (404 from API is ignored)
+- **Idempotent**: Only structured native code `232009` proves the group was already dissolved. Invalid IDs, missing scopes (`99991672`), permission denials (`232017`), HTTP 404 or unknown CLI output are failures.
 - **Atomic**: Mapping file uses temp+rename write pattern
 - **Validation**: chatId must be `oc_xxx` format
 - **No partial state**: Group dissolution failure doesn't remove mapping (allows retry)
+- **Native result**: CLI exit zero alone is insufficient; require a parsed successful API/CLI envelope before cleanup.
+- **Temp cleanup**: Only paths resolving beneath the real `/tmp` root are removed. Traversal and symlinks outside that root are skipped and reported accurately.
 
 ## When to Use
 
