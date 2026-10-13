@@ -93,23 +93,28 @@ function buildConfig(): BenchConfig {
 async function main(): Promise<void> {
   const tenantAccessToken = requiredEnv('LARKSUITE_CLI_TENANT_ACCESS_TOKEN');
   const cardId = requiredEnv('CARDKIT_BENCH_CARD_ID');
-  const elementId = requiredEnv('CARDKIT_BENCH_ELEMENT_ID');
+  const method = (process.env.CARDKIT_BENCH_METHOD ?? 'PUT').trim().toUpperCase();
+  if (method !== 'PUT' && method !== 'PATCH') {
+    throw new Error('CARDKIT_BENCH_METHOD must be PUT (content) or PATCH (settings)');
+  }
+  const elementId = method === 'PUT' ? requiredEnv('CARDKIT_BENCH_ELEMENT_ID') : '';
   const baseUrl = process.env.CARDKIT_BENCH_BASE_URL; // optional; defaults to open.feishu.cn
   const config = buildConfig();
 
   console.error(
-    `Card Kit rate-limit bench: card=${cardId} element=${elementId} ` +
+    `Card Kit rate-limit bench: method=${method} card=${cardId} element=${elementId} ` +
       `cadences=[${config.cadencesPerSec.join(',')}] burst=${config.burst.count}×${config.burst.rounds}`
   );
 
-  const caller = createFeishuBenchCaller({ tenantAccessToken, cardId, elementId, baseUrl });
+  const caller = createFeishuBenchCaller({ tenantAccessToken, cardId, elementId, baseUrl,
+    operation: method === 'PATCH' ? 'settings' : 'content' });
   const result = await runRateLimitBench({ caller, config });
 
-  console.log(formatFindingsTable(result));
+  console.log(formatFindingsTable(result, method));
   console.error(
     `\nDone. maxSustained=${result.maxSustainedPerSec}/s ` +
       `minIntervalMs=${result.suggestedMinIntervalMs || '—'} ` +
-      `maxBackoffMs=${result.suggestedMaxBackoffMs}`
+      `maxBackoffMs=${result.suggestedMaxBackoffMs || 'not observed'}`
   );
 }
 
