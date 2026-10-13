@@ -40,18 +40,21 @@ agents:
     default: true
     codex:
       transport: app-server
-      reasoningEffort: max
-      maxActiveSessions: 3
       maxConcurrentRuns: 2
 llms:
   daily:
     model: gpt-6-luna
+    reasoningEffort: max
+    maxConcurrentSessions: 3
 ```
 
 `llms.daily.model` is the bound model. `CODEX_MODEL` overrides the default
 Codex binding; named non-default bindings retain their explicit models. Omit
-`model` to keep the CLI's native default. Transport and execution permissions follow the selected binding. Concurrency
-caps are startup settings shared by the service's Codex runtime.
+`model` to keep the CLI's native default. Model reasoning and session concurrency
+follow the bound LLM. Agents sharing its name share its session budget. At the
+limit, new sessions are rejected without stopping existing work. Transport and
+execution permissions follow the selected agent; `maxConcurrentRuns` is the
+startup process-wide child limit. See [agent configuration](agent-configuration.md).
 
 Disclaude does not define a fixed default model. Concrete model and effort
 recommendations are kept in the [configuration sample](../disclaude.config.example.yaml).
@@ -72,7 +75,7 @@ resolved model is passed as `codex exec -m`; an explicit effort is passed as
 `-c model_reasoning_effort=...`, so these run options take precedence over the
 Codex CLI config file.
 
-Set `agents.<name>.codex.reasoningEffort` or `CODEX_REASONING_EFFORT` to request an
+Set `llms.<name>.reasoningEffort` or `CODEX_REASONING_EFFORT` to request an
 explicit effort. Supported labels exposed by current Codex model catalogs
 include `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, and `ultra`; each
 model exposes only a subset. App-server checks the selected model's catalog

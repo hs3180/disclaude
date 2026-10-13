@@ -18,7 +18,7 @@ describe('idle reclamation across real ChatAgent work boundaries', () => {
         llms: {
           default: {
             model: 'test-model',
-            api: { protocol: 'anthropic', apiKeyEnv: 'TEST_LLM_DEFAULT_KEY' },
+            api: { protocol: 'anthropic', apiKey: '$TEST_LLM_DEFAULT_KEY' },
           },
         },
         env: { TEST_LLM_DEFAULT_KEY: 'test-key' },

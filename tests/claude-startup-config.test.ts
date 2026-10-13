@@ -21,7 +21,7 @@ describe('Claude startup with real YAML configuration (offline)', () => {
       writeFileSync(config, JSON.stringify({
         workspace: { dir },
         agents: { default: { backend: 'claude', llm: 'test' } },
-        llms: { test: { model, api: { protocol: 'anthropic', baseUrl: 'http://127.0.0.1:1', apiKeyEnv: 'SMOKE_API_KEY' } } },
+        llms: { test: { model, api: { protocol: 'anthropic', baseUrl: 'http://127.0.0.1:1', apiKey: '$SMOKE_API_KEY' } } },
       }));
       const entry = pathToFileURL(resolve('packages/service/dist/service.js')).href;
       const result = spawnSync(

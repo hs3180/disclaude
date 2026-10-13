@@ -34,6 +34,7 @@ import { Config } from '../config/index.js';
 import { loadRuntimeEnv } from '../config/runtime-env.js';
 import path from 'node:path';
 import { assertToolOptions } from '../sdk/tools.js';
+import { withLlmSessionLimit } from '../sdk/llm-session-limit.js';
 
 // Re-export BaseAgentConfig for backward compatibility
 export type { BaseAgentConfig } from './types.js';
@@ -245,7 +246,12 @@ export abstract class BaseAgent implements Disposable {
       };
     }
     options.apiProtocol = this.apiProtocol;
-    options.reasoningEffort = this.selectedConfig.settings?.codex?.reasoningEffort;
+    options.reasoningEffort = this.selectedConfig.reasoningEffort;
+    if (this.selectedConfig.llm && this.selectedConfig.maxConcurrentSessions !== undefined) {
+      options.llmSessionLimit = {
+        name: this.selectedConfig.llm, maxConcurrentSessions: this.selectedConfig.maxConcurrentSessions,
+      };
+    }
     // Set model
     if (this.model) {
       options.model = this.model;
@@ -399,7 +405,9 @@ export abstract class BaseAgent implements Disposable {
       }
     }
 
-    const result = this.sdkProvider.queryStream(convertInput(), options);
+    const result = withLlmSessionLimit(
+      () => this.sdkProvider.queryStream(convertInput(), options), options.llmSessionLimit,
+    );
 
     const self = this;
     const streamStartMs = Date.now(); // Issue #3003: track stream timing
@@ -452,9 +460,15 @@ export abstract class BaseAgent implements Disposable {
       );
     }
 
+    const iterator = wrappedIterator();
+    const returnIterator = iterator.return.bind(iterator);
+    iterator.return = (value) => {
+      result.handle.close();
+      return returnIterator(value);
+    };
     return {
       handle: result.handle,
-      iterator: wrappedIterator(),
+      iterator,
     };
   }
 

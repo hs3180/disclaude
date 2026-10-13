@@ -221,7 +221,7 @@ export class Config {
   static readonly CODEX_MODEL_SOURCE = this.CODEX_MODEL_SETTING.source;
   private static readonly CODEX_REASONING_EFFORT_SETTING = resolveCodexReasoningEffort({
     environment: process.env.CODEX_REASONING_EFFORT?.trim() || fileConfigOnly.env?.CODEX_REASONING_EFFORT,
-    configured: defaultAgent?.codex?.reasoningEffort,
+    configured: defaultAgent?.reasoningEffort,
   });
   static readonly CODEX_REASONING_EFFORT = this.CODEX_REASONING_EFFORT_SETTING.value;
   static readonly CODEX_REASONING_EFFORT_SOURCE = this.CODEX_REASONING_EFFORT_SETTING.source;
@@ -333,7 +333,7 @@ export class Config {
     const selected = resolveAgentPreset(resolved.presets);
     if (selected.ok && selected.preset.agentBackend === 'codex') {
       resolved.presets[selected.name] = { ...selected.preset, model: this.CODEX_MODEL,
-        codex: { ...selected.preset.codex, reasoningEffort: this.CODEX_REASONING_EFFORT } };
+        reasoningEffort: this.CODEX_REASONING_EFFORT };
     }
     return resolved.presets;
   }
@@ -405,6 +405,8 @@ export class Config {
       apiProtocol: preset.apiProtocol, apiBaseUrl: preset.apiBaseUrl,
       agentBackend: preset.agentBackend, permissionMode: preset.permissionMode,
       env: preset.env, credentialEnvKeys: preset.credentialEnvKeys,
+      llm: preset.llm, reasoningEffort: preset.reasoningEffort,
+      maxConcurrentSessions: preset.maxConcurrentSessions,
       settings: preset,
     };
   }

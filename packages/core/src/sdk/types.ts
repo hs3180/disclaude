@@ -276,6 +276,8 @@ export interface AgentQueryOptions {
   };
   /** Native adapter-owned reasoning selection; each provider validates its supported levels. */
   reasoningEffort?: string;
+  /** Host session budget shared by every agent bound to the same named LLM. */
+  llmSessionLimit?: { name: string; maxConcurrentSessions: number };
   /** 权限模式 */
   permissionMode?: PermissionMode;
   /** Business tools; each Harness adapter owns registration and transport. */

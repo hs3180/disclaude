@@ -5,7 +5,6 @@ agents:
     llm: daily
     default: true
     codex:
-      reasoningEffort: max
       transport: app-server
   assistant:
     backend: claude
@@ -15,11 +14,13 @@ agents:
 llms:
   daily:
     model: gpt-6-luna
+    reasoningEffort: max
+    maxConcurrentSessions: 3             # Shared by agents bound to this LLM
   assistant:
     model: sonnet
     api:
       protocol: anthropic                 # anthropic or openai (Pi supports both)
-      apiKeyEnv: ASSISTANT_API_KEY        # Set this in the service environment
+      apiKey: $ASSISTANT_API_KEY         # $NAME or ${NAME}, from the service environment
       # baseUrl: https://your-api.example # Omit for the protocol's default endpoint
     # Native Claude aliases; use actual model IDs exposed by your endpoint.
     # env:

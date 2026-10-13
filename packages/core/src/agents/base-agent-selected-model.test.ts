@@ -55,6 +55,29 @@ async function selectedOptions(model: string, env?: Record<string, string>, sett
 }
 
 describe('Claude native model aliases', () => {
+  it('passes reasoning and the shared session budget from the selected LLM to native queries', async () => {
+    fixture.value.agents!.secondary = { backend: 'codex', llm: 'default' };
+    fixture.value.agents!.independent = { backend: 'codex', llm: 'other' };
+    fixture.value.llms!.default.reasoningEffort = 'max';
+    fixture.value.llms!.default.maxConcurrentSessions = 3;
+    fixture.value.llms!.other = { model: 'gpt-6-luna', reasoningEffort: 'low', maxConcurrentSessions: 1 };
+    const { BaseAgent } = await import('./base-agent.js');
+    const { Config } = await import('../config/index.js');
+    class BoundAgent extends BaseAgent {
+      protected getAgentName() { return 'BoundAgent'; }
+      options() { return this.createSdkOptions(); }
+    }
+    const presets = Config.getAgentPresets()!;
+    for (const [name, llm, effort, cap] of [
+      ['secondary', 'default', 'max', 3], ['independent', 'other', 'low', 1],
+    ] as const) {
+      const preset = presets[name];
+      expect(new BoundAgent({ ...preset, settings: preset }).options()).toMatchObject({
+        model: 'gpt-6-luna', reasoningEffort: effort,
+        llmSessionLimit: { name: llm, maxConcurrentSessions: cap },
+      });
+    }
+  });
   it('leaves unspecified subagent aliases to the native CLI', async () => {
     const options = await selectedOptions('glm-5.3');
     expect(options.model).toBe('glm-5.3');

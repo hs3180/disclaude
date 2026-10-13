@@ -12,18 +12,17 @@ const configuration = (): DisclaudeConfig => ({
       backend: 'codex',
       llm: 'daily',
       default: true,
-      codex: { reasoningEffort: 'max' },
     },
     assistant: { backend: 'claude', llm: 'proxy' },
     other: { backend: 'pi', llm: 'other' },
   },
   llms: {
-    daily: { model: 'gpt-6-luna' },
+    daily: { model: 'gpt-6-luna', reasoningEffort: 'max', maxConcurrentSessions: 3 },
     proxy: {
       model: 'glm-5.3',
-      api: { protocol: 'anthropic', baseUrl: 'https://proxy.example', apiKeyEnv: 'PROXY_KEY' },
+      api: { protocol: 'anthropic', baseUrl: 'https://proxy.example', apiKey: '$PROXY_KEY' },
     },
-    other: { model: 'other-model', api: { protocol: 'openai', apiKeyEnv: 'OTHER_KEY' } },
+    other: { model: 'other-model', api: { protocol: 'openai', apiKey: '$OTHER_KEY' } },
   },
   channels: { feishu: { appId: 'test-app', appSecretEnv: 'FEISHU_APP_SECRET' } },
 });
@@ -45,7 +44,8 @@ describe('named runtime and LLM configuration', () => {
     expect(result.presets.daily).toMatchObject({
       apiKey: '',
       model: 'gpt-6-luna',
-      codex: { reasoningEffort: 'max' },
+      reasoningEffort: 'max',
+      maxConcurrentSessions: 3,
     });
     expect(resolveAgentPreset(result.presets)).toMatchObject({ ok: true, name: 'daily' });
   });
@@ -58,7 +58,7 @@ describe('named runtime and LLM configuration', () => {
     if (!result.ok) {
       throw new Error(result.errors.join('\n'));
     }
-    expect(validateResolvedAgent(result.presets.assistant)).toContain('llms.proxy.api.apiKeyEnv');
+    expect(validateResolvedAgent(result.presets.assistant)).toContain('llms.proxy.api.apiKey');
   });
   it('prefers the service environment over defaults and injects only selected API credentials', () => {
     vi.stubEnv('PROXY_KEY', 'selected-secret');
@@ -109,6 +109,30 @@ describe('named runtime and LLM configuration', () => {
     result = resolveConfiguredAgents(config);
     expect(result).toMatchObject({ ok: true, presets: { assistant: { model: 'explicit-model' } } });
   });
+  it('resolves braced references and never expands embedded or shell expressions', () => {
+    const config = configuration();
+    config.llms!.proxy.api!.apiKey = '${PROXY_KEY}';
+    vi.stubEnv('PROXY_KEY', 'selected-secret');
+    expect(resolveConfiguredAgents(config)).toMatchObject({
+      ok: true, presets: { assistant: { apiKey: 'selected-secret' } },
+    });
+    for (const value of ['PROXY_KEY', 'canary-secret', '$PROXY_KEY suffix', '${PROXY_KEY:-fallback}', '$(PROXY_KEY)']) {
+      config.llms!.proxy.api!.apiKey = value;
+      const resolved = resolveConfiguredAgents(config);
+      expect(resolved.ok).toBe(false);
+      expect(JSON.stringify(resolved)).not.toContain(value);
+    }
+  });
+  it('binds shared model settings independently of the default agent', () => {
+    const config = configuration();
+    config.agents!.secondary = { backend: 'codex', llm: 'daily' };
+    config.agents!.independent = { backend: 'codex', llm: 'independent' };
+    config.llms!.independent = { model: 'gpt-6-luna', reasoningEffort: 'low', maxConcurrentSessions: 1 };
+    expect(resolveConfiguredAgents(config)).toMatchObject({ ok: true, presets: {
+      secondary: { llm: 'daily', reasoningEffort: 'max', maxConcurrentSessions: 3 },
+      independent: { llm: 'independent', reasoningEffort: 'low', maxConcurrentSessions: 1 },
+    } });
+  });
   it('rejects old sections with migration guidance and no credential values', () => {
     const legacy = {
       agent: { model: 'old' },
@@ -136,7 +160,7 @@ describe('named runtime and LLM configuration', () => {
       c.llms!.proxy.api!.baseUrl = 'https://user:canary-secret@example.com';
     },
     (c: DisclaudeConfig) => {
-      c.llms!.proxy.api!.apiKeyEnv = 'literal key';
+      c.llms!.proxy.api!.apiKey = 'literal key';
     },
     (c: DisclaudeConfig) => {
       c.llms!.daily.api = { protocol: 'anthropic' };
@@ -145,8 +169,11 @@ describe('named runtime and LLM configuration', () => {
       c.llms!.daily.model = 'claude-sonnet';
     },
     (c: DisclaudeConfig) => {
-      c.agents!.daily.codex!.maxConcurrentRuns = 0;
+      c.agents!.daily.codex = { maxConcurrentRuns: 0 };
     },
+    (c: DisclaudeConfig) => { c.llms!.daily.maxConcurrentSessions = 0; },
+    (c: DisclaudeConfig) => { c.llms!.daily.maxConcurrentSessions = 1.5; },
+    (c: DisclaudeConfig) => { c.llms!.daily.reasoningEffort = 'invalid' as never; },
     (c: DisclaudeConfig) => {
       c.agents!.daily.fullAccess = true;
       c.agents!.daily.codexSandbox = 'read-only';

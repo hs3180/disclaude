@@ -11,12 +11,12 @@ const canary = 'test-credential-must-not-appear-in-errors';
 
 describe('CLI configuration error reporting', () => {
   it.each([
-    ['llms.test.api.apiKeyEnv', {
+    ['llms.test.api.apiKey', {
       agents: { test: { backend: 'claude', llm: 'test' } },
       llms: {
         test: {
           model: 'test-model',
-          api: { protocol: 'anthropic', apiKeyEnv: 'MISSING_TEST_KEY' },
+          api: { protocol: 'anthropic', apiKey: '$MISSING_TEST_KEY' },
         },
       },
     }],

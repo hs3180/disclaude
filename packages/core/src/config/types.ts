@@ -24,8 +24,6 @@ export interface WorkspaceConfig {
  * ChatGPT subscription or fork unbounded codex exec children.
  */
 export interface CodexAgentGovernanceConfig {
-  /** Explicit model reasoning effort; unset defers to Codex's model-specific default. */
-  reasoningEffort?: CodexReasoningEffort;
   /** Codex process protocol. `exec` remains the compatibility default. */
   transport?: 'exec' | 'app-server';
   /** Max concurrently-alive codex sessions (queryStreams) per process. Default 3. */
@@ -90,11 +88,15 @@ export type ApiProtocol = 'anthropic' | 'openai';
 /** A model and its optional API connection. Native CLI agents may omit api. */
 export interface LlmConfig {
   model?: string;
+  /** Native Codex/DSH reasoning effort; omission keeps the model's default. */
+  reasoningEffort?: CodexReasoningEffort;
+  /** Maximum live host sessions sharing this LLM, across named agents. */
+  maxConcurrentSessions?: number;
   api?: {
     protocol: ApiProtocol;
     baseUrl?: string;
-    /** Environment variable name, never a literal credential. */
-    apiKeyEnv?: string;
+    /** Explicit environment reference: $VARIABLE or ${VARIABLE}. */
+    apiKey?: string;
   };
   /** Native runtime settings, including ANTHROPIC_DEFAULT_*_MODEL aliases. */
   env?: Record<string, string>;
@@ -119,6 +121,8 @@ export interface AgentPreset extends AgentConfig {
   credentialEnvKeys?: string[];
   default?: boolean;
   llm: string;
+  reasoningEffort?: CodexReasoningEffort;
+  maxConcurrentSessions?: number;
   deepseek?: DeepSeekConfig;
 }
 export type AgentPresets = Record<string, AgentPreset>;

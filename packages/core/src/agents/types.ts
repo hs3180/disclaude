@@ -278,6 +278,10 @@ export interface BaseAgentConfig {
   apiKey: string;
   /** Model identifier */
   model: string;
+  /** Bound LLM identity and its native model settings. */
+  llm?: string;
+  reasoningEffort?: string;
+  maxConcurrentSessions?: number;
   /** API wire format of the selected LLM. */
   apiProtocol?: ApiProtocol;
   env?: Record<string, string>;

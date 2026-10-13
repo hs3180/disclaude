@@ -234,6 +234,18 @@ export class CodexAgentProvider implements IAgentSDKProvider {
    * singleton per process (factory), so its caps bound the whole process.
    */
   private readonly governor: CodexSessionGovernor;
+  private readonly llmGovernors = new Map<string, CodexSessionGovernor>();
+
+  private sessionGovernor(options: AgentQueryOptions): CodexSessionGovernor {
+    const limit = options.llmSessionLimit;
+    if (!limit) { return this.governor; }
+    let governor = this.llmGovernors.get(limit.name);
+    if (!governor) {
+      governor = new CodexSessionGovernor({ maxActiveSessions: limit.maxConcurrentSessions });
+      this.llmGovernors.set(limit.name, governor);
+    }
+    return governor;
+  }
   /**
    * Evicted-session thread stash (S7): sessionKey → thread_id, written ONLY
    * by the eviction hook. An evicted chat's next queryStream resumes its
@@ -343,7 +355,15 @@ export class CodexAgentProvider implements IAgentSDKProvider {
    * /status-ready; also the runtime admin surface via setGovernanceLimits.
    */
   getGovernanceStats() {
-    return this.governor.getStats();
+    const stats = this.governor.getStats();
+    if (this.llmGovernors.size && !stats.activeSessions) { stats.maxActiveSessions = 0; }
+    for (const governor of this.llmGovernors.values()) {
+      const scoped = governor.getStats();
+      stats.activeSessions += scoped.activeSessions;
+      stats.evictedSessions += scoped.evictedSessions;
+      stats.maxActiveSessions += scoped.maxActiveSessions;
+    }
+    return stats;
   }
 
   /** Runtime cap change (admin/test surface, Issue #4634). */
@@ -371,7 +391,10 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     this.appServerLifecycles.delete(sessionKey);
     this.appServerThreadIds.delete(sessionKey);
     this.appServerDynamicToolSignatures.delete(sessionKey);
-    const hadRegistration = this.governor.forgetSession(sessionKey);
+    let hadRegistration = this.governor.forgetSession(sessionKey);
+    for (const governor of this.llmGovernors.values()) {
+      hadRegistration = governor.forgetSession(sessionKey) || hadRegistration;
+    }
     const hadStash = this.threadStash.delete(sessionKey);
     if (hadRegistration || hadStash) {
       logger.info(
@@ -496,6 +519,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     };
     // Same capture for the S7 governor + stash (this: void closures below).
     const governorSink = this.governor;
+    const sessionGovernor = this.sessionGovernor(options);
     const stashSink = this.threadStash;
 
     // Abort plumbing (mirrors pi: early-cancel latch + late onAbort wake).
@@ -538,7 +562,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     const stashedThread = stashable ? this.threadStash.get(sessionKey) : undefined;
     this.threadStash.delete(sessionKey); // consume-on-read: /reset after an eviction-resume must not resurrect the old thread later
     resumeThreadId = stashedThread;
-    const registration = this.governor.registerSession(sessionKey, {
+    const registration = sessionGovernor.registerSession(sessionKey, {
       evict: () => {
         wasEvicted = true;
         // Eviction can land after thread.started/output has been consumed but
@@ -854,7 +878,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         let retryWaitedMs = 0;
         for (let retryAttempt = 0; ; retryAttempt++) {
           deliveredEventKeys.clear();
-          governorSink.touchSession(sessionKey);
+          sessionGovernor.touchSession(sessionKey);
           // Backpressure UX (#4634): announce the wait BEFORE it happens —
           // never silence. (Also announce when merely joining the queue.)
           const pre = governorSink.getStats();
@@ -1189,9 +1213,11 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       handle: {
         close: () => {
           requestAbort();
+          registration.unregister();
         },
         cancel: () => {
           requestAbort();
+          registration.unregister();
         },
         get sessionId(): string | undefined {
           return latestSessionId;
@@ -1210,6 +1236,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     codexModel: string | undefined,
     reasoningEffort: CodexReasoningEffort | undefined,
   ): StreamQueryResult {
+    const sessionGovernor = this.sessionGovernor(options);
     const dynamicToolRegistry = createCodexDynamicToolRegistry(options.tools);
     const dynamicToolSignature = dynamicToolRegistry.signature;
     let lifecycle: CodexAppServerLifecycle | undefined;
@@ -1492,7 +1519,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           ]);
           if (next.done || stopped) {break;}
           if (!registration) {
-            registration = await this.governor.acquireSession(sessionKey, {
+            registration = await sessionGovernor.acquireSession(sessionKey, {
               evict: () => {
                 wasEvicted = true;
                 stopHandle('codex app-server session evicted');
@@ -1591,7 +1618,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               asyncDeliveryFailure = undefined;
               completingTurnId = undefined;
               openToolItems = 0;
-              this.governor.touchSession(sessionKey);
+              sessionGovernor.touchSession(sessionKey);
               const userInput = userInputText(next.value);
               activeTurnId = await lifecycle.startTurn(
                 sessionKey,
@@ -1624,7 +1651,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               armStall();
               for (const event of earlyEvents.splice(0)) {onNotification(event.method, event.params);}
               await completed;
-              this.governor.touchSession(sessionKey);
+              sessionGovernor.touchSession(sessionKey);
             } finally {
               bindTurn(undefined);
               await interruptFlight;

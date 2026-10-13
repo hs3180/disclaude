@@ -49,7 +49,7 @@ const { mockGetConfigFromFile, mockGetPreloadedConfig } = vi.hoisted(() => ({
         model: 'glm-4',
         api: {
           protocol: 'anthropic',
-          apiKeyEnv: 'TEST_LLM_DEFAULT_KEY',
+          apiKey: '$TEST_LLM_DEFAULT_KEY',
           baseUrl: 'https://api.test.com',
         },
       },
@@ -180,7 +180,7 @@ describe('Config', () => {
   describe('getRawConfig', () => {
     it('should return file config when no preloaded', () => {
       const raw = Config.getRawConfig();
-      expect(raw.llms?.default.api?.apiKeyEnv).toBe('TEST_LLM_DEFAULT_KEY');
+      expect(raw.llms?.default.api?.apiKey).toBe('$TEST_LLM_DEFAULT_KEY');
     });
   });
 

@@ -16,7 +16,7 @@ describe('native Codex settings', () => {
     expect(resolveCodexReasoningEffort({})).toEqual({ source: 'codex-cli-model-default' });
     expect(resolveCodexReasoningEffort({ configured: 'max' })).toEqual({
       value: 'max',
-      source: 'agents.codex.reasoningEffort',
+      source: 'llms.reasoningEffort',
     });
     expect(resolveCodexReasoningEffort({ configured: 'max', environment: 'low' })).toEqual({
       value: 'low',

@@ -50,7 +50,7 @@ with socket.socket() as probe:
 config = state / 'config.json'
 config.write_text(json.dumps({'workspace': {'dir': str(workspace)},
     'agents': {'default': {'backend': 'claude', 'llm': 'launchd-smoke'}},
-    'llms': {'launchd-smoke': {'model': 'claude-sonnet-4', 'api': {'protocol': 'anthropic', 'apiKeyEnv': 'LAUNCHD_SMOKE_API_KEY'}}},
+    'llms': {'launchd-smoke': {'model': 'claude-sonnet-4', 'api': {'protocol': 'anthropic', 'apiKey': '$LAUNCHD_SMOKE_API_KEY'}}},
     'channels': {'rest': {'port': rest_port, 'host': '127.0.0.1', 'fileStorageDir': str(state / 'files')}},
     'logging': {'level': 'info', 'pretty': False}}))
 # Baseline and rollback exercise an older CLI schema; keep a separate test

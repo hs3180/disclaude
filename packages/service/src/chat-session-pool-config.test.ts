@@ -22,18 +22,18 @@ describe('preset switching with real configuration and providers', () => {
           missing: { backend: 'claude', llm: 'missing' },
         },
         llms: {
-          native: { model: backend === 'codex' ? 'gpt-6-luna' : 'native-model' },
+          native: { model: backend === 'codex' ? 'gpt-6-luna' : 'native-model', reasoningEffort: 'max', maxConcurrentSessions: 3 },
           proxy: {
             model: 'glm-5.3',
-            api: { protocol: 'anthropic', baseUrl: 'http://127.0.0.1:1', apiKeyEnv: 'PROXY_KEY' },
+            api: { protocol: 'anthropic', baseUrl: 'http://127.0.0.1:1', apiKey: '$PROXY_KEY' },
           },
           direct: {
             model: 'sonnet',
-            api: { protocol: 'anthropic', baseUrl: 'http://127.0.0.1:2', apiKeyEnv: 'DIRECT_KEY' },
+            api: { protocol: 'anthropic', baseUrl: 'http://127.0.0.1:2', apiKey: '$DIRECT_KEY' },
           },
           missing: {
             model: 'missing-model',
-            api: { protocol: 'anthropic', apiKeyEnv: 'MISSING_KEY' },
+            api: { protocol: 'anthropic', apiKey: '$MISSING_KEY' },
           },
         },
       }));
@@ -47,6 +47,9 @@ describe('preset switching with real configuration and providers', () => {
         try {
           const original = pool.getOrCreateChatAgent('test-chat', callbacks);
           assert.equal(Config.getAgentConfig().apiKey, '');
+          assert.equal(Config.getAgentConfig().reasoningEffort, 'max');
+          assert.equal(Config.getAgentConfig().maxConcurrentSessions, 3);
+          assert.equal(Config.getAgentConfig().llm, 'native');
           const rejected = pool.switchAgentPreset('test-chat', 'missing');
           assert.equal(rejected.ok, false);
           assert.match(rejected.error, /credential/);
@@ -74,7 +77,7 @@ describe('preset switching with real configuration and providers', () => {
       `;
       const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
         cwd: repo,
-        env: { ...process.env, DISCLAUDE_CONFIG_PATH: configPath, ANTHROPIC_MODEL: '', CODEX_MODEL: '', PROXY_KEY: 'selected-proxy-key', DIRECT_KEY: 'selected-direct-key', MISSING_KEY: '', LOG_LEVEL: 'silent' },
+        env: { ...process.env, DISCLAUDE_CONFIG_PATH: configPath, ANTHROPIC_MODEL: '', CODEX_MODEL: '', CODEX_REASONING_EFFORT: '', PROXY_KEY: 'selected-proxy-key', DIRECT_KEY: 'selected-direct-key', MISSING_KEY: '', LOG_LEVEL: 'silent' },
         encoding: 'utf8',
         timeout: 10_000,
       });

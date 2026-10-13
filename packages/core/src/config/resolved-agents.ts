@@ -8,6 +8,7 @@ import type {
 } from './types.js';
 import { validateAgentPresets } from './agent-presets.js';
 import { isCodexReasoningEffort } from './codex-settings.js';
+import { apiCredentialEnvName } from './env-reference.js';
 
 const CONFIG_KEYS = new Set([
   'workspace',
@@ -70,13 +71,20 @@ export function resolveConfiguredAgents(
       continue;
     }
     for (const key of Object.keys(raw)) {
-      if (!['model', 'api', 'env'].includes(key)) {
+      if (!['model', 'reasoningEffort', 'maxConcurrentSessions', 'api', 'env'].includes(key)) {
         errors.push(`${field}.${key} is unsupported`);
       }
     }
     const llm = raw as LlmConfig;
     if (llm.model !== undefined && (typeof llm.model !== 'string' || !llm.model.trim())) {
       errors.push(`${field}.model must be a non-empty string`);
+    }
+    if (llm.reasoningEffort !== undefined && !isCodexReasoningEffort(llm.reasoningEffort)) {
+      errors.push(`${field}.reasoningEffort is invalid`);
+    }
+    if (llm.maxConcurrentSessions !== undefined &&
+        (!Number.isSafeInteger(llm.maxConcurrentSessions) || llm.maxConcurrentSessions <= 0)) {
+      errors.push(`${field}.maxConcurrentSessions must be a positive integer`);
     }
     if (
       llm.env !== undefined &&
@@ -93,7 +101,7 @@ export function resolveConfiguredAgents(
         continue;
       }
       for (const key of Object.keys(llm.api)) {
-        if (!['protocol', 'baseUrl', 'apiKeyEnv'].includes(key)) {
+        if (!['protocol', 'baseUrl', 'apiKey'].includes(key)) {
           errors.push(`${field}.api.${key} is unsupported`);
         }
       }
@@ -115,11 +123,9 @@ export function resolveConfiguredAgents(
           errors.push(`${field}.api.baseUrl must be an HTTP(S) URL without credentials`);
         }
       }
-      const keyEnv =
-        llm.api.apiKeyEnv ??
-        (llm.api.protocol === 'openai' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY');
-      if (typeof keyEnv !== 'string' || !ENV_NAME.test(keyEnv)) {
-        errors.push(`${field}.api.apiKeyEnv must be an environment variable name`);
+      const keyEnv = apiCredentialEnvName(llm.api);
+      if (!keyEnv) {
+        errors.push(`${field}.api.apiKey must be an environment reference ($VARIABLE or \u0024{VARIABLE})`);
       } else {
         credentialEnvKeys.add(keyEnv);
       }
@@ -204,16 +210,10 @@ export function resolveConfiguredAgents(
       }
       for (const key of Object.keys(agent.codex)) {
         if (
-          !['reasoningEffort', 'transport', 'maxActiveSessions', 'maxConcurrentRuns'].includes(key)
+          !['transport', 'maxActiveSessions', 'maxConcurrentRuns'].includes(key)
         ) {
           errors.push(`${field}.codex.${key} is unsupported`);
         }
-      }
-      if (
-        agent.codex.reasoningEffort !== undefined &&
-        !isCodexReasoningEffort(agent.codex.reasoningEffort)
-      ) {
-        errors.push(`${field}.codex.reasoningEffort is invalid`);
       }
       if (
         agent.codex.transport !== undefined &&
@@ -243,26 +243,30 @@ export function resolveConfiguredAgents(
     if (agent.backend === 'claude' && llm.api?.protocol === 'openai') {
       errors.push(`${field}: Claude requires an Anthropic API connection`);
     }
+    if (llm.reasoningEffort !== undefined && !['codex', 'deepseek'].includes(agent.backend)) {
+      errors.push(`llms.${agent.llm}.reasoningEffort requires a Codex or DSH native runtime`);
+    }
     if (['codex', 'deepseek'].includes(agent.backend) && llm.api !== undefined) {
       errors.push(
         `${field}: this native runtime owns its API connection; omit llms.${agent.llm}.api`
       );
     }
     const protocol = llm.api?.protocol;
-    const keyEnv =
-      llm.api?.apiKeyEnv ?? (protocol === 'openai' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY');
+    const keyEnv = llm.api ? apiCredentialEnvName(llm.api) : undefined;
     const environmentModel = protocol === 'openai' ? 'OPENAI_MODEL' : 'ANTHROPIC_MODEL';
     const { backend, ...settings } = agent;
     presets[name] = {
       ...settings,
       agentBackend: backend,
+      reasoningEffort: llm.reasoningEffort,
+      maxConcurrentSessions: llm.maxConcurrentSessions,
       model:
         llm.model?.trim() ||
         (protocol
           ? process.env[environmentModel]?.trim() || config.env?.[environmentModel]?.trim()
           : '') ||
         '',
-      apiKey: protocol ? (process.env[keyEnv] ?? config.env?.[keyEnv] ?? '') : '',
+      apiKey: keyEnv ? (process.env[keyEnv] ?? config.env?.[keyEnv] ?? '') : '',
       apiProtocol: protocol,
       apiBaseUrl: llm.api?.baseUrl,
       env: llm.env,
@@ -296,7 +300,7 @@ export function validateResolvedAgent(preset: AgentPreset): string | undefined {
     return `llms.${preset.llm}.api is required for this runtime`;
   }
   if (!preset.apiKey.trim()) {
-    return `The credential referenced by llms.${preset.llm}.api.apiKeyEnv is missing`;
+    return `The credential referenced by llms.${preset.llm}.api.apiKey is missing`;
   }
   if (!preset.model.trim()) {
     return `llms.${preset.llm}.model or the matching API model environment variable is required`;

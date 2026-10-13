@@ -186,6 +186,22 @@ describe('ChatAgent (service)', () => {
   });
 
   describe('constructor', () => {
+    it('settles a capacity rejection with a channel notice and lets a later retry start', async () => {
+      const rejection = Object.assign(new Error('LLM daily 的并发会话已满（1/1）；请结束一个会话后重试。'),
+        { code: 'LLM_SESSION_LIMIT' });
+      const query = (chatAgent as any).createQueryStream;
+      query.mockImplementationOnce(() => { throw rejection; });
+      try {
+        await expect(chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'first', messageId: 'full' })).resolves.toBeUndefined();
+        await expect(chatAgent.turnCompleteFor('full')).rejects.toBe(rejection);
+        expect(callbacks.sendMessage).toHaveBeenCalledWith('oc_test_chat', expect.stringContaining('1/1'), 'full');
+        expect(callbacks.onDone).toHaveBeenCalledWith('oc_test_chat', 'full');
+        expect((chatAgent as any).restartManager.recordSuccess).not.toHaveBeenCalled();
+        expect(query).toHaveBeenCalledTimes(1);
+        await chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'retry', messageId: 'retry' });
+        expect(query).toHaveBeenCalledTimes(2);
+      } finally { chatAgent.reset(); ChatAgent.prototype.dispose.call(chatAgent); }
+    });
     it.each([false, true])('rejects the owning completion on async delivery failure (once=%s)', async once => {
       const agent = new ChatAgent({ chatId: 'failed-input-chat', callbacks: createMockCallbacks(), apiKey: 'test', model: 'test' });
       (agent as any).isAgentTeamsEnabled = () => false;

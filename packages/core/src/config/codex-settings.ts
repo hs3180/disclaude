@@ -13,7 +13,7 @@ export const CODEX_REASONING_EFFORTS = [
 export type CodexModelSource = 'environment' | 'llms.model' | 'codex-cli-default';
 export type CodexEffortSource =
   | 'environment'
-  | 'agents.codex.reasoningEffort'
+  | 'llms.reasoningEffort'
   | 'codex-cli-model-default';
 
 export interface ResolvedCodexSetting<T, S extends string> {
@@ -60,7 +60,7 @@ export function resolveCodexReasoningEffort(sources: {
     return { value: environment, source: 'environment' };
   }
   if (sources.configured) {
-    return { value: sources.configured, source: 'agents.codex.reasoningEffort' };
+    return { value: sources.configured, source: 'llms.reasoningEffort' };
   }
   return { source: 'codex-cli-model-default' };
 }

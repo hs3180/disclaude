@@ -59,7 +59,7 @@ with tempfile.TemporaryDirectory(prefix='disclaude-workspace-e2e-') as tmp:
     env['WORKSPACE_SMOKE_API_KEY']='offline-workspace-test'
     payload={'workspace':{'dir':str(custom)},
              'agents':{'default':{'backend':'claude','llm':'workspace-smoke'}},
-             'llms':{'workspace-smoke':{'model':'claude-sonnet-4','api':{'protocol':'anthropic','apiKeyEnv':'WORKSPACE_SMOKE_API_KEY'}}},'channels':{'feishu':{'enabled':False},'rest':{'enabled':True,'host':'127.0.0.1','port':port,'fileStorageDir':str(custom/'files')}},'logging':{'level':'info'}}
+             'llms':{'workspace-smoke':{'model':'claude-sonnet-4','api':{'protocol':'anthropic','apiKey':'$WORKSPACE_SMOKE_API_KEY'}}},'channels':{'feishu':{'enabled':False},'rest':{'enabled':True,'host':'127.0.0.1','port':port,'fileStorageDir':str(custom/'files')}},'logging':{'level':'info'}}
     config.write_text(json.dumps(payload))
     for attempt in range(2):
         output=home/f'run-{attempt}.log'

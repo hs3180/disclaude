@@ -1043,7 +1043,27 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Start session if needed
     if (!this.isSessionActive) {
       this.logger.info({ chatId }, 'No active session, starting agent loop');
-      const startupNotice = this.startAgentLoop();
+      let startupNotice: ReturnType<ChatAgent['startAgentLoop']>;
+      try { startupNotice = this.startAgentLoop(); }
+      catch (error) {
+        if (!(error instanceof Error && 'code' in error && error.code === 'LLM_SESSION_LIMIT')) { throw error; }
+        this.isSessionActive = false;
+        this.createTurnCompletion(messageId);
+        this.resolveTurn(messageId, error);
+        let userVisible = false;
+        try {
+          await this.callbacks.sendMessage(chatId, `⏳ ${error.message}`, threadRootId ?? messageId);
+          userVisible = true;
+        } catch (sendError) {
+          this.logger.error({ err: sendError, chatId, messageId }, 'Failed to send LLM session limit notice');
+        }
+        try { await this.callbacks.onDone?.(chatId, threadRootId ?? messageId); }
+        catch (doneError) { this.logger.error({ err: doneError, chatId, messageId }, 'Failed to finish rejected LLM session'); }
+        this.logger.warn({ event: 'agent_turn', state: 'failed', ...lifecycleContext,
+          diagnosticId: crypto.randomUUID(), errorMessage: error.message, user_visible: userVisible,
+        }, 'Message rejected because the LLM session budget is full');
+        return;
+      }
       if (!this.isSessionActive) {
         const error = new Error('Message rejected because the bound project directory is unavailable');
         this.createTurnCompletion(messageId);

@@ -34,7 +34,7 @@ llms:
     model: your-model-id
     api:
       protocol: openai
-      apiKeyEnv: ASSISTANT_API_KEY
+      apiKey: $ASSISTANT_API_KEY
       # baseUrl: https://your-api.example/v1
 ```
 

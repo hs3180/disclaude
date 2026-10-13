@@ -124,7 +124,7 @@ read catalog; echo '{"id":3,"error":{"code":-32601,"message":"not authorized: be
         model: 'gpt-5.6-luna', reasoningEffort: 'high',
       })).rejects.toThrow(
         'Cannot verify Codex reasoning effort "high": the app-server model catalog is unavailable. ' +
-        'Update the Codex CLI or unset agent.codex.reasoningEffort.'
+        'Update the Codex CLI or unset llms.<name>.reasoningEffort.'
       );
       expect(lifecycle.snapshot('chat-1')?.state).toBe('idle');
     } finally { await lifecycle.close(); }
