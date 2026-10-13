@@ -55,6 +55,7 @@ import {
   type ChatAgent as ChatAgentInterface,
   type AgentUserInput,
   type AgentMessage,
+  type AgentMessageMetadata,
   type IteratorYieldResult,
   type UserMessageParams,
   type CwdResolution,
@@ -195,14 +196,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   // between "session exists but idle" and "actively processing a message".
   private isProcessingMessage = false;
 
-  // Issue #4620: When the current turn started (ms epoch), set at the same
-  // moment isProcessingMessage flips true. Lets the pool's busy-turn cap
-  // measure the CURRENT turn, not the accumulated wall-clock of many
-  // back-to-back turns (the observation-based busySince marker survived
-  // turn boundaries whenever every sweep tick landed mid-turn).
+  // Start of the most recent turn, retained for activity diagnostics.
   private turnStartedAtMsPrivate = 0;
   /** Message identity of the turn currently consumed by the persistent iterator. */
   private activeTurnMessageId?: string;
+  private lastActivityAtPrivate = 0;
+  private lastActivityTypePrivate = 'created';
+  private readonly backgroundTaskIds = new Set<string>();
+  private hasBackgroundTaskSnapshot = false;
+  private activityThreadRootId?: string;
 
   // Provider stall (#3706, #5283): set when the provider's watchdog
   // terminated the stream. Checked at the iterator-end/restart decision point to
@@ -229,6 +231,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   // next to the stalledTerminated check in processIterator.
   private sessionGeneration = 0;
   private readonly stoppedQueryGenerations = new Set<number>();
+  private readonly stopReasons = new Map<number, string>();
 
   // Issue #4626: user-visible delivery isolation state. A channel sendMessage
   // failure (invalid receive_id → 400, transient 5xx, network blip) used to
@@ -671,26 +674,47 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     return this.isProcessingMessage;
   }
 
-  /** True while this agent has an active turn or messages queued for its iterator. */
+  /** Idle reclamation includes admitted/queued work and live background tasks. */
   get hasPendingWork(): boolean {
-    return this.isProcessingMessage || this.pendingTurnMessageIds.length > 0;
+    return !this.disposed && (this.isBusy || (this.isSessionActive && (
+      this.pendingTurnMessageIds.length > 0 || this.activeTurnMessageId !== undefined ||
+      this.backgroundTaskIds.size > 0
+    )));
+  }
+
+  get activeBackgroundTaskCount(): number { return this.backgroundTaskIds.size; }
+  get lastActivityAt(): number { return this.lastActivityAtPrivate; }
+  get lastActivityType(): string { return this.lastActivityTypePrivate; }
+  get pendingWorkContext(): Partial<NonNullable<StreamingUserMessage['correlation']>> & { threadRootId?: string } {
+    const queued = !this.activeTurnMessageId && this.pendingLifecycleContexts.length > 0;
+    return { ...(queued ? this.pendingLifecycleContexts[0] : this.activeLifecycleContext),
+      threadRootId: queued ? this.pendingTurnAnchors[0] : this.activityThreadRootId };
+  }
+
+  private noteActivity(type: string): void {
+    this.lastActivityAtPrivate = Date.now();
+    this.lastActivityTypePrivate = type.slice(0, 80);
+  }
+
+  private observeBackgroundTasks(metadata: AgentMessageMetadata | undefined): void {
+    if (metadata?.backgroundTaskIds !== undefined) {
+      this.hasBackgroundTaskSnapshot = true;
+      this.backgroundTaskIds.clear();
+      for (const id of metadata.backgroundTaskIds) { this.backgroundTaskIds.add(id); }
+    } else if (metadata?.backgroundTask && !this.hasBackgroundTaskSnapshot) {
+      const { id, state } = metadata.backgroundTask;
+      if (state === 'running') { this.backgroundTaskIds.add(id); }
+      else { this.backgroundTaskIds.delete(id); }
+    }
   }
 
   /**
    * When the most recent turn started (ms epoch), or 0 if no turn has
    * started yet.
    *
-   * Issue #4620: the pool's busy-turn hard cap measures the CURRENT turn
-   * from this authoritative timestamp. The previous observation-based
-   * marker (set when the idle sweep first saw isBusy, cleared when a sweep
-   * saw !isBusy) silently accumulated across back-to-back turns — whenever
-   * every sweep tick landed mid-turn, the marker never cleared, and after
-   * 90 min of session wall-clock a brand-new turn was insta-killed with a
-   * misleading "running for 90 minutes" message.
-   *
    * Note: the timestamp is set on turn start and never reset — once a turn
    * has run, idle agents still report that (stale) turn's start. Readers
-   * must gate on `isBusy` for "is this turn live" semantics; the pool does.
+   * must gate on `isBusy`/`hasPendingWork` for live-work semantics.
    *
    * @returns ms epoch of the most recent turn's start, or 0 if no turn has
    * started.
@@ -974,6 +998,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // #5240: capable backends receive ordinary busy input through steer.
     // Only unattempted or definitely rejected input falls back to the channel.
     const queuedBehindActiveTurn = this.isBusy;
+    this.noteActivity('input');
     const potentialLiveInput = this.isSessionActive && this.isBusy &&
       typeof this.queryHandle?.steer === 'function' && !!this.activeTurnMessageId &&
       this.turnCompletions.has(this.activeTurnMessageId);
@@ -1164,10 +1189,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       enqueueTurnAnchor();
       const busyBeforePush = queuedBehindActiveTurn && this.isBusy;
       // Issue #3985: Mark as processing when a user message is pushed to the channel.
+      if (!this.isProcessingMessage) { this.turnStartedAtMsPrivate = Date.now(); }
       this.isProcessingMessage = true;
-      // Issue #4620: authoritative turn-start timestamp for the pool's
-      // busy-turn cap — see turnStartedAtMs getter.
-      this.turnStartedAtMsPrivate = Date.now();
       // Issue #4063 / #4649 (review ③): register THIS message's completion
       // entry before the push so turnCompleteFor(messageId) can never miss
       // it. On push rejection only THIS entry is settled — rejectTurn()
@@ -1497,6 +1520,18 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Create streaming query using channel's generator
     const queryOptions = this.configureQueryOptions?.(sdkOptions) ?? sdkOptions;
+    // Invalidate old activity callbacks before creating the next query.
+    const activityGeneration = ++this.sessionGeneration;
+    this.backgroundTaskIds.clear();
+    this.hasBackgroundTaskSnapshot = false;
+    this.noteActivity('session-start');
+    const existingActivityObserver = queryOptions.onActivity;
+    queryOptions.onActivity = (type) => {
+      if (this.disposed || this.sessionGeneration !== activityGeneration ||
+          this.stoppedQueryGenerations.has(activityGeneration)) { return; }
+      this.noteActivity(type);
+      existingActivityObserver?.(type);
+    };
     const { handle, iterator } = this.createQueryStream(this.channel.generator(), queryOptions);
 
     this.queryHandle = handle;
@@ -1507,10 +1542,6 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // (one wasted attempt per session, bounded by construction).
     this.consecutiveSendFailures = 0;
     this.sendCircuitOpen = false;
-    // Issue #4391 (part 2 review): this query is a new session generation.
-    // Any still-draining processIterator from a previous generation reads the
-    // bump and exits as a superseded session instead of "unexpected end".
-    this.sessionGeneration++;
 
     // Issue #4587 (part 1, review fix): fresh session — anchors queued for the
     // OLD session's channel are dead (that channel is closed above). Safe
@@ -1823,6 +1854,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         turnResultText = '';
         turnResultTruncated = false;
         this.activeTurnMessageId = currentTurnMessageId;
+        this.activityThreadRootId = currentTurnAnchor;
+        if (!this.isProcessingMessage) { this.turnStartedAtMsPrivate = Date.now(); }
+        this.isProcessingMessage = true;
       }
       return currentTurnAnchor;
     };
@@ -1932,6 +1966,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         // it guarantees the anchor is frozen before any text/result of the
         // turn is dispatched, even when an interleaved processMessage pushed
         // a second anchor mid-turn.
+        this.noteActivity(`sdk:${typeof parsed.metadata?.systemSubtype === 'string' ? parsed.metadata.systemSubtype : parsed.type}`);
+        this.observeBackgroundTasks(parsed.metadata);
+        if (parsed.metadata?.backgroundTaskIds !== undefined || parsed.metadata?.backgroundTask) {
+          continue;
+        }
         consumeTurnAnchor();
 
         if (parsed.type === 'error') { turnHadError = true; }
@@ -2800,10 +2839,23 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Keep the generation check so late teardown cannot finish a replacement
     // session's REST request or turn-completion promises.
     if (this.stoppedQueryGenerations.delete(myGeneration)) {
+      const stopReason = this.stopReasons.get(myGeneration);
+      this.stopReasons.delete(myGeneration);
       const interruptedByServiceRestart = this.serviceRestartInterruptedGenerations.delete(myGeneration);
       if (this.sessionGeneration === myGeneration) {
         const threadRoot = resolveReplyThreadRoot();
-        const error = new Error(backendInterrupted ? 'Agent turn interrupted by backend' : 'Agent turn cancelled by stop');
+        // Snapshot before rejecting waiters or awaiting the notice: a new
+        // input may replace the active context while delivery is pending.
+        // Settled inputs (including a completed turn with background work)
+        // already have a terminal and must not be recorded again.
+        const interruptedContexts = new Map(
+          [this.activeLifecycleContext, ...this.pendingLifecycleContexts]
+            .filter((context): context is NonNullable<StreamingUserMessage['correlation']> =>
+              !!context && this.turnCompletions.get(context.sourceMessageId)?.settled === false)
+            .map(context => [context.sourceMessageId, context]),
+        );
+        const error = new Error(stopReason ? `Agent turn stopped by activity policy: ${stopReason}`
+          : backendInterrupted ? 'Agent turn interrupted by backend' : 'Agent turn cancelled by stop');
         this.rejectTurn(error);
         this.taskCompletionReject?.(error);
         this.clearTaskCompletion();
@@ -2814,7 +2866,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         this.isProcessingMessage = false;
         this.activeTurnMessageId = undefined;
         if (!interruptedByServiceRestart) {
-          await this.deliverUserVisible(chatId, '⏹️ 本轮已停止。', threadRoot);
+          const delivered = await this.deliverUserVisible(chatId, stopReason ?? '⏹️ 本轮已停止。', threadRoot);
+          for (const context of interruptedContexts.values()) {
+            this.logger.warn({
+              ...context, diagnosticId, event: 'agent_turn', state: 'interrupted',
+              interruptionCause: stopReason ? 'activity_policy' : backendInterrupted ? 'backend_interrupted' : 'user_stop',
+              stopReason, errorMessage: error.message,
+              user_visible: delivered && context.sourceMessageId === currentTurnMessageId,
+            }, 'Terminal outcome for stopped request');
+          }
         }
         if (this.sessionGeneration !== myGeneration) { return; }
         await this.callbacks.onDone?.(chatId, threadRoot);
@@ -3094,6 +3154,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Mark session as inactive BEFORE closing to signal explicit close
     this.isSessionActive = false;
     this.isProcessingMessage = false;
+    this.backgroundTaskIds.clear();
+    this.activityThreadRootId = undefined;
 
     // Close channel and query
     if (this.channel) {
@@ -3184,9 +3246,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    * The user can continue the conversation after stopping.
    *
    * @param chatId - Optional chat ID (must match bound chatId if provided)
+   * @param reason - Activity-policy notice delivered through the original turn's channel
    * @returns true if a query was stopped, false if no active query
    */
-  stop(chatId?: string): boolean {
+  stop(chatId?: string, reason?: string): boolean {
     // Issue #644: If chatId is provided, it must match bound chatId
     if (chatId && chatId !== this.boundChatId) {
       this.logger.warn(
@@ -3204,6 +3267,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     this.logger.info({ chatId: this.boundChatId }, 'Stopping current query');
     this.stoppedQueryGenerations.add(this.sessionGeneration);
+    if (reason) { this.stopReasons.set(this.sessionGeneration, reason); }
 
     // Issue #2926: Abort the running iterator so processIterator breaks
     // immediately instead of continuing to process buffered messages.
@@ -3224,6 +3288,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
     this.queryHandle.close();
     this.queryHandle = undefined;
+    this.backgroundTaskIds.clear();
 
     // Note: We do NOT set isSessionActive to false here.
     // processIterator settles the cancelled turn and ends this native query.
@@ -3341,6 +3406,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Issue #4391 (part 2 review): mark disposed synchronously first, so a
     // replay timer firing mid-dispose (or right after) sees the flag.
     this.disposed = true;
+    this.backgroundTaskIds.clear();
     // Issue #3745: Synchronously close queryHandle and channel to prevent
     // exit listener leaks. The previous fire-and-forget pattern (dispose →
     // shutdown() without await) meant shutdown()'s `await Promise.resolve()`
@@ -3377,6 +3443,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Mark session as inactive
     this.isSessionActive = false;
     this.isProcessingMessage = false;
+    this.backgroundTaskIds.clear();
 
     // Issue #2926: Abort any running agent loop
     if (this.abortController) {

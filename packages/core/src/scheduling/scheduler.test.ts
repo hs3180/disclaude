@@ -1224,12 +1224,7 @@ describe('Scheduler', () => {
         expect(streakMap().get('timeout-neutral')).toBe(1);
       });
 
-      it('default timeout is 2 hours — above the pool busy-turn cap so stuck turns stay countable (②)', async () => {
-        // DEFAULT_TASK_TIMEOUT_MS is deliberately larger than the agent
-        // pool's 90-min busy-turn hard cap (#4577): a genuinely stuck turn
-        // is killed by the pool cap and lands in the catch as a REAL
-        // (countable) error before this timeout fires. Pin the default so a
-        // future "just lower it" tweak can't silently re-break that order.
+      it('default timeout bounds the wait at 2 hours without cancelling the turn', async () => {
         vi.useFakeTimers();
         try {
           const task = createTask({ id: 'timeout-default-2h' }); // no timeoutMs

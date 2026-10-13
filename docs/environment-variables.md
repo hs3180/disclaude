@@ -31,3 +31,9 @@ The launchd script has deployment-specific `DISCLAUDE_LAUNCHD_*` overrides.
 Prefer its documented CLI workflow instead of setting those low-level values
 directly. `DISCLAUDE_SCHEDULE_ID`, `DISCLAUDE_SCHEDULE_NAME`, and
 `DISCLAUDE_CHAT_ID` are injected as task context, not service configuration.
+
+The service pool reclaims completed, idle sessions. Active turns, admitted or
+queued messages, and live non-ambient background tasks remain protected even
+when they have no recent SDK or tool activity. The pool does not impose turn
+duration or inactivity caps. Explicit stop/reset and service shutdown retain
+their own lifecycle handling; provider watchdogs remain separate.

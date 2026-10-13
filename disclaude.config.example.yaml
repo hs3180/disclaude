@@ -83,6 +83,9 @@ agent:
   # Default: 1
   maxConcurrentTasks: 1
 
+  # Pending turns, queued messages, and non-ambient background tasks survive
+  # idle cleanup. The pool does not impose a turn duration or inactivity cap.
+
   # Enable Claude Code Agent Teams mode
   # When enabled, the agent can spawn and coordinate multiple teammate sessions
   # for parallel work on complex tasks.

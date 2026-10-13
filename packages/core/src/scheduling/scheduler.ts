@@ -71,12 +71,9 @@ function formatTimeout(ms: number): string {
  * Issue #4649 (review ②): 5 minutes was calibrated for the OLD semantics
  * (bounding the route/queue call, which completes in well under a second);
  * applied to whole turns it falsely failed every legitimately long task.
- * The new default is deliberately ABOVE the agent pool's busy-turn hard cap
- * (90 min default, Issue #4577, wired in cli.ts): a genuinely stuck turn is
- * killed by the pool cap first and lands in the catch as a REAL error —
- * countable toward the #4648 consecutive-failure alert — while this timeout
- * only fires for turns legitimately longer than 2 hours, which are expected
- * to declare their duration via `timeoutMs` in SCHEDULE.md.
+ * Tasks expected to take longer than 2 hours can declare their wait duration
+ * via `timeoutMs` in SCHEDULE.md. Provider errors count toward the #4648
+ * consecutive-failure alert independently of this wait timeout.
  *
  * When this timeout fires the agent is NOT cancelled (the abandoned await
  * never could), so the outcome is unknown rather than failed — see the
@@ -1028,9 +1025,7 @@ ${task.prompt ?? ''}`;
         // as failure made every legitimately-long task a guaranteed ❌ and,
         // past the alert threshold, a false chronic-failure alarm. So:
         // - streak untouched (a slow task must neither mask real failures
-        //   nor fake them); genuinely stuck turns are caught earlier by the
-        //   pool's busy-turn hard cap and land here as countable REAL
-        //   errors (see DEFAULT_TASK_TIMEOUT_MS),
+        //   nor fake them); actual provider errors remain countable,
         // - the handler retains its session until the actual turn settles;
         //   this wait timeout must not dispose a turn that may still run,
         // - the notification keeps the honest wording and teaches the knob.
