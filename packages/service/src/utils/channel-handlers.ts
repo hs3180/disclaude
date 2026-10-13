@@ -93,12 +93,12 @@ export interface MessageHandlerOptions {
  * Create a ChatAgentCallbacks factory for a channel.
  *
  * Wraps channel.sendMessage() into the ChatAgentCallbacks interface.
- * The returned factory captures the channel via closure.
+ * The returned factory captures the channel and each message's explicit topic root.
  *
  * @param channel - The channel instance to send messages through
  * @param logger - Logger instance for warnings
  * @param options - Options for channel-specific behavior
- * @returns A factory function that takes a chatId and returns ChatAgentCallbacks
+ * @returns A factory function that takes a chatId and optional topic root
  *
  * @example
  * ```typescript
@@ -113,8 +113,8 @@ export function createChannelCallbacksFactory(
   channel: IChannel,
   logger: Logger,
   options?: ChannelCallbacksOptions
-): (chatId: string) => ChatAgentCallbacks {
-  return (_chatId: string): ChatAgentCallbacks => ({
+): (chatId: string, threadRootId?: string) => ChatAgentCallbacks {
+  return (_chatId: string, threadRootId?: string): ChatAgentCallbacks => ({
     ...(channel.requestAgentInput ? { requestAgentInput: channel.requestAgentInput.bind(channel) } : {}),
     ...(channel.addReaction ? {
       addReaction: channel.addReaction.bind(channel),
@@ -125,6 +125,7 @@ export function createChannelCallbacksFactory(
         type: 'text',
         text,
         threadId: parentMessageId,
+        ...(threadRootId ? { threadRootId } : {}),
       });
     },
     sendCard: async (
@@ -139,6 +140,7 @@ export function createChannelCallbacksFactory(
         card,
         description,
         threadId: parentMessageId,
+        ...(threadRootId ? { threadRootId } : {}),
       });
     },
     // eslint-disable-next-line require-await
@@ -276,7 +278,7 @@ export function createDefaultMessageHandler(
     // Issue #4587 (part 2): thread root for per-thread session keying
     const threadRootId = metadata?.threadRootId as string | undefined;
 
-    const callbacks = context.callbacks(chatId);
+    const callbacks = threadRootId ? context.callbacks(chatId, threadRootId) : context.callbacks(chatId);
     const agent = context.agentPool.getOrCreateChatAgent(chatId, callbacks, threadRootId);
 
     // Convert attachments if the channel supports them
