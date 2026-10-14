@@ -23,6 +23,29 @@ const lastConfig = (): ChatAgentConfig => vi.mocked(ChatAgent).mock.calls.at(-1)
 describe('createChatAgent', () => {
   beforeEach(() => vi.resetAllMocks());
 
+  it('uses the resolved target connection for hooks and preserves it for construction', () => {
+    const settings = {
+      agentBackend: 'dsh' as const, mode: 'minimal' as const,
+      model: 'selected-model', apiKey: 'selected-test-key',
+      apiProtocol: 'openai' as const, apiBaseUrl: 'https://selected.example/v1',
+      dshHome: '/owned-selected-home',
+    };
+    const configureChat = vi.fn((hooks: ChatAgentHooks) => hooks);
+    vi.mocked(getProvider).mockImplementation((backend, selected) => {
+      if (backend !== 'dsh' || selected !== settings) {
+        throw new Error('Unconfigured default composition was used');
+      }
+      return { configureChat } as unknown as IAgentSDKProvider;
+    });
+    const config = { ...baseConfig(), agentBackend: 'dsh' as const, settings };
+
+    createChatAgent(config);
+
+    expect(getProvider).toHaveBeenCalledExactlyOnceWith('dsh', settings);
+    expect(configureChat).toHaveBeenCalledTimes(1);
+    expect(lastConfig().settings).toBe(settings);
+  });
+
   it('uses the common provider hook and preserves the service configuration', () => {
     const callerHooks = Object.freeze<ChatAgentHooks>({
       messageBuilderOptions: { buildHeader: () => 'Channel header' },
