@@ -114,7 +114,7 @@ export interface IAgentSDKProvider {
 /**
  * Provider 工厂函数类型
  */
-export type ProviderFactory = () => IAgentSDKProvider;
+export type ProviderFactory = (settings?: BaseAgentConfig['settings']) => IAgentSDKProvider;
 
 /**
  * Provider 构造函数类型

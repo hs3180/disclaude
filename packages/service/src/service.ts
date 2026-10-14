@@ -272,8 +272,8 @@ export class DisclaudeService extends EventEmitter {
     const agentBackend = Config.AGENT_BACKEND;
     if (!agentBackend) {
       throw new Error(
-        'No agent backend configured. Set agent.agentBackend (claude, pi, codex, or deepseek) ' +
-          'or declare an agents preset.'
+        'No agent backend configured. Declare an agents entry with backend: claude, pi, codex, or dsh ' +
+          'and bind it to an llms entry.'
       );
     }
 

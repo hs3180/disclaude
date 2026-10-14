@@ -37,7 +37,11 @@ export type CodexReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhig
 
 export interface AgentConfig {
   /** Agent runtime. */
-  agentBackend?: 'claude' | 'pi' | 'codex' | 'deepseek';
+  agentBackend?: 'claude' | 'pi' | 'codex' | 'dsh';
+  /** DSH composition. Changes apply after service restart. Default: standard. */
+  mode?: 'minimal' | 'standard';
+  /** Optional isolated DSH home directory (overrides DSH_HOME). */
+  dshHome?: string;
   /**
    * Codex exec sandbox level override (Issue #4631, S4 of #4627).
    * Only meaningful when `agentBackend: 'codex'`. Unset → the normal
@@ -54,6 +58,8 @@ export interface AgentConfig {
    * with `agentBackend: 'codex'`; caps are per process.
    */
   codex?: CodexAgentGovernanceConfig;
+  /** Native DSH connection, only for the DSH backend. */
+  dsh?: DshConfig;
   /** Permission mode for SDK */
   permissionMode?: 'default' | 'bypassPermissions';
   /** Maximum concurrent tasks */
@@ -107,7 +113,6 @@ export interface AgentDefinition extends Omit<AgentConfig, 'agentBackend'> {
   backend: NonNullable<AgentConfig['agentBackend']>;
   llm: string;
   default?: boolean;
-  deepseek?: DeepSeekConfig;
 }
 
 /** Internal resolved preset shared by validation and agent construction. */
@@ -123,7 +128,6 @@ export interface AgentPreset extends AgentConfig {
   llm: string;
   reasoningEffort?: CodexReasoningEffort;
   maxConcurrentSessions?: number;
-  deepseek?: DeepSeekConfig;
 }
 export type AgentPresets = Record<string, AgentPreset>;
 
@@ -186,16 +190,12 @@ export interface FeishuConfig {
   };
 }
 
-/** DeepSeek harness configuration (developer preview; Issue #4741). */
-export interface DeepSeekConfig {
+/** DSH runtime configuration (developer preview; Issue #4741). */
+export interface DshConfig {
   /** DSH model provider route. Omit to use the selected native profile's default. */
   provider?: string;
-  /** Harness composition. Changes apply after service restart. Default: standard. */
-  mode?: 'minimal' | 'standard';
   /** Environment variable holding the native harness credential. */
   apiKeyEnv?: string;
-  /** Optional isolated dsh home directory (overrides DSH_HOME). */
-  dshHome?: string;
 }
 
 /**

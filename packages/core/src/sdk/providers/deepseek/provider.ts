@@ -68,7 +68,7 @@ function dshHome(configured: string | undefined): string {
 }
 
 export class DeepSeekHarnessProvider implements IAgentSDKProvider {
-  readonly name = 'deepseek';
+  readonly name = 'dsh';
   readonly version = '0.1.2-native';
   private readonly home: string;
   private readonly configuredHome?: string;
@@ -85,13 +85,13 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
   constructor(options: DeepSeekHarnessProviderOptions = {}) {
     const mode = options.mode ?? 'standard';
     if (mode !== 'minimal' && mode !== 'standard') {
-      throw new Error('deepseek.mode must be minimal or standard');
+      throw new Error('DSH mode must be minimal or standard');
     }
     if (options.mode !== undefined && options.args !== undefined) {
       throw new Error('Explicit dsh mode cannot be combined with custom process args');
     }
     if (options.provider !== undefined && !options.provider.trim()) {
-      throw new TypeError('deepseek.provider must be non-empty');
+      throw new TypeError('dsh.provider must be non-empty');
     }
     this.profile = mode === 'minimal' ? 'sdk-minimal' : 'sdk';
     const env = options.env ?? process.env;
@@ -117,7 +117,12 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
         this.overlay ??= createDshNativeProfileOverlay();
         return {
           cwd: state.cwd,
-          env: { ...environment, ...state.environment },
+          env: {
+            ...environment,
+            ...state.environment,
+            ...(options.apiKey === undefined ? {} : { DEEPSEEK_API_KEY: options.apiKey }),
+            DSH_HOME: this.home,
+          },
           args: [...(options.args ?? ['--profile', this.profile]), '--patch', this.overlay.path],
           onRequest: (request) => this.onRequest(state, request),
           onStderr: (data) => state.stderr?.(data),

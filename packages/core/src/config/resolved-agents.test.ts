@@ -28,6 +28,128 @@ const configuration = (): DisclaudeConfig => ({
 });
 
 describe('named runtime and LLM configuration', () => {
+  it('keeps minimal DSH settings on a named DSH agent with a Codex default', () => {
+    const config = configuration();
+    config.llms!.native = { model: 'glm-5.3' };
+    config.agents!.dsh = {
+      backend: 'dsh', llm: 'native', mode: 'minimal', dshHome: '/dsh-home',
+      dsh: { provider: 'glm-proxy', apiKeyEnv: 'DSH_TEST_KEY' },
+    };
+    expect(resolveConfiguredAgents(config)).toMatchObject({ ok: true, presets: {
+      dsh: { agentBackend: 'dsh', mode: 'minimal', dshHome: '/dsh-home', apiProtocol: undefined, dsh: config.agents!.dsh.dsh },
+    } });
+  });
+
+  it('rejects the legacy backend with migration guidance', () => {
+    const config = configuration();
+    config.llms!.native = { model: 'glm-5.3' };
+    config.agents!.dsh = { backend: 'deepseek' as never, llm: 'native' };
+    expect(resolveConfiguredAgents(config)).toEqual({ ok: false, errors: [
+      'agents.dsh.backend deepseek is unsupported; use backend: dsh',
+    ] });
+  });
+
+  it.each(['dsh', 'codex', 'pi', 'claude'] as const)(
+    'rejects a deepseek block under %s with migration guidance', backend => {
+      const config = configuration();
+      config.llms!.native = { model: 'glm-5.3' };
+      config.agents!.legacy = { backend, llm: 'native', deepseek: { mode: 'minimal' } } as never;
+      expect(resolveConfiguredAgents(config)).toEqual({ ok: false, errors: [
+        'agents.legacy.deepseek is unsupported; rename this connection block to agents.legacy.dsh, move mode to agents.legacy.mode and dshHome to agents.legacy.dshHome, and use backend: dsh',
+      ] });
+    }
+  );
+
+  it.each(['codex', 'pi', 'claude'] as const)('rejects DSH settings under %s', backend => {
+    const config = configuration();
+    config.agents!.misplaced = { backend, llm: backend === 'codex' ? 'daily' : 'proxy', dsh: { provider: 'native-route' } };
+    expect(resolveConfiguredAgents(config)).toMatchObject({ ok: false, errors: [
+      'agents.misplaced.dsh requires backend: dsh',
+    ] });
+  });
+
+  it.each(['minimal', 'standard'] as const)('accepts %s mode and home without a dsh connection block', mode => {
+    const config = configuration();
+    config.llms!.native = { model: 'glm-5.3' };
+    config.agents!.dsh = { backend: 'dsh', llm: 'native', mode, dshHome: '/selected-home' };
+    expect(resolveConfiguredAgents(config)).toMatchObject({ ok: true, presets: {
+      dsh: { agentBackend: 'dsh', mode, dshHome: '/selected-home' },
+    } });
+  });
+
+  it.each(['codex', 'pi', 'claude'] as const)('rejects unsupported mode on %s', backend => {
+    const config = configuration();
+    config.agents!.misplaced = { backend, llm: backend === 'codex' ? 'daily' : 'proxy', mode: 'minimal' };
+    expect(resolveConfiguredAgents(config)).toEqual({ ok: false, errors: [
+      'agents.misplaced.mode requires backend: dsh',
+    ] });
+  });
+
+  it.each([null, false, 42, '', 'typo', {}])('rejects malformed mode (%j)', mode => {
+    const config = configuration();
+    config.llms!.native = { model: 'glm-5.3' };
+    config.agents!.dsh = { backend: 'dsh', llm: 'native', mode: mode as never };
+    expect(resolveConfiguredAgents(config)).toEqual({ ok: false, errors: [
+      'agents.dsh.mode must be minimal or standard',
+    ] });
+  });
+
+  it.each([undefined, 'standard'] as const)('rejects nested mode with migration guidance (flat mode: %s)', mode => {
+    const config = configuration();
+    config.llms!.native = { model: 'glm-5.3' };
+    config.agents!.dsh = {
+      backend: 'dsh', llm: 'native', mode,
+      dsh: { mode: 'minimal' } as never,
+    };
+    expect(resolveConfiguredAgents(config)).toEqual({ ok: false, errors: [
+      'agents.dsh.dsh.mode is unsupported; move mode to agents.dsh.mode',
+    ] });
+  });
+
+  it.each(['codex', 'pi', 'claude'] as const)('rejects unsupported dshHome on %s', backend => {
+    const config = configuration();
+    config.agents!.misplaced = { backend, llm: backend === 'codex' ? 'daily' : 'proxy', dshHome: '/selected-home' };
+    expect(resolveConfiguredAgents(config)).toEqual({ ok: false, errors: [
+      'agents.misplaced.dshHome requires backend: dsh',
+    ] });
+  });
+
+  it.each([null, false, 42, '', '   ', {}])('rejects malformed dshHome (%j)', dshHome => {
+    const config = configuration();
+    config.llms!.native = { model: 'glm-5.3' };
+    config.agents!.dsh = { backend: 'dsh', llm: 'native', dshHome: dshHome as never };
+    expect(resolveConfiguredAgents(config)).toEqual({ ok: false, errors: [
+      'agents.dsh.dshHome must be a non-empty string',
+    ] });
+  });
+
+  it.each([undefined, '/selected-home'])('rejects nested home with migration guidance (flat home: %s)', dshHome => {
+    const config = configuration();
+    config.llms!.native = { model: 'glm-5.3' };
+    config.agents!.dsh = {
+      backend: 'dsh', llm: 'native', dshHome,
+      dsh: { dshHome: '/legacy-home' } as never,
+    };
+    expect(resolveConfiguredAgents(config)).toEqual({ ok: false, errors: [
+      'agents.dsh.dsh.dshHome is unsupported; move dshHome to agents.dsh.dshHome',
+    ] });
+  });
+
+  it.each([
+    null,
+    'minimal',
+    { mode: 'typo' },
+    { provider: '' },
+    { dshHome: 42 },
+    { apiKeyEnv: '$DSH_TEST_KEY' },
+    { ignoredSetting: true },
+  ])('rejects malformed or ignored DSH settings (%j)', dsh => {
+    const config = configuration();
+    config.llms!.native = { model: 'glm-5.3' };
+    config.agents!.dsh = { backend: 'dsh', llm: 'native', dsh: dsh as never };
+    expect(resolveConfiguredAgents(config).ok).toBe(false);
+  });
+
   it('resolves model vendors through API formats and independently binds native agents', () => {
     vi.stubEnv('PROXY_KEY', 'proxy-secret');
     const result = resolveConfiguredAgents(configuration());

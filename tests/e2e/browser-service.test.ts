@@ -262,18 +262,18 @@ describe('user starts Disclaude and coordinates an already deployed browser', ()
         if (attempt === 0) {
           let previous = 'handoff';
           const backends = [
-            ...(process.env.DISCLAUDE_E2E_BROWSER_MODEL ? ['deepseek'] : []),
+            ...(process.env.DISCLAUDE_E2E_BROWSER_MODEL ? ['dsh'] : []),
             ...(process.env.DISCLAUDE_E2E_BROWSER_CODEX === '1' ? ['codex'] : []),
             ...(process.env.DISCLAUDE_E2E_BROWSER_CLAUDE_MODEL ? ['claude'] : []),
             ...(process.env.DISCLAUDE_E2E_BROWSER_PI_MODEL ? ['pi'] : []),
           ];
           for (const backend of backends) {
             const naturalTask = backend === 'codex' && process.env.DISCLAUDE_E2E_BROWSER_NATURAL === '1';
-            if (backend === 'deepseek') {
+            if (backend === 'dsh') {
               expect(process.env.DEEPSEEK_API_KEY).toBeTruthy();
               await mkdir(join(root, 'dsh-home'), { mode: 0o700 });
             }
-            const provider = backend === 'deepseek'
+            const provider = backend === 'dsh'
               ? new DeepSeekHarnessProvider({ env: taskEnv, dshHome: join(root, 'dsh-home') })
               : backend === 'codex' ? new CodexAgentProvider({
                 env: taskEnv,
@@ -291,7 +291,7 @@ describe('user starts Disclaude and coordinates an already deployed browser', ()
               const quotedScript = "'" + script.replaceAll("'", "'\\''") + "'";
               yield { role: 'user' as const, content: `Use your Bash/shell tool to run exactly this command:\nprintf '%s' ${quotedScript} | browser-use\nThen report the value. The shared page is already open. Do not invoke skills, search files, discover other tools, launch another browser, use direct CDP, delegate, or modify unrelated files.` };
             }
-            const model = backend === 'deepseek' ? process.env.DISCLAUDE_E2E_BROWSER_MODEL
+            const model = backend === 'dsh' ? process.env.DISCLAUDE_E2E_BROWSER_MODEL
               : backend === 'claude' ? process.env.DISCLAUDE_E2E_BROWSER_CLAUDE_MODEL
                 : backend === 'pi' ? process.env.DISCLAUDE_E2E_BROWSER_PI_MODEL
                   : codexAcceptanceModel;
@@ -315,7 +315,7 @@ describe('user starts Disclaude and coordinates an already deployed browser', ()
               } else {
                 expect(messages.some(message => message.type === 'tool_result' && message.content.includes(`PREVIOUS:${previous}`))).toBe(true);
               }
-              if (backend === 'deepseek') { expect(result?.metadata?.stopReason).toBe('completed'); }
+              if (backend === 'dsh') { expect(result?.metadata?.stopReason).toBe('completed'); }
               expect(await run("print(js(\"document.querySelector('#value').value\"))\n")).toContain(marker);
               console.info('BROWSER_MODEL_HANDOFF', JSON.stringify({ backend, naturalTask, previousStateVerified: true, independentReadback: true }));
               previous = marker;
