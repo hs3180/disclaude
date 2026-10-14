@@ -12,38 +12,53 @@ describe('preset switching with real configuration and providers', () => {
     const root = mkdtempSync(join(tmpdir(), 'disclaude-preset-config-'));
     try {
       const configPath = join(root, 'config.yaml');
-      writeFileSync(configPath, JSON.stringify({
-        workspace: { dir: root },
-        logging: { level: 'silent' },
-        agents: {
-          native: {
-            backend, llm: 'native', default: true,
-            ...(backend === 'dsh' ? { mode: 'minimal', dshHome: join(root, 'dsh-home'), dsh: {
-              provider: 'native-test-route',
-              apiKeyEnv: 'DISCLAUDE_NATIVE_CONFIG_TEST_KEY',
-            } } : {}),
+      writeFileSync(
+        configPath,
+        JSON.stringify({
+          workspace: { dir: root },
+          logging: { level: 'silent' },
+          agents: {
+            native: {
+              backend,
+              llm: 'native',
+              default: true,
+              ...(backend === 'dsh' ? { mode: 'minimal', dshHome: join(root, 'dsh-home') } : {}),
+            },
+            proxy: { backend: 'claude', llm: 'proxy' },
+            direct: { backend: 'claude', llm: 'direct' },
+            missing: { backend: 'claude', llm: 'missing' },
           },
-          proxy: { backend: 'claude', llm: 'proxy' },
-          direct: { backend: 'claude', llm: 'direct' },
-          missing: { backend: 'claude', llm: 'missing' },
-        },
-        llms: {
-          native: { model: backend === 'codex' ? 'gpt-6-luna' : 'native-model', reasoningEffort: 'max', maxConcurrentSessions: 3 },
-          proxy: {
-            model: 'glm-5.3',
-            api: { protocol: 'anthropic', baseUrl: 'http://127.0.0.1:1', apiKey: '$PROXY_KEY' },
+          llms: {
+            native: {
+              model: backend === 'codex' ? 'gpt-6-luna' : 'native-model',
+              reasoningEffort: 'max',
+              maxConcurrentSessions: 3,
+              ...(backend === 'dsh'
+                ? {
+                    api: {
+                      protocol: 'openai',
+                      baseUrl: 'https://dsh.example/v1',
+                      apiKey: '$DISCLAUDE_NATIVE_CONFIG_TEST_KEY',
+                    },
+                  }
+                : {}),
+            },
+            proxy: {
+              model: 'glm-5.3',
+              api: { protocol: 'anthropic', baseUrl: 'http://127.0.0.1:1', apiKey: '$PROXY_KEY' },
+            },
+            direct: {
+              model: 'sonnet',
+              api: { protocol: 'anthropic', baseUrl: 'http://127.0.0.1:2', apiKey: '$DIRECT_KEY' },
+            },
+            missing: {
+              model: 'missing-model',
+              api: { protocol: 'anthropic', apiKey: '$MISSING_KEY' },
+            },
           },
-          direct: {
-            model: 'sonnet',
-            api: { protocol: 'anthropic', baseUrl: 'http://127.0.0.1:2', apiKey: '$DIRECT_KEY' },
-          },
-          missing: {
-            model: 'missing-model',
-            api: { protocol: 'anthropic', apiKey: '$MISSING_KEY' },
-          },
-        },
-        env: { DISCLAUDE_NATIVE_CONFIG_TEST_KEY: 'selected-native-test-key' },
-      }));
+          env: { DISCLAUDE_NATIVE_CONFIG_TEST_KEY: 'selected-native-test-key' },
+        })
+      );
       const script = `
         import assert from 'node:assert/strict';
         import { Config, getProvider } from './packages/core/dist/index.js';
@@ -56,14 +71,15 @@ describe('preset switching with real configuration and providers', () => {
             const preset = Config.getAgentPresets().native;
             assert.equal(preset.mode, 'minimal');
             assert.equal(Config.DSH_MODE, 'minimal');
-            assert.equal(Config.DSH_PROVIDER, 'native-test-route');
             assert.equal(Config.DSH_HOME, preset.dshHome);
-            assert.equal(Config.DSH_API_KEY, 'selected-native-test-key');
+            assert.equal(preset.apiProtocol, 'openai');
+            assert.equal(preset.apiBaseUrl, 'https://dsh.example/v1');
+            assert.equal(preset.apiKey, 'selected-native-test-key');
             assert.equal(getProvider('dsh').name, 'dsh');
             assert.equal(getProvider('dsh'), getProvider('dsh', preset));
           }
           const original = pool.getOrCreateChatAgent('test-chat', callbacks);
-          assert.equal(Config.getAgentConfig().apiKey, '');
+          assert.equal(Config.getAgentConfig().apiKey, Config.AGENT_BACKEND === 'dsh' ? 'selected-native-test-key' : '');
           assert.equal(Config.getAgentConfig().reasoningEffort, 'max');
           assert.equal(Config.getAgentConfig().maxConcurrentSessions, 3);
           assert.equal(Config.getAgentConfig().llm, 'native');
@@ -94,7 +110,17 @@ describe('preset switching with real configuration and providers', () => {
       `;
       const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
         cwd: repo,
-        env: { ...process.env, DISCLAUDE_CONFIG_PATH: configPath, ANTHROPIC_MODEL: '', CODEX_MODEL: '', CODEX_REASONING_EFFORT: '', PROXY_KEY: 'selected-proxy-key', DIRECT_KEY: 'selected-direct-key', MISSING_KEY: '', LOG_LEVEL: 'silent' },
+        env: {
+          ...process.env,
+          DISCLAUDE_CONFIG_PATH: configPath,
+          ANTHROPIC_MODEL: '',
+          CODEX_MODEL: '',
+          CODEX_REASONING_EFFORT: '',
+          PROXY_KEY: 'selected-proxy-key',
+          DIRECT_KEY: 'selected-direct-key',
+          MISSING_KEY: '',
+          LOG_LEVEL: 'silent',
+        },
         encoding: 'utf8',
         timeout: 10_000,
       });
@@ -102,6 +128,8 @@ describe('preset switching with real configuration and providers', () => {
       expect(result.signal).toBeNull();
       expect(result.status).toBe(0);
       expect(result.stdout).toContain('target-config-and-session-preservation: passed');
-    } finally { rmSync(root, { recursive: true, force: true }); }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

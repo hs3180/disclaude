@@ -9,12 +9,16 @@ backend and composition independently of the model vendor:
 agents:
   default:
     backend: dsh
-    llm: native
+    llm: glm-openai
     mode: minimal
     dshHome: /absolute/path/to/isolated-dsh-home
 llms:
-  native:
-    model: your-supported-model
+  glm-openai:
+    model: glm-5.3
+    api:
+      protocol: openai
+      baseUrl: https://your-openai-compatible-api.example/v1
+      apiKey: $GLM_API_KEY
 ```
 
 `agents.<name>.mode` accepts `standard` (default) or `minimal` for `backend: dsh`. Restart the service
@@ -22,29 +26,36 @@ when changing it; existing tasks are not switched in place. Each provider owns
 its own process pool and selects one profile for its lifetime.
 Set the native home directly with `agents.<name>.dshHome`; it overrides `DSH_HOME`.
 Omission uses `DSH_HOME`, then the native runtime's default home. Named DSH agents
-use their own mode and home even when Codex is the default agent. The optional
-`dsh` block holds only provider and credential options. Other backends reject
-the DSH mode, home and connection settings.
-Equivalent DSH connections share a provider; different modes, routes, homes or
-credentials use separate providers. Switching and resetting a named agent use
+use their own mode and home even when Codex is the default agent. API settings
+belong only in the bound LLM: `api.protocol`, `api.baseUrl`, and `api.apiKey` as a
+credential reference. OpenAI means Chat Completions; Anthropic means Messages.
+The agent has no nested `dsh` connection block. Other backends reject DSH mode and home.
+Equivalent DSH connections share a provider; different modes, homes, protocols,
+endpoints, models or credentials use separate providers. Switching and resetting a named agent use
 the same selected connection as its queries.
 
-`backend: deepseek` and an agent's `deepseek` block are rejected. Use `backend: dsh`,
-move composition and home to `agents.<name>.mode` and `agents.<name>.dshHome`, and
-provider/credential settings to `agents.<name>.dsh` before restarting. Nested
-`dsh.mode` and `dsh.dshHome` are rejected with guidance to move them to the agent level.
+`backend: deepseek`, `agents.<name>.deepseek`, and `agents.<name>.dsh` are rejected.
+Use `backend: dsh`, put composition and home directly on the agent, and move the
+native connection's protocol, URL and credential reference to `llms.<name>.api`
+before restarting. A model-only DSH binding is rejected; a missing selected key
+fails preflight instead of falling back to a native account or another provider.
 
-| Mode | Official SDK profile | Intended composition |
-| --- | --- | --- |
-| `standard` | `sdk` | Base-backed SDK environment with the standard tools and supporting services. |
-| `minimal` | `sdk-minimal` | Standalone minimal SDK environment; reduced model-facing tools and runtime context. |
+The host registers the bound API route in a temporary patch, augmenting an existing
+API adapter with an explicit entry id or loading the optional pinned adapter once.
+The configured home/profile files stay untouched; only a credential variable name
+enters the patch. The resolved key is projected into the owned child process.
+
+| Mode       | Official SDK profile | Intended composition                                                                |
+| ---------- | -------------------- | ----------------------------------------------------------------------------------- |
+| `standard` | `sdk`                | Base-backed SDK environment with the standard tools and supporting services.        |
+| `minimal`  | `sdk-minimal`        | Standalone minimal SDK environment; reduced model-facing tools and runtime context. |
 
 These are SDK profiles served over JSON-RPC, not the interactive Web/TUI presets.
 The installed dsh version and any user profile patches determine the effective
 plugin/tool set. Selecting minimal does not uninstall global packages or rewrite
 existing user profiles. It also does not guarantee higher quality for every task.
 The upstream SDK-minimal defaults omit managed credentials, skill discovery and
-compaction; supply credentials through `agents.<name>.dsh.apiKeyEnv` / `DEEPSEEK_API_KEY` and
+compaction; supply API credentials through the bound LLM's `api.apiKey` reference and
 check the capabilities of your installed version before using long-running tasks.
 
 An unsupported profile fails with its profile name and startup/protocol error;
