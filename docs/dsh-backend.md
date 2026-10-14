@@ -20,6 +20,11 @@ llms:
 `agents.<name>.deepseek.mode` accepts `standard` (default) or `minimal`. Restart the service
 when changing it; existing tasks are not switched in place. Each provider owns
 its own process pool and selects one profile for its lifetime.
+Named DSH agents use their own `deepseek` settings even when Codex is the default
+agent. Keep this block only under `backend: deepseek`; other backends reject it.
+Equivalent DSH connections share a provider; different modes, routes, homes or
+credentials use separate providers. Switching and resetting a named agent use
+the same selected connection as its queries.
 
 | Mode | Official SDK profile | Intended composition |
 | --- | --- | --- |

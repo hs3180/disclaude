@@ -117,7 +117,12 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
         this.overlay ??= createDshNativeProfileOverlay();
         return {
           cwd: state.cwd,
-          env: { ...environment, ...state.environment },
+          env: {
+            ...environment,
+            ...state.environment,
+            ...(options.apiKey === undefined ? {} : { DEEPSEEK_API_KEY: options.apiKey }),
+            DSH_HOME: this.home,
+          },
           args: [...(options.args ?? ['--profile', this.profile]), '--patch', this.overlay.path],
           onRequest: (request) => this.onRequest(state, request),
           onStderr: (data) => state.stderr?.(data),

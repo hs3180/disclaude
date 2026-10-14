@@ -230,11 +230,33 @@ export function resolveConfiguredAgents(
         }
       }
     }
-    if (
-      agent.deepseek?.mode !== undefined &&
-      !['minimal', 'standard'].includes(agent.deepseek.mode)
-    ) {
-      errors.push(`${field}.deepseek.mode must be minimal or standard`);
+    if (agent.deepseek !== undefined) {
+      if (agent.backend !== 'deepseek') {
+        errors.push(`${field}.deepseek requires backend: deepseek`);
+      }
+      if (!mapping(agent.deepseek)) {
+        errors.push(`${field}.deepseek must be a mapping`);
+        continue;
+      }
+      for (const key of Object.keys(agent.deepseek)) {
+        if (!['mode', 'provider', 'apiKeyEnv', 'dshHome'].includes(key)) {
+          errors.push(`${field}.deepseek.${key} is unsupported`);
+        }
+      }
+      if (agent.deepseek.mode !== undefined &&
+          (typeof agent.deepseek.mode !== 'string' || !['minimal', 'standard'].includes(agent.deepseek.mode))) {
+        errors.push(`${field}.deepseek.mode must be minimal or standard`);
+      }
+      for (const key of ['provider', 'dshHome'] as const) {
+        const value = agent.deepseek[key];
+        if (value !== undefined && (typeof value !== 'string' || !value.trim())) {
+          errors.push(`${field}.deepseek.${key} must be a non-empty string`);
+        }
+      }
+      if (agent.deepseek.apiKeyEnv !== undefined &&
+          (typeof agent.deepseek.apiKeyEnv !== 'string' || !ENV_NAME.test(agent.deepseek.apiKeyEnv))) {
+        errors.push(`${field}.deepseek.apiKeyEnv must be an environment variable name`);
+      }
     }
     const llm = llms[agent.llm];
     if (!llm || typeof llm !== 'object') {

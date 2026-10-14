@@ -6,19 +6,54 @@
  */
 
 import type { IAgentSDKProvider, ProviderFactory, ProviderConstructor } from './interface.js';
+import { createHash } from 'node:crypto';
 import type { ProviderInfo } from './types.js';
+import type { DeepSeekHarnessProviderOptions } from './providers/deepseek/provider.js';
 import {
   ClaudeSDKProvider,
   PiAgentProvider,
   CodexAgentProvider,
   DeepSeekHarnessProvider,
 } from './providers/index.js';
-import { Config } from '../config/index.js';
+import { Config, type AgentConfig } from '../config/index.js';
 
 /**
  * 已注册的 Provider 类型
  */
 export type ProviderType = 'claude' | 'pi' | 'codex' | string;
+
+function deepseekOptions(settings?: AgentConfig): DeepSeekHarnessProviderOptions {
+  if (settings === undefined) {
+    return {
+      provider: Config.DSH_PROVIDER,
+      apiKey: Config.DEEPSEEK_API_KEY,
+      dshHome: Config.DSH_HOME || undefined,
+      mode: Config.DSH_MODE,
+    };
+  }
+  const native = settings.deepseek;
+  const keyEnv = native?.apiKeyEnv ?? 'DEEPSEEK_API_KEY';
+  return {
+    mode: native?.mode ?? 'standard',
+    provider: native?.provider,
+    dshHome: native?.dshHome || process.env.DSH_HOME || undefined,
+    apiKey: process.env[keyEnv] ?? Config.getGlobalEnv()[keyEnv] ?? '',
+  };
+}
+
+function providerCacheKey(type: ProviderType, settings?: AgentConfig): string {
+  if (type !== 'deepseek') {
+    return 'default';
+  }
+  const options = deepseekOptions(settings);
+  return JSON.stringify({
+    mode: options.mode ?? 'standard',
+    provider: options.provider,
+    dshHome: options.dshHome ?? process.env.DSH_HOME,
+    // Keep credential values out of cache identifiers.
+    credential: createHash('sha256').update(options.apiKey ?? '').digest('hex'),
+  });
+}
 
 /**
  * Provider 注册表
@@ -44,12 +79,7 @@ const providerRegistry = new Map<ProviderType, ProviderFactory>([
         reasoningEffortSource: Config.CODEX_REASONING_EFFORT_SOURCE,
       }),
   ],
-  ['deepseek', () => new DeepSeekHarnessProvider({
-    provider: Config.DSH_PROVIDER,
-    apiKey: Config.DEEPSEEK_API_KEY,
-    dshHome: Config.DSH_HOME,
-    mode: Config.DSH_MODE,
-  })],
+  ['deepseek', settings => new DeepSeekHarnessProvider(deepseekOptions(settings))],
 ]);
 
 /**
@@ -60,7 +90,7 @@ let defaultProviderType: ProviderType = 'claude';
 /**
  * 缓存的 Provider 实例
  */
-const providerCache = new Map<ProviderType, IAgentSDKProvider>();
+const providerCache = new Map<ProviderType, Map<string, IAgentSDKProvider>>();
 
 /**
  * 获取 Provider 实例
@@ -71,14 +101,15 @@ const providerCache = new Map<ProviderType, IAgentSDKProvider>();
  * @returns Provider 实例
  * @throws 如果 Provider 类型未注册
  */
-export function getProvider(type?: ProviderType): IAgentSDKProvider {
+export function getProvider(type?: ProviderType, settings?: AgentConfig): IAgentSDKProvider {
   const providerType = type ?? defaultProviderType;
 
   // Issue #4224: builtin skills/agents are now discovered in place via the
   // local-plugin option wired in adaptOptions() — no copy-on-start here.
 
   // 检查缓存
-  const cached = providerCache.get(providerType);
+  const cacheKey = providerCacheKey(providerType, settings);
+  const cached = providerCache.get(providerType)?.get(cacheKey);
   if (cached) {
     return cached;
   }
@@ -92,8 +123,10 @@ export function getProvider(type?: ProviderType): IAgentSDKProvider {
   }
 
   // 创建并缓存实例
-  const provider = factory();
-  providerCache.set(providerType, provider);
+  const provider = factory(settings);
+  const instances = providerCache.get(providerType) ?? new Map<string, IAgentSDKProvider>();
+  instances.set(cacheKey, provider);
+  providerCache.set(providerType, instances);
 
   return provider;
 }

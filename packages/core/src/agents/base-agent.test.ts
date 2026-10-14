@@ -119,6 +119,16 @@ describe('BaseAgent', () => {
     expect(mockGetProvider).toHaveBeenLastCalledWith('pi');
   });
 
+  it('passes the selected native DSH preset into provider construction', () => {
+    const settings = {
+      agentBackend: 'deepseek' as const,
+      llm: 'glm-native', model: 'glm-5.3', apiKey: '',
+      deepseek: { mode: 'minimal' as const, provider: 'glm-proxy', dshHome: '/named-home' },
+    };
+    new TestAgent({ ...config, ...settings, settings });
+    expect(mockGetProvider).toHaveBeenLastCalledWith('deepseek', settings);
+  });
+
   it('omits Claude-only runtime options for deepseek', () => {
     const deepseek = new TestAgent({ ...config, agentBackend: 'deepseek' });
     const options = deepseek.testCreateSdkOptions();

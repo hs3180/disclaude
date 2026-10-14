@@ -54,6 +54,8 @@ export interface AgentConfig {
    * with `agentBackend: 'codex'`; caps are per process.
    */
   codex?: CodexAgentGovernanceConfig;
+  /** Native DSH composition and connection, only for the DeepSeek backend. */
+  deepseek?: DeepSeekConfig;
   /** Permission mode for SDK */
   permissionMode?: 'default' | 'bypassPermissions';
   /** Maximum concurrent tasks */
@@ -107,7 +109,6 @@ export interface AgentDefinition extends Omit<AgentConfig, 'agentBackend'> {
   backend: NonNullable<AgentConfig['agentBackend']>;
   llm: string;
   default?: boolean;
-  deepseek?: DeepSeekConfig;
 }
 
 /** Internal resolved preset shared by validation and agent construction. */
@@ -123,7 +124,6 @@ export interface AgentPreset extends AgentConfig {
   llm: string;
   reasoningEffort?: CodexReasoningEffort;
   maxConcurrentSessions?: number;
-  deepseek?: DeepSeekConfig;
 }
 export type AgentPresets = Record<string, AgentPreset>;
 

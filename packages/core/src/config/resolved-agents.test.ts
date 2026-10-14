@@ -28,6 +28,41 @@ const configuration = (): DisclaudeConfig => ({
 });
 
 describe('named runtime and LLM configuration', () => {
+  it('keeps minimal DSH settings on a named DSH agent with a Codex default', () => {
+    const config = configuration();
+    config.llms!.native = { model: 'glm-5.3' };
+    config.agents!.dsh = {
+      backend: 'deepseek', llm: 'native',
+      deepseek: { mode: 'minimal', provider: 'glm-proxy', apiKeyEnv: 'DSH_TEST_KEY', dshHome: '/dsh-home' },
+    };
+    expect(resolveConfiguredAgents(config)).toMatchObject({ ok: true, presets: {
+      dsh: { deepseek: config.agents!.dsh.deepseek },
+    } });
+  });
+
+  it.each(['codex', 'pi', 'claude'] as const)('rejects DSH settings under %s', backend => {
+    const config = configuration();
+    config.agents!.misplaced = { backend, llm: backend === 'codex' ? 'daily' : 'proxy', deepseek: { mode: 'minimal' } };
+    expect(resolveConfiguredAgents(config)).toMatchObject({ ok: false, errors: [
+      'agents.misplaced.deepseek requires backend: deepseek',
+    ] });
+  });
+
+  it.each([
+    null,
+    'minimal',
+    { mode: 'typo' },
+    { provider: '' },
+    { dshHome: 42 },
+    { apiKeyEnv: '$DSH_TEST_KEY' },
+    { ignoredSetting: true },
+  ])('rejects malformed or ignored DSH settings (%j)', deepseek => {
+    const config = configuration();
+    config.llms!.native = { model: 'glm-5.3' };
+    config.agents!.dsh = { backend: 'deepseek', llm: 'native', deepseek: deepseek as never };
+    expect(resolveConfiguredAgents(config).ok).toBe(false);
+  });
+
   it('resolves model vendors through API formats and independently binds native agents', () => {
     vi.stubEnv('PROXY_KEY', 'proxy-secret');
     const result = resolveConfiguredAgents(configuration());
