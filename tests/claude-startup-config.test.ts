@@ -17,16 +17,12 @@ describe('Claude startup with real YAML configuration (offline)', () => {
       const dir = mkdtempSync(join(tmpdir(), 'disclaude-claude-config-'));
       fixtures.push(dir);
       const config = join(dir, 'config.yaml');
-      const apiProvider = provider === 'missing' ? 'anthropic' : provider;
-      const model = apiProvider === 'glm' ? 'glm-5' : 'claude-sonnet-4';
-      writeFileSync(
-        config,
-        [
-          `workspace:\n  dir: ${JSON.stringify(dir)}`,
-          `agent:\n  agentBackend: claude\n  provider: ${apiProvider}\n  model: ${model}`,
-          `${apiProvider}:\n  apiKey: ${provider === 'missing' ? '""' : 'offline-placeholder'}\n  model: ${model}\n  apiBaseUrl: http://127.0.0.1:1`,
-        ].join('\n')
-      );
+      const model = provider === 'glm' ? 'glm-5.3' : 'claude-sonnet-4';
+      writeFileSync(config, JSON.stringify({
+        workspace: { dir },
+        agents: { default: { backend: 'claude', llm: 'test' } },
+        llms: { test: { model, api: { protocol: 'anthropic', baseUrl: 'http://127.0.0.1:1', apiKey: '$SMOKE_API_KEY' } } },
+      }));
       const entry = pathToFileURL(resolve('packages/service/dist/service.js')).href;
       const result = spawnSync(
         process.execPath,
@@ -57,7 +53,7 @@ describe('Claude startup with real YAML configuration (offline)', () => {
             BU_CDP_URL: '',
             DISCLAUDE_CHROMIUM_CONFIG: join(dir, 'missing-chromium-cdp.json'),
             ANTHROPIC_API_KEY: '',
-            GLM_API_KEY: '',
+            SMOKE_API_KEY: provider === 'missing' ? '' : 'offline-placeholder',
             DISCLAUDE_CONFIG_PATH: config,
           },
           encoding: 'utf8',

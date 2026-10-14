@@ -31,10 +31,8 @@ import {
   Config,
   createLogger,
   type BaseAgentConfig,
-  type AgentProvider,
   type SchedulerCallbacks,
   type MessageBuilderOptions,
-  type ModelTier,
   type CwdProvider,
   type CwdResolution,
   type AgentPreset,
@@ -88,7 +86,7 @@ export function toChatAgentCallbacks(callbacks: SchedulerCallbacks): ChatAgentCa
  * Options for creating agents with custom configuration.
  * Uses unified configuration structure (Issue #327).
  */
-export interface AgentCreateOptions {
+export interface AgentCreateOptions extends Partial<BaseAgentConfig> {
   /** Agent SDK runtime override (normally supplied by a named preset). */
   agentBackend?: AgentPreset['agentBackend'];
   /** Native provider identity; defaults to the delivery chat ID. */
@@ -97,14 +95,6 @@ export interface AgentCreateOptions {
   apiKey?: string;
   /** Override model */
   model?: string;
-  /**
-   * Model tier for tier-based model resolution (Issue #3059).
-   * Resolved to a model name via Config.getModelForTier().
-   * Ignored when `model` is explicitly set.
-   */
-  modelTier?: ModelTier;
-  /** Override API provider */
-  provider?: AgentProvider;
   /** Override API base URL */
   apiBaseUrl?: string;
   /** Override permission mode */
@@ -151,40 +141,20 @@ export class AgentFactory {
    * @param options - Optional configuration overrides
    * @returns BaseAgentConfig with merged configuration
    */
-  private static getBaseConfig(options: AgentCreateOptions = {}): BaseAgentConfig {
-    const defaultConfig = Config.getAgentConfig();
-
-    // Issue #3059: Model resolution priority:
-    // 1. Explicit model override (options.model) — highest priority
-    // 2. Tier-specific model (resolved from options.modelTier via Config.getModelForTier())
-    // 3. Default model (from Config.getAgentConfig())
-    let resolvedModel: string;
-    if (options.model) {
-      resolvedModel = options.model;
-    } else if (options.modelTier) {
-      const tierModel = Config.getModelForTier(options.modelTier);
-      resolvedModel = tierModel ?? defaultConfig.model;
-    } else {
-      resolvedModel = defaultConfig.model;
+  static resolveConfig(options: AgentCreateOptions = {}): BaseAgentConfig {
+    const completeSelection = options.agentBackend !== undefined && options.apiKey !== undefined && options.model !== undefined;
+    let defaultConfig: BaseAgentConfig = completeSelection
+      ? { apiKey: '', model: '' } : Config.getAgentConfig();
+    if (options.agentBackend && options.agentBackend !== (defaultConfig.agentBackend ?? Config.AGENT_BACKEND)) {
+      defaultConfig = { apiKey: '', model: '', agentBackend: options.agentBackend };
     }
 
-    // A Codex/dsh default has no Anthropic key in getAgentConfig(). A named
-    // Claude/pi selection must resolve credentials from its API service rather
-    // than inherit the default runtime's deliberately empty key.
-    const provider = options.provider ?? defaultConfig.provider;
-    const selectingApiBackend = options.agentBackend === 'claude' || options.agentBackend === 'pi';
-    const defaultHasNativeAuth = Config.AGENT_BACKEND === 'codex' || Config.AGENT_BACKEND === 'deepseek';
-    const apiKey = selectingApiBackend && defaultHasNativeAuth
-      ? (provider === 'glm' ? Config.GLM_API_KEY : Config.ANTHROPIC_API_KEY)
-      : defaultConfig.apiKey;
-
     return {
-      apiKey: options.apiKey ?? apiKey,
-      model: resolvedModel,
-      provider,
-      apiBaseUrl: options.apiBaseUrl ?? defaultConfig.apiBaseUrl,
-      permissionMode: options.permissionMode ?? 'bypassPermissions',
-      agentBackend: options.agentBackend,
+      ...defaultConfig,
+      ...options,
+      apiKey: options.apiKey ?? defaultConfig.apiKey,
+      model: options.model ?? defaultConfig.model,
+      permissionMode: options.permissionMode ?? defaultConfig.permissionMode ?? 'bypassPermissions',
     };
   }
 
@@ -250,7 +220,7 @@ export class AgentFactory {
         );
       }
 
-      const baseConfig = this.getBaseConfig(options);
+      const baseConfig = this.resolveConfig(options);
       const config: ChatAgentConfig = {
         ...baseConfig,
         chatId,
@@ -299,7 +269,7 @@ export class AgentFactory {
     callbacks: ChatAgentCallbacks,
     options: AgentCreateOptions = {}
   ): ChatAgent {
-    const baseConfig = this.getBaseConfig(options);
+    const baseConfig = this.resolveConfig(options);
 
     // Issue #4448 (direction #4): `cwdProvider` is optional, but omitting it
     // silently runs the agent in the workspace cwd, ignoring any `/project`

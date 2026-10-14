@@ -16,6 +16,7 @@
  * @module agents/types
  */
 
+import type { ApiProtocol, AgentConfig as AgentSettings } from '../config/types.js';
 import type { AgentMessage } from '../types/index.js';
 import type { UserMessageParams } from '../messaging/message-router.js';
 
@@ -258,11 +259,6 @@ export function isDisposable(obj: unknown): obj is Disposable {
 // ============================================================================
 
 /**
- * API provider type.
- */
-export type AgentProvider = 'anthropic' | 'glm';
-
-/**
  * Base configuration for all agents.
  *
  * This is the unified configuration interface that all agents use.
@@ -273,7 +269,7 @@ export type AgentProvider = 'anthropic' | 'glm';
  * const config: BaseAgentConfig = {
  *   apiKey: 'sk-...',
  *   model: 'claude-3-5-sonnet-20241022',
- *   provider: 'anthropic',
+ *   apiProtocol: 'anthropic',
  * };
  * ```
  */
@@ -282,9 +278,16 @@ export interface BaseAgentConfig {
   apiKey: string;
   /** Model identifier */
   model: string;
-  /** API provider (anthropic or glm) */
-  provider?: AgentProvider;
-  /** Optional API base URL (e.g., for GLM) */
+  /** Bound LLM identity and its native model settings. */
+  llm?: string;
+  reasoningEffort?: string;
+  maxConcurrentSessions?: number;
+  /** API wire format of the selected LLM. */
+  apiProtocol?: ApiProtocol;
+  env?: Record<string, string>;
+  credentialEnvKeys?: string[];
+  settings?: AgentSettings;
+  /** Optional API base URL for a compatible endpoint */
   apiBaseUrl?: string;
   /** Permission mode for tool execution */
   permissionMode?: 'default' | 'bypassPermissions';
@@ -303,7 +306,7 @@ export interface BaseAgentConfig {
  * const config: ChatAgentConfig = {
  *   apiKey: 'sk-...',
  *   model: 'claude-3-5-sonnet-20241022',
- *   provider: 'anthropic',
+ *   apiProtocol: 'anthropic',
  *   callbacks: {
  *     sendMessage: async (chatId, text) => { ... },
  *     sendCard: async (chatId, card) => { ... },
@@ -376,7 +379,7 @@ export interface AgentRuntimeContext {
   /** Get the workspace directory path */
   getWorkspaceDir(): string;
   /** Get agent configuration (API key, model, provider) */
-  getAgentConfig(): { apiKey: string; model: string; apiBaseUrl?: string; provider: AgentProvider };
+  getAgentConfig(): BaseAgentConfig;
   /** Get logging configuration */
   getLoggingConfig(): { sdkDebug: boolean };
   /** Get global environment variables */

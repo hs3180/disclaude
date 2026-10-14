@@ -259,9 +259,9 @@ export interface HarnessConfig {
   agentBackend?: 'claude' | 'codex' | 'pi' | 'deepseek';
   /** Optional model override; otherwise Config.getAgentConfig() default. */
   model?: string;
-  /** Optional provider override (e.g. 'anthropic' | 'glm'). */
-  provider?: string;
-  /** Optional API base URL override (GLM / proxy). */
+  /** Optional API wire format. */
+  apiProtocol?: 'anthropic' | 'openai';
+  /** Optional API base URL override. */
   apiBaseUrl?: string;
   /** Per-turn timeout for the agent, ms. Default 10 min. */
   turnTimeoutMs: number;

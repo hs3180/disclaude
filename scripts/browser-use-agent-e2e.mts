@@ -22,7 +22,7 @@ interface Argv {
   workspaceDir?: string;
   apiKey?: string;
   model?: string;
-  provider?: string;
+  apiProtocol?: 'anthropic' | 'openai';
   apiBaseUrl?: string;
   timeoutMs?: number;
 }
@@ -39,7 +39,7 @@ Options:
                        Default: DISCLAUDE_WORKSPACE_DIR env or ./workspace
   --api-key <key>      model API key (default: env ANTHROPIC_API_KEY)
   --model <name>       model override (default: disclaude config)
-  --provider <name>    provider override (default: disclaude config)
+  --api-protocol <name> API format (anthropic or openai) (default: disclaude config)
   --api-base-url <url> API base URL override
   --timeout-ms <n>     per-turn timeout (default 600000)
 
@@ -58,7 +58,11 @@ function parseArgs(): Argv {
       case '--workspace': argv.workspaceDir = next(); break;
       case '--api-key': argv.apiKey = next(); break;
       case '--model': argv.model = next(); break;
-      case '--provider': argv.provider = next(); break;
+      case '--api-protocol': {
+        const format = next();
+        if (format !== 'anthropic' && format !== 'openai') { throw new Error('API format must be anthropic or openai'); }
+        argv.apiProtocol = format; break;
+      }
       case '--api-base-url': argv.apiBaseUrl = next(); break;
       case '--timeout-ms': argv.timeoutMs = Number(next()); break;
       case '--help': case '-h': usage(); process.exit(0);
@@ -86,7 +90,7 @@ async function main(): Promise<void> {
     apiKey,
     agentBackend: Config.AGENT_BACKEND,
     model: argv.model,
-    provider: argv.provider,
+    apiProtocol: argv.apiProtocol,
     apiBaseUrl: argv.apiBaseUrl,
     turnTimeoutMs: argv.timeoutMs ?? 600_000,
   };
@@ -130,7 +134,7 @@ async function main(): Promise<void> {
     agentBackend,
     apiKey: config.apiKey,
     model: config.model,
-    provider: config.provider,
+    apiProtocol: config.apiProtocol,
     apiBaseUrl: config.apiBaseUrl,
     // Unbound cwd: run in the workspace dir itself (this harness IS the
     // workspace owner; a cwdProvider binding would just resolve here).

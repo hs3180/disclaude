@@ -1263,7 +1263,7 @@ export class MessageHandler {
     // Placed BEFORE trigger_mode check so notifications fire for all topic messages,
     // regardless of whether the bot is @mentioned.
     if (chat_type === 'topic' && this.callbacks.onTopicMessage
-        && Config.getRawConfig().feishu?.topicNotify?.enabled === true) {
+        && Config.getRawConfig().channels?.feishu?.topicNotify?.enabled === true) {
       try {
         const senderOpenId = extractOpenId(sender);
         const senderName = extractSenderName({ sender, sender_name: sender?.sender_id } as unknown as { [key: string]: unknown });

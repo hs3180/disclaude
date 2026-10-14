@@ -18,6 +18,25 @@ persistent configuration.
 | `DISCLAUDE_QUERY_MAX_RETRIES` | Override Claude SDK query retries. | Positive integer; otherwise the provider default is used. |
 | `DISCLAUDE_SYSTEM_FLOOD_THRESHOLD` | Set Claude system-message flood threshold. | Positive integer; defaults to 50. |
 | `DISCLAUDE_MIDSTREAM_RETRY_DELAY_MS` | Set the delay used by mid-stream retry handling. | Internal reliability tuning; omit unless diagnosing or testing provider behavior. |
+| `ANTHROPIC_MODEL` | Fallback primary model for Claude/API backends. | Explicit model configuration wins; an empty or whitespace-only value does not satisfy model validation. |
+
+The bound `llms.<name>.model` selects the model independently of its vendor.
+An unset API model falls back to `ANTHROPIC_MODEL` or `OPENAI_MODEL`, according
+to the connection's wire format. The service process environment takes
+precedence over global YAML `env` defaults; whitespace-only values are ignored.
+Codex uses its bound LLM, explicit `CODEX_MODEL` override and native CLI defaults.
+See [agent configuration](agent-configuration.md) for credentials and bindings.
+
+Claude Code `settingSources: ['user', 'project', 'local']` loads settings into
+the SDK subprocess. It does not export `model` or `env.ANTHROPIC_MODEL` from
+those files into the Disclaude service process. The service validates its
+configuration before launching that subprocess, and passes the resolved model
+explicitly to the SDK. Set `ANTHROPIC_MODEL` in the service's launch environment
+or YAML `env` block to use the fallback; a Claude Code settings file alone
+cannot satisfy the service's required model. Explicit SDK model selection
+also takes priority over the subprocess's model settings. See the official
+[Claude Code settings](https://code.claude.com/docs/en/settings) and
+[model configuration](https://code.claude.com/docs/en/model-config) references.
 
 `disclaude start` generates a fresh API token for each run by default and
 supplies it to managed child processes. If `--api-token` is set, use that

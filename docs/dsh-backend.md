@@ -5,15 +5,19 @@ For Project-bound Notebook capabilities, see [optional Jupyter CLI/Skill](jupyte
 Select the dsh backend and its composition in the service configuration:
 
 ```yaml
-agent:
-  agentBackend: deepseek
-  model: your-supported-deepseek-model
-deepseek:
-  mode: minimal
-  dshHome: /absolute/path/to/isolated-dsh-home
+agents:
+  default:
+    backend: deepseek
+    llm: native
+    deepseek:
+      mode: minimal
+      dshHome: /absolute/path/to/isolated-dsh-home
+llms:
+  native:
+    model: your-supported-deepseek-model
 ```
 
-`deepseek.mode` accepts `standard` (default) or `minimal`. Restart the service
+`agents.<name>.deepseek.mode` accepts `standard` (default) or `minimal`. Restart the service
 when changing it; existing tasks are not switched in place. Each provider owns
 its own process pool and selects one profile for its lifetime.
 
@@ -27,7 +31,7 @@ The installed dsh version and any user profile patches determine the effective
 plugin/tool set. Selecting minimal does not uninstall global packages or rewrite
 existing user profiles. It also does not guarantee higher quality for every task.
 The upstream SDK-minimal defaults omit managed credentials, skill discovery and
-compaction; supply credentials through `deepseek.apiKey` / `DEEPSEEK_API_KEY` and
+compaction; supply credentials through `agents.<name>.deepseek.apiKeyEnv` / `DEEPSEEK_API_KEY` and
 check the capabilities of your installed version before using long-running tasks.
 
 An unsupported profile fails with its profile name and startup/protocol error;

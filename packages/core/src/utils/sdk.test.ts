@@ -175,6 +175,22 @@ describe('SDK Utilities', () => {
       expect(env.ANTHROPIC_API_KEY).toBe('sk-final-key');
     });
 
+    it('isolates a selected API key from global bearer and OAuth credentials', () => {
+      vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'global-bearer');
+      vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'global-oauth');
+      const env = buildSdkEnv('selected-preset-key', undefined, { ANTHROPIC_AUTH_TOKEN: 'config-bearer' });
+      expect(env.ANTHROPIC_API_KEY).toBe('selected-preset-key');
+      expect(env).not.toHaveProperty('ANTHROPIC_AUTH_TOKEN');
+      expect(env).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
+      expect(process.env.ANTHROPIC_AUTH_TOKEN).toBe('global-bearer');
+    });
+
+    it('preserves token authentication when no API key is selected', () => {
+      vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'global-bearer');
+      const env = buildSdkEnv('');
+      expect(env.ANTHROPIC_AUTH_TOKEN).toBe('global-bearer');
+    });
+
     it('should remove CLAUDECODE from environment', () => {
       vi.stubEnv('CLAUDECODE', '1');
       const env = buildSdkEnv('sk-test-key');

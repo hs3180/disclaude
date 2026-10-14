@@ -59,6 +59,9 @@ const mockAgents: Map<string, { dispose: ReturnType<typeof vi.fn>; stop: ReturnT
 // Mock AgentFactory
 vi.mock('./agents/factory.js', () => ({
   AgentFactory: {
+    resolveConfig: vi.fn((options: { model: string; apiProtocol?: 'anthropic' | 'openai' }) => ({
+      apiKey: 'test-key', model: options.model, apiProtocol: options.apiProtocol ?? 'anthropic',
+    })),
     createChatAgent: vi.fn((_name: string, chatId: string, _callbacks: unknown, _options?: unknown) => {
       const agent = {
         dispose: vi.fn(),
@@ -158,14 +161,14 @@ describe('ChatSessionPool', () => {
 
   it('applies temporary model/history overrides through the same preset-aware factory', () => {
     const pool = new ChatSessionPool({ agentPresets: {
-      default: { agentBackend: 'codex', model: 'gpt-5.6' },
+      default: {apiKey: 'test-key', llm: 'test',  agentBackend: 'codex', model: 'gpt-5.6' },
     } });
     const callbacks = createMockCallbacks();
     const user = pool.getOrCreateChatAgent('chat-1', callbacks);
     const task = pool.getOrCreateChatAgent('chat-1', callbacks, undefined, {
       id: 'execution:model-override', model: 'gpt-5.6-mini', skipHistory: true, releaseAfterTurn: true,
     });
-    expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith('pilot', 'chat-1', callbacks, expect.objectContaining({
+    expect(AgentFactory.createChatAgent).toHaveBeenLastCalledWith('pilot', 'chat-1', callbacks, expect.objectContaining({apiKey: 'test-key', llm: 'test',
       agentBackend: 'codex', model: 'gpt-5.6-mini', skipHistory: true, sdkSessionKey: 'chat-1::execution:model-override',
     }));
     expect(pool.getActiveAgentPreset('chat-1')).toMatchObject({ name: 'default', model: 'gpt-5.6' });
@@ -191,9 +194,20 @@ describe('ChatSessionPool', () => {
 
   describe('named runtime presets', () => {
     const presets = {
-      default: { agentBackend: 'claude' as const, model: 'claude-sonnet' },
-      fast: { agentBackend: 'claude' as const, model: 'claude-haiku' },
+      default: {apiKey: 'test-key', llm: 'test',  agentBackend: 'claude' as const, model: 'claude-sonnet' },
+      fast: {apiKey: 'test-key', llm: 'test',  agentBackend: 'claude' as const, model: 'claude-haiku' },
     };
+
+    it('passes the resolved target configuration into the backend preflight', () => {
+      const validatePresetBackend = vi.fn().mockReturnValue({ available: true });
+      const pool = new ChatSessionPool({ agentPresets: presets, validatePresetBackend });
+      try {
+        expect(pool.switchAgentPreset('chat-selected', 'fast')).toMatchObject({ ok: true });
+        expect(validatePresetBackend).toHaveBeenCalledExactlyOnceWith('claude', {
+          apiKey: 'test-key', model: 'claude-haiku', apiProtocol: 'anthropic',
+        });
+      } finally { pool.disposeAll(); }
+    });
 
     it('passes the default preset through the real pool-to-factory creation path', () => {
       const pool = new ChatSessionPool({ agentPresets: presets, validatePresetBackend: () => ({ available: true }) });
@@ -202,7 +216,7 @@ describe('ChatSessionPool', () => {
 
       expect(AgentFactory.createChatAgent).toHaveBeenCalledWith(
         'pilot', 'chat-default', callbacks,
-        expect.objectContaining({ agentBackend: 'claude', model: 'claude-sonnet' })
+        expect.objectContaining({apiKey: 'test-key', llm: 'test',  agentBackend: 'claude', model: 'claude-sonnet' })
       );
       expect(pool.getActiveAgentPreset('chat-default')).toEqual({
         name: 'default', agentBackend: 'claude', model: 'claude-sonnet',

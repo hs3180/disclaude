@@ -1052,7 +1052,27 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Start session if needed
     if (!this.isSessionActive) {
       this.logger.info({ chatId }, 'No active session, starting agent loop');
-      const startupNotice = this.startAgentLoop();
+      let startupNotice: ReturnType<ChatAgent['startAgentLoop']>;
+      try { startupNotice = this.startAgentLoop(); }
+      catch (error) {
+        if (!(error instanceof Error && 'code' in error && error.code === 'LLM_SESSION_LIMIT')) { throw error; }
+        this.isSessionActive = false;
+        this.createTurnCompletion(messageId);
+        this.resolveTurn(messageId, error);
+        let userVisible = false;
+        try {
+          await this.callbacks.sendMessage(chatId, `⏳ ${error.message}`, threadRootId ?? messageId);
+          userVisible = true;
+        } catch (sendError) {
+          this.logger.error({ err: sendError, chatId, messageId }, 'Failed to send LLM session limit notice');
+        }
+        try { await this.callbacks.onDone?.(chatId, threadRootId ?? messageId); }
+        catch (doneError) { this.logger.error({ err: doneError, chatId, messageId }, 'Failed to finish rejected LLM session'); }
+        this.logger.warn({ event: 'agent_turn', state: 'failed', ...lifecycleContext,
+          diagnosticId: crypto.randomUUID(), errorMessage: error.message, user_visible: userVisible,
+        }, 'Message rejected because the LLM session budget is full');
+        return;
+      }
       if (!this.isSessionActive) {
         const error = new Error('Message rejected because the bound project directory is unavailable');
         this.createTurnCompletion(messageId);
@@ -2341,7 +2361,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                 messageCount,
                 completionMs,
                 model: this.model,
-                provider: this.provider,
+                provider: this.apiProtocol,
               },
               'Turn completed with 0 tool calls while Agent Teams is enabled. ' +
                 'If team workers are stuck in idle loops, the model may not support ' +
@@ -2431,7 +2451,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                 toolCallCount,
                 userVisibleOutputCount,
                 model: this.model,
-                provider: this.provider,
+                provider: this.apiProtocol,
               },
               'Empty turn completed with no user-visible output and no tool calls (Issue #4194). ' +
                 'Turn was marked successful but the user saw no reply; consider session reset.'
@@ -2602,7 +2622,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                 toolCallCount,
                 userVisibleOutputCount,
                 model: this.model,
-                provider: this.provider,
+                provider: this.apiProtocol,
                 stopReason: parsed.metadata?.stopReason,
                 // upstreamApiErrorStderr lives at the top level of `parsed`
                 // (hoisted by convertToLegacyFormat), NOT inside parsed.metadata

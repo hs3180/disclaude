@@ -241,7 +241,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     try {
       expect(() => provider.queryStream(input, {
         sessionKey: 'exec-host-tool', settingSources: [], tools,
-      } as AgentQueryOptions)).toThrow(/require agent\.codex\.transport: app-server/);
+      } as AgentQueryOptions)).toThrow('require agents.<name>.codex.transport: app-server');
     } finally { provider.dispose(); }
   });
 

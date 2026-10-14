@@ -56,8 +56,10 @@ with tempfile.TemporaryDirectory(prefix='disclaude-workspace-e2e-') as tmp:
     # Exercise a real service twice; a real upload writes to the chosen workspace and survives restart.
     with socket.socket() as probe:
         probe.bind(('127.0.0.1',0));port=probe.getsockname()[1]
-    payload={'workspace':{'dir':str(custom)},'agent':{'agentBackend':'claude','provider':'anthropic','model':'claude-sonnet-4'},
-             'anthropic':{'apiKey':'offline-workspace-test'},'channels':{'feishu':{'enabled':False},'rest':{'enabled':True,'host':'127.0.0.1','port':port,'fileStorageDir':str(custom/'files')}},'logging':{'level':'info'}}
+    env['WORKSPACE_SMOKE_API_KEY']='offline-workspace-test'
+    payload={'workspace':{'dir':str(custom)},
+             'agents':{'default':{'backend':'claude','llm':'workspace-smoke'}},
+             'llms':{'workspace-smoke':{'model':'claude-sonnet-4','api':{'protocol':'anthropic','apiKey':'$WORKSPACE_SMOKE_API_KEY'}}},'channels':{'feishu':{'enabled':False},'rest':{'enabled':True,'host':'127.0.0.1','port':port,'fileStorageDir':str(custom/'files')}},'logging':{'level':'info'}}
     config.write_text(json.dumps(payload))
     for attempt in range(2):
         output=home/f'run-{attempt}.log'

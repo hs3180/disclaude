@@ -1,8 +1,8 @@
 # Codex backend
 
-Set `agent.agentBackend: codex` to run the Codex CLI as Disclaude's agent
-harness. Codex uses its own authentication and model configuration; Disclaude's
-Anthropic-compatible `provider` settings do not select the Codex model.
+Set `agents.<name>.backend: codex` and bind its `llm` to a model entry.
+Codex owns authentication through the CLI account; omit the LLM's API block.
+See [agent configuration](agent-configuration.md).
 
 > Docker commands in this guide require a full source checkout. Prebuilt
 > release packages omit Compose files; see the
@@ -33,19 +33,28 @@ docker compose run --rm service codex login --device-auth
 ## Configure
 
 ```yaml
-agent:
-  agentBackend: codex
-  codex:
-    transport: app-server # optional; default: exec
-    maxActiveSessions: 3  # optional
-    maxConcurrentRuns: 2  # optional
+agents:
+  daily:
+    backend: codex
+    llm: daily
+    default: true
+    codex:
+      transport: app-server
+      maxConcurrentRuns: 2
+llms:
+  daily:
+    model: gpt-6-luna
+    reasoningEffort: max
+    maxConcurrentSessions: 3
 ```
 
-`agent.codex.model` is the canonical model setting. `CODEX_MODEL` overrides it;
-the legacy `agent.model` and a default Codex preset's `model` remain fallback
-sources for existing configurations. If multiple legacy and canonical values
-conflict, the selected source wins and startup warns which duplicate setting to
-remove. A named agent preset can still select its own model for that chat.
+`llms.daily.model` is the bound model. `CODEX_MODEL` overrides the default
+Codex binding; named non-default bindings retain their explicit models. Omit
+`model` to keep the CLI's native default. Model reasoning and session concurrency
+follow the bound LLM. Agents sharing its name share its session budget. At the
+limit, new sessions are rejected without stopping existing work. Transport and
+execution permissions follow the selected agent; `maxConcurrentRuns` is the
+startup process-wide child limit. See [agent configuration](agent-configuration.md).
 
 Disclaude does not define a fixed default model. Concrete model and effort
 recommendations are kept in the [configuration sample](../disclaude.config.example.yaml).
@@ -58,8 +67,7 @@ The precedence for a run is a selected per-chat/per-turn model, then a
 per-query `CODEX_MODEL`, the process `CODEX_MODEL`, the resolved configuration
 setting, and finally the Codex CLI default. Avoid setting the same model in
 several places; use the resolved run log to see the effective model and source.
-Do not configure `agent.provider` or an Anthropic-compatible API key to select
-the Codex model.
+The Codex binding does not accept an API block.
 
 When no Disclaude model override is set, the Codex CLI keeps its own model
 selection from `CODEX_HOME/config.toml` or its built-in default. An explicit
@@ -67,7 +75,7 @@ resolved model is passed as `codex exec -m`; an explicit effort is passed as
 `-c model_reasoning_effort=...`, so these run options take precedence over the
 Codex CLI config file.
 
-Set `agent.codex.reasoningEffort` or `CODEX_REASONING_EFFORT` to request an
+Set `llms.<name>.reasoningEffort` or `CODEX_REASONING_EFFORT` to request an
 explicit effort. Supported labels exposed by current Codex model catalogs
 include `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, and `ultra`; each
 model exposes only a subset. App-server checks the selected model's catalog
@@ -79,7 +87,7 @@ per-query `CODEX_REASONING_EFFORT`, process `CODEX_REASONING_EFFORT`, the YAML
 setting, then the selected model's Codex CLI default.
 
 The default `exec` transport runs non-interactive turns. Set
-`agent.codex.transport: app-server` when using Codex's structured
+`agents.<name>.codex.transport: app-server` when using Codex's structured
 `requestUserInput` interaction; see [Feishu channel cards](feishu-channel.md#codex-input-cards).
 Concurrency limits are per service process; extra work waits rather than
 starting unlimited Codex sessions or child processes.
@@ -127,9 +135,9 @@ or starting a model turn.
 
 ## Permissions and behavior
 
-- The default Codex sandbox is `workspace-write`. Set `agent.codexSandbox` to
+- The default Codex sandbox is `workspace-write`. Set `agents.<name>.codexSandbox` to
   `read-only`, `workspace-write`, or `danger-full-access` to choose an explicit
-  level. `agent.fullAccess: true` is an explicit opt-in to unrestricted access.
+  level. `agents.<name>.fullAccess: true` is an explicit opt-in to unrestricted access.
 - Claude `allowedTools` / `disallowedTools` are not Codex policies; stale
   query fields are rejected. Choose business callbacks by passing their
   definitions in `tools`, and use the native sandbox configuration above.

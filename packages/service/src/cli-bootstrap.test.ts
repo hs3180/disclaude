@@ -41,11 +41,18 @@ describe('disclaude service CLI config bootstrap (Issue #4654)', () => {
       const explicitPath = join(root, 'explicit.yaml');
       writeFileSync(
         join(root, 'disclaude.config.yaml'),
-        'agent:\n  agentBackend: codex\n  model: default-leak\n',
+        JSON.stringify({
+          agents: { default: { backend: 'codex', llm: 'daily' } },
+          llms: { daily: { model: 'gpt-6-luna' } },
+        }),
       );
       writeFileSync(
         explicitPath,
-        'workspace:\n  dir: /tmp/bootstrap-test-workspace\nagent:\n  agentBackend: pi\n  model: explicit-model\n',
+        JSON.stringify({
+          workspace: { dir: '/tmp/bootstrap-test-workspace' },
+          agents: { default: { backend: 'pi', llm: 'explicit' } },
+          llms: { explicit: { model: 'explicit-model', api: { protocol: 'anthropic' } } },
+        }),
       );
 
       const cliUrl = pathToFileURL(join(process.cwd(), 'packages/service/src/cli.ts')).href;

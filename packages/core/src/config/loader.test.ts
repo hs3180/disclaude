@@ -16,11 +16,11 @@ import {
   loadConfigFile,
   getConfigFromFile,
   validateConfig,
-  validateRequiredConfig,
   setLoadedConfig,
   getPreloadedConfig,
   EXPLICIT_CONFIG_PATH_ENV,
 } from './loader.js';
+import type { DisclaudeConfig, LoadedConfig } from './types.js';
 
 // Mock fs module
 vi.mock('fs', () => ({
@@ -157,8 +157,15 @@ describe('loadConfigFile', () => {
 workspace:
   dir: /custom/workspace
 
-agent:
-  model: claude-3-5-sonnet-20241022
+agents:
+  default:
+    backend: claude
+    llm: default
+llms:
+  default:
+    model: claude-3-5-sonnet-20241022
+    api:
+      protocol: anthropic
 
 logging:
   level: debug
@@ -169,7 +176,7 @@ logging:
     expect(result._fromFile).toBe(true);
     expect(result._source).toBeDefined();
     expect(result.workspace?.dir).toBe('/custom/workspace');
-    expect(result.agent?.model).toBe('claude-3-5-sonnet-20241022');
+    expect(result.llms?.default.model).toBe('claude-3-5-sonnet-20241022');
     expect(result.logging?.level).toBe('debug');
   });
 
@@ -237,25 +244,27 @@ workspace:
 
 describe('getConfigFromFile', () => {
   it('should extract config from LoadedConfig', () => {
-    const loadedConfig = {
+    const loadedConfig: LoadedConfig = {
       _source: '/path/to/config.yaml',
       _fromFile: true,
       workspace: { dir: '/workspace' },
-      agent: { model: 'test-model' },
+      agents: { default: { backend: 'claude', llm: 'default' } },
+      llms: { default: { model: 'test-model', api: { protocol: 'anthropic' } } },
     };
 
     const result = getConfigFromFile(loadedConfig);
 
     expect(result).toEqual({
       workspace: { dir: '/workspace' },
-      agent: { model: 'test-model' },
+      agents: { default: { backend: 'claude', llm: 'default' } },
+      llms: { default: { model: 'test-model', api: { protocol: 'anthropic' } } },
     });
     expect(result).not.toHaveProperty('_source');
     expect(result).not.toHaveProperty('_fromFile');
   });
 
   it('should handle empty config', () => {
-    const loadedConfig = {
+    const loadedConfig: LoadedConfig = {
       _source: '/path/to/config.yaml',
       _fromFile: true,
     };
@@ -266,30 +275,34 @@ describe('getConfigFromFile', () => {
   });
 
   it('should preserve all config properties', () => {
-    const loadedConfig = {
+    const loadedConfig: LoadedConfig = {
       _source: '/path/to/config.yaml',
       _fromFile: true,
       workspace: { dir: '/workspace' },
-      agent: { model: 'model', permission: 'bypass' },
       logging: { level: 'info' },
-      feishu: { appId: 'app123', appSecret: 'secret' },
+      agents: {
+        default: { backend: 'claude', llm: 'default', permissionMode: 'bypassPermissions' },
+      },
+      llms: { default: { model: 'model', api: { protocol: 'anthropic' } } },
+      channels: { feishu: { appId: 'app123', appSecret: 'secret' } },
     };
 
     const result = getConfigFromFile(loadedConfig);
 
     expect(result.workspace).toBeDefined();
-    expect(result.agent).toBeDefined();
+    expect(result.agents).toBeDefined();
     expect(result.logging).toBeDefined();
-    expect(result.feishu).toBeDefined();
+    expect(result.channels?.feishu).toBeDefined();
   });
 });
 
 describe('validateConfig', () => {
   it('should validate valid config', () => {
-    const config = {
+    const config: DisclaudeConfig = {
       workspace: { dir: '/workspace' },
-      agent: { model: 'claude-3-5-sonnet-20241022' },
       logging: { level: 'debug' },
+      agents: { default: { backend: 'claude', llm: 'default' } },
+      llms: { default: { model: 'claude-3-5-sonnet-20241022', api: { protocol: 'anthropic' } } },
     };
 
     const result = validateConfig(config);
@@ -312,7 +325,7 @@ describe('validateConfig', () => {
     expect(validateConfig(undefined as unknown as Record<string, unknown>)).toBe(false);
     // Primitives return true (treated as empty objects)
     // Arrays are objects
-    expect(validateConfig([] as unknown as Record<string, unknown>)).toBe(true);
+    expect(validateConfig([] as unknown as Record<string, unknown>)).toBe(false);
   });
 
   it('should reject invalid workspace.dir', () => {
@@ -324,8 +337,14 @@ describe('validateConfig', () => {
   });
 
   it('should reject invalid agent.model', () => {
-    const config1 = { agent: { model: 123 } };
-    const config2 = { agent: { model: ['array'] } };
+    const config1 = {
+      agents: { default: { backend: 'claude', llm: 'default' } },
+      llms: { default: { model: 123, api: { protocol: 'anthropic' } } },
+    };
+    const config2 = {
+      agents: { default: { backend: 'claude', llm: 'default' } },
+      llms: { default: { model: ['array'], api: { protocol: 'anthropic' } } },
+    };
 
     expect(validateConfig(config1 as unknown as Record<string, unknown>)).toBe(false);
     expect(validateConfig(config2 as unknown as Record<string, unknown>)).toBe(false);
@@ -340,10 +359,11 @@ describe('validateConfig', () => {
   });
 
   it('should accept valid string values', () => {
-    const config = {
+    const config: DisclaudeConfig = {
       workspace: { dir: '/workspace' },
-      agent: { model: 'model-name' },
       logging: { level: 'info' },
+      agents: { default: { backend: 'claude', llm: 'default' } },
+      llms: { default: { model: 'model-name', api: { protocol: 'anthropic' } } },
     };
 
     expect(validateConfig(config)).toBe(true);
@@ -357,12 +377,12 @@ describe('validateConfig', () => {
     expect(validateConfig(config)).toBe(true);
   });
 
-  it('should allow optional agent properties', () => {
+  it('rejects an empty named agent section', () => {
     const config = {
-      agent: {},
+      agents: {},
     };
 
-    expect(validateConfig(config)).toBe(true);
+    expect(validateConfig(config)).toBe(false);
   });
 
   it('should allow optional logging properties', () => {
@@ -374,15 +394,18 @@ describe('validateConfig', () => {
   });
 
   it('should accept config with all valid sections', () => {
-    const config = {
+    const config: DisclaudeConfig = {
       workspace: { dir: '/custom/dir' },
-      agent: { model: 'claude-model', permission: 'default' },
-      logging: { level: 'debug', dir: '/var/log' },
-      feishu: {
-        appId: 'app-id',
-        appSecret: 'app-secret',
-        encryptKey: 'encrypt-key',
-        verificationToken: 'token',
+      logging: { level: 'debug', file: '/var/log/service.log' },
+      agents: { default: { backend: 'claude', llm: 'default', permissionMode: 'default' } },
+      llms: { default: { model: 'claude-model', api: { protocol: 'anthropic' } } },
+      channels: {
+        feishu: {
+          appId: 'app-id',
+          appSecret: 'app-secret',
+          encryptKey: 'encrypt-key',
+          verificationToken: 'token',
+        },
       },
     };
 
@@ -397,7 +420,7 @@ describe('validateConfig', () => {
     };
 
     // Should still validate as we only check known structure
-    expect(validateConfig(config)).toBe(true);
+    expect(validateConfig(config)).toBe(false);
   });
 });
 
@@ -418,9 +441,15 @@ describe('config loader integration', () => {
 workspace:
   dir: /test/workspace
 
-agent:
-  model: claude-3-5-sonnet-20241022
-  permission: bypass
+agents:
+  default:
+    backend: claude
+    llm: default
+llms:
+  default:
+    model: claude-3-5-sonnet-20241022
+    api:
+      protocol: anthropic
 
 logging:
   level: info
@@ -454,108 +483,6 @@ logging:
   });
 });
 
-describe('validateRequiredConfig', () => {
-  const originalAnthropicKey = process.env.ANTHROPIC_API_KEY;
-
-  afterEach(() => {
-    if (originalAnthropicKey !== undefined) {
-      process.env.ANTHROPIC_API_KEY = originalAnthropicKey;
-    } else {
-      delete process.env.ANTHROPIC_API_KEY;
-    }
-  });
-
-  it('should return valid when no GLM or Anthropic config is set', () => {
-    delete process.env.ANTHROPIC_API_KEY;
-    const result = validateRequiredConfig({});
-    expect(result.valid).toBe(true);
-    expect(result.errors).toHaveLength(0);
-  });
-
-  it('should return error when glm.apiKey is set without glm.model', () => {
-    delete process.env.ANTHROPIC_API_KEY;
-    const result = validateRequiredConfig({
-      glm: { apiKey: 'glm-key' },
-    } as any);
-    expect(result.valid).toBe(false);
-    expect(result.errors).toHaveLength(1);
-    expect(result.errors[0].field).toBe('glm.model');
-  });
-
-  it('should return error when glm.model is set without glm.apiKey', () => {
-    delete process.env.ANTHROPIC_API_KEY;
-    const result = validateRequiredConfig({
-      glm: { model: 'glm-4' },
-    } as any);
-    expect(result.valid).toBe(false);
-    expect(result.errors).toHaveLength(1);
-    expect(result.errors[0].field).toBe('glm.apiKey');
-  });
-
-  it('should return error when both glm.apiKey and glm.model are missing from glm config', () => {
-    delete process.env.ANTHROPIC_API_KEY;
-    const result = validateRequiredConfig({
-      glm: {},
-    } as any);
-    expect(result.valid).toBe(true);
-    expect(result.errors).toHaveLength(0);
-  });
-
-  it('should return valid when both glm.apiKey and glm.model are set', () => {
-    delete process.env.ANTHROPIC_API_KEY;
-    const result = validateRequiredConfig({
-      glm: { apiKey: 'glm-key', model: 'glm-4' },
-    } as any);
-    expect(result.valid).toBe(true);
-    expect(result.errors).toHaveLength(0);
-  });
-
-  it('requires an explicit endpoint when agent.provider selects GLM', () => {
-    delete process.env.ANTHROPIC_API_KEY;
-    const result = validateRequiredConfig({
-      agent: { provider: 'glm' },
-      glm: { apiKey: 'glm-key', model: 'glm-4' },
-    } as any);
-    expect(result.valid).toBe(false);
-    expect(result.errors).toContainEqual(expect.objectContaining({ field: 'glm.apiBaseUrl' }));
-  });
-
-  it('accepts an explicit Anthropic-compatible GLM proxy endpoint', () => {
-    delete process.env.ANTHROPIC_API_KEY;
-    const result = validateRequiredConfig({
-      agent: { provider: 'glm' },
-      glm: { apiKey: 'glm-key', model: 'glm-4', apiBaseUrl: 'https://proxy.example' },
-    } as any);
-    expect(result.valid).toBe(true);
-  });
-
-  it('should return error when ANTHROPIC_API_KEY is set but agent.model is not', () => {
-    process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
-    const result = validateRequiredConfig({});
-    expect(result.valid).toBe(false);
-    expect(result.errors).toHaveLength(1);
-    expect(result.errors[0].field).toBe('agent.model');
-  });
-
-  it('should return valid when ANTHROPIC_API_KEY is set and agent.model is configured', () => {
-    process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
-    const result = validateRequiredConfig({
-      agent: { model: 'claude-3-5-sonnet' },
-    } as any);
-    expect(result.valid).toBe(true);
-    expect(result.errors).toHaveLength(0);
-  });
-
-  it('should collect multiple errors at once', () => {
-    process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
-    const result = validateRequiredConfig({
-      glm: { apiKey: 'glm-key' },
-    } as any);
-    expect(result.valid).toBe(false);
-    expect(result.errors.length).toBeGreaterThanOrEqual(2);
-  });
-});
-
 describe('setLoadedConfig / getPreloadedConfig', () => {
   let previousConfig: ReturnType<typeof getPreloadedConfig>;
 
@@ -574,10 +501,11 @@ describe('setLoadedConfig / getPreloadedConfig', () => {
   });
 
   it('should set and get preloaded config', () => {
-    const config = {
+    const config: LoadedConfig = {
       _source: '/test/config.yaml',
       _fromFile: true,
-      agent: { model: 'test-model' },
+      agents: { default: { backend: 'claude', llm: 'default' } },
+      llms: { default: { model: 'test-model', api: { protocol: 'anthropic' } } },
     };
 
     setLoadedConfig(config);
@@ -586,7 +514,7 @@ describe('setLoadedConfig / getPreloadedConfig', () => {
     expect(result).toBeDefined();
     expect(result?._source).toBe('/test/config.yaml');
     expect(result?._fromFile).toBe(true);
-    expect(result?.agent?.model).toBe('test-model');
+    expect(result?.llms?.default.model).toBe('test-model');
   });
 
   it('should overwrite previously set config', () => {
@@ -598,12 +526,4 @@ describe('setLoadedConfig / getPreloadedConfig', () => {
     expect(result?._fromFile).toBe(false);
     expect(result?.workspace?.dir).toBe('/ws');
   });
-});
-
-// A misspelled mode must not become an unnoticed standard-mode deployment.
-it('validates the optional DeepSeek harness mode', () => {
-  expect(validateConfig({ deepseek: {} })).toBe(true);
-  expect(validateConfig({ deepseek: { mode: 'standard' } })).toBe(true);
-  expect(validateConfig({ deepseek: { mode: 'minimal' } })).toBe(true);
-  expect(validateConfig({ deepseek: { mode: 'typo' as never } })).toBe(false);
 });

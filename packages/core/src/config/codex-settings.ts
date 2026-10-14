@@ -10,15 +10,10 @@ export const CODEX_REASONING_EFFORTS = [
   'ultra',
 ] as const satisfies readonly CodexReasoningEffort[];
 
-export type CodexModelSource =
-  | 'environment'
-  | 'agent.codex.model'
-  | 'agent.model'
-  | 'agents.default.model'
-  | 'codex-cli-default';
+export type CodexModelSource = 'environment' | 'llms.model' | 'codex-cli-default';
 export type CodexEffortSource =
   | 'environment'
-  | 'agent.codex.reasoningEffort'
+  | 'llms.reasoningEffort'
   | 'codex-cli-model-default';
 
 export interface ResolvedCodexSetting<T, S extends string> {
@@ -37,18 +32,14 @@ export function isCodexReasoningEffort(value: unknown): value is CodexReasoningE
   );
 }
 
-/** Resolve the one effective default model, keeping legacy inputs as ordered fallbacks. */
+/** Resolve the bound default model and the explicit host override. */
 export function resolveCodexModelSetting(sources: {
   environment?: string;
   configured?: string;
-  legacyAgent?: string;
-  legacyPreset?: string;
 }): ResolvedCodexSetting<string, CodexModelSource> {
   const candidates: Array<[string | undefined, CodexModelSource]> = [
     [sources.environment, 'environment'],
-    [sources.configured, 'agent.codex.model'],
-    [sources.legacyAgent, 'agent.model'],
-    [sources.legacyPreset, 'agents.default.model'],
+    [sources.configured, 'llms.model'],
   ];
   for (const [value, source] of candidates) {
     const normalized = nonEmpty(value);
@@ -69,7 +60,7 @@ export function resolveCodexReasoningEffort(sources: {
     return { value: environment, source: 'environment' };
   }
   if (sources.configured) {
-    return { value: sources.configured, source: 'agent.codex.reasoningEffort' };
+    return { value: sources.configured, source: 'llms.reasoningEffort' };
   }
   return { source: 'codex-cli-model-default' };
 }

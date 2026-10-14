@@ -15,8 +15,11 @@ describe('scheduled provider failure through the real agent and routing boundary
       mkdirSync(home);
       writeFileSync(join(home, 'auth.json'), '{}');
       const config = join(root, 'config.json');
-      writeFileSync(config, JSON.stringify({ workspace: { dir: root },
-        agent: { agentBackend: 'codex', codex: { model: 'gpt-6-luna' } } }));
+      writeFileSync(config, JSON.stringify({
+        workspace: { dir: root },
+        agents: { default: { backend: 'codex', llm: 'default' } },
+        llms: { default: { model: 'gpt-6-luna' } },
+      }));
       const script = `
         import assert from 'node:assert/strict';
         import { getProvider, setDefaultProvider, MessageRouter, Scheduler } from './packages/core/dist/index.js';

@@ -95,8 +95,9 @@ describe('user starts Disclaude and coordinates an already deployed browser', ()
       await new Promise<void>(done => probe.close(() => done()));
       serviceUrl = `http://127.0.0.1:${port}`;
       await writeFile(config, JSON.stringify({
-        agent: { agentBackend: 'claude', provider: 'anthropic', model: contentionModel || 'claude-sonnet-4' },
-        ...(contentionModel ? {} : { anthropic: { apiKey: 'offline-test-placeholder' } }),
+        agents: { default: { backend: 'claude', llm: 'browser' } },
+        llms: { browser: { model: contentionModel || 'claude-sonnet-4', api: { protocol: 'anthropic' } } },
+        ...(contentionModel ? {} : { env: { ANTHROPIC_API_KEY: 'offline-test-placeholder' } }),
         workspace: { dir: root }, channels: { feishu: { enabled: false }, rest: { host: '127.0.0.1', port, fileStorageDir: join(root, 'files') } },
         logging: { level: 'info' },
       }), { mode: 0o600 });

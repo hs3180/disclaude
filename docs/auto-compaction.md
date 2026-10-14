@@ -2,7 +2,7 @@
 
 For the Claude backend, disclaude resolves the compaction policy in this order:
 
-1. If `agent.autoCompactWindow` is configured, use that value without querying
+1. If `agents.<name>.autoCompactWindow` is configured, use that value without querying
    model metadata. This applies to native Claude models as well as compatible
    third-party models. `0` disables SDK automatic compaction.
 2. Native `claude-*` model IDs retain the SDK's automatic policy without a
@@ -16,10 +16,12 @@ For the Claude backend, disclaude resolves the compaction policy in this order:
    an unknown model, so configure a threshold when discovery is unavailable.
 
 ```yaml
-agent:
-  agentBackend: claude
-  # Optional explicit override; choose based on your model/runtime limits.
-  autoCompactWindow: 80000
+agents:
+  assistant:
+    backend: claude
+    llm: assistant
+    autoCompactWindow: 80000
+# Define llms.assistant as shown in agent-configuration.md.
 ```
 
 Discovery uses the configured API origin and credentials, not a third-party

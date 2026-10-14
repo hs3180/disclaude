@@ -12,8 +12,17 @@ describe('idle reclamation across real ChatAgent work boundaries', () => {
     const root = mkdtempSync(join(tmpdir(), 'disclaude-pool-work-'));
     try {
       const configPath = join(root, 'config.json');
-      writeFileSync(configPath, JSON.stringify({ workspace: { dir: root },
-        agent: { agentBackend: 'claude', provider: 'anthropic', model: 'test-model' }, anthropic: { apiKey: 'test-key' } }));
+      writeFileSync(configPath, JSON.stringify({
+        workspace: { dir: root },
+        agents: { default: { backend: 'claude', llm: 'default' } },
+        llms: {
+          default: {
+            model: 'test-model',
+            api: { protocol: 'anthropic', apiKey: '$TEST_LLM_DEFAULT_KEY' },
+          },
+        },
+        env: { TEST_LLM_DEFAULT_KEY: 'test-key' },
+      }));
       const script = `
         import assert from 'node:assert/strict';
         import { getProvider } from './packages/core/dist/index.js';

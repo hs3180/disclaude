@@ -301,8 +301,7 @@ export async function main(): Promise<void> {
     logger.info(
       {
         agentBackend: Config.AGENT_BACKEND ?? 'claude',
-        provider:
-          Config.AGENT_BACKEND === 'codex' ? 'codex' : agentConfig.apiBaseUrl ? 'glm' : 'anthropic',
+        apiProtocol: agentConfig.apiProtocol ?? 'native',
         model: agentConfig.model,
       },
       'Agent configuration loaded'
@@ -310,7 +309,8 @@ export async function main(): Promise<void> {
   } catch (error) {
     logger.error({ err: error }, 'Failed to get agent configuration');
     console.error(
-      'Error: No API key configured. Please set up disclaude.config.yaml with glm or anthropic settings.'
+      `Error: 配置校验未通过，服务无法启动。\n${error instanceof Error ? error.message : 'Unknown configuration error'}\n` +
+      '请检查 disclaude.config.yaml 中的 agents / llms / channels 配置及相关环境变量。'
     );
     processLock?.release();
     process.exit(1);
@@ -829,7 +829,7 @@ export function resolveChannelConfigs(
         fileStorageDir?: string;
       }
     | undefined;
-  if (restChannelConfig?.port && restChannelConfig?.host && restChannelConfig?.fileStorageDir) {
+  if (rawConfig.channels?.rest?.enabled !== false && restChannelConfig?.port && restChannelConfig?.host && restChannelConfig?.fileStorageDir) {
     entries.push({
       type: 'rest',
       config: {
@@ -840,10 +840,10 @@ export function resolveChannelConfigs(
     });
   }
 
-  // Feishu channel: configured under top-level feishu.appId/appSecret
+  // Feishu channel: configured under channels.feishu
   const feishuAppId = config.FEISHU_APP_ID;
   const feishuAppSecret = config.FEISHU_APP_SECRET;
-  if (feishuAppId && feishuAppSecret) {
+  if (rawConfig.channels?.feishu?.enabled !== false && feishuAppId && feishuAppSecret) {
     entries.push({
       type: 'feishu',
       // Issue #4400 / #4208: plumb streamingCard through to FeishuChannelConfig
@@ -860,7 +860,7 @@ export function resolveChannelConfigs(
   // Note: WeChat is intentionally NOT in knownChannelKeys — it only supports
   // dynamic registration (Issue #1638), not config-driven creation.
   // If a user adds channels.wechat, they will get a warning.
-  const knownChannelKeys = new Set(['rest']);
+  const knownChannelKeys = new Set(['rest', 'feishu']);
   const channelKeys = Object.keys(rawConfig.channels || {});
   for (const key of channelKeys) {
     if (!knownChannelKeys.has(key)) {

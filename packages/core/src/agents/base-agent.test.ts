@@ -109,7 +109,7 @@ describe('BaseAgent', () => {
     config = {
       apiKey: 'test-api-key',
       model: 'claude-3-5-sonnet-20241022',
-      provider: 'anthropic',
+      apiProtocol: 'anthropic',
     };
     agent = new TestAgent(config);
   });
@@ -164,7 +164,7 @@ describe('BaseAgent', () => {
       expect(agent).toBeDefined();
       expect(agent.apiKey).toBe('test-api-key');
       expect(agent.model).toBe('claude-3-5-sonnet-20241022');
-      expect(agent.provider).toBe('anthropic');
+      expect(agent.apiProtocol).toBe('anthropic');
     });
 
     it('should default permissionMode to bypassPermissions', () => {
@@ -182,20 +182,20 @@ describe('BaseAgent', () => {
         model: 'model',
       };
       const noProviderAgent = new TestAgent(noProviderConfig);
-      expect(noProviderAgent.provider).toBe('anthropic');
+      expect(noProviderAgent.apiProtocol).toBe('anthropic');
     });
 
     it('should use runtime context provider if set', () => {
       setRuntimeContext({
         getWorkspaceDir: () => '/workspace',
-        getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'glm' }),
+        getAgentConfig: () => ({ apiKey: 'key', model: 'model', apiProtocol: 'anthropic' }),
         getLoggingConfig: () => ({ sdkDebug: false }),
         getGlobalEnv: () => ({}),
         isAgentTeamsEnabled: () => false,
       });
 
       const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model' });
-      expect(ctxAgent.provider).toBe('glm');
+      expect(ctxAgent.apiProtocol).toBe('anthropic');
     });
   });
 
@@ -256,7 +256,7 @@ describe('BaseAgent', () => {
     it('should set teammateMode when Agent Teams is enabled', () => {
       setRuntimeContext({
         getWorkspaceDir: () => '/workspace',
-        getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
+        getAgentConfig: () => ({ apiKey: 'key', model: 'model', apiProtocol: 'anthropic' }),
         getLoggingConfig: () => ({ sdkDebug: false }),
         getGlobalEnv: () => ({}),
         isAgentTeamsEnabled: () => true,
@@ -664,13 +664,13 @@ describe('BaseAgent', () => {
       process.env.SDK_DEBUG = 'true';
       setRuntimeContext({
         getWorkspaceDir: () => '/runtime-workspace',
-        getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
+        getAgentConfig: () => ({ apiKey: 'key', model: 'model', apiProtocol: 'anthropic' }),
         getLoggingConfig: () => ({ sdkDebug: false }),
         getGlobalEnv: () => ({ CUSTOM_VAR: 'value' }),
         isAgentTeamsEnabled: () => false,
       });
 
-      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
       const options = ctxAgent.testCreateSdkOptions();
       // Runtime context takes precedence - sdkDebug is false
       expect(options.env?.SDK_DEBUG).toBeUndefined();
@@ -684,7 +684,7 @@ describe('BaseAgent', () => {
     });
 
     it('should not set model when model is empty string', () => {
-      const noModelAgent = new TestAgent({ apiKey: 'key', model: '', provider: 'anthropic' });
+      const noModelAgent = new TestAgent({ apiKey: 'key', model: '', apiProtocol: 'anthropic' });
       const options = noModelAgent.testCreateSdkOptions();
       expect(options.model).toBeUndefined();
     });
@@ -699,12 +699,12 @@ describe('BaseAgent', () => {
     it('should NOT set CLAUDE_CONFIG_DIR when cwd equals workspace dir', () => {
       setRuntimeContext({
         getWorkspaceDir: () => '/workspace',
-        getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
+        getAgentConfig: () => ({ apiKey: 'key', model: 'model', apiProtocol: 'anthropic' }),
         getLoggingConfig: () => ({ sdkDebug: false }),
         getGlobalEnv: () => ({}),
         isAgentTeamsEnabled: () => false,
       });
-      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
       const options = ctxAgent.testCreateSdkOptions({ cwd: '/workspace' });
       expect(options.env?.CLAUDE_CONFIG_DIR).toBeUndefined();
     });
@@ -712,12 +712,12 @@ describe('BaseAgent', () => {
     it('should set CLAUDE_CONFIG_DIR to workspace .claude when cwd differs from workspace', () => {
       setRuntimeContext({
         getWorkspaceDir: () => '/workspace',
-        getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
+        getAgentConfig: () => ({ apiKey: 'key', model: 'model', apiProtocol: 'anthropic' }),
         getLoggingConfig: () => ({ sdkDebug: false }),
         getGlobalEnv: () => ({}),
         isAgentTeamsEnabled: () => false,
       });
-      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
       const options = ctxAgent.testCreateSdkOptions({ cwd: '/other/project' });
       expect(options.env?.CLAUDE_CONFIG_DIR).toBe('/workspace/.claude');
     });
@@ -725,12 +725,12 @@ describe('BaseAgent', () => {
     it('should not affect other environment variables when injecting CLAUDE_CONFIG_DIR', () => {
       setRuntimeContext({
         getWorkspaceDir: () => '/workspace',
-        getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
+        getAgentConfig: () => ({ apiKey: 'key', model: 'model', apiProtocol: 'anthropic' }),
         getLoggingConfig: () => ({ sdkDebug: false }),
         getGlobalEnv: () => ({ EXISTING_VAR: 'preserved', ANOTHER_VAR: 'also-preserved' }),
         isAgentTeamsEnabled: () => false,
       });
-      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
       const options = ctxAgent.testCreateSdkOptions({ cwd: '/other/project' });
 
       // CLAUDE_CONFIG_DIR is injected correctly
@@ -743,143 +743,23 @@ describe('BaseAgent', () => {
     });
   });
 
-  describe('createSdkOptions - Issue #3770: model tier env vars for Task/Team agents', () => {
-    const getModelForTierSpy = vi.spyOn(Config, 'getModelForTier');
-
-    afterEach(() => {
-      getModelForTierSpy.mockClear();
-    });
-
-    it('should inject model tier env vars for GLM provider even without Agent Teams', () => {
-      getModelForTierSpy.mockImplementation(((tier: string) => {
-        if (tier === 'high') {
-          return 'glm-5.1';
-        }
-        if (tier === 'low') {
-          return 'glm-5-turbo';
-        }
-        if (tier === 'multimodal') {
-          return 'glm-5v-turbo';
-        }
-        return undefined;
-      }) as any);
-
-      setRuntimeContext({
-        getWorkspaceDir: () => '/workspace',
-        getAgentConfig: () => ({ apiKey: 'key', model: 'glm-5.1', provider: 'glm' }),
-        getLoggingConfig: () => ({ sdkDebug: false }),
-        getGlobalEnv: () => ({}),
-        isAgentTeamsEnabled: () => false,
-      });
-
-      const glmAgent = new TestAgent({ apiKey: 'key', model: 'glm-5.1', provider: 'glm' });
-      const options = glmAgent.testCreateSdkOptions();
-
-      expect(options.env?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5.1');
-      expect(options.env?.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-5-turbo');
-      expect(options.env?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5v-turbo');
-      // Agent Teams should NOT be enabled
-      expect(options.teammateMode).toBeUndefined();
-    });
-
-    it('should inject model tier env vars when Agent Teams is also enabled', () => {
-      getModelForTierSpy.mockImplementation(((tier: string) => {
-        if (tier === 'high') {
-          return 'glm-5.1';
-        }
-        if (tier === 'low') {
-          return 'glm-5-turbo';
-        }
-        if (tier === 'multimodal') {
-          return 'glm-5v-turbo';
-        }
-        return undefined;
-      }) as any);
-
-      setRuntimeContext({
-        getWorkspaceDir: () => '/workspace',
-        getAgentConfig: () => ({ apiKey: 'key', model: 'glm-5.1', provider: 'glm' }),
-        getLoggingConfig: () => ({ sdkDebug: false }),
-        getGlobalEnv: () => ({}),
-        isAgentTeamsEnabled: () => true,
-      });
-
-      const glmAgent = new TestAgent({ apiKey: 'key', model: 'glm-5.1', provider: 'glm' });
-      const options = glmAgent.testCreateSdkOptions();
-
-      expect(options.env?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5.1');
-      expect(options.env?.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-5-turbo');
-      expect(options.env?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5v-turbo');
-      expect(options.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS).toBeUndefined();
-      expect(options.teammateMode).toBe('in-process');
-    });
-
-    it('should respect user overrides in globalEnv for model tier env vars', () => {
-      getModelForTierSpy.mockImplementation(((tier: string) => {
-        if (tier === 'high') {
-          return 'glm-5.1';
-        }
-        return undefined;
-      }) as any);
-
-      setRuntimeContext({
-        getWorkspaceDir: () => '/workspace',
-        getAgentConfig: () => ({ apiKey: 'key', model: 'glm-5v-turbo', provider: 'glm' }),
-        getLoggingConfig: () => ({ sdkDebug: false }),
-        getGlobalEnv: () => ({
-          ANTHROPIC_DEFAULT_OPUS_MODEL: 'user-custom-opus',
-          ANTHROPIC_DEFAULT_SONNET_MODEL: 'user-custom-sonnet',
-        }),
-        isAgentTeamsEnabled: () => false,
-      });
-
-      const glmAgent = new TestAgent({ apiKey: 'key', model: 'glm-5v-turbo', provider: 'glm' });
-      const options = glmAgent.testCreateSdkOptions();
-
-      // User's explicit values should not be overridden
-      expect(options.env?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('user-custom-opus');
-      expect(options.env?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('user-custom-sonnet');
-    });
-
-    it('should not inject sonnet model when multimodal tier is undefined', () => {
-      getModelForTierSpy.mockImplementation((() => {
-        // All tiers return undefined - simulates no tier models configured
-        return undefined;
-      }) as any);
-
-      setRuntimeContext({
-        getWorkspaceDir: () => '/workspace',
-        getAgentConfig: () => ({ apiKey: 'key', model: 'my-model', provider: 'glm' }),
-        getLoggingConfig: () => ({ sdkDebug: false }),
-        getGlobalEnv: () => ({}),
-        isAgentTeamsEnabled: () => false,
-      });
-
-      const glmAgent = new TestAgent({ apiKey: 'key', model: 'my-model', provider: 'glm' });
-      const options = glmAgent.testCreateSdkOptions();
-
-      // sonnet uses Config.getModelForTier('multimodal'), not this.model
-      expect(options.env?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
-    });
-  });
-
   describe('createSdkOptions - Issue #4883: fallback auto-compaction', () => {
     it('discovers the context limit instead of injecting a fixed fallback', () => {
-      const glmAgent = new TestAgent({ apiKey: 'key', model: 'glm-5.1', provider: 'glm' });
+      const glmAgent = new TestAgent({ apiKey: 'key', model: 'glm-5.1', apiProtocol: 'anthropic' });
       expect(glmAgent.testCreateSdkOptions().autoCompactWindow).toBe('auto');
     });
 
     it.each(['claude-sonnet-4-20250514', 'sonnet', 'opus[1m]', 'haiku'])(
       'also discovers native model metadata for %s when not configured',
       (model) => {
-        const nativeAgent = new TestAgent({ apiKey: 'key', model, provider: 'anthropic' });
+        const nativeAgent = new TestAgent({ apiKey: 'key', model, apiProtocol: 'anthropic' });
         expect(nativeAgent.testCreateSdkOptions().autoCompactWindow).toBe('auto');
       }
     );
 
     it('uses a configured fallback window and permits zero as an opt-out', () => {
       const windowSpy = vi.spyOn(Config, 'getAutoCompactWindow');
-      const glmAgent = new TestAgent({ apiKey: 'key', model: 'glm-5.1', provider: 'glm' });
+      const glmAgent = new TestAgent({ apiKey: 'key', model: 'glm-5.1', apiProtocol: 'anthropic' });
 
       windowSpy.mockReturnValueOnce(64_000);
       expect(glmAgent.testCreateSdkOptions().autoCompactWindow).toBe(64_000);
@@ -893,7 +773,7 @@ describe('BaseAgent', () => {
       const piAgent = new TestAgent({
         apiKey: 'key',
         model: 'glm-5.1',
-        provider: 'glm',
+        apiProtocol: 'anthropic',
         agentBackend: 'pi',
       });
       expect(piAgent.testCreateSdkOptions().autoCompactWindow).toBeUndefined();
@@ -902,7 +782,7 @@ describe('BaseAgent', () => {
     it('honors explicit configuration for native Claude models too', () => {
       const spy = vi.spyOn(Config, 'getAutoCompactWindow').mockReturnValue(42000);
       try {
-        const agent = new TestAgent({ apiKey: 'key', model: 'claude-sonnet-4', provider: 'anthropic' });
+        const agent = new TestAgent({ apiKey: 'key', model: 'claude-sonnet-4', apiProtocol: 'anthropic' });
         expect(agent.testCreateSdkOptions().autoCompactWindow).toBe(42000);
       } finally { spy.mockRestore(); }
     });
@@ -912,12 +792,12 @@ describe('BaseAgent', () => {
     it('should always set DISCLAUDE_WORKSPACE_DIR to workspace dir', () => {
       setRuntimeContext({
         getWorkspaceDir: () => '/workspace',
-        getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
+        getAgentConfig: () => ({ apiKey: 'key', model: 'model', apiProtocol: 'anthropic' }),
         getLoggingConfig: () => ({ sdkDebug: false }),
         getGlobalEnv: () => ({}),
         isAgentTeamsEnabled: () => false,
       });
-      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
       const options = ctxAgent.testCreateSdkOptions();
       expect(options.env?.DISCLAUDE_WORKSPACE_DIR).toBe('/workspace');
     });
@@ -925,12 +805,12 @@ describe('BaseAgent', () => {
     it('should set DISCLAUDE_WORKSPACE_DIR even in project mode', () => {
       setRuntimeContext({
         getWorkspaceDir: () => '/workspace',
-        getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
+        getAgentConfig: () => ({ apiKey: 'key', model: 'model', apiProtocol: 'anthropic' }),
         getLoggingConfig: () => ({ sdkDebug: false }),
         getGlobalEnv: () => ({}),
         isAgentTeamsEnabled: () => false,
       });
-      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
       const options = ctxAgent.testCreateSdkOptions({ cwd: '/workspace/projects/my-app' });
       expect(options.env?.DISCLAUDE_WORKSPACE_DIR).toBe('/workspace');
     });

@@ -266,10 +266,21 @@ export interface AgentQueryOptions {
    * separate from cwd: chat runtime state may execute in a shared workspace.
    */
   projectRoot?: string;
+  /** Selected LLM wire format, independent of the model name. */
+  apiProtocol?: import('../config/types.js').ApiProtocol;
   /** 使用的模型 */
   model?: string;
+  /** Resolved Codex binding; absent preserves direct SDK callers' provider defaults. */
+  codexRuntime?: {
+    sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+    fullAccess?: boolean;
+    networkAccess?: boolean;
+    transport?: 'exec' | 'app-server';
+  };
   /** Native adapter-owned reasoning selection; each provider validates its supported levels. */
   reasoningEffort?: string;
+  /** Host session budget shared by every agent bound to the same named LLM. */
+  llmSessionLimit?: { name: string; maxConcurrentSessions: number };
   /** 权限模式 */
   permissionMode?: PermissionMode;
   /** Business tools; each Harness adapter owns registration and transport. */

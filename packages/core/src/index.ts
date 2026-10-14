@@ -146,7 +146,6 @@ export {
   type Disposable,
   type UserInput as AgentUserInput,
   type ChatAgent,
-  type AgentProvider,
   type BaseAgentConfig,
   type ChatAgentConfig,
   type AgentConfig,

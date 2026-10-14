@@ -8,8 +8,8 @@ export type AgentPresetValidation =
   | { ok: true; name: string; preset: AgentPreset }
   | { ok: false; errors: string[] };
 
-export type AgentPresetResolution =
-  | { ok: true; name: string; preset: AgentPreset }
+export type AgentPresetResolution<T = AgentPreset> =
+  | { ok: true; name: string; preset: T }
   | { ok: false; error: string };
 
 /**
@@ -48,10 +48,10 @@ export function validateAgentPresets(agents: unknown): AgentPresetValidation {
     if (!VALID_BACKENDS.has(preset.agentBackend as AgentPreset['agentBackend'])) {
       errors.push(`agents.${name}.agentBackend must be one of: claude, pi, codex, deepseek`);
     }
-    if (typeof preset.model !== 'string' || !preset.model.trim()) {
+    if (typeof preset.model !== 'string' || (!preset.model.trim() && !['codex', 'deepseek'].includes(preset.agentBackend ?? ''))) {
       errors.push(`agents.${name}.model must be a non-empty string`);
     } else if (
-      preset.agentBackend === 'codex' &&
+      preset.agentBackend === 'codex' && preset.model.trim() &&
       !/^gpt-\d+(?:[.-].+)/i.test(preset.model.trim())
     ) {
       errors.push(`agents.${name}.model must be a Codex/ChatGPT model identifier`);
@@ -82,10 +82,10 @@ export function validateAgentPresets(agents: unknown): AgentPresetValidation {
  * configuration should run validateAgentPresets first, while runtime command
  * handlers can use this helper without duplicating selection semantics.
  */
-export function resolveAgentPreset(
-  agents: AgentPresets,
+export function resolveAgentPreset<T extends Pick<AgentPreset, 'agentBackend' | 'model' | 'default'>>(
+  agents: Record<string, T>,
   requestedName?: string
-): AgentPresetResolution {
+): AgentPresetResolution<T> {
   const name = requestedName?.trim();
   if (name) {
     const preset = agents[name];

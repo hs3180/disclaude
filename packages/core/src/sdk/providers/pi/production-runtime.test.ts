@@ -31,6 +31,27 @@ describe('pi model and credential isolation', () => {
     expect(second.model.id).toBe('model-b');
     expect(process.env.ANTHROPIC_API_KEY).toBe('host-key');
   });
+  it('selects OpenAI chat completions by API format and ignores unrelated Anthropic credentials', () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'unrelated-key');
+    const result = resolvePiModel({
+      settingSources: [],
+      apiProtocol: 'openai',
+      model: 'alternate-model',
+      env: {
+        OPENAI_API_KEY: 'selected-key',
+        OPENAI_BASE_URL: 'https://openai-compatible.example/v1',
+      },
+    });
+    expect(result.apiKey).toBe('selected-key');
+    expect(result.model).toMatchObject({
+      api: 'openai-completions',
+      provider: 'openai',
+      baseUrl: 'https://openai-compatible.example/v1',
+    });
+    expect(() =>
+      resolvePiModel({ settingSources: [], apiProtocol: 'openai', model: 'm', env: {} })
+    ).toThrow('OPENAI_API_KEY');
+  });
   it('rejects missing configuration and non-HTTP endpoints', () => {
     vi.stubEnv('ANTHROPIC_API_KEY', '');
     expect(() => resolvePiModel({ settingSources: [], model: 'm' })).toThrow('ANTHROPIC_API_KEY');

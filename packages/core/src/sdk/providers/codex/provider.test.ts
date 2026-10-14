@@ -677,6 +677,46 @@ JSONL
 
 
 
+    it('uses the selected binding permissions and transport without inheriting unrestricted defaults', async () => {
+      sandboxedFixtures();
+      const provider = new CodexAgentProvider({
+        env: { PATH: `${fixtures.binDir}:${process.env.PATH ?? ''}`, CODEX_HOME: fixtures.codexHome },
+        transport: 'app-server', fullAccess: true, reasoningEffort: 'max',
+      });
+      await drainStream(provider, ['hi'], {
+        model: 'gpt-6-luna', reasoningEffort: undefined,
+        codexRuntime: { transport: 'exec', sandbox: 'read-only', fullAccess: false },
+      });
+      expect(argvOf(fixtures)).toContain('-s read-only');
+      expect(argvOf(fixtures)).toContain('-m gpt-6-luna');
+      expect(argvOf(fixtures)).not.toContain('--dangerously-bypass-approvals-and-sandbox');
+      expect(argvOf(fixtures)).not.toContain('model_reasoning_effort');
+      provider.dispose();
+    }, 15_000);
+
+    it('uses independent LLM session caps instead of the default agent cap', async () => {
+      sandboxedFixtures();
+      const provider = new CodexAgentProvider({
+        env: { PATH: `${fixtures.binDir}:${process.env.PATH ?? ''}`, CODEX_HOME: fixtures.codexHome },
+        maxActiveSessions: 1, maxConcurrentRuns: 1,
+      });
+      const streams = Array.from({ length: 4 }, (_, index) => provider.queryStream(
+        (async function* () { yield { role: 'user', content: 'hi' } as UserInput; })(),
+        { settingSources: [], sessionKey: `llm-cap-${index}`,
+          llmSessionLimit: index < 3 ? { name: 'shared', maxConcurrentSessions: 3 }
+            : { name: 'independent', maxConcurrentSessions: 1 } },
+      ));
+      try {
+        expect(provider.getGovernanceStats()).toMatchObject({
+          activeSessions: 4, maxActiveSessions: 4, maxConcurrentRuns: 1, evictedSessions: 0,
+        });
+        for (const stream of streams) {
+          for await (const message of stream.iterator) { expect(message.type).not.toBe('error'); }
+        }
+        expect(provider.getGovernanceStats().activeSessions).toBe(0);
+      } finally { for (const stream of streams) { stream.handle.close(); } provider.dispose(); }
+    }, 15_000);
+
     it('uses danger-full-access when the explicit full-access switch is enabled', async () => {
       sandboxedFixtures();
       const provider = new CodexAgentProvider({

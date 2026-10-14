@@ -282,7 +282,7 @@ export class CodexAppServerLifecycle {
         } catch {
           throw new Error(
             `Cannot verify Codex reasoning effort "${effort}": the app-server model catalog is unavailable. ` +
-            'Update the Codex CLI or unset agent.codex.reasoningEffort.'
+            'Update the Codex CLI or unset llms.<name>.reasoningEffort.'
           );
         }
         const models = Array.isArray(page?.data) ? page.data : [];
@@ -299,7 +299,7 @@ export class CodexAppServerLifecycle {
       }
       const selectedModel = selected?.model ?? selected?.id;
       if (!selected || !selectedModel || !Array.isArray(selected.supportedReasoningEfforts)) {
-        throw new Error(`Cannot verify Codex reasoning effort "${effort}": model "${model ?? 'Codex CLI default'}" is absent from the app-server model catalog. Choose a listed model or unset agent.codex.reasoningEffort.`);
+        throw new Error(`Cannot verify Codex reasoning effort "${effort}": model "${model ?? 'Codex CLI default'}" is absent from the app-server model catalog. Choose a listed model or unset llms.<name>.reasoningEffort.`);
       }
       supported = new Set(selected.supportedReasoningEfforts
         .map(item => item.reasoningEffort)

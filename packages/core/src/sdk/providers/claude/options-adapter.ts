@@ -78,10 +78,22 @@ export function adaptOptions(
 
   // 环境变量
   if (options.env) {
-    // CRITICAL: Extract API key and base URL from env and pass as direct options
-    // The SDK requires these as direct options, not just env vars
     if (options.env.ANTHROPIC_API_KEY) {
       sdkOptions.apiKey = options.env.ANTHROPIC_API_KEY;
+      // File settings can overwrite the child environment. Pin only the
+      // selected API service's credentials/endpoint in SDK flag settings;
+      // other user, project and local settings continue to load normally.
+      sdkOptions.settings = {
+        env: {
+          ANTHROPIC_API_KEY: options.env.ANTHROPIC_API_KEY,
+          ANTHROPIC_AUTH_TOKEN: '',
+          CLAUDE_CODE_OAUTH_TOKEN: '',
+          ...(options.env.ANTHROPIC_BASE_URL ? { ANTHROPIC_BASE_URL: options.env.ANTHROPIC_BASE_URL } : {}),
+        },
+      };
+      const env = sdkOptions.env as NodeJS.ProcessEnv;
+      delete env.ANTHROPIC_AUTH_TOKEN;
+      delete env.CLAUDE_CODE_OAUTH_TOKEN;
     }
     if (options.env.ANTHROPIC_BASE_URL) {
       sdkOptions.apiBaseUrl = options.env.ANTHROPIC_BASE_URL;

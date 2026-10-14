@@ -181,12 +181,28 @@ describe('ChatAgent (service)', () => {
       callbacks,
       apiKey: 'test-key',
       model: 'test-model',
-      provider: 'anthropic',
+      apiProtocol: 'anthropic',
       apiBaseUrl: 'https://api.example.com',
     });
   });
 
   describe('constructor', () => {
+    it('settles a capacity rejection with a channel notice and lets a later retry start', async () => {
+      const rejection = Object.assign(new Error('LLM daily 的并发会话已满（1/1）；请结束一个会话后重试。'),
+        { code: 'LLM_SESSION_LIMIT' });
+      const query = (chatAgent as any).createQueryStream;
+      query.mockImplementationOnce(() => { throw rejection; });
+      try {
+        await expect(chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'first', messageId: 'full' })).resolves.toBeUndefined();
+        await expect(chatAgent.turnCompleteFor('full')).rejects.toBe(rejection);
+        expect(callbacks.sendMessage).toHaveBeenCalledWith('oc_test_chat', expect.stringContaining('1/1'), 'full');
+        expect(callbacks.onDone).toHaveBeenCalledWith('oc_test_chat', 'full');
+        expect((chatAgent as any).restartManager.recordSuccess).not.toHaveBeenCalled();
+        expect(query).toHaveBeenCalledTimes(1);
+        await chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'retry', messageId: 'retry' });
+        expect(query).toHaveBeenCalledTimes(2);
+      } finally { chatAgent.reset(); ChatAgent.prototype.dispose.call(chatAgent); }
+    });
     it.each([false, true])('rejects the owning completion on async delivery failure (once=%s)', async once => {
       const agent = new ChatAgent({ chatId: 'failed-input-chat', callbacks: createMockCallbacks(), apiKey: 'test', model: 'test' });
       (agent as any).isAgentTeamsEnabled = () => false;
@@ -291,7 +307,7 @@ describe('ChatAgent (service)', () => {
     });
 
     it('uses an isolated provider session key while remaining bound to the real chat (#4812)', async () => {
-      const agent = new ChatAgent({ chatId: 'oc_test_chat', callbacks, apiKey: 'test', model: 'test', provider: 'anthropic', sdkSessionKey: 'oc_test_chat::schedule:tick-1' });
+      const agent = new ChatAgent({ chatId: 'oc_test_chat', callbacks, apiKey: 'test', model: 'test', apiProtocol: 'anthropic', sdkSessionKey: 'oc_test_chat::schedule:tick-1' });
       await agent.processMessage({ chatId: 'oc_test_chat', payload: 'run', messageId: 'tick-1' });
       expect((agent as any).createSdkOptions).toHaveBeenCalledWith(expect.objectContaining({ sessionKey: 'oc_test_chat::schedule:tick-1' }));
       expect(agent.getChatId()).toBe('oc_test_chat');
@@ -319,7 +335,7 @@ describe('ChatAgent (service)', () => {
         callbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
       expect(p.getChatId()).toBe('oc_another_chat');
     });
@@ -441,7 +457,7 @@ describe('ChatAgent (service)', () => {
       ChatAgent.prototype.dispose.call(chatAgent);
     });
     it('passes pending-question eligibility to the message builder', async () => {
-      const agent = new ChatAgent({ chatId: 'eligible-mention', callbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const agent = new ChatAgent({ chatId: 'eligible-mention', callbacks, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
       await agent.processMessage({
         chatId: 'eligible-mention',
         payload: '',
@@ -1141,7 +1157,7 @@ describe('ChatAgent (service)', () => {
         callbacks,
         apiKey: 'test-key',
         model: 'test-model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
         apiBaseUrl: 'https://api.example.com',
         cwdProvider: (chatId: string) =>
           chatId === 'oc_test_chat' && stateAt() === 'bound' ? '/bound/project/dir' : undefined,
@@ -1291,7 +1307,7 @@ describe('ChatAgent (service)', () => {
         callbacks,
         apiKey: 'test-key',
         model: 'test-model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
         apiBaseUrl: 'https://api.example.com',
         cwdProvider,
         cwdResolver: () => ({
@@ -1311,7 +1327,7 @@ describe('ChatAgent (service)', () => {
         callbacks,
         apiKey: 'test-key',
         model: 'test-model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
         apiBaseUrl: 'https://api.example.com',
         cwdResolver: () => ({
           effectiveCwd: '/bound/project/dir',
@@ -1336,7 +1352,7 @@ describe('ChatAgent (service)', () => {
         callbacks,
         apiKey: 'test-key',
         model: 'test-model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
         apiBaseUrl: 'https://api.example.com',
         cwdResolver: () => {
           const workingDir = resolvedCwds[Math.min(resolutionIndex, resolvedCwds.length - 1)];
@@ -1475,7 +1491,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
         agentBackend: backend,
       });
 
@@ -1594,7 +1610,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // Provider-level synthesized terminal result: the SDK query ended cleanly
@@ -1660,7 +1676,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
       // One generator instance, reused for every session start (a finished async
       // generator stays finished, so a second startAgentLoop drains nothing).
@@ -1837,7 +1853,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
       async function* scriptedIterator() {
         for (const parsed of parsedMessages) {
@@ -2043,7 +2059,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // #4322 shape: the turn streamed partial user-visible work, THEN the SDK
@@ -2116,7 +2132,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       async function* okResultIterator() {
@@ -2165,7 +2181,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // Result-only stream (no assistant text / no tools) → isEmptyTurn becomes
@@ -2236,7 +2252,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       async function* resultIterator() {
@@ -2282,7 +2298,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       async function* resultIterator() {
@@ -2327,7 +2343,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       async function* resultIterator() {
@@ -2370,7 +2386,7 @@ describe('ChatAgent (service)', () => {
   it.each([false, true])('recovers UNKNOWN once without replaying input (tool emitted: %s)', async toolEmitted => {
     const { RestartManager: RealRestartManager } = await vi.importActual<typeof import('@disclaude/core')>('@disclaude/core');
     const callbacks = createMockCallbacks();
-    const agent = new ChatAgent({ chatId: 'unknown-recovery', callbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+    const agent = new ChatAgent({ chatId: 'unknown-recovery', callbacks, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
     const internals = agent as any;
     internals.restartManager = new RealRestartManager({ logger: internals.logger, initialBackoffMs: 5 });
     let fail!: () => void;
@@ -2406,7 +2422,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // Iterator that throws immediately (0 messages = startup failure)
@@ -2464,7 +2480,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // Iterator that throws with stderr attached
@@ -2516,7 +2532,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       async function* failingIterator() {
@@ -2570,7 +2586,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // Iterator that yields messages before throwing (runtime error).
@@ -2633,7 +2649,7 @@ describe('ChatAgent (service)', () => {
         callbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // Iterator that parks after the first yield until close() is called.
@@ -2697,7 +2713,7 @@ describe('ChatAgent (service)', () => {
         callbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // Issue #4394: same parking-iterator shape as the reset() test above.
@@ -2888,7 +2904,7 @@ describe('ChatAgent (service)', () => {
         callbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // Start a session to create AbortController
@@ -2916,7 +2932,7 @@ describe('ChatAgent (service)', () => {
         callbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       void agent.processMessage({
@@ -2936,7 +2952,7 @@ describe('ChatAgent (service)', () => {
         callbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       void agent.processMessage({
@@ -2961,7 +2977,7 @@ describe('ChatAgent (service)', () => {
       callbacks.sendMessage.mockImplementation(async (_chat, text) => {
         if (text === '⏹️ 本轮已停止。') { noticeStarted(); await notice; }
       });
-      const agent = new ChatAgent({ chatId: 'backend-resume', callbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const agent = new ChatAgent({ chatId: 'backend-resume', callbacks, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
       (agent as any).isAgentTeamsEnabled = () => false;
       let interrupt!: () => void, complete!: () => void;
       const interrupted = new Promise<void>(resolve => { interrupt = resolve; });
@@ -3002,7 +3018,7 @@ describe('ChatAgent (service)', () => {
 
     it.each([{ partial: false, once: false }, { partial: true, once: false }, { partial: false, once: true }, { partial: true, once: true }])('rejects interrupted work without success or automatic replay (%j)', async ({ partial, once }) => {
       const callbacks = { ...createMockCallbacks(), onTurnResult: vi.fn().mockResolvedValue(undefined) };
-      const agent = new ChatAgent({ chatId: 'backend-stop', callbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const agent = new ChatAgent({ chatId: 'backend-stop', callbacks, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
       (agent as any).isAgentTeamsEnabled = () => false;
       const close = vi.fn();
       let publish!: () => void;
@@ -3062,7 +3078,7 @@ describe('ChatAgent (service)', () => {
       localCallbacks.sendMessage.mockResolvedValue('restart-notice-receipt');
       const agent = new ChatAgent({
         chatId: 'reconcile-chat', callbacks: localCallbacks, apiKey: 'key', model: 'model',
-        provider: 'anthropic', turnRecovery: nextProcess,
+        apiProtocol: 'anthropic', turnRecovery: nextProcess,
       });
       (agent as any).isAgentTeamsEnabled = () => false;
       (agent as any).createQueryStream = vi.fn(() => ({
@@ -3553,7 +3569,7 @@ describe('ChatAgent (service)', () => {
         onTurnResult: vi.fn().mockResolvedValue(undefined),
         addReaction: vi.fn().mockResolvedValue(undefined),
       };
-      const agent = new ChatAgent({ chatId: 'tool-only-chat', callbacks: localCallbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const agent = new ChatAgent({ chatId: 'tool-only-chat', callbacks: localCallbacks, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
       let toolAttempts = 0;
       async function* output() {
         yield { parsed: { type: 'tool_use' as const, content: 'execute owned command' }, raw: {} };
@@ -3591,7 +3607,7 @@ describe('ChatAgent (service)', () => {
         requestAgentInput: vi.fn().mockResolvedValue(undefined),
         onTurnResult: vi.fn().mockResolvedValue(undefined),
       };
-      const agent = new ChatAgent({ chatId: 'question-chat', callbacks: localCallbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const agent = new ChatAgent({ chatId: 'question-chat', callbacks: localCallbacks, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
       const request = { requestId: 'owned-question', params: { questions: [{ id: 'choice', header: 'Choice', question: 'Which option?', options: [{ label: 'One', description: 'First option' }, { label: 'Two', description: 'Second option' }] }] } };
       const context = { chatId: 'question-chat', sourceMessageId: 'question-source', threadRootId: 'question-root' };
       (agent as any).createQueryStream = (_input: unknown, options: any) => ({
@@ -3612,7 +3628,7 @@ describe('ChatAgent (service)', () => {
     });
 
     it('rejects one-shot completion after tool execution without a final reply', async () => {
-      const agent = new ChatAgent({ chatId: 'tool-only-once', callbacks: createMockCallbacks(), apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const agent = new ChatAgent({ chatId: 'tool-only-once', callbacks: createMockCallbacks(), apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
       const create = vi.fn(() => ({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: (async function* () {
         yield { parsed: { type: 'tool_use', content: 'owned command' }, raw: {} };
         yield { parsed: { type: 'result', content: '✅ Complete' }, raw: {} };
@@ -3626,7 +3642,7 @@ describe('ChatAgent (service)', () => {
 
     it('retains failure when the missing-reply notification cannot be delivered', async () => {
       const localCallbacks = { ...createMockCallbacks(), sendMessage: vi.fn().mockRejectedValue(new Error('channel unavailable')) };
-      const agent = new ChatAgent({ chatId: 'tool-only-undelivered', callbacks: localCallbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const agent = new ChatAgent({ chatId: 'tool-only-undelivered', callbacks: localCallbacks, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
       const create = vi.fn(() => ({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: (async function* () {
         yield { parsed: { type: 'tool_use', content: 'owned command' }, raw: {} };
         yield { parsed: { type: 'result', content: '✅ Complete' }, raw: {} };
@@ -3645,7 +3661,7 @@ describe('ChatAgent (service)', () => {
   describe('structured internal turn results', () => {
     it.each([false, true])('bounds terminal output and resets the bound at a tool call (tool=%s)', async tool => {
       const callbacks = { ...createMockCallbacks(), onTurnResult: vi.fn().mockResolvedValue(undefined) };
-      const agent = new ChatAgent({ chatId: 'bounded-result', callbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const agent = new ChatAgent({ chatId: 'bounded-result', callbacks, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
       (agent as any).isAgentTeamsEnabled = () => false;
       async function* output() {
         yield { parsed: { type: 'text', content: 'x'.repeat(65_537) } };
@@ -3667,7 +3683,7 @@ describe('ChatAgent (service)', () => {
 
     it.each([undefined, 'turn_failed'])('separates assistant output from progress and preserves failure (reason=%s)', async reason => {
       const callbacks = { ...createMockCallbacks(), onTurnResult: vi.fn().mockResolvedValue(undefined) };
-      const agent = new ChatAgent({ chatId: 'research-result', callbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const agent = new ChatAgent({ chatId: 'research-result', callbacks, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
       async function* output() {
         yield { parsed: { type: 'status', content: '🤔 Thinking...' } };
         yield { parsed: { type: 'text', content: 'I will check the supplied report first.' } };
@@ -3706,7 +3722,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // Set up debug group
@@ -3764,7 +3780,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       mockGetDebugGroup.mockReturnValue({ chatId: 'oc_debug_group', setAt: Date.now() });
@@ -3832,7 +3848,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
       (agent as any).sdkProvider = { name: backend };
 
@@ -3907,7 +3923,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       mockGetDebugGroup.mockReturnValue({ chatId: 'oc_debug_group', setAt: Date.now() });
@@ -3954,7 +3970,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       mockGetDebugGroup.mockReturnValue({ chatId: 'oc_debug_group', setAt: Date.now() });
@@ -4001,7 +4017,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       mockGetDebugGroup.mockReturnValue({ chatId: 'oc_debug_group', setAt: Date.now() });
@@ -4044,7 +4060,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // No debug group set (default mock returns null)
@@ -4089,7 +4105,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       mockGetDebugGroup.mockReturnValue({ chatId: 'oc_debug_group', setAt: Date.now() });
@@ -4132,7 +4148,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // Set as topic type
@@ -4192,7 +4208,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       (agent as any).chatType = 'topic';
@@ -4267,7 +4283,7 @@ describe('ChatAgent (service)', () => {
     it('keeps an attachment-only turn and its queued newer request separately correlated', async () => {
       const callbacks = createMockCallbacks();
       callbacks.sendMessage.mockImplementation((_chat: string, text: string) => Promise.resolve(`receipt:${text}`));
-      const agent = new ChatAgent({ chatId: 'chat', callbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const agent = new ChatAgent({ chatId: 'chat', callbacks, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
       (agent as any).isAgentTeamsEnabled = () => false;
       let resume!: () => void;
       const gate = new Promise<void>(resolve => {resume = resolve;});
@@ -4323,7 +4339,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       (agent as any).chatType = 'topic';
@@ -4503,7 +4519,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // Two turns within one persistent processIterator run. startAgentLoop is
@@ -4568,7 +4584,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // Single empty turn: only the ✅ Complete result marker, no real reply,
@@ -4639,7 +4655,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       async function* systemResultIterator() {
@@ -4700,7 +4716,7 @@ describe('ChatAgent (service)', () => {
         callbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
       (agent as any).isAgentTeamsEnabled = () => false;
       return agent;
@@ -5350,7 +5366,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // Yield one message first (so messageCount > 0 ⇒ not a startup failure),
@@ -5398,7 +5414,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       async function* yieldThenThrowIterator() {
@@ -5440,7 +5456,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       // Single empty turn: only the ✅ Complete result marker, no real reply,
@@ -5482,7 +5498,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       async function* failedTurnIterator() {
@@ -5541,7 +5557,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       async function* systemResultIterator() {
@@ -5608,7 +5624,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       async function* replyIterator() {
@@ -5659,7 +5675,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       async function* noStreamIterator() {
@@ -5700,7 +5716,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       (agent as any).createQueryStream = () => ({
@@ -5757,7 +5773,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
 
       async function* scopedIterator() {
@@ -5857,7 +5873,7 @@ describe('ChatAgent (service)', () => {
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
-        provider: 'anthropic',
+        apiProtocol: 'anthropic',
       });
       (agent as any).isAgentTeamsEnabled = () => false;
       return { agent, localCallbacks };
@@ -6028,7 +6044,7 @@ describe('Issue #4907: completion feedback belongs to delivered output', () => {
       finalizeStreaming: opts.failFinalize ? vi.fn().mockRejectedValue(new Error('freeze failed'))
         : vi.fn().mockResolvedValue('om-streamed-reply'),
     };
-    const agent = new ChatAgent({ chatId: 'oc_delivery', callbacks, apiKey: 'key', model: 'model', provider: 'anthropic' });
+    const agent = new ChatAgent({ chatId: 'oc_delivery', callbacks, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
     async function* events() {
       yield { parsed: { type: opts.statusOnly ? 'status' : 'text', content: 'final answer' }, raw: {} };
       if (opts.errorEvent) { yield { parsed: { type: 'error', content: 'upstream error' }, raw: {} }; }
@@ -6077,7 +6093,7 @@ describe('Issue #4907: completion feedback belongs to delivered output', () => {
       streamText: vi.fn().mockResolvedValue(undefined),
       finalizeStreaming: vi.fn().mockResolvedValueOnce('om-answer-1').mockResolvedValueOnce('om-answer-2'),
     };
-    const agent = new ChatAgent({ chatId: 'oc_queue', callbacks: cb, apiKey: 'key', model: 'model', provider: 'anthropic' });
+    const agent = new ChatAgent({ chatId: 'oc_queue', callbacks: cb, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     async function* events() {
@@ -6113,7 +6129,7 @@ describe('completion after asynchronous streaming delivery', () => {
       streamText: vi.fn().mockResolvedValue(undefined),
       finalizeStreaming: vi.fn(() => finalDelivery),
     };
-    const agent = new ChatAgent({ chatId: 'oc_async', callbacks: cb, apiKey: 'key', model: 'model', provider: 'anthropic' });
+    const agent = new ChatAgent({ chatId: 'oc_async', callbacks: cb, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
     async function* events() {
       yield { parsed: { type: 'text', content: 'answer' }, raw: {} };
       yield { parsed: { type: 'result', content: '✅ Complete' }, raw: {} };

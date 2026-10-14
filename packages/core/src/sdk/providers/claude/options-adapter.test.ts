@@ -6,9 +6,14 @@
  * Issue #1617: Phase 2 - SDK providers test coverage.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { browserAgentEnv } from '../../../utils/browser-env.js';
 import { adaptOptions, adaptInput } from './options-adapter.js';
+
+vi.mock('../../../config/loader.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../../../config/loader.js')>(),
+  loadConfigFile: () => ({ _fromFile: false }),
+}));
 
 describe('adaptOptions', () => {
   it('should return empty options for minimal input', () => {
@@ -105,6 +110,23 @@ describe('adaptOptions', () => {
 
     expect(result.apiKey).toBeUndefined();
     expect(result.apiBaseUrl).toBeUndefined();
+  });
+
+  it('keeps selected API credentials above loaded settings without losing other SDK settings', () => {
+    const result = adaptOptions({
+      settingSources: ['user', 'project', 'local'],
+      teammateMode: 'in-process', autoCompactWindow: 100_000,
+      env: { ANTHROPIC_API_KEY: 'selected-key', ANTHROPIC_BASE_URL: 'https://selected.example',
+        ANTHROPIC_AUTH_TOKEN: 'global-bearer', CLAUDE_CODE_OAUTH_TOKEN: 'global-oauth', CUSTOM_VAR: 'kept' },
+    });
+    expect(result.env).not.toHaveProperty('ANTHROPIC_AUTH_TOKEN');
+    expect(result.env).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
+    expect(result.settings).toEqual({
+      env: { ANTHROPIC_API_KEY: 'selected-key', ANTHROPIC_BASE_URL: 'https://selected.example',
+        ANTHROPIC_AUTH_TOKEN: '', CLAUDE_CODE_OAUTH_TOKEN: '' },
+      teammateMode: 'in-process', autoCompactEnabled: true, autoCompactWindow: 100_000,
+    });
+    expect(result.env).toHaveProperty('CUSTOM_VAR', 'kept');
   });
 
   it('should pass through stderr callback (Issue #2920)', () => {

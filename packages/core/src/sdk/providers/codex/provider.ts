@@ -234,6 +234,18 @@ export class CodexAgentProvider implements IAgentSDKProvider {
    * singleton per process (factory), so its caps bound the whole process.
    */
   private readonly governor: CodexSessionGovernor;
+  private readonly llmGovernors = new Map<string, CodexSessionGovernor>();
+
+  private sessionGovernor(options: AgentQueryOptions): CodexSessionGovernor {
+    const limit = options.llmSessionLimit;
+    if (!limit) { return this.governor; }
+    let governor = this.llmGovernors.get(limit.name);
+    if (!governor) {
+      governor = new CodexSessionGovernor({ maxActiveSessions: limit.maxConcurrentSessions });
+      this.llmGovernors.set(limit.name, governor);
+    }
+    return governor;
+  }
   /**
    * Evicted-session thread stash (S7): sessionKey → thread_id, written ONLY
    * by the eviction hook. An evicted chat's next queryStream resumes its
@@ -343,7 +355,15 @@ export class CodexAgentProvider implements IAgentSDKProvider {
    * /status-ready; also the runtime admin surface via setGovernanceLimits.
    */
   getGovernanceStats() {
-    return this.governor.getStats();
+    const stats = this.governor.getStats();
+    if (this.llmGovernors.size && !stats.activeSessions) { stats.maxActiveSessions = 0; }
+    for (const governor of this.llmGovernors.values()) {
+      const scoped = governor.getStats();
+      stats.activeSessions += scoped.activeSessions;
+      stats.evictedSessions += scoped.evictedSessions;
+      stats.maxActiveSessions += scoped.maxActiveSessions;
+    }
+    return stats;
   }
 
   /** Runtime cap change (admin/test surface, Issue #4634). */
@@ -371,7 +391,10 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     this.appServerLifecycles.delete(sessionKey);
     this.appServerThreadIds.delete(sessionKey);
     this.appServerDynamicToolSignatures.delete(sessionKey);
-    const hadRegistration = this.governor.forgetSession(sessionKey);
+    let hadRegistration = this.governor.forgetSession(sessionKey);
+    for (const governor of this.llmGovernors.values()) {
+      hadRegistration = governor.forgetSession(sessionKey) || hadRegistration;
+    }
     const hadStash = this.threadStash.delete(sessionKey);
     if (hadRegistration || hadStash) {
       logger.info(
@@ -415,7 +438,8 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             ? 'environment'
             : this.modelSource;
     const rawEffort = options.reasoningEffort ?? options.env?.CODEX_REASONING_EFFORT?.trim() ??
-      this.env.CODEX_REASONING_EFFORT?.trim() ?? this.reasoningEffort;
+      this.env.CODEX_REASONING_EFFORT?.trim() ??
+      (Object.hasOwn(options, 'reasoningEffort') ? undefined : this.reasoningEffort);
     if (rawEffort && !isCodexReasoningEffort(rawEffort)) {
       throw new Error('Codex reasoning effort must be one of: minimal, low, medium, high, xhigh, max, ultra');
     }
@@ -441,10 +465,13 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     // an actionable message when the policy cannot be honored headlessly
     // (e.g. an invalid permissionMode) — same fail-fast contract as the
     // binary check above.
+    const native = options.codexRuntime;
+    const configuredFullAccess = native ? native.fullAccess ?? false : this.fullAccess;
+    const networkAccess = native ? native.networkAccess ?? true : this.networkAccess;
     const sandboxDecision = resolveCodexSandboxPolicy(
       options,
-      this.sandboxOverride,
-      this.fullAccess
+      native ? native.sandbox : this.sandboxOverride,
+      configuredFullAccess
     );
     logger.info(
       {
@@ -455,7 +482,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       },
       'codex sandbox policy resolved (Issue #4631): permission gate → codex exec sandbox'
     );
-    if (this.fullAccess) {
+    if (configuredFullAccess) {
       logger.warn(
         {
           permissionMode:
@@ -463,22 +490,22 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           sandbox: sandboxDecision.sandbox,
         },
         sandboxDecision.sandbox === 'danger-full-access'
-          ? 'Codex full-access mode is enabled by explicit agent.fullAccess=true; commands and workspace mutations are unrestricted'
+          ? 'Codex full-access mode is enabled by the selected agent.fullAccess=true; commands and workspace mutations are unrestricted'
           : 'Codex full-access was requested but the sandbox policy remains enforced'
       );
     }
 
     const skillsManifest = this.skillsManifestFor(options.projectRoot ?? options.cwd, options.cwd ?? process.cwd());
-    if (this.transportMode === 'app-server') {
+    if ((native ? native.transport ?? 'exec' : this.transportMode) === 'app-server') {
       return this.queryAppServer(input, options, sandboxDecision.sandbox, binary, skillsManifest, codexModel, requestedEffort);
     }
     if (options.tools?.length) {
-      throw new Error('Codex host tools require agent.codex.transport: app-server; codex exec cannot dispatch host tools.');
+      throw new Error('Codex host tools require agents.<name>.codex.transport: app-server; codex exec cannot dispatch host tools.');
     }
 
     const runner = new CodexExecRunner({
       binary,
-      networkAccess: this.networkAccess,
+      networkAccess,
     });
     // Captured at queryStream call time — the constructor-injected env the
     // binary was resolved from (tests: PATH fixtures; prod: process.env).
@@ -492,6 +519,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     };
     // Same capture for the S7 governor + stash (this: void closures below).
     const governorSink = this.governor;
+    const sessionGovernor = this.sessionGovernor(options);
     const stashSink = this.threadStash;
 
     // Abort plumbing (mirrors pi: early-cancel latch + late onAbort wake).
@@ -534,7 +562,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     const stashedThread = stashable ? this.threadStash.get(sessionKey) : undefined;
     this.threadStash.delete(sessionKey); // consume-on-read: /reset after an eviction-resume must not resurrect the old thread later
     resumeThreadId = stashedThread;
-    const registration = this.governor.registerSession(sessionKey, {
+    const registration = sessionGovernor.registerSession(sessionKey, {
       evict: () => {
         wasEvicted = true;
         // Eviction can land after thread.started/output has been consumed but
@@ -567,7 +595,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     // Keep the automatic no-approval flag aligned with the effective policy:
     // a mutation denylist can intentionally cap a requested full-access mode
     // back to read-only, in which case Codex must retain its safety gate.
-    const fullAccess = this.fullAccess && sandboxDecision.sandbox === 'danger-full-access';
+    const fullAccess = configuredFullAccess && sandboxDecision.sandbox === 'danger-full-access';
     const adaptIterator = async function* (this: void): AsyncGenerator<AgentMessage> {
       // ── Event bridge state (pi #4386 part 3 pattern) ──────────────────
       const queue: AgentMessage[] = [];
@@ -850,7 +878,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         let retryWaitedMs = 0;
         for (let retryAttempt = 0; ; retryAttempt++) {
           deliveredEventKeys.clear();
-          governorSink.touchSession(sessionKey);
+          sessionGovernor.touchSession(sessionKey);
           // Backpressure UX (#4634): announce the wait BEFORE it happens —
           // never silence. (Also announce when merely joining the queue.)
           const pre = governorSink.getStats();
@@ -1187,9 +1215,11 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       handle: {
         close: () => {
           requestAbort();
+          registration.unregister();
         },
         cancel: () => {
           requestAbort();
+          registration.unregister();
         },
         get sessionId(): string | undefined {
           return latestSessionId;
@@ -1208,6 +1238,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     codexModel: string | undefined,
     reasoningEffort: CodexReasoningEffort | undefined,
   ): StreamQueryResult {
+    const sessionGovernor = this.sessionGovernor(options);
     const dynamicToolRegistry = createCodexDynamicToolRegistry(options.tools);
     const dynamicToolSignature = dynamicToolRegistry.signature;
     let lifecycle: CodexAppServerLifecycle | undefined;
@@ -1490,7 +1521,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           ]);
           if (next.done || stopped) {break;}
           if (!registration) {
-            registration = await this.governor.acquireSession(sessionKey, {
+            registration = await sessionGovernor.acquireSession(sessionKey, {
               evict: () => {
                 wasEvicted = true;
                 stopHandle('codex app-server session evicted');
@@ -1571,7 +1602,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
                   }
                 }
                 await options.onAsyncUserInputAnswer(request, text, context);
-              });
+              }, options.env);
               const requestedThreadId = threadId;
               threadId = await lifecycle.ensureThread(sessionKey, {
                 threadId,
@@ -1590,7 +1621,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               asyncDeliveryFailure = undefined;
               completingTurnId = undefined;
               openToolItems = 0;
-              this.governor.touchSession(sessionKey);
+              sessionGovernor.touchSession(sessionKey);
               const currentInput = userInputText(next.value);
               const userInput = next.value.continuationContext && (!requestedThreadId || requestedThreadId !== threadId)
                 ? `${next.value.continuationContext}\n${currentInput}` : currentInput;
@@ -1599,7 +1630,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
                 skillsManifest ? `${skillsManifest}\n\nUser request:\n${userInput}` : userInput,
                 {
                 sandbox,
-                networkAccess: this.networkAccess,
+                networkAccess: options.codexRuntime ? options.codexRuntime.networkAccess ?? true : this.networkAccess,
                 cwd: options.cwd,
                 model: codexModel,
                 reasoningEffort,
@@ -1625,7 +1656,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               armStall();
               for (const event of earlyEvents.splice(0)) {onNotification(event.method, event.params);}
               await completed;
-              this.governor.touchSession(sessionKey);
+              sessionGovernor.touchSession(sessionKey);
             } finally {
               bindTurn(undefined);
               await interruptFlight;
@@ -1729,6 +1760,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     onDynamicToolCall?: (request: CodexAppServerDynamicToolCallRequest) => Promise<CodexAppServerDynamicToolCallResult>,
     asyncInputs?: CodexAsyncUserInput,
     onAsyncAnswer?: (request: AgentInputRequest, text: string) => Promise<void>,
+    environment?: Record<string, string | undefined>,
   ): CodexAppServerLifecycle {
     const lifecycle = new CodexAppServerLifecycle({
       binary,
@@ -1738,7 +1770,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       onDynamicToolCall,
       asyncInputs,
       onAsyncAnswer,
-      env: this.env,
+      env: environment ?? this.env,
       onNotification: (method, params) => {
         const threadId = (params as { threadId?: string } | null)?.threadId;
         if (threadId) {this.appServerRoutes.get(threadId)?.(method, params);}
