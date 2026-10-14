@@ -1,7 +1,14 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import * as zlib from 'node:zlib';
 
 export type DshBootstrap = 'cli' | 'node-sdk';
+
+export function dshSdkRuntimeSupported(): boolean {
+  return typeof zlib.zstdCompress === 'function' && typeof zlib.createZstdDecompress === 'function';
+}
+
+export const DSH_SDK_RUNTIME_ERROR = 'DSH node-sdk requires native Zstandard APIs (Node22.15+ or24+); use a supported Node runtime or cli bootstrap';
 
 export function resolveDshBootstrap(value?: string): DshBootstrap {
   if (value === undefined || value === 'cli') { return 'cli'; }
@@ -11,6 +18,7 @@ export function resolveDshBootstrap(value?: string): DshBootstrap {
 
 /** Resolve only declared, pinned libraries; no CLI lookup or profile creation. */
 export function dshSdkModules(): { boot: string; bundle: string; moduleBase: string; attachments: string } {
+  if (!dshSdkRuntimeSupported()) { throw new Error(DSH_SDK_RUNTIME_ERROR); }
   for (const library of ['dsh-app-boot', 'dsh-sdk-minimal', 'dsh-attachment-local']) {
     const manifestPath = import.meta.resolve(`@deepseek-ai/${library}/package.json`);
     const manifest = JSON.parse(readFileSync(fileURLToPath(manifestPath), 'utf8')) as { version: string };

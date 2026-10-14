@@ -24,7 +24,7 @@ import {
 } from './native-profile.js';
 import { DshSessionBindings } from './session-bindings.js';
 import { fileURLToPath } from 'node:url';
-import { dshSdkModules, resolveDshBootstrap, type DshBootstrap } from './sdk-bootstrap.js';
+import { dshSdkModules, dshSdkRuntimeSupported, DSH_SDK_RUNTIME_ERROR, resolveDshBootstrap, type DshBootstrap } from './sdk-bootstrap.js';
 
 const logger = createLogger('DeepSeekHarnessProvider');
 
@@ -497,6 +497,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
 
   private diagnose(): string {
     if (this.bootstrap === 'node-sdk') {
+      if (!dshSdkRuntimeSupported()) { return DSH_SDK_RUNTIME_ERROR; }
       try { dshSdkModules(); } catch { return 'Install the pinned optional DSH app-boot and sdk-minimal packages for node-sdk bootstrap'; }
       if (['cordis.yml', 'cordis.patch.yml'].some(name => existsSync(join(this.home, 'profiles', this.profile, name)))) {
         return 'DSH Node SDK prototype does not load user profile overrides; use an isolated dshHome or cli bootstrap';

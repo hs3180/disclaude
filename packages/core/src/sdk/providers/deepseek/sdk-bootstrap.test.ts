@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { resolveDshBootstrap, dshSdkModules } from './sdk-bootstrap.js';
+import { resolveDshBootstrap, dshSdkModules, dshSdkRuntimeSupported } from './sdk-bootstrap.js';
 import { DeepSeekHarnessProvider } from './provider.js';
 import { DshStdioTransport } from './dsh-transport.js';
 import { dshApiProvider } from './native-profile.js';
@@ -20,7 +20,7 @@ describe('DSH direct Node SDK bootstrap', () => {
     expect(() => new DeepSeekHarnessProvider({ bootstrap:'node-sdk', mode:'minimal', binary:'dsh' })).toThrow('owned Node worker');
   });
 
-  it('opens and cancels real native sessions and shuts down with no dsh executable on PATH', async () => {
+  it.skipIf(!dshSdkRuntimeSupported())('opens and cancels real native sessions and shuts down with no dsh executable on PATH', async () => {
     dshSdkModules();
     const directory=await mkdtemp(join(tmpdir(),'owned-node-sdk-'));
     const api={protocol:'openai' as const,baseUrl:'http://127.0.0.1:1/v1',model:'owned-no-model-request'};
