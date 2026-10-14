@@ -82,8 +82,10 @@ export function resolveConfiguredAgents(
     if (llm.reasoningEffort !== undefined && !isCodexReasoningEffort(llm.reasoningEffort)) {
       errors.push(`${field}.reasoningEffort is invalid`);
     }
-    if (llm.maxConcurrentSessions !== undefined &&
-        (!Number.isSafeInteger(llm.maxConcurrentSessions) || llm.maxConcurrentSessions <= 0)) {
+    if (
+      llm.maxConcurrentSessions !== undefined &&
+      (!Number.isSafeInteger(llm.maxConcurrentSessions) || llm.maxConcurrentSessions <= 0)
+    ) {
       errors.push(`${field}.maxConcurrentSessions must be a positive integer`);
     }
     if (
@@ -125,7 +127,9 @@ export function resolveConfiguredAgents(
       }
       const keyEnv = apiCredentialEnvName(llm.api);
       if (!keyEnv) {
-        errors.push(`${field}.api.apiKey must be an environment reference ($VARIABLE or \u0024{VARIABLE})`);
+        errors.push(
+          `${field}.api.apiKey must be an environment reference ($VARIABLE or \u0024{VARIABLE})`
+        );
       } else {
         credentialEnvKeys.add(keyEnv);
       }
@@ -158,19 +162,22 @@ export function resolveConfiguredAgents(
       'enableAgentTeams',
       'autoCompactWindow',
       'sdkTimeoutMs',
-      'dsh',
     ]);
     for (const key of Object.keys(raw)) {
       if (!allowed.has(key)) {
-        errors.push(key === 'deepseek'
-          ? `${field}.deepseek is unsupported; rename this connection block to ${field}.dsh, move mode to ${field}.mode and dshHome to ${field}.dshHome, and use backend: dsh`
-          : `${field}.${key} is unsupported; models and API connections belong in llms`);
+        errors.push(
+          key === 'deepseek' || key === 'dsh'
+            ? `${field}.${key} is unsupported; keep mode and dshHome on the agent and move protocol, baseUrl and credential reference to llms.${agent.llm}.api`
+            : `${field}.${key} is unsupported; models and API connections belong in llms`
+        );
       }
     }
     if (!BACKENDS.has(agent.backend)) {
-      errors.push(raw.backend === 'deepseek'
-        ? `${field}.backend deepseek is unsupported; use backend: dsh`
-        : `${field}.backend must be claude, pi, codex or dsh`);
+      errors.push(
+        raw.backend === 'deepseek'
+          ? `${field}.backend deepseek is unsupported; use backend: dsh`
+          : `${field}.backend must be claude, pi, codex or dsh`
+      );
     }
     if (typeof agent.llm !== 'string' || !Object.hasOwn(llms, agent.llm)) {
       errors.push(`${field}.llm must reference a defined llms entry`);
@@ -215,9 +222,7 @@ export function resolveConfiguredAgents(
         continue;
       }
       for (const key of Object.keys(agent.codex)) {
-        if (
-          !['transport', 'maxActiveSessions', 'maxConcurrentRuns'].includes(key)
-        ) {
+        if (!['transport', 'maxActiveSessions', 'maxConcurrentRuns'].includes(key)) {
           errors.push(`${field}.codex.${key} is unsupported`);
         }
       }
@@ -252,30 +257,6 @@ export function resolveConfiguredAgents(
         errors.push(`${field}.dshHome must be a non-empty string`);
       }
     }
-    if (agent.dsh !== undefined) {
-      if (agent.backend !== 'dsh') {
-        errors.push(`${field}.dsh requires backend: dsh`);
-      }
-      if (!mapping(agent.dsh)) {
-        errors.push(`${field}.dsh must be a mapping`);
-        continue;
-      }
-      for (const key of Object.keys(agent.dsh)) {
-        if (!['provider', 'apiKeyEnv'].includes(key)) {
-          errors.push(key === 'mode' || key === 'dshHome'
-            ? `${field}.dsh.${key} is unsupported; move ${key} to ${field}.${key}`
-            : `${field}.dsh.${key} is unsupported`);
-        }
-      }
-      if (agent.dsh.provider !== undefined &&
-          (typeof agent.dsh.provider !== 'string' || !agent.dsh.provider.trim())) {
-        errors.push(`${field}.dsh.provider must be a non-empty string`);
-      }
-      if (agent.dsh.apiKeyEnv !== undefined &&
-          (typeof agent.dsh.apiKeyEnv !== 'string' || !ENV_NAME.test(agent.dsh.apiKeyEnv))) {
-        errors.push(`${field}.dsh.apiKeyEnv must be an environment variable name`);
-      }
-    }
     const llm = llms[agent.llm];
     if (!llm || typeof llm !== 'object') {
       continue;
@@ -286,9 +267,14 @@ export function resolveConfiguredAgents(
     if (llm.reasoningEffort !== undefined && !['codex', 'dsh'].includes(agent.backend)) {
       errors.push(`llms.${agent.llm}.reasoningEffort requires a Codex or DSH native runtime`);
     }
-    if (['codex', 'dsh'].includes(agent.backend) && llm.api !== undefined) {
+    if (agent.backend === 'codex' && llm.api !== undefined) {
       errors.push(
         `${field}: this native runtime owns its API connection; omit llms.${agent.llm}.api`
+      );
+    }
+    if (agent.backend === 'dsh' && (!llm.api || !llm.api.baseUrl)) {
+      errors.push(
+        `llms.${agent.llm}.api with protocol, baseUrl and credential reference is required for DSH`
       );
     }
     const protocol = llm.api?.protocol;
@@ -333,7 +319,7 @@ export function resolveConfiguredAgents(
 
 /** Validate only the selected runtime's secrets; dormant entries need no credentials. */
 export function validateResolvedAgent(preset: AgentPreset): string | undefined {
-  if (preset.agentBackend === 'codex' || preset.agentBackend === 'dsh') {
+  if (preset.agentBackend === 'codex') {
     return undefined;
   }
   if (!preset.apiProtocol) {

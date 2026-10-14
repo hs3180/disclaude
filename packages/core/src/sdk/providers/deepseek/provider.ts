@@ -16,7 +16,12 @@ import type {
 import { DshSessionPool } from './dsh-session-pool.js';
 import type { DshRpcNotification, DshRpcRequest, DshStdioTransport } from './dsh-transport.js';
 import { adaptDeepSeekEvent, type DeepSeekSessionEvent } from './event-adapter.js';
-import { createDshNativeProfileOverlay } from './native-profile.js';
+import {
+  createDshNativeProfileOverlay,
+  dshApiProvider,
+  DSH_API_CREDENTIAL_ENV,
+  type DshApiConnection,
+} from './native-profile.js';
 import { DshSessionBindings } from './session-bindings.js';
 
 const logger = createLogger('DeepSeekHarnessProvider');
@@ -24,6 +29,8 @@ const logger = createLogger('DeepSeekHarnessProvider');
 export interface DeepSeekHarnessProviderOptions {
   env?: Record<string, string | undefined>;
   apiKey?: string;
+  /** Resolved connection from the bound llms entry; secrets remain in the child environment. */
+  api?: DshApiConnection;
   /** Native DSH provider route. Omit to use the selected profile's route. */
   provider?: string;
   mode?: 'minimal' | 'standard';
@@ -93,15 +100,34 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
     if (options.provider !== undefined && !options.provider.trim()) {
       throw new TypeError('dsh.provider must be non-empty');
     }
+    if (options.api) {
+      if (options.provider !== undefined) {
+        throw new Error('A DSH API connection cannot be combined with a native provider override');
+      }
+      if (!['openai', 'anthropic'].includes(options.api.protocol) || !options.api.model.trim()) {
+        throw new Error('DSH API connection requires a supported protocol and model');
+      }
+      try {
+        const url = new URL(options.api.baseUrl);
+        if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
+          throw new Error();
+        }
+      } catch {
+        throw new Error('DSH API connection requires an HTTP(S) baseUrl without credentials');
+      }
+      if (!options.apiKey?.trim()) {
+        throw new Error('DSH API connection credential is missing');
+      }
+    }
     this.profile = mode === 'minimal' ? 'sdk-minimal' : 'sdk';
     const env = options.env ?? process.env;
     this.configuredHome = options.dshHome ?? env.DSH_HOME;
     this.home = dshHome(this.configuredHome);
-    this.route = options.provider;
+    this.route = options.api ? dshApiProvider(options.api) : options.provider;
     const environment = {
       ...process.env,
       ...env,
-      DEEPSEEK_API_KEY: options.apiKey ?? env.DEEPSEEK_API_KEY,
+      DEEPSEEK_API_KEY: options.api ? undefined : (options.apiKey ?? env.DEEPSEEK_API_KEY),
       DSH_HOME: this.home,
     };
     this.bindings = new DshSessionBindings(this.home);
@@ -114,13 +140,27 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
         if (!state) {
           throw new Error('Native DSH runtime has no owner');
         }
-        this.overlay ??= createDshNativeProfileOverlay();
+        this.overlay ??= createDshNativeProfileOverlay(
+          options.api,
+          [
+            join(this.home, 'profiles', this.profile, 'cordis.yml'),
+            join(this.home, 'profiles', this.profile, 'cordis.patch.yml'),
+          ],
+          this.profile === 'sdk' ? 'llm-pi-ai' : undefined
+        );
         return {
           cwd: state.cwd,
           env: {
             ...environment,
             ...state.environment,
-            ...(options.apiKey === undefined ? {} : { DEEPSEEK_API_KEY: options.apiKey }),
+            ...(options.api
+              ? {
+                  DEEPSEEK_API_KEY: undefined,
+                  [DSH_API_CREDENTIAL_ENV]: options.apiKey,
+                }
+              : options.apiKey === undefined
+                ? {}
+                : { DEEPSEEK_API_KEY: options.apiKey }),
             DSH_HOME: this.home,
           },
           args: [...(options.args ?? ['--profile', this.profile]), '--patch', this.overlay.path],
@@ -163,7 +203,9 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
       throw new Error(`DeepSeekHarnessProvider unavailable: ${reason}`);
     }
     if (options.systemPrompt !== undefined && typeof options.systemPrompt !== 'string') {
-      throw new TypeError('DSH systemPrompt must be raw text; Claude Code presets belong to their own adapter');
+      throw new TypeError(
+        'DSH systemPrompt must be raw text; Claude Code presets belong to their own adapter'
+      );
     }
     const descriptors = prepareTools(options.tools);
     const tools = new Map(descriptors.map((tool) => [tool.name, tool]));

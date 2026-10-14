@@ -205,11 +205,8 @@ export class Config {
     return raw ?? false;
   })();
 
-  // Native runtimes own authentication; API runtimes use the bound LLM.
-  static readonly DSH_API_KEY = process.env[defaultAgent?.dsh?.apiKeyEnv ?? 'DEEPSEEK_API_KEY'] ??
-    fileConfigOnly.env?.[defaultAgent?.dsh?.apiKeyEnv ?? 'DEEPSEEK_API_KEY'] ?? '';
+  // DSH composition and home; API connections come from the bound LLM.
   static readonly DSH_MODE = defaultAgent?.mode ?? 'standard';
-  static readonly DSH_PROVIDER = defaultAgent?.dsh?.provider;
   static readonly DSH_HOME = defaultAgent?.dshHome || process.env.DSH_HOME || '';
   static readonly AGENT_BACKEND = defaultAgent?.agentBackend;
 

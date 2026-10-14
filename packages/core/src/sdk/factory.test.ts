@@ -312,10 +312,14 @@ describe('Provider Factory', () => {
 
   describe('config-driven backend selection (Issue #4388)', () => {
     it('registers and selects the native runtime as dsh', () => {
+      const connection = {
+        model: 'test-model', apiKey: 'test-key', apiProtocol: 'openai' as const,
+        apiBaseUrl: 'https://dsh.example/v1',
+      };
       setDefaultProvider('dsh');
       expect(getDefaultProviderType()).toBe('dsh');
-      expect(getProvider().name).toBe('dsh');
-      expect(getProvider().getInfo().name).toBe('dsh');
+      expect(getProvider(undefined, connection).name).toBe('dsh');
+      expect(getProvider(undefined, connection).getInfo().name).toBe('dsh');
       const names = getAvailableProviders().map(info => info.name);
       expect(names).toContain('dsh');
       expect(names).not.toContain('deepseek');
