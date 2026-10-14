@@ -122,8 +122,8 @@ describe('BaseAgent', () => {
   it('passes the selected native DSH preset into provider construction', () => {
     const settings = {
       agentBackend: 'dsh' as const,
-      llm: 'glm-native', model: 'glm-5.3', apiKey: '',
-      dsh: { mode: 'minimal' as const, provider: 'glm-proxy', dshHome: '/named-home' },
+      llm: 'glm-native', model: 'glm-5.3', apiKey: '', mode: 'minimal' as const,
+      dsh: { provider: 'glm-proxy', dshHome: '/named-home' },
     };
     new TestAgent({ ...config, ...settings, settings });
     expect(mockGetProvider).toHaveBeenLastCalledWith('dsh', settings);

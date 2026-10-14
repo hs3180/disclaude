@@ -13,8 +13,7 @@ agents:
   # dsh:
   #   backend: dsh
   #   llm: dsh-model
-  #   dsh:
-  #     mode: minimal
+  #   mode: minimal
 
 # Native Codex binds agent + LLM through the CLI's account; no API block is needed.
 llms:

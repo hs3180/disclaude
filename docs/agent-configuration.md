@@ -43,8 +43,9 @@ default. `CODEX_MODEL` explicitly overrides the default Codex binding; named
 non-default bindings remain independent. Put `reasoningEffort` alongside `model`
 in `llms.<name>`; it is currently supported by native Codex and DSH. Omission
 keeps the model's native default. Transport stays under the agent's `codex` block.
-DSH uses `backend: dsh` and owns its native connection. Put runtime options under
-the agent's `dsh` block; the bound LLM supplies the model and reasoning effort.
+DSH uses `backend: dsh` and owns its native connection. Set the composition
+directly with `agents.<name>.mode: minimal` or `standard`. Its optional `dsh` block
+holds native connection settings; the bound LLM supplies the model and reasoning effort.
 See [DSH runtime modes](dsh-backend.md) for minimal mode and native provider routes.
 
 Set `llms.<name>.maxConcurrentSessions` to a positive integer to cap live host
@@ -82,8 +83,9 @@ For earlier #5294 previews, move `agents.<name>.codex.reasoningEffort` to its bo
 LLM and replace `apiKeyEnv: NAME` with `apiKey: $NAME`.
 
 For DSH, replace `backend: deepseek` with `backend: dsh` and rename the agent's
-`deepseek` runtime block to `dsh`. Both old names are rejected with migration
-guidance. Native `dsh.apiKeyEnv` still names the credential environment variable.
+`deepseek` connection block to `dsh`. Move any nested `mode` to the agent's direct
+`mode` field. The old backend/block names and nested `dsh.mode` are rejected with
+migration guidance. Native `dsh.apiKeyEnv` still names the credential environment variable.
 
 Global `env` and workspace `.runtime-env` keep their existing lifecycle. This
 change does not implement the broader secret-file store or permission management

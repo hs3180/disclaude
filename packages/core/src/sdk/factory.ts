@@ -34,7 +34,7 @@ function dshOptions(settings?: AgentConfig): DeepSeekHarnessProviderOptions {
   const native = settings.dsh;
   const keyEnv = native?.apiKeyEnv ?? 'DEEPSEEK_API_KEY';
   return {
-    mode: native?.mode ?? 'standard',
+    mode: settings.mode ?? 'standard',
     provider: native?.provider,
     dshHome: native?.dshHome || process.env.DSH_HOME || undefined,
     apiKey: process.env[keyEnv] ?? Config.getGlobalEnv()[keyEnv] ?? '',

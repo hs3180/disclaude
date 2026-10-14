@@ -37,8 +37,8 @@ const preset = (): AgentPreset => ({
   llm: 'glm-native',
   model: 'glm-5.3',
   apiKey: '',
+  mode: 'minimal',
   dsh: {
-    mode: 'minimal',
     provider: 'glm-proxy',
     dshHome: '/named-dsh-home',
     apiKeyEnv: 'NAMED_DSH_TEST_KEY',
@@ -52,6 +52,8 @@ beforeEach(() => {
   setDefaultProvider('codex');
   state.environment = { NAMED_DSH_TEST_KEY: 'named-test-key' };
   vi.stubEnv('NAMED_DSH_TEST_KEY', undefined);
+  vi.stubEnv('DEEPSEEK_API_KEY', undefined);
+  vi.stubEnv('DSH_HOME', undefined);
 });
 afterEach(() => vi.unstubAllEnvs());
 
@@ -67,11 +69,25 @@ describe('named DSH connections', () => {
     });
   });
 
+  it('selects flat mode without an optional dsh connection block', () => {
+    const selected = preset();
+    delete selected.dsh;
+    const minimal = getProvider('dsh', selected);
+    expect(optionsOf(minimal)).toEqual({
+      mode: 'minimal', provider: undefined, dshHome: undefined, apiKey: '',
+    });
+    delete selected.mode;
+    const standard = getProvider('dsh', selected);
+    expect(optionsOf(standard).mode).toBe('standard');
+    expect(standard).not.toBe(minimal);
+    expect(getProvider('dsh', { ...selected, mode: 'standard' })).toBe(standard);
+  });
+
   it('keeps distinct modes, routes, homes and credentials independent', () => {
     const selected = preset();
     const first = getProvider('dsh', selected);
+    expect(getProvider('dsh', { ...selected, mode: 'standard' })).not.toBe(first);
     for (const change of [
-      { mode: 'standard' as const },
       { provider: 'other-route' },
       { dshHome: '/other-home' },
       { apiKeyEnv: 'OTHER_DSH_TEST_KEY' },
@@ -91,8 +107,8 @@ describe('named DSH connections', () => {
 
   it('shares equivalent default and named connections for reset routing', () => {
     const selected = preset();
+    selected.mode = state.defaults.DSH_MODE;
     selected.dsh = {
-      mode: state.defaults.DSH_MODE,
       provider: state.defaults.DSH_PROVIDER,
       dshHome: state.defaults.DSH_HOME,
       apiKeyEnv: 'DEFAULT_DSH_TEST_KEY',
@@ -105,7 +121,7 @@ describe('named DSH connections', () => {
   it('clears every DSH connection without clearing another backend', () => {
     const selected = preset();
     const first = getProvider('dsh', selected);
-    const secondSettings = { ...selected, dsh: { ...selected.dsh, mode: 'standard' as const } };
+    const secondSettings = { ...selected, mode: 'standard' as const };
     const second = getProvider('dsh', secondSettings);
     const codex = getProvider('codex');
     clearProviderCache('dsh');

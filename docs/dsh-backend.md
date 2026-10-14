@@ -10,25 +10,29 @@ agents:
   default:
     backend: dsh
     llm: native
+    mode: minimal
     dsh:
-      mode: minimal
       dshHome: /absolute/path/to/isolated-dsh-home
 llms:
   native:
     model: your-supported-model
 ```
 
-`agents.<name>.dsh.mode` accepts `standard` (default) or `minimal`. Restart the service
+`agents.<name>.mode` accepts `standard` (default) or `minimal` for `backend: dsh`. Restart the service
 when changing it; existing tasks are not switched in place. Each provider owns
 its own process pool and selects one profile for its lifetime.
-Named DSH agents use their own `dsh` settings even when Codex is the default
-agent. Keep this block only under `backend: dsh`; other backends reject it.
+Named DSH agents use their own mode and optional `dsh` connection settings even
+when Codex is the default agent. The `dsh` block holds provider, credential and
+home options; it is unnecessary when only setting mode. Other backends reject
+the DSH mode and connection settings.
 Equivalent DSH connections share a provider; different modes, routes, homes or
 credentials use separate providers. Switching and resetting a named agent use
 the same selected connection as its queries.
 
-`backend: deepseek` and an agent's `deepseek` block are rejected. Migrate them
-to `backend: dsh` and `dsh` respectively before restarting the service.
+`backend: deepseek` and an agent's `deepseek` block are rejected. Use `backend: dsh`,
+move composition to `agents.<name>.mode` and native connection settings to
+`agents.<name>.dsh` before restarting. Nested `dsh.mode` is also rejected with
+guidance to move it to the agent's direct `mode` field.
 
 | Mode | Official SDK profile | Intended composition |
 | --- | --- | --- |

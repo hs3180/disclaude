@@ -147,6 +147,7 @@ export function resolveConfiguredAgents(
       'backend',
       'llm',
       'default',
+      'mode',
       'permissionMode',
       'fullAccess',
       'codexSandbox',
@@ -161,7 +162,7 @@ export function resolveConfiguredAgents(
     for (const key of Object.keys(raw)) {
       if (!allowed.has(key)) {
         errors.push(key === 'deepseek'
-          ? `${field}.deepseek is unsupported; rename this runtime block to ${field}.dsh and use backend: dsh`
+          ? `${field}.deepseek is unsupported; rename this connection block to ${field}.dsh, move mode to ${field}.mode and use backend: dsh`
           : `${field}.${key} is unsupported; models and API connections belong in llms`);
       }
     }
@@ -234,6 +235,14 @@ export function resolveConfiguredAgents(
         }
       }
     }
+    if (agent.mode !== undefined) {
+      if (agent.backend !== 'dsh') {
+        errors.push(`${field}.mode requires backend: dsh`);
+      }
+      if (typeof agent.mode !== 'string' || !['minimal', 'standard'].includes(agent.mode)) {
+        errors.push(`${field}.mode must be minimal or standard`);
+      }
+    }
     if (agent.dsh !== undefined) {
       if (agent.backend !== 'dsh') {
         errors.push(`${field}.dsh requires backend: dsh`);
@@ -243,13 +252,11 @@ export function resolveConfiguredAgents(
         continue;
       }
       for (const key of Object.keys(agent.dsh)) {
-        if (!['mode', 'provider', 'apiKeyEnv', 'dshHome'].includes(key)) {
-          errors.push(`${field}.dsh.${key} is unsupported`);
+        if (!['provider', 'apiKeyEnv', 'dshHome'].includes(key)) {
+          errors.push(key === 'mode'
+            ? `${field}.dsh.mode is unsupported; move mode to ${field}.mode`
+            : `${field}.dsh.${key} is unsupported`);
         }
-      }
-      if (agent.dsh.mode !== undefined &&
-          (typeof agent.dsh.mode !== 'string' || !['minimal', 'standard'].includes(agent.dsh.mode))) {
-        errors.push(`${field}.dsh.mode must be minimal or standard`);
       }
       for (const key of ['provider', 'dshHome'] as const) {
         const value = agent.dsh[key];

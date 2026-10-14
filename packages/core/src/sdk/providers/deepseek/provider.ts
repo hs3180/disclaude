@@ -85,7 +85,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
   constructor(options: DeepSeekHarnessProviderOptions = {}) {
     const mode = options.mode ?? 'standard';
     if (mode !== 'minimal' && mode !== 'standard') {
-      throw new Error('dsh.mode must be minimal or standard');
+      throw new Error('DSH mode must be minimal or standard');
     }
     if (options.mode !== undefined && options.args !== undefined) {
       throw new Error('Explicit dsh mode cannot be combined with custom process args');

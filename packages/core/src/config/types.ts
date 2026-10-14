@@ -38,6 +38,8 @@ export type CodexReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhig
 export interface AgentConfig {
   /** Agent runtime. */
   agentBackend?: 'claude' | 'pi' | 'codex' | 'dsh';
+  /** DSH composition. Changes apply after service restart. Default: standard. */
+  mode?: 'minimal' | 'standard';
   /**
    * Codex exec sandbox level override (Issue #4631, S4 of #4627).
    * Only meaningful when `agentBackend: 'codex'`. Unset → the normal
@@ -54,7 +56,7 @@ export interface AgentConfig {
    * with `agentBackend: 'codex'`; caps are per process.
    */
   codex?: CodexAgentGovernanceConfig;
-  /** Native DSH composition and connection, only for the DSH backend. */
+  /** Native DSH connection, only for the DSH backend. */
   dsh?: DshConfig;
   /** Permission mode for SDK */
   permissionMode?: 'default' | 'bypassPermissions';
@@ -190,8 +192,6 @@ export interface FeishuConfig {
 export interface DshConfig {
   /** DSH model provider route. Omit to use the selected native profile's default. */
   provider?: string;
-  /** Harness composition. Changes apply after service restart. Default: standard. */
-  mode?: 'minimal' | 'standard';
   /** Environment variable holding the native harness credential. */
   apiKeyEnv?: string;
   /** Optional isolated dsh home directory (overrides DSH_HOME). */

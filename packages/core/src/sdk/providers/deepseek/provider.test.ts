@@ -214,7 +214,7 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
     }
   });
   it('rejects invalid modes and custom arguments that could override the selected mode', () => {
-    expect(() => new DeepSeekHarnessProvider({ mode: 'typo' as never })).toThrow('dsh.mode');
+    expect(() => new DeepSeekHarnessProvider({ mode: 'typo' as never })).toThrow('DSH mode');
     expect(
       () => new DeepSeekHarnessProvider({ mode: 'minimal', args: ['--profile', 'sdk'] })
     ).toThrow('custom process args');

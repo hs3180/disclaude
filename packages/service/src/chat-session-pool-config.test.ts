@@ -18,8 +18,8 @@ describe('preset switching with real configuration and providers', () => {
         agents: {
           native: {
             backend, llm: 'native', default: true,
-            ...(backend === 'dsh' ? { dsh: {
-              mode: 'minimal', provider: 'native-test-route', dshHome: join(root, 'dsh-home'),
+            ...(backend === 'dsh' ? { mode: 'minimal', dsh: {
+              provider: 'native-test-route', dshHome: join(root, 'dsh-home'),
               apiKeyEnv: 'DISCLAUDE_NATIVE_CONFIG_TEST_KEY',
             } } : {}),
           },
@@ -54,6 +54,7 @@ describe('preset switching with real configuration and providers', () => {
         try {
           if (Config.AGENT_BACKEND === 'dsh') {
             const preset = Config.getAgentPresets().native;
+            assert.equal(preset.mode, 'minimal');
             assert.equal(Config.DSH_MODE, 'minimal');
             assert.equal(Config.DSH_PROVIDER, 'native-test-route');
             assert.equal(Config.DSH_HOME, preset.dsh.dshHome);
