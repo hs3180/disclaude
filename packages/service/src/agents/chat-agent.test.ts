@@ -3398,6 +3398,42 @@ describe('ChatAgent (service)', () => {
   });
 
   describe('group assistant delivery (#5239)', () => {
+    it.each([false, true])('keeps DSH progress separate from the final answer when progress delivery fails=%s', async failProgress => {
+      const callbacks = createMockCallbacks();
+      if (failProgress) { callbacks.sendMessage.mockRejectedValueOnce(new Error('owned progress failure')); }
+      const agent = new ChatAgent({ chatId: 'owned-dsh', callbacks, apiKey: 'test', model: 'test', agentBackend: 'dsh' });
+      (agent as any).agentBackend = 'dsh';
+      (agent as any).isAgentTeamsEnabled = vi.fn(() => false);
+      (agent as any).chatType = 'topic';
+      (agent as any).pendingTurnAnchors = ['owned-root'];
+      (agent as any).pendingTurnMessageIds = ['owned-input'];
+      await (agent as any).processIterator((async function* () {
+        yield { parsed: { type: 'text', content: '先检查现有文件，避免覆盖已有修改。' } };
+        yield { parsed: { type: 'tool_use', content: 'Read', metadata: { toolInput: { path: '/private/owned-input' } } } };
+        yield { parsed: { type: 'tool_result', content: 'private tool result' } };
+        yield { parsed: { type: 'tool_use', content: 'Bash' } };
+        yield { parsed: { type: 'text', content: '最终结果', metadata: { phase: 'final_answer' } } };
+        yield { parsed: { type: 'result', content: '' } };
+      })());
+      expect(callbacks.sendMessage.mock.calls.map(([, text]) => text)).toEqual(['⏳ 先检查现有文件，避免覆盖已有修改。', '最终结果']);
+      expect(callbacks.sendMessage.mock.calls.every(([, , root]) => root === 'owned-root')).toBe(true);
+      expect(callbacks.onDone).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps DSH progress out of final-only structured responses', async () => {
+      const callbacks = { ...createMockCallbacks(), finalReplyOnly: true };
+      const agent = new ChatAgent({ chatId: 'owned-dsh-json', callbacks, apiKey: 'test', model: 'test', agentBackend: 'dsh' });
+      (agent as any).agentBackend = 'dsh';
+      (agent as any).isAgentTeamsEnabled = vi.fn(() => false);
+      await (agent as any).processIterator((async function* () {
+        yield { parsed: { type: 'text', content: 'public stage' } };
+        yield { parsed: { type: 'tool_use', content: 'Bash' } };
+        yield { parsed: { type: 'text', content: '{"ok":true}' } };
+        yield { parsed: { type: 'result', content: '' } };
+      })());
+      expect(callbacks.sendMessage.mock.calls.map(([, text]) => text)).toEqual(['{"ok":true}']);
+    });
+
     it.each(['native commentary', 'unphased pre-tool text'])('keeps %s out of a final-only REST JSON response', async kind => {
       const sent: OutgoingMessage[] = [];
       const channel = {

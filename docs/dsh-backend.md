@@ -1,5 +1,12 @@
 # DSH runtime modes
 
+DSH chat tasks show short stage updates before tools run, including concise public
+choices and their reasons when the model supplies them. Repeated or rapid updates
+are coalesced, with at most four updates per request. Internal reasoning and raw
+tool arguments/results remain hidden. These updates do not indicate completion;
+the final reply remains separate, and a failed progress send cannot fail the task.
+Final-only structured channel responses do not include stage messages.
+
 For Project-bound Notebook capabilities, see [optional Jupyter CLI/Skill](jupyter-service.md).
 
 DSH is an agent runtime that can use different model providers. Select its
