@@ -8,6 +8,7 @@ import { browserAgentEnv } from '../../../utils/browser-env.js';
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface, type Interface } from 'node:readline';
+import { dshProcessEnv } from './dsh-environment.js';
 
 export interface DshTransportOptions {
   binary?: string;
@@ -81,7 +82,7 @@ export class DshStdioTransport {
 
     const child = spawn(this.options.binary ?? 'dsh', this.options.args ?? ['--profile', 'sdk'], {
       cwd: this.options.cwd,
-      env: browserAgentEnv(this.options.env),
+      env: dshProcessEnv(browserAgentEnv(this.options.env)),
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     this.child = child;
