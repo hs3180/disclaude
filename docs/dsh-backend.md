@@ -1,30 +1,34 @@
-# DeepSeek harness modes
+# DSH runtime modes
 
 For Project-bound Notebook capabilities, see [optional Jupyter CLI/Skill](jupyter-service.md).
 
-Select the dsh backend and its composition in the service configuration:
+DSH is an agent runtime that can use different model providers. Select its
+backend and composition independently of the model vendor:
 
 ```yaml
 agents:
   default:
-    backend: deepseek
+    backend: dsh
     llm: native
-    deepseek:
+    dsh:
       mode: minimal
       dshHome: /absolute/path/to/isolated-dsh-home
 llms:
   native:
-    model: your-supported-deepseek-model
+    model: your-supported-model
 ```
 
-`agents.<name>.deepseek.mode` accepts `standard` (default) or `minimal`. Restart the service
+`agents.<name>.dsh.mode` accepts `standard` (default) or `minimal`. Restart the service
 when changing it; existing tasks are not switched in place. Each provider owns
 its own process pool and selects one profile for its lifetime.
-Named DSH agents use their own `deepseek` settings even when Codex is the default
-agent. Keep this block only under `backend: deepseek`; other backends reject it.
+Named DSH agents use their own `dsh` settings even when Codex is the default
+agent. Keep this block only under `backend: dsh`; other backends reject it.
 Equivalent DSH connections share a provider; different modes, routes, homes or
 credentials use separate providers. Switching and resetting a named agent use
 the same selected connection as its queries.
+
+`backend: deepseek` and an agent's `deepseek` block are rejected. Migrate them
+to `backend: dsh` and `dsh` respectively before restarting the service.
 
 | Mode | Official SDK profile | Intended composition |
 | --- | --- | --- |
@@ -36,7 +40,7 @@ The installed dsh version and any user profile patches determine the effective
 plugin/tool set. Selecting minimal does not uninstall global packages or rewrite
 existing user profiles. It also does not guarantee higher quality for every task.
 The upstream SDK-minimal defaults omit managed credentials, skill discovery and
-compaction; supply credentials through `agents.<name>.deepseek.apiKeyEnv` / `DEEPSEEK_API_KEY` and
+compaction; supply credentials through `agents.<name>.dsh.apiKeyEnv` / `DEEPSEEK_API_KEY` and
 check the capabilities of your installed version before using long-running tasks.
 
 An unsupported profile fails with its profile name and startup/protocol error;

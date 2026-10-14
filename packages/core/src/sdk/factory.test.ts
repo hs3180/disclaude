@@ -311,6 +311,19 @@ describe('Provider Factory', () => {
   });
 
   describe('config-driven backend selection (Issue #4388)', () => {
+    it('registers and selects the native runtime as dsh', () => {
+      setDefaultProvider('dsh');
+      expect(getDefaultProviderType()).toBe('dsh');
+      expect(getProvider().name).toBe('dsh');
+      expect(getProvider().getInfo().name).toBe('dsh');
+      const names = getAvailableProviders().map(info => info.name);
+      expect(names).toContain('dsh');
+      expect(names).not.toContain('deepseek');
+      expect(() => getProvider('deepseek')).toThrow('Unknown provider type: deepseek');
+      expect(() => setDefaultProvider('deepseek')).toThrow('Unknown provider type: deepseek');
+      clearProviderCache('dsh');
+    });
+
     it("setDefaultProvider('pi') makes getProvider() return the pi backend", () => {
       // Mirrors the boot wiring in DisclaudeService.start(): a non-'claude'
       // agentBackend in config → setDefaultProvider(agentBackend).

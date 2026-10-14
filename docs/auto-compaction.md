@@ -39,4 +39,4 @@ large single input. Native SDK runtime limits can also be smaller than a
 third-party model's advertised context capacity.
 
 Other backends retain their own compaction policies; this setting is not passed
-to Codex, pi, or the native DeepSeek harness.
+to Codex, pi, or the native DSH runtime.

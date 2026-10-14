@@ -24,7 +24,7 @@ const CONFIG_KEYS = new Set([
   '_source',
   '_fromFile',
 ]);
-const BACKENDS = new Set(['claude', 'pi', 'codex', 'deepseek']);
+const BACKENDS = new Set(['claude', 'pi', 'codex', 'dsh']);
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const mapping = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -136,7 +136,7 @@ export function resolveConfiguredAgents(
     return { ok: false, errors };
   }
   const presets: AgentPresets = {};
-  for (const [name, raw] of Object.entries(config.agents as Record<string, AgentDefinition>)) {
+  for (const [name, raw] of Object.entries(config.agents as Record<string, unknown>)) {
     const field = `agents.${name}`;
     if (!mapping(raw)) {
       errors.push(`${field} must be a mapping`);
@@ -156,15 +156,19 @@ export function resolveConfiguredAgents(
       'enableAgentTeams',
       'autoCompactWindow',
       'sdkTimeoutMs',
-      'deepseek',
+      'dsh',
     ]);
     for (const key of Object.keys(raw)) {
       if (!allowed.has(key)) {
-        errors.push(`${field}.${key} is unsupported; models and API connections belong in llms`);
+        errors.push(key === 'deepseek'
+          ? `${field}.deepseek is unsupported; rename this runtime block to ${field}.dsh and use backend: dsh`
+          : `${field}.${key} is unsupported; models and API connections belong in llms`);
       }
     }
     if (!BACKENDS.has(agent.backend)) {
-      errors.push(`${field}.backend must be claude, pi, codex or deepseek`);
+      errors.push(raw.backend === 'deepseek'
+        ? `${field}.backend deepseek is unsupported; use backend: dsh`
+        : `${field}.backend must be claude, pi, codex or dsh`);
     }
     if (typeof agent.llm !== 'string' || !Object.hasOwn(llms, agent.llm)) {
       errors.push(`${field}.llm must reference a defined llms entry`);
@@ -230,32 +234,32 @@ export function resolveConfiguredAgents(
         }
       }
     }
-    if (agent.deepseek !== undefined) {
-      if (agent.backend !== 'deepseek') {
-        errors.push(`${field}.deepseek requires backend: deepseek`);
+    if (agent.dsh !== undefined) {
+      if (agent.backend !== 'dsh') {
+        errors.push(`${field}.dsh requires backend: dsh`);
       }
-      if (!mapping(agent.deepseek)) {
-        errors.push(`${field}.deepseek must be a mapping`);
+      if (!mapping(agent.dsh)) {
+        errors.push(`${field}.dsh must be a mapping`);
         continue;
       }
-      for (const key of Object.keys(agent.deepseek)) {
+      for (const key of Object.keys(agent.dsh)) {
         if (!['mode', 'provider', 'apiKeyEnv', 'dshHome'].includes(key)) {
-          errors.push(`${field}.deepseek.${key} is unsupported`);
+          errors.push(`${field}.dsh.${key} is unsupported`);
         }
       }
-      if (agent.deepseek.mode !== undefined &&
-          (typeof agent.deepseek.mode !== 'string' || !['minimal', 'standard'].includes(agent.deepseek.mode))) {
-        errors.push(`${field}.deepseek.mode must be minimal or standard`);
+      if (agent.dsh.mode !== undefined &&
+          (typeof agent.dsh.mode !== 'string' || !['minimal', 'standard'].includes(agent.dsh.mode))) {
+        errors.push(`${field}.dsh.mode must be minimal or standard`);
       }
       for (const key of ['provider', 'dshHome'] as const) {
-        const value = agent.deepseek[key];
+        const value = agent.dsh[key];
         if (value !== undefined && (typeof value !== 'string' || !value.trim())) {
-          errors.push(`${field}.deepseek.${key} must be a non-empty string`);
+          errors.push(`${field}.dsh.${key} must be a non-empty string`);
         }
       }
-      if (agent.deepseek.apiKeyEnv !== undefined &&
-          (typeof agent.deepseek.apiKeyEnv !== 'string' || !ENV_NAME.test(agent.deepseek.apiKeyEnv))) {
-        errors.push(`${field}.deepseek.apiKeyEnv must be an environment variable name`);
+      if (agent.dsh.apiKeyEnv !== undefined &&
+          (typeof agent.dsh.apiKeyEnv !== 'string' || !ENV_NAME.test(agent.dsh.apiKeyEnv))) {
+        errors.push(`${field}.dsh.apiKeyEnv must be an environment variable name`);
       }
     }
     const llm = llms[agent.llm];
@@ -265,10 +269,10 @@ export function resolveConfiguredAgents(
     if (agent.backend === 'claude' && llm.api?.protocol === 'openai') {
       errors.push(`${field}: Claude requires an Anthropic API connection`);
     }
-    if (llm.reasoningEffort !== undefined && !['codex', 'deepseek'].includes(agent.backend)) {
+    if (llm.reasoningEffort !== undefined && !['codex', 'dsh'].includes(agent.backend)) {
       errors.push(`llms.${agent.llm}.reasoningEffort requires a Codex or DSH native runtime`);
     }
-    if (['codex', 'deepseek'].includes(agent.backend) && llm.api !== undefined) {
+    if (['codex', 'dsh'].includes(agent.backend) && llm.api !== undefined) {
       errors.push(
         `${field}: this native runtime owns its API connection; omit llms.${agent.llm}.api`
       );
@@ -315,7 +319,7 @@ export function resolveConfiguredAgents(
 
 /** Validate only the selected runtime's secrets; dormant entries need no credentials. */
 export function validateResolvedAgent(preset: AgentPreset): string | undefined {
-  if (preset.agentBackend === 'codex' || preset.agentBackend === 'deepseek') {
+  if (preset.agentBackend === 'codex' || preset.agentBackend === 'dsh') {
     return undefined;
   }
   if (!preset.apiProtocol) {

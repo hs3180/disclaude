@@ -214,7 +214,7 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
     }
   });
   it('rejects invalid modes and custom arguments that could override the selected mode', () => {
-    expect(() => new DeepSeekHarnessProvider({ mode: 'typo' as never })).toThrow('deepseek.mode');
+    expect(() => new DeepSeekHarnessProvider({ mode: 'typo' as never })).toThrow('dsh.mode');
     expect(
       () => new DeepSeekHarnessProvider({ mode: 'minimal', args: ['--profile', 'sdk'] })
     ).toThrow('custom process args');
@@ -224,7 +224,7 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
 
     expect(provider.validateConfig()).toBe(true);
     expect(provider.getInfo()).toMatchObject({
-      name: 'deepseek',
+      name: 'dsh',
       available: true,
     });
   });
@@ -237,7 +237,7 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
 
     expect(provider.validateConfig()).toBe(true);
     expect(provider.getInfo()).toMatchObject({
-      name: 'deepseek',
+      name: 'dsh',
       version: '0.1.2-native',
       available: true,
     });

@@ -9,9 +9,17 @@ agents:
   assistant:
     backend: claude
     llm: assistant
+  # Optional native DSH runtime; choose a model supported by your DSH profile.
+  # dsh:
+  #   backend: dsh
+  #   llm: dsh-model
+  #   dsh:
+  #     mode: minimal
 
 # Native Codex binds agent + LLM through the CLI's account; no API block is needed.
 llms:
+  # dsh-model:
+  #   model: your-supported-model
   daily:
     model: gpt-6-luna
     reasoningEffort: max

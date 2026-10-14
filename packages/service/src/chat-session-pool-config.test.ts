@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 const repo = fileURLToPath(new URL('../../../', import.meta.url));
 
 describe('preset switching with real configuration and providers', () => {
-  it.each(['codex', 'deepseek'])('validates the target independently of a %s default', (backend) => {
+  it.each(['codex', 'dsh'])('validates the target independently of a %s default', (backend) => {
     const root = mkdtempSync(join(tmpdir(), 'disclaude-preset-config-'));
     try {
       const configPath = join(root, 'config.yaml');
@@ -16,7 +16,13 @@ describe('preset switching with real configuration and providers', () => {
         workspace: { dir: root },
         logging: { level: 'silent' },
         agents: {
-          native: { backend, llm: 'native', default: true },
+          native: {
+            backend, llm: 'native', default: true,
+            ...(backend === 'dsh' ? { dsh: {
+              mode: 'minimal', provider: 'native-test-route', dshHome: join(root, 'dsh-home'),
+              apiKeyEnv: 'DISCLAUDE_NATIVE_CONFIG_TEST_KEY',
+            } } : {}),
+          },
           proxy: { backend: 'claude', llm: 'proxy' },
           direct: { backend: 'claude', llm: 'direct' },
           missing: { backend: 'claude', llm: 'missing' },
@@ -36,6 +42,7 @@ describe('preset switching with real configuration and providers', () => {
             api: { protocol: 'anthropic', apiKey: '$MISSING_KEY' },
           },
         },
+        env: { DISCLAUDE_NATIVE_CONFIG_TEST_KEY: 'selected-native-test-key' },
       }));
       const script = `
         import assert from 'node:assert/strict';
@@ -45,6 +52,15 @@ describe('preset switching with real configuration and providers', () => {
         const pool = new ChatSessionPool();
         const callbacks = { sendMessage: async () => {}, sendCard: async () => {}, sendFile: async () => {} };
         try {
+          if (Config.AGENT_BACKEND === 'dsh') {
+            const preset = Config.getAgentPresets().native;
+            assert.equal(Config.DSH_MODE, 'minimal');
+            assert.equal(Config.DSH_PROVIDER, 'native-test-route');
+            assert.equal(Config.DSH_HOME, preset.dsh.dshHome);
+            assert.equal(Config.DSH_API_KEY, 'selected-native-test-key');
+            assert.equal(getProvider('dsh').name, 'dsh');
+            assert.equal(getProvider('dsh'), getProvider('dsh', preset));
+          }
           const original = pool.getOrCreateChatAgent('test-chat', callbacks);
           assert.equal(Config.getAgentConfig().apiKey, '');
           assert.equal(Config.getAgentConfig().reasoningEffort, 'max');

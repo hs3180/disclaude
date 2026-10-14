@@ -206,11 +206,11 @@ export class Config {
   })();
 
   // Native runtimes own authentication; API runtimes use the bound LLM.
-  static readonly DEEPSEEK_API_KEY = process.env[defaultAgent?.deepseek?.apiKeyEnv ?? 'DEEPSEEK_API_KEY'] ??
-    fileConfigOnly.env?.[defaultAgent?.deepseek?.apiKeyEnv ?? 'DEEPSEEK_API_KEY'] ?? '';
-  static readonly DSH_MODE = defaultAgent?.deepseek?.mode ?? 'standard';
-  static readonly DSH_PROVIDER = defaultAgent?.deepseek?.provider;
-  static readonly DSH_HOME = defaultAgent?.deepseek?.dshHome || process.env.DSH_HOME || '';
+  static readonly DSH_API_KEY = process.env[defaultAgent?.dsh?.apiKeyEnv ?? 'DEEPSEEK_API_KEY'] ??
+    fileConfigOnly.env?.[defaultAgent?.dsh?.apiKeyEnv ?? 'DEEPSEEK_API_KEY'] ?? '';
+  static readonly DSH_MODE = defaultAgent?.dsh?.mode ?? 'standard';
+  static readonly DSH_PROVIDER = defaultAgent?.dsh?.provider;
+  static readonly DSH_HOME = defaultAgent?.dsh?.dshHome || process.env.DSH_HOME || '';
   static readonly AGENT_BACKEND = defaultAgent?.agentBackend;
 
   private static readonly CODEX_MODEL_SETTING = resolveCodexModelSetting({

@@ -256,7 +256,7 @@ export interface HarnessConfig {
   browserRuntimePath?: string;
   /** Model API key (ANTHROPIC_API_KEY or provider equivalent). */
   apiKey: string;
-  agentBackend?: 'claude' | 'codex' | 'pi' | 'deepseek';
+  agentBackend?: 'claude' | 'codex' | 'pi' | 'dsh';
   /** Optional model override; otherwise Config.getAgentConfig() default. */
   model?: string;
   /** Optional API wire format. */
@@ -280,7 +280,7 @@ export interface PreflightResult {
  */
 export function preflight(config: HarnessConfig): PreflightResult {
   const problems: string[] = [];
-  if (!config.apiKey && config.agentBackend !== 'codex' && config.agentBackend !== 'deepseek') {
+  if (!config.apiKey && config.agentBackend !== 'codex' && config.agentBackend !== 'dsh') {
     problems.push('missing model API key (set ANTHROPIC_API_KEY or pass --api-key)');
   }
   if (!config.browserRuntimePath) {

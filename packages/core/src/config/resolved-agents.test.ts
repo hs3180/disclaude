@@ -32,19 +32,39 @@ describe('named runtime and LLM configuration', () => {
     const config = configuration();
     config.llms!.native = { model: 'glm-5.3' };
     config.agents!.dsh = {
-      backend: 'deepseek', llm: 'native',
-      deepseek: { mode: 'minimal', provider: 'glm-proxy', apiKeyEnv: 'DSH_TEST_KEY', dshHome: '/dsh-home' },
+      backend: 'dsh', llm: 'native',
+      dsh: { mode: 'minimal', provider: 'glm-proxy', apiKeyEnv: 'DSH_TEST_KEY', dshHome: '/dsh-home' },
     };
     expect(resolveConfiguredAgents(config)).toMatchObject({ ok: true, presets: {
-      dsh: { deepseek: config.agents!.dsh.deepseek },
+      dsh: { agentBackend: 'dsh', apiProtocol: undefined, dsh: config.agents!.dsh.dsh },
     } });
   });
 
+  it('rejects the legacy backend with migration guidance', () => {
+    const config = configuration();
+    config.llms!.native = { model: 'glm-5.3' };
+    config.agents!.dsh = { backend: 'deepseek' as never, llm: 'native' };
+    expect(resolveConfiguredAgents(config)).toEqual({ ok: false, errors: [
+      'agents.dsh.backend deepseek is unsupported; use backend: dsh',
+    ] });
+  });
+
+  it.each(['dsh', 'codex', 'pi', 'claude'] as const)(
+    'rejects a deepseek block under %s with migration guidance', backend => {
+      const config = configuration();
+      config.llms!.native = { model: 'glm-5.3' };
+      config.agents!.legacy = { backend, llm: 'native', deepseek: { mode: 'minimal' } } as never;
+      expect(resolveConfiguredAgents(config)).toEqual({ ok: false, errors: [
+        'agents.legacy.deepseek is unsupported; rename this runtime block to agents.legacy.dsh and use backend: dsh',
+      ] });
+    }
+  );
+
   it.each(['codex', 'pi', 'claude'] as const)('rejects DSH settings under %s', backend => {
     const config = configuration();
-    config.agents!.misplaced = { backend, llm: backend === 'codex' ? 'daily' : 'proxy', deepseek: { mode: 'minimal' } };
+    config.agents!.misplaced = { backend, llm: backend === 'codex' ? 'daily' : 'proxy', dsh: { mode: 'minimal' } };
     expect(resolveConfiguredAgents(config)).toMatchObject({ ok: false, errors: [
-      'agents.misplaced.deepseek requires backend: deepseek',
+      'agents.misplaced.dsh requires backend: dsh',
     ] });
   });
 
@@ -56,10 +76,10 @@ describe('named runtime and LLM configuration', () => {
     { dshHome: 42 },
     { apiKeyEnv: '$DSH_TEST_KEY' },
     { ignoredSetting: true },
-  ])('rejects malformed or ignored DSH settings (%j)', deepseek => {
+  ])('rejects malformed or ignored DSH settings (%j)', dsh => {
     const config = configuration();
     config.llms!.native = { model: 'glm-5.3' };
-    config.agents!.dsh = { backend: 'deepseek', llm: 'native', deepseek: deepseek as never };
+    config.agents!.dsh = { backend: 'dsh', llm: 'native', dsh: dsh as never };
     expect(resolveConfiguredAgents(config).ok).toBe(false);
   });
 

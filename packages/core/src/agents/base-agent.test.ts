@@ -121,23 +121,23 @@ describe('BaseAgent', () => {
 
   it('passes the selected native DSH preset into provider construction', () => {
     const settings = {
-      agentBackend: 'deepseek' as const,
+      agentBackend: 'dsh' as const,
       llm: 'glm-native', model: 'glm-5.3', apiKey: '',
-      deepseek: { mode: 'minimal' as const, provider: 'glm-proxy', dshHome: '/named-home' },
+      dsh: { mode: 'minimal' as const, provider: 'glm-proxy', dshHome: '/named-home' },
     };
     new TestAgent({ ...config, ...settings, settings });
-    expect(mockGetProvider).toHaveBeenLastCalledWith('deepseek', settings);
+    expect(mockGetProvider).toHaveBeenLastCalledWith('dsh', settings);
   });
 
-  it('omits Claude-only runtime options for deepseek', () => {
-    const deepseek = new TestAgent({ ...config, agentBackend: 'deepseek' });
-    const options = deepseek.testCreateSdkOptions();
+  it('omits Claude-only runtime options for DSH', () => {
+    const dsh = new TestAgent({ ...config, agentBackend: 'dsh' });
+    const options = dsh.testCreateSdkOptions();
     expect(options.systemPrompt).toBeUndefined();
     expect(options).not.toHaveProperty('builtinTools');
     expect(options).not.toHaveProperty('disallowedTools');
   });
 
-  it.each(['codex', 'pi', 'deepseek'] as const)('does not inject Claude runtime options into %s', (backend) => {
+  it.each(['codex', 'pi', 'dsh'] as const)('does not inject Claude runtime options into %s', (backend) => {
     const instance = new TestAgent({ ...config, agentBackend: backend });
     const options = instance.testCreateSdkOptions({});
     expect(options.systemPrompt).toBeUndefined();
@@ -151,14 +151,14 @@ describe('BaseAgent', () => {
     expect(options.env?.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBeUndefined();
   });
 
-  it('uses DeepSeek options when the backend is selected globally', () => {
+  it('uses DSH options when the backend is selected globally', () => {
     mockGetProvider.mockReturnValueOnce({
       ...mockSdkProvider,
-      name: 'deepseek',
+      name: 'dsh',
     } as typeof mockSdkProvider);
     const defaultAgent = new TestAgent(config);
     const options = defaultAgent.testCreateSdkOptions();
-    expect(defaultAgent.agentBackend).toBe('deepseek');
+    expect(defaultAgent.agentBackend).toBe('dsh');
     expect(options).not.toHaveProperty('builtinTools');
     expect(options.systemPrompt).toBeUndefined();
     expect(options).not.toHaveProperty('disallowedTools');

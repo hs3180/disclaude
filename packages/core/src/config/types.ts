@@ -37,7 +37,7 @@ export type CodexReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhig
 
 export interface AgentConfig {
   /** Agent runtime. */
-  agentBackend?: 'claude' | 'pi' | 'codex' | 'deepseek';
+  agentBackend?: 'claude' | 'pi' | 'codex' | 'dsh';
   /**
    * Codex exec sandbox level override (Issue #4631, S4 of #4627).
    * Only meaningful when `agentBackend: 'codex'`. Unset → the normal
@@ -54,8 +54,8 @@ export interface AgentConfig {
    * with `agentBackend: 'codex'`; caps are per process.
    */
   codex?: CodexAgentGovernanceConfig;
-  /** Native DSH composition and connection, only for the DeepSeek backend. */
-  deepseek?: DeepSeekConfig;
+  /** Native DSH composition and connection, only for the DSH backend. */
+  dsh?: DshConfig;
   /** Permission mode for SDK */
   permissionMode?: 'default' | 'bypassPermissions';
   /** Maximum concurrent tasks */
@@ -186,8 +186,8 @@ export interface FeishuConfig {
   };
 }
 
-/** DeepSeek harness configuration (developer preview; Issue #4741). */
-export interface DeepSeekConfig {
+/** DSH runtime configuration (developer preview; Issue #4741). */
+export interface DshConfig {
   /** DSH model provider route. Omit to use the selected native profile's default. */
   provider?: string;
   /** Harness composition. Changes apply after service restart. Default: standard. */

@@ -25,8 +25,8 @@ import { ChatSessionPool } from './chat-session-pool.js';
 describe('named DSH pool routing', () => {
   it('uses the selected DSH connection for both switch preflight and reset', () => {
     const selected: AgentPreset = {
-      agentBackend: 'deepseek', llm: 'glm-native', model: 'glm-5.3', apiKey: '',
-      deepseek: { mode: 'minimal', provider: 'glm-proxy', dshHome: '/selected-home' },
+      agentBackend: 'dsh', llm: 'glm-native', model: 'glm-5.3', apiKey: '',
+      dsh: { mode: 'minimal', provider: 'glm-proxy', dshHome: '/selected-home' },
     };
     native.getProvider.mockImplementation((_backend, settings) => {
       if (settings !== selected) {
@@ -42,6 +42,6 @@ describe('named DSH pool routing', () => {
     expect(native.getInfo).toHaveBeenCalledWith(expect.objectContaining({ settings: selected }));
     pool.reset('test-chat');
     expect(native.forgetSession).toHaveBeenCalledWith('test-chat');
-    expect(native.getProvider).toHaveBeenLastCalledWith('deepseek', selected);
+    expect(native.getProvider).toHaveBeenLastCalledWith('dsh', selected);
   });
 });

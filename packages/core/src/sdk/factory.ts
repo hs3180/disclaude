@@ -22,16 +22,16 @@ import { Config, type AgentConfig } from '../config/index.js';
  */
 export type ProviderType = 'claude' | 'pi' | 'codex' | string;
 
-function deepseekOptions(settings?: AgentConfig): DeepSeekHarnessProviderOptions {
+function dshOptions(settings?: AgentConfig): DeepSeekHarnessProviderOptions {
   if (settings === undefined) {
     return {
       provider: Config.DSH_PROVIDER,
-      apiKey: Config.DEEPSEEK_API_KEY,
+      apiKey: Config.DSH_API_KEY,
       dshHome: Config.DSH_HOME || undefined,
       mode: Config.DSH_MODE,
     };
   }
-  const native = settings.deepseek;
+  const native = settings.dsh;
   const keyEnv = native?.apiKeyEnv ?? 'DEEPSEEK_API_KEY';
   return {
     mode: native?.mode ?? 'standard',
@@ -42,10 +42,10 @@ function deepseekOptions(settings?: AgentConfig): DeepSeekHarnessProviderOptions
 }
 
 function providerCacheKey(type: ProviderType, settings?: AgentConfig): string {
-  if (type !== 'deepseek') {
+  if (type !== 'dsh') {
     return 'default';
   }
-  const options = deepseekOptions(settings);
+  const options = dshOptions(settings);
   return JSON.stringify({
     mode: options.mode ?? 'standard',
     provider: options.provider,
@@ -79,7 +79,7 @@ const providerRegistry = new Map<ProviderType, ProviderFactory>([
         reasoningEffortSource: Config.CODEX_REASONING_EFFORT_SOURCE,
       }),
   ],
-  ['deepseek', settings => new DeepSeekHarnessProvider(deepseekOptions(settings))],
+  ['dsh', settings => new DeepSeekHarnessProvider(dshOptions(settings))],
 ]);
 
 /**
