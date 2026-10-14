@@ -52,7 +52,7 @@ export async function loadPiProduction(options: AgentQueryOptions): Promise<{
   tools: NativeTool[];
 }> {
   const { model, apiKey } = resolvePiModel(options);
-  // Variable specifiers keep this backend optional for hosts running Claude/Codex/DeepSeek.
+  // Variable specifiers keep this backend optional for hosts running Claude/Codex/DSH.
   const apiSpecifier = `@earendil-works/pi-ai/api/${model.api as string}`;
   const coreSpecifier = '@earendil-works/pi-agent-core';
   const nodeSpecifier = '@earendil-works/pi-agent-core/node';

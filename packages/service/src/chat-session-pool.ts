@@ -238,7 +238,7 @@ export class ChatSessionPool {
       const config = AgentFactory.resolveConfig({ ...resolved.preset, settings: resolved.preset });
       info = this.options.validatePresetBackend
         ? this.options.validatePresetBackend(resolved.preset.agentBackend, config)
-        : getProvider(resolved.preset.agentBackend).getInfo(config);
+        : getProvider(resolved.preset.agentBackend, resolved.preset).getInfo(config);
     } catch {
       return { ok: false, error: `Could not validate agent preset "${resolved.name}". Check backend configuration and availability; the current session is unchanged.` };
     }
@@ -267,7 +267,7 @@ export class ChatSessionPool {
       // session. Forget the selected backend only after construction succeeds,
       // so a failed switch leaves the currently active session untouched.
       try {
-        getProvider(resolved.preset.agentBackend).forgetSession?.(sessionKey);
+        getProvider(resolved.preset.agentBackend, resolved.preset).forgetSession?.(sessionKey);
       } catch (error) {
         candidate.dispose();
         return {
@@ -533,7 +533,7 @@ export class ChatSessionPool {
       ? resolveAgentPreset(this.presets, this.selectedPresetBySession.get(sessionKey))
       : undefined;
     if (selected?.ok) {
-      getProvider(selected.preset.agentBackend).forgetSession?.(sessionKey);
+      getProvider(selected.preset.agentBackend, selected.preset).forgetSession?.(sessionKey);
     } else {
       this.forgetProviderSession(sessionKey);
     }

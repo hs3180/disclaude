@@ -32,7 +32,7 @@ fs.appendFileSync('/data/workspace/schedule-runs.ndjson', JSON.stringify({boot, 
 
     let createdContainer = false;
     const config = {
-      agents: { default: { backend: 'deepseek', llm: 'native', deepseek: { mode: 'standard' } } },
+      agents: { default: { backend: 'dsh', llm: 'native', mode: 'standard' } },
       llms: { native: { model: 'deepseek-flash' } },
       workspace: { dir: '/data/workspace' },
       channels: { feishu: { enabled: false }, rest: { enabled: true, host: '127.0.0.1', port: 13000, fileStorageDir: '/data/workspace/files' } },
@@ -118,7 +118,7 @@ fs.appendFileSync('/data/workspace/schedule-runs.ndjson', JSON.stringify({boot, 
         await docker('rm', container); createdContainer = false;
         expect(await dataOperation(`import fs from 'node:fs'; console.log(fs.existsSync('/data/service.pid'));`)).toBe('false');
         if (attempt === 0) {
-          await dataOperation(`import fs from 'node:fs'; const c=JSON.parse(fs.readFileSync('/data/config.json')); c.agents.default.deepseek.mode='minimal'; fs.writeFileSync('/data/config.json',JSON.stringify(c));`);
+          await dataOperation(`import fs from 'node:fs'; const c=JSON.parse(fs.readFileSync('/data/config.json')); c.agents.default.mode='minimal'; fs.writeFileSync('/data/config.json',JSON.stringify(c));`);
         }
         console.info('DOCKER_SERVICE_ACCEPTANCE', JSON.stringify({ attempt, mode: attempt ? 'minimal' : 'standard', ...runtime, uploadRetained: true, scheduleExecuted: true, scheduleAndHistoryRetained: true, cleanExit: true, realModelToolCall: withChatModel, realScheduledModelTurn: withScheduledModel }));
       }

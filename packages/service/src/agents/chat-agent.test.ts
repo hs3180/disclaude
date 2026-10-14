@@ -3841,7 +3841,7 @@ describe('ChatAgent (service)', () => {
       expect(debugMessages).toEqual(['[status] 🤔 Thinking...', '[status] 🤔 Thinking...']);
     });
 
-    it.each(['claude', 'codex', 'pi', 'deepseek'])('hides %s tool traces while preserving debug and final delivery', async (backend) => {
+    it.each(['claude', 'codex', 'pi', 'dsh'])('hides %s tool traces while preserving debug and final delivery', async (backend) => {
       const localCallbacks = createMockCallbacks();
       const agent = new ChatAgent({
         chatId: 'oc_codex_user_chat',

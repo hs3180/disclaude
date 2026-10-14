@@ -24,7 +24,7 @@ async function collect(iterator: ReturnType<DeepSeekHarnessProvider['queryStream
 }
 
 async function sdkFixture(
-  options: { foreignSession?: boolean } = {}
+  options: { foreignSession?: boolean; captureConnection?: boolean } = {}
 ): Promise<{ dir: string; binary: string }> {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-provider-'));
   const binary = join(dir, 'dsh');
@@ -33,6 +33,7 @@ async function sdkFixture(
     `#!/usr/bin/env node
 require('node:fs').writeFileSync(require('node:path').join(${JSON.stringify(dir)}, 'argv.json'), JSON.stringify(process.argv.slice(2)));
 require('node:fs').writeFileSync(require('node:path').join(${JSON.stringify(dir)}, 'environment.json'), JSON.stringify({ sentinel: process.env.DSH_QUERY_VISIBLE, hasAuthority: Object.hasOwn(process.env, 'DSH_QUERY_AUTHORITY') }));
+${options.captureConnection ? `require('node:fs').writeFileSync(require('node:path').join(${JSON.stringify(dir)}, 'connection.json'), JSON.stringify({ apiKey: process.env.DEEPSEEK_API_KEY, home: process.env.DSH_HOME }));` : ''}
 const rl = require('node:readline').createInterface({ input: process.stdin });
 const reply = (id, result) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id, result }) + '\\n');
 const notify = (method, params) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method, params }) + '\\n');
@@ -114,6 +115,24 @@ async function* oneInput() {
 }
 
 describe('DeepSeekHarnessProvider (Issue #4741)', () => {
+  it('keeps the selected native credential and home when query env contains stale values', async () => {
+    const fixture = await sdkFixture({ captureConnection: true });
+    const provider = new DeepSeekHarnessProvider({
+      binary: fixture.binary, dshHome: fixture.dir, apiKey: 'selected-test-key', mode: 'minimal',
+    });
+    try {
+      await collect(provider.queryStream(oneInput(), {
+        settingSources: [], cwd: fixture.dir,
+        env: { DEEPSEEK_API_KEY: 'stale-test-key', DSH_HOME: '/wrong-home' },
+      }).iterator);
+      expect(JSON.parse(await readFile(join(fixture.dir, 'connection.json'), 'utf8'))).toEqual({
+        apiKey: 'selected-test-key', home: fixture.dir,
+      });
+    } finally {
+      await provider.shutdown();
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
+  });
   it('uses query environment overrides and omits explicitly removed host authority', async () => {
     const fixture = await sdkFixture();
     const provider = new DeepSeekHarnessProvider({
@@ -195,7 +214,7 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
     }
   });
   it('rejects invalid modes and custom arguments that could override the selected mode', () => {
-    expect(() => new DeepSeekHarnessProvider({ mode: 'typo' as never })).toThrow('deepseek.mode');
+    expect(() => new DeepSeekHarnessProvider({ mode: 'typo' as never })).toThrow('DSH mode');
     expect(
       () => new DeepSeekHarnessProvider({ mode: 'minimal', args: ['--profile', 'sdk'] })
     ).toThrow('custom process args');
@@ -205,7 +224,7 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
 
     expect(provider.validateConfig()).toBe(true);
     expect(provider.getInfo()).toMatchObject({
-      name: 'deepseek',
+      name: 'dsh',
       available: true,
     });
   });
@@ -218,7 +237,7 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
 
     expect(provider.validateConfig()).toBe(true);
     expect(provider.getInfo()).toMatchObject({
-      name: 'deepseek',
+      name: 'dsh',
       version: '0.1.2-native',
       available: true,
     });

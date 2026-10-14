@@ -34,7 +34,7 @@ changes ship under a new version.
 | [Feishu channel](docs/feishu-channel.md) | App setup, supported interactions, and cards |
 | [Workspace setup](docs/workspace-setup.md) | Choose or safely move persistent project data |
 | [Environment variables](docs/environment-variables.md) | Operator-facing runtime settings |
-| [Codex](docs/codex-backend.md), [Pi](docs/pi-backend.md), [DeepSeek](docs/dsh-backend.md) | Backend-specific configuration |
+| [Codex](docs/codex-backend.md), [Pi](docs/pi-backend.md), [DSH](docs/dsh-backend.md) | Backend-specific configuration |
 | [Browser control](docs/browser-coordination.md) | Serialized CLI calls, ownership, and recovery |
 | [Jupyter repair CLI](jupyter/datalayer/README.md#cli-deployment) | Generate/deploy the upstream repair and inspect restart requirements |
 | [Skills](docs/skills.md) | Discovery, precedence, and CLI contract |

@@ -11,7 +11,7 @@
 | Browser setup and persistence | `chromium-launchd.test.ts`, `chromium-systemd.test.ts`, `chromium-setup.test.ts`, `chromium-download.test.ts` | Actual platform service manager and browser; systemd/download CI supplies Linux environment. macOS launchd remains an explicit local case. |
 | Container startup, storage and cleanup | `docker-service.test.ts`, `docker-browser-smoke.test.ts`, `docker-cleanup.test.ts` | Actual Docker service/browser images and labelled volumes/networks; dedicated Docker CI also injects a failure to verify cleanup. Optional model execution is separate from the offline container case. |
 | Static Feishu card delivery | `static-card-feishu.test.ts` | Explicit authorized test chat and credentials. Real outgoing API/readback with an in-process channel fixture; does not prove incoming WebSocket callbacks or desktop rendering. |
-| DeepSeek tool execution | `deepseek-mode.test.ts` | Explicit real model credentials and dsh; invokes the provider directly. This is bounded provider/artifact evidence, not the full deployed chat path. |
+| DSH tool execution | `deepseek-mode.test.ts` | Explicit real model credentials and dsh; invokes the provider directly. This is bounded provider/artifact evidence, not the full deployed chat path. |
 
 Actual package installation remains the separate `pnpm run test:install:checkout --matrix` CI job. `tests/git-release-install.test.ts` checks the generator with local source fixtures; it does not install or start the distribution.
 

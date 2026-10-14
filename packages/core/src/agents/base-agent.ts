@@ -151,7 +151,7 @@ export abstract class BaseAgent implements Disposable {
     this.apiBaseUrl = config.apiBaseUrl;
     this.permissionMode = config.permissionMode ?? 'bypassPermissions';
 
-    this.apiProtocol = config.apiProtocol ?? (['codex', 'deepseek'].includes(config.agentBackend ?? '')
+    this.apiProtocol = config.apiProtocol ?? (['codex', 'dsh'].includes(config.agentBackend ?? '')
       ? undefined : hasRuntimeContext() ? getRuntimeContext().getAgentConfig().apiProtocol ?? 'anthropic' : 'anthropic');
     this.selectedConfig = config;
 
@@ -159,12 +159,14 @@ export abstract class BaseAgent implements Disposable {
     this.logger = createLogger(this.getAgentName());
 
     // Get SDK provider instance
-    this.sdkProvider = getProvider(config.agentBackend);
-    // disclaude service may select DeepSeek as the global default without passing
+    this.sdkProvider = config.settings
+      ? getProvider(config.agentBackend, config.settings)
+      : getProvider(config.agentBackend);
+    // disclaude service may select DSH as the global default without passing
     // an explicit per-agent override. Build options for the resolved backend.
     this.agentBackend =
       config.agentBackend ??
-      (['claude', 'codex', 'pi', 'deepseek'].includes(this.sdkProvider.name)
+      (['claude', 'codex', 'pi', 'dsh'].includes(this.sdkProvider.name)
         ? (this.sdkProvider.name as BaseAgentConfig['agentBackend'])
         : undefined);
   }

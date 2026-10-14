@@ -7,7 +7,7 @@ import { DeepSeekHarnessProvider } from '../../packages/core/src/sdk/providers/d
 
 const enabled = process.env.DISCLAUDE_E2E_DSH === '1';
 
-describe('DeepSeek mode: create and read an actual workspace artifact', () => {
+describe('DSH mode: create and read an actual workspace artifact', () => {
   it.skipIf(!enabled).each(['minimal', 'standard'] as const)('%s executes a tool and returns its result', async mode => {
     if (!process.env.DEEPSEEK_API_KEY || !process.env.DISCLAUDE_E2E_DSH_MODEL) {
       throw new Error('Enabled dsh E2E requires DEEPSEEK_API_KEY and DISCLAUDE_E2E_DSH_MODEL');
