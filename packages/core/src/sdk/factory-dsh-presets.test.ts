@@ -59,6 +59,7 @@ describe('DSH connections resolved from named LLMs', () => {
     expect(getProvider().name).toBe('codex');
     expect(optionsOf(getProvider('dsh', preset()))).toEqual({
       mode: 'minimal',
+      bootstrap: 'cli',
       dshHome: '/named-dsh-home',
       apiKey: 'named-test-key',
       api: { protocol: 'openai', baseUrl: 'https://named.example/v1', model: 'glm-5.3' },

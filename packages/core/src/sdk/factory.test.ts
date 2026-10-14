@@ -311,6 +311,18 @@ describe('Provider Factory', () => {
   });
 
   describe('config-driven backend selection (Issue #4388)', () => {
+    it('keeps CLI and direct SDK providers separate while reusing equivalent connections', () => {
+      const connection = {
+        model: 'test-model', apiKey: 'test-key', apiProtocol: 'openai' as const,
+        apiBaseUrl: 'https://dsh.example/v1', mode: 'minimal' as const,
+      };
+      const cli = getProvider('dsh', { ...connection, env: { DISCLAUDE_DSH_BOOTSTRAP: 'cli' } });
+      const sdk = getProvider('dsh', { ...connection, env: { DISCLAUDE_DSH_BOOTSTRAP: 'node-sdk' } });
+      expect(sdk).not.toBe(cli);
+      expect(getProvider('dsh', { ...connection, env: { DISCLAUDE_DSH_BOOTSTRAP: 'node-sdk' } })).toBe(sdk);
+      clearProviderCache('dsh');
+    });
+
     it('registers and selects the native runtime as dsh', () => {
       const connection = {
         model: 'test-model', apiKey: 'test-key', apiProtocol: 'openai' as const,

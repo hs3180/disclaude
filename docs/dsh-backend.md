@@ -74,4 +74,35 @@ the selected composition with `DSH_HOME=... dsh --profile sdk-minimal
 model/tool task completes. Use `--dump-config` locally to inspect user overrides;
 configuration output may contain private settings.
 
+## Direct Node SDK prototype
+
+The default bootstrap remains `cli`. For an isolated experiment, set
+`env.DISCLAUDE_DSH_BOOTSTRAP: node-sdk` on a named DSH agent, select
+`mode: minimal`, and give it an existing, isolated `dshHome` directory:
+
+```yaml
+agents:
+  dsh-sdk:
+    backend: dsh
+    llm: glm-openai
+    mode: minimal
+    dshHome: /absolute/path/to/isolated-sdk-home
+    env:
+      DISCLAUDE_DSH_BOOTSTRAP: node-sdk
+```
+
+This opt-in path starts an owned Node worker using the declared, pinned
+`@deepseek-ai/dsh-app-boot` and `@deepseek-ai/dsh-sdk-minimal` libraries; it does
+not look up or execute the global `dsh` binary. It reuses the native Agent,
+Session, persistence, API routing and host-tool bridge. The optional local
+attachment plugin supplies the service required by the controller.
+
+This prototype supports only the pinned minimal composition. It rejects standard
+mode, custom process launch arguments and user profile overrides rather than
+silently changing the composition. It does not promise standard-mode skill,
+compaction or Bash capability parity. Set the same flag to `cli` and restart
+the service to return to the existing CLI bootstrap. Preserve the configured
+home and workspace; test either path with its own chosen composition before
+using it for production work.
+
 Upstream: https://github.com/deepseek-ai/deepseek-harness/blob/master/python/sdk/examples/README.md

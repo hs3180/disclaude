@@ -23,6 +23,8 @@ import {
   type DshApiConnection,
 } from './native-profile.js';
 import { DshSessionBindings } from './session-bindings.js';
+import { fileURLToPath } from 'node:url';
+import { dshSdkModules, resolveDshBootstrap, type DshBootstrap } from './sdk-bootstrap.js';
 
 const logger = createLogger('DeepSeekHarnessProvider');
 
@@ -38,6 +40,8 @@ export interface DeepSeekHarnessProviderOptions {
   binary?: string;
   args?: string[];
   requestTimeoutMs?: number;
+  /** Experimental library bootstrap; the default CLI composition remains available. */
+  bootstrap?: DshBootstrap;
 }
 
 interface NativeInvocation {
@@ -81,6 +85,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
   private readonly configuredHome?: string;
   private readonly route?: string;
   private readonly profile: 'sdk' | 'sdk-minimal';
+  private readonly bootstrap: DshBootstrap;
   private readonly bindings: DshSessionBindings;
   private readonly pool: DshSessionPool;
   private readonly queries = new Map<string, QueryState>();
@@ -90,12 +95,16 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
   private shutdownFlight?: Promise<void>;
 
   constructor(options: DeepSeekHarnessProviderOptions = {}) {
+    this.bootstrap = resolveDshBootstrap(options.bootstrap ?? options.env?.DISCLAUDE_DSH_BOOTSTRAP ?? process.env.DISCLAUDE_DSH_BOOTSTRAP);
     const mode = options.mode ?? 'standard';
     if (mode !== 'minimal' && mode !== 'standard') {
       throw new Error('DSH mode must be minimal or standard');
     }
     if (options.mode !== undefined && options.args !== undefined) {
       throw new Error('Explicit dsh mode cannot be combined with custom process args');
+    }
+    if (this.bootstrap === 'node-sdk' && (mode !== 'minimal' || options.binary !== undefined || options.args !== undefined)) {
+      throw new Error('DSH Node SDK prototype supports minimal mode with its owned Node worker; use cli bootstrap for standard/custom compositions');
     }
     if (options.provider !== undefined && !options.provider.trim()) {
       throw new TypeError('dsh.provider must be non-empty');
@@ -132,7 +141,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
     };
     this.bindings = new DshSessionBindings(this.home);
     this.pool = new DshSessionPool({
-      binary: options.binary,
+      binary: this.bootstrap === 'node-sdk' ? process.execPath : options.binary,
       requestTimeoutMs: options.requestTimeoutMs ?? 30_000,
       env: environment,
       forSession: (runtimeId) => {
@@ -163,7 +172,9 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
                 : { DEEPSEEK_API_KEY: options.apiKey }),
             DSH_HOME: this.home,
           },
-          args: [...(options.args ?? ['--profile', this.profile]), '--patch', this.overlay.path],
+          args: this.bootstrap === 'node-sdk'
+            ? [fileURLToPath(new URL('./sdk-worker.js', import.meta.url)), this.overlay.path]
+            : [...(options.args ?? ['--profile', this.profile]), '--patch', this.overlay.path],
           onRequest: (request) => this.onRequest(state, request),
           onStderr: (data) => state.stderr?.(data),
           onNotification: (notification) => this.onNotification(state, notification),
@@ -485,6 +496,12 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
   }
 
   private diagnose(): string {
+    if (this.bootstrap === 'node-sdk') {
+      try { dshSdkModules(); } catch { return 'Install the pinned optional DSH app-boot and sdk-minimal packages for node-sdk bootstrap'; }
+      if (['cordis.yml', 'cordis.patch.yml'].some(name => existsSync(join(this.home, 'profiles', this.profile, name)))) {
+        return 'DSH Node SDK prototype does not load user profile overrides; use an isolated dshHome or cli bootstrap';
+      }
+    }
     return this.configuredHome && !existsSync(this.home)
       ? `DSH_HOME does not exist: ${this.home}`
       : '';
