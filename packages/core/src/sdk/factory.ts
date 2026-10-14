@@ -16,28 +16,31 @@ import {
   DeepSeekHarnessProvider,
 } from './providers/index.js';
 import { Config, type AgentConfig } from '../config/index.js';
+import type { BaseAgentConfig } from '../agents/types.js';
 
 /**
  * 已注册的 Provider 类型
  */
 export type ProviderType = 'claude' | 'pi' | 'codex' | string;
 
-function dshOptions(settings?: AgentConfig): DeepSeekHarnessProviderOptions {
-  if (settings === undefined) {
-    return {
-      provider: Config.DSH_PROVIDER,
-      apiKey: Config.DSH_API_KEY,
-      dshHome: Config.DSH_HOME || undefined,
-      mode: Config.DSH_MODE,
-    };
-  }
-  const native = settings.dsh;
-  const keyEnv = native?.apiKeyEnv ?? 'DEEPSEEK_API_KEY';
+function dshOptions(
+  settings?: AgentConfig & Partial<BaseAgentConfig>
+): DeepSeekHarnessProviderOptions {
+  const defaults = settings === undefined ? Config.getAgentConfig() : undefined;
+  const selected = settings ?? { ...defaults?.settings, ...defaults };
   return {
-    mode: settings.mode ?? 'standard',
-    provider: native?.provider,
-    dshHome: settings.dshHome || process.env.DSH_HOME || undefined,
-    apiKey: process.env[keyEnv] ?? Config.getGlobalEnv()[keyEnv] ?? '',
+    mode: selected.mode ?? 'standard',
+    dshHome: selected.dshHome || process.env.DSH_HOME || undefined,
+    apiKey: selected.apiKey,
+    ...(selected.apiProtocol
+      ? {
+          api: {
+            protocol: selected.apiProtocol,
+            baseUrl: selected.apiBaseUrl ?? '',
+            model: selected.model ?? '',
+          },
+        }
+      : {}),
   };
 }
 
@@ -48,10 +51,12 @@ function providerCacheKey(type: ProviderType, settings?: AgentConfig): string {
   const options = dshOptions(settings);
   return JSON.stringify({
     mode: options.mode ?? 'standard',
-    provider: options.provider,
+    api: options.api,
     dshHome: options.dshHome ?? process.env.DSH_HOME,
     // Keep credential values out of cache identifiers.
-    credential: createHash('sha256').update(options.apiKey ?? '').digest('hex'),
+    credential: createHash('sha256')
+      .update(options.apiKey ?? '')
+      .digest('hex'),
   });
 }
 
@@ -79,7 +84,7 @@ const providerRegistry = new Map<ProviderType, ProviderFactory>([
         reasoningEffortSource: Config.CODEX_REASONING_EFFORT_SOURCE,
       }),
   ],
-  ['dsh', settings => new DeepSeekHarnessProvider(dshOptions(settings))],
+  ['dsh', (settings) => new DeepSeekHarnessProvider(dshOptions(settings))],
 ]);
 
 /**
@@ -101,7 +106,10 @@ const providerCache = new Map<ProviderType, Map<string, IAgentSDKProvider>>();
  * @returns Provider 实例
  * @throws 如果 Provider 类型未注册
  */
-export function getProvider(type?: ProviderType, settings?: AgentConfig): IAgentSDKProvider {
+export function getProvider(
+  type?: ProviderType,
+  settings?: AgentConfig & Partial<BaseAgentConfig>
+): IAgentSDKProvider {
   const providerType = type ?? defaultProviderType;
 
   // Issue #4224: builtin skills/agents are now discovered in place via the

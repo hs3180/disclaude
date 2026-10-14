@@ -123,7 +123,7 @@ describe('BaseAgent', () => {
     const settings = {
       agentBackend: 'dsh' as const,
       llm: 'glm-native', model: 'glm-5.3', apiKey: '', mode: 'minimal' as const, dshHome: '/named-home',
-      dsh: { provider: 'glm-proxy' },
+      apiProtocol: 'openai' as const, apiBaseUrl: 'https://dsh.example/v1',
     };
     new TestAgent({ ...config, ...settings, settings });
     expect(mockGetProvider).toHaveBeenLastCalledWith('dsh', settings);

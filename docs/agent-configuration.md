@@ -23,8 +23,8 @@ channels:
 ```
 
 Model vendors do not define configuration sections or API formats. Any model
-exposed by an Anthropic-compatible endpoint uses `protocol: anthropic`; Pi also
-supports `protocol: openai` through its OpenAI chat-completions adapter. Claude
+exposed by an Anthropic-compatible endpoint uses `protocol: anthropic`; Pi and DSH also
+support `protocol: openai` through an OpenAI chat-completions adapter. Claude
 requires the Anthropic format. There are no built-in third-party proxy URLs.
 
 Set `apiKey: $ASSISTANT_API_KEY` (or `apiKey: ${ASSISTANT_API_KEY}`) to reference
@@ -43,10 +43,15 @@ default. `CODEX_MODEL` explicitly overrides the default Codex binding; named
 non-default bindings remain independent. Put `reasoningEffort` alongside `model`
 in `llms.<name>`; it is currently supported by native Codex and DSH. Omission
 keeps the model's native default. Transport stays under the agent's `codex` block.
-DSH uses `backend: dsh` and owns its native connection. Set the composition
+DSH uses `backend: dsh` and the bound `llms.<name>.api` connection. Set the composition
 directly with `agents.<name>.mode: minimal` or `standard`, and set its optional home
-with `agents.<name>.dshHome` (overriding `DSH_HOME`). The optional `dsh` block holds
-only native provider and credential settings; the bound LLM supplies the model and reasoning effort.
+with `agents.<name>.dshHome` (overriding `DSH_HOME`). There is no nested `dsh` block.
+The LLM declares its model, reasoning effort, API protocol, base URL and credential
+reference. DSH requires an explicit base URL. The host adds the connection through
+an owned temporary profile patch; it does not rewrite the installed profile or put
+the resolved credential in that patch. Different endpoints, protocols, models and
+credentials use separate providers. An existing API adapter receives the selected
+route instead of loading a duplicate adapter.
 See [DSH runtime modes](dsh-backend.md) for minimal mode and native provider routes.
 
 Set `llms.<name>.maxConcurrentSessions` to a positive integer to cap live host
@@ -83,10 +88,14 @@ files are never rewritten automatically; keep a backup when migrating deployment
 For earlier #5294 previews, move `agents.<name>.codex.reasoningEffort` to its bound
 LLM and replace `apiKeyEnv: NAME` with `apiKey: $NAME`.
 
-For DSH, replace `backend: deepseek` with `backend: dsh` and rename the agent's
-`deepseek` connection block to `dsh`. Move nested `mode` and `dshHome` directly to
-the agent. The old backend/block names and nested `dsh.mode`/`dsh.dshHome` are rejected with
-migration guidance. Native `dsh.apiKeyEnv` still names the credential environment variable.
+For DSH, replace `backend: deepseek` with `backend: dsh`, move composition and home
+to the agent's `mode` and `dshHome`, and remove either old `deepseek` or `dsh`
+connection block. Move the native provider's protocol and URL to the bound
+`llms.<name>.api.protocol` and `.baseUrl`, and replace `apiKeyEnv: NAME` with
+`.apiKey: $NAME`. The old blocks are rejected with migration guidance. The LLM
+API declaration now selects the connection; a native provider route name is not
+a public agent setting. Keep custom tools and other profile settings; an existing
+`@deepseek-ai/dsh-llm-pi-ai` entry must have an explicit id so it can be augmented.
 
 Global `env` and workspace `.runtime-env` keep their existing lifecycle. This
 change does not implement the broader secret-file store or permission management

@@ -9,26 +9,30 @@ agents:
   assistant:
     backend: claude
     llm: assistant
-  # Optional native DSH runtime; choose a model supported by your DSH profile.
+  # Optional DSH runtime; its API connection belongs in the named LLM below.
   # dsh:
   #   backend: dsh
-  #   llm: dsh-model
+  #   llm: glm-openai
   #   mode: minimal
   #   dshHome: /absolute/path/to/isolated-dsh-home
 
 # Native Codex binds agent + LLM through the CLI's account; no API block is needed.
 llms:
-  # dsh-model:
-  #   model: your-supported-model
+  # glm-openai:
+  #   model: glm-5.3
+  #   api:
+  #     protocol: openai
+  #     baseUrl: https://your-openai-compatible-api.example/v1
+  #     apiKey: $GLM_API_KEY
   daily:
     model: gpt-6-luna
     reasoningEffort: max
-    maxConcurrentSessions: 3             # Shared by agents bound to this LLM
+    maxConcurrentSessions: 3 # Shared by agents bound to this LLM
   assistant:
     model: sonnet
     api:
-      protocol: anthropic                 # anthropic or openai (Pi supports both)
-      apiKey: $ASSISTANT_API_KEY         # $NAME or ${NAME}, from the service environment
+      protocol: anthropic # anthropic or openai (Pi and DSH support both)
+      apiKey: $ASSISTANT_API_KEY # $NAME or ${NAME}, from the service environment
       # baseUrl: https://your-api.example # Omit for the protocol's default endpoint
     # Native Claude aliases; use actual model IDs exposed by your endpoint.
     # env:

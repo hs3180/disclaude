@@ -6,13 +6,15 @@ const native = vi.hoisted(() => ({
   getInfo: vi.fn(() => ({ available: true })),
   forgetSession: vi.fn(),
 }));
-vi.mock('@disclaude/core', async importOriginal => {
+vi.mock('@disclaude/core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@disclaude/core')>();
   return {
     ...actual,
     getProvider: native.getProvider,
     Config: class extends actual.Config {
-      static getAgentPresets() { return undefined; }
+      static getAgentPresets() {
+        return undefined;
+      }
     },
   };
 });
@@ -25,8 +27,14 @@ import { ChatSessionPool } from './chat-session-pool.js';
 describe('named DSH pool routing', () => {
   it('uses the selected DSH connection for both switch preflight and reset', () => {
     const selected: AgentPreset = {
-      agentBackend: 'dsh', llm: 'glm-native', model: 'glm-5.3', apiKey: '', mode: 'minimal', dshHome: '/selected-home',
-      dsh: { provider: 'glm-proxy' },
+      agentBackend: 'dsh',
+      llm: 'glm-native',
+      model: 'glm-5.3',
+      apiKey: '',
+      mode: 'minimal',
+      dshHome: '/selected-home',
+      apiProtocol: 'openai',
+      apiBaseUrl: 'https://dsh.example/v1',
     };
     native.getProvider.mockImplementation((_backend, settings) => {
       if (settings !== selected) {
@@ -34,10 +42,18 @@ describe('named DSH pool routing', () => {
       }
       return { getInfo: native.getInfo, forgetSession: native.forgetSession };
     });
-    const pool = new ChatSessionPool({ agentPresets: {
-      codex: { agentBackend: 'codex', llm: 'daily', model: 'gpt-6-luna', apiKey: '', default: true },
-      dsh: selected,
-    } });
+    const pool = new ChatSessionPool({
+      agentPresets: {
+        codex: {
+          agentBackend: 'codex',
+          llm: 'daily',
+          model: 'gpt-6-luna',
+          apiKey: '',
+          default: true,
+        },
+        dsh: selected,
+      },
+    });
     expect(pool.switchAgentPreset('test-chat', 'dsh')).toMatchObject({ ok: true });
     expect(native.getInfo).toHaveBeenCalledWith(expect.objectContaining({ settings: selected }));
     pool.reset('test-chat');
