@@ -58,8 +58,14 @@ Set `llms.<name>.maxConcurrentSessions` to a positive integer to cap live host
 sessions using that LLM across all agents and backends in this service process.
 For example, `llms.daily: {model: gpt-6-luna, reasoningEffort: max, maxConcurrentSessions: 3}`.
 Idle open sessions still count; native subagents are outside this host budget.
-At capacity a new session is rejected with a retry message; existing sessions
-continue. Closing, canceling, resetting, or ending a stream releases its slot.
+At capacity new sessions wait in a process-local FIFO queue of up to 64 sessions.
+Accepted chat inputs receive a queue notice and continue automatically when a
+slot is released, with their original chat, topic and message identity. A full
+queue rejects the input explicitly; it must be sent again after capacity is freed.
+Closing, canceling, resetting, or ending a stream releases its slot. Canceling a
+waiting session removes it before any native query starts. Configuration and
+provider errors are not retried as capacity waits. The queue does not survive
+service restart; the existing interrupted-turn recovery reports unfinished work.
 Different LLM names have independent budgets. Omission preserves backend defaults.
 For Codex an explicit LLM cap replaces the legacy process session cap, while
 `agents.<default>.codex.maxConcurrentRuns` still caps running children process-wide.

@@ -187,15 +187,50 @@ describe('ChatAgent (service)', () => {
   });
 
   describe('constructor', () => {
+    it('confirms capacity waiting only after accepting the original message and keeps its topic', async () => {
+      const handle = { close: vi.fn(), cancel: vi.fn(), capacityQueued: true, inputDelivery: 'queued' };
+      let finish!: () => void;
+      (chatAgent as any).createQueryStream.mockReturnValue({ handle,
+        iterator: (async function* () { await new Promise<void>(resolve => { finish = resolve; }); })() });
+      try {
+        await chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'Retained input', messageId: 'waiting-source',
+          senderOpenId: 'original-actor', threadRootId: 'original-topic' });
+        expect(callbacks.sendMessage).toHaveBeenCalledExactlyOnceWith('oc_test_chat', expect.stringContaining('无需重新发送'), 'original-topic');
+        expect(chatAgent.hasPendingWork).toBe(true);
+        const [[input]] = (chatAgent as any).channel.push.mock.calls;
+        expect(input).toMatchObject({ correlation: { sourceMessageId: 'waiting-source' },
+          inputContext: { actorId: 'original-actor', chatId: 'oc_test_chat', sourceMessageId: 'waiting-source', threadRootId: 'original-topic' },
+          message: { content: expect.stringContaining('Retained input') } });
+        expect((chatAgent as any).pendingTurnAnchors).toEqual(['original-topic']);
+        expect(turnEvents(chatAgent, 'completed')).toHaveLength(0);
+        expect((chatAgent as any).restartManager.recordSuccess).not.toHaveBeenCalled();
+      } finally { chatAgent.reset(); finish?.(); ChatAgent.prototype.dispose.call(chatAgent); }
+    });
+
+    it('does not confirm capacity queuing for a rejected channel input', async () => {
+      let finish!: () => void;
+      (chatAgent as any).createQueryStream.mockReturnValue({
+        handle: { close: vi.fn(), cancel: vi.fn(), capacityQueued: true },
+        iterator: (async function* () { await new Promise<void>(resolve => { finish = resolve; }); })(),
+      });
+      try {
+        await (chatAgent as any).startAgentLoop();
+        (chatAgent as any).channel.push.mockReturnValue(false);
+        await chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'Not accepted', messageId: 'rejected-source', threadRootId: 'original-topic' });
+        expect(callbacks.sendMessage.mock.calls.some(([, text]) => text.includes('无需重新发送'))).toBe(false);
+        await expect(chatAgent.turnCompleteFor('rejected-source')).rejects.toThrow('Channel closed');
+      } finally { chatAgent.reset(); finish?.(); ChatAgent.prototype.dispose.call(chatAgent); }
+    });
+
     it('settles a capacity rejection with a channel notice and lets a later retry start', async () => {
-      const rejection = Object.assign(new Error('LLM daily 的并发会话已满（1/1）；请结束一个会话后重试。'),
+      const rejection = Object.assign(new Error('LLM daily 的等待队列已满（64）；这条消息未被接收，请结束一个会话后重新发送。'),
         { code: 'LLM_SESSION_LIMIT' });
       const query = (chatAgent as any).createQueryStream;
       query.mockImplementationOnce(() => { throw rejection; });
       try {
         await expect(chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'first', messageId: 'full' })).resolves.toBeUndefined();
         await expect(chatAgent.turnCompleteFor('full')).rejects.toBe(rejection);
-        expect(callbacks.sendMessage).toHaveBeenCalledWith('oc_test_chat', expect.stringContaining('1/1'), 'full');
+        expect(callbacks.sendMessage).toHaveBeenCalledWith('oc_test_chat', expect.stringContaining('未被接收'), 'full');
         expect(callbacks.onDone).toHaveBeenCalledWith('oc_test_chat', 'full');
         expect((chatAgent as any).restartManager.recordSuccess).not.toHaveBeenCalled();
         expect(query).toHaveBeenCalledTimes(1);

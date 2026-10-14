@@ -410,6 +410,10 @@ export abstract class BaseAgent implements Disposable {
 
     const result = withLlmSessionLimit(
       () => this.sdkProvider.queryStream(convertInput(), options), options.llmSessionLimit,
+      () => {
+        const info = this.sdkProvider.getInfo(this.selectedConfig);
+        if (!info.available) { throw new Error(info.unavailableReason ?? 'Selected agent backend is unavailable'); }
+      },
     );
 
     const self = this;
