@@ -343,6 +343,8 @@ export interface QueryHandle {
   readonly sessionId?: string;
   /** Channel inputs can join an active turn; omission means they are queued. */
   readonly inputDelivery?: 'streaming' | 'queued';
+  /** Accepted locally, waiting for a named LLM session reservation. */
+  readonly capacityQueued?: boolean;
   /**
    * Live same-turn steering, when the selected transport supports it.
    * Throw LiveInputRejectedError only for confirmed non-acceptance; all other

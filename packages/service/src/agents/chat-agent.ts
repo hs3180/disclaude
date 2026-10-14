@@ -1267,10 +1267,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           };
         }
       }
-      if (busyBeforePush) {
+      if (this.queryHandle?.capacityQueued || busyBeforePush) {
         void this.callbacks.sendMessage(
           chatId,
-          this.queryHandle?.inputDelivery === 'streaming'
+          this.queryHandle?.capacityQueued
+            ? '⏳ 这条消息已接收并排队；模型会话容量释放后会自动处理，无需重新发送。'
+            : this.queryHandle?.inputDelivery === 'streaming'
             ? '💬 已送入当前会话的输入流；模型可在执行中接收补充信息，正在运行的工具会继续执行。'
             : '⏳ 这条消息已排队，将在当前回合结束后处理。',
           threadRootId
