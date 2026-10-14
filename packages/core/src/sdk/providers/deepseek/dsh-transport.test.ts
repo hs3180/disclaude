@@ -15,6 +15,13 @@ const rl = readline.createInterface({ input: process.stdin });
 let pendingHost;
 rl.on('line', (line) => {
   const request = JSON.parse(line);
+  if (request.method === 'locale') {
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result: {
+      lang: process.env.LANG ?? null, ctype: process.env.LC_CTYPE ?? null,
+      all: process.env.LC_ALL ?? null, sentinel: process.env.DSH_LOCALE_TEST_SENTINEL,
+    } }) + '\\n');
+    return;
+  }
   if (request.id === 'from-dsh' && !request.method) {
     process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: pendingHost, result: request }) + '\\n');
     return;
@@ -50,6 +57,28 @@ rl.on('line', (line) => {
 }
 
 describe('DshStdioTransport', () => {
+  it.each([
+    { LANG: undefined, LC_CTYPE: undefined, LC_ALL: undefined },
+    { LANG: 'C', LC_CTYPE: 'C', LC_ALL: 'POSIX' },
+  ])('starts the runtime with UTF-8 after all child environment merges: %j', async (locale) => {
+    const fixture = await fakeDsh();
+    const env = { ...process.env, ...locale, DSH_LOCALE_TEST_SENTINEL: 'kept' };
+    const transport = new DshStdioTransport({ binary: fixture.binary, env });
+    try {
+      const all = process.platform === 'win32'
+        ? locale.LC_ALL ?? null
+        : process.platform === 'darwin' ? 'en_US.UTF-8' : 'C.UTF-8';
+      await expect(transport.request('locale')).resolves.toEqual({
+        lang: locale.LANG ?? null, ctype: locale.LC_CTYPE ?? null,
+        all, sentinel: 'kept',
+      });
+      expect(env.LC_ALL).toBe(locale.LC_ALL);
+    } finally {
+      await transport.shutdown();
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
   it('correlates out-of-order responses and delivers notifications', async () => {
     const fixture = await fakeDsh();
     const notifications: unknown[] = [];
