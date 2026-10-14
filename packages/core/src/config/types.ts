@@ -40,6 +40,8 @@ export interface AgentConfig {
   agentBackend?: 'claude' | 'pi' | 'codex' | 'dsh';
   /** DSH composition. Changes apply after service restart. Default: standard. */
   mode?: 'minimal' | 'standard';
+  /** Optional isolated DSH home directory (overrides DSH_HOME). */
+  dshHome?: string;
   /**
    * Codex exec sandbox level override (Issue #4631, S4 of #4627).
    * Only meaningful when `agentBackend: 'codex'`. Unset → the normal
@@ -194,8 +196,6 @@ export interface DshConfig {
   provider?: string;
   /** Environment variable holding the native harness credential. */
   apiKeyEnv?: string;
-  /** Optional isolated dsh home directory (overrides DSH_HOME). */
-  dshHome?: string;
 }
 
 /**

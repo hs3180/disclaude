@@ -148,6 +148,7 @@ export function resolveConfiguredAgents(
       'llm',
       'default',
       'mode',
+      'dshHome',
       'permissionMode',
       'fullAccess',
       'codexSandbox',
@@ -162,7 +163,7 @@ export function resolveConfiguredAgents(
     for (const key of Object.keys(raw)) {
       if (!allowed.has(key)) {
         errors.push(key === 'deepseek'
-          ? `${field}.deepseek is unsupported; rename this connection block to ${field}.dsh, move mode to ${field}.mode and use backend: dsh`
+          ? `${field}.deepseek is unsupported; rename this connection block to ${field}.dsh, move mode to ${field}.mode and dshHome to ${field}.dshHome, and use backend: dsh`
           : `${field}.${key} is unsupported; models and API connections belong in llms`);
       }
     }
@@ -243,6 +244,14 @@ export function resolveConfiguredAgents(
         errors.push(`${field}.mode must be minimal or standard`);
       }
     }
+    if (agent.dshHome !== undefined) {
+      if (agent.backend !== 'dsh') {
+        errors.push(`${field}.dshHome requires backend: dsh`);
+      }
+      if (typeof agent.dshHome !== 'string' || !agent.dshHome.trim()) {
+        errors.push(`${field}.dshHome must be a non-empty string`);
+      }
+    }
     if (agent.dsh !== undefined) {
       if (agent.backend !== 'dsh') {
         errors.push(`${field}.dsh requires backend: dsh`);
@@ -252,17 +261,15 @@ export function resolveConfiguredAgents(
         continue;
       }
       for (const key of Object.keys(agent.dsh)) {
-        if (!['provider', 'apiKeyEnv', 'dshHome'].includes(key)) {
-          errors.push(key === 'mode'
-            ? `${field}.dsh.mode is unsupported; move mode to ${field}.mode`
+        if (!['provider', 'apiKeyEnv'].includes(key)) {
+          errors.push(key === 'mode' || key === 'dshHome'
+            ? `${field}.dsh.${key} is unsupported; move ${key} to ${field}.${key}`
             : `${field}.dsh.${key} is unsupported`);
         }
       }
-      for (const key of ['provider', 'dshHome'] as const) {
-        const value = agent.dsh[key];
-        if (value !== undefined && (typeof value !== 'string' || !value.trim())) {
-          errors.push(`${field}.dsh.${key} must be a non-empty string`);
-        }
+      if (agent.dsh.provider !== undefined &&
+          (typeof agent.dsh.provider !== 'string' || !agent.dsh.provider.trim())) {
+        errors.push(`${field}.dsh.provider must be a non-empty string`);
       }
       if (agent.dsh.apiKeyEnv !== undefined &&
           (typeof agent.dsh.apiKeyEnv !== 'string' || !ENV_NAME.test(agent.dsh.apiKeyEnv))) {

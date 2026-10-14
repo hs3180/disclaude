@@ -36,7 +36,7 @@ function dshOptions(settings?: AgentConfig): DeepSeekHarnessProviderOptions {
   return {
     mode: settings.mode ?? 'standard',
     provider: native?.provider,
-    dshHome: native?.dshHome || process.env.DSH_HOME || undefined,
+    dshHome: settings.dshHome || process.env.DSH_HOME || undefined,
     apiKey: process.env[keyEnv] ?? Config.getGlobalEnv()[keyEnv] ?? '',
   };
 }

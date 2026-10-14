@@ -38,9 +38,9 @@ const preset = (): AgentPreset => ({
   model: 'glm-5.3',
   apiKey: '',
   mode: 'minimal',
+  dshHome: '/named-dsh-home',
   dsh: {
     provider: 'glm-proxy',
-    dshHome: '/named-dsh-home',
     apiKeyEnv: 'NAMED_DSH_TEST_KEY',
   },
 });
@@ -69,12 +69,12 @@ describe('named DSH connections', () => {
     });
   });
 
-  it('selects flat mode without an optional dsh connection block', () => {
+  it('selects flat mode and home without an optional dsh connection block', () => {
     const selected = preset();
     delete selected.dsh;
     const minimal = getProvider('dsh', selected);
     expect(optionsOf(minimal)).toEqual({
-      mode: 'minimal', provider: undefined, dshHome: undefined, apiKey: '',
+      mode: 'minimal', provider: undefined, dshHome: '/named-dsh-home', apiKey: '',
     });
     delete selected.mode;
     const standard = getProvider('dsh', selected);
@@ -83,13 +83,25 @@ describe('named DSH connections', () => {
     expect(getProvider('dsh', { ...selected, mode: 'standard' })).toBe(standard);
   });
 
+  it('prefers the selected home over DSH_HOME and uses the environment when omitted', () => {
+    vi.stubEnv('DSH_HOME', '/environment-home');
+    const selected = preset();
+    expect(optionsOf(getProvider('dsh', selected)).dshHome).toBe('/named-dsh-home');
+    delete selected.dshHome;
+    const inherited = getProvider('dsh', selected);
+    expect(optionsOf(inherited).dshHome).toBe('/environment-home');
+    expect(getProvider('dsh', { ...selected, dshHome: '/environment-home' })).toBe(inherited);
+    vi.stubEnv('DSH_HOME', undefined);
+    expect(optionsOf(getProvider('dsh', selected)).dshHome).toBeUndefined();
+  });
+
   it('keeps distinct modes, routes, homes and credentials independent', () => {
     const selected = preset();
     const first = getProvider('dsh', selected);
     expect(getProvider('dsh', { ...selected, mode: 'standard' })).not.toBe(first);
+    expect(getProvider('dsh', { ...selected, dshHome: '/other-home' })).not.toBe(first);
     for (const change of [
       { provider: 'other-route' },
-      { dshHome: '/other-home' },
       { apiKeyEnv: 'OTHER_DSH_TEST_KEY' },
     ]) {
       state.environment.OTHER_DSH_TEST_KEY = 'other-test-key';
@@ -108,9 +120,9 @@ describe('named DSH connections', () => {
   it('shares equivalent default and named connections for reset routing', () => {
     const selected = preset();
     selected.mode = state.defaults.DSH_MODE;
+    selected.dshHome = state.defaults.DSH_HOME;
     selected.dsh = {
       provider: state.defaults.DSH_PROVIDER,
-      dshHome: state.defaults.DSH_HOME,
       apiKeyEnv: 'DEFAULT_DSH_TEST_KEY',
     };
     state.environment.DEFAULT_DSH_TEST_KEY = state.defaults.DSH_API_KEY;

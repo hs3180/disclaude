@@ -210,7 +210,7 @@ export class Config {
     fileConfigOnly.env?.[defaultAgent?.dsh?.apiKeyEnv ?? 'DEEPSEEK_API_KEY'] ?? '';
   static readonly DSH_MODE = defaultAgent?.mode ?? 'standard';
   static readonly DSH_PROVIDER = defaultAgent?.dsh?.provider;
-  static readonly DSH_HOME = defaultAgent?.dsh?.dshHome || process.env.DSH_HOME || '';
+  static readonly DSH_HOME = defaultAgent?.dshHome || process.env.DSH_HOME || '';
   static readonly AGENT_BACKEND = defaultAgent?.agentBackend;
 
   private static readonly CODEX_MODEL_SETTING = resolveCodexModelSetting({

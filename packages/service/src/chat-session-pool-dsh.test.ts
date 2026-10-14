@@ -25,8 +25,8 @@ import { ChatSessionPool } from './chat-session-pool.js';
 describe('named DSH pool routing', () => {
   it('uses the selected DSH connection for both switch preflight and reset', () => {
     const selected: AgentPreset = {
-      agentBackend: 'dsh', llm: 'glm-native', model: 'glm-5.3', apiKey: '', mode: 'minimal',
-      dsh: { provider: 'glm-proxy', dshHome: '/selected-home' },
+      agentBackend: 'dsh', llm: 'glm-native', model: 'glm-5.3', apiKey: '', mode: 'minimal', dshHome: '/selected-home',
+      dsh: { provider: 'glm-proxy' },
     };
     native.getProvider.mockImplementation((_backend, settings) => {
       if (settings !== selected) {

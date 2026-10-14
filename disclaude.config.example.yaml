@@ -14,6 +14,7 @@ agents:
   #   backend: dsh
   #   llm: dsh-model
   #   mode: minimal
+  #   dshHome: /absolute/path/to/isolated-dsh-home
 
 # Native Codex binds agent + LLM through the CLI's account; no API block is needed.
 llms:
