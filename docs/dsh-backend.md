@@ -58,6 +58,15 @@ The upstream SDK-minimal defaults omit managed credentials, skill discovery and
 compaction; supply API credentials through the bound LLM's `api.apiKey` reference and
 check the capabilities of your installed version before using long-running tasks.
 
+On macOS and Linux, the owned DSH process uses a UTF-8 locale for its persistent
+Bash terminal. A host with no locale or a `C`/`POSIX` override can otherwise make
+Readline treat Chinese input as Meta shortcuts, corrupting the command and causing
+a tool timeout. An effective UTF-8 `LC_ALL`, `LC_CTYPE`, or `LANG` is preserved in
+that priority order. Otherwise, disclaude sets the child's `LC_ALL` to an existing
+declared UTF-8 locale, or to `en_US.UTF-8` on macOS / `C.UTF-8` on Linux. This applies
+after per-query environment settings are merged. Restart existing DSH runtimes to
+receive the corrected environment.
+
 An unsupported profile fails with its profile name and startup/protocol error;
 disclaude does not retry using another mode. Check `dsh --version`, then inspect
 the selected composition with `DSH_HOME=... dsh --profile sdk-minimal
