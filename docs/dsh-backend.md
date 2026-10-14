@@ -105,4 +105,13 @@ the service to return to the existing CLI bootstrap. Preserve the configured
 home and workspace; test either path with its own chosen composition before
 using it for production work.
 
+| Capability | CLI bootstrap | Node SDK prototype |
+| --- | --- | --- |
+| Runtime source | Installed `dsh` and selected profile | Pinned local libraries in an owned Node worker |
+| Composition | `standard` / `minimal`, including selected home patches | Published minimal bundle; user profile overrides rejected |
+| Bound OpenAI / Anthropic APIs | Existing native adapter | Same native adapter and selected credential |
+| Host tools, session persistence, cancellation | Existing native controller | Same native controller; each query owns its worker |
+| Standard Bash, skill discovery and compaction | Depends on installed composition | Not offered by this minimal prototype |
+| Rollback | Default `cli` flag | Change the flag to `cli` and restart |
+
 Upstream: https://github.com/deepseek-ai/deepseek-harness/blob/master/python/sdk/examples/README.md
