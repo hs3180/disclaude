@@ -1,4 +1,4 @@
-/** Bounded public task summaries; never accepts tool arguments or results. */
+/** DSH-owned public stage policy; never accepts tool arguments or results. */
 export class DshTaskProgress {
   private sent = 0;
   private lastAt = Number.NEGATIVE_INFINITY;

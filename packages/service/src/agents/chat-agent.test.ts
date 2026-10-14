@@ -3398,17 +3398,16 @@ describe('ChatAgent (service)', () => {
   });
 
   describe('group assistant delivery (#5239)', () => {
-    it.each([false, true])('keeps DSH progress separate from the final answer when progress delivery fails=%s', async failProgress => {
+    it.each([false, true])('keeps producer-marked progress separate from final output when its delivery fails=%s', async failProgress => {
       const callbacks = createMockCallbacks();
       if (failProgress) { callbacks.sendMessage.mockRejectedValueOnce(new Error('owned progress failure')); }
-      const agent = new ChatAgent({ chatId: 'owned-dsh', callbacks, apiKey: 'test', model: 'test', agentBackend: 'dsh' });
-      (agent as any).agentBackend = 'dsh';
+      const agent = new ChatAgent({ chatId: 'owned-progress', callbacks, apiKey: 'test', model: 'test' });
       (agent as any).isAgentTeamsEnabled = vi.fn(() => false);
       (agent as any).chatType = 'topic';
       (agent as any).pendingTurnAnchors = ['owned-root'];
       (agent as any).pendingTurnMessageIds = ['owned-input'];
       await (agent as any).processIterator((async function* () {
-        yield { parsed: { type: 'text', content: '先检查现有文件，避免覆盖已有修改。' } };
+        yield { parsed: { type: 'status', content: '⏳ 先检查现有文件，避免覆盖已有修改。', metadata: { publicProgress: true } } };
         yield { parsed: { type: 'tool_use', content: 'Read', metadata: { toolInput: { path: '/private/owned-input' } } } };
         yield { parsed: { type: 'tool_result', content: 'private tool result' } };
         yield { parsed: { type: 'tool_use', content: 'Bash' } };
@@ -3420,13 +3419,12 @@ describe('ChatAgent (service)', () => {
       expect(callbacks.onDone).toHaveBeenCalledTimes(1);
     });
 
-    it('keeps DSH progress out of final-only structured responses', async () => {
+    it('keeps producer-marked progress out of final-only structured responses', async () => {
       const callbacks = { ...createMockCallbacks(), finalReplyOnly: true };
-      const agent = new ChatAgent({ chatId: 'owned-dsh-json', callbacks, apiKey: 'test', model: 'test', agentBackend: 'dsh' });
-      (agent as any).agentBackend = 'dsh';
+      const agent = new ChatAgent({ chatId: 'owned-progress-json', callbacks, apiKey: 'test', model: 'test' });
       (agent as any).isAgentTeamsEnabled = vi.fn(() => false);
       await (agent as any).processIterator((async function* () {
-        yield { parsed: { type: 'text', content: 'public stage' } };
+        yield { parsed: { type: 'status', content: 'public stage', metadata: { publicProgress: true } } };
         yield { parsed: { type: 'tool_use', content: 'Bash' } };
         yield { parsed: { type: 'text', content: '{"ok":true}' } };
         yield { parsed: { type: 'result', content: '' } };

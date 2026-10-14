@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DshTaskProgress } from './dsh-task-progress.js';
 
-describe('DSH public task progress', () => {
+describe('DSH provider public task progress', () => {
   it('keeps the public choice and reason concise', () => {
     expect(new DshTaskProgress().next('先读取现有配置，\n避免覆盖用户的修改。', 'Read')).toBe('⏳ 先读取现有配置， 避免覆盖用户的修改。');
   });

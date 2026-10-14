@@ -262,16 +262,19 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
         events.push(event);
       }
       expect(events.map((event) => event.type)).toEqual([
+        'status',
         'tool_use',
         'tool_result',
         'text',
         'result',
       ]);
-      expect(events[0]?.metadata).toMatchObject({
+      expect(events[0]).toMatchObject({ type: 'status', metadata: { publicProgress: true } });
+      expect(events[0]?.content).not.toMatch(/a\.txt|file data|private reasoning/);
+      expect(events[1]?.metadata).toMatchObject({
         toolName: 'read_file',
         toolInput: { path: 'a.txt' },
       });
-      expect(events[1]).toMatchObject({ content: 'file data' });
+      expect(events[2]).toMatchObject({ content: 'file data' });
       expect(events.filter((event) => event.type === 'result')).toHaveLength(1);
       expect(events.filter((event) => event.type === 'text').map((event) => event.content)).toEqual(
         ['done']

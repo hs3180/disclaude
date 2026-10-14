@@ -64,7 +64,6 @@ import { getDebugGroupService } from '../services/debug-group-service.js';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 import type { InterruptedServiceTurn, ServiceTurnRecoveryStore } from '../service-turn-recovery.js';
 import { HistoryManager } from './history-manager.js';
-import { DshTaskProgress } from './dsh-task-progress.js';
 import crypto from 'node:crypto';
 
 // Type alias for backward compatibility within this module
@@ -1871,10 +1870,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     let userVisibleOutputCount = 0;
     let turnResultText = '';
     let turnResultTruncated = false;
-    const dshProgress = this.agentBackend === 'dsh' && this.callbacks.finalReplyOnly !== true
-      ? new DshTaskProgress() : undefined;
-    let pendingProgressSummary = '';
-    const bufferAssistantText = this.callbacks.finalReplyOnly === true || !!dshProgress ||
+    const bufferAssistantText = this.callbacks.finalReplyOnly === true ||
       this.chatType === 'group' || this.chatType === 'topic';
     let pendingAssistantChunks: string[] = [];
     // 2026-09-08: 本轮是否收到 proxy 的 mid-stream 中断标记(带 MIDSTREAM_MARKER 的
@@ -1899,8 +1895,6 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     let turnHadError = false;
     const consumeTurnAnchor = (): string | undefined => {
       if (!turnAnchorConsumed && this.pendingTurnMessageIds.length > 0) {
-        dshProgress?.reset();
-        pendingProgressSummary = '';
         turnAnchorConsumed = true;
         turnHasTerminal = false;
         currentTurnAnchor = this.pendingTurnAnchors.shift();
@@ -2061,23 +2055,22 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           );
         }
 
-        // Issue #3003: Track tool call timing
-        if (dshProgress && parsed.type === 'text' && parsed.metadata?.phase === 'commentary') {
-          pendingProgressSummary = parsed.content ?? '';
-        }
-        if (parsed.type === 'tool_use') {
-          // Public text before a DSH tool is a stage/choice summary, not a
-          // final answer. Publish only a few summaries without raw traces.
-          const progress = dshProgress?.next(pendingProgressSummary || pendingAssistantChunks.join(''), parsed.content ?? '');
-          pendingProgressSummary = '';
-          if (progress) {
+        // Producers may mark public progress independently of final output.
+        // The consumer owns delivery policy, never backend stage generation.
+        if (parsed.type === 'status' && parsed.metadata?.publicProgress === true) {
+          if (this.callbacks.finalReplyOnly !== true && parsed.content) {
             try {
-              await this.callbacks.sendMessage(chatId, progress, resolveReplyThreadRoot());
+              await this.callbacks.sendMessage(chatId, parsed.content, resolveReplyThreadRoot());
             } catch (error) {
               // Progress cannot fail or complete the turn.
-              this.logger.debug({ error, chatId }, 'DSH progress delivery failed');
+              this.logger.debug({ error, chatId }, 'Public progress delivery failed');
             }
           }
+          continue;
+        }
+
+        // Issue #3003: Track tool call timing
+        if (parsed.type === 'tool_use') {
           // A following tool proves the unphased text belonged to an
           // intermediate model round. Do not publish it as a group message.
           pendingAssistantChunks = [];

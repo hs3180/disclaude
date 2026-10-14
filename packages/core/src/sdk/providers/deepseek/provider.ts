@@ -23,6 +23,7 @@ import {
   type DshApiConnection,
 } from './native-profile.js';
 import { DshSessionBindings } from './session-bindings.js';
+import { DshTaskProgress } from './dsh-task-progress.js';
 
 const logger = createLogger('DeepSeekHarnessProvider');
 
@@ -54,6 +55,7 @@ interface QueryState {
   wake(): void;
   abort: AbortController;
   pendingText: string;
+  progress: DshTaskProgress;
   tools: Map<string, ToolDefinition>;
   invocations: Map<string, NativeInvocation>;
   receivedInvocations: Set<string>;
@@ -224,6 +226,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
       wake: () => wake(),
       abort: new AbortController(),
       pendingText: '',
+      progress: new DshTaskProgress(),
       tools,
       invocations: new Map(),
       receivedInvocations: new Set(),
@@ -577,12 +580,25 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
       return;
     }
     if (params.event.type === 'assistant/message') {
+      state.pendingText = adaptDeepSeekEvent(params.event)
+        .filter(message => message.type === 'text')
+        .map(message => message.content).join('');
+      return;
+    }
+    if (params.event.type === 'tool/call') {
+      const summary = state.progress.next(state.pendingText, String(params.event.data?.name ?? ''));
       state.pendingText = '';
+      if (summary) {
+        state.events.push({ type: 'status', role: 'assistant', content: summary, metadata: { publicProgress: true } });
+      }
     }
     if (params.event.type === 'turn/end' && state.pendingText) {
-      state.events.push({ type: 'text', content: state.pendingText, role: 'assistant' });
+      const completed = (params.event.data?.reason as { kind?: string } | undefined)?.kind === 'completed';
+      state.events.push({ type: 'text', content: state.pendingText, role: 'assistant',
+        ...(completed ? { metadata: { phase: 'final_answer' as const } } : {}) });
       state.pendingText = '';
     }
+    if (params.event.type === 'turn/end') { state.progress.reset(); }
     state.events.push(...adaptDeepSeekEvent(params.event));
     state.wake();
   }
