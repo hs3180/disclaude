@@ -58,8 +58,6 @@ export interface AgentConfig {
    * with `agentBackend: 'codex'`; caps are per process.
    */
   codex?: CodexAgentGovernanceConfig;
-  /** Native DSH connection, only for the DSH backend. */
-  dsh?: DshConfig;
   /** Permission mode for SDK */
   permissionMode?: 'default' | 'bypassPermissions';
   /** Maximum concurrent tasks */
@@ -91,7 +89,7 @@ export interface AgentConfig {
 /** Supported LLM wire formats, independent of model vendor. */
 export type ApiProtocol = 'anthropic' | 'openai';
 
-/** A model and its optional API connection. Native CLI agents may omit api. */
+/** A model and its API connection. Codex account bindings may omit api. */
 export interface LlmConfig {
   model?: string;
   /** Native Codex/DSH reasoning effort; omission keeps the model's default. */
@@ -188,14 +186,6 @@ export interface FeishuConfig {
     /** Enable/disable topic group message notifications (default: false) */
     enabled: boolean;
   };
-}
-
-/** DSH runtime configuration (developer preview; Issue #4741). */
-export interface DshConfig {
-  /** DSH model provider route. Omit to use the selected native profile's default. */
-  provider?: string;
-  /** Environment variable holding the native harness credential. */
-  apiKeyEnv?: string;
 }
 
 /**
