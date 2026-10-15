@@ -267,7 +267,8 @@ export abstract class BaseAgent implements Disposable {
 
     // Each supporting backend resolves its own native compaction policy.
     if (['claude', 'dsh'].includes(this.agentBackend ?? 'claude')) {
-      options.autoCompactWindow = this.selectedConfig.settings ? this.selectedConfig.settings.autoCompactWindow ?? 'auto' : Config.getAutoCompactWindow() ?? 'auto';
+      const window = this.selectedConfig.settings ? this.selectedConfig.settings.autoCompactWindow : Config.getAutoCompactWindow();
+      if (window !== undefined) {options.autoCompactWindow = window;}
     }
 
     // Partial events expose thinking/token activity to the host activity clock.

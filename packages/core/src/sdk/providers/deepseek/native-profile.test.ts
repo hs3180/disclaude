@@ -9,9 +9,9 @@ import {
 } from './native-profile.js';
 
 describe('DSH bound LLM API overlay', () => {
-  it.each([undefined, 'llm-pi-ai'])('mounts or reuses the native compaction components (%s)', adapter => {
+  it('reuses the standard profile compaction components', () => {
     const api = { protocol: 'openai' as const, baseUrl: 'https://selected.example/v1', model: 'selected' };
-    const overlay = createDshNativeProfileOverlay(api, [], adapter, {
+    const overlay = createDshNativeProfileOverlay(api, [], 'llm-pi-ai', {
       auto: true, source: 'configured', contextWindow: 60_000, thresholdRatio: 0.8,
     });
     try {

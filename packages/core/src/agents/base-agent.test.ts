@@ -768,17 +768,17 @@ describe('BaseAgent', () => {
     });
   });
 
-  describe('createSdkOptions - Issue #4883: fallback auto-compaction', () => {
-    it('discovers the context limit instead of injecting a fixed fallback', () => {
+  describe('createSdkOptions - explicit native compaction policy', () => {
+    it('leaves unconfigured compatible model compaction to the SDK', () => {
       const glmAgent = new TestAgent({ apiKey: 'key', model: 'glm-5.1', apiProtocol: 'anthropic' });
-      expect(glmAgent.testCreateSdkOptions().autoCompactWindow).toBe('auto');
+      expect(glmAgent.testCreateSdkOptions().autoCompactWindow).toBeUndefined();
     });
 
     it.each(['claude-sonnet-4-20250514', 'sonnet', 'opus[1m]', 'haiku'])(
-      'also discovers native model metadata for %s when not configured',
+      'leaves %s compaction to the SDK when not configured',
       (model) => {
         const nativeAgent = new TestAgent({ apiKey: 'key', model, apiProtocol: 'anthropic' });
-        expect(nativeAgent.testCreateSdkOptions().autoCompactWindow).toBe('auto');
+        expect(nativeAgent.testCreateSdkOptions().autoCompactWindow).toBeUndefined();
       }
     );
 

@@ -141,6 +141,21 @@ async function* oneInput() {
 }
 
 describe('DeepSeekHarnessProvider (Issue #4741)', () => {
+  it.each([undefined, 'auto', 0, 48_000] as const)('keeps minimal free of compaction plugins and metadata requests (%s)', async autoCompactWindow => {
+    const fixture = await sdkFixture();
+    const provider = new DeepSeekHarnessProvider({ binary: fixture.binary, dshHome: fixture.dir, mode: 'minimal',
+      api: { protocol: 'openai', baseUrl: 'https://bound.example/v1', model: 'selected' }, apiKey: 'selected-test-key' });
+    try {
+      await collect(provider.queryStream(oneInput(), { settingSources: [], autoCompactWindow }).iterator);
+      expect(fetch).not.toHaveBeenCalled();
+      const overlay = await readFile(join(fixture.dir, 'overlay.json'), 'utf8');
+      expect(overlay).not.toMatch(/token-meter|compaction-basic/);
+      expect(overlay).toContain('disclaude-dsh-native-app');
+      expect(overlay).toContain('disclaude-dsh-api');
+      expect(overlay).not.toContain('selected-test-key');
+      if (autoCompactWindow === 48_000) {expect(overlay).toContain('contextWindow');}
+    } finally {await provider.shutdown(); await rm(fixture.dir, { recursive: true, force: true });}
+  });
   it('keeps the selected native credential and home when query env contains stale values', async () => {
     const fixture = await sdkFixture({ captureConnection: true });
     const provider = new DeepSeekHarnessProvider({

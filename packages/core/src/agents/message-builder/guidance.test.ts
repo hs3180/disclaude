@@ -203,6 +203,13 @@ describe('output and environment boundaries', () => {
 // Issue #4705: canonical channel CLI help exposed to the agent prompt, kept in
 // sync with the CLI's own `help` output (single source of truth).
 describe('buildChannelCliHelpGuidance', () => {
+  it('explains Feishu visibility and requires accessible local artifact delivery', () => {
+    const result = buildChannelCliHelpGuidance();
+    expect(result).toContain("cannot see or interact with Codex's TUI");
+    expect(result).toContain('local path/link in your reply does not deliver a file');
+    expect(result).toContain('use send_file if supported and verify its delivery');
+    expect(result).toContain('inline content preview');
+  });
   it('CHANNEL_CLI_HELP includes every command (the source of truth)', () => {
     expect(CHANNEL_CLI_HELP).toContain('send_text');
     expect(CHANNEL_CLI_HELP).toContain('send_file');

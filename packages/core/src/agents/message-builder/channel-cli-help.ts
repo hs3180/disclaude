@@ -86,6 +86,7 @@ export function buildChannelCliHelpGuidance(
     : '';
   return `\n## Channel CLI\n\nSupported commands: ${commandList}. For flags and input schemas, run \`${invoke} help\` only when using a command.
 This list describes channel delivery, not all backend tools. For local Project files, use available native file or execution tools (Codex: exec_command) in the current working directory. /project use selects that directory; local-file requests do not require a cloud Project link.
+Feishu users see only messages, previews and attachments delivered to their chat. They cannot see or interact with Codex's TUI, terminal output or local workspace file links (including file:// and absolute paths). A local path/link in your reply does not deliver a file. When asked to send or show a local artifact, use send_file if supported and verify its delivery, or send a useful inline content preview; state any delivery failure clearly.
 Use the current Chat ID and Message ID from metadata for --chat and --parent. Managed agents inherit the current API address/token through DISCLAUDE_API_BASE_URL / DISCLAUDE_API_TOKEN. Do not reuse credentials from another session.${cardRouting}${privateInput}
 The CLI returns one JSON result on stdout and diagnostics on stderr; verify the requested outcome.`;
 }

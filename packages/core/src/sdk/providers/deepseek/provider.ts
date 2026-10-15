@@ -285,17 +285,21 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
     const pump = Promise.resolve().then(async () => {
       try {
         state.abort.signal.throwIfAborted();
-        const compaction = await resolveDshCompaction(
-          this.api, this.apiKey, options.autoCompactWindow, state.abort.signal
-        );
+        const minimal = this.profile === 'sdk-minimal';
+        // Minimal owns its composition. Never probe capacity or mount behavioral
+        // plugins there; an explicit number may still describe the bound model.
+        const policy = !minimal || typeof options.autoCompactWindow === 'number'
+          ? await resolveDshCompaction(this.api, this.apiKey, options.autoCompactWindow, state.abort.signal)
+          : undefined;
+        const compaction = minimal ? undefined : policy;
         state.abort.signal.throwIfAborted();
         state.overlay = createDshNativeProfileOverlay(this.api, [
           join(this.home, 'profiles', this.profile, 'cordis.yml'),
           join(this.home, 'profiles', this.profile, 'cordis.patch.yml'),
-        ], this.profile === 'sdk' ? 'llm-pi-ai' : undefined, compaction);
+        ], this.profile === 'sdk' ? 'llm-pi-ai' : undefined, compaction, policy?.contextWindow);
         transport = this.pool.getOrCreate(state.runtimeId);
-        logger.info({ sessionId: state.sessionId, source: compaction.source,
-          contextWindow: compaction.contextWindow, thresholdRatio: compaction.thresholdRatio, auto: compaction.auto },
+        logger.info({ sessionId: state.sessionId, source: compaction?.source ?? 'native-minimal',
+          contextWindow: policy?.contextWindow, thresholdRatio: compaction?.thresholdRatio, auto: compaction?.auto },
         'DSH native compaction policy prepared');
         const initialized = (await transport.request(
           'initialize',

@@ -70,12 +70,12 @@ export interface AgentConfig {
    */
   enableAgentTeams?: boolean;
   /**
-   * Explicit Claude-backend auto-compaction threshold, including native models.
-   * If absent, query the configured provider's model API and use 80% of its
-   * context limit. If unavailable, warn without inventing a fixed limit.
-   * Set to 0 to disable automatic compaction.
+   * Optional native compaction policy. Claude leaves the SDK policy untouched
+   * when absent; 'auto' opts into bound-provider model metadata discovery.
+   * A number sets a trigger; 0 disables auto compaction in Claude/DSH standard.
+   * DSH minimal never adds compaction plugins or probes model metadata.
    */
-  autoCompactWindow?: number;
+  autoCompactWindow?: number | 'auto';
   /**
    * SDK HTTP request timeout in milliseconds.
    * Sets the ANTHROPIC_TIMEOUT environment variable for the SDK subprocess,
