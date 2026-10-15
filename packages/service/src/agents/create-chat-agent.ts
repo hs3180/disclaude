@@ -4,7 +4,9 @@ import type { ChatAgentConfig } from './types.js';
 
 /** Let the selected provider compose chat hooks through the common interface. */
 export function createChatAgent(config: ChatAgentConfig): ChatAgent {
-  const provider = getProvider(config.agentBackend);
+  const provider = config.settings
+    ? getProvider(config.agentBackend, config.settings)
+    : getProvider(config.agentBackend);
   const hooks = {
     messageBuilderOptions: config.messageBuilderOptions,
     configureQueryOptions: config.configureQueryOptions,
