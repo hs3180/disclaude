@@ -10,7 +10,7 @@ import { assertToolOptions, type ToolDefinition } from '../../tools.js';
 import { registerDshTools } from './tool-adapter.js';
 
 export const name = 'disclaude-dsh-native-app';
-export const inject = ['agents', 'tools', 'systemPrompt', 'sdkAppStartup', 'attachments'];
+export const inject = ['agents', 'tools', 'systemPrompt', 'sdkAppStartup'];
 
 interface ToolDescriptor {
   name: string;
@@ -163,7 +163,7 @@ export class DshNativeApp {
     this.initialized = true;
     return {
       serverInfo: { name, version: '1' },
-      capabilities: { tools: true, resume: true, cancel: true },
+      capabilities: { tools: true, resume: true, cancel: true, images: !!this.ctx.get('attachments') },
     };
   }
 
@@ -201,7 +201,7 @@ export class DshNativeApp {
           }
         },
       }));
-      registerDshTools(agentCtx.tools, tools, this.ctx.attachments);
+      registerDshTools(agentCtx.tools, tools, this.ctx.get('attachments'));
       if (this.prompt) {
         agentCtx.systemPrompt.section({
           name: 'disclaude-context',
@@ -236,9 +236,13 @@ export class DshNativeApp {
       throw new TypeError('contentBlocks must be an array');
     }
     const images = raw.filter((block) => block?.type === 'image');
-    const refs = images.length
+    const attachments = images.length ? this.ctx.get('attachments') : undefined;
+    if (images.length && !attachments) {
+      throw new Error('Selected DSH profile has no attachment store; use standard mode or configure an attachment plugin');
+    }
+    const refs = attachments
       ? await admitEncodedImages(
-          this.ctx.attachments,
+          attachments,
           images.map((block) => {
             if (typeof block.data !== 'string' || typeof block.mimeType !== 'string') {
               throw new TypeError('Invalid encoded image');

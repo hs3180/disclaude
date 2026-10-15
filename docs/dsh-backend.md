@@ -57,6 +57,10 @@ existing user profiles. It also does not guarantee higher quality for every task
 The upstream SDK-minimal defaults omit managed credentials, skill discovery and
 compaction; supply API credentials through the bound LLM's `api.apiKey` reference and
 check the capabilities of your installed version before using long-running tasks.
+The pinned minimal profile also omits an attachment store. Text and native tools
+remain available; image prompts are rejected before enqueue until an attachment
+plugin is configured. Standard profiles that provide a store keep durable image
+admission. Host tools producing images require that same store.
 
 On macOS and Linux, the owned DSH process uses a UTF-8 locale for its persistent
 Bash terminal. A host with no locale or a `C`/`POSIX` override can otherwise make
