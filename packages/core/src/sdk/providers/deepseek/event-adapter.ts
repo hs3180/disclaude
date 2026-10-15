@@ -37,26 +37,21 @@ export function adaptDeepSeekEvent(event: DeepSeekSessionEvent): AgentMessage[] 
   const data = event.data ?? {};
   switch (event.type) {
     case 'assistant/chunk': {
-      // The provider buffers text deltas until a message boundary. A shared
-      // text event represents a deliverable reply, not one token or reasoning.
+      // Deliver completed public messages, never individual tokens/reasoning.
       return [];
     }
     case 'assistant/message': {
       const message = data.message as Record<string, unknown> | undefined;
       const blocks = Array.isArray(message?.content) ? message.content : [];
-      return blocks.flatMap((block) => {
-        if (!block || typeof block !== 'object') {
-          return [];
-        }
-        const value = block as Record<string, unknown>;
-        if (value.type !== 'text') {
-          return [];
-        }
-        if (typeof value.text !== 'string' || value.text.length === 0) {
-          return [];
-        }
-        return [makeMessage('text', value.text, { messageId: String(message?.id ?? '') })];
-      });
+      const text = blocks
+        .filter((block): block is { type: 'text'; text: string } =>
+          block?.type === 'text' && typeof block.text === 'string')
+        .map(block => block.text).join('');
+      if (!text) { return []; }
+      return [makeMessage('text', text, {
+        messageId: String(message?.id ?? ''),
+        phase: blocks.some(block => block?.type === 'tool-call') ? 'commentary' : 'final_answer',
+      })];
     }
     case 'tool/call': {
       const rawArguments = typeof data.arguments === 'string' ? data.arguments : '';

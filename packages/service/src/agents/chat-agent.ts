@@ -2057,15 +2057,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           );
         }
 
-        // Producers may mark public progress independently of final output.
-        // The consumer owns delivery policy, never backend stage generation.
-        if (parsed.type === 'status' && parsed.metadata?.publicProgress === true) {
+        // A completed public commentary item is its own message, as in the
+        // Codex stream. It never joins a final card or structured result.
+        if (parsed.type === 'text' && parsed.metadata?.phase === 'commentary') {
           if (this.callbacks.finalReplyOnly !== true && parsed.content) {
             try {
               await this.callbacks.sendMessage(chatId, parsed.content, resolveReplyThreadRoot());
             } catch (error) {
               // Progress cannot fail or complete the turn.
-              this.logger.debug({ error, chatId }, 'Public progress delivery failed');
+              this.logger.debug({ error, chatId }, 'Public commentary delivery failed');
             }
           }
           continue;
@@ -2117,7 +2117,6 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             parsed.type === 'tool_use' ||
             parsed.type === 'tool_result' ||
             parsed.type === 'tool_progress' ||
-            (bufferAssistantText && parsed.type === 'text' && parsed.metadata?.phase === 'commentary') ||
             parsed.metadata?.transientStatus === true;
           // #4774: tool traces are internal for every harness and chat type.
           // Preserve debug forwarding and accounting without publishing raw

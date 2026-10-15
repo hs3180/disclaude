@@ -23,7 +23,6 @@ import {
   type DshApiConnection,
 } from './native-profile.js';
 import { DshSessionBindings } from './session-bindings.js';
-import { DshTaskProgress } from './dsh-task-progress.js';
 
 const logger = createLogger('DeepSeekHarnessProvider');
 
@@ -54,8 +53,7 @@ interface QueryState {
   events: AgentMessage[];
   wake(): void;
   abort: AbortController;
-  pendingText: string;
-  progress: DshTaskProgress;
+  deliveredAssistantMessages: Set<string>;
   tools: Map<string, ToolDefinition>;
   invocations: Map<string, NativeInvocation>;
   receivedInvocations: Set<string>;
@@ -225,8 +223,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
       events: [],
       wake: () => wake(),
       abort: new AbortController(),
-      pendingText: '',
-      progress: new DshTaskProgress(),
+      deliveredAssistantMessages: new Set(),
       tools,
       invocations: new Map(),
       receivedInvocations: new Set(),
@@ -572,33 +569,14 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
     if (notification.method !== 'session.event' || !params.event) {
       return;
     }
-    if (params.event.type === 'assistant/chunk') {
-      const chunk = params.event.data?.chunk as { type?: unknown; text?: unknown } | undefined;
-      if (chunk?.type === 'text-delta' && typeof chunk.text === 'string') {
-        state.pendingText += chunk.text;
-      }
-      return;
-    }
     if (params.event.type === 'assistant/message') {
-      state.pendingText = adaptDeepSeekEvent(params.event)
-        .filter(message => message.type === 'text')
-        .map(message => message.content).join('');
-      return;
-    }
-    if (params.event.type === 'tool/call') {
-      const summary = state.progress.next(state.pendingText, String(params.event.data?.name ?? ''));
-      state.pendingText = '';
-      if (summary) {
-        state.events.push({ type: 'status', role: 'assistant', content: summary, metadata: { publicProgress: true } });
+      const message = params.event.data?.message as { id?: unknown } | undefined;
+      if (typeof message?.id === 'string' && message.id) {
+        if (state.deliveredAssistantMessages.has(message.id)) { return; }
+        state.deliveredAssistantMessages.add(message.id);
       }
     }
-    if (params.event.type === 'turn/end' && state.pendingText) {
-      const completed = (params.event.data?.reason as { kind?: string } | undefined)?.kind === 'completed';
-      state.events.push({ type: 'text', content: state.pendingText, role: 'assistant',
-        ...(completed ? { metadata: { phase: 'final_answer' as const } } : {}) });
-      state.pendingText = '';
-    }
-    if (params.event.type === 'turn/end') { state.progress.reset(); }
+    if (params.event.type === 'turn/end') { state.deliveredAssistantMessages.clear(); }
     state.events.push(...adaptDeepSeekEvent(params.event));
     state.wake();
   }

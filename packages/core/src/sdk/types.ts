@@ -76,8 +76,6 @@ export interface AgentMessageMetadata {
   consumedInputIds?: string[];
   /** Provider-declared assistant phase; commentary is visible progress, not a final result. */
   phase?: 'commentary' | 'final_answer';
-  /** Producer-confirmed public status, independent of final output and completion. */
-  publicProgress?: boolean;
   /** 工具名称 */
   toolName?: string;
   /** 工具输入参数 */

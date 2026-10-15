@@ -310,10 +310,10 @@ describe('BaseAgent', () => {
     });
   });
 
-  it('preserves provider public-progress policy through the SDK iterator boundary', async () => {
+  it('preserves public commentary and final phases through the SDK iterator boundary', async () => {
     mockSdkProvider.queryStream.mockReturnValue({
       iterator: (async function* () {
-        yield createMockSdkMessage({ type: 'status', content: 'Reading owned material', metadata: { publicProgress: true } });
+        yield createMockSdkMessage({ type: 'text', content: 'Reading owned material', metadata: { phase: 'commentary' } });
         yield createMockSdkMessage({ type: 'text', content: 'Final answer', metadata: { phase: 'final_answer' } });
       })(),
       handle: { sessionId: 'owned-progress', interrupt: vi.fn(), sendUserMessage: vi.fn(), close: vi.fn() },
@@ -321,7 +321,7 @@ describe('BaseAgent', () => {
     const stream = agent.testCreateQueryStream((async function* () {})(), { settingSources: [] });
     const messages: IteratorYieldResult[] = [];
     for await (const message of stream.iterator) { messages.push(message); }
-    expect(messages[0].parsed).toMatchObject({ type: 'status', metadata: { publicProgress: true } });
+    expect(messages[0].parsed).toMatchObject({ type: 'text', metadata: { phase: 'commentary' } });
     expect(messages[1].parsed).toMatchObject({ type: 'text', content: 'Final answer', metadata: { phase: 'final_answer' } });
   });
 

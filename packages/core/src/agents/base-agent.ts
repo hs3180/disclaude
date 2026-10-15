@@ -356,7 +356,6 @@ export abstract class BaseAgent implements Disposable {
             durationApiMs: message.metadata.durationApiMs,
             consumedInputIds: message.metadata.consumedInputIds,
             transientStatus: message.metadata.transientStatus,
-            publicProgress: message.metadata.publicProgress,
             phase: message.metadata.phase,
             systemSubtype: message.metadata.systemSubtype,
             backgroundTaskIds: message.metadata.backgroundTaskIds,

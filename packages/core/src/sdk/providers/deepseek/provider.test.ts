@@ -24,7 +24,7 @@ async function collect(iterator: ReturnType<DeepSeekHarnessProvider['queryStream
 }
 
 async function sdkFixture(
-  options: { foreignSession?: boolean; captureConnection?: boolean } = {}
+  options: { foreignSession?: boolean; captureConnection?: boolean; publicStages?: boolean } = {}
 ): Promise<{ dir: string; binary: string }> {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-provider-'));
   const binary = join(dir, 'dsh');
@@ -95,6 +95,8 @@ rl.on('line', line => {
     process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: 'host-1', method: 'tool.call', params: { sessionId: ${options.foreignSession ? "'foreign-session'" : 'sid'}, name: tool.name, input: {}, invocationId: 'call-1' } }) + '\\n');
     return;
   }
+  const finish = () => {
+  fs.writeFileSync(path.join(root, 'tool-started'), 'yes');
   notify('session.event', { sessionId: sid, event: { type: 'tool/call', data: { callId: 'call-1', name: 'read_file', arguments: '{"path":"a.txt"}' } } });
   notify('session.event', { sessionId: sid, event: { type: 'tool/result', data: { message: { content: [{ type: 'tool-result', toolCallId: 'call-1', content: [{ type: 'text', text: 'file data' }] }] } } } });
   notify('session.event', { sessionId: sid, event: { type: 'assistant/chunk', data: { chunk: { type: 'reasoning-delta', text: 'private reasoning' } } } });
@@ -103,6 +105,21 @@ rl.on('line', line => {
   notify('session.event', { sessionId: sid, event: { type: 'assistant/message', data: { message: { id: 'assistant-1', content: [{ type: 'text', text: 'done' }] } } } });
   notify('session.event', { sessionId: sid, event: { type: 'turn/end', data: { reason: { kind: 'completed' } } } });
   notify('session.status', { sessionId: sid, status: 'idle' });
+  };
+  ${options.publicStages ? `
+  for (let stage = 1; stage <= 5; stage++) {
+    const event = { type: 'assistant/message', data: { message: { id: 'stage-' + stage, content: [
+      { type: 'reasoning', text: 'private reasoning' },
+      { type: 'text', text: '阶段 ' + stage + '：已核验结果。\\n继续下一项检查。' },
+      { type: 'tool-call', name: 'read_file', arguments: 'private tool payload' }
+    ] } } };
+    notify('session.event', { sessionId: sid, event });
+    notify('session.event', { sessionId: sid, event });
+  }
+  const gate = setInterval(() => {
+    if (fs.existsSync(path.join(root, 'release-stages'))) { clearInterval(gate); finish(); }
+  }, 10);
+  ` : 'finish();'}
 });
 `,
     { mode: 0o755 }
@@ -262,24 +279,48 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
         events.push(event);
       }
       expect(events.map((event) => event.type)).toEqual([
-        'status',
         'tool_use',
         'tool_result',
         'text',
         'result',
       ]);
-      expect(events[0]).toMatchObject({ type: 'status', metadata: { publicProgress: true } });
-      expect(events[0]?.content).not.toMatch(/a\.txt|file data|private reasoning/);
-      expect(events[1]?.metadata).toMatchObject({
+      expect(events[0]?.metadata).toMatchObject({
         toolName: 'read_file',
         toolInput: { path: 'a.txt' },
       });
-      expect(events[2]).toMatchObject({ content: 'file data' });
+      expect(events[1]).toMatchObject({ content: 'file data' });
       expect(events.filter((event) => event.type === 'result')).toHaveLength(1);
       expect(events.filter((event) => event.type === 'text').map((event) => event.content)).toEqual(
         ['done']
       );
     } finally {
+      provider.dispose();
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('streams five distinct public messages before tools or completion and ignores duplicate message IDs', async () => {
+    const fixture = await sdkFixture({ publicStages: true });
+    const provider = new DeepSeekHarnessProvider({ apiKey: 'test-key', binary: fixture.binary, dshHome: fixture.dir });
+    try {
+      const { iterator } = provider.queryStream(oneInput(), { cwd: fixture.dir, settingSources: [] });
+      for (let stage = 1; stage <= 5; stage++) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          const next = await Promise.race([iterator.next(), new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error('Public message was buffered until completion')), 2000);
+          })]);
+          expect(next.value).toMatchObject({ type: 'text', content: `阶段 ${stage}：已核验结果。\n继续下一项检查。`,
+            metadata: { messageId: `stage-${stage}`, phase: 'commentary' } });
+        } finally { clearTimeout(timer); }
+      }
+      await expect(readFile(join(fixture.dir, 'tool-started'))).rejects.toMatchObject({ code: 'ENOENT' });
+      await writeFile(join(fixture.dir, 'release-stages'), 'continue');
+      const tail = await collect(iterator);
+      expect(tail.map(event => event.type)).toEqual(['tool_use', 'tool_result', 'text', 'result']);
+      expect(tail[2]).toMatchObject({ content: 'done', metadata: { phase: 'final_answer' } });
+    } finally {
+      await writeFile(join(fixture.dir, 'release-stages'), 'continue');
       provider.dispose();
       await rm(fixture.dir, { recursive: true, force: true });
     }

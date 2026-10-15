@@ -1,11 +1,12 @@
 # DSH runtime modes
 
-DSH chat tasks show short stage updates before tools run, including concise public
-choices and their reasons when the model supplies them. Repeated or rapid updates
-are coalesced, with at most four updates per request. Internal reasoning and raw
-tool arguments/results remain hidden. These updates do not indicate completion;
-the final reply remains separate, and a failed progress send cannot fail the task.
-Final-only structured channel responses do not include stage messages.
+DSH delivers each completed public intermediate result or decision as a separate
+chat message, using the same commentary/final-answer contract as Codex. Messages
+are sent when available, before the next tool starts; they keep their formatting
+without a timer, summary rewrite or per-task count limit. Duplicate native message
+IDs are ignored. Internal reasoning and raw tool arguments/results remain hidden.
+Commentary does not complete the task or join its final reply; a failed commentary
+send cannot fail the task. Final-only structured responses include only the answer.
 
 For Project-bound Notebook capabilities, see [optional Jupyter CLI/Skill](jupyter-service.md).
 
