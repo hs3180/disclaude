@@ -24,7 +24,7 @@ const configuration = (): DisclaudeConfig => ({
     },
     other: { model: 'other-model', api: { protocol: 'openai', apiKey: '$OTHER_KEY' } },
   },
-  channels: { feishu: { appId: 'test-app', appSecretEnv: 'FEISHU_APP_SECRET' } },
+  channels: { feishu: { appId: 'test-app', appSecret: '$FEISHU_APP_SECRET' } },
 });
 
 describe('named runtime and LLM configuration', () => {

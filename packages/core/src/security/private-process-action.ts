@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import type { PrivateAction } from './action-bound-input.js';
+import { withoutChannelCredentials } from '../config/channel-credentials.js';
 
 export interface PrivateProcessActionOptions {
   id: string;
@@ -19,7 +20,7 @@ export interface PrivateProcessActionOptions {
  * returned; it must finish its work before exit. This is not an OS sandbox.
  */
 export function createPrivateProcessAction(options: PrivateProcessActionOptions): PrivateAction {
-  const definition = { ...options, args: [...(options.args ?? [])], env: { ...(options.env ?? process.env) } };
+  const definition = { ...options, args: [...(options.args ?? [])], env: withoutChannelCredentials(options.env ?? process.env) };
   const timeoutMs = options.timeoutMs ?? 30_000;
   if (!definition.command || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     throw new Error('Invalid private process definition');

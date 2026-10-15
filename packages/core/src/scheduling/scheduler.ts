@@ -25,6 +25,7 @@ import { TurnSupersededError } from '../messaging/turn-superseded-error.js';
 import type { SystemMessage } from '../types/message.js';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { withoutChannelCredentials } from '../config/channel-credentials.js';
 
 const logger = createLogger('Scheduler');
 
@@ -232,7 +233,7 @@ export const defaultCommandRunner: CommandRunner = (command, options) => {
   return new Promise((resolve, reject) => {
   const child = spawn('/bin/sh', ['-c', command], {
     detached: process.platform !== 'win32',
-    env: options.env,
+    env: withoutChannelCredentials(options.env),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let stdout: Buffer = Buffer.alloc(0);

@@ -402,9 +402,9 @@ describe('validateConfig', () => {
       channels: {
         feishu: {
           appId: 'app-id',
-          appSecret: 'app-secret',
-          encryptKey: 'encrypt-key',
-          verificationToken: 'token',
+          appSecret: '$FEISHU_APP_SECRET',
+          encryptKey: '$FEISHU_ENCRYPT_KEY',
+          verificationToken: '$FEISHU_VERIFICATION_TOKEN',
         },
       },
     };

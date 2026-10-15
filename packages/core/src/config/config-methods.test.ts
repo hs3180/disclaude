@@ -55,7 +55,7 @@ const { mockGetConfigFromFile, mockGetPreloadedConfig } = vi.hoisted(() => ({
       },
     },
     env: { TEST_VAR: 'test_value', TEST_LLM_DEFAULT_KEY: 'test-glm-key' },
-    channels: { feishu: { appId: 'test-app-id', appSecret: 'test-secret' } },
+    channels: { feishu: { appId: 'test-app-id', appSecret: '$TEST_CHANNEL_APP_SECRET' } },
   })),
   mockGetPreloadedConfig: vi.fn(() => null),
 }));
@@ -241,7 +241,9 @@ describe('Config', () => {
   describe('static properties', () => {
     it('should have Feishu configuration from config file', () => {
       expect(Config.FEISHU_APP_ID).toBe('test-app-id');
-      expect(Config.FEISHU_APP_SECRET).toBe('test-secret');
+      vi.stubEnv('TEST_CHANNEL_APP_SECRET', 'test-secret');
+      try {expect(Config.FEISHU_APP_SECRET).toBe('test-secret');}
+      finally {vi.unstubAllEnvs();}
     });
 
     it('should have logging configuration from config file', () => {

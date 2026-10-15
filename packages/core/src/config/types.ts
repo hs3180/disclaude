@@ -133,11 +133,11 @@ export type AgentPresets = Record<string, AgentPreset>;
  * Feishu/Lark platform configuration section.
  */
 export interface FeishuConfig {
-  /** Application ID (overrides FEISHU_APP_ID env var) */
+  /** Public application ID: literal or whole $VARIABLE / ${VARIABLE} reference. */
   appId?: string;
-  /** Application secret (overrides FEISHU_APP_SECRET env var) */
+  /** Secret: whole $VARIABLE / ${VARIABLE} reference to the external service environment. */
   appSecret?: string;
-  /** Environment variable containing the app secret. */
+  /** @deprecated Rejected on startup. Migrate to appSecret: $VARIABLE; see docs/channel-credentials.md. */
   appSecretEnv?: string;
   /** CLI chat ID for testing */
   cliChatId?: string;
@@ -209,13 +209,13 @@ export interface RuliuConfig {
   enabled?: boolean;
   /** API host (e.g., https://apiin.im.baidu.com) */
   apiHost?: string;
-  /** Verification token from Ruliu bot settings */
+  /** Secret reference ($VARIABLE / ${VARIABLE}) to the Ruliu verification token. */
   checkToken?: string;
-  /** Message encryption key (Base64 encoded, 43 characters) */
+  /** Secret reference to the Base64 message encryption key. */
   encodingAESKey?: string;
-  /** Application key from Ruliu bot settings */
+  /** Public application key: literal or full environment reference. */
   appKey?: string;
-  /** Application secret from Ruliu bot settings */
+  /** Secret reference to the Ruliu application secret. */
   appSecret?: string;
   /** Robot name for @mention detection */
   robotName?: string;
@@ -454,6 +454,7 @@ export interface ConfigChannelConfig {
  * Main project extends this with specific channel types.
  */
 export interface ChannelsConfig {
+  rest?: ConfigChannelConfig & { authToken?: string };
   feishu?: ConfigChannelConfig & FeishuConfig;
   ruliu?: ConfigChannelConfig & RuliuConfig;
   [channelName: string]: ConfigChannelConfig | undefined;
