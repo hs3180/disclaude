@@ -53,7 +53,8 @@ interface QueryState {
   events: AgentMessage[];
   wake(): void;
   abort: AbortController;
-  pendingText: string;
+  deliveredAssistantMessages: Set<string>;
+  lastPublicCommentary: string;
   tools: Map<string, ToolDefinition>;
   invocations: Map<string, NativeInvocation>;
   receivedInvocations: Set<string>;
@@ -223,7 +224,8 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
       events: [],
       wake: () => wake(),
       abort: new AbortController(),
-      pendingText: '',
+      deliveredAssistantMessages: new Set(),
+      lastPublicCommentary: '',
       tools,
       invocations: new Map(),
       receivedInvocations: new Set(),
@@ -569,21 +571,26 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
     if (notification.method !== 'session.event' || !params.event) {
       return;
     }
-    if (params.event.type === 'assistant/chunk') {
-      const chunk = params.event.data?.chunk as { type?: unknown; text?: unknown } | undefined;
-      if (chunk?.type === 'text-delta' && typeof chunk.text === 'string') {
-        state.pendingText += chunk.text;
-      }
-      return;
-    }
     if (params.event.type === 'assistant/message') {
-      state.pendingText = '';
+      const message = params.event.data?.message as { id?: unknown } | undefined;
+      if (typeof message?.id === 'string' && message.id) {
+        if (state.deliveredAssistantMessages.has(message.id)) { return; }
+        state.deliveredAssistantMessages.add(message.id);
+      }
     }
-    if (params.event.type === 'turn/end' && state.pendingText) {
-      state.events.push({ type: 'text', content: state.pendingText, role: 'assistant' });
-      state.pendingText = '';
+    if (params.event.type === 'turn/end') {
+      state.deliveredAssistantMessages.clear();
+      state.lastPublicCommentary = '';
     }
-    state.events.push(...adaptDeepSeekEvent(params.event));
+    for (const message of adaptDeepSeekEvent(params.event)) {
+      if (message.metadata?.phase === 'commentary') {
+        const text = message.content.trim();
+        if (!text || text === state.lastPublicCommentary ||
+          /^[\s🤔⏳🔄]*(?:thinking|working|compacting|正在思考|思考中|处理中)[\s.!…。]*$/i.test(text)) { continue; }
+        state.lastPublicCommentary = text;
+      }
+      state.events.push(message);
+    }
     state.wake();
   }
 }

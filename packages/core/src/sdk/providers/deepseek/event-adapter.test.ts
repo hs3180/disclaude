@@ -2,13 +2,26 @@ import { describe, expect, it } from 'vitest';
 import { adaptDeepSeekEvent } from './event-adapter.js';
 
 describe('adaptDeepSeekEvent (Issue #4743 contract)', () => {
-  it('leaves token buffering to the provider', () => {
+  it('does not publish incomplete text tokens', () => {
     expect(
       adaptDeepSeekEvent({
         type: 'assistant/chunk',
         data: { chunk: { type: 'text-delta', text: 'hi' } },
       })
     ).toEqual([]);
+  });
+
+  it('keeps a complete public decision in one commentary message without reasoning or tool payloads', () => {
+    const text = `已确认读取被拒绝。\n\n${'选择只检查元数据，避免修改用户权限。'.repeat(20)}`;
+    expect(adaptDeepSeekEvent({ type: 'assistant/message', data: { message: {
+      id: 'decision', content: [
+        { type: 'reasoning', text: 'private reasoning' },
+        { type: 'text', text },
+        { type: 'text', text: '\n继续核验。' },
+        { type: 'tool-call', name: 'bash', arguments: 'private command' },
+      ],
+    } } })).toEqual([{ type: 'text', role: 'assistant', content: `${text}\n继续核验。`,
+      metadata: { messageId: 'decision', phase: 'commentary' } }]);
   });
 
   it('maps text from the official assistant/message envelope', () => {
@@ -25,7 +38,7 @@ describe('adaptDeepSeekEvent (Issue #4743 contract)', () => {
           },
         },
       })
-    ).toEqual([expect.objectContaining({ content: 'hello' })]);
+    ).toEqual([expect.objectContaining({ content: 'hello', metadata: { messageId: 'msg-1', phase: 'final_answer' } })]);
   });
 
   it('maps tool calls and results with a stable call id', () => {

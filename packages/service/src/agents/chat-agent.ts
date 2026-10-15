@@ -2057,6 +2057,20 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           );
         }
 
+        // A completed public commentary item is its own message, as in the
+        // Codex stream. It never joins a final card or structured result.
+        if (parsed.type === 'text' && parsed.metadata?.phase === 'commentary') {
+          if (this.callbacks.finalReplyOnly !== true && parsed.content) {
+            try {
+              await this.callbacks.sendMessage(chatId, parsed.content, resolveReplyThreadRoot());
+            } catch (error) {
+              // Progress cannot fail or complete the turn.
+              this.logger.debug({ error, chatId }, 'Public commentary delivery failed');
+            }
+          }
+          continue;
+        }
+
         // Issue #3003: Track tool call timing
         if (parsed.type === 'tool_use') {
           // A following tool proves the unphased text belonged to an
@@ -2103,7 +2117,6 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             parsed.type === 'tool_use' ||
             parsed.type === 'tool_result' ||
             parsed.type === 'tool_progress' ||
-            (bufferAssistantText && parsed.type === 'text' && parsed.metadata?.phase === 'commentary') ||
             parsed.metadata?.transientStatus === true;
           // #4774: tool traces are internal for every harness and chat type.
           // Preserve debug forwarding and accounting without publishing raw

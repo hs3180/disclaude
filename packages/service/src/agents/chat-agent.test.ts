@@ -3433,6 +3433,42 @@ describe('ChatAgent (service)', () => {
   });
 
   describe('group assistant delivery (#5239)', () => {
+    it.each([false, true])('delivers completed commentary before the next tool, separately from final output, when its send fails=%s', async failProgress => {
+      const callbacks = createMockCallbacks();
+      if (failProgress) { callbacks.sendMessage.mockRejectedValueOnce(new Error('owned progress failure')); }
+      const agent = new ChatAgent({ chatId: 'owned-progress', callbacks, apiKey: 'test', model: 'test' });
+      (agent as any).isAgentTeamsEnabled = vi.fn(() => false);
+      (agent as any).chatType = 'topic';
+      (agent as any).pendingTurnAnchors = ['owned-root'];
+      (agent as any).pendingTurnMessageIds = ['owned-input'];
+      await (agent as any).processIterator((async function* () {
+        yield { parsed: { type: 'text', content: '先检查现有文件，避免覆盖已有修改。', metadata: { phase: 'commentary' } } };
+        expect(callbacks.sendMessage).toHaveBeenCalledWith('owned-progress', '先检查现有文件，避免覆盖已有修改。', 'owned-root');
+        expect(callbacks.onDone).not.toHaveBeenCalled();
+        yield { parsed: { type: 'tool_use', content: 'Read', metadata: { toolInput: { path: '/private/owned-input' } } } };
+        yield { parsed: { type: 'tool_result', content: 'private tool result' } };
+        yield { parsed: { type: 'tool_use', content: 'Bash' } };
+        yield { parsed: { type: 'text', content: '最终结果', metadata: { phase: 'final_answer' } } };
+        yield { parsed: { type: 'result', content: '' } };
+      })());
+      expect(callbacks.sendMessage.mock.calls.map(([, text]) => text)).toEqual(['先检查现有文件，避免覆盖已有修改。', '最终结果']);
+      expect(callbacks.sendMessage.mock.calls.every(([, , root]) => root === 'owned-root')).toBe(true);
+      expect(callbacks.onDone).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps public commentary out of final-only structured responses', async () => {
+      const callbacks = { ...createMockCallbacks(), finalReplyOnly: true };
+      const agent = new ChatAgent({ chatId: 'owned-progress-json', callbacks, apiKey: 'test', model: 'test' });
+      (agent as any).isAgentTeamsEnabled = vi.fn(() => false);
+      await (agent as any).processIterator((async function* () {
+        yield { parsed: { type: 'text', content: 'public stage', metadata: { phase: 'commentary' } } };
+        yield { parsed: { type: 'tool_use', content: 'Bash' } };
+        yield { parsed: { type: 'text', content: '{"ok":true}' } };
+        yield { parsed: { type: 'result', content: '' } };
+      })());
+      expect(callbacks.sendMessage.mock.calls.map(([, text]) => text)).toEqual(['{"ok":true}']);
+    });
+
     it.each(['native commentary', 'unphased pre-tool text'])('keeps %s out of a final-only REST JSON response', async kind => {
       const sent: OutgoingMessage[] = [];
       const channel = {
@@ -3490,16 +3526,16 @@ describe('ChatAgent (service)', () => {
       expect(callbacks.sendMessage).toHaveBeenCalledExactlyOnceWith('owned-delivery', 'Sent and verified.\n\nFinal count: 14.', expect.anything());
     });
 
-    it('suppresses declared commentary but delivers a declared final answer and necessary status', async () => {
+    it('delivers each completed public commentary as its own message before the final answer', async () => {
       const { agent, callbacks } = ownedAgent();
       await (agent as any).processIterator((async function* () {
-        yield { parsed: { type: 'text', content: 'Internal next action', metadata: { phase: 'commentary' } } };
+        yield { parsed: { type: 'text', content: '已确认缺少权限，改为核验可见元数据。', metadata: { phase: 'commentary' } } };
         yield { parsed: { type: 'status', content: 'Please authorize the required operation.' } };
         yield { parsed: { type: 'tool_use', content: 'hidden tool' } };
         yield { parsed: { type: 'text', content: 'Final reply', metadata: { phase: 'final_answer' } } };
         yield { parsed: { type: 'result', content: '' } };
       })());
-      expect(callbacks.sendMessage.mock.calls.map(call => call[1])).toEqual(['Please authorize the required operation.', 'Final reply']);
+      expect(callbacks.sendMessage.mock.calls.map(call => call[1])).toEqual(['已确认缺少权限，改为核验可见元数据。', 'Please authorize the required operation.', 'Final reply']);
     });
 
     it('keeps non-streaming private-chat delivery unchanged', async () => {
@@ -3535,17 +3571,18 @@ describe('ChatAgent (service)', () => {
       expect(callbacks.sendMessage).toHaveBeenCalledExactlyOnceWith('owned-delivery', '{"count":14,"ok":true}', expect.anything());
     });
 
-    it('keeps declared commentary available in the configured debug group', async () => {
+    it('sends public commentary to the user while raw tool results remain in the configured debug group', async () => {
       const { agent, callbacks } = ownedAgent();
       mockGetDebugGroup.mockReturnValue({ chatId: 'owned-debug', setAt: 1 });
       try {
         await (agent as any).processIterator((async function* () {
-          yield { parsed: { type: 'text', content: 'Internal next action', metadata: { phase: 'commentary' } } };
+          yield { parsed: { type: 'text', content: '已找到相关记录，继续核验。', metadata: { phase: 'commentary' } } };
+          yield { parsed: { type: 'tool_result', content: 'private tool result' } };
           yield { parsed: { type: 'text', content: 'Answer', metadata: { phase: 'final_answer' } } };
           yield { parsed: { type: 'result', content: '' } };
         })());
         expect(callbacks.sendMessage.mock.calls.map(call => [call[0], call[1]])).toEqual([
-          ['owned-debug', '[text] Internal next action'], ['owned-delivery', 'Answer'],
+          ['owned-delivery', '已找到相关记录，继续核验。'], ['owned-debug', '[tool_result] private tool result'], ['owned-delivery', 'Answer'],
         ]);
       } finally { mockGetDebugGroup.mockReturnValue(null); }
     });

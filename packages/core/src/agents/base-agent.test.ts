@@ -310,6 +310,21 @@ describe('BaseAgent', () => {
     });
   });
 
+  it('preserves public commentary and final phases through the SDK iterator boundary', async () => {
+    mockSdkProvider.queryStream.mockReturnValue({
+      iterator: (async function* () {
+        yield createMockSdkMessage({ type: 'text', content: 'Reading owned material', metadata: { phase: 'commentary' } });
+        yield createMockSdkMessage({ type: 'text', content: 'Final answer', metadata: { phase: 'final_answer' } });
+      })(),
+      handle: { sessionId: 'owned-progress', interrupt: vi.fn(), sendUserMessage: vi.fn(), close: vi.fn() },
+    });
+    const stream = agent.testCreateQueryStream((async function* () {})(), { settingSources: [] });
+    const messages: IteratorYieldResult[] = [];
+    for await (const message of stream.iterator) { messages.push(message); }
+    expect(messages[0].parsed).toMatchObject({ type: 'text', metadata: { phase: 'commentary' } });
+    expect(messages[1].parsed).toMatchObject({ type: 'text', content: 'Final answer', metadata: { phase: 'final_answer' } });
+  });
+
   describe('handleIteratorError', () => {
     it('should handle Error instances', () => {
       const error = new Error('SDK connection failed');
