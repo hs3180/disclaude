@@ -57,7 +57,10 @@ See [DSH runtime modes](dsh-backend.md) for minimal mode and native provider rou
 Set `llms.<name>.maxConcurrentSessions` to a positive integer to cap live host
 sessions using that LLM across all agents and backends in this service process.
 For example, `llms.daily: {model: gpt-6-luna, reasoningEffort: max, maxConcurrentSessions: 3}`.
-Idle open sessions still count; native subagents are outside this host budget.
+Idle open sessions still count for stream-scoped runtimes; native subagents are
+outside this host budget. Codex app-server reserves this shared budget per native
+connection and releases it after transport shutdown, preserving the input stream
+and thread ID for later turns. A later turn reacquires the same bounded FIFO budget.
 At capacity new sessions wait in a process-local FIFO queue of up to 64 sessions.
 Accepted chat inputs receive a queue notice and continue automatically when a
 slot is released, with their original chat, topic and message identity. A full

@@ -204,6 +204,10 @@ export class CodexSessionGovernor {
    * @returns true when a live registration was dropped, false when unknown.
    */
   forgetSession(sessionKey: string): boolean {
+    // A pinned native connection is already being stopped by the provider.
+    // Its owner unregisters after transport exit; dropping it now would hide
+    // a still-live connection and admit a replacement before teardown.
+    if (this.sessions.get(sessionKey)?.busy) { return false; }
     const removed = this.sessions.delete(sessionKey);
     this.pumpSessions();
     return removed;

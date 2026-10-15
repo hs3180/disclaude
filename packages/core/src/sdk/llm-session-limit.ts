@@ -10,12 +10,13 @@ export class LlmSessionLimitError extends Error {
   readonly code = 'LLM_SESSION_LIMIT';
 }
 
-export function withLlmSessionLimit(
-  start: () => StreamQueryResult,
+/** A bounded FIFO reservation, also usable by per-connection native runtimes. */
+export function reserveLlmSession(
   limit: AgentQueryOptions['llmSessionLimit'],
-  preflight?: () => void
-): StreamQueryResult {
-  if (!limit) { return start(); }
+  preflight?: () => void,
+  onAdmitted?: (release: () => void) => void,
+) {
+  if (!limit) { return undefined; }
   const { name, maxConcurrentSessions } = limit;
   if (!name || !Number.isSafeInteger(maxConcurrentSessions) || maxConcurrentSessions <= 0) {
     throw new Error('Invalid LLM session limit');
@@ -30,11 +31,10 @@ export function withLlmSessionLimit(
       `LLM ${name} 的等待队列已满（${MAX_WAITING_LLM_SESSIONS}）；这条消息未被接收，请结束一个会话后重新发送。`
     );
   }
-  let result: StreamQueryResult | undefined;
   let waiter: Waiter | undefined;
-  let closed = false, reserved = false, failure: unknown, failed = false;
-  let wake!: () => void;
-  const ready = new Promise<void>(resolve => { wake = resolve; });
+  let closed = false, reserved = false;
+  let wake!: (admitted: boolean) => void;
+  const ready = new Promise<boolean>(resolve => { wake = resolve; });
 
   const drain = (): void => {
     // A queued provider may throw synchronously; its release must not recurse.
@@ -51,19 +51,24 @@ export function withLlmSessionLimit(
     }
   };
   const release = (): void => {
-    if (!reserved) { return; }
-    reserved = false;
-    budget.active--;
+    if (closed) { return; }
+    closed = true;
+    if (waiter) {
+      const index = budget.waiters.indexOf(waiter);
+      if (index >= 0) { budget.waiters.splice(index, 1); }
+      waiter = undefined;
+      wake(false);
+    }
+    if (reserved) { reserved = false; budget.active--; }
     drain();
   };
   const admit = (): void => {
     waiter = undefined;
-    if (closed) { wake(); return; }
+    if (closed) { wake(false); return; }
     reserved = true;
     budget.active++;
-    try { result = start(); }
-    catch (error) { failed = true; failure = error; release(); }
-    finally { wake(); }
+    try { onAdmitted?.(release); }
+    finally { wake(true); }
   };
   if (mustWait) {
     waiter = { max: maxConcurrentSessions, admit };
@@ -71,21 +76,30 @@ export function withLlmSessionLimit(
     drain();
   } else {
     admit();
-    // Preserve immediate configuration/start failures; never retry them as capacity.
-    if (failed) { throw failure; }
   }
+  return { ready, release, get queued() { return waiter !== undefined; } };
+}
+
+export function withLlmSessionLimit(
+  start: () => StreamQueryResult,
+  limit: AgentQueryOptions['llmSessionLimit'],
+  preflight?: () => void
+): StreamQueryResult {
+  let result: StreamQueryResult | undefined;
+  let closed = false, failed = false, failure: unknown;
+  const reservation = reserveLlmSession(limit, preflight, release => {
+    if (closed) { return; }
+    try { result = start(); }
+    catch (error) { failed = true; failure = error; release(); }
+  });
+  if (!reservation) { return start(); }
+  if (failed) { throw failure; }
+  const { ready } = reservation;
   const stop = (method: 'close' | 'cancel' = 'close'): void => {
     if (closed) { return; }
     closed = true;
-    if (waiter) {
-      const index = budget.waiters.indexOf(waiter);
-      if (index >= 0) { budget.waiters.splice(index, 1); }
-      waiter = undefined;
-      wake();
-      drain();
-    }
     try { result?.handle[method](); }
-    finally { release(); }
+    finally { reservation.release(); }
   };
   const iterator: StreamQueryResult['iterator'] = {
     async next(...args) {
@@ -115,8 +129,8 @@ export function withLlmSessionLimit(
     handle: new Proxy({ close: () => stop(), cancel: () => stop('cancel') } as QueryHandle, {
       get(target, key) {
         if (key === 'close' || key === 'cancel') { return target[key]; }
-        if (key === 'capacityQueued') { return waiter !== undefined; }
-        if (key === 'inputDelivery' && waiter) { return 'queued'; }
+        if (key === 'capacityQueued') { return reservation.queued; }
+        if (key === 'inputDelivery' && reservation.queued) { return 'queued'; }
         const handle = result?.handle;
         if (!handle) { return undefined; }
         const value = Reflect.get(handle, key, handle);

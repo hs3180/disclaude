@@ -94,6 +94,9 @@ export interface IAgentSDKProvider {
   /** Compose provider-specific chat behavior with the caller's prompt/query hooks. */
   configureChat?(hooks: ChatAgentHooks): ChatAgentHooks;
 
+  /** Own the shared named-LLM budget at a finer native connection boundary. */
+  managesLlmSessionLimit?(options: AgentQueryOptions): boolean;
+
   /**
    * 忘记指定会话的 Provider 侧状态（可选能力，Issue #4644）。
    *

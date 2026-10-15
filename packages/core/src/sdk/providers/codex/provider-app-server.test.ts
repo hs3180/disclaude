@@ -946,7 +946,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     return fixture.provider;
   }
 
-  function start(provider: CodexAgentProvider, sessionKey: string) {
+  function start(provider: CodexAgentProvider, sessionKey: string, llmSessionLimit?: AgentQueryOptions['llmSessionLimit']) {
     let release!: () => void;
     let send!: (input: UserInput | undefined) => void;
     const pending = new Promise<void>(resolve => { release = resolve; });
@@ -956,7 +956,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
       const next = await followup;
       if (next) { yield next; }
       await pending;
-    })(), { sessionKey, settingSources: [] } as AgentQueryOptions);
+    })(), { sessionKey, settingSources: [], llmSessionLimit } as AgentQueryOptions);
     const messages: AgentMessage[] = [];
     const collecting = (async () => {
       for await (const message of result.iterator) {messages.push(message);}
@@ -1047,5 +1047,31 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
       await Promise.all(streams.map(s => s.collecting));
     }
     expect(provider.getGovernanceStats().activeSessions).toBe(0);
+  });
+
+  it('releases the shared named-LLM reservation on delivery and reacquires it for a followup', async () => {
+    const provider = controlledProvider();
+    provider.setGovernanceLimits({ maxActiveSessions: 3, maxConcurrentRuns: 3 });
+    const limit = { name: 'native-connection-budget', maxConcurrentSessions: 1 };
+    const streams: Stream[] = [];
+    try {
+      expect(provider.managesLlmSessionLimit({ settingSources: [] })).toBe(true);
+      const a = start(provider, 'named-a', limit); streams.push(a); await started(a);
+      const b = start(provider, 'named-b', limit); streams.push(b);
+      expect(b.handle.capacityQueued).toBe(true);
+      await complete(a); await started(b);
+      expect(b.handle.capacityQueued).toBe(false);
+      a.send();
+      await vi.waitFor(() => expect(a.handle.capacityQueued).toBe(true));
+      expect(a.messages.filter(m => m.type === 'status')).toHaveLength(1);
+      await complete(b);
+      await vi.waitFor(() => expect(a.messages.filter(m => m.type === 'status')).toHaveLength(2));
+      await complete(a);
+      await vi.waitFor(() => expect(provider.getGovernanceStats().activeSessions).toBe(0));
+      expect(provider.getGovernanceStats().evictedSessions).toBe(0);
+    } finally {
+      provider.dispose(); for (const s of streams) { s.release(); }
+      await Promise.all(streams.map(s => s.collecting));
+    }
   });
 });
