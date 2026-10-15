@@ -139,6 +139,19 @@ function createTestChannel(mockClient: ReturnType<typeof createMockClient>['clie
 }
 
 describe('native welcome event dispatch through the actual SDK parser', () => {
+  it('returns a private callback toast through the native dispatcher', async () => {
+    const channel = new FeishuChannel({ appId: 'test-app', appSecret: 'test-secret' });
+    await channel.start();
+    try {
+      const connection = vi.mocked(WsConnectionManager).mock.results.at(-1)?.value;
+      const dispatcher = connection.start.mock.calls[0][0] as EventDispatcher;
+      const handler = vi.mocked(MessageHandler).mock.results.at(-1)?.value;
+      const response = { toast: { type: 'info', content: '已收到提交' } };
+      handler.handleCardAction.mockResolvedValueOnce(response);
+      expect(await dispatcher.invoke({ schema: '2.0', header: { event_type: 'card.action.trigger', event_id: 'private-callback' },
+        event: { action: { value: { private_action: 'unknown' } } } }, { needCheck: false })).toEqual(response);
+    } finally {await channel.stop();}
+  });
   it.each([
     ['im.chat.member.bot.added_v1', 'handleBotAdded', { chat_id: 'oc_group' }],
     ['im.chat.member.user.added_v1', 'handleUserAdded', { chat_id: 'oc_group', users: [{ user_id: { open_id: 'ou_joiner' } }] }],
