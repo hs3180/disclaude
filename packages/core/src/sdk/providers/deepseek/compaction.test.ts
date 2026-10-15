@@ -11,6 +11,8 @@ describe('DSH native compaction budget', () => {
     const settings = await resolveDshCompaction(api, 'selected-key', 48_000, signal());
     expect(settings.source).toBe('configured');
     expect(settings.contextWindow! * settings.thresholdRatio).toBe(48_000);
+    expect((await resolveDshCompaction(api, 'selected-key', 8000, signal())).contextWindow)
+      .toBeGreaterThanOrEqual(DEFAULT_DSH_CONTEXT_WINDOW);
     expect(await resolveDshCompaction(api, 'selected-key', 0, signal())).toMatchObject({ auto: false, source: 'disabled' });
     expect(fetcher).not.toHaveBeenCalled();
   });

@@ -29,7 +29,7 @@ export async function resolveDshCompaction(
     if (!api) { throw new Error('DSH autoCompactWindow requires a bound llms.api connection; native profiles own their compaction policy'); }
     // DSH's public policy accepts a capacity and ratio, rather than an
     // absolute trigger. Preserve the configured trigger and output headroom.
-    const contextWindow = Math.ceil(window / RATIO);
+    const contextWindow = Math.max(DEFAULT_DSH_CONTEXT_WINDOW, Math.ceil(window / RATIO));
     return { auto: true, thresholdRatio: window / contextWindow, contextWindow, source: 'configured' };
   }
   if (!api) { return { auto: true, thresholdRatio: RATIO, source: 'native-profile' }; }
