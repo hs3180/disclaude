@@ -182,6 +182,13 @@ function textEvent(text: string, overrides: Record<string, unknown> = {}) {
   } as any;
 }
 
+/** Build a topic reply while preserving the normal event envelope. */
+function topicReplyEvent(text: string, message: Record<string, unknown>) {
+  const data = textEvent(text);
+  Object.assign(data.event.message, { chat_type: 'topic', ...message });
+  return data;
+}
+
 /** Build a Feishu post message event. */
 function postEvent(content: unknown[], overrides: Record<string, unknown> = {}) {
   return {
@@ -1955,11 +1962,11 @@ describe('MessageHandler', () => {
           message: {
             get: vi.fn().mockResolvedValue({
               data: {
-                message: {
-                  message_type: 'image',
-                  content: JSON.stringify({ image_key: 'img_q_001' }),
+                items: [{
+                  msg_type: 'image',
+                  body: { content: JSON.stringify({ image_key: 'img_q_001' }) },
                   message_id: 'msg_q_parent',
-                },
+                }],
               },
             }),
           },
@@ -2002,11 +2009,11 @@ describe('MessageHandler', () => {
           message: {
             get: vi.fn().mockResolvedValue({
               data: {
-                message: {
-                  message_type: 'audio',
-                  content: JSON.stringify({ file_key: 'audio_q_001', file_name: 'voice.mp3' }),
+                items: [{
+                  msg_type: 'audio',
+                  body: { content: JSON.stringify({ file_key: 'audio_q_001', file_name: 'voice.mp3' }) },
                   message_id: 'msg_q_audio',
-                },
+                }],
               },
             }),
           },
@@ -2190,11 +2197,11 @@ describe('MessageHandler', () => {
           message: {
             get: vi.fn().mockResolvedValue({
               data: {
-                message: {
-                  message_type: 'media',
-                  content: JSON.stringify({ file_key: 'media_q_001', file_name: 'video.mp4' }),
+                items: [{
+                  msg_type: 'media',
+                  body: { content: JSON.stringify({ file_key: 'media_q_001', file_name: 'video.mp4' }) },
                   message_id: 'msg_q_media',
-                },
+                }],
               },
             }),
           },
@@ -2240,11 +2247,11 @@ describe('MessageHandler', () => {
           message: {
             get: vi.fn().mockResolvedValue({
               data: {
-                message: {
-                  message_type: 'video',
-                  content: JSON.stringify({ file_key: 'video_q_001', file_name: 'clip.mp4' }),
+                items: [{
+                  msg_type: 'video',
+                  body: { content: JSON.stringify({ file_key: 'video_q_001', file_name: 'clip.mp4' }) },
                   message_id: 'msg_q_video',
-                },
+                }],
               },
             }),
           },
@@ -2291,11 +2298,11 @@ describe('MessageHandler', () => {
           message: {
             get: vi.fn().mockResolvedValue({
               data: {
-                message: {
-                  message_type: 'file',
-                  content: JSON.stringify({ file_key: 'file_q_fail', file_name: 'doc.pdf' }),
+                items: [{
+                  msg_type: 'file',
+                  body: { content: JSON.stringify({ file_key: 'file_q_fail', file_name: 'doc.pdf' }) },
                   message_id: 'msg_q_fail',
-                },
+                }],
               },
             }),
           },
@@ -2335,11 +2342,11 @@ describe('MessageHandler', () => {
           message: {
             get: vi.fn().mockResolvedValue({
               data: {
-                message: {
-                  message_type: 'text',
-                  content: JSON.stringify({ text: 'Quoted text' }),
+                items: [{
+                  msg_type: 'text',
+                  body: { content: JSON.stringify({ text: 'Quoted text' }) },
                   message_id: 'msg_parent',
-                },
+                }],
               },
             }),
           },
@@ -2376,13 +2383,13 @@ describe('MessageHandler', () => {
           message: {
             get: vi.fn().mockResolvedValue({
               data: {
-                message: {
-                  message_type: 'post',
-                  content: JSON.stringify({
+                items: [{
+                  msg_type: 'post',
+                  body: { content: JSON.stringify({
                     content: [[{ tag: 'text', text: 'Bold post' }]],
-                  }),
+                  }) },
                   message_id: 'msg_parent_post',
-                },
+                }],
               },
             }),
           },
@@ -2426,35 +2433,35 @@ describe('MessageHandler', () => {
               // 1st call: getQuotedMessageContext(parent_id) — fetches the immediate parent
               .mockResolvedValueOnce({
                 data: {
-                  message: {
-                    message_type: 'text',
-                    content: JSON.stringify({ text: 'First reply' }),
+                  items: [{
+                    msg_type: 'text',
+                    body: { content: JSON.stringify({ text: 'First reply' }) },
                     message_id: 'msg_parent',
-                  },
+                  }],
                 },
               })
               // 2nd call: getThreadContext(parent_id) — walks up from parent
               .mockResolvedValueOnce({
                 data: {
-                  message: {
-                    message_type: 'text',
-                    content: JSON.stringify({ text: 'First reply' }),
+                  items: [{
+                    msg_type: 'text',
+                    body: { content: JSON.stringify({ text: 'First reply' }) },
                     message_id: 'msg_parent',
                     parent_id: 'msg_root',
                     sender: { sender_type: 'user' },
-                  },
+                  }],
                 },
               })
               // 3rd call: getThreadContext continues to root
               .mockResolvedValueOnce({
                 data: {
-                  message: {
-                    message_type: 'text',
-                    content: JSON.stringify({ text: 'Root message' }),
+                  items: [{
+                    msg_type: 'text',
+                    body: { content: JSON.stringify({ text: 'Root message' }) },
                     message_id: 'msg_root',
                     parent_id: undefined,
                     sender: { sender_type: 'user' },
-                  },
+                  }],
                 },
               }),
           },
@@ -2505,15 +2512,15 @@ describe('MessageHandler', () => {
             get: vi.fn()
               // 1st call: getQuotedMessageContext(parent_id)
               .mockResolvedValueOnce({
-                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent' } },
+                data: { items: [{ msg_type: 'text', body: { content: JSON.stringify({ text: 'First reply' }) }, message_id: 'msg_parent' }] },
               })
               // 2nd call: getThreadContext(parent_id) — parent itself
               .mockResolvedValueOnce({
-                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent', parent_id: 'msg_root', sender: { sender_type: 'user' } } },
+                data: { items: [{ msg_type: 'text', body: { content: JSON.stringify({ text: 'First reply' }) }, message_id: 'msg_parent', parent_id: 'msg_root', sender: { sender_type: 'user' } }] },
               })
               // 3rd call: getThreadContext walks to root
               .mockResolvedValueOnce({
-                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'Root message' }), message_id: 'msg_root', sender: { sender_type: 'user' } } },
+                data: { items: [{ msg_type: 'text', body: { content: JSON.stringify({ text: 'Root message' }) }, message_id: 'msg_root', sender: { sender_type: 'user' } }] },
               }),
           },
         },
@@ -2540,6 +2547,78 @@ describe('MessageHandler', () => {
       expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
       const msg = firstCallArg(mockState.emitMessage);
       expect(msg.metadata.threadRootId).toBe('msg_root');
+    });
+
+    it('keeps nested text, reset and attachment replies on the event root when history is unavailable', async () => {
+      mockState.hasControlHandler = true;
+      mockState.isBotMentioned = true;
+      mockState.emitControl.mockResolvedValue({ success: true, message: 'done' });
+      const get = vi.fn().mockRejectedValue(new Error('message history unavailable'));
+      const { handler } = createHandler();
+      handler.initialize({ im: { message: { get } } } as any);
+      handler.setControlHandler(true);
+
+      await handler.handleMessageReceive(topicReplyEvent('preview', {
+        message_id: 'msg_preview', chat_type: 'topic', parent_id: 'msg_bind_reply', root_id: 'msg_root',
+      }));
+      const readsBeforeCommand = get.mock.calls.length;
+      await handler.handleMessageReceive(topicReplyEvent('/reset', {
+        message_id: 'msg_reset', chat_type: 'topic', parent_id: 'msg_preview', root_id: 'msg_root',
+      }));
+      expect(get).toHaveBeenCalledTimes(readsBeforeCommand);
+      await handler.handleMessageReceive(topicReplyEvent('', {
+        message_id: 'msg_attachment', chat_type: 'topic', parent_id: 'msg_reset', root_id: 'msg_root',
+        message_type: 'file', content: JSON.stringify({ file_key: 'file_key', file_name: 'notes.txt' }),
+      }));
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(2);
+      expect(mockState.emitMessage.mock.calls.map(([message]: any[]) => message.metadata.threadRootId))
+        .toEqual(['msg_root', 'msg_root']);
+      expect(firstCallArg(mockState.emitControl).threadRootId).toBe('msg_root');
+      await handler.handleMessageReceive(topicReplyEvent('different topic', {
+        message_id: 'msg_other', chat_type: 'topic', parent_id: 'msg_other_reply', root_id: 'msg_other_root',
+      }));
+      const lastCall = mockState.emitMessage.mock.calls.at(-1) as unknown as any[];
+      expect(lastCall[0]).toMatchObject({ metadata: { threadRootId: 'msg_other_root' } });
+    });
+
+    it.each(['follow up', '/unrecognized-skill'])('keeps quoted and thread context for %s using the documented GET shape', async (text) => {
+      mockState.isBotMentioned = true;
+      const get = vi.fn().mockImplementation(({ path }: { path: { message_id: string } }) => Promise.resolve({
+        data: { items: [{
+          message_id: path.message_id,
+          ...(path.message_id === 'msg_parent' ? { parent_id: 'msg_root', root_id: 'msg_root' } : {}),
+          msg_type: 'text', body: { content: JSON.stringify({ text: path.message_id === 'msg_parent' ? 'Earlier reply' : 'Original task' }) },
+          sender: { sender_type: 'user' },
+        }] },
+      }));
+      const { handler } = createHandler();
+      handler.initialize({ im: { message: { get } } } as any);
+
+      await handler.handleMessageReceive(topicReplyEvent(text, {
+        message_id: 'msg_follow_up', parent_id: 'msg_parent',
+        ...(text.startsWith('/') ? { root_id: 'msg_root' } : {}),
+      }));
+
+      const message = firstCallArg(mockState.emitMessage);
+      expect(message.metadata.threadRootId).toBe('msg_root');
+      expect(message.metadata.threadContext).toContain('Original task');
+      expect(message.metadata.threadContext).toContain('Earlier reply');
+      expect(message.metadata.quotedMessage).toContain('Earlier reply');
+    });
+
+    it.each(['depth-cap', 'fetch-failure'])('preserves an API-declared root after a %s context boundary', async (boundary) => {
+      const get = vi.fn().mockResolvedValueOnce({ data: { items: [{
+        message_id: 'msg_parent', parent_id: 'msg_ancestor', root_id: 'msg_root',
+        msg_type: 'text', body: { content: JSON.stringify({ text: 'Earlier reply' }) },
+      }] } }).mockRejectedValue(new Error('ancestor unavailable'));
+      const { handler } = createHandler();
+      handler.initialize({ im: { message: { get } } } as any);
+
+      const context = await (handler as any).getThreadContext('msg_parent', boundary === 'depth-cap' ? 1 : 10);
+
+      expect(context).toEqual({ text: '👤 Earlier reply', rootId: 'msg_root', incomplete: false });
+      expect(get).toHaveBeenCalledTimes(boundary === 'depth-cap' ? 1 : 3);
     });
 
     it('emits threadRootId = message_id for a topic-group message without parent_id (Issue #4587 part 1)', async () => {
@@ -2612,11 +2691,11 @@ describe('MessageHandler', () => {
               // skipped for slash commands, so the walk starts at call 1.
               // 1st call: getThreadContext(parent_id) — parent itself
               .mockResolvedValueOnce({
-                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent', parent_id: 'msg_root', sender: { sender_type: 'user' } } },
+                data: { items: [{ msg_type: 'text', body: { content: JSON.stringify({ text: 'First reply' }) }, message_id: 'msg_parent', parent_id: 'msg_root', sender: { sender_type: 'user' } }] },
               })
               // 2nd call: getThreadContext walks to root
               .mockResolvedValueOnce({
-                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'Root message' }), message_id: 'msg_root', sender: { sender_type: 'user' } } },
+                data: { items: [{ msg_type: 'text', body: { content: JSON.stringify({ text: 'Root message' }) }, message_id: 'msg_root', sender: { sender_type: 'user' } }] },
               }),
           },
         },
@@ -2662,11 +2741,11 @@ describe('MessageHandler', () => {
             get: vi.fn()
               // getThreadContext(parent_id) — parent itself (text, has root)
               .mockResolvedValueOnce({
-                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent', parent_id: 'msg_root', sender: { sender_type: 'user' } } },
+                data: { items: [{ msg_type: 'text', body: { content: JSON.stringify({ text: 'First reply' }) }, message_id: 'msg_parent', parent_id: 'msg_root', sender: { sender_type: 'user' } }] },
               })
               // getThreadContext walks to root
               .mockResolvedValueOnce({
-                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'Root message' }), message_id: 'msg_root', sender: { sender_type: 'user' } } },
+                data: { items: [{ msg_type: 'text', body: { content: JSON.stringify({ text: 'Root message' }) }, message_id: 'msg_root', sender: { sender_type: 'user' } }] },
               }),
           },
         },
@@ -2719,15 +2798,15 @@ describe('MessageHandler', () => {
             get: vi.fn()
               // getThreadContext(parent_id) — parent itself
               .mockResolvedValueOnce({
-                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent', parent_id: 'msg_root', sender: { sender_type: 'user' } } },
+                data: { items: [{ msg_type: 'text', body: { content: JSON.stringify({ text: 'First reply' }) }, message_id: 'msg_parent', parent_id: 'msg_root', sender: { sender_type: 'user' } }] },
               })
               // getThreadContext walks to root
               .mockResolvedValueOnce({
-                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'Root message' }), message_id: 'msg_root', sender: { sender_type: 'user' } } },
+                data: { items: [{ msg_type: 'text', body: { content: JSON.stringify({ text: 'Root message' }) }, message_id: 'msg_root', sender: { sender_type: 'user' } }] },
               })
               // Deferred getQuotedMessageContext(parent_id) after router decline
               .mockResolvedValueOnce({
-                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent' } },
+                data: { items: [{ msg_type: 'text', body: { content: JSON.stringify({ text: 'First reply' }) }, message_id: 'msg_parent' }] },
               }),
           },
         },
@@ -2833,13 +2912,13 @@ describe('MessageHandler', () => {
       mockState.isBotMentioned = true;
       const deepMsg = (id: string, parent: string) => ({
         data: {
-          message: {
-            message_type: 'text',
-            content: JSON.stringify({ text: `msg ${id}` }),
+          items: [{
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: `msg ${id}` }) },
             message_id: id,
             parent_id: parent,
             sender: { sender_type: 'user' },
-          },
+          }],
         },
       });
       const mockClient = {
@@ -2848,7 +2927,7 @@ describe('MessageHandler', () => {
             get: vi.fn()
               // 1st call: getQuotedMessageContext(parent_id)
               .mockResolvedValueOnce({
-                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'msg d9' }), message_id: 'd9' } },
+                data: { items: [{ msg_type: 'text', body: { content: JSON.stringify({ text: 'msg d9' }) }, message_id: 'd9' }] },
               })
               // getThreadContext walk: d9 → d8 → ... → d0 → (parent of d0,
               // never fetched) — 10 nodes visited, cap hit before the root.
@@ -2903,17 +2982,17 @@ describe('MessageHandler', () => {
             get: vi.fn()
               // 1st call: getQuotedMessageContext(parent_id)
               .mockResolvedValueOnce({
-                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent' } },
+                data: { items: [{ msg_type: 'text', body: { content: JSON.stringify({ text: 'First reply' }) }, message_id: 'msg_parent' }] },
               })
               // 2nd call: getThreadContext(parent_id) — transient failure
               .mockRejectedValueOnce(new Error('ETIMEDOUT'))
               // retry of the same node succeeds
               .mockResolvedValueOnce({
-                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent', parent_id: 'msg_root', sender: { sender_type: 'user' } } },
+                data: { items: [{ msg_type: 'text', body: { content: JSON.stringify({ text: 'First reply' }) }, message_id: 'msg_parent', parent_id: 'msg_root', sender: { sender_type: 'user' } }] },
               })
               // walk continues to root
               .mockResolvedValueOnce({
-                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'Root message' }), message_id: 'msg_root', sender: { sender_type: 'user' } } },
+                data: { items: [{ msg_type: 'text', body: { content: JSON.stringify({ text: 'Root message' }) }, message_id: 'msg_root', sender: { sender_type: 'user' } }] },
               }),
           },
         },
@@ -2954,7 +3033,7 @@ describe('MessageHandler', () => {
             get: vi.fn()
               // 1st call: getQuotedMessageContext(parent_id)
               .mockResolvedValueOnce({
-                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent' } },
+                data: { items: [{ msg_type: 'text', body: { content: JSON.stringify({ text: 'First reply' }) }, message_id: 'msg_parent' }] },
               })
               // getThreadContext(parent_id) — fails, retry fails, walk aborts
               .mockRejectedValue(new Error('ECONNRESET')),
@@ -3031,13 +3110,13 @@ describe('MessageHandler', () => {
       // node either; identical rule to the text path.
       const deepMsg = (id: string, parent: string) => ({
         data: {
-          message: {
-            message_type: 'text',
-            content: JSON.stringify({ text: `msg ${id}` }),
+          items: [{
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: `msg ${id}` }) },
             message_id: id,
             parent_id: parent,
             sender: { sender_type: 'user' },
-          },
+          }],
         },
       });
       // Topic chats are group chats: without a @mention the message is filtered
@@ -3309,24 +3388,24 @@ describe('MessageHandler', () => {
             get: vi.fn()
               .mockResolvedValueOnce({
                 data: {
-                  message: {
-                    message_type: 'image',
-                    content: JSON.stringify({ image_key: 'img_test123' }),
+                  items: [{
+                    msg_type: 'image',
+                    body: { content: JSON.stringify({ image_key: 'img_test123' }) },
                     message_id: 'msg_image',
                     parent_id: 'msg_root',
                     sender: { sender_type: 'user' },
-                  },
+                  }],
                 },
               })
               .mockResolvedValueOnce({
                 data: {
-                  message: {
-                    message_type: 'text',
-                    content: JSON.stringify({ text: 'See this screenshot' }),
+                  items: [{
+                    msg_type: 'text',
+                    body: { content: JSON.stringify({ text: 'See this screenshot' }) },
                     message_id: 'msg_root',
                     parent_id: undefined,
                     sender: { sender_type: 'user' },
-                  },
+                  }],
                 },
               }),
           },
@@ -3472,25 +3551,25 @@ describe('MessageHandler', () => {
             get: vi.fn()
               .mockResolvedValueOnce({
                 data: {
-                  message: {
+                  items: [{
                     // image with no image_key — nothing to point the agent at
-                    message_type: 'image',
-                    content: JSON.stringify({}),
+                    msg_type: 'image',
+                    body: { content: JSON.stringify({}) },
                     message_id: 'msg_no_key',
                     parent_id: 'msg_root',
                     sender: { sender_type: 'user' },
-                  },
+                  }],
                 },
               })
               .mockResolvedValueOnce({
                 data: {
-                  message: {
-                    message_type: 'text',
-                    content: JSON.stringify({ text: 'thread root' }),
+                  items: [{
+                    msg_type: 'text',
+                    body: { content: JSON.stringify({ text: 'thread root' }) },
                     message_id: 'msg_root',
                     parent_id: undefined,
                     sender: { sender_type: 'user' },
-                  },
+                  }],
                 },
               }),
           },
@@ -3522,11 +3601,11 @@ describe('MessageHandler', () => {
           message: {
             get: vi.fn().mockResolvedValue({
               data: {
-                message: {
-                  message_type: 'text',
-                  content: JSON.stringify({ text: 'Parent' }),
+                items: [{
+                  msg_type: 'text',
+                  body: { content: JSON.stringify({ text: 'Parent' }) },
                   message_id: 'msg_parent',
-                },
+                }],
               },
             }),
           },
@@ -3729,24 +3808,24 @@ describe('MessageHandler', () => {
               // getThreadContext walks up: parent → root
               .mockResolvedValueOnce({
                 data: {
-                  message: {
-                    message_type: 'text',
-                    content: JSON.stringify({ text: 'Reply in thread' }),
+                  items: [{
+                    msg_type: 'text',
+                    body: { content: JSON.stringify({ text: 'Reply in thread' }) },
                     message_id: 'msg_parent',
                     parent_id: 'msg_root',
                     sender: { sender_type: 'user' },
-                  },
+                  }],
                 },
               })
               .mockResolvedValueOnce({
                 data: {
-                  message: {
-                    message_type: 'text',
-                    content: JSON.stringify({ text: 'Root message' }),
+                  items: [{
+                    msg_type: 'text',
+                    body: { content: JSON.stringify({ text: 'Root message' }) },
                     message_id: 'msg_root',
                     parent_id: undefined,
                     sender: { sender_type: 'user' },
-                  },
+                  }],
                 },
               }),
           },
