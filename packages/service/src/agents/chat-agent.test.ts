@@ -1592,6 +1592,9 @@ describe('ChatAgent (service)', () => {
       expect(notices[0][1]).toContain('msg_1');
       expect(notices[0][1]).toContain(failure.diagnosticId);
       expect(notices[0][1]).toContain('没有自动重放工具');
+      for (const field of ['Run ID:', '会话 ID:', 'UTC:', '日志:', 'provider-stall', 'om_stall_root']) {
+        expect(notices[0][1]).toContain(field);
+      }
       expect(notices[0][2]).toBe('om_stall_root');
       expect(localCallbacks.onTurnResult).toHaveBeenCalledExactlyOnceWith({ success: false, text: '', truncated: false });
       // Session inactive (restart suppressed)
@@ -2447,6 +2450,7 @@ describe('ChatAgent (service)', () => {
     expect(output).toContain('系统没有自动重放工具');
     const [diagnostic] = internals.logger.error.mock.calls.find((call: any[]) => call[1] === 'Iterator error');
     expect(output).toContain(diagnostic.diagnosticId);
+    expect(JSON.stringify(diagnostic)).not.toContain('synthetic-credential');
     agent.reset();
   });
 
@@ -2501,6 +2505,9 @@ describe('ChatAgent (service)', () => {
       expect(diagnosticCall![1]).toContain('诊断 ID:');
       expect(diagnosticCall![1]).toContain('运行环境');
       expect(diagnosticCall![1]).toContain('/reset');
+      for (const field of ['Run ID:', '会话 ID:', 'UTC:', '日志:', 'startup-failure', 'Invalid configuration']) {
+        expect(diagnosticCall![1]).toContain(field);
+      }
 
       // Session should be inactive
       expect(agent.hasActiveSession()).toBe(false);
@@ -2633,7 +2640,7 @@ describe('ChatAgent (service)', () => {
       // wall-clock dependency.
       async function* runtimeErrorIterator() {
         yield { parsed: { type: 'text', content: 'Hello from agent' } };
-        throw new Error('Runtime crash after messages');
+        throw new Error('Runtime crash after messages; token=synthetic-runtime-secret');
       }
 
       (agent as any).createQueryStream = () => ({
@@ -2665,7 +2672,8 @@ describe('ChatAgent (service)', () => {
         (call: any[]) => typeof call[1] === 'string' && call[1].includes('本次请求中断')
       );
       expect(sessionErrorCall).toBeDefined();
-      expect(sessionErrorCall![1]).not.toContain('Runtime crash after messages');
+      expect(sessionErrorCall![1]).toContain('Runtime crash after messages');
+      expect(sessionErrorCall![1]).not.toContain('synthetic-runtime-secret');
 
       // Should NOT show startup failure message
       const startupFailCall = sendMessageCalls.find(
@@ -3265,6 +3273,39 @@ describe('ChatAgent (service)', () => {
   });
 
   describe('unexpected iterator terminal outcomes (#5288)', () => {
+    it.each([null, 'om-owned-failure-root'])('settles a fatal agent-loop exception with safe correlated feedback (root=%s)', async replyRootId => {
+      const callbacks = createMockCallbacks();
+      const agent = new ChatAgent({ chatId: 'loop-failure', callbacks, apiKey: 'key', model: 'model', agentBackend: 'codex' });
+      let fail!: (error: Error) => void;
+      const fatal = new Promise<void>((_resolve, reject) => { fail = reject; });
+      vi.spyOn(agent as any, 'processIterator').mockImplementation(() => fatal);
+      const close = vi.fn();
+      (agent as any).createQueryStream = () => ({
+        handle: { close, cancel: vi.fn(), sessionId: 'native-loop-session' },
+        iterator: (async function* () {})(),
+      });
+      try {
+        await agent.processMessage({ chatId: 'loop-failure', payload: 'owned work', messageId: 'owned-loop-source', replyRootId });
+        const outcome = expect(agent.turnCompleteFor('owned-loop-source')).rejects.toMatchObject({
+          diagnosticId: expect.any(String), message: expect.stringContaining('Owned loop crash'),
+        });
+        fail(new Error('Owned loop crash; Bearer synthetic-loop-secret'));
+        await outcome;
+        await vi.waitFor(() => expect(callbacks.sendMessage).toHaveBeenCalledWith('loop-failure', expect.stringContaining('agent-loop-error'), replyRootId ?? undefined));
+        const [, notice] = callbacks.sendMessage.mock.calls.find(([, text]) => text.includes('agent-loop-error'))!;
+        for (const value of ['native-loop-session', 'owned-loop-source', 'UTC:', 'Run ID:', '日志:', 'Owned loop crash']) {
+          expect(notice).toContain(value);
+        }
+        const logs = (agent as any).logger.error.mock.calls;
+        const [terminal] = logs.find(([fields]: any[]) => fields.event === 'agent_turn');
+        expect(notice).toContain(terminal.diagnosticId);
+        expect(notice).not.toContain('synthetic-loop-secret');
+        expect(JSON.stringify(logs)).not.toContain('synthetic-loop-secret');
+        expect(agent.hasPendingWork).toBe(false);
+        expect(close).toHaveBeenCalledOnce();
+      } finally { agent.dispose(); }
+    });
+
     it.each([false, true])('settles active and queued requests once without replay (throws=%s)', async throws => {
       const callbacks = createMockCallbacks();
       const agent = new ChatAgent({ chatId: 'iterator-end', callbacks, apiKey: 'key', model: 'model' });
@@ -3274,9 +3315,9 @@ describe('ChatAgent (service)', () => {
         await ready;
         yield { parsed: { type: 'text', content: 'Partial evidence' } };
         yield { parsed: { type: 'tool_use', content: 'Operation may already have happened' } };
-        if (throws) { throw new Error('Connection closed mid-operation'); }
+        if (throws) { throw new Error('Connection closed mid-operation; Bearer synthetic-iterator-secret'); }
       }
-      const create = vi.fn(() => ({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: events() }));
+      const create = vi.fn(() => ({ handle: { close: vi.fn(), cancel: vi.fn(), sessionId: 'native-iterator-session' }, iterator: events() }));
       (agent as any).createQueryStream = create;
       try {
         await agent.processMessage({ chatId: 'iterator-end', payload: 'first', messageId: 'original', threadRootId: 'first-thread' });
@@ -3291,11 +3332,21 @@ describe('ChatAgent (service)', () => {
         expect(notices[0]).toEqual(['iterator-end', expect.stringContaining('消息 ID: original'), 'first-thread']);
         expect(notices[1]).toEqual(['iterator-end', expect.stringContaining('消息 ID: queued'), 'second-thread']);
         expect(notices.every(([, content]) => String(content).includes('诊断 ID:') && String(content).includes('重新提交'))).toBe(true);
+        for (const [, content] of notices) {
+          for (const field of ['Run ID:', 'native-iterator-session', 'UTC:', '日志:', throws ? 'iterator-error' : 'iterator-ended']) {
+            expect(content).toContain(field);
+          }
+          expect(content).not.toContain('synthetic-iterator-secret');
+        }
         expect(create).toHaveBeenCalledTimes(1);
         expect((agent as any).restartManager.recordSuccess).not.toHaveBeenCalled();
         const outcomes = (agent as any).logger.warn.mock.calls.filter(([fields]: any[]) => fields.state === 'interrupted');
         expect(outcomes.map(([fields]: any[]) => fields.sourceMessageId)).toEqual(['original', 'queued']);
         expect(outcomes.every(([fields]: any[]) => fields.diagnosticId && fields.runId && fields.traceId)).toBe(true);
+        expect(JSON.stringify(outcomes)).not.toContain('synthetic-iterator-secret');
+        if (throws) {
+          await expect(agent.turnCompleteFor('original')).rejects.not.toThrow('synthetic-iterator-secret');
+        }
       } finally { finish(); agent.dispose(); }
     });
 
@@ -6214,6 +6265,29 @@ describe('Issue #4907: completion feedback belongs to delivered output', () => {
 
 
 describe('completion after asynchronous streaming delivery', () => {
+  it('keeps a rootless scheduled stream rootless when iterator loss requires a fallback', async () => {
+    const cb = {
+      ...createMockCallbacks(),
+      getCapabilities: vi.fn(() => ({ supportsStreaming: true, supportsCard: true, supportsThread: true, supportsFile: true, supportsMarkdown: true, supportsMention: true, supportsUpdate: true })),
+      startStreaming: vi.fn().mockResolvedValue('card-rootless'),
+      streamText: vi.fn().mockResolvedValue(undefined),
+      finalizeStreaming: vi.fn().mockRejectedValue(new Error('Freeze failed')),
+    };
+    const agent = new ChatAgent({ chatId: 'rootless-stream', callbacks: cb, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
+    (agent as any).isAgentTeamsEnabled = () => false;
+    (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: (async function* () {
+      yield { parsed: { type: 'text', content: 'Owned partial report' }, raw: {} };
+      throw new Error('Owned iterator loss');
+    })() });
+    try {
+      await agent.processMessage({ chatId: 'rootless-stream', payload: 'scheduled work', messageId: 'sched-rootless-stream', replyRootId: null, chatType: 'p2p' });
+      await expect(agent.turnCompleteFor('sched-rootless-stream')).rejects.toThrow('Owned iterator loss');
+      await vi.waitFor(() => expect(cb.sendMessage).toHaveBeenCalledWith('rootless-stream', expect.stringContaining('Owned partial report'), undefined));
+      expect(cb.startStreaming).toHaveBeenCalledExactlyOnceWith('rootless-stream', undefined);
+      expect(cb.sendMessage.mock.calls.every(call => call[2] === undefined)).toBe(true);
+    } finally { agent.dispose(); }
+  });
+
   it.each([false, true])('waits for finalization and suppresses feedback if cancelled=%s', async (cancelled) => {
     let release!: (id: string) => void;
     const finalDelivery = new Promise<string>((resolve) => { release = resolve; });

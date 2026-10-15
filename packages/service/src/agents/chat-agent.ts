@@ -1631,36 +1631,59 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Process SDK messages in background
     this.processIterator(iterator).catch(async (err) => {
+      if (this.sessionGeneration !== activityGeneration || this.disposed ||
+          this.stoppedQueryGenerations.has(activityGeneration)) { return; }
+      const diagnosticId = crypto.randomUUID();
+      const detail = sanitizeDiagnosticText(err instanceof Error ? err.message : String(err));
+      const safeError = Object.assign(new Error(detail), { diagnosticId, backend: this.agentBackend, provider: this.sdkProvider.name });
+      const affected = new Map(
+        [
+          { context: this.activeLifecycleContext, anchor: this.activityThreadRootId },
+          ...this.pendingLifecycleContexts.map((context, index) => ({ context, anchor: this.pendingTurnAnchors[index] })),
+        ].filter((entry): entry is { context: NonNullable<StreamingUserMessage['correlation']>; anchor: string | null | undefined } =>
+          !!entry.context && this.turnCompletions.get(entry.context.sourceMessageId)?.settled === false)
+          .map(entry => [entry.context.sourceMessageId, entry]),
+      );
+      const failures = [...affected.values()].map(({ context, anchor }) =>
+        this.createFailureContext(context, anchor, 'agent-loop-error', detail, diagnosticId));
       this.logger.error(
         {
-          err,
-          chatId,
-          errorMessage: err instanceof Error ? err.message : String(err),
-          errorStack: err instanceof Error ? err.stack : undefined,
+          chatId, diagnosticId, backend: this.agentBackend, provider: this.sdkProvider.name,
+          errorMessage: detail,
+          errorStack: err instanceof Error && err.stack ? sanitizeDiagnosticText(err.stack) : undefined,
         },
         'Agent loop error'
       );
       this.isSessionActive = false;
       this.isProcessingMessage = false;
+      this.rejectTurn(safeError);
+      this.pendingLifecycleContexts = [];
+      this.pendingTurnMessageIds = [];
+      this.pendingTurnAnchors = [];
+      this.activeTurnMessageId = undefined;
+      for (const transport of [this.channel, this.queryHandle]) {
+        try { transport?.close(); }
+        catch (closeError) {
+          this.logger.warn({ chatId, diagnosticId, errorMessage: sanitizeDiagnosticText(
+            closeError instanceof Error ? closeError.message : String(closeError)) }, 'Failed to close the failed agent transport');
+        }
+      }
+      this.channel = undefined;
+      this.queryHandle = undefined;
 
       // Issue #3124: Reject completion promise on outer catch
-      this.taskCompletionReject?.(err instanceof Error ? err : new Error(String(err)));
+      this.taskCompletionReject?.(safeError);
       this.clearTaskCompletion();
 
       // Issue #1357: Notify user about the critical failure.
       // This is the outer catch — if processIterator itself throws (not an inner
       // iteration error, which is already handled inside processIterator), the user
       // currently sees complete silence. Send a fallback notification.
-      try {
-        await this.callbacks.sendMessage(
-          chatId,
-          '❌ 处理消息时发生严重错误，会话已中断。请发送 /reset 重置会话后重试。'
-        );
-      } catch (notifyErr) {
-        this.logger.error(
-          { err: notifyErr, chatId },
-          'Failed to send agent loop error notification'
-        );
+      for (const failure of failures) {
+        const delivered = await this.deliverUserVisible(chatId,
+          `❌ 处理消息时发生严重错误，会话已中断。请先核对已执行的操作，再发送 /reset 重置会话。\n${this.formatFailureDiagnostic(failure)}`,
+          failure.threadRootId === 'none' ? undefined : failure.threadRootId);
+        this.logger.error({ ...failure, event: 'agent_turn', state: 'failed', user_visible: delivered }, 'Agent loop terminal failure');
       }
     });
   }
@@ -1830,6 +1853,20 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     this.taskCompletionReject = undefined;
   }
 
+  private createFailureContext(context: StreamingUserMessage['correlation'], anchor: string | null | undefined,
+    failureClass: string, detail: string, diagnosticId: string, sessionId = this.queryHandle?.sessionId) {
+    return { ...context, chatId: this.boundChatId, diagnosticId, sessionId: sessionId ?? 'unavailable',
+      threadRootId: anchor ?? 'none', backend: this.agentBackend, provider: this.sdkProvider.name,
+      logPath: `${sanitizeDiagnosticText(process.env.LOG_DIR ?? './logs')}/disclaude-combined*.log`,
+      failureClass, timestamp: new Date().toISOString(), detail: sanitizeDiagnosticText(detail) };
+  }
+
+  private formatFailureDiagnostic(failure: ReturnType<ChatAgent['createFailureContext']>): string {
+    return `诊断 ID: ${failure.diagnosticId}\nRun ID: ${failure.runId ?? 'unavailable'}\n会话 ID: ${failure.sessionId}\n消息 ID: ${failure.sourceMessageId ?? 'unavailable'}\n` +
+      `Chat ID: ${failure.chatId}；Thread: ${failure.threadRootId}\nUTC: ${failure.timestamp}；Backend: ${failure.backend ?? failure.provider}；分类: ${failure.failureClass}\n` +
+      `错误: ${failure.detail}\n日志: ${failure.logPath}（或服务 stderr），按诊断 ID 检索。`;
+  }
+
   /**
    * Process the SDK iterator for this chatId.
    *
@@ -1924,8 +1961,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       consumeTurnAnchor();
       return currentTurnAnchor === null ? undefined : currentTurnAnchor ?? this.conversationOrchestrator.getThreadRoot(chatId);
     };
+    const failureContext = (context: StreamingUserMessage['correlation'], anchor: string | null | undefined,
+      failureClass: string, detail: string, sessionId = this.queryHandle?.sessionId) =>
+      this.createFailureContext(context, anchor, failureClass, detail, diagnosticId, sessionId);
     const finishUnexpectedTurns = async (error: Error, startupCategory?: string): Promise<void> => {
       if (this.sessionGeneration !== myGeneration || this.stoppedQueryGenerations.has(myGeneration)) { return; }
+      const sessionId = this.queryHandle?.sessionId;
+      const safeError = Object.assign(new Error(sanitizeDiagnosticText(error.message)), {
+        name: error.name, diagnosticId, backend: this.agentBackend, provider: this.sdkProvider.name,
+      });
       // An iterator can end before its first event or between queued turns.
       // Never attribute that failure to the preceding completed request.
       if (!turnHasTerminal && !currentTurnLifecycleContext) { consumeTurnAnchor(); }
@@ -1943,8 +1987,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.queryHandle?.close();
       this.channel = undefined;
       this.queryHandle = undefined;
-      this.rejectTurn(error);
-      this.taskCompletionReject?.(error);
+      this.rejectTurn(safeError);
+      this.taskCompletionReject?.(safeError);
       this.clearTaskCompletion();
       this.pendingLifecycleContexts = [];
       this.pendingTurnMessageIds = [];
@@ -1952,16 +1996,18 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.activeTurnMessageId = undefined;
       const classification = tagErrorCategory(error);
       for (const { context, anchor } of affected) {
+        const failure = failureContext(context, anchor, startupCategory ? 'startup-failure'
+          : iteratorError ? 'iterator-error' : 'iterator-ended', error.message, sessionId);
         const prefix = startupCategory ? `❌ Agent 启动失败（${startupCategory}）。` : '❌ 本次请求中断，结果可能不完整。';
         const guidance = startupCategory ? '请检查配置、权限和运行环境，修复后发送 /reset。' :
           '请先核对已经执行的操作，再决定是否重新提交或发送消息继续；系统没有自动重放工具。';
-        const notice = `${prefix}消息 ID: ${context.sourceMessageId}。诊断 ID: ${diagnosticId}。${guidance}`;
+        const notice = `${prefix}${guidance}\n${this.formatFailureDiagnostic(failure)}`;
         const delivered = await this.deliverUserVisible(chatId, notice, anchor ?? undefined);
-        this.logger.warn({ ...context, diagnosticId, event: 'agent_turn',
+        this.logger.warn({ ...failure, event: 'agent_turn',
           state: startupCategory ? 'failed' : 'interrupted',
           interruptionCause: iteratorError ? 'iterator_error' : 'iterator_ended',
           errorCategory: classification.category, transient: classification.transient,
-          errorMessage: error.message, user_visible: delivered,
+          errorMessage: failure.detail, user_visible: delivered,
         }, 'Terminal outcome for request whose iterator ended without a result (#5288)');
       }
       turnHasTerminal = true;
@@ -2243,17 +2289,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // always has a user-visible terminal outcome.
           if (parsed.terminatedReason === 'turn_failed') {
             this.restartManager.recordFailure(chatId, 'turn_failed');
-            const failure = { ...this.activeLifecycleContext, chatId, diagnosticId,
-              sessionId: parsed.sessionId ?? this.queryHandle?.sessionId ?? 'unavailable',
-              threadRootId: resolveReplyThreadRoot() ?? 'none', backend: this.agentBackend,
-              provider: this.sdkProvider.name, logPath: `${sanitizeDiagnosticText(process.env.LOG_DIR ?? './logs')}/disclaude-combined*.log`, failureClass: 'provider-turn-failed', timestamp: new Date().toISOString(),
-              detail: sanitizeDiagnosticText(parsed.terminationDetail || parsed.content || 'Provider turn failed') };
+            const failure = failureContext(this.activeLifecycleContext, resolveReplyThreadRoot(), 'provider-turn-failed',
+              parsed.terminationDetail || parsed.content || 'Provider turn failed', parsed.sessionId ?? this.queryHandle?.sessionId);
             const delivered = await this.deliverUserVisible(
               chatId,
-              `❌ 本轮 ${failure.provider} 执行失败，未生成可交付结果。请先核对已执行的操作，再检查模型服务、凭据和超时配置。\n` +
-                `诊断 ID: ${diagnosticId}\nRun ID: ${failure.runId ?? 'unavailable'}\n会话 ID: ${failure.sessionId}\n消息 ID: ${failure.sourceMessageId ?? currentTurnMessageId ?? 'unavailable'}\n` +
-                `Chat ID: ${chatId}；Thread: ${failure.threadRootId}\nUTC: ${failure.timestamp}；Backend: ${failure.backend ?? failure.provider}；分类: ${failure.failureClass}\n` +
-                `错误: ${failure.detail}\n日志: ${failure.logPath}（或服务 stderr），按诊断 ID 检索。`,
+              `❌ 本轮 ${failure.provider} 执行失败，未生成可交付结果。请先核对已执行的操作，再检查模型服务、凭据和超时配置。\n${this.formatFailureDiagnostic(failure)}`,
               resolveReplyThreadRoot()
             );
             this.logger.error({ ...failure, event: 'agent_turn_failure', user_visible: delivered }, 'Provider turn failed');
@@ -2264,16 +2304,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           if (parsed.terminatedReason === 'stall') {
             this.stalledTerminated = true;
             const lifecycleContext = this.activeLifecycleContext;
-            const sourceMessageId = lifecycleContext?.sourceMessageId ?? currentTurnMessageId;
+            const failure = failureContext(lifecycleContext, resolveReplyThreadRoot(), 'provider-stall',
+              parsed.terminationDetail ?? 'Provider stall watchdog terminated the turn', parsed.sessionId ?? this.queryHandle?.sessionId);
             const providerNotice = sanitizeDiagnosticText(parsed.content?.trim() || `⚠️ ${this.sdkProvider.name} 响应已中断，结果可能不完整。`);
             const delivered = await this.deliverUserVisible(chatId,
-              `${providerNotice}\n消息 ID: ${sourceMessageId ?? 'unknown'}。诊断 ID: ${diagnosticId}。` +
-                '请先核对已经执行的操作，再决定是否继续；系统没有自动重放工具。',
+              `${providerNotice}\n请先核对已经执行的操作，再决定是否继续；系统没有自动重放工具。\n${this.formatFailureDiagnostic(failure)}`,
               resolveReplyThreadRoot());
             this.logger.warn(
-              { chatId, messageCount, backend: this.agentBackend, provider: this.sdkProvider.name,
-                terminationDetail: parsed.terminationDetail, ...lifecycleContext,
-                event: 'agent_turn', state: 'failed', diagnosticId, user_visible: delivered },
+              { ...failure, messageCount, terminationDetail: failure.detail,
+                event: 'agent_turn', state: 'failed', user_visible: delivered },
               'Provider stall: watchdog terminated the stream; recording failure, resolving turn'
             );
             this.restartManager.recordFailure(chatId, 'stall');
@@ -2886,7 +2925,6 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         // Issue #3003: Log detailed timing on iterator error
         this.logger.error(
           {
-            err: iteratorError,
             diagnosticId,
             ...((!turnHasTerminal ? currentTurnLifecycleContext : undefined) ?? this.pendingLifecycleContexts[0]),
             chatId,
@@ -2894,10 +2932,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             elapsedMs,
             ttftMs: firstMessageMs ? firstMessageMs - startTime : undefined,
             toolCallCount,
-            errorMessage: iteratorError.message,
-            errorStack: iteratorError.stack,
+            errorMessage: sanitizeDiagnosticText(iteratorError.message),
+            errorStack: iteratorError.stack ? sanitizeDiagnosticText(iteratorError.stack) : undefined,
             errorName: iteratorError.constructor.name,
-            errorCause: iteratorError.cause,
+            errorCause: iteratorError.cause === undefined ? undefined : sanitizeDiagnosticText(
+              iteratorError.cause instanceof Error ? iteratorError.cause.message : String(iteratorError.cause)),
           },
           'Iterator error'
         );
@@ -2908,7 +2947,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         // 重试无法解决，直接向用户展示具体错误。
         const classification = tagErrorCategory(iteratorError);
         if (isStartupFailure(messageCount, elapsedMs) && !classification.transient && classification.category !== 'UNKNOWN') {
-          const stderr = getErrorStderr(iteratorError);
+          const rawStderr = getErrorStderr(iteratorError);
+          const stderr = rawStderr ? sanitizeDiagnosticText(rawStderr) : undefined;
           this.logger.error(
             {
               chatId,
@@ -2940,7 +2980,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // when streaming never started or the channel doesn't stream — the
       // driver's finish() is idempotent and only acts in the streaming state.
       if (streamDriver) {
-        const finishThreadRoot = currentTurnAnchor ?? this.conversationOrchestrator.getThreadRoot(chatId);
+        const finishThreadRoot = currentTurnAnchor === null ? undefined : currentTurnAnchor ?? this.conversationOrchestrator.getThreadRoot(chatId);
         const terminalDelivered = await streamDriver.finish(finishThreadRoot);
         if (!terminalDelivered) {
           this.logger.error(
@@ -3115,7 +3155,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
 
     // Iterator ended without explicit close - determine error message for restart logic
-    const errorMessage = iteratorError?.message ?? 'Unknown error';
+    const errorMessage = sanitizeDiagnosticText(iteratorError?.message ?? 'Unknown error');
     // Classify the restart-triggering error before touching RestartManager.
     // Persistent configuration, validation, and permission errors already have
     // a user-visible diagnostic from the iterator catch above. They are a
