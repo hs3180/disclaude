@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { spawn } from 'node:child_process';
-import { accessSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { accessSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -10,12 +10,15 @@ import { browserStatus, prepareBrowserCommands, resolveBrowserUse, resolveCdpEnd
 
 const roots = new Set<string>();
 const children = new Set<ReturnType<typeof spawn>>();
+const services = new Set<{ stop(): Promise<void> }>();
 afterEach(async () => {
   await Promise.all([...children].map(child => new Promise<void>(done => {
     child.once('close', () => done());
     if (child.exitCode === null && child.signalCode === null) { child.kill('SIGTERM'); }
   })));
   children.clear();
+  await Promise.all([...services].map(service => service.stop()));
+  services.clear();
   for (const root of roots) { rmSync(root, { recursive: true, force: true }); }
   roots.clear();
 });
@@ -45,6 +48,7 @@ setTimeout(() => {
   const fetchImpl = vi.fn(() => Promise.resolve(new Response(JSON.stringify({ webSocketDebuggerUrl: `ws://127.0.0.1:9999/devtools/browser/${browserId}` }))));
   const start = async (values = env) => {
     const service = await prepareBrowserCommands({ env: values, fetchImpl });
+    services.add(service);
     const path = resolveBrowserRuntimePath(values);
     const data = JSON.parse(readFileSync(path, 'utf8'));
     roots.add(data.directory);
@@ -69,6 +73,57 @@ setTimeout(() => {
 }
 
 describe('transparent browser-use command coordination', () => {
+  it('recovers a reused legacy PID while preserving a live legacy owner', async () => {
+    const f = await fixture();
+    await f.service.stop();
+    const legacy = { ...f.data };
+    delete legacy.ownerLock;
+    writeFileSync(f.path, JSON.stringify(legacy));
+    await expect(f.start()).rejects.toThrow(/already belong/);
+    const previousIncarnation = new Date(Date.now() - (process.uptime() + 60) * 1000);
+    utimesSync(f.path, previousIncarnation, previousIncarnation);
+    expect(() => browserStatus(f.path)).toThrow(/unavailable/);
+    const recovered = await f.start();
+    expect(recovered.data.pid).toBe(process.pid);
+    expect(recovered.data.instance).not.toBe(legacy.instance);
+    expect(browserStatus(f.path).state).toBe('idle');
+  });
+
+  it('fences a live owner and reclaims its abandoned lock after SIGKILL and PID reuse', async () => {
+    const f = await fixture();
+    await f.service.stop();
+    const module = new URL('./service.mjs', import.meta.url).href;
+    const script = `import { prepareBrowserCommands } from ${JSON.stringify(module)};
+      await prepareBrowserCommands({ fetchImpl: async () => new Response(JSON.stringify({
+        webSocketDebuggerUrl: ${JSON.stringify(f.data.browserEnv.BU_CDP_WS)}
+      })) });
+      setInterval(() => {}, 1000);`;
+    const owner = spawn(process.execPath, ['--input-type=module', '-e', script], { env: f.env, stdio: 'ignore' });
+    children.add(owner);
+    const closed = new Promise<void>(resolve => owner.once('close', () => { children.delete(owner); resolve(); }));
+    await vi.waitFor(() => expect(JSON.parse(readFileSync(f.path, 'utf8')).pid).toBe(owner.pid));
+    await expect(f.start()).rejects.toThrow(/already belong/);
+    owner.kill('SIGKILL');
+    await closed;
+    const abandoned = JSON.parse(readFileSync(f.path, 'utf8'));
+    writeFileSync(f.path, JSON.stringify({ ...abandoned, pid: process.pid }));
+    expect(() => browserStatus(f.path)).toThrow(/unavailable/);
+    const recovered = await f.start();
+    expect(recovered.data.instance).not.toBe(abandoned.instance);
+    expect(browserStatus(f.path).state).toBe('idle');
+  });
+
+  it('releases service ownership when a startup write fails', async () => {
+    const f = await fixture();
+    await f.service.stop();
+    const launcher = join(dirname(f.path), 'bin', 'browser-use');
+    mkdirSync(launcher);
+    await expect(f.start()).rejects.toThrow(/EISDIR/);
+    rmSync(launcher, { recursive: true });
+    const recovered = await f.start();
+    expect(browserStatus(recovered.path).state).toBe('idle');
+  });
+
   it('passes arguments, stdin, cwd, output and exit code to the installed CLI', async () => {
     const f = await fixture();
     const op = { inspect: true, stderr: 'upstream stderr', code: 7 };

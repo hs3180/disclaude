@@ -64,6 +64,10 @@ existing user profiles. It also does not guarantee higher quality for every task
 The upstream SDK-minimal defaults omit managed credentials, skill discovery and
 compaction; supply API credentials through the bound LLM's `api.apiKey` reference and
 check the capabilities of your installed version before using long-running tasks.
+The pinned minimal profile also omits an attachment store. Text and native tools
+remain available; image prompts are rejected before enqueue until an attachment
+plugin is configured. Standard profiles that provide a store keep durable image
+admission. Host tools producing images require that same store.
 
 On macOS and Linux, the owned DSH process uses a UTF-8 locale for its persistent
 Bash terminal. A host with no locale or a `C`/`POSIX` override can otherwise make
@@ -80,5 +84,45 @@ the selected composition with `DSH_HOME=... dsh --profile sdk-minimal
 --dump-default-config` (or `sdk`). The dump shows composition, not evidence that a
 model/tool task completes. Use `--dump-config` locally to inspect user overrides;
 configuration output may contain private settings.
+
+## SDK and plugin integration
+
+The service uses one supported DSH launcher and a disclaude Cordis plugin:
+
+```text
+disclaude provider → dsh --profile sdk / sdk-minimal --patch …
+                    └─ disclaude native-app plugin → native Agent, Session and tools
+```
+
+DSH owns profile composition, persistence and terminal services. The plugin owns
+disclaude's dynamic host-tool callbacks, system context and session cancellation.
+There is no second Node worker launcher or manually assembled SDK application tree.
+
+For an isolated TypeScript SDK experiment, use the [official SDK probe](../tests/dsh/README.md#official-typescript-sdk-prototype).
+It calls the pinned `DeepSeekHarness` API and mounts a small tool plugin through an
+ordinary profile patch. The SDK resolves its matching DSH dependency, so this
+experiment needs no global `dsh` executable. It adds no SDK runtime dependency to
+the service package and does not change its configuration or startup path.
+
+| Capability | Service plugin | Official TypeScript SDK 0.1.2-rc.1 prototype |
+| --- | --- | --- |
+| Startup | Configured `dsh` and selected profile | SDK-owned matching `dsh` dependency |
+| Composition | `standard` / `minimal`, with home patches | Same named profiles and ordered patches |
+| Bound OpenAI / Anthropic APIs | Named LLM connection | Same named connection, isolated home and workspace |
+| Tools | Dynamic host callbacks through the disclaude plugin | Native tools and a probe plugin in the SDK-owned process |
+| Persistence | Explicit create/resume through the plugin | Native logs; the pinned high-level SDK has no persisted-resume API |
+| Cancel | Per-session native cancel and host-operation drain | Close the entire SDK-owned runtime; no mid-turn cancel API |
+| Shutdown | Await owned process exit | Official `close()` |
+
+The [official SDK](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/sdk/client)
+also starts a DSH profile in a child process. Its public API does not accept
+server-to-client tool requests. Replacing the service adapter with it would first
+require a supported host-tool and cancellation contract. This prototype establishes
+the simpler SDK/plugin boundary; it does not claim that production migration is complete.
+
+Earlier experimental `DISCLAUDE_DSH_BOOTSTRAP` settings are obsolete. Remove them;
+the service always uses the single plugin path. The isolated prototype has no
+production switch to roll back: close it and retain the service configuration,
+workspace and DSH home.
 
 Upstream: https://github.com/deepseek-ai/deepseek-harness/blob/master/python/sdk/examples/README.md
