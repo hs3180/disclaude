@@ -21,6 +21,12 @@ export class FeishuPrivateInput {
 
   async request(action: string, actor: string, chat: string, source: string): Promise<void> {
     const issued = this.handoff.issue(action, actor, chat, source);
+    for (const [id, owner] of this.cards) {
+      if (owner.actor === actor && owner.chat === chat) {
+        this.cards.delete(id);
+        void this.update?.(id, statusCard(PRIVATE_INPUT_EXPIRED)).catch(() => {});
+      }
+    }
     const card = {
       schema: '2.0', config: { enable_forward: false, update_multi: true },
       header: { title: { tag: 'plain_text', content: this.handoff.action.title } },

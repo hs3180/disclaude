@@ -37,6 +37,16 @@ describe('private input transport', () => {
     expect(FeishuPrivateInput.isPrivateCallback({ action: 'malformed' })).toBe(false);
   });
 
+  it('removes the previous legacy form controls when the same actor reissues', async () => {
+    const send = vi.fn().mockResolvedValueOnce('first-card').mockResolvedValueOnce('second-card');
+    const update = vi.fn().mockResolvedValue(undefined);
+    const input = new FeishuPrivateInput(new ActionBoundInput({ id: 'action', title: 'Input', description: 'One use', consume: vi.fn() }, () => {}), send, update);
+    await input.request('action', 'actor', 'chat', 'source');
+    await input.request('action', 'actor', 'chat', 'source-2');
+    expect(update).toHaveBeenCalledWith('first-card', expect.objectContaining({ body: { elements: [{ tag: 'markdown', content: expect.stringContaining('重新发起') }] } }));
+    expect(JSON.stringify(update.mock.calls)).not.toContain('credential');
+  });
+
   it('invalidates revoked forms and never reflects rejected values, even if patching fails', async () => {
     const consume = vi.fn();
     const send = vi.fn().mockResolvedValue('card');
