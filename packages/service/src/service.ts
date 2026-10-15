@@ -749,9 +749,7 @@ export class DisclaudeService extends EventEmitter {
           chatId,
           text: message,
         };
-        const channel = this.channelManager.resolveChannelForChatId(chatId);
-        if (!channel) {throw new Error('Scheduled notification has no owning channel');}
-        return await channel.sendMessage(outgoingMessage);
+        return await this.channelManager.broadcast(outgoingMessage);
       },
       resetAgent: (chatId: string, skipContext: boolean = true): void => {
         this.agentPool?.reset(chatId, skipContext);
