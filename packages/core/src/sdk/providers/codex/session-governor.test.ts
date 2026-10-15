@@ -280,7 +280,12 @@ describe('busy session admission', () => {
     const g = new CodexSessionGovernor({ maxActiveSessions: 1 });
     const {signal} = new AbortController();
     const old = await g.acquireSession('same', { evict: NOOP }, signal);
-    const replacement = await g.acquireSession('same', { evict: NOOP }, signal);
+    let replaced = false;
+    const replacing = g.acquireSession('same', { evict: NOOP }, signal).then(r => {replaced = true; return r;});
+    await Promise.resolve();
+    expect(replaced).toBe(false);
+    old.unregister();
+    const replacement = await replacing;
     old.setBusy(false);
     let admitted = false;
     const waiting = g.acquireSession('other', { evict: NOOP }, signal).then(r => {admitted = true; return r;});

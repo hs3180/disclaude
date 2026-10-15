@@ -1258,7 +1258,6 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     let stopped = false;
     let wasEvicted = false;
     const admissionAbort = new AbortController();
-    let registration: SessionRegistration | undefined;
     let stopInput!: () => void;
     const stopSignal = new Promise<void>((resolveStop) => { stopInput = resolveStop; });
     let activeTurnId: string | undefined;
@@ -1520,17 +1519,6 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             stopSignal.then(() => ({ done: true, value: undefined } as IteratorResult<UserInput>)),
           ]);
           if (next.done || stopped) {break;}
-          if (!registration) {
-            registration = await sessionGovernor.acquireSession(sessionKey, {
-              evict: () => {
-                wasEvicted = true;
-                stopHandle('codex app-server session evicted');
-              },
-            }, admissionAbort.signal);
-          }
-          // Pin before waiting for a run slot, through subprocess teardown.
-          registration.setBusy(true);
-          if (stopped) {break;}
           let retryWaitedMs = 0;
           for (let retryAttempt = 0; ; retryAttempt++) {
             turnCanRetry = true;
@@ -1545,6 +1533,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             }
             let bindTurn!: (id: string | undefined) => void;
             const turnBinding = new Promise<string | undefined>(resolve => { bindTurn = resolve; });
+            let registration: SessionRegistration | undefined;
             const onDynamicToolCall = dynamicToolRegistry.specs.length > 0 ? async (request: CodexAppServerDynamicToolCallRequest) => {
               const boundTurn = await turnBinding;
               if (!boundTurn || stopped || request.threadId !== threadId || request.turnId !== boundTurn
@@ -1555,6 +1544,14 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               return dynamicToolRegistry.call(request);
             } : undefined;
             try {
+              // App-server connections live for one attempt, not for the input
+              // stream. Run-slot waiters and completed chats own no connection.
+              registration = await sessionGovernor.acquireSession(sessionKey, {
+                evict: () => {
+                  wasEvicted = true;
+                  stopHandle('codex app-server session evicted');
+                },
+              }, admissionAbort.signal);
               if (stopped) {break;}
               activeCorrelation = next.value.correlation;
               lastEventAt = Date.now();
@@ -1659,14 +1656,20 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               sessionGovernor.touchSession(sessionKey);
             } finally {
               bindTurn(undefined);
-              await interruptFlight;
-              if (threadId && this.appServerRoutes.get(threadId) === onNotification) {this.appServerRoutes.delete(threadId);}
-              await lifecycle?.close();
-              if (this.appServerLifecycles.get(sessionKey) === lifecycle) {this.appServerLifecycles.delete(sessionKey);}
-              lifecycle = undefined;
-              if (stallTimer) {clearTimeout(stallTimer);}
-              openToolItems = 0;
-              lease.release();
+              try {
+                await interruptFlight;
+                if (threadId && this.appServerRoutes.get(threadId) === onNotification) {this.appServerRoutes.delete(threadId);}
+                await lifecycle?.close();
+              } finally {
+                if (this.appServerLifecycles.get(sessionKey) === lifecycle) {this.appServerLifecycles.delete(sessionKey);}
+                lifecycle = undefined;
+                if (stallTimer) {clearTimeout(stallTimer);}
+                openToolItems = 0;
+                // Closing the transport precedes FIFO admission; thread ids
+                // remain available to this stream and later resumptions.
+                registration?.unregister();
+                lease.release();
+              }
             }
             if (stopped || !deferredTurnOverload) { break; }
             const failure = deferredTurnOverload as CodexOverloadFailure;
@@ -1681,7 +1684,6 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             if (!await waitForCodexOverloadRetry(delayMs, admissionAbort.signal)) { break; }
             retryWaitedMs += delayMs;
           }
-          registration.setBusy(false);
         }
       } catch (error) {
         if (!stopped) {
@@ -1695,7 +1697,6 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         asyncInputs.close();
         await interruptFlight;
         if (stallTimer) {clearTimeout(stallTimer);}
-        registration?.unregister();
         if (wasEvicted) {
           // Issue #4987: ChatAgent must end idle eviction without reconnecting.
           push({ type: 'result', content: '', role: 'system', metadata: { terminatedReason: 'evicted' } });

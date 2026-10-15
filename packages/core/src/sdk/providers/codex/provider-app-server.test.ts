@@ -948,25 +948,33 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
 
   function start(provider: CodexAgentProvider, sessionKey: string) {
     let release!: () => void;
+    let send!: (input: UserInput | undefined) => void;
     const pending = new Promise<void>(resolve => { release = resolve; });
+    const followup = new Promise<UserInput | undefined>(resolve => { send = resolve; });
     const result = provider.queryStream((async function* () {
       yield { role: 'user', content: 'hold until steer' } as UserInput;
+      const next = await followup;
+      if (next) { yield next; }
       await pending;
     })(), { sessionKey, settingSources: [] } as AgentQueryOptions);
     const messages: AgentMessage[] = [];
     const collecting = (async () => {
       for await (const message of result.iterator) {messages.push(message);}
     })();
-    return { ...result, messages, collecting, release };
+    return { ...result, messages, collecting,
+      send: () => send({ role: 'user', content: 'continue the same conversation' } as UserInput),
+      release: () => { send(undefined); release(); },
+    };
   }
   type Stream = ReturnType<typeof start>;
   const started = (stream: Stream) => vi.waitFor(() => expect(stream.messages.some(m => m.type === 'status')).toBe(true));
   const complete = async (stream: Stream) => {
+    const completed = stream.messages.filter(m => m.content === '✅ Complete').length;
     await stream.handle.steer?.('finish');
-    await vi.waitFor(() => expect(stream.messages.some(m => m.content === '✅ Complete')).toBe(true));
+    await vi.waitFor(() => expect(stream.messages.filter(m => m.content === '✅ Complete')).toHaveLength(completed + 1));
   };
 
-  it('protects the older running turn, silently evicts idle, and resumes its thread', async () => {
+  it('releases completed connections without evicting idle streams and resumes their threads', async () => {
     const provider = controlledProvider();
     provider.setGovernanceLimits({ maxActiveSessions: 2, maxConcurrentRuns: 2 });
     const streams: Stream[] = [];
@@ -977,22 +985,28 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
       await started(idle);
       await complete(idle);
       await vi.waitFor(() => expect(provider.getGovernanceStats().runningRuns).toBe(1));
+      expect(provider.getGovernanceStats().activeSessions).toBe(1);
       const threadId = idle.handle.sessionId;
       const newcomer = start(provider, 'new'); streams.push(newcomer);
       await started(newcomer);
-      await idle.collecting;
       expect(idle.messages.filter(m => m.type === 'error')).toEqual([]);
-      expect(idle.messages.filter(m => m.metadata?.terminatedReason === 'evicted')).toEqual([
-        { type: 'result', content: '', role: 'system', metadata: { terminatedReason: 'evicted' } },
-      ]);
+      expect(idle.messages.filter(m => m.metadata?.terminatedReason === 'evicted')).toEqual([]);
       expect(active.messages.some(m => m.type === 'result' || m.type === 'error')).toBe(false);
       await complete(active);
       await complete(newcomer);
       await vi.waitFor(() => expect(provider.getGovernanceStats().runningRuns).toBe(0));
-      const resumed = start(provider, 'idle'); streams.push(resumed);
-      await started(resumed);
-      expect(resumed.handle.sessionId).toBe(threadId);
-      expect(provider.getGovernanceStats().activeSessions).toBe(2);
+      expect(provider.getGovernanceStats().activeSessions).toBe(0);
+      idle.send();
+      await vi.waitFor(() => expect(idle.messages.filter(m => m.type === 'status')).toHaveLength(2));
+      expect(idle.handle.sessionId).toBe(threadId);
+      expect(provider.getGovernanceStats().activeSessions).toBe(1);
+      await complete(idle);
+      await vi.waitFor(() => expect(provider.getGovernanceStats().activeSessions).toBe(0));
+      provider.forgetSession('idle');
+      const reset = start(provider, 'idle'); streams.push(reset);
+      await started(reset);
+      expect(reset.handle.sessionId).not.toBe(threadId);
+      expect(provider.getGovernanceStats().evictedSessions).toBe(0);
     } finally {
       provider.dispose();
       for (const stream of streams) {stream.release();}
@@ -1001,9 +1015,12 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     expect(provider.getGovernanceStats().activeSessions).toBe(0);
   });
 
-  it('queues at an all-busy cap and removes cancelled admission without spawning a turn', async () => {
+  it.each([
+    { maxActiveSessions: 1, maxConcurrentRuns: 2 },
+    { maxActiveSessions: 3, maxConcurrentRuns: 1 },
+  ])('counts only live connections and cancels queued admission (%j)', async limits => {
     const provider = controlledProvider();
-    provider.setGovernanceLimits({ maxActiveSessions: 1, maxConcurrentRuns: 1 });
+    provider.setGovernanceLimits(limits);
     const streams: Stream[] = [];
     try {
       const active = start(provider, 'active'); streams.push(active);
@@ -1020,8 +1037,8 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
       expect(waiting.messages).toEqual([]);
       await complete(active);
       await started(waiting);
-      await active.collecting;
-      expect(active.messages.some(m => m.metadata?.terminatedReason === 'evicted')).toBe(true);
+      expect(active.messages.some(m => m.metadata?.terminatedReason === 'evicted')).toBe(false);
+      expect(provider.getGovernanceStats().activeSessions).toBe(1);
       expect(provider.getGovernanceStats().runningRuns).toBe(1);
       await complete(waiting);
     } finally {
