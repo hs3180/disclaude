@@ -54,6 +54,7 @@ interface QueryState {
   wake(): void;
   abort: AbortController;
   deliveredAssistantMessages: Set<string>;
+  lastPublicCommentary: string;
   tools: Map<string, ToolDefinition>;
   invocations: Map<string, NativeInvocation>;
   receivedInvocations: Set<string>;
@@ -224,6 +225,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
       wake: () => wake(),
       abort: new AbortController(),
       deliveredAssistantMessages: new Set(),
+      lastPublicCommentary: '',
       tools,
       invocations: new Map(),
       receivedInvocations: new Set(),
@@ -576,8 +578,19 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
         state.deliveredAssistantMessages.add(message.id);
       }
     }
-    if (params.event.type === 'turn/end') { state.deliveredAssistantMessages.clear(); }
-    state.events.push(...adaptDeepSeekEvent(params.event));
+    if (params.event.type === 'turn/end') {
+      state.deliveredAssistantMessages.clear();
+      state.lastPublicCommentary = '';
+    }
+    for (const message of adaptDeepSeekEvent(params.event)) {
+      if (message.metadata?.phase === 'commentary') {
+        const text = message.content.trim();
+        if (!text || text === state.lastPublicCommentary ||
+          /^[\s🤔⏳🔄]*(?:thinking|working|compacting|正在思考|思考中|处理中)[\s.!…。]*$/i.test(text)) { continue; }
+        state.lastPublicCommentary = text;
+      }
+      state.events.push(message);
+    }
     state.wake();
   }
 }

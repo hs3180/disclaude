@@ -107,6 +107,9 @@ rl.on('line', line => {
   notify('session.status', { sessionId: sid, status: 'idle' });
   };
   ${options.publicStages ? `
+  notify('session.event', { sessionId: sid, event: { type: 'assistant/message', data: { message: {
+    id: 'placeholder', content: [{ type: 'text', text: '🤔 Thinking...' }, { type: 'tool-call', name: 'read_file' }]
+  } } } });
   for (let stage = 1; stage <= 5; stage++) {
     const event = { type: 'assistant/message', data: { message: { id: 'stage-' + stage, content: [
       { type: 'reasoning', text: 'private reasoning' },
@@ -115,6 +118,7 @@ rl.on('line', line => {
     ] } } };
     notify('session.event', { sessionId: sid, event });
     notify('session.event', { sessionId: sid, event });
+    notify('session.event', { sessionId: sid, event: { ...event, data: { message: { ...event.data.message, id: 'repeat-' + stage } } } });
   }
   const gate = setInterval(() => {
     if (fs.existsSync(path.join(root, 'release-stages'))) { clearInterval(gate); finish(); }
@@ -299,7 +303,7 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
     }
   });
 
-  it('streams five distinct public messages before tools or completion and ignores duplicate message IDs', async () => {
+  it('streams five distinct public messages before tools or completion, suppressing duplicates and empty placeholders', async () => {
     const fixture = await sdkFixture({ publicStages: true });
     const provider = new DeepSeekHarnessProvider({ apiKey: 'test-key', binary: fixture.binary, dshHome: fixture.dir });
     try {

@@ -2,9 +2,10 @@
 
 DSH delivers each completed public intermediate result or decision as a separate
 chat message, using the same commentary/final-answer contract as Codex. Messages
-are sent when available, before the next tool starts; they keep their formatting
-without a timer, summary rewrite or per-task count limit. Duplicate native message
-IDs are ignored. Internal reasoning and raw tool arguments/results remain hidden.
+are sent at native message boundaries while the task continues, preserving their
+formatting without a timer, summary rewrite or per-task count limit. Duplicate
+native IDs, consecutive identical commentary and empty “Thinking...” placeholders
+are ignored. Internal reasoning and raw tool arguments/results remain hidden.
 Commentary does not complete the task or join its final reply; a failed commentary
 send cannot fail the task. Final-only structured responses include only the answer.
 
