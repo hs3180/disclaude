@@ -405,6 +405,22 @@ describe('HttpApiServer', () => {
   });
 
   describe('POST /api/send-message (Issue #4279)', () => {
+    it.each(['/api/send-message', '/api/send-interactive'])('preserves safe provider rejection details for %s', async url => {
+      const error = Object.assign(new Error('Request failed with status code 400'), {
+        config: { headers: { Authorization: 'Bearer private-config-secret' } },
+        response: { status: 400, data: { code: 99991663, msg: 'chat id is invalid; access_token=private-body-secret',
+          secret: 'private-extra-field' } },
+      });
+      const handler = vi.fn().mockRejectedValue(error);
+      if (url === '/api/send-message') {server.setSendMessageHandler(handler);}
+      else {server.setSendInteractiveHandler(handler);}
+      const { statusCode, body } = await dispatch(server, { method: 'POST', url,
+        body: JSON.stringify({ chatId: 'oc_invalid', text: 'probe', question: 'probe', options: [{ text: 'ok', value: 'ok' }] }) });
+      expect(statusCode).toBe(400);
+      expect(JSON.parse(body)).toMatchObject({ ok: false, upstreamStatus: 400, upstreamCode: 99991663,
+        diagnosticId: expect.any(String), message: expect.stringContaining('chat id is invalid') });
+      for (const secret of ['private-config-secret', 'private-body-secret', 'private-extra-field']) {expect(body).not.toContain(secret);}
+    });
     it('should delegate to the handler and return success + messageId', async () => {
       const mockHandler = vi.fn().mockResolvedValue({ success: true, messageId: 'om_123' });
       server.setSendMessageHandler(mockHandler);

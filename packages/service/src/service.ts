@@ -743,13 +743,15 @@ export class DisclaudeService extends EventEmitter {
    */
   protected createSchedulerCallbacks(): SchedulerCallbacks {
     return {
-      sendMessage: async (chatId: string, message: string): Promise<void> => {
+      sendMessage: async (chatId: string, message: string): Promise<string | void> => {
         const outgoingMessage: OutgoingMessage = {
           type: 'text',
           chatId,
           text: message,
         };
-        await this.channelManager.broadcast(outgoingMessage);
+        const channel = this.channelManager.resolveChannelForChatId(chatId);
+        if (!channel) {throw new Error('Scheduled notification has no owning channel');}
+        return await channel.sendMessage(outgoingMessage);
       },
       resetAgent: (chatId: string, skipContext: boolean = true): void => {
         this.agentPool?.reset(chatId, skipContext);

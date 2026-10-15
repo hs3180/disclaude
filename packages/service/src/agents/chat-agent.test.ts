@@ -66,6 +66,7 @@ vi.mock('@disclaude/core', async (importOriginal) => {
     BaseAgent,
     // Issue #4399: real driver so the streaming wiring is exercised end-to-end.
     StreamingReplyDriver: actual.StreamingReplyDriver,
+    sanitizeDiagnosticText: actual.sanitizeDiagnosticText,
     // Issue #4649 (review ①): real class — ChatAgent throws it from
     // setTurnPending and the tests below assert instanceof on the exact
     // class the production import resolves to.
@@ -5575,7 +5576,7 @@ describe('ChatAgent (service)', () => {
 
       async function* failedTurnIterator() {
         yield {
-          parsed: { type: 'result', content: '', terminatedReason: 'turn_failed' },
+          parsed: { type: 'result', content: '', terminatedReason: 'turn_failed', sessionId: 'native-failed-session', terminationDetail: 'HTTP 429 rate limited; Bearer private-failure-secret' },
           raw: {},
         };
       }
@@ -5600,12 +5601,33 @@ describe('ChatAgent (service)', () => {
       }, { timeout: 1000, interval: 20 });
 
       const sentText = localCallbacks.sendMessage.mock.calls.map((call: any[]) => call[1]);
+      const diagnostic = sentText.find((text: string) => text.includes('诊断 ID:'));
+      expect(diagnostic).toContain('native-failed-session');
+      expect(diagnostic).toContain('msg_failed');
+      expect(diagnostic).toContain('oc_turn_failed');
+      expect(diagnostic).toContain('UTC:');
+      expect(diagnostic).toContain('HTTP 429 rate limited');
+      expect(diagnostic).not.toContain('private-failure-secret');
       expect(sentText).not.toContain('✅ Complete');
       expect((agent as any).restartManager.recordFailure).toHaveBeenCalledWith(
         'oc_turn_failed',
         'turn_failed'
       );
       expect((agent as any).restartManager.recordSuccess).not.toHaveBeenCalled();
+    });
+
+    it.each(['om_schedule_start', null])('freezes an explicit scheduler reply anchor instead of reusing the previous thread (%s)', async replyRootId => {
+      const callbacks = createMockCallbacks();
+      const agent = new ChatAgent({ chatId: 'scheduled-chat', callbacks, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
+      (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(), cancel: vi.fn() }, iterator: (async function* () {
+        yield { parsed: { type: 'text', content: 'owned scheduled reply' }, raw: {} };
+        yield { parsed: { type: 'result', content: '' }, raw: {} };
+      })() });
+      try {
+        await agent.processMessage({ chatId: 'scheduled-chat', payload: 'scheduled work', messageId: 'sched-internal', replyRootId });
+        await vi.waitFor(() => expect(callbacks.sendMessage).toHaveBeenCalledWith('scheduled-chat', 'owned scheduled reply', replyRootId ?? undefined));
+        expect(callbacks.sendMessage.mock.calls.every(call => call[2] !== 'sched-internal')).toBe(true);
+      } finally {await agent.shutdown();}
     });
 
     it('Issue #4260 (test 1): a system→result-only stream is marked failed, not silent success', async () => {

@@ -46,6 +46,7 @@ import {
   getErrorStderr,
   isStartupFailure,
   tagErrorCategory,
+  sanitizeDiagnosticText,
   StreamingReplyDriver,
   REACTIONS,
   TurnSupersededError,
@@ -317,7 +318,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    * Reset on startAgentLoop (fresh session) and reset(); bounded to avoid
    * unbounded growth if turns never drain (iterator parked/dead session).
    */
-  private pendingTurnAnchors: (string | undefined)[] = [];
+  private pendingTurnAnchors: (string | null | undefined)[] = [];
 
   // Issue #4808: keep turn identity alongside the reply anchor so completion
   // settlement can target the message whose turn actually ended.
@@ -697,7 +698,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   get pendingWorkContext(): Partial<NonNullable<StreamingUserMessage['correlation']>> & { threadRootId?: string } {
     const queued = !this.activeTurnMessageId && this.pendingLifecycleContexts.length > 0;
     return { ...(queued ? this.pendingLifecycleContexts[0] : this.activeLifecycleContext),
-      threadRootId: queued ? this.pendingTurnAnchors[0] : this.activityThreadRootId };
+      threadRootId: queued ? this.pendingTurnAnchors[0] ?? undefined : this.activityThreadRootId };
   }
 
   private noteActivity(type: string): void {
@@ -986,6 +987,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       chatType,
       threadContext,
       threadRootId,
+      replyRootId,
     } = params;
     // Issue #644: Verify chatId matches bound chatId
     if (chatId !== this.boundChatId) {
@@ -1047,7 +1049,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     if (!potentialLiveInput) { this.lastTurnMessage = params; }
 
     // Track thread root
-    this.conversationOrchestrator.setThreadRoot(chatId, messageId);
+    if (replyRootId !== null) {this.conversationOrchestrator.setThreadRoot(chatId, replyRootId ?? messageId);}
 
     // Start session if needed
     if (!this.isSessionActive) {
@@ -1108,7 +1110,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const enqueueTurnAnchor = (): void => {
       if (anchorQueued) { return; }
       anchorQueued = true;
-      this.pendingTurnAnchors.push(threadRootId ?? this.conversationOrchestrator.getThreadRoot(chatId));
+      this.pendingTurnAnchors.push(replyRootId !== undefined ? replyRootId : threadRootId ?? this.conversationOrchestrator.getThreadRoot(chatId));
       this.pendingTurnMessageIds.push(messageId);
       this.pendingLifecycleContexts.push(lifecycleContext);
       if (!queuedBehindActiveTurn) { this.activeLifecycleContext = lifecycleContext; }
@@ -1188,6 +1190,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       text,
       includeStableContext,
       messageId,
+      replyRootId,
       senderOpenId,
       attachments,
       chatHistoryContext: effectiveChatHistoryContext,
@@ -1195,7 +1198,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       chatLogFilePaths: this.historyManager.chatLogFilePaths,
       chatType: this.chatType,
       threadContext,
-      threadRootId: threadRootId ?? this.conversationOrchestrator.getThreadRoot(chatId),
+      threadRootId: replyRootId === null ? undefined : replyRootId ?? threadRootId ?? this.conversationOrchestrator.getThreadRoot(chatId),
     };
     const enhancedContent = this.messageBuilder.buildEnhancedContent(
       messageData,
@@ -1889,7 +1892,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // (next queued message) picks up its own anchor.
     let turnAnchorConsumed = false;
     let turnHasTerminal = false;
-    let currentTurnAnchor: string | undefined;
+    let currentTurnAnchor: string | null | undefined;
     let currentTurnMessageId: string | undefined;
     let currentTurnLifecycleContext: NonNullable<StreamingUserMessage['correlation']> | undefined;
     let finalDeliveryId: string | undefined;
@@ -1910,15 +1913,17 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         turnResultText = '';
         turnResultTruncated = false;
         this.activeTurnMessageId = currentTurnMessageId;
-        this.activityThreadRootId = currentTurnAnchor;
+        this.activityThreadRootId = currentTurnAnchor ?? undefined;
         if (!this.isProcessingMessage) { this.turnStartedAtMsPrivate = Date.now(); }
         this.isProcessingMessage = true;
       }
-      return currentTurnAnchor;
+      return currentTurnAnchor ?? undefined;
     };
     // Issue #4587 (part 1, review fix): resolve this turn's reply anchor once.
-    const resolveReplyThreadRoot = (): string | undefined =>
-      consumeTurnAnchor() ?? this.conversationOrchestrator.getThreadRoot(chatId);
+    const resolveReplyThreadRoot = (): string | undefined => {
+      consumeTurnAnchor();
+      return currentTurnAnchor === null ? undefined : currentTurnAnchor ?? this.conversationOrchestrator.getThreadRoot(chatId);
+    };
     const finishUnexpectedTurns = async (error: Error, startupCategory?: string): Promise<void> => {
       if (this.sessionGeneration !== myGeneration || this.stoppedQueryGenerations.has(myGeneration)) { return; }
       // An iterator can end before its first event or between queued turns.
@@ -1951,7 +1956,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         const guidance = startupCategory ? '请检查配置、权限和运行环境，修复后发送 /reset。' :
           '请先核对已经执行的操作，再决定是否重新提交或发送消息继续；系统没有自动重放工具。';
         const notice = `${prefix}消息 ID: ${context.sourceMessageId}。诊断 ID: ${diagnosticId}。${guidance}`;
-        const delivered = await this.deliverUserVisible(chatId, notice, anchor);
+        const delivered = await this.deliverUserVisible(chatId, notice, anchor ?? undefined);
         this.logger.warn({ ...context, diagnosticId, event: 'agent_turn',
           state: startupCategory ? 'failed' : 'interrupted',
           interruptionCause: iteratorError ? 'iterator_error' : 'iterator_ended',
@@ -1961,7 +1966,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       }
       turnHasTerminal = true;
       if (affected.length > 0 && this.sessionGeneration === myGeneration) {
-        await this.callbacks.onDone?.(chatId, affected[0]?.anchor);
+        await this.callbacks.onDone?.(chatId, affected[0]?.anchor ?? undefined);
       }
     };
 
@@ -2238,11 +2243,20 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // always has a user-visible terminal outcome.
           if (parsed.terminatedReason === 'turn_failed') {
             this.restartManager.recordFailure(chatId, 'turn_failed');
-            await this.deliverUserVisible(
+            const failure = { ...this.activeLifecycleContext, chatId, diagnosticId,
+              sessionId: parsed.sessionId ?? this.queryHandle?.sessionId ?? 'unavailable',
+              threadRootId: resolveReplyThreadRoot() ?? 'none', backend: this.agentBackend,
+              provider: this.sdkProvider.name, logPath: `${sanitizeDiagnosticText(process.env.LOG_DIR ?? './logs')}/disclaude-combined*.log`, failureClass: 'provider-turn-failed', timestamp: new Date().toISOString(),
+              detail: sanitizeDiagnosticText(parsed.terminationDetail || parsed.content || 'Provider turn failed') };
+            const delivered = await this.deliverUserVisible(
               chatId,
-              `❌ 本轮 ${this.sdkProvider.name} 执行失败，未生成可交付结果。请稍后重试；若持续失败，请检查模型服务、凭据和超时配置。`,
+              `❌ 本轮 ${failure.provider} 执行失败，未生成可交付结果。请先核对已执行的操作，再检查模型服务、凭据和超时配置。\n` +
+                `诊断 ID: ${diagnosticId}\n会话 ID: ${failure.sessionId}\n消息 ID: ${failure.sourceMessageId ?? currentTurnMessageId ?? 'unavailable'}\n` +
+                `Chat ID: ${chatId}；Thread: ${failure.threadRootId}\nUTC: ${failure.timestamp}；Backend: ${failure.backend ?? failure.provider}；分类: ${failure.failureClass}\n` +
+                `错误: ${failure.detail}\n日志: disclaude-combined*.log（服务日志目录），按诊断 ID 检索。`,
               resolveReplyThreadRoot()
             );
+            this.logger.error({ ...failure, event: 'agent_turn_failure', user_visible: delivered }, 'Provider turn failed');
           }
           // Provider watchdog/process loss is a terminal failure, including
           // when the provider supplies no notice. Keep its message/diagnostic
@@ -2815,6 +2829,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
               event: 'agent_turn', state: parsed.terminatedReason === 'turn_failed' ? 'failed' : 'completed',
               chatId, user_visible: this.didDeliverUserVisibleThisTurn,
               circuitState: this.sendCircuitOpen ? 'open' : 'closed', ...this.activeLifecycleContext,
+              ...(parsed.terminatedReason === 'turn_failed' ? { diagnosticId } : {}),
             }, 'agent_turn');
           }
 
@@ -2825,7 +2840,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // Issue #4063: Resolve per-turn completion promise (works in persistent mode)
           const turnError = parsed.terminatedReason === 'turn_failed'
             ? Object.assign(new Error(parsed.terminationDetail || parsed.content || 'Provider turn failed'),
-              this.activeLifecycleContext, { name: 'ProviderTurnFailedError', backend: this.agentBackend, provider: this.sdkProvider.name })
+              this.activeLifecycleContext, { name: 'ProviderTurnFailedError', backend: this.agentBackend, provider: this.sdkProvider.name, diagnosticId })
             : missingToolReplyError;
           this.resolveTurn(currentTurnMessageId, turnError);
 
