@@ -37,7 +37,15 @@ export const handleAgent: CommandHandler<'agent'> = (
       return { success: false, message: 'Usage: `/agent use <preset>`' };
     }
     const result = api.switchAgentPreset(command.chatId, name, command.threadRootId);
-    if (!result.ok) { return { success: false, message: result.error }; }
+    if (!result.ok) {
+      const canList = !context.isCommandAllowed || context.isCommandAllowed({
+        ...command, data: { subcommand: 'list' },
+      });
+      const recovery = canList
+        ? 'Use `/agent list` to find a configured preset, then `/agent use <name>` to switch.'
+        : 'Contact the service maintainer to confirm which presets are available.';
+      return { success: false, message: `${result.error}\n\nThe current selection is unchanged. ${recovery}` };
+    }
     return {
       success: true,
       message: `✅ Active agent: ${formatPreset(result.active)}\n\nA new native session will be used; context is not migrated across presets. The selection lasts until this service restarts.`,
