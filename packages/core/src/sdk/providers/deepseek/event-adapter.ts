@@ -97,6 +97,12 @@ export function adaptDeepSeekEvent(event: DeepSeekSessionEvent): AgentMessage[] 
       if (reason?.kind === 'aborted') {
         return [makeMessage('result', '', { stopReason: 'interrupted' })];
       }
+      const error = reason?.error as { code?: unknown } | undefined;
+      if (reason?.kind === 'error' && error?.code === 'CONTEXT_WINDOW_EXCEEDED') {
+        return [makeMessage('error', '上下文已满，本轮未能继续。请先检查已完成的结果，再发送消息继续；如仍无法继续，可使用 /reset 开始新会话。', {
+          stopReason: 'error', terminationDetail: 'DSH CONTEXT_WINDOW_EXCEEDED',
+        })];
+      }
       const detail =
         reason?.kind === 'error'
           ? stringifyPayload(reason.error)

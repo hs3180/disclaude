@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import type { ApiProtocol } from '../../../config/types.js';
 import { DEFAULT_SCHEMA, load, Type } from 'js-yaml';
 import { createHash } from 'node:crypto';
+import type { DshCompactionSettings } from './compaction.js';
 
 export const DSH_API_CREDENTIAL_ENV = 'DISCLAUDE_DSH_API_KEY';
 
@@ -26,7 +27,8 @@ export function dshApiProvider(api: DshApiConnection): string {
   return `disclaude-api-${identity}`;
 }
 
-function existingApiAdapter(files: string[]): string | undefined {
+function existingPlugin(files: string[], packageName: string): string | undefined {
+  const label = packageName === '@deepseek-ai/dsh-llm-pi-ai' ? 'API adapter' : `${packageName} plugin`;
   const ids = new Set<string>();
   const visited = new Set<object>();
   const visit = (value: unknown): void => {
@@ -41,12 +43,11 @@ function existingApiAdapter(files: string[]): string | undefined {
     const entry = value as Record<string, unknown>;
     if (
       typeof entry.name === 'string' &&
-      (entry.name === '@deepseek-ai/dsh-llm-pi-ai' ||
-        entry.name.includes('/@deepseek-ai/dsh-llm-pi-ai/'))
+      (entry.name === packageName || entry.name.includes(`/${packageName}/`))
     ) {
       if (typeof entry.id !== 'string' || !entry.id.trim()) {
         throw new Error(
-          'Give the existing DSH API adapter a profile entry id before using llms.api'
+          `Give the existing DSH ${label} a profile entry id before applying an overlay`
         );
       }
       ids.add(entry.id);
@@ -66,7 +67,7 @@ function existingApiAdapter(files: string[]): string | undefined {
     visit(config);
   }
   if (ids.size > 1) {
-    throw new Error('The selected DSH profile declares multiple API adapters');
+    throw new Error(`The selected DSH profile declares multiple ${label}s`);
   }
   return ids.values().next().value;
 }
@@ -75,12 +76,13 @@ function existingApiAdapter(files: string[]): string | undefined {
 export function createDshNativeProfileOverlay(
   api?: DshApiConnection,
   profileFiles: string[] = [],
-  defaultAdapter?: string
+  defaultAdapter?: string,
+  compaction?: DshCompactionSettings,
 ): { path: string; dispose(): void } {
   const plugins: Record<string, unknown>[] = [];
   const patches: Record<string, unknown>[] = [{ id: 'sdk-jsonrpc-server', disabled: true }];
   if (api) {
-    const existing = existingApiAdapter(profileFiles) ?? defaultAdapter;
+    const existing = existingPlugin(profileFiles, '@deepseek-ai/dsh-llm-pi-ai') ?? defaultAdapter;
     let adapter: string;
     try {
       adapter = import.meta.resolve('@deepseek-ai/dsh-llm-pi-ai');
@@ -95,7 +97,8 @@ export function createDshNativeProfileOverlay(
           api: api.protocol === 'openai' ? 'openai-completions' : 'anthropic-messages',
           baseURL: api.baseUrl,
           apiKeyEnv: DSH_API_CREDENTIAL_ENV,
-          models: [{ id: api.model, name: api.model, input: ['text'] }],
+          models: [{ id: api.model, name: api.model, input: ['text'],
+            ...(compaction?.contextWindow ? { contextWindow: compaction.contextWindow } : {}) }],
         },
       },
     };
@@ -104,6 +107,20 @@ export function createDshNativeProfileOverlay(
       patches.push({ id: existing, disabled: false, config });
     } else {
       plugins.push({ id: 'disclaude-dsh-api', name: adapter, config });
+    }
+  }
+  if (compaction) {
+    for (const [id, packageName, config] of [
+      ['token-meter', '@deepseek-ai/dsh-token-meter', undefined],
+      ['compaction-basic', '@deepseek-ai/dsh-compaction-basic', {
+        auto: compaction.auto, thresholdRatio: compaction.thresholdRatio,
+        // Keep a recent tail below even a deliberately small configured trigger.
+        retainRatio: Math.min(0.16, compaction.thresholdRatio / 2),
+      }],
+    ] as const) {
+      const existing = existingPlugin(profileFiles, packageName) ?? (defaultAdapter ? id : undefined);
+      if (existing) { patches.push({ id: existing, disabled: false, ...(config ? { config } : {}) }); }
+      else { plugins.push({ id: `disclaude-${id}`, name: packageName, ...(config ? { config } : {}) }); }
     }
   }
   plugins.push({

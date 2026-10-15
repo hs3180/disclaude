@@ -64,8 +64,9 @@ The installed dsh version and any user profile patches determine the effective
 plugin/tool set. Selecting minimal does not uninstall global packages or rewrite
 existing user profiles. It also does not guarantee higher quality for every task.
 The upstream SDK-minimal defaults omit managed credentials, skill discovery and
-compaction; supply API credentials through the bound LLM's `api.apiKey` reference and
-check the capabilities of your installed version before using long-running tasks.
+compaction. Disclaude mounts the native token meter and compaction backend in
+minimal mode, and reuses those components in standard mode. Supply API credentials
+through the bound LLM's `api.apiKey` reference.
 The pinned minimal profile also omits an attachment store. Text and native tools
 remain available; image prompts are rejected before enqueue until an attachment
 plugin is configured. Standard profiles that provide a store keep durable image
@@ -79,6 +80,24 @@ that priority order. Otherwise, disclaude sets the child's `LC_ALL` to an existi
 declared UTF-8 locale, or to `en_US.UTF-8` on macOS / `C.UTF-8` on Linux. This applies
 after per-query environment settings are merged. Restart existing DSH runtimes to
 receive the corrected environment.
+
+## Context compaction
+
+Both modes use DSH's native conversation compactor, including its bounded
+context-overflow recovery; disclaude does not summarize or replay tool calls.
+Set `agents.<name>.autoCompactWindow` to an absolute token trigger, or `0` to
+disable automatic compaction. An explicit trigger takes priority over discovery.
+Otherwise, the host checks only the bound API's model directory for
+`max_input_tokens`, `context_length`, or `context_window` and starts compaction at
+80% of that capacity. Output `max_tokens` is not a context limit. If the directory
+does not supply a capacity, a warning identifies the model and the conservative
+65,536-token capacity used until an explicit budget is configured.
+
+The policy and model capacity live in a per-query temporary overlay; user profile
+files remain untouched. DSH retains recent history and stores its compaction
+checkpoints in the original session. Unrecoverable context overflow produces a
+readable instruction to inspect partial results, continue, or use `/reset`;
+structured service logs include `CONTEXT_WINDOW_EXCEEDED` and the session identity.
 
 An unsupported profile fails with its profile name and startup/protocol error;
 disclaude does not retry using another mode. Check `dsh --version`, then inspect

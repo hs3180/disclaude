@@ -9,6 +9,23 @@ import {
 } from './native-profile.js';
 
 describe('DSH bound LLM API overlay', () => {
+  it.each([undefined, 'llm-pi-ai'])('mounts or reuses the native compaction components (%s)', adapter => {
+    const api = { protocol: 'openai' as const, baseUrl: 'https://selected.example/v1', model: 'selected' };
+    const overlay = createDshNativeProfileOverlay(api, [], adapter, {
+      auto: true, source: 'configured', contextWindow: 60_000, thresholdRatio: 0.8,
+    });
+    try {
+      const patch = JSON.parse(readFileSync(overlay.path, 'utf8'));
+      const inserted = patch.find((entry: { insert?: unknown[] }) => entry.insert).insert;
+      const all = [...patch.filter((entry: { id?: string }) => entry.id), ...inserted];
+      expect(all.filter(entry => /compaction-basic$/.test(entry.id))).toHaveLength(1);
+      expect(all.filter(entry => /token-meter$/.test(entry.id))).toHaveLength(1);
+      expect(all.find(entry => /compaction-basic$/.test(entry.id)).config).toMatchObject({ auto: true, thresholdRatio: 0.8 });
+      const route = all.find(entry => entry.config?.providers).config.providers[dshApiProvider(api)];
+      expect(route.models[0].contextWindow).toBe(60_000);
+    } finally { overlay.dispose(); }
+  });
+
   it('augments the pinned standard SDK adapter instead of registering it twice', () => {
     const overlay = createDshNativeProfileOverlay(
       { protocol: 'openai', baseUrl: 'https://api.example', model: 'model' },
