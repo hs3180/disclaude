@@ -265,9 +265,8 @@ export abstract class BaseAgent implements Disposable {
       options.teammateMode = 'in-process';
     }
 
-    // Explicit configuration wins for every Claude-backend model. Discovery is
-    // asynchronous and runs in the provider before starting the SDK subprocess.
-    if ((this.agentBackend ?? 'claude') === 'claude') {
+    // Each supporting backend resolves its own native compaction policy.
+    if (['claude', 'dsh'].includes(this.agentBackend ?? 'claude')) {
       options.autoCompactWindow = this.selectedConfig.settings ? this.selectedConfig.settings.autoCompactWindow ?? 'auto' : Config.getAutoCompactWindow() ?? 'auto';
     }
 

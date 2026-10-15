@@ -804,6 +804,12 @@ describe('BaseAgent', () => {
       expect(piAgent.testCreateSdkOptions().autoCompactWindow).toBeUndefined();
     });
 
+    it('passes the selected DSH agent budget to its native compaction policy', () => {
+      const settings = { autoCompactWindow: 48_000, agentBackend: 'dsh' as const };
+      const agent = new TestAgent({ apiKey: 'key', model: 'glm-5.3', agentBackend: 'dsh', settings });
+      expect(agent.testCreateSdkOptions().autoCompactWindow).toBe(48_000);
+    });
+
     it('honors explicit configuration for native Claude models too', () => {
       const spy = vi.spyOn(Config, 'getAutoCompactWindow').mockReturnValue(42000);
       try {

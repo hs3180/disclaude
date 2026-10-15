@@ -92,4 +92,15 @@ describe('adaptDeepSeekEvent (Issue #4743 contract)', () => {
       []
     );
   });
+
+  it('gives a safe recovery path for context overflow without raw provider JSON', () => {
+    const [message] = adaptDeepSeekEvent({ type: 'turn/end', data: { reason: {
+      kind: 'error', error: { code: 'CONTEXT_WINDOW_EXCEEDED', message: 'private upstream detail' },
+    } } });
+    expect(message.type).toBe('error');
+    expect(message.content).toMatch(/上下文已满.*\/reset/);
+    expect(message.content).not.toContain('private upstream detail');
+    expect(message.content).not.toContain('CONTEXT_WINDOW_EXCEEDED');
+    expect(message.metadata?.terminationDetail).toContain('CONTEXT_WINDOW_EXCEEDED');
+  });
 });

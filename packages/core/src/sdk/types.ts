@@ -318,7 +318,7 @@ export interface AgentQueryOptions {
    * - `'auto'` — SDK decides automatically
    */
   teammateMode?: 'auto' | 'tmux' | 'in-process';
-  /** Enable SDK auto-compaction at this context-window size. */
+  /** Native Claude/DSH compaction trigger; 'auto' discovers capacity, 0 opts out. */
   autoCompactWindow?: number | 'auto';
   /**
    * Enable partial (stream_event) messages (Issue #3706 GLM stall).

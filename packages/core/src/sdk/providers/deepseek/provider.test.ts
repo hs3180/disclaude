@@ -1,9 +1,13 @@
 import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DeepSeekHarnessProvider } from './provider.js';
 import type { ToolDefinition } from '../../tools.js';
+
+// These transport fixtures own no model directory or external endpoint.
+beforeEach(() => vi.stubGlobal('fetch', vi.fn().mockImplementation(() => Promise.resolve(new Response('{"data":[]}')))));
+afterEach(() => vi.unstubAllGlobals());
 
 function nativeTool(execute: ToolDefinition['execute']): ToolDefinition {
   return {
@@ -32,6 +36,7 @@ async function sdkFixture(
     binary,
     `#!/usr/bin/env node
 require('node:fs').writeFileSync(require('node:path').join(${JSON.stringify(dir)}, 'argv.json'), JSON.stringify(process.argv.slice(2)));
+require('node:fs').writeFileSync(require('node:path').join(${JSON.stringify(dir)}, 'overlay.json'), require('node:fs').readFileSync(process.argv.at(-1)));
 require('node:fs').writeFileSync(require('node:path').join(${JSON.stringify(dir)}, 'environment.json'), JSON.stringify({ sentinel: process.env.DSH_QUERY_VISIBLE, hasAuthority: Object.hasOwn(process.env, 'DSH_QUERY_AUTHORITY') }));
 ${options.captureConnection ? `require('node:fs').writeFileSync(require('node:path').join(${JSON.stringify(dir)}, 'connection.json'), JSON.stringify({ apiKey: process.env.DEEPSEEK_API_KEY, home: process.env.DSH_HOME }));` : ''}
 const rl = require('node:readline').createInterface({ input: process.stdin });
@@ -199,7 +204,7 @@ describe('DeepSeekHarnessProvider (Issue #4741)', () => {
           mode === 'minimal' ? 'sdk-minimal' : 'sdk',
           '--patch',
         ]);
-        expect(await readFile(argv[3], 'utf8')).toContain('disclaude-dsh-native-app');
+        expect(await readFile(join(fixture.dir, 'overlay.json'), 'utf8')).toContain('disclaude-dsh-native-app');
         expect(events.at(-1)?.type).toBe('result');
       } finally {
         provider.dispose();

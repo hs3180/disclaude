@@ -23,6 +23,7 @@ import {
   type DshApiConnection,
 } from './native-profile.js';
 import { DshSessionBindings } from './session-bindings.js';
+import { resolveDshCompaction } from './compaction.js';
 
 const logger = createLogger('DeepSeekHarnessProvider');
 
@@ -65,6 +66,7 @@ interface QueryState {
   stopping: boolean;
   finalized: boolean;
   failure?: Error;
+  overlay?: ReturnType<typeof createDshNativeProfileOverlay>;
   stop(): Promise<void>;
 }
 
@@ -82,11 +84,12 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
   private readonly configuredHome?: string;
   private readonly route?: string;
   private readonly profile: 'sdk' | 'sdk-minimal';
+  private readonly api?: DshApiConnection;
+  private readonly apiKey?: string;
   private readonly bindings: DshSessionBindings;
   private readonly pool: DshSessionPool;
   private readonly queries = new Map<string, QueryState>();
   private readonly active = new Map<string, QueryState>();
-  private overlay?: ReturnType<typeof createDshNativeProfileOverlay>;
   private disposed = false;
   private shutdownFlight?: Promise<void>;
 
@@ -121,6 +124,8 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
       }
     }
     this.profile = mode === 'minimal' ? 'sdk-minimal' : 'sdk';
+    this.api = options.api;
+    this.apiKey = options.apiKey;
     const env = options.env ?? process.env;
     this.configuredHome = options.dshHome ?? env.DSH_HOME;
     this.home = dshHome(this.configuredHome);
@@ -141,14 +146,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
         if (!state) {
           throw new Error('Native DSH runtime has no owner');
         }
-        this.overlay ??= createDshNativeProfileOverlay(
-          options.api,
-          [
-            join(this.home, 'profiles', this.profile, 'cordis.yml'),
-            join(this.home, 'profiles', this.profile, 'cordis.patch.yml'),
-          ],
-          this.profile === 'sdk' ? 'llm-pi-ai' : undefined
-        );
+        if (!state.overlay) { throw new Error('Native DSH compaction policy has not been prepared'); }
         return {
           cwd: state.cwd,
           env: {
@@ -164,7 +162,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
                 : { DEEPSEEK_API_KEY: options.apiKey }),
             DSH_HOME: this.home,
           },
-          args: [...(options.args ?? ['--profile', this.profile]), '--patch', this.overlay.path],
+          args: [...(options.args ?? ['--profile', this.profile]), '--patch', state.overlay.path],
           onRequest: (request) => this.onRequest(state, request),
           onStderr: (data) => state.stderr?.(data),
           onNotification: (notification) => this.onNotification(state, notification),
@@ -239,14 +237,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
     };
     this.queries.set(state.runtimeId, state);
     this.active.set(state.sessionId, state);
-    let transport: DshStdioTransport;
-    try {
-      transport = this.pool.getOrCreate(state.runtimeId);
-    } catch (error) {
-      this.queries.delete(state.runtimeId);
-      this.active.delete(state.sessionId);
-      throw error;
-    }
+    let transport: DshStdioTransport | undefined;
     let ready: () => void = () => {};
     const openingFinished = new Promise<void>((resolve) => {
       ready = resolve;
@@ -272,6 +263,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
         await openingFinished;
         try {
           if (state.opened) {
+            if (!transport) { throw new Error('Native DSH session has no active transport'); }
             const ack = (await transport.request('session/cancel', {
               sessionId: state.sessionId,
             })) as { reasoningStopped?: unknown };
@@ -293,6 +285,18 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
     const pump = Promise.resolve().then(async () => {
       try {
         state.abort.signal.throwIfAborted();
+        const compaction = await resolveDshCompaction(
+          this.api, this.apiKey, options.autoCompactWindow, state.abort.signal
+        );
+        state.abort.signal.throwIfAborted();
+        state.overlay = createDshNativeProfileOverlay(this.api, [
+          join(this.home, 'profiles', this.profile, 'cordis.yml'),
+          join(this.home, 'profiles', this.profile, 'cordis.patch.yml'),
+        ], this.profile === 'sdk' ? 'llm-pi-ai' : undefined, compaction);
+        transport = this.pool.getOrCreate(state.runtimeId);
+        logger.info({ sessionId: state.sessionId, source: compaction.source,
+          contextWindow: compaction.contextWindow, thresholdRatio: compaction.thresholdRatio, auto: compaction.auto },
+        'DSH native compaction policy prepared');
         const initialized = (await transport.request(
           'initialize',
           {
@@ -346,9 +350,10 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
         state.wake();
       }
       try {
-        if (!state.opened || state.stopping) {
+        if (!state.opened || state.stopping || !transport) {
           return;
         }
+        const activeTransport = transport;
         for await (const message of input) {
           if (state.stopping) {
             break;
@@ -362,7 +367,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
                     ? { type: 'text', text: block.text }
                     : { type: 'image', data: block.data, mimeType: block.mimeType }
                 );
-          await transport.request('session/prompt', { sessionId: state.sessionId, contentBlocks });
+          await activeTransport.request('session/prompt', { sessionId: state.sessionId, contentBlocks });
           accepted++;
         }
       } catch (error) {
@@ -413,7 +418,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
               await state.stop();
             }
           } finally {
-            await transport.shutdown();
+            await transport?.shutdown();
           }
         } finally {
           state.finalized = true;
@@ -422,6 +427,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
             provider.active.delete(state.sessionId);
           }
           provider.pool.release(state.runtimeId);
+          state.overlay?.dispose();
         }
       }
     })();
@@ -467,7 +473,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
         }
       } finally {
         this.pool.close();
-        this.overlay?.dispose();
+        for (const state of this.queries.values()) { state.overlay?.dispose(); }
         this.queries.clear();
         this.active.clear();
       }
@@ -581,6 +587,15 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
     if (params.event.type === 'turn/end') {
       state.deliveredAssistantMessages.clear();
       state.lastPublicCommentary = '';
+      const reason = params.event.data?.reason as { kind?: unknown; error?: { code?: unknown } } | undefined;
+      if (reason?.kind === 'error') {
+        logger.warn({ sessionKey: state.sessionKey, sessionId: state.sessionId, runtimeId: state.runtimeId,
+          code: typeof reason.error?.code === 'string' ? reason.error.code : 'UNKNOWN' }, 'DSH native turn failed');
+      }
+    }
+    if (params.event.type.startsWith('compaction/')) {
+      logger.info({ sessionKey: state.sessionKey, sessionId: state.sessionId, eventType: params.event.type },
+        'DSH native context compaction event');
     }
     for (const message of adaptDeepSeekEvent(params.event)) {
       if (message.metadata?.phase === 'commentary') {
