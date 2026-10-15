@@ -6,7 +6,8 @@
  * into an explicit, configurable policy:
  *
  * - **Session cap** (`agent.codex.maxActiveSessions`, default 3): at most N
- *   concurrently-alive codex sessions (one per chatId's queryStream). When a
+ *   concurrently-alive codex sessions. Exec registers its queryStream;
+ *   app-server registers each connection until its transport closes. When a
  *   NEW session arrives at cap, the IDLEST session is evicted (LRU by last
  *   activity — aligned with ChatAgent's idle cleanup) rather than rejecting
  *   the newcomer: active work always wins over idle sessions.
@@ -159,7 +160,10 @@ export class CodexSessionGovernor {
       };
       const admit = (): boolean => {
         const busyCount = [...this.sessions.values()].filter(session => session.busy).length;
-        if (!this.sessions.has(sessionKey) && busyCount >= this.maxActiveSessions) {return false;}
+        // A replacement must wait for its predecessor's transport teardown,
+        // even when another slot is free; replacing the map entry would hide
+        // a still-live connection and let stale cleanup release its successor.
+        if (this.sessions.get(sessionKey)?.busy || busyCount >= this.maxActiveSessions) {return false;}
         signal.removeEventListener('abort', abort);
         resolve(this.registerSession(sessionKey, { ...hooks, busy: true }));
         return true;
@@ -200,6 +204,10 @@ export class CodexSessionGovernor {
    * @returns true when a live registration was dropped, false when unknown.
    */
   forgetSession(sessionKey: string): boolean {
+    // A pinned native connection is already being stopped by the provider.
+    // Its owner unregisters after transport exit; dropping it now would hide
+    // a still-live connection and admit a replacement before teardown.
+    if (this.sessions.get(sessionKey)?.busy) { return false; }
     const removed = this.sessions.delete(sessionKey);
     this.pumpSessions();
     return removed;

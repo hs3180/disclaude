@@ -236,6 +236,21 @@ describe('CodexSessionGovernor forgetSession (Issue #4644)', () => {
 });
 
 describe('busy session admission', () => {
+  it('keeps a reset connection counted until its owner finishes teardown', async () => {
+    const g = new CodexSessionGovernor({ maxActiveSessions: 1 });
+    const { signal } = new AbortController();
+    const active = await g.acquireSession('resetting', { evict: NOOP }, signal);
+    let admitted = false;
+    const next = g.acquireSession('next', { evict: NOOP }, signal).then(r => { admitted = true; return r; });
+    expect(g.forgetSession('resetting')).toBe(false);
+    await Promise.resolve();
+    expect(admitted).toBe(false);
+    expect(g.getStats().activeSessions).toBe(1);
+    active.unregister();
+    (await next).unregister();
+    expect(g.getStats().activeSessions).toBe(0);
+  });
+
   it('evicts a newer idle session instead of an older running turn', async () => {
     const g = new CodexSessionGovernor({ maxActiveSessions: 2 });
     const evicted: string[] = [];
@@ -280,7 +295,12 @@ describe('busy session admission', () => {
     const g = new CodexSessionGovernor({ maxActiveSessions: 1 });
     const {signal} = new AbortController();
     const old = await g.acquireSession('same', { evict: NOOP }, signal);
-    const replacement = await g.acquireSession('same', { evict: NOOP }, signal);
+    let replaced = false;
+    const replacing = g.acquireSession('same', { evict: NOOP }, signal).then(r => {replaced = true; return r;});
+    await Promise.resolve();
+    expect(replaced).toBe(false);
+    old.unregister();
+    const replacement = await replacing;
     old.setBusy(false);
     let admitted = false;
     const waiting = g.acquireSession('other', { evict: NOOP }, signal).then(r => {admitted = true; return r;});

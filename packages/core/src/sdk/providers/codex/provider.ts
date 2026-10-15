@@ -74,6 +74,7 @@ import {
 } from './codex-runner.js';
 import { resolveCodexSandboxPolicy, type CodexSandboxLevel } from './sandbox-policy.js';
 import { CodexSessionGovernor, type SessionRegistration } from './session-governor.js';
+import { reserveLlmSession } from '../../llm-session-limit.js';
 import { CodexAppServerLifecycle, CodexNoActiveTurnError } from './app-server-lifecycle.js';
 import { LiveInputRejectedError } from '../../live-input.js';
 import {
@@ -245,6 +246,10 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       this.llmGovernors.set(limit.name, governor);
     }
     return governor;
+  }
+
+  managesLlmSessionLimit(options: AgentQueryOptions): boolean {
+    return (options.codexRuntime ? options.codexRuntime.transport ?? 'exec' : this.transportMode) === 'app-server';
   }
   /**
    * Evicted-session thread stash (S7): sessionKey → thread_id, written ONLY
@@ -1253,12 +1258,12 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     if (threadId && registeredToolSignature === undefined && dynamicToolRegistry.specs.length > 0) {
       throw new Error('Codex app-server cannot add host tools to an existing thread; reset the conversation to register them.');
     }
+    let llmReservation = reserveLlmSession(options.llmSessionLimit);
     this.appServerStops.get(sessionKey)?.();
     let done = false;
     let stopped = false;
     let wasEvicted = false;
     const admissionAbort = new AbortController();
-    let registration: SessionRegistration | undefined;
     let stopInput!: () => void;
     const stopSignal = new Promise<void>((resolveStop) => { stopInput = resolveStop; });
     let activeTurnId: string | undefined;
@@ -1481,6 +1486,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       stopped = true;
       asyncInputs.close();
       admissionAbort.abort();
+      if (!lifecycle) { llmReservation?.release(); }
       stopInput();
       void input.return?.(undefined);
       // Issue #5186: a stop can land after the turn's terminal notification
@@ -1520,23 +1526,17 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             stopSignal.then(() => ({ done: true, value: undefined } as IteratorResult<UserInput>)),
           ]);
           if (next.done || stopped) {break;}
-          if (!registration) {
-            registration = await sessionGovernor.acquireSession(sessionKey, {
-              evict: () => {
-                wasEvicted = true;
-                stopHandle('codex app-server session evicted');
-              },
-            }, admissionAbort.signal);
-          }
-          // Pin before waiting for a run slot, through subprocess teardown.
-          registration.setBusy(true);
-          if (stopped) {break;}
           let retryWaitedMs = 0;
           for (let retryAttempt = 0; ; retryAttempt++) {
             turnCanRetry = true;
             deferredTurnOverload = undefined;
             deferredFailedTurnId = undefined;
             earlyEvents.length = 0;
+            llmReservation ??= reserveLlmSession(options.llmSessionLimit);
+            if (llmReservation && !await Promise.race([
+              llmReservation.ready, stopSignal.then(() => false),
+            ])) { break; }
+            if (stopped) { break; }
             const acquisition = this.governor.acquireRun();
             const lease = await Promise.race([acquisition, stopSignal.then(() => undefined)]);
             if (!lease) {
@@ -1545,6 +1545,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             }
             let bindTurn!: (id: string | undefined) => void;
             const turnBinding = new Promise<string | undefined>(resolve => { bindTurn = resolve; });
+            let registration: SessionRegistration | undefined;
             const onDynamicToolCall = dynamicToolRegistry.specs.length > 0 ? async (request: CodexAppServerDynamicToolCallRequest) => {
               const boundTurn = await turnBinding;
               if (!boundTurn || stopped || request.threadId !== threadId || request.turnId !== boundTurn
@@ -1555,6 +1556,14 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               return dynamicToolRegistry.call(request);
             } : undefined;
             try {
+              // App-server connections live for one attempt, not for the input
+              // stream. Run-slot waiters and completed chats own no connection.
+              registration = await sessionGovernor.acquireSession(sessionKey, {
+                evict: () => {
+                  wasEvicted = true;
+                  stopHandle('codex app-server session evicted');
+                },
+              }, admissionAbort.signal);
               if (stopped) {break;}
               activeCorrelation = next.value.correlation;
               lastEventAt = Date.now();
@@ -1659,14 +1668,22 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               sessionGovernor.touchSession(sessionKey);
             } finally {
               bindTurn(undefined);
-              await interruptFlight;
-              if (threadId && this.appServerRoutes.get(threadId) === onNotification) {this.appServerRoutes.delete(threadId);}
-              await lifecycle?.close();
-              if (this.appServerLifecycles.get(sessionKey) === lifecycle) {this.appServerLifecycles.delete(sessionKey);}
-              lifecycle = undefined;
-              if (stallTimer) {clearTimeout(stallTimer);}
-              openToolItems = 0;
-              lease.release();
+              try {
+                await interruptFlight;
+                if (threadId && this.appServerRoutes.get(threadId) === onNotification) {this.appServerRoutes.delete(threadId);}
+                await lifecycle?.close();
+              } finally {
+                if (this.appServerLifecycles.get(sessionKey) === lifecycle) {this.appServerLifecycles.delete(sessionKey);}
+                lifecycle = undefined;
+                if (stallTimer) {clearTimeout(stallTimer);}
+                openToolItems = 0;
+                // Closing the transport precedes FIFO admission; thread ids
+                // remain available to this stream and later resumptions.
+                registration?.unregister();
+                lease.release();
+                llmReservation?.release();
+                llmReservation = undefined;
+              }
             }
             if (stopped || !deferredTurnOverload) { break; }
             const failure = deferredTurnOverload as CodexOverloadFailure;
@@ -1681,7 +1698,6 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             if (!await waitForCodexOverloadRetry(delayMs, admissionAbort.signal)) { break; }
             retryWaitedMs += delayMs;
           }
-          registration.setBusy(false);
         }
       } catch (error) {
         if (!stopped) {
@@ -1694,8 +1710,8 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       } finally {
         asyncInputs.close();
         await interruptFlight;
+        llmReservation?.release();
         if (stallTimer) {clearTimeout(stallTimer);}
-        registration?.unregister();
         if (wasEvicted) {
           // Issue #4987: ChatAgent must end idle eviction without reconnecting.
           push({ type: 'result', content: '', role: 'system', metadata: { terminatedReason: 'evicted' } });
@@ -1723,6 +1739,8 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       handle: {
         close: () => stopHandle('codex app-server stream closed'),
         cancel: () => stopHandle('codex app-server stream cancelled'),
+        get capacityQueued() { return llmReservation?.queued ?? false; },
+        get inputDelivery() { return llmReservation?.queued ? 'queued' as const : undefined; },
         interrupt: () => stopped
           ? Promise.reject(new Error('codex app-server stream is closed'))
           : lifecycle?.interrupt(sessionKey) ?? Promise.reject(new Error('No active app-server turn')),
