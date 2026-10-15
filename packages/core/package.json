@@ -52,10 +52,7 @@
     "@types/pino": "^7.0.4",
     "@types/uuid": "^10.0.0",
     "@types/ws": "8.18.2",
-    "typescript": "^5.9.3",
-    "@deepseek-ai/dsh-app-boot": "0.1.2-rc.1",
-    "@deepseek-ai/dsh-sdk-minimal": "0.1.2-rc.1",
-    "@deepseek-ai/dsh-attachment-local": "0.1.2-rc.1"
+    "typescript": "^5.9.3"
   },
   "optionalDependencies": {
     "@deepseek-ai/cordis": "4.0.4",

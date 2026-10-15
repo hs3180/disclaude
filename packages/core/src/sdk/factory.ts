@@ -17,7 +17,6 @@ import {
 } from './providers/index.js';
 import { Config, type AgentConfig } from '../config/index.js';
 import type { BaseAgentConfig } from '../agents/types.js';
-import { resolveDshBootstrap } from './providers/deepseek/sdk-bootstrap.js';
 
 /**
  * 已注册的 Provider 类型
@@ -31,7 +30,6 @@ function dshOptions(
   const selected = settings ?? { ...defaults?.settings, ...defaults };
   return {
     mode: selected.mode ?? 'standard',
-    bootstrap: resolveDshBootstrap(selected.env?.DISCLAUDE_DSH_BOOTSTRAP ?? process.env.DISCLAUDE_DSH_BOOTSTRAP),
     dshHome: selected.dshHome || process.env.DSH_HOME || undefined,
     apiKey: selected.apiKey,
     ...(selected.apiProtocol
@@ -53,7 +51,6 @@ function providerCacheKey(type: ProviderType, settings?: AgentConfig): string {
   const options = dshOptions(settings);
   return JSON.stringify({
     mode: options.mode ?? 'standard',
-    bootstrap: options.bootstrap,
     api: options.api,
     dshHome: options.dshHome ?? process.env.DSH_HOME,
     // Keep credential values out of cache identifiers.

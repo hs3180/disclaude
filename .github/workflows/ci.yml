@@ -95,22 +95,6 @@ jobs:
           path: package-install.log
           retention-days: 7
 
-  dsh-sdk-smoke:
-    name: DSH Node SDK smoke (Node24)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: 'pnpm'
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm run build
-      - name: Run isolated native worker open, cancel and shutdown
-        run: pnpm exec vitest run packages/core/src/sdk/providers/deepseek/sdk-bootstrap.test.ts
-
   # =============================================================================
   # Build
   # =============================================================================

@@ -74,64 +74,44 @@ the selected composition with `DSH_HOME=... dsh --profile sdk-minimal
 model/tool task completes. Use `--dump-config` locally to inspect user overrides;
 configuration output may contain private settings.
 
-## Direct Node SDK prototype
+## SDK and plugin integration
 
-The default bootstrap remains `cli`. For an isolated experiment, export
-`DISCLAUDE_DSH_BOOTSTRAP=node-sdk` in that service process, select
-`mode: minimal`, and give its named DSH agent an existing, isolated `dshHome`:
+The service uses one supported DSH launcher and a disclaude Cordis plugin:
 
-```yaml
-agents:
-  dsh-sdk:
-    backend: dsh
-    llm: glm-openai
-    mode: minimal
-    dshHome: /absolute/path/to/isolated-sdk-home
+```text
+disclaude provider → dsh --profile sdk / sdk-minimal --patch …
+                    └─ disclaude native-app plugin → native Agent, Session and tools
 ```
 
-This opt-in path starts an owned Node worker using the declared, pinned
-`@deepseek-ai/dsh-app-boot` and `@deepseek-ai/dsh-sdk-minimal` libraries; it does
-not look up or execute the global `dsh` binary. It reuses the native Agent,
-Session, persistence, API routing and host-tool bridge. The optional local
-attachment plugin supplies the service required by the controller.
+DSH owns profile composition, persistence and terminal services. The plugin owns
+disclaude's dynamic host-tool callbacks, system context and session cancellation.
+There is no second Node worker launcher or manually assembled SDK application tree.
 
-Source workspaces install these experimental libraries as development
-dependencies. The ordinary prebuilt package keeps its existing runtime dependency
-tree. To try the prototype in a separate, owned prebuilt installation on a
-supported Node version, install the three libraries explicitly into that package:
+For an isolated TypeScript SDK experiment, use the [official SDK probe](../tests/dsh/README.md#official-typescript-sdk-prototype).
+It calls the pinned `DeepSeekHarness` API and mounts a small tool plugin through an
+ordinary profile patch. The SDK resolves its matching DSH dependency, so this
+experiment needs no global `dsh` executable. It adds no SDK runtime dependency to
+the service package and does not change its configuration or startup path.
 
-```sh
-npm install --prefix /absolute/path/to/isolated/disclaude --no-save \
-  @deepseek-ai/dsh-app-boot@0.1.2-rc.1 \
-  @deepseek-ai/dsh-sdk-minimal@0.1.2-rc.1 \
-  @deepseek-ai/dsh-attachment-local@0.1.2-rc.1
-```
-
-Missing libraries fail preflight with an installation instruction. This prevents
-an unsupported experimental composition from removing existing optional DSH
-dependencies during the ordinary Node20/npm installation.
-
-This prototype supports only the pinned minimal composition. It rejects standard
-mode, custom process launch arguments and user profile overrides rather than
-silently changing the composition. It does not promise standard-mode skill,
-compaction or Bash capability parity. Set the same flag to `cli` and restart
-the service to return to the existing CLI bootstrap. Preserve the configured
-home and workspace; test either path with its own chosen composition before
-using it for production work.
-
-Its persistence library imports native Zstandard APIs. These are available in
-[Node22.15+](https://nodejs.org/en/blog/release/v22.15.0); Node24+ is recommended
-for the prototype and covered by its isolated worker smoke test. Node20 remains
-supported for the existing service paths, but selecting `node-sdk` there fails
-preflight with an explicit runtime/CLI recovery instruction.
-
-| Capability | CLI bootstrap | Node SDK prototype |
+| Capability | Service plugin | Official TypeScript SDK 0.1.2-rc.1 prototype |
 | --- | --- | --- |
-| Runtime source | Installed `dsh` and selected profile | Pinned local libraries in an owned Node worker |
-| Composition | `standard` / `minimal`, including selected home patches | Published minimal bundle; user profile overrides rejected |
-| Bound OpenAI / Anthropic APIs | Existing native adapter | Same native adapter and selected credential |
-| Host tools, session persistence, cancellation | Existing native controller | Same native controller; each query owns its worker |
-| Full standard composition and user profile extensions | Depends on installed composition | Unsupported; minimal Bash and other tool parity still require verification |
-| Rollback | Default `cli` flag | Change the flag to `cli` and restart |
+| Startup | Configured `dsh` and selected profile | SDK-owned matching `dsh` dependency |
+| Composition | `standard` / `minimal`, with home patches | Same named profiles and ordered patches |
+| Bound OpenAI / Anthropic APIs | Named LLM connection | Same named connection, isolated home and workspace |
+| Tools | Dynamic host callbacks through the disclaude plugin | Native tools and a probe plugin in the SDK-owned process |
+| Persistence | Explicit create/resume through the plugin | Native logs; the pinned high-level SDK has no persisted-resume API |
+| Cancel | Per-session native cancel and host-operation drain | Close the entire SDK-owned runtime; no mid-turn cancel API |
+| Shutdown | Await owned process exit | Official `close()` |
+
+The [official SDK](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/sdk/client)
+also starts a DSH profile in a child process. Its public API does not accept
+server-to-client tool requests. Replacing the service adapter with it would first
+require a supported host-tool and cancellation contract. This prototype establishes
+the simpler SDK/plugin boundary; it does not claim that production migration is complete.
+
+Earlier experimental `DISCLAUDE_DSH_BOOTSTRAP` settings are obsolete. Remove them;
+the service always uses the single plugin path. The isolated prototype has no
+production switch to roll back: close it and retain the service configuration,
+workspace and DSH home.
 
 Upstream: https://github.com/deepseek-ai/deepseek-harness/blob/master/python/sdk/examples/README.md
