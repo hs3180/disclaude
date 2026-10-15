@@ -5564,10 +5564,10 @@ describe('ChatAgent (service)', () => {
       expect(rm.recordSuccess).not.toHaveBeenCalled();
     });
 
-    it('Issue #4747: failed Codex turns have a visible terminal outcome', async () => {
+    it.each(['claude', 'codex', 'dsh', 'pi'] as const)('fatal %s turns expose safe correlated diagnostics', async agentBackend => {
       const localCallbacks = createMockCallbacks();
       const agent = new ChatAgent({
-        chatId: 'oc_turn_failed',
+        chatId: 'oc_turn_failed', agentBackend,
         callbacks: localCallbacks,
         apiKey: 'key',
         model: 'model',
@@ -5608,6 +5608,8 @@ describe('ChatAgent (service)', () => {
       expect(diagnostic).toContain('UTC:');
       expect(diagnostic).toContain('HTTP 429 rate limited');
       expect(diagnostic).not.toContain('private-failure-secret');
+      expect(diagnostic).toContain(agentBackend);
+      await expect(agent.turnCompleteFor('msg_failed')).rejects.not.toThrow('private-failure-secret');
       expect(sentText).not.toContain('✅ Complete');
       expect((agent as any).restartManager.recordFailure).toHaveBeenCalledWith(
         'oc_turn_failed',

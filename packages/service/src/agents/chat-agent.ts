@@ -2251,9 +2251,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             const delivered = await this.deliverUserVisible(
               chatId,
               `❌ 本轮 ${failure.provider} 执行失败，未生成可交付结果。请先核对已执行的操作，再检查模型服务、凭据和超时配置。\n` +
-                `诊断 ID: ${diagnosticId}\n会话 ID: ${failure.sessionId}\n消息 ID: ${failure.sourceMessageId ?? currentTurnMessageId ?? 'unavailable'}\n` +
+                `诊断 ID: ${diagnosticId}\nRun ID: ${failure.runId ?? 'unavailable'}\n会话 ID: ${failure.sessionId}\n消息 ID: ${failure.sourceMessageId ?? currentTurnMessageId ?? 'unavailable'}\n` +
                 `Chat ID: ${chatId}；Thread: ${failure.threadRootId}\nUTC: ${failure.timestamp}；Backend: ${failure.backend ?? failure.provider}；分类: ${failure.failureClass}\n` +
-                `错误: ${failure.detail}\n日志: disclaude-combined*.log（服务日志目录），按诊断 ID 检索。`,
+                `错误: ${failure.detail}\n日志: ${failure.logPath}（或服务 stderr），按诊断 ID 检索。`,
               resolveReplyThreadRoot()
             );
             this.logger.error({ ...failure, event: 'agent_turn_failure', user_visible: delivered }, 'Provider turn failed');
@@ -2265,7 +2265,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             this.stalledTerminated = true;
             const lifecycleContext = this.activeLifecycleContext;
             const sourceMessageId = lifecycleContext?.sourceMessageId ?? currentTurnMessageId;
-            const providerNotice = parsed.content?.trim() || `⚠️ ${this.sdkProvider.name} 响应已中断，结果可能不完整。`;
+            const providerNotice = sanitizeDiagnosticText(parsed.content?.trim() || `⚠️ ${this.sdkProvider.name} 响应已中断，结果可能不完整。`);
             const delivered = await this.deliverUserVisible(chatId,
               `${providerNotice}\n消息 ID: ${sourceMessageId ?? 'unknown'}。诊断 ID: ${diagnosticId}。` +
                 '请先核对已经执行的操作，再决定是否继续；系统没有自动重放工具。',
@@ -2279,7 +2279,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             this.restartManager.recordFailure(chatId, 'stall');
             this.isProcessingMessage = false;
             const stallError = Object.assign(new Error(
-              parsed.terminationDetail ?? 'Provider stall watchdog terminated the turn'
+              sanitizeDiagnosticText(parsed.terminationDetail ?? 'Provider stall watchdog terminated the turn')
             ), lifecycleContext, { backend: this.agentBackend, provider: this.sdkProvider.name, diagnosticId });
             stallError.name = 'ProviderStallError';
             this.resolveTurn(currentTurnMessageId, stallError);
@@ -2839,7 +2839,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
           // Issue #4063: Resolve per-turn completion promise (works in persistent mode)
           const turnError = parsed.terminatedReason === 'turn_failed'
-            ? Object.assign(new Error(parsed.terminationDetail || parsed.content || 'Provider turn failed'),
+            ? Object.assign(new Error(sanitizeDiagnosticText(parsed.terminationDetail || parsed.content || 'Provider turn failed')),
               this.activeLifecycleContext, { name: 'ProviderTurnFailedError', backend: this.agentBackend, provider: this.sdkProvider.name, diagnosticId })
             : missingToolReplyError;
           this.resolveTurn(currentTurnMessageId, turnError);
