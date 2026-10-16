@@ -16,7 +16,8 @@ export function channelCredentialErrors(config: DisclaudeConfig): string[] {
   for (const [channel, fields] of Object.entries(CHANNEL_CREDENTIAL_FIELDS)) {
     const entry = config.channels?.[channel];
     if (!entry) {continue;}
-    if (channel === 'feishu' && entry.appSecretEnv !== undefined) {
+    // Diagnose raw legacy YAML without retaining the removed field in the API.
+    if (channel === 'feishu' && Object.hasOwn(entry, 'appSecretEnv')) {
       errors.push('channels.feishu.appSecretEnv is obsolete; migrate to appSecret: $VARIABLE and an external secret environment file (docs/channel-credentials.md)');
     }
     for (const [field, secret] of Object.entries(fields)) {

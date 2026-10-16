@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { channelCredentialErrors, resolveChannelCredential, withoutChannelCredentials, redactChannelSecrets } from './channel-credentials.js';
-import type { DisclaudeConfig } from './types.js';
+import type { DisclaudeConfig, FeishuConfig } from './types.js';
 
 afterEach(() => vi.unstubAllEnvs());
 describe('external channel credentials', () => {
@@ -33,11 +33,21 @@ describe('external channel credentials', () => {
       expect(errors[0]).toContain('channels.feishu.appSecret');
       if (appSecret.length > 2) {expect(JSON.stringify(errors)).not.toContain(appSecret);}
     }
-    expect(channelCredentialErrors({ channels: { feishu: { appSecretEnv: 'OWNED_CHANNEL_SECRET' } } })[0]).toContain('migrate');
     const config: DisclaudeConfig = { env: { OWNED_CHANNEL_SECRET: 'yaml-private-canary' }, channels: { rest: { authToken: '$OWNED_CHANNEL_SECRET' } } };
     vi.stubEnv('OWNED_CHANNEL_SECRET', 'external-canary');
     expect(() => resolveChannelCredential(config, 'rest', 'authToken')).toThrow('channels.rest.authToken');
     expect(JSON.stringify(channelCredentialErrors(config))).not.toContain('yaml-private-canary');
+  });
+
+  it('removes the legacy field from the public type while diagnosing raw YAML', () => {
+    // @ts-expect-error The removed alias must not remain an advertised config option.
+    const legacy: FeishuConfig = { appSecretEnv: 'legacy-private-canary' };
+    const errors = channelCredentialErrors({ channels: { feishu: { ...legacy } } });
+    expect(errors).toEqual([
+      'channels.feishu.appSecretEnv is obsolete; migrate to appSecret: $VARIABLE and an external secret environment file (docs/channel-credentials.md)',
+    ]);
+    expect(JSON.stringify(errors)).not.toContain('legacy-private-canary');
+    expect(channelCredentialErrors({ channels: { feishu: { appSecretEnv: undefined } as never } })).toHaveLength(1);
   });
 
   it('reports missing and blank references by field path without using config env fallback', () => {

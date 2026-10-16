@@ -137,8 +137,6 @@ export interface FeishuConfig {
   appId?: string;
   /** Secret: whole $VARIABLE / ${VARIABLE} reference to the external service environment. */
   appSecret?: string;
-  /** @deprecated Rejected on startup. Migrate to appSecret: $VARIABLE; see docs/channel-credentials.md. */
-  appSecretEnv?: string;
   /** CLI chat ID for testing */
   cliChatId?: string;
   /**
