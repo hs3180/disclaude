@@ -37,7 +37,8 @@ not that control API. An absent REST token retains its existing unprotected mode
 
 The inherited service environment wins, including an explicitly empty value.
 For the public service CLI, `DISCLAUDE_SECRET_ENV_FILE` optionally loads one
-external file **before** config/core imports. The file fills only unset variables.
+external file **before** config/core imports. It can contain channel, model and
+tool secrets; see [configuration secrets](configuration-secrets.md). The file fills only unset variables.
 There is no automatic `.env` discovery, config-local `env` fallback or interpolation.
 A referenced missing or blank variable fails with its channel field path and
 variable name. Generic configuration exports retain references, never resolved
@@ -48,7 +49,7 @@ The external file accepts one `KEY=VALUE` per line, blank lines and full-line `#
 comments. Optional surrounding single/double quotes are removed literally; there
 is no shell expansion, escape processing, multiline value or inline-comment
 syntax. The file must be a regular, non-symlink file, at most 1 MiB, with no
-group/other permission bits (`0600` or `0400` on Unix). Keep it outside the
+group/other permission bits (`0600` or `0400` on Unix), owned by the service UID. Keep it outside the
 workspace, version control, backups intended for sharing and general YAML exports.
 The service account must be able to read it.
 

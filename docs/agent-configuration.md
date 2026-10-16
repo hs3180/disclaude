@@ -106,8 +106,9 @@ API declaration now selects the connection; a native provider route name is not
 a public agent setting. Keep custom tools and other profile settings; an existing
 `@deepseek-ai/dsh-llm-pi-ai` entry must have an explicit id so it can be augmented.
 
-Global `env` and workspace `.runtime-env` keep their existing lifecycle. This
-change does not implement the broader secret-file store or permission management
-tracked in #5233.
+Global `env` contains public defaults; persistent secrets use external references.
+The optional owner-only secret file and selected LLM native/tool environment
+projection are described in [configuration secrets](configuration-secrets.md).
+Workspace `.runtime-env` keeps its existing lifecycle.
 
 Channel credential sources and migration: [channel-credentials.md](channel-credentials.md).

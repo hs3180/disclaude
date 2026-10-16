@@ -4,11 +4,12 @@ import { openSync, fstatSync, readFileSync, closeSync, constants } from 'node:fs
 export function loadSecretEnvFile(file: string | undefined, env: NodeJS.ProcessEnv = process.env): void {
   if (!file) {return;}
   let fd: number;
-  try {fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);}
+  try {fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);}
   catch {throw new Error('Cannot open the external secret environment file');}
   try {
     const stat = fstatSync(fd);
-    if (!stat.isFile() || stat.size > 1024 * 1024 || (process.platform !== 'win32' && (stat.mode & 0o077) !== 0)) {
+    if (!stat.isFile() || stat.size > 1024 * 1024 || (process.platform !== 'win32' &&
+      ((stat.mode & 0o077) !== 0 || (process.getuid && stat.uid !== process.getuid())))) {
       throw new Error('DISCLAUDE_SECRET_ENV_FILE must be a regular owner-only file (0600 or 0400), at most 1 MiB');
     }
     const parsed: Record<string, string> = Object.create(null) as Record<string, string>;

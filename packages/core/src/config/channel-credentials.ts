@@ -10,6 +10,16 @@ export const CHANNEL_CREDENTIAL_FIELDS = {
 type Channel = keyof typeof CHANNEL_CREDENTIAL_FIELDS;
 const privateNames = new Set<string>();
 const consumedSecrets = new Set<string>();
+const modelSecretNames = new Set<string>();
+
+/** API and per-LLM references share log redaction, without becoming channel-only env. */
+export function registerModelSecretNames(names: Iterable<string>): void {
+  for (const name of names) {modelSecretNames.add(name);}
+}
+
+export function knownSecretValues(): string[] {
+  return [...consumedSecrets, ...[...privateNames, ...modelSecretNames].map(name => process.env[name] ?? '')].filter(Boolean);
+}
 
 export function channelCredentialErrors(config: DisclaudeConfig): string[] {
   const errors: string[] = [];
@@ -57,13 +67,13 @@ export function resolveChannelCredential(config: DisclaudeConfig, channel: Chann
 
 /** Applied after JSON serialization, including strings/stacks, in every log mode. */
 export function redactChannelSecrets(serialized: string): string {
-  const values = [...consumedSecrets, ...[...privateNames].map(name => process.env[name] ?? '')]
-    .filter(Boolean).sort((a, b) => b.length - a.length);
+  const secretNames = new Set([...privateNames, ...modelSecretNames]);
+  const values = knownSecretValues().sort((a, b) => b.length - a.length);
   const sensitive = /^(?:api[_-]?key|app[_-]?secret|auth[_-]?token|checkToken|encodingAESKey|encryptKey|verificationToken|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|secret|token|authorization|cookie|set-cookie)$/i;
   try {
     const parsed: unknown = JSON.parse(serialized);
     return JSON.stringify(parsed, (key, value: unknown) => {
-      if (sensitive.test(key) || privateNames.has(key)) {return '[REDACTED]';}
+      if (sensitive.test(key) || secretNames.has(key)) {return '[REDACTED]';}
       if (typeof value !== 'string') {return value;}
       let text = value;
       for (const secret of values) {

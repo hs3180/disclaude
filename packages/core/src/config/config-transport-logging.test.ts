@@ -14,7 +14,9 @@
  * @see Issue #1617 Phase 2
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterAll } from 'vitest';
+vi.hoisted(() => vi.stubEnv('TEST_LLM_DEFAULT_KEY', 'test-glm-key'));
+afterAll(() => vi.unstubAllEnvs());
 
 const { mockGetConfigFromFile } = vi.hoisted(() => ({
   mockGetConfigFromFile: vi.fn(() => ({
@@ -43,7 +45,6 @@ const { mockGetConfigFromFile } = vi.hoisted(() => ({
         api: { protocol: 'anthropic', apiKey: '$TEST_LLM_DEFAULT_KEY' },
       },
     },
-    env: { TEST_LLM_DEFAULT_KEY: 'test-glm-key' },
     channels: { feishu: {} },
   })),
 }));

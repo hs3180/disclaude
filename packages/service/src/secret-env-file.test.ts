@@ -1,4 +1,5 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync, symlinkSync, mkdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
@@ -26,5 +27,20 @@ it('does not partially apply a malformed file or reflect its contents', () => {
     expect(() => loadSecretEnvFile(file, env)).toThrow('line 2');
     expect(env).toEqual({});
     try {loadSecretEnvFile(file, env);} catch (error) {expect(String(error)).not.toContain('synthetic-private-canary');}
+  } finally {rmSync(dir, { recursive: true, force: true });}
+});
+
+it('rejects symlinks, directories, oversize files and FIFOs without blocking or applying variables', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'disclaude-secret-env-shape-'));
+  try {
+    const file = join(dir, 'secret'); writeFileSync(file, 'KEY=owned-value', { mode: 0o600 });
+    const link = join(dir, 'link'); symlinkSync(file, link);
+    const directory = join(dir, 'directory'); mkdirSync(directory, { mode: 0o700 });
+    const large = join(dir, 'large'); writeFileSync(large, Buffer.alloc(1024 * 1024 + 1), { mode: 0o600 });
+    for (const path of [link, directory, large]) { expect(() => loadSecretEnvFile(path, {})).toThrow(); }
+    if (process.platform !== 'win32') {
+      const fifo = join(dir, 'fifo'); execFileSync('mkfifo', ['-m', '600', fifo]);
+      expect(() => loadSecretEnvFile(fifo, {})).toThrow('regular owner-only');
+    }
   } finally {rmSync(dir, { recursive: true, force: true });}
 });

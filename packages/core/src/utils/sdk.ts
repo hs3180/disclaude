@@ -104,13 +104,16 @@ export function buildSdkEnv(
 
   // A named LLM supplies native settings and only its own credential. Remove
   // all configured credential references before projecting the selected key.
-  Object.assign(env, selected?.selectedEnv);
   for (const key of selected?.credentialEnvKeys ?? []) { env[key] = undefined; }
+  Object.assign(env, selected?.selectedEnv);
   const protocol = selected ? selected.protocol : 'anthropic';
   const apiVariables = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_AUTH_TOKEN',
     'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'OPENAI_BASE_URL'];
   if (selected || apiKey) {
     for (const key of apiVariables) {
+      // A native account binding may explicitly select its own auth/endpoint.
+      // Protocol bindings below always take credentials from their API block.
+      if (selected && !protocol && Object.hasOwn(selected.selectedEnv ?? {}, key)) {continue;}
       // Explicit undefined also masks credentials in adapters that merge env.
       if (selected) { env[key] = undefined; } else { delete env[key]; }
     }
