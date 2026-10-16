@@ -66,7 +66,7 @@ describe('browser HTTP failure provenance', () => {
       res.writeHead(404, { 'Content-Type': 'application/json', 'Set-Cookie': 'secret-cookie' });
       res.end('{"message":"password=secret-password","token":"secret-token"}');
     });
-    const error = await discoverCdp({ endpoint: `${s.endpoint}/proxy`, endpointSource: 'BU_CDP_URL' }).catch(error => error);
+    const error = await discoverCdp({ endpoint: `${s.endpoint}/proxy`, endpointSource: 'BU_CDP_URL', env: {} }).catch(error => error);
     expect(error.diagnostic).toMatchObject({ stage: 'http-discovery', method: 'GET', path: '/proxy/json/version',
       endpointSource: 'BU_CDP_URL', status: 404, reason: 'http-error' });
     expect(requests).toEqual([{ method: 'GET', path: '/proxy/json/version' }]);
@@ -89,7 +89,7 @@ describe('browser HTTP failure provenance', () => {
     const s = await server((req, res) => {
       requests.push(req.url); res.writeHead(302, { Location: '/other?token=secret' }); res.end();
     });
-    const error = await discoverCdp({ endpoint: s.endpoint, endpointSource: 'BU_CDP_URL' }).catch(error => error);
+    const error = await discoverCdp({ endpoint: s.endpoint, endpointSource: 'BU_CDP_URL', env: {} }).catch(error => error);
     expect(error.diagnostic).toMatchObject({ stage: 'http-discovery', path: '/json/version', reason: 'request-failed' });
     expect(requests).toEqual(['/json/version']);
     expect(error.message).not.toContain('secret');
@@ -98,7 +98,7 @@ describe('browser HTTP failure provenance', () => {
   it('identifies the actual rejected WebSocket GET route without leaking query, userinfo or response', async () => {
     const s = await cdpServer({ rejectUpgrade: true });
     const url = `${s.websocket}?token=secret-query`;
-    const error = await connect(url, { endpoint: `http://user:secret-password@127.0.0.1/`, endpointSource: 'installed-chromium-config' }).catch(error => error);
+    const error = await connect(url, { endpoint: `http://user:secret-password@127.0.0.1/`, endpointSource: 'installed-chromium-config', env: {} }).catch(error => error);
     expect(error.diagnostic).toMatchObject({ stage: 'websocket-attach', status: 404, method: 'GET',
       path: new URL(s.websocket).pathname, endpointSource: 'installed-chromium-config' });
     expect(s.seen).toEqual([{ method: 'GET', path: `${new URL(s.websocket).pathname}?token=secret-query` }]);
@@ -109,7 +109,7 @@ describe('browser HTTP failure provenance', () => {
 
   it('observes document 404 independently from successful attach and retains unknown methods', async () => {
     const s = await cdpServer(), records = [];
-    const observer = await observeBrowser({ websocket: s.websocket, endpoint: s.endpoint, endpointSource: 'BU_CDP_URL', onDiagnostic: record => records.push(record) });
+    const observer = await observeBrowser({ websocket: s.websocket, endpoint: s.endpoint, endpointSource: 'BU_CDP_URL', env: {}, onDiagnostic: record => records.push(record) });
     cleanup.push(() => observer.stop());
     s.event('Network.requestWillBeSent', { requestId: 'post', type: 'Document', request: { method: 'POST', url: 'https://example.test/missing' } });
     for (let i = 0; i < 20; i++) s.event('Network.responseReceived', { requestId: i ? 'unobserved' : 'post', type: 'Document',
@@ -127,7 +127,7 @@ describe('browser HTTP failure provenance', () => {
 
   it('reports unavailable observation without selecting another endpoint or retrying', async () => {
     const s = await cdpServer({ rejectUpgrade: true }), records = [];
-    const observer = await observeBrowser({ websocket: s.websocket, endpoint: s.endpoint, endpointSource: 'BU_CDP_URL', onDiagnostic: record => records.push(record) });
+    const observer = await observeBrowser({ websocket: s.websocket, endpoint: s.endpoint, endpointSource: 'BU_CDP_URL', env: {}, onDiagnostic: record => records.push(record) });
     await observer.stop();
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({ stage: 'websocket-attach', observation: 'diagnostic-observer', status: 404 });
@@ -137,7 +137,7 @@ describe('browser HTTP failure provenance', () => {
   it('ignores malformed/detached events and isolates a failing diagnostic sink', async () => {
     const s = await cdpServer();
     const sink = vi.fn(() => { throw new Error('sink failed'); });
-    const observer = await observeBrowser({ websocket: s.websocket, endpoint: s.endpoint, onDiagnostic: sink });
+    const observer = await observeBrowser({ websocket: s.websocket, endpoint: s.endpoint, env: {}, onDiagnostic: sink });
     cleanup.push(() => observer.stop());
     for (const ws of s.sockets) { ws.send('null'); ws.send('invalid JSON'); }
     s.event('Target.targetCreated');
@@ -166,7 +166,7 @@ describe('browser HTTP failure provenance', () => {
     cleanup.push(() => rmSync(root, { recursive: true, force: true }));
     const bin = join(root, 'upstream'); mkdirSync(bin);
     writeFileSync(join(bin, 'browser-use'), `#!${process.execPath}\nsetTimeout(() => { process.stdout.write('original result'); process.exit(0); }, 300);\n`, { mode: 0o700 });
-    const env = { ...process.env, PATH: `${bin}:/usr/bin:/bin`, XDG_RUNTIME_DIR: root, BU_CDP_URL: s.endpoint,
+    const env = { PATH: `${bin}:/usr/bin:/bin`, XDG_RUNTIME_DIR: root, BU_CDP_URL: s.endpoint,
       DISCLAUDE_CONFIG_PATH: join(root, 'config.json'), DISCLAUDE_CHROMIUM_CONFIG: join(root, 'missing.json') };
     const runtime = await prepareBrowserCommands({ env, fetchImpl: () => Promise.resolve(new Response(JSON.stringify({ webSocketDebuggerUrl: s.websocket }))) });
     const path = resolveBrowserRuntimePath(env), data = JSON.parse(readFileSync(path, 'utf8'));

@@ -80,7 +80,7 @@ export async function main(args = process.argv.slice(2), env = process.env) {
     Object.assign(cliEnv, runtime.browserEnv, { PATH: runtime.path });
     if (args.length === 0) {
       observer = await observeBrowser({ websocket: runtime.browserEnv.BU_CDP_WS,
-        endpoint: runtime.browserEnv.BU_CDP_URL, endpointSource: runtime.endpointSource || 'unknown', onDiagnostic: reportDiagnostic });
+        endpoint: runtime.browserEnv.BU_CDP_URL, endpointSource: runtime.endpointSource || 'unknown', onDiagnostic: reportDiagnostic, env });
       if (interrupted) throw new Error('Browser command cancelled before execution');
     }
     const result = await new Promise((done, reject) => {

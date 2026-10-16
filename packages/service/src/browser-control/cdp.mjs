@@ -1,28 +1,32 @@
 /** Private CDP transport for diagnostics and disposable browser checks. */
 import WebSocket from 'ws';
 import { browserDiagnostic, BrowserDiagnosticError } from './diagnostics.mjs';
-export async function connect(url, { endpoint = url, endpointSource = 'explicit-websocket', onEvent = () => {}, observation = 'request', timeoutMs = 5000 } = {}) {
+import { readErrorResponse } from './response-summary.mjs';
+export async function connect(url, { endpoint = url, endpointSource = 'explicit-websocket', onEvent = () => {}, observation = 'request', timeoutMs = 5000, maxPayloadBytes, env = process.env } = {}) {
   // Never follow an upgrade redirect to a different endpoint.
   let ws;
-  try { ws = new WebSocket(url, { followRedirects: false }); }
+  try { ws = new WebSocket(url, { followRedirects: false, ...(maxPayloadBytes ? { maxPayload: maxPayloadBytes } : {}) }); }
   catch {
-    throw new BrowserDiagnosticError(browserDiagnostic({ stage: 'websocket-attach', url, endpoint, endpointSource, reason: 'invalid-websocket-url', observation }));
+    throw new BrowserDiagnosticError(browserDiagnostic({ stage: 'websocket-attach', url, endpoint, endpointSource, reason: 'invalid-websocket-url', observation, env }));
   }
   let sequence = 0;
   const pending = new Map();
   const closed = new Promise(resolve => ws.addEventListener('close', resolve, { once: true }));
   await new Promise((resolve, reject) => {
-    const fail = (status, reason) => {
+    let settled = false, upgradeResponse = false;
+    const fail = (status, reason, response, headers) => {
+      if (settled) return; settled = true;
       clearTimeout(timer);
-      reject(new BrowserDiagnosticError(browserDiagnostic({ stage: 'websocket-attach', url, endpoint, endpointSource, status, reason, observation })));
+      reject(new BrowserDiagnosticError(browserDiagnostic({ stage: 'websocket-attach', url, endpoint, endpointSource, status, reason, observation, response, env, headers })));
       ws.terminate();
     };
     const timer = setTimeout(() => fail(undefined, 'connect-timeout'), timeoutMs);
-    ws.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true });
-    ws.addEventListener('error', () => fail(undefined, 'connect-error'), { once: true });
-    ws.once('unexpected-response', (_request, response) => {
-      response.destroy();
-      fail(response.statusCode, 'http-upgrade-rejected');
+    ws.addEventListener('open', () => { settled = true; clearTimeout(timer); resolve(); }, { once: true });
+    ws.addEventListener('error', () => { if (!upgradeResponse) fail(undefined, 'connect-error'); });
+    ws.once('unexpected-response', async (_request, response) => {
+      upgradeResponse = true; clearTimeout(timer);
+      const summary = await readErrorResponse(response, { url, endpoint, env });
+      fail(response.statusCode, 'http-upgrade-rejected', summary, response.headers);
     });
   });
   ws.addEventListener('message', event => {
@@ -44,11 +48,11 @@ export async function connect(url, { endpoint = url, endpointSource = 'explicit-
   });
   return {
     ws, closed,
-    call(method, params = {}, sessionId) {
+    call(method, params = {}, sessionId, { timeoutMs: callTimeoutMs = 5000 } = {}) {
       if (ws.readyState !== WebSocket.OPEN) return Promise.reject(new Error('CDP unavailable'));
       return new Promise((resolve, reject) => {
         const id = ++sequence;
-        const timer = setTimeout(() => { pending.delete(id); reject(new Error('CDP response timeout; outcome may be unknown')); }, 5000);
+        const timer = setTimeout(() => { pending.delete(id); reject(new Error('CDP response timeout; outcome may be unknown')); }, callTimeoutMs);
         pending.set(id, { resolve, reject, timer });
         ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
       });

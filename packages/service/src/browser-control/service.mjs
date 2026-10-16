@@ -131,7 +131,7 @@ export async function prepareBrowserCommands({ env = process.env, fetchImpl = gl
   const executable = resolveBrowserUse(env, bin);
   const { endpoint, endpointSource } = resolveCdpConfiguration(env);
   let discovered;
-  try { discovered = await discoverCdp({ endpoint, endpointSource, fetchImpl }); }
+  try { discovered = await discoverCdp({ endpoint, endpointSource, fetchImpl, env }); }
   catch (error) {
     if (error.diagnostic) onEvent(error.diagnostic);
     throw error;

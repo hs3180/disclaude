@@ -1,21 +1,12 @@
-/** Browser diagnostics contain routing metadata, never response bodies or headers. */
-export function safeLocation(value) {
-  if (!value) return { url: '<unknown>', path: '<unknown>' };
-  try {
-    const url = new URL(value);
-    if (!['http:', 'https:', 'ws:', 'wss:'].includes(url.protocol)) return { url: '<non-http-url>', path: '<non-http-url>' };
-    // Queries, fragments and userinfo may contain credentials. Preserve the
-    // pathname needed to diagnose a bad route, but redact labelled path tokens.
-    const path = url.pathname.replace(/\/(token|secret|password|api[-_]?key|authorization)\/[^/]+/giu, '/$1/<redacted>').slice(0, 2048);
-    return { url: `${url.protocol}//${url.host}${path}`, path };
-  } catch { return { url: '<invalid-url>', path: '<invalid-url>' }; }
-}
+import { safeLocation, knownSecrets, readErrorResponse } from './response-summary.mjs';
+export { safeLocation, safeErrorResponse } from './response-summary.mjs';
 
-export function browserDiagnostic({ stage, url, endpoint, endpointSource = 'unknown', method = 'GET', status, reason, observation = 'request' }) {
-  return { type: 'browser-diagnostic', stage, observation, method, ...safeLocation(url),
-    endpoint: safeLocation(endpoint).url, endpointSource,
+export function browserDiagnostic({ stage, url, endpoint, endpointSource = 'unknown', method = 'GET', status, reason, observation = 'request', response, env = process.env, headers }) {
+  const secrets = knownSecrets(env, [url, endpoint], headers);
+  return { type: 'browser-diagnostic', stage, observation, method, ...safeLocation(url, secrets),
+    endpoint: safeLocation(endpoint, secrets).url, endpointSource,
     ...(Number.isFinite(status) ? { status } : {}), ...(reason ? { reason } : {}),
-    response: '<body and headers omitted: may contain credentials or private page content>' };
+    response: response ?? { body: { omittedReason: 'response-unavailable' } } };
 }
 
 export class BrowserDiagnosticError extends Error {
@@ -26,18 +17,17 @@ export class BrowserDiagnosticError extends Error {
   }
 }
 
-export async function discoverCdp({ endpoint, endpointSource, fetchImpl = globalThis.fetch }) {
+export async function discoverCdp({ endpoint, endpointSource, fetchImpl = globalThis.fetch, env = process.env }) {
   const url = `${endpoint}/json/version`;
-  const fail = (status, reason) => new BrowserDiagnosticError(browserDiagnostic({
-    stage: 'http-discovery', url, endpoint, endpointSource, status, reason,
+  const fail = (status, reason, response, headers) => new BrowserDiagnosticError(browserDiagnostic({
+    stage: 'http-discovery', url, endpoint, endpointSource, status, reason, response, env, headers,
   }));
   let response;
   try { response = await fetchImpl(url, { redirect: 'error', signal: AbortSignal.timeout(5000) }); }
   catch { throw fail(undefined, 'request-failed'); }
   if (!response.ok) {
-    // Do not read a potentially unbounded or secret-bearing error body.
-    await response.body?.cancel().catch(() => {});
-    throw fail(response.status, 'http-error');
+    const summary = await readErrorResponse(response, { url, endpoint, env });
+    throw fail(response.status, 'http-error', summary, response.headers);
   }
   try {
     const version = await response.json();

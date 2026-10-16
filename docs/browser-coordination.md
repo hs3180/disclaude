@@ -121,8 +121,16 @@ Browser failure records use `type: browser-diagnostic` and distinguish:
 Each record includes the method, failing path, selected endpoint and its source
 (`installed-chromium-config`, `BU_CDP_URL`, or `unknown` for an older runtime).
 Userinfo, queries, fragments and labelled credential path segments are redacted.
-Response bodies and headers are fully omitted: arbitrary error documents can
-contain credentials or private content. The numeric status and safe reason remain.
+Current environment values, selected URL credentials and response cookie values
+are also masked before URL truncation, including encoded forms and host matches.
+Headers are never output. A bounded error response summary retains actual safe
+JSON fields (`code`, `type`, `status`, `message`, `reason`) or a recognized plain
+HTTP error phrase. Values must match standard HTTP/JSON-RPC codes, fixed error
+names, standard phrases or a route template matching the actual failed request;
+arbitrary messages and other private fields are omitted. The summary includes a
+standard status phrase and media type when safe, or a concrete `omittedReason`
+such as `html-response`, `no-safe-error-fields`, `body-too-large` or `body-timeout`.
+HTML, unknown types, encoded bodies and unrecognized content are never copied.
 The launcher adds an invocation ID and timestamp. It writes the latest record to
 the private browser runtime, exposed as `lastDiagnostic` by `disclaude browser status`.
 This is historical evidence with a timestamp, not the current readiness result.
@@ -134,7 +142,12 @@ For stdin scripts, the launcher opens one temporary read-only CDP connection
 under the existing invocation lock. It discovers and attaches to at most 16 page
 targets and enables Network events, with at most 8 records per invocation and
 256 in-flight document request IDs. Connection/setup waits are capped at one
-second each. This adds an upgrade and CDP setup calls before the original CLI;
+second each. Error bodies are limited to 4 KiB and 250 ms per read, with at most
+8 page body reads and 1 KiB of summarized body per record. Page body reads use
+read-only `Network.getResponseBody` after `loadingFinished`; absent or oversized
+encoded length skips the read. The diagnostic WebSocket has a 64 KiB payload cap
+to bound indivisible CDP envelopes even when the server's length is inaccurate.
+This adds an upgrade and CDP setup calls before the original CLI;
 it does not pause targets, intercept requests, retry work, rediscover an endpoint,
 or change protocols. The diagnostic connection closes when that invocation ends.
 CLI flags such as `--help`, `--version` and `--reload` skip this observation.
@@ -142,7 +155,8 @@ CLI flags such as `--help`, `--version` and `--reload` skip this observation.
 Observation is best effort. A page may begin loading before the observer attaches;
 an unavailable request method remains `unknown`. Responses before attachment,
 non-page targets, targets beyond the limit and work after the invocation ends
-may be missed. No observed page error does not prove navigation success. Upstream
+may be missed. A body that finishes after the invocation ends is omitted, with
+the observed response metadata preserved. No observed page error does not prove navigation success. Upstream
 stderr remains available and is outside the launcher's added-record redaction.
 Diagnostics alone do not establish that the unreproduced #5352 incident is fixed.
 
