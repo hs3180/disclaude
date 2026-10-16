@@ -6,6 +6,7 @@ import { createServer } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
   mkdtempSync,
+  mkdirSync,
   readFileSync,
   realpathSync,
   existsSync,
@@ -133,6 +134,9 @@ async function verifyPackage() {
   const cli = join(prefix, 'bin/disclaude');
   assert.equal(run(cli, ['--version']).trim(), `disclaude v${pkg.version}`);
   assert.match(run(cli, ['browser', '--help']), /automatically serializes calls/u);
+  assert.match(run(cli, ['plugins', '--help']), /official diagnostics plugin is optional/u);
+  assert(!existsSync(join(installed, 'skills/diagnose-logs')), 'Diagnostics must not ship in the default skills bundle');
+  assert(existsSync(join(installed, 'optional-plugins/diagnostics/skills/diagnose-logs/SKILL.md')));
   assert.match(run(cli, ['jupyter', '--help']), /Kernel memory stays on remote Jupyter/u);
   const notebookTools = JSON.parse(run(cli, ['jupyter', 'tools', '--no-interactive']));
   assert.equal(notebookTools.ok, true);
@@ -228,6 +232,7 @@ async function verifyPackage() {
     const { codexSkillsRegistry } = await load('core', 'sdk/providers/codex/skill-sources.js');
     const workspace = realpathSync(process.cwd());
     const skills = codexSkillsRegistry(workspace, Config.getBuiltinsDir()).resolve();
+    assert(!skills.manifest.includes('diagnose-logs'), 'Clean default manifest must not expose diagnostics');
     assert.deepEqual(skills.diagnostics.filter((item) => item.name === 'browser-use'), [],
       'Installed browser-use metadata must parse successfully');
     const browserLink = skills.manifest.match(/\\[browser-use\\]\\(([^)]+)\\)/)?.[1];
@@ -244,6 +249,41 @@ async function verifyPackage() {
     process.exit(0);
   `,
   ]);
+  // Install through the actual distributed executable, without network or a
+  // link to the checkout. Keep the plugin scoped to a separate user Project.
+  const diagnosticsProject = join(temp, 'diagnostics project');
+  mkdirSync(diagnosticsProject);
+  const pluginArgs = ['--project-dir', diagnosticsProject];
+  assert.equal(JSON.parse(run(cli, ['plugins', 'list', ...pluginArgs])).data.installed, false);
+  assert(!existsSync(join(diagnosticsProject, '.disclaude')), 'Listing plugins must remain read-only');
+  assert.equal(JSON.parse(run(cli, ['plugins', 'install', 'diagnostics', ...pluginArgs])).data.changed, true);
+  assert.equal(JSON.parse(run(cli, ['plugins', 'install', 'diagnostics', ...pluginArgs])).data.changed, false);
+  assert.equal(JSON.parse(run(cli, ['plugins', 'update', 'diagnostics', ...pluginArgs])).data.changed, false);
+  run(process.execPath, ['--input-type=module', '-e', `
+    import assert from 'node:assert/strict';
+    import { join, resolve } from 'node:path';
+    import { readFileSync } from 'node:fs';
+    import { pathToFileURL } from 'node:url';
+    const root = ${JSON.stringify(installed)};
+    const project = ${JSON.stringify(diagnosticsProject)};
+    const modulesRoot = ${JSON.stringify(isPrebuilt ? 'packages' : 'node_modules/@disclaude')};
+    const load = file => import(pathToFileURL(join(root, modulesRoot, 'core/dist', file)).href);
+    const { codexSkillsRegistry } = await load('sdk/providers/codex/skill-sources.js');
+    const { diagnosticsPluginManifest, diagnosticsPluginRoot } = await load('skills/diagnostics-plugin.js');
+    const { adaptOptions } = await load('sdk/providers/claude/options-adapter.js');
+    const resolution = codexSkillsRegistry(project, root).resolve();
+    const skill = resolution.skills.find(item => item.name === 'diagnose-logs');
+    assert(skill, 'Installed diagnostics must be discovered');
+    const instructions = readFileSync(resolve(project, skill.reference), 'utf8');
+    assert.match(instructions, /Disclaude service issues only/);
+    assert(diagnosticsPluginManifest(project).includes('diagnose-logs'), 'DSH manifest must discover installed diagnostics');
+    assert(adaptOptions({ cwd: project, settingSources: [] }).plugins.some(item => item.path === diagnosticsPluginRoot(project)),
+      'Claude must load the installed optional local plugin');
+  `]);
+  assert.equal(JSON.parse(run(cli, ['plugins', 'remove', 'diagnostics', ...pluginArgs])).data.changed, true);
+  assert.equal(JSON.parse(run(cli, ['plugins', 'list', ...pluginArgs])).data.installed, false);
+  assert(!existsSync(join(diagnosticsProject, '.disclaude/plugins/diagnostics')));
+  console.log('OPTIONAL_DIAGNOSTICS_INSTALL_DISCOVERY_REMOVE_OK');
   // Exercise the public executable twice with isolated data and loopback-only REST.
   // No model prompt, live channel or production service is touched.
   const portProbe = createServer();

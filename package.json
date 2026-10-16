@@ -116,6 +116,7 @@
     "packages/*/tsconfig.json",
     "scripts/",
     "skills/",
+    "optional-plugins/",
     "examples/skills/",
     "docs/",
     "jupyter/",
