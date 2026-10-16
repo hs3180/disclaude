@@ -165,6 +165,8 @@ export interface AgentMessageMetadata {
    * provider.ts 的 stderrIndicatesUpstreamApiError()。
    */
   upstreamApiError?: boolean;
+  /** Whole-turn replay is unsafe even when the upstream failure is transient. */
+  automaticReplayBlocked?: string;
   /**
    * 触发 upstreamApiError 的 stderr 尾部(Issue #4322)。含上游 request_id 等可操作
    * 信息,ChatAgent 在 ❌ Failed 提示里截取展示。仅在 upstreamApiError=true 时设置。

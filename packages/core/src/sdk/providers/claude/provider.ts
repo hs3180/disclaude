@@ -24,6 +24,9 @@ import type { BaseAgentConfig } from '../../../agents/types.js';
 import { withDiscoveredCompaction } from './compaction.js';
 import { buildClaudeDisallowedTools } from './disallowed-tools.js';
 import { privateSdkSettings } from './private-settings.js';
+import { ClaudeAttemptProcess, type AttemptExit } from './attempt-process.js';
+import { claudeReplayBlock, type ClaudeAttemptEvidence } from './replay-admission.js';
+import { preventAutomaticReplay } from '../../../utils/replay-safety.js';
 
 const logger = createLogger('ClaudeSDKProvider');
 
@@ -31,7 +34,7 @@ const logger = createLogger('ClaudeSDKProvider');
 // query ends cleanly with ZERO messages (200-OK-zero-content) and the in-request
 // retries (below) are exhausted.
 const EMPTY_STREAM_TERMINATE_NOTICE =
-  '❌ 上游返回了空响应（200 但零内容事件），本次会话未产生任何输出。请稍后重试。';
+  '❌ 上游返回了空响应，已停止自动重试。请先核对已有操作和结果，再决定是否继续。';
 
 // ============================================================================
 // Upstream API error detection (Issue #4322)
@@ -312,14 +315,35 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     const stderrCapture = new StderrCapture();
 
     const privateSettings = privateSdkSettings(adaptOptions(commonOptions, { allowedTools, disallowedTools }));
+    const cleanupPrivateSettings = (): void => {
+      try { privateSettings.cleanup(); }
+      catch { logger.warn({ cleanupFailed: true }, 'Private Claude SDK settings cleanup failed'); }
+    };
     const sdkOptions = privateSettings.options;
-    // 将 stderr 回调注入 SDK 选项
-    sdkOptions.stderr = (data: string) => {
+    type Attempt = ClaudeAttemptEvidence & {
+      ordinal: number; process: ClaudeAttemptProcess; sdk?: ReturnType<typeof query>; exit?: Promise<AttemptExit>;
+    };
+    const captureStderr = (current: Attempt, data: string): void => {
       stderrCapture.append(data);
-      // 同时调用用户提供的回调（如果有）
+      if (/\b(?:tool_use|tool_result|PreToolUse|PostToolUse|Executing tool)\b/i.test(data)) { current.toolObserved = true; }
       options.stderr?.(data);
     };
-
+    const createAttempt = (ordinal: number): Attempt => {
+      const process = new ClaudeAttemptProcess({ stderr: data => captureStderr(current, data) });
+      const current: Attempt = { ordinal, process, messages: 0, partials: false, permissionRequests: 0, toolObserved: false,
+        inputOffered: false, inputPullPending: false, get processStarted() { return process.started; } };
+      return current;
+    };
+    let attempt = createAttempt(1);
+    const stopAttempt = (current: Attempt): Promise<AttemptExit> => {
+      current.exit ??= current.process.stop(() => current.sdk?.close?.()).then(exit => {
+        const { pid: nativePid, ...settlement } = exit;
+        logger.info({ queryAttempt: current.ordinal, nativePid, ...settlement, scope: 'native-process-and-observed-descendants' },
+          'Claude attempt process settled');
+        return exit;
+      });
+      return current.exit;
+    };
     // 创建输入适配器生成器
     // IMPORTANT: Use manual iteration instead of `for await...of` to avoid blocking on input
     let inputCount = 0;
@@ -328,9 +352,11 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     // yields the buffer first, then resumes the outer `input` generator.
     const inputBuffer: SDKUserMessage[] = [];
     let inputExhausted = false;
-    async function* adaptInputStream(): AsyncGenerator<SDKUserMessage> {
+    async function* adaptInputStream(current: Attempt): AsyncGenerator<SDKUserMessage> {
       // Replay buffered input first (retries), then resume the outer generator.
       for (const buffered of inputBuffer) {
+        if (current.process.closed) { return; }
+        current.inputOffered = true;
         yield buffered;
       }
       if (inputExhausted) {
@@ -339,7 +365,12 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
       // Manual iteration - only pull one value at a time
       const iterator = input[Symbol.asyncIterator]();
       while (true) {
-        const { value, done } = await iterator.next();
+        if (current.process.closed) { return; }
+        current.inputPullPending = true;
+        let next: IteratorResult<UserInput>;
+        try { next = await iterator.next(); }
+        finally { current.inputPullPending = false; }
+        const { value, done } = next;
         if (done) {
           inputExhausted = true;
           return;
@@ -347,6 +378,8 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         inputCount++;
         const adapted = adaptUserInput(value);
         inputBuffer.push(adapted); // tee for replay on retry
+        if (current.process.closed) { return; }
+        current.inputOffered = true;
         logger.info({ inputCount, contentLength: value.content?.length }, 'Input received');
         yield adapted;
       }
@@ -357,15 +390,32 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     // works even before iteration starts.
     let cancelled = false;
     let queryResult: ReturnType<typeof query>;
+    const startQuery = (current: Attempt): ReturnType<typeof query> => {
+      const nativeOptions = { ...sdkOptions, spawnClaudeCodeProcess: (command: Parameters<ClaudeAttemptProcess['spawn']>[0]) => {
+        const child = current.process.spawn(command);
+        logger.info({ queryAttempt: current.ordinal, nativePid: current.process.pid }, 'Claude attempt process started');
+        return child;
+      },
+        stderr: (data: string) => captureStderr(current, data) };
+      const permission = sdkOptions.canUseTool as NonNullable<Parameters<typeof query>[0]['options']>['canUseTool'];
+      if (permission) {
+        Object.assign(nativeOptions, { canUseTool: (...args: Parameters<NonNullable<typeof permission>>) => {
+          current.permissionRequests++;
+          return permission(...args);
+        } });
+      }
+      current.sdk = query({ prompt: adaptInputStream(current),
+        options: nativeOptions as Parameters<typeof query>[0]['options'] });
+      return current.sdk;
+    };
     try {
-      queryResult = query({
-        prompt: adaptInputStream(),
-        options: sdkOptions as Parameters<typeof query>[0]['options'],
-      });
+      queryResult = startQuery(attempt);
     } catch (error) {
-      privateSettings.cleanup();
+      void stopAttempt(attempt).finally(cleanupPrivateSettings);
+      if (!attempt.process.started) { cleanupPrivateSettings(); }
       cleanupNewProcessListeners(listenerSnapshot);
-      throw error;
+      throw attempt.process.started || attempt.inputOffered || attempt.inputPullPending
+        ? preventAutomaticReplay(error, 'startup-outcome-uncertain') : error;
     }
 
     // Issue #3003: Track SDK query timing for diagnostics
@@ -385,11 +435,8 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
 
     async function* adaptIterator(): AsyncGenerator<AgentMessage> {
       let partialsObserved = false;
-      // Issue #4192 (L1): retry the query on a transient error that occurs
-      // BEFORE any SDK message is yielded (messageCount === 0) — nothing has
-      // been emitted to the consumer, so a retry can safely replay the buffered
-      // input without duplicating output or re-running tool side effects. Backoff
-      // uses the centralized computeBackoffDelay (#4227). At most MAX_QUERY_RETRIES.
+      // Whole-query retry needs positive pre-work evidence and confirmed teardown.
+      // SDK/client API retries remain inside the original native execution.
       //
       // Issue #4313: MAX_QUERY_RETRIES is operator-tunable via
       // DISCLAUDE_QUERY_MAX_RETRIES (e.g. to retry more before rethrowing when the
@@ -404,8 +451,8 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
       };
       const delayMs = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
       for (let queryAttempt = 0; ; queryAttempt++) {
-        // Per-attempt reset: finally cleared the watchdog timers; counters/flags
-        // reset here so each attempt starts clean.
+        if (cancelled) { return; }
+        // The previous attempt is settled before the next attempt is created.
         messageCount = 0;
         partialsObserved = false;
         listenersCleanedUp = false;
@@ -417,12 +464,10 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           // be fed during query() creation, before the loop — is preserved for
           // the catch's attachStderrToError, and so each retry starts clean.
           stderrCapture.reset();
-          queryResult = query({
-            prompt: adaptInputStream(),
-            options: sdkOptions as Parameters<typeof query>[0]['options'],
-          });
+          attempt = createAttempt(queryAttempt + 1);
         }
       try {
+        if (queryAttempt > 0) { queryResult = startQuery(attempt); }
         // Issue #4200 part 2: per-query registry of taskId → label, so status-only
         // TaskUpdate calls can recall a subject/activeForm seen on an earlier
         // update. Local to this generator → GC'd when the query stream ends.
@@ -462,14 +507,20 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           // terminate a turn merely because content deltas pause during backoff.
           if (message.type === 'stream_event') {
             partialsObserved = true;
+            attempt.partials = true;
             continue;
           }
           const now = Date.now();
           messageCount++;
+          attempt.messages = messageCount;
           // 提前适配,使日志与检测均能复用(D1:保留 system subtype 到 metadata 供诊断)
           // Issue #4200 part 2: thread the per-query task registry so status-only
           // TaskUpdate calls can recall a label seen on an earlier update.
           const adapted = adaptSDKMessage(message, taskSubjectRegistry);
+          if (adapted.type === 'tool_use') { attempt.toolObserved = true; }
+          if (adapted.type === 'result' && (attempt.process.started || attempt.inputOffered)) {
+            adapted.metadata = { ...adapted.metadata, automaticReplayBlocked: 'execution-outcome-uncertain' };
+          }
           // Issue #3003: log TTFT and per-message elapsed
           if (!firstMessageMs) {
             firstMessageMs = now;
@@ -584,63 +635,21 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         }
         // Issue #3003: log iterator completion timing
         const totalMs = Date.now() - queryStartMs;
-        // Issue #4442 (part 2): empty stream — the SDK yielded zero messages, so the
-        // turn produced no content at all (200-OK-zero-content / empty stream). This is
-        // the "silent turn death" mode: the for-await ends cleanly and the turn completes
-        // as if successful, masked by the INFO "iterator completed" line below. A clean
-        // empty-stream completion is detectable from messageCount alone. Elevate it to a
-        // structured ERROR so the failure is observable in logs
-        // instead of silent (the #4442 ask: 判错/上报 rather than 静默完成). A stream
-        // that never ends remains the SDK/CLI's liveness responsibility.
-        //
-        // Issue #4442 (part 3): recovery — an empty stream is safe to retry in-request
-        // for exactly the same reason a pre-first-message transient error is (the #4192
-        // L1 gate below): messageCount === 0 ⇒ NOTHING was yielded to the consumer, so
-        // replaying the buffered input can't duplicate output or re-run tool side
-        // effects. Retry within the SAME loop/attempts budget (MAX_QUERY_RETRIES,
-        // DISCLAUDE_QUERY_MAX_RETRIES); when the budget is exhausted, synthesize a
-        // terminal result (terminatedReason 'empty-stream') instead of letting the
-        // generator return cleanly — the turn then surfaces ❌ to the user and
-        // recordFailure('empty-stream') in ChatAgent instead of silently completing.
         if (messageCount === 0) {
-          if (queryAttempt < MAX_QUERY_RETRIES) {
-            // Best-effort cleanup of the empty attempt's handle before reassigning
-            // queryResult — same rationale as the transient-error retry in the catch
-            // (the SDK iterator's clean return doesn't guarantee subprocess/transport
-            // teardown either).
-            try { queryResult.close?.(); } catch { /* best-effort */ }
-            logger.warn(
-              {
-                queryAttempt: queryAttempt + 1,
-                totalMs,
-                model: options.model,
-                apiBaseUrl: options.env?.ANTHROPIC_BASE_URL,
-                partialsObserved,
-              },
-              'Issue #4442: SDK query completed with zero messages (empty stream / '
-                + '200-OK-zero-content) — retrying query before first SDK message '
-                + '(Issue #4192 L1 budget)',
-            );
+          const exit = await stopAttempt(attempt);
+          const replayBlock = claudeReplayBlock(attempt, exit);
+          if (!replayBlock && queryAttempt < MAX_QUERY_RETRIES) {
+            logger.warn({ queryAttempt: queryAttempt + 1, totalMs, partialsObserved, nativePid: exit.pid,
+              processStatus: exit.status },
+            'Issue #4442: SDK query completed with zero messages — retrying confirmed pre-work failure (Issue #4192 L1 budget)');
             await delayMs(computeBackoffDelay(queryAttempt, QUERY_RETRY_TIMING));
             continue;
           }
-          logger.error(
-            {
-              totalMs,
-              model: options.model,
-              apiBaseUrl: options.env?.ANTHROPIC_BASE_URL,
-              partialsObserved,
-            },
-            'Issue #4442: SDK query completed with zero messages (empty stream / '
-              + '200-OK-zero-content) and retries are exhausted — turn produced no content; '
-              + 'yielding terminal empty-stream result (silent turn death → surfaced)',
-          );
-          yield {
-            type: 'result',
-            content: EMPTY_STREAM_TERMINATE_NOTICE,
-            role: 'system',
-            metadata: { terminatedReason: 'empty-stream' },
-          };
+          logger.error({ totalMs, model: options.model, partialsObserved, replayBlock, nativePid: exit.pid,
+            processStatus: exit.status },
+          'Issue #4442: SDK query completed with zero messages; automatic retry stopped');
+          yield { type: 'result', content: EMPTY_STREAM_TERMINATE_NOTICE, role: 'system',
+            metadata: { terminatedReason: 'empty-stream', automaticReplayBlocked: replayBlock ?? 'retry-budget-exhausted' } };
           return;
         }
         logger.info(
@@ -658,30 +667,13 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         // downstream handler reading the tagged error) knows the category, e.g.
         // NETWORK/TIMEOUT (transient → retry candidate) vs CONFIG/SDK (not).
         const { category: errorCategory, transient: errorTransient } = tagErrorCategory(error);
-        // Issue #4192 (L1): retry on a transient error that occurred before the
-        // first SDK message was yielded. messageCount === 0 ⇒ nothing was emitted
-        // to the consumer, so replaying the buffered input can't duplicate output
-        // or re-run tool side effects. `continue` → finally cleans this attempt.
-        //
-        // Note (review 🟠): messageCount===0 may still have partialsObserved===true
-        // (the SDK yielded a message_start but no content/full message before the
-        // network reset). Safe for our consumer (nothing emitted); upstream is
-        // at-least-once (the request was accepted). For idempotent chat turns this
-        // is fine. Tighten to !partialsObserved if at-most-once-upstream is needed.
-        if (errorTransient && messageCount === 0 && queryAttempt < MAX_QUERY_RETRIES) {
-          // Review 🟡 + 🟠(note 2): best-effort cleanup of the failed attempt's handle
-          // before reassigning queryResult on retry (SDK iterator throw doesn't guarantee
-          // subprocess/transport teardown — especially on network reset). This also
-          // underpins the note-2 single-consumer guarantee: by the time we re-enter the
-          // loop and call adaptInputStream() again, the prior attempt's prompt generator
-          // is done (its for-await threw → return() ran), so the shared outer `input`
-          // iterator has exactly one active consumer and the replayed/buffered pull can't
-          // race the abandoned one.
-          try { queryResult.close?.(); } catch { /* best-effort */ }
-          logger.warn(
-            { queryAttempt: queryAttempt + 1, err: error, errorCategory },
-            'Transient error before first SDK message — retrying query (Issue #4192 L1)',
-          );
+        const exit = await stopAttempt(attempt);
+        const replayBlock = claudeReplayBlock(attempt, exit);
+        if (cancelled) { return; }
+        if (errorTransient && !replayBlock && queryAttempt < MAX_QUERY_RETRIES) {
+          logger.warn({ queryAttempt: queryAttempt + 1, err: error, errorCategory,
+            nativePid: exit.pid, processStatus: exit.status },
+          'Transient pre-work error — retrying query (Issue #4192 L1)');
           await delayMs(computeBackoffDelay(queryAttempt, QUERY_RETRY_TIMING));
           continue;
         }
@@ -690,13 +682,17 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
             err: error,
             errorCategory,
             errorTransient,
+            replayBlock,
+            nativePid: exit.pid,
+            processStatus: exit.status,
             messageCount,
             stderr: stderrCapture.hasContent() ? stderrCapture.getTail() : '(no stderr)',
           },
           'adaptIterator error'
         );
-        throw error;
+        throw replayBlock ? preventAutomaticReplay(error, replayBlock) : error;
       } finally {
+        await stopAttempt(attempt);
         // Issue #3378: Clean up SDK-registered process listeners after query completes.
         // This prevents listener accumulation across multiple queries in long-running
         // processes (e.g., integration test server).
@@ -705,43 +701,38 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
       } // end Issue #4192 (L1) retry loop
     }
 
+    let interruptSent = false;
+    const cancel = () => {
+      cancelled = true;
+      if (!interruptSent && typeof queryResult.interrupt === 'function') {
+        interruptSent = true;
+        try {
+          void Promise.resolve(queryResult.interrupt()).catch(() => logger.debug('Interrupt channel closed during cancellation'));
+        } catch { logger.debug('Interrupt channel unavailable during cancellation'); }
+      }
+    };
+    const close = (): Promise<AttemptExit> => {
+      cancelled = true;
+      cleanupListeners();
+      const stopped = stopAttempt(attempt);
+      if (!attempt.process.started) { cleanupPrivateSettings(); }
+      return stopped.finally(cleanupPrivateSettings);
+    };
     return {
       handle: {
         inputDelivery: 'streaming',
-        close: () => {
-          try {
-            if ('close' in queryResult && typeof queryResult.close === 'function') {
-              queryResult.close();
-            }
-          } finally {
-          // Issue #3378: Also clean up listeners when handle is explicitly closed,
-          // in case the iterator wasn't fully consumed.
-            cleanupListeners();
-            privateSettings.cleanup();
-          }
-        },
-        cancel: () => {
-          try {
-            cancelled = true;
-          // cancel ends this query; interrupt alone may leave SDK background
-          // tools/follow-ups running. close tears down the owned subprocess.
-            if (typeof queryResult.interrupt === 'function') {
-              void queryResult.interrupt().catch((err: unknown) => {
-                logger.debug({ err }, 'Interrupt settled after cancellation');
-              });
-            }
-            queryResult.close?.();
-          } finally {
-          // Issue #3378: Clean up listeners on cancel as well.
-            cleanupListeners();
-            privateSettings.cleanup();
-          }
+        close: () => { void close(); },
+        cancel: () => { cancel(); void close(); },
+        interrupt: async () => {
+          cancel();
+          const exit = await close();
+          if (!exit.confirmed) { throw preventAutomaticReplay(new Error('Claude process exit could not be confirmed'), 'process-exit-unconfirmed'); }
         },
         sessionId: undefined,
       },
       iterator: (async function* () {
         try { yield* adaptIterator(); }
-        finally { privateSettings.cleanup(); }
+        finally { await stopAttempt(attempt); cleanupPrivateSettings(); }
       })(),
     };
   }

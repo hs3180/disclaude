@@ -6,6 +6,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { RestartManager } from './restart-manager.js';
 import { createLogger } from '../utils/logger.js';
 import { tagErrorCategory } from '../utils/error-handler.js';
+import { preventAutomaticReplay } from '../utils/replay-safety.js';
 
 describe('RestartManager', () => {
   let manager: RestartManager;
@@ -40,6 +41,13 @@ describe('RestartManager', () => {
   });
 
   describe('shouldRestart', () => {
+    it('does not replay a provider-uncertain execution or consume restart quota', () => {
+      const error = preventAutomaticReplay(new Error('ECONNRESET'), 'input-delivery-uncertain');
+      tagErrorCategory(error);
+      expect(manager.shouldRestart('uncertain', error.message, new Error('wrapper', { cause: error })))
+        .toMatchObject({ allowed: false, reason: 'replay_unsafe', restartCount: 0 });
+      expect(manager.shouldRestart('uncertain', 'ECONNRESET').allowed).toBe(true);
+    });
     it('bounds UNKNOWN recovery per chat until reset or a successful operation', () => {
       const error = new Error('unclassified failure');
       tagErrorCategory(error);
