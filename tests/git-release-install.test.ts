@@ -79,10 +79,11 @@ test('generates a standalone manifest and excludes untracked resources', () => {
     );
     write(
       `packages/${name}/dist/index.js`,
-      name === 'core' ? 'export const x = 1;' : "export { x } from '@disclaude/core';"
+      name === 'core' ? 'export const x = 1;' : "export { x } from '@disclaude/core'; import '@disclaude/core/secret-environment';"
     );
     write(`packages/${name}/dist/index.test.js`, 'should not ship');
   }
+  write('packages/core/dist/config/secret-environment.js', 'export const names = new Set();');
   const git = (args: string[]) => execFileSync('git', args, { cwd: root });
   git(['init', '-q']);
   git(['add', '.']);
@@ -128,6 +129,8 @@ test('generates a standalone manifest and excludes untracked resources', () => {
     readFileSync(join(output, 'packages/service/dist/index.js'), 'utf8'),
     /\.\.\/\.\.\/core\/dist\/index.js/
   );
+  assert.match(readFileSync(join(output, 'packages/service/dist/index.js'), 'utf8'),
+    /\.\.\/\.\.\/core\/dist\/config\/secret-environment.js/);
   assert.equal(
     JSON.parse(readFileSync(join(output, 'release-source.json'), 'utf8')).sourceFingerprint,
     sourceFingerprint(root)

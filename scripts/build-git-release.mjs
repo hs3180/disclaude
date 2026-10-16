@@ -125,6 +125,7 @@ export function generateRelease(root, output) {
     'packages/core/dist/utils/browser-env.js'
   );
   targets['@disclaude/core/jupyter'] = join(output, 'packages/core/dist/jupyter/index.js');
+  targets['@disclaude/core/secret-environment'] = join(output, 'packages/core/dist/config/secret-environment.js');
   const dependencies = {};
   const optionalDependencies = {};
   const manifests = [

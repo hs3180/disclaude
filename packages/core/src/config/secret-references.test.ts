@@ -7,6 +7,7 @@ import { sanitizeDiagnosticText } from '../utils/diagnostic-text.js';
 import { applyGlobalEnv } from './index.js';
 import { setLoadedConfig } from './loader.js';
 import type { DisclaudeConfig } from './types.js';
+import { registerExternalSecretEnvironmentNames } from './secret-environment.js';
 
 afterEach(() => { vi.unstubAllEnvs(); setLoadedConfig(null); });
 const config = (): DisclaudeConfig => ({
@@ -15,6 +16,33 @@ const config = (): DisclaudeConfig => ({
 });
 
 describe('persistent external secrets', () => {
+  it('masks and redacts opaque unused external-file sources, granting only selected mappings', () => {
+    vi.stubEnv('OPAQUE_FILE_SOURCE', 'synthetic-opaque-file-canary');
+    vi.stubEnv('OPAQUE_FILE_OVERRIDE', 'synthetic-opaque-inherited-canary');
+    registerExternalSecretEnvironmentNames(['OPAQUE_FILE_SOURCE', 'OPAQUE_FILE_OVERRIDE']);
+    const value = config();
+    value.llms!.native.env = { TOOL_DATA: '$OPAQUE_FILE_SOURCE' };
+    const result = resolveConfiguredAgents(value);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {return;}
+    for (const name of ['daily', 'a', 'b']) {
+      const preset = result.presets[name];
+      const env = buildSdkEnv(preset.apiKey, preset.apiBaseUrl, {}, false, undefined,
+        { protocol: preset.apiProtocol, credentialEnvKeys: preset.credentialEnvKeys, selectedEnv: preset.env });
+      expect(env.OPAQUE_FILE_SOURCE).toBeUndefined();
+      expect(env.OPAQUE_FILE_OVERRIDE).toBeUndefined();
+      expect(env.TOOL_DATA).toBe(name === 'daily' ? 'synthetic-opaque-file-canary' : undefined);
+    }
+    const log = redactChannelSecrets(JSON.stringify({ OPAQUE_FILE_SOURCE: 'synthetic-opaque-file-canary',
+      msg: 'synthetic-opaque-file-canary synthetic-opaque-inherited-canary' }));
+    const diagnostic = sanitizeDiagnosticText('synthetic-opaque-file-canary synthetic-opaque-inherited-canary');
+    for (const canary of ['synthetic-opaque-file-canary', 'synthetic-opaque-inherited-canary']) {
+      expect(log).not.toContain(canary);
+      expect(diagnostic).not.toContain(canary);
+    }
+    expect(buildSdkEnv('', undefined, {}, false).OPAQUE_FILE_OVERRIDE).toBeUndefined();
+  });
+
   it.each(['CUSTOM_TOKEN', 'JUPYTERLAB_PASS', 'SERVICE_PASSWORD', 'OPAQUE_A', 'AUTHORIZATION', 'COOKIE', 'CREDENTIALS', 'PGPASSWORD'])('rejects YAML env.%s, even when an inherited value would override it', key => {
     vi.stubEnv(key, 'external-value');
     const value = config(); value.env = { [key]: 'private-canary-not-to-print' };

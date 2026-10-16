@@ -30,6 +30,13 @@ use whole external references. Reference syntax never executes shell expressions
 Application-specific secrets with opaque names still belong in the external
 store; use explicit native LLM references to select their consumers.
 
+Every variable named in the explicit external secret file is treated as secret
+by its source, including opaque or currently unused names and inherited overrides.
+Those source variables are masked from agent environments and redacted in logs
+and user diagnostics. A selected LLM receives a value only through its explicit
+API/native mapping. The service records variable names internally, without an
+environment metadata channel or secret values in configuration exports.
+
 Inherited secret-like variables and every configured credential/reference source
 are masked before the selected LLM's environment is projected. Selected API keys
 and endpoints then override conflicting inherited/native settings. Source variable
