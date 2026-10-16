@@ -692,6 +692,26 @@ describe('adaptSDKMessage', () => {
         cacheCreationTokens: 3, costUsd: 0.003, terminatedReason: 'turn_failed' });
     });
 
+    it('prefers model pipeline usage and cost without summing distinct result snapshots', () => {
+      const makeResult = (input: number) => asMsg({ type: 'result', subtype: 'success', is_error: false,
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 1, cache_creation_input_tokens: 1 },
+        total_cost_usd: 0.05,
+        modelUsage: {
+          main: { inputTokens: input, outputTokens: 2, cacheReadInputTokens: 3, cacheCreationInputTokens: 4, costUSD: 0.01 },
+          child: { inputTokens: 7, outputTokens: 5, cacheReadInputTokens: 6, cacheCreationInputTokens: 8, costUSD: 0.02 },
+        } });
+      expect(adaptSDKMessage(makeResult(10)).metadata).toMatchObject({ inputTokens: 17, outputTokens: 7,
+        cacheReadTokens: 9, cacheCreationTokens: 12, costUsd: 0.05 });
+      expect(adaptSDKMessage(makeResult(30)).metadata?.inputTokens).toBe(37);
+    });
+
+    it('omits invalid usage counters while preserving valid cache and zero counters', () => {
+      const result = adaptSDKMessage(asMsg({ type: 'result', subtype: 'success',
+        total_cost_usd: -1, usage: { input_tokens: Number.NaN, output_tokens: -2,
+          cache_read_input_tokens: 0, cache_creation_input_tokens: 3 } }));
+      expect(result.metadata).toEqual({ cacheReadTokens: 0, cacheCreationTokens: 3 });
+    });
+
     it('should format error result', () => {
       const message = {
         type: 'result' as const,

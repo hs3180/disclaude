@@ -423,56 +423,58 @@ describe('ClaudeSDKProvider', () => {
   // --------------------------------------------------------------------------
 
   describe('queryStream', () => {
-    it('stops before an unaffordable Retry-After wait, reports progress and prevents L2 replay', async () => {
+    it('leaves native retry events opaque and waits without a host retry policy', async () => {
       vi.useFakeTimers();
       try {
         const close = vi.fn();
         mockQuery.mockReturnValue(Object.assign((async function* () {
-          yield { type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 2, retry_delay_ms: 1000, error_status: 429 };
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          yield { type: 'system', subtype: 'api_retry', attempt: 2, max_retries: 2, retry_delay_ms: 60_000, error_status: 429 };
+          yield { type: 'system', subtype: 'api_retry', attempt: 10, max_retries: 10, retry_delay_ms: 60_000, error_status: 429 };
+          await new Promise(resolve => setTimeout(resolve, 60_000));
+          yield { type: 'assistant', message: { content: [{ type: 'text', text: 'Recovered' }] } };
+          yield { type: 'result', subtype: 'success', usage: { input_tokens: 10, output_tokens: 2 } };
         })(), { close }));
-        const stream = provider.queryStream((async function* () {})(), {
-          settingSources: [], env: { DISCLAUDE_RETRY_BACKOFF_BUDGET_MS: '5000' },
-        });
+        const stream = provider.queryStream((async function* () {})(), { settingSources: [] });
         const first = await stream.iterator.next();
-        expect(first.value).toMatchObject({ type: 'status', metadata: { retryProgress: { attempt: 1, delayMs: 1000 } } });
-        const { automaticReplayBlock } = await import('../../../utils/replay-safety.js');
-        let failure: unknown;
-        const next = stream.iterator.next().catch(error => { failure = error; });
-        await vi.advanceTimersByTimeAsync(1000); await next;
-        expect(failure).toBeInstanceOf(Error);
-        expect(automaticReplayBlock(failure)).toBe('retry-budget-exhausted');
-        expect(close).toHaveBeenCalledOnce();
-        expect(mockQuery).toHaveBeenCalledTimes(1);
-        expect(loggerMock.info).toHaveBeenCalledWith(expect.objectContaining({ event: 'claude_query_usage', attemptCount: 1,
-          unknownAttempts: 1, knownTotals: {} }), expect.any(String));
+        expect(first.value).toMatchObject({ type: 'text', content: '', role: 'system', metadata: { systemSubtype: 'api_retry' } });
+        expect(Object.keys(first.value.metadata)).toEqual(['systemSubtype']);
+        const next = stream.iterator.next();
+        await vi.advanceTimersByTimeAsync(59_999);
+        expect(close).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        expect((await next).value).toMatchObject({ content: 'Recovered' });
+        for await (const _message of stream.iterator) { /* drain */ }
+        expect(mockQuery).toHaveBeenCalledOnce();
+        const { env, settings } = mockQuery.mock.calls[0][0].options;
+        expect(Object.keys(env).filter(name => /retri|retry/i.test(name))).toEqual([]);
+        expect(Object.keys(settings?.env ?? {}).filter(name => /retri|retry/i.test(name))).toEqual([]);
       } finally { vi.useRealTimers(); }
     });
 
-    it('reports one native usage record and explicit unknown API-retry charges', async () => {
+    it('logs only the latest SDK result usage once per query, including failed terminals', async () => {
       loggerMock.info.mockClear();
       mockQuery.mockReturnValue(Object.assign((async function* () {
-        yield { type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 2, retry_delay_ms: 1000, error_status: 429 };
-        yield { type: 'result', uuid: 'owned-usage-result', subtype: 'success', is_error: false,
-          usage: { input_tokens: 10, output_tokens: 2 }, total_cost_usd: 0.01,
+        yield { type: 'result', uuid: 'first-result', subtype: 'success', is_error: false,
           modelUsage: { fixture: { inputTokens: 10, outputTokens: 2, cacheReadInputTokens: 3,
-            cacheCreationInputTokens: 4, costUSD: 0.01 } } };
+            cacheCreationInputTokens: 4, costUSD: 0.01 } }, total_cost_usd: 0.01 };
+        yield { type: 'result', uuid: 'last-result', subtype: 'error_during_execution', is_error: true,
+          errors: ['Owned fixture rejection'], usage: { input_tokens: 1, output_tokens: 1 }, total_cost_usd: 0.03,
+          modelUsage: { fixture: { inputTokens: 30, outputTokens: 5, cacheReadInputTokens: 7,
+            cacheCreationInputTokens: 9, costUSD: 0.03 } } };
       })(), { close: vi.fn() }));
       const stream = provider.queryStream((async function* () {})(), { settingSources: [] });
       const messages: AgentMessage[] = [];
       for await (const message of stream.iterator) { messages.push(message); }
+      stream.handle.close();
+      await stream.handle.interrupt?.();
       expect(mockQuery).toHaveBeenCalledOnce();
-      expect(messages.at(-1)?.metadata?.queryUsage).toMatchObject({ attemptCount: 1, unknownAttempts: 0,
-        attempts: [{ state: 'reported', retryEvents: 1, retryUsage: 'unknown', billingVerified: false }],
-        knownTotals: { inputTokens: 10, outputTokens: 2, cacheReadTokens: 3, cacheCreationTokens: 4, costUsd: 0.01 } });
-      const records = loggerMock.info.mock.calls.map(call => call[0]);
-      expect(records.filter(record => record?.event === 'claude_attempt_usage')).toHaveLength(1);
-      expect(records.filter(record => record?.event === 'claude_query_usage')).toHaveLength(1);
-      expect(records.find(record => record?.event === 'claude_retry_policy'))
-        .toMatchObject({ nativeAttemptsPerQuery: 1, sdkAttemptsPerApiRequest: 3, backoffBudgetMs: 60_000 });
+      expect(messages.map(message => message.metadata?.inputTokens)).toEqual([10, 30]);
+      expect(messages.at(-1)?.metadata).toMatchObject({ inputTokens: 30, outputTokens: 5,
+        cacheReadTokens: 7, cacheCreationTokens: 9, costUsd: 0.03, terminatedReason: 'turn_failed' });
+      const usageRecords = loggerMock.info.mock.calls.map(call => call[0])
+        .filter(record => record?.event?.includes('usage'));
+      expect(usageRecords).toEqual([{ event: 'claude_query_usage', queryId: expect.any(String),
+        inputTokens: 30, outputTokens: 5, cacheReadTokens: 7, cacheCreationTokens: 9, costUsd: 0.03 }]);
     });
-
 
     it('still fences and closes an attempt when interrupt throws synchronously', async () => {
       const close = vi.fn();
@@ -540,9 +542,8 @@ describe('ClaudeSDKProvider', () => {
         for await (const _message of result.iterator) { /* drain */ }
         expect(fetch).not.toHaveBeenCalled();
         const { settings } = mockQuery.mock.calls[0][0].options;
-        expect(settings.autoCompactEnabled).toBe(autoCompactWindow === undefined ? undefined : autoCompactWindow > 0);
-        expect(settings.autoCompactWindow).toBe(autoCompactWindow !== undefined && autoCompactWindow > 0 ? autoCompactWindow : undefined);
-        expect(settings.env.CLAUDE_CODE_MAX_RETRIES).toBe('2');
+        expect(settings?.autoCompactEnabled).toBe(autoCompactWindow === undefined ? undefined : autoCompactWindow > 0);
+        expect(settings?.autoCompactWindow).toBe(autoCompactWindow !== undefined && autoCompactWindow > 0 ? autoCompactWindow : undefined);
       } finally { vi.unstubAllGlobals(); }
     });
 
@@ -874,7 +875,7 @@ describe('ClaudeSDKProvider', () => {
         const result = provider.queryStream(testInput(), {
           settingSources: ['user', 'project', 'local'],
           cwd: '/workspace',
-          env: { ANTHROPIC_API_KEY: 'sk-test-key', DISCLAUDE_RETRY_BACKOFF_BUDGET_MS: '180000' },
+          env: { ANTHROPIC_API_KEY: 'sk-test-key' },
           onActivity,
         });
         const messages: AgentMessage[] = [];

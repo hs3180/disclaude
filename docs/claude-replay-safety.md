@@ -36,7 +36,8 @@ error cause wrappers, blocks RestartManager recovery without consuming its
 quota, and prevents the empty-reply reset path from resubmitting the original
 input. Uncertain empty results advise inspecting prior operations before
 continuing. The SDK's ordinary backoff has no new task-duration deadline here.
-Native retry-budget coordination and known/unknown usage remain #5362/#5367.
+Retry configuration and backoff remain framework-owned; SDK-reported result
+usage follows [the single snapshot path](claude-retry-accounting.md).
 No inference about duplicate billing is made from the child fixtures.
 
 After installing this checkout's dependencies:
