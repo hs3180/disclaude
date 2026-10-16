@@ -36,7 +36,8 @@ is repeatable; pin every current deployment, rollback and retained failure sourc
 including service definitions that are not running. The parent of the release
 directory is inspected for symlink selectors. Running command paths and open
 executable/working directories add active PID references; observations are a local
-user, point-in-time view. An incomplete scan prevents stale-prefix eligibility.
+user, point-in-time view, including ordinary open data/log files. An incomplete
+scan prevents stale-prefix eligibility.
 
 The report includes delivery `prefix*`/`sdk-prefix*` installs, release directories,
 registered Git worktrees, npm's `_cacache` and individual `_npx` entries. It records

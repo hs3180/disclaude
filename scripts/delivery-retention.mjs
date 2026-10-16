@@ -129,7 +129,7 @@ export function inventory(options, observations) {
   for (const name of ['_cacache', '_npx']) {
     for (const entry of name === '_npx'
       ? children(join(options.npmCache, name))
-      : [{ name, isDirectory: () => true }]) {
+      : children(options.npmCache).filter((entry) => entry.name === name)) {
       const path =
         name === '_npx' ? join(options.npmCache, name, entry.name) : join(options.npmCache, name);
       if (entry.isDirectory())
@@ -137,7 +137,7 @@ export function inventory(options, observations) {
     }
   }
   const processScan = observations.processes ?? run('ps', ['-axo', 'pid=,command=']);
-  const openFiles = observations.openFiles ?? run('lsof', ['-nP', '-Fpn', '-d', 'cwd,txt']);
+  const openFiles = observations.openFiles ?? run('lsof', ['-nP', '-Fpn']);
   const referencesComplete = processScan.ok && openFiles.ok;
   const processes = processScan.text
     .split('\n')
@@ -164,7 +164,18 @@ export function inventory(options, observations) {
   const unique = new Map();
   for (const candidate of candidates) {
     const path = canonical(candidate.path);
-    if (!unique.has(path)) unique.set(path, { ...candidate, path });
+    const prior = unique.get(path);
+    unique.set(
+      path,
+      prior
+        ? {
+            ...prior,
+            ...candidate,
+            kind: prior.kind,
+            kinds: [...new Set([...prior.kinds, candidate.kind])],
+          }
+        : { ...candidate, path, kinds: [candidate.kind] }
+    );
   }
   const rows = [...unique.values()].map((candidate) => {
     const size = measureTree(candidate.path);
@@ -182,7 +193,7 @@ export function inventory(options, observations) {
     const ageDays = Math.max(0, (now - size.newestMtimeMs) / 86_400_000);
     if (ageDays < options.olderThanDays) reasons.push('recent');
     const row = { ...candidate, ...size, ageDays, activePids: [...activePids], reasons };
-    if (candidate.kind === 'worktree') {
+    if (candidate.kinds.includes('worktree')) {
       const status = run('git', ['status', '--porcelain=v1', '--ignored=matching'], candidate.path);
       const upstream = run(
         'git',
@@ -203,18 +214,48 @@ export function inventory(options, observations) {
       if (!upstream.ok || row.git.aheadBehind[0] > 0 || candidate.branch === 'detached')
         reasons.push('unpublished-or-detached-history');
     }
-    if (candidate.kind.endsWith('cache')) reasons.push('shared-cache-requires-owner-review');
+    if (candidate.kinds.some((kind) => kind.endsWith('cache')))
+      reasons.push('shared-cache-requires-owner-review');
     return row;
   });
   for (const kind of ['release', 'delivery-prefix']) {
     rows
-      .filter((row) => row.kind === kind)
+      .filter((row) => row.kinds.includes(kind))
       .sort((a, b) => b.newestMtimeMs - a.newestMtimeMs)
       .slice(0, options.keepLatest)
       .forEach((row) => row.reasons.push('keep-latest'));
   }
   const allInodes = new Map();
   for (const row of rows) for (const [key, value] of row.inodes) allInodes.set(key, value);
+  // A retained nested entry also protects a broader candidate that contains it.
+  for (const row of [...rows].sort((a, b) => b.path.length - a.path.length)) {
+    if (
+      !row.reasons.length &&
+      rows.some((child) => child !== row && child.reasons.length && inside(child.path, row.path))
+    ) {
+      row.reasons.push('contains-retained-entry');
+    }
+  }
+  const eligibleRoots = [];
+  const eligibleInodes = new Map();
+  for (const row of rows
+    .filter((row) => !row.reasons.length)
+    .sort((a, b) => a.path.length - b.path.length)) {
+    if (eligibleRoots.some((path) => inside(row.path, path))) continue;
+    eligibleRoots.push(row.path);
+    for (const [key, inode] of row.inodes) {
+      const prior = eligibleInodes.get(key);
+      eligibleInodes.set(key, {
+        ...inode,
+        occurrences: inode.occurrences + (prior?.occurrences ?? 0),
+      });
+    }
+  }
+  const estimatedReclaimableBytes = [...eligibleInodes.values()].reduce(
+    (sum, inode) =>
+      sum + (inode.directory || inode.links <= inode.occurrences ? inode.allocatedBytes : 0),
+    0
+  );
   for (const row of rows) {
     // A prefix may contain runtime-created user data. An unreferenced old tree
     // is a review candidate, never proof that deleting it is authorized.
@@ -238,7 +279,7 @@ export function inventory(options, observations) {
         (sum, inode) => sum + inode.allocatedBytes,
         0
       ),
-      estimatedReclaimableBytes: rows.reduce((sum, row) => sum + row.estimatedReclaimableBytes, 0),
+      estimatedReclaimableBytes,
     },
     limitations: [
       'Filesystem block counts are estimates: APFS clones, compression and snapshots can change actual reclaimed space.',

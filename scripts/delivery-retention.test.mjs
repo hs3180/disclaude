@@ -133,3 +133,44 @@ test('CLI rejects destructive, unknown and malformed options', () => {
     assert.throws(() => parseOptions(args));
   assert.equal(parseOptions(['--keep-latest', '0']).keepLatest, 0);
 });
+
+test('overlapping eligible trees and hard links share one global reclaim estimate', (t) => {
+  const { options, observations } = fixture(t);
+  options.releaseRoot = options.deliveryRoot;
+  prefix(join(options.deliveryRoot, 'old/prefix'));
+  let report = inventory(options, observations);
+  assert.equal(report.entries.length, 2);
+  assert.equal(report.totals.estimatedReclaimableBytes, report.totals.uniqueAllocatedBytes);
+  const first = join(options.deliveryRoot, 'old/prefix/lib/node_modules/disclaude/payload');
+  prefix(join(options.deliveryRoot, 'other/prefix'));
+  const second = join(options.deliveryRoot, 'other/prefix/lib/node_modules/disclaude/shared');
+  linkSync(first, second);
+  report = inventory(options, observations);
+  assert.equal(report.totals.estimatedReclaimableBytes, report.totals.uniqueAllocatedBytes);
+});
+
+test('open data files and retained nested entries protect a containing release', (t) => {
+  const { options, observations } = fixture(t);
+  options.releaseRoot = options.deliveryRoot;
+  const path = join(options.deliveryRoot, 'old/prefix');
+  prefix(path);
+  observations.openFiles.text = `p123\nn${path}/lib/node_modules/disclaude/payload`;
+  let report = inventory(options, observations);
+  assert(report.entries.every((row) => row.activePids.includes(123)));
+  assert.equal(report.totals.estimatedReclaimableBytes, 0);
+  observations.openFiles.text = '';
+  options.keepLatest = 1;
+  report = inventory(options, observations);
+  assert.equal(report.totals.estimatedReclaimableBytes, 0);
+});
+
+test('a worktree also discovered as a prefix retains its history safeguards', (t) => {
+  const { options, observations } = fixture(t);
+  const path = join(options.deliveryRoot, 'old/prefix');
+  prefix(path);
+  observations.worktrees.text = `worktree ${path}\nHEAD abc\ndetached\n\n`;
+  const row = inventory(options, observations).entries.find((row) => row.path === path);
+  assert(row.kinds.includes('worktree'));
+  assert(row.reasons.includes('worktree-requires-owner-review'));
+  assert.equal(row.estimatedReclaimableBytes, 0);
+});
