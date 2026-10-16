@@ -2214,12 +2214,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
               finalDeliveryId = typeof receipt === 'string' ? receipt : undefined;
               // A buffered push or an empty finish does not prove delivery.
               // Successful channels may return void instead of a message ID.
-              if (streamTextDelivered) { this.didDeliverUserVisibleThisTurn = true; }
+              if (this.sessionGeneration === myGeneration && streamTextDelivered) { this.didDeliverUserVisibleThisTurn = true; }
             },
             sendMessage: async (cid, content, threadRoot) => {
               const receipt = await this.callbacks.sendMessage(cid, content, threadRoot);
               finalDeliveryId = typeof receipt === 'string' ? receipt : undefined;
-              if (content.trim()) { this.didDeliverUserVisibleThisTurn = true; }
+              if (this.sessionGeneration === myGeneration && content.trim()) { this.didDeliverUserVisibleThisTurn = true; }
             },
             logger: this.logger,
           })

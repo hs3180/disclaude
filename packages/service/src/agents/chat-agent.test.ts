@@ -6883,6 +6883,26 @@ describe('streaming delivery visibility', () => {
     expect(terminals()).toEqual([expect.objectContaining({ sourceMessageId: 'input-A', user_visible: false })]);
   });
 
+  it.each(['finalize', 'fallback'])('does not credit a new owner when old %s delivery settles late', async path => {
+    const { agent, callbacks } = streamingAgent({ decline: path === 'fallback' });
+    let release!: () => void;
+    const delivered = new Promise<void>(resolve => { release = resolve; });
+    if (path === 'finalize') { callbacks.finalizeStreaming.mockImplementation(() => delivered); }
+    else { callbacks.sendMessage.mockImplementation(() => delivered); }
+    const running = (agent as any).processIterator((async function* () {
+      yield { parsed: { type: 'text', content: 'Owned old answer' } };
+      yield { parsed: { type: 'result', content: '' } };
+    })());
+    await vi.waitFor(() => expect(path === 'finalize' ? callbacks.finalizeStreaming : callbacks.sendMessage).toHaveBeenCalled());
+    // A reset/new query can replace the owner while a channel promise is pending.
+    (agent as any).sessionGeneration++;
+    (agent as any).activeTurnMessageId = 'new-owner';
+    (agent as any).didDeliverUserVisibleThisTurn = false;
+    release();
+    await running;
+    expect((agent as any).didDeliverUserVisibleThisTurn).toBe(false);
+  });
+
   it('does not count an empty finish as delivery', async () => {
     const { agent, callbacks } = streamingAgent();
     await (agent as any).processIterator((async function* () {
