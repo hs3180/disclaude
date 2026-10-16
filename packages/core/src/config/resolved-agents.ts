@@ -77,8 +77,8 @@ export function resolveConfiguredAgents(
       }
     }
     const llm = raw as LlmConfig;
-    if (llm.model !== undefined && (typeof llm.model !== 'string' || !llm.model.trim())) {
-      errors.push(`${field}.model must be a non-empty string`);
+    if (typeof llm.model !== 'string' || !llm.model.trim()) {
+      errors.push(`${field}.model must be an explicit non-empty string; set this LLM model before upgrading (docs/agent-configuration.md)`);
     }
     if (llm.reasoningEffort !== undefined && !isCodexReasoningEffort(llm.reasoningEffort)) {
       errors.push(`${field}.reasoningEffort is invalid`);
@@ -281,19 +281,13 @@ export function resolveConfiguredAgents(
     }
     const protocol = llm.api?.protocol;
     const keyEnv = llm.api ? apiCredentialEnvName(llm.api) : undefined;
-    const environmentModel = protocol === 'openai' ? 'OPENAI_MODEL' : 'ANTHROPIC_MODEL';
     const { backend, ...settings } = agent;
     presets[name] = {
       ...settings,
       agentBackend: backend,
       reasoningEffort: llm.reasoningEffort,
       maxConcurrentSessions: llm.maxConcurrentSessions,
-      model:
-        llm.model?.trim() ||
-        (protocol
-          ? process.env[environmentModel]?.trim() || config.env?.[environmentModel]?.trim()
-          : '') ||
-        '',
+      model: llm.model.trim(),
       apiKey: keyEnv ? (process.env[keyEnv] ?? '') : '',
       apiProtocol: protocol,
       apiBaseUrl: llm.api?.baseUrl,
@@ -325,6 +319,9 @@ export function resolveConfiguredAgents(
 
 /** Validate only the selected runtime's secrets; dormant entries need no credentials. */
 export function validateResolvedAgent(preset: AgentPreset): string | undefined {
+  if (typeof preset.model !== 'string' || !preset.model.trim()) {
+    return `llms.${preset.llm}.model must be an explicit non-empty string`;
+  }
   if (preset.missingEnvReferences?.length) {
     return `External environment references are missing or empty: ${preset.missingEnvReferences.join(', ')}`;
   }
@@ -336,9 +333,6 @@ export function validateResolvedAgent(preset: AgentPreset): string | undefined {
   }
   if (!preset.apiKey.trim()) {
     return `The credential referenced by llms.${preset.llm}.api.apiKey is missing`;
-  }
-  if (!preset.model.trim()) {
-    return `llms.${preset.llm}.model or the matching API model environment variable is required`;
   }
   return undefined;
 }

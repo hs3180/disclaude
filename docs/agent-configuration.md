@@ -37,10 +37,12 @@ are removed from child environments before only the selected key is projected.
 Do not put literal API keys in YAML; supply them through the service's environment
 or a restricted environment file in launchd, systemd or Docker.
 
-Codex uses the native CLI account and model catalog: bind `backend: codex` to an
-LLM with an optional `model` and no `api` block. An omitted model uses the CLI
-default. `CODEX_MODEL` explicitly overrides the default Codex binding; named
-non-default bindings remain independent. Put `reasoningEffort` alongside `model`
+Every named agent binds an LLM with an explicit, non-empty `model`. This includes
+native Codex: bind `backend: codex` to a named LLM with `model` and no `api` block.
+`ANTHROPIC_MODEL` and `OPENAI_MODEL` do not fill missing models. `CODEX_MODEL`
+explicitly overrides the default Codex binding only after the configured model
+passes validation; it does not supply a missing model. Named non-default bindings
+remain independent. Put `reasoningEffort` alongside `model`
 in `llms.<name>`; it is currently supported by native Codex and DSH. Omission
 keeps the model's native default. Transport stays under the agent's `codex` block.
 DSH uses `backend: dsh` and the bound `llms.<name>.api` connection. Set the composition
@@ -96,6 +98,12 @@ top-level platform sections are rejected with migration guidance. Configuration
 files are never rewritten automatically; keep a backup when migrating deployments.
 For earlier #5294 previews, move `agents.<name>.codex.reasoningEffort` to its bound
 LLM and replace `apiKeyEnv: NAME` with `apiKey: $NAME`.
+
+For the 0.6.4 named-configuration contract, add an explicit `llms.<name>.model`
+when an older configuration omitted it or relied on a native/API environment
+default. Missing or blank models fail with that field path before startup or
+preset selection, even when `CODEX_MODEL`, `ANTHROPIC_MODEL` or `OPENAI_MODEL` is
+set. Choose the intended model locally; the application never edits the file.
 
 For DSH, replace `backend: deepseek` with `backend: dsh`, move composition and home
 to the agent's `mode` and `dshHome`, and remove either old `deepseek` or `dsh`

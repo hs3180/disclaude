@@ -5,9 +5,12 @@ backend to `llms.<name>`, which owns its model, API protocol, endpoint and
 credential reference. Multiple runtimes can bind different connections for the
 same backend. API protocols describe wire formats, not model vendors. Exactly one
 `default: true` marker is accepted; the reserved `default` name or first entry is
-the documented fallback. Native Codex bindings may omit their model to use the
-native account default. No top-level `agent`, `glm`, `anthropic` or `deepseek`
+the documented fallback. Every bound LLM requires an explicit non-empty `model`,
+including native Codex. No top-level `agent`, `glm`, `anthropic` or `deepseek`
 fallback is consulted. See [agent configuration](agent-configuration.md).
+API model environment variables do not fill a missing declaration. The documented
+`CODEX_MODEL` startup override applies only after a valid model is declared for
+the default Codex binding; other named bindings retain their own models.
 
 ## Secret inventory and projection
 
@@ -98,8 +101,8 @@ The application never rewrites configuration files. Before upgrading:
 
 1. Keep a private backup of the original config and service definition. Preserve
    workspace data and the working release for rollback.
-2. Move each runtime to `agents`, its model/connection to `llms`, and platform
-   settings to `channels`. Replace inline secrets with whole references. Remove
+2. Move each runtime to `agents`, its explicit non-empty model/connection to
+   `llms`, and platform settings to `channels`. Replace inline secrets with whole references. Remove
    those values from global YAML `env`; select required tool/native credentials
    through the appropriate LLM's `env` references.
 3. Put values in the external secret source, check UID/mode, then validate with
