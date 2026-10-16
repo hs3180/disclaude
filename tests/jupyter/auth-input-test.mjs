@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -325,4 +325,31 @@ test('CLI rejects ambiguous/irrelevant interactive options before transport, and
   } finally {
     close();
   }
+});
+
+test('discovers cwd, explicit Project, workspace marker and environment workspace without exposing values', async () => {
+  const { cwd: parent, close } = fixture();
+  try {
+    const workspace = join(parent, 'workspace'), project = join(workspace, 'project'), cwd = join(project, 'nested');
+    const fallback = join(parent, 'environment-workspace');
+    mkdirSync(cwd, { recursive: true }); mkdirSync(join(workspace, '.disclaude')); mkdirSync(fallback);
+    writeFileSync(join(workspace, '.disclaude', 'project-bindings.json'), '{}');
+    const save = (directory, secret) => writeFileSync(join(directory, '.env'), `JUPYTERLAB_HOST=${baseUrl}\nJUPYTERLAB_TOKEN=${secret}\n`);
+    save(workspace, 'workspace-owned-token'); save(fallback, 'fallback-owned-token');
+    const options = { jupyter: 'configured', projectDir: project, interactive: false };
+    const events = [];
+    const context = { cwd, environment: { DISCLAUDE_WORKSPACE_DIR: fallback }, onDiscovery: event => events.push(event) };
+    assert.equal((await resolveJupyterAuth(options, context)).secret, 'workspace-owned-token');
+    assert.equal(events.at(-1).envFile, join(workspace, '.env'));
+    save(project, 'project-owned-token');
+    assert.equal((await resolveJupyterAuth(options, context)).secret, 'project-owned-token');
+    save(cwd, 'cwd-owned-token');
+    assert.equal((await resolveJupyterAuth(options, context)).secret, 'cwd-owned-token');
+    assert.equal((await resolveJupyterAuth({ ...options, envFile: join(fallback, '.env') }, context)).secret, 'fallback-owned-token');
+    assert.ok(!JSON.stringify(events).includes('owned-token'));
+    await assert.rejects(resolveJupyterAuth({ ...options, envFile: join(parent, 'missing.env') }, context),
+      error => error.diagnostic?.layer === 'auth' && error.diagnostic.code === 'env_file_unreadable');
+    const unrelated = join(parent, 'unrelated'); mkdirSync(unrelated);
+    assert.equal((await resolveJupyterAuth({ ...options, projectDir: unrelated }, { ...context, cwd: unrelated })).secret, 'fallback-owned-token');
+  } finally { close(); }
 });

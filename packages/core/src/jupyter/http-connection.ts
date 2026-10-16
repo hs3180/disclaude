@@ -1,4 +1,5 @@
 import type { CookieJar } from 'tough-cookie';
+import { JupyterDiagnosticError, jupyterNetworkDiagnostic, jupyterServerBody } from './diagnostics.js';
 
 export interface JupyterHttpOptions {
   /** Explicit remote Jupyter endpoint; Python and kernels belong to that server. */
@@ -13,6 +14,7 @@ export interface JupyterHttpOptions {
   cookieJar?: CookieJar;
   timeoutMs?: number;
   maxResponseBytes?: number;
+  onProgress?(event: { phase: 'http'; method: string; state: 'requested' | 'responded' | 'failed'; status?: number }): void;
 }
 
 /** Restore only a host-owned jar. No cookie data belongs in a tool descriptor. */
@@ -30,6 +32,8 @@ export class JupyterHttpConnection {
   private readonly maxResponseBytes: number;
   private cookies?: Promise<CookieJar>;
   private authenticating?: Promise<void>;
+  private readonly diagnosticSecrets = new Set<string>();
+  private diagnosticCookies: string[] = [];
 
   constructor(private readonly httpOptions: JupyterHttpOptions) {
     const options = httpOptions;
@@ -84,9 +88,17 @@ export class JupyterHttpConnection {
       if (typeof value !== 'string' || !value || value.length > 8192 || /[\r\n]/.test(value)) {
         throw new Error('Invalid secret');
       }
+      this.diagnosticSecrets.add(value);
+      if (/^(?:token|Bearer)\s+/i.test(value)) { this.diagnosticSecrets.add(value.replace(/^\S+\s+/, '')); }
+      while (this.diagnosticSecrets.size > 8) {
+        const oldest = this.diagnosticSecrets.values().next().value;
+        if (oldest === undefined) { break; }
+        this.diagnosticSecrets.delete(oldest);
+      }
       return value;
     } catch {
-      throw new Error('Jupyter connection authentication is unavailable');
+      throw new JupyterDiagnosticError({ layer: 'auth', code: 'credentials_unavailable', phase: 'credentials',
+        message: 'Jupyter connection authentication is unavailable', hint: 'Resolve the host-owned password/token from environment or the selected private env file.' });
     }
   }
 
@@ -102,10 +114,16 @@ export class JupyterHttpConnection {
       : undefined;
     const cookies = await this.cookieJar();
     const cookie = await cookies.getCookieString(url.href);
+    this.diagnosticCookies = [cookie, ...cookie.split(';').map(part => part.slice(part.indexOf('=') + 1).trim())].filter(Boolean);
     if (Buffer.byteLength(cookie) > 16_384) {
       throw new Error('Jupyter session cookie limit exceeded');
     }
     let response: Response;
+    const progress = (state: 'requested' | 'responded' | 'failed', status?: number): void => {
+      try { this.httpOptions.onProgress?.({ phase: 'http', method, state, ...(status === undefined ? {} : { status }) }); }
+      catch { /* Diagnostics cannot change request/execute semantics. */ }
+    };
+    progress('requested');
     try {
       response = await fetch(url, {
         method,
@@ -135,10 +153,12 @@ export class JupyterHttpConnection {
         redirect: 'manual',
         signal: AbortSignal.timeout(this.timeoutMs),
       });
-    } catch {
+    } catch (error) {
       // Fetch errors may quote a rejected Authorization value. Keep them host-private.
-      throw new Error('Jupyter request outcome could not be verified');
+      progress('failed');
+      throw jupyterNetworkDiagnostic(error);
     }
+    progress('responded', response.status);
     try {
       const updates = response.headers.getSetCookie();
       if (updates.length > 16 || updates.some((value) => Buffer.byteLength(value) > 8192)) {
@@ -169,7 +189,8 @@ export class JupyterHttpConnection {
   public async responseText(response: Response): Promise<string> {
     const reader = response.body?.getReader();
     if (!reader) {
-      throw new Error('Jupyter coordinator response body is missing');
+      throw new JupyterDiagnosticError({ layer: 'schema', code: 'response_body_missing', message: 'Jupyter coordinator response body is missing',
+        hint: 'Verify the remote API response and server extension.' });
     }
     const chunks: Uint8Array[] = [];
     let length = 0;
@@ -181,14 +202,33 @@ export class JupyterHttpConnection {
         }
         length += value.byteLength;
         if (length > this.maxResponseBytes) {
-          throw new Error('Jupyter coordinator response limit exceeded');
+          throw new JupyterDiagnosticError({ layer: 'schema', code: 'response_limit_exceeded', message: 'Jupyter coordinator response limit exceeded',
+            hint: 'Use a bounded output/export request; the response was not accepted.' });
         }
         chunks.push(value);
       }
+    } catch (error) {
+      throw error instanceof JupyterDiagnosticError ? error : jupyterNetworkDiagnostic(error);
     } finally {
-      await reader.cancel();
+      await reader.cancel().catch(() => {});
     }
     return Buffer.concat(chunks).toString('utf8');
+  }
+
+  /** Consume a failed response once and expose only bounded, scrubbed error fields. */
+  public async responseError(response: Response, phase = 'request'): Promise<JupyterDiagnosticError> {
+    let serverBody: string | undefined;
+    try {
+      if (this.httpOptions.password) { await this.secret(this.httpOptions.password); }
+      serverBody = jupyterServerBody(await this.responseText(response), [...this.diagnosticSecrets, ...this.diagnosticCookies]);
+    }
+    catch { serverBody = '[Error response unavailable]'; }
+    const auth = response.status === 401 || response.status === 403;
+    return new JupyterDiagnosticError({ layer: auth ? 'auth' : 'http', code: auth ? 'authentication_rejected' : 'http_rejected',
+      status: response.status, phase, serverBody, message: `Jupyter API returned HTTP ${response.status}`,
+      hint: auth ? 'Verify the selected credential source and Jupyter permissions.'
+        : 'Inspect the server error and remote path/extension configuration. Verify the original run before retrying an uncertain execution.',
+      outcome: auth ? 'rejected' : 'unknown' });
   }
 
   public async authenticate(): Promise<void> {
@@ -212,18 +252,19 @@ export class JupyterHttpConnection {
       throw new Error('Jupyter password authentication is unavailable');
     }
     const existing = await this.send('api/status');
-    await existing.body?.cancel();
     if (existing.ok) {
+      await existing.body?.cancel();
       return;
     }
     if (![401, 403].includes(existing.status)) {
-      throw new Error(`Jupyter authentication check returned HTTP ${existing.status}`);
+      throw await this.responseError(existing, 'authentication-check');
     }
+    await existing.body?.cancel();
     const page = await this.send('login');
-    await page.body?.cancel();
     if (!page.ok) {
-      throw new Error('Jupyter password login is unavailable');
+      throw await this.responseError(page, 'password-login-page');
     }
+    await page.body?.cancel();
     const loginUrl = new URL('login', this.base);
     const xsrf = (await (await this.cookieJar()).getCookies(loginUrl.href)).find(
       (c) => c.key === '_xsrf'
@@ -240,7 +281,8 @@ export class JupyterHttpConnection {
     await result.body?.cancel();
     const destination = result.headers.get('Location');
     if (![302, 303].includes(result.status) || !destination) {
-      throw new Error('Jupyter password login failed');
+      throw new JupyterDiagnosticError({ layer: 'auth', code: 'password_login_failed', status: result.status,
+        message: 'Jupyter password login failed', hint: 'Verify the selected password and remote Jupyter authentication settings.' });
     }
     let redirect: URL;
     try {
@@ -258,10 +300,10 @@ export class JupyterHttpConnection {
     }
     // Verify the cookie with a safe read. Never follow a redirect or retry a mutation.
     const verified = await this.send('api/status');
-    await verified.body?.cancel();
     if (!verified.ok) {
-      throw new Error('Jupyter password login could not be verified');
+      throw await this.responseError(verified, 'password-login-verification');
     }
+    await verified.body?.cancel();
   }
 
   protected url(route: string): URL {
