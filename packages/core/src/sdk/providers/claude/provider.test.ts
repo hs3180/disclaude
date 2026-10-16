@@ -481,6 +481,23 @@ describe('ClaudeSDKProvider', () => {
       expect(mockQuery).toHaveBeenCalledTimes(1);
     });
 
+    it.each([undefined, 0, 80_000])('does not discover metadata for an unconfigured or numeric policy (%s)', async autoCompactWindow => {
+      const fetch = vi.fn(() => { throw new Error('unexpected metadata request'); });
+      vi.stubGlobal('fetch', fetch);
+      mockQuery.mockReturnValue({ close: vi.fn(), async *[Symbol.asyncIterator]() {} });
+      try {
+        const result = provider.queryStream((async function* () {})(), {
+          settingSources: [], model: 'glm-5.3', autoCompactWindow,
+        });
+        for await (const _message of result.iterator) { /* drain */ }
+        expect(fetch).not.toHaveBeenCalled();
+        const { settings } = mockQuery.mock.calls[0][0].options;
+        expect(settings).toEqual(autoCompactWindow === undefined ? undefined
+          : { autoCompactEnabled: autoCompactWindow > 0,
+            ...(autoCompactWindow > 0 ? { autoCompactWindow } : {}) });
+      } finally { vi.unstubAllGlobals(); }
+    });
+
     it.each([undefined, 'auto'] as const)('declares provider-neutral streaming input delivery before SDK startup (%s)', autoCompactWindow => {
       mockQuery.mockReturnValue({ close: vi.fn(), async *[Symbol.asyncIterator]() {} });
       const result = provider.queryStream((async function* () { yield { role: 'user', content: 'owned input' } as UserInput; })(), {

@@ -28,6 +28,13 @@ const configuration = (): DisclaudeConfig => ({
 });
 
 describe('named runtime and LLM configuration', () => {
+  it('accepts explicit auto metadata discovery as an opt-in', () => {
+    const config = configuration();
+    config.agents!.assistant.autoCompactWindow = 'auto';
+    expect(validateConfig(config)).toBe(true);
+    const result = resolveConfiguredAgents(config);
+    expect(result.ok && result.presets.assistant.autoCompactWindow).toBe('auto');
+  });
   it.each(['openai', 'anthropic'] as const)(
     'resolves a DSH %s connection from its LLM',
     (protocol) => {

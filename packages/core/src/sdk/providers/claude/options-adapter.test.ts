@@ -159,6 +159,11 @@ describe('adaptOptions', () => {
     });
   });
 
+  it('leaves SDK compaction settings absent when unconfigured', () => {
+    const result = adaptOptions({ settingSources: [], model: 'glm-5.3' });
+    expect(result.settings).toBeUndefined();
+  });
+
   it('disables SDK auto-compaction when the explicit threshold is zero', () => {
     expect(adaptOptions({ settingSources: [], autoCompactWindow: 0 }).settings)
       .toEqual({ autoCompactEnabled: false });
