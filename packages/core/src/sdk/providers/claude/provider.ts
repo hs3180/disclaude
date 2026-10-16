@@ -6,6 +6,8 @@ import { assertToolOptions } from '../../tools.js';
  */
 
 import { query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
 import type { ChatAgentHooks, IAgentSDKProvider } from '../../interface.js';
 import type {
   AgentMessage,
@@ -24,6 +26,7 @@ import type { BaseAgentConfig } from '../../../agents/types.js';
 import { withDiscoveredCompaction } from './compaction.js';
 import { buildClaudeDisallowedTools } from './disallowed-tools.js';
 import { privateSdkSettings } from './private-settings.js';
+import { apiErrorEvidence, ClaudeTranscriptErrors, type ApiErrorEvidence } from './api-error-evidence.js';
 
 const logger = createLogger('ClaudeSDKProvider');
 
@@ -44,10 +47,9 @@ const EMPTY_STREAM_TERMINATE_NOTICE =
 // subtype=success (carrying the accumulated usage), so ChatAgent faithfully
 // reports ✅ Complete and nothing surfaces the failure.
 //
-// Fix (part 1, this slice): detect the upstream-API-error signature in the
-// stderr captured for the turn and tag the success result's metadata so the
-// consumer (ChatAgent) can report ❌ Failed + recordFailure instead of masking
-// it. Turn-level retry is a separate, larger follow-up (Issue #4314 / #4192 L2).
+// Prefer structured stream fields, then the current session's new transcript
+// API-error records. Stderr signatures remain a legacy fallback. Preserve the
+// same classification if the SDK throws after emitting its failed terminal.
 
 /**
  * Stderr signatures that definitively indicate the SDK gave up on an upstream
@@ -63,7 +65,7 @@ const EMPTY_STREAM_TERMINATE_NOTICE =
  * recovered from does not emit "after retries", so this avoids false positives
  * on recovered turns. Broaden in a follow-up if other 5xx shapes appear.
  */
-const UPSTREAM_API_ERROR_RE = /server_overload after retries|overloaded_error|API Error:\s*\[?\s*5\d\d/i;
+const UPSTREAM_API_ERROR_RE = /\bserver_overload after retries\b|\boverloaded_error\b|\bAPI Error:\s*\[?\s*5\d{2}\b/i;
 
 /**
  * True when the captured stderr indicates the turn was killed by an upstream
@@ -313,6 +315,12 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
 
     const privateSettings = privateSdkSettings(adaptOptions(commonOptions, { allowedTools, disallowedTools }));
     const sdkOptions = privateSettings.options;
+    const transcriptErrors = new ClaudeTranscriptErrors();
+    let streamedApiError: ApiErrorEvidence | undefined;
+    let terminalApiError: ApiErrorEvidence | undefined;
+    let terminalApiErrorSource: 'stream' | 'transcript' | undefined;
+    const environment = sdkOptions.env as NodeJS.ProcessEnv;
+    const claudeConfigDir = resolve(options.cwd ?? process.cwd(), environment.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'));
     // 将 stderr 回调注入 SDK 选项
     sdkOptions.stderr = (data: string) => {
       stderrCapture.append(data);
@@ -356,6 +364,8 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     // retry before the first SDK message. Created eagerly here so handle.close
     // works even before iteration starts.
     let cancelled = false;
+    const queryStartMs = Date.now();
+    let attemptStartedMs = queryStartMs;
     let queryResult: ReturnType<typeof query>;
     try {
       queryResult = query({
@@ -369,7 +379,6 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     }
 
     // Issue #3003: Track SDK query timing for diagnostics
-    const queryStartMs = Date.now();
 
     // 创建消息适配迭代器
     let messageCount = 0;
@@ -417,6 +426,11 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           // be fed during query() creation, before the loop — is preserved for
           // the catch's attachStderrToError, and so each retry starts clean.
           stderrCapture.reset();
+          transcriptErrors.reset();
+          streamedApiError = undefined;
+          terminalApiError = undefined;
+          terminalApiErrorSource = undefined;
+          attemptStartedMs = Date.now();
           queryResult = query({
             prompt: adaptInputStream(),
             options: sdkOptions as Parameters<typeof query>[0]['options'],
@@ -450,6 +464,14 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
 
         for await (const message of queryResult) {
           if (cancelled) {return;}
+          if ('session_id' in message && typeof message.session_id === 'string') {
+            transcriptErrors.bindSession(message.session_id, claudeConfigDir, attemptStartedMs);
+          }
+          terminalApiError = undefined;
+          terminalApiErrorSource = undefined;
+          const streamed = apiErrorEvidence(message) ?? ('message' in message ? apiErrorEvidence(message.message) : undefined);
+          if (streamed) { streamedApiError = streamed; }
+          else if (message.type === 'assistant') { streamedApiError = undefined; }
           try {
             options.onActivity?.(message.type === 'stream_event'
               ? `claude:${message.event.type}`
@@ -557,24 +579,32 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
             consecutiveEmptySystemCount = 0;
           }
 
-          // Issue #4322: 上游 API 错误(overloaded_error / 5xx)可能在本轮已流出
-          // 部分输出后才杀掉 turn。SDK 把错误打到 stderr 但仍发 subtype=success 的
-          // result,下游会静默报 ✅ Complete。若本轮捕获的 stderr 带上游 API 错误
-          // 特征,给该 success result 打 upstreamApiError 标记,让 ChatAgent 改报
-          // ❌ Failed + recordFailure。不覆盖 stall 合成的 result(terminatedReason)。
-          if (
-            adapted.type === 'result' &&
-            !adapted.metadata?.terminatedReason &&
-            stderrCapture.hasContent() &&
-            stderrIndicatesUpstreamApiError(stderrCapture.getCaptured())
-          ) {
-            adapted.metadata = {
-              ...(adapted.metadata ?? {}),
-              upstreamApiError: true,
-              // Surface the stderr tail (carries the upstream request_id) so the
-              // consumer can include an actionable reference in the ❌ Failed notice.
-              upstreamApiErrorStderr: stderrCapture.getTail(300),
-            };
+          // A terminal can precede the transcript flush. Structured API evidence
+          // enriches both masked successes and already-failed terminals without
+          // changing their existing termination reason.
+          if (adapted.type === 'result') {
+            const transcript = streamedApiError ? await transcriptErrors.read()
+              : await transcriptErrors.readAfterFlush(adapted.metadata?.terminatedReason === 'turn_failed'
+                || stderrIndicatesUpstreamApiError(stderrCapture.getCaptured()), () => cancelled);
+            const evidence = streamedApiError ?? transcript.error;
+            logger.debug({ transcriptState: transcript.state, hasStructuredApiError: Boolean(evidence) }, 'Read current-turn API error evidence');
+            const source = streamedApiError ? 'stream' : transcript.error ? 'transcript' : 'stderr';
+            terminalApiError = evidence;
+            terminalApiErrorSource = evidence ? (streamedApiError ? 'stream' : 'transcript') : undefined;
+            if (evidence || (!adapted.metadata?.terminatedReason && stderrIndicatesUpstreamApiError(stderrCapture.getCaptured()))) {
+              const tag = evidence ? tagErrorCategory(new Error('Upstream API failure'), evidence) : undefined;
+              adapted.metadata = {
+                ...(adapted.metadata ?? {}), upstreamApiError: true,
+                upstreamApiErrorSource: source,
+                ...(tag ? { upstreamApiErrorStatus: tag.status, upstreamApiErrorIsTransient: tag.transient } : {}),
+                upstreamApiErrorStderr: tag ? `Upstream API error${tag.status ? ` (HTTP ${tag.status})` : ''}` : stderrCapture.getTail(300),
+              };
+              logger.warn({ evidenceSource: source, transcriptState: transcript.state,
+                apiErrorStatus: tag?.status, apiErrorIsTransient: tag?.transient },
+              'Upstream API failure classified');
+            }
+            streamedApiError = undefined;
+            stderrCapture.reset();
           }
 
           yield adapted;
@@ -657,7 +687,11 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         // Issue #4192 (L0): classify the error so the structured log (and any
         // downstream handler reading the tagged error) knows the category, e.g.
         // NETWORK/TIMEOUT (transient → retry candidate) vs CONFIG/SDK (not).
-        const { category: errorCategory, transient: errorTransient } = tagErrorCategory(error);
+        const transcript = terminalApiError ? { state: 'available' as const, error: undefined }
+          : await transcriptErrors.readAfterFlush(true, () => cancelled);
+        const evidence = streamedApiError ?? transcript.error ?? terminalApiError;
+        const evidenceSource = streamedApiError ? 'stream' : transcript.error ? 'transcript' : terminalApiErrorSource;
+        const { category: errorCategory, transient: errorTransient, status: errorStatus, source: classificationSource } = tagErrorCategory(error, evidence);
         // Issue #4192 (L1): retry on a transient error that occurred before the
         // first SDK message was yielded. messageCount === 0 ⇒ nothing was emitted
         // to the consumer, so replaying the buffered input can't duplicate output
@@ -679,7 +713,8 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           // race the abandoned one.
           try { queryResult.close?.(); } catch { /* best-effort */ }
           logger.warn(
-            { queryAttempt: queryAttempt + 1, err: error, errorCategory },
+            { queryAttempt: queryAttempt + 1, err: error, errorCategory, errorStatus, classificationSource,
+              evidenceSource: evidenceSource ?? classificationSource ?? 'message' },
             'Transient error before first SDK message — retrying query (Issue #4192 L1)',
           );
           await delayMs(computeBackoffDelay(queryAttempt, QUERY_RETRY_TIMING));
@@ -690,6 +725,9 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
             err: error,
             errorCategory,
             errorTransient,
+            errorStatus,
+            classificationSource,
+            evidenceSource: evidenceSource ?? classificationSource ?? 'message',
             messageCount,
             stderr: stderrCapture.hasContent() ? stderrCapture.getTail() : '(no stderr)',
           },

@@ -6,7 +6,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { StderrCapture, getErrorStderr, isStartupFailure, attachStderrToError, ClaudeSDKProvider, stderrIndicatesUpstreamApiError } from './provider.js';
@@ -1333,6 +1334,57 @@ describe('ClaudeSDKProvider', () => {
     // / 5xx) it prints the error to stderr but STILL emits a subtype=success result,
     // which downstream would silently report as ✅ Complete. The provider detects the
     // stderr signature and tags the success result so ChatAgent can report ❌ Failed.
+    it('uses the current transcript structured 429 verdict before stderr in masked results', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'claude-masked-api-'));
+      const project = join(dir, 'projects', 'owned-project');
+      mkdirSync(project, { recursive: true });
+      const file = join(project, 'owned-session.jsonl');
+      type Options = { stderr: (text: string) => void };
+      mockQuery.mockImplementation(({ options }: { options: Options }) => (async function* () {
+        // An old failure must not leak into this query's decision.
+        writeFileSync(file, `${JSON.stringify({ type: 'assistant', sessionId: 'owned-session', timestamp: '2000-01-01T00:00:00Z', isApiErrorMessage: true, apiErrorStatus: 503 })  }\n`);
+        yield { type: 'system', subtype: 'init', session_id: 'owned-session' };
+        appendFileSync(file, `${JSON.stringify({ type: 'assistant', sessionId: 'owned-session', isApiErrorMessage: true,
+          timestamp: new Date().toISOString(), apiErrorStatus: 429, apiErrorIsTransient: false, message: { content: 'private-upstream-canary' } })  }\n`);
+        options.stderr('overloaded_error HTTP 503');
+        yield { type: 'result', subtype: 'success', session_id: 'owned-session' };
+        // The following turn has no new API error.
+        yield { type: 'result', subtype: 'success', session_id: 'owned-session' };
+      })());
+      try {
+        const stream = provider.queryStream((async function* () {})(), { settingSources: [], env: { CLAUDE_CONFIG_DIR: dir } });
+        const messages: AgentMessage[] = [];
+        for await (const message of stream.iterator) { messages.push(message); }
+        const results = messages.filter(message => message.type === 'result');
+        expect(results[0].metadata).toMatchObject({ upstreamApiError: true, upstreamApiErrorSource: 'transcript',
+          upstreamApiErrorStatus: 429, upstreamApiErrorIsTransient: false });
+        expect(JSON.stringify(messages)).not.toContain('private-upstream-canary');
+        expect(results[1].metadata?.upstreamApiError).toBeUndefined();
+        expect(loggerMock.warn).toHaveBeenCalledWith(expect.objectContaining({ evidenceSource: 'transcript',
+          apiErrorStatus: 429, apiErrorIsTransient: false }), 'Upstream API failure classified');
+      } finally { rmSync(dir, { recursive: true, force: true }); }
+    });
+
+    it('uses structured stream fields without a transcript or stderr signature', async () => {
+      mockQuery.mockReturnValue((async function* () {
+        yield { type: 'assistant', apiErrorStatus: 429, apiErrorIsTransient: false, message: { content: [] } };
+        yield { type: 'result', subtype: 'success' };
+      })());
+      const stream = provider.queryStream((async function* () {})(), { settingSources: [] });
+      const messages: AgentMessage[] = [];
+      for await (const message of stream.iterator) { messages.push(message); }
+      expect(messages.at(-1)?.metadata).toMatchObject({ upstreamApiErrorSource: 'stream', upstreamApiErrorStatus: 429, upstreamApiErrorIsTransient: false });
+    });
+
+    it('does not replay a structured non-transient thrown 429 despite its transient wording', async () => {
+      mockQuery.mockReturnValue((async function* () {
+        throw Object.assign(new Error('HTTP 429 Too Many Requests'), { apiErrorStatus: 429, apiErrorIsTransient: false });
+      })());
+      const stream = provider.queryStream((async function* () {})(), { settingSources: [] });
+      await expect(stream.iterator.next()).rejects.toThrow('HTTP 429');
+      expect(mockQuery).toHaveBeenCalledTimes(1);
+    });
+
     it('Issue #4322: tags the success result with upstreamApiError when stderr shows an upstream overload', async () => {
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
 

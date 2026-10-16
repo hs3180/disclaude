@@ -209,6 +209,60 @@ describe('isRetryable', () => {
 });
 
 describe('isTransient', () => {
+  it.each([
+    { status: 429 }, { statusCode: 502 }, { response: { status: 503 } },
+    { apiErrorStatus: 504 }, { cause: { status: 500 } }, { code: 'ECONNRESET' },
+  ])('uses structured error evidence for %j', error => {
+    expect(classifyError(error)).toBe(error.code ? ErrorCategory.NETWORK : ErrorCategory.API);
+    expect(isTransient(error)).toBe(true);
+    expect(isRetryable(error)).toBe(true);
+    expect(tagErrorCategory(error).source).toBe('structured');
+  });
+
+  it.each([400, 401, 403, 404, 422])('does not override HTTP %s with message digits or wording', status => {
+    const error = Object.assign(new Error('rate limit 429 at localhost:15020; connection timeout'), { status });
+    expect(tagErrorCategory(error)).toMatchObject({ status, transient: false, source: 'structured' });
+    expect(isRetryable(error)).toBe(false);
+    expect(isTransient(error)).toBe(false);
+  });
+
+  it('honors an explicit upstream transient verdict, including false on 429', () => {
+    const error = Object.assign(new Error('HTTP 429 Too Many Requests'), {
+      apiErrorStatus: 429, apiErrorIsTransient: false,
+    });
+    expect(tagErrorCategory(error)).toEqual({ category: ErrorCategory.API, status: 429, transient: false, source: 'structured' });
+    expect(isTransient(error)).toBe(false);
+    expect(isRetryable(error)).toBe(false);
+    expect(isTransient({ apiErrorStatus: 400, apiErrorIsTransient: true })).toBe(true);
+  });
+
+  it.each([
+    'Invalid port 15020', 'Request ID 429123 failed', 'Lookup of record 502 failed',
+    'status 429123 invalid', 'HTTP 502123 invalid', 'See http://localhost:15020/item/429',
+    '429 record identifier missing', '502 item not found',
+  ])('does not treat arbitrary digits as HTTP evidence: %s', message => {
+    const error = new Error(message);
+    expect(isTransient(error)).toBe(false);
+    expect(isRetryable(error)).toBe(false);
+    expect(tagErrorCategory(error).status).toBeUndefined();
+  });
+
+  it('handles malformed structured fields and cyclic causes conservatively', () => {
+    const error = Object.assign(new Error('invalid port 15020'), { status: '429', apiErrorIsTransient: 'true', cause: undefined as unknown });
+    error.cause = error;
+    expect(isTransient(error)).toBe(false);
+    expect(tagErrorCategory(error).source).toBeUndefined();
+  });
+
+  it('shares an enriched transcript verdict with every classifier and downstream tag reader', () => {
+    const error = new Error('HTTP 429');
+    tagErrorCategory(error);
+    const tag = tagErrorCategory(error, { apiErrorStatus: 401, apiErrorIsTransient: false });
+    expect(getErrorCategoryTag(error)).toEqual(tag);
+    expect(classifyError(error)).toBe(ErrorCategory.PERMISSION);
+    expect(isTransient(error)).toBe(false);
+    expect(isRetryable(error)).toBe(false);
+  });
   it('should return false for non-Error values', () => {
     expect(isTransient(null)).toBe(false);
     expect(isTransient(undefined)).toBe(false);
