@@ -56,7 +56,6 @@ describe('preset switching with real configuration and providers', () => {
               api: { protocol: 'anthropic', apiKey: '$MISSING_KEY' },
             },
           },
-          env: { DISCLAUDE_NATIVE_CONFIG_TEST_KEY: 'selected-native-test-key' },
         })
       );
       const script = `
@@ -117,6 +116,7 @@ describe('preset switching with real configuration and providers', () => {
           CODEX_MODEL: '',
           CODEX_REASONING_EFFORT: '',
           PROXY_KEY: 'selected-proxy-key',
+          DISCLAUDE_NATIVE_CONFIG_TEST_KEY: 'selected-native-test-key',
           DIRECT_KEY: 'selected-direct-key',
           MISSING_KEY: '',
           LOG_LEVEL: 'silent',

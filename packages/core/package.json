@@ -21,6 +21,10 @@
     "./browser-runtime": {
       "import": "./dist/utils/browser-env.js",
       "types": "./dist/utils/browser-env.d.ts"
+    },
+    "./secret-environment": {
+      "import": "./dist/config/secret-environment.js",
+      "types": "./dist/config/secret-environment.d.ts"
     }
   },
   "scripts": {

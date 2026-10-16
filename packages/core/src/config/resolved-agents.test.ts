@@ -329,14 +329,13 @@ describe('named runtime and LLM configuration', () => {
     }
     expect(validateResolvedAgent(result.presets.assistant)).toContain('llms.proxy.api.apiKey');
   });
-  it('prefers the service environment over defaults and injects only selected API credentials', () => {
+  it('injects only the selected external API credentials and endpoint', () => {
     vi.stubEnv('PROXY_KEY', 'selected-secret');
     vi.stubEnv('OTHER_KEY', 'other-secret');
     vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'host-bearer');
     vi.stubEnv('OPENAI_API_KEY', 'host-openai');
     vi.stubEnv('ANTHROPIC_BASE_URL', 'https://host.example');
     const config = configuration();
-    config.env = { PROXY_KEY: 'default-secret' };
     const result = resolveConfiguredAgents(config);
     if (!result.ok) {
       throw new Error(result.errors.join('\n'));
@@ -370,18 +369,52 @@ describe('named runtime and LLM configuration', () => {
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env.OPENAI_BASE_URL).toBeUndefined();
   });
-  it('uses API model environment fallback without overriding explicit model identifiers', () => {
-    vi.stubEnv('ANTHROPIC_MODEL', 'environment-model');
+  it.each([undefined, '', '   '])('requires an explicit Codex model (%j)', (model) => {
+    vi.stubEnv('CODEX_MODEL', 'gpt-6-luna');
     const config = configuration();
-    delete config.llms!.proxy.model;
-    let result = resolveConfiguredAgents(config);
-    expect(result).toMatchObject({
-      ok: true,
-      presets: { assistant: { model: 'environment-model' } },
-    });
-    config.llms!.proxy.model = 'explicit-model';
-    result = resolveConfiguredAgents(config);
-    expect(result).toMatchObject({ ok: true, presets: { assistant: { model: 'explicit-model' } } });
+    Object.assign(config.llms!.daily, { model });
+    const result = resolveConfiguredAgents(config);
+    expect(result).toEqual({ ok: false, errors: [
+      'llms.daily.model must be an explicit non-empty string; set this LLM model before upgrading (docs/agent-configuration.md)',
+    ] });
+    expect(validateRequiredConfig(config).valid).toBe(false);
+  });
+  it.each([
+    ['proxy', 'ANTHROPIC_MODEL'],
+    ['other', 'OPENAI_MODEL'],
+  ])('does not fill llms.%s.model from %s', (name, variable) => {
+    vi.stubEnv(variable, 'inherited-model');
+    const config = configuration();
+    config.env = { [variable]: 'global-model' };
+    Object.assign(config.llms![name], { model: undefined });
+    expect(resolveConfiguredAgents(config)).toEqual({ ok: false, errors: [
+      `llms.${name}.model must be an explicit non-empty string; set this LLM model before upgrading (docs/agent-configuration.md)`,
+    ] });
+    config.llms![name].model = 'explicit-model';
+    const result = resolveConfiguredAgents(config);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.presets[name === 'proxy' ? 'assistant' : 'other'].model).toBe('explicit-model');
+    }
+  });
+  it('keeps explicit models independent for two agents on the same backend', () => {
+    vi.stubEnv('ANTHROPIC_MODEL', 'unrelated-global-model');
+    const config = configuration();
+    config.agents!.second = { backend: 'claude', llm: 'second' };
+    config.llms!.second = {
+      model: 'second-explicit-model',
+      api: { protocol: 'anthropic', baseUrl: 'https://second.example', apiKey: '$SECOND_KEY' },
+    };
+    expect(resolveConfiguredAgents(config)).toMatchObject({ ok: true, presets: {
+      assistant: { agentBackend: 'claude', model: 'glm-5.3', apiBaseUrl: 'https://proxy.example' },
+      second: { agentBackend: 'claude', model: 'second-explicit-model', apiBaseUrl: 'https://second.example' },
+    } });
+  });
+  it('rejects an empty resolved Codex model before its native credential exemption', () => {
+    const result = resolveConfiguredAgents(configuration());
+    if (!result.ok) { throw new Error(result.errors.join('\n')); }
+    result.presets.daily.model = '';
+    expect(validateResolvedAgent(result.presets.daily)).toBe('llms.daily.model must be an explicit non-empty string');
   });
   it('resolves braced references and never expands embedded or shell expressions', () => {
     const config = configuration();

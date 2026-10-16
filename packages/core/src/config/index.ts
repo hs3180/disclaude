@@ -26,6 +26,7 @@ import { resolveAgentPreset } from './agent-presets.js';
 import { resolveConfiguredAgents, validateResolvedAgent } from './resolved-agents.js';
 import { resolveCodexModelSetting, resolveCodexReasoningEffort } from './codex-settings.js';
 import { channelCredentialErrors, resolveChannelCredential } from './channel-credentials.js';
+import { secretConfigurationErrors } from './secret-references.js';
 import { type BaseAgentConfig, type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 
 // Re-export sub-modules
@@ -68,7 +69,7 @@ const configLoaded = fileConfig._fromFile;
  */
 export function applyGlobalEnv(): void {
   const source = getPreloadedConfig() ?? fileConfigOnly;
-  const errors = channelCredentialErrors(source);
+  const errors = [...channelCredentialErrors(source), ...secretConfigurationErrors(source)];
   if (errors.length) {throw new Error(errors.join('; '));}
   // Prefer preloaded config (set via --config CLI flag) over the default
   // config loaded at module import time. This ensures applyGlobalEnv()

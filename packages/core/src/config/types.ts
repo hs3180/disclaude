@@ -90,7 +90,8 @@ export type ApiProtocol = 'anthropic' | 'openai';
 
 /** A model and its API connection. Codex account bindings may omit api. */
 export interface LlmConfig {
-  model?: string;
+  /** Explicit model for every public named binding, including native Codex. */
+  model: string;
   /** Native Codex/DSH reasoning effort; omission keeps the model's default. */
   reasoningEffort?: CodexReasoningEffort;
   /** Maximum live host sessions sharing this LLM, across named agents. */
@@ -121,6 +122,8 @@ export interface AgentPreset extends AgentConfig {
   apiBaseUrl?: string;
   env?: Record<string, string>;
   credentialEnvKeys?: string[];
+  /** Internal preflight errors for selected-only native environment references. */
+  missingEnvReferences?: string[];
   default?: boolean;
   llm: string;
   reasoningEffort?: CodexReasoningEffort;

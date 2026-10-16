@@ -2,6 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { resolveAgentPreset, validateAgentPresets } from './agent-presets.js';
 
 describe('validateAgentPresets', () => {
+  it.each(['codex', 'dsh'])('requires a model for named %s presets', (agentBackend) => {
+    for (const model of [undefined, '', '   ']) {
+      expect(validateAgentPresets({ daily: { agentBackend, model } })).toEqual({
+        ok: false, errors: ['agents.daily.model must be a non-empty string'],
+      });
+    }
+  });
   it.each(['0', '1', '01', '4294967294'])('rejects numeric preset name %s', (name) => {
     expect(
       validateAgentPresets({ [name]: { agentBackend: 'claude', model: 'claude-sonnet' } })
