@@ -31,7 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 These six PRs are pending maintainer Review and merge. Their combined candidate
 has separate engineering and installation receipts; real channel acceptance and
-final merged-main verification remain open. See the
+final merged-main verification remain open. A 2026-10-16 candidate window failed
+before readiness, with no regression-model inputs or test sends; the original
+service was restored. This is not a pass or failure of the unexecuted model
+cases. See the
 [0.6.4 candidate delivery record](docs/releases/0.6.4-rc.1.md) for exact sources,
 evidence boundaries and migration guides. No release publication is claimed.
 
