@@ -19,6 +19,7 @@ import {
 import { isChannelApiAvailable, getChannelApiErrorMessage, getChannelApiClient, buildChannelApiFallbackHint } from './channel-api-utils.js';
 import { getMessageSentCallback } from './callback-manager.js';
 import type { SendInteractiveResult, ActionPromptMap, InteractiveOption } from './types.js';
+import { assertReadableInteractiveText } from '../utils/interactive-text.js';
 
 const logger = createLogger('InteractiveMessage');
 
@@ -143,6 +144,8 @@ export async function send_interactive_message(params: {
         };
       }
     }
+
+    assertReadableInteractiveText(options, params.actionPrompts);
 
     // Check REST API availability - REST API is required for sending messages (Issue #1355: async connection probe)
     if (!(await isChannelApiAvailable())) {
