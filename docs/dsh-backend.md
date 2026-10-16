@@ -64,8 +64,9 @@ The installed dsh version and any user profile patches determine the effective
 plugin/tool set. Selecting minimal does not uninstall global packages or rewrite
 existing user profiles. It also does not guarantee higher quality for every task.
 The upstream SDK-minimal defaults omit managed credentials, skill discovery and
-compaction. Disclaude mounts the native token meter and compaction backend in
-minimal mode, and reuses those components in standard mode. Supply API credentials
+compaction. Minimal adds only API routing and the native-app controller required
+for the host connection; it does not add token-meter or compaction plugins or
+query the model directory. Standard reuses the native compaction components. Supply API credentials
 through the bound LLM's `api.apiKey` reference.
 The pinned minimal profile also omits an attachment store. Text and native tools
 remain available; image prompts are rejected before enqueue until an attachment
@@ -83,7 +84,7 @@ receive the corrected environment.
 
 ## Context compaction
 
-Both modes use DSH's native conversation compactor, including its bounded
+Standard uses DSH's native conversation compactor, including its bounded
 context-overflow recovery; disclaude does not summarize or replay tool calls.
 Set `agents.<name>.autoCompactWindow` to an absolute token trigger, or `0` to
 disable automatic compaction. An explicit trigger takes priority over discovery.
@@ -93,7 +94,13 @@ Otherwise, the host checks only the bound API's model directory for
 does not supply a capacity, a warning identifies the model and the conservative
 65,536-token capacity used until an explicit budget is configured.
 
-The policy and model capacity live in a per-query temporary overlay; user profile
+`autoCompactWindow` applies to standard mode. In minimal mode all values (unset,
+`auto`, `0`, or a positive number) leave compression and model capacity to the
+selected upstream profile. A token trigger is not treated as context capacity.
+Choose standard for host-configured automatic compaction. Both modes retain the
+readable overflow error and inspect/continue/reset guidance.
+
+The standard policy and model capacity live in a per-query temporary overlay; user profile
 files remain untouched. DSH retains recent history and stores its compaction
 checkpoints in the original session. Unrecoverable context overflow produces a
 readable instruction to inspect partial results, continue, or use `/reset`;
