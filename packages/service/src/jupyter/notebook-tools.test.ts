@@ -153,6 +153,36 @@ async function fixture() {
 }
 
 describe('Optional Datalayer Notebook tools', () => {
+  it('inserts and edits 20 live cells without stderr warnings (#5317)', async () => {
+    const f = await fixture();
+    const warn = vi.spyOn(console, 'warn');
+    const error = vi.spyOn(console, 'error');
+    try {
+      for (let i = 0; i < 20; i++) {
+        const inserted = await f.call(f.session, 'notebook_insert_cell', {
+          notebookId: f.args.notebookId, cellId: `new-${i}`, beforeCellId: '',
+          cellType: i % 2 ? 'markdown' : 'code', source: `initial ${i}`,
+        }) as { sourceHash: string };
+        expect(inserted).toMatchObject({ state: 'inserted', cellId: `new-${i}` });
+        const edited = await f.call(f.session, 'notebook_edit_cell', {
+          notebookId: f.args.notebookId, cellId: `new-${i}`,
+          expectedSourceHash: inserted.sourceHash, source: `edited ${i}`,
+        });
+        expect(edited).toMatchObject({ state: 'edited', cellId: `new-${i}` });
+      }
+      expect(f.notebook.cells).toHaveLength(22);
+      expect(f.notebook.cells.slice(2).map(cell => cell.source))
+        .toEqual(Array.from({ length: 20 }, (_, i) => `edited ${i}`));
+      expect(warn).not.toHaveBeenCalled();
+      expect(error).not.toHaveBeenCalled();
+      f.doc.flush.mockRejectedValueOnce(new Error('Owned RTC synchronization failure'));
+      await expect(f.call(f.session, 'notebook_insert_cell', {
+        notebookId: f.args.notebookId, cellId: 'failed', beforeCellId: '', cellType: 'code', source: '',
+      })).rejects.toThrow('Owned RTC synchronization failure');
+      expect(f.notebook.cells).toHaveLength(22);
+    } finally { warn.mockRestore(); error.mockRestore(); }
+  });
+
   it('returns canonical error fields and one-release aliases that a Jupyter Notebook consumer can read', async () => {
     const f = await fixture();
     const raw = { output_type: 'error', ename: 'NameError', evalue: "name 'IN_DIR' is not defined",
