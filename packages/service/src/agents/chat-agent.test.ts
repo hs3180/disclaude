@@ -4831,6 +4831,27 @@ describe('ChatAgent (service)', () => {
   });
 
   describe('Issue #4391: empty-turn session-reset + bounded replay', () => {
+    it('does not reset and replay when the provider reports an uncertain execution outcome', async () => {
+      const callbacks = createMockCallbacks();
+      const agent = makeRetryAgent('oc_no_unsafe_replay', callbacks);
+      const markRetried = vi.spyOn((agent as any).emptyTurnRetryPolicy, 'markRetried');
+      const query = vi.fn(() => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          yield { parsed: { type: 'result', content: '✅ Complete', automaticReplayBlocked: 'execution-outcome-uncertain' }, raw: {} };
+        })(),
+      }));
+      (agent as any).createQueryStream = query;
+      void agent.processMessage({ chatId: 'oc_no_unsafe_replay', payload: 'do work', messageId: 'om_no_unsafe_replay' });
+      await vi.waitFor(() => {
+        expect(callbacks.sendMessage.mock.calls.some((call: unknown[]) => String(call[1]).includes('未产生任何可见输出'))).toBe(true);
+      });
+      await new Promise(resolve => setTimeout(resolve, 50));
+      expect(markRetried).not.toHaveBeenCalled();
+      expect(query).toHaveBeenCalledTimes(1);
+      expect(callbacks.sendMessage.mock.calls.some((call: unknown[]) => String(call[1]).includes('系统不会自动重放原输入'))).toBe(true);
+      agent.dispose();
+    });
     // Shared harness for the empty-turn recovery matrix. createQueryStream
     // is stubbed per-test; the mock channel (in the @disclaude/core mock) has
     // push() → true, so processMessage always accepts.

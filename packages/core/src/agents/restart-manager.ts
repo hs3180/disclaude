@@ -23,6 +23,7 @@
 
 import type { Logger } from '../utils/logger.js';
 import { tagErrorCategory, ErrorCategory } from '../utils/error-handler.js';
+import { automaticReplayBlock } from '../utils/replay-safety.js';
 
 /**
  * Configuration for RestartManager.
@@ -68,7 +69,7 @@ export interface RestartDecision {
   /** Whether restart is allowed */
   allowed: boolean;
   /** Reason if not allowed */
-  reason?: 'max_restarts_exceeded' | 'circuit_open' | 'backoff_pending' | 'non_transient' | 'unknown_recovery_exhausted';
+  reason?: 'max_restarts_exceeded' | 'circuit_open' | 'backoff_pending' | 'non_transient' | 'unknown_recovery_exhausted' | 'replay_unsafe';
   /** Time to wait before restart in ms (if allowed) */
   waitMs?: number;
   /** Current restart count */
@@ -161,6 +162,12 @@ export class RestartManager {
     state.recentErrors.push({ message: errorMessage, timestamp: now });
     if (state.recentErrors.length > this.maxRecentErrors) {
       state.recentErrors.shift();
+    }
+
+    const replayBlock = automaticReplayBlock(error);
+    if (replayBlock) {
+      this.logger.warn({ chatId, replayBlock }, 'Automatic replay blocked by provider evidence');
+      return { allowed: false, reason: 'replay_unsafe', restartCount: state.restartCount, circuitOpen: state.circuitOpen };
     }
 
     // Check if circuit is already open
