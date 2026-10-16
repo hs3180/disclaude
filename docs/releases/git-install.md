@@ -48,6 +48,8 @@ When upgrading an existing deployment:
 Package installation does not migrate or delete configuration or workspace
 data. For workspace relocation, use the separate
 [workspace migration procedure](../workspace-setup.md#moving-an-existing-production-workspace).
+For retained candidate prefixes and rollback installations, use the
+[read-only delivery retention preview](../delivery-retention.md) before cleanup.
 
 ## Docker Compose deployment
 

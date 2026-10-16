@@ -7,7 +7,10 @@ import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 const temp = mkdtempSync(join(tmpdir(), 'disclaude-node22-gate-'));
 let cleanupSafe = true;
-const toolingEnv = { ...process.env, npm_config_cache: join(temp, 'cache'), npm_config_userconfig: join(temp, 'empty.npmrc') };
+const sharedCache = process.env.DISCLAUDE_INSTALL_TEST_NPM_CACHE
+  ? resolve(process.env.DISCLAUDE_INSTALL_TEST_NPM_CACHE)
+  : join(temp, 'cache');
+const toolingEnv = { ...process.env, npm_config_cache: sharedCache, npm_config_userconfig: join(temp, 'empty.npmrc'), DISCLAUDE_INSTALL_TEST_NPM_CACHE: sharedCache };
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { encoding: 'utf8', timeout: 240_000, env: toolingEnv, ...options });
   if (result.signal || (result.error && ['ETIMEDOUT', 'ENOBUFS'].includes(result.error.code))
@@ -47,7 +50,7 @@ try {
     symlinkSync(node, join(selected, 'node'));
     symlinkSync(npm, join(selected, 'npm'));
     console.log(run(node, [resolve('scripts/test-package-install.mjs'), process.argv[2], process.argv[3], '--prefix-from-env'], {
-      env: { ...process.env, PATH: `${selected}${delimiter}${process.env.PATH}` },
+      env: { ...process.env, DISCLAUDE_INSTALL_TEST_NPM_CACHE: sharedCache, PATH: `${selected}${delimiter}${process.env.PATH}` },
     }));
   }
 } finally {
