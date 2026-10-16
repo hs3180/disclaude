@@ -318,7 +318,7 @@ export interface AgentQueryOptions {
    * - `'auto'` — SDK decides automatically
    */
   teammateMode?: 'auto' | 'tmux' | 'in-process';
-  /** Native compaction policy; Claude unset uses SDK defaults. DSH minimal never mounts compaction plugins. */
+  /** Claude unset uses SDK defaults; 'auto' discovers capacity, a number sets a trigger, 0 disables. DSH resolves its native policy. */
   autoCompactWindow?: number | 'auto';
   /**
    * Enable partial (stream_event) messages (Issue #3706 GLM stall).

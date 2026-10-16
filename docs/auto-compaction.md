@@ -1,17 +1,20 @@
 # Automatic compaction
 
-For the Claude backend, disclaude resolves the compaction policy in this order:
+For the Claude backend, the selected `agents.<name>.autoCompactWindow` controls
+only the host override. Omitting it leaves the SDK's own settings and automatic
+compaction behavior in control; it does not disable SDK compaction.
 
-1. If `agents.<name>.autoCompactWindow` is configured, use that value without querying
-   model metadata. This applies to native Claude models as well as compatible
-   third-party models. `0` disables SDK automatic compaction.
-2. When unset, do not query model metadata or inject compaction settings. All
-   models retain the SDK's native strategy, including compatible third-party models.
-3. Set `autoCompactWindow: auto` to opt into metadata discovery. Native `claude-*`
-   IDs retain SDK policy. For other IDs, query only the bound provider's models API
-   and use `floor(limit * 0.8)`. Read `max_input_tokens`, `context_length`, or
-   `context_window`; output-only `max_tokens` is never a context limit. Missing
-   metadata produces a warning without injecting a guessed threshold.
+| Selected agent setting | Host behavior |
+| --- | --- |
+| Unset | No model metadata requests and no compaction settings injected |
+| Positive integer | Inject that token trigger, without metadata discovery |
+| `0` | Explicitly disable SDK automatic compaction |
+| `auto` | Opt into bound-provider metadata discovery; native `claude-*` IDs keep SDK policy |
+
+Discovery reads `max_input_tokens`, `context_length`, or `context_window` and
+uses `floor(limit * 0.8)`. Output-only `max_tokens` is never a context limit.
+Missing metadata produces a warning without injecting a guessed threshold.
+Settings on another/default agent are not inherited by the selected named agent.
 
 ```yaml
 agents:
@@ -41,6 +44,5 @@ continuing with less input or starting a fresh session with `/reset`. Disclaude
 never replays tools to recover context. Explicit compaction changes conversation
 history and should be an operator choice.
 
-Codex and pi retain their own compaction policies. DSH standard supports the
-native policy described in [dsh-backend.md](dsh-backend.md#context-compaction);
-DSH minimal never mounts compaction plugins.
+Other backends retain their own compaction policies; see
+[dsh-backend.md](dsh-backend.md#context-compaction) for DSH.

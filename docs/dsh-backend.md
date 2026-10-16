@@ -64,8 +64,8 @@ The installed dsh version and any user profile patches determine the effective
 plugin/tool set. Selecting minimal does not uninstall global packages or rewrite
 existing user profiles. It also does not guarantee higher quality for every task.
 The upstream SDK-minimal defaults omit managed credentials, skill discovery and
-compaction. Disclaude adds no token-meter or compaction plugins to minimal,
-and does not query its model directory. Standard reuses its native components. Supply API credentials
+compaction. Disclaude mounts the native token meter and compaction backend in
+minimal mode, and reuses those components in standard mode. Supply API credentials
 through the bound LLM's `api.apiKey` reference.
 The pinned minimal profile also omits an attachment store. Text and native tools
 remain available; image prompts are rejected before enqueue until an attachment
@@ -83,7 +83,7 @@ receive the corrected environment.
 
 ## Context compaction
 
-Standard uses DSH's native conversation compactor, including its bounded
+Both modes use DSH's native conversation compactor, including its bounded
 context-overflow recovery; disclaude does not summarize or replay tool calls.
 Set `agents.<name>.autoCompactWindow` to an absolute token trigger, or `0` to
 disable automatic compaction. An explicit trigger takes priority over discovery.
@@ -93,14 +93,7 @@ Otherwise, the host checks only the bound API's model directory for
 does not supply a capacity, a warning identifies the model and the conservative
 65,536-token capacity used until an explicit budget is configured.
 
-Minimal preserves the selected upstream composition: only API routing and the
-native-app controller are added. Neither unset, `auto`, nor `0` mounts compaction
-plugins or queries model metadata in minimal. A positive numeric setting supplies
-bound-model context metadata only; it does not enable compression. Choose standard
-for automatic compaction. Both modes retain the readable overflow error and
-Chinese recovery instructions; inspect prior results before continuing or `/reset`.
-
-The standard policy and model capacity live in a per-query temporary overlay; user profile
+The policy and model capacity live in a per-query temporary overlay; user profile
 files remain untouched. DSH retains recent history and stores its compaction
 checkpoints in the original session. Unrecoverable context overflow produces a
 readable instruction to inspect partial results, continue, or use `/reset`;

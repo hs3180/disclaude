@@ -70,10 +70,9 @@ export interface AgentConfig {
    */
   enableAgentTeams?: boolean;
   /**
-   * Optional native compaction policy. Claude leaves the SDK policy untouched
-   * when absent; 'auto' opts into bound-provider model metadata discovery.
-   * A number sets a trigger; 0 disables auto compaction in Claude/DSH standard.
-   * DSH minimal never adds compaction plugins or probes model metadata.
+   * Claude leaves the SDK policy untouched when absent. 'auto' explicitly
+   * opts into bound-provider model metadata discovery. A positive number sets
+   * a token trigger; 0 disables automatic compaction. DSH resolves its own policy.
    */
   autoCompactWindow?: number | 'auto';
   /**

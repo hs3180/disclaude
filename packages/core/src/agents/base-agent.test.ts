@@ -810,6 +810,13 @@ describe('BaseAgent', () => {
       expect(agent.testCreateSdkOptions().autoCompactWindow).toBe(48_000);
     });
 
+    it('retains the DSH default while Claude discovery requires an explicit opt-in', () => {
+      const dsh = new TestAgent({ apiKey: 'key', model: 'model', agentBackend: 'dsh', settings: {} });
+      expect(dsh.testCreateSdkOptions().autoCompactWindow).toBe('auto');
+      const claude = new TestAgent({ apiKey: 'key', model: 'model', settings: { autoCompactWindow: 'auto' } });
+      expect(claude.testCreateSdkOptions().autoCompactWindow).toBe('auto');
+    });
+
     it('honors explicit configuration for native Claude models too', () => {
       const spy = vi.spyOn(Config, 'getAutoCompactWindow').mockReturnValue(42000);
       try {

@@ -78,7 +78,6 @@ export function createDshNativeProfileOverlay(
   profileFiles: string[] = [],
   defaultAdapter?: string,
   compaction?: DshCompactionSettings,
-  contextWindow = compaction?.contextWindow,
 ): { path: string; dispose(): void } {
   const plugins: Record<string, unknown>[] = [];
   const patches: Record<string, unknown>[] = [{ id: 'sdk-jsonrpc-server', disabled: true }];
@@ -99,7 +98,7 @@ export function createDshNativeProfileOverlay(
           baseURL: api.baseUrl,
           apiKeyEnv: DSH_API_CREDENTIAL_ENV,
           models: [{ id: api.model, name: api.model, input: ['text'],
-            ...(contextWindow ? { contextWindow } : {}) }],
+            ...(compaction?.contextWindow ? { contextWindow: compaction.contextWindow } : {}) }],
         },
       },
     };
