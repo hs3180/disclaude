@@ -13,39 +13,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   group/topic conversations and streaming replies, while keeping thinking,
   raw tool payloads and child-agent frames private (#5377, #5381).
 
+- Let the Claude framework own retries and SDK-reported usage without a host
+  retry-budget or per-attempt audit layer (#5382, #5383, merged).
+- Reuse installation download caches and preview retained prefixes without
+  sharing runtime dependency trees or deleting user data (#5354, #5384, merged).
+
 ### In review for 0.6.4
 
-- Let the Claude framework own retries and SDK-reported usage without a host
-  retry-budget or per-attempt audit layer (#5382, #5383).
-- Use Claude native interrupt-and-replace for default busy input, with a short
-  old-turn notice, the new input's reply anchor and no automatic replay
-  (#5258, #5388).
 - Keep persistent credentials outside YAML, project only selected LLM settings,
-  and mask every explicit external secret-file source (#5233, #5387).
+  mask every explicit external secret-file source and require an explicit model
+  for every named binding (#5233, #5387).
 - Make Disclaude diagnostics an optional project-local CLI-installed plugin
   discovered by Claude, Codex, DSH and Pi (#5251, #5385).
-- Distinguish observed CDP connection failures from page-navigation responses
-  with bounded diagnostics that omit response bodies and headers (#5352, #5386).
-- Reuse installation download caches and preview retained prefixes without
-  sharing runtime dependency trees or deleting user data (#5354, #5384).
+- Distinguish CDP discovery, WebSocket attach and page-navigation failures,
+  retaining a bounded safely redacted error-response summary (#5352, #5386).
 - Record one lifecycle terminal for a completed parent input when its native
   background Agent later delivers a child result, preserving the child reply
   and callbacks; account successful streamed/fallback delivery only for its
   owning turn (#5390).
 
-These seven implementation PRs and the delivery-record PR #5389 are eight
-current review items, pending maintainer Review and merge. Verification source
-`d438ef019` passed build/lint, 5,839 tests in 278 files and independent prebuilt
-installation/lifecycle checks. The nine-model real Feishu/REST run belongs to
-earlier candidate `e22f1e7b5`: its card transport passed, but its visible-delivery
-flag remained false. Actual verification of that field after the later
-bookkeeping fix remains pending on final source. Neither candidate is merged
-main. Earlier readiness and harness failures, the
-e91d duplicate-terminal product failure, actual service interruptions and
-restoration evidence remain recorded separately. Final merged-main verification
-and release publication remain open. See the
+At the 11:54 UTC snapshot, main was `60a44399a` after the maintainer merged
+#5383 and #5384. Five PRs remain open: #5385, #5386, #5387, #5389 and #5390.
+The maintainer closed #5388 unmerged after requesting default stream behavior;
+ordinary busy Claude input retains main's live stream and running tools continue.
+New candidate `1ff923231` excludes that closed proposal. Its forced build/lint,
+5,845 tests in 279 files, fresh prebuilt installation and read-only
+preserved acceptance-config comparison passed. Controlled native-stream checks are not real
+model/channel acceptance. The original daily configuration requires migration
+and successful preflight before deployment; that acceptance-config comparison
+does not prove an unchanged legacy-config upgrade.
+
+Earlier `e22f1e7b5` passed nine real-model inputs under its old interrupt-and-replace
+behavior, including actual interactive-card delivery; it logged a false visible
+flag. Later `d438ef019` passed build/lint, 5,839 tests in 278 files and independent
+installation for the bookkeeping fix. Both are historical, source-specific
+receipts. Actual new-default-stream behavior and the corrected P2P visibility
+field remain pending on final source. Earlier readiness/harness failures,
+duplicate-terminal failure, non-test interruptions and the known pending notice
+remain recorded. Maintainer Review, final merged-main verification and release
+publication remain open. See the
 [0.6.4 candidate delivery record](docs/releases/0.6.4-rc.1.md) for exact sources,
-evidence boundaries and migration guides. No release publication is claimed.
+requirement corrections, evidence boundaries and migration guides.
 
 ## [0.6.2] - 2026-09-30
 
