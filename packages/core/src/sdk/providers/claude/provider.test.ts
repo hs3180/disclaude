@@ -550,9 +550,9 @@ describe('ClaudeSDKProvider', () => {
         for await (const _message of result.iterator) { /* drain */ }
         expect(fetch).not.toHaveBeenCalled();
         const { settings } = mockQuery.mock.calls[0][0].options;
-        expect(settings).toEqual(autoCompactWindow === undefined ? undefined
-          : { autoCompactEnabled: autoCompactWindow > 0,
-            ...(autoCompactWindow > 0 ? { autoCompactWindow } : {}) });
+        expect(settings.autoCompactEnabled).toBe(autoCompactWindow === undefined ? undefined : autoCompactWindow > 0);
+        expect(settings.autoCompactWindow).toBe(autoCompactWindow !== undefined && autoCompactWindow > 0 ? autoCompactWindow : undefined);
+        expect(settings.env.CLAUDE_CODE_MAX_RETRIES).toBe('2');
       } finally { vi.unstubAllGlobals(); }
     });
 
