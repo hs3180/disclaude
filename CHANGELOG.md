@@ -30,13 +30,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sharing runtime dependency trees or deleting user data (#5354, #5384).
 - Record one lifecycle terminal for a completed parent input when its native
   background Agent later delivers a child result, preserving the child reply
-  and callbacks (#5390).
+  and callbacks; account successful streamed/fallback delivery only for its
+  owning turn (#5390).
 
 These seven implementation PRs and the delivery-record PR #5389 are eight
-current review items, pending maintainer Review and merge. Corrected combined
-candidate `e22f1e7b5` passed build/lint, 5,830 tests in 278 files, independent
-prebuilt installation/lifecycle checks and a nine-model real Feishu/REST run.
-That candidate is not merged main. Earlier readiness and harness failures, the
+current review items, pending maintainer Review and merge. Verification source
+`d438ef019` passed build/lint, 5,839 tests in 278 files and independent prebuilt
+installation/lifecycle checks. The nine-model real Feishu/REST run belongs to
+earlier candidate `e22f1e7b5`: its card transport passed, but its visible-delivery
+flag remained false. Actual verification of that field after the later
+bookkeeping fix remains pending on final source. Neither candidate is merged
+main. Earlier readiness and harness failures, the
 e91d duplicate-terminal product failure, actual service interruptions and
 restoration evidence remain recorded separately. Final merged-main verification
 and release publication remain open. See the
