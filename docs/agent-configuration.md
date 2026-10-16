@@ -19,7 +19,7 @@ llms:
 channels:
   feishu:
     appId: your-app-id
-    appSecretEnv: FEISHU_APP_SECRET
+    appSecret: $FEISHU_APP_SECRET
 ```
 
 Model vendors do not define configuration sections or API formats. Any model
@@ -109,3 +109,5 @@ a public agent setting. Keep custom tools and other profile settings; an existin
 Global `env` and workspace `.runtime-env` keep their existing lifecycle. This
 change does not implement the broader secret-file store or permission management
 tracked in #5233.
+
+Channel credential sources and migration: [channel-credentials.md](channel-credentials.md).

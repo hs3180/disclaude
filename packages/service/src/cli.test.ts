@@ -9,6 +9,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+import { channelCredentialErrors, resolveChannelCredential } from '../../core/src/config/channel-credentials.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -21,6 +22,8 @@ import { execFileSync } from 'node:child_process';
 // both.
 const loggerInfoCalls: Array<{ fields: unknown; msg: unknown }> = [];
 vi.mock('@disclaude/core', () => ({
+  channelCredentialErrors: (...args: Parameters<typeof channelCredentialErrors>) => channelCredentialErrors(...args),
+  resolveChannelCredential: (...args: Parameters<typeof resolveChannelCredential>) => resolveChannelCredential(...args),
   loadConfigFile: vi.fn(),
   setLoadedConfig: vi.fn(),
   applyGlobalEnv: vi.fn(),

@@ -100,7 +100,7 @@ start the DisclaudeService with `--api-port`. No browser or extra binaries requi
 | ------------------ | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
 | `send_text`        | —               | `--chat <id>` _(optional with default)_, `--text <string>`, `--text-file <path>`, `--parent <id>`, `--mentions <json>`                                                                   | ✅ part 3 |
 | `send_card`        | —               | `--chat <id>` _(optional with default)_, `--card <json>`, `--card-file <path>`, `--parent <id>`                                                                                          | ✅ part 5 |
-| `send_interactive` | —               | `--chat <id>` _(optional with default)_, `--question <string>` _(req)_, `--options <json>` _(req)_, `--title <string>`, `--context <string>`, `--action-prompts <json>`, `--parent <id>`, `--thread-root <id>` _(topic threads)_, `--idempotency-key <key>` _(requires action prompts)_ | ✅ part 7 |
+| `send_interactive` | —               | `--chat <id>` _(optional with default)_, `--question <string>` _(req)_, `--options <json>` / `--options-file <path|->` _(req)_, `--title <string>`, `--context <string>`, `--action-prompts <json>` / `--action-prompts-file <path|->`, `--parent <id>`, `--thread-root <id>` _(topic threads)_, `--idempotency-key <key>` _(requires action prompts)_ | ✅ part 7 |
 | `send_file`        | —               | `--chat <id>` _(optional with default)_, `--file <path>` _(req)_, `--parent <id>`                                                                                                        | ✅ part 4 |
 | `push`    | —               | `--chat <id>` _(optional with default)_, `--message <string>`, `--message-file <path>`                                                                                                   | ✅ part 6 |
 | `help`             | —               | —                                                                                                                                                                                        | ✅        |
@@ -132,8 +132,25 @@ when no `--text`/`--text-file` is given and stdin is not a TTY. `push`
 follows the same rule for its instruction body (`--message` / `--message-file` /
 piped stdin). This follows the Skill format spec §2.1 rule: never require the
 agent to embed multi-KB text inline. `send_interactive` follows the same rule for its `--question`
-(`--question` / `--question-file` / piped stdin); its `--options` is always a
-JSON array flag (structured, not free text).
+(`--question` / `--question-file` / piped stdin). Interactive options accept
+`--options <json-array>` or `--options-file <path|->`; action prompts accept
+`--action-prompts <json-object>` or `--action-prompts-file <path|->`. The same
+input cannot use both inline and file forms, and only one input may read stdin.
+When JSON uses stdin, supply the question explicitly or through another file.
+Use raw UTF-8 JSON files or a single JSON Unicode escape layer. Dense literal
+`\uXXXX` text is rejected as likely double escaping; labels and action prompts
+are never silently decoded twice.
+
+**Help and preview** — `disclaude channel <command> --help` (or `-h`) succeeds
+without chat IDs, credentials or a REST connection. Every command accepts
+`--dry-run` to validate local input and print the parsed payload without any
+network access, upload, send, push or workflow start. No service address/token
+is required for dry-run. It does not confirm remote acceptance or render cards.
+Interactive output includes `decodedPreview`: the first 80 characters of button
+labels and 120 of action prompts, with truncation flags. Dry-run also includes
+the complete parsed payload and preserves parent/thread/idempotency routing.
+Run `disclaude channel send_interactive --help` for schema and two complete
+examples. JSON errors identify the flag and input character/byte lengths.
 
 **Card input** — `--card "<json>"` for small cards; `--card-file <path>` (or
 `--card-file -` to read stdin explicitly) for larger card JSON; or pipe on stdin
@@ -144,7 +161,7 @@ never require the agent to embed a multi-KB card inline.
 
 ## Output contract
 
-Every command prints **exactly one JSON object** to stdout and nothing else
+Every execution prints **exactly one JSON object** to stdout and nothing else; help prints command usage instead
 (spec §2.2). Diagnostics and logs go to stderr. Exit code is `0` on success,
 `1` on failure.
 

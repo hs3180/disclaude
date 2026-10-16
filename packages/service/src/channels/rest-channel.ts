@@ -21,6 +21,7 @@
  */
 
 import http from 'node:http';
+import { timingSafeEqual } from 'node:crypto';
 import { createLogger, withTiming, type ChannelConfig, type OutgoingMessage, type ChannelCapabilities, BaseChannel, MessageRouter as InputMessageRouter } from '@disclaude/core';
 import { v4 as uuidv4 } from 'uuid';
 import type { AgentPoolStats } from '../chat-session-pool.js';
@@ -41,6 +42,8 @@ export type { IFileStorageService };
  * REST channel configuration.
  */
 export interface RestChannelConfig extends ChannelConfig {
+  /** Resolved bearer credential. General YAML must use an external environment reference. */
+  authToken?: string;
   /** Server port (default: 3000) */
   port?: number;
   /** Server host (default: '127.0.0.1') */
@@ -399,6 +402,14 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     if (url === '/api/health' && req.method === 'GET') {
       this.handleHealth(req, res);
       return;
+    }
+    if (this.config.authToken) {
+      const expected = Buffer.from(`Bearer ${this.config.authToken}`);
+      const received = Buffer.from(req.headers.authorization ?? '');
+      if (expected.length !== received.length || !timingSafeEqual(expected, received)) {
+        this.sendError(res, 401, 'REST channel bearer authentication required');
+        return;
+      }
     }
 
     if (url === '/api/chat' && req.method === 'POST') {

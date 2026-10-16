@@ -1,26 +1,28 @@
 #!/usr/bin/env node
 /** Typed, distributable entry point for the channel CLI. */
-import { existsSync, readFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { CHANNEL_CLI_HELP, normalizeChannelApiBaseUrl, isSyntheticMessageId } from '@disclaude/core';
+import { CHANNEL_CLI_HELP, getChannelCliCommandHelp, normalizeChannelApiBaseUrl, isSyntheticMessageId } from '@disclaude/core';
 import type { ActionPromptMap, InteractiveOption } from './tools/types.js';
 
 import { getChatIdValidationError } from './utils/chat-id-validator.js';
+import { assertReadableInteractiveText } from './utils/interactive-text.js';
+import { getCardValidationError, isValidFeishuCard } from './utils/card-validator.js';
 
 // Issue #4788 (second root cause): parseArgs used to store every `--foo` it saw
 // and silently consume the next argv entry as its value. A misspelled or invented
 // flag therefore ate a real argument and surfaced as a confusing downstream error
 // (`--payload '{...}'` swallowed the payload, then failed with "Missing question
 // content"). These lists let the CLI name the bad flag instead.
-const COMMON_FLAGS = ['chat', 'parent', 'base-url', 'api-token'];
+const COMMON_FLAGS = ['chat', 'parent', 'base-url', 'api-token', 'dry-run'];
 const COMMAND_FLAGS: Record<string, string[]> = {
   request_private_input: ['actor', 'source', 'workflow', 'workflow-file'],
   send_text: ['text', 'text-file', 'mentions'],
   send_file: ['file'],
   send_card: ['card', 'card-file'],
   push_to_agent: ['message', 'message-file'],
-  send_interactive: ['question', 'question-file', 'options', 'action-prompts', 'title', 'context', 'thread-root', 'idempotency-key'],
+  send_interactive: ['question', 'question-file', 'options', 'options-file', 'action-prompts', 'action-prompts-file', 'title', 'context', 'thread-root', 'idempotency-key'],
 };
 
 // Issue #4705: single source of truth shared with the message builder's
@@ -53,7 +55,14 @@ function parseArgs(argv: string[]): Args {
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') {args.help = 'true';}
-    else if (arg.startsWith('--')) { args[arg.slice(2)] = argv[i + 1]; i += 1; }
+    else if (arg === '--dry-run') {args['dry-run'] = 'true';}
+    else if (arg.startsWith('--')) {
+      const key = arg.slice(2); const value = argv[i + 1];
+      if (value === undefined || value.startsWith('--') || value === '-h') {
+        args[key] = undefined;
+        const missing = (args._missing ??= []) as string[]; missing.push(key);
+      } else { args[key] = value; i += 1; }
+    }
     else {args._.push(arg);}
   }
   return args;
@@ -66,7 +75,7 @@ function arg(args: Args, key: string): string | undefined { return typeof args[k
  */
 function rejectUnknownFlags(command: string, args: Args): boolean {
   const allowed = new Set([...COMMON_FLAGS, ...(COMMAND_FLAGS[command] ?? [])]);
-  const unknown = Object.keys(args).filter((key) => key !== '_' && key !== 'help' && !allowed.has(key));
+  const unknown = Object.keys(args).filter((key) => !['_', '_missing', 'help'].includes(key) && !allowed.has(key));
   if (unknown.length === 0) {return false;}
   const listed = unknown.map((key) => `--${key}`).join(', ');
   const valid = [...allowed].sort().map((key) => `--${key}`).join(', ');
@@ -77,7 +86,7 @@ function readStdin(): string | undefined {
   if (process.stdin.isTTY) {return undefined;}
   try { return readFileSync(0, 'utf8'); } catch { return undefined; }
 }
-function readInput(args: Args, valueKey: string, fileKey: string): string | undefined {
+function readInput(args: Args, valueKey: string, fileKey: string, defaultStdin = true): string | undefined {
   const value = arg(args, valueKey);
   if (value !== undefined) {return value;}
   const file = arg(args, fileKey);
@@ -85,7 +94,23 @@ function readInput(args: Args, valueKey: string, fileKey: string): string | unde
     try { return file === '-' ? readStdin() : readFileSync(file, 'utf8'); }
     catch (error) { throw new Error(`Cannot read --${fileKey} ${file}: ${errorMessage(error)}`); }
   }
-  return readStdin();
+  return defaultStdin ? readStdin() : undefined;
+}
+
+function validateInputSources(command: string, args: Args): void {
+  const pairs: Record<string, Array<[string, string, boolean]>> = {
+    send_text: [['text', 'text-file', true]], send_card: [['card', 'card-file', true]],
+    push_to_agent: [['message', 'message-file', true]], request_private_input: [['workflow', 'workflow-file', true]],
+    send_interactive: [['question', 'question-file', true], ['options', 'options-file', false],
+      ['action-prompts', 'action-prompts-file', false]],
+  };
+  const stdin: string[] = [];
+  for (const [valueKey, fileKey, fallback] of pairs[command] ?? []) {
+    const value = arg(args, valueKey); const file = arg(args, fileKey);
+    if (value !== undefined && file !== undefined) { throw new Error(`Use only one of --${valueKey} and --${fileKey}`); }
+    if (file === '-' || (value === undefined && file === undefined && fallback)) { stdin.push(valueKey); }
+  }
+  if (stdin.length > 1) { throw new Error(`stdin can supply only one input, requested by: ${stdin.join(', ')}. Supply the other inputs explicitly or through files.`); }
 }
 function resolveChat(args: Args): string | undefined {
   const explicit = arg(args, 'chat');
@@ -116,7 +141,8 @@ function validateChat(command: string, args: Args): string | undefined {
 }
 function parseJson<T>(raw: string | undefined, name: string): T | undefined {
   if (!raw) {return undefined;}
-  try { return JSON.parse(raw) as T; } catch (error) { throw new Error(`Invalid --${name} JSON: ${errorMessage(error)}`); }
+  try { return JSON.parse(raw.replace(/^\uFEFF/, '')) as T; }
+  catch (error) { throw new Error(`Invalid --${name} JSON (${raw.length} UTF-16 units, ${Buffer.byteLength(raw, 'utf8')} UTF-8 bytes): ${errorMessage(error)}`); }
 }
 function parseMentions(raw: string | undefined): Array<{ openId: string; name?: string }> | undefined {
   const value = parseJson<unknown>(raw, 'mentions');
@@ -194,6 +220,7 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
   let parsedOptions: InteractiveOption[] | undefined;
   let parsedActionPrompts: ActionPromptMap | undefined;
   try {
+    validateInputSources(command, args);
     if (command === 'send_text') {
       text = readInput(args, 'text', 'text-file');
       parsedMentions = parseMentions(arg(args, 'mentions'));
@@ -223,8 +250,15 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
     } else {
       question = readInput(args, 'question', 'question-file');
       if (!question || !question.trim()) { emitFail(command, 'Missing question content', 'pass --question <string>, --question-file <path>, or pipe content on stdin'); return 1; }
-      parsedOptions = parseOptions(arg(args, 'options'));
-      parsedActionPrompts = parseActionPrompts(arg(args, 'action-prompts'));
+      parsedOptions = parseOptions(readInput(args, 'options', 'options-file', false));
+      parsedActionPrompts = parseActionPrompts(readInput(args, 'action-prompts', 'action-prompts-file', false));
+      const values = parsedOptions.map(option => option.value);
+      if (new Set(values).size !== values.length) { throw new Error('options[].value must be unique for unambiguous action routing'); }
+      const prompts = parsedActionPrompts;
+      if (prompts && values.some(value => !Object.hasOwn(prompts, value) || !prompts[value].trim())) {
+        throw new Error('action-prompts must map every option value to a non-empty prompt');
+      }
+      assertReadableInteractiveText(parsedOptions, parsedActionPrompts);
     }
   } catch (error) {
     const messageText = errorMessage(error);
@@ -240,9 +274,6 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
     emitFail(command, '--idempotency-key requires --action-prompts for safe button routing');
     return 1;
   }
-  let mod: typeof import('./index.js');
-  try { mod = await withLogsRedirected(() => import('./index.js')); }
-  catch (error) { emitFail(command, `Failed to load channel implementation: ${errorMessage(error)}`, 'run npm run build before using the packaged CLI'); return 1; }
   const parentMessageId = arg(args, 'parent');
   const threadRootId = arg(args, 'thread-root');
   if ([parentMessageId, threadRootId].some(id => id && isSyntheticMessageId(id))) {
@@ -253,6 +284,33 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
     emitFail(command, '--thread-root must be a non-empty thread root ID');
     return 1;
   }
+  const decodedPreview = command === 'send_interactive' ? {
+    options: parsedOptions?.map(option => ({ value: option.value, text: option.text.slice(0, 80), truncated: option.text.length > 80 })),
+    actionPrompts: parsedActionPrompts && Object.fromEntries(Object.entries(parsedActionPrompts).map(([value, prompt]) =>
+      [value, { text: prompt.slice(0, 120), truncated: prompt.length > 120 }])),
+  } : undefined;
+  if (arg(args, 'dry-run') === 'true') {
+    try {
+      if (card && !isValidFeishuCard(card)) { throw new Error(getCardValidationError(card)); }
+      if (filePath) {
+        if (!statSync(filePath).isFile()) { throw new Error('--file must refer to a regular file'); }
+        accessSync(filePath, constants.R_OK);
+      }
+    } catch (error) { emitFail(command, errorMessage(error)); return 1; }
+    const common = { chatId, parentMessageId };
+    const payload = command === 'send_text' ? { ...common, text, mentions: parsedMentions }
+      : command === 'send_file' ? { ...common, filePath }
+      : command === 'send_card' ? { ...common, card }
+      : command === 'push_to_agent' ? { chatId, message }
+      : command === 'request_private_input' ? { chatId, actorId: arg(args, 'actor'), sourceMessageId: arg(args, 'source'), workflow }
+      : { ...common, question, options: parsedOptions, actionPrompts: parsedActionPrompts, title: arg(args, 'title'),
+        context: arg(args, 'context'), threadRootId, idempotencyKey };
+    emitOk({ command, chatId, dryRun: true, validation: 'local-input', payload, ...(decodedPreview ? { decodedPreview } : {}) });
+    return 0;
+  }
+  let mod: typeof import('./index.js');
+  try { mod = await withLogsRedirected(() => import('./index.js')); }
+  catch (error) { emitFail(command, `Failed to load channel implementation: ${errorMessage(error)}`, 'run pnpm run build before using the packaged CLI'); return 1; }
   let result: ToolResult;
   try {
     if (command === 'send_text') {
@@ -276,7 +334,7 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
     emitFail(command, errorText, await failureHint(baseUrl, errorText));
     return 1;
   }
-  if (result.success) { emitOk({ command, chatId, result: result.message || 'sent', durationMs: 0, ...(result.actionId ? { actionId: result.actionId } : {}) }); return 0; }
+  if (result.success) { emitOk({ command, chatId, result: result.message || 'sent', durationMs: 0, ...(result.actionId ? { actionId: result.actionId } : {}), ...(decodedPreview ? { decodedPreview } : {}) }); return 0; }
   const resultError = result.error || result.message || `${command} returned without success`;
   emitFail(command, resultError, await failureHint(baseUrl, resultError));
   return 1;
@@ -290,6 +348,10 @@ export async function run(argv: string[]): Promise<number> {
   // `push` is the agent-facing spelling; `push_to_agent` stays as the canonical
   // command name so the stdout JSON contract (`command` field) is unchanged.
   const command = invokedAs === 'push' ? 'push_to_agent' : invokedAs;
+  if (argv.slice(1).some(value => value === '--help' || value === '-h')) {
+    const help = getChannelCliCommandHelp(command);
+    if (help) { writeResult(`${help}\n`); return 0; }
+  }
   const args = parseArgs(argv.slice(1));
   // Derived from COMMAND_FLAGS so a new command cannot be routable yet have no
   // flag whitelist (which would reject every one of its own options).
@@ -298,11 +360,19 @@ export async function run(argv: string[]): Promise<number> {
   // Before chat validation: a mistyped `--chat` shows up as an unknown flag, and
   // naming it beats the generic "Missing required option --chat" it would cause.
   if (rejectUnknownFlags(command, args)) {return 1;}
+  if (Array.isArray(args._missing) && args._missing.length) {
+    emitFail(command, `Missing value for ${args._missing.map(name => `--${name}`).join(', ')}`, `run disclaude channel ${invokedAs} --help`);
+    return 1;
+  }
   const chat = validateChat(command, args);
   if (!chat) {return 1;}
   let baseUrl: string;
   try {
-    baseUrl = setupRest(args);
+    if (arg(args, 'dry-run') === 'true') {
+      const explicit = arg(args, 'base-url');
+      if (explicit !== undefined) { normalizeChannelApiBaseUrl(explicit); }
+      baseUrl = '';
+    } else { baseUrl = setupRest(args); }
   } catch (error) {
     emitFail(command, errorMessage(error));
     return 1;

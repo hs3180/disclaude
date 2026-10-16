@@ -153,6 +153,57 @@ async function fixture() {
 }
 
 describe('Optional Datalayer Notebook tools', () => {
+  it('returns canonical error fields and one-release aliases that a Jupyter Notebook consumer can read', async () => {
+    const f = await fixture();
+    const raw = { output_type: 'error', ename: 'NameError', evalue: "name 'IN_DIR' is not defined",
+      traceback: ['Cell In[1], line 3', '----> 3 print(IN_DIR)', "NameError: name 'IN_DIR' is not defined"] };
+    (f.notebook.getCell(0) as unknown as { outputs: unknown[] }).outputs = [raw];
+    const read = await f.call(f.session, 'notebook_read_cell', { notebookId: f.args.notebookId, cellId: 'code' }) as { outputs: Record<string, unknown>[] };
+    expect(read.outputs[0]).toMatchObject({ ...raw, outputType: 'error', errorName: raw.ename, errorValue: raw.evalue });
+    const consumer = new YNotebook();
+    consumer.fromJSON({ nbformat: 4, nbformat_minor: 5, metadata: {}, cells: [{ id: 'consumer', cell_type: 'code',
+      metadata: {}, source: 'print(IN_DIR)', execution_count: 1, outputs: read.outputs }] } as never);
+    expect((consumer.getCell(0).toJSON() as unknown as { outputs: Record<string, unknown>[] }).outputs[0])
+      .toMatchObject({ output_type: 'error', ename: 'NameError', evalue: raw.evalue, traceback: raw.traceback });
+    consumer.dispose();
+    expect((f.notebook.getCell(0).toJSON() as unknown as { outputs: unknown[] }).outputs).toEqual([raw]);
+  });
+
+  it('keeps bounded recent traceback frames in both live and journal status without replay', async () => {
+    const f = await fixture();
+    f.client.submitCell.mockResolvedValue({ state: 'accepted', handle: { kernelId: 'kernel', requestId: 'owned-error' } } as never);
+    const frames = Array.from({ length: 40 }, (_, index) => `frame ${index}: ${'context '.repeat(300)}`);
+    frames.push('Cell In[1], line 3', "NameError: name 'IN_DIR' is not defined");
+    f.client.observe.mockResolvedValue({ state: 'failed', result: { execution_count: 1,
+      outputs: [{ output_type: 'error', ename: 'NameError', evalue: 'Missing input', traceback: frames }] } } as never);
+    await f.call(f.session, 'notebook_execute', f.args);
+    const args = { notebookId: f.args.notebookId, runId: 'original' };
+    const live = await f.call(f.session, 'notebook_status', args) as { result: { outputs: Array<{ traceback: string[]; tracebackTruncated: boolean }> } };
+    const [error] = live.result.outputs;
+    expect(error.traceback.length).toBeLessThanOrEqual(20);
+    expect(error.traceback.every(frame => frame.length <= 1000)).toBe(true);
+    expect(error.traceback.join('').length).toBeLessThanOrEqual(8000);
+    expect(error.traceback.at(-1)).toContain("NameError: name 'IN_DIR'");
+    expect(error.tracebackTruncated).toBe(true);
+    await f.session.close();
+    const journal = await f.call(f.create(), 'notebook_status', args) as { source: string; result: { outputs: unknown[] } };
+    expect(journal.source).toBe('local-journal');
+    expect(journal.result.outputs).toEqual(live.result.outputs);
+    expect(f.client.submitCell).toHaveBeenCalledOnce();
+    expect(f.client.observe).toHaveBeenCalledOnce();
+  });
+
+  it('normalizes missing/malformed error fields to finite nbformat field types', async () => {
+    const f = await fixture();
+    (f.notebook.getCell(0) as unknown as { outputs: unknown[] }).outputs = [
+      { output_type: 'error', ename: 'X'.repeat(500), evalue: 'V'.repeat(5000), traceback: ['recent frame', 42] },
+      { output_type: 'error' },
+    ];
+    const read = await f.call(f.session, 'notebook_read_cell', { notebookId: f.args.notebookId, cellId: 'code' }) as { outputs: Array<{ ename: string; evalue: string; traceback: string[] }> };
+    expect(read.outputs[0].ename).toHaveLength(128); expect(read.outputs[0].evalue).toHaveLength(1000);
+    expect(read.outputs[0].traceback).toEqual(['recent frame']);
+    expect(read.outputs[1]).toMatchObject({ output_type: 'error', ename: 'Error', evalue: '', traceback: [] });
+  });
   function exportFixture(
     f: Awaited<ReturnType<typeof fixture>>,
     serializeNotebook = (content: unknown) => JSON.stringify(content, null, 2)
@@ -354,11 +405,27 @@ describe('Optional Datalayer Notebook tools', () => {
     expect(f.client.observe).toHaveBeenCalledOnce();
   });
 
+  it('accepts a full uppercase SHA-256 without truncation or a false conflict', async () => {
+    const f = await fixture();
+    await f.call(f.session, 'notebook_execute', { ...f.args, expectedSourceHash: f.args.expectedSourceHash.toUpperCase() });
+    expect(f.client.submitCell).toHaveBeenCalledOnce();
+  });
+
+  it('distinguishes a non-code cell from a hash mismatch without submitting execution', async () => {
+    const f = await fixture();
+    const expectedSourceHash = createHash('sha256').update(f.notebook.getCell(1).source).digest('hex');
+    await expect(f.call(f.session, 'notebook_execute', { ...f.args, cellId: 'human', expectedSourceHash }))
+      .rejects.toMatchObject({ diagnostic: { layer: 'schema', code: 'cell_not_executable', outcome: 'not-submitted' } });
+    expect(f.client.submitCell).not.toHaveBeenCalled();
+  });
+
   it('refuses stale source and leaves human content intact', async () => {
     const f = await fixture();
     f.notebook.getCell(0).source = 'print(99)';
+    const actual = createHash('sha256').update('print(99)').digest('hex');
     expect(await f.call(f.session, 'notebook_execute', f.args)).toMatchObject({
-      state: 'conflict',
+      state: 'conflict', expected: f.args.expectedSourceHash, actual, sourceHash: actual,
+      diagnostic: { layer: 'cas', code: 'source_hash_conflict', outcome: 'not-submitted' }, hint: expect.stringContaining('Re-describe'),
     });
     expect(f.client.submitCell).not.toHaveBeenCalled();
     expect(f.notebook.getCell(1).source).toBe('Preserve my conclusion.');

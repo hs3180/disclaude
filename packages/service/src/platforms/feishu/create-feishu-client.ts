@@ -279,6 +279,13 @@ export function createFeishuClient(
 
   // Wrap axios as lark HttpInstance (with retry logic)
   const httpInstance = wrapAxiosAsHttpInstance(axiosInstance);
+  // The SDK's console logger can dump Axios config (including auth headers).
+  // Keep its summary in the redacted service logger; REST handlers retain safe
+  // provider status/code/reason separately.
+  const safeArgs = (args: unknown[]) => args.map(value => value instanceof Error
+    ? `${value.name}: ${value.message}` : typeof value === 'string' ? value : '[SDK structured detail omitted]').join(' ');
+  const sdkLogger = Object.fromEntries(['error', 'warn', 'info', 'debug', 'trace'].map(level => [level,
+    (...args: unknown[]) => logger[level as 'error' | 'warn' | 'info' | 'debug' | 'trace'](safeArgs(args))]));
 
   // Create and return lark Client with custom httpInstance
   return new lark.Client({
@@ -286,7 +293,7 @@ export function createFeishuClient(
     appSecret,
     domain: options?.domain ?? lark.Domain.Feishu,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    logger: options?.logger as any,
+    logger: (options?.logger ?? sdkLogger) as any,
     loggerLevel: options?.loggerLevel,
     httpInstance,
   });

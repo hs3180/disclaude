@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { JupyterHttpConnection, type JupyterHttpOptions } from './http-connection.js';
+import { JupyterDiagnosticError, jupyterDiagnostic, type JupyterDiagnostic } from './diagnostics.js';
 
 export interface DatalayerTool {
   name: string;
@@ -17,13 +18,14 @@ type InterfaceState = 'available' | 'missing' | 'incompatible' | 'unverified';
 export interface DatalayerConnectionInspection {
   backend: 'datalayer';
   serverVersion: string;
-  nbmodel: { state: InterfaceState; httpStatus?: number };
+  nbmodel: { state: InterfaceState; httpStatus?: number; diagnostic?: JupyterDiagnostic };
   rtc: {
     state: 'configured' | 'disabled' | 'unverified';
     httpStatus?: number;
     serverSideExecution?: boolean;
+    diagnostic?: JupyterDiagnostic;
   };
-  nbconvert: { state: InterfaceState; httpStatus?: number; formats?: string[] };
+  nbconvert: { state: InterfaceState; httpStatus?: number; formats?: string[]; diagnostic?: JupyterDiagnostic };
   /** Interface discovery does not run a Notebook or prove save/cancel/output behavior. */
   productAcceptance: 'not_verified';
 }
@@ -106,14 +108,14 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
 
   private async inspectJson(
     route: string
-  ): Promise<{ state: InterfaceState; httpStatus?: number; data?: unknown }> {
+  ): Promise<{ state: InterfaceState; httpStatus?: number; data?: unknown; diagnostic?: JupyterDiagnostic }> {
     try {
       const response = await this.response(route);
       if (!response.ok) {
-        await response.body?.cancel();
         return {
           state: response.status === 404 ? 'missing' : 'unverified',
           httpStatus: response.status,
+          diagnostic: (await this.responseError(response, 'interface-inspection')).diagnostic,
         };
       }
       try {
@@ -123,10 +125,12 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
           data: JSON.parse(await this.responseText(response)) as unknown,
         };
       } catch {
-        return { state: 'incompatible', httpStatus: response.status };
+        return { state: 'incompatible', httpStatus: response.status,
+          diagnostic: { layer: 'schema', code: 'invalid_interface_response', message: 'Jupyter interface returned invalid JSON',
+            hint: 'Verify the remote extension and configured endpoint.', status: response.status } };
       }
-    } catch {
-      return { state: 'unverified' };
+    } catch (error) {
+      return { state: 'unverified', diagnostic: jupyterDiagnostic(error) };
     }
   }
 
@@ -134,8 +138,8 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
     try {
       const response = await this.response('lab');
       if (!response.ok) {
-        await response.body?.cancel();
-        return { state: 'unverified', httpStatus: response.status };
+        return { state: 'unverified', httpStatus: response.status,
+          diagnostic: (await this.responseError(response, 'rtc-inspection')).diagnostic };
       }
       const html = await this.responseText(response);
       const script = html.match(
@@ -154,22 +158,24 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
           ? { serverSideExecution: config.serverSideExecution }
           : {}),
       };
-    } catch {
-      return { state: 'unverified' };
+    } catch (error) {
+      return { state: 'unverified', diagnostic: error instanceof JupyterDiagnosticError ? error.diagnostic
+        : { layer: 'schema', code: 'invalid_rtc_config', phase: 'rtc-inspection', message: 'JupyterLab RTC configuration could not be parsed',
+          hint: 'Verify the remote JupyterLab configuration and compatible extension versions.' } };
     }
   }
 
   /** Authenticated reads only: no MCP request, document, kernel or execution is created. */
   async inspectConnection(): Promise<DatalayerConnectionInspection> {
-    const server = await this.inspectJson('api');
-    const version = (server.data as Record<string, unknown> | undefined)?.version;
+    const server = await this.json('api');
+    const version = (server as Record<string, unknown> | undefined)?.version;
     if (
-      server.state !== 'available' ||
       typeof version !== 'string' ||
       !/^\d+\.\d+\.\d+[A-Za-z0-9.+-]*$/.test(version) ||
       version.length > 128
     ) {
-      throw new Error('Authenticated Jupyter API version could not be verified');
+      throw new JupyterDiagnosticError({ layer: 'schema', code: 'invalid_api_version', phase: 'api-version',
+        message: 'Authenticated Jupyter API version could not be verified', hint: 'Verify that the configured endpoint is a Jupyter Server API.' });
     }
     // The installed nbmodel GET lists a queue without creating a client or task.
     // An unowned random ID avoids opening or inspecting any user's kernel.
@@ -195,6 +201,7 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
               ? 'available'
               : 'incompatible',
         ...(queue.httpStatus !== undefined ? { httpStatus: queue.httpStatus } : {}),
+        ...(queue.diagnostic ? { diagnostic: queue.diagnostic } : {}),
       },
       rtc,
       nbconvert: {
@@ -206,6 +213,7 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
               : 'incompatible',
         ...(exported.httpStatus !== undefined ? { httpStatus: exported.httpStatus } : {}),
         ...(formats ? { formats } : {}),
+        ...(exported.diagnostic ? { diagnostic: exported.diagnostic } : {}),
       },
       productAcceptance: 'not_verified',
     };
@@ -737,13 +745,17 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
   async json(route: string, method = 'GET', body?: Record<string, unknown>): Promise<unknown> {
     const response = await this.response(route, method, body);
     if (!response.ok) {
-      await response.body?.cancel();
-      throw new Error(`Jupyter API returned HTTP ${response.status}`);
+      throw await this.responseError(response);
     }
     if (response.status === 204) {
       await response.body?.cancel();
       return undefined;
     }
-    return JSON.parse(await this.responseText(response)) as unknown;
+    try { return JSON.parse(await this.responseText(response)) as unknown; }
+    catch (error) {
+      if (error instanceof JupyterDiagnosticError) { throw error; }
+      throw new JupyterDiagnosticError({ layer: 'schema', code: 'invalid_json_response', phase: 'response', status: response.status,
+        message: 'Jupyter API response is not valid JSON', hint: 'Verify the configured remote API endpoint and server extension versions.' });
+    }
   }
 }

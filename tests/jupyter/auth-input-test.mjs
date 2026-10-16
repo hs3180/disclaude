@@ -1,15 +1,30 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 import { promptJupyterValue, resolveJupyterAuth } from '../../bin/jupyter-auth.js';
 import { terminalArguments } from '../../bin/jupyter-patch.js';
 
 const baseUrl = 'https://jupyter.invalid/proxy/user/';
 const cli = new URL('../../bin/disclaude.js', import.meta.url);
+
+test('the Node-only authentication module loads without compiled packages', async () => {
+  const parser = pathToFileURL(createRequire(import.meta.url).resolve('dotenv')).href;
+  const source = readFileSync(new URL('../../bin/jupyter-auth.js', import.meta.url), 'utf8')
+    .replace("from 'dotenv'", 'from ' + JSON.stringify(parser));
+  // Relative compiled-package imports cannot resolve from a data URL.
+  const auth = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
+  const owned = fixture();
+  try {
+    await assert.rejects(auth.resolveJupyterAuth({ jupyter: 'configured', interactive: false },
+      { environment: {}, cwd: owned.cwd }), error => error.diagnostic?.code === 'credentials_missing');
+  } finally { owned.close(); }
+});
 function fixture() {
   const cwd = mkdtempSync(join(tmpdir(), 'jupyter-auth-'));
   return { cwd, close: () => rmSync(cwd, { recursive: true, force: true }) };
@@ -325,4 +340,31 @@ test('CLI rejects ambiguous/irrelevant interactive options before transport, and
   } finally {
     close();
   }
+});
+
+test('discovers cwd, explicit Project, workspace marker and environment workspace without exposing values', async () => {
+  const { cwd: parent, close } = fixture();
+  try {
+    const workspace = join(parent, 'workspace'), project = join(workspace, 'project'), cwd = join(project, 'nested');
+    const fallback = join(parent, 'environment-workspace');
+    mkdirSync(cwd, { recursive: true }); mkdirSync(join(workspace, '.disclaude')); mkdirSync(fallback);
+    writeFileSync(join(workspace, '.disclaude', 'project-bindings.json'), '{}');
+    const save = (directory, secret) => writeFileSync(join(directory, '.env'), `JUPYTERLAB_HOST=${baseUrl}\nJUPYTERLAB_TOKEN=${secret}\n`);
+    save(workspace, 'workspace-owned-token'); save(fallback, 'fallback-owned-token');
+    const options = { jupyter: 'configured', projectDir: project, interactive: false };
+    const events = [];
+    const context = { cwd, environment: { DISCLAUDE_WORKSPACE_DIR: fallback }, onDiscovery: event => events.push(event) };
+    assert.equal((await resolveJupyterAuth(options, context)).secret, 'workspace-owned-token');
+    assert.equal(events.at(-1).envFile, join(workspace, '.env'));
+    save(project, 'project-owned-token');
+    assert.equal((await resolveJupyterAuth(options, context)).secret, 'project-owned-token');
+    save(cwd, 'cwd-owned-token');
+    assert.equal((await resolveJupyterAuth(options, context)).secret, 'cwd-owned-token');
+    assert.equal((await resolveJupyterAuth({ ...options, envFile: join(fallback, '.env') }, context)).secret, 'fallback-owned-token');
+    assert.ok(!JSON.stringify(events).includes('owned-token'));
+    await assert.rejects(resolveJupyterAuth({ ...options, envFile: join(parent, 'missing.env') }, context),
+      error => error.diagnostic?.layer === 'auth' && error.diagnostic.code === 'env_file_unreadable');
+    const unrelated = join(parent, 'unrelated'); mkdirSync(unrelated);
+    assert.equal((await resolveJupyterAuth({ ...options, projectDir: unrelated }, { ...context, cwd: unrelated })).secret, 'fallback-owned-token');
+  } finally { close(); }
 });

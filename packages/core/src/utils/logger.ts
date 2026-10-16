@@ -22,6 +22,7 @@ import pino, { Logger, Level, LoggerOptions } from 'pino';
 import { PassThrough } from 'node:stream';
 import { finished } from 'node:stream/promises';
 import pinoRoll from 'pino-roll';
+import { redactChannelSecrets } from '../config/channel-credentials.js';
 
 // Re-export Logger type for consumers
 export type { Logger } from 'pino';
@@ -346,6 +347,7 @@ function getDefaultLogLevel(): LogLevel {
  */
 function getDevelopmentConfig(): LoggerOptions {
   const baseConfig: LoggerOptions = {
+    hooks: { streamWrite: redactChannelSecrets },
     level: getDefaultLogLevel(),
     formatters: {
       level: (label) => {
@@ -379,6 +381,7 @@ function getDevelopmentConfig(): LoggerOptions {
  */
 function getProductionConfig(): LoggerOptions {
   return {
+    hooks: { streamWrite: redactChannelSecrets },
     level: getDefaultLogLevel(),
     formatters: {
       level: (label) => {

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { notebookSnapshotHash, type DatalayerJupyterClient } from '@disclaude/core/jupyter';
+import { notebookSnapshotHash, JupyterDiagnosticError, jupyterHashConflict, type DatalayerJupyterClient } from '@disclaude/core/jupyter';
 import type { ToolDefinition, ToolContext } from '@disclaude/core';
 import {
   JupyterProjectConfigStore,
@@ -20,7 +20,38 @@ const key = notebookIdentifier;
 const text = { type: 'string' };
 const notebookId = { notebookId: text };
 const cellId = { ...notebookId, cellId: text };
+const sourceHash = { type: 'string', pattern: '^[a-fA-F0-9]{64}$', description: 'Full SHA-256 from the latest live cell read; never truncate it.' };
+function requireCodeCell(cellType: unknown): void {
+  if (cellType !== 'code') {
+    throw new JupyterDiagnosticError({ layer: 'schema', code: 'cell_not_executable', phase: 'input',
+      message: 'Notebook execute requires a code cell', hint: 'Select the stable ID of a code cell and read its latest sourceHash.', outcome: 'not-submitted' });
+  }
+}
 const inputLimit = 2_000_000;
+const errorOutputDescription = 'Error previews expose output_type="error", ename:string, evalue:string and traceback:string[]. Tracebacks retain the last 20 frames, at most 1000 characters per frame and 8000 total. errorName/errorValue are deprecated aliases retained for this release.';
+
+function boundedErrorOutput(output: Record<string, unknown>): Record<string, unknown> {
+  const ename = (typeof output.ename === 'string' ? output.ename : 'Error').slice(0, 128).replace(/[\uD800-\uDBFF]$/, '');
+  const evalue = String(output.evalue ?? '').slice(0, 1000).replace(/[\uD800-\uDBFF]$/, '');
+  const frames = Array.isArray(output.traceback) ? output.traceback : [];
+  const tail = frames.slice(-20);
+  const kept: string[] = [];
+  let budget = 8000;
+  let truncated = frames.length > tail.length || (output.traceback !== undefined && !Array.isArray(output.traceback));
+  for (const frame of [...tail].reverse()) {
+    if (typeof frame !== 'string') { truncated = true; continue; }
+    if (budget === 0) { truncated = true; break; }
+    const shortened = frame.slice(-Math.min(1000, budget)).replace(/^[\uDC00-\uDFFF]/, '');
+    truncated ||= shortened.length !== frame.length;
+    budget -= shortened.length;
+    kept.push(shortened);
+  }
+  return { output_type: 'error', ename, evalue, traceback: kept.reverse(),
+    // One-release compatibility for existing preview consumers. These DTOs
+    // are not written back into the full remote nbformat Notebook export.
+    outputType: 'error', errorName: ename, errorValue: evalue,
+    ...(truncated ? { tracebackTruncated: true } : {}) };
+}
 export interface NotebookToolOptions {
   projectDir: string;
   useClient<T>(
@@ -57,10 +88,11 @@ export class NotebookTools {
     this.tools = [
       this.tool(
         'notebook_list',
-        'List this Project’s authorized remote Notebooks and persisted run IDs.',
+        'List Project-local Notebook references and persisted run IDs, not server inventory. This operation does not probe remote authentication.',
         {},
         () =>
           Promise.resolve({
+            scope: 'project-local-references', auth: 'not_checked', remoteInventory: 'not_queried',
             notebooks: this.refs().map((ref) => ({ ...ref, notebookId: key(ref) })),
             recentRuns: this.recentRuns(),
           })
@@ -145,10 +177,7 @@ export class NotebookTools {
         'Edit a live shared cell only after checking its last read sourceHash. This client-side check is not an atomic server CAS.',
         {
           ...cellId,
-          expectedSourceHash: {
-            type: 'string',
-            description: 'SHA-256 from the latest live cell read',
-          },
+          expectedSourceHash: sourceHash,
           source: { type: 'string' },
         },
         async (input) => {
@@ -157,7 +186,7 @@ export class NotebookTools {
           this.assertBound(bound);
           const cell = this.cell(bound, String(input.cellId));
           if (hash(cell.source) !== input.expectedSourceHash) {
-            return { state: 'conflict', sourceHash: hash(cell.source) };
+            return jupyterHashConflict(String(input.expectedSourceHash), hash(cell.source));
           }
           cell.source = String(input.source);
           await bound.doc.flush();
@@ -172,14 +201,14 @@ export class NotebookTools {
       this.tool(
         'notebook_move_cell',
         'Move one stable cell before beforeCellId; an empty target appends. Check the latest sourceHash and preserve cell metadata/attachments.',
-        { ...cellId, expectedSourceHash: text, beforeCellId: text },
+        { ...cellId, expectedSourceHash: sourceHash, beforeCellId: text },
         async (input) => {
           const bound = await this.bound(String(input.notebookId));
           await bound.doc.flush();
           this.assertBound(bound);
           const cell = this.cell(bound, String(input.cellId));
           if (hash(cell.source) !== input.expectedSourceHash) {
-            return { state: 'conflict', sourceHash: hash(cell.source) };
+            return jupyterHashConflict(String(input.expectedSourceHash), hash(cell.source));
           }
           if (input.beforeCellId === cell.id) {
             return { state: 'unchanged', cellId: cell.id };
@@ -201,7 +230,7 @@ export class NotebookTools {
       this.tool(
         'notebook_delete_cell',
         'Delete the explicitly identified stable cell only if its last read sourceHash still matches. Preserve unrelated human cells.',
-        { ...cellId, expectedSourceHash: text },
+        { ...cellId, expectedSourceHash: sourceHash },
         async (input) => {
           const bound = await this.bound(String(input.notebookId));
           await bound.doc.flush();
@@ -212,7 +241,7 @@ export class NotebookTools {
           }
           const cell = this.cell(bound, String(input.cellId));
           if (hash(cell.source) !== input.expectedSourceHash) {
-            return { state: 'conflict', sourceHash: hash(cell.source) };
+            return jupyterHashConflict(String(input.expectedSourceHash), hash(cell.source));
           }
           const stableId = cell.id;
           bound.doc.notebook.deleteCell(bound.doc.notebook.cells.indexOf(cell));
@@ -225,10 +254,7 @@ export class NotebookTools {
         'Submit the exact live code cell once to the remote nbmodel queue. Persist and reuse runId; unknown submissions must not be replayed. Poll notebook_status for completion.',
         {
           ...cellId,
-          expectedSourceHash: {
-            type: 'string',
-            description: 'SHA-256 from the latest live cell read',
-          },
+          expectedSourceHash: sourceHash,
           runId: text,
         },
         (input, invocation) => this.execute(input, invocation)
@@ -354,7 +380,8 @@ export class NotebookTools {
         required: Object.keys(properties),
         additionalProperties: false,
       },
-      outputSchema: { type: 'object' },
+      outputSchema: { type: 'object', ...(['notebook_read_cell', 'notebook_describe', 'notebook_status'].includes(name)
+        ? { description: errorOutputDescription } : {}) },
       execute: async (input, invocation) => {
         invocation.signal.throwIfAborted();
         this.assertActive();
@@ -374,16 +401,23 @@ export class NotebookTools {
             );
           })
         ) {
-          throw new Error('Invalid Notebook command input; read its schema with jupyter tools');
+          throw new JupyterDiagnosticError({ layer: 'schema', code: 'invalid_tool_input',
+            message: 'Invalid Notebook command input; read its schema with jupyter tools',
+            hint: 'Match the command input schema, including required fields and value types.', outcome: 'not-submitted' });
         }
+        if (input.expectedSourceHash !== undefined &&
+            (typeof input.expectedSourceHash !== 'string' || !/^[a-fA-F0-9]{64}$/.test(input.expectedSourceHash))) {
+          throw new JupyterDiagnosticError({ layer: 'cas', code: 'invalid_source_hash', phase: 'input',
+            message: 'Invalid expectedSourceHash: must be a full 64-character hexadecimal SHA-256',
+            hint: 'Re-describe or read-cell and copy the entire latest sourceHash. No remote request was submitted.', outcome: 'not-submitted' });
+        }
+        const normalizedInput = typeof input.expectedSourceHash === 'string'
+          ? { ...input, expectedSourceHash: input.expectedSourceHash.toLowerCase() } : input;
         // DSH supports a small schema subset; keep limits in the host boundary too.
         if (
           Buffer.byteLength(JSON.stringify(input)) > 300000 ||
           (input.source !== undefined &&
             (typeof input.source !== 'string' || input.source.length > 64000)) ||
-          (input.expectedSourceHash !== undefined &&
-            (typeof input.expectedSourceHash !== 'string' ||
-              !/^[a-f0-9]{64}$/.test(input.expectedSourceHash))) ||
           ['cellId', 'runId', 'beforeCellId'].some(
             (field) =>
               input[field] !== undefined &&
@@ -394,9 +428,10 @@ export class NotebookTools {
                 ))
           )
         ) {
-          throw new Error('Invalid or oversized Notebook tool argument');
+          throw new JupyterDiagnosticError({ layer: 'schema', code: 'invalid_tool_argument',
+            message: 'Invalid or oversized Notebook tool argument', hint: 'Check source size and stable cell/run IDs against jupyter tools.', outcome: 'not-submitted' });
         }
-        const result = await execute(input, invocation);
+        const result = await execute(normalizedInput, invocation);
         invocation.signal.throwIfAborted();
         this.assertActive();
         return result;
@@ -677,6 +712,7 @@ export class NotebookTools {
   private outputs(cell: Record<string, unknown>): unknown[] {
     const outputs = Array.isArray(cell.outputs) ? cell.outputs : [];
     return outputs.slice(0, 16).map((output: Record<string, unknown>) => {
+      if (output.output_type === 'error') { return boundedErrorOutput(output); }
       const data = output.data as Record<string, unknown> | undefined;
       return {
         outputType: output.output_type,
@@ -687,9 +723,6 @@ export class NotebookTools {
                 8000
               ),
             }
-          : {}),
-        ...(output.ename
-          ? { errorName: output.ename, errorValue: String(output.evalue).slice(0, 1000) }
           : {}),
         ...(data
           ? {
@@ -817,8 +850,9 @@ export class NotebookTools {
     const bound = await this.bound(String(input.notebookId));
     await bound.doc.flush();
     const cell = this.cell(bound, String(input.cellId));
-    if (cell.cell_type !== 'code' || hash(cell.source) !== input.expectedSourceHash) {
-      return { state: 'conflict', sourceHash: hash(cell.source) };
+    requireCodeCell(cell.cell_type);
+    if (hash(cell.source) !== input.expectedSourceHash) {
+      return jupyterHashConflict(String(input.expectedSourceHash), hash(cell.source));
     }
     const policy = await bound.client.executionPolicy();
     if (!policy) {
@@ -848,8 +882,9 @@ export class NotebookTools {
     this.assertBound(bound);
     const currentCell = this.cell(bound, String(input.cellId));
     const { source } = currentCell;
-    if (currentCell.cell_type !== 'code' || hash(source) !== input.expectedSourceHash) {
-      return { state: 'conflict', sourceHash: hash(source) };
+    requireCodeCell(currentCell.cell_type);
+    if (hash(source) !== input.expectedSourceHash) {
+      return jupyterHashConflict(String(input.expectedSourceHash), hash(source));
     }
     const record = this.journal.reserve(runId, {
       connectionId: bound.ref.connectionId,

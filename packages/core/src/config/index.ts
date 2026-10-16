@@ -25,6 +25,7 @@ import type {
 import { resolveAgentPreset } from './agent-presets.js';
 import { resolveConfiguredAgents, validateResolvedAgent } from './resolved-agents.js';
 import { resolveCodexModelSetting, resolveCodexReasoningEffort } from './codex-settings.js';
+import { channelCredentialErrors, resolveChannelCredential } from './channel-credentials.js';
 import { type BaseAgentConfig, type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 
 // Re-export sub-modules
@@ -32,6 +33,7 @@ export * from './types.js';
 export * from './loader.js';
 export * from './agent-presets.js';
 export * from './resolved-agents.js';
+export * from './channel-credentials.js';
 
 export { loadRuntimeEnv, setRuntimeEnv, deleteRuntimeEnv } from './runtime-env.js';
 
@@ -40,6 +42,8 @@ const logger = createLogger('Config');
 // Load configuration file (use preloaded config if available from CLI --config)
 const fileConfig = getPreloadedConfig() || loadConfigFile();
 const fileConfigOnly = getConfigFromFile(fileConfig);
+// Register private variable names for subprocess filtering without resolving them on imports.
+channelCredentialErrors(fileConfigOnly);
 const resolvedAgents = resolveConfiguredAgents(fileConfigOnly);
 const agentPresets = resolvedAgents.ok ? resolvedAgents.presets : {};
 const defaultSelection = Object.keys(agentPresets).length ? resolveAgentPreset(agentPresets) : undefined;
@@ -63,6 +67,9 @@ const configLoaded = fileConfig._fromFile;
  * @see Issue #1618
  */
 export function applyGlobalEnv(): void {
+  const source = getPreloadedConfig() ?? fileConfigOnly;
+  const errors = channelCredentialErrors(source);
+  if (errors.length) {throw new Error(errors.join('; '));}
   // Prefer preloaded config (set via --config CLI flag) over the default
   // config loaded at module import time. This ensures applyGlobalEnv()
   // reads from the correct config file when --config is used.
@@ -181,10 +188,8 @@ export class Config {
   }
 
   // Feishu/Lark configuration (from config file)
-  static readonly FEISHU_APP_ID = fileConfigOnly.channels?.feishu?.appId || '';
-  static readonly FEISHU_APP_SECRET = (fileConfigOnly.channels?.feishu?.appSecretEnv
-    ? process.env[fileConfigOnly.channels.feishu.appSecretEnv] ?? fileConfigOnly.env?.[fileConfigOnly.channels.feishu.appSecretEnv]
-    : fileConfigOnly.channels?.feishu?.appSecret) || '';
+  static get FEISHU_APP_ID(): string {return resolveChannelCredential(fileConfigOnly, 'feishu', 'appId');}
+  static get FEISHU_APP_SECRET(): string {return resolveChannelCredential(fileConfigOnly, 'feishu', 'appSecret');}
   static readonly FEISHU_CLI_CHAT_ID = fileConfigOnly.channels?.feishu?.cliChatId || '';
   // Issue #4400 / #4208: gray-rollout flag for native streaming replies.
   // Plumbed through to FeishuChannelConfig.streamingCard in resolveChannelConfigs.
