@@ -351,6 +351,23 @@ describe('channel CLI guidance capability gating', () => {
       { ...DEFAULT_CHANNEL_CAPABILITIES, ...capabilities },
     );
 
+  it('explains TUI visibility and gives a usable artifact delivery path', () => {
+    const out = build({ supportsFile: true, supportedChannelTools: ['send_file'] });
+    expect(out).toContain('cannot see or interact with the Codex TUI');
+    expect(out).toContain('Host-local paths and file:// links are not accessible');
+    expect(out).toContain('send a chat attachment with send_file and check its successful CLI result');
+    expect(out).toContain('content preview');
+    expect(out).toContain('Report any delivery failure explicitly');
+    expect(out.match(/cannot see or interact with the Codex TUI/g)).toHaveLength(1);
+  });
+
+  it('uses final-reply previews when attachment delivery is unavailable', () => {
+    const out = build({ supportsFile: false, supportedChannelTools: [] });
+    expect(out).toContain('include a useful content preview in your final reply');
+    expect(out).toContain('attachments are unavailable on this channel');
+    expect(out).not.toContain('send a chat attachment with send_file');
+  });
+
   it('does not advertise send_file when the channel says it is unsupported', () => {
     const out = build({ supportsFile: false, supportedChannelTools: ['send_text'] });
     expect(out).toContain('send_file is NOT supported');
