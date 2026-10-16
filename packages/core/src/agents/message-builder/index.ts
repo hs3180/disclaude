@@ -31,6 +31,7 @@ export {
 // Issue #4705, single source of truth so the in-prompt help can't drift)
 export {
   CHANNEL_CLI_HELP,
+  getChannelCliCommandHelp,
   buildChannelCliHelpGuidance,
   getSupportedChannelSendCommands,
 } from './channel-cli-help.js';

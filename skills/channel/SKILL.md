@@ -7,7 +7,7 @@ description: Explicitly deliver files, cards or additional messages through the 
 
 In a Disclaude conversation, ChatAgent delivers your final response to the current chat automatically. Answer ordinary questions directly; do not call `send_text` to send the same answer first. Use this skill for an explicit additional delivery, such as an artifact, a feedback card, or an authorized message to another chat. If a delivery tool has already sent content, keep the final reply to any remaining information instead of repeating that content.
 
-Use the channel CLI supplied by the runtime; otherwise run `disclaude channel help`. Read its current help for command options instead of invoking a repository-relative script. The CLI connects to the existing service over its REST API; it does not start a service.
+Use the channel CLI supplied by the runtime; otherwise run `disclaude channel help`. Read its current help for command options instead of invoking a repository-relative script. Use `disclaude channel <command> --help` for that command, and inspect `--dry-run` before an uncertain delivery. Dry-run validates local input and sends nothing. For interactive JSON, prefer UTF-8 `--options-file` / `--action-prompts-file`; `-` reads stdin for one input only. JSON is parsed once; dense double-escaped Unicode is rejected. The CLI connects to the existing service over its REST API; it does not start a service.
 
 Use the chat and thread identifiers from the current request or runtime context. Do not guess a recipient or treat a cross-chat push as permission to perform additional work. Preserve the supplied service address and authentication environment; do not print credentials or switch identities to bypass a delivery denial.
 
