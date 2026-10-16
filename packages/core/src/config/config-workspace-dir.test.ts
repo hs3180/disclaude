@@ -27,7 +27,6 @@ const { mockGetConfigFromFile, mockGetPreloadedConfig, mockLoadConfigFile } = vi
         api: { protocol: 'anthropic', apiKey: '$TEST_LLM_DEFAULT_KEY' },
       },
     },
-    env: { TEST_LLM_DEFAULT_KEY: 'test-key' },
   })),
   mockGetPreloadedConfig: vi.fn(() => null),
   mockLoadConfigFile: vi.fn(() => ({ _fromFile: false, _source: null })),
