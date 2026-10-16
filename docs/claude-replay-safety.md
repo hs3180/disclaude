@@ -23,8 +23,8 @@ signals. No command arguments or environments are inspected. Unrelated process
 groups are preserved. Inspection failure remains explicit in the exit report. Windows has native-child exit observation, with process-tree inspection
 reported unavailable.
 
-`Claude attempt process started` and `Claude attempt process settled` logs
-carry the attempt number and `nativePid`. Settlement reports `not-started`,
+`Claude attempt process settled` logs carry the attempt number and
+`nativePid`. Settlement reports `not-started`,
 `exited`, `killed` or `unconfirmed`, its exit code/signal, close failure and
 inspection availability. Confirmation covers the native process and observed
 descendants. `QueryHandle.interrupt()` awaits that confirmation; compatible
