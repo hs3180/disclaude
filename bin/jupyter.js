@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { resolveJupyterAuth } from './jupyter-auth.js';
+import { JupyterAuthError, resolveJupyterAuth } from './jupyter-auth.js';
 import { jupyterDiagnostic, jupyterExitCode } from '../packages/core/dist/jupyter/diagnostics.js';
 
 export async function main(args = process.argv.slice(2)) {
@@ -51,7 +51,8 @@ export async function main(args = process.argv.slice(2)) {
         await resolveJupyterAuth({ ...options, interactive: false }, { onDiscovery: discovery });
         listAuth = { state: 'configured', authentication: 'not_checked' };
       } catch (error) {
-        listAuth = { state: 'unresolved', authentication: 'not_checked', diagnostic: jupyterDiagnostic(error) };
+        listAuth = { state: 'unresolved', authentication: 'not_checked',
+          diagnostic: error instanceof JupyterAuthError ? error.diagnostic : jupyterDiagnostic(error) };
       }
     }
     phase = 'input';
@@ -65,7 +66,8 @@ export async function main(args = process.argv.slice(2)) {
       ...(listAuth ? { scope: 'project-local-references', auth: listAuth } : {}),
       ...(credentials ? { credentials } : {}), ...(options.command === 'check' ? { checks: checks() } : {}) }));
   } catch (error) {
-    const diagnostic = jupyterDiagnostic(error, ['options', 'input'].includes(phase) ? 'schema' : 'unknown');
+    const diagnostic = error instanceof JupyterAuthError ? error.diagnostic
+      : jupyterDiagnostic(error, ['options', 'input'].includes(phase) ? 'schema' : 'unknown');
     console.log(JSON.stringify({ ok: false, command: options?.command || args[0], error: diagnostic,
       ...(credentials ? { credentials } : {}), ...(options?.command === 'check' ? { checks: checks(diagnostic) } : {}) }));
     process.exitCode = jupyterExitCode(diagnostic.layer);

@@ -3,7 +3,16 @@ import { readFileSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { emitKeypressEvents } from 'node:readline';
 import { parse as parseEnv } from 'dotenv';
-import { JupyterDiagnosticError } from '../packages/core/dist/jupyter/diagnostics.js';
+
+// Patch/test commands use this module before the TypeScript packages are built.
+// These diagnostics contain only host-selected messages, never credential values.
+export class JupyterAuthError extends Error {
+  constructor(diagnostic) {
+    super(diagnostic.message);
+    this.name = 'JupyterAuthError';
+    this.diagnostic = diagnostic;
+  }
+}
 
 function workspaceRoot(directory) {
   let current = resolve(directory);
@@ -37,7 +46,7 @@ function validateUrl(value) {
     )
       throw new Error();
   } catch {
-    throw new JupyterDiagnosticError({ layer: 'schema', code: 'invalid_endpoint', phase: 'credentials',
+    throw new JupyterAuthError({ layer: 'schema', code: 'invalid_endpoint', phase: 'credentials',
       message: 'Jupyter URL must be HTTP(S), without credentials, query or fragment',
       hint: 'Use a remote endpoint in JUPYTERLAB_HOST or --jupyter; keep credentials in their separate environment keys.' });
   }
@@ -51,7 +60,7 @@ function validateSecret(value, mode) {
     value.length > (mode === 'token' ? 8186 : 8192) ||
     /[\u0000-\u001f\u007f]/.test(value)
   )
-    throw new JupyterDiagnosticError({ layer: 'auth', code: 'invalid_credential', phase: 'credentials',
+    throw new JupyterAuthError({ layer: 'auth', code: 'invalid_credential', phase: 'credentials',
       message: 'Jupyter credential is empty, too long or contains control characters',
       hint: 'Check the host-owned credential value without printing it.' });
   return value;
@@ -155,7 +164,7 @@ export async function resolveJupyterAuth(
     catch (error) {
       if (!options.envFile && error.code === 'ENOENT') continue;
       observe({ state: 'unresolved' });
-      throw new JupyterDiagnosticError({ layer: 'auth', code: 'env_file_unreadable', phase: 'credentials',
+      throw new JupyterAuthError({ layer: 'auth', code: 'env_file_unreadable', phase: 'credentials',
         message: 'Host-private Jupyter environment file could not be read',
         hint: 'Check the selected env-file path and host file permissions; no alternative credential source was selected.' });
     }
@@ -188,7 +197,7 @@ export async function resolveJupyterAuth(
   observe({ ...sources, mode, state: baseUrl && secret ? 'configured' : 'unresolved', authentication: 'not_checked' });
   const ask = (label, hidden = false) => {
     if (options.interactive === false || !input.isTTY || !output.isTTY) {
-      throw new JupyterDiagnosticError({ layer: 'auth', code: 'credentials_missing', phase: 'credentials',
+      throw new JupyterAuthError({ layer: 'auth', code: 'credentials_missing', phase: 'credentials',
         message: 'Jupyter URL/authentication is missing; configure .env/environment variables or use --interactive in a TTY',
         hint: selectedFile ? 'The selected env file/environment lacks the endpoint or credential. Check JUPYTERLAB_HOST and the password/token key.'
           : 'No Jupyter credentials were found in the known env-file locations or environment. Configure the workspace .env, use --env-file, or use --interactive in a TTY.' });

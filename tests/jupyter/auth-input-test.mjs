@@ -4,12 +4,27 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 import { promptJupyterValue, resolveJupyterAuth } from '../../bin/jupyter-auth.js';
 import { terminalArguments } from '../../bin/jupyter-patch.js';
 
 const baseUrl = 'https://jupyter.invalid/proxy/user/';
 const cli = new URL('../../bin/disclaude.js', import.meta.url);
+
+test('the Node-only authentication module loads without compiled packages', async () => {
+  const parser = pathToFileURL(createRequire(import.meta.url).resolve('dotenv')).href;
+  const source = readFileSync(new URL('../../bin/jupyter-auth.js', import.meta.url), 'utf8')
+    .replace("from 'dotenv'", 'from ' + JSON.stringify(parser));
+  // Relative compiled-package imports cannot resolve from a data URL.
+  const auth = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
+  const owned = fixture();
+  try {
+    await assert.rejects(auth.resolveJupyterAuth({ jupyter: 'configured', interactive: false },
+      { environment: {}, cwd: owned.cwd }), error => error.diagnostic?.code === 'credentials_missing');
+  } finally { owned.close(); }
+});
 function fixture() {
   const cwd = mkdtempSync(join(tmpdir(), 'jupyter-auth-'));
   return { cwd, close: () => rmSync(cwd, { recursive: true, force: true }) };
