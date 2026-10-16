@@ -1,19 +1,17 @@
 # Claude retries, progress and usage estimates
 
-The native SDK/client retries an API request within one execution. Host L1
-recovery can only retry confirmed pre-launch failures: once a native process
-starts, input is offered, or work becomes uncertain, #5361/#5369 block a new
-execution. Consequently a failed native API request is not multiplied by the
-host pre-launch budget.
+Each logical Claude query creates one SDK query and one native execution.
+Disclaude never replays the whole query, including pre-launch failures and
+empty results. API retries belong to the native SDK/client inside that original
+execution. There is no host retry layer to multiply them.
 
 The effective policy is resolved once for each host query and logged as
 `claude_retry_policy`, including its generated `queryId`:
 
 | Setting | Default | Accepted values | Scope |
 | --- | --- | --- | --- |
-| `DISCLAUDE_QUERY_MAX_RETRIES` | 2 | integer 0–15 | confirmed pre-launch failures |
 | `CLAUDE_CODE_MAX_RETRIES` | 2 | integer 0–15 | native retries per API request, plus its initial request |
-| `DISCLAUDE_RETRY_BACKOFF_BUDGET_MS` | 60000 | integer 0–1800000 | combined advertised retry waits per native result turn |
+| `DISCLAUDE_RETRY_BACKOFF_BUDGET_MS` | 60000 | integer 0–1800000 | advertised native retry waits per native result turn |
 
 Selected query environment overrides the host environment. Invalid values fail
 before spawning. The native retry count is pinned in SDK environment and flag
@@ -23,8 +21,7 @@ retry waits. A streaming session starts a fresh wait budget after each native
 result, allowing later user turns to recover independently.
 
 Before admitting a retry, the host reserves its advertised delay against the
-shared wait budget. An unaffordable Retry-After is refused, rather than shortened
-or ignored. Host pre-launch waits use the same budget. Native events exceeding
+wait budget. An unaffordable Retry-After is refused. Native events exceeding
 the configured retry cap or carrying invalid counters fail closed. Refusal
 terminates the owned attempt, blocks outer replay and gives the user a budget
 exhaustion notice. Ordinary accepted waits emit `claude_retry_progress` and a
@@ -43,7 +40,7 @@ the first API request; this is not an arbitrary production-outage guarantee.
 
 Each attempt logs `claude_attempt_usage` with `queryId`, attempt ordinal,
 `nativePid`, latency and available input/output/cache token counters and cost.
-The final `claude_query_usage` includes every attempt and known subtotals.
+The final `claude_query_usage` includes that one attempt and its known subtotal.
 Result metadata carries the same audit, linking ChatAgent's turn diagnostics
 to the provider query. A host query may span multiple user turns in a streaming
 session; do not sum its cumulative audit again at each turn.
@@ -65,7 +62,11 @@ deduplicated, and later partial main-loop output remains visible after an
 earlier complete turn. A native conversation reset can change its accounting
 window: the current snapshot is marked partial rather than claimed to cover
 all earlier windows. SDK helper calls outside its query pipeline and upstream
-requests whose response was lost may remain unobserved. All costs are SDK
+requests whose response was lost may remain unobserved. `retryEvents` counts
+observed native API-retry events; their individual usage is explicitly
+`retryUsage: unknown`, even when a successful query reports pipeline totals.
+Without such events the field is `not-observed`, never a claim of zero retries
+or zero cost. All costs are SDK
 estimates with `billingVerified: false`, not upstream invoices. Physical POST
 counts do not prove duplicate billing.
 
@@ -78,9 +79,10 @@ node tests/integration/claude-retry-budget.mjs
 node tests/integration/claude-attempt-exit.mjs
 ```
 
-The three-attempt provider fixture has two unknown pre-launch failures and a
-reported successful attempt. The separate ledger fixture includes visible
-partial failed-attempt usage, an unknown attempt and a reported success. A
-native attempt with observed work is never replayed merely to produce an
-accounting fixture. Existing virtual-time coverage keeps a productive task
-alive past 180 seconds with an explicitly sufficient retry-wait budget.
+The provider fixture reports a successful native execution after an API-retry
+event, while explicitly marking individual retry usage unknown. Separate ledger
+cases cover partial failed usage, zeroed crash data, cumulative results and
+accounting resets. No additional SDK query is created to produce accounting
+fixtures. Existing virtual-time coverage keeps a productive task alive past
+180 seconds with an explicitly sufficient retry-wait budget. The obsolete
+`DISCLAUDE_QUERY_MAX_RETRIES` variable cannot enable whole-query replay.

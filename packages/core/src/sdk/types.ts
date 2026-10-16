@@ -71,7 +71,7 @@ export interface StreamingUserMessage {
 export type MessageRole = 'user' | 'assistant' | 'system';
 
 export interface RetryProgress {
-  layer: 'sdk' | 'prelaunch';
+  layer: 'sdk';
   attempt: number;
   maxRetries: number;
   delayMs: number;
@@ -86,6 +86,9 @@ export interface UsageEstimate {
   scope: 'query-pipeline' | 'main-loop' | 'unavailable';
   latencyMs: number;
   resultCount: number;
+  /** API retry events expose no per-request usage counters. */
+  retryEvents: number;
+  retryUsage: 'unknown' | 'not-observed';
   inputTokens?: number;
   outputTokens?: number;
   cacheReadTokens?: number;
@@ -204,8 +207,12 @@ export interface AgentMessageMetadata {
    * provider.ts 的 stderrIndicatesUpstreamApiError()。
    */
   upstreamApiError?: boolean;
-  /** Whole-turn replay is unsafe even when the upstream failure is transient. */
+  /** The provider forbids automatic resubmission of this logical query. */
   automaticReplayBlocked?: string;
+  /** Machine-owned evidence is preferred to the legacy stderr signature. */
+  upstreamApiErrorSource?: 'stream' | 'transcript' | 'stderr';
+  upstreamApiErrorStatus?: number;
+  upstreamApiErrorIsTransient?: boolean;
   /**
    * 触发 upstreamApiError 的 stderr 尾部(Issue #4322)。含上游 request_id 等可操作
    * 信息,ChatAgent 在 ❌ Failed 提示里截取展示。仅在 upstreamApiError=true 时设置。

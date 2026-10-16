@@ -511,7 +511,7 @@ describe('BaseAgent', () => {
       const queryUsage: NonNullable<AgentMessage['metadata']>['queryUsage'] = {
         queryId: 'owned-query', attemptCount: 1, unknownAttempts: 1, partialAttempts: 0, knownTotals: {},
         billingVerified: false, attempts: [{ attempt: 1, state: 'unknown', scope: 'unavailable',
-          latencyMs: 50, resultCount: 0, billingVerified: false }],
+          latencyMs: 50, resultCount: 0, retryEvents: 0, retryUsage: 'not-observed', billingVerified: false }],
       };
       const retryProgress = { layer: 'sdk' as const, attempt: 1, maxRetries: 2, delayMs: 60_000,
         remainingBackoffMs: 0, turn: 1 };

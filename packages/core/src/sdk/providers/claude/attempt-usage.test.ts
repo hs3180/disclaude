@@ -10,18 +10,15 @@ const assistant = (id: string, input: number, output: number) => ({ type: 'assis
   message: { id, usage: { input_tokens: input, output_tokens: output } } }) as SDKMessage;
 
 describe('Claude attempt and logical-query usage estimates', () => {
-  it('retains three attempt records, visible failures and explicit unknown charges', () => {
-    const first = new ClaudeAttemptUsage(1);
-    first.observe(assistant('failed', 11, 2)); first.finish(true);
-    const second = new ClaudeAttemptUsage(2); second.finish(true);
-    const third = new ClaudeAttemptUsage(3);
-    third.observe(result('success', { modelUsage: { fixture: model(20) }, total_cost_usd: 0.02 }));
-    third.finish();
-    const audit = claudeQueryUsage('owned-query', [first, second, third]);
-    expect(audit).toMatchObject({ queryId: 'owned-query', attemptCount: 3, unknownAttempts: 1, partialAttempts: 1,
-      knownTotals: { inputTokens: 31, outputTokens: 4, cacheReadTokens: 3, cacheCreationTokens: 4, costUsd: 0.02 }, billingVerified: false });
-    expect(audit.attempts.map(item => item.state)).toEqual(['partial', 'unknown', 'reported']);
-    expect(audit.attempts[1]).not.toHaveProperty('inputTokens');
+  it('reports a single native attempt with unknown API-retry charges', () => {
+    const usage = new ClaudeAttemptUsage(1);
+    usage.observe({ type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 2,
+      retry_delay_ms: 1000, error_status: 429 } as SDKMessage);
+    usage.observe(result('success', { modelUsage: { fixture: model(20) }, total_cost_usd: 0.02 }));
+    usage.finish();
+    expect(claudeQueryUsage('owned-query', [usage])).toMatchObject({ attemptCount: 1, unknownAttempts: 0,
+      attempts: [{ state: 'reported', retryEvents: 1, retryUsage: 'unknown', billingVerified: false }],
+      knownTotals: { inputTokens: 20, outputTokens: 2, costUsd: 0.02 }, billingVerified: false });
   });
   it('replaces cumulative modelUsage and cost rather than summing result turns', () => {
     const usage = new ClaudeAttemptUsage(1);

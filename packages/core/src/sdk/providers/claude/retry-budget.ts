@@ -1,7 +1,6 @@
 import type { RetryProgress } from '../../types.js';
 
 export interface ClaudeRetryPolicy {
-  prelaunchMaxRetries: number;
   sdkMaxRetries: number;
   backoffBudgetMs: number;
 }
@@ -18,7 +17,6 @@ function integer(env: NodeJS.ProcessEnv, name: string, fallback: number, max: nu
 /** Pin the native budget instead of inheriting an SDK-version-dependent default. */
 export function claudeRetryPolicy(env: NodeJS.ProcessEnv): ClaudeRetryPolicy {
   return {
-    prelaunchMaxRetries: integer(env, 'DISCLAUDE_QUERY_MAX_RETRIES', 2, 15),
     sdkMaxRetries: integer(env, 'CLAUDE_CODE_MAX_RETRIES', 2, 15),
     backoffBudgetMs: integer(env, 'DISCLAUDE_RETRY_BACKOFF_BUDGET_MS', 60_000, 1_800_000),
   };
@@ -35,19 +33,19 @@ export class ClaudeRetryBudget {
   private turn = 1;
   constructor(readonly policy: ClaudeRetryPolicy) {}
 
-  reserve(layer: 'sdk' | 'prelaunch', attempt: number, maxRetries: number, delayMs: number,
+  reserve(attempt: number, maxRetries: number, delayMs: number,
     status?: number | null): RetryProgress {
     if (!Number.isSafeInteger(attempt) || attempt < 1 || !Number.isSafeInteger(maxRetries) || maxRetries < 0 ||
         !Number.isFinite(delayMs) || delayMs < 0) {
       throw new ClaudeRetryBudgetError('invalid SDK retry progress');
     }
-    const cap = layer === 'sdk' ? this.policy.sdkMaxRetries : this.policy.prelaunchMaxRetries;
-    if (attempt > cap || maxRetries > cap) { throw new ClaudeRetryBudgetError(`${layer} retry count exceeds configured cap ${cap}`); }
+    const cap = this.policy.sdkMaxRetries;
+    if (attempt > cap || maxRetries > cap) { throw new ClaudeRetryBudgetError(`SDK retry count exceeds configured cap ${cap}`); }
     if (delayMs > this.policy.backoffBudgetMs - this.spentMs) {
       throw new ClaudeRetryBudgetError(`requested ${delayMs}ms wait exceeds remaining ${this.policy.backoffBudgetMs - this.spentMs}ms`);
     }
     this.spentMs += delayMs;
-    return { layer, attempt, maxRetries, delayMs, remainingBackoffMs: this.policy.backoffBudgetMs - this.spentMs,
+    return { layer: 'sdk', attempt, maxRetries, delayMs, remainingBackoffMs: this.policy.backoffBudgetMs - this.spentMs,
       turn: this.turn, ...(typeof status === 'number' ? { status } : {}) };
   }
 

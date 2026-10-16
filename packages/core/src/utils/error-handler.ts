@@ -152,13 +152,18 @@ function getErrorHandlerLogger(): Logger {
 }
 
 /**
- * Classify an error based on its type and message
+ * Prefer the stored tag and structured status; wording is the final fallback.
  */
 export function classifyError(error: Error | unknown): ErrorCategory {
+  const cached = getErrorCategoryTag(error);
+  if (cached) { return cached.category; }
   // If it's already an AppError, return its category
   if (error instanceof AppError) {
     return error.category;
   }
+
+  const evidence = structuredErrorEvidence(error);
+  if (evidence) { return evidence.category; }
 
   if (!(error instanceof Error)) {
     return ErrorCategory.UNKNOWN;
@@ -202,8 +207,7 @@ export function classifyError(error: Error | unknown): ErrorCategory {
     name.includes('http') ||
     name.includes('api') ||
     message.includes('rate limit') ||
-    message.includes('429') ||
-    message.includes('500')
+    messageHttpStatus(message) !== undefined
   ) {
     return ErrorCategory.API;
   }
@@ -249,30 +253,48 @@ export function isRetryable(error: Error | unknown): boolean {
     return error.retryable;
   }
 
-  if (!(error instanceof Error)) {
-    return false;
+  return tagErrorCategory(error).transient;
+}
+
+/** Only recognized HTTP error forms may supply a status through text. */
+function messageHttpStatus(message: string): number | undefined {
+  const match = /\b(?:http(?:\/\d(?:\.\d)?)?(?:\s+(?:status|error))?|api\s+error|status(?:\s+code)?)\s*[:=]?\s*\[?\s*([45]\d{2})\b/i.exec(message)
+    ?? /^\s*([45]\d{2})(?=\s*(?:$|:)|\s+(?:too many requests|bad gateway|service unavailable)\b)/i.exec(message)
+    ?? /\b(?:bad gateway|service unavailable)\s*\(?\s*(50[23])\b/i.exec(message);
+  return match ? Number(match[1]) : undefined;
+}
+
+function validHttpStatus(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 100 && value <= 599;
+}
+
+function transientHttpStatus(status: number): boolean {
+  return [408, 409, 425, 429].includes(status) || status >= 500;
+}
+
+/** Read machine-owned fields before looking at wording, including a bounded cause chain. */
+function structuredErrorEvidence(error: unknown): ErrorCategoryTag | undefined {
+  const seen = new Set<object>();
+  let current = error;
+  for (let depth = 0; depth < 5 && current && typeof current === 'object'; depth++) {
+    if (seen.has(current)) { break; }
+    seen.add(current);
+    const entry = current as Record<string, unknown>;
+    const response = entry.response && typeof entry.response === 'object'
+      ? entry.response as Record<string, unknown> : undefined;
+    const status = [entry.apiErrorStatus, entry.status, entry.statusCode, response?.status].find(validHttpStatus);
+    const transient = typeof entry.apiErrorIsTransient === 'boolean' ? entry.apiErrorIsTransient : undefined;
+    if (status !== undefined || transient !== undefined) {
+      return { category: status === 401 || status === 403 ? ErrorCategory.PERMISSION : ErrorCategory.API,
+        transient: transient ?? (status !== undefined && transientHttpStatus(status)),
+        ...(status === undefined ? {} : { status }), source: 'structured' };
+    }
+    if (typeof entry.code === 'string' && /^(?:ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EPIPE)$/.test(entry.code)) {
+      return { category: ErrorCategory.NETWORK, transient: true, source: 'structured' };
+    }
+    current = entry.cause;
   }
-
-  const category = classifyError(error);
-
-  // Network and timeout errors are typically retryable
-  const retryableCategories = [
-    ErrorCategory.NETWORK,
-    ErrorCategory.TIMEOUT,
-    ErrorCategory.API
-  ];
-
-  // Check for specific retryable error patterns
-  const message = error.message.toLowerCase();
-  const isRetryablePattern =
-    message.includes('timeout') ||
-    message.includes('etimedout') ||
-    message.includes('econnreset') ||
-    message.includes('rate limit') ||
-    message.includes('503') ||
-    message.includes('502');
-
-  return retryableCategories.includes(category) || isRetryablePattern;
+  return undefined;
 }
 
 /**
@@ -289,27 +311,10 @@ function isTransientFor(category: ErrorCategory, message: string): boolean {
     return true;
   }
 
-  // Rate-limit / overload API errors are transient — they clear on backoff.
-  // Issue #4442: `classifyError` already buckets "429" / "rate limit" into
-  // ErrorCategory.API and `isRetryable` already treats them (plus 503/502) as
-  // retryable, but this transient predicate only matched the literal "rate
-  // limit" wording. So a thrown 429 surfacing as "429" / "Too Many Requests" /
-  // "rate_limit_error" (e.g. litellm account-quota 1308 → HTTP 429) was
-  // classified transient=false, and the Claude provider's L1 in-request retry
-  // (provider.ts, which keys off `tagErrorCategory().transient`) silently did
-  // NOT fire — exactly the "0 retries" symptom in #4442. Align this predicate
-  // with classifyError/isRetryable so the existing exponential-backoff retry
-  // actually engages for rate-limit / overload responses.
+  const status = messageHttpStatus(message);
   return (
-    message.includes('timeout') ||
-    message.includes('etimedout') ||
-    message.includes('econnreset') ||
-    message.includes('rate limit') ||
-    message.includes('rate_limit') || // rate_limit_error / RateLimitError-ish
-    message.includes('429') || // HTTP 429
-    message.includes('too many requests') || // HTTP 429 reason phrase
-    message.includes('503') || // service unavailable (overloaded)
-    message.includes('502') // bad gateway (transient upstream)
+    /\b(?:timeout|etimedout|econnreset|rate limit(?:ed)?|rate_limit(?:_error)?|too many requests)\b/.test(message) ||
+    (status !== undefined && [429, 502, 503].includes(status))
   );
 }
 
@@ -317,15 +322,7 @@ function isTransientFor(category: ErrorCategory, message: string): boolean {
  * Determine if an error is transient (temporary)
  */
 export function isTransient(error: Error | unknown): boolean {
-  if (error instanceof AppError) {
-    return error.transient;
-  }
-
-  if (!(error instanceof Error)) {
-    return false;
-  }
-
-  return isTransientFor(classifyError(error), error.message.toLowerCase());
+  return tagErrorCategory(error).transient;
 }
 
 /**
@@ -343,6 +340,8 @@ const ERROR_CATEGORY_SYMBOL = Symbol('errorCategory');
 export interface ErrorCategoryTag {
   category: ErrorCategory;
   transient: boolean;
+  status?: number;
+  source?: 'structured';
 }
 
 /**
@@ -354,18 +353,25 @@ export interface ErrorCategoryTag {
  * the category is available both in structured logs and to later recovery
  * layers (L1 in-request retry, L2 turn replay).
  */
-export function tagErrorCategory(error: unknown): ErrorCategoryTag {
+export function tagErrorCategory(error: unknown, evidence?: unknown): ErrorCategoryTag {
+  const cached = evidence === undefined ? getErrorCategoryTag(error) : undefined;
+  if (cached) { return cached; }
   // Classify once and derive `transient` from the same category (Issue #4192
   // review nit #1) — avoids the previous double `classifyError` via `isTransient`.
-  const category = classifyError(error);
+  const structured = error instanceof AppError && evidence === undefined ? undefined
+    : structuredErrorEvidence(evidence ?? error);
+  const category = structured?.category ?? classifyError(error);
   const transient =
-    error instanceof AppError
+    structured ? structured.transient : error instanceof AppError
       ? error.transient
       : isTransientFor(category, error instanceof Error ? error.message.toLowerCase() : '');
-  if (error instanceof Error) {
-    (error as Error & { [ERROR_CATEGORY_SYMBOL]: ErrorCategoryTag })[ERROR_CATEGORY_SYMBOL] = { category, transient };
+  const status = structured?.status ?? (error instanceof Error ? messageHttpStatus(error.message) : undefined);
+  const tag = { category, transient, ...(status === undefined ? {} : { status }),
+    ...(structured?.source ? { source: structured.source } : {}) };
+  if (error instanceof Error && Object.isExtensible(error)) {
+    (error as Error & { [ERROR_CATEGORY_SYMBOL]: ErrorCategoryTag })[ERROR_CATEGORY_SYMBOL] = tag;
   }
-  return { category, transient };
+  return tag;
 }
 
 /**

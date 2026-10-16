@@ -6,7 +6,9 @@ import { assertToolOptions } from '../../tools.js';
  */
 
 import { query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { join, resolve } from 'node:path';
 import type { ChatAgentHooks, IAgentSDKProvider } from '../../interface.js';
 import type {
   AgentMessage,
@@ -19,25 +21,23 @@ import { adaptSDKMessage, adaptUserInput, TaskSubjectRegistry } from './message-
 import { adaptOptions } from './options-adapter.js';
 import { createLogger } from '../../../utils/logger.js';
 import { tagErrorCategory } from '../../../utils/error-handler.js';
-import { computeBackoffDelay } from '../../../utils/retry.js';
+import { automaticReplayBlock, preventAutomaticReplay } from '../../../utils/replay-safety.js';
+import { ClaudeAttemptProcess, type AttemptExit } from './attempt-process.js';
+import { ClaudeRetryBudget, claudeRetryPolicy, retryProgressText } from './retry-budget.js';
+import { ClaudeAttemptUsage, claudeQueryUsage } from './attempt-usage.js';
 import { Config } from '../../../config/index.js';
 import type { BaseAgentConfig } from '../../../agents/types.js';
 import { withDiscoveredCompaction } from './compaction.js';
 import { buildClaudeDisallowedTools } from './disallowed-tools.js';
 import { privateSdkSettings } from './private-settings.js';
-import { ClaudeAttemptProcess, type AttemptExit } from './attempt-process.js';
-import { claudeReplayBlock, type ClaudeAttemptEvidence } from './replay-admission.js';
-import { automaticReplayBlock, preventAutomaticReplay } from '../../../utils/replay-safety.js';
-import { ClaudeRetryBudget, claudeRetryPolicy, retryProgressText } from './retry-budget.js';
-import { ClaudeAttemptUsage, claudeQueryUsage } from './attempt-usage.js';
+import { apiErrorEvidence, ClaudeTranscriptErrors, type ApiErrorEvidence } from './api-error-evidence.js';
 
 const logger = createLogger('ClaudeSDKProvider');
 
 // Issue #4442 (part 3): empty-stream terminal notice. Synthesized when the SDK
-// query ends cleanly with ZERO messages (200-OK-zero-content) and the in-request
-// retries (below) are exhausted.
+// query ends cleanly with ZERO messages (200-OK-zero-content).
 const EMPTY_STREAM_TERMINATE_NOTICE =
-  '❌ 上游返回了空响应，已停止自动重试。请先核对已有操作和结果，再决定是否继续。';
+  '❌ 上游返回了空响应（200 但零内容事件），本次会话未产生任何输出。请稍后重试。';
 
 // ============================================================================
 // Upstream API error detection (Issue #4322)
@@ -50,10 +50,9 @@ const EMPTY_STREAM_TERMINATE_NOTICE =
 // subtype=success (carrying the accumulated usage), so ChatAgent faithfully
 // reports ✅ Complete and nothing surfaces the failure.
 //
-// Fix (part 1, this slice): detect the upstream-API-error signature in the
-// stderr captured for the turn and tag the success result's metadata so the
-// consumer (ChatAgent) can report ❌ Failed + recordFailure instead of masking
-// it. Turn-level retry is a separate, larger follow-up (Issue #4314 / #4192 L2).
+// Prefer structured stream fields, then the current session's new transcript
+// API-error records. Stderr signatures remain a legacy fallback. Preserve the
+// same classification if the SDK throws after emitting its failed terminal.
 
 /**
  * Stderr signatures that definitively indicate the SDK gave up on an upstream
@@ -69,7 +68,7 @@ const EMPTY_STREAM_TERMINATE_NOTICE =
  * recovered from does not emit "after retries", so this avoids false positives
  * on recovered turns. Broaden in a follow-up if other 5xx shapes appear.
  */
-const UPSTREAM_API_ERROR_RE = /server_overload after retries|overloaded_error|API Error:\s*\[?\s*5\d\d/i;
+const UPSTREAM_API_ERROR_RE = /\bserver_overload after retries\b|\boverloaded_error\b|\bAPI Error:\s*\[?\s*5\d{2}\b/i;
 
 /**
  * True when the captured stderr indicates the turn was killed by an upstream
@@ -327,13 +326,14 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     const queryId = randomUUID();
     logger.info({ event: 'claude_retry_policy', queryId, ...retryPolicy,
       nativeAttemptsPerQuery: 1, sdkAttemptsPerApiRequest: retryPolicy.sdkMaxRetries + 1,
-      waitBudgetScope: 'per-native-result-turn', prelaunchRetriesCannotCallUpstream: true }, 'Claude retry policy resolved');
-    const usageAttempts: ClaudeAttemptUsage[] = [];
+      waitBudgetScope: 'per-native-result-turn' }, 'Claude retry policy resolved');
+    const usage = new ClaudeAttemptUsage(1);
+    let failed = false;
     let usageLogged = false;
     const logQueryUsage = (): void => {
       if (usageLogged) { return; }
       usageLogged = true;
-      logger.info({ event: 'claude_query_usage', ...claudeQueryUsage(queryId, usageAttempts) }, 'Claude logical query usage estimate');
+      logger.info({ event: 'claude_query_usage', ...claudeQueryUsage(queryId, [usage]) }, 'Claude logical query usage estimate');
     };
     const privateSettings = privateSdkSettings(native);
     const cleanupPrivateSettings = (): void => {
@@ -341,112 +341,63 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
       catch { logger.warn({ cleanupFailed: true }, 'Private Claude SDK settings cleanup failed'); }
     };
     const sdkOptions = privateSettings.options;
-    type Attempt = ClaudeAttemptEvidence & {
-      ordinal: number; process: ClaudeAttemptProcess; usage: ClaudeAttemptUsage; failed: boolean;
-      sdk?: ReturnType<typeof query>; exit?: Promise<AttemptExit>;
-    };
-    const captureStderr = (current: Attempt, data: string): void => {
+    const transcriptErrors = new ClaudeTranscriptErrors();
+    let streamedApiError: ApiErrorEvidence | undefined;
+    let terminalApiError: ApiErrorEvidence | undefined;
+    let terminalApiErrorSource: 'stream' | 'transcript' | undefined;
+    const environment = sdkOptions.env as NodeJS.ProcessEnv;
+    const claudeConfigDir = resolve(options.cwd ?? process.cwd(), environment.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'));
+    // 将 stderr 回调注入 SDK 选项
+    const captureStderr = (data: string) => {
       stderrCapture.append(data);
-      if (/\b(?:tool_use|tool_result|PreToolUse|PostToolUse|Executing tool)\b/i.test(data)) { current.toolObserved = true; }
+      // 同时调用用户提供的回调（如果有）
       options.stderr?.(data);
     };
-    const createAttempt = (ordinal: number): Attempt => {
-      const process = new ClaudeAttemptProcess({ stderr: data => captureStderr(current, data) });
-      const usage = new ClaudeAttemptUsage(ordinal);
-      usageAttempts.push(usage);
-      const current: Attempt = { ordinal, process, usage, failed: false, messages: 0, partials: false, permissionRequests: 0, toolObserved: false,
-        inputOffered: false, inputPullPending: false, get processStarted() { return process.started; } };
-      return current;
-    };
-    let attempt = createAttempt(1);
-    const stopAttempt = (current: Attempt): Promise<AttemptExit> => {
-      current.exit ??= current.process.stop(() => current.sdk?.close?.()).then(exit => {
-        const { pid: nativePid, ...settlement } = exit;
-        current.usage.finish(current.failed || cancelled || !exit.confirmed);
-        logger.info({ queryId, queryAttempt: current.ordinal, nativePid, ...settlement, scope: 'native-process-and-observed-descendants' },
+
+    // One logical query owns one SDK query and one input consumer. API retries
+    // stay inside that native execution; the host never resubmits the prompt.
+    sdkOptions.stderr = captureStderr;
+    const nativeProcess = new ClaudeAttemptProcess({ stderr: captureStderr });
+    let queryResult: ReturnType<typeof query>;
+    let settlement: Promise<AttemptExit> | undefined;
+    const stopProcess = (): Promise<AttemptExit> => {
+      settlement ??= nativeProcess.stop(() => queryResult?.close?.()).then(exit => {
+        usage.finish(failed || cancelled || !exit.confirmed);
+        const { pid: nativePid, ...details } = exit;
+        logger.info({ event: 'claude_attempt_usage', queryId, nativePid, ...usage.snapshot() }, 'Claude attempt usage estimate');
+        logger.info({ queryAttempt: 1, nativePid, ...details, scope: 'native-process-and-observed-descendants' },
           'Claude attempt process settled');
-        logger.info({ event: 'claude_attempt_usage', queryId, nativePid, ...current.usage.snapshot() }, 'Claude attempt usage estimate');
         return exit;
       });
-      return current.exit;
+      return settlement;
     };
-    // 创建输入适配器生成器
-    // IMPORTANT: Use manual iteration instead of `for await...of` to avoid blocking on input
     let inputCount = 0;
-    // Issue #4192 (L1): buffer the adapted input so a retried query can replay
-    // the full prompt. Populated lazily as the SDK pulls; adaptInputStream()
-    // yields the buffer first, then resumes the outer `input` generator.
-    const inputBuffer: SDKUserMessage[] = [];
-    let inputExhausted = false;
-    async function* adaptInputStream(current: Attempt): AsyncGenerator<SDKUserMessage> {
-      // Replay buffered input first (retries), then resume the outer generator.
-      for (const buffered of inputBuffer) {
-        if (current.process.closed) { return; }
-        current.inputOffered = true;
-        yield buffered;
-      }
-      if (inputExhausted) {
-        return;
-      }
-      // Manual iteration - only pull one value at a time
-      const iterator = input[Symbol.asyncIterator]();
-      while (true) {
-        if (current.process.closed) { return; }
-        current.inputPullPending = true;
-        let next: IteratorResult<UserInput>;
-        try { next = await iterator.next(); }
-        finally { current.inputPullPending = false; }
-        const { value, done } = next;
-        if (done) {
-          inputExhausted = true;
-          return;
-        }
+    async function* adaptInputStream(): AsyncGenerator<SDKUserMessage> {
+      while (!nativeProcess.closed) {
+        const { value, done } = await input.next();
+        if (done || nativeProcess.closed) { return; }
         inputCount++;
-        const adapted = adaptUserInput(value);
-        inputBuffer.push(adapted); // tee for replay on retry
-        if (current.process.closed) { return; }
-        current.inputOffered = true;
         logger.info({ inputCount, contentLength: value.content?.length }, 'Input received');
-        yield adapted;
+        yield adaptUserInput(value);
       }
     }
 
-    // `let` (not const): Issue #4192 (L1) reassigns this on a transient-error
-    // retry before the first SDK message. Created eagerly here so handle.close
-    // works even before iteration starts.
     let cancelled = false;
-    let queryResult: ReturnType<typeof query>;
-    const startQuery = (current: Attempt): ReturnType<typeof query> => {
-      const nativeOptions = { ...sdkOptions, spawnClaudeCodeProcess: (command: Parameters<ClaudeAttemptProcess['spawn']>[0]) => {
-        const child = current.process.spawn(command);
-        logger.info({ queryId, queryAttempt: current.ordinal, nativePid: current.process.pid }, 'Claude attempt process started');
-        return child;
-      },
-        stderr: (data: string) => captureStderr(current, data) };
-      const permission = sdkOptions.canUseTool as NonNullable<Parameters<typeof query>[0]['options']>['canUseTool'];
-      if (permission) {
-        Object.assign(nativeOptions, { canUseTool: (...args: Parameters<NonNullable<typeof permission>>) => {
-          current.permissionRequests++;
-          return permission(...args);
-        } });
-      }
-      current.sdk = query({ prompt: adaptInputStream(current),
-        options: nativeOptions as Parameters<typeof query>[0]['options'] });
-      return current.sdk;
-    };
+    const queryStartMs = Date.now();
     try {
-      queryResult = startQuery(attempt);
+      queryResult = query({
+        prompt: adaptInputStream(),
+        options: { ...sdkOptions, spawnClaudeCodeProcess: nativeProcess.spawn } as Parameters<typeof query>[0]['options'],
+      });
     } catch (error) {
-      attempt.failed = true;
-      void stopAttempt(attempt).finally(() => { cleanupPrivateSettings(); logQueryUsage(); });
-      if (!attempt.process.started) { cleanupPrivateSettings(); }
+      failed = true;
+      void stopProcess().finally(() => { cleanupPrivateSettings(); logQueryUsage(); });
+      if (!nativeProcess.started) { cleanupPrivateSettings(); }
       cleanupNewProcessListeners(listenerSnapshot);
-      throw attempt.process.started || attempt.inputOffered || attempt.inputPullPending
-        ? preventAutomaticReplay(error, 'startup-outcome-uncertain') : error;
+      throw preventAutomaticReplay(error, 'whole-query-replay-disabled');
     }
 
     // Issue #3003: Track SDK query timing for diagnostics
-    const queryStartMs = Date.now();
 
     // 创建消息适配迭代器
     let messageCount = 0;
@@ -462,45 +413,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
 
     async function* adaptIterator(): AsyncGenerator<AgentMessage> {
       let partialsObserved = false;
-      // Whole-query retry needs positive pre-work evidence and confirmed teardown.
-      // SDK/client API retries remain inside the original native execution.
-      //
-      // Issue #4313: MAX_QUERY_RETRIES is operator-tunable via
-      // DISCLAUDE_QUERY_MAX_RETRIES (e.g. to retry more before rethrowing when the
-      // upstream is flaky — cf. the overloaded_error scenario in #4322). 0
-      // disables the in-request retry. Default 2 (preserves prior behavior).
-      const MAX_QUERY_RETRIES = retryPolicy.prelaunchMaxRetries;
-      const QUERY_RETRY_TIMING = {
-        initialDelayMs: 500, backoffMultiplier: 2, maxDelayMs: 8000, jitter: true,
-      };
-      const delayMs = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-      const reserveRetry = (...args: Parameters<ClaudeRetryBudget['reserve']>) => {
-        try { return retryBudget.reserve(...args); }
-        catch (error) {
-          logger.warn({ event: 'claude_retry_refused', queryId, queryAttempt: attempt.ordinal,
-            layer: args[0], attempt: args[1], maxRetries: args[2], requestedWaitMs: args[3], status: args[4],
-            reason: error instanceof Error ? error.message : 'retry budget unavailable' }, 'Claude retry denied by shared budget');
-          attempt.failed = true; throw preventAutomaticReplay(error, 'retry-budget-exhausted');
-        }
-      };
-      for (let queryAttempt = 0; ; queryAttempt++) {
-        if (cancelled) { return; }
-        // The previous attempt is settled before the next attempt is created.
-        messageCount = 0;
-        partialsObserved = false;
-        listenersCleanedUp = false;
-        if (queryAttempt > 0) {
-          // Issue #4322: clear stale stderr from the previous (failed) attempt
-          // before recreating the query, so a recovered L1 retry isn't falsely
-          // tagged upstreamApiError by the prior attempt's error line. Reset
-          // here (not at the top of the loop) so attempt 0's stderr — which may
-          // be fed during query() creation, before the loop — is preserved for
-          // the catch's attachStderrToError, and so each retry starts clean.
-          stderrCapture.reset();
-          attempt = createAttempt(queryAttempt + 1);
-        }
       try {
-        if (queryAttempt > 0) { queryResult = startQuery(attempt); }
         // Issue #4200 part 2: per-query registry of taskId → label, so status-only
         // TaskUpdate calls can recall a subject/activeForm seen on an earlier
         // update. Local to this generator → GC'd when the query stream ends.
@@ -528,6 +441,24 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
 
         for await (const message of queryResult) {
           if (cancelled) {return;}
+          usage.observe(message);
+          let retryProgress;
+          if (message.type === 'system' && message.subtype === 'api_retry') {
+            try { retryProgress = retryBudget.reserve(message.attempt, message.max_retries, message.retry_delay_ms, message.error_status); }
+            catch (error) {
+              logger.warn({ event: 'claude_retry_refused', queryId, delayMs: message.retry_delay_ms,
+                reason: error instanceof Error ? error.message : 'retry budget unavailable' }, 'Claude native retry denied');
+              throw preventAutomaticReplay(error, 'retry-budget-exhausted');
+            }
+          }
+          if ('session_id' in message && typeof message.session_id === 'string') {
+            transcriptErrors.bindSession(message.session_id, claudeConfigDir, queryStartMs);
+          }
+          terminalApiError = undefined;
+          terminalApiErrorSource = undefined;
+          const streamed = apiErrorEvidence(message) ?? ('message' in message ? apiErrorEvidence(message.message) : undefined);
+          if (streamed) { streamedApiError = streamed; }
+          else if (message.type === 'assistant') { streamedApiError = undefined; }
           try {
             options.onActivity?.(message.type === 'stream_event'
               ? `claude:${message.event.type}`
@@ -540,15 +471,10 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           // terminate a turn merely because content deltas pause during backoff.
           if (message.type === 'stream_event') {
             partialsObserved = true;
-            attempt.partials = true;
             continue;
           }
           const now = Date.now();
           messageCount++;
-          attempt.messages = messageCount;
-          attempt.usage.observe(message);
-          const retryProgress = message.type === 'system' && message.subtype === 'api_retry'
-            ? reserveRetry('sdk', message.attempt, message.max_retries, message.retry_delay_ms, message.error_status) : undefined;
           // 提前适配,使日志与检测均能复用(D1:保留 system subtype 到 metadata 供诊断)
           // Issue #4200 part 2: thread the per-query task registry so status-only
           // TaskUpdate calls can recall a label seen on an earlier update.
@@ -556,15 +482,14 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           if (retryProgress) {
             adapted.type = 'status'; adapted.role = 'system'; adapted.content = retryProgressText(retryProgress);
             adapted.metadata = { ...adapted.metadata, retryProgress };
-            logger.warn({ event: 'claude_retry_progress', queryId, queryAttempt: attempt.ordinal, ...retryProgress }, 'Claude upstream retry wait');
+            logger.warn({ event: 'claude_retry_progress', queryId, ...retryProgress }, 'Claude upstream retry wait');
           }
-          if (message.type === 'result') {
-            adapted.metadata = { ...adapted.metadata, queryUsage: claudeQueryUsage(queryId, usageAttempts) };
+          if (adapted.type === 'result') {
+            adapted.metadata = { ...adapted.metadata, queryUsage: claudeQueryUsage(queryId, [usage]) };
             retryBudget.nextTurn();
           }
-          if (adapted.type === 'tool_use') { attempt.toolObserved = true; }
-          if (adapted.type === 'result' && (attempt.process.started || attempt.inputOffered)) {
-            adapted.metadata = { ...adapted.metadata, automaticReplayBlocked: 'execution-outcome-uncertain' };
+          if (adapted.type === 'result') {
+            adapted.metadata = { ...adapted.metadata, automaticReplayBlocked: 'whole-query-replay-disabled' };
           }
           // Issue #3003: log TTFT and per-message elapsed
           if (!firstMessageMs) {
@@ -653,24 +578,32 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
             consecutiveEmptySystemCount = 0;
           }
 
-          // Issue #4322: 上游 API 错误(overloaded_error / 5xx)可能在本轮已流出
-          // 部分输出后才杀掉 turn。SDK 把错误打到 stderr 但仍发 subtype=success 的
-          // result,下游会静默报 ✅ Complete。若本轮捕获的 stderr 带上游 API 错误
-          // 特征,给该 success result 打 upstreamApiError 标记,让 ChatAgent 改报
-          // ❌ Failed + recordFailure。不覆盖 stall 合成的 result(terminatedReason)。
-          if (
-            adapted.type === 'result' &&
-            !adapted.metadata?.terminatedReason &&
-            stderrCapture.hasContent() &&
-            stderrIndicatesUpstreamApiError(stderrCapture.getCaptured())
-          ) {
-            adapted.metadata = {
-              ...(adapted.metadata ?? {}),
-              upstreamApiError: true,
-              // Surface the stderr tail (carries the upstream request_id) so the
-              // consumer can include an actionable reference in the ❌ Failed notice.
-              upstreamApiErrorStderr: stderrCapture.getTail(300),
-            };
+          // A terminal can precede the transcript flush. Structured API evidence
+          // enriches both masked successes and already-failed terminals without
+          // changing their existing termination reason.
+          if (adapted.type === 'result') {
+            const transcript = streamedApiError ? await transcriptErrors.read()
+              : await transcriptErrors.readAfterFlush(adapted.metadata?.terminatedReason === 'turn_failed'
+                || stderrIndicatesUpstreamApiError(stderrCapture.getCaptured()), () => cancelled);
+            const evidence = streamedApiError ?? transcript.error;
+            logger.debug({ transcriptState: transcript.state, hasStructuredApiError: Boolean(evidence) }, 'Read current-turn API error evidence');
+            const source = streamedApiError ? 'stream' : transcript.error ? 'transcript' : 'stderr';
+            terminalApiError = evidence;
+            terminalApiErrorSource = evidence ? (streamedApiError ? 'stream' : 'transcript') : undefined;
+            if (evidence || (!adapted.metadata?.terminatedReason && stderrIndicatesUpstreamApiError(stderrCapture.getCaptured()))) {
+              const tag = evidence ? tagErrorCategory(new Error('Upstream API failure'), evidence) : undefined;
+              adapted.metadata = {
+                ...(adapted.metadata ?? {}), upstreamApiError: true,
+                upstreamApiErrorSource: source,
+                ...(tag ? { upstreamApiErrorStatus: tag.status, upstreamApiErrorIsTransient: tag.transient } : {}),
+                upstreamApiErrorStderr: tag ? `Upstream API error${tag.status ? ` (HTTP ${tag.status})` : ''}` : stderrCapture.getTail(300),
+              };
+              logger.warn({ evidenceSource: source, transcriptState: transcript.state,
+                apiErrorStatus: tag?.status, apiErrorIsTransient: tag?.transient },
+              'Upstream API failure classified');
+            }
+            streamedApiError = undefined;
+            stderrCapture.reset();
           }
 
           yield adapted;
@@ -681,32 +614,21 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         // Issue #3003: log iterator completion timing
         const totalMs = Date.now() - queryStartMs;
         if (messageCount === 0) {
-          const exit = await stopAttempt(attempt);
-          const replayBlock = claudeReplayBlock(attempt, exit);
-          if (!replayBlock && queryAttempt < MAX_QUERY_RETRIES) {
-            logger.warn({ queryAttempt: queryAttempt + 1, totalMs, partialsObserved, nativePid: exit.pid,
-              processStatus: exit.status },
-            'Issue #4442: SDK query completed with zero messages — retrying confirmed pre-work failure (Issue #4192 L1 budget)');
-            const progress = reserveRetry('prelaunch', queryAttempt + 1, MAX_QUERY_RETRIES, computeBackoffDelay(queryAttempt, QUERY_RETRY_TIMING));
-            yield { type: 'status', role: 'system', content: retryProgressText(progress), metadata: { retryProgress: progress } };
-            await delayMs(progress.delayMs);
-            continue;
-          }
-          logger.error({ totalMs, model: options.model, partialsObserved, replayBlock, nativePid: exit.pid,
-            processStatus: exit.status },
-          'Issue #4442: SDK query completed with zero messages; automatic retry stopped');
+          const exit = await stopProcess();
+          logger.error({ totalMs, model: options.model, partialsObserved, nativePid: exit.pid,
+            processStatus: exit.status }, 'SDK query completed with zero messages; whole-query replay is disabled');
           yield { type: 'result', content: EMPTY_STREAM_TERMINATE_NOTICE, role: 'system',
-            metadata: { terminatedReason: 'empty-stream', automaticReplayBlocked: replayBlock ?? 'retry-budget-exhausted' } };
+            metadata: { terminatedReason: 'empty-stream', automaticReplayBlocked: 'whole-query-replay-disabled', queryUsage: claudeQueryUsage(queryId, [usage]) } };
           return;
         }
         logger.info(
           { totalMs, messageCount, ttftMs: firstMessageMs ? firstMessageMs - queryStartMs : undefined },
           'SDK iterator completed'
         );
-        return; // success — exit the retry loop + generator (Issue #4192 L1)
+        return;
       } catch (error) {
+        failed = true;
         if (cancelled) {return;}
-        attempt.failed = true;
         // Issue #2920: 将捕获的 stderr 附加到 error 对象
         if (stderrCapture.hasContent()) {
           attachStderrToError(error, stderrCapture.getCaptured());
@@ -714,41 +636,36 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         // Issue #4192 (L0): classify the error so the structured log (and any
         // downstream handler reading the tagged error) knows the category, e.g.
         // NETWORK/TIMEOUT (transient → retry candidate) vs CONFIG/SDK (not).
-        const { category: errorCategory, transient: errorTransient } = tagErrorCategory(error);
-        const exit = await stopAttempt(attempt);
-        const replayBlock = claudeReplayBlock(attempt, exit);
+        const transcript = terminalApiError ? { state: 'available' as const, error: undefined }
+          : await transcriptErrors.readAfterFlush(true, () => cancelled);
+        const evidence = streamedApiError ?? transcript.error ?? terminalApiError;
+        const evidenceSource = streamedApiError ? 'stream' : transcript.error ? 'transcript' : terminalApiErrorSource;
+        const { category: errorCategory, transient: errorTransient, status: errorStatus, source: classificationSource } = tagErrorCategory(error, evidence);
+        const exit = await stopProcess();
         if (cancelled) { return; }
-        if (errorTransient && !replayBlock && queryAttempt < MAX_QUERY_RETRIES) {
-          logger.warn({ queryAttempt: queryAttempt + 1, err: error, errorCategory,
-            nativePid: exit.pid, processStatus: exit.status },
-          'Transient pre-work error — retrying query (Issue #4192 L1)');
-          const progress = reserveRetry('prelaunch', queryAttempt + 1, MAX_QUERY_RETRIES, computeBackoffDelay(queryAttempt, QUERY_RETRY_TIMING));
-          yield { type: 'status', role: 'system', content: retryProgressText(progress), metadata: { retryProgress: progress } };
-          await delayMs(progress.delayMs);
-          continue;
-        }
         logger.error(
           {
             err: error,
             errorCategory,
             errorTransient,
-            replayBlock,
+            errorStatus,
             nativePid: exit.pid,
             processStatus: exit.status,
+            classificationSource,
+            evidenceSource: evidenceSource ?? classificationSource ?? 'message',
             messageCount,
             stderr: stderrCapture.hasContent() ? stderrCapture.getTail() : '(no stderr)',
           },
           'adaptIterator error'
         );
-        throw replayBlock ? preventAutomaticReplay(error, automaticReplayBlock(error) ?? replayBlock) : error;
+        throw preventAutomaticReplay(error, automaticReplayBlock(error) ?? 'whole-query-replay-disabled');
       } finally {
-        await stopAttempt(attempt);
+        await stopProcess();
         // Issue #3378: Clean up SDK-registered process listeners after query completes.
         // This prevents listener accumulation across multiple queries in long-running
         // processes (e.g., integration test server).
         cleanupListeners();
       }
-      } // end Issue #4192 (L1) retry loop
     }
 
     let interruptSent = false;
@@ -764,8 +681,8 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     const close = (): Promise<AttemptExit> => {
       cancelled = true;
       cleanupListeners();
-      const stopped = stopAttempt(attempt);
-      if (!attempt.process.started) { cleanupPrivateSettings(); }
+      const stopped = stopProcess();
+      if (!nativeProcess.started) { cleanupPrivateSettings(); }
       return stopped.finally(() => { cleanupPrivateSettings(); logQueryUsage(); });
     };
     return {
@@ -782,7 +699,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
       },
       iterator: (async function* () {
         try { yield* adaptIterator(); }
-        finally { await stopAttempt(attempt); cleanupPrivateSettings(); logQueryUsage(); }
+        finally { await stopProcess(); cleanupPrivateSettings(); logQueryUsage(); }
       })(),
     };
   }

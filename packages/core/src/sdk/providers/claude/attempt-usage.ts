@@ -29,10 +29,12 @@ export class ClaudeAttemptUsage {
   private failedResult = false;
   private incomplete = false;
   private resultCount = 0;
+  private retryEvents = 0;
 
   constructor(readonly ordinal: number) {}
 
   observe(message: SDKMessage): void {
+    if (message.type === 'system' && message.subtype === 'api_retry') { this.retryEvents++; }
     if (message.type === 'conversation_reset') { this.accountingWindowChanged = true; }
     if (message.type === 'assistant' && !message.parent_tool_use_id && message.message?.id && message.message.usage) {
       // Multiple content blocks may repeat the same message usage.
@@ -76,7 +78,8 @@ export class ClaudeAttemptUsage {
       : this.pipelineComplete && !this.failedResult && !this.incomplete && !pending.length && !this.accountingWindowChanged ? 'reported' : 'partial';
     return { attempt: this.ordinal, state, scope: this.pipeline ? 'query-pipeline' : hasTokens ? 'main-loop' : 'unavailable',
       latencyMs: (this.endedAt ?? Date.now()) - this.startedAt, ...totals,
-      ...(finite(this.estimatedCost) ? { costUsd: this.estimatedCost } : {}), resultCount: this.resultCount,
+      ...(finite(this.estimatedCost) ? { costUsd: this.estimatedCost } : {}), resultCount: this.resultCount, retryEvents: this.retryEvents,
+      retryUsage: this.retryEvents ? 'unknown' : 'not-observed',
       ...(this.accountingWindowChanged ? { accountingWindowChanged: true } : {}),
       billingVerified: false };
   }
