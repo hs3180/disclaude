@@ -141,6 +141,33 @@ async function* oneInput() {
 }
 
 describe('DeepSeekHarnessProvider (Issue #4741)', () => {
+  it.each([undefined, 'auto', 0, 48_000] as const)(
+    'keeps minimal free of host compaction plugins and metadata discovery (%s)', async autoCompactWindow => {
+      const fixture = await sdkFixture();
+      const provider = new DeepSeekHarnessProvider({
+        binary: fixture.binary, dshHome: fixture.dir, mode: 'minimal', apiKey: 'fixture-key',
+        api: { protocol: 'openai', baseUrl: 'https://fixture.invalid/v1', model: 'fixture-model' },
+      });
+      try {
+        await collect(provider.queryStream(oneInput(), { settingSources: [], autoCompactWindow }).iterator);
+        const overlay = JSON.parse(await readFile(join(fixture.dir, 'overlay.json'), 'utf8'));
+        expect(fetch).not.toHaveBeenCalled();
+        expect(overlay.filter((entry: { id?: string }) => entry.id)).toEqual([
+          { id: 'sdk-jsonrpc-server', disabled: true },
+        ]);
+        const inserted = overlay.find((entry: { insert?: unknown }) => entry.insert).insert;
+        expect(inserted.map((entry: { id: string }) => entry.id)).toEqual([
+          'disclaude-dsh-api', 'disclaude-dsh-native-app',
+        ]);
+        const route = Object.values(inserted[0].config.providers)[0] as { models: object[] };
+        expect(route.models).toEqual([{ id: 'fixture-model', name: 'fixture-model', input: ['text'] }]);
+      } finally {
+        await provider.shutdown();
+        await rm(fixture.dir, { recursive: true, force: true });
+      }
+    }
+  );
+
   it('keeps the selected native credential and home when query env contains stale values', async () => {
     const fixture = await sdkFixture({ captureConnection: true });
     const provider = new DeepSeekHarnessProvider({

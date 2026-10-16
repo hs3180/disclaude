@@ -59,6 +59,12 @@ describe('RestartManager', () => {
       expect(decision.restartCount).toBe(0); // doesn't consume a restart slot
     });
 
+    it('uses structured API status and its explicit transient verdict before message wording', () => {
+      const error = Object.assign(new Error('HTTP 429 timeout at port 15020'), { apiErrorStatus: 429, apiErrorIsTransient: false });
+      expect(manager.shouldRestart('structured', error.message, error)).toMatchObject({ allowed: false, reason: 'non_transient', restartCount: 0 });
+      expect(manager.shouldRestart('status', 'invalid parameter', { status: 503 }).allowed).toBe(true);
+    });
+
     it('Issue #4314 (L2): allows restart for transient (network) errors', () => {
       const decision = manager.shouldRestart('chat-1', 'Network Error: timeout');
       expect(decision.allowed).toBe(true);
