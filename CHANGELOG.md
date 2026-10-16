@@ -28,13 +28,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with bounded diagnostics that omit response bodies and headers (#5352, #5386).
 - Reuse installation download caches and preview retained prefixes without
   sharing runtime dependency trees or deleting user data (#5354, #5384).
+- Record one lifecycle terminal for a completed parent input when its native
+  background Agent later delivers a child result, preserving the child reply
+  and callbacks (#5390).
 
-These six PRs are pending maintainer Review and merge. Their combined candidate
-has separate engineering and installation receipts; real channel acceptance and
-final merged-main verification remain open. A 2026-10-16 candidate window failed
-before readiness, with no regression-model inputs or test sends; the original
-service was restored. This is not a pass or failure of the unexecuted model
-cases. See the
+These seven implementation PRs and the delivery-record PR #5389 are eight
+current review items, pending maintainer Review and merge. Corrected combined
+candidate `e22f1e7b5` passed build/lint, 5,830 tests in 278 files, independent
+prebuilt installation/lifecycle checks and a nine-model real Feishu/REST run.
+That candidate is not merged main. Earlier readiness and harness failures, the
+e91d duplicate-terminal product failure, actual service interruptions and
+restoration evidence remain recorded separately. Final merged-main verification
+and release publication remain open. See the
 [0.6.4 candidate delivery record](docs/releases/0.6.4-rc.1.md) for exact sources,
 evidence boundaries and migration guides. No release publication is claimed.
 
