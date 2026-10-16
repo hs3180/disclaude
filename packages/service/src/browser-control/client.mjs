@@ -6,6 +6,9 @@ import { fileURLToPath } from 'node:url';
 import { resolveBrowserRuntimePath } from '@disclaude/core/browser-runtime';
 import { openCommandLock, tryCommandLock, waitCommandLock } from './command-lock.mjs';
 import { processExists, readBrowserRuntime } from './service.mjs';
+import { observeBrowser } from './observer.mjs';
+import { browserDiagnostic } from './diagnostics.mjs';
+import { randomUUID } from 'node:crypto';
 
 /** One invocation, including its entire stdin script, is one exclusive unit. */
 export async function main(args = process.argv.slice(2), env = process.env) {
@@ -14,7 +17,15 @@ export async function main(args = process.argv.slice(2), env = process.env) {
   const fd = openCommandLock(join(runtime.directory, 'command.lock'));
   const marker = join(runtime.directory, 'interrupted.json');
   const waiting = new AbortController();
-  let child, interrupted, killTimer;
+  let child, interrupted, killTimer, observer, diagnosticCount = 0;
+  const invocationId = randomUUID();
+  const reportDiagnostic = diagnostic => {
+    diagnosticCount++;
+    const record = { ...diagnostic, invocationId, recordedAt: new Date().toISOString() };
+    console.error(`\n${JSON.stringify(record)}`);
+    try { writeFileSync(join(runtime.directory, 'last-diagnostic.json'), JSON.stringify(record), { mode: 0o600 }); }
+    catch { /* A diagnostic write must not change the upstream result. */ }
+  };
   function interrupt(signal = 'SIGTERM') {
     if (interrupted) return;
     interrupted = signal;
@@ -67,12 +78,21 @@ export async function main(args = process.argv.slice(2), env = process.env) {
       if (key.startsWith('BU_CDP_') || key.startsWith('BH_') || ['BU_NAME', 'BU_AUTOSPAWN'].includes(key)) delete cliEnv[key];
     }
     Object.assign(cliEnv, runtime.browserEnv, { PATH: runtime.path });
+    if (args.length === 0) {
+      observer = await observeBrowser({ websocket: runtime.browserEnv.BU_CDP_WS,
+        endpoint: runtime.browserEnv.BU_CDP_URL, endpointSource: runtime.endpointSource || 'unknown', onDiagnostic: reportDiagnostic, env });
+      if (interrupted) throw new Error('Browser command cancelled before execution');
+    }
     const result = await new Promise((done, reject) => {
       // The actual CLI inherits FD 3. No worker, shell or Python runner in between.
       child = spawn(runtime.executable, args, { env: cliEnv, stdio: ['inherit', 'inherit', 'inherit', fd], detached: true });
       child.once('error', reject);
       child.once('exit', (code, signal) => done({ code, signal }));
     });
+    if (result.code !== 0 && !diagnosticCount && !interrupted) reportDiagnostic(browserDiagnostic({
+      stage: 'unknown', observation: 'upstream-exit', method: 'unknown', url: undefined,
+      endpoint: runtime.browserEnv.BU_CDP_URL, endpointSource: runtime.endpointSource || 'unknown', reason: 'upstream-command-failed',
+    }));
     if (result.code === 0 && !interrupted) {
       if (reload && daemonPid) {
         for (let attempt = 0; attempt < 20 && processExists(daemonPid); attempt++) await delay(100);
@@ -82,6 +102,7 @@ export async function main(args = process.argv.slice(2), env = process.env) {
     }
     return interrupted ? { code: null, signal: interrupted } : result;
   } finally {
+    await observer?.stop().catch(() => {});
     clearInterval(ownerCheck); clearTimeout(killTimer);
     process.removeListener('SIGINT', sigint); process.removeListener('SIGTERM', sigterm);
     closeSync(fd);
