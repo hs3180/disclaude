@@ -138,8 +138,8 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
     try {
       const response = await this.response('lab');
       if (!response.ok) {
-        await response.body?.cancel();
-        return { state: 'unverified', httpStatus: response.status };
+        return { state: 'unverified', httpStatus: response.status,
+          diagnostic: (await this.responseError(response, 'rtc-inspection')).diagnostic };
       }
       const html = await this.responseText(response);
       const script = html.match(
@@ -158,8 +158,10 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
           ? { serverSideExecution: config.serverSideExecution }
           : {}),
       };
-    } catch {
-      return { state: 'unverified' };
+    } catch (error) {
+      return { state: 'unverified', diagnostic: error instanceof JupyterDiagnosticError ? error.diagnostic
+        : { layer: 'schema', code: 'invalid_rtc_config', phase: 'rtc-inspection', message: 'JupyterLab RTC configuration could not be parsed',
+          hint: 'Verify the remote JupyterLab configuration and compatible extension versions.' } };
     }
   }
 

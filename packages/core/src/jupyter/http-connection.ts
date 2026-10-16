@@ -181,7 +181,8 @@ export class JupyterHttpConnection {
     }
     if (response.status >= 300 && response.status < 400 && !loginRedirect) {
       await response.body?.cancel();
-      throw new Error('Jupyter redirect was refused');
+      throw new JupyterDiagnosticError({ layer: 'http', code: 'redirect_refused', phase: 'http', status: response.status,
+        message: 'Jupyter redirect was refused', hint: 'Verify the configured API endpoint and authentication; requests are not redirected automatically.', outcome: 'unknown' });
     }
     return response;
   }

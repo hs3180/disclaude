@@ -26,7 +26,7 @@ const server = createServer((request, response) => {
   if (/^api\/kernels\/[^/]+\/execute$/.test(route)) return json(200, { kernel_id: route.split('/')[2], requests: [] });
   if (route === 'lab') { response.writeHead(200, { 'content-type': 'text/html' }); response.end('<script id="jupyter-config-data">{"disableRTC":false,"serverSideExecution":true}</script>'); return; }
   if (route === 'api/nbconvert') return json(200, { html: {} });
-  if (route.startsWith('api/contents/')) return json(404, { message: `Parent directory is missing; ${secret}`, token: secret });
+  if (route.startsWith('api/contents/')) return json(mode === 'preflight-denied' ? 403 : 404, { message: `Parent directory is missing; ${secret}`, token: secret });
   return json(404, { message: 'Owned unknown route' });
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -73,6 +73,10 @@ try {
   const hash = await invoke('execute', ['--input-file', input]);
   assert.equal(hash.code, 7, hash.stdout); assert.equal(hash.json.error.code, 'invalid_source_hash');
   assert.equal(hash.json.error.outcome, 'not-submitted'); assert.equal(requests.length, before); cases.push('invalid-hash-zero-requests');
+  mode = 'preflight-denied'; const deniedCreate = await invoke('create', ['--path', 'research/denied.ipynb']);
+  assert.equal(deniedCreate.code, 3, deniedCreate.stdout); assert.equal(deniedCreate.json.error.layer, 'auth');
+  assert.equal(deniedCreate.json.error.status, 403); assert.equal(deniedCreate.json.error.phase, 'create-preflight');
+  assert.equal(requests.at(-1).method, 'GET'); cases.push('create-preflight-auth-rejection');
   mode = 'denied'; const denied = await invoke('check', ['--verbose']);
   assert.equal(denied.code, 3, denied.stdout); assert.equal(denied.json.error.layer, 'auth');
   assert.equal(denied.json.error.status, 401); cases.push('auth-rejection');

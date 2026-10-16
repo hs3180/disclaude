@@ -302,7 +302,9 @@ export async function runNotebookCommand(
     useClient: async (id, namespace, operation) => {
       const resolved = await connection();
       if (resolved.connectionId !== id || resolved.namespace !== namespace) {
-        throw new Error('Project reference belongs to another configured endpoint');
+        throw new JupyterDiagnosticError({ layer: 'auth', code: 'endpoint_reference_mismatch', phase: 'reference',
+          message: 'Project reference belongs to another configured endpoint',
+          hint: 'Verify the selected env-file/endpoint and this Project reference before explicitly relinking it.', outcome: 'not-submitted' });
       }
       signal.throwIfAborted();
       return await operation(resolved.client);
@@ -345,7 +347,8 @@ export async function runNotebookCommand(
           ref.contentPath.split('/').some((s) => ['.', '..'].includes(s)) ||
           ref.contentPath.length > 1024
         ) {
-          throw new Error('Invalid relative Notebook path');
+          throw new JupyterDiagnosticError({ layer: 'schema', code: 'invalid_notebook_path', phase: 'input',
+            message: 'Invalid relative Notebook path', hint: 'Use a relative .ipynb Contents path without traversal or control characters.', outcome: 'not-submitted' });
         }
         const store = new JupyterProjectConfigStore(root);
         const loaded = store.listNotebookReferences();
@@ -371,9 +374,11 @@ export async function runNotebookCommand(
           const route = `api/contents/${ref.contentPath.split('/').map(encodeURIComponent).join('/')}`;
           const response = await client.response(`${route}?content=0`);
           const missing = response.status === 404;
+          if (!missing && !response.ok) { throw await client.responseError(response, 'create-preflight'); }
           await response.body?.cancel();
           if (!missing) {
-            throw new Error('Remote Notebook already exists or cannot be verified');
+            throw new JupyterDiagnosticError({ layer: 'schema', code: 'notebook_already_exists', phase: 'create-preflight', status: response.status,
+              message: 'Remote Notebook already exists; refusing overwrite', hint: 'Choose another path or explicitly link the existing Notebook.', outcome: 'not-submitted' });
           }
           signal.throwIfAborted();
           await client.json(route, 'PUT', {
