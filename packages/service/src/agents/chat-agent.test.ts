@@ -2943,6 +2943,109 @@ describe('ChatAgent (service)', () => {
       } finally { release(); agent.dispose(); }
     });
 
+    describe('background terminal lifecycle', () => {
+      const gate = () => {
+        let release!: () => void;
+        const promise = new Promise<void>(resolve => { release = resolve; });
+        return { promise, release };
+      };
+      const terminalsFor = (agent: ChatAgent, id: string) =>
+        ['completed', 'failed', 'interrupted'].flatMap(state => turnEvents(agent, state))
+          .filter(event => event.sourceMessageId === id);
+
+      it.each([false, true])('delivers natural background output once without resettling its parent, then records a new input (failed=%s)', async failed => {
+        const callbacks = { ...createMockCallbacks(), onTurnResult: vi.fn().mockResolvedValue(undefined) };
+        const agent = new ChatAgent({ chatId: 'background-terminal', callbacks, apiKey: 'key', model: 'model' });
+        (agent as any).isAgentTeamsEnabled = () => false;
+        const parent = gate(), child = gate(), follow = gate();
+        const create = vi.fn(() => ({ handle: { close: vi.fn(), cancel: vi.fn() },
+          iterator: (async function* () {
+            await parent.promise;
+            yield { parsed: { type: 'text', content: '', metadata: { backgroundTask: { id: 'owned-child', state: 'running' } } } };
+            yield { parsed: { type: 'text', content: 'Parent dispatched the child.' } };
+            yield { parsed: { type: 'result', content: '' } };
+            await child.promise;
+            yield { parsed: { type: 'text', content: '', metadata: { backgroundTask: { id: 'owned-child', state: 'completed' } } } };
+            yield { parsed: { type: 'text', content: 'Child completed naturally.' } };
+            yield { parsed: { type: 'result', content: '' } };
+            await follow.promise;
+            yield { parsed: { type: 'text', content: 'Independent follow-up.' } };
+            yield { parsed: { type: 'result', content: '', ...(failed ? { terminatedReason: 'turn_failed' } : {}) } };
+            throw new Error('Owned iterator failure after the completed inputs');
+          })() }));
+        (agent as any).createQueryStream = create;
+        try {
+          await agent.processMessage({ chatId: 'background-terminal', payload: 'start a background child', messageId: 'parent-input', threadRootId: 'parent-root', chatType: 'group' });
+          parent.release();
+          await agent.turnCompleteFor('parent-input');
+          await vi.waitFor(() => expect(callbacks.onDone).toHaveBeenCalledTimes(1));
+          expect(agent.activeBackgroundTaskCount).toBe(1);
+          child.release();
+          await vi.waitFor(() => expect(callbacks.onDone).toHaveBeenCalledTimes(2));
+          expect(agent.activeBackgroundTaskCount).toBe(0);
+          expect(callbacks.sendMessage.mock.calls.filter(([, text]) => text === 'Child completed naturally.')).toEqual([
+            ['background-terminal', 'Child completed naturally.', 'parent-root'],
+          ]);
+          expect(callbacks.onTurnResult).toHaveBeenCalledTimes(2);
+          expect(terminalsFor(agent, 'parent-input')).toEqual([
+            expect.objectContaining({ state: 'completed', sourceMessageId: 'parent-input' }),
+          ]);
+
+          await agent.processMessage({ chatId: 'background-terminal', payload: 'explicit next input', messageId: 'follow-input', threadRootId: 'follow-root' });
+          const completion = agent.turnCompleteFor('follow-input')!;
+          const observed = failed ? expect(completion).rejects.toThrow('Provider turn failed') : expect(completion).resolves.toBeUndefined();
+          follow.release();
+          await observed;
+          await vi.waitFor(() => expect(agent.hasActiveSession()).toBe(false));
+          expect(create).toHaveBeenCalledTimes(1);
+          expect(terminalsFor(agent, 'parent-input')).toHaveLength(1);
+          expect(terminalsFor(agent, 'follow-input')).toEqual([
+            expect.objectContaining({ state: failed ? 'failed' : 'completed', sourceMessageId: 'follow-input' }),
+          ]);
+          for (const id of ['parent-input', 'follow-input']) {
+            const started = turnEvents(agent, 'started').find(event => event.sourceMessageId === id);
+            expect(terminalsFor(agent, id)[0]).toMatchObject({ runId: started.runId, traceId: started.traceId });
+          }
+          expect(callbacks.onTurnResult).toHaveBeenCalledTimes(3);
+          expect(callbacks.onDone).toHaveBeenCalledTimes(3);
+          expect(callbacks.sendMessage.mock.calls.some(([, text, root]) => String(text).includes('Independent follow-up.') && root === 'follow-root')).toBe(true);
+        } finally { parent.release(); child.release(); follow.release(); agent.dispose(); }
+      });
+
+      it.each(['stall', 'missing-reply'] as const)('records the first %s failure but never a second terminal for the same input', async reason => {
+        const callbacks = { ...createMockCallbacks(), onTurnResult: vi.fn().mockResolvedValue(undefined) };
+        // Keep missing-reply detection true after its first undelivered warning.
+        if (reason === 'missing-reply') { callbacks.sendMessage.mockRejectedValueOnce(new Error('Owned delivery failure')); }
+        const agent = new ChatAgent({ chatId: 'background-failure', callbacks, apiKey: 'key', model: 'model' });
+        (agent as any).isAgentTeamsEnabled = () => false;
+        const first = gate(), late = gate(), end = gate();
+        (agent as any).createQueryStream = () => ({ handle: { close: vi.fn(end.release), cancel: vi.fn() },
+          iterator: (async function* () {
+            await first.promise;
+            if (reason === 'missing-reply') { yield { parsed: { type: 'tool_use', content: 'owned tool metadata' } }; }
+            yield { parsed: { type: 'result', content: '', ...(reason === 'stall' ? { terminatedReason: 'stall' } : {}) } };
+            await late.promise;
+            if (reason === 'missing-reply') { yield { parsed: { type: 'tool_use', content: 'late owned tool metadata' } }; }
+            yield { parsed: { type: 'result', content: '', ...(reason === 'stall' ? { terminatedReason: 'stall' } : {}) } };
+            await end.promise;
+          })() });
+        try {
+          await agent.processMessage({ chatId: 'background-failure', payload: 'owned failing work', messageId: 'failure-input' });
+          const completion = expect(agent.turnCompleteFor('failure-input')).rejects.toThrow();
+          first.release();
+          await completion;
+          await vi.waitFor(() => expect(callbacks.onDone).toHaveBeenCalledTimes(1));
+          expect(terminalsFor(agent, 'failure-input')).toEqual([
+            expect.objectContaining({ state: 'failed', sourceMessageId: 'failure-input' }),
+          ]);
+          late.release();
+          await vi.waitFor(() => expect(callbacks.onDone).toHaveBeenCalledTimes(2));
+          expect(terminalsFor(agent, 'failure-input')).toHaveLength(1);
+          expect(callbacks.onTurnResult).toHaveBeenCalledTimes(2);
+        } finally { first.release(); late.release(); end.release(); agent.dispose(); }
+      });
+    });
+
     it('should abort AbortController on reset()', () => {
       const agent = new ChatAgent({
         chatId: 'oc_reset_abort_test',
@@ -6426,5 +6529,122 @@ describe('completion after asynchronous streaming delivery', () => {
     await vi.waitFor(() => expect(cb.onDone).toHaveBeenCalled());
     if (cancelled) { expect(cb.addReaction).not.toHaveBeenCalled(); }
     else { expect(cb.addReaction).toHaveBeenCalledExactlyOnceWith('om-delivered', 'DONE'); }
+  });
+});
+
+
+describe('streaming delivery visibility', () => {
+  function streamingAgent(options: { decline?: boolean; failPatch?: boolean; failSend?: boolean; receipt?: string } = {}) {
+    const callbacks = {
+      ...createMockCallbacks(),
+      getCapabilities: vi.fn(() => ({ supportsStreaming: true, supportsCard: true, supportsThread: true,
+        supportsFile: true, supportsMarkdown: true, supportsMention: true, supportsUpdate: true })),
+      startStreaming: vi.fn().mockResolvedValue(options.decline ? null : 'owned-card'),
+      streamText: options.failPatch ? vi.fn().mockRejectedValue(new Error('Owned patch failure'))
+        : vi.fn().mockResolvedValue(undefined),
+      finalizeStreaming: vi.fn().mockResolvedValue(options.receipt),
+      sendMessage: options.failSend ? vi.fn().mockRejectedValue(new Error('Owned fallback failure'))
+        : vi.fn().mockResolvedValue(undefined),
+    };
+    const agent = new ChatAgent({ chatId: 'owned-visibility', callbacks, apiKey: 'key', model: 'model' });
+    (agent as any).isAgentTeamsEnabled = () => false;
+    (agent as any).chatType = 'p2p';
+    (agent as any).pendingTurnAnchors = ['root-A', 'root-B'];
+    (agent as any).pendingTurnMessageIds = ['input-A', 'input-B'];
+    (agent as any).pendingLifecycleContexts = ['A', 'B'].map(id => ({
+      chatId: 'owned-visibility', sourceMessageId: `input-${id}`, traceId: `trace-${id}`, runId: `run-${id}`,
+    }));
+    const terminals = () => (agent as any).logger.info.mock.calls.map(([row]: [Record<string, unknown>]) => row)
+      .filter((row: Record<string, unknown>) => row.event === 'agent_turn' && row.state !== 'started');
+    return { agent, callbacks, terminals };
+  }
+
+  it.each([undefined, 'owned-receipt'])('records a successfully finalized nonempty card with receipt=%s', async receipt => {
+    const { agent, callbacks, terminals } = streamingAgent({ receipt });
+    let release!: (value: string | undefined) => void;
+    callbacks.finalizeStreaming.mockImplementation(() => new Promise(resolve => { release = resolve; }));
+    const running = (agent as any).processIterator((async function* () {
+      yield { parsed: { type: 'text', content: 'Owned visible answer' } };
+      expect((agent as any).didDeliverUserVisibleThisTurn).toBe(false);
+      yield { parsed: { type: 'result', content: '' } };
+    })());
+    await vi.waitFor(() => expect(callbacks.finalizeStreaming).toHaveBeenCalled());
+    expect((agent as any).didDeliverUserVisibleThisTurn).toBe(false);
+    expect(terminals()).toEqual([]);
+    release(receipt);
+    await running;
+    expect(terminals()).toEqual([expect.objectContaining({ sourceMessageId: 'input-A', user_visible: true })]);
+    expect(callbacks.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('records declined-stream fallback visibility only after send success (fail=%s)', async failSend => {
+    const { agent, callbacks, terminals } = streamingAgent({ decline: true, failSend });
+    await (agent as any).processIterator((async function* () {
+      yield { parsed: { type: 'text', content: 'Owned fallback answer' } };
+      yield { parsed: { type: 'result', content: '' } };
+    })());
+    expect(callbacks.sendMessage).toHaveBeenCalledWith('owned-visibility', 'Owned fallback answer', 'root-A');
+    expect(terminals()).toEqual([expect.objectContaining({ sourceMessageId: 'input-A', user_visible: !failSend })]);
+  });
+
+  it('keeps visibility false when card flush and fallback fail', async () => {
+    const { agent, callbacks, terminals } = streamingAgent({ failPatch: true, failSend: true });
+    await (agent as any).processIterator((async function* () {
+      yield { parsed: { type: 'text', content: 'Owned undelivered answer' } };
+      yield { parsed: { type: 'result', content: '' } };
+    })());
+    expect(callbacks.finalizeStreaming).toHaveBeenCalled();
+    expect(callbacks.sendMessage).toHaveBeenCalled();
+    expect(terminals()).toEqual([expect.objectContaining({ sourceMessageId: 'input-A', user_visible: false })]);
+  });
+
+  it.each(['finalize', 'fallback'])('does not credit a new owner when old %s delivery settles late', async path => {
+    const { agent, callbacks } = streamingAgent({ decline: path === 'fallback' });
+    let release!: () => void;
+    const delivered = new Promise<void>(resolve => { release = resolve; });
+    if (path === 'finalize') { callbacks.finalizeStreaming.mockImplementation(() => delivered); }
+    else { callbacks.sendMessage.mockImplementation(() => delivered); }
+    const running = (agent as any).processIterator((async function* () {
+      yield { parsed: { type: 'text', content: 'Owned old answer' } };
+      yield { parsed: { type: 'result', content: '' } };
+    })());
+    await vi.waitFor(() => expect(path === 'finalize' ? callbacks.finalizeStreaming : callbacks.sendMessage).toHaveBeenCalled());
+    // A reset/new query can replace the owner while a channel promise is pending.
+    (agent as any).sessionGeneration++;
+    (agent as any).activeTurnMessageId = 'new-owner';
+    (agent as any).didDeliverUserVisibleThisTurn = false;
+    release();
+    await running;
+    expect((agent as any).didDeliverUserVisibleThisTurn).toBe(false);
+  });
+
+  it('does not count an empty finish as delivery', async () => {
+    const { agent, callbacks } = streamingAgent();
+    await (agent as any).processIterator((async function* () {
+      yield { parsed: { type: 'status', content: '' } };
+    })());
+    expect(callbacks.startStreaming).not.toHaveBeenCalled();
+    expect(callbacks.finalizeStreaming).not.toHaveBeenCalled();
+    expect(callbacks.sendMessage).not.toHaveBeenCalled();
+    expect((agent as any).didDeliverUserVisibleThisTurn).toBe(false);
+  });
+
+  it('resets successful visibility before a subsequent failed stream', async () => {
+    const { agent, callbacks, terminals } = streamingAgent({ failSend: true });
+    let failPatch = false;
+    callbacks.streamText.mockImplementation(() => failPatch
+      ? Promise.reject(new Error('Owned next-turn failure')) : Promise.resolve());
+    await (agent as any).processIterator((async function* () {
+      yield { parsed: { type: 'text', content: 'Owned first answer' } };
+      yield { parsed: { type: 'result', content: '' } };
+      failPatch = true;
+      yield { parsed: { type: 'text', content: 'Owned second answer' } };
+      yield { parsed: { type: 'result', content: '' } };
+    })());
+    expect(terminals()).toEqual([
+      expect.objectContaining({ sourceMessageId: 'input-A', user_visible: true }),
+      expect.objectContaining({ sourceMessageId: 'input-B', user_visible: false }),
+    ]);
+    expect(callbacks.onDone).toHaveBeenCalledTimes(2);
   });
 });
