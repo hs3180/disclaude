@@ -31,6 +31,8 @@ import {
   ProjectManager,
   type SystemMessage,
   eventBus,
+  channelCredentialErrors,
+  resolveChannelCredential,
 } from '@disclaude/core';
 import crypto from 'node:crypto';
 import { DisclaudeService } from './service.js';
@@ -820,6 +822,8 @@ export function resolveChannelConfigs(
   config: typeof Config
 ): ResolvedChannelConfig[] {
   const entries: ResolvedChannelConfig[] = [];
+  const errors = channelCredentialErrors(rawConfig);
+  if (errors.length) {throw new Error(errors.join('; '));}
 
   // REST channel: configured under channels.rest
   const restChannelConfig = rawConfig.channels?.rest as
@@ -827,6 +831,7 @@ export function resolveChannelConfigs(
         port?: number;
         host?: string;
         fileStorageDir?: string;
+        authToken?: string;
       }
     | undefined;
   if (rawConfig.channels?.rest?.enabled !== false && restChannelConfig?.port && restChannelConfig?.host && restChannelConfig?.fileStorageDir) {
@@ -836,13 +841,19 @@ export function resolveChannelConfigs(
         port: restChannelConfig.port,
         host: restChannelConfig.host,
         fileStorageDir: restChannelConfig.fileStorageDir,
+        ...(restChannelConfig.authToken !== undefined ? { authToken: resolveChannelCredential(rawConfig, 'rest', 'authToken') } : {}),
       },
     });
   }
 
   // Feishu channel: configured under channels.feishu
-  const feishuAppId = config.FEISHU_APP_ID;
-  const feishuAppSecret = config.FEISHU_APP_SECRET;
+  const feishuEnabled = rawConfig.channels?.feishu?.enabled !== false;
+  const feishuAppId = feishuEnabled ? config.FEISHU_APP_ID : '';
+  const feishuAppSecret = feishuEnabled ? config.FEISHU_APP_SECRET : '';
+  if (feishuEnabled && rawConfig.channels?.feishu) {
+    if (!feishuAppId) {throw new Error('channels.feishu.appId is required');}
+    if (!feishuAppSecret) {throw new Error('channels.feishu.appSecret is required; use an external $VARIABLE reference');}
+  }
   if (rawConfig.channels?.feishu?.enabled !== false && feishuAppId && feishuAppSecret) {
     entries.push({
       type: 'feishu',

@@ -32,7 +32,7 @@ features.
    ```yaml
    feishu:
      appId: "cli_..."
-     appSecret: "..."
+     appSecret: $FEISHU_APP_SECRET
    ```
 
    ```sh
@@ -168,3 +168,5 @@ the existing defaults rather than interpreting zero as a measured safe value.
 Keep credentials and tenant-specific measurements outside the repository.
 Measured limits vary by tenant and should not be treated as a universal
 service quota.
+
+Channel credential sources and migration: [channel-credentials.md](channel-credentials.md).
