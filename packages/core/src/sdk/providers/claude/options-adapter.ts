@@ -11,6 +11,7 @@ import type { ClaudeQueryOptions } from './provider.js';
 import { createClaudeToolServer, claudeToolNames, CLAUDE_HOST_SERVER } from './tool-adapter.js';
 import * as path from 'node:path';
 import { Config } from '../../../config/index.js';
+import { installedDiagnosticsPlugin } from '../../../skills/diagnostics-plugin.js';
 
 /**
  * 适配统一选项为 Claude SDK 选项
@@ -50,7 +51,11 @@ export function adaptOptions(
   // replacing the copy-on-start materialization. The plugin loads at
   // subprocess init (before any query()), so the first-message race is gone.
   // Path MUST be absolute (relative resolves against SDK cwd = workspace).
-  sdkOptions.plugins = [{ type: 'local', path: path.resolve(Config.getBuiltinsDir()) }];
+  const diagnostics = installedDiagnosticsPlugin(options.projectRoot ?? options.cwd ?? process.cwd());
+  sdkOptions.plugins = [
+    { type: 'local', path: path.resolve(Config.getBuiltinsDir()) },
+    ...(diagnostics ? [{ type: 'local', path: diagnostics }] : []),
+  ];
 
   if (options.includePartialMessages !== undefined) {
     sdkOptions.includePartialMessages = options.includePartialMessages;

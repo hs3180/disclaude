@@ -7,6 +7,8 @@ allowed-tools: Bash, Read, Grep, Glob
 # Log Diagnostics
 
 Diagnose the disclaude launchd service by analyzing pino JSON logs.
+This optional plugin is for Disclaude service issues only. Do not use it for
+generic log analysis or unrelated services.
 
 ## Log Locations
 

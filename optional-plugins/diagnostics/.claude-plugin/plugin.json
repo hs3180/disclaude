@@ -1,0 +1,5 @@
+{
+  "name": "disclaude-diagnostics",
+  "version": "1.0.0",
+  "description": "Optional first-party guidance for diagnosing Disclaude service logs and health."
+}

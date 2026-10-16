@@ -48,16 +48,17 @@ export class SkillsRegistry {
   private cachedFingerprint?: string;
 
   constructor(
-    private readonly sources: readonly SkillSource[],
+    private readonly sources: readonly SkillSource[] | (() => readonly SkillSource[]),
     private readonly referenceRoot?: string,
   ) {}
 
   resolve(): SkillsRegistryResolution {
+    const sources = typeof this.sources === 'function' ? this.sources() : this.sources;
     const diagnostics: SkillDiagnostic[] = [];
-    const candidates = this.sources.flatMap((source) => this.discover(source, diagnostics));
+    const candidates = sources.flatMap((source) => this.discover(source, diagnostics));
     const fingerprint = createHash('sha256')
       .update(candidates.map((candidate) => candidate.fingerprint).sort().join('\n'))
-      .update(this.sources.map((source) => `${source.kind}:${resolve(source.root)}`).sort().join('\n'))
+      .update(sources.map((source) => `${source.kind}:${resolve(source.root)}`).sort().join('\n'))
       .update(JSON.stringify(diagnostics))
       .digest('hex');
     if (this.cached && this.cachedFingerprint === fingerprint) {return this.cached;}
