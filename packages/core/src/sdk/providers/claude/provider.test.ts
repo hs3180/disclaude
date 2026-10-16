@@ -5,6 +5,10 @@
  * Issue #1617: Phase 2 - ClaudeSDKProvider class test coverage.
  */
 
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import type { SpawnedProcess, SpawnOptions } from '@anthropic-ai/claude-agent-sdk';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -1555,5 +1559,75 @@ describe('ClaudeSDKProvider', () => {
       // Should still be at baseline, not below
       expect(process.listenerCount('exit')).toBe(exitListenersBefore);
     });
+  });
+});
+
+function replayChildAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; }
+  catch (error) { return (error as NodeJS.ErrnoException).code !== 'ESRCH'; }
+}
+
+describe('Claude replay admission with a real disconnected child', () => {
+  it.skipIf(process.platform === 'win32')('does not replay an accepted input after a hidden side effect and confirms child exit', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'claude-replay-side-effect-'));
+    const marker = join(root, 'effects.jsonl');
+    const program = join(root, 'child.cjs');
+    await writeFile(program, `const fs = require('node:fs');
+fs.appendFileSync(process.argv[2], JSON.stringify({ pid: process.pid, at: Date.now() }) + '\\n');
+process.on('SIGTERM', () => {});
+process.stdout.write('READY\\n');
+setInterval(() => {}, 1000);
+`);
+    const children: ChildProcessWithoutNullStreams[] = [];
+    const exits: Promise<unknown>[] = [];
+    let overlap = false;
+    mockQuery.mockReset();
+    mockQuery.mockImplementation(({ prompt, options }: {
+      prompt: AsyncGenerator<unknown>;
+      options: { env: NodeJS.ProcessEnv; spawnClaudeCodeProcess?: (options: SpawnOptions) => SpawnedProcess };
+    }) => {
+      const attempt = mockQuery.mock.calls.length;
+      return Object.assign((async function* () {
+        await prompt.next();
+        overlap ||= children.some(child => child.pid && replayChildAlive(child.pid));
+        const command: SpawnOptions = { command: process.execPath, args: [program, marker], cwd: root,
+          env: options.env, signal: new AbortController().signal };
+        const child = (options.spawnClaudeCodeProcess
+          ? options.spawnClaudeCodeProcess(command)
+          : spawn(command.command, command.args, { cwd: root, env: command.env, stdio: 'pipe' })) as ChildProcessWithoutNullStreams;
+        children.push(child);
+        exits.push(new Promise(resolve => child.once('exit', (code, signal) => resolve({ code, signal }))));
+        await new Promise<void>((resolve, reject) => {
+          child.stdout.once('data', () => resolve());
+          child.once('error', reject);
+        });
+        if (attempt === 1) { throw Object.assign(new Error('ECONNRESET'), { code: 'ECONNRESET' }); }
+        yield { type: 'assistant', message: { content: [{ type: 'text', text: 'replayed' }] } };
+      })(), { close: () => { throw new Error('Control transport is disconnected'); } });
+    });
+    const provider = new ClaudeSDKProvider();
+    const stream = provider.queryStream((async function* () { yield { role: 'user', content: 'owned side-effect fixture' }; })(), {
+      settingSources: [], cwd: root,
+    });
+    try {
+      let failed: unknown;
+      try { for await (const message of stream.iterator) { void message; } }
+      catch (error) { failed = error; }
+      const effects = (await readFile(marker, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+      const snapshot = { queryAttempts: mockQuery.mock.calls.length, effects, overlap,
+        livePids: children.filter(child => child.pid && replayChildAlive(child.pid)).map(child => child.pid) };
+      console.log(JSON.stringify({ replaySafetyFixture: snapshot }));
+      expect(failed).toBeInstanceOf(Error);
+      expect(snapshot.queryAttempts).toBe(1);
+      expect(snapshot.effects).toHaveLength(1);
+      expect(snapshot.overlap).toBe(false);
+      expect(snapshot.livePids).toEqual([]);
+    } finally {
+      try { stream.handle.close(); } catch { /* The control transport deliberately fails. */ }
+      for (const child of children) { child.kill('SIGKILL'); }
+      await Promise.all(exits);
+      await rm(root, { recursive: true, force: true });
+      provider.dispose();
+    }
   });
 });
