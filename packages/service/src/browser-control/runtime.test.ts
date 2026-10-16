@@ -129,7 +129,8 @@ describe('transparent browser-use command coordination', () => {
     const op = { inspect: true, stderr: 'upstream stderr', code: 7 };
     const result = await f.run(op, ['argument with spaces', '--flag']).result;
     expect(result.code).toBe(7);
-    expect(result.stderr).toBe('upstream stderr');
+    expect(result.stderr).toContain('upstream stderr');
+    expect(result.stderr).toContain('"stage":"unknown"');
     expect(JSON.parse(result.stdout)).toMatchObject({ args: ['argument with spaces', '--flag'], input: JSON.stringify(op), cwd: realpathSync(f.root),
       endpoint: f.data.browserEnv.BU_CDP_WS, runtime: f.data.directory });
     expect(browserStatus(f.path).state).toBe('interrupted');
