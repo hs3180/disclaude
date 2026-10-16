@@ -83,12 +83,21 @@ export function adaptSDKMessage(message: SDKMessage, taskRegistry?: TaskSubjectR
         metadata.phase = 'commentary';
       }
 
+      // #5377: when the same SDK message carries the tool call, the co-located
+      // text is the round's decision narration. The raw trace stays private,
+      // so the narration travels as metadata for the service to publish.
+      if (toolBlocks.length > 0 && assistantText.length > 0) {
+        metadata.narration = assistantText;
+      }
+
       if (assistantText.length > 0) {
         contentParts.push(assistantText);
       }
 
       return {
-        type: toolBlocks.length > 0 ? 'tool_use' : 'text',
+        // Child assistant text is the Agent tool's private working output.
+        // Only the parent reply may become the user's answer (#5377/#5330).
+        type: message.parent_tool_use_id ? 'tool_progress' : toolBlocks.length > 0 ? 'tool_use' : 'text',
         content: contentParts.join('\n'),
         role: 'assistant',
         metadata,

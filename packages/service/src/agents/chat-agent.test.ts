@@ -3485,6 +3485,96 @@ describe('ChatAgent (service)', () => {
   });
 
   describe('group assistant delivery (#5239)', () => {
+    it.each([false, true])('streams decision narration in p2p while tool traces stay private, finalOnly=%s', async finalReplyOnly => {
+      const callbacks = {
+        ...createMockCallbacks(), finalReplyOnly,
+        getCapabilities: vi.fn(() => ({ supportsStreaming: true, supportsCard: true, supportsThread: true,
+          supportsFile: true, supportsMarkdown: true, supportsMention: true, supportsUpdate: true })),
+        startStreaming: vi.fn(() => Promise.resolve('owned-stream')),
+        streamText: vi.fn(() => Promise.resolve()), finalizeStreaming: vi.fn(() => Promise.resolve('owned-final')),
+      };
+      const agent = new ChatAgent({ chatId: 'owned-stream-chat', callbacks, apiKey: 'test', model: 'test' });
+      (agent as any).chatType = 'p2p';
+      (agent as any).isAgentTeamsEnabled = vi.fn(() => false);
+      await (agent as any).processIterator((async function* () {
+        yield { parsed: { type: 'text', content: '先检查现有文件，避免覆盖已有修改。' } };
+        yield { parsed: { type: 'tool_use', content: 'private command', metadata: { toolName: 'Bash' } } };
+        yield { parsed: { type: 'tool_progress', content: 'private child answer' } };
+        yield { parsed: { type: 'tool_result', content: 'private result' } };
+        yield { parsed: { type: 'text', content: 'Final answer' } };
+        yield { parsed: { type: 'result', content: '' } };
+      })());
+      const texts = callbacks.sendMessage.mock.calls.map(([, text]) => text);
+      expect(texts).toEqual(finalReplyOnly ? ['Final answer'] : []);
+      expect(JSON.stringify(callbacks.sendMessage.mock.calls)).not.toContain('private');
+      expect(callbacks.startStreaming).toHaveBeenCalledTimes(finalReplyOnly ? 0 : 1);
+      if (!finalReplyOnly) {
+        // Narration streams into the same card the final reply builds.
+        expect(callbacks.streamText).toHaveBeenCalledWith('owned-stream', '先检查现有文件，避免覆盖已有修改。\nFinal answer');
+        expect(callbacks.finalizeStreaming).toHaveBeenCalledWith('owned-stream');
+      }
+    });
+
+    it.each(['group', 'topic'])('delivers decision narration live in %s while raw traces stay private (#5377)', async chatType => {
+      const { agent, callbacks } = ownedAgent(chatType);
+      (agent as any).pendingTurnAnchors = ['root-A', 'root-B'];
+      (agent as any).pendingTurnMessageIds = ['source-A', 'source-B'];
+      const onTurnResult = vi.fn().mockResolvedValue(undefined);
+      (agent as any).callbacks.onTurnResult = onTurnResult;
+      await (agent as any).processIterator((async function* () {
+        yield { parsed: { type: 'text', content: '先检查现有文件，避免覆盖已有修改。' } };
+        yield { parsed: { type: 'tool_use', content: '[tool_use] Bash: cat /private/owned-secret',
+          metadata: { toolName: 'Bash' } } };
+        expect(callbacks.sendMessage).toHaveBeenCalledWith('owned-delivery', '先检查现有文件，避免覆盖已有修改。', 'root-A');
+        expect(onTurnResult).not.toHaveBeenCalled();
+        for (let i = 0; i < 50; i++) {
+          yield { parsed: { type: 'tool_progress', content: 'owned-secret output' } };
+        }
+        expect(callbacks.sendMessage).toHaveBeenCalledTimes(1);
+        yield { parsed: { type: 'tool_result', content: 'owned-secret result' } };
+        yield { parsed: { type: 'text', content: 'Answer A', metadata: { phase: 'final_answer' } } };
+        yield { parsed: { type: 'result', content: '' } };
+        yield { parsed: { type: 'tool_use', content: '[tool_use] custom/owned-secret',
+          metadata: { toolName: 'custom/owned-secret', narration: '已确认缺少权限，改为核验可见元数据。' } } };
+        yield { parsed: { type: 'text', content: 'Answer B', metadata: { phase: 'final_answer' } } };
+        yield { parsed: { type: 'result', content: '' } };
+      })());
+      const messages = callbacks.sendMessage.mock.calls;
+      expect(messages.map(([, text]) => text)).toEqual([
+        '先检查现有文件，避免覆盖已有修改。', 'Answer A', '已确认缺少权限，改为核验可见元数据。', 'Answer B',
+      ]);
+      expect(messages.slice(0, 2).every(([, , root]) => root === 'root-A')).toBe(true);
+      expect(messages.slice(2).every(([, , root]) => root === 'root-B')).toBe(true);
+      expect(JSON.stringify(messages)).not.toContain('owned-secret');
+      expect(onTurnResult.mock.calls.map(([result]) => result)).toEqual([
+        { success: true, text: 'Answer A', truncated: false },
+        { success: true, text: 'Answer B', truncated: false },
+      ]);
+    });
+
+    it('does not let narration hide a missing tool reply, or fail a successful turn when narration delivery fails', async () => {
+      const { agent, callbacks } = ownedAgent();
+      const onTurnResult = vi.fn().mockResolvedValue(undefined);
+      (agent as any).callbacks.onTurnResult = onTurnResult;
+      await (agent as any).processIterator((async function* () {
+        yield { parsed: { type: 'tool_use', content: 'private', metadata: { narration: '正在核验。' } } };
+        yield { parsed: { type: 'result', content: '' } };
+      })());
+      expect(callbacks.sendMessage.mock.calls.some(([, text]) => String(text).includes('未收到最终回复'))).toBe(true);
+      expect(onTurnResult).toHaveBeenCalledWith({ success: false, text: '', truncated: false });
+
+      const next = ownedAgent();
+      const completed = vi.fn().mockResolvedValue(undefined);
+      (next.agent as any).callbacks.onTurnResult = completed;
+      next.callbacks.sendMessage.mockRejectedValueOnce(new Error('Owned narration delivery failure'));
+      await (next.agent as any).processIterator((async function* () {
+        yield { parsed: { type: 'tool_use', content: 'private', metadata: { narration: '正在核验。' } } };
+        yield { parsed: { type: 'text', content: 'Delivered answer' } };
+        yield { parsed: { type: 'result', content: '' } };
+      })());
+      expect(completed).toHaveBeenCalledWith({ success: true, text: 'Delivered answer', truncated: false });
+    });
+
     it.each([false, true])('delivers completed commentary before the next tool, separately from final output, when its send fails=%s', async failProgress => {
       const callbacks = createMockCallbacks();
       if (failProgress) { callbacks.sendMessage.mockRejectedValueOnce(new Error('owned progress failure')); }
@@ -3558,24 +3648,23 @@ describe('ChatAgent (service)', () => {
       return { agent, callbacks };
     }
 
-    it.each(['group', 'topic'])('waits for a %s text round to finish and discards text followed by tools', async chatType => {
+    it.each(['group', 'topic'])('delivers %s text rounds followed by tools as live decision narration', async chatType => {
       const { agent, callbacks } = ownedAgent(chatType);
       const iterator = (async function* () {
         yield { parsed: { type: 'text', content: 'opaque pre-tool narration' } };
-        expect(callbacks.sendMessage).not.toHaveBeenCalled();
         yield { parsed: { type: 'tool_use', content: 'Read', metadata: { toolName: 'Read' } } };
+        expect(callbacks.sendMessage).toHaveBeenCalledExactlyOnceWith('owned-delivery', 'opaque pre-tool narration', expect.anything());
         yield { parsed: { type: 'tool_result', content: 'read result' } };
         yield { parsed: { type: 'text', content: 'opaque verification narration' } };
-        expect(callbacks.sendMessage).not.toHaveBeenCalled();
         yield { parsed: { type: 'tool_use', content: 'Verify' } };
+        expect(callbacks.sendMessage).toHaveBeenCalledTimes(2);
         yield { parsed: { type: 'tool_result', content: 'verified' } };
         yield { parsed: { type: 'text', content: 'Sent and verified.' } };
         yield { parsed: { type: 'text', content: '\n\nFinal count: 14.' } };
-        expect(callbacks.sendMessage).not.toHaveBeenCalled();
         yield { parsed: { type: 'result', content: '✅ Complete' } };
       })();
       await (agent as any).processIterator(iterator);
-      expect(callbacks.sendMessage).toHaveBeenCalledExactlyOnceWith('owned-delivery', 'Sent and verified.\n\nFinal count: 14.', expect.anything());
+      expect(callbacks.sendMessage.mock.calls.map(([, text]) => text)).toEqual(['opaque pre-tool narration', 'opaque verification narration', 'Sent and verified.\n\nFinal count: 14.']);
     });
 
     it('delivers each completed public commentary as its own message before the final answer', async () => {

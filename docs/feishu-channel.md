@@ -82,6 +82,13 @@ Disclaude streams replies through Feishu CardKit. Update pacing and retry
 handling are managed by the service; a measured tenant limit is not a universal
 Feishu guarantee.
 
+Progress during a turn is the agent's own decision narration: assistant text
+produced alongside tool calls is delivered live in private chats, groups and
+topics, as its own message that never replaces the final reply. What stays
+private is the per-step detail — thinking, raw tool arguments and outputs, and
+child-agent frames (configurable debug forwarding is unchanged).
+Final-reply-only workflows receive no narration.
+
 `disclaude channel send_card --chat <chat-id> --card-file ./card.json` accepts
 legacy cards and static Card JSON 2.0. A minimal 2.0 card is:
 
