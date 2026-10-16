@@ -2189,25 +2189,37 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // normalization), so an unset value degrades to non-streaming
     // (fail-safe: unknown type → no card).
     const streamCapabilities = this.callbacks.getCapabilities?.(chatId);
-    const { startStreaming, finalizeStreaming } = this.callbacks;
+    const { startStreaming, streamText, finalizeStreaming } = this.callbacks;
+    let streamTextDelivered = false;
     const streamDriver =
       !!streamCapabilities?.supportsStreaming &&
       this.chatType === 'p2p' &&
       !!startStreaming &&
-      !!this.callbacks.streamText &&
+      !!streamText &&
       !!finalizeStreaming
         ? new StreamingReplyDriver({
             chatId,
             parentMessageId: resolveReplyThreadRoot() ?? undefined,
-            startStreaming: (cid) => startStreaming(cid, resolveReplyThreadRoot()),
-            streamText: this.callbacks.streamText,
+            startStreaming: (cid) => {
+              streamTextDelivered = false;
+              return startStreaming(cid, resolveReplyThreadRoot());
+            },
+            streamText: async (id, content) => {
+              streamTextDelivered = false;
+              await streamText(id, content);
+              streamTextDelivered = Boolean(content.trim());
+            },
             finalizeStreaming: async (id) => {
               const receipt = await finalizeStreaming(id);
               finalDeliveryId = typeof receipt === 'string' ? receipt : undefined;
+              // A buffered push or an empty finish does not prove delivery.
+              // Successful channels may return void instead of a message ID.
+              if (streamTextDelivered) { this.didDeliverUserVisibleThisTurn = true; }
             },
             sendMessage: async (cid, content, threadRoot) => {
               const receipt = await this.callbacks.sendMessage(cid, content, threadRoot);
               finalDeliveryId = typeof receipt === 'string' ? receipt : undefined;
+              if (content.trim()) { this.didDeliverUserVisibleThisTurn = true; }
             },
             logger: this.logger,
           })
