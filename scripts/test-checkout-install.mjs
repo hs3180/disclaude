@@ -13,6 +13,12 @@ assert(
 );
 const exec = promisify(execFile);
 const temp = mkdtempSync(join(tmpdir(), 'disclaude-checkout-install-'));
+const installEnv = {
+  ...process.env,
+  DISCLAUDE_INSTALL_TEST_NPM_CACHE: process.env.DISCLAUDE_INSTALL_TEST_NPM_CACHE
+    ? resolve(process.env.DISCLAUDE_INSTALL_TEST_NPM_CACHE)
+    : join(temp, 'npm-cache'),
+};
 const distribution = join(temp, 'distribution');
 const report = { suite: 'package-install', status: 'preparing', checks: [], cleanup: 'pending' };
 let cleanupSafe = true;
@@ -64,7 +70,7 @@ function assertDockerDeploymentContract(candidate) {
 
 async function run(command, args, cwd = resolve('.'), timeout = 240_000) {
   try {
-    const result = await exec(command, args, { cwd, encoding: 'utf8', timeout });
+    const result = await exec(command, args, { cwd, encoding: 'utf8', timeout, env: installEnv });
     return result.stdout;
   } catch (error) {
     // A timeout may leave descendants using the archive. The outer owned-process

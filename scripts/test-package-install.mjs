@@ -71,7 +71,11 @@ async function verifyPackage() {
   if (prefixFromEnv) env.npm_config_prefix = prefix;
   const plainInstall = process.argv.includes('--plain-install');
   assert(!plainInstall || prefixFromEnv, '--plain-install requires an isolated prefix from the environment');
-  env.npm_config_cache = join(temp, 'cache');
+  // Share npm's content-addressed download cache, never an installed prefix or
+  // node_modules. Each Node/npm pair still resolves and installs independently.
+  env.npm_config_cache = process.env.DISCLAUDE_INSTALL_TEST_NPM_CACHE
+    ? resolve(process.env.DISCLAUDE_INSTALL_TEST_NPM_CACHE)
+    : join(temp, 'cache');
   env.npm_config_userconfig = join(temp, 'empty.npmrc');
   function run(command, args) {
     const result = spawnSync(command, args, {
