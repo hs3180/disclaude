@@ -137,6 +137,9 @@ describe('optional first-party diagnostics plugin', () => {
         expect(() => manageDiagnosticsPlugin(command, root, builtin)).toThrow();
         expect(existsSync(plugin)).toBe(true);
       }
+      expect(diagnosticsPluginManifest(root)).toBe('');
+      expect(codexSkillsRegistry(root, builtin).resolve().manifest).not.toContain('diagnose-logs');
+      expect(adaptOptions({ cwd: root, settingSources: [] }).plugins).toHaveLength(1);
     }
   );
 
@@ -150,4 +153,22 @@ describe('optional first-party diagnostics plugin', () => {
     mkdirSync(join(root, '.disclaude/plugins/.diagnostics.lock'), { recursive: true });
     expect(() => manageDiagnosticsPlugin('install', root, builtin)).toThrow('already in progress');
   });
+
+  it.each(['.disclaude', '.disclaude/plugins', '.disclaude/plugins/diagnostics'])(
+    'does not discover another Project through a symlink at %s',
+    (boundary) => {
+      const projectA = project();
+      const projectB = project();
+      const registry = codexSkillsRegistry(projectA, builtin);
+      expect(registry.resolve().manifest).not.toContain('diagnose-logs');
+      manageDiagnosticsPlugin('install', projectB, builtin);
+      mkdirSync(join(projectA, boundary, '..'), { recursive: true });
+      symlinkSync(join(projectB, boundary), join(projectA, boundary));
+      expect(() => manageDiagnosticsPlugin('install', projectA, builtin)).toThrow();
+      expect(registry.resolve().manifest).not.toContain('diagnose-logs');
+      expect(diagnosticsPluginManifest(projectA)).toBe('');
+      expect(adaptOptions({ cwd: projectA, settingSources: [] }).plugins).toHaveLength(1);
+      expect(diagnosticsPluginManifest(projectB)).toContain('diagnose-logs');
+    }
+  );
 });

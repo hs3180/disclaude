@@ -25,23 +25,41 @@ interface Receipt {
 }
 
 export function diagnosticsPluginRoot(projectRoot: string): string {
-  return join(resolve(projectRoot), '.disclaude', 'plugins', 'diagnostics');
+  let project = resolve(projectRoot);
+  try {
+    project = realpathSync(project);
+  } catch {
+    /* An absent Project has no installation. */
+  }
+  return join(project, '.disclaude', 'plugins', 'diagnostics');
 }
 
 /** Missing optional resources never add prompts or prevent normal startup. */
 export function installedDiagnosticsPlugin(projectRoot: string): string | undefined {
-  const root = diagnosticsPluginRoot(projectRoot);
-  return FILES.every((file) => existsSync(join(root, file))) ? root : undefined;
+  try {
+    const project = realpathSync(resolve(projectRoot));
+    const root = diagnosticsPluginRoot(project);
+    for (const directory of [project, join(project, '.disclaude'), dirname(root), root]) {
+      assertDirectory(directory);
+    }
+    assertOwned(root);
+    return root;
+  } catch {
+    // A missing, edited or redirected optional installation must not grant
+    // another Project's instructions or prevent ordinary service startup.
+    return undefined;
+  }
 }
 
 export function diagnosticsPluginManifest(
   projectRoot: string,
   executionRoot = projectRoot
 ): string {
-  return new SkillsRegistry(
-    [{ kind: 'user', root: diagnosticsPluginRoot(projectRoot) }],
-    executionRoot
-  ).resolve().manifest;
+  const root = installedDiagnosticsPlugin(projectRoot);
+  if (!root) {
+    return '';
+  }
+  return new SkillsRegistry([{ kind: 'user', root }], executionRoot).resolve().manifest;
 }
 
 function sha256(content: string): string {

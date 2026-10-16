@@ -63,7 +63,9 @@ existing install is not silently replaced by a Disclaude upgrade. Repeating
 install/update with identical content and removing an absent plugin are safe.
 Update and removal verify the CLI's installation receipt and refuse edited,
 extra, incomplete or symlinked content. Preserve such content and move the
-plugin directory aside manually before reinstalling. Commands return one JSON
+plugin directory aside manually before reinstalling. All backends ignore
+invalid or redirected installations during discovery; missing optional plugins
+never prevent ordinary service startup. Commands return one JSON
 result with `ok: true`, or `ok: false` and a nonzero exit status. `plugins list`
 reports availability and installed presence without creating files.
 

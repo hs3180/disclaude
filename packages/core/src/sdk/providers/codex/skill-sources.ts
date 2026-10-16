@@ -1,14 +1,17 @@
 import { join, resolve } from 'node:path';
 import { SkillsRegistry } from '../../../skills/index.js';
-import { diagnosticsPluginRoot } from '../../../skills/diagnostics-plugin.js';
+import { installedDiagnosticsPlugin } from '../../../skills/diagnostics-plugin.js';
 
 /** Shared Codex source layout; transports must not implement their own scan. */
 export function codexSkillsRegistry(workspaceRoot: string, builtinRoot: string, executionRoot = workspaceRoot): SkillsRegistry {
   const workspace = resolve(workspaceRoot);
-  return new SkillsRegistry([
-    { kind: 'project', root: workspace },
-    { kind: 'project', root: join(workspace, '.disclaude') },
-    { kind: 'user', root: diagnosticsPluginRoot(workspace) },
-    { kind: 'builtin', root: builtinRoot },
-  ], executionRoot);
+  return new SkillsRegistry(() => {
+    const diagnostics = installedDiagnosticsPlugin(workspace);
+    return [
+      { kind: 'project', root: workspace },
+      { kind: 'project', root: join(workspace, '.disclaude') },
+      ...(diagnostics ? [{ kind: 'user' as const, root: diagnostics }] : []),
+      { kind: 'builtin', root: builtinRoot },
+    ];
+  }, executionRoot);
 }
