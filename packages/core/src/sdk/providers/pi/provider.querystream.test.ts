@@ -25,6 +25,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { manageDiagnosticsPlugin } from '../../../skills/diagnostics-plugin.js';
 
 // --- Fake pi-agent-core module ------------------------------------------------
 // vi.mock is hoisted; the state it closes over must be hoisted too.
@@ -258,6 +262,39 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
     });
     // agent_end maps to the result message (see event-adapter).
     expect(messages.map((m) => m.type)).toContain('result');
+  });
+
+  it('discovers the installed optional skill from Pi execution cwd while other Projects stay clean', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'pi-diagnostics-'));
+    try {
+      const project = join(root, 'selected'), other = join(root, 'other'), execution = join(project, 'nested');
+      mkdirSync(execution, { recursive: true }); mkdirSync(other);
+      manageDiagnosticsPlugin('install', project, resolve('.'));
+      await collect(provider.queryStream(inputs(userInput('hi')), { ...baseOptions(), cwd: execution,
+        projectRoot: project, systemPrompt: 'be terse' }).iterator);
+      const prompt = (fakeState.ctorOptions as { initialState: { systemPrompt: string } }).initialState.systemPrompt;
+      expect(prompt).toContain('be terse'); expect(prompt).toContain('diagnose-logs');
+      const reference = /\[diagnose-logs\]\(([^)]+)\)/.exec(prompt)?.[1];
+      if (!reference) {throw new Error('Pi manifest omitted the installed skill reference');}
+      expect(readFileSync(resolve(execution, decodeURIComponent(reference)), 'utf8')).toContain('Disclaude service issues only');
+      await collect(provider.queryStream(inputs(userInput('hi')), { ...baseOptions(), cwd: other, systemPrompt: 'ordinary' }).iterator);
+      expect(fakeState.ctorOptions).toMatchObject({ initialState: { systemPrompt: 'ordinary' } });
+      manageDiagnosticsPlugin('remove', project, resolve('.'));
+      await collect(provider.queryStream(inputs(userInput('hi')), { ...baseOptions(), cwd: execution, projectRoot: project }).iterator);
+      expect(fakeState.ctorOptions).toMatchObject({ initialState: { systemPrompt: '' } });
+    } finally {rmSync(root, { recursive: true, force: true });}
+  });
+
+  it('does not discover diagnostics through a cross-Project symlink ancestor', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'pi-diagnostics-link-'));
+    try {
+      const owner = join(root, 'owner'), other = join(root, 'other'); mkdirSync(owner); mkdirSync(other);
+      manageDiagnosticsPlugin('install', owner, resolve('.'));
+      mkdirSync(join(other, '.disclaude'));
+      symlinkSync(join(owner, '.disclaude/plugins'), join(other, '.disclaude/plugins'));
+      await collect(provider.queryStream(inputs(userInput('hi')), { ...baseOptions(), cwd: other }).iterator);
+      expect(fakeState.ctorOptions).toMatchObject({ initialState: { systemPrompt: '' } });
+    } finally {rmSync(root, { recursive: true, force: true });}
   });
 
   // -------------------------------------------------------------------------
