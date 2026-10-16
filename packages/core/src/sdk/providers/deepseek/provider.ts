@@ -24,6 +24,7 @@ import {
 } from './native-profile.js';
 import { DshSessionBindings } from './session-bindings.js';
 import { resolveDshCompaction } from './compaction.js';
+import { diagnosticsPluginManifest } from '../../../skills/diagnostics-plugin.js';
 
 const logger = createLogger('DeepSeekHarnessProvider');
 
@@ -209,6 +210,8 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
     const descriptors = prepareTools(options.tools);
     const tools = new Map(descriptors.map((tool) => [tool.name, tool]));
     const cwd = resolve(options.cwd ?? process.cwd());
+    const diagnostics = diagnosticsPluginManifest(options.projectRoot ?? cwd, cwd);
+    const systemPrompt = diagnostics ? [options.systemPrompt, diagnostics].filter(Boolean).join('\n\n') : options.systemPrompt;
     const binding = this.bindings.reserve(options.sessionKey, cwd);
     if (this.active.has(binding.sessionId)) {
       throw new Error('Native DSH conversation already has an active query');
@@ -308,7 +311,7 @@ export class DeepSeekHarnessProvider implements IAgentSDKProvider {
             ...(options.reasoningEffort === undefined
               ? {}
               : { reasoningEffort: options.reasoningEffort }),
-            ...(options.systemPrompt === undefined ? {} : { systemPrompt: options.systemPrompt }),
+            ...(systemPrompt === undefined ? {} : { systemPrompt }),
             tools: descriptors.map(({ name, description, inputSchema, outputSchema }) => ({
               name,
               description,

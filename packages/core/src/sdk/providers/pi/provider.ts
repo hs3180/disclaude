@@ -18,6 +18,7 @@ import { createLogger } from '../../../utils/logger.js';
 import { adaptPiEvent, type PiAgentEvent } from './event-adapter.js';
 import { adaptPiTools } from './tool-adapter.js';
 import { adaptPiOptions } from './options-adapter.js';
+import { diagnosticsPluginManifest } from '../../../skills/diagnostics-plugin.js';
 import { loadPiRuntime, toPiUserMessage, type PiAgentOptions } from './pi-runtime.js';
 
 const logger = createLogger('PiAgentProvider');
@@ -278,7 +279,9 @@ export class PiAgentProvider implements IAgentSDKProvider {
 
       const inputIterator = input[Symbol.asyncIterator]();
 
-      const adaptedOptions = adaptPiOptions(options);
+      const executionRoot = options.cwd ?? process.cwd();
+      const diagnostics = diagnosticsPluginManifest(options.projectRoot ?? executionRoot, executionRoot);
+      const adaptedOptions = adaptPiOptions(options, diagnostics);
       const inherited = new Set((production?.tools ?? []).map((tool) => tool.name));
       for (const tool of tools) {
         if (inherited.has(tool.name)) {

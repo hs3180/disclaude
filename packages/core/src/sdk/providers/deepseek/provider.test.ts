@@ -1,6 +1,7 @@
 import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { manageDiagnosticsPlugin } from '../../../skills/diagnostics-plugin.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DeepSeekHarnessProvider } from './provider.js';
 import type { ToolDefinition } from '../../tools.js';
@@ -141,6 +142,26 @@ async function* oneInput() {
 }
 
 describe('DeepSeekHarnessProvider (Issue #4741)', () => {
+  it('exposes diagnostics instructions only after explicit Project installation', async () => {
+    const fixture = await sdkFixture();
+    const provider = new DeepSeekHarnessProvider({ binary: fixture.binary, dshHome: fixture.dir, mode: 'minimal' });
+    try {
+      const options = { settingSources: [], cwd: fixture.dir, systemPrompt: 'Original context' };
+      await collect(provider.queryStream(oneInput(), options).iterator);
+      let requests = (await readFile(join(fixture.dir, 'requests.jsonl'), 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+      expect(requests.find((request) => request.method === 'initialize').params.systemPrompt).toBe('Original context');
+      manageDiagnosticsPlugin('install', fixture.dir, resolve('.'));
+      await collect(provider.queryStream(oneInput(), options).iterator);
+      requests = (await readFile(join(fixture.dir, 'requests.jsonl'), 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+      const prompt = requests.filter((request) => request.method === 'initialize').at(-1).params.systemPrompt;
+      expect(prompt).toContain('Original context');
+      expect(prompt).toContain('[diagnose-logs](.disclaude/plugins/diagnostics/skills/diagnose-logs/SKILL.md)');
+      manageDiagnosticsPlugin('remove', fixture.dir, resolve('.'));
+    } finally {
+      await provider.shutdown();
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
+  });
   it.each([undefined, 'auto', 0, 48_000] as const)(
     'keeps minimal free of host compaction plugins and metadata discovery (%s)', async autoCompactWindow => {
       const fixture = await sdkFixture();
