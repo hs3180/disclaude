@@ -151,7 +151,7 @@ vi.mock('../services/debug-group-service.js', () => ({
 
 import { ChatAgent } from './chat-agent.js';
 import { createChannelCallbacksFactory } from '../utils/channel-handlers.js';
-import type { IChannel, OutgoingMessage } from '@disclaude/core';
+import type { IChannel, OutgoingMessage, StreamingUserMessage } from '@disclaude/core';
 import type { Logger } from 'pino';
 import { ServiceTurnRecoveryStore } from '../service-turn-recovery.js';
 
