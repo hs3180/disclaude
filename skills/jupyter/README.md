@@ -73,6 +73,24 @@ bounded previews; reports and images are files, not embedded binary stdout.
 | `export`, `download-report` | Create matching remote HTML/ipynb snapshot; download also retains local files and up to four raster previews |
 | `patch` | Existing upstream repair installer, using Jupyter Terminal only |
 
+### Error output previews
+
+`read-cell`, `describe` and `status` expose the [nbformat error fields](https://nbformat.readthedocs.io/en/latest/format_description.html#error):
+`output_type: "error"`, string `ename`/`evalue`, and `traceback: string[]`.
+`ename` is bounded to 128 characters and `evalue` to 1000. Traceback previews
+retain the last 20 frames, at most 1000 characters per frame and 8000 in total;
+`tracebackTruncated: true` identifies omitted content. Missing tracebacks are
+empty arrays. The error name, message and most recent cell/error lines remain
+visible without dumping a raw result.
+
+Legacy `outputType`, `errorName` and `errorValue` remain preview aliases for
+this release; new clients should read canonical names. Preview DTOs include
+compatibility/truncation fields and are not full Notebook-file exports. Use
+the original Notebook/export when strict full-file validation or the complete
+traceback is required. Previewing never changes the remote error output or
+replays an execution. `tools` includes output-schema descriptions for this
+contract.
+
 ### Interrupt an existing kernel
 
 Use this separate command for execution started in JupyterLab, or when the
