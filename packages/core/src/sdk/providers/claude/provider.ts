@@ -23,8 +23,6 @@ import { createLogger } from '../../../utils/logger.js';
 import { tagErrorCategory } from '../../../utils/error-handler.js';
 import { automaticReplayBlock, preventAutomaticReplay } from '../../../utils/replay-safety.js';
 import { ClaudeAttemptProcess, type AttemptExit } from './attempt-process.js';
-import { ClaudeRetryBudget, claudeRetryPolicy, retryProgressText } from './retry-budget.js';
-import { ClaudeAttemptUsage, claudeQueryUsage } from './attempt-usage.js';
 import { Config } from '../../../config/index.js';
 import type { BaseAgentConfig } from '../../../agents/types.js';
 import { withDiscoveredCompaction } from './compaction.js';
@@ -317,23 +315,14 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     const stderrCapture = new StderrCapture();
 
     const native = adaptOptions(commonOptions, { allowedTools, disallowedTools });
-    const retryPolicy = claudeRetryPolicy({ ...process.env, ...(native.env as NodeJS.ProcessEnv) });
-    const retryBudget = new ClaudeRetryBudget(retryPolicy);
-    const retryEnv = { CLAUDE_CODE_MAX_RETRIES: String(retryPolicy.sdkMaxRetries) };
-    native.env = { ...(native.env as NodeJS.ProcessEnv), ...retryEnv };
-    const settings = native.settings as { env?: NodeJS.ProcessEnv } | undefined;
-    native.settings = { ...settings, env: { ...settings?.env, ...retryEnv } };
     const queryId = randomUUID();
-    logger.info({ event: 'claude_retry_policy', queryId, ...retryPolicy,
-      nativeAttemptsPerQuery: 1, sdkAttemptsPerApiRequest: retryPolicy.sdkMaxRetries + 1,
-      waitBudgetScope: 'per-native-result-turn' }, 'Claude retry policy resolved');
-    const usage = new ClaudeAttemptUsage(1);
-    let failed = false;
+    let latestUsage: Pick<NonNullable<AgentMessage['metadata']>,
+      'inputTokens' | 'outputTokens' | 'cacheReadTokens' | 'cacheCreationTokens' | 'costUsd'> = {};
     let usageLogged = false;
     const logQueryUsage = (): void => {
       if (usageLogged) { return; }
       usageLogged = true;
-      logger.info({ event: 'claude_query_usage', ...claudeQueryUsage(queryId, [usage]) }, 'Claude logical query usage estimate');
+      logger.info({ event: 'claude_query_usage', queryId, ...latestUsage }, 'Claude SDK-reported usage');
     };
     const privateSettings = privateSdkSettings(native);
     const cleanupPrivateSettings = (): void => {
@@ -362,9 +351,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     let settlement: Promise<AttemptExit> | undefined;
     const stopProcess = (): Promise<AttemptExit> => {
       settlement ??= nativeProcess.stop(() => queryResult?.close?.()).then(exit => {
-        usage.finish(failed || cancelled || !exit.confirmed);
         const { pid: nativePid, ...details } = exit;
-        logger.info({ event: 'claude_attempt_usage', queryId, nativePid, ...usage.snapshot() }, 'Claude attempt usage estimate');
         logger.info({ queryAttempt: 1, nativePid, ...details, scope: 'native-process-and-observed-descendants' },
           'Claude attempt process settled');
         return exit;
@@ -390,7 +377,6 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         options: { ...sdkOptions, spawnClaudeCodeProcess: nativeProcess.spawn } as Parameters<typeof query>[0]['options'],
       });
     } catch (error) {
-      failed = true;
       void stopProcess().finally(() => { cleanupPrivateSettings(); logQueryUsage(); });
       if (!nativeProcess.started) { cleanupPrivateSettings(); }
       cleanupNewProcessListeners(listenerSnapshot);
@@ -441,16 +427,6 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
 
         for await (const message of queryResult) {
           if (cancelled) {return;}
-          usage.observe(message);
-          let retryProgress;
-          if (message.type === 'system' && message.subtype === 'api_retry') {
-            try { retryProgress = retryBudget.reserve(message.attempt, message.max_retries, message.retry_delay_ms, message.error_status); }
-            catch (error) {
-              logger.warn({ event: 'claude_retry_refused', queryId, delayMs: message.retry_delay_ms,
-                reason: error instanceof Error ? error.message : 'retry budget unavailable' }, 'Claude native retry denied');
-              throw preventAutomaticReplay(error, 'retry-budget-exhausted');
-            }
-          }
           if ('session_id' in message && typeof message.session_id === 'string') {
             transcriptErrors.bindSession(message.session_id, claudeConfigDir, queryStartMs);
           }
@@ -479,16 +455,10 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           // Issue #4200 part 2: thread the per-query task registry so status-only
           // TaskUpdate calls can recall a label seen on an earlier update.
           const adapted = adaptSDKMessage(message, taskSubjectRegistry);
-          if (retryProgress) {
-            adapted.type = 'status'; adapted.role = 'system'; adapted.content = retryProgressText(retryProgress);
-            adapted.metadata = { ...adapted.metadata, retryProgress };
-            logger.warn({ event: 'claude_retry_progress', queryId, ...retryProgress }, 'Claude upstream retry wait');
-          }
           if (adapted.type === 'result') {
-            adapted.metadata = { ...adapted.metadata, queryUsage: claudeQueryUsage(queryId, [usage]) };
-            retryBudget.nextTurn();
-          }
-          if (adapted.type === 'result') {
+            const { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, costUsd } = adapted.metadata ?? {};
+            // SDK result snapshots replace prior turns; never add cumulative usage.
+            latestUsage = { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, costUsd };
             adapted.metadata = { ...adapted.metadata, automaticReplayBlocked: 'whole-query-replay-disabled' };
           }
           // Issue #3003: log TTFT and per-message elapsed
@@ -618,7 +588,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           logger.error({ totalMs, model: options.model, partialsObserved, nativePid: exit.pid,
             processStatus: exit.status }, 'SDK query completed with zero messages; whole-query replay is disabled');
           yield { type: 'result', content: EMPTY_STREAM_TERMINATE_NOTICE, role: 'system',
-            metadata: { terminatedReason: 'empty-stream', automaticReplayBlocked: 'whole-query-replay-disabled', queryUsage: claudeQueryUsage(queryId, [usage]) } };
+            metadata: { terminatedReason: 'empty-stream', automaticReplayBlocked: 'whole-query-replay-disabled' } };
           return;
         }
         logger.info(
@@ -627,7 +597,6 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         );
         return;
       } catch (error) {
-        failed = true;
         if (cancelled) {return;}
         // Issue #2920: 将捕获的 stderr 附加到 error 对象
         if (stderrCapture.hasContent()) {

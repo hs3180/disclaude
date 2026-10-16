@@ -70,7 +70,6 @@ export interface RestartDecision {
   allowed: boolean;
   /** Reason if not allowed */
   reason?: 'max_restarts_exceeded' | 'circuit_open' | 'backoff_pending' | 'non_transient' | 'unknown_recovery_exhausted' | 'replay_unsafe';
-  replayBlock?: string;
   /** Time to wait before restart in ms (if allowed) */
   waitMs?: number;
   /** Current restart count */
@@ -168,7 +167,7 @@ export class RestartManager {
     const replayBlock = automaticReplayBlock(error);
     if (replayBlock) {
       this.logger.warn({ chatId, replayBlock }, 'Automatic replay blocked by provider evidence');
-      return { allowed: false, reason: 'replay_unsafe', replayBlock, restartCount: state.restartCount, circuitOpen: state.circuitOpen };
+      return { allowed: false, reason: 'replay_unsafe', restartCount: state.restartCount, circuitOpen: state.circuitOpen };
     }
 
     // Check if circuit is already open

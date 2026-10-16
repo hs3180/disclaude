@@ -46,7 +46,6 @@ import {
   getErrorStderr,
   isStartupFailure,
   tagErrorCategory,
-  automaticReplayBlock,
   sanitizeDiagnosticText,
   StreamingReplyDriver,
   REACTIONS,
@@ -1996,12 +1995,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.pendingTurnAnchors = [];
       this.activeTurnMessageId = undefined;
       const classification = tagErrorCategory(error);
-      const retryBudgetExhausted = automaticReplayBlock(error) === 'retry-budget-exhausted';
       for (const { context, anchor } of affected) {
         const failure = failureContext(context, anchor, startupCategory ? 'startup-failure'
-          : retryBudgetExhausted ? 'retry-budget-exhausted' : iteratorError ? 'iterator-error' : 'iterator-ended', error.message, sessionId);
-        const prefix = retryBudgetExhausted ? '❌ 上游重试或退避等待预算已用完，本轮已停止。'
-          : startupCategory ? `❌ Agent 启动失败（${startupCategory}）。` : '❌ 本次请求中断，结果可能不完整。';
+          : iteratorError ? 'iterator-error' : 'iterator-ended', error.message, sessionId);
+        const prefix = startupCategory ? `❌ Agent 启动失败（${startupCategory}）。` : '❌ 本次请求中断，结果可能不完整。';
         const guidance = startupCategory ? '请检查配置、权限和运行环境，修复后发送 /reset。' :
           '请先核对已经执行的操作，再决定是否重新提交或发送消息继续；系统没有自动重放工具。';
         const notice = `${prefix}${guidance}\n${this.formatFailureDiagnostic(failure)}`;
@@ -2098,15 +2095,6 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           continue;
         }
         consumeTurnAnchor();
-
-        if (parsed.metadata?.retryProgress) {
-          if (this.callbacks.finalReplyOnly !== true && parsed.content) {
-            await this.deliverUserVisible(chatId, parsed.content, resolveReplyThreadRoot());
-          }
-          // A retry notice must not count as a delivered answer or hide an
-          // empty/failed turn. Delivery is isolated from execution recovery.
-          continue;
-        }
 
         if (parsed.type === 'error') { turnHadError = true; }
         messageCount++;
@@ -2457,7 +2445,6 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
               numTurns: parsed.metadata?.numTurns,
               durationMs: parsed.metadata?.durationMs,
               durationApiMs: parsed.metadata?.durationApiMs,
-              queryUsage: parsed.metadata?.queryUsage,
             },
             'Result received, turn complete'
           );
@@ -3253,9 +3240,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // Notify user that circuit breaker opened
       {
         const threadRoot = resolveReplyThreadRoot();
-        const blockMessage = decision.replayBlock === 'retry-budget-exhausted'
-          ? `🚫 上游重试或退避等待预算已用完，本轮已停止。请先核对已有操作和结果，再决定是否稍后继续。诊断 ID: ${diagnosticId}`
-          : decision.reason === 'replay_unsafe'
+        const blockMessage = decision.reason === 'replay_unsafe'
           ? `🚫 执行结果尚未确认，已停止自动重放。请先核对已有操作和结果，再决定是否继续。诊断 ID: ${diagnosticId}`
           : decision.reason === 'non_transient'
           ? `🚫 会话已暂停。请检查配置与权限，修复后发送 /reset。诊断 ID: ${diagnosticId}`

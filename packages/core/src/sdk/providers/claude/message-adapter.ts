@@ -153,17 +153,27 @@ export function adaptSDKMessage(message: SDKMessage, taskRegistry?: TaskSubjectR
     }
 
     case 'result': {
-      // Preserve reported usage on failed terminals as well as success.
+      // Native result usage is the only usage source, including failed terminals.
+      // modelUsage covers the query pipeline; each result is a fresh snapshot.
+      const finite = (value: unknown): value is number =>
+        typeof value === 'number' && Number.isFinite(value) && value >= 0;
       const { usage } = message;
-      if (usage) {
-        const counters = { inputTokens: usage.input_tokens, outputTokens: usage.output_tokens,
-          cacheReadTokens: usage.cache_read_input_tokens, cacheCreationTokens: usage.cache_creation_input_tokens };
-        Object.assign(metadata, Object.fromEntries(Object.entries(counters)
-          .filter(([, value]) => typeof value === 'number' && Number.isFinite(value) && value >= 0)));
+      const models = Object.values(message.modelUsage ?? {});
+      const counters = {
+        inputTokens: usage?.input_tokens, outputTokens: usage?.output_tokens,
+        cacheReadTokens: usage?.cache_read_input_tokens, cacheCreationTokens: usage?.cache_creation_input_tokens,
+        costUsd: usage && 'total_cost' in usage ? usage.total_cost : undefined,
+      };
+      for (const [field, modelField] of [
+        ['inputTokens', 'inputTokens'], ['outputTokens', 'outputTokens'],
+        ['cacheReadTokens', 'cacheReadInputTokens'], ['cacheCreationTokens', 'cacheCreationInputTokens'],
+        ['costUsd', 'costUSD'],
+      ] as const) {
+        const values = models.map(model => model[modelField]).filter(finite);
+        const value = values.length ? values.reduce((total, current) => total + current, 0) : counters[field];
+        if (finite(value)) { metadata[field] = value; }
       }
-      if (typeof message.total_cost_usd === 'number' && Number.isFinite(message.total_cost_usd) && message.total_cost_usd >= 0) {
-        metadata.costUsd = message.total_cost_usd;
-      }
+      if (finite(message.total_cost_usd)) { metadata.costUsd = message.total_cost_usd; }
       // Streaming inputs may be folded into one turn. Only the native result
       // can confirm which submitted UUIDs were consumed; an input replay or
       // first assistant frame can precede later fold-ins.
@@ -204,39 +214,13 @@ export function adaptSDKMessage(message: SDKMessage, taskRegistry?: TaskSubjectR
         // SDKResultSuccess 包含 usage: NonNullableUsage 和 total_cost_usd: number。
         let statsText = '✅ Complete';
 
-        if ('usage' in message && message.usage) {
-          const { usage } = message;
-
-          const parts: string[] = [];
-
-          // SDKResultSuccess.total_cost_usd 是 SDK 标准字段；
-          // 部分运行时数据可能将 cost 放在 usage.total_cost 中（非 SDK 类型定义）。
-          // 使用运行时检查优先读取 total_cost_usd，回退到 usage.total_cost。
-          const costUsd = message.total_cost_usd
-            ?? ('total_cost' in usage ? usage.total_cost as number : undefined);
-          if (costUsd !== undefined && costUsd > 0) {
-            metadata.costUsd = costUsd;
-            parts.push(`Cost: $${costUsd.toFixed(4)}`);
-          }
-
-          // NonNullableUsage 提供 input_tokens 和 output_tokens (number 类型)
-          const inputTokens = usage.input_tokens as number | undefined;
-          const outputTokens = usage.output_tokens as number | undefined;
-          const totalTokens = (inputTokens ?? 0) + (outputTokens ?? 0);
-          if (totalTokens > 0) {
-            parts.push(`Tokens: ${(totalTokens / 1000).toFixed(1)}k`);
-          }
-          if (inputTokens !== undefined) {
-            metadata.inputTokens = inputTokens;
-          }
-          if (outputTokens !== undefined) {
-            metadata.outputTokens = outputTokens;
-          }
-
-          if (parts.length > 0) {
-            statsText += ` | ${parts.join(' | ')}`;
-          }
+        const parts: string[] = [];
+        if (metadata.costUsd !== undefined && metadata.costUsd > 0) {
+          parts.push(`Cost: $${metadata.costUsd.toFixed(4)}`);
         }
+        const totalTokens = (metadata.inputTokens ?? 0) + (metadata.outputTokens ?? 0);
+        if (totalTokens > 0) { parts.push(`Tokens: ${(totalTokens / 1000).toFixed(1)}k`); }
+        if (parts.length > 0) { statsText += ` | ${parts.join(' | ')}`; }
 
         return {
           type: 'result',
