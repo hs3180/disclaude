@@ -507,6 +507,31 @@ describe('BaseAgent', () => {
       expect(results).toHaveLength(1);
     });
 
+    it('carries retry progress and unknown usage through the real stream conversion without inventing zero cost', async () => {
+      const queryUsage: NonNullable<AgentMessage['metadata']>['queryUsage'] = {
+        queryId: 'owned-query', attemptCount: 1, unknownAttempts: 1, partialAttempts: 0, knownTotals: {},
+        billingVerified: false, attempts: [{ attempt: 1, state: 'unknown', scope: 'unavailable',
+          latencyMs: 50, resultCount: 0, retryEvents: 0, retryUsage: 'not-observed', billingVerified: false }],
+      };
+      const retryProgress = { layer: 'sdk' as const, attempt: 1, maxRetries: 2, delayMs: 60_000,
+        remainingBackoffMs: 0, turn: 1 };
+      mockSdkProvider.queryStream.mockImplementation(() => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          yield createMockSdkMessage({ type: 'status', content: 'Retrying', metadata: { retryProgress } });
+          yield createMockSdkMessage({ type: 'result', metadata: { queryUsage, inputTokens: 0, outputTokens: 0, costUsd: 0 } });
+        })(),
+      }));
+      const stream = agent.testCreateQueryStream(createMockInput([]), defaultOptions);
+      const messages: IteratorYieldResult[] = [];
+      for await (const message of stream.iterator) { messages.push(message); }
+      expect(messages[0].parsed.metadata?.retryProgress).toEqual(retryProgress);
+      expect(messages[0].parsed.metadata?.tokens).toBeUndefined();
+      expect(messages[1].parsed.metadata?.queryUsage).toEqual(queryUsage);
+      expect(messages[1].parsed.metadata?.tokens).toBeUndefined();
+      expect(messages[1].parsed.metadata?.cost).toBeUndefined();
+    });
+
     it('should convert metadata with token counts in stream messages', async () => {
       const mockHandle: QueryHandle = { close: vi.fn(), cancel: vi.fn() };
 

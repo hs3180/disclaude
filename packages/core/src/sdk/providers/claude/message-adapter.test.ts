@@ -662,6 +662,14 @@ describe('adaptSDKMessage', () => {
       expect(result.metadata?.durationApiMs).toBeUndefined();
     });
 
+    it.each(['error_during_execution', 'success'])('preserves reported usage on failed %s terminals', subtype => {
+      const result = adaptSDKMessage(asMsg({ type: 'result', subtype, is_error: true,
+        result: 'Owned rejection', errors: ['Owned rejection'], total_cost_usd: 0.003,
+        usage: { input_tokens: 7, output_tokens: 2, cache_read_input_tokens: 5, cache_creation_input_tokens: 3 } }));
+      expect(result.metadata).toMatchObject({ inputTokens: 7, outputTokens: 2, cacheReadTokens: 5,
+        cacheCreationTokens: 3, costUsd: 0.003, terminatedReason: 'turn_failed' });
+    });
+
     it('should format error result', () => {
       const message = {
         type: 'result' as const,
