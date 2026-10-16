@@ -1,19 +1,20 @@
 # Automatic compaction
 
-For the Claude backend, disclaude resolves the compaction policy in this order:
+For the Claude backend, the selected `agents.<name>.autoCompactWindow` controls
+only the host override. Omitting it leaves the SDK's own settings and automatic
+compaction behavior in control; it does not disable SDK compaction.
 
-1. If `agents.<name>.autoCompactWindow` is configured, use that value without querying
-   model metadata. This applies to native Claude models as well as compatible
-   third-party models. `0` disables SDK automatic compaction.
-2. Native `claude-*` model IDs retain the SDK's automatic policy without a
-   discovery override. Otherwise, query the configured provider's models API.
-   Read `max_input_tokens`, `context_length`, or `context_window`, then use
-   `floor(limit * 0.8)` to reserve 20% for output and growth between checks.
-   Output-only `max_tokens` is never treated as a context limit.
-3. If the API does not expose a valid limit, log a warning asking for explicit
-   configuration. Do not inject a fixed/guessed threshold; the underlying SDK's
-   behavior remains unchanged. This does **not** guarantee safe compaction for
-   an unknown model, so configure a threshold when discovery is unavailable.
+| Selected agent setting | Host behavior |
+| --- | --- |
+| Unset | No model metadata requests and no compaction settings injected |
+| Positive integer | Inject that token trigger, without metadata discovery |
+| `0` | Explicitly disable SDK automatic compaction |
+| `auto` | Opt into bound-provider metadata discovery; native `claude-*` IDs keep SDK policy |
+
+Discovery reads `max_input_tokens`, `context_length`, or `context_window` and
+uses `floor(limit * 0.8)`. Output-only `max_tokens` is never a context limit.
+Missing metadata produces a warning without injecting a guessed threshold.
+Settings on another/default agent are not inherited by the selected named agent.
 
 ```yaml
 agents:
@@ -38,5 +39,10 @@ explicit nor an API-derived threshold guarantees acceptance of an arbitrarily
 large single input. Native SDK runtime limits can also be smaller than a
 third-party model's advertised context capacity.
 
-Other backends retain their own compaction policies; this setting is not passed
-to Codex, pi, or the native DSH runtime.
+If a request exceeds a compatible model's limit, inspect partial results before
+continuing with less input or starting a fresh session with `/reset`. Disclaude
+never replays tools to recover context. Explicit compaction changes conversation
+history and should be an operator choice.
+
+Other backends retain their own compaction policies; see
+[dsh-backend.md](dsh-backend.md#context-compaction) for DSH.

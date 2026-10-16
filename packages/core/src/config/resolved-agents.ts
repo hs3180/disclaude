@@ -196,9 +196,10 @@ export function resolveConfiguredAgents(
     for (const key of ['autoCompactWindow', 'sdkTimeoutMs'] as const) {
       if (
         agent[key] !== undefined &&
+        !(key === 'autoCompactWindow' && agent[key] === 'auto') &&
         (!Number.isInteger(agent[key]) || (agent[key] as number) < 0)
       ) {
-        errors.push(`${field}.${key} must be a non-negative integer`);
+        errors.push(`${field}.${key} must be a non-negative integer${key === 'autoCompactWindow' ? ' or auto' : ''}`);
       }
     }
     if (
