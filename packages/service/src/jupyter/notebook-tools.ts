@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { notebookSnapshotHash, JupyterDiagnosticError, jupyterHashConflict, type DatalayerJupyterClient } from '@disclaude/core/jupyter';
+import { notebookSnapshotHash, insertNotebookCell, JupyterDiagnosticError, jupyterHashConflict, type DatalayerJupyterClient } from '@disclaude/core/jupyter';
 import type { ToolDefinition, ToolContext } from '@disclaude/core';
 import {
   JupyterProjectConfigStore,
@@ -157,12 +157,10 @@ export class NotebookTools {
           if (index < 0) {
             throw new Error('Insertion target cell is missing');
           }
-          bound.doc.notebook.insertCell(index, {
+          insertNotebookCell(bound.doc.notebook, index, {
             id: String(input.cellId),
             cell_type: input.cellType as 'code' | 'markdown',
             source: String(input.source),
-            metadata: {},
-            ...(input.cellType === 'code' ? { outputs: [], execution_count: null } : {}),
           });
           await bound.doc.flush();
           return {
