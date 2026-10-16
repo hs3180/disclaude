@@ -70,8 +70,45 @@ export interface StreamingUserMessage {
 /** 消息角色 */
 export type MessageRole = 'user' | 'assistant' | 'system';
 
+export interface RetryProgress {
+  layer: 'sdk' | 'prelaunch';
+  attempt: number;
+  maxRetries: number;
+  delayMs: number;
+  remainingBackoffMs: number;
+  turn: number;
+  status?: number;
+}
+
+export interface UsageEstimate {
+  attempt: number;
+  state: 'reported' | 'partial' | 'unknown';
+  scope: 'query-pipeline' | 'main-loop' | 'unavailable';
+  latencyMs: number;
+  resultCount: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
+  costUsd?: number;
+  billingVerified: false;
+  accountingWindowChanged?: boolean;
+}
+
+export interface QueryUsageAudit {
+  queryId: string;
+  attemptCount: number;
+  attempts: UsageEstimate[];
+  unknownAttempts: number;
+  partialAttempts: number;
+  knownTotals: Pick<UsageEstimate, 'inputTokens' | 'outputTokens' | 'cacheReadTokens' | 'cacheCreationTokens' | 'costUsd'>;
+  billingVerified: false;
+}
+
 /** Agent 消息元数据 */
 export interface AgentMessageMetadata {
+  retryProgress?: RetryProgress;
+  queryUsage?: QueryUsageAudit;
   /** Host input UUIDs the provider confirms were consumed by this result. */
   consumedInputIds?: string[];
   /** Provider-declared assistant phase; commentary is visible progress, not a final result. */
@@ -90,6 +127,8 @@ export interface AgentMessageMetadata {
   inputTokens?: number;
   /** 输出 token 数 */
   outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
   /** 消息 ID */
   messageId?: string;
   /** 停止原因 */

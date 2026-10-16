@@ -144,6 +144,17 @@ export function adaptSDKMessage(message: SDKMessage, taskRegistry?: TaskSubjectR
     }
 
     case 'result': {
+      // Preserve reported usage on failed terminals as well as success.
+      const { usage } = message;
+      if (usage) {
+        const counters = { inputTokens: usage.input_tokens, outputTokens: usage.output_tokens,
+          cacheReadTokens: usage.cache_read_input_tokens, cacheCreationTokens: usage.cache_creation_input_tokens };
+        Object.assign(metadata, Object.fromEntries(Object.entries(counters)
+          .filter(([, value]) => typeof value === 'number' && Number.isFinite(value) && value >= 0)));
+      }
+      if (typeof message.total_cost_usd === 'number' && Number.isFinite(message.total_cost_usd) && message.total_cost_usd >= 0) {
+        metadata.costUsd = message.total_cost_usd;
+      }
       // Streaming inputs may be folded into one turn. Only the native result
       // can confirm which submitted UUIDs were consumed; an input replay or
       // first assistant frame can precede later fold-ins.

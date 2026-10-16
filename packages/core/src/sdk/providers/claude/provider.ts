@@ -6,6 +6,7 @@ import { assertToolOptions } from '../../tools.js';
  */
 
 import { query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import { randomUUID } from 'node:crypto';
 import type { ChatAgentHooks, IAgentSDKProvider } from '../../interface.js';
 import type {
   AgentMessage,
@@ -26,7 +27,9 @@ import { buildClaudeDisallowedTools } from './disallowed-tools.js';
 import { privateSdkSettings } from './private-settings.js';
 import { ClaudeAttemptProcess, type AttemptExit } from './attempt-process.js';
 import { claudeReplayBlock, type ClaudeAttemptEvidence } from './replay-admission.js';
-import { preventAutomaticReplay } from '../../../utils/replay-safety.js';
+import { automaticReplayBlock, preventAutomaticReplay } from '../../../utils/replay-safety.js';
+import { ClaudeRetryBudget, claudeRetryPolicy, retryProgressText } from './retry-budget.js';
+import { ClaudeAttemptUsage, claudeQueryUsage } from './attempt-usage.js';
 
 const logger = createLogger('ClaudeSDKProvider');
 
@@ -314,14 +317,33 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     // Issue #2920: 创建 stderr 捕获器
     const stderrCapture = new StderrCapture();
 
-    const privateSettings = privateSdkSettings(adaptOptions(commonOptions, { allowedTools, disallowedTools }));
+    const native = adaptOptions(commonOptions, { allowedTools, disallowedTools });
+    const retryPolicy = claudeRetryPolicy({ ...process.env, ...(native.env as NodeJS.ProcessEnv) });
+    const retryBudget = new ClaudeRetryBudget(retryPolicy);
+    const retryEnv = { CLAUDE_CODE_MAX_RETRIES: String(retryPolicy.sdkMaxRetries) };
+    native.env = { ...(native.env as NodeJS.ProcessEnv), ...retryEnv };
+    const settings = native.settings as { env?: NodeJS.ProcessEnv } | undefined;
+    native.settings = { ...settings, env: { ...settings?.env, ...retryEnv } };
+    const queryId = randomUUID();
+    logger.info({ event: 'claude_retry_policy', queryId, ...retryPolicy,
+      nativeAttemptsPerQuery: 1, sdkAttemptsPerApiRequest: retryPolicy.sdkMaxRetries + 1,
+      waitBudgetScope: 'per-native-result-turn', prelaunchRetriesCannotCallUpstream: true }, 'Claude retry policy resolved');
+    const usageAttempts: ClaudeAttemptUsage[] = [];
+    let usageLogged = false;
+    const logQueryUsage = (): void => {
+      if (usageLogged) { return; }
+      usageLogged = true;
+      logger.info({ event: 'claude_query_usage', ...claudeQueryUsage(queryId, usageAttempts) }, 'Claude logical query usage estimate');
+    };
+    const privateSettings = privateSdkSettings(native);
     const cleanupPrivateSettings = (): void => {
       try { privateSettings.cleanup(); }
       catch { logger.warn({ cleanupFailed: true }, 'Private Claude SDK settings cleanup failed'); }
     };
     const sdkOptions = privateSettings.options;
     type Attempt = ClaudeAttemptEvidence & {
-      ordinal: number; process: ClaudeAttemptProcess; sdk?: ReturnType<typeof query>; exit?: Promise<AttemptExit>;
+      ordinal: number; process: ClaudeAttemptProcess; usage: ClaudeAttemptUsage; failed: boolean;
+      sdk?: ReturnType<typeof query>; exit?: Promise<AttemptExit>;
     };
     const captureStderr = (current: Attempt, data: string): void => {
       stderrCapture.append(data);
@@ -330,7 +352,9 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     };
     const createAttempt = (ordinal: number): Attempt => {
       const process = new ClaudeAttemptProcess({ stderr: data => captureStderr(current, data) });
-      const current: Attempt = { ordinal, process, messages: 0, partials: false, permissionRequests: 0, toolObserved: false,
+      const usage = new ClaudeAttemptUsage(ordinal);
+      usageAttempts.push(usage);
+      const current: Attempt = { ordinal, process, usage, failed: false, messages: 0, partials: false, permissionRequests: 0, toolObserved: false,
         inputOffered: false, inputPullPending: false, get processStarted() { return process.started; } };
       return current;
     };
@@ -338,8 +362,10 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     const stopAttempt = (current: Attempt): Promise<AttemptExit> => {
       current.exit ??= current.process.stop(() => current.sdk?.close?.()).then(exit => {
         const { pid: nativePid, ...settlement } = exit;
-        logger.info({ queryAttempt: current.ordinal, nativePid, ...settlement, scope: 'native-process-and-observed-descendants' },
+        current.usage.finish(current.failed || cancelled || !exit.confirmed);
+        logger.info({ queryId, queryAttempt: current.ordinal, nativePid, ...settlement, scope: 'native-process-and-observed-descendants' },
           'Claude attempt process settled');
+        logger.info({ event: 'claude_attempt_usage', queryId, nativePid, ...current.usage.snapshot() }, 'Claude attempt usage estimate');
         return exit;
       });
       return current.exit;
@@ -393,7 +419,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     const startQuery = (current: Attempt): ReturnType<typeof query> => {
       const nativeOptions = { ...sdkOptions, spawnClaudeCodeProcess: (command: Parameters<ClaudeAttemptProcess['spawn']>[0]) => {
         const child = current.process.spawn(command);
-        logger.info({ queryAttempt: current.ordinal, nativePid: current.process.pid }, 'Claude attempt process started');
+        logger.info({ queryId, queryAttempt: current.ordinal, nativePid: current.process.pid }, 'Claude attempt process started');
         return child;
       },
         stderr: (data: string) => captureStderr(current, data) };
@@ -411,7 +437,8 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     try {
       queryResult = startQuery(attempt);
     } catch (error) {
-      void stopAttempt(attempt).finally(cleanupPrivateSettings);
+      attempt.failed = true;
+      void stopAttempt(attempt).finally(() => { cleanupPrivateSettings(); logQueryUsage(); });
       if (!attempt.process.started) { cleanupPrivateSettings(); }
       cleanupNewProcessListeners(listenerSnapshot);
       throw attempt.process.started || attempt.inputOffered || attempt.inputPullPending
@@ -442,14 +469,20 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
       // DISCLAUDE_QUERY_MAX_RETRIES (e.g. to retry more before rethrowing when the
       // upstream is flaky — cf. the overloaded_error scenario in #4322). 0
       // disables the in-request retry. Default 2 (preserves prior behavior).
-      const MAX_QUERY_RETRIES = (() => {
-        const env = Number.parseInt(process.env.DISCLAUDE_QUERY_MAX_RETRIES ?? '', 10);
-        return Number.isFinite(env) && env >= 0 ? env : 2;
-      })();
+      const MAX_QUERY_RETRIES = retryPolicy.prelaunchMaxRetries;
       const QUERY_RETRY_TIMING = {
         initialDelayMs: 500, backoffMultiplier: 2, maxDelayMs: 8000, jitter: true,
       };
       const delayMs = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+      const reserveRetry = (...args: Parameters<ClaudeRetryBudget['reserve']>) => {
+        try { return retryBudget.reserve(...args); }
+        catch (error) {
+          logger.warn({ event: 'claude_retry_refused', queryId, queryAttempt: attempt.ordinal,
+            layer: args[0], attempt: args[1], maxRetries: args[2], requestedWaitMs: args[3], status: args[4],
+            reason: error instanceof Error ? error.message : 'retry budget unavailable' }, 'Claude retry denied by shared budget');
+          attempt.failed = true; throw preventAutomaticReplay(error, 'retry-budget-exhausted');
+        }
+      };
       for (let queryAttempt = 0; ; queryAttempt++) {
         if (cancelled) { return; }
         // The previous attempt is settled before the next attempt is created.
@@ -513,10 +546,22 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           const now = Date.now();
           messageCount++;
           attempt.messages = messageCount;
+          attempt.usage.observe(message);
+          const retryProgress = message.type === 'system' && message.subtype === 'api_retry'
+            ? reserveRetry('sdk', message.attempt, message.max_retries, message.retry_delay_ms, message.error_status) : undefined;
           // 提前适配,使日志与检测均能复用(D1:保留 system subtype 到 metadata 供诊断)
           // Issue #4200 part 2: thread the per-query task registry so status-only
           // TaskUpdate calls can recall a label seen on an earlier update.
           const adapted = adaptSDKMessage(message, taskSubjectRegistry);
+          if (retryProgress) {
+            adapted.type = 'status'; adapted.role = 'system'; adapted.content = retryProgressText(retryProgress);
+            adapted.metadata = { ...adapted.metadata, retryProgress };
+            logger.warn({ event: 'claude_retry_progress', queryId, queryAttempt: attempt.ordinal, ...retryProgress }, 'Claude upstream retry wait');
+          }
+          if (message.type === 'result') {
+            adapted.metadata = { ...adapted.metadata, queryUsage: claudeQueryUsage(queryId, usageAttempts) };
+            retryBudget.nextTurn();
+          }
           if (adapted.type === 'tool_use') { attempt.toolObserved = true; }
           if (adapted.type === 'result' && (attempt.process.started || attempt.inputOffered)) {
             adapted.metadata = { ...adapted.metadata, automaticReplayBlocked: 'execution-outcome-uncertain' };
@@ -642,7 +687,9 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
             logger.warn({ queryAttempt: queryAttempt + 1, totalMs, partialsObserved, nativePid: exit.pid,
               processStatus: exit.status },
             'Issue #4442: SDK query completed with zero messages — retrying confirmed pre-work failure (Issue #4192 L1 budget)');
-            await delayMs(computeBackoffDelay(queryAttempt, QUERY_RETRY_TIMING));
+            const progress = reserveRetry('prelaunch', queryAttempt + 1, MAX_QUERY_RETRIES, computeBackoffDelay(queryAttempt, QUERY_RETRY_TIMING));
+            yield { type: 'status', role: 'system', content: retryProgressText(progress), metadata: { retryProgress: progress } };
+            await delayMs(progress.delayMs);
             continue;
           }
           logger.error({ totalMs, model: options.model, partialsObserved, replayBlock, nativePid: exit.pid,
@@ -659,6 +706,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         return; // success — exit the retry loop + generator (Issue #4192 L1)
       } catch (error) {
         if (cancelled) {return;}
+        attempt.failed = true;
         // Issue #2920: 将捕获的 stderr 附加到 error 对象
         if (stderrCapture.hasContent()) {
           attachStderrToError(error, stderrCapture.getCaptured());
@@ -674,7 +722,9 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           logger.warn({ queryAttempt: queryAttempt + 1, err: error, errorCategory,
             nativePid: exit.pid, processStatus: exit.status },
           'Transient pre-work error — retrying query (Issue #4192 L1)');
-          await delayMs(computeBackoffDelay(queryAttempt, QUERY_RETRY_TIMING));
+          const progress = reserveRetry('prelaunch', queryAttempt + 1, MAX_QUERY_RETRIES, computeBackoffDelay(queryAttempt, QUERY_RETRY_TIMING));
+          yield { type: 'status', role: 'system', content: retryProgressText(progress), metadata: { retryProgress: progress } };
+          await delayMs(progress.delayMs);
           continue;
         }
         logger.error(
@@ -690,7 +740,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           },
           'adaptIterator error'
         );
-        throw replayBlock ? preventAutomaticReplay(error, replayBlock) : error;
+        throw replayBlock ? preventAutomaticReplay(error, automaticReplayBlock(error) ?? replayBlock) : error;
       } finally {
         await stopAttempt(attempt);
         // Issue #3378: Clean up SDK-registered process listeners after query completes.
@@ -716,7 +766,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
       cleanupListeners();
       const stopped = stopAttempt(attempt);
       if (!attempt.process.started) { cleanupPrivateSettings(); }
-      return stopped.finally(cleanupPrivateSettings);
+      return stopped.finally(() => { cleanupPrivateSettings(); logQueryUsage(); });
     };
     return {
       handle: {
@@ -732,7 +782,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
       },
       iterator: (async function* () {
         try { yield* adaptIterator(); }
-        finally { await stopAttempt(attempt); cleanupPrivateSettings(); }
+        finally { await stopAttempt(attempt); cleanupPrivateSettings(); logQueryUsage(); }
       })(),
     };
   }

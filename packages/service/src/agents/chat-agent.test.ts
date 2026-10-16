@@ -132,6 +132,7 @@ vi.mock('@disclaude/core', async (importOriginal) => {
       return undefined;
     },
     tagErrorCategory: actual.tagErrorCategory,
+    automaticReplayBlock: actual.automaticReplayBlock,
   };
 });
 
@@ -2420,6 +2421,26 @@ describe('ChatAgent (service)', () => {
         { timeout: 1000, interval: 20 }
       );
     });
+  });
+
+  it('reports retry-budget exhaustion without claiming restart quota exhaustion or starting a new query', async () => {
+    const { RestartManager: RealRestartManager, preventAutomaticReplay } = await vi.importActual<typeof import('@disclaude/core')>('@disclaude/core');
+    const callbacks = createMockCallbacks();
+    const agent = new ChatAgent({ chatId: 'retry-budget', callbacks, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
+    const internals = agent as any;
+    internals.restartManager = new RealRestartManager({ logger: internals.logger, initialBackoffMs: 5 });
+    let fail!: () => void;
+    const accepted = new Promise<void>(resolve => { fail = resolve; });
+    internals.createQueryStream = vi.fn(() => ({
+      handle: { close: vi.fn(), cancel: vi.fn() },
+      iterator: (async function* () { await accepted; throw preventAutomaticReplay(new Error('Claude retry budget exhausted'), 'retry-budget-exhausted'); })(),
+    }));
+    await agent.processMessage({ chatId: 'retry-budget', payload: 'do work', messageId: 'budget-source' });
+    fail();
+    await vi.waitFor(() => expect(JSON.stringify(callbacks.sendMessage.mock.calls)).toContain('上游重试或退避等待预算已用完'));
+    expect(JSON.stringify(callbacks.sendMessage.mock.calls)).not.toContain('自动恢复次数已用完');
+    expect(internals.createQueryStream).toHaveBeenCalledTimes(1);
+    agent.reset();
   });
 
   it.each([false, true])('recovers UNKNOWN once without replaying input (tool emitted: %s)', async toolEmitted => {
@@ -4831,13 +4852,17 @@ describe('ChatAgent (service)', () => {
   });
 
   describe('Issue #4391: empty-turn session-reset + bounded replay', () => {
-    it('does not reset and replay when the provider reports an uncertain execution outcome', async () => {
+    it.each([false, true])('does not reset/replay an uncertain empty turn, even after retry progress (%s)', async showProgress => {
       const callbacks = createMockCallbacks();
       const agent = makeRetryAgent('oc_no_unsafe_replay', callbacks);
       const markRetried = vi.spyOn((agent as any).emptyTurnRetryPolicy, 'markRetried');
       const query = vi.fn(() => ({
         handle: { close: vi.fn(), cancel: vi.fn() },
         iterator: (async function* () {
+          if (showProgress) {
+            yield { parsed: { type: 'status', content: '⏳ 上游重试，预计等待 60 秒。',
+              metadata: { retryProgress: { layer: 'sdk', attempt: 1, maxRetries: 2, delayMs: 60_000 } } }, raw: {} };
+          }
           yield { parsed: { type: 'result', content: '✅ Complete', automaticReplayBlocked: 'execution-outcome-uncertain' }, raw: {} };
         })(),
       }));
@@ -4849,6 +4874,7 @@ describe('ChatAgent (service)', () => {
       await new Promise(resolve => setTimeout(resolve, 50));
       expect(markRetried).not.toHaveBeenCalled();
       expect(query).toHaveBeenCalledTimes(1);
+      expect(callbacks.sendMessage.mock.calls.some((call: unknown[]) => String(call[1]).includes('预计等待 60 秒'))).toBe(showProgress);
       expect(callbacks.sendMessage.mock.calls.some((call: unknown[]) => String(call[1]).includes('系统不会自动重放原输入'))).toBe(true);
       agent.dispose();
     });
