@@ -3,7 +3,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { CHANNEL_CLI_HELP, normalizeChannelApiBaseUrl } from '@disclaude/core';
+import { CHANNEL_CLI_HELP, normalizeChannelApiBaseUrl, isSyntheticMessageId } from '@disclaude/core';
 import type { ActionPromptMap, InteractiveOption } from './tools/types.js';
 
 import { getChatIdValidationError } from './utils/chat-id-validator.js';
@@ -174,7 +174,9 @@ async function restIsReachable(baseUrl: string): Promise<boolean> {
   }
 }
 async function failureHint(baseUrl: string, error: string): Promise<string | undefined> {
-  if (/CHANNEL_API|REST API|ECONNREFUSED|ENOTFOUND|fetch failed/i.test(error)) {return restHint(baseUrl);}
+  if (/CHANNEL_API_REQUEST_FAILED/.test(error)) {return undefined;}
+  if (/CHANNEL_API_TIMEOUT/.test(error)) {return 'DisclaudeService REST request timed out; verify delivery before retrying.';}
+  if (/CHANNEL_API_NOT_AVAILABLE|ECONNREFUSED|ENOTFOUND|fetch failed/i.test(error)) {return restHint(baseUrl);}
   return await restIsReachable(baseUrl) ? undefined : restHint(baseUrl);
 }
 
@@ -243,6 +245,10 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
   catch (error) { emitFail(command, `Failed to load channel implementation: ${errorMessage(error)}`, 'run npm run build before using the packaged CLI'); return 1; }
   const parentMessageId = arg(args, 'parent');
   const threadRootId = arg(args, 'thread-root');
+  if ([parentMessageId, threadRootId].some(id => id && isSyntheticMessageId(id))) {
+    emitFail(command, 'Reply IDs must be real platform message IDs. Internal tracking IDs cannot be used with --parent or --thread-root; omit them when no reply root exists.');
+    return 1;
+  }
   if (threadRootId !== undefined && !threadRootId.trim()) {
     emitFail(command, '--thread-root must be a non-empty thread root ID');
     return 1;

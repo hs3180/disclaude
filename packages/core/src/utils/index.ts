@@ -23,6 +23,7 @@ export {
 } from './error-handler.js';
 export type { ErrorContext } from './error-handler.js';
 export { browserAgentEnv, resolveBrowserRuntimePath } from './browser-env.js';
+export { sanitizeDiagnosticText } from './diagnostic-text.js';
 export {
   classifyError,
   isRetryable,
