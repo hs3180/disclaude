@@ -3783,6 +3783,30 @@ describe('ChatAgent (service)', () => {
       expect(callbacks.sendMessage.mock.calls.map(call => call[1])).toEqual(['已确认缺少权限，改为核验可见元数据。', 'Please authorize the required operation.', 'Final reply']);
     });
 
+    it('folds oversized payloads embedded in narration and commentary, never in the final answer', async () => {
+      const { agent, callbacks } = ownedAgent();
+      const dump = `{"imageSource":"https://example.com/shot_01.png?Signature=${'a'.repeat(400)}"}`;
+      const narration = `**Input:**\n\`\`\`json\n${dump}\n\`\`\`\n*Executing on server...*`;
+      const commentary = `**Output:**\n**summary:** [{"text": "${'long output '.repeat(40)}"}]`;
+      await (agent as any).processIterator((async function* () {
+        yield { parsed: { type: 'text', content: narration } };
+        yield { parsed: { type: 'tool_use', content: 'hidden tool' } };
+        yield { parsed: { type: 'text', content: commentary, metadata: { phase: 'commentary' } } };
+        yield { parsed: { type: 'text', content: `最终结论（含完整 dump）：\n\`\`\`json\n${dump}\n\`\`\``, metadata: { phase: 'final_answer' } } };
+        yield { parsed: { type: 'result', content: '' } };
+      })());
+      const messages = callbacks.sendMessage.mock.calls.map(([, text]) => text as string);
+      expect(messages).toHaveLength(3);
+      // Narration and commentary keep their framing but fold the payload.
+      expect(messages[0]).toContain('**Input:**');
+      expect(messages[0]).toContain('payload 已折叠');
+      expect(messages[1]).toContain('**Output:**');
+      expect(messages[1]).toContain('payload 已折叠');
+      expect(messages.slice(0, 2).join('\n')).not.toContain('a'.repeat(100));
+      // The final answer is never compacted.
+      expect(messages[2]).toContain('aaaa');
+    });
+
     it('keeps non-streaming private-chat delivery unchanged', async () => {
       const { agent, callbacks } = ownedAgent('p2p');
       await (agent as any).processIterator((async function* () {
