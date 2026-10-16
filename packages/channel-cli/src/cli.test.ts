@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -200,24 +199,34 @@ describe('@disclaude/channel-cli', () => {
       } finally { fetch.mockRestore(); }
     });
 
-    it('whitelists every flag the README documents', async () => {
-      // Guards the direction that actually breaks users: a flag the docs promise
-      // but the whitelist omits is now a hard rejection, not a silent no-op. The
-      // README table is the published contract, so read it rather than restate it.
-      const readme = await readFile(new URL('../../../skills/channel/README.md', import.meta.url), 'utf8');
-      const row = readme.split('\n').find((line) => line.startsWith('| `send_interactive`'));
-      expect(row).toBeDefined();
-      const documented = [...(row as string).matchAll(/`--([a-z][a-z0-9-]*)/g)].map((m) => m[1]);
-      expect(documented.length).toBeGreaterThan(0);
-      // Serial, not Promise.all: run() shares a module-level `emitted` flag and
-      // swaps the global process.stdout.write, so concurrent runs interleave
-      // their output into one capture and starve the others.
-      const rejected: string[] = [];
-      for (const flag of documented) {
-        const { writes } = await capture(['send_interactive', '--chat', CHAT, `--${flag}`, 'x']);
-        if (String(JSON.parse(writes[0]).error).startsWith('Unknown option')) {rejected.push(`--${flag}`);}
-      }
-      expect(rejected).toEqual([]);
+    it('whitelists exactly the flags send_interactive reads', async () => {
+      // Guards both directions without a docs file: a flag callers rely on that
+      // the whitelist omits is a hard rejection, not a silent no-op, and the
+      // whitelist cannot grow silently either. The CLI restates its accepted
+      // set in the failure hint, so pin that list exactly.
+      const { writes } = await capture(['send_interactive', '--chat', CHAT, '--not-a-flag', 'x']);
+      const result = JSON.parse(writes[0]);
+      expect(result.error).toBe('Unknown option: --not-a-flag');
+      const accepted = [...String(result.hint ?? '').matchAll(/--([a-z][a-z0-9-]*)/g)].map(
+        (m) => m[1]
+      );
+      expect(accepted).toEqual([
+        'action-prompts',
+        'action-prompts-file',
+        'api-token',
+        'base-url',
+        'chat',
+        'context',
+        'dry-run',
+        'idempotency-key',
+        'options',
+        'options-file',
+        'parent',
+        'question',
+        'question-file',
+        'thread-root',
+        'title',
+      ]);
     });
   });
 });
