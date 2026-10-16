@@ -32,8 +32,9 @@ export class AgentPoolMessageHandler implements IAgentMessageHandler {
     return this.dispatch(params, 'user message');
   }
 
-  handleSystemMessage(chatId: string, payload: string, messageId: string, options?: { waitForCompletion?: boolean; agentSession?: AgentSessionOptions }): Promise<void> {
-    return this.dispatch({ chatId, payload, messageId, ...(options?.agentSession ? { agentSession: options.agentSession } : {}) }, 'system message', options?.waitForCompletion);
+  handleSystemMessage(chatId: string, payload: string, messageId: string, options?: { waitForCompletion?: boolean; agentSession?: AgentSessionOptions; replyRootId?: string | null }): Promise<void> {
+    return this.dispatch({ chatId, payload, messageId, ...(options?.agentSession ? { agentSession: options.agentSession } : {}),
+      ...(options?.replyRootId !== undefined ? { replyRootId: options.replyRootId } : {}) }, 'system message', options?.waitForCompletion);
   }
 
   private dispatch(params: UserMessageParams, context: string, waitForCompletion = false): Promise<void> {

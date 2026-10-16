@@ -799,6 +799,18 @@ describe('Scheduler', () => {
       expect(routedMessage.payload).toContain('Run tests');
       expect(routedMessage.source).toBe('system');
       expect(routedMessage.trigger).toBe('scheduled');
+      expect(routedMessage.replyRootId).toBeNull();
+    });
+
+    it.each(['om_actual_start', 'sched-invalid-start'])('uses only a platform notification as the reply root (%s)', async messageId => {
+      vi.mocked(mockCallbacks.sendMessage).mockResolvedValueOnce(messageId);
+      const task = createTask({ id: 'reply-root' });
+      scheduler.addTask(task);
+      fireJob(scheduler.getActiveJobs());
+      await vi.waitFor(() => expect(mockRouterAsMock.route).toHaveBeenCalledOnce());
+      const message = getRoutedMessage();
+      expect(message.id).toMatch(/^sched-/);
+      expect(message.replyRootId).toBe(messageId.startsWith('sched-') ? null : messageId);
     });
 
     it('maps clearContext to an isolated blank session without resetting the user (#4812)', async () => {

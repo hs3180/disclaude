@@ -30,6 +30,7 @@ import type { FileRef } from '../../types/file.js';
 import type { ChannelCapabilities } from '../../types/channel.js';
 import type { MessageData, MessageBuilderContext, MessageBuilderOptions, MessageBuilderSection } from './types.js';
 import { getSupportedChannelSendCommands } from './channel-cli-help.js';
+import { isSyntheticMessageId } from '../../utils/message-id.js';
 import {
   buildChatHistorySection,
   buildPersistedHistorySection,
@@ -56,6 +57,12 @@ import {
  * Channel-specific content is injected via the options callbacks.
  */
 export class MessageBuilder {
+  private replyMetadata(msg: MessageData): string {
+    const id = msg.replyRootId !== undefined ? msg.replyRootId : msg.messageId;
+    return id && !isSyntheticMessageId(id)
+      ? `**Message ID:** ${id}`
+      : '**Reply root:** none. Send directly to the Chat ID; omit --parent and --thread-root. Internal tracking IDs are not platform message IDs.';
+  }
   private readonly options: MessageBuilderOptions;
 
   constructor(options?: MessageBuilderOptions) {
@@ -110,7 +117,7 @@ export class MessageBuilder {
 
     const metadataParts: string[] = [
       `**Chat ID:** ${chatId}`,
-      `**Message ID:** ${msg.messageId}`,
+      this.replyMetadata(msg),
     ];
     if (msg.threadRootId) {
       metadataParts.push(`**Thread Root ID:** ${msg.threadRootId}`);
@@ -152,7 +159,7 @@ export class MessageBuilder {
     // Metadata
     const metadataParts: string[] = [
       `**Chat ID:** ${chatId}`,
-      `**Message ID:** ${msg.messageId}`,
+      this.replyMetadata(msg),
     ];
     if (msg.threadRootId) {
       metadataParts.push(`**Thread Root ID:** ${msg.threadRootId}`);

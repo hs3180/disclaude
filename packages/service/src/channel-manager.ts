@@ -183,7 +183,7 @@ export class ChannelManager {
    * Broadcast a message to all registered channels.
    * Uses Promise.allSettled to ensure one channel's failure doesn't affect others.
    */
-  async broadcast(message: OutgoingMessage): Promise<void> {
+  async broadcast(message: OutgoingMessage): Promise<string | void> {
     if (this.channels.size === 0) {
       logger.warn({ chatId: message.chatId }, 'No channels registered');
       return;
@@ -192,7 +192,7 @@ export class ChannelManager {
     const results = await Promise.allSettled(
       Array.from(this.channels.values()).map(async (channel) => {
         try {
-          await channel.sendMessage(message);
+          return await channel.sendMessage(message);
         } catch (error) {
           logger.warn(
             { channelId: channel.id, chatId: message.chatId, error },
@@ -213,6 +213,11 @@ export class ChannelManager {
         );
       }
     });
+    // A single confirmed platform delivery is safe to use as a reply anchor.
+    // Ambiguous/missing IDs leave the caller explicitly rootless.
+    const ids = results.flatMap(result => result.status === 'fulfilled' && typeof result.value === 'string' && result.value
+      ? [result.value] : []);
+    return ids.length === 1 ? ids[0] : undefined;
   }
 
   /**

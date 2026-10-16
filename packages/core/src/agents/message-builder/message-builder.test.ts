@@ -17,20 +17,25 @@ describe('MessageBuilder', () => {
   });
 
   describe('buildEnhancedContent - basic structure', () => {
+    it.each(['om_actual_start', null])('keeps the synthetic tracking ID out of reply metadata (%s)', replyRootId => {
+      const text = messageBuilder.buildEnhancedContent({ text: 'scheduled task', messageId: 'sched-tracking', replyRootId }, 'chat');
+      expect(text).not.toContain('sched-tracking');
+      expect(text).toContain(replyRootId ?? 'omit --parent and --thread-root');
+    });
     it('should include chat ID and message ID in output', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
       }, 'chat-456');
 
       expect(result).toContain('chat-456');
-      expect(result).toContain('msg-123');
+      expect(result).toContain('om_message_123');
     });
 
     it('should expose the stable topic root needed to route interactive-card clicks', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Continue with option A',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
         chatType: 'topic',
         threadRootId: 'thread-root-1',
       }, 'chat-456');
@@ -41,7 +46,7 @@ describe('MessageBuilder', () => {
     it('should include sender open ID when provided', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
         senderOpenId: 'user-789',
       }, 'chat-456');
 
@@ -51,7 +56,7 @@ describe('MessageBuilder', () => {
     it('should not include sender open ID when not provided', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
       }, 'chat-456');
 
       expect(result).not.toContain('Sender Open ID');
@@ -60,7 +65,7 @@ describe('MessageBuilder', () => {
     it('should include user message text', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'What is the weather today?',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
       }, 'chat-456');
 
       expect(result).toContain('What is the weather today?');
@@ -96,7 +101,7 @@ describe('MessageBuilder', () => {
     it('should include next-step guidance for regular messages', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
       }, 'chat-456');
 
       expect(result).toContain('Next Steps After Response');
@@ -105,7 +110,7 @@ describe('MessageBuilder', () => {
     it('should include output format guidance for regular messages', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
       }, 'chat-456');
 
       expect(result).toContain('Output Format Requirements');
@@ -115,7 +120,7 @@ describe('MessageBuilder', () => {
     it('should include location awareness guidance for regular messages', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
       }, 'chat-456');
 
       expect(result).toContain('Location Awareness');
@@ -124,7 +129,7 @@ describe('MessageBuilder', () => {
     it('should not include guidance sections for skill commands', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: '/reset',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
       }, 'chat-456');
 
       expect(result).not.toContain('Next Steps After Response');
@@ -137,18 +142,18 @@ describe('MessageBuilder', () => {
     it('should return skill command text with minimal context', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: '/reset',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
       }, 'chat-456');
 
       expect(result).toContain('/reset');
       expect(result).toContain('chat-456');
-      expect(result).toContain('msg-123');
+      expect(result).toContain('om_message_123');
     });
 
     it('should not include history sections for skill commands', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: '/reset',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
         chatHistoryContext: 'Some history',
         persistedHistoryContext: 'Some persisted history',
       }, 'chat-456');
@@ -160,7 +165,7 @@ describe('MessageBuilder', () => {
     it('should handle skill commands with spaces', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: '  /command arg1 arg2',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
       }, 'chat-456');
 
       expect(result).toContain('/command arg1 arg2');
@@ -172,7 +177,7 @@ describe('MessageBuilder', () => {
     it('should include chat history section when provided', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
         chatHistoryContext: 'Previous conversation here...',
       }, 'chat-456');
 
@@ -202,7 +207,7 @@ describe('MessageBuilder', () => {
     it('should not include chat history section when not provided', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
       }, 'chat-456');
 
       expect(result).not.toContain('Recent Chat History');
@@ -211,7 +216,7 @@ describe('MessageBuilder', () => {
     it('should include persisted history section when provided', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
         persistedHistoryContext: 'Previous session content...',
       }, 'chat-456');
 
@@ -222,7 +227,7 @@ describe('MessageBuilder', () => {
     it('should not include persisted history section when not provided', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
       }, 'chat-456');
 
       expect(result).not.toContain('Previous Session Context');
@@ -231,7 +236,7 @@ describe('MessageBuilder', () => {
     it('should include both history sections when both are provided', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
         persistedHistoryContext: 'Persisted history...',
         chatHistoryContext: 'Chat history...',
       }, 'chat-456');
@@ -245,7 +250,7 @@ describe('MessageBuilder', () => {
     it('should not include persisted history for skill commands', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: '/reset',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
         persistedHistoryContext: 'Previous conversation...',
       }, 'chat-456');
 
@@ -268,7 +273,7 @@ describe('MessageBuilder', () => {
 
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
         attachments,
       }, 'chat-456');
 
@@ -282,7 +287,7 @@ describe('MessageBuilder', () => {
     it('should not include attachment section when no attachments', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
       }, 'chat-456');
 
       expect(result).not.toContain('Attachments');
@@ -312,7 +317,7 @@ describe('MessageBuilder', () => {
 
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
         attachments,
       }, 'chat-456');
 
@@ -332,7 +337,7 @@ describe('MessageBuilder', () => {
 
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
         attachments,
       }, 'chat-456');
 
@@ -353,7 +358,7 @@ describe('MessageBuilder', () => {
 
       const result = messageBuilder.buildEnhancedContent({
         text: '/analyze',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
         attachments,
       }, 'chat-456');
 
@@ -370,7 +375,7 @@ describe('MessageBuilder', () => {
 
       const result = builder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
       }, 'chat-456');
 
       expect(result).toContain('You are responding in a Test Chat.');
@@ -384,7 +389,7 @@ describe('MessageBuilder', () => {
 
       const result = builder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
       }, 'chat-456');
 
       expect(result).toContain('Custom Section');
@@ -397,7 +402,7 @@ describe('MessageBuilder', () => {
 
       const result = builder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
       }, 'chat-456');
 
       expect(result).not.toContain('## Tools');
@@ -411,7 +416,7 @@ describe('MessageBuilder', () => {
 
       const result = builder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
       }, 'chat-456');
 
       expect(result).not.toContain('## Tools');
@@ -425,7 +430,7 @@ describe('MessageBuilder', () => {
 
       const result = builder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
       }, 'chat-456');
 
       expect(result).toContain('## Tools');
@@ -440,7 +445,7 @@ describe('MessageBuilder', () => {
 
       const result = builder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
         attachments: [{
           id: 'att-1',
           fileName: 'test.png',
@@ -461,7 +466,7 @@ describe('MessageBuilder', () => {
 
       builder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
       }, 'chat-456');
 
       // buildAttachmentExtra should still be called (it decides what to return)
@@ -476,7 +481,7 @@ describe('MessageBuilder', () => {
 
       const result = builder.buildEnhancedContent({
         text: '/command',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
       }, 'chat-456');
 
       expect(result).toContain('Skill execution context...');
@@ -495,7 +500,7 @@ describe('MessageBuilder', () => {
 
       builder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
         senderOpenId: 'user-789',
       }, 'chat-456', { ...DEFAULT_CHANNEL_CAPABILITIES, supportsCard: true });
 
@@ -521,7 +526,7 @@ describe('MessageBuilder', () => {
 
       builder.buildEnhancedContent({
         text: '/skill command',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
       }, 'chat-456');
 
       expect(buildSkillCommandExtra.mock.calls[0][0].isSkillCommand).toBe(true);
@@ -531,7 +536,7 @@ describe('MessageBuilder', () => {
     it('should use next-step fallback when channel does not support cards', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
       }, 'chat-456', { ...DEFAULT_CHANNEL_CAPABILITIES, supportsCard: false });
 
       expect(result).toContain('Next Steps After Response');
@@ -543,7 +548,7 @@ describe('MessageBuilder', () => {
     it('should handle empty attachments array', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
         attachments: [],
       }, 'chat-456');
 
@@ -563,7 +568,7 @@ describe('MessageBuilder', () => {
 
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
         attachments,
       }, 'chat-456');
 
@@ -582,7 +587,7 @@ describe('MessageBuilder', () => {
 
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
         attachments,
       }, 'chat-456');
 
@@ -598,7 +603,7 @@ describe('MessageBuilder', () => {
 
       const result = builder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
       }, 'chat-456');
 
       const toolsIdx = result.indexOf('## Tools');
@@ -615,7 +620,7 @@ describe('MessageBuilder', () => {
 
       const result = builder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
       }, 'chat-456');
 
       expect(result).not.toContain('You are responding');
@@ -629,7 +634,7 @@ describe('MessageBuilder', () => {
 
       const result = builder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
       }, 'chat-456');
 
       // The empty string should not produce any visible content
@@ -637,7 +642,7 @@ describe('MessageBuilder', () => {
       const defaultBuilder = new MessageBuilder();
       const defaultResult = defaultBuilder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
       }, 'chat-456');
 
       expect(result).toBe(defaultResult);
@@ -646,7 +651,7 @@ describe('MessageBuilder', () => {
     it('should use text next-step guidance when channel capabilities are unknown', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
       }, 'chat-456', undefined);
 
       expect(result).not.toContain('actionPrompts');
@@ -661,7 +666,7 @@ describe('MessageBuilder', () => {
 
       const result = builder.buildEnhancedContent({
         text: '/analyze',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
         attachments: [{
           id: 'att-1',
           fileName: 'data.csv',
@@ -683,7 +688,7 @@ describe('MessageBuilder', () => {
     it('should include thread context section when threadContext is provided', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
         threadContext: '👤 Root message\n\n🤖 Bot reply',
       }, 'chat-456');
 
@@ -695,7 +700,7 @@ describe('MessageBuilder', () => {
     it('should not include thread context section when threadContext is not provided', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
       }, 'chat-456');
 
       expect(result).not.toContain('Thread Context');
@@ -707,7 +712,7 @@ describe('MessageBuilder', () => {
     it('should inject lark-cli self-service guidance for topic threads even without threadContext', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: '深入分析这篇研报',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
         chatType: 'topic',
         // NOTE: no threadContext — the pre-build failed. Guidance must still appear.
       }, 'chat-456');
@@ -723,7 +728,7 @@ describe('MessageBuilder', () => {
     it('should NOT inject lark-cli self-service guidance for non-topic chats', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
         chatType: 'group',
       }, 'chat-456');
 
@@ -734,7 +739,7 @@ describe('MessageBuilder', () => {
     it('should not include thread context for skill commands', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: '/reset',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
         threadContext: 'Thread data here',
       }, 'chat-456');
 
@@ -745,7 +750,7 @@ describe('MessageBuilder', () => {
     it('should include thread context alongside other history sections', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
         chatHistoryContext: 'Chat history...',
         persistedHistoryContext: 'Persisted history...',
         threadContext: 'Thread content...',
@@ -759,7 +764,7 @@ describe('MessageBuilder', () => {
     it('should skip flat chat history for topic threads (Issue #3989)', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
         chatType: 'topic',
         chatHistoryContext: 'Flat chat history...',
         threadContext: 'Thread content...',
@@ -778,7 +783,7 @@ describe('MessageBuilder', () => {
     it('should skip next-step guidance when chatType is topic', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
         chatType: 'topic',
       }, 'chat-456');
 
@@ -789,7 +794,7 @@ describe('MessageBuilder', () => {
     it('should include next-step guidance for non-topic chatType', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
         chatType: 'group',
       }, 'chat-456');
 
@@ -800,7 +805,7 @@ describe('MessageBuilder', () => {
     it('should include next-step guidance when chatType is undefined', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
       }, 'chat-456');
 
       expect(result).toContain('Next Steps After Response');
@@ -809,7 +814,7 @@ describe('MessageBuilder', () => {
     it('should include other guidance sections for topic threads', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
         chatType: 'topic',
         threadContext: 'Previous thread messages...',
       }, 'chat-456');
@@ -828,7 +833,7 @@ describe('MessageBuilder', () => {
     it('should place user message after guidance sections', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'My question here',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
       }, 'chat-456');
 
       const outputFormatIdx = result.indexOf('Output Format Requirements');
@@ -839,7 +844,7 @@ describe('MessageBuilder', () => {
     it('should place stable guidance before volatile history', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
-        messageId: 'msg-123',
+        messageId: 'om_message_123',
         chatHistoryContext: 'History...',
       }, 'chat-456');
 

@@ -26,6 +26,7 @@ import type { SystemMessage } from '../types/message.js';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { withoutChannelCredentials } from '../config/channel-credentials.js';
+import { isSyntheticMessageId } from '../utils/message-id.js';
 
 const logger = createLogger('Scheduler');
 
@@ -168,7 +169,7 @@ interface ActiveJob {
  */
 export interface SchedulerCallbacks {
   /** Send a text message to a chat */
-  sendMessage: (chatId: string, message: string) => Promise<void>;
+  sendMessage: (chatId: string, message: string) => Promise<string | void>;
   /**
    * @deprecated Compatibility hook only; scheduled executions no longer reset
    * the user's persistent agent. Fresh sessions are owned by the pool handler.
@@ -893,7 +894,7 @@ ${task.prompt ?? ''}`;
       }
 
       // Send start notification
-      await this.callbacks.sendMessage(
+      const startMessageId = await this.callbacks.sendMessage(
         task.chatId,
         `⏰ 定时任务「${task.name}」开始执行...`
       );
@@ -901,6 +902,7 @@ ${task.prompt ?? ''}`;
       {
         const systemMessage: SystemMessage = {
           id: `sched-${task.id}-${randomUUID()}`,
+          replyRootId: typeof startMessageId === 'string' && startMessageId && !isSyntheticMessageId(startMessageId) ? startMessageId : null,
           source: 'system',
           payload: wrappedPrompt,
           chatId: task.chatId,

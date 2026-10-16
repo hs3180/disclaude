@@ -18,6 +18,8 @@ import type { ChannelCapabilities } from '../../types/channel.js';
  * for an agent, including user text, metadata, and optional context.
  */
 export interface MessageData {
+  /** Explicit platform reply anchor for a system trigger; null means omit --parent. */
+  replyRootId?: string | null;
   /** User's message text */
   text: string;
   /** False only after this query already accepted the same stable channel context. Defaults to true for standalone/one-shot prompts. */

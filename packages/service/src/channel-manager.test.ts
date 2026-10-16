@@ -98,6 +98,15 @@ describe('ChannelManager', () => {
   });
 
   describe('broadcast()', () => {
+    it.each([1, 2])('returns a reply ID only for a unique confirmed platform delivery (%s IDs)', async count => {
+      for (let i = 0; i < count; i++) {
+        const channel = createMockChannel(`channel-${  i}`);
+        vi.mocked(channel.sendMessage).mockResolvedValueOnce(`om_delivery_${  i}`);
+        manager.register(channel);
+      }
+      await expect(manager.broadcast({ chatId: 'generic-rest-chat', type: 'text', text: 'start' }))
+        .resolves.toBe(count === 1 ? 'om_delivery_0' : undefined);
+    });
     it('should send message to all channels', async () => {
       const channel1 = createMockChannel('feishu');
       const channel2 = createMockChannel('rest');

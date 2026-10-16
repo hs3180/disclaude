@@ -101,7 +101,7 @@ describe('ChannelApiClient', () => {
       const client = new ChannelApiClient({ baseUrl: 'http://localhost:19200' });
 
       await expect(client.requestChannel('sendCard', { chatId: 'x', card: {} })).rejects.toThrow(
-        'CHANNEL_API_REQUEST_FAILED: REST sendCard (handler error)',
+        'CHANNEL_API_REQUEST_FAILED: REST sendCard (HTTP 500: handler error)',
       );
     });
 
@@ -110,7 +110,7 @@ describe('ChannelApiClient', () => {
       const client = new ChannelApiClient({ baseUrl: 'http://localhost:19200' });
 
       await expect(client.requestChannel('uploadFile', { chatId: 'x', filePath: '/a' })).rejects.toThrow(
-        'CHANNEL_API_REQUEST_FAILED: REST uploadFile (handler not configured)',
+        'CHANNEL_API_REQUEST_FAILED: REST uploadFile (HTTP 503: handler not configured)',
       );
     });
 

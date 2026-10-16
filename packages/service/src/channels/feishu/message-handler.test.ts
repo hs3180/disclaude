@@ -331,9 +331,37 @@ describe('MessageHandler', () => {
 
   it('does not downgrade an unknown private form into ordinary text', async () => {
     const { handler } = createHandler();
-    await handler.handleCardAction(cardActionEvent({ action: { form_value: { credential: 'private' }, tag: 'button' } }));
+    const response = await handler.handleCardAction(cardActionEvent({ action: { form_value: { credential: 'private' }, tag: 'button' } }));
+    expect(response).toMatchObject({ toast: { type: 'info', content: expect.stringContaining('已收到提交') } });
+    await vi.waitFor(() => expect(mockState.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining('重新发起') })));
     expect(mockState.emitMessage).not.toHaveBeenCalled();
     expect(mockState.logCardInteraction).not.toHaveBeenCalled();
+    expect(JSON.stringify(mockState.sendMessage.mock.calls)).not.toContain('credential');
+  });
+
+  it.each(['expired', 'restarted'] as const)('acknowledges a %s workflow without running its process or leaking its value', async reason => {
+    if (reason === 'expired') {vi.useFakeTimers();}
+    const { handler } = createHandler();
+    mockState.sendMessage.mockResolvedValueOnce('stale-card' as never);
+    await handler.requestPrivateWorkflow({ chatId: 'chat_001', actorId: 'user_001', sourceMessageId: 'msg_001',
+      workflow: { title: 'One use', description: 'Private', command: process.execPath, args: ['-e', 'process.exit(42)'] } });
+    const { card } = firstCallArg(mockState.sendMessage);
+    const [{ value }] = card.body.elements[1].elements[1].behaviors;
+    let target = handler;
+    if (reason === 'expired') {
+      await vi.advanceTimersByTimeAsync(300_001);
+    } else {
+      handler.clearClient();
+      target = createHandler().handler;
+    }
+    try {
+      await target.handleCardAction(cardActionEvent({ context: { open_message_id: 'stale-card', open_chat_id: 'chat_001' },
+        action: { tag: 'button', value, form_value: { credential: 'stale-submitted-secret' } } }));
+      await vi.waitFor(() => expect(mockState.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining('重新发起') })));
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+      expect(mockState.logCardInteraction).not.toHaveBeenCalled();
+      expect(JSON.stringify(mockState.sendMessage.mock.calls)).not.toContain('stale-submitted-secret');
+    } finally { vi.useRealTimers(); handler.clearClient(); target.clearClient(); }
   });
 
   it('should construct without errors', () => {
