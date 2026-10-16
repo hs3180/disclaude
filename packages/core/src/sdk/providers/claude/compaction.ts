@@ -145,6 +145,9 @@ export function withDiscoveredCompaction(
       get inputDelivery() {
         return active?.handle.inputDelivery ?? inputDelivery;
       },
+      get steerMode() { return active?.handle.steerMode; },
+      get steer() { return active?.handle.steer?.bind(active.handle); },
+      get interrupt() { return active?.handle.interrupt?.bind(active.handle); },
       close() {
         abort.abort();
         active?.handle.close();

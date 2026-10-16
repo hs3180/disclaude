@@ -715,6 +715,291 @@ describe('ChatAgent (service)', () => {
         .map(([record]: any[]) => record)
         .filter(record => record?.event === 'agent_turn' && record.sourceMessageId === messageId && record.state !== 'started');
 
+    it.each([false, true])('preserves replacement input ownership when interrupt races a natural terminal (%s)', async naturalTerminal => {
+      const { agent, callbacks, push, steer, handle } = owned('claude');
+      Object.assign(handle, { steer, steerMode: 'interrupt-and-replace' });
+      const internals = agent as any;
+      const ownerContext = { chatId: 'owned-steer', traceId: 'trace-A', runId: 'run-A', sourceMessageId: 'owner-A' };
+      Object.assign(internals, { pendingTurnAnchors: ['root-A'], pendingTurnMessageIds: ['owner-A'], pendingLifecycleContexts: [ownerContext] });
+      const owner = agent.turnCompleteFor('owner-A')!.catch(error => error);
+      let acknowledge!: () => void;
+      let interruptResult!: () => void;
+      let newInput!: () => void;
+      let finish!: () => void;
+      const acknowledged = new Promise<void>(resolve => { acknowledge = resolve; });
+      const oldResult = new Promise<void>(resolve => { interruptResult = resolve; });
+      const newPushed = new Promise<void>(resolve => { newInput = resolve; });
+      const ended = new Promise<void>(resolve => { finish = resolve; });
+      steer.mockImplementation(async () => { await acknowledged; return { turnId: 'run-A' }; });
+      push.mockImplementation(() => { newInput(); return true; });
+      const loop = internals.processIterator((async function* () {
+        yield { parsed: { type: 'tool_use', content: 'private tool' } };
+        await oldResult;
+        if (naturalTerminal) {
+          yield { parsed: { type: 'text', content: 'Original completed' } };
+          yield { parsed: { type: 'result', content: '✅ Complete' } };
+        } else {
+          yield { parsed: { type: 'result', content: '', terminatedReason: 'interrupted',
+            metadata: { interruptionMode: 'replace', consumedInputIds: ['run-A'] } } };
+        }
+        await newPushed;
+        yield { parsed: { type: 'text', content: 'Replacement completed' } };
+        yield { parsed: { type: 'result', content: '✅ Complete' } };
+        await ended;
+      })());
+      try {
+        const admission = agent.processMessage(input());
+        await vi.waitFor(() => expect(steer).toHaveBeenCalledOnce());
+        expect(push).not.toHaveBeenCalled();
+        expect(JSON.stringify(callbacks.sendMessage.mock.calls)).not.toContain('已打断');
+        if (naturalTerminal) {
+          interruptResult();
+          await owner;
+          expect(push).not.toHaveBeenCalled();
+          acknowledge();
+        } else {
+          acknowledge();
+          await Promise.resolve();
+          expect(push).not.toHaveBeenCalled(); // ACK alone is not the old turn's terminal.
+          interruptResult();
+        }
+        await admission;
+        expect((await owner)?.name).toBe(naturalTerminal ? undefined : 'TurnInterruptedError');
+        await agent.turnCompleteFor('follow-B');
+        expect(push).toHaveBeenCalledOnce();
+        expect(push.mock.calls[0][0].correlation.sourceMessageId).toBe('follow-B');
+        expect(handle.close).not.toHaveBeenCalled();
+        expect(liveTerminals(agent, 'owner-A')).toEqual([expect.objectContaining(naturalTerminal
+          ? { state: 'completed' } : { state: 'interrupted', interruptionCause: 'busy_input' })]);
+        expect(liveTerminals(agent, 'follow-B')).toEqual([expect.objectContaining({ state: 'completed' })]);
+        expect(callbacks.sendMessage.mock.calls.some((call: any[]) => call[1] === 'Replacement completed' && call[2] === 'root-B')).toBe(true);
+        expect(JSON.stringify(callbacks.sendMessage.mock.calls)).not.toContain('自动重放');
+      } finally { agent.reset(); finish(); await loop; dispose(agent); }
+    });
+
+    it('serializes concurrent replacement admissions and submits every new input exactly once', async () => {
+      const { agent, push, steer, handle } = owned('claude');
+      Object.assign(handle, { steer, steerMode: 'interrupt-and-replace' });
+      const internals = agent as any;
+      const acknowledge: Array<() => void> = [];
+      steer.mockImplementation(() => new Promise(resolve => { acknowledge.push(() => resolve({ turnId: 'native' })); }));
+      push.mockImplementation((message: StreamingUserMessage) => {
+        internals.activeTurnMessageId = message.correlation?.sourceMessageId;
+        internals.isProcessingMessage = true;
+        return true;
+      });
+      const first = agent.processMessage(input('follow-B'));
+      const second = agent.processMessage(input('follow-C'));
+      try {
+        await vi.waitFor(() => expect(steer).toHaveBeenCalledTimes(1));
+        expect(push).not.toHaveBeenCalled();
+        acknowledge[0]();
+        internals.resolveTurn('owner-A', new Error('Owner interrupted'));
+        await first;
+        await vi.waitFor(() => expect(steer).toHaveBeenCalledTimes(2));
+        expect(push.mock.calls.map(call => call[0].correlation.sourceMessageId)).toEqual(['follow-B']);
+        const firstCompletion = agent.turnCompleteFor('follow-B')!.catch(error => error);
+        acknowledge[1]();
+        internals.resolveTurn('follow-B', new Error('B interrupted'));
+        await second;
+        expect((await firstCompletion).message).toBe('B interrupted');
+        expect(push.mock.calls.map(call => call[0].correlation.sourceMessageId)).toEqual(['follow-B', 'follow-C']);
+        internals.resolveTurn('follow-C');
+        await agent.turnCompleteFor('follow-C');
+      } finally { dispose(agent); }
+    });
+
+    it('handles a second busy input before the replacement has its first native event without losing either input', async () => {
+      const { agent, push, steer, handle } = owned('claude');
+      Object.assign(handle, { steer, steerMode: 'interrupt-and-replace' });
+      const { LiveInputRejectedError } = await import('@disclaude/core');
+      steer.mockResolvedValueOnce({ turnId: 'run-A' }).mockRejectedValueOnce(new LiveInputRejectedError('Native B not active yet'));
+      const internals = agent as any;
+      Object.assign(internals, { pendingTurnAnchors: ['root-A'], pendingTurnMessageIds: ['owner-A'], pendingLifecycleContexts: [
+        { chatId: 'owned-steer', traceId: 'trace-A', runId: 'run-A', sourceMessageId: 'owner-A' }] });
+      let releaseA!: () => void, releaseB!: () => void, finish!: () => void;
+      const interrupted = new Promise<void>(resolve => { releaseA = resolve; });
+      const firstBEvent = new Promise<void>(resolve => { releaseB = resolve; });
+      const ended = new Promise<void>(resolve => { finish = resolve; });
+      const loop = internals.processIterator((async function* () {
+        yield { parsed: { type: 'tool_use', content: 'private tool' } };
+        await interrupted;
+        yield { parsed: { type: 'result', content: '', terminatedReason: 'interrupted', metadata: { interruptionMode: 'replace' } } };
+        await firstBEvent;
+        yield { parsed: { type: 'text', content: 'B and its streamed supplement completed' } };
+        yield { parsed: { type: 'result', content: '✅ Complete', metadata: {
+          consumedInputIds: push.mock.calls.map(call => call[0].correlation.runId) } } };
+        await ended;
+      })());
+      try {
+        const first = agent.processMessage(input('follow-B'));
+        await vi.waitFor(() => expect(steer).toHaveBeenCalledTimes(1));
+        releaseA();
+        await first;
+        expect(internals.activeTurnMessageId).toBeUndefined();
+        await agent.processMessage(input('follow-C'));
+        expect(steer).toHaveBeenCalledTimes(2);
+        expect(push.mock.calls.map(call => call[0].correlation.sourceMessageId)).toEqual(['follow-B', 'follow-C']);
+        releaseB();
+        await Promise.all([agent.turnCompleteFor('follow-B'), agent.turnCompleteFor('follow-C')]);
+        expect(liveTerminals(agent, 'follow-B')).toEqual([expect.objectContaining({ state: 'completed' })]);
+        expect(liveTerminals(agent, 'follow-C')).toEqual([expect.objectContaining({ state: 'completed', consumedBySourceMessageId: 'follow-B' })]);
+      } finally { agent.reset(); finish(); await loop; dispose(agent); }
+    });
+
+    it('preserves queued anchors when explicit replacement input takes priority', async () => {
+      const { agent, push, steer, handle } = owned('claude');
+      Object.assign(handle, { steer, steerMode: 'interrupt-and-replace' });
+      const internals = agent as any;
+      internals.busyInput = 'queue';
+      Object.assign(internals, { pendingTurnAnchors: ['root-A'], pendingTurnMessageIds: ['owner-A'], pendingLifecycleContexts: [
+        { chatId: 'owned-steer', traceId: 'trace-A', runId: 'run-A', sourceMessageId: 'owner-A' }] });
+      let release!: () => void, finish!: () => void;
+      const interrupted = new Promise<void>(resolve => { release = resolve; });
+      const ended = new Promise<void>(resolve => { finish = resolve; });
+      const loop = internals.processIterator((async function* () {
+        yield { parsed: { type: 'tool_use', content: 'private tool' } };
+        await interrupted;
+        yield { parsed: { type: 'result', content: '', terminatedReason: 'interrupted', metadata: { interruptionMode: 'replace' } } };
+        await vi.waitFor(() => expect(push).toHaveBeenCalledTimes(1));
+        for (const name of ['Explicit replacement', 'Queued B']) {
+          yield { parsed: { type: 'text', content: `${name} completed` } };
+          yield { parsed: { type: 'result', content: '✅ Complete' } };
+        }
+        await ended;
+      })());
+      try {
+        await agent.processMessage(input('follow-B'));
+        const explicit = agent.steer('replace current work');
+        await vi.waitFor(() => expect(steer).toHaveBeenCalledOnce());
+        release();
+        expect((await explicit).ok).toBe(true);
+        await agent.turnCompleteFor('follow-B');
+        expect(push.mock.calls.map(call => call[0].correlation.sourceMessageId)).toEqual([expect.stringMatching(/^steer-/), 'follow-B']);
+        expect(liveTerminals(agent, 'follow-B')).toEqual([expect.objectContaining({ state: 'completed' })]);
+      } finally { agent.reset(); finish(); await loop; dispose(agent); }
+    });
+
+    it.each(['reset', 'stop'] as const)('cancels replacement admissions waiting behind an old ACK on %s', async action => {
+      const { agent, push, steer, handle } = owned('claude');
+      Object.assign(handle, { steer, steerMode: 'interrupt-and-replace' });
+      const internals = agent as any;
+      let acknowledge!: () => void;
+      steer.mockImplementation(() => new Promise(resolve => { acknowledge = () => resolve({ turnId: 'native-A' }); }));
+      const first = agent.processMessage(input('follow-B'));
+      const queued = agent.processMessage(input('follow-C'));
+      const startLoop = vi.spyOn(internals, 'startAgentLoop');
+      try {
+        await vi.waitFor(() => expect(steer).toHaveBeenCalledOnce());
+        agent[action]();
+        acknowledge();
+        internals.resolveTurn('owner-A', new Error('Stopped'));
+        await Promise.all([first, queued]);
+        expect(push).not.toHaveBeenCalled();
+        expect(startLoop).not.toHaveBeenCalled();
+        await expect(agent.turnCompleteFor('follow-C')).rejects.toThrow('superseded');
+        expect(liveTerminals(agent, 'follow-C')).toEqual([expect.objectContaining({ state: 'interrupted' })]);
+      } finally { dispose(agent); }
+    });
+
+    it('fences a queued explicit steer on reset and retains its call-time thread', async () => {
+      const { agent, callbacks, steer, handle } = owned('claude');
+      Object.assign(handle, { steer, steerMode: 'interrupt-and-replace' });
+      const internals = agent as any;
+      internals.activityThreadRootId = 'explicit-call-root';
+      let acknowledge!: () => void;
+      steer.mockImplementation(() => new Promise(resolve => { acknowledge = () => resolve({ turnId: 'native-A' }); }));
+      const first = agent.processMessage(input('follow-B'));
+      const explicit = agent.steer('explicit instruction');
+      try {
+        await vi.waitFor(() => expect(steer).toHaveBeenCalledOnce());
+        internals.activityThreadRootId = 'later-root';
+        agent.reset();
+        acknowledge();
+        await first;
+        expect((await explicit).ok).toBe(false);
+        expect(callbacks.sendMessage.mock.calls.some((call: any[]) => call[1].includes('随停止或重置取消') && call[2] === 'explicit-call-root')).toBe(true);
+        expect(steer).toHaveBeenCalledOnce();
+      } finally { dispose(agent); }
+    });
+
+    it.each([false, true])('falls back once when replacement interruption is unavailable or unconfirmed (%s)', ambiguous => {
+      return (async () => {
+        const { agent, callbacks, push, steer, handle } = owned('claude');
+        Object.assign(handle, { steer, steerMode: 'interrupt-and-replace' });
+        const { LiveInputRejectedError } = await import('@disclaude/core');
+        steer.mockRejectedValue(ambiguous ? new Error('Interrupt control transport lost') : new LiveInputRejectedError('Native interrupt unavailable'));
+        try {
+          await agent.processMessage(input());
+          expect(steer).toHaveBeenCalledOnce();
+          expect(push).toHaveBeenCalledOnce();
+          expect((agent as any).turnCompletions.get('owner-A').settled).toBe(false);
+          expect(JSON.stringify(callbacks.sendMessage.mock.calls)).toContain('输入流');
+          expect(JSON.stringify(callbacks.sendMessage.mock.calls)).not.toContain('已打断');
+        } finally { dispose(agent); }
+      })();
+    });
+
+    it('rejects a full busy queue without losing its oldest anchor or marking the active task idle', async () => {
+      const { agent, push } = owned('claude');
+      const internals = agent as any;
+      internals.busyInput = 'queue';
+      try {
+        for (let index = 0; index < 49; index++) { await agent.processMessage(input(`queued-${index}`)); }
+        expect(internals.pendingTurnMessageIds).toHaveLength(49);
+        await agent.processMessage(input('overflow'));
+        await expect(agent.turnCompleteFor('overflow')).rejects.toThrow('queue is full');
+        expect(internals.pendingTurnMessageIds).toHaveLength(49);
+        expect(internals.pendingTurnMessageIds[0]).toBe('queued-0');
+        expect(internals.pendingTurnMessageIds.at(-1)).toBe('queued-48');
+        expect(agent.isBusy).toBe(true);
+        expect(internals.turnCompletions.get('owner-A').settled).toBe(false);
+        expect(push).not.toHaveBeenCalled();
+      } finally { dispose(agent); }
+    });
+
+    it('uses configured streaming injection without interrupting a capable backend', async () => {
+      const { agent, push, steer } = owned();
+      (agent as any).busyInput = 'stream';
+      try {
+        await agent.processMessage(input());
+        expect(steer).not.toHaveBeenCalled();
+        expect(push).toHaveBeenCalledOnce();
+      } finally { dispose(agent); }
+    });
+
+    it('holds configured queue input until the current result and drains one input per turn', async () => {
+      const { agent, push, steer } = owned('claude');
+      const internals = agent as any;
+      internals.busyInput = 'queue';
+      Object.assign(internals, { pendingTurnAnchors: ['root-A'], pendingTurnMessageIds: ['owner-A'], pendingLifecycleContexts: [
+        { chatId: 'owned-steer', traceId: 'trace-A', runId: 'run-A', sourceMessageId: 'owner-A' }] });
+      let release!: () => void;
+      let finish!: () => void;
+      const ready = new Promise<void>(resolve => { release = resolve; });
+      const ended = new Promise<void>(resolve => { finish = resolve; });
+      const loop = internals.processIterator((async function* () {
+        yield { parsed: { type: 'tool_use', content: 'private tool' } };
+        await ready;
+        for (const name of ['A', 'B', 'C']) {
+          yield { parsed: { type: 'text', content: `${name} complete` } };
+          yield { parsed: { type: 'result', content: '✅ Complete' } };
+        }
+        await ended;
+      })());
+      try {
+        await agent.processMessage(input('follow-B'));
+        await agent.processMessage(input('follow-C'));
+        expect(push).not.toHaveBeenCalled();
+        expect(steer).not.toHaveBeenCalled();
+        release();
+        await agent.turnCompleteFor('follow-C');
+        expect(push.mock.calls.map(call => call[0].correlation.sourceMessageId)).toEqual(['follow-B', 'follow-C']);
+        expect(liveTerminals(agent, 'follow-B')).toEqual([expect.objectContaining({ state: 'completed' })]);
+        expect(liveTerminals(agent, 'follow-C')).toEqual([expect.objectContaining({ state: 'completed' })]);
+      } finally { agent.reset(); finish(); await loop; dispose(agent); }
+    });
+
     it.each([true, false])('records the steered input terminal and original visibility once (success=%s)', async success => {
       const { agent } = owned();
       const failure = new Error('Original native turn failed');

@@ -5,7 +5,7 @@ import { assertToolOptions } from '../../tools.js';
  * 实现 IAgentSDKProvider 接口，封装 Claude Agent SDK 的功能。
  */
 
-import { query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import { query, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
@@ -22,6 +22,7 @@ import { adaptOptions } from './options-adapter.js';
 import { createLogger } from '../../../utils/logger.js';
 import { tagErrorCategory } from '../../../utils/error-handler.js';
 import { automaticReplayBlock, preventAutomaticReplay } from '../../../utils/replay-safety.js';
+import { LiveInputRejectedError } from '../../live-input.js';
 import { ClaudeAttemptProcess, type AttemptExit } from './attempt-process.js';
 import { Config } from '../../../config/index.js';
 import type { BaseAgentConfig } from '../../../agents/types.js';
@@ -358,6 +359,15 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
       });
       return settlement;
     };
+    const submittedInputIds = new Set<string>();
+    let activeInputIds: string[] = [];
+    let pendingInterrupt: { ids: Set<string>; acknowledged: Promise<boolean>; marker: boolean } | undefined;
+    const nativeInputIds = (message: SDKMessage): string[] => {
+      const ids = 'user_message_uuids' in message && Array.isArray(message.user_message_uuids)
+        ? message.user_message_uuids : [];
+      return [...new Set([...ids, ...('user_message_uuid' in message && typeof message.user_message_uuid === 'string'
+        ? [message.user_message_uuid] : [])])];
+    };
     let inputCount = 0;
     async function* adaptInputStream(): AsyncGenerator<SDKUserMessage> {
       while (!nativeProcess.closed) {
@@ -365,7 +375,10 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         if (done || nativeProcess.closed) { return; }
         inputCount++;
         logger.info({ inputCount, contentLength: value.content?.length }, 'Input received');
-        yield adaptUserInput(value);
+        const message = adaptUserInput(value);
+        message.uuid ??= randomUUID();
+        submittedInputIds.add(message.uuid);
+        yield message;
       }
     }
 
@@ -427,6 +440,26 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
 
         for await (const message of queryResult) {
           if (cancelled) {return;}
+          const inputIds = nativeInputIds(message);
+          if (message.type === 'assistant' && !message.parent_tool_use_id && inputIds.length) {
+            activeInputIds = inputIds;
+          }
+          if (message.type === 'user' && pendingInterrupt && Array.isArray(message.message.content)
+              && message.message.content.some(block => block.type === 'text'
+                && /^\[Request interrupted by user(?: for tool use)?\]$/.test(block.text))) {
+            pendingInterrupt.marker = true;
+          }
+          let interruptedForInput = false;
+          if (message.type === 'result') {
+            const request = pendingInterrupt;
+            if (request && inputIds.some(id => request.ids.has(id))) {
+              interruptedForInput = request.marker && message.subtype === 'error_during_execution'
+                && await request.acknowledged;
+              if (pendingInterrupt === request) { pendingInterrupt = undefined; }
+            }
+            for (const id of inputIds) { submittedInputIds.delete(id); }
+            activeInputIds = [];
+          }
           if ('session_id' in message && typeof message.session_id === 'string') {
             transcriptErrors.bindSession(message.session_id, claudeConfigDir, queryStartMs);
           }
@@ -455,6 +488,12 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           // Issue #4200 part 2: thread the per-query task registry so status-only
           // TaskUpdate calls can recall a label seen on an earlier update.
           const adapted = adaptSDKMessage(message, taskSubjectRegistry);
+          if (interruptedForInput) {
+            adapted.content = '';
+            adapted.metadata = { ...adapted.metadata, terminatedReason: 'interrupted', interruptionMode: 'replace' };
+            streamedApiError = undefined;
+            stderrCapture.reset();
+          }
           if (adapted.type === 'result') {
             const { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, costUsd } = adapted.metadata ?? {};
             // SDK result snapshots replace prior turns; never add cumulative usage.
@@ -551,7 +590,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           // A terminal can precede the transcript flush. Structured API evidence
           // enriches both masked successes and already-failed terminals without
           // changing their existing termination reason.
-          if (adapted.type === 'result') {
+          if (adapted.type === 'result' && !interruptedForInput) {
             const transcript = streamedApiError ? await transcriptErrors.read()
               : await transcriptErrors.readAfterFlush(adapted.metadata?.terminatedReason === 'turn_failed'
                 || stderrIndicatesUpstreamApiError(stderrCapture.getCaptured()), () => cancelled);
@@ -657,6 +696,30 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     return {
       handle: {
         inputDelivery: 'streaming',
+        steerMode: 'interrupt-and-replace',
+        steer: async () => {
+          if (cancelled || nativeProcess.closed || typeof queryResult.interrupt !== 'function') {
+            throw new LiveInputRejectedError('The native session cannot interrupt its active turn');
+          }
+          if (pendingInterrupt) {
+            throw new LiveInputRejectedError('The previous interrupted turn has not settled yet');
+          }
+          const ids = activeInputIds.length ? activeInputIds : [...submittedInputIds].slice(0, 1);
+          if (!ids.length) { throw new LiveInputRejectedError('No native input is active yet'); }
+          const request = { ids: new Set(ids), acknowledged: Promise.resolve(false), marker: false };
+          pendingInterrupt = request;
+          request.acknowledged = (async () => {
+            try { await queryResult.interrupt(); return true; }
+            catch { return false; }
+          })();
+          if (!(await request.acknowledged)) {
+            if (pendingInterrupt === request) { pendingInterrupt = undefined; }
+            // This path never submits the replacement input. Streaming fallback
+            // is safe even if the interrupt control acknowledgement was lost.
+            throw new LiveInputRejectedError('Native interruption was not acknowledged; new input was not submitted');
+          }
+          return { turnId: ids[0] };
+        },
         close: () => { void close(); },
         cancel: () => { cancel(); void close(); },
         interrupt: async () => {

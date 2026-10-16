@@ -28,6 +28,22 @@ const configuration = (): DisclaudeConfig => ({
 });
 
 describe('named runtime and LLM configuration', () => {
+  it.each(['steer', 'stream', 'queue'] as const)('preserves busy input policy %s on its named agent', busyInput => {
+    const config = configuration();
+    config.agents!.assistant.busyInput = busyInput;
+    const result = resolveConfiguredAgents(config);
+    expect(result.ok).toBe(true);
+    if (result.ok) { expect(result.presets.assistant.busyInput).toBe(busyInput); }
+  });
+
+  it('rejects unknown busy input policies', () => {
+    const config = configuration();
+    config.agents!.assistant.busyInput = 'interrupt' as never;
+    const result = resolveConfiguredAgents(config);
+    expect(result.ok).toBe(false);
+    if (!result.ok) { expect(result.errors).toContain('agents.assistant.busyInput must be steer, stream or queue'); }
+  });
+
   it('accepts explicit auto metadata discovery as an opt-in', () => {
     const config = configuration();
     config.agents!.assistant.autoCompactWindow = 'auto';

@@ -159,6 +159,7 @@ export function resolveConfiguredAgents(
       'codexNetworkAccess',
       'codex',
       'maxConcurrentTasks',
+      'busyInput',
       'enableAgentTeams',
       'autoCompactWindow',
       'sdkTimeoutMs',
@@ -192,6 +193,9 @@ export function resolveConfiguredAgents(
       if (agent[key] !== undefined && typeof agent[key] !== 'boolean') {
         errors.push(`${field}.${key} must be a boolean`);
       }
+    }
+    if (agent.busyInput !== undefined && !['steer', 'stream', 'queue'].includes(agent.busyInput)) {
+      errors.push(`${field}.busyInput must be steer, stream or queue`);
     }
     for (const key of ['autoCompactWindow', 'sdkTimeoutMs'] as const) {
       if (
