@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Deliver necessary public assistant decision narration before tool calls in
+  group/topic conversations and streaming replies, while keeping thinking,
+  raw tool payloads and child-agent frames private (#5377, #5381).
+
+### In review for 0.6.4
+
+- Let the Claude framework own retries and SDK-reported usage without a host
+  retry-budget or per-attempt audit layer (#5382, #5383).
+- Use Claude native interrupt-and-replace for default busy input, with a short
+  old-turn notice, the new input's reply anchor and no automatic replay
+  (#5258, #5388).
+- Keep persistent credentials outside YAML, project only selected LLM settings,
+  and mask every explicit external secret-file source (#5233, #5387).
+- Make Disclaude diagnostics an optional project-local CLI-installed plugin
+  discovered by Claude, Codex, DSH and Pi (#5251, #5385).
+- Distinguish observed CDP connection failures from page-navigation responses
+  with bounded diagnostics that omit response bodies and headers (#5352, #5386).
+- Reuse installation download caches and preview retained prefixes without
+  sharing runtime dependency trees or deleting user data (#5354, #5384).
+
+These six PRs are pending maintainer Review and merge. Their combined candidate
+has separate engineering and installation receipts; real channel acceptance and
+final merged-main verification remain open. See the
+[0.6.4 candidate delivery record](docs/releases/0.6.4-rc.1.md) for exact sources,
+evidence boundaries and migration guides. No release publication is claimed.
+
 ## [0.6.2] - 2026-09-30
 
 ### Added
