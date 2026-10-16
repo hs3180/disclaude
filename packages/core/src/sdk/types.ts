@@ -116,6 +116,8 @@ export interface AgentMessageMetadata {
   consumedInputIds?: string[];
   /** Provider-declared assistant phase; commentary is visible progress, not a final result. */
   phase?: 'commentary' | 'final_answer';
+  /** Decision narration co-located with a tool call (#5377); user-visible, unlike the raw trace. */
+  narration?: string;
   /** 工具名称 */
   toolName?: string;
   /** 工具输入参数 */

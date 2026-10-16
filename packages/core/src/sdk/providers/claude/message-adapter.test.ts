@@ -13,6 +13,15 @@ const asMsg = (m: object) => m as any;
 
 describe('adaptSDKMessage', () => {
   describe('assistant messages', () => {
+    it.each(['tool_use', 'end_turn'])('keeps child %s output in the private tool-progress path', stopReason => {
+      const child = adaptSDKMessage(asMsg({ type: 'assistant', parent_tool_use_id: 'owned-agent-call',
+        message: { role: 'assistant', stop_reason: stopReason, content: [{ type: 'text', text: 'private child output' }] } }));
+      expect(child).toMatchObject({ type: 'tool_progress', content: 'private child output' });
+      const parent = adaptSDKMessage(asMsg({ type: 'assistant', parent_tool_use_id: null,
+        message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: 'public parent reply' }] } }));
+      expect(parent).toMatchObject({ type: 'text', content: 'public parent reply' });
+    });
+
     it.each(['tool_use', 'end_turn', null])('preserves text and identifies the native %s stop reason', stopReason => {
       const result = adaptSDKMessage(asMsg({
         type: 'assistant',
@@ -113,6 +122,19 @@ describe('adaptSDKMessage', () => {
       expect(result.content).toContain('Listing files');
       expect(result.metadata?.toolName).toBe('Bash');
       expect(result.metadata?.toolInput).toEqual({ command: 'ls -la' });
+      expect(result.metadata?.narration).toBe('Listing files');
+    });
+
+    it('extracts co-located narration for user-visible progress while the raw trace stays private (#5377)', () => {
+      const result = adaptSDKMessage(asMsg({ type: 'assistant', parent_tool_use_id: null,
+        message: { role: 'assistant', stop_reason: 'tool_use', content: [
+          { type: 'text', text: '先检查现有文件，避免覆盖已有修改。' },
+          { type: 'tool_use', name: 'Bash', input: { command: 'cat /private/owned-secret' } },
+        ] } }));
+      expect(result).toMatchObject({ type: 'tool_use', metadata: { toolName: 'Bash',
+        narration: '先检查现有文件，避免覆盖已有修改。' } });
+      expect(result.content).toContain('owned-secret');
+      expect(result.metadata?.narration).not.toContain('owned-secret');
     });
 
     it('should handle Edit tool with file_path', () => {

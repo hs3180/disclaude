@@ -2136,9 +2136,38 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
         // Issue #3003: Track tool call timing
         if (parsed.type === 'tool_use') {
-          // A following tool proves the unphased text belonged to an
-          // intermediate model round. Do not publish it as a group message.
-          pendingAssistantChunks = [];
+          // #5377: text immediately preceding a tool call is the round's
+          // decision narration — the necessary intermediate decision process
+          // users should see while work advances. Buffered chats (group /
+          // topic) used to drop it here; deliver it live instead. This is the
+          // model's own wording, never a raw tool trace, and it is not an
+          // answer: delivery cannot fail the turn (#5288 stays intact), the
+          // narration is excluded from turnResultText, and finalReplyOnly
+          // workflows remain final-only.
+          const coNarrated =
+            typeof parsed.metadata?.narration === 'string' && parsed.metadata.narration.length > 0
+              ? parsed.metadata.narration
+              : '';
+          if (coNarrated) { pendingAssistantChunks.push(coNarrated); }
+          if (this.callbacks.finalReplyOnly === true) {
+            // Structured workflows consume the terminal answer only.
+            pendingAssistantChunks = [];
+          } else if (pendingAssistantChunks.length > 0) {
+            const narration = pendingAssistantChunks.join('');
+            pendingAssistantChunks = [];
+            const narrationRoot = resolveReplyThreadRoot();
+            try {
+              if (streamDriver) {
+                // p2p keeps narrating into the same streaming card the reply
+                // is building; the driver owns its own send fallbacks.
+                await streamDriver.pushText(narration, narrationRoot);
+              } else {
+                await this.callbacks.sendMessage(chatId, narration, narrationRoot);
+              }
+            } catch (error) {
+              this.logger.debug({ error, chatId }, 'Decision narration delivery failed');
+            }
+          }
           // Text preceding another tool call is intermediate commentary, not
           // the terminal answer consumed by structured internal workflows.
           turnResultText = '';
