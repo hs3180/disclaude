@@ -5,6 +5,7 @@ import { isAbsolute, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { launchBrowser } from './managed-browser.mjs';
 import { connect } from './cdp.mjs';
+import { discoverCdp } from './diagnostics.mjs';
 
 /** Probe an explicitly selected executable with disposable state, never a live profile. */
 export async function diagnoseBrowser({ binary, headless = false, signal }) {
@@ -35,8 +36,9 @@ export async function diagnoseBrowser({ binary, headless = false, signal }) {
     for (let cycle = 0; cycle < 2; cycle++) {
       checkCancelled();
       browser = await launchBrowser({ binary: executable, profile, headless, signal });
-      const info = await (await fetch(`${browser.endpoint}/json/version`, { signal: AbortSignal.timeout(3000) })).json();
-      client = await connect(info.webSocketDebuggerUrl);
+      const endpointSource = 'temporary-managed-browser';
+      const { websocket } = await discoverCdp({ endpoint: browser.endpoint, endpointSource });
+      client = await connect(websocket.href, { endpoint: browser.endpoint, endpointSource });
       checkCancelled();
       const version = await client.call('Browser.getVersion');
       const { targetId } = await client.call('Target.createTarget', { url: 'about:blank' });
