@@ -19,7 +19,7 @@ import { evaluateMessageFilters } from './message-filters.js';
 import { FeishuPrivateInput } from './private-input.js';
 import { FeishuAgentInput } from './agent-input.js';
 import { FeishuPrivateWorkflows } from './private-workflows.js';
-import { tryHandleSlashCommand } from './command-router.js';
+import { tryHandleSlashCommand, tryHandleGuidance } from './command-router.js';
 import { extractOpenId, parsePostContent, parseShareChatContent, extractSenderName, } from './content-parser.js';
 const logger = createLogger('MessageHandler');
 function sanitizeLifecycleReason(reason) {
@@ -119,6 +119,8 @@ export class MessageHandler {
     tenantAccessToken;
     privateInput;
     agentInput;
+    welcomeService;
+    setWelcomeService(service) { this.welcomeService = service; }
     async requestAgentInput(request, context) {
         if (!this.agentInput) {
             throw new Error('Feishu input channel is unavailable');
@@ -138,15 +140,24 @@ export class MessageHandler {
         this.mentionDetector = options.mentionDetector;
         this.interactionManager = options.interactionManager;
         this.callbacks = options.callbacks;
-        this.privateWorkflows = new FeishuPrivateWorkflows(options.callbacks.sendMessage);
+        this.privateWorkflows = new FeishuPrivateWorkflows(options.callbacks.sendMessage, this.updatePrivateCard);
         this.isRunning = options.isRunning;
         this.getHasControlHandler = options.hasControlHandler;
         this.controlHandler = false;
         this.tenantAccessToken = options.tenantAccessToken;
         if (options.privateInput) {
-            this.privateInput = new FeishuPrivateInput(options.privateInput, options.callbacks.sendMessage);
+            this.privateInput = new FeishuPrivateInput(options.privateInput, options.callbacks.sendMessage, this.updatePrivateCard);
         }
     }
+    updatePrivateCard = async (cardId, card) => {
+        if (!this.client) {
+            return;
+        }
+        const result = await this.client.im.message.patch({ path: { message_id: cardId }, data: { content: JSON.stringify(card) } });
+        if (result.code !== 0) {
+            throw new Error('Private input card update failed');
+        }
+    };
     /**
      * Initialize the handler with client.
      */
@@ -399,11 +410,9 @@ export class MessageHandler {
      * between replies in the same thread), the walked root is the stable
      * per-thread identity part 2 will key agent sessions on. No extra API
      * calls — the root is already fetched for the context text.
-     * Issue #4591: also returns `incomplete` — false only when the walk reached
-     * the true root (a message with no parent_id). When true, `rootId` is a
-     * mid-chain node that other replies of the same thread may resolve
-     * differently, so callers must NOT key sessions on it (they fall back to
-     * parent_id instead).
+     * `incomplete` describes root identity: a root_id returned by Feishu is
+     * authoritative even if the context walk stops early. Without that field,
+     * only a walk reaching a message without parent_id establishes the root.
      */
     async getThreadContext(parentId, maxDepth = 10) {
         if (!this.client) {
@@ -416,12 +425,10 @@ export class MessageHandler {
             let currentId = parentId;
             // Issue #4587 (part 1): thread-root tracking (see return-site comment)
             let rootId;
+            let declaredRootId;
             let lastVisitedWithParent;
-            // Issue #4591 (fix 1): whether the walk reached the true root (a message
-            // with no parent_id). When it did not (depth cap or a fetch that stayed
-            // failed after retry), resolvedRootId is a mid-chain node — a per-message
-            // value that two replies in the same thread may disagree on. Callers use
-            // the flag to fall back to a uniform per-thread key instead.
+            // Without an API-declared root, only a complete parent walk establishes
+            // the identity. A capped walk may end on a different ancestor per reply.
             let walkComplete = false;
             // Issue #4591 (fix 1): count visited nodes, not assembled texts. The old
             // `threadMessages.length < maxDepth` guard counted only messages with
@@ -446,17 +453,27 @@ export class MessageHandler {
                 catch (fetchError) {
                     logger.debug({ err: fetchError, messageId: currentId }, 'Thread-walk fetch failed, retrying once');
                     await sleep(THREAD_WALK_RETRY_DELAY_MS);
-                    response = await this.client.im.message.get({
-                        path: { message_id: currentId },
-                        params: { user_id_type: 'open_id' },
-                    });
+                    try {
+                        response = await this.client.im.message.get({
+                            path: { message_id: currentId },
+                            params: { user_id_type: 'open_id' },
+                        });
+                    }
+                    catch (retryError) {
+                        logger.debug({ err: retryError, messageId: currentId }, 'Thread-walk retry failed');
+                        if (!declaredRootId) {
+                            return undefined;
+                        }
+                        break;
+                    }
                 }
-                const msg = response.data;
-                if (!msg?.message) {
+                const msg = response.data?.items?.[0];
+                if (!msg) {
                     break;
                 }
-                const msgType = msg.message.message_type;
-                let text = this.extractMessageText(msgType, msg.message.content || '{}');
+                declaredRootId ||= msg.root_id;
+                const msgType = msg.msg_type;
+                let text = this.extractMessageText(msgType, msg.body?.content || '{}');
                 // Issue #4319 (read-only design, 2026-07-16): getThreadContext must stay
                 // read-only — it only does client.im.message.get and assembles text. For a
                 // media message we do NOT download (no handleQuotedFileMessage / spawned
@@ -467,16 +484,16 @@ export class MessageHandler {
                 // Falls back to extractMessageText's placeholder only when no key can be
                 // parsed (nothing to point the agent at).
                 if (MEDIA_MESSAGE_TYPES.has(msgType || '')) {
-                    const guidance = this.buildMediaThreadGuidance(msgType || '', msg.message.content || '{}', msg.message.message_id || currentId);
+                    const guidance = this.buildMediaThreadGuidance(msgType || '', msg.body?.content || '{}', msg.message_id || currentId);
                     if (guidance) {
                         text = guidance;
                     }
                 }
                 if (text) {
                     threadMessages.push({
-                        messageId: msg.message.message_id || currentId,
+                        messageId: msg.message_id || currentId,
                         content: text,
-                        senderType: msg.message.sender?.sender_type === 'app' ? 'bot' : 'user',
+                        senderType: msg.sender?.sender_type === 'app' ? 'bot' : 'user',
                     });
                 }
                 // Issue #4587 (part 1): remember the last message that still has a
@@ -484,8 +501,8 @@ export class MessageHandler {
                 // message is the thread root. Tracked on a non-text message too (the
                 // root may be a media message whose text is a placeholder).
                 lastVisitedWithParent = currentId;
-                if (msg.message.parent_id) {
-                    rootId = msg.message.parent_id;
+                if (msg.parent_id) {
+                    rootId = msg.parent_id;
                 }
                 else {
                     // The current node has no parent — it IS the true root and the walk
@@ -493,18 +510,16 @@ export class MessageHandler {
                     walkComplete = true;
                 }
                 // Walk to parent
-                currentId = msg.message.parent_id;
+                currentId = msg.parent_id;
             }
-            // Issue #4587 (part 1): the walk stopped either at the root (no
-            // parent_id — rootId was set on the previous iteration) or at a fetch
-            // failure / depth cap (rootId may point past what we actually fetched).
-            // Only report a root we have seen: the last id we visited that itself
-            // has a parent, i.e. the highest real message in the chain.
-            const resolvedRootId = rootId && visitedIds.has(rootId) ? rootId : lastVisitedWithParent;
+            // Prefer Feishu's declared root even when history was truncated. Without
+            // it, report only a visited ancestor and mark a capped walk incomplete.
+            const resolvedRootId = declaredRootId
+                || (rootId && visitedIds.has(rootId) ? rootId : lastVisitedWithParent);
             if (threadMessages.length === 0) {
                 // No text assembled, but the root is still known — surface it so
                 // session keying (part 2) works even when context text is empty.
-                return { text: undefined, rootId: resolvedRootId, incomplete: !walkComplete };
+                return { text: undefined, rootId: resolvedRootId, incomplete: !walkComplete && !declaredRootId };
             }
             // Reverse to get chronological order (oldest first)
             threadMessages.reverse();
@@ -513,7 +528,7 @@ export class MessageHandler {
                 const label = m.senderType === 'bot' ? '🤖' : '👤';
                 return `${label} ${m.content}`;
             });
-            return { text: lines.join('\n\n'), rootId: resolvedRootId, incomplete: !walkComplete };
+            return { text: lines.join('\n\n'), rootId: resolvedRootId, incomplete: !walkComplete && !declaredRootId };
         }
         catch (error) {
             logger.debug({ err: error, parentId }, 'Failed to get thread context');
@@ -591,13 +606,13 @@ export class MessageHandler {
                     user_id_type: 'open_id',
                 },
             });
-            const message = response.data;
-            if (!message?.message) {
+            const message = response.data?.items?.[0];
+            if (!message) {
                 return undefined;
             }
-            const msgType = message.message.message_type;
-            const msgContent = message.message.content || '{}';
-            const msgId = message.message.message_id || parentId;
+            const msgType = message.msg_type;
+            const msgContent = message.body?.content || '{}';
+            const msgId = message.message_id || parentId;
             let quotedText = '';
             try {
                 if (msgType === 'text') {
@@ -798,7 +813,7 @@ export class MessageHandler {
         if (!message) {
             return;
         }
-        const { message_id, chat_id, chat_type: rawChatType, content, message_type, create_time, mentions, parent_id } = message;
+        const { message_id, chat_id, chat_type: rawChatType, content, message_type, create_time, mentions, parent_id, root_id } = message;
         const threadId = message_id;
         if (!message_id || !chat_id || !content || !message_type) {
             logger.info({ event: 'filter_result', reason: 'missing_fields', sanitizedReason: 'missing required message fields', traceId: message_id || 'unknown', runId: message_id || 'unknown', sourceMessageId: message_id, chatId: chat_id || 'unknown', target: chat_id, user_visible: false }, 'filter_result');
@@ -834,6 +849,10 @@ export class MessageHandler {
             // Issue #4401: Resolve the effective topic chat type after dedup. Falls
             // back to the event value on lookup errors so processing never blocks.
             const chat_type = await this.resolveTopicChatType(chat_id, rawChatType);
+            const senderId = extractOpenId(sender);
+            if (chat_type === 'p2p' && sender?.sender_type === 'user' && senderId) {
+                this.welcomeService?.registerPrivateChat(senderId, chat_id);
+            }
             // Bot-to-bot @mention messages that passed the filter are allowed through (#1742).
             if (sender?.sender_type === 'app') {
                 logger.info({ messageId: message_id, chatId: chat_id }, 'Bot message mentions our bot, allowing through');
@@ -936,21 +955,18 @@ export class MessageHandler {
                     // Issue #4587 (part 1): capture the walked thread root for session keying
                     const threadInfo = await this.getThreadContext(parent_id);
                     fileThreadContext = threadInfo?.text;
-                    // Issue #4591 (fix 1): same rule as the text path — trust the walked
-                    // root only when the walk completed; otherwise fall back to parent_id.
-                    // (The old fallback here was message_id, a per-message value no other
-                    // message in the thread could ever share — a guaranteed session-key
-                    // split that even a successful walk on the next message would hit.)
-                    fileMetadata.threadRootId = threadInfo && !threadInfo.incomplete && threadInfo.rootId
+                    // Event root identity survives history lookup failures. Legacy events
+                    // without root_id use the API-declared or fully walked root if known.
+                    fileMetadata.threadRootId = root_id || (threadInfo && !threadInfo.incomplete && threadInfo.rootId
                         ? threadInfo.rootId
-                        : parent_id;
+                        : parent_id);
                 }
                 else if (chat_type === 'topic') {
                     // Issue #4587 (part 1, review fix): a topic media message with no
                     // parent_id starts a new thread — same rule as the text path. Without
                     // this, part 2's session keying would treat thread-starting media as
                     // chat-scoped (no identity), diverging from the text path.
-                    fileMetadata.threadRootId = message_id;
+                    fileMetadata.threadRootId = root_id || message_id;
                 }
                 if (fileThreadContext) {
                     fileMetadata.threadContext = fileThreadContext;
@@ -1040,14 +1056,14 @@ export class MessageHandler {
             // Placed BEFORE trigger_mode check so notifications fire for all topic messages,
             // regardless of whether the bot is @mentioned.
             if (chat_type === 'topic' && this.callbacks.onTopicMessage
-                && Config.getRawConfig().feishu?.topicNotify?.enabled === true) {
+                && Config.getRawConfig().channels?.feishu?.topicNotify?.enabled === true) {
                 try {
                     const senderOpenId = extractOpenId(sender);
                     const senderName = extractSenderName({ sender, sender_name: sender?.sender_id });
                     this.callbacks.onTopicMessage({
                         type: 'topic_group_message',
                         chatId: chat_id,
-                        rootId: parent_id ?? message_id,
+                        rootId: root_id || parent_id || message_id,
                         threadId: message_id,
                         sender: {
                             name: senderName,
@@ -1129,21 +1145,18 @@ export class MessageHandler {
             if (chat_type === 'topic') {
                 if (parent_id) {
                     // Topic groups: build thread context from parent chain only
-                    const threadInfo = await this.getThreadContext(parent_id);
+                    const threadInfo = isSlashCommand && root_id ? undefined : await this.getThreadContext(parent_id);
                     threadContext = threadInfo?.text;
-                    // Issue #4591 (fix 1): a walked root is only trustworthy when the walk
-                    // reached the true root. On an incomplete walk (depth cap / fetch that
-                    // stayed failed after retry) the resolved root is a mid-chain node that
-                    // differs between replies of the same thread — fall back to parent_id,
-                    // the same uniform fallback the total-failure path uses, so every
-                    // message in the thread still lands on ONE session key.
-                    threadRootId = threadInfo && !threadInfo.incomplete
+                    // A canonical event root does not depend on history availability.
+                    // parent_id is only a best-effort fallback for legacy events whose
+                    // API lookup also cannot establish the root.
+                    threadRootId = root_id || (threadInfo && !threadInfo.incomplete
                         ? threadInfo.rootId ?? parent_id
-                        : parent_id;
+                        : parent_id);
                 }
                 else {
                     // A topic message without parent_id starts a new thread — it IS the root
-                    threadRootId = message_id;
+                    threadRootId = root_id || message_id;
                 }
             }
             else if (isTriggerModeMention && chat_type !== 'topic') {
@@ -1162,14 +1175,23 @@ export class MessageHandler {
             // Issue #4587 (part 3): resolve thread identity BEFORE dispatching, so a
             // /reset or /stop typed inside a topic-group thread addresses that
             // thread's agent slot rather than the chat-scoped one.
-            const commandHandled = await tryHandleSlashCommand({ textWithoutMentions, chatId: chat_id, threadRootId }, {
+            const commandInput = {
+                textWithoutMentions, mentions, chatId: chat_id, threadRootId,
+                ...(chat_type === 'p2p' || chat_type === 'group' || chat_type === 'topic' ? { chatType: chat_type } : {}),
+                actorId: extractOpenId(sender),
+            };
+            const commandDeps = {
                 hasControlHandler: this.controlHandler,
                 emitControl: (command) => this.callbacks.emitControl(command),
                 sendMessage: async (reply) => {
                     await this.callbacks.sendMessage(reply);
                 },
-            });
+            };
+            const commandHandled = await tryHandleSlashCommand(commandInput, commandDeps);
             if (commandHandled) {
+                return;
+            }
+            if (message_type === 'text' && (!parent_id || chat_type === 'topic') && await tryHandleGuidance(commandInput, commandDeps, this.welcomeService)) {
                 return;
             }
             // Issue #4587 (part 3) review fix: the router declined — this is an
@@ -1179,6 +1201,9 @@ export class MessageHandler {
             if (isSlashCommand) {
                 if (parent_id) {
                     quotedMessageResult = await this.getQuotedMessageContext(parent_id);
+                    if (chat_type === 'topic' && root_id) {
+                        threadContext = (await this.getThreadContext(parent_id))?.text;
+                    }
                 }
                 if (isTriggerModeMention && chat_type !== 'topic') {
                     chatHistoryContext = await this.getChatHistoryContext(chat_id);
@@ -1246,13 +1271,18 @@ export class MessageHandler {
         if (FeishuPrivateInput.isPrivateCallback(rawData)) {
             // Acknowledge promptly; the one-shot handoff consumes before awaiting.
             // Consumer failures never enter ordinary logs or the agent channel.
-            void this.privateWorkflows.submit(rawData).then(handled => {
+            void this.privateWorkflows.submit(rawData).then(async (handled) => {
                 if (!handled) {
-                    return this.privateInput?.submit(rawData);
+                    if (this.privateInput) {
+                        await this.privateInput.submit(rawData);
+                    }
+                    else {
+                        await FeishuPrivateInput.reject(rawData, this.callbacks.sendMessage, this.updatePrivateCard);
+                    }
                 }
-                return undefined;
             }).catch(() => logger.warn('Private input delivery failed'));
-            return;
+            // Even a malformed callback lacking safe routing IDs gets visible feedback.
+            return { toast: { type: 'info', content: '已收到提交；若表单已过期、失效或服务重启，请重新发起。' } };
         }
         // Feishu reuses the card message id for every button click. Prefer its
         // event id for a stable unique agent input id, with a UUID fallback.

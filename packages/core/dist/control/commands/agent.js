@@ -25,7 +25,13 @@ export const handleAgent = (command, context) => {
         }
         const result = api.switchAgentPreset(command.chatId, name, command.threadRootId);
         if (!result.ok) {
-            return { success: false, message: result.error };
+            const canList = !context.isCommandAllowed || context.isCommandAllowed({
+                ...command, data: { subcommand: 'list' },
+            });
+            const recovery = canList
+                ? 'Use `/agent list` to find a configured preset, then `/agent use <name>` to switch.'
+                : 'Contact the service maintainer to confirm which presets are available.';
+            return { success: false, message: `${result.error}\n\nThe current selection is unchanged. ${recovery}` };
         }
         return {
             success: true,

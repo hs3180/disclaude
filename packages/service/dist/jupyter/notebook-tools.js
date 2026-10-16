@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { notebookSnapshotHash } from "../../../core/dist/jupyter/index.js";
+import { notebookSnapshotHash, insertNotebookCell, JupyterDiagnosticError, jupyterHashConflict } from "../../../core/dist/jupyter/index.js";
 import { JupyterProjectConfigStore, } from './project-config-store.js';
 import { DatalayerRunStore } from './datalayer-run-store.js';
 const terminal = new Set(['completed', 'failed', 'cancelled', 'rejected']);
@@ -12,7 +12,43 @@ const key = notebookIdentifier;
 const text = { type: 'string' };
 const notebookId = { notebookId: text };
 const cellId = { ...notebookId, cellId: text };
+const sourceHash = { type: 'string', pattern: '^[a-fA-F0-9]{64}$', description: 'Full SHA-256 from the latest live cell read; never truncate it.' };
+function requireCodeCell(cellType) {
+    if (cellType !== 'code') {
+        throw new JupyterDiagnosticError({ layer: 'schema', code: 'cell_not_executable', phase: 'input',
+            message: 'Notebook execute requires a code cell', hint: 'Select the stable ID of a code cell and read its latest sourceHash.', outcome: 'not-submitted' });
+    }
+}
 const inputLimit = 2_000_000;
+const errorOutputDescription = 'Error previews expose output_type="error", ename:string, evalue:string and traceback:string[]. Tracebacks retain the last 20 frames, at most 1000 characters per frame and 8000 total. errorName/errorValue are deprecated aliases retained for this release.';
+function boundedErrorOutput(output) {
+    const ename = (typeof output.ename === 'string' ? output.ename : 'Error').slice(0, 128).replace(/[\uD800-\uDBFF]$/, '');
+    const evalue = String(output.evalue ?? '').slice(0, 1000).replace(/[\uD800-\uDBFF]$/, '');
+    const frames = Array.isArray(output.traceback) ? output.traceback : [];
+    const tail = frames.slice(-20);
+    const kept = [];
+    let budget = 8000;
+    let truncated = frames.length > tail.length || (output.traceback !== undefined && !Array.isArray(output.traceback));
+    for (const frame of [...tail].reverse()) {
+        if (typeof frame !== 'string') {
+            truncated = true;
+            continue;
+        }
+        if (budget === 0) {
+            truncated = true;
+            break;
+        }
+        const shortened = frame.slice(-Math.min(1000, budget)).replace(/^[\uDC00-\uDFFF]/, '');
+        truncated ||= shortened.length !== frame.length;
+        budget -= shortened.length;
+        kept.push(shortened);
+    }
+    return { output_type: 'error', ename, evalue, traceback: kept.reverse(),
+        // One-release compatibility for existing preview consumers. These DTOs
+        // are not written back into the full remote nbformat Notebook export.
+        outputType: 'error', errorName: ename, errorValue: evalue,
+        ...(truncated ? { tracebackTruncated: true } : {}) };
+}
 /** MVP over existing RTC/nbmodel APIs. Reports unsupported guarantees explicitly. */
 export class NotebookTools {
     options;
@@ -39,7 +75,8 @@ export class NotebookTools {
         this.config = new JupyterProjectConfigStore(this.root);
         this.journal = new DatalayerRunStore(this.root);
         this.tools = [
-            this.tool('notebook_list', 'List this Project’s authorized remote Notebooks and persisted run IDs.', {}, () => Promise.resolve({
+            this.tool('notebook_list', 'List Project-local Notebook references and persisted run IDs, not server inventory. This operation does not probe remote authentication.', {}, () => Promise.resolve({
+                scope: 'project-local-references', auth: 'not_checked', remoteInventory: 'not_queried',
                 notebooks: this.refs().map((ref) => ({ ...ref, notebookId: key(ref) })),
                 recentRuns: this.recentRuns(),
             })),
@@ -86,12 +123,10 @@ export class NotebookTools {
                 if (index < 0) {
                     throw new Error('Insertion target cell is missing');
                 }
-                bound.doc.notebook.insertCell(index, {
+                insertNotebookCell(bound.doc.notebook, index, {
                     id: String(input.cellId),
                     cell_type: input.cellType,
                     source: String(input.source),
-                    metadata: {},
-                    ...(input.cellType === 'code' ? { outputs: [], execution_count: null } : {}),
                 });
                 await bound.doc.flush();
                 return {
@@ -102,10 +137,7 @@ export class NotebookTools {
             }),
             this.tool('notebook_edit_cell', 'Edit a live shared cell only after checking its last read sourceHash. This client-side check is not an atomic server CAS.', {
                 ...cellId,
-                expectedSourceHash: {
-                    type: 'string',
-                    description: 'SHA-256 from the latest live cell read',
-                },
+                expectedSourceHash: sourceHash,
                 source: { type: 'string' },
             }, async (input) => {
                 const bound = await this.bound(String(input.notebookId));
@@ -113,7 +145,7 @@ export class NotebookTools {
                 this.assertBound(bound);
                 const cell = this.cell(bound, String(input.cellId));
                 if (hash(cell.source) !== input.expectedSourceHash) {
-                    return { state: 'conflict', sourceHash: hash(cell.source) };
+                    return jupyterHashConflict(String(input.expectedSourceHash), hash(cell.source));
                 }
                 cell.source = String(input.source);
                 await bound.doc.flush();
@@ -124,13 +156,13 @@ export class NotebookTools {
                     revision: bound.doc.snapshot().revision,
                 };
             }),
-            this.tool('notebook_move_cell', 'Move one stable cell before beforeCellId; an empty target appends. Check the latest sourceHash and preserve cell metadata/attachments.', { ...cellId, expectedSourceHash: text, beforeCellId: text }, async (input) => {
+            this.tool('notebook_move_cell', 'Move one stable cell before beforeCellId; an empty target appends. Check the latest sourceHash and preserve cell metadata/attachments.', { ...cellId, expectedSourceHash: sourceHash, beforeCellId: text }, async (input) => {
                 const bound = await this.bound(String(input.notebookId));
                 await bound.doc.flush();
                 this.assertBound(bound);
                 const cell = this.cell(bound, String(input.cellId));
                 if (hash(cell.source) !== input.expectedSourceHash) {
-                    return { state: 'conflict', sourceHash: hash(cell.source) };
+                    return jupyterHashConflict(String(input.expectedSourceHash), hash(cell.source));
                 }
                 if (input.beforeCellId === cell.id) {
                     return { state: 'unchanged', cellId: cell.id };
@@ -148,7 +180,7 @@ export class NotebookTools {
                 await bound.doc.flush();
                 return { state: 'moved', cellId: stableId, revision: bound.doc.snapshot().revision };
             }),
-            this.tool('notebook_delete_cell', 'Delete the explicitly identified stable cell only if its last read sourceHash still matches. Preserve unrelated human cells.', { ...cellId, expectedSourceHash: text }, async (input) => {
+            this.tool('notebook_delete_cell', 'Delete the explicitly identified stable cell only if its last read sourceHash still matches. Preserve unrelated human cells.', { ...cellId, expectedSourceHash: sourceHash }, async (input) => {
                 const bound = await this.bound(String(input.notebookId));
                 await bound.doc.flush();
                 this.assertBound(bound);
@@ -158,7 +190,7 @@ export class NotebookTools {
                 }
                 const cell = this.cell(bound, String(input.cellId));
                 if (hash(cell.source) !== input.expectedSourceHash) {
-                    return { state: 'conflict', sourceHash: hash(cell.source) };
+                    return jupyterHashConflict(String(input.expectedSourceHash), hash(cell.source));
                 }
                 const stableId = cell.id;
                 bound.doc.notebook.deleteCell(bound.doc.notebook.cells.indexOf(cell));
@@ -167,13 +199,18 @@ export class NotebookTools {
             }),
             this.tool('notebook_execute', 'Submit the exact live code cell once to the remote nbmodel queue. Persist and reuse runId; unknown submissions must not be replayed. Poll notebook_status for completion.', {
                 ...cellId,
-                expectedSourceHash: {
-                    type: 'string',
-                    description: 'SHA-256 from the latest live cell read',
-                },
+                expectedSourceHash: sourceHash,
                 runId: text,
             }, (input, invocation) => this.execute(input, invocation)),
-            this.tool('notebook_status', 'Query the original runId without replay. Retained remote results and host snapshots preserve original execution provenance.', { ...notebookId, runId: text }, (input) => this.observe(this.record(String(input.notebookId), String(input.runId)))),
+            this.tool('notebook_status', 'Query the original runId without replay. source distinguishes live lookup from local journal facts; client-error/server-unknown preserve the last confirmed state.', { ...notebookId, runId: text }, (input) => this.observe(this.record(String(input.notebookId), String(input.runId)))),
+            this.tool('notebook_reconcile', 'Read the original handles of all nonterminal Project runs after connection recovery. Never submits or replays a cell; each result labels live versus local-journal evidence.', {}, async (_input, invocation) => {
+                const runs = [];
+                for (const record of this.journal.records().filter((r) => !terminal.has(r.state))) {
+                    invocation.signal.throwIfAborted();
+                    runs.push(await this.observe(record));
+                }
+                return { state: 'reconciled', runs };
+            }),
             this.tool('notebook_stop', 'Cancel this exact original nbmodel request and wait for its terminal result. Report unknown when completion cannot be verified.', { ...notebookId, runId: text }, async (input) => {
                 const record = this.record(String(input.notebookId), String(input.runId));
                 const result = await this.requestStop(record);
@@ -241,7 +278,8 @@ export class NotebookTools {
                 required: Object.keys(properties),
                 additionalProperties: false,
             },
-            outputSchema: { type: 'object' },
+            outputSchema: { type: 'object', ...(['notebook_read_cell', 'notebook_describe', 'notebook_status'].includes(name)
+                    ? { description: errorOutputDescription } : {}) },
             execute: async (input, invocation) => {
                 invocation.signal.throwIfAborted();
                 this.assertActive();
@@ -257,22 +295,30 @@ export class NotebookTools {
                                 : typeof input[field] !== schema.type) ||
                             (schema.enum !== undefined && !schema.enum.includes(input[field])));
                     })) {
-                    throw new Error('Invalid Notebook command input; read its schema with jupyter tools');
+                    throw new JupyterDiagnosticError({ layer: 'schema', code: 'invalid_tool_input',
+                        message: 'Invalid Notebook command input; read its schema with jupyter tools',
+                        hint: 'Match the command input schema, including required fields and value types.', outcome: 'not-submitted' });
                 }
+                if (input.expectedSourceHash !== undefined &&
+                    (typeof input.expectedSourceHash !== 'string' || !/^[a-fA-F0-9]{64}$/.test(input.expectedSourceHash))) {
+                    throw new JupyterDiagnosticError({ layer: 'cas', code: 'invalid_source_hash', phase: 'input',
+                        message: 'Invalid expectedSourceHash: must be a full 64-character hexadecimal SHA-256',
+                        hint: 'Re-describe or read-cell and copy the entire latest sourceHash. No remote request was submitted.', outcome: 'not-submitted' });
+                }
+                const normalizedInput = typeof input.expectedSourceHash === 'string'
+                    ? { ...input, expectedSourceHash: input.expectedSourceHash.toLowerCase() } : input;
                 // DSH supports a small schema subset; keep limits in the host boundary too.
                 if (Buffer.byteLength(JSON.stringify(input)) > 300000 ||
                     (input.source !== undefined &&
                         (typeof input.source !== 'string' || input.source.length > 64000)) ||
-                    (input.expectedSourceHash !== undefined &&
-                        (typeof input.expectedSourceHash !== 'string' ||
-                            !/^[a-f0-9]{64}$/.test(input.expectedSourceHash))) ||
                     ['cellId', 'runId', 'beforeCellId'].some((field) => input[field] !== undefined &&
                         (typeof input[field] !== 'string' ||
                             !((field === 'beforeCellId' && input[field] === '') ||
                                 /^[A-Za-z0-9_-]{1,200}$/.test(input[field]))))) {
-                    throw new Error('Invalid or oversized Notebook tool argument');
+                    throw new JupyterDiagnosticError({ layer: 'schema', code: 'invalid_tool_argument',
+                        message: 'Invalid or oversized Notebook tool argument', hint: 'Check source size and stable cell/run IDs against jupyter tools.', outcome: 'not-submitted' });
                 }
-                const result = await execute(input, invocation);
+                const result = await execute(normalizedInput, invocation);
                 invocation.signal.throwIfAborted();
                 this.assertActive();
                 return result;
@@ -503,6 +549,9 @@ export class NotebookTools {
     outputs(cell) {
         const outputs = Array.isArray(cell.outputs) ? cell.outputs : [];
         return outputs.slice(0, 16).map((output) => {
+            if (output.output_type === 'error') {
+                return boundedErrorOutput(output);
+            }
             const data = output.data;
             return {
                 outputType: output.output_type,
@@ -510,9 +559,6 @@ export class NotebookTools {
                     ? {
                         text: String(Array.isArray(output.text) ? output.text.join('') : output.text).slice(0, 8000),
                     }
-                    : {}),
-                ...(output.ename
-                    ? { errorName: output.ename, errorValue: String(output.evalue).slice(0, 1000) }
                     : {}),
                 ...(data
                     ? {
@@ -550,7 +596,9 @@ export class NotebookTools {
             .slice(-10)
             .map((r) => ({
             runId: r.runId,
-            state: r.state,
+            state: r.loss?.kind ?? r.state,
+            source: 'local-journal',
+            ...(r.loss ? { lastKnownState: r.state, lostAt: r.lostAt, failure: r.loss } : {}),
             cellId: r.target.cellId,
             contentPath: r.target.contentPath,
         }));
@@ -621,8 +669,9 @@ export class NotebookTools {
         const bound = await this.bound(String(input.notebookId));
         await bound.doc.flush();
         const cell = this.cell(bound, String(input.cellId));
-        if (cell.cell_type !== 'code' || hash(cell.source) !== input.expectedSourceHash) {
-            return { state: 'conflict', sourceHash: hash(cell.source) };
+        requireCodeCell(cell.cell_type);
+        if (hash(cell.source) !== input.expectedSourceHash) {
+            return jupyterHashConflict(String(input.expectedSourceHash), hash(cell.source));
         }
         const policy = await bound.client.executionPolicy();
         if (!policy) {
@@ -643,8 +692,9 @@ export class NotebookTools {
         this.assertBound(bound);
         const currentCell = this.cell(bound, String(input.cellId));
         const { source } = currentCell;
-        if (currentCell.cell_type !== 'code' || hash(source) !== input.expectedSourceHash) {
-            return { state: 'conflict', sourceHash: hash(source) };
+        requireCodeCell(currentCell.cell_type);
+        if (hash(source) !== input.expectedSourceHash) {
+            return jupyterHashConflict(String(input.expectedSourceHash), hash(source));
         }
         const record = this.journal.reserve(runId, {
             connectionId: bound.ref.connectionId,
@@ -665,10 +715,24 @@ export class NotebookTools {
         });
         const saved = this.journal.update(runId, result.state === 'accepted'
             ? { state: 'accepted', handle: result.handle }
-            : { state: result.state });
+            : {
+                state: result.state,
+                ...(result.state === 'unknown'
+                    ? {
+                        observation: {
+                            state: 'unknown',
+                            httpStatus: result.httpStatus,
+                            failure: { kind: 'client-error', reason: 'submission-unverified' },
+                        },
+                    }
+                    : {}),
+            });
         return {
             runId: record.runId,
-            state: saved.state,
+            state: saved.loss?.kind ?? saved.state,
+            ...(saved.loss
+                ? { source: 'local-journal', lastKnownState: saved.state, failure: saved.loss }
+                : {}),
             ...(saved.handle ? { requestId: saved.handle.requestId } : {}),
         };
     }
@@ -695,20 +759,52 @@ export class NotebookTools {
     }
     async observe(record) {
         let current = record;
+        let source = 'local-journal';
         if (!terminal.has(record.state) && record.handle) {
             const { handle } = record;
             let observation;
             try {
                 observation = await this.useRecord(record, (client) => client.observe(handle));
             }
-            catch {
-                observation = { state: 'unknown' };
+            catch (error) {
+                observation = {
+                    state: 'unknown',
+                    failure: {
+                        kind: 'client-error',
+                        reason: error instanceof Error &&
+                            /authentication|credential|password|token/i.test(error.message)
+                            ? 'authentication-required'
+                            : 'connection-unavailable',
+                    },
+                };
             }
+            source =
+                observation.state !== 'unknown' || observation.failure?.kind === 'server-unknown'
+                    ? 'live'
+                    : 'local-journal';
             current = this.journal.update(record.runId, { state: observation.state, observation });
+        }
+        else if (!terminal.has(record.state)) {
+            current = this.journal.update(record.runId, {
+                state: 'unknown',
+                observation: {
+                    state: 'unknown',
+                    failure: { kind: 'client-error', reason: 'request-handle-unavailable' },
+                },
+            });
         }
         return {
             runId: current.runId,
-            state: current.state === 'submitting' ? 'unknown' : current.state,
+            state: current.loss?.kind ?? current.state,
+            source,
+            observedAt: current.observedAt,
+            checkedAt: current.checkedAt,
+            remoteChecked: source === 'live',
+            ...(current.lastConfirmedRunningAt === undefined
+                ? {}
+                : { lastConfirmedRunningAt: current.lastConfirmedRunningAt }),
+            ...(current.lostAt === undefined ? {} : { lostAt: current.lostAt }),
+            ...(current.loss ? { lastKnownState: current.state, failure: current.loss } : {}),
             sourceHash: current.target.sourceHash,
             cellId: current.target.cellId,
             ...(current.handle ? { requestId: current.handle.requestId } : {}),
@@ -722,7 +818,17 @@ export class NotebookTools {
             ...(current.target.kernelIncarnation
                 ? { kernelIncarnation: current.target.kernelIncarnation }
                 : {}),
-            ...(current.observation?.result ? { result: this.summary(current.observation.result) } : {}),
+            ...(current.observation?.result
+                ? current.loss
+                    ? {
+                        lastKnownResult: {
+                            source: 'local-journal',
+                            observedAt: current.observedAt,
+                            result: this.summary(current.observation.result),
+                        },
+                    }
+                    : { result: this.summary(current.observation.result) }
+                : {}),
         };
     }
     summary(result) {

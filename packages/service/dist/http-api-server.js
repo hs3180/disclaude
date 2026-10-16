@@ -3,7 +3,7 @@ import { isPrivateWorkflowRequest } from './channels/feishu/private-workflows.js
  * HTTP API Server for disclaude service.
  *
  * Provides a lightweight HTTP server for external tools (CLI, scripts) to
- * interact with disclaude service without going through Channel MCP.
+ * interact with disclaude service through the Channel API boundary.
  *
  * Phase 2 of Issue #3857: disclaude service HTTP API.
  *
@@ -30,6 +30,7 @@ import { createServer } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { createLogger } from "../../core/dist/index.js";
 import { SERVICE_VERSION } from './version.js';
+import { channelError } from './channel-error.js';
 const logger = createLogger('HttpApiServer');
 /**
  * HTTP API Server — lightweight HTTP interface for disclaude service.
@@ -502,7 +503,7 @@ export class HttpApiServer {
      * Accepts `{ chatId, filePath, threadId? }` and delegates to the channel's
      * uploadFile capability (reads the local file and uploads it). Uses a local
      * filePath rather than multipart because the REST face is localhost-bound —
-     * the caller (MCP server) and disclaude service are co-located, so the file is
+     * the channel CLI and disclaude service are co-located, so the file is
      * already readable on the host (exact REST API parity, no transfer needed).
      * Response: `{ ok: true, success, fileKey?, fileType?, fileName?, fileSize? }`.
      */
@@ -617,9 +618,9 @@ export class HttpApiServer {
             this.sendJson(res, 200, { ok: true, ...result });
         }
         catch (err) {
-            logger.error({ err, chatId: raw.chatId }, 'sendMessage handler error');
-            const msg = err instanceof Error ? err.message : 'sendMessage failed';
-            this.sendJson(res, 500, { ok: false, message: msg });
+            const failure = channelError(err, [this.config.apiToken ?? '']);
+            logger.error({ ...failure.body, chatId: raw.chatId }, 'sendMessage handler error');
+            this.sendJson(res, failure.status, failure.body);
         }
     }
     /**
@@ -765,9 +766,9 @@ export class HttpApiServer {
             this.sendJson(res, 200, { ok: true, ...result });
         }
         catch (err) {
-            logger.error({ err, chatId: raw.chatId }, 'sendInteractive handler error');
-            const msg = err instanceof Error ? err.message : 'sendInteractive failed';
-            this.sendJson(res, 500, { ok: false, message: msg });
+            const failure = channelError(err, [this.config.apiToken ?? '']);
+            logger.error({ ...failure.body, chatId: raw.chatId }, 'sendInteractive handler error');
+            this.sendJson(res, failure.status, failure.body);
         }
     }
     /**

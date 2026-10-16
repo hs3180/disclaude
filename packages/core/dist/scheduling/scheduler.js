@@ -16,10 +16,38 @@
 import { CronJob } from 'cron';
 import { createLogger } from '../utils/logger.js';
 import { DEFAULT_TIMEZONE } from './scheduled-task.js';
+import { MessageRoutingError } from '../messaging/message-router.js';
 import { TurnSupersededError } from '../messaging/turn-superseded-error.js';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { withoutChannelCredentials } from '../config/channel-credentials.js';
+import { isSyntheticMessageId } from '../utils/message-id.js';
 const logger = createLogger('Scheduler');
+/** Routing adds context while retaining the original turn outcome. */
+function routingCause(error) {
+    let current = error;
+    const seen = new Set([current]);
+    for (let depth = 0; depth < 8 && current instanceof MessageRoutingError; depth++) {
+        const { cause } = current;
+        if (cause === undefined || seen.has(cause)) {
+            break;
+        }
+        seen.add(cause);
+        current = cause;
+    }
+    return current;
+}
+function turnCorrelation(error) {
+    if (!(error instanceof Error)) {
+        return {};
+    }
+    const context = error;
+    return {
+        ...(typeof context.runId === 'string' ? { runId: context.runId } : {}),
+        ...(typeof context.traceId === 'string' ? { traceId: context.traceId } : {}),
+        ...(typeof context.sourceMessageId === 'string' ? { sourceMessageId: context.sourceMessageId } : {}),
+    };
+}
 /**
  * Format timeout duration for display.
  * Shows seconds when under 1 minute, otherwise shows minutes.
@@ -39,12 +67,9 @@ function formatTimeout(ms) {
  * Issue #4649 (review ②): 5 minutes was calibrated for the OLD semantics
  * (bounding the route/queue call, which completes in well under a second);
  * applied to whole turns it falsely failed every legitimately long task.
- * The new default is deliberately ABOVE the agent pool's busy-turn hard cap
- * (90 min default, Issue #4577, wired in cli.ts): a genuinely stuck turn is
- * killed by the pool cap first and lands in the catch as a REAL error —
- * countable toward the #4648 consecutive-failure alert — while this timeout
- * only fires for turns legitimately longer than 2 hours, which are expected
- * to declare their duration via `timeoutMs` in SCHEDULE.md.
+ * Tasks expected to take longer than 2 hours can declare their wait duration
+ * via `timeoutMs` in SCHEDULE.md. Provider errors count toward the #4648
+ * consecutive-failure alert independently of this wait timeout.
  *
  * When this timeout fires the agent is NOT cancelled (the abandoned await
  * never could), so the outcome is unknown rather than failed — see the
@@ -113,7 +138,7 @@ export const defaultCommandRunner = (command, options) => {
     return new Promise((resolve, reject) => {
         const child = spawn('/bin/sh', ['-c', command], {
             detached: process.platform !== 'win32',
-            env: options.env,
+            env: withoutChannelCredentials(options.env),
             stdio: ['ignore', 'pipe', 'pipe'],
         });
         let stdout = Buffer.alloc(0);
@@ -275,8 +300,8 @@ export const defaultCommandRunner = (command, options) => {
  * ```
  */
 export class Scheduler {
-    /** Blocking isolated turns remain owned after their caller stops waiting. */
-    isolatedBlockingTurns = new Map();
+    /** Pending agent turns remain owned after their caller stops waiting. */
+    pendingAgentTurns = new Map();
     scheduleManager;
     callbacks;
     cooldownManager;
@@ -284,24 +309,18 @@ export class Scheduler {
     /** Issue #4218 (fix A): injectable job factory; undefined → real CronJob. */
     jobFactory;
     commandRunner;
-    /** Every non-blocking tick owns its controller; task IDs are not execution IDs. */
+    /** Every admitted command owns its cancellation controller. */
     activeCommandControllers = new Map();
     /** Stop barrier captured before preflight awaits; explicit later executions remain supported. */
     commandStopGeneration = 0;
     activeJobs = new Map();
     running = false;
-    /** Tracks tasks currently being executed (for blocking mechanism) */
-    runningTasks = new Set();
-    /**
-     * Issue #4102: Tracks chatIds that currently have a blocking scheduled task running.
-     * Blocking tasks only skip when ANOTHER blocking scheduled task is running for the
-     * same chatId — not when the agent is busy with user messages.
-     */
-    runningBlockingTaskChatIds = new Set();
+    /** Admitted executions keyed by task ID, with their chat ownership. */
+    activeExecutions = new Map();
     /**
      * Resolves when all running tasks have completed.
      * Created lazily when the first task starts; resolved and cleared when
-     * runningTasks drains to zero. Used by stop() for graceful shutdown
+     * activeExecutions drains to zero. Used by stop() for graceful shutdown
      * without polling.
      *
      * Issue #3415.
@@ -390,11 +409,11 @@ export class Scheduler {
         // Issue #3415: Uses a drain promise instead of polling.
         const waitTimeout = timeoutMs ?? Scheduler.GRACEFUL_SHUTDOWN_TIMEOUT_MS;
         if (this._drainPromise && waitTimeout > 0) {
-            logger.info({ taskIds: Array.from(this.runningTasks), timeoutMs: waitTimeout }, 'Waiting for running tasks to complete...');
+            logger.info({ taskIds: Array.from(this.activeExecutions.keys()), timeoutMs: waitTimeout }, 'Waiting for running tasks to complete...');
             const timeoutPromise = new Promise((resolve) => {
                 setTimeout(() => {
-                    if (this.runningTasks.size > 0) {
-                        logger.warn({ taskIds: Array.from(this.runningTasks) }, 'Graceful shutdown timed out, abandoning running tasks');
+                    if (this.activeExecutions.size > 0) {
+                        logger.warn({ taskIds: Array.from(this.activeExecutions.keys()) }, 'Graceful shutdown timed out, abandoning running tasks');
                     }
                     resolve();
                 }, waitTimeout);
@@ -451,7 +470,7 @@ export class Scheduler {
      * Extracted to avoid duplication between stale-job cleanup and finally block.
      */
     resolveDrainIfNeeded() {
-        if (this.runningTasks.size === 0 && this._drainResolve) {
+        if (this.activeExecutions.size === 0 && this._drainResolve) {
             this._drainResolve();
             this._drainPromise = null;
             this._drainResolve = null;
@@ -459,16 +478,12 @@ export class Scheduler {
     }
     /**
      * Clean up task tracking state after a task finishes or is aborted.
-     * Issue #4102: Also cleans up per-chatId blocking task tracking.
      */
     cleanupTaskTracking(task) {
         if ((this.activeCommandControllers.get(task.id)?.size ?? 0) > 0) {
             return;
         }
-        this.runningTasks.delete(task.id);
-        if (task.blocking && task.chatId) {
-            this.runningBlockingTaskChatIds.delete(task.chatId);
-        }
+        this.activeExecutions.delete(task.id);
     }
     /**
      * Remove a task from the scheduler.
@@ -566,17 +581,14 @@ ${task.prompt ?? ''}`;
                 return;
             }
         }
-        // Check blocking mechanism
-        if (task.blocking && (this.runningTasks.has(task.id) || this.isolatedBlockingTurns.has(task.id))) {
+        // Every schedule uses the same policy: one execution per task and chat.
+        // A timed-out caller does not release ownership of a still-pending turn.
+        if (this.activeExecutions.has(task.id) || this.pendingAgentTurns.has(task.id)) {
             logger.info({ taskId: task.id, name: task.name }, 'Task skipped - previous execution still running');
             return;
         }
-        // Issue #4102: Check if another blocking scheduled task is running for this chatId.
-        // Previously used isAgentBusy() which also blocked on user-initiated conversations,
-        // causing scheduled tasks to be indefinitely skipped in active chats.
-        // Now we only block on OTHER scheduled blocking tasks for the same chatId.
-        if (task.blocking && task.chatId && (this.runningBlockingTaskChatIds.has(task.chatId) || [...this.isolatedBlockingTurns.values()].includes(task.chatId))) {
-            logger.info({ taskId: task.id, name: task.name, chatId: task.chatId }, 'Task skipped - another blocking scheduled task is running for this chatId');
+        if (task.chatId && ([...this.activeExecutions.values()].includes(task.chatId) || [...this.pendingAgentTurns.values()].includes(task.chatId))) {
+            logger.info({ taskId: task.id, name: task.name, chatId: task.chatId }, 'Task skipped - another scheduled execution is active for this chatId');
             return;
         }
         // A scheduled task should not be dispatched into a chat whose agent is
@@ -591,12 +603,8 @@ ${task.prompt ?? ''}`;
         }
         logger.info({ taskId: task.id, name: task.name }, 'Executing scheduled task');
         // Mark task as running
-        this.runningTasks.add(task.id);
+        this.activeExecutions.set(task.id, task.chatId);
         const commandExecutionGeneration = this.commandStopGeneration;
-        // Issue #4102: Track blocking tasks by chatId for per-chat serialization
-        if (task.blocking && task.chatId) {
-            this.runningBlockingTaskChatIds.add(task.chatId);
-        }
         // Create drain promise if this is the first running task
         if (!this._drainPromise) {
             this._drainPromise = new Promise((resolve) => {
@@ -604,8 +612,8 @@ ${task.prompt ?? ''}`;
             });
         }
         // Issue #3929: Verify the schedule file still exists before executing.
-        // Placed after runningTasks.add() so that the blocking mechanism still
-        // works synchronously. fs.watch may miss deletion events on Linux and
+        // Ownership is registered before this await, so duplicate ticks cannot
+        // both pass admission. fs.watch may miss deletion events on Linux and
         // the periodic fullRescan may not have run yet.
         try {
             const currentTask = await this.scheduleManager.get(task.id);
@@ -628,6 +636,7 @@ ${task.prompt ?? ''}`;
         // logs below (previously "completed" was logged at routing time, ~0.3s
         // BEFORE the agent even produced its first token).
         const taskStartedAt = Date.now();
+        let sourceMessageId;
         try {
             if ((!task.prompt && !task.command) || (task.prompt && task.command)) {
                 throw new Error('Schedule task must define exactly one of prompt or command');
@@ -693,10 +702,11 @@ ${task.prompt ?? ''}`;
                 throw new Error('Conflicting schedule context options: skipHistory/clearContext:true require freshSession:true');
             }
             // Send start notification
-            await this.callbacks.sendMessage(task.chatId, `⏰ 定时任务「${task.name}」开始执行...`);
+            const startMessageId = await this.callbacks.sendMessage(task.chatId, `⏰ 定时任务「${task.name}」开始执行...`);
             {
                 const systemMessage = {
                     id: `sched-${task.id}-${randomUUID()}`,
+                    replyRootId: typeof startMessageId === 'string' && startMessageId && !isSyntheticMessageId(startMessageId) ? startMessageId : null,
                     source: 'system',
                     payload: wrappedPrompt,
                     chatId: task.chatId,
@@ -723,9 +733,10 @@ ${task.prompt ?? ''}`;
                     // branch in the catch); long-running tasks should set timeoutMs.
                     waitForCompletion: true,
                 };
+                sourceMessageId = systemMessage.id;
                 logger.debug({ taskId: task.id, chatId: task.chatId }, 'Routing scheduled task via InputMessageRouter');
                 // Issue #3894: Timeout protection for InputMessageRouter route.
-                // Prevents hung routes from keeping task in runningTasks forever.
+                // Bounds the caller's wait while retaining pending-turn ownership.
                 const timeoutMs = task.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
                 let timeoutId;
                 const timeoutPromise = new Promise((_, reject) => {
@@ -733,11 +744,9 @@ ${task.prompt ?? ''}`;
                 });
                 try {
                     const turn = this.inputMessageRouter.route(systemMessage);
-                    if (freshSession && task.blocking) {
-                        this.isolatedBlockingTurns.set(task.id, task.chatId);
-                        // Observe both outcomes without creating an unhandled rejection.
-                        void turn.then(() => { this.isolatedBlockingTurns.delete(task.id); }, () => { this.isolatedBlockingTurns.delete(task.id); });
-                    }
+                    this.pendingAgentTurns.set(task.id, task.chatId);
+                    // Observe both outcomes without creating an unhandled rejection.
+                    void turn.then(() => { this.pendingAgentTurns.delete(task.id); }, () => { this.pendingAgentTurns.delete(task.id); });
                     await Promise.race([
                         turn,
                         timeoutPromise,
@@ -762,14 +771,20 @@ ${task.prompt ?? ''}`;
             }
         }
         catch (error) {
-            const errorMessage = error instanceof Error ? error.message : String(error);
+            const cause = routingCause(error);
+            const outerMessage = error instanceof Error ? error.message : String(error);
+            const causeMessage = cause instanceof Error ? cause.message : String(cause);
+            const errorMessage = cause !== error && causeMessage !== outerMessage
+                ? `${outerMessage}\n原因: ${causeMessage}` : outerMessage;
             const outcomeContext = {
                 taskId: task.id,
                 name: task.name,
                 chatId: task.chatId,
                 elapsedMs: Date.now() - taskStartedAt,
+                sourceMessageId,
+                ...turnCorrelation(cause),
             };
-            if (error instanceof TurnSupersededError) {
+            if (cause instanceof TurnSupersededError) {
                 // Issue #4649 (review ①): a newer message (typically a user reply
                 // landing mid-turn in the same chat) superseded this turn's
                 // completion promise. That is normal concurrency in an active chat,
@@ -792,30 +807,28 @@ ${task.prompt ?? ''}`;
                 logger.info(outcomeContext, 'Scheduled task turn superseded by a newer message (neutral — not counted as failure)');
                 return;
             }
-            if (error instanceof CommandCancelledError) {
+            if (cause instanceof CommandCancelledError) {
                 logger.info(outcomeContext, 'Scheduled command cancelled during scheduler shutdown (neutral)');
                 return;
             }
-            if (error instanceof TaskTimeoutError) {
+            if (cause instanceof TaskTimeoutError) {
                 // Issue #4649 (review ②): this timeout bounds the WAIT — the agent
                 // is not cancelled (#4648 wording), so the outcome is UNKNOWN: the
                 // turn may still complete successfully after the bound. Counting it
                 // as failure made every legitimately-long task a guaranteed ❌ and,
                 // past the alert threshold, a false chronic-failure alarm. So:
                 // - streak untouched (a slow task must neither mask real failures
-                //   nor fake them); genuinely stuck turns are caught earlier by the
-                //   pool's busy-turn hard cap and land here as countable REAL
-                //   errors (see DEFAULT_TASK_TIMEOUT_MS),
+                //   nor fake them); actual provider errors remain countable,
                 // - the handler retains its session until the actual turn settles;
                 //   this wait timeout must not dispose a turn that may still run,
                 // - the notification keeps the honest wording and teaches the knob.
-                logger.warn({ ...outcomeContext, timeoutMs: error.timeoutMs }, 'Scheduled task timed out waiting for the agent turn (turn not cancelled, outcome unknown — not counted as failure)');
+                logger.warn({ ...outcomeContext, timeoutMs: cause.timeoutMs }, 'Scheduled task timed out waiting for the agent turn (turn not cancelled, outcome unknown — not counted as failure)');
                 // Issue #4648 residual ⑧: channel I/O inside a catch must not throw —
                 // a Feishu send failing here would replace the handled timeout and
                 // reject executeTask past the fire-and-forget cron onTick (unhandled
                 // rejection). The notification is best-effort.
                 try {
-                    await this.callbacks.sendMessage(task.chatId, `⏱️ 定时任务「${task.name}」执行超时 (${formatTimeout(error.timeoutMs)})，已停止等待` +
+                    await this.callbacks.sendMessage(task.chatId, `⏱️ 定时任务「${task.name}」执行超时 (${formatTimeout(cause.timeoutMs)})，已停止等待` +
                         '（agent 轮次可能仍在后台继续）。若该任务确需更长运行时间，请在 SCHEDULE.md 设置 timeoutMs。');
                 }
                 catch (notifyErr) {
@@ -834,7 +847,7 @@ ${task.prompt ?? ''}`;
                 ...outcomeContext,
                 consecutiveFailures,
             };
-            logger.error({ err: error, ...failureContext }, 'Scheduled task failed (agent turn ended with an error)');
+            logger.error({ err: error, providerCause: causeMessage, ...failureContext }, 'Scheduled task failed (agent turn ended with an error)');
             if (consecutiveFailures >= CONSECUTIVE_FAILURE_ALERT_THRESHOLD) {
                 // Issue #4648: dedicated alertable marker — a task failing this many
                 // runs in a row is chronic (bad chatId, broken prompt environment,
@@ -856,7 +869,7 @@ ${task.prompt ?? ''}`;
             // failure itself is fully logged above; the notification is
             // best-effort.
             try {
-                await this.callbacks.sendMessage(task.chatId, `❌ 定时任务「${task.name}」执行失败: ${errorMessage}`);
+                await this.callbacks.sendMessage(task.chatId, `❌ 定时任务「${task.name}」执行失败: ${errorMessage}${outcomeContext.sourceMessageId ? `\n请求: ${outcomeContext.sourceMessageId}` : ''}${outcomeContext.runId ? `\nrunId: ${outcomeContext.runId}` : ''}${outcomeContext.traceId ? `\ntraceId: ${outcomeContext.traceId}` : ''}`);
             }
             catch (notifyErr) {
                 logger.warn({ err: notifyErr, taskId: task.id, chatId: task.chatId }, 'Failed to send failure notification for scheduled task');
@@ -893,7 +906,7 @@ ${task.prompt ?? ''}`;
      * @returns true if the task is currently running
      */
     isTaskRunning(taskId) {
-        return this.runningTasks.has(taskId);
+        return this.activeExecutions.has(taskId);
     }
     /**
      * Check if any scheduled task is currently being executed.
@@ -902,7 +915,7 @@ ${task.prompt ?? ''}`;
      * @returns true if any scheduled task is currently running
      */
     isAnyTaskRunning() {
-        return this.runningTasks.size > 0;
+        return this.activeExecutions.size > 0;
     }
     /**
      * Get the IDs of all currently running tasks.
@@ -910,7 +923,7 @@ ${task.prompt ?? ''}`;
      * @returns Array of running task IDs
      */
     getRunningTaskIds() {
-        return Array.from(this.runningTasks);
+        return Array.from(this.activeExecutions.keys());
     }
     /**
      * Get cooldown status for a task.

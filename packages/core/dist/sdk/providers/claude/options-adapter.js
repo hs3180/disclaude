@@ -3,6 +3,7 @@ import { browserAgentEnv } from '../../../utils/browser-env.js';
 import { createClaudeToolServer, claudeToolNames, CLAUDE_HOST_SERVER } from './tool-adapter.js';
 import * as path from 'node:path';
 import { Config } from '../../../config/index.js';
+import { installedDiagnosticsPlugin } from '../../../skills/diagnostics-plugin.js';
 /**
  * 适配统一选项为 Claude SDK 选项
  *
@@ -33,7 +34,11 @@ export function adaptOptions(options, permissions = {}) {
     // replacing the copy-on-start materialization. The plugin loads at
     // subprocess init (before any query()), so the first-message race is gone.
     // Path MUST be absolute (relative resolves against SDK cwd = workspace).
-    sdkOptions.plugins = [{ type: 'local', path: path.resolve(Config.getBuiltinsDir()) }];
+    const diagnostics = installedDiagnosticsPlugin(options.projectRoot ?? options.cwd ?? process.cwd());
+    sdkOptions.plugins = [
+        { type: 'local', path: path.resolve(Config.getBuiltinsDir()) },
+        ...(diagnostics ? [{ type: 'local', path: diagnostics }] : []),
+    ];
     if (options.includePartialMessages !== undefined) {
         sdkOptions.includePartialMessages = options.includePartialMessages;
     }
@@ -54,10 +59,22 @@ export function adaptOptions(options, permissions = {}) {
     }
     // 环境变量
     if (options.env) {
-        // CRITICAL: Extract API key and base URL from env and pass as direct options
-        // The SDK requires these as direct options, not just env vars
         if (options.env.ANTHROPIC_API_KEY) {
             sdkOptions.apiKey = options.env.ANTHROPIC_API_KEY;
+            // File settings can overwrite the child environment. Pin only the
+            // selected API service's credentials/endpoint in SDK flag settings;
+            // other user, project and local settings continue to load normally.
+            sdkOptions.settings = {
+                env: {
+                    ANTHROPIC_API_KEY: options.env.ANTHROPIC_API_KEY,
+                    ANTHROPIC_AUTH_TOKEN: '',
+                    CLAUDE_CODE_OAUTH_TOKEN: '',
+                    ...(options.env.ANTHROPIC_BASE_URL ? { ANTHROPIC_BASE_URL: options.env.ANTHROPIC_BASE_URL } : {}),
+                },
+            };
+            const env = sdkOptions.env;
+            delete env.ANTHROPIC_AUTH_TOKEN;
+            delete env.CLAUDE_CODE_OAUTH_TOKEN;
         }
         if (options.env.ANTHROPIC_BASE_URL) {
             sdkOptions.apiBaseUrl = options.env.ANTHROPIC_BASE_URL;

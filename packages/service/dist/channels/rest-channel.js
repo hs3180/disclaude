@@ -20,6 +20,7 @@
  * @module service/channels/rest-channel
  */
 import http from 'node:http';
+import { timingSafeEqual } from 'node:crypto';
 import { createLogger, withTiming, BaseChannel } from "../../../core/dist/index.js";
 import { v4 as uuidv4 } from 'uuid';
 import { RestSessionManager } from './rest/session-manager.js';
@@ -217,14 +218,9 @@ export class RestChannel extends BaseChannel {
     }
     /**
      * Get the capabilities of REST channel.
-     * REST channel supports cards and markdown, but not threads or files via MCP tools.
-     *
-     * Issue #3530: Removed send_text/send_card/send_interactive/send_file from
-     * supportedMcpTools. These channel tools route through the Feishu HTTP API (request →
-     * Feishu API), which fails when Feishu channel is unavailable or has invalid
-     * credentials (e.g., integration test environment). REST channel handles
-     * responses through its own text buffering — the agent should output text
-     * directly, not via send_text MCP tool.
+     * REST supports buffered card and markdown responses, without separate
+     * outbound channel CLI operations. The agent returns its response directly;
+     * it must not use Feishu delivery commands for a REST conversation (#3530).
      */
     getCapabilities() {
         return {
@@ -235,7 +231,7 @@ export class RestChannel extends BaseChannel {
             supportsMention: false,
             supportsUpdate: false,
             supportsStreaming: false,
-            supportedMcpTools: [],
+            supportedChannelTools: [],
         };
     }
     /**
@@ -282,6 +278,14 @@ export class RestChannel extends BaseChannel {
         if (url === '/api/health' && req.method === 'GET') {
             this.handleHealth(req, res);
             return;
+        }
+        if (this.config.authToken) {
+            const expected = Buffer.from(`Bearer ${this.config.authToken}`);
+            const received = Buffer.from(req.headers.authorization ?? '');
+            if (expected.length !== received.length || !timingSafeEqual(expected, received)) {
+                this.sendError(res, 401, 'REST channel bearer authentication required');
+                return;
+            }
         }
         if (url === '/api/chat' && req.method === 'POST') {
             await withTiming(logger, 'http:POST /api/chat', undefined, () => this.handleChat(req, res, false));

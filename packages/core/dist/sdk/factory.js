@@ -4,8 +4,42 @@
  * 提供创建和管理 Provider 实例的统一入口。
  * 支持运行时切换不同的 Agent SDK 实现。
  */
+import { createHash } from 'node:crypto';
 import { ClaudeSDKProvider, PiAgentProvider, CodexAgentProvider, DeepSeekHarnessProvider, } from './providers/index.js';
 import { Config } from '../config/index.js';
+function dshOptions(settings) {
+    const defaults = settings === undefined ? Config.getAgentConfig() : undefined;
+    const selected = settings ?? { ...defaults?.settings, ...defaults };
+    return {
+        mode: selected.mode ?? 'standard',
+        dshHome: selected.dshHome || process.env.DSH_HOME || undefined,
+        apiKey: selected.apiKey,
+        ...(selected.apiProtocol
+            ? {
+                api: {
+                    protocol: selected.apiProtocol,
+                    baseUrl: selected.apiBaseUrl ?? '',
+                    model: selected.model ?? '',
+                },
+            }
+            : {}),
+    };
+}
+function providerCacheKey(type, settings) {
+    if (type !== 'dsh') {
+        return 'default';
+    }
+    const options = dshOptions(settings);
+    return JSON.stringify({
+        mode: options.mode ?? 'standard',
+        api: options.api,
+        dshHome: options.dshHome ?? process.env.DSH_HOME,
+        // Keep credential values out of cache identifiers.
+        credential: createHash('sha256')
+            .update(options.apiKey ?? '')
+            .digest('hex'),
+    });
+}
 /**
  * Provider 注册表
  */
@@ -29,12 +63,7 @@ const providerRegistry = new Map([
             reasoningEffortSource: Config.CODEX_REASONING_EFFORT_SOURCE,
         }),
     ],
-    ['deepseek', () => new DeepSeekHarnessProvider({
-            provider: Config.DSH_PROVIDER,
-            apiKey: Config.DEEPSEEK_API_KEY,
-            dshHome: Config.DSH_HOME,
-            mode: Config.DSH_MODE,
-        })],
+    ['dsh', (settings) => new DeepSeekHarnessProvider(dshOptions(settings))],
 ]);
 /**
  * 默认 Provider 类型
@@ -53,12 +82,13 @@ const providerCache = new Map();
  * @returns Provider 实例
  * @throws 如果 Provider 类型未注册
  */
-export function getProvider(type) {
+export function getProvider(type, settings) {
     const providerType = type ?? defaultProviderType;
     // Issue #4224: builtin skills/agents are now discovered in place via the
     // local-plugin option wired in adaptOptions() — no copy-on-start here.
     // 检查缓存
-    const cached = providerCache.get(providerType);
+    const cacheKey = providerCacheKey(providerType, settings);
+    const cached = providerCache.get(providerType)?.get(cacheKey);
     if (cached) {
         return cached;
     }
@@ -68,8 +98,10 @@ export function getProvider(type) {
         throw new Error(`Unknown provider type: ${providerType}. Available: ${[...providerRegistry.keys()].join(', ')}`);
     }
     // 创建并缓存实例
-    const provider = factory();
-    providerCache.set(providerType, provider);
+    const provider = factory(settings);
+    const instances = providerCache.get(providerType) ?? new Map();
+    instances.set(cacheKey, provider);
+    providerCache.set(providerType, instances);
     return provider;
 }
 /**

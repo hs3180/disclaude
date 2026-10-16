@@ -13,7 +13,7 @@ import { createLogger } from "../../../../core/dist/index.js";
 const logger = createLogger('RestChannel.Session');
 /** Session TTL: 1 hour */
 const SESSION_TTL = 3600000;
-/** Maximum number of sessions before LRU eviction */
+/** Session retention target; processing requests cannot be evicted. */
 const MAX_SESSIONS = 10000;
 /** Cleanup interval: 1 minute */
 const CLEANUP_INTERVAL_MS = 60000;
@@ -123,16 +123,20 @@ export class RestSessionManager {
         const now = Date.now();
         let expiredCount = 0;
         let evictedCount = 0;
-        // Remove expired sessions (TTL-based cleanup)
+        // A processing request can run longer than TTL without assistant output.
+        // Its lifetime is governed by the agent's activity policy. Retention TTL
+        // starts again when complete/setStatus records the terminal outcome.
         for (const [chatId, session] of this.sessionStates) {
-            if (now - session.updatedAt > SESSION_TTL) {
+            if (session.status !== 'processing' && now - session.updatedAt > SESSION_TTL) {
                 this.sessionStates.delete(chatId);
                 expiredCount++;
             }
         }
-        // Enforce max sessions limit (LRU eviction)
+        // Reclaim inactive state first. The target is soft if all remaining
+        // sessions are processing: dropping one would lose its original result.
         if (this.sessionStates.size > MAX_SESSIONS) {
             const sortedSessions = Array.from(this.sessionStates.entries())
+                .filter(([, session]) => session.status !== 'processing')
                 .sort((a, b) => a[1].updatedAt - b[1].updatedAt);
             const toEvict = sortedSessions.slice(0, this.sessionStates.size - MAX_SESSIONS);
             for (const [chatId] of toEvict) {

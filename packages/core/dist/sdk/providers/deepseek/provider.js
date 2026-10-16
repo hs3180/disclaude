@@ -7,47 +7,72 @@ import { createLogger } from '../../../utils/logger.js';
 import { assertToolOptions, prepareTools } from '../../tools.js';
 import { DshSessionPool } from './dsh-session-pool.js';
 import { adaptDeepSeekEvent } from './event-adapter.js';
-import { createDshNativeProfileOverlay } from './native-profile.js';
+import { createDshNativeProfileOverlay, dshApiProvider, DSH_API_CREDENTIAL_ENV, } from './native-profile.js';
 import { DshSessionBindings } from './session-bindings.js';
+import { resolveDshCompaction } from './compaction.js';
+import { diagnosticsPluginManifest } from '../../../skills/diagnostics-plugin.js';
 const logger = createLogger('DeepSeekHarnessProvider');
 function dshHome(configured) {
     const value = configured?.trim() || join(homedir(), '.dsh');
     return resolve(value === '~' ? homedir() : value.startsWith('~/') ? join(homedir(), value.slice(2)) : value);
 }
 export class DeepSeekHarnessProvider {
-    name = 'deepseek';
+    name = 'dsh';
     version = '0.1.2-native';
     home;
     configuredHome;
     route;
     profile;
+    api;
+    apiKey;
     bindings;
     pool;
     queries = new Map();
     active = new Map();
-    overlay;
     disposed = false;
     shutdownFlight;
     constructor(options = {}) {
         const mode = options.mode ?? 'standard';
         if (mode !== 'minimal' && mode !== 'standard') {
-            throw new Error('deepseek.mode must be minimal or standard');
+            throw new Error('DSH mode must be minimal or standard');
         }
         if (options.mode !== undefined && options.args !== undefined) {
             throw new Error('Explicit dsh mode cannot be combined with custom process args');
         }
         if (options.provider !== undefined && !options.provider.trim()) {
-            throw new TypeError('deepseek.provider must be non-empty');
+            throw new TypeError('dsh.provider must be non-empty');
+        }
+        if (options.api) {
+            if (options.provider !== undefined) {
+                throw new Error('A DSH API connection cannot be combined with a native provider override');
+            }
+            if (!['openai', 'anthropic'].includes(options.api.protocol) || !options.api.model.trim()) {
+                throw new Error('DSH API connection requires a supported protocol and model');
+            }
+            try {
+                const url = new URL(options.api.baseUrl);
+                if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
+                    throw new Error();
+                }
+            }
+            catch {
+                throw new Error('DSH API connection requires an HTTP(S) baseUrl without credentials');
+            }
+            if (!options.apiKey?.trim()) {
+                throw new Error('DSH API connection credential is missing');
+            }
         }
         this.profile = mode === 'minimal' ? 'sdk-minimal' : 'sdk';
+        this.api = options.api;
+        this.apiKey = options.apiKey;
         const env = options.env ?? process.env;
         this.configuredHome = options.dshHome ?? env.DSH_HOME;
         this.home = dshHome(this.configuredHome);
-        this.route = options.provider;
+        this.route = options.api ? dshApiProvider(options.api) : options.provider;
         const environment = {
             ...process.env,
             ...env,
-            DEEPSEEK_API_KEY: options.apiKey ?? env.DEEPSEEK_API_KEY,
+            DEEPSEEK_API_KEY: options.api ? undefined : (options.apiKey ?? env.DEEPSEEK_API_KEY),
             DSH_HOME: this.home,
         };
         this.bindings = new DshSessionBindings(this.home);
@@ -60,11 +85,25 @@ export class DeepSeekHarnessProvider {
                 if (!state) {
                     throw new Error('Native DSH runtime has no owner');
                 }
-                this.overlay ??= createDshNativeProfileOverlay();
+                if (!state.overlay) {
+                    throw new Error('Native DSH compaction policy has not been prepared');
+                }
                 return {
                     cwd: state.cwd,
-                    env: { ...environment, ...state.environment },
-                    args: [...(options.args ?? ['--profile', this.profile]), '--patch', this.overlay.path],
+                    env: {
+                        ...environment,
+                        ...state.environment,
+                        ...(options.api
+                            ? {
+                                DEEPSEEK_API_KEY: undefined,
+                                [DSH_API_CREDENTIAL_ENV]: options.apiKey,
+                            }
+                            : options.apiKey === undefined
+                                ? {}
+                                : { DEEPSEEK_API_KEY: options.apiKey }),
+                        DSH_HOME: this.home,
+                    },
+                    args: [...(options.args ?? ['--profile', this.profile]), '--patch', state.overlay.path],
                     onRequest: (request) => this.onRequest(state, request),
                     onStderr: (data) => state.stderr?.(data),
                     onNotification: (notification) => this.onNotification(state, notification),
@@ -106,6 +145,8 @@ export class DeepSeekHarnessProvider {
         const descriptors = prepareTools(options.tools);
         const tools = new Map(descriptors.map((tool) => [tool.name, tool]));
         const cwd = resolve(options.cwd ?? process.cwd());
+        const diagnostics = diagnosticsPluginManifest(options.projectRoot ?? cwd, cwd);
+        const systemPrompt = diagnostics ? [options.systemPrompt, diagnostics].filter(Boolean).join('\n\n') : options.systemPrompt;
         const binding = this.bindings.reserve(options.sessionKey, cwd);
         if (this.active.has(binding.sessionId)) {
             throw new Error('Native DSH conversation already has an active query');
@@ -119,7 +160,8 @@ export class DeepSeekHarnessProvider {
             events: [],
             wake: () => wake(),
             abort: new AbortController(),
-            pendingText: '',
+            deliveredAssistantMessages: new Set(),
+            lastPublicCommentary: '',
             tools,
             invocations: new Map(),
             receivedInvocations: new Set(),
@@ -134,14 +176,6 @@ export class DeepSeekHarnessProvider {
         this.queries.set(state.runtimeId, state);
         this.active.set(state.sessionId, state);
         let transport;
-        try {
-            transport = this.pool.getOrCreate(state.runtimeId);
-        }
-        catch (error) {
-            this.queries.delete(state.runtimeId);
-            this.active.delete(state.sessionId);
-            throw error;
-        }
         let ready = () => { };
         const openingFinished = new Promise((resolve) => {
             ready = resolve;
@@ -167,6 +201,9 @@ export class DeepSeekHarnessProvider {
                 await openingFinished;
                 try {
                     if (state.opened) {
+                        if (!transport) {
+                            throw new Error('Native DSH session has no active transport');
+                        }
                         const ack = (await transport.request('session/cancel', {
                             sessionId: state.sessionId,
                         }));
@@ -187,6 +224,19 @@ export class DeepSeekHarnessProvider {
         const pump = Promise.resolve().then(async () => {
             try {
                 state.abort.signal.throwIfAborted();
+                // Minimal retains its profile's composition and capacity metadata.
+                // A compaction trigger is not a model capacity: do not turn it into
+                // guessed context metadata or mount behavioral plugins in minimal.
+                const compaction = this.profile === 'sdk-minimal' ? undefined
+                    : await resolveDshCompaction(this.api, this.apiKey, options.autoCompactWindow, state.abort.signal);
+                state.abort.signal.throwIfAborted();
+                state.overlay = createDshNativeProfileOverlay(this.api, [
+                    join(this.home, 'profiles', this.profile, 'cordis.yml'),
+                    join(this.home, 'profiles', this.profile, 'cordis.patch.yml'),
+                ], this.profile === 'sdk' ? 'llm-pi-ai' : undefined, compaction);
+                transport = this.pool.getOrCreate(state.runtimeId);
+                logger.info({ sessionId: state.sessionId, source: compaction?.source ?? 'native-minimal',
+                    contextWindow: compaction?.contextWindow, thresholdRatio: compaction?.thresholdRatio, auto: compaction?.auto }, 'DSH native compaction policy prepared');
                 const initialized = (await transport.request('initialize', {
                     cwd,
                     ...(this.route === undefined ? {} : { provider: this.route }),
@@ -194,7 +244,7 @@ export class DeepSeekHarnessProvider {
                     ...(options.reasoningEffort === undefined
                         ? {}
                         : { reasoningEffort: options.reasoningEffort }),
-                    ...(options.systemPrompt === undefined ? {} : { systemPrompt: options.systemPrompt }),
+                    ...(systemPrompt === undefined ? {} : { systemPrompt }),
                     tools: descriptors.map(({ name, description, inputSchema, outputSchema }) => ({
                         name,
                         description,
@@ -229,9 +279,10 @@ export class DeepSeekHarnessProvider {
                 state.wake();
             }
             try {
-                if (!state.opened || state.stopping) {
+                if (!state.opened || state.stopping || !transport) {
                     return;
                 }
+                const activeTransport = transport;
                 for await (const message of input) {
                     if (state.stopping) {
                         break;
@@ -242,7 +293,7 @@ export class DeepSeekHarnessProvider {
                         : message.content.map((block) => block.type === 'text'
                             ? { type: 'text', text: block.text }
                             : { type: 'image', data: block.data, mimeType: block.mimeType });
-                    await transport.request('session/prompt', { sessionId: state.sessionId, contentBlocks });
+                    await activeTransport.request('session/prompt', { sessionId: state.sessionId, contentBlocks });
                     accepted++;
                 }
             }
@@ -297,7 +348,7 @@ export class DeepSeekHarnessProvider {
                         }
                     }
                     finally {
-                        await transport.shutdown();
+                        await transport?.shutdown();
                     }
                 }
                 finally {
@@ -307,6 +358,7 @@ export class DeepSeekHarnessProvider {
                         provider.active.delete(state.sessionId);
                     }
                     provider.pool.release(state.runtimeId);
+                    state.overlay?.dispose();
                 }
             }
         })();
@@ -343,7 +395,9 @@ export class DeepSeekHarnessProvider {
             }
             finally {
                 this.pool.close();
-                this.overlay?.dispose();
+                for (const state of this.queries.values()) {
+                    state.overlay?.dispose();
+                }
                 this.queries.clear();
                 this.active.clear();
             }
@@ -429,21 +483,38 @@ export class DeepSeekHarnessProvider {
         if (notification.method !== 'session.event' || !params.event) {
             return;
         }
-        if (params.event.type === 'assistant/chunk') {
-            const chunk = params.event.data?.chunk;
-            if (chunk?.type === 'text-delta' && typeof chunk.text === 'string') {
-                state.pendingText += chunk.text;
-            }
-            return;
-        }
         if (params.event.type === 'assistant/message') {
-            state.pendingText = '';
+            const message = params.event.data?.message;
+            if (typeof message?.id === 'string' && message.id) {
+                if (state.deliveredAssistantMessages.has(message.id)) {
+                    return;
+                }
+                state.deliveredAssistantMessages.add(message.id);
+            }
         }
-        if (params.event.type === 'turn/end' && state.pendingText) {
-            state.events.push({ type: 'text', content: state.pendingText, role: 'assistant' });
-            state.pendingText = '';
+        if (params.event.type === 'turn/end') {
+            state.deliveredAssistantMessages.clear();
+            state.lastPublicCommentary = '';
+            const reason = params.event.data?.reason;
+            if (reason?.kind === 'error') {
+                logger.warn({ sessionKey: state.sessionKey, sessionId: state.sessionId, runtimeId: state.runtimeId,
+                    code: typeof reason.error?.code === 'string' ? reason.error.code : 'UNKNOWN' }, 'DSH native turn failed');
+            }
         }
-        state.events.push(...adaptDeepSeekEvent(params.event));
+        if (params.event.type.startsWith('compaction/')) {
+            logger.info({ sessionKey: state.sessionKey, sessionId: state.sessionId, eventType: params.event.type }, 'DSH native context compaction event');
+        }
+        for (const message of adaptDeepSeekEvent(params.event)) {
+            if (message.metadata?.phase === 'commentary') {
+                const text = message.content.trim();
+                if (!text || text === state.lastPublicCommentary ||
+                    /^[\s🤔⏳🔄]*(?:thinking|working|compacting|正在思考|思考中|处理中)[\s.!…。]*$/i.test(text)) {
+                    continue;
+                }
+                state.lastPublicCommentary = text;
+            }
+            state.events.push(message);
+        }
         state.wake();
     }
 }

@@ -1,6 +1,7 @@
 /**
  * Shared utilities for Agent SDK integration.
  */
+import { externalSecretEnvironmentNames } from '../config/secret-environment.js';
 /**
  * Get directory containing node executable.
  * This is needed for SDK subprocess spawning to find node.
@@ -44,13 +45,13 @@ export function extractText(message) {
  * another Claude Code session (nested session detection).
  *
  * @param apiKey - API key for authentication
- * @param apiBaseUrl - Optional base URL for API requests (e.g., for GLM)
+ * @param apiBaseUrl - Optional base URL for API requests (for a compatible endpoint)
  * @param extraEnv - Optional extra environment variables to merge
  * @param sdkDebug - Enable SDK debug logging (default: true)
  * @param sdkTimeoutMs - SDK HTTP request timeout in ms (Issue #2992, default: 300000)
  * @returns Environment object for SDK options
  */
-export function buildSdkEnv(apiKey, apiBaseUrl, extraEnv, sdkDebug = true, sdkTimeoutMs) {
+export function buildSdkEnv(apiKey, apiBaseUrl, extraEnv, sdkDebug = true, sdkTimeoutMs, selected) {
     const nodeBinDir = getNodeBinDir();
     // Ensure PATH includes node bin dir at the front
     // SDK subprocess needs to find 'node' command
@@ -58,16 +59,11 @@ export function buildSdkEnv(apiKey, apiBaseUrl, extraEnv, sdkDebug = true, sdkTi
     const newPath = originalPath.includes(nodeBinDir)
         ? originalPath
         : `${nodeBinDir}:${originalPath}`;
-    // Priority (highest to lowest):
-    // 1. Our forced values (API_KEY, PATH, BASE_URL, DEBUG)
-    // 2. process.env (system environment)
-    // 3. extraEnv (caller-provided defaults)
-    // This ensures system env vars can't be accidentally overridden by extraEnv,
-    // but our critical values always take precedence.
+    // Host environment overrides global defaults. Bound LLM settings and the
+    // selected API credential are applied below, after these shared values.
     const env = {
         ...extraEnv,
         ...process.env,
-        ANTHROPIC_API_KEY: apiKey,
         PATH: newPath,
         // Enable SDK debug logging by default for better troubleshooting
         // SDK subprocess errors go to stderr and are critical for debugging
@@ -79,9 +75,40 @@ export function buildSdkEnv(apiKey, apiBaseUrl, extraEnv, sdkDebug = true, sdkTi
     // "Claude Code cannot be launched inside another Claude Code session"
     // Must use delete to completely remove the key, not just set to undefined.
     delete env.CLAUDECODE;
-    // Set base URL if provided (for GLM or custom endpoints)
-    if (apiBaseUrl) {
-        env.ANTHROPIC_BASE_URL = apiBaseUrl;
+    // A named LLM supplies native settings and only its own credential. Remove
+    // all configured credential references before projecting the selected key.
+    for (const key of new Set([...externalSecretEnvironmentNames(), ...(selected?.credentialEnvKeys ?? [])])) {
+        if (key !== 'DISCLAUDE_API_TOKEN') {
+            env[key] = undefined;
+        }
+    }
+    Object.assign(env, selected?.selectedEnv);
+    const protocol = selected ? selected.protocol : 'anthropic';
+    const apiVariables = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_AUTH_TOKEN',
+        'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'OPENAI_BASE_URL'];
+    if (selected || apiKey) {
+        for (const key of apiVariables) {
+            // A native account binding may explicitly select its own auth/endpoint.
+            // Protocol bindings below always take credentials from their API block.
+            if (selected && !protocol && Object.hasOwn(selected.selectedEnv ?? {}, key)) {
+                continue;
+            }
+            // Explicit undefined also masks credentials in adapters that merge env.
+            if (selected) {
+                env[key] = undefined;
+            }
+            else {
+                delete env[key];
+            }
+        }
+    }
+    if (protocol) {
+        const keyName = protocol === 'openai' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY';
+        const urlName = protocol === 'openai' ? 'OPENAI_BASE_URL' : 'ANTHROPIC_BASE_URL';
+        env[keyName] = apiKey;
+        if (apiBaseUrl) {
+            env[urlName] = apiBaseUrl;
+        }
     }
     // Issue #2992: Set HTTP timeout for SDK→API connections.
     // Prevents infinite hang when the TCP connection to the API proxy (e.g., LiteLLM)

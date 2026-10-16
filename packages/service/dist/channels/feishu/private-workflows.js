@@ -27,9 +27,11 @@ export function isPrivateWorkflowRequest(value) {
 /** Each request freezes a task-selected consumer; form callbacks cannot replace it. */
 export class FeishuPrivateWorkflows {
     send;
+    update;
     pending = new Map();
-    constructor(send) {
+    constructor(send, update) {
         this.send = send;
+        this.update = update;
     }
     async request(request) {
         if (!isPrivateWorkflowRequest(request)) {
@@ -45,7 +47,7 @@ export class FeishuPrivateWorkflows {
         }
         const actionId = randomUUID();
         const audit = createLogger('PrivateWorkflow');
-        const input = new FeishuPrivateInput(new ActionBoundInput(createPrivateProcessAction({ ...request.workflow, id: actionId }), (event) => audit.info(event, 'Private workflow completed')), this.send);
+        const input = new FeishuPrivateInput(new ActionBoundInput(createPrivateProcessAction({ ...request.workflow, id: actionId }), (event) => audit.info(event, 'Private workflow completed')), this.send, this.update);
         const timer = setTimeout(() => this.remove(actionId), 300_000);
         timer.unref();
         this.pending.set(actionId, { input, actor: request.actorId, chat: request.chatId, timer });

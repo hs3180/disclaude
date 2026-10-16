@@ -17,6 +17,11 @@ export function normalizeCommandData(type, rawData) {
         return undefined;
     }
     switch (type) {
+        case 'help': {
+            const args = Array.isArray(rawData.args) ? rawData.args : [];
+            const mode = rawData.mode ?? args[0];
+            return mode ? { mode } : undefined;
+        }
         case 'project': {
             const args = rawData.args;
             const subcommand = rawData.subcommand ?? args?.[0] ?? 'info';

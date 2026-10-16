@@ -114,6 +114,7 @@ export class MessageRouter {
         });
     }
     async routeSystemMessage(message) {
-        await this.handler.handleSystemMessage(message.chatId, message.payload, message.id, { waitForCompletion: message.waitForCompletion, ...(message.agentSession ? { agentSession: message.agentSession } : {}) });
+        await this.handler.handleSystemMessage(message.chatId, message.payload, message.id, { waitForCompletion: message.waitForCompletion, ...(message.agentSession ? { agentSession: message.agentSession } : {}),
+            ...(message.replyRootId !== undefined ? { replyRootId: message.replyRootId } : {}) });
     }
 }

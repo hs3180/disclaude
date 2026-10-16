@@ -14,13 +14,11 @@ function nonEmpty(value) {
 export function isCodexReasoningEffort(value) {
     return (typeof value === 'string' && CODEX_REASONING_EFFORTS.includes(value));
 }
-/** Resolve the one effective default model, keeping legacy inputs as ordered fallbacks. */
+/** Resolve the bound default model and the explicit host override. */
 export function resolveCodexModelSetting(sources) {
     const candidates = [
         [sources.environment, 'environment'],
-        [sources.configured, 'agent.codex.model'],
-        [sources.legacyAgent, 'agent.model'],
-        [sources.legacyPreset, 'agents.default.model'],
+        [sources.configured, 'llms.model'],
     ];
     for (const [value, source] of candidates) {
         const normalized = nonEmpty(value);
@@ -37,7 +35,7 @@ export function resolveCodexReasoningEffort(sources) {
         return { value: environment, source: 'environment' };
     }
     if (sources.configured) {
-        return { value: sources.configured, source: 'agent.codex.reasoningEffort' };
+        return { value: sources.configured, source: 'llms.reasoningEffort' };
     }
     return { source: 'codex-cli-model-default' };
 }

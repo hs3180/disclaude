@@ -13,11 +13,31 @@ persistent configuration.
 | `DISCLAUDE_API_BASE_URL` | Address the local DisclaudeService HTTP API used by channel commands. | Managed child processes receive the active address. |
 | `DISCLAUDE_API_TOKEN` | Bearer token for write requests to that API. | The service generates a fresh value by default, or uses an explicit `--api-token`; managed children receive the active value. Do not persist or reuse an old token. |
 | `DISCLAUDE_ALLOW_BUILTIN_CRON` | Re-enable the backend's built-in cron/loop tools. | Disabled by default; `1` or `true` enables them. The persistent `schedule` feature is separate. |
-| `DISCLAUDE_STALL_TIMEOUT_MS` | Override the local stall timeout for providers that still use a stall watchdog. | Defaults to 180,000 ms; Claude delegates stream-level retries and liveness to its SDK/CLI. |
+| `DISCLAUDE_STALL_TIMEOUT_MS` | Set the quiet interval for provider watchdogs. | Defaults to 180,000 ms. Codex checks liveness before terminating; silence alone is insufficient. See [Codex liveness](codex-backend.md#quiet-turns-and-liveness). Claude delegates liveness to its SDK/CLI. |
 | `DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS` | Grace period before force-closing a stalled provider process when its provider watchdog is active. | Defaults to 5,000 ms; Claude does not use this watchdog. |
 | `DISCLAUDE_QUERY_MAX_RETRIES` | Override Claude SDK query retries. | Positive integer; otherwise the provider default is used. |
 | `DISCLAUDE_SYSTEM_FLOOD_THRESHOLD` | Set Claude system-message flood threshold. | Positive integer; defaults to 50. |
 | `DISCLAUDE_MIDSTREAM_RETRY_DELAY_MS` | Set the delay used by mid-stream retry handling. | Internal reliability tuning; omit unless diagnosing or testing provider behavior. |
+| `CODEX_MODEL` | Explicit startup override for the default Codex binding. | The bound `llms.<name>.model` must already be declared and non-empty; other named bindings are unchanged. |
+| `ANTHROPIC_MODEL` / `OPENAI_MODEL` | Native runtime environment settings. | They do not supply or override a public named LLM's required model declaration. |
+
+The bound `llms.<name>.model` selects the model independently of its vendor.
+Every public named LLM requires an explicit, non-empty `llms.<name>.model`.
+Inherited environment, global YAML `env` and native account defaults cannot fill
+an omitted model. Codex's documented `CODEX_MODEL` override applies only after
+that declaration passes validation.
+See [agent configuration](agent-configuration.md) for credentials and bindings.
+
+Claude Code `settingSources: ['user', 'project', 'local']` loads settings into
+the SDK subprocess. It does not export `model` or `env.ANTHROPIC_MODEL` from
+those files into the Disclaude service process. The service validates its
+configuration before launching that subprocess, and passes the resolved model
+explicitly to the SDK. Set the bound `llms.<name>.model` in the application
+configuration; environment or Claude Code settings alone cannot satisfy the
+service's required model. Explicit SDK model selection
+also takes priority over the subprocess's model settings. See the official
+[Claude Code settings](https://code.claude.com/docs/en/settings) and
+[model configuration](https://code.claude.com/docs/en/model-config) references.
 
 `disclaude start` generates a fresh API token for each run by default and
 supplies it to managed child processes. If `--api-token` is set, use that
@@ -31,3 +51,9 @@ The launchd script has deployment-specific `DISCLAUDE_LAUNCHD_*` overrides.
 Prefer its documented CLI workflow instead of setting those low-level values
 directly. `DISCLAUDE_SCHEDULE_ID`, `DISCLAUDE_SCHEDULE_NAME`, and
 `DISCLAUDE_CHAT_ID` are injected as task context, not service configuration.
+
+The service pool reclaims completed, idle sessions. Active turns, admitted or
+queued messages, and live non-ambient background tasks remain protected even
+when they have no recent SDK or tool activity. The pool does not impose turn
+duration or inactivity caps. Explicit stop/reset and service shutdown retain
+their own lifecycle handling; provider watchdogs remain separate.

@@ -44,8 +44,8 @@ export const DEFAULT_BENCH_CONFIG = {
  * Classify one response.
  *
  * - `success`  — 2xx and Feishu business code 0.
- * - `throttled` — HTTP 429 (the unambiguous rate-limit signal; triggers cooldown
- *   probing and `Retry-After` capture).
+ * - `throttled` — HTTP 429 or the documented frequency-limit code 99991400;
+ *   triggers cooldown probing and `Retry-After` capture.
  * - `rejected` — HTTP 200 but a non-zero business code. Feishu rate-limits this
  *   way often, but so do sequence (300317) / permission errors — the bench
  *   records the first code+msg per cadence (`firstRejectedCode`/`firstRejectedMsg`)
@@ -54,7 +54,7 @@ export const DEFAULT_BENCH_CONFIG = {
  * - `error` — no response (0) or 5xx.
  */
 export function classifyOutcome(res) {
-    if (res.status === 429) {
+    if (res.status === 429 || res.code === 99991400) {
         return 'throttled';
     }
     if (typeof res.code === 'number' && res.code !== 0) {
@@ -100,6 +100,7 @@ export async function runRateLimitBench(deps) {
     const nextReq = (content) => ({ sequence: ++sequence, content });
     const cadenceResults = [];
     let maxObservedBackoffMs = 0;
+    let unrecoveredThrottle = false;
     for (const cadence of config.cadencesPerSec) {
         const intervalMs = Math.max(1, Math.round(1000 / cadence));
         const start = now();
@@ -109,12 +110,18 @@ export async function runRateLimitBench(deps) {
             sent: 0,
             successes: 0,
             throttled: 0,
+            http429: 0,
+            businessThrottled: 0,
             rejected: 0,
             errors: 0,
+            elapsedMs: 0,
+            actualRequestsPerSec: 0,
+            actualSuccessesPerSec: 0,
         };
         let throttled = false;
         // Sweep at the cadence until the deadline, or until we observe + probe a throttle.
         while (now() < deadline) {
+            const requestStartedAt = now();
             const res = await deps.caller(nextReq(contentFor(sequence)));
             tally(result, res);
             const outcome = classifyOutcome(res);
@@ -128,9 +135,9 @@ export async function runRateLimitBench(deps) {
                 throttled = true;
                 result.firstThrottleAtMs = now() - start;
                 result.firstRetryAfterMs = res.retryAfterMs;
-                if (typeof res.retryAfterMs === 'number') {
-                    maxObservedBackoffMs = Math.max(maxObservedBackoffMs, res.retryAfterMs);
-                }
+                result.firstRateLimitResetMs = res.rateLimitResetMs;
+                const serverDelayMs = Math.max(res.retryAfterMs ?? 0, res.rateLimitResetMs ?? 0);
+                maxObservedBackoffMs = Math.max(maxObservedBackoffMs, serverDelayMs);
                 // Probe at a slow cadence until a success to measure the effective cooldown.
                 const cooldown = await probeUntilSuccess({
                     caller: deps.caller,
@@ -138,11 +145,13 @@ export async function runRateLimitBench(deps) {
                     probeIntervalMs: config.probeIntervalMs,
                     budgetMs: config.probeBudgetMs,
                     throttleAt: now(),
+                    retryAfterMs: serverDelayMs,
                     now,
                     sleep,
                     onProbe: (r) => {
                         result.sent += 1;
                         tallyCountsOnly(result, r);
+                        maxObservedBackoffMs = Math.max(maxObservedBackoffMs, r.retryAfterMs ?? 0, r.rateLimitResetMs ?? 0);
                     },
                 });
                 if (typeof cooldown === 'number') {
@@ -152,19 +161,35 @@ export async function runRateLimitBench(deps) {
                 break; // cadence done — we have its throttle + cooldown data
             }
             if (now() < deadline) {
-                await sleep(intervalMs);
+                // HTTP latency already consumes part (or all) of the start-to-start interval.
+                const waitMs = Math.min(deadline - now(), requestStartedAt + intervalMs - now());
+                if (waitMs > 0) {
+                    await sleep(waitMs);
+                }
             }
+        }
+        result.elapsedMs = now() - start;
+        if (result.elapsedMs > 0) {
+            result.actualRequestsPerSec = result.sent * 1000 / result.elapsedMs;
+            result.actualSuccessesPerSec = result.successes * 1000 / result.elapsedMs;
         }
         logger.info({ cadence, ...result }, 'Card Kit bench: cadence step complete');
         cadenceResults.push(result);
+        if (throttled && result.cooldownMs === undefined) {
+            unrecoveredThrottle = true;
+            break;
+        }
     }
-    const burst = await runBurst({ caller: deps.caller, nextReq, config, now, sleep });
-    // Highest cadence at which every PUT succeeded (zero throttled/rejected/error).
+    const burstConfig = unrecoveredThrottle
+        ? { ...config, burst: { ...config.burst, rounds: 0 } } : config;
+    const burst = await runBurst({ caller: deps.caller, nextReq, config: burstConfig, now, sleep });
+    maxObservedBackoffMs = Math.max(maxObservedBackoffMs, burst.maxBackoffMs);
+    // Highest actual throughput with no throttled/rejected/error responses.
     let maxSustainedPerSec = 0;
     for (const r of cadenceResults) {
         const clean = r.sent > 0 && r.throttled === 0 && r.rejected === 0 && r.errors === 0;
-        if (clean && r.cadencePerSec > maxSustainedPerSec) {
-            maxSustainedPerSec = r.cadencePerSec;
+        if (clean && r.actualRequestsPerSec > maxSustainedPerSec) {
+            maxSustainedPerSec = r.actualRequestsPerSec;
         }
     }
     const suggestedMinIntervalMs = maxSustainedPerSec > 0
@@ -201,6 +226,12 @@ function tallyCountsOnly(result, res) {
             break;
         case 'throttled':
             result.throttled += 1;
+            if (res.status === 429) {
+                result.http429 += 1;
+            }
+            else {
+                result.businessThrottled += 1;
+            }
             break;
         case 'rejected':
             result.rejected += 1;
@@ -216,13 +247,18 @@ function tallyCountsOnly(result, res) {
  */
 async function probeUntilSuccess(deps) {
     const deadline = deps.throttleAt + deps.budgetMs;
+    let waitMs = Math.max(deps.probeIntervalMs, deps.retryAfterMs ?? 0);
     while (deps.now() < deadline) {
-        await deps.sleep(deps.probeIntervalMs);
+        if (waitMs > deadline - deps.now()) {
+            return undefined;
+        }
+        await deps.sleep(waitMs);
         const res = await deps.caller(deps.nextReq(contentFor(-1)));
         deps.onProbe?.(res);
         if (classifyOutcome(res) === 'success') {
             return deps.now() - deps.throttleAt;
         }
+        waitMs = Math.max(deps.probeIntervalMs, res.retryAfterMs ?? 0, res.rateLimitResetMs ?? 0);
     }
     return undefined;
 }
@@ -231,14 +267,23 @@ async function runBurst(deps) {
     const { count, windowMs, rounds, idleMs } = deps.config.burst;
     const stepMs = count > 1 ? Math.max(1, Math.round(windowMs / (count - 1))) : 0;
     const result = {
-        rounds,
+        rounds: 0,
         totalSent: 0,
         totalApplied: 0,
         totalThrottled: 0,
         totalRejected: 0,
+        totalErrors: 0,
+        http429: 0,
+        businessThrottled: 0,
+        roundWindowsMs: [],
+        maxBackoffMs: 0,
     };
     for (let round = 0; round < rounds; round += 1) {
+        result.rounds += 1;
+        const start = deps.now();
+        let lastDispatch = start;
         for (let i = 0; i < count; i += 1) {
+            lastDispatch = deps.now();
             const res = await deps.caller(deps.nextReq(contentFor(result.totalSent)));
             result.totalSent += 1;
             switch (classifyOutcome(res)) {
@@ -247,17 +292,30 @@ async function runBurst(deps) {
                     break;
                 case 'throttled':
                     result.totalThrottled += 1;
-                    break;
+                    if (res.status === 429) {
+                        result.http429 += 1;
+                    }
+                    else {
+                        result.businessThrottled += 1;
+                    }
+                    result.maxBackoffMs = Math.max(res.retryAfterMs ?? 0, res.rateLimitResetMs ?? 0);
+                    result.roundWindowsMs.push(lastDispatch - start);
+                    return result; // End the burst on its first limit instead of sending more requests.
                 case 'rejected':
                     result.totalRejected += 1;
                     break;
                 default:
+                    result.totalErrors += 1;
                     break;
             }
             if (i < count - 1) {
-                await deps.sleep(stepMs);
+                const waitMs = start + (i + 1) * stepMs - deps.now();
+                if (waitMs > 0) {
+                    await deps.sleep(waitMs);
+                }
             }
         }
+        result.roundWindowsMs.push(lastDispatch - start);
         if (round < rounds - 1) {
             await deps.sleep(idleMs);
         }
@@ -280,7 +338,7 @@ function roundUpBackoff(ms) {
  * `StreamingThrottle` defaults. Matches the methodology doc's table shape so an
  * operator can paste measured numbers straight in.
  */
-export function formatFindingsTable(result) {
+export function formatFindingsTable(result, method = 'PUT') {
     const rows = result.cadences.map((r) => {
         const clean = r.throttled === 0 && r.rejected === 0 && r.errors === 0 ? '✅ clean' : '⛔ pushed back';
         const rejectDetail = r.rejected > 0
@@ -288,7 +346,7 @@ export function formatFindingsTable(result) {
                 ? `${r.firstRejectedCode}${r.firstRejectedMsg ? ` (${r.firstRejectedMsg})` : ''}`
                 : '(no code)'
             : '—';
-        return `| ${r.cadencePerSec} | ${r.sent} | ${r.successes} | ${r.throttled} | ${r.rejected} | ${rejectDetail} | ${r.errors} | ${r.firstThrottleAtMs ?? '—'} | ${r.firstRetryAfterMs ?? '—'} | ${r.cooldownMs ?? '—'} | ${clean} |`;
+        return `| ${r.cadencePerSec} | ${r.actualRequestsPerSec.toFixed(2)} | ${r.elapsedMs} | ${r.sent} | ${r.successes} | ${r.http429} | ${r.businessThrottled} | ${r.rejected} | ${rejectDetail} | ${r.errors} | ${r.firstThrottleAtMs ?? '—'} | ${r.firstRetryAfterMs ?? '—'} | ${r.firstRateLimitResetMs ?? '—'} | ${r.cooldownMs ?? '—'} | ${clean} |`;
     });
     const { burst } = result;
     return [
@@ -296,26 +354,30 @@ export function formatFindingsTable(result) {
         '',
         '> Fill from a live run (`scripts/feishu-cardkit-rate-limit-bench.mts`).',
         '> Numbers below are from this run; defaults feed `StreamingThrottle` (#4414).',
+        '> Requests are serial. HTTP latency can prevent reaching the requested cadence.',
+        '> Clean measured throughput is a lower bound, not the tenant quota or a universal limit.',
         '',
         '### Sustained sweep',
         '',
-        '| cadence (PUT/s) | sent | ok | 429 | biz-reject | first reject code | errors | first 429 @ms | Retry-After ms | cooldown ms | verdict |',
-        '|---|---|---|---|---|---|---|---|---|---|---|',
+        `| cadence (${method}/s) | actual requests/s | elapsed ms | sent | ok | 429 | biz-limit | biz-reject | first reject code | errors | first limit @ms | Retry-After ms | reset ms | cooldown ms | verdict |`,
+        '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|',
         ...rows,
         '',
-        `**Max sustained without push-back:** ${result.maxSustainedPerSec}/s → ` +
+        `**Max sustained measured without push-back:** ${result.maxSustainedPerSec.toFixed(2)}/s → ` +
             `\`StreamingThrottle.minIntervalMs\` ≈ ${result.suggestedMinIntervalMs || '—'} ms`,
         '',
         '### Burst tolerance',
         '',
-        '| rounds | sent | applied | throttled | biz-rejected |',
-        '|---|---|---|---|---|',
-        `| ${burst.rounds} | ${burst.totalSent} | ${burst.totalApplied} | ${burst.totalThrottled} | ${burst.totalRejected} |`,
+        '| rounds | actual dispatch windows ms | sent | applied | 429 | biz-limit | biz-rejected | errors |',
+        '|---|---|---|---|---|---|---|---|',
+        `| ${burst.rounds} | ${burst.roundWindowsMs.join(', ')} | ${burst.totalSent} | ${burst.totalApplied} | ${burst.http429} | ${burst.businessThrottled} | ${burst.totalRejected} | ${burst.totalErrors} |`,
         '',
         '### Throttle backoff',
         '',
-        `**Max observed backoff (Retry-After / cooldown):** ${result.maxObservedBackoffMs} ms → ` +
-            `\`StreamingThrottle.maxBackoffMs\` ≈ ${result.suggestedMaxBackoffMs} ms`,
+        result.maxObservedBackoffMs > 0
+            ? `**Max backoff signal (Retry-After / reset / measured cooldown):** ${result.maxObservedBackoffMs} ms → ` +
+                `\`StreamingThrottle.maxBackoffMs\` ≈ ${result.suggestedMaxBackoffMs} ms`
+            : '**Backoff:** not observed; retain existing `StreamingThrottle.maxBackoffMs`. Zero is not a recommendation.',
         '',
     ].join('\n');
 }
@@ -337,24 +399,32 @@ export function createFeishuBenchCaller(opts) {
     }
     const now = opts.now ?? (() => Date.now());
     const timeoutMs = opts.timeoutMs ?? 15_000;
-    const url = `${base}${CARDKIT_PATH}/cards/${encodeURIComponent(opts.cardId)}` +
-        `/elements/${encodeURIComponent(opts.elementId)}/content`;
+    const settings = opts.operation === 'settings';
+    const suffix = settings ? '/settings' : `/elements/${encodeURIComponent(opts.elementId)}/content`;
+    const url = `${base}${CARDKIT_PATH}/cards/${encodeURIComponent(opts.cardId)}${suffix}`;
     return async (req) => {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
         try {
             const res = await fetchImpl(url, {
-                method: 'PUT',
+                method: settings ? 'PATCH' : 'PUT',
                 headers: {
                     Authorization: `Bearer ${opts.tenantAccessToken}`,
                     'Content-Type': 'application/json; charset=utf-8',
                 },
-                body: JSON.stringify({ content: req.content, sequence: req.sequence, uuid: randomUuid() }),
+                body: JSON.stringify({
+                    ...(settings ? { settings: JSON.stringify({ config: { streaming_mode: true } }) }
+                        : { content: req.content }),
+                    sequence: req.sequence, uuid: randomUuid(),
+                }),
                 signal: controller.signal,
             });
             const text = await res.text().catch(() => undefined);
             const parsed = safeParseJson(text);
             const retryAfter = parseRetryAfter(res.headers.get('retry-after'), now());
+            const resetRaw = res.headers.get('x-ogw-ratelimit-reset');
+            const resetMs = resetRaw && /^\d+(\.\d+)?$/.test(resetRaw.trim())
+                ? Math.round(Number(resetRaw) * 1000) : undefined;
             const out = {
                 status: res.status,
                 code: typeof parsed?.code === 'number' ? parsed.code : undefined,
@@ -365,6 +435,12 @@ export function createFeishuBenchCaller(opts) {
             }
             if (typeof retryAfter.raw === 'string') {
                 out.retryAfterRaw = retryAfter.raw;
+            }
+            if (typeof resetMs === 'number' && Number.isFinite(resetMs)) {
+                out.rateLimitResetMs = resetMs;
+            }
+            if (resetRaw) {
+                out.rateLimitResetRaw = resetRaw;
             }
             return out;
         }

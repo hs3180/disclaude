@@ -20,7 +20,8 @@
  *
  * @module agents/restart-manager
  */
-import { isTransient, getErrorCategoryTag, classifyError, ErrorCategory } from '../utils/error-handler.js';
+import { tagErrorCategory, ErrorCategory } from '../utils/error-handler.js';
+import { automaticReplayBlock } from '../utils/replay-safety.js';
 /**
  * RestartManager - Manages Agent restart with protection mechanisms.
  *
@@ -100,6 +101,11 @@ export class RestartManager {
         if (state.recentErrors.length > this.maxRecentErrors) {
             state.recentErrors.shift();
         }
+        const replayBlock = automaticReplayBlock(error);
+        if (replayBlock) {
+            this.logger.warn({ chatId, replayBlock }, 'Automatic replay blocked by provider evidence');
+            return { allowed: false, reason: 'replay_unsafe', restartCount: state.restartCount, circuitOpen: state.circuitOpen };
+        }
         // Check if circuit is already open
         if (state.circuitOpen) {
             this.logger.warn({ chatId, restartCount: state.restartCount }, 'Circuit already open, restart blocked');
@@ -133,18 +139,16 @@ export class RestartManager {
         // the "timeout" keyword would classify as UNKNOWN (non-transient) and
         // WRONGLY suppress a restart that would likely help. `new Error(...)` is
         // the last resort, used only when the caller passed no error at all.
-        const l0Tag = error !== undefined ? getErrorCategoryTag(error) : undefined;
-        const isTransientError = l0Tag
-            ? l0Tag.transient
-            : isTransient(error ?? new Error(errorMessage));
-        const category = l0Tag?.category ?? classifyError(error ?? new Error(errorMessage));
+        const classification = tagErrorCategory(error ?? new Error(errorMessage));
+        const { transient: isTransientError, category } = classification;
         const unknown = category === ErrorCategory.UNKNOWN;
         if (unknown && state.unknownRestartCount >= 1) {
             state.circuitOpen = true;
             return { allowed: false, reason: 'unknown_recovery_exhausted', restartCount: state.restartCount, circuitOpen: true };
         }
         if (!isTransientError && !unknown) {
-            this.logger.warn({ chatId, errorMessage, errorCategory: l0Tag?.category }, 'Non-transient error — restart skipped (Issue #4314 L2)');
+            this.logger.warn({ chatId, errorMessage, errorCategory: category, errorStatus: classification.status,
+                classificationSource: classification.source }, 'Non-transient error — restart skipped (Issue #4314 L2)');
             return {
                 allowed: false,
                 reason: 'non_transient',

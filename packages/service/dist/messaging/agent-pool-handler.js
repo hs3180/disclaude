@@ -16,7 +16,8 @@ export class AgentPoolMessageHandler {
         return this.dispatch(params, 'user message');
     }
     handleSystemMessage(chatId, payload, messageId, options) {
-        return this.dispatch({ chatId, payload, messageId, ...(options?.agentSession ? { agentSession: options.agentSession } : {}) }, 'system message', options?.waitForCompletion);
+        return this.dispatch({ chatId, payload, messageId, ...(options?.agentSession ? { agentSession: options.agentSession } : {}),
+            ...(options?.replyRootId !== undefined ? { replyRootId: options.replyRootId } : {}) }, 'system message', options?.waitForCompletion);
     }
     dispatch(params, context, waitForCompletion = false) {
         const { chatId, messageId, threadRootId, agentSession } = params;
@@ -63,7 +64,7 @@ export class AgentPoolMessageHandler {
         }
     }
     getAgentSafely(chatId, messageId, context, threadRootId, session) {
-        const callbacks = this.callbacksFactory(chatId);
+        const callbacks = threadRootId ? this.callbacksFactory(chatId, threadRootId) : this.callbacksFactory(chatId);
         try {
             return session
                 ? this.agentPool.getOrCreateChatAgent(chatId, callbacks, threadRootId, session)

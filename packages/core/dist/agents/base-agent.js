@@ -3,7 +3,7 @@
  *
  * Provides common functionality:
  * - SDK configuration building via abstraction layer
- * - GLM logging
+ * - API logging
  * - Error handling
  *
  * Uses Template Method pattern - subclasses implement specific logic.
@@ -19,6 +19,7 @@ import { Config } from '../config/index.js';
 import { loadRuntimeEnv } from '../config/runtime-env.js';
 import path from 'node:path';
 import { assertToolOptions } from '../sdk/tools.js';
+import { withLlmSessionLimit } from '../sdk/llm-session-limit.js';
 /**
  * Abstract base class for all Agent types.
  *
@@ -52,7 +53,8 @@ export class BaseAgent {
     model;
     apiBaseUrl;
     permissionMode;
-    provider;
+    apiProtocol;
+    selectedConfig;
     agentBackend;
     logger;
     initialized = false;
@@ -62,31 +64,22 @@ export class BaseAgent {
         this.model = config.model;
         this.apiBaseUrl = config.apiBaseUrl;
         this.permissionMode = config.permissionMode ?? 'bypassPermissions';
-        // Get provider from config, fallback to runtime context
-        // This allows agents to be created with explicit provider setting
-        // while maintaining backward compatibility
-        this.provider = config.provider ?? this.getDefaultProvider();
+        this.apiProtocol = config.apiProtocol ?? (['codex', 'dsh'].includes(config.agentBackend ?? '')
+            ? undefined : hasRuntimeContext() ? getRuntimeContext().getAgentConfig().apiProtocol ?? 'anthropic' : 'anthropic');
+        this.selectedConfig = config;
         // Create logger with agent name
         this.logger = createLogger(this.getAgentName());
         // Get SDK provider instance
-        this.sdkProvider = getProvider(config.agentBackend);
-        // disclaude service may select DeepSeek as the global default without passing
+        this.sdkProvider = config.settings
+            ? getProvider(config.agentBackend, config.settings)
+            : getProvider(config.agentBackend);
+        // disclaude service may select DSH as the global default without passing
         // an explicit per-agent override. Build options for the resolved backend.
         this.agentBackend =
             config.agentBackend ??
-                (['claude', 'codex', 'pi', 'deepseek'].includes(this.sdkProvider.name)
+                (['claude', 'codex', 'pi', 'dsh'].includes(this.sdkProvider.name)
                     ? this.sdkProvider.name
                     : undefined);
-    }
-    /**
-     * Get default provider from runtime context.
-     */
-    getDefaultProvider() {
-        if (hasRuntimeContext()) {
-            return getRuntimeContext().getAgentConfig().provider;
-        }
-        // Default to anthropic if no runtime context
-        return 'anthropic';
     }
     /**
      * Create SDK options for agent execution.
@@ -124,25 +117,9 @@ export class BaseAgent {
             ...this.getGlobalEnv(),
             ...loadRuntimeEnv(workspaceDir),
         };
-        // Issue #3770: Inject model tier env vars so SDK sub-agents (Task tool,
-        // Team workers) resolve opus/sonnet/haiku aliases to the correct model
-        // names for the active provider. Without this, the SDK resolves "haiku"
-        // to a Claude default (e.g., "claude-haiku-4-5-20251001") that
-        // non-Anthropic endpoints don't recognize, causing sub-agents to fail
-        // with 400 Invalid model name errors.
+        // Claude owns native aliases; pass configured ANTHROPIC_DEFAULT_*_MODEL
+        // through unchanged instead of inventing disclaude capability tiers.
         if ((this.agentBackend ?? 'claude') === 'claude') {
-            const opusModel = Config.getModelForTier('high');
-            const haikuModel = Config.getModelForTier('low');
-            const sonnetModel = Config.getModelForTier('multimodal');
-            if (opusModel && !globalEnv.ANTHROPIC_DEFAULT_OPUS_MODEL) {
-                globalEnv.ANTHROPIC_DEFAULT_OPUS_MODEL = opusModel;
-            }
-            if (sonnetModel && !globalEnv.ANTHROPIC_DEFAULT_SONNET_MODEL) {
-                globalEnv.ANTHROPIC_DEFAULT_SONNET_MODEL = sonnetModel;
-            }
-            if (haikuModel && !globalEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL) {
-                globalEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL = haikuModel;
-            }
             // Issue #3532: Set CLAUDE_CONFIG_DIR to workspace .claude dir when project-bound.
             // This redirects SDK's user scope to workspace, making workspace skills always available.
             if (isProjectBound) {
@@ -152,25 +129,41 @@ export class BaseAgent {
         // Issue #3803: Expose workspace directory to agent so skills (e.g., schedule)
         // can resolve workspace paths correctly regardless of the agent's cwd.
         globalEnv.DISCLAUDE_WORKSPACE_DIR = workspaceDir;
-        options.env = buildSdkEnv(this.apiKey, this.apiBaseUrl, globalEnv, loggingConfig.sdkDebug, this.getSdkTimeoutMs());
+        options.env = buildSdkEnv(this.apiKey, this.apiBaseUrl, globalEnv, loggingConfig.sdkDebug, this.selectedConfig.settings ? this.selectedConfig.settings.sdkTimeoutMs ?? 300_000 : this.getSdkTimeoutMs(), { protocol: this.apiProtocol, selectedEnv: this.selectedConfig.env,
+            credentialEnvKeys: this.selectedConfig.credentialEnvKeys });
+        if (this.agentBackend === 'codex' && this.selectedConfig.settings) {
+            const { settings } = this.selectedConfig;
+            options.codexRuntime = {
+                sandbox: settings.codexSandbox, fullAccess: settings.fullAccess,
+                networkAccess: settings.codexNetworkAccess, transport: settings.codex?.transport,
+            };
+        }
+        options.apiProtocol = this.apiProtocol;
+        options.reasoningEffort = this.selectedConfig.reasoningEffort;
+        if (this.selectedConfig.llm && this.selectedConfig.maxConcurrentSessions !== undefined) {
+            options.llmSessionLimit = {
+                name: this.selectedConfig.llm, maxConcurrentSessions: this.selectedConfig.maxConcurrentSessions,
+            };
+        }
         // Set model
         if (this.model) {
             options.model = this.model;
         }
         // SDK 0.3.177+: Agent Teams is enabled via teammateMode Settings field,
         // replacing the deprecated CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS env var.
-        if ((this.agentBackend ?? 'claude') === 'claude' && this.isAgentTeamsEnabled()) {
+        if ((this.agentBackend ?? 'claude') === 'claude' && (this.selectedConfig.settings ? this.selectedConfig.settings.enableAgentTeams ?? false : this.isAgentTeamsEnabled())) {
             options.teammateMode = 'in-process';
         }
-        // Explicit configuration wins for every Claude-backend model. Discovery is
-        // asynchronous and runs in the provider before starting the SDK subprocess.
-        if ((this.agentBackend ?? 'claude') === 'claude') {
-            options.autoCompactWindow = Config.getAutoCompactWindow() ?? 'auto';
+        // Claude leaves an absent policy to the SDK. DSH retains its own default.
+        const backend = this.agentBackend ?? 'claude';
+        if (backend === 'claude' || backend === 'dsh') {
+            const window = this.selectedConfig.settings ? this.selectedConfig.settings.autoCompactWindow : Config.getAutoCompactWindow();
+            if (window !== undefined || backend === 'dsh') {
+                options.autoCompactWindow = window ?? 'auto';
+            }
         }
-        // Issue #3706 (GLM stall): enable partial (stream_event) messages so the provider
-        // can observe content_block_delta / message_start / message_stop and run a
-        // no-content-progress watchdog. stream_events are filtered in adaptIterator
-        // (not yielded to ChatAgent), so this only adds watchdog visibility, not downstream volume.
+        // Partial events expose thinking/token activity to the host activity clock.
+        // The provider filters them from user output; SDK/CLI still owns retries.
         if ((this.agentBackend ?? 'claude') === 'claude') {
             options.includePartialMessages = true;
         }
@@ -239,20 +232,23 @@ export class BaseAgent {
                     toolInputRaw: message.metadata.toolInput,
                     toolOutput: message.metadata.toolOutput,
                     elapsed: message.metadata.elapsedMs,
-                    cost: message.metadata.costUsd,
-                    tokens: (message.metadata.inputTokens ?? 0) + (message.metadata.outputTokens ?? 0),
                     stopReason: message.metadata.stopReason,
                     numTurns: message.metadata.numTurns,
                     durationMs: message.metadata.durationMs,
                     durationApiMs: message.metadata.durationApiMs,
+                    consumedInputIds: message.metadata.consumedInputIds,
                     transientStatus: message.metadata.transientStatus,
                     phase: message.metadata.phase,
+                    systemSubtype: message.metadata.systemSubtype,
+                    backgroundTaskIds: message.metadata.backgroundTaskIds,
+                    backgroundTask: message.metadata.backgroundTask,
                 }
                 : undefined,
             sessionId: message.metadata?.sessionId,
             terminatedReason: message.metadata?.terminatedReason,
             terminationDetail: message.metadata?.terminationDetail,
             upstreamApiError: message.metadata?.upstreamApiError,
+            automaticReplayBlocked: message.metadata?.automaticReplayBlocked,
             upstreamApiErrorStderr: message.metadata?.upstreamApiErrorStderr,
         };
     }
@@ -282,13 +278,19 @@ export class BaseAgent {
                     role: 'user',
                     ...(msg.correlation ? { correlation: { ...msg.correlation } } : {}),
                     ...(msg.inputContext ? { inputContext: { ...msg.inputContext } } : {}),
+                    ...(msg.continuationContext ? { continuationContext: msg.continuationContext } : {}),
                     content: typeof msg.message?.content === 'string'
                         ? msg.message.content
                         : JSON.stringify(msg.message?.content ?? ''),
                 };
             }
         }
-        const result = this.sdkProvider.queryStream(convertInput(), options);
+        const result = withLlmSessionLimit(() => this.sdkProvider.queryStream(convertInput(), options), this.sdkProvider.managesLlmSessionLimit?.(options) ? undefined : options.llmSessionLimit, () => {
+            const info = this.sdkProvider.getInfo(this.selectedConfig);
+            if (!info.available) {
+                throw new Error(info.unavailableReason ?? 'Selected agent backend is unavailable');
+            }
+        });
         const self = this;
         const streamStartMs = Date.now(); // Issue #3003: track stream timing
         async function* wrappedIterator() {
@@ -301,14 +303,14 @@ export class BaseAgent {
                 if (!firstYieldMs) {
                     firstYieldMs = Date.now();
                     self.logger.info({
-                        provider: self.provider,
+                        provider: self.apiProtocol,
                         ttftMs: firstYieldMs - streamStartMs,
                         messageType: parsed.type,
                     }, 'First message yielded from SDK stream (TTFT)');
                 }
                 // Log SDK message with full details for debugging
                 self.logger.debug({
-                    provider: self.provider,
+                    provider: self.apiProtocol,
                     messageType: parsed.type,
                     contentLength: parsed.content?.length || 0,
                     toolName: parsed.metadata?.toolName,
@@ -320,15 +322,21 @@ export class BaseAgent {
             // Issue #3003: Log stream completion timing
             const totalMs = Date.now() - streamStartMs;
             self.logger.info({
-                provider: self.provider,
+                provider: self.apiProtocol,
                 totalMs,
                 yieldCount,
                 ttftMs: firstYieldMs ? firstYieldMs - streamStartMs : undefined,
             }, 'SDK stream completed');
         }
+        const iterator = wrappedIterator();
+        const returnIterator = iterator.return.bind(iterator);
+        iterator.return = (value) => {
+            result.handle.close();
+            return returnIterator(value);
+        };
         return {
             handle: result.handle,
-            iterator: wrappedIterator(),
+            iterator,
         };
     }
     /**

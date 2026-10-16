@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { JupyterHttpConnection } from './http-connection.js';
+import { JupyterDiagnosticError, jupyterDiagnostic } from './diagnostics.js';
 class DatalayerProtocolError extends Error {
     httpStatus;
     rpcCode;
@@ -27,10 +28,10 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
         try {
             const response = await this.response(route);
             if (!response.ok) {
-                await response.body?.cancel();
                 return {
                     state: response.status === 404 ? 'missing' : 'unverified',
                     httpStatus: response.status,
+                    diagnostic: (await this.responseError(response, 'interface-inspection')).diagnostic,
                 };
             }
             try {
@@ -41,19 +42,21 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
                 };
             }
             catch {
-                return { state: 'incompatible', httpStatus: response.status };
+                return { state: 'incompatible', httpStatus: response.status,
+                    diagnostic: { layer: 'schema', code: 'invalid_interface_response', message: 'Jupyter interface returned invalid JSON',
+                        hint: 'Verify the remote extension and configured endpoint.', status: response.status } };
             }
         }
-        catch {
-            return { state: 'unverified' };
+        catch (error) {
+            return { state: 'unverified', diagnostic: jupyterDiagnostic(error) };
         }
     }
     async inspectRtc() {
         try {
             const response = await this.response('lab');
             if (!response.ok) {
-                await response.body?.cancel();
-                return { state: 'unverified', httpStatus: response.status };
+                return { state: 'unverified', httpStatus: response.status,
+                    diagnostic: (await this.responseError(response, 'rtc-inspection')).diagnostic };
             }
             const html = await this.responseText(response);
             const script = html.match(/<script\b(?=[^>]*\bid=(["'])jupyter-config-data\1)[^>]*>([\s\S]*?)<\/script>/i);
@@ -70,19 +73,21 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
                     : {}),
             };
         }
-        catch {
-            return { state: 'unverified' };
+        catch (error) {
+            return { state: 'unverified', diagnostic: error instanceof JupyterDiagnosticError ? error.diagnostic
+                    : { layer: 'schema', code: 'invalid_rtc_config', phase: 'rtc-inspection', message: 'JupyterLab RTC configuration could not be parsed',
+                        hint: 'Verify the remote JupyterLab configuration and compatible extension versions.' } };
         }
     }
     /** Authenticated reads only: no MCP request, document, kernel or execution is created. */
     async inspectConnection() {
-        const server = await this.inspectJson('api');
-        const version = server.data?.version;
-        if (server.state !== 'available' ||
-            typeof version !== 'string' ||
+        const server = await this.json('api');
+        const version = server?.version;
+        if (typeof version !== 'string' ||
             !/^\d+\.\d+\.\d+[A-Za-z0-9.+-]*$/.test(version) ||
             version.length > 128) {
-            throw new Error('Authenticated Jupyter API version could not be verified');
+            throw new JupyterDiagnosticError({ layer: 'schema', code: 'invalid_api_version', phase: 'api-version',
+                message: 'Authenticated Jupyter API version could not be verified', hint: 'Verify that the configured endpoint is a Jupyter Server API.' });
         }
         // The installed nbmodel GET lists a queue without creating a client or task.
         // An unowned random ID avoids opening or inspecting any user's kernel.
@@ -106,6 +111,7 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
                         ? 'available'
                         : 'incompatible',
                 ...(queue.httpStatus !== undefined ? { httpStatus: queue.httpStatus } : {}),
+                ...(queue.diagnostic ? { diagnostic: queue.diagnostic } : {}),
             },
             rtc,
             nbconvert: {
@@ -116,6 +122,7 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
                         : 'incompatible',
                 ...(exported.httpStatus !== undefined ? { httpStatus: exported.httpStatus } : {}),
                 ...(formats ? { formats } : {}),
+                ...(exported.diagnostic ? { diagnostic: exported.diagnostic } : {}),
             },
             productAcceptance: 'not_verified',
         };
@@ -279,28 +286,62 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
     }
     /** Read only the original request. Missing lookup never proves non-execution. */
     async observe(handle) {
+        let responded = false;
         try {
             const response = await this.response(`api/kernels/${id(handle.kernelId)}/requests/${id(handle.requestId)}`);
+            responded = true;
             if ([404, 410].includes(response.status)) {
                 await response.body?.cancel();
-                return { state: 'unknown', httpStatus: response.status };
+                return {
+                    state: 'unknown',
+                    httpStatus: response.status,
+                    failure: {
+                        kind: 'server-unknown',
+                        reason: response.status === 410 ? 'request-expired' : 'request-not-found',
+                    },
+                };
             }
             if (![200, 202, 300, 500].includes(response.status)) {
                 await response.body?.cancel();
-                return { state: 'unknown', httpStatus: response.status };
+                return {
+                    state: 'unknown',
+                    httpStatus: response.status,
+                    failure: {
+                        kind: 'client-error',
+                        reason: response.status === 401
+                            ? 'authentication-required'
+                            : response.status === 403
+                                ? 'permission-denied'
+                                : 'http-error',
+                    },
+                };
             }
             const result = JSON.parse(await this.responseText(response));
             if ((result.request_id !== undefined && result.request_id !== handle.requestId) ||
-                (result.kernel_id !== undefined && result.kernel_id !== handle.kernelId) ||
-                (handle.kernelIncarnation &&
-                    result.kernel_incarnation !== undefined &&
-                    result.kernel_incarnation !== handle.kernelIncarnation)) {
-                return { state: 'unknown', httpStatus: response.status };
+                (result.kernel_id !== undefined && result.kernel_id !== handle.kernelId)) {
+                return {
+                    state: 'unknown',
+                    httpStatus: response.status,
+                    failure: { kind: 'client-error', reason: 'result-provenance-mismatch' },
+                };
+            }
+            if (handle.kernelIncarnation &&
+                result.kernel_incarnation !== undefined &&
+                result.kernel_incarnation !== handle.kernelIncarnation) {
+                return {
+                    state: 'unknown',
+                    httpStatus: response.status,
+                    failure: { kind: 'server-unknown', reason: 'kernel-incarnation-changed' },
+                };
             }
             const artifact = result.result_artifact;
             if (artifact !== undefined &&
                 artifact !== `nbmodel-results/${handle.kernelId}/${handle.requestId}.json`) {
-                return { state: 'unknown', httpStatus: response.status };
+                return {
+                    state: 'unknown',
+                    httpStatus: response.status,
+                    failure: { kind: 'client-error', reason: 'result-provenance-mismatch' },
+                };
             }
             const entries = {
                 original_result_entry: this.requestEntry(handle),
@@ -319,10 +360,22 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
                 ? JSON.parse(result.outputs)
                 : result.outputs;
             if (outputs !== undefined && !Array.isArray(outputs)) {
-                return { state: 'unknown', httpStatus: response.status };
+                return {
+                    state: 'unknown',
+                    httpStatus: response.status,
+                    failure: { kind: 'client-error', reason: 'invalid-response' },
+                };
             }
             const error = (result.error ??
                 (Array.isArray(outputs) ? outputs.find((o) => o?.output_type === 'error') : undefined));
+            if (response.status === 500 &&
+                (typeof error !== 'object' || typeof error?.ename !== 'string')) {
+                return {
+                    state: 'unknown',
+                    httpStatus: 500,
+                    failure: { kind: 'client-error', reason: 'http-error' },
+                };
+            }
             const normalized = {
                 ...result,
                 ...entries,
@@ -339,8 +392,19 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
                 result: normalized,
             };
         }
-        catch {
-            return { state: 'unknown' };
+        catch (error) {
+            return {
+                state: 'unknown',
+                failure: {
+                    kind: 'client-error',
+                    reason: responded
+                        ? 'invalid-response'
+                        : error instanceof Error &&
+                            /authentication|credential|password|token/i.test(error.message)
+                            ? 'authentication-required'
+                            : 'connection-unavailable',
+                },
+            };
         }
     }
     /** Advertised queue policy is discovery, not proof that product acceptance passed. */
@@ -374,6 +438,49 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
             requestQuota: Number(policy.request_quota),
             inlineResultBytes: Number(policy.inline_result_bytes),
         };
+    }
+    /** Explicit kernel-wide operation; never restart, create, retry or cancel a named run. */
+    async interruptKernel(kernelId, signal) {
+        const route = `api/kernels/${id(kernelId)}`;
+        let phase = 'inspect_kernel';
+        const result = (state, httpStatus) => ({
+            kernelId,
+            state,
+            executionState: 'unknown',
+            phase,
+            ...(httpStatus !== undefined ? { httpStatus } : {}),
+        });
+        const failure = (status) => result(status === 404
+            ? 'missing'
+            : [405, 501].includes(status)
+                ? 'unsupported'
+                : [401, 403].includes(status)
+                    ? 'rejected'
+                    : 'unknown', status);
+        signal?.throwIfAborted();
+        try {
+            const inspected = await this.response(route);
+            if (!inspected.ok) {
+                await inspected.body?.cancel();
+                return failure(inspected.status);
+            }
+            const model = JSON.parse(await this.responseText(inspected));
+            if (!model || model.id !== kernelId) {
+                return result('identity_changed', inspected.status);
+            }
+            // A busy kernel may not answer kernel_info until execution ends. The REST
+            // identity check must not wait on that shell request before interrupting.
+            signal?.throwIfAborted();
+            phase = 'interrupt';
+            const response = await this.response(`${route}/interrupt`, 'POST');
+            await response.body?.cancel();
+            return response.status === 204 ? result('accepted', 204) : failure(response.status);
+        }
+        catch {
+            signal?.throwIfAborted();
+            // The server may have received the POST. Do not send a second interrupt.
+            return result('unknown');
+        }
     }
     /** Require target cancellation policy before a DELETE; no kernel-wide fallback. */
     async stopRequest(handle) {
@@ -456,13 +563,21 @@ export class DatalayerJupyterClient extends JupyterHttpConnection {
     async json(route, method = 'GET', body) {
         const response = await this.response(route, method, body);
         if (!response.ok) {
-            await response.body?.cancel();
-            throw new Error(`Jupyter API returned HTTP ${response.status}`);
+            throw await this.responseError(response);
         }
         if (response.status === 204) {
             await response.body?.cancel();
             return undefined;
         }
-        return JSON.parse(await this.responseText(response));
+        try {
+            return JSON.parse(await this.responseText(response));
+        }
+        catch (error) {
+            if (error instanceof JupyterDiagnosticError) {
+                throw error;
+            }
+            throw new JupyterDiagnosticError({ layer: 'schema', code: 'invalid_json_response', phase: 'response', status: response.status,
+                message: 'Jupyter API response is not valid JSON', hint: 'Verify the configured remote API endpoint and server extension versions.' });
+        }
     }
 }

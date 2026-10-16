@@ -123,7 +123,7 @@ export class ChannelApiClient {
         }
         if (!(route.success ?? defaultSuccess)(json, res)) {
             const msg = json.message ?? `${type} failed (HTTP ${res.status})`;
-            throw new Error(`CHANNEL_API_REQUEST_FAILED: REST ${type} (${msg})`);
+            throw new Error(`CHANNEL_API_REQUEST_FAILED: REST ${type} (HTTP ${res.status}: ${msg})`);
         }
         // Apply per-route response shaping (default: strip the `ok` envelope).
         return (route.shape ?? stripOk)(json);

@@ -8,8 +8,9 @@ Disclaude connects Feishu/Lark and REST conversations to agent harnesses for
 software development and research. It supports ongoing conversations,
 scheduled work, project-scoped skills, and coordinated browser automation.
 
-**Latest published release: [v0.6.2](https://github.com/hs3180/disclaude/releases/tag/v0.6.2).**
-See the [release notes](docs/releases/0.6.2.md)
+**Release target: [v0.6.4](https://github.com/hs3180/disclaude/releases/tag/v0.6.4).**
+Check the [latest published release](https://github.com/hs3180/disclaude/releases/latest).
+See the [release notes](docs/releases/0.6.4.md)
 and [changelog](CHANGELOG.md). Published release tags are immutable; follow-up
 changes ship under a new version.
 
@@ -34,7 +35,7 @@ changes ship under a new version.
 | [Feishu channel](docs/feishu-channel.md) | App setup, supported interactions, and cards |
 | [Workspace setup](docs/workspace-setup.md) | Choose or safely move persistent project data |
 | [Environment variables](docs/environment-variables.md) | Operator-facing runtime settings |
-| [Codex](docs/codex-backend.md), [Pi](docs/pi-backend.md), [DeepSeek](docs/dsh-backend.md) | Backend-specific configuration |
+| [Codex](docs/codex-backend.md), [Pi](docs/pi-backend.md), [DSH](docs/dsh-backend.md) | Backend-specific configuration |
 | [Browser control](docs/browser-coordination.md) | Serialized CLI calls, ownership, and recovery |
 | [Jupyter repair CLI](jupyter/datalayer/README.md#cli-deployment) | Generate/deploy the upstream repair and inspect restart requirements |
 | [Skills](docs/skills.md) | Discovery, precedence, and CLI contract |
@@ -48,10 +49,10 @@ Requirements: Node.js 20 or later, npm 10 or later, and Git. Create and publish
 a Feishu/Lark app with a bot, required permissions, and a persistent event
 connection as described in the [Feishu channel guide](docs/feishu-channel.md).
 
-Install the current stable release and create a configuration file:
+Install the release tag below after it is published, then create a configuration file:
 
 ```sh
-npm install -g "github:hs3180/disclaude#v0.6.2"
+npm install -g "github:hs3180/disclaude#v0.6.4"
 mkdir -p ~/.disclaude
 cp "$(npm root -g)/disclaude/disclaude.config.example.yaml" \
   ~/.disclaude/disclaude.config.yaml
@@ -75,9 +76,10 @@ upgrade and rollback instructions.
 ## Development
 
 ```sh
-npm ci --include=dev
-npm run build
-npm test
+corepack enable
+pnpm install --frozen-lockfile
+pnpm run build
+pnpm test
 ```
 
 Contributions should include focused tests and documentation updates for any
@@ -86,3 +88,5 @@ user-visible behavior change.
 ## License
 
 MIT
+
+See [worktree dependencies](docs/worktree-dependencies.md) for shared-store setup and safe cleanup.

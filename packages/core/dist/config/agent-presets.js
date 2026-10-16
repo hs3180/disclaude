@@ -1,5 +1,5 @@
 /** Pure validation and default selection for named agent presets. */
-const VALID_BACKENDS = new Set(['claude', 'pi', 'codex', 'deepseek']);
+const VALID_BACKENDS = new Set(['claude', 'pi', 'codex', 'dsh']);
 /**
  * Validate the public `agents:` map and resolve its effective default preset.
  *
@@ -30,12 +30,12 @@ export function validateAgentPresets(agents) {
         }
         const preset = raw;
         if (!VALID_BACKENDS.has(preset.agentBackend)) {
-            errors.push(`agents.${name}.agentBackend must be one of: claude, pi, codex, deepseek`);
+            errors.push(`agents.${name}.agentBackend must be one of: claude, pi, codex, dsh`);
         }
         if (typeof preset.model !== 'string' || !preset.model.trim()) {
             errors.push(`agents.${name}.model must be a non-empty string`);
         }
-        else if (preset.agentBackend === 'codex' &&
+        else if (preset.agentBackend === 'codex' && preset.model.trim() &&
             !/^gpt-\d+(?:[.-].+)/i.test(preset.model.trim())) {
             errors.push(`agents.${name}.model must be a Codex/ChatGPT model identifier`);
         }

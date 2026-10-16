@@ -20,26 +20,22 @@ export function adaptDeepSeekEvent(event) {
     const data = event.data ?? {};
     switch (event.type) {
         case 'assistant/chunk': {
-            // The provider buffers text deltas until a message boundary. A shared
-            // text event represents a deliverable reply, not one token or reasoning.
+            // Deliver completed public messages, never individual tokens/reasoning.
             return [];
         }
         case 'assistant/message': {
             const message = data.message;
             const blocks = Array.isArray(message?.content) ? message.content : [];
-            return blocks.flatMap((block) => {
-                if (!block || typeof block !== 'object') {
-                    return [];
-                }
-                const value = block;
-                if (value.type !== 'text') {
-                    return [];
-                }
-                if (typeof value.text !== 'string' || value.text.length === 0) {
-                    return [];
-                }
-                return [makeMessage('text', value.text, { messageId: String(message?.id ?? '') })];
-            });
+            const text = blocks
+                .filter((block) => block?.type === 'text' && typeof block.text === 'string')
+                .map(block => block.text).join('');
+            if (!text) {
+                return [];
+            }
+            return [makeMessage('text', text, {
+                    messageId: String(message?.id ?? ''),
+                    phase: blocks.some(block => block?.type === 'tool-call') ? 'commentary' : 'final_answer',
+                })];
         }
         case 'tool/call': {
             const rawArguments = typeof data.arguments === 'string' ? data.arguments : '';
@@ -83,6 +79,12 @@ export function adaptDeepSeekEvent(event) {
             }
             if (reason?.kind === 'aborted') {
                 return [makeMessage('result', '', { stopReason: 'interrupted' })];
+            }
+            const error = reason?.error;
+            if (reason?.kind === 'error' && error?.code === 'CONTEXT_WINDOW_EXCEEDED') {
+                return [makeMessage('error', '上下文已满，本轮未能继续。请先检查已完成的结果，再发送消息继续；如仍无法继续，可使用 /reset 开始新会话。', {
+                        stopReason: 'error', terminationDetail: 'DSH CONTEXT_WINDOW_EXCEEDED',
+                    })];
             }
             const detail = reason?.kind === 'error'
                 ? stringifyPayload(reason.error)

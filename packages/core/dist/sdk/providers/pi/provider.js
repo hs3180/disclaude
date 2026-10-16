@@ -7,6 +7,7 @@ import { createLogger } from '../../../utils/logger.js';
 import { adaptPiEvent } from './event-adapter.js';
 import { adaptPiTools } from './tool-adapter.js';
 import { adaptPiOptions } from './options-adapter.js';
+import { diagnosticsPluginManifest } from '../../../skills/diagnostics-plugin.js';
 import { loadPiRuntime, toPiUserMessage } from './pi-runtime.js';
 const logger = createLogger('PiAgentProvider');
 // Issue #4386 (part 5): terminal notice synthesized when the no-content-progress
@@ -26,15 +27,28 @@ export class PiAgentProvider {
     // --------------------------------------------------------------------------
     // Provider information
     // --------------------------------------------------------------------------
-    getInfo() {
-        const available = this.validateConfig();
+    getInfo(target) {
+        let configurationError;
+        if (target && !this.streamFn) {
+            try {
+                const protocol = target.apiProtocol ?? 'anthropic';
+                const keyName = protocol === 'openai' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY';
+                const urlName = protocol === 'openai' ? 'OPENAI_BASE_URL' : 'ANTHROPIC_BASE_URL';
+                resolvePiModel({ settingSources: [], model: target.model, apiProtocol: protocol,
+                    env: { [keyName]: target.apiKey, [urlName]: target.apiBaseUrl } });
+            }
+            catch {
+                configurationError = 'check the selected LLM API credential, model and endpoint';
+            }
+        }
+        const available = !configurationError && this.validateConfig();
         const info = {
             name: this.name,
             version: this.version,
             available,
         };
         if (!available) {
-            info.unavailableReason = 'pi-agent-core package not installed or not configured';
+            info.unavailableReason = configurationError ?? 'pi-agent-core package not installed or not configured';
         }
         return info;
     }
@@ -228,7 +242,9 @@ export class PiAgentProvider {
                 stallWatchdog = armStallTimer(fireStallWatchdog, STALL_TIMEOUT_MS);
             };
             const inputIterator = input[Symbol.asyncIterator]();
-            const adaptedOptions = adaptPiOptions(options);
+            const executionRoot = options.cwd ?? process.cwd();
+            const diagnostics = diagnosticsPluginManifest(options.projectRoot ?? executionRoot, executionRoot);
+            const adaptedOptions = adaptPiOptions(options, diagnostics);
             const inherited = new Set((production?.tools ?? []).map((tool) => tool.name));
             for (const tool of tools) {
                 if (inherited.has(tool.name)) {

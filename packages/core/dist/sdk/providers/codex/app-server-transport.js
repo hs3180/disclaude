@@ -7,6 +7,23 @@ import { createLogger } from '../../../utils/logger.js';
 import { readProcessGroupResources } from './process-resources.js';
 import { captureDescendantGroups, signalDescendantGroups } from './owned-descendants.js';
 import { parseAgentInputParams, validateAgentInputAnswers } from '../../user-input.js';
+/** A received RPC error is distinct from a missing or timed-out response. */
+export class CodexAppServerRpcError extends Error {
+    code;
+    constructor(code, message) {
+        super(`Codex app-server error ${code}: ${message}`);
+        this.code = code;
+        this.name = 'CodexAppServerRpcError';
+    }
+}
+export class CodexAppServerRequestTimeoutError extends Error {
+    method;
+    constructor(method) {
+        super(`codex app-server request timed out: ${method}`);
+        this.method = method;
+        this.name = 'CodexAppServerRequestTimeoutError';
+    }
+}
 /**
  * Experimental persistent stdio transport for the Codex app-server protocol.
  * CodexAgentProvider selects it only when explicitly configured; `codex exec`
@@ -40,9 +57,9 @@ export class CodexAppServerTransport {
             ...(options.onUserInput ? [
                 '--enable', 'default_mode_request_user_input',
                 // The feature flag alone exposes the protocol surface. Codex 0.155
-                // also requires the experimental tool config to expose async input to
-                // the model; keep this scoped to app-server children with a host
-                // input callback instead of mutating the user's global config.
+                // also requires the experimental tool config for synchronous input.
+                // Native async-question registration is separately model-catalog
+                // controlled in 0.162. Keep these flags scoped to this child.
                 '-c', 'tools.experimental_request_user_input={enabled=true}',
             ] : [])], {
             env: browserAgentEnv(options.env),
@@ -83,7 +100,7 @@ export class CodexAppServerTransport {
         await this.reportResources('initialized');
         return result;
     }
-    request(method, params) {
+    request(method, params, timeoutMs) {
         if (!this.acceptingRequests) {
             return Promise.reject(new Error('codex app-server transport is closed'));
         }
@@ -91,8 +108,8 @@ export class CodexAppServerTransport {
         return new Promise((resolve, reject) => {
             const timer = setTimeout(() => {
                 this.pending.delete(id);
-                reject(new Error(`codex app-server request timed out: ${method}`));
-            }, this.options.requestTimeoutMs ?? 30_000);
+                reject(new CodexAppServerRequestTimeoutError(method));
+            }, timeoutMs ?? this.options.requestTimeoutMs ?? 30_000);
             timer.unref();
             this.pending.set(id, { resolve, reject, timer });
             this.write({ jsonrpc: '2.0', id, method, params });
@@ -243,7 +260,7 @@ export class CodexAppServerTransport {
             this.pending.delete(message.id);
             clearTimeout(waiter.timer);
             if (message.error) {
-                waiter.reject(new Error(`Codex app-server error ${message.error.code}: ${message.error.message}`));
+                waiter.reject(new CodexAppServerRpcError(message.error.code, message.error.message));
             }
             else {
                 waiter.resolve(message.result);

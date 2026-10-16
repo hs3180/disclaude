@@ -1,9 +1,14 @@
 export function hasChromiumCdpConfiguration(env?: NodeJS.ProcessEnv): boolean;
 export function processExists(pid: any): boolean;
 export function resolveCdpEndpoint(env: any): string;
+export function resolveCdpConfiguration(env: any): {
+    endpoint: string;
+    endpointSource: string;
+};
 export function resolveBrowserUse(env: any, launcherDirectory: any): string;
 export function readBrowserRuntime(path: any): any;
 export function browserStatus(path: any): {
+    lastDiagnostic?: any;
     state: string;
     pid: any;
     executable: any;

@@ -20,5 +20,5 @@ export const DEFAULT_CHANNEL_CAPABILITIES = {
     supportsMention: false,
     supportsUpdate: false,
     supportsStreaming: false,
-    supportedMcpTools: [],
+    supportedChannelTools: [],
 };

@@ -13,7 +13,7 @@ import { createLogger } from "../../../../core/dist/index.js";
  * Chat type is implied by the Feishu event type at this boundary (the event
  * payloads themselves carry no `chat_type` field):
  * - bot_p2p_chat_entered_v1  → 'p2p'   (a user opened a private chat with the bot)
- * - im.chat.member.added     → 'group' (members are added to group chats; P2P
+ * - im.chat.member.*.added   → 'group' (members are added to group chats; P2P
  *                                      chats are established by messaging, not
  *                                      by member-add events)
  *
@@ -56,14 +56,42 @@ export class WelcomeHandler {
         if (!this.isRunning() || !this.welcomeService) {
             return;
         }
-        const { event } = data;
-        if (!event?.user?.open_id) {
+        // EventDispatcher flattens the native envelope. Keep the legacy wrapper
+        // accepted by older callers, but use the actual chat for guidance state.
+        const event = ('event' in data ? data.event ?? data : data);
+        const userId = event.operator_id?.open_id ?? event.user?.open_id;
+        if (!userId) {
             logger.debug('P2P chat entered event missing user info');
             return;
         }
-        const userId = event.user.open_id;
-        logger.info({ userId }, 'P2P chat entered, sending welcome message');
-        await this.welcomeService.handleP2PChatEntered(userId, CHAT_TYPE_FROM_P2P_ENTERED);
+        const chatId = event.chat_id || userId;
+        if (event.chat_id) {
+            this.welcomeService.registerPrivateChat(userId, event.chat_id);
+        }
+        logger.info({ userId, chatId }, 'P2P chat entered, sending welcome message');
+        await this.welcomeService.handleP2PChatEntered(chatId, CHAT_TYPE_FROM_P2P_ENTERED);
+    }
+    /** Native bot-added events have a chat ID, not the legacy members array. */
+    async handleBotAdded(event) {
+        if (!this.isRunning() || !this.welcomeService || !event.chat_id ||
+            (event.app_id && event.app_id !== this.appId)) {
+            return;
+        }
+        logger.info({ chatId: event.chat_id }, 'Bot added to group, sending welcome message');
+        await this.welcomeService.handleBotAddedToGroup(event.chat_id, CHAT_TYPE_FROM_MEMBER_ADDED);
+    }
+    /** The SDK exposes joined users as users[].user_id.open_id. */
+    async handleUserAdded(event) {
+        if (!this.isRunning() || !this.welcomeService || !event.chat_id ||
+            (event.app_id && event.app_id !== this.appId)) {
+            return;
+        }
+        const userIds = [...new Set((event.users ?? []).map(user => user?.user_id?.open_id).filter((id) => !!id))];
+        if (!userIds.length) {
+            return;
+        }
+        logger.info({ chatId: event.chat_id, userCount: userIds.length }, 'New users joined group, sending help message');
+        await this.welcomeService.handleUserJoinedGroup(event.chat_id, CHAT_TYPE_FROM_MEMBER_ADDED, userIds);
     }
     /**
      * Handle chat member added event.

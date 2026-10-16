@@ -116,11 +116,14 @@ export async function discoverCompactionWindow(options, signal) {
     return window;
 }
 /** Delay SDK creation until metadata resolves, retaining cancellation semantics. */
-export function withDiscoveredCompaction(input, options, start) {
+export function withDiscoveredCompaction(input, options, start, inputDelivery) {
     const abort = new AbortController();
     let active;
     return {
         handle: {
+            get inputDelivery() {
+                return active?.handle.inputDelivery ?? inputDelivery;
+            },
             close() {
                 abort.abort();
                 active?.handle.close();

@@ -46,7 +46,35 @@ export class DatalayerRunStore {
                     typeof r.state !== 'string')) {
                 throw new Error('Invalid Notebook journal');
             }
-            return data.records;
+            return data.records.map((record) => {
+                if (record.state !== 'unknown') {
+                    return record.state === 'running' && record.lastConfirmedRunningAt === undefined
+                        ? { ...record, lastConfirmedRunningAt: record.observedAt }
+                        : record;
+                }
+                // v1 unknown records may have lost their prior running fact. Do not invent it.
+                const failure = record.observation?.failure ??
+                    {
+                        kind: [404, 410].includes(record.observation?.httpStatus ?? 0)
+                            ? 'server-unknown'
+                            : 'client-error',
+                        reason: record.observation?.httpStatus === 404
+                            ? 'request-not-found'
+                            : record.observation?.httpStatus === 410
+                                ? 'request-expired'
+                                : 'legacy-unknown',
+                    };
+                return {
+                    ...record,
+                    state: record.handle ? 'accepted' : 'submitting',
+                    loss: {
+                        ...failure,
+                        checkedAt: record.observedAt,
+                        httpStatus: record.observation?.httpStatus,
+                    },
+                    lostAt: record.lostAt ?? record.observedAt,
+                };
+            });
         }
         catch (error) {
             if (error.code === 'ENOENT') {
@@ -93,7 +121,44 @@ export class DatalayerRunStore {
         if (terminal.has(previous.state)) {
             return previous;
         }
-        const record = { ...previous, ...patch, observedAt: Date.now() };
+        const now = Date.now();
+        let record;
+        if (patch.state === 'unknown') {
+            const loss = {
+                ...(patch.observation?.failure ?? {
+                    kind: 'client-error',
+                    reason: 'submission-unverified',
+                }),
+                checkedAt: now,
+                ...(patch.observation?.httpStatus === undefined
+                    ? {}
+                    : { httpStatus: patch.observation.httpStatus }),
+            };
+            const changed = !previous.loss ||
+                previous.loss.kind !== loss.kind ||
+                previous.loss.reason !== loss.reason ||
+                previous.loss.httpStatus !== loss.httpStatus;
+            record = {
+                ...previous,
+                ...(patch.handle ? { handle: patch.handle } : {}),
+                checkedAt: now,
+                lostAt: previous.loss ? (previous.lostAt ?? now) : now,
+                loss,
+                lossEvents: changed
+                    ? [...(previous.lossEvents ?? []), loss].slice(-32)
+                    : previous.lossEvents,
+            };
+        }
+        else {
+            record = {
+                ...previous,
+                ...patch,
+                observedAt: now,
+                checkedAt: now,
+                loss: undefined,
+                ...(patch.state === 'running' ? { lastConfirmedRunningAt: now } : {}),
+            };
+        }
         records[index] = record;
         this.persist(records);
         return record;

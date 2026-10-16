@@ -83,39 +83,19 @@ export class AgentFactory {
      * @param options - Optional configuration overrides
      * @returns BaseAgentConfig with merged configuration
      */
-    static getBaseConfig(options = {}) {
-        const defaultConfig = Config.getAgentConfig();
-        // Issue #3059: Model resolution priority:
-        // 1. Explicit model override (options.model) — highest priority
-        // 2. Tier-specific model (resolved from options.modelTier via Config.getModelForTier())
-        // 3. Default model (from Config.getAgentConfig())
-        let resolvedModel;
-        if (options.model) {
-            resolvedModel = options.model;
+    static resolveConfig(options = {}) {
+        const completeSelection = options.agentBackend !== undefined && options.apiKey !== undefined && options.model !== undefined;
+        let defaultConfig = completeSelection
+            ? { apiKey: '', model: '' } : Config.getAgentConfig();
+        if (options.agentBackend && options.agentBackend !== (defaultConfig.agentBackend ?? Config.AGENT_BACKEND)) {
+            defaultConfig = { apiKey: '', model: '', agentBackend: options.agentBackend };
         }
-        else if (options.modelTier) {
-            const tierModel = Config.getModelForTier(options.modelTier);
-            resolvedModel = tierModel ?? defaultConfig.model;
-        }
-        else {
-            resolvedModel = defaultConfig.model;
-        }
-        // A Codex/dsh default has no Anthropic key in getAgentConfig(). A named
-        // Claude/pi selection must resolve credentials from its API service rather
-        // than inherit the default runtime's deliberately empty key.
-        const provider = options.provider ?? defaultConfig.provider;
-        const selectingApiBackend = options.agentBackend === 'claude' || options.agentBackend === 'pi';
-        const defaultHasNativeAuth = Config.AGENT_BACKEND === 'codex' || Config.AGENT_BACKEND === 'deepseek';
-        const apiKey = selectingApiBackend && defaultHasNativeAuth
-            ? (provider === 'glm' ? Config.GLM_API_KEY : Config.ANTHROPIC_API_KEY)
-            : defaultConfig.apiKey;
         return {
-            apiKey: options.apiKey ?? apiKey,
-            model: resolvedModel,
-            provider,
-            apiBaseUrl: options.apiBaseUrl ?? defaultConfig.apiBaseUrl,
-            permissionMode: options.permissionMode ?? 'bypassPermissions',
-            agentBackend: options.agentBackend,
+            ...defaultConfig,
+            ...options,
+            apiKey: options.apiKey ?? defaultConfig.apiKey,
+            model: options.model ?? defaultConfig.model,
+            permissionMode: options.permissionMode ?? defaultConfig.permissionMode ?? 'bypassPermissions',
         };
     }
     // ============================================================================
@@ -174,7 +154,7 @@ export class AgentFactory {
             if (!options.cwdProvider) {
                 logger.warn({ chatId }, 'AgentFactory.createChatAgent called without cwdProvider; agent will run in the workspace cwd and ignore any /project binding');
             }
-            const baseConfig = this.getBaseConfig(options);
+            const baseConfig = this.resolveConfig(options);
             const config = {
                 ...baseConfig,
                 chatId,
@@ -184,6 +164,7 @@ export class AgentFactory {
                 cwdResolver: options.cwdResolver,
                 skipHistory: options.skipHistory,
                 sdkSessionKey: options.sdkSessionKey,
+                turnRecovery: options.turnRecovery,
             };
             return createChatAgent(config);
         }
@@ -215,7 +196,7 @@ export class AgentFactory {
      * ```
      */
     static createAgent(chatId, callbacks, options = {}) {
-        const baseConfig = this.getBaseConfig(options);
+        const baseConfig = this.resolveConfig(options);
         // Issue #4448 (direction #4): `cwdProvider` is optional, but omitting it
         // silently runs the agent in the workspace cwd, ignoring any `/project`
         // binding for this chat. There is currently no production caller that
@@ -233,6 +214,7 @@ export class AgentFactory {
             cwdResolver: options.cwdResolver,
             skipHistory: options.skipHistory,
             sdkSessionKey: options.sdkSessionKey,
+            turnRecovery: options.turnRecovery,
         };
         return createChatAgent(config);
     }

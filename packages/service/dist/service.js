@@ -198,8 +198,8 @@ export class DisclaudeService extends EventEmitter {
         // agentBackend is orthogonal to the model-layer `provider` (LLM API).
         const agentBackend = Config.AGENT_BACKEND;
         if (!agentBackend) {
-            throw new Error('No agent backend configured. Set agent.agentBackend (claude, pi, codex, or deepseek) ' +
-                'or declare an agents preset.');
+            throw new Error('No agent backend configured. Declare an agents entry with backend: claude, pi, codex, or dsh ' +
+                'and bind it to an llms entry.');
         }
         try {
             setDefaultProvider(agentBackend);
@@ -215,7 +215,12 @@ export class DisclaudeService extends EventEmitter {
             throw error;
         }
         this.browserRuntime = await startBrowserRuntime(process.env, record => {
-            logger.info({ browser: record }, 'Upstream browser-use CLI selected');
+            if (record.type === 'browser-diagnostic') {
+                logger.warn({ browser: record }, 'Browser endpoint diagnostic');
+            }
+            else {
+                logger.info({ browser: record }, 'Upstream browser-use CLI selected');
+            }
         });
         // Issue #4280 (part 5): no REST API server is started anymore — DisclaudeService
         // serves REST-only via the HttpApiServer wired in cli.ts (--api-port).
@@ -589,7 +594,7 @@ export class DisclaudeService extends EventEmitter {
                     chatId,
                     text: message,
                 };
-                await this.channelManager.broadcast(outgoingMessage);
+                return await this.channelManager.broadcast(outgoingMessage);
             },
             resetAgent: (chatId, skipContext = true) => {
                 this.agentPool?.reset(chatId, skipContext);

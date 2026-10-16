@@ -10,9 +10,10 @@
  * @returns the pi-relevant subset (system prompt / model
  *   string / env); see `PiAdaptedOptions` for the deferred-items contract.
  */
-export function adaptPiOptions(options) {
+export function adaptPiOptions(options, skillManifest = '') {
+    const prompt = resolveSystemPrompt(options);
     return {
-        systemPrompt: resolveSystemPrompt(options),
+        systemPrompt: skillManifest ? [prompt, skillManifest].filter(Boolean).join('\n\n') : prompt,
         model: options.model,
         env: options.env,
     };

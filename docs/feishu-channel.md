@@ -21,14 +21,18 @@ features.
 3. Under event subscriptions, select **receive events through a persistent
    connection** and subscribe to `im.message.receive_v1`. Subscribe to
    `im.chat.updated_v1` when the app needs group metadata changes to take effect
-   immediately.
+   immediately. For welcome messages, also subscribe to
+   `im.chat.access_event.bot_p2p_chat_entered_v1`,
+   `im.chat.member.bot.added_v1` and `im.chat.member.user.added_v1`.
+   These are separate private-chat, bot-join and user-join subscriptions; the
+   legacy `im.chat.member.added_v1` handler is retained for older integrations.
 4. Publish the app version, then add the bot to the target chat.
 5. Put the App ID and App Secret in `disclaude.config.yaml` and start the service:
 
    ```yaml
    feishu:
      appId: "cli_..."
-     appSecret: "..."
+     appSecret: $FEISHU_APP_SECRET
    ```
 
    ```sh
@@ -38,11 +42,52 @@ features.
 Send `@bot 你好` in a chat to verify the connection. The [root README
 quickstart](../README.md#quickstart) covers installation and backend setup.
 
+## Welcome and command help
+
+`/help` lists the registered commands whose runtime dependencies and host access
+policy allow them in this conversation. Private chats omit group trigger controls;
+topic commands and help replies stay in the current topic. `/agent list` and
+`/agent use <name>` appear when named backend/model presets are configured. A
+switch starts a new native session. `/steer` appears only when an active query
+actually exposes native steer. Attachment guidance reflects the channel's support;
+reading or processing a file still requires the model and Feishu permissions.
+
+With the welcome events subscribed, opening a private chat sends a short welcome
+once per service run. Bot or member joins share a per-group 24-hour cooldown.
+Exact onboarding requests such as `怎么用？`, `不知道怎么开始` or `help` receive
+short command guidance, at most once per chat per five minutes across topics.
+Normal tasks, ambiguous greetings, quoted messages, attachments, code and explicit
+output-format requests continue to the agent. Already actionable task-failure
+notices retain their recovery advice. A control-command exception gets a generic
+failure notice and, within the same cooldown, a `/help` suggestion; raw exception
+details are not sent to the chat.
+
+`/help off` disables automatic welcome and guidance for the whole chat, including
+its topics; `/help on` enables them. Explicit `/help` always remains available
+subject to the host's access policy. Preferences and rate state are local to the
+channel's service run and reset on restart, as the command confirmation states.
+State is bounded to 1,000 chats; new automatic prompts are skipped at capacity,
+and existing disabled preferences are retained. Failed or uncertain welcome
+delivery consumes its cooldown and is not automatically retried.
+
+The optional host `isCommandAllowed` callback uses the same actor/chat/topic
+context for command dispatch and help. This does not add user roles or change the
+default service permission policy. Anonymous group-join events cannot infer an
+individual member's privileges; hosts requiring actor-specific authorization can
+deny such automatic help. Native API permission rejection is still authoritative.
+
 ## Messages and cards
 
 Disclaude streams replies through Feishu CardKit. Update pacing and retry
 handling are managed by the service; a measured tenant limit is not a universal
 Feishu guarantee.
+
+Progress during a turn is the agent's own decision narration: assistant text
+produced alongside tool calls is delivered live in private chats, groups and
+topics, as its own message that never replaces the final reply. What stays
+private is the per-step detail — thinking, raw tool arguments and outputs, and
+child-agent frames (configurable debug forwarding is unchanged).
+Final-reply-only workflows receive no narration.
 
 `disclaude channel send_card --chat <chat-id> --card-file ./card.json` accepts
 legacy cards and static Card JSON 2.0. A minimal 2.0 card is:
@@ -69,8 +114,15 @@ Structured user-input cards are available when the backend is Codex and its
 transport is `app-server`:
 
 - A blocking request resumes the originating request with its question IDs.
-- A supported non-blocking request is returned as a user message in the
-  originating turn; it is not a second request.
+- Native asynchronous questions remain answerable for 15 minutes after
+  creation, including after normal turn completion. An answer steers the
+  originating active turn; after it completes, the answer is admitted once as
+  new input in the same conversation and topic. The original task is not
+  replayed. The card's submitted state confirms admission, not completion of
+  the follow-up work.
+- Cancellation, reset, session closure, failed/interrupted turns, and expiry
+  invalidate pending questions. One-shot tasks and channels without the
+  asynchronous answer path report an explicit delivery failure.
 - `exec` transport has no interactive request/response path.
 
 Cards are bound to the originating actor, chat, topic, and turn. Stale,
@@ -80,6 +132,15 @@ are masked and bypass ordinary message logging, prompt generation, conversation
 history, and persistent configuration. This cannot constrain how the model
 later uses or emits an answer. Never collect credentials in an ordinary,
 non-secret question.
+
+Codex CLI 0.162's [native async tool](https://github.com/openai/codex/blob/rust-v0.162.0/codex-rs/core/src/tools/handlers/request_user_input_async.rs)
+returns `accepted: true` without waiting for host delivery. That value is not a
+Feishu delivery receipt.
+Disclaude waits for the card sender before reporting the host turn as complete;
+unsupported requests and failed sends produce an explicit failure. An
+uncertain answer acknowledgement is never automatically queued or resent.
+Structured `requestUserInput` RPC responses, including secret answers, retain
+their original request/response path.
 
 ## Maintainer rate-limit check
 
@@ -91,9 +152,28 @@ a tenant access token with `cardkit:card:write` and the card/element IDs:
 LARKSUITE_CLI_TENANT_ACCESS_TOKEN=... \
 CARDKIT_BENCH_CARD_ID=... \
 CARDKIT_BENCH_ELEMENT_ID=... \
-npx tsx scripts/feishu-cardkit-rate-limit-bench.mts
+pnpm exec tsx scripts/feishu-cardkit-rate-limit-bench.mts
 ```
+
+The default measures element-content `PUT`. Set `CARDKIT_BENCH_METHOD=PATCH`
+to measure the settings endpoint; it keeps `streaming_mode` enabled and does
+not require an element ID. Both operations share one per-card sequence. See
+the official [content PUT](https://open.feishu.cn/document/cardkit-v1/card-element/content)
+and [settings PATCH](https://open.feishu.cn/document/cardkit-v1/card/settings)
+contracts.
+
+The caller is serial. Requested cadence and actual requests/second are reported
+separately; HTTP latency may prevent reaching the requested rate or burst
+window. A clean run provides an observed lower bound, not the maximum tenant
+capacity. HTTP 429 and the documented frequency-limit business code `99991400`
+are counted separately from other rejections. Cooldown probes respect
+`Retry-After` and Feishu's `x-ogw-ratelimit-reset` within their bounded budget
+(see [frequency control](https://open.feishu.cn/document/ukTMukTMukTM/uUzN04SN3QjL1cDN)).
+When backoff is not observed, keep
+the existing defaults rather than interpreting zero as a measured safe value.
 
 Keep credentials and tenant-specific measurements outside the repository.
 Measured limits vary by tenant and should not be treated as a universal
 service quota.
+
+Channel credential sources and migration: [channel-credentials.md](channel-credentials.md).

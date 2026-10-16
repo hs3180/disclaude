@@ -7,7 +7,7 @@
  * - Type definitions (platform, websocket, file)
  * - Constants (deduplication, dialogue, api config)
  * - Utility functions (logger, error-handler, retry)
- * - REST API Protocol (shared between disclaude service and MCP Server)
+ * - REST API Protocol (shared between disclaude service and channel clients)
  * - Agent SDK abstraction layer
  */
 // Types (extended types for application-level use)
@@ -16,7 +16,7 @@ export * from './types/index.js';
 export * from './constants/index.js';
 // Utils
 export * from './utils/index.js';
-// REST API Protocol (shared between disclaude service and MCP Server)
+// REST API Protocol (shared between disclaude service and channel clients)
 export * from './channel-api/index.js';
 // Jupyter identity, revision, and execution ownership contracts (#5217/#5218)
 export { notebookSnapshotHash } from './jupyter/notebook-fingerprint.js';
@@ -39,6 +39,7 @@ StderrCapture, getErrorStderr, isStartupFailure,
 // Factory functions
 getProvider, registerProvider, registerProviderClass, setDefaultProvider, getDefaultProviderType, getAvailableProviders, clearProviderCache, isProviderAvailable, } from './sdk/index.js';
 export { validateAgentInputAnswers } from './sdk/user-input.js';
+export { LiveInputRejectedError } from './sdk/index.js';
 // Agent Infrastructure (Issue #1040, Issue #1501: Simplified to ChatAgent-only)
 // Types and interfaces
 export { 
@@ -64,7 +65,7 @@ export { AgentPool, } from './agents/agent-pool.js';
 // Base Agent
 export { BaseAgent, } from './agents/base-agent.js';
 // Message Builder (Issue #1492: extracted from worker-node to core)
-export { MessageBuilder, buildChatHistorySection, buildPersistedHistorySection, buildNextStepGuidance, buildOutputFormatGuidance, buildLocationAwarenessGuidance, CHANNEL_CLI_HELP, buildChannelCliHelpGuidance, } from './agents/message-builder/index.js';
+export { MessageBuilder, buildChatHistorySection, buildPersistedHistorySection, buildNextStepGuidance, buildOutputFormatGuidance, buildLocationAwarenessGuidance, CHANNEL_CLI_HELP, getChannelCliCommandHelp, buildChannelCliHelpGuidance, getSupportedChannelSendCommands, } from './agents/message-builder/index.js';
 // Conversation module (Issue #1041)
 export { MessageQueue, ConversationSessionManager, ConversationOrchestrator, SessionTimeoutManager, } from './conversation/index.js';
 // Scheduling module (Issue #1041, Issue #1382)
@@ -91,7 +92,7 @@ export { ChannelLoader, addChannel, removeChannel, setChannelEnabled, getChannel
 // File module (Issue #1041 - migrated from worker-node)
 export { AttachmentManager, attachmentManager } from './file/index.js';
 // Control module - unified control command handling
-export { createControlHandler, commandRegistry, getHandler, createControlCommand, normalizeCommandData, } from './control/index.js';
+export { createControlHandler, commandRegistry, getHandler, getAvailableCommands, buildHelpMessage, createControlCommand, normalizeCommandData, } from './control/index.js';
 // Internal Event Bus (Issue #4031: decoupled event propagation)
 export { InternalEventBus, eventBus } from './event-bus.js';
 export { ProjectManager, 

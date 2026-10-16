@@ -8,7 +8,7 @@
  *
  * @module service/channels/feishu/command-router
  */
-import { createControlCommand, } from "../../../../core/dist/index.js";
+import { createControlCommand, stripCommandMentions, } from "../../../../core/dist/index.js";
 /**
  * Try to handle a `/`-prefixed command.
  *
@@ -28,7 +28,8 @@ export async function tryHandleSlashCommand(input, deps) {
     if (!input.textWithoutMentions.startsWith('/')) {
         return false;
     }
-    const [command, ...args] = input.textWithoutMentions.slice(1).split(/\s+/);
+    const text = stripCommandMentions(input.textWithoutMentions, input.mentions);
+    const [command, ...args] = text.slice(1).split(/\s+/);
     const cmd = command.toLowerCase();
     const replyTarget = {
         chatId: input.chatId,
@@ -39,11 +40,16 @@ export async function tryHandleSlashCommand(input, deps) {
     // address the thread's agent slot when typed inside a topic-group thread.
     if (deps.hasControlHandler) {
         const rawData = { args };
-        const response = await deps.emitControl(createControlCommand(cmd, input.chatId, rawData, input.threadRootId ? { threadRootId: input.threadRootId } : undefined));
+        const response = await deps.emitControl(createControlCommand(cmd, input.chatId, rawData, input.threadRootId || input.chatType || input.actorId ? {
+            ...(input.threadRootId ? { threadRootId: input.threadRootId } : {}),
+            ...(input.chatType ? { chatType: input.chatType } : {}),
+            ...(input.actorId ? { actorId: input.actorId } : {}),
+        } : undefined));
         // Issue #1562: relay both success and error messages from the control handler.
-        if (response.success || response.message) {
-            if (response.message) {
-                await deps.sendMessage({ ...replyTarget, type: 'text', text: response.message });
+        const message = response.message ?? (cmd === 'project' ? response.error : undefined);
+        if (response.success || message) {
+            if (message) {
+                await deps.sendMessage({ ...replyTarget, type: 'text', text: message });
             }
             return true;
         }
@@ -75,4 +81,24 @@ export async function tryHandleSlashCommand(input, deps) {
         return true;
     }
     return false;
+}
+/** Exact onboarding requests only: task descriptions, attachments, quotations and code pass through. */
+export async function tryHandleGuidance(input, deps, welcome) {
+    if (!welcome || !deps.hasControlHandler || !/^(?:帮助|怎么用|如何使用|不知道怎么开始|不知道该做什么|help|how do i (?:start|use this))[?？!！。\.]*$/i.test(input.textWithoutMentions.trim())) {
+        return false;
+    }
+    if (!welcome.claimPrompt(input.chatId)) {
+        return false;
+    }
+    const response = await deps.emitControl(createControlCommand('help', input.chatId, { mode: 'brief' }, {
+        ...(input.threadRootId ? { threadRootId: input.threadRootId } : {}),
+        ...(input.chatType ? { chatType: input.chatType } : {}),
+        ...(input.actorId ? { actorId: input.actorId } : {}),
+    }));
+    // A denied help command is consumed with the same denial as explicit /help.
+    if (!response.message || !welcome.isEnabled(input.chatId)) {
+        return false;
+    }
+    await deps.sendMessage({ chatId: input.chatId, ...(input.threadRootId ? { threadId: input.threadRootId } : {}), type: 'text', text: response.message });
+    return true;
 }

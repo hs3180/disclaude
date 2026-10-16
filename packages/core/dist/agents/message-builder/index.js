@@ -11,4 +11,4 @@ export { MessageBuilder } from './message-builder.js';
 export { buildChatHistorySection, buildPersistedHistorySection, buildNextStepGuidance, buildOutputFormatGuidance, buildLocationAwarenessGuidance, } from './guidance.js';
 // Canonical channel CLI help (shared with channel-cli's `help` output —
 // Issue #4705, single source of truth so the in-prompt help can't drift)
-export { CHANNEL_CLI_HELP, buildChannelCliHelpGuidance, } from './channel-cli-help.js';
+export { CHANNEL_CLI_HELP, getChannelCliCommandHelp, buildChannelCliHelpGuidance, getSupportedChannelSendCommands, } from './channel-cli-help.js';

@@ -46,7 +46,6 @@ export const DEFAULT_CAPABILITIES = {
     supportsDelete: false,
     supportsMention: false,
     supportsReactions: false,
-    supportedMcpTools: [],
 };
 /**
  * Feishu channel capabilities.
@@ -62,7 +61,6 @@ export const FEISHU_CAPABILITIES = {
     supportsDelete: true,
     supportsMention: true,
     supportsReactions: true,
-    supportedMcpTools: ['send_message', 'send_file'],
 };
 /**
  * CLI channel capabilities.
@@ -78,7 +76,6 @@ export const CLI_CAPABILITIES = {
     supportsDelete: false,
     supportsMention: false,
     supportsReactions: false,
-    supportedMcpTools: [], // CLI mode doesn't need MCP tools
 };
 /**
  * REST channel capabilities.
@@ -94,7 +91,6 @@ export const REST_CAPABILITIES = {
     supportsDelete: false,
     supportsMention: false,
     supportsReactions: false,
-    supportedMcpTools: ['send_message'], // REST channel only supports basic messaging
 };
 // ============================================================================
 // Format Conversion Utilities

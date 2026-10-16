@@ -1,6 +1,16 @@
 import { parseAgentInputParams, validateAgentInputAnswers } from '../../user-input.js';
 const object = (value) => value && typeof value === 'object' && !Array.isArray(value)
     ? value : {};
+export class CodexAsyncInputDeliveryError extends Error {
+    code;
+    constructor(reason = 'delivery-failed') {
+        super(reason === 'unsupported'
+            ? 'Async question was not delivered: asynchronous answers are unsupported in this conversation.'
+            : 'Async question was not delivered: the channel could not confirm card delivery.');
+        this.code = reason === 'unsupported' ? 'CODEX_ASYNC_INPUT_UNSUPPORTED' : 'CODEX_ASYNC_INPUT_DELIVERY_FAILED';
+        this.name = 'CodexAsyncInputDeliveryError';
+    }
+}
 /** Notification-based questions have no pending server RPC to answer. */
 export class CodexAsyncUserInput {
     deliver;
@@ -9,13 +19,14 @@ export class CodexAsyncUserInput {
     closed = false;
     seen = new Set();
     pending = new Map();
+    deliveries = new Map();
     constructor(deliver, steer, timeoutMs = 15 * 60_000) {
         this.deliver = deliver;
         this.steer = steer;
         this.timeoutMs = timeoutMs;
     }
-    receive(raw) {
-        if (this.closed || !this.deliver) {
+    receive(raw, delivery = {}) {
+        if (this.closed) {
             return false;
         }
         const event = object(raw), item = object(event.item);
@@ -35,6 +46,14 @@ export class CodexAsyncUserInput {
                 }) });
         }
         catch {
+            if (delivery.onError) {
+                delivery.onError(new CodexAsyncInputDeliveryError());
+                return true;
+            }
+            return false;
+        }
+        const deliver = delivery.deliver ?? this.deliver;
+        if (!deliver && !delivery.onError) {
             return false;
         }
         const key = JSON.stringify([params.threadId, params.turnId, params.itemId]);
@@ -42,7 +61,8 @@ export class CodexAsyncUserInput {
             return true;
         }
         if (this.seen.size >= 1000) {
-            return false;
+            delivery.onError?.(new CodexAsyncInputDeliveryError());
+            return !!delivery.onError;
         }
         this.seen.add(key);
         const abort = new AbortController();
@@ -64,7 +84,12 @@ export class CodexAsyncUserInput {
                     question: question.question, answers: answers[question.id].answers,
                 })))}`;
                 try {
-                    await this.steer(params.threadId, params.turnId, text);
+                    if (delivery.submit) {
+                        await delivery.submit(request, text);
+                    }
+                    else {
+                        await this.steer(params.threadId, params.turnId, text);
+                    }
                     if (abort.signal.aborted) {
                         throw new Error('Async answer delivery became uncertain');
                     }
@@ -77,13 +102,50 @@ export class CodexAsyncUserInput {
             },
         };
         this.pending.set(key, { request, abort });
-        void Promise.resolve().then(() => {
-            if (!abort.signal.aborted) {
-                return this.deliver?.(request);
+        let rejectCancelled;
+        const cancelled = new Promise((_, reject) => {
+            rejectCancelled = () => reject(new CodexAsyncInputDeliveryError());
+            abort.signal.addEventListener('abort', rejectCancelled, { once: true });
+        });
+        const flight = Promise.race([
+            cancelled,
+            Promise.resolve().then(async () => {
+                if (!deliver) {
+                    throw new CodexAsyncInputDeliveryError('unsupported');
+                }
+                if (abort.signal.aborted) {
+                    throw new CodexAsyncInputDeliveryError();
+                }
+                await deliver(request);
+                if (abort.signal.aborted) {
+                    throw new CodexAsyncInputDeliveryError();
+                }
+            }),
+        ]).catch(error => {
+            abort.abort('unavailable');
+            if (error instanceof CodexAsyncInputDeliveryError) {
+                throw error;
             }
-            return undefined;
-        }).catch(() => abort.abort('unavailable'));
+            if (error instanceof Error && 'code' in error && error.code === 'AGENT_ASYNC_INPUT_UNSUPPORTED') {
+                throw new CodexAsyncInputDeliveryError('unsupported');
+            }
+            throw new CodexAsyncInputDeliveryError();
+        }).finally(() => abort.signal.removeEventListener('abort', rejectCancelled));
+        this.deliveries.set(key, { params, flight });
+        void flight.catch(error => delivery.onError?.(error));
         return true;
+    }
+    /** A native completed turn is not a delivery receipt for its questions. */
+    async waitForDelivery(threadId, turnId) {
+        await Promise.all([...this.deliveries.values()].filter(entry => entry.params.threadId === threadId
+            && entry.params.turnId === turnId).map(entry => entry.flight));
+    }
+    releaseDelivery(threadId, turnId) {
+        for (const [key, entry] of this.deliveries) {
+            if (entry.params.threadId === threadId && entry.params.turnId === turnId) {
+                this.deliveries.delete(key);
+            }
+        }
     }
     cancel(reason, threadId, turnId) {
         for (const { request, abort } of this.pending.values()) {

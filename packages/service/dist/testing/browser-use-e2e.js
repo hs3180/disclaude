@@ -195,7 +195,7 @@ export function evaluateE2EReport(reply, workspaceDir) {
  */
 export function preflight(config) {
     const problems = [];
-    if (!config.apiKey && config.agentBackend !== 'codex' && config.agentBackend !== 'deepseek') {
+    if (!config.apiKey && config.agentBackend !== 'codex' && config.agentBackend !== 'dsh') {
         problems.push('missing model API key (set ANTHROPIC_API_KEY or pass --api-key)');
     }
     if (!config.browserRuntimePath) {

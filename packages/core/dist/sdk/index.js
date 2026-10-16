@@ -63,6 +63,7 @@
 // Provider 导出
 // ============================================================================
 export { ClaudeSDKProvider, StderrCapture, getErrorStderr, isStartupFailure, snapshotProcessListeners, cleanupNewProcessListeners, SDK_PROCESS_EVENTS } from './providers/index.js';
+export { LiveInputRejectedError } from './live-input.js';
 // ============================================================================
 // 工厂函数导出
 // ============================================================================

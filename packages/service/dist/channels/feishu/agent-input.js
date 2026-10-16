@@ -3,7 +3,7 @@ import { validateAgentInputAnswers } from "../../../../core/dist/index.js";
 const plain = (content) => ({ tag: 'plain_text', content });
 const text = (content) => ({ tag: 'div', text: plain(content) });
 const object = (value) => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-/** Answers stay in the callback/RPC path, outside chat history and action prompts. */
+/** RPC/secret answers stay outside chat history; non-secret async answers retain their originating conversation. */
 export class FeishuAgentInput {
     client;
     pending = new Map();
@@ -19,7 +19,7 @@ export class FeishuAgentInput {
         const inactive = { expired: '回答已过期，未自动选择答案', cancelled: '已取消', resolved: '问题已结束，无需回答',
             'turn-ended': '任务已结束，不能再提交', closed: '连接已断开，表单失效', unavailable: '输入请求不可用' };
         const expiry = typeof request.signal.reason === 'string' ? inactive[request.signal.reason] : undefined;
-        const label = { waiting: request.isBlocking ? '等待你的回答' : '可补充回答，任务仍在继续', submitting: '正在提交', answered: '已回答', expired: expiry ?? '请求已结束或过期', failed: '提交未完成，请重新发起任务' }[state];
+        const label = { waiting: request.isBlocking ? '等待你的回答' : '可补充回答；回答将继续当前会话', submitting: '正在提交', answered: '已回答', expired: expiry ?? '请求已结束或过期', failed: '提交未完成，请重新发起任务' }[state];
         const elements = [text(label)];
         if (pending.error) {
             elements.push(text(pending.error));

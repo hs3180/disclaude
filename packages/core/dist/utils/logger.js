@@ -21,6 +21,7 @@ import pino from 'pino';
 import { PassThrough } from 'node:stream';
 import { finished } from 'node:stream/promises';
 import pinoRoll from 'pino-roll';
+import { redactChannelSecrets } from '../config/channel-credentials.js';
 import path from 'path';
 import fs from 'fs';
 /**
@@ -282,6 +283,7 @@ function getDefaultLogLevel() {
  */
 function getDevelopmentConfig() {
     const baseConfig = {
+        hooks: { streamWrite: redactChannelSecrets },
         level: getDefaultLogLevel(),
         formatters: {
             level: (label) => {
@@ -312,6 +314,7 @@ function getDevelopmentConfig() {
  */
 function getProductionConfig() {
     return {
+        hooks: { streamWrite: redactChannelSecrets },
         level: getDefaultLogLevel(),
         formatters: {
             level: (label) => {

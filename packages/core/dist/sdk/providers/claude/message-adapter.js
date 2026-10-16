@@ -51,11 +51,25 @@ export function adaptSDKMessage(message, taskRegistry) {
             // Whitespace-only messages still become empty so downstream delivery skips them.
             const rawText = textBlocks.map((block) => block.text).join('');
             const assistantText = rawText.trim().length === 0 ? '' : rawText.replace(/^(?:[^\S\r\n]*\r?\n)+/, '');
+            // Some SDK rounds carry the text and tool call in separate assistant
+            // messages. Preserve the native stop reason rather than guessing from
+            // the text whether it is a user-facing answer.
+            if (toolBlocks.length === 0 && apiMessage.stop_reason === 'tool_use') {
+                metadata.phase = 'commentary';
+            }
+            // #5377: when the same SDK message carries the tool call, the co-located
+            // text is the round's decision narration. The raw trace stays private,
+            // so the narration travels as metadata for the service to publish.
+            if (toolBlocks.length > 0 && assistantText.length > 0) {
+                metadata.narration = assistantText;
+            }
             if (assistantText.length > 0) {
                 contentParts.push(assistantText);
             }
             return {
-                type: toolBlocks.length > 0 ? 'tool_use' : 'text',
+                // Child assistant text is the Agent tool's private working output.
+                // Only the parent reply may become the user's answer (#5377/#5330).
+                type: message.parent_tool_use_id ? 'tool_progress' : toolBlocks.length > 0 ? 'tool_use' : 'text',
                 content: contentParts.join('\n'),
                 role: 'assistant',
                 metadata,
@@ -108,6 +122,39 @@ export function adaptSDKMessage(message, taskRegistry) {
             };
         }
         case 'result': {
+            // Native result usage is the only usage source, including failed terminals.
+            // modelUsage covers the query pipeline; each result is a fresh snapshot.
+            const finite = (value) => typeof value === 'number' && Number.isFinite(value) && value >= 0;
+            const { usage } = message;
+            const models = Object.values(message.modelUsage ?? {});
+            const counters = {
+                inputTokens: usage?.input_tokens, outputTokens: usage?.output_tokens,
+                cacheReadTokens: usage?.cache_read_input_tokens, cacheCreationTokens: usage?.cache_creation_input_tokens,
+                costUsd: usage && 'total_cost' in usage ? usage.total_cost : undefined,
+            };
+            for (const [field, modelField] of [
+                ['inputTokens', 'inputTokens'], ['outputTokens', 'outputTokens'],
+                ['cacheReadTokens', 'cacheReadInputTokens'], ['cacheCreationTokens', 'cacheCreationInputTokens'],
+                ['costUsd', 'costUSD'],
+            ]) {
+                const values = models.map(model => model[modelField]).filter(finite);
+                const value = values.length ? values.reduce((total, current) => total + current, 0) : counters[field];
+                if (finite(value)) {
+                    metadata[field] = value;
+                }
+            }
+            if (finite(message.total_cost_usd)) {
+                metadata.costUsd = message.total_cost_usd;
+            }
+            // Streaming inputs may be folded into one turn. Only the native result
+            // can confirm which submitted UUIDs were consumed; an input replay or
+            // first assistant frame can precede later fold-ins.
+            const consumed = [...(Array.isArray(message.user_message_uuids) ? message.user_message_uuids : []),
+                ...(typeof message.user_message_uuid === 'string' ? [message.user_message_uuid] : [])];
+            const consumedInputIds = [...new Set(consumed.filter(id => typeof id === 'string' && id.length > 0))];
+            if (consumedInputIds.length > 0) {
+                metadata.consumedInputIds = consumedInputIds;
+            }
             // Issue #4320 (part 2): extract SDK result observability fields for ALL
             // result subtypes, not just success. A premature end via error_max_turns
             // (or error_max_budget_usd / error_max_structured_output_retries) is
@@ -139,34 +186,16 @@ export function adaptSDKMessage(message, taskRegistry) {
                 // TypeScript 通过 subtype === 'success' 将 message 收窄为 SDKResultSuccess。
                 // SDKResultSuccess 包含 usage: NonNullableUsage 和 total_cost_usd: number。
                 let statsText = '✅ Complete';
-                if ('usage' in message && message.usage) {
-                    const { usage } = message;
-                    const parts = [];
-                    // SDKResultSuccess.total_cost_usd 是 SDK 标准字段；
-                    // 部分运行时数据可能将 cost 放在 usage.total_cost 中（非 SDK 类型定义）。
-                    // 使用运行时检查优先读取 total_cost_usd，回退到 usage.total_cost。
-                    const costUsd = message.total_cost_usd
-                        ?? ('total_cost' in usage ? usage.total_cost : undefined);
-                    if (costUsd !== undefined && costUsd > 0) {
-                        metadata.costUsd = costUsd;
-                        parts.push(`Cost: $${costUsd.toFixed(4)}`);
-                    }
-                    // NonNullableUsage 提供 input_tokens 和 output_tokens (number 类型)
-                    const inputTokens = usage.input_tokens;
-                    const outputTokens = usage.output_tokens;
-                    const totalTokens = (inputTokens ?? 0) + (outputTokens ?? 0);
-                    if (totalTokens > 0) {
-                        parts.push(`Tokens: ${(totalTokens / 1000).toFixed(1)}k`);
-                    }
-                    if (inputTokens !== undefined) {
-                        metadata.inputTokens = inputTokens;
-                    }
-                    if (outputTokens !== undefined) {
-                        metadata.outputTokens = outputTokens;
-                    }
-                    if (parts.length > 0) {
-                        statsText += ` | ${parts.join(' | ')}`;
-                    }
+                const parts = [];
+                if (metadata.costUsd !== undefined && metadata.costUsd > 0) {
+                    parts.push(`Cost: $${metadata.costUsd.toFixed(4)}`);
+                }
+                const totalTokens = (metadata.inputTokens ?? 0) + (metadata.outputTokens ?? 0);
+                if (totalTokens > 0) {
+                    parts.push(`Tokens: ${(totalTokens / 1000).toFixed(1)}k`);
+                }
+                if (parts.length > 0) {
+                    statsText += ` | ${parts.join(' | ')}`;
                 }
                 return {
                     type: 'result',
@@ -222,6 +251,20 @@ export function adaptSDKMessage(message, taskRegistry) {
             };
         }
         case 'system': {
+            if (message.subtype === 'background_tasks_changed' && Array.isArray(message.tasks)) {
+                metadata.backgroundTaskIds = message.tasks
+                    .filter(task => task && !task.ambient && typeof task.task_id === 'string' && task.task_id.trim().length > 0)
+                    .map(task => task.task_id);
+            }
+            else if ((message.subtype === 'task_started' || message.subtype === 'task_progress') &&
+                typeof message.task_id === 'string' && message.task_id.trim() &&
+                !('ambient' in message && message.ambient) && !('skip_transcript' in message && message.skip_transcript)) {
+                metadata.backgroundTask = { id: message.task_id, state: 'running' };
+            }
+            else if (message.subtype === 'task_notification' && typeof message.task_id === 'string' && message.task_id.trim() &&
+                ['completed', 'failed', 'stopped'].includes(message.status)) {
+                metadata.backgroundTask = { id: message.task_id, state: message.status };
+            }
             if (message.subtype === 'status') {
                 // 瞬态进度占位:content 保留给 debug 群 / 日志,但打上 transientStatus
                 // 让 ChatAgent 当中间消息过滤 —— SDK 每个请求都发一次 requesting,不过滤
@@ -325,6 +368,8 @@ export function adaptUserInput(input) {
         },
         parent_tool_use_id: null,
         session_id: '',
+        ...(input.correlation && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(input.correlation.runId)
+            ? { uuid: input.correlation.runId } : {}),
     };
 }
 /**

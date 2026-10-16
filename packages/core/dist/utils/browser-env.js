@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { devNull, homedir } from 'node:os';
+import { withoutChannelCredentials } from '../config/channel-credentials.js';
 /** Private service manifest, not a user-configurable IPC endpoint. */
 export function resolveBrowserRuntimePath(env = process.env) {
     const config = env.DISCLAUDE_CONFIG_PATH
@@ -17,7 +18,7 @@ export function browserAgentEnv(env = process.env) {
     const previous = env.DISCLAUDE_BROWSER_RUNTIME;
     const previousBin = previous && isAbsolute(previous) ? join(dirname(previous), 'bin') : undefined;
     const bin = join(dirname(runtime), 'bin');
-    const result = { ...env };
+    const result = withoutChannelCredentials(env);
     if (env.DISCLAUDE_CONFIG_PATH) {
         result.DISCLAUDE_CONFIG_PATH = resolve(env.DISCLAUDE_CONFIG_PATH);
     }

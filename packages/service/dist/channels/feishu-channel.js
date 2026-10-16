@@ -43,7 +43,7 @@ export function extractChatIdFromEvent(data) {
         return undefined;
     }
     // Try message event format: data.event.message.chat_id
-    const event = raw.event;
+    const event = (raw.event ?? raw);
     if (event?.message) {
         const message = event.message;
         if (typeof message.chat_id === 'string') {
@@ -255,7 +255,7 @@ export class FeishuChannel extends BaseChannel {
             },
             'card.action.trigger': async (data) => {
                 try {
-                    await this.feishuMessageHandler.handleCardAction(data);
+                    return await this.feishuMessageHandler.handleCardAction(data);
                 }
                 catch (error) {
                     logger.error({ err: error }, 'Failed to handle card action');
@@ -286,6 +286,24 @@ export class FeishuChannel extends BaseChannel {
                 }
                 catch (error) {
                     logger.error({ err: error }, 'Failed to handle chat member added');
+                    await this.notifyUserDirectly(extractChatIdFromEvent(data) ?? '', '⚠️ 欢迎消息发送失败，但这不影响正常使用。');
+                }
+            },
+            'im.chat.member.bot.added_v1': async (data) => {
+                try {
+                    await this.welcomeHandler.handleBotAdded(data);
+                }
+                catch (error) {
+                    logger.error({ err: error }, 'Failed to handle bot added');
+                    await this.notifyUserDirectly(extractChatIdFromEvent(data) ?? '', '⚠️ 欢迎消息发送失败，但这不影响正常使用。');
+                }
+            },
+            'im.chat.member.user.added_v1': async (data) => {
+                try {
+                    await this.welcomeHandler.handleUserAdded(data);
+                }
+                catch (error) {
+                    logger.error({ err: error }, 'Failed to handle user added');
                     await this.notifyUserDirectly(extractChatIdFromEvent(data) ?? '', '⚠️ 欢迎消息发送失败，但这不影响正常使用。');
                 }
             },
@@ -383,49 +401,110 @@ export class FeishuChannel extends BaseChannel {
             this.queueOfflineMessage(message);
             return;
         }
-        // Issue #1619: Use thread reply when threadId is provided.
-        // Consistent with feishu-adapter.ts pattern.
-        const useThreadReply = !!message.threadId;
+        const threadRootId = message.threadRootId?.trim();
+        const useThreadReply = !!(message.threadId || threadRootId);
         // Narrow client type for use inside closure (TS can't narrow this.client in closures)
         // eslint-disable-next-line prefer-destructuring
         const client = this.client;
+        const assertApiSuccess = (response) => {
+            if (response.code !== undefined && response.code !== 0) {
+                throw Object.assign(new Error(`Feishu message rejected: ${response.code} ${response.msg ?? ''}`), {
+                    code: response.code, msg: response.msg,
+                });
+            }
+        };
+        // Keep a real trigger as the reply parent only if it belongs to the requested
+        // topic. Card-action IDs are synthetic; read failures safely select the root
+        // before sending anything, rather than sending into an unverified thread.
+        let replyTargetPromise;
+        const resolveReplyTarget = () => {
+            replyTargetPromise ??= (async () => {
+                const parent = message.threadId;
+                if (!threadRootId || !parent || parent === threadRootId) {
+                    return threadRootId ?? parent;
+                }
+                try {
+                    const response = await client.im.message.get({ path: { message_id: parent } });
+                    assertApiSuccess(response);
+                    const item = response.data?.items?.find(entry => entry.message_id === parent);
+                    if (item && !item.deleted && item.chat_id === message.chatId && item.root_id === threadRootId) {
+                        return parent;
+                    }
+                }
+                catch (err) {
+                    logger.warn({ chatId: message.chatId, parent, threadRootId, ...extractFeishuApiError(err) }, 'Reply parent could not be verified; using the explicit topic root');
+                }
+                return threadRootId;
+            })();
+            return replyTargetPromise;
+        };
+        const confirmDelivery = async (data) => {
+            const messageId = data?.message_id;
+            if ((message.type === 'card' || threadRootId) && !messageId?.trim()) {
+                throw new Error('Feishu delivery returned no message_id; delivery outcome is unknown');
+            }
+            if (!threadRootId) {
+                return messageId;
+            }
+            const locationMatches = (item) => !!item && item.message_id === messageId && item.root_id === threadRootId &&
+                item.chat_id === message.chatId && !!item.thread_id;
+            if (locationMatches(data)) {
+                return messageId;
+            }
+            if ((data?.root_id && data.root_id !== threadRootId) ||
+                (data?.chat_id && data.chat_id !== message.chatId)) {
+                throw new Error(`Feishu delivered ${messageId} outside the requested topic; do not resend`);
+            }
+            try {
+                const response = await client.im.message.get({ path: { message_id: messageId } });
+                assertApiSuccess(response);
+                const item = response.data?.items?.find(entry => entry.message_id === messageId);
+                if (locationMatches(item)) {
+                    return messageId;
+                }
+            }
+            catch {
+                // The send has already returned a message ID. A read failure is not a
+                // send rejection and must never authorize another send to the root.
+            }
+            throw new Error(`Feishu delivered ${messageId}, but the requested topic could not be verified; do not resend`);
+        };
+        const replyTo = async (target, msgType, content) => {
+            const response = await client.im.message.reply({
+                path: { message_id: target },
+                data: {
+                    msg_type: msgType, content,
+                    ...(message.type === 'card' || threadRootId ? { reply_in_thread: true } : {}),
+                },
+            });
+            assertApiSuccess(response);
+            return confirmDelivery(response.data);
+        };
         /**
          * Helper: send a Feishu message via create or reply API.
          * Returns the real message_id from the API response.
          */
         const sendFeishuMessage = async (msgType, content, options = {}) => {
             if (useThreadReply) {
-                // useThreadReply is !!message.threadId — guaranteed truthy here.
-                // TypeScript can't narrow from boolean, so we use type assertion.
-                const threadId = message.threadId;
+                const threadId = await resolveReplyTarget();
                 try {
-                    const replyResp = await client.im.message.reply({
-                        path: {
-                            message_id: threadId,
-                        },
-                        data: {
-                            msg_type: msgType,
-                            content,
-                        },
-                    });
-                    return replyResp.data?.message_id;
+                    return await replyTo(threadId, msgType, content);
                 }
                 catch (err) {
-                    if ((options.avoidRetryAfterAmbiguousThreadReply || message.type === 'file') &&
-                        !isDefiniteFeishuApiRejection(err)) {
+                    if (threadRootId && threadId !== threadRootId && isDefiniteFeishuApiRejection(err)) {
+                        logger.warn({ threadId, threadRootId, chatId: message.chatId, ...extractFeishuApiError(err) }, 'Reply parent was rejected; retrying once at the explicit topic root');
+                        return replyTo(threadRootId, msgType, content);
+                    }
+                    if (threadRootId || message.type === 'card' ||
+                        (options.avoidRetryAfterAmbiguousThreadReply || message.type === 'file') &&
+                            !isDefiniteFeishuApiRejection(err)) {
                         throw err;
                     }
-                    // Issue #4452: capture the Feishu API-level error (code/msg/log_id)
-                    // so the frequent reply() 400s become diagnosable. Rather than dump
-                    // the raw (very verbose) axios error, `extractFeishuApiError` pulls
-                    // out the body the lark SDK buries on `err.response.data` plus the
-                    // HTTP status — the fields needed to pinpoint why reply() failed.
                     logger.warn({
                         threadId,
                         chatId: message.chatId,
                         ...extractFeishuApiError(err),
-                    }, 'Thread reply failed, falling back to message.create');
-                    // Fall through to create path (with root_id, see below).
+                    }, 'Thread reply failed; using legacy chat-level message.create fallback');
                 }
             }
             const createResp = await client.im.message.create({
@@ -436,14 +515,10 @@ export class FeishuChannel extends BaseChannel {
                     receive_id: message.chatId,
                     msg_type: msgType,
                     content,
-                    // Issue #4252: when we intended a thread reply, keep the message in
-                    // the thread on the create fallback too. Without root_id, message.create
-                    // posts to the chat root, so the card/text escapes the thread — the
-                    // observed symptom for send_interactive/send_card when reply() fails.
-                    ...(useThreadReply ? { root_id: message.threadId } : {}),
                 },
             });
-            return createResp.data?.message_id;
+            assertApiSuccess(createResp);
+            return confirmDelivery(createResp.data);
         };
         /**
          * Helper: log an outgoing message to the chat history (Issue #3795).
@@ -722,7 +797,7 @@ export class FeishuChannel extends BaseChannel {
     }
     /**
      * Upload an image to Feishu and return the image_key for card embedding.
-     * Issue #2951: Used by MCP send_card to auto-translate local image paths.
+     * Issue #2951: Used by channel send_card to auto-translate local image paths.
      *
      * @param filePath - Local file path to upload
      * @returns Feishu image_key (e.g., "img_v3_xxx")
@@ -768,7 +843,7 @@ export class FeishuChannel extends BaseChannel {
             // Do not advertise channel-send tools to an agent when the channel
             // cannot authenticate. This prevents Codex from discovering a tool that
             // can only fail later with "Feishu credentials not configured".
-            supportedMcpTools: credentialsConfigured
+            supportedChannelTools: credentialsConfigured
                 ? ['send_text', 'send_card', 'send_interactive', 'send_file']
                 : [],
         };
@@ -1007,6 +1082,23 @@ export class FeishuChannel extends BaseChannel {
      */
     setWelcomeService(service) {
         this.welcomeHandler.setWelcomeService(service);
+        this.feishuMessageHandler.setWelcomeService(service);
+    }
+    /** Welcome events have no reply anchor; validate a real native receipt and never enqueue/retry. */
+    async sendWelcomeMessage(chatId, text, _chatType) {
+        if (!this.client || !this.isRunning) {
+            throw new Error('Welcome channel is unavailable');
+        }
+        const response = await this.client.im.message.create({
+            params: { receive_id_type: chatId.startsWith('ou_') ? 'open_id' : 'chat_id' },
+            data: { receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text }) },
+        });
+        if (response.code !== 0 || !response.data?.message_id) {
+            throw new Error('Welcome delivery was not confirmed');
+        }
+        await messageLogger.logOutgoingMessage(response.data.message_id, chatId, text, 'text').catch(error => {
+            logger.warn({ error, chatId }, 'Failed to record welcome receipt');
+        });
     }
     /**
      * Handle incoming message event (for testing purposes).

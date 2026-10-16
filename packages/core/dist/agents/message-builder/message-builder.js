@@ -17,7 +17,7 @@
  *   ├── Channel sections (via options callbacks)
  *   │   ├── buildHeader() - Platform label
  *   │   ├── buildPostHistory() - @ mention section
- *   │   ├── buildToolsSection() - MCP tools
+ *   │   ├── buildToolsSection() - channel CLI/API guidance
  *   │   └── buildAttachmentExtra() - Image analyzer hints
  *   ├── Guidance sections (next-step, output format, location awareness)
  *   └── User message + attachments
@@ -25,6 +25,8 @@
  *
  * @module agents/message-builder
  */
+import { getSupportedChannelSendCommands } from './channel-cli-help.js';
+import { isSyntheticMessageId } from '../../utils/message-id.js';
 import { buildChatHistorySection, buildPersistedHistorySection, buildThreadContextSection, buildThreadSelfServiceGuidance, buildNextStepGuidance, buildOutputFormatGuidance, buildLocationAwarenessGuidance, buildRuntimeEnvironmentGuidance, } from './guidance.js';
 /**
  * Message builder for agent prompts.
@@ -41,6 +43,12 @@ import { buildChatHistorySection, buildPersistedHistorySection, buildThreadConte
  * Channel-specific content is injected via the options callbacks.
  */
 export class MessageBuilder {
+    replyMetadata(msg) {
+        const id = msg.replyRootId !== undefined ? msg.replyRootId : msg.messageId;
+        return id && !isSyntheticMessageId(id)
+            ? `**Message ID:** ${id}`
+            : '**Reply root:** none. Send directly to the Chat ID; omit --parent and --thread-root. Internal tracking IDs are not platform message IDs.';
+    }
     options;
     constructor(options) {
         this.options = options ?? {};
@@ -62,6 +70,11 @@ export class MessageBuilder {
         const isSkillCommand = msg.text.trimStart().startsWith('/');
         return this.buildSectionsForContext({ msg, chatId, capabilities, isSkillCommand });
     }
+    /** Guidance to restore when a provider starts a fresh native conversation between turns. */
+    buildStableContext(msg, chatId, capabilities) {
+        return this.renderSections(this.buildSections({ ...msg, includeStableContext: true }, chatId, capabilities)
+            .filter(section => section.stability === 'stable'));
+    }
     renderSections(sections) {
         return sections.map(section => section.content).join('\n');
     }
@@ -77,7 +90,7 @@ export class MessageBuilder {
         const { msg, chatId } = ctx;
         const metadataParts = [
             `**Chat ID:** ${chatId}`,
-            `**Message ID:** ${msg.messageId}`,
+            this.replyMetadata(msg),
         ];
         if (msg.threadRootId) {
             metadataParts.push(`**Thread Root ID:** ${msg.threadRootId}`);
@@ -114,7 +127,7 @@ export class MessageBuilder {
         // Metadata
         const metadataParts = [
             `**Chat ID:** ${chatId}`,
-            `**Message ID:** ${msg.messageId}`,
+            this.replyMetadata(msg),
         ];
         if (msg.threadRootId) {
             metadataParts.push(`**Thread Root ID:** ${msg.threadRootId}`);
@@ -132,7 +145,6 @@ export class MessageBuilder {
         const threadContextSection = buildThreadContextSection(msg.threadContext);
         // Issue #4402: lark-cli self-service guidance, decoupled from threadContext.
         // Injected for topic threads even when threadContext wasn't pre-built.
-        const threadSelfServiceGuidance = isTopicThread ? buildThreadSelfServiceGuidance() : '';
         // Channel-specific content after history (e.g., @ mention section)
         const postHistory = this.options.buildPostHistory?.(ctx);
         // Channel-specific tools section
@@ -140,21 +152,21 @@ export class MessageBuilder {
         const stableToolsSection = this.options.buildStableToolsSection?.({ capabilities });
         // Core guidance sections (framework-agnostic)
         // Issue #3641: Skip next-step guidance in topic threads to reduce noise
-        const supportsInteractiveCards = capabilities?.supportsCard !== false &&
-            (capabilities?.supportedMcpTools === undefined || capabilities.supportedMcpTools.includes('send_interactive'));
+        const supportsInteractiveCards = getSupportedChannelSendCommands(capabilities).includes('send_interactive');
+        const threadSelfServiceGuidance = isTopicThread ? buildThreadSelfServiceGuidance(supportsInteractiveCards) : '';
         const nextStepGuidance = isTopicThread ? '' : buildNextStepGuidance(supportsInteractiveCards);
         const outputFormatGuidance = buildOutputFormatGuidance();
         const locationAwarenessGuidance = buildLocationAwarenessGuidance();
         // Compose all sections
         const sections = [];
-        if (header) {
+        if (header && msg.includeStableContext !== false) {
             sections.push({ kind: 'channel-header', stability: 'stable', content: header });
         }
-        if (stableToolsSection) {
+        if (stableToolsSection && msg.includeStableContext !== false) {
             sections.push({ kind: 'tools', stability: 'stable', content: `\n---\n\n## Tools\n${stableToolsSection}` });
         }
-        for (const guidance of [nextStepGuidance, outputFormatGuidance, locationAwarenessGuidance, buildRuntimeEnvironmentGuidance()]) {
-            if (guidance) {
+        for (const guidance of [nextStepGuidance, threadSelfServiceGuidance, outputFormatGuidance, locationAwarenessGuidance, buildRuntimeEnvironmentGuidance()]) {
+            if (guidance && msg.includeStableContext !== false) {
                 sections.push({ kind: 'guidance', stability: 'stable', content: guidance });
             }
         }
@@ -170,9 +182,6 @@ export class MessageBuilder {
         }
         if (threadContextSection) {
             sections.push({ kind: 'thread-context', stability: 'dynamic', content: threadContextSection });
-        }
-        if (threadSelfServiceGuidance) {
-            sections.push({ kind: 'channel-context', stability: 'dynamic', content: threadSelfServiceGuidance });
         }
         if (postHistory) {
             sections.push({ kind: 'channel-context', stability: 'dynamic', content: postHistory });

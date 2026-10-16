@@ -153,7 +153,7 @@ export class ChannelManager {
         }
         const results = await Promise.allSettled(Array.from(this.channels.values()).map(async (channel) => {
             try {
-                await channel.sendMessage(message);
+                return await channel.sendMessage(message);
             }
             catch (error) {
                 logger.warn({ channelId: channel.id, chatId: message.chatId, error }, 'Channel failed to send message');
@@ -167,6 +167,11 @@ export class ChannelManager {
                 logger.warn({ channelId: channelArray[index].id, chatId: message.chatId }, 'Message delivery failed');
             }
         });
+        // A single confirmed platform delivery is safe to use as a reply anchor.
+        // Ambiguous/missing IDs leave the caller explicitly rootless.
+        const ids = results.flatMap(result => result.status === 'fulfilled' && typeof result.value === 'string' && result.value
+            ? [result.value] : []);
+        return ids.length === 1 ? ids[0] : undefined;
     }
     /**
      * Start all registered channels.

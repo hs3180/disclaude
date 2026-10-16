@@ -10,8 +10,16 @@ Configure `JUPYTERLAB_HOST` and either `JUPYTERLAB_PASS` or
 `JUPYTERLAB_TOKEN` in the command environment or a private `.env`. Environment
 values take precedence over `.env`. An operator can use `--interactive` in a
 TTY; hidden input is never echoed. Agent calls should use `--no-interactive`.
-`--env-file` selects a private file outside the Project. URL, password and token
-are never persisted in Notebook references or returned by the CLI.
+`--env-file` selects one explicit private file. Otherwise discovery checks cwd,
+`--project-dir`, the nearest existing disclaude workspace binding marker
+(`.disclaude/project-bindings.json`), then `$DISCLAUDE_WORKSPACE_DIR`. Files
+without Jupyter keys are skipped; the first relevant file wins and files are
+not merged. Environment values still override that file, including explicit
+empty values. An unreadable selected file fails rather than changing identity.
+The CLI reports the selected file path and source labels, never credential
+values. Password/token values are never persisted in Notebook references;
+references retain the connection label, opaque endpoint namespace and Notebook
+path/document identity.
 
 ```sh
 disclaude jupyter check --no-interactive
@@ -56,7 +64,31 @@ disclaude channel send_file --chat <request-chat-id> --parent <request-thread-id
 
 Run `--help` for flags and `tools` for input schemas. Each command emits one
 JSON result on stdout: `{ "ok": true, "command": "...", "data": ... }` or
-`{ "ok": false, "error": "..." }` with a nonzero exit status. JSON uses
+`{ "ok": false, "error": { "layer": "...", "code": "...", "message": "...", "hint": "..." } }`
+with a nonzero exit status. HTTP failures also include `status` and a bounded,
+scrubbed `serverBody`; DNS/TCP errors do not echo raw fetch exceptions. HTML,
+private response fields, credential/cookie values and raw tracebacks are omitted.
+`--verbose` writes safe credential-discovery and HTTP phase records to stderr.
+`check` includes layer/phase states; interface checks remain separate from
+Notebook execution/product acceptance.
+
+Exit codes: schema `2`, auth `3`, DNS `4`, TCP `5`, HTTP `6`, hash/CAS `7`,
+local filesystem `8`, unclassified `1`. A failure can leave a submitted operation
+unknown; preserve and query its original run ID rather than replaying it.
+
+`list` is an offline Project-local reference/journal listing, not server
+inventory. Its explicit scope and `remoteInventory: not_queried` prevent an
+empty local list from implying an empty remote server. `auth.state` is
+`configured` or `unresolved`; `authentication: not_checked` remains explicit.
+Available credentials are not proof of remote authentication. Local references
+remain readable without credentials.
+
+Use the full 64-hex `sourceHash` for execute/edit/move/delete. Malformed hashes
+fail before credentials, RTC or execution requests; case is normalized. An
+observed mismatch returns `state: conflict`, `expected`, `actual`, legacy
+`sourceHash`, and a re-read hint; the CLI reports layer `cas` and exits `7`.
+These checks remain client-side and are not atomic server CAS. Selecting a
+non-code execution cell is a separate schema failure. JSON uses
 bounded previews; reports and images are files, not embedded binary stdout.
 
 | Commands | Effect |
@@ -67,14 +99,74 @@ bounded previews; reports and images are files, not embedded binary stdout.
 | `describe`, `read-cell` | Read live RTC cells and bounded outputs |
 | `insert-cell`, `edit-cell`, `move-cell`, `delete-cell` | Change explicitly identified shared cells |
 | `execute`, `status`, `stop` | Submit once, query or cancel the original execution handle |
+| `interrupt` | Send one interrupt to an explicitly selected existing kernel; no run ID or execution journal required |
 | `import-file` | Copy a regular Project-local file, up to 2 MB, into the remote input directory; return hash, size and kernel-relative path |
 | `observe-image` | Save one bounded image artifact for the harness to inspect |
 | `export`, `download-report` | Create matching remote HTML/ipynb snapshot; download also retains local files and up to four raster previews |
 | `patch` | Existing upstream repair installer, using Jupyter Terminal only |
 
+### Error output previews
+
+`read-cell`, `describe` and `status` expose the [nbformat error fields](https://nbformat.readthedocs.io/en/latest/format_description.html#error):
+`output_type: "error"`, string `ename`/`evalue`, and `traceback: string[]`.
+`ename` is bounded to 128 characters and `evalue` to 1000. Traceback previews
+retain the last 20 frames, at most 1000 characters per frame and 8000 in total;
+`tracebackTruncated: true` identifies omitted content. Missing tracebacks are
+empty arrays. The error name, message and most recent cell/error lines remain
+visible without dumping a raw result.
+
+Legacy `outputType`, `errorName` and `errorValue` remain preview aliases for
+this release; new clients should read canonical names. Preview DTOs include
+compatibility/truncation fields and are not full Notebook-file exports. Use
+the original Notebook/export when strict full-file validation or the complete
+traceback is required. Previewing never changes the remote error output or
+replays an execution. `tools` includes output-schema descriptions for this
+contract.
+
+### Interrupt an existing kernel
+
+Use this separate command for execution started in JupyterLab, or when the
+original CLI run journal is unavailable. Select the kernel explicitly:
+
+```sh
+disclaude jupyter interrupt --input-file - --no-interactive <<'JSON'
+{"kernelId":"<existing-kernel-id>"}
+JSON
+```
+
+Alternatively supply `{"notebookId":"<project-notebook-id>"}` to resolve the
+Notebook's unique existing kernel. Missing, ambiguous or shared bindings are
+refused. With both IDs, a changed observed binding is refused. A moved stable
+document or changed endpoint is also refused; inspect/relink it explicitly.
+No path starts a replacement kernel or restarts the selected kernel.
+
+The command uses the standard authenticated
+[Jupyter interrupt REST endpoint](https://jupyter-server.readthedocs.io/en/latest/developers/rest-api.html#post--api-kernels-kernel_id-interrupt).
+Explicit `kernelId` needs no RTC, nbmodel, nbconvert or linked Notebook. It
+inspects the current REST kernel ID without a potentially blocked shell request,
+then sends one POST. Notebook resolution also checks the current sessions and,
+when present, stable document path. These are observed identity checks, not an
+atomic server fence against a concurrent rebind or external restart.
+
+An acknowledged result contains `state: "accepted"`, `httpStatus: 204` and
+`executionState: "unknown"`. The CLI's `ok` envelope means the command returned
+a result; inspect `data.state` before claiming acceptance. Missing kernels,
+unsupported interfaces, authorization rejection, changed bindings and uncertain
+responses have separate states. An uncertain POST is never replayed.
+
+Interrupt affects the selected kernel's current execution. It preserves the
+kernel and does not implement a queue clear or cancellation of one specific run.
+HTTP 204 does not prove execution ended or later queued work stopped. For a
+known run, query its original `notebookId`/`runId` using `status` and retain its
+actual terminal result. For JupyterLab work, inspect the original execution and
+kernel state separately. Keep `unknown` when that evidence is unavailable.
+`stop` retains per-request cancellation and never falls back to interrupt.
+
 ## Runtime and state
 
-The host needs Node 18+ and a built/installed disclaude. Remote Jupyter supplies
+The host needs Node 18+ and a built/installed disclaude. Notebook operations use
+the following remote interfaces; explicit kernel interrupt needs only standard
+Jupyter REST and the configured authentication. Remote Jupyter supplies
 the RTC/file-ID APIs, Datalayer/nbmodel execution interfaces, nbconvert, kernel
 and scientific packages. No host Python, local Jupyter, SSH or container
 operations are used.
@@ -108,7 +200,9 @@ Client source checks detect observed conflicts but cannot eliminate a concurrent
 human edit. Upstream result retention still applies; unavailable original
 requests are reported as unknown. A persisted terminal result remains available
 locally without replay. Chat `/stop` stops inference only; use `jupyter stop`
-for a named remote run and require terminal confirmation.
+for a named remote run and require terminal confirmation. Use `jupyter interrupt`
+only when intentionally targeting the selected kernel, and verify execution
+termination independently of its REST acknowledgement.
 
 Skill discovery and CLI/protocol tests are not evidence of real model research,
 channel delivery or device acceptance. Those require their own recorded tests.

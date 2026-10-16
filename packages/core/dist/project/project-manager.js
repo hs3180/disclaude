@@ -10,10 +10,11 @@
  * @see Issue #3519 (simplify /project command)
  * @see Issue #1916 (parent — unified ProjectContext system)
  */
-import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync, } from 'node:fs';
+import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync, statSync, } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { createLogger } from '../utils/logger.js';
 const logger = createLogger('ProjectManager');
+const PERSISTENCE_FAILURE_MESSAGE = '项目绑定保存失败，请联系服务维护者核对存储配置与权限。';
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ProjectManager
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -71,7 +72,7 @@ export class ProjectManager {
      * Bind a chatId to a working directory.
      *
      * Resolves relative paths against the workspace directory.
-     * Validates that the directory path doesn't contain path traversal patterns.
+     * Validates that the path is an existing directory without traversal patterns.
      *
      * @param chatId - Chat session requesting binding
      * @param workingDir - Working directory path (relative or absolute)
@@ -88,6 +89,14 @@ export class ProjectManager {
         }
         // Resolve relative paths against workspaceDir
         const resolvedDir = resolve(this.workspaceDir, workingDir);
+        try {
+            if (!statSync(resolvedDir).isDirectory()) {
+                return { ok: false, error: `工作目录不是目录: ${resolvedDir}` };
+            }
+        }
+        catch {
+            return { ok: false, error: `工作目录不存在或不可访问: ${resolvedDir}。请指定已存在的目录；原绑定未改变。` };
+        }
         // Save pre-mutation state for rollback
         const oldDir = this.bindings.get(chatId);
         this.bindings.set(chatId, resolvedDir);
@@ -178,7 +187,7 @@ export class ProjectManager {
     resolveCwd(chatId) {
         const active = this.getActive(chatId);
         // default → unbound; SDK falls back to getWorkspaceDir()
-        if (active.name === 'default') {
+        if (!this.bindings.has(chatId)) {
             return {
                 effectiveCwd: undefined,
                 boundWorkingDir: undefined,
@@ -186,7 +195,14 @@ export class ProjectManager {
             };
         }
         // Issue #3977: validate the bound directory exists before trusting it
-        if (!existsSync(active.workingDir)) {
+        let available = false;
+        try {
+            available = statSync(active.workingDir).isDirectory();
+        }
+        catch {
+            // Preserve stale bindings for explicit recovery; never silently rebind.
+        }
+        if (!available) {
             return {
                 effectiveCwd: undefined,
                 boundWorkingDir: active.workingDir,
@@ -252,17 +268,19 @@ export class ProjectManager {
                 catch {
                     // Ignore cleanup failure
                 }
+                logger.error({ err: renameErr, stage: 'rename' }, 'Project binding persistence failed');
                 return {
                     ok: false,
-                    error: `持久化写入失败: ${renameErr instanceof Error ? renameErr.message : String(renameErr)}`,
+                    error: PERSISTENCE_FAILURE_MESSAGE,
                 };
             }
             return { ok: true, data: undefined };
         }
         catch (err) {
+            logger.error({ err, stage: 'persist' }, 'Project binding persistence failed');
             return {
                 ok: false,
-                error: `持久化失败: ${err instanceof Error ? err.message : String(err)}`,
+                error: PERSISTENCE_FAILURE_MESSAGE,
             };
         }
     }

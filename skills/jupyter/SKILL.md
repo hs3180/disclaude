@@ -10,21 +10,43 @@ Use `disclaude jupyter` from the active Project directory, or pass
 it does not start Jupyter or require host Python. Read `disclaude jupyter tools`
 for the current JSON input schemas and [README.md](./README.md) for setup.
 
-1. Run `list` to discover this Project's references and recent run IDs. Use
+1. Run `list` for Project-local references and recent run IDs, not remote inventory.
+   Check its credential state; configured credentials are not an authentication probe. Use
    `link --path research/analysis.ipynb` for an existing Notebook, or `create`
    for a new, explicitly selected remote path. Keep findings, code and conclusions
    in that remote Notebook. Project bindings remain managed by `/project`.
-2. Use `describe` and `read-cell` to read live shared cells by stable ID. Edit,
+2. Use `describe` and `read-cell` to read live shared cells by stable ID.
+   Error previews expose `ename`, `evalue` and bounded `traceback[]`; inspect
+   the recent traceback lines and any truncation flag before diagnosing code. Edit,
    move or delete only the intended cell, using its latest `sourceHash`.
-   Preserve other cells and human notes. These source checks are client-side.
+   Copy the full 64-hex hash; a conflict reports expected/actual values and asks
+   for a fresh read. Preserve human content. These checks remain client-side,
+   not atomic server CAS.
 3. Pass command arguments through `--input-file FILE` or `--input-file -`.
    Use a unique `runId` with `execute`; it submits once and returns promptly.
    Continue with `status` for the original run. Reuse the same ID after a lost
    response; never invent a new ID to replay an uncertain execution.
+   Check `source`: `live` is a current remote observation; `local-journal` is
+   a saved fact or a failed client lookup. `client-error` retains the last
+   confirmed state and loss time. `server-unknown` means the original record
+   was queried but is missing, expired or from a changed kernel incarnation;
+   it does not prove non-execution. Restore the configured connection, then
+   use `reconcile` to query every nonterminal original handle without replay.
+   Cached partial outputs are labelled `lastKnownResult`.
 4. Stop remote work with `stop` and its original `notebookId`/`runId`. Only
    `stopConfirmed: true` confirms cancellation. Chat `/stop` stops inference;
    remote executions remain independent. Do not claim the kernel stopped
    from a cancelled tool invocation or a stopped chat.
+   For work started in JupyterLab or without an available run journal, use
+   `interrupt` only with the explicitly selected existing `kernelId`, or a
+   Project `notebookId` whose existing kernel binding is unique and unshared.
+   Supplying both IDs checks the observed binding against the selected kernel.
+   This affects that kernel's current execution and preserves the kernel;
+   it does not cancel one named run or confirm that queued work was cleared.
+   `state: accepted` / HTTP 204 acknowledges the request only. Its
+   `executionState: unknown` requires separate evidence from the original
+   execution, or a subsequent kernel observation. Do not automatically retry an
+   unknown interrupt or substitute it for a failed `stop`.
 5. To use an incoming attachment, copy the supplied local attachment into this
    Project, then `import-file` with its Project-relative path. Read the returned
    hash/size and use `kernelRelativePath` in remote code. Host and kernel paths
@@ -37,6 +59,10 @@ for the current JSON input schemas and [README.md](./README.md) for setup.
    existing channel skill to send those files with the request's chat/thread
    identifiers. Check its delivery result before claiming success; inspect an
    uncertain delivery before retrying. Cite the report revision in the summary.
+
+Failures carry a safe layer/code and, for HTTP, a scrubbed server excerpt. Use
+`--verbose` for phase diagnostics; never print raw upstream exceptions. Read
+the error hint and original run status before deciding whether to continue.
 
 Use `--no-interactive` in agent calls. The operator configures authentication
 through environment variables or a private `.env`; do not read or print secrets,

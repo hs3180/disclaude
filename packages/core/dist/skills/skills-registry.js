@@ -17,11 +17,12 @@ export class SkillsRegistry {
         this.referenceRoot = referenceRoot;
     }
     resolve() {
+        const sources = typeof this.sources === 'function' ? this.sources() : this.sources;
         const diagnostics = [];
-        const candidates = this.sources.flatMap((source) => this.discover(source, diagnostics));
+        const candidates = sources.flatMap((source) => this.discover(source, diagnostics));
         const fingerprint = createHash('sha256')
             .update(candidates.map((candidate) => candidate.fingerprint).sort().join('\n'))
-            .update(this.sources.map((source) => `${source.kind}:${resolve(source.root)}`).sort().join('\n'))
+            .update(sources.map((source) => `${source.kind}:${resolve(source.root)}`).sort().join('\n'))
             .update(JSON.stringify(diagnostics))
             .digest('hex');
         if (this.cached && this.cachedFingerprint === fingerprint) {
