@@ -386,7 +386,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       },
       'card.action.trigger': async (data: unknown) => {
         try {
-          await this.feishuMessageHandler.handleCardAction(data as FeishuCardActionEventData);
+          return await this.feishuMessageHandler.handleCardAction(data as FeishuCardActionEventData);
         } catch (error) {
           logger.error({ err: error }, 'Failed to handle card action');
           await this.notifyUserDirectly(

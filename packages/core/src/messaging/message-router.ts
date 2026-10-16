@@ -31,6 +31,8 @@ const defaultLogger = createLogger('InputMessageRouter');
  * Issue #3779: Convert positional parameters to options objects for type safety.
  */
 export interface UserMessageParams {
+  /** System-trigger delivery anchor; null explicitly means no reply root. */
+  replyRootId?: string | null;
   agentSession?: Message['agentSession'];
   /** Target chat ID */
   chatId: string;
@@ -87,7 +89,7 @@ export interface IAgentMessageHandler {
     chatId: string,
     payload: string,
     messageId: string,
-    options?: { waitForCompletion?: boolean; agentSession?: Message['agentSession'] }
+    options?: { waitForCompletion?: boolean; agentSession?: Message['agentSession']; replyRootId?: string | null }
   ): Promise<void>;
 }
 
@@ -221,7 +223,8 @@ export class MessageRouter {
       message.chatId,
       message.payload,
       message.id,
-      { waitForCompletion: message.waitForCompletion, ...(message.agentSession ? { agentSession: message.agentSession } : {}) }
+      { waitForCompletion: message.waitForCompletion, ...(message.agentSession ? { agentSession: message.agentSession } : {}),
+        ...(message.replyRootId !== undefined ? { replyRootId: message.replyRootId } : {}) }
     );
   }
 }

@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { HELP, run } from './cli.js';
 
 /** Run the CLI with stdout captured, returning the emitted lines and exit code. */
@@ -15,6 +15,27 @@ async function capture(argv: string[]): Promise<{ code: number; writes: string[]
 }
 
 describe('@disclaude/channel-cli', () => {
+  it.each(['send_text', 'send_interactive'])('rejects synthetic reply IDs before any %s request', async command => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch');
+    try {
+      const flags = command === 'send_text' ? ['--text', 'probe'] : ['--question', 'probe', '--options', '[{"text":"ok","value":"ok"}]'];
+      const { code, writes } = await capture([command, '--chat', 'oc_0123456789012345678901234567890123', '--base-url', 'http://127.0.0.1:19200', '--parent', 'sched-owned-task', ...flags]);
+      expect(code).toBe(1);
+      expect(JSON.parse(writes[0]).error).toContain('Internal tracking IDs');
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {fetchMock.mockRestore();}
+  });
+
+  it('does not label an upstream rejection as a network outage', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(url => Promise.resolve(String(url).endsWith('/api/ping') ? new Response(JSON.stringify({ ok: true, pong: true })) : new Response(JSON.stringify({ ok: false, message: 'upstream HTTP 400: 99991663 chat id is invalid' }), { status: 400 })));
+    try {
+      const { code, writes } = await capture(['send_text', '--chat', 'oc_0123456789012345678901234567890123', '--text', 'probe', '--base-url', 'http://127.0.0.1:19200']);
+      expect(code).toBe(1);
+      const result = JSON.parse(writes[0]);
+      expect(result.error).toContain('99991663 chat id is invalid');
+      expect(result.hint).toBeUndefined();
+    } finally {fetchMock.mockRestore();}
+  });
   it('exposes the packaged command surface in help', () => {
     expect(HELP).toContain('send_interactive');
     expect(HELP).toContain('disclaude channel');

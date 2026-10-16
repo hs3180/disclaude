@@ -100,6 +100,8 @@ export type SystemTrigger = 'scheduled' | 'signal' | 'command';
  * without knowledge of the Project system.
  */
 export interface SystemMessage extends Message {
+  /** Delivery anchor, distinct from the internal tracking id. null explicitly sends without a reply root. */
+  replyRootId?: string | null;
   source: 'system';
   /** Distinguishes the trigger source */
   trigger: SystemTrigger;

@@ -32,6 +32,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { createLogger, type TopicGroupMessageEvent, type FeishuCard } from '@disclaude/core';
 import { SERVICE_VERSION } from './version.js';
 import type { DeliveryHealth } from './health-types.js';
+import { channelError } from './channel-error.js';
 
 const logger = createLogger('HttpApiServer');
 
@@ -924,9 +925,9 @@ export class HttpApiServer {
       );
       this.sendJson(res, 200, { ok: true, ...result });
     } catch (err) {
-      logger.error({ err, chatId: raw.chatId }, 'sendMessage handler error');
-      const msg = err instanceof Error ? err.message : 'sendMessage failed';
-      this.sendJson(res, 500, { ok: false, message: msg });
+      const failure = channelError(err, [this.config.apiToken ?? '']);
+      logger.error({ ...failure.body, chatId: raw.chatId }, 'sendMessage handler error');
+      this.sendJson(res, failure.status, failure.body);
     }
   }
 
@@ -1078,9 +1079,9 @@ export class HttpApiServer {
       const result = await this.sendInteractiveHandler(raw.chatId as string, params);
       this.sendJson(res, 200, { ok: true, ...result });
     } catch (err) {
-      logger.error({ err, chatId: raw.chatId }, 'sendInteractive handler error');
-      const msg = err instanceof Error ? err.message : 'sendInteractive failed';
-      this.sendJson(res, 500, { ok: false, message: msg });
+      const failure = channelError(err, [this.config.apiToken ?? '']);
+      logger.error({ ...failure.body, chatId: raw.chatId }, 'sendInteractive handler error');
+      this.sendJson(res, failure.status, failure.body);
     }
   }
 
