@@ -38,6 +38,7 @@ export function sourceFingerprint(root) {
       'bin',
       'jupyter/datalayer',
       'skills',
+      'optional-plugins',
       'agents',
       '.claude-plugin',
       'examples/skills',
@@ -96,6 +97,7 @@ export function rewriteImports(code, file, targets) {
 }
 
 export function generateRelease(root, output) {
+  assert(!existsSync(join(root, 'skills/diagnose-logs')), 'Diagnostics must remain outside the default builtin skills bundle');
   assert(!existsSync(output) || readdirSync(output).length === 0, 'Output must be new or empty');
   const json = (path) => JSON.parse(readFileSync(path, 'utf8'));
   const pkg = json(join(root, 'package.json'));
@@ -169,6 +171,7 @@ export function generateRelease(root, output) {
     'bin',
     'jupyter/datalayer',
     'skills',
+    'optional-plugins',
     'agents',
     '.claude-plugin',
     'examples/skills',
@@ -250,6 +253,7 @@ export function generateRelease(root, output) {
       'packages/',
       'scripts/',
       'skills/',
+      'optional-plugins/',
       'agents/',
       '.claude-plugin/',
       'examples/',

@@ -342,8 +342,6 @@ export abstract class BaseAgent implements Disposable {
    * Convert SDK AgentMessage to legacy parsed format for compatibility.
    */
   private convertToLegacyFormat(message: SdkAgentMessage): IteratorYieldResult['parsed'] {
-    const usageUnknown = message.metadata?.queryUsage?.attempts.at(-1)?.state === 'unknown';
-    const hasTokens = message.metadata?.inputTokens !== undefined || message.metadata?.outputTokens !== undefined;
     return {
       type: message.type,
       content: message.content,
@@ -354,10 +352,6 @@ export abstract class BaseAgent implements Disposable {
             toolInputRaw: message.metadata.toolInput,
             toolOutput: message.metadata.toolOutput,
             elapsed: message.metadata.elapsedMs,
-            cost: usageUnknown ? undefined : message.metadata.costUsd,
-            tokens: usageUnknown || !hasTokens ? undefined : (message.metadata.inputTokens ?? 0) + (message.metadata.outputTokens ?? 0),
-            retryProgress: message.metadata.retryProgress,
-            queryUsage: message.metadata.queryUsage,
             stopReason: message.metadata.stopReason,
             numTurns: message.metadata.numTurns,
             durationMs: message.metadata.durationMs,

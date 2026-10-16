@@ -36,6 +36,16 @@ the same lock. Reload may close the daemon-owned tab. The next call creates a fr
 session; no Chromium/profile reset is required. Do not start a second daemon manually.
 Relative artifact paths use the calling task directory.
 
+The launcher may append JSON `browser-diagnostic` records to stderr. Report the
+record's stage, method, path and endpoint source when explaining an error.
+`page-navigation` with status 404 describes a document response; do not call it
+a CDP connection failure. `websocket-attach` records marked `diagnostic-observer`
+describe a separate read-only probe, not an upstream daemon's connection.
+`unknown` means the phase or request metadata was not observed; do not infer it
+from a bare 404. `disclaude browser status` exposes the latest timestamped record,
+which is historical evidence rather than a fresh check. Do not reset/reload or
+replay side effects solely because a page returned 404.
+
 ## Quick start
 
 ```bash

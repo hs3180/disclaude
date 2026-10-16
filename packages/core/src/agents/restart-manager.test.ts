@@ -41,11 +41,12 @@ describe('RestartManager', () => {
   });
 
   describe('shouldRestart', () => {
-    it.each(['input-delivery-uncertain', 'retry-budget-exhausted'])('preserves replay denial %s without consuming restart quota', replayBlock => {
+    it('preserves provider replay denial without consuming restart quota', () => {
+      const replayBlock = 'input-delivery-uncertain';
       const error = preventAutomaticReplay(new Error('ECONNRESET'), replayBlock);
       tagErrorCategory(error);
       expect(manager.shouldRestart('uncertain', error.message, new Error('wrapper', { cause: error })))
-        .toMatchObject({ allowed: false, reason: 'replay_unsafe', replayBlock, restartCount: 0 });
+        .toMatchObject({ allowed: false, reason: 'replay_unsafe', restartCount: 0 });
       expect(manager.shouldRestart('uncertain', 'ECONNRESET').allowed).toBe(true);
     });
     it('bounds UNKNOWN recovery per chat until reset or a successful operation', () => {

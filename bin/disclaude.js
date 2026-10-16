@@ -47,6 +47,7 @@ function showHelp() {
       '  start [options]    Start disclaude',
       '  channel <command>  Send channel messages through the service',
       '  browser <cmd>      Inspect coordinated browser control',
+      '  plugins <cmd>      Install, update or remove optional first-party diagnostics',
       '  jupyter <command> Work with remote Notebooks; patch installs repairs; test verifies the configured server',
       '  chromium-cdp <cmd> Manage or diagnose the persistent Chromium CDP service (Issue #4807)',
       '',
@@ -66,6 +67,7 @@ function showHelp() {
 }
 
 const ROUTES = {
+  plugins: { file: resolve(ROOT, 'bin/plugins.js') },
   jupyter: {
     file: resolve(
       ROOT,

@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { resolveBrowserRuntimePath } from '@disclaude/core/browser-runtime';
 import { openCommandLock, tryCommandLock } from './command-lock.mjs';
+import { discoverCdp } from './diagnostics.mjs';
 
 function chromiumConfigPath(env) {
   const path = env.DISCLAUDE_CHROMIUM_CONFIG ||
@@ -52,6 +53,10 @@ function runtimeOwnerIsLive(runtime, path) {
 }
 
 export function resolveCdpEndpoint(env) {
+  return resolveCdpConfiguration(env).endpoint;
+}
+
+export function resolveCdpConfiguration(env) {
   let document;
   try { document = JSON.parse(readFileSync(chromiumConfigPath(env), 'utf8')); }
   catch (error) {
@@ -61,7 +66,7 @@ export function resolveCdpEndpoint(env) {
     if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) {
       throw new Error('BU_CDP_URL must be an HTTP(S) endpoint without credentials, query, or fragment');
     }
-    return parsed.href.replace(/\/+$/u, '');
+    return { endpoint: parsed.href.replace(/\/+$/u, ''), endpointSource: 'BU_CDP_URL' };
   }
   if (!document || document.version !== 1 || !document.environment || typeof document.environment !== 'object' || Array.isArray(document.environment)) {
     throw new Error('The installed Chromium CDP configuration is invalid');
@@ -69,7 +74,8 @@ export function resolveCdpEndpoint(env) {
   const { CHROMIUM_CDP_ADDRESS: address = '127.0.0.1', CHROMIUM_CDP_PORT: port = '9222' } = document.environment;
   if (typeof address !== 'string' || typeof port !== 'string' || !/^[a-zA-Z0-9.:[\]-]+$/.test(address) ||
       !/^\d+$/.test(port) || +port < 1 || +port > 65535) throw new Error('Invalid installed Chromium CDP address or port');
-  return `http://${address.includes(':') && !address.startsWith('[') ? `[${address}]` : address}:${port}`;
+  return { endpoint: `http://${address.includes(':') && !address.startsWith('[') ? `[${address}]` : address}:${port}`,
+    endpointSource: 'installed-chromium-config' };
 }
 
 function privateDirectory(path) {
@@ -109,8 +115,11 @@ export function browserStatus(path) {
   const fd = openCommandLock(join(runtime.directory, 'command.lock'));
   try {
     const busy = !tryCommandLock(fd);
+    const diagnosticPath = join(runtime.directory, 'last-diagnostic.json');
+    let lastDiagnostic;
+    try { lastDiagnostic = JSON.parse(readFileSync(diagnosticPath, 'utf8')); } catch { /* No diagnostic has been recorded. */ }
     return { state: busy ? 'busy' : existsSync(join(runtime.directory, 'interrupted.json')) ? 'interrupted' : 'idle',
-      pid: runtime.pid, executable: runtime.executable };
+      pid: runtime.pid, executable: runtime.executable, ...(lastDiagnostic ? { lastDiagnostic } : {}) };
   } finally { closeSync(fd); }
 }
 
@@ -120,13 +129,14 @@ export async function prepareBrowserCommands({ env = process.env, fetchImpl = gl
   const path = resolveBrowserRuntimePath(env);
   const bin = join(dirname(path), 'bin');
   const executable = resolveBrowserUse(env, bin);
-  const endpoint = resolveCdpEndpoint(env);
-  const response = await fetchImpl(`${endpoint}/json/version`, { redirect: 'error', signal: AbortSignal.timeout(5000) });
-  if (!response.ok) throw new Error(`Browser CDP discovery failed: HTTP ${response.status}`);
-  const version = await response.json();
-  const websocket = new URL(version.webSocketDebuggerUrl);
-  const browserId = /^\/devtools\/browser\/([^/]+)$/.exec(websocket.pathname)?.[1];
-  if (!['ws:', 'wss:'].includes(websocket.protocol) || !browserId) throw new Error('Invalid Chromium CDP browser identity');
+  const { endpoint, endpointSource } = resolveCdpConfiguration(env);
+  let discovered;
+  try { discovered = await discoverCdp({ endpoint, endpointSource, fetchImpl }); }
+  catch (error) {
+    if (error.diagnostic) onEvent(error.diagnostic);
+    throw error;
+  }
+  const { websocket, browserId } = discovered;
   // One browser ID shares a lock across projects, configurations and URL aliases.
   // A short local root also accommodates upstream's Unix socket path limit.
   const identity = createHash('sha256').update(browserId).digest('hex').slice(0, 24);
@@ -141,7 +151,7 @@ export async function prepareBrowserCommands({ env = process.env, fetchImpl = gl
     }
     const fd = openCommandLock(join(directory, 'command.lock'));
     try { tryCommandLock(fd); } finally { closeSync(fd); }
-    const runtime = { version: 1, ownerLock: 1, pid: process.pid, instance: randomUUID(), executable, directory,
+    const runtime = { version: 1, ownerLock: 1, pid: process.pid, instance: randomUUID(), executable, directory, endpointSource,
       path: env.PATH, browserEnv: { BU_CDP_WS: websocket.href, BU_CDP_URL: endpoint,
         BU_NAME: `disclaude-${identity}`, BU_AUTOSPAWN: '0', BH_RUNTIME_DIR: directory, BH_TMP_DIR: directory,
         BH_HOME: directory,

@@ -45,9 +45,10 @@ print(js("document.querySelector('#name').value"))
 PY
 ```
 
-Arguments, stdin, cwd, stdout, stderr and the upstream command's exit status are
-preserved. Output is streamed, not collected into an IPC response. A waiting call
-may print a queue notice on stderr. There is no command execution deadline or
+Arguments, stdin, cwd, stdout and the upstream command's exit status are
+preserved. Upstream stderr is streamed unchanged, with queue notices and bounded
+JSON diagnostics appended by the launcher. Output is not collected into an IPC response.
+There is no command execution deadline or
 cross-call lease. The kernel decides waiter order; FIFO is not promised.
 
 Put dependent operations in one invocation. Between calls another task may
@@ -100,6 +101,50 @@ There is no legacy service migration. This code does not discover or stop old
 LaunchAgents/systemd units, change production configuration, or clean user data.
 
 ## Diagnostics and validation
+
+Browser failure records use `type: browser-diagnostic` and distinguish:
+
+- `http-discovery`: the service's actual `GET <selected endpoint>/json/version`,
+  including the HTTP status or a request/identity failure. Startup emits this
+  record to the service log before rejecting the bad endpoint.
+- `websocket-attach`: an actual failed upgrade on the selected WebSocket route.
+  During a CLI invocation, `observation: diagnostic-observer` identifies the
+  launcher's diagnostic connection; it is not evidence about an existing
+  upstream daemon's separate connection.
+- `page-navigation`: a document HTTP error observed through CDP Network events.
+  A page's 404 is a page response, not a failed CDP connection. It does not
+  change the upstream exit code or make a successful script fail.
+- `unknown`: an upstream nonzero exit without correlated observations, or
+  unavailable/incomplete observation. Inspect the original upstream error;
+  a bare 404 is insufficient to assign a connection or navigation stage.
+
+Each record includes the method, failing path, selected endpoint and its source
+(`installed-chromium-config`, `BU_CDP_URL`, or `unknown` for an older runtime).
+Userinfo, queries, fragments and labelled credential path segments are redacted.
+Response bodies and headers are fully omitted: arbitrary error documents can
+contain credentials or private content. The numeric status and safe reason remain.
+The launcher adds an invocation ID and timestamp. It writes the latest record to
+the private browser runtime, exposed as `lastDiagnostic` by `disclaude browser status`.
+This is historical evidence with a timestamp, not the current readiness result.
+Page records also identify the CDP target. A record's invocation ID identifies
+the observation window; background document activity in another tab may also be
+observed, so that ID alone does not establish that the script caused the response.
+
+For stdin scripts, the launcher opens one temporary read-only CDP connection
+under the existing invocation lock. It discovers and attaches to at most 16 page
+targets and enables Network events, with at most 8 records per invocation and
+256 in-flight document request IDs. Connection/setup waits are capped at one
+second each. This adds an upgrade and CDP setup calls before the original CLI;
+it does not pause targets, intercept requests, retry work, rediscover an endpoint,
+or change protocols. The diagnostic connection closes when that invocation ends.
+CLI flags such as `--help`, `--version` and `--reload` skip this observation.
+
+Observation is best effort. A page may begin loading before the observer attaches;
+an unavailable request method remains `unknown`. Responses before attachment,
+non-page targets, targets beyond the limit and work after the invocation ends
+may be missed. No observed page error does not prove navigation success. Upstream
+stderr remains available and is outside the launcher's added-record redaction.
+Diagnostics alone do not establish that the unreproduced #5352 incident is fixed.
 
 `disclaude browser doctor --binary /absolute/browser/path [--headless]` remains a
 separate, explicit Chromium test with disposable state. It distinguishes browser

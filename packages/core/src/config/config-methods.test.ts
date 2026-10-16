@@ -14,7 +14,9 @@
  * @see Issue #1617 Phase 2
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterAll } from 'vitest';
+vi.hoisted(() => vi.stubEnv('TEST_LLM_DEFAULT_KEY', 'test-glm-key'));
+afterAll(() => vi.unstubAllEnvs());
 import path from 'path';
 
 // Mock with sessionRestore config to test both branches
@@ -54,7 +56,7 @@ const { mockGetConfigFromFile, mockGetPreloadedConfig } = vi.hoisted(() => ({
         },
       },
     },
-    env: { TEST_VAR: 'test_value', TEST_LLM_DEFAULT_KEY: 'test-glm-key' },
+    env: { TEST_VAR: 'test_value' },
     channels: { feishu: { appId: 'test-app-id', appSecret: '$TEST_CHANNEL_APP_SECRET' } },
   })),
   mockGetPreloadedConfig: vi.fn(() => null),

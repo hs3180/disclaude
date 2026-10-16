@@ -121,6 +121,8 @@ export interface AgentPreset extends AgentConfig {
   apiBaseUrl?: string;
   env?: Record<string, string>;
   credentialEnvKeys?: string[];
+  /** Internal preflight errors for selected-only native environment references. */
+  missingEnvReferences?: string[];
   default?: boolean;
   llm: string;
   reasoningEffort?: CodexReasoningEffort;

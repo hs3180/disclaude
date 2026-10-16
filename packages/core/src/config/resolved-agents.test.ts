@@ -329,14 +329,13 @@ describe('named runtime and LLM configuration', () => {
     }
     expect(validateResolvedAgent(result.presets.assistant)).toContain('llms.proxy.api.apiKey');
   });
-  it('prefers the service environment over defaults and injects only selected API credentials', () => {
+  it('injects only the selected external API credentials and endpoint', () => {
     vi.stubEnv('PROXY_KEY', 'selected-secret');
     vi.stubEnv('OTHER_KEY', 'other-secret');
     vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'host-bearer');
     vi.stubEnv('OPENAI_API_KEY', 'host-openai');
     vi.stubEnv('ANTHROPIC_BASE_URL', 'https://host.example');
     const config = configuration();
-    config.env = { PROXY_KEY: 'default-secret' };
     const result = resolveConfiguredAgents(config);
     if (!result.ok) {
       throw new Error(result.errors.join('\n'));

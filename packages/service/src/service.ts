@@ -296,7 +296,11 @@ export class DisclaudeService extends EventEmitter {
     }
 
     this.browserRuntime = await startBrowserRuntime(process.env, record => {
-      logger.info({ browser: record }, 'Upstream browser-use CLI selected');
+      if (record.type === 'browser-diagnostic') {
+        logger.warn({ browser: record }, 'Browser endpoint diagnostic');
+      } else {
+        logger.info({ browser: record }, 'Upstream browser-use CLI selected');
+      }
     });
 
     // Issue #4280 (part 5): no REST API server is started anymore — DisclaudeService

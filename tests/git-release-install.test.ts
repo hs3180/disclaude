@@ -57,6 +57,8 @@ test('generates a standalone manifest and excludes untracked resources', () => {
   write('scripts/chromium-config.mjs', 'export {};');
   write('scripts/chromium-diagnose.mjs', 'export const readOnly = true;');
   write('skills/example/SKILL.md', 'tracked skill');
+  write('optional-plugins/diagnostics/skills/diagnose-logs/SKILL.md', 'optional skill');
+  write('optional-plugins/diagnostics/.claude-plugin/plugin.json', '{"name":"disclaude-diagnostics"}');
   write('scripts/browser-use-smoke.sh', '#!/bin/bash\nexit 0');
   write('scripts/browser-use-smoke-daemon.py', 'pass');
   write('scripts/browser-use-smoke-timeout.py', 'pass');
@@ -105,6 +107,9 @@ test('generates a standalone manifest and excludes untracked resources', () => {
   assert.equal(manifest.devDependencies, undefined);
   assert.deepEqual(manifest.dependencies, { 'js-yaml': '^4.1.0' });
   assert(!existsSync(join(output, 'skills/example/private.txt')));
+  assert(!existsSync(join(output, 'skills/diagnose-logs/SKILL.md')));
+  assert(existsSync(join(output, 'optional-plugins/diagnostics/skills/diagnose-logs/SKILL.md')));
+  assert(manifest.files.includes('optional-plugins/'));
   assert(existsSync(join(output, '.claude-plugin/plugin.json')));
   for (const file of ['browser-use-smoke.sh', 'browser-use-smoke-daemon.py', 'browser-use-smoke-timeout.py']) {
     assert(existsSync(join(output, 'scripts', file)));
@@ -133,6 +138,9 @@ test('generates a standalone manifest and excludes untracked resources', () => {
     sourceFingerprint(root)
   );
   assert.throws(() => generateRelease(root, output), /new or empty/);
+  write('skills/diagnose-logs/SKILL.md', 'accidental default plugin');
+  assert.throws(() => generateRelease(root, join(root, 'contaminated')), /outside the default/);
+  rmSync(join(root, 'skills/diagnose-logs'), { recursive: true });
   write('bin/disclaude.js', 'changed');
   assert.throws(() => generateRelease(root, join(root, 'other')), /committed source tree/);
 });
