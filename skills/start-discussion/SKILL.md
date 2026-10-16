@@ -19,9 +19,10 @@ Agent 识别到需要深入讨论的话题后，创建飞书讨论群、通过 `
 
 ## Single Responsibility
 
-- ✅ Create a Feishu discussion group via `lark-cli`
-- ✅ Inject initialization context via `push_to_agent` MCP tool
+- ✅ Create a Feishu discussion group via `lark-cli` with ownership handed to the triggering user (`--owner`)
+- ✅ Inject initialization context via `push_to_agent` MCP tool, requiring a pinned 群定位声明 as the new group's first post
 - ✅ Record mapping in `workspace/bot-chat-mapping.json`
+- ✅ Post the migration card to the source thread before returning
 - ✅ Return immediately — non-blocking by design
 - ❌ DO NOT wait for user response in the discussion group
 - ❌ DO NOT dissolve groups — let users handle lifecycle
@@ -48,17 +49,17 @@ Analyze the current conversation and determine:
 
 ### Step 2: Create Discussion Group
 
-Use `lark-cli` to create a new Feishu group. **Always include the triggering user** (Sender Open ID) in the group:
+Use `lark-cli` to create a new Feishu group. **Always include the triggering user** (Sender Open ID) in the group, and **always pass ownership to that user** — without `--owner` the group owner defaults to the bot, leaving the user without management rights (cannot pin, dissolve, or manage members):
 
 ```bash
-# Create group with the triggering user
-lark-cli im +chat-create --name "讨论: {topic}" --description "Agent 发起的讨论: {topic}" --users "{sender_open_id}"
+# Create group with the triggering user as owner
+lark-cli im +chat-create --name "讨论: {topic}" --description "Agent 发起的讨论: {topic}" --users "{sender_open_id}" --owner "{sender_open_id}"
 ```
 
 If additional participants need to be included, merge them into the same `--users` list:
 
 ```bash
-lark-cli im +chat-create --name "讨论: {topic}" --description "Agent 发起的讨论: {topic}" --users "{sender_open_id},ou_xxx,ou_yyy"
+lark-cli im +chat-create --name "讨论: {topic}" --description "Agent 发起的讨论: {topic}" --users "{sender_open_id},ou_xxx,ou_yyy" --owner "{sender_open_id}"
 ```
 
 **Parse the response** to extract the new group's `chatId` (format: `oc_xxx`).
@@ -82,6 +83,7 @@ The initialization prompt should include:
 - The source chat ID (for traceability)
 - Background materials and the specific question to discuss
 - Instructions for the agent (e.g., "引导用户讨论以上问题")
+- **A required first post: 群定位声明** — the agent's first message in the new group must state what belongs in this group vs. the source chat (本群管什么 / 来源群保留什么 / 什么样的更新会发到这里), and pin it. Without this declaration users have to guess where to send each message
 
 **Note**: `push_to_agent` handles agent creation automatically. The agent will then manage the conversation in the new group using its standard messaging capabilities (`send_text`, `send_interactive`, etc.).
 
@@ -113,19 +115,25 @@ echo '{ ... updated JSON ... }' > workspace/bot-chat-mapping.json.tmp \
   && mv workspace/bot-chat-mapping.json.tmp workspace/bot-chat-mapping.json
 ```
 
-### Step 5: Confirm and Return
+### Step 5: Post Migration Card to the Source Thread, Then Return
 
-Report to the **source chat** that the discussion has been initiated:
+**Mandatory, not optional**: reply in the **source thread** with a migration card. Without it, the source thread keeps receiving execution narration for work that has moved, and readers of the source chat have no pointer to the new group (#5392 / #5393). Use this template:
 
-> 已创建讨论群「{topic}」，上下文已发送。我将继续当前工作，讨论结果稍后会处理。
+> 🚚 已创建讨论群「{topic}」承接此话题：
+>
+> - **新群管什么**：{本群定位——讨论的问题与执行流水}
+> - **来源群/本 thread 保留什么**：{原 thread 的定位}
+> - **群主**：已移交给你（可置顶/解散/管理成员）
+>
+> 相关讨论请移步新群；本 thread 不再推送该话题的执行流水。
 
-**Do NOT wait for any response** — return immediately.
+**Do NOT wait for any response** — post the card and return immediately.
 
 ## lark-cli Command Reference
 
 | Operation | Command |
 |-----------|---------|
-| Create group | `lark-cli im +chat-create --name "..." --description "..." --users "{sender_open_id}"` |
+| Create group | `lark-cli im +chat-create --name "..." --description "..." --users "{sender_open_id}" --owner "{sender_open_id}"` |
 | Create group with extra participants | `lark-cli im +chat-create --name "..." --users "{sender_open_id},ou_xxx,ou_yyy"` |
 | Add members | `lark-cli im chat.members create --params '{"chat_id":"oc_xxx","member_id_type":"open_id","succeed_type":1}' --data '{"id_list":["ou_aaa"]}'` |
 | Dissolve group | `lark-cli api DELETE /open-apis/im/v1/chats/oc_xxx` |
