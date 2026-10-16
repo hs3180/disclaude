@@ -50,8 +50,8 @@ whether files are overwritten, accumulated, or caller-managed. Preserve user
 data by default and document any deletion or replacement. Do not imply that
 state is shared across invocations unless that behavior is implemented.
 
-See [`skills/channel/README.md`](../skills/channel/README.md) for the packaged
-channel CLI and [`skills/browser-use/SKILL.md`](../skills/browser-use/SKILL.md)
-for browser automation. The [Jupyter CLI Skill](../skills/jupyter/README.md)
+See [`skills/browser-use/SKILL.md`](../skills/browser-use/SKILL.md) for browser
+automation. The packaged channel CLI is documented by its registry `SKILL.md`
+plus `disclaude channel help`. The [Jupyter CLI Skill](../skills/jupyter/README.md)
 adds optional remote Notebook research through `disclaude jupyter`, using the
 agent's existing shell tool without extending ChatAgent's session lifecycle.
