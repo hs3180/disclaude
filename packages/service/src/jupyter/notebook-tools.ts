@@ -28,6 +28,30 @@ function requireCodeCell(cellType: unknown): void {
   }
 }
 const inputLimit = 2_000_000;
+const errorOutputDescription = 'Error previews expose output_type="error", ename:string, evalue:string and traceback:string[]. Tracebacks retain the last 20 frames, at most 1000 characters per frame and 8000 total. errorName/errorValue are deprecated aliases retained for this release.';
+
+function boundedErrorOutput(output: Record<string, unknown>): Record<string, unknown> {
+  const ename = (typeof output.ename === 'string' ? output.ename : 'Error').slice(0, 128).replace(/[\uD800-\uDBFF]$/, '');
+  const evalue = String(output.evalue ?? '').slice(0, 1000).replace(/[\uD800-\uDBFF]$/, '');
+  const frames = Array.isArray(output.traceback) ? output.traceback : [];
+  const tail = frames.slice(-20);
+  const kept: string[] = [];
+  let budget = 8000;
+  let truncated = frames.length > tail.length || (output.traceback !== undefined && !Array.isArray(output.traceback));
+  for (const frame of [...tail].reverse()) {
+    if (typeof frame !== 'string') { truncated = true; continue; }
+    if (budget === 0) { truncated = true; break; }
+    const shortened = frame.slice(-Math.min(1000, budget)).replace(/^[\uDC00-\uDFFF]/, '');
+    truncated ||= shortened.length !== frame.length;
+    budget -= shortened.length;
+    kept.push(shortened);
+  }
+  return { output_type: 'error', ename, evalue, traceback: kept.reverse(),
+    // One-release compatibility for existing preview consumers. These DTOs
+    // are not written back into the full remote nbformat Notebook export.
+    outputType: 'error', errorName: ename, errorValue: evalue,
+    ...(truncated ? { tracebackTruncated: true } : {}) };
+}
 export interface NotebookToolOptions {
   projectDir: string;
   useClient<T>(
@@ -356,7 +380,8 @@ export class NotebookTools {
         required: Object.keys(properties),
         additionalProperties: false,
       },
-      outputSchema: { type: 'object' },
+      outputSchema: { type: 'object', ...(['notebook_read_cell', 'notebook_describe', 'notebook_status'].includes(name)
+        ? { description: errorOutputDescription } : {}) },
       execute: async (input, invocation) => {
         invocation.signal.throwIfAborted();
         this.assertActive();
@@ -687,6 +712,7 @@ export class NotebookTools {
   private outputs(cell: Record<string, unknown>): unknown[] {
     const outputs = Array.isArray(cell.outputs) ? cell.outputs : [];
     return outputs.slice(0, 16).map((output: Record<string, unknown>) => {
+      if (output.output_type === 'error') { return boundedErrorOutput(output); }
       const data = output.data as Record<string, unknown> | undefined;
       return {
         outputType: output.output_type,
@@ -697,9 +723,6 @@ export class NotebookTools {
                 8000
               ),
             }
-          : {}),
-        ...(output.ename
-          ? { errorName: output.ename, errorValue: String(output.evalue).slice(0, 1000) }
           : {}),
         ...(data
           ? {

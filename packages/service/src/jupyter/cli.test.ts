@@ -65,6 +65,17 @@ describe('Optional Jupyter CLI boundary', () => {
     expect(f.resolve).not.toHaveBeenCalled();
     expect(f.client.openDocument).not.toHaveBeenCalled();
   });
+  it('publishes canonical error output fields and bounded traceback policy in tools', async () => {
+    const f = connection();
+    const tools = await runNotebookCommand(parseNotebookOptions(['tools', '--project-dir', root()]), f.resolve, signal) as
+      Array<{ command: string; outputSchema?: { description?: string } }>;
+    for (const command of ['read-cell', 'describe', 'status']) {
+      const description = tools.find(tool => tool.command === command)?.outputSchema?.description;
+      expect(description).toContain('ename:string'); expect(description).toContain('traceback:string[]');
+      expect(description).toContain('8000 total'); expect(description).toContain('deprecated aliases');
+    }
+    expect(f.resolve).not.toHaveBeenCalled();
+  });
   it('reconciles an empty Project without credentials or an input file', async () => {
     const f = connection();
     expect(

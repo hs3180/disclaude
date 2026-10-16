@@ -313,10 +313,11 @@ export async function runNotebookCommand(
   try {
     if (options.command === 'tools') {
       return [
-        ...tools.tools.map(({ name, description, inputSchema }) => ({
+        ...tools.tools.map(({ name, description, inputSchema, outputSchema }) => ({
           command: name.replace(/^notebook_/, '').replaceAll('_', '-'),
           description,
           inputSchema,
+          outputSchema,
         })),
         interruptCommand,
       ];

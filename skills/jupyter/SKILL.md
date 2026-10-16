@@ -15,7 +15,9 @@ for the current JSON input schemas and [README.md](./README.md) for setup.
    `link --path research/analysis.ipynb` for an existing Notebook, or `create`
    for a new, explicitly selected remote path. Keep findings, code and conclusions
    in that remote Notebook. Project bindings remain managed by `/project`.
-2. Use `describe` and `read-cell` to read live shared cells by stable ID. Edit,
+2. Use `describe` and `read-cell` to read live shared cells by stable ID.
+   Error previews expose `ename`, `evalue` and bounded `traceback[]`; inspect
+   the recent traceback lines and any truncation flag before diagnosing code. Edit,
    move or delete only the intended cell, using its latest `sourceHash`.
    Copy the full 64-hex hash; a conflict reports expected/actual values and asks
    for a fresh read. Preserve human content. These checks remain client-side,
