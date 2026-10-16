@@ -2507,11 +2507,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             const delivered = await this.deliverUserVisible(chatId,
               `${providerNotice}\n请先核对已经执行的操作，再决定是否继续；系统没有自动重放工具。\n${this.formatFailureDiagnostic(failure)}`,
               resolveReplyThreadRoot());
-            this.logger.warn(
-              { ...failure, messageCount, terminationDetail: failure.detail,
-                event: 'agent_turn', state: 'failed', user_visible: delivered },
-              'Provider stall: watchdog terminated the stream; recording failure, resolving turn'
-            );
+            if (!turnHasTerminal) {
+              this.logger.warn(
+                { ...failure, messageCount, terminationDetail: failure.detail,
+                  event: 'agent_turn', state: 'failed', user_visible: delivered },
+                'Provider stall: watchdog terminated the stream; recording failure, resolving turn'
+              );
+            }
+            turnHasTerminal = true;
             this.restartManager.recordFailure(chatId, 'stall');
             this.isProcessingMessage = false;
             const stallError = Object.assign(new Error(
@@ -2668,9 +2671,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             const delivered = await this.deliverUserVisible(chatId,
               `❌ 本轮工具调用后未收到最终回复，结果可能不完整。消息 ID: ${context?.sourceMessageId ?? currentTurnMessageId}。诊断 ID: ${diagnosticId}。请先核对已执行的操作，再决定是否继续；系统不会自动重放工具。`,
               resolveReplyThreadRoot());
-            this.logger.warn({ event: 'agent_turn', state: 'failed', ...context, diagnosticId,
-              failureCause: 'missing_tool_reply', toolCallCount, user_visible: delivered,
-            }, 'Terminal outcome for tool-only turn with no visible reply (#5288)');
+            if (!turnHasTerminal) {
+              this.logger.warn({ event: 'agent_turn', state: 'failed', ...context, diagnosticId,
+                failureCause: 'missing_tool_reply', toolCallCount, user_visible: delivered,
+              }, 'Terminal outcome for tool-only turn with no visible reply (#5288)');
+            }
           }
           // Issue #4391 (#4194 follow-up ②): on a real-user empty turn, decide
           // whether to consume this chat's single reset+replay attempt. The
@@ -3062,8 +3067,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             this.logger.debug({ chatId, messageId, outcome }, 'Completion reaction outcome');
           }
 
-          turnHasTerminal = true;
-          if (!missingToolReply) {
+          // Native background output can finish after its input already settled.
+          // Keep delivery/callbacks, but only a newly adopted input gets a terminal.
+          if (!turnHasTerminal && !missingToolReply) {
             this.logger.info({
               event: 'agent_turn', state: parsed.terminatedReason === 'turn_failed' ? 'failed' : 'completed',
               chatId, user_visible: this.didDeliverUserVisibleThisTurn,
@@ -3071,6 +3077,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
               ...(parsed.terminatedReason === 'turn_failed' ? { diagnosticId } : {}),
             }, 'agent_turn');
           }
+          turnHasTerminal = true;
 
           // Issue #3985: Mark as not processing after receiving result.
           // The agent is now idle between turns — blocking tasks can execute.
