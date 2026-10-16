@@ -5,7 +5,7 @@ import {
   createLogger,
   type PrivateProcessActionOptions,
 } from '@disclaude/core';
-import { FeishuPrivateInput } from './private-input.js';
+import { FeishuPrivateInput, type UpdatePrivateCard } from './private-input.js';
 
 export interface PrivateWorkflowRequest {
   chatId: string;
@@ -50,7 +50,7 @@ export class FeishuPrivateWorkflows {
     string,
     { input: FeishuPrivateInput; actor: string; chat: string; timer: ReturnType<typeof setTimeout> }
   >();
-  constructor(private readonly send: ConstructorParameters<typeof FeishuPrivateInput>[1]) {}
+  constructor(private readonly send: ConstructorParameters<typeof FeishuPrivateInput>[1], private readonly update?: UpdatePrivateCard) {}
 
   async request(request: PrivateWorkflowRequest): Promise<{ actionId: string }> {
     if (!isPrivateWorkflowRequest(request)) {
@@ -71,7 +71,8 @@ export class FeishuPrivateWorkflows {
         createPrivateProcessAction({ ...request.workflow, id: actionId }),
         (event) => audit.info(event, 'Private workflow completed')
       ),
-      this.send
+      this.send,
+      this.update
     );
     const timer = setTimeout(() => this.remove(actionId), 300_000);
     timer.unref();

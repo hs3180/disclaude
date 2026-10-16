@@ -239,14 +239,20 @@ export class MessageHandler {
     this.mentionDetector = options.mentionDetector;
     this.interactionManager = options.interactionManager;
     this.callbacks = options.callbacks;
-    this.privateWorkflows = new FeishuPrivateWorkflows(options.callbacks.sendMessage);
+    this.privateWorkflows = new FeishuPrivateWorkflows(options.callbacks.sendMessage, this.updatePrivateCard);
     this.isRunning = options.isRunning;
     this.getHasControlHandler = options.hasControlHandler;
     this.controlHandler = false;
     this.tenantAccessToken = options.tenantAccessToken;
-    if (options.privateInput) {this.privateInput = new FeishuPrivateInput(options.privateInput, options.callbacks.sendMessage);}
+    if (options.privateInput) {this.privateInput = new FeishuPrivateInput(options.privateInput, options.callbacks.sendMessage, this.updatePrivateCard);}
 
   }
+
+  private readonly updatePrivateCard = async (cardId: string, card: Record<string, unknown>): Promise<void> => {
+    if (!this.client) {return;}
+    const result = await this.client.im.message.patch({ path: { message_id: cardId }, data: { content: JSON.stringify(card) } });
+    if (result.code !== 0) {throw new Error('Private input card update failed');}
+  };
 
   /**
    * Initialize the handler with client.
@@ -1464,7 +1470,7 @@ export class MessageHandler {
   /**
    * Handle card action event from WebSocket.
    */
-  async handleCardAction(data: FeishuCardActionEventData): Promise<void> {
+  async handleCardAction(data: FeishuCardActionEventData): Promise<void | { toast: { type: 'info'; content: string } }> {
     if (!this.isRunning()) {
       return;
     }
@@ -1478,11 +1484,14 @@ export class MessageHandler {
     if (FeishuPrivateInput.isPrivateCallback(rawData)) {
       // Acknowledge promptly; the one-shot handoff consumes before awaiting.
       // Consumer failures never enter ordinary logs or the agent channel.
-      void this.privateWorkflows.submit(rawData).then(handled => {
-        if (!handled) {return this.privateInput?.submit(rawData);}
-        return undefined;
+      void this.privateWorkflows.submit(rawData).then(async handled => {
+        if (!handled) {
+          if (this.privateInput) {await this.privateInput.submit(rawData);}
+          else {await FeishuPrivateInput.reject(rawData, this.callbacks.sendMessage, this.updatePrivateCard);}
+        }
       }).catch(() => logger.warn('Private input delivery failed'));
-      return;
+      // Even a malformed callback lacking safe routing IDs gets visible feedback.
+      return { toast: { type: 'info', content: '已收到提交；若表单已过期、失效或服务重启，请重新发起。' } };
     }
     // Feishu reuses the card message id for every button click. Prefer its
     // event id for a stable unique agent input id, with a UUID fallback.
