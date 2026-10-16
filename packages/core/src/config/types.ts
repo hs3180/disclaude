@@ -60,6 +60,8 @@ export interface AgentConfig {
   codex?: CodexAgentGovernanceConfig;
   /** Permission mode for SDK */
   permissionMode?: 'default' | 'bypassPermissions';
+  /** Busy user input: steer (default), live stream injection, or wait for the next turn. */
+  busyInput?: 'steer' | 'stream' | 'queue';
   /** Maximum concurrent tasks */
   maxConcurrentTasks?: number;
   /**

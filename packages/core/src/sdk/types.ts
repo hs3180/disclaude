@@ -72,6 +72,8 @@ export type MessageRole = 'user' | 'assistant' | 'system';
 
 /** Agent 消息元数据 */
 export interface AgentMessageMetadata {
+  /** An acknowledged live input interrupted this turn while retaining its query. */
+  interruptionMode?: 'replace';
   /** Host input UUIDs the provider confirms were consumed by this result. */
   consumedInputIds?: string[];
   /** Provider-declared assistant phase; commentary is visible progress, not a final result. */
@@ -353,10 +355,14 @@ export interface QueryHandle {
   readonly sessionId?: string;
   /** Channel inputs can join an active turn; omission means they are queued. */
   readonly inputDelivery?: 'streaming' | 'queued';
+  /** Replacement steering ACKs interruption; the host then submits the new channel input once. */
+  readonly steerMode?: 'interrupt-and-replace';
   /** Accepted locally, waiting for a named LLM session reservation. */
   readonly capacityQueued?: boolean;
   /**
-   * Live same-turn steering, when the selected transport supports it.
+   * Live steering, when the selected transport supports it.
+   * With steerMode=interrupt-and-replace this only interrupts the old turn;
+   * the caller owns subsequent submission of the replacement channel input.
    * Throw LiveInputRejectedError only for confirmed non-acceptance; all other
    * failures have an unknown delivery outcome and must not be retried by hosts.
    */

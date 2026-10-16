@@ -476,6 +476,62 @@ describe('ClaudeSDKProvider', () => {
         inputTokens: 30, outputTokens: 5, cacheReadTokens: 7, cacheCreationTokens: 9, costUsd: 0.03 }]);
     });
 
+    it('requires interrupt ACK and its matching native marker before replacing the old terminal', async () => {
+      let ack!: () => void;
+      const acked = new Promise<void>(resolve => { ack = resolve; });
+      const interrupt = vi.fn(() => acked);
+      const close = vi.fn();
+      mockQuery.mockReturnValue(Object.assign((async function* () {
+        yield { type: 'assistant', parent_tool_use_id: null, user_message_uuid: 'old-input',
+          message: { content: [{ type: 'tool_use', id: 'owned-tool', name: 'Bash', input: {} }] } };
+        yield { type: 'user', message: { content: [{ type: 'text', text: '[Request interrupted by user for tool use]' }] } };
+        yield { type: 'result', subtype: 'error_during_execution', is_error: true,
+          user_message_uuid: 'old-input', errors: ['Native tool interruption'], stop_reason: 'tool_use' };
+        yield { type: 'assistant', user_message_uuid: 'new-input', message: { content: [{ type: 'text', text: 'New result' }] } };
+        yield { type: 'result', subtype: 'success', user_message_uuid: 'new-input' };
+      })(), { interrupt, close }));
+      const stream = provider.queryStream((async function* () {})(), { settingSources: [] });
+      expect((await stream.iterator.next()).value?.type).toBe('tool_use');
+      const steer = stream.handle.steer?.('Replacement');
+      await stream.iterator.next(); // Native interruption marker precedes its result.
+      let settled = false;
+      const terminal = stream.iterator.next().then(value => { settled = true; return value; });
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      expect(close).not.toHaveBeenCalled();
+      ack();
+      expect(await steer).toEqual({ turnId: 'old-input' });
+      expect((await terminal).value).toMatchObject({ type: 'result', content: '', metadata: {
+        terminatedReason: 'interrupted', interruptionMode: 'replace', consumedInputIds: ['old-input'] } });
+      expect(close).not.toHaveBeenCalled();
+      expect((await stream.iterator.next()).value?.content).toBe('New result');
+      expect((await stream.iterator.next()).value?.metadata?.terminatedReason).toBeUndefined();
+      await stream.iterator.next();
+      expect(mockQuery).toHaveBeenCalledOnce();
+      expect(interrupt).toHaveBeenCalledOnce();
+    });
+
+    it.each(['no-marker', 'other-input', 'no-ack'] as const)('keeps genuine failures distinct from interruption (%s)', async condition => {
+      const interrupt = vi.fn(condition === 'no-ack' ? () => Promise.reject(new Error('Control unavailable')) : () => Promise.resolve());
+      mockQuery.mockReturnValue(Object.assign((async function* () {
+        yield { type: 'assistant', parent_tool_use_id: null, user_message_uuid: 'old-input', message: { content: [] } };
+        if (condition !== 'no-marker') {
+          yield { type: 'user', message: { content: [{ type: 'text', text: '[Request interrupted by user]' }] } };
+        }
+        yield { type: 'result', subtype: 'error_during_execution', is_error: true,
+          user_message_uuid: condition === 'other-input' ? 'different-input' : 'old-input', errors: ['Real failure'] };
+      })(), { interrupt, close: vi.fn() }));
+      const stream = provider.queryStream((async function* () {})(), { settingSources: [] });
+      await stream.iterator.next();
+      const steering = stream.handle.steer?.('Replacement');
+      if (condition === 'no-ack') { await expect(steering).rejects.toThrow('not acknowledged'); }
+      else { await steering; }
+      const messages: AgentMessage[] = [];
+      for await (const message of stream.iterator) { messages.push(message); }
+      expect(messages.at(-1)?.metadata?.terminatedReason).toBe('turn_failed');
+      expect(messages.at(-1)?.metadata?.interruptionMode).toBeUndefined();
+    });
+
     it('still fences and closes an attempt when interrupt throws synchronously', async () => {
       const close = vi.fn();
       mockQuery.mockReturnValue(Object.assign((async function* () {})(), {
@@ -554,7 +610,7 @@ describe('ClaudeSDKProvider', () => {
       });
       try {
         expect(result.handle.inputDelivery).toBe('streaming');
-        expect(result.handle.steer).toBeUndefined();
+        expect(result.handle.steer).toEqual(autoCompactWindow === 'auto' ? undefined : expect.any(Function));
       } finally { result.handle.close(); }
     });
 

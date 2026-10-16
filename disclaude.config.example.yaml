@@ -9,6 +9,7 @@ agents:
   assistant:
     backend: claude
     llm: assistant
+    # busyInput: steer # Default: interrupt-and-replace; alternatives: stream or queue
   # Optional DSH runtime; its API connection belongs in the named LLM below.
   # dsh:
   #   backend: dsh

@@ -576,7 +576,7 @@ export class ChatSessionPool {
     try {
       const result = await agent.steer(prompt);
       return result.ok
-        ? { ok: true, message: `Steer acknowledged for active turn ${result.turnId}.` }
+        ? { ok: true, message: `Steer instruction accepted: ${result.turnId}.` }
         : result;
     } catch (error) {
       return {

@@ -781,7 +781,7 @@ describe('ChatSessionPool', () => {
       acknowledge({ ok: true, turnId: 'turn-2' });
       await expect(result).resolves.toEqual({
         ok: true,
-        message: 'Steer acknowledged for active turn turn-2.',
+        message: 'Steer instruction accepted: turn-2.',
       });
     });
   });
