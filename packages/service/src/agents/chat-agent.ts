@@ -3205,7 +3205,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // Circuit breaker opened - notify user and stop
       this.logger.error(
         { chatId, diagnosticId, ...interruptedLifecycleContext, reason: decision.reason, restartCount: decision.restartCount },
-        decision.reason === 'replay_unsafe' ? 'Automatic replay blocked by execution evidence' : 'Restart blocked by circuit breaker'
+        decision.reason === 'replay_unsafe' ? 'Automatic replay blocked by provider policy' : 'Restart blocked by circuit breaker'
       );
 
       // Notify user that circuit breaker opened

@@ -22,7 +22,7 @@
  */
 
 import type { Logger } from '../utils/logger.js';
-import { isTransient, getErrorCategoryTag, classifyError, ErrorCategory } from '../utils/error-handler.js';
+import { tagErrorCategory, ErrorCategory } from '../utils/error-handler.js';
 import { automaticReplayBlock } from '../utils/replay-safety.js';
 
 /**
@@ -208,11 +208,8 @@ export class RestartManager {
     // the "timeout" keyword would classify as UNKNOWN (non-transient) and
     // WRONGLY suppress a restart that would likely help. `new Error(...)` is
     // the last resort, used only when the caller passed no error at all.
-    const l0Tag = error !== undefined ? getErrorCategoryTag(error) : undefined;
-    const isTransientError = l0Tag
-      ? l0Tag.transient
-      : isTransient(error ?? new Error(errorMessage));
-    const category = l0Tag?.category ?? classifyError(error ?? new Error(errorMessage));
+    const classification = tagErrorCategory(error ?? new Error(errorMessage));
+    const { transient: isTransientError, category } = classification;
     const unknown = category === ErrorCategory.UNKNOWN;
     if (unknown && state.unknownRestartCount >= 1) {
       state.circuitOpen = true;
@@ -220,7 +217,8 @@ export class RestartManager {
     }
     if (!isTransientError && !unknown) {
       this.logger.warn(
-        { chatId, errorMessage, errorCategory: l0Tag?.category },
+        { chatId, errorMessage, errorCategory: category, errorStatus: classification.status,
+          classificationSource: classification.source },
         'Non-transient error — restart skipped (Issue #4314 L2)',
       );
       return {

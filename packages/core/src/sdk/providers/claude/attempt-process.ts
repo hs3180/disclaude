@@ -115,7 +115,7 @@ export class ClaudeAttemptProcess {
     catch {
       this.inspectionAvailable = false;
       // The held ChildProcess handle still identifies the native child. Its
-      // descendants remain unverified, so this cannot authorize replay.
+      // descendants remain unverified and exit confirmation will report that.
       if (!this.ended && this.child.kill(signal)) { this.signals.push(signal); }
       return;
     }
