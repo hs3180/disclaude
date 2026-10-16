@@ -51,9 +51,10 @@ service workspace. The CLI does not start or restart services.
 
 After installing, start a new agent session in that Project. Claude loads the
 installed directory through its local-plugin API; Codex exec/app-server indexes
-it through `SkillsRegistry`; DSH receives the same compact skill manifest and
+it through `SkillsRegistry`; DSH and Pi receive the same compact skill manifest and
 can read the linked instructions using its profile's file/shell tools. A custom
-DSH profile must provide a tool capable of reading local Markdown. References
+DSH profile must provide a tool capable of reading local Markdown. Pi uses its
+native `Read` tool; a custom injected Pi runtime must also provide a file reader. References
 resolve from the actual execution directory, including Project subdirectories.
 Codex treats installed plugin skills at user precedence, so explicit project
 skills override them.

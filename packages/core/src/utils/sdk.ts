@@ -2,6 +2,8 @@
  * Shared utilities for Agent SDK integration.
  */
 
+import { externalSecretEnvironmentNames } from '../config/secret-environment.js';
+
 import type {
   AgentMessage,
   ContentBlock,
@@ -104,7 +106,9 @@ export function buildSdkEnv(
 
   // A named LLM supplies native settings and only its own credential. Remove
   // all configured credential references before projecting the selected key.
-  for (const key of selected?.credentialEnvKeys ?? []) { env[key] = undefined; }
+  for (const key of new Set([...externalSecretEnvironmentNames(), ...(selected?.credentialEnvKeys ?? [])])) {
+    if (key !== 'DISCLAUDE_API_TOKEN') {env[key] = undefined;}
+  }
   Object.assign(env, selected?.selectedEnv);
   const protocol = selected ? selected.protocol : 'anthropic';
   const apiVariables = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_AUTH_TOKEN',

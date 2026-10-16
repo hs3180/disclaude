@@ -274,6 +274,7 @@ async function verifyPackage() {
     const load = file => import(pathToFileURL(join(root, modulesRoot, 'core/dist', file)).href);
     const { codexSkillsRegistry } = await load('sdk/providers/codex/skill-sources.js');
     const { diagnosticsPluginManifest, diagnosticsPluginRoot } = await load('skills/diagnostics-plugin.js');
+    const { adaptPiOptions } = await load('sdk/providers/pi/options-adapter.js');
     const { adaptOptions } = await load('sdk/providers/claude/options-adapter.js');
     const resolution = codexSkillsRegistry(project, root).resolve();
     const skill = resolution.skills.find(item => item.name === 'diagnose-logs');
@@ -281,6 +282,10 @@ async function verifyPackage() {
     const instructions = readFileSync(resolve(project, skill.reference), 'utf8');
     assert.match(instructions, /Disclaude service issues only/);
     assert(diagnosticsPluginManifest(project).includes('diagnose-logs'), 'DSH manifest must discover installed diagnostics');
+    const pi = adaptPiOptions({ settingSources: [], cwd: project }, diagnosticsPluginManifest(project));
+    const piReference = pi.systemPrompt.match(/\\[diagnose-logs\\]\\(([^)]+)\\)/)?.[1];
+    assert(piReference, 'Installed Pi prompt must discover diagnostics');
+    assert.match(readFileSync(resolve(project, decodeURIComponent(piReference)), 'utf8'), /Disclaude service issues only/);
     assert(adaptOptions({ cwd: project, settingSources: [] }).plugins.some(item => item.path === diagnosticsPluginRoot(project)),
       'Claude must load the installed optional local plugin');
   `]);

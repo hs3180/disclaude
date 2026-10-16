@@ -1,5 +1,6 @@
 import { credentialEnvName } from './env-reference.js';
 import type { DisclaudeConfig } from './types.js';
+import { externalSecretEnvironmentNames } from './secret-environment.js';
 
 /** Public IDs may be literals; secrets always reference host-owned environment values. */
 export const CHANNEL_CREDENTIAL_FIELDS = {
@@ -18,7 +19,8 @@ export function registerModelSecretNames(names: Iterable<string>): void {
 }
 
 export function knownSecretValues(): string[] {
-  return [...consumedSecrets, ...[...privateNames, ...modelSecretNames].map(name => process.env[name] ?? '')].filter(Boolean);
+  return [...consumedSecrets, ...[...privateNames, ...modelSecretNames, ...externalSecretEnvironmentNames()]
+    .map(name => process.env[name] ?? '')].filter(Boolean);
 }
 
 export function channelCredentialErrors(config: DisclaudeConfig): string[] {
@@ -67,7 +69,7 @@ export function resolveChannelCredential(config: DisclaudeConfig, channel: Chann
 
 /** Applied after JSON serialization, including strings/stacks, in every log mode. */
 export function redactChannelSecrets(serialized: string): string {
-  const secretNames = new Set([...privateNames, ...modelSecretNames]);
+  const secretNames = new Set([...privateNames, ...modelSecretNames, ...externalSecretEnvironmentNames()]);
   const values = knownSecretValues().sort((a, b) => b.length - a.length);
   const sensitive = /^(?:api[_-]?key|app[_-]?secret|auth[_-]?token|checkToken|encodingAESKey|encryptKey|verificationToken|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|secret|token|authorization|cookie|set-cookie)$/i;
   try {

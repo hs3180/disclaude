@@ -1,6 +1,7 @@
 import { apiCredentialEnvName, credentialEnvName } from './env-reference.js';
 import { registerModelSecretNames } from './channel-credentials.js';
 import type { DisclaudeConfig } from './types.js';
+import { externalSecretEnvironmentNames } from './secret-environment.js';
 
 /** Names supplement explicit references; values are never guessed or inspected. */
 export const isSecretVariable = (name: string): boolean =>
@@ -16,6 +17,9 @@ export function hasUrlCredential(value: unknown): boolean {
 
 export function modelSecretReferences(config: DisclaudeConfig): Set<string> {
   const names = new Set(['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN']);
+  for (const name of externalSecretEnvironmentNames()) {
+    if (name !== 'DISCLAUDE_API_TOKEN') {names.add(name);}
+  }
   registerModelSecretNames(['DISCLAUDE_API_TOKEN']);
   // Host tool credentials require explicit per-LLM projection as well. The
   // service's channel-control bearer is intentionally supplied to every agent.

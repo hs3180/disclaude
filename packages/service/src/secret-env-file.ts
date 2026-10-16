@@ -1,4 +1,5 @@
 import { openSync, fstatSync, readFileSync, closeSync, constants } from 'node:fs';
+import { registerExternalSecretEnvironmentNames } from '@disclaude/core/secret-environment';
 
 /** Explicit host-owned file, loaded before core config imports. No interpolation or shell evaluation. */
 export function loadSecretEnvFile(file: string | undefined, env: NodeJS.ProcessEnv = process.env): void {
@@ -29,5 +30,7 @@ export function loadSecretEnvFile(file: string | undefined, env: NodeJS.ProcessE
     // Parse completely before mutating. The inherited environment, including an
     // explicitly empty value, wins over the file. Config env is never a fallback.
     for (const [key, value] of Object.entries(parsed)) {if (env[key] === undefined) {env[key] = value;}}
+    // Detached caller-owned dictionaries do not establish host provenance.
+    if (env === process.env) {registerExternalSecretEnvironmentNames(Object.keys(parsed));}
   } finally {closeSync(fd);}
 }
