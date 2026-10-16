@@ -8,7 +8,8 @@ import type {
 } from './types.js';
 import { validateAgentPresets } from './agent-presets.js';
 import { isCodexReasoningEffort } from './codex-settings.js';
-import { apiCredentialEnvName } from './env-reference.js';
+import { apiCredentialEnvName, credentialEnvName } from './env-reference.js';
+import { modelSecretReferences, secretConfigurationErrors, resolveLlmEnvironment, hasUrlCredential } from './secret-references.js';
 
 const CONFIG_KEYS = new Set([
   'workspace',
@@ -32,7 +33,7 @@ const mapping = (value: unknown): value is Record<string, unknown> =>
 export function resolveConfiguredAgents(
   config: DisclaudeConfig
 ): { ok: true; presets: AgentPresets } | { ok: false; errors: string[] } {
-  const errors: string[] = [];
+  const errors: string[] = secretConfigurationErrors(config);
   for (const key of Object.keys(config)) {
     if (!CONFIG_KEYS.has(key)) {
       errors.push(
@@ -63,7 +64,7 @@ export function resolveConfiguredAgents(
   }
 
   const llms = config.llms as Record<string, LlmConfig>;
-  const credentialEnvKeys = new Set<string>();
+  const credentialEnvKeys = modelSecretReferences(config);
   for (const [name, raw] of Object.entries(llms)) {
     const field = `llms.${name}`;
     if (!mapping(raw)) {
@@ -76,8 +77,8 @@ export function resolveConfiguredAgents(
       }
     }
     const llm = raw as LlmConfig;
-    if (llm.model !== undefined && (typeof llm.model !== 'string' || !llm.model.trim())) {
-      errors.push(`${field}.model must be a non-empty string`);
+    if (typeof llm.model !== 'string' || !llm.model.trim()) {
+      errors.push(`${field}.model must be an explicit non-empty string; set this LLM model before upgrading (docs/agent-configuration.md)`);
     }
     if (llm.reasoningEffort !== undefined && !isCodexReasoningEffort(llm.reasoningEffort)) {
       errors.push(`${field}.reasoningEffort is invalid`);
@@ -117,7 +118,7 @@ export function resolveConfiguredAgents(
             typeof llm.api.baseUrl !== 'string' ||
             !['http:', 'https:'].includes(url.protocol) ||
             url.username ||
-            url.password
+            url.password || url.hash || hasUrlCredential(llm.api.baseUrl)
           ) {
             throw new Error('invalid endpoint');
           }
@@ -280,23 +281,21 @@ export function resolveConfiguredAgents(
     }
     const protocol = llm.api?.protocol;
     const keyEnv = llm.api ? apiCredentialEnvName(llm.api) : undefined;
-    const environmentModel = protocol === 'openai' ? 'OPENAI_MODEL' : 'ANTHROPIC_MODEL';
     const { backend, ...settings } = agent;
     presets[name] = {
       ...settings,
       agentBackend: backend,
       reasoningEffort: llm.reasoningEffort,
       maxConcurrentSessions: llm.maxConcurrentSessions,
-      model:
-        llm.model?.trim() ||
-        (protocol
-          ? process.env[environmentModel]?.trim() || config.env?.[environmentModel]?.trim()
-          : '') ||
-        '',
-      apiKey: keyEnv ? (process.env[keyEnv] ?? config.env?.[keyEnv] ?? '') : '',
+      model: llm.model.trim(),
+      apiKey: keyEnv ? (process.env[keyEnv] ?? '') : '',
       apiProtocol: protocol,
       apiBaseUrl: llm.api?.baseUrl,
-      env: llm.env,
+      env: resolveLlmEnvironment(llm.env),
+      missingEnvReferences: Object.entries(llm.env ?? {}).flatMap(([key, value]) => {
+        const reference = credentialEnvName(value);
+        return reference && !process.env[reference]?.trim() ? [`llms.${agent.llm}.env.${key} (${reference})`] : [];
+      }),
       credentialEnvKeys: [...credentialEnvKeys],
     };
   }
@@ -320,6 +319,12 @@ export function resolveConfiguredAgents(
 
 /** Validate only the selected runtime's secrets; dormant entries need no credentials. */
 export function validateResolvedAgent(preset: AgentPreset): string | undefined {
+  if (typeof preset.model !== 'string' || !preset.model.trim()) {
+    return `llms.${preset.llm}.model must be an explicit non-empty string`;
+  }
+  if (preset.missingEnvReferences?.length) {
+    return `External environment references are missing or empty: ${preset.missingEnvReferences.join(', ')}`;
+  }
   if (preset.agentBackend === 'codex') {
     return undefined;
   }
@@ -328,9 +333,6 @@ export function validateResolvedAgent(preset: AgentPreset): string | undefined {
   }
   if (!preset.apiKey.trim()) {
     return `The credential referenced by llms.${preset.llm}.api.apiKey is missing`;
-  }
-  if (!preset.model.trim()) {
-    return `llms.${preset.llm}.model or the matching API model environment variable is required`;
   }
   return undefined;
 }

@@ -1,14 +1,16 @@
 import { openSync, fstatSync, readFileSync, closeSync, constants } from 'node:fs';
+import { registerExternalSecretEnvironmentNames } from '@disclaude/core/secret-environment';
 
 /** Explicit host-owned file, loaded before core config imports. No interpolation or shell evaluation. */
 export function loadSecretEnvFile(file: string | undefined, env: NodeJS.ProcessEnv = process.env): void {
   if (!file) {return;}
   let fd: number;
-  try {fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);}
+  try {fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);}
   catch {throw new Error('Cannot open the external secret environment file');}
   try {
     const stat = fstatSync(fd);
-    if (!stat.isFile() || stat.size > 1024 * 1024 || (process.platform !== 'win32' && (stat.mode & 0o077) !== 0)) {
+    if (!stat.isFile() || stat.size > 1024 * 1024 || (process.platform !== 'win32' &&
+      ((stat.mode & 0o077) !== 0 || (process.getuid && stat.uid !== process.getuid())))) {
       throw new Error('DISCLAUDE_SECRET_ENV_FILE must be a regular owner-only file (0600 or 0400), at most 1 MiB');
     }
     const parsed: Record<string, string> = Object.create(null) as Record<string, string>;
@@ -28,5 +30,7 @@ export function loadSecretEnvFile(file: string | undefined, env: NodeJS.ProcessE
     // Parse completely before mutating. The inherited environment, including an
     // explicitly empty value, wins over the file. Config env is never a fallback.
     for (const [key, value] of Object.entries(parsed)) {if (env[key] === undefined) {env[key] = value;}}
+    // Detached caller-owned dictionaries do not establish host provenance.
+    if (env === process.env) {registerExternalSecretEnvironmentNames(Object.keys(parsed));}
   } finally {closeSync(fd);}
 }

@@ -48,9 +48,10 @@ llms:
     maxConcurrentSessions: 3
 ```
 
-`llms.daily.model` is the bound model. `CODEX_MODEL` overrides the default
-Codex binding; named non-default bindings retain their explicit models. Omit
-`model` to keep the CLI's native default. Model reasoning and session concurrency
+`llms.daily.model` is required and must be non-empty. After it passes validation,
+`CODEX_MODEL` may explicitly override the default Codex binding; named non-default
+bindings retain their own models. The override cannot fill a missing declaration.
+Model reasoning and session concurrency
 follow the bound LLM. Agents sharing its name share its session budget. At the
 limit, new sessions are rejected without stopping existing work. Transport and
 execution permissions follow the selected agent; `maxConcurrentRuns` is the

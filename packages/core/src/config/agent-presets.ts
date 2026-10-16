@@ -48,7 +48,7 @@ export function validateAgentPresets(agents: unknown): AgentPresetValidation {
     if (!VALID_BACKENDS.has(preset.agentBackend as AgentPreset['agentBackend'])) {
       errors.push(`agents.${name}.agentBackend must be one of: claude, pi, codex, dsh`);
     }
-    if (typeof preset.model !== 'string' || (!preset.model.trim() && !['codex', 'dsh'].includes(preset.agentBackend ?? ''))) {
+    if (typeof preset.model !== 'string' || !preset.model.trim()) {
       errors.push(`agents.${name}.model must be a non-empty string`);
     } else if (
       preset.agentBackend === 'codex' && preset.model.trim() &&

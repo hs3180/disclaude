@@ -21,7 +21,6 @@ describe('Project commands with persistent chat and topic queries', () => {
             api: { protocol: 'anthropic', apiKey: '$TEST_LLM_DEFAULT_KEY' },
           },
         },
-        env: { TEST_LLM_DEFAULT_KEY: 'test-key' },
       }));
       const script = `
         import assert from 'node:assert/strict';
@@ -91,7 +90,7 @@ describe('Project commands with persistent chat and topic queries', () => {
         } finally { pool.disposeAll(); }
       `;
       const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
-        cwd: repo, env: { ...process.env,
+        cwd: repo, env: { ...process.env, TEST_LLM_DEFAULT_KEY: 'test-key',
           DISCLAUDE_CONFIG_PATH: configPath, DISCLAUDE_WORKSPACE_DIR: root,
           LOG_LEVEL: 'error', LOG_TO_FILE: 'false', NODE_ENV: 'test' },
         encoding: 'utf8', timeout: 10_000,

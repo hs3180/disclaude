@@ -1,10 +1,12 @@
+import { knownSecretValues } from '../config/channel-credentials.js';
+
 /** Bound diagnostic text without serializing request/config/header objects. */
 export function sanitizeDiagnosticText(value: string, secrets: readonly string[] = []): string {
   let text = value;
-  const protectedValues = [...secrets, ...Object.entries(process.env)
+  const protectedValues = [...knownSecretValues(), ...secrets, ...Object.entries(process.env)
     .filter(([name]) => /(?:KEY|TOKEN|SECRET|PASS(?:WORD)?|CREDENTIAL)/i.test(name))
-    .map(([, secret]) => secret ?? '')];
-  for (const secret of protectedValues.filter(v => v.length >= 4).sort((a, b) => b.length - a.length)) {
+    .map(([, secret]) => secret ?? '').filter(v => v.length >= 4)];
+  for (const secret of protectedValues.filter(Boolean).sort((a, b) => b.length - a.length)) {
     for (const candidate of [secret, encodeURIComponent(secret)]) {text = text.split(candidate).join('[REDACTED]');}
   }
   return text

@@ -16,7 +16,8 @@ agents:
   #   mode: minimal
   #   dshHome: /absolute/path/to/isolated-dsh-home
 
-# Native Codex binds agent + LLM through the CLI's account; no API block is needed.
+# Every bound LLM requires an explicit model, including native Codex.
+# Codex uses the CLI's account; no API block is needed.
 llms:
   # glm-openai:
   #   model: glm-5.3
