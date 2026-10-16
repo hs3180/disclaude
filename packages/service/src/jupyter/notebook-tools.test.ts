@@ -354,11 +354,27 @@ describe('Optional Datalayer Notebook tools', () => {
     expect(f.client.observe).toHaveBeenCalledOnce();
   });
 
+  it('accepts a full uppercase SHA-256 without truncation or a false conflict', async () => {
+    const f = await fixture();
+    await f.call(f.session, 'notebook_execute', { ...f.args, expectedSourceHash: f.args.expectedSourceHash.toUpperCase() });
+    expect(f.client.submitCell).toHaveBeenCalledOnce();
+  });
+
+  it('distinguishes a non-code cell from a hash mismatch without submitting execution', async () => {
+    const f = await fixture();
+    const expectedSourceHash = createHash('sha256').update(f.notebook.getCell(1).source).digest('hex');
+    await expect(f.call(f.session, 'notebook_execute', { ...f.args, cellId: 'human', expectedSourceHash }))
+      .rejects.toMatchObject({ diagnostic: { layer: 'schema', code: 'cell_not_executable', outcome: 'not-submitted' } });
+    expect(f.client.submitCell).not.toHaveBeenCalled();
+  });
+
   it('refuses stale source and leaves human content intact', async () => {
     const f = await fixture();
     f.notebook.getCell(0).source = 'print(99)';
+    const actual = createHash('sha256').update('print(99)').digest('hex');
     expect(await f.call(f.session, 'notebook_execute', f.args)).toMatchObject({
-      state: 'conflict',
+      state: 'conflict', expected: f.args.expectedSourceHash, actual, sourceHash: actual,
+      diagnostic: { layer: 'cas', code: 'source_hash_conflict', outcome: 'not-submitted' }, hint: expect.stringContaining('Re-describe'),
     });
     expect(f.client.submitCell).not.toHaveBeenCalled();
     expect(f.notebook.getCell(1).source).toBe('Preserve my conclusion.');

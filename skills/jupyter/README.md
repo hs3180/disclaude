@@ -10,8 +10,16 @@ Configure `JUPYTERLAB_HOST` and either `JUPYTERLAB_PASS` or
 `JUPYTERLAB_TOKEN` in the command environment or a private `.env`. Environment
 values take precedence over `.env`. An operator can use `--interactive` in a
 TTY; hidden input is never echoed. Agent calls should use `--no-interactive`.
-`--env-file` selects a private file outside the Project. URL, password and token
-are never persisted in Notebook references or returned by the CLI.
+`--env-file` selects one explicit private file. Otherwise discovery checks cwd,
+`--project-dir`, the nearest existing disclaude workspace binding marker
+(`.disclaude/project-bindings.json`), then `$DISCLAUDE_WORKSPACE_DIR`. Files
+without Jupyter keys are skipped; the first relevant file wins and files are
+not merged. Environment values still override that file, including explicit
+empty values. An unreadable selected file fails rather than changing identity.
+The CLI reports the selected file path and source labels, never credential
+values. Password/token values are never persisted in Notebook references;
+references retain the connection label, opaque endpoint namespace and Notebook
+path/document identity.
 
 ```sh
 disclaude jupyter check --no-interactive
@@ -56,7 +64,31 @@ disclaude channel send_file --chat <request-chat-id> --parent <request-thread-id
 
 Run `--help` for flags and `tools` for input schemas. Each command emits one
 JSON result on stdout: `{ "ok": true, "command": "...", "data": ... }` or
-`{ "ok": false, "error": "..." }` with a nonzero exit status. JSON uses
+`{ "ok": false, "error": { "layer": "...", "code": "...", "message": "...", "hint": "..." } }`
+with a nonzero exit status. HTTP failures also include `status` and a bounded,
+scrubbed `serverBody`; DNS/TCP errors do not echo raw fetch exceptions. HTML,
+private response fields, credential/cookie values and raw tracebacks are omitted.
+`--verbose` writes safe credential-discovery and HTTP phase records to stderr.
+`check` includes layer/phase states; interface checks remain separate from
+Notebook execution/product acceptance.
+
+Exit codes: schema `2`, auth `3`, DNS `4`, TCP `5`, HTTP `6`, hash/CAS `7`,
+local filesystem `8`, unclassified `1`. A failure can leave a submitted operation
+unknown; preserve and query its original run ID rather than replaying it.
+
+`list` is an offline Project-local reference/journal listing, not server
+inventory. Its explicit scope and `remoteInventory: not_queried` prevent an
+empty local list from implying an empty remote server. `auth.state` is
+`configured` or `unresolved`; `authentication: not_checked` remains explicit.
+Available credentials are not proof of remote authentication. Local references
+remain readable without credentials.
+
+Use the full 64-hex `sourceHash` for execute/edit/move/delete. Malformed hashes
+fail before credentials, RTC or execution requests; case is normalized. An
+observed mismatch returns `state: conflict`, `expected`, `actual`, legacy
+`sourceHash`, and a re-read hint; the CLI reports layer `cas` and exits `7`.
+These checks remain client-side and are not atomic server CAS. Selecting a
+non-code execution cell is a separate schema failure. JSON uses
 bounded previews; reports and images are files, not embedded binary stdout.
 
 | Commands | Effect |
