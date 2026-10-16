@@ -768,17 +768,17 @@ describe('BaseAgent', () => {
     });
   });
 
-  describe('createSdkOptions - Issue #4883: fallback auto-compaction', () => {
-    it('discovers the context limit instead of injecting a fixed fallback', () => {
+  describe('createSdkOptions - explicit native compaction policy', () => {
+    it('leaves unconfigured compatible model compaction to the SDK', () => {
       const glmAgent = new TestAgent({ apiKey: 'key', model: 'glm-5.1', apiProtocol: 'anthropic' });
-      expect(glmAgent.testCreateSdkOptions().autoCompactWindow).toBe('auto');
+      expect(glmAgent.testCreateSdkOptions().autoCompactWindow).toBeUndefined();
     });
 
     it.each(['claude-sonnet-4-20250514', 'sonnet', 'opus[1m]', 'haiku'])(
-      'also discovers native model metadata for %s when not configured',
+      'leaves %s compaction to the SDK when not configured',
       (model) => {
         const nativeAgent = new TestAgent({ apiKey: 'key', model, apiProtocol: 'anthropic' });
-        expect(nativeAgent.testCreateSdkOptions().autoCompactWindow).toBe('auto');
+        expect(nativeAgent.testCreateSdkOptions().autoCompactWindow).toBeUndefined();
       }
     );
 
@@ -808,6 +808,13 @@ describe('BaseAgent', () => {
       const settings = { autoCompactWindow: 48_000, agentBackend: 'dsh' as const };
       const agent = new TestAgent({ apiKey: 'key', model: 'glm-5.3', agentBackend: 'dsh', settings });
       expect(agent.testCreateSdkOptions().autoCompactWindow).toBe(48_000);
+    });
+
+    it('retains the DSH default while Claude discovery requires an explicit opt-in', () => {
+      const dsh = new TestAgent({ apiKey: 'key', model: 'model', agentBackend: 'dsh', settings: {} });
+      expect(dsh.testCreateSdkOptions().autoCompactWindow).toBe('auto');
+      const claude = new TestAgent({ apiKey: 'key', model: 'model', settings: { autoCompactWindow: 'auto' } });
+      expect(claude.testCreateSdkOptions().autoCompactWindow).toBe('auto');
     });
 
     it('honors explicit configuration for native Claude models too', () => {

@@ -485,8 +485,8 @@ export class Config {
     return defaultAgent?.enableAgentTeams ?? false;
   }
 
-  /** Explicit override; absence means discover the current model's API limit. */
-  static getAutoCompactWindow(): number | undefined {
+  /** Explicit policy; absence leaves Claude's SDK-owned policy unchanged. */
+  static getAutoCompactWindow(): number | 'auto' | undefined {
     return defaultAgent?.autoCompactWindow;
   }
 

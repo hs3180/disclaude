@@ -92,7 +92,7 @@ describe('Claude native model aliases', () => {
     vi.stubEnv('ANTHROPIC_TIMEOUT', undefined);
     const options = await selectedOptions('sonnet', undefined, {});
     expect(options.teammateMode).toBeUndefined();
-    expect(options.autoCompactWindow).toBe('auto');
+    expect(options.autoCompactWindow).toBeUndefined();
     expect(options.env?.ANTHROPIC_TIMEOUT).toBe('300000');
   });
   it('passes the selected LLM native aliases through and overrides inherited aliases', async () => {
