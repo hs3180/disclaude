@@ -218,6 +218,7 @@ export {
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
   CHANNEL_CLI_HELP,
+  getChannelCliCommandHelp,
   buildChannelCliHelpGuidance,
   getSupportedChannelSendCommands,
   type MessageData,

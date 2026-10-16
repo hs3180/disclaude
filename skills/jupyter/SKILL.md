@@ -10,7 +10,8 @@ Use `disclaude jupyter` from the active Project directory, or pass
 it does not start Jupyter or require host Python. Read `disclaude jupyter tools`
 for the current JSON input schemas and [README.md](./README.md) for setup.
 
-1. Run `list` to discover this Project's references and recent run IDs. Use
+1. Run `list` for Project-local references and recent run IDs, not remote inventory.
+   Check its credential state; configured credentials are not an authentication probe. Use
    `link --path research/analysis.ipynb` for an existing Notebook, or `create`
    for a new, explicitly selected remote path. Keep findings, code and conclusions
    in that remote Notebook. Project bindings remain managed by `/project`.
@@ -18,7 +19,9 @@ for the current JSON input schemas and [README.md](./README.md) for setup.
    Error previews expose `ename`, `evalue` and bounded `traceback[]`; inspect
    the recent traceback lines and any truncation flag before diagnosing code. Edit,
    move or delete only the intended cell, using its latest `sourceHash`.
-   Preserve other cells and human notes. These source checks are client-side.
+   Copy the full 64-hex hash; a conflict reports expected/actual values and asks
+   for a fresh read. Preserve human content. These checks remain client-side,
+   not atomic server CAS.
 3. Pass command arguments through `--input-file FILE` or `--input-file -`.
    Use a unique `runId` with `execute`; it submits once and returns promptly.
    Continue with `status` for the original run. Reuse the same ID after a lost
@@ -56,6 +59,10 @@ for the current JSON input schemas and [README.md](./README.md) for setup.
    existing channel skill to send those files with the request's chat/thread
    identifiers. Check its delivery result before claiming success; inspect an
    uncertain delivery before retrying. Cite the report revision in the summary.
+
+Failures carry a safe layer/code and, for HTTP, a scrubbed server excerpt. Use
+`--verbose` for phase diagnostics; never print raw upstream exceptions. Read
+the error hint and original run status before deciding whether to continue.
 
 Use `--no-interactive` in agent calls. The operator configures authentication
 through environment variables or a private `.env`; do not read or print secrets,

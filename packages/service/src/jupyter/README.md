@@ -75,3 +75,29 @@ kernels, or replays uncertain executions. A reservation without a trustworthy
 request handle reports `client-error / request-handle-unavailable`; it cannot
 claim a live query or safely infer non-execution. Confirmed terminal results stay
 available from the journal even when the remote result has expired.
+
+
+## CLI diagnostics and credential discovery
+
+Notebook CLI failures expose a structured `error` with a safe layer/code,
+message/hint and optional HTTP status/body excerpt. Core transport classifies
+network errors by native codes, keeps raw fetch errors private, and scrubs
+host-resolved credentials and current cookies before exposing selected server
+error fields. HTML and arbitrary JSON/traceback fields are omitted. Mutations
+remain single-submit; an HTTP error does not prove an execution never started.
+`--verbose` reports credential/HTTP phases without headers or secret values.
+
+The host auth helper discovers cwd, explicit Project, an existing disclaude
+workspace binding marker and the environment workspace in order. It selects
+one relevant env file; it does not merge profiles or initialize agent config.
+Explicit files and unreadable selected files never fall back silently. Only
+source labels/path metadata cross the CLI boundary. `list` remains local and
+labels remote inventory/authentication as not queried/checked, including an
+explicit unresolved-credential state.
+
+Full SHA-256 validation runs before `useClient`; malformed hashes have a CAS
+input diagnostic. Observed source conflicts preserve `state/sourceHash` and
+add expected/actual values and a re-read hint. This does not strengthen the
+existing client-side check into an atomic server CAS. The owned HTTP fixture
+`tests/integration/jupyter-diagnostics.mjs` performs no configured-server or
+kernel execution; it is protocol evidence, not a new product acceptance.

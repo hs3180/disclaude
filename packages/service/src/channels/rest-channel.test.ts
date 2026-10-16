@@ -249,6 +249,15 @@ async function simulateRequest(options: {
 describe('RestChannel', () => {
   let channel: RestChannel;
   const testPort = 3099;
+  it('requires the configured bearer credential for channel data while leaving health readable', async () => {
+    channel = new RestChannel({ port: testPort, authToken: 'synthetic-rest-secret' });
+    await channel.start();
+    expect((await simulateRequest({ method: 'GET', path: '/api/health' })).status).toBe(200);
+    expect((await simulateRequest({ method: 'GET', path: '/api/files/private' })).status).toBe(401);
+    expect((await simulateRequest({ method: 'GET', path: '/api/files/private', headers: { authorization: 'Bearer wrong-secret' } })).status).toBe(401);
+    const result = await simulateRequest({ method: 'GET', path: '/unknown', headers: { authorization: 'Bearer synthetic-rest-secret' } });
+    expect(result.status).toBe(404);
+  });
 
   beforeEach(() => {
     vi.clearAllMocks();

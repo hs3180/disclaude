@@ -86,6 +86,7 @@ export interface IteratorYieldResult {
      * subtype=success result,ChatAgent 据此改报 ❌ Failed + recordFailure(Issue #4322)。
      */
     upstreamApiError?: boolean;
+    automaticReplayBlocked?: string;
     /** 触发 upstreamApiError 的 stderr 尾部(含上游 request_id),Issue #4322。 */
     upstreamApiErrorStderr?: string;
   };
@@ -369,6 +370,7 @@ export abstract class BaseAgent implements Disposable {
       terminatedReason: message.metadata?.terminatedReason,
       terminationDetail: message.metadata?.terminationDetail,
       upstreamApiError: message.metadata?.upstreamApiError,
+      automaticReplayBlocked: message.metadata?.automaticReplayBlocked,
       upstreamApiErrorStderr: message.metadata?.upstreamApiErrorStderr,
     };
   }

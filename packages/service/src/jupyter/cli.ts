@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { DatalayerJupyterClient } from '@disclaude/core/jupyter';
+import { JupyterDiagnosticError, type DatalayerJupyterClient } from '@disclaude/core/jupyter';
 import { NotebookTools, createArtifactDirectory, notebookIdentifier } from './notebook-tools.js';
 import { JupyterProjectConfigStore } from './project-config-store.js';
 
@@ -41,13 +41,19 @@ Options:
   --path PATH           Relative remote Contents .ipynb path for link/create/unlink
   --connection-id ID    Local connection label (default: configured)
   --jupyter URL         Endpoint or 'configured' (default: configured)
-  --env-file FILE       Private .env (default: current-directory .env)
+  --env-file FILE       Private .env (otherwise cwd, Project, workspace marker, environment workspace)
   --password-env NAME   Password environment key (default: JUPYTERLAB_PASS)
   --token-env NAME      Token environment key (default: JUPYTERLAB_TOKEN)
   --interactive        Prompt for credentials with hidden input
   --no-interactive     Never prompt (for agent/automation calls)
+  --verbose            Emit safe credential/HTTP phase records on stderr
 
 Credentials: environment > .env > interactive input. Connection is lazy.
+The selected env-file path is reported; credential values and cookies stay private.
+list shows local Project references, not remote inventory; auth is configured/unresolved,
+and remote authentication remains not_checked. No list/check result proves execution acceptance.
+Failures expose error.layer/code/status/serverBody/hint; exit codes: schema=2,
+auth=3, dns=4, tcp=5, http=6, cas=7, local=8, unknown=1.
 Each command closes its RTC sockets. Kernel memory stays on remote Jupyter.
 execute submits once and returns runId; use status/stop for the original run.
 status labels source as live or local-journal; connection failures retain last-known facts.
@@ -70,6 +76,7 @@ export interface NotebookCLIOptions {
   passwordEnv?: string;
   tokenEnv?: string;
   interactive?: boolean;
+  verbose?: boolean;
 }
 export interface NotebookCLIConnection {
   client: DatalayerJupyterClient;
@@ -186,6 +193,10 @@ async function interruptKernel(
 }
 
 export function parseNotebookOptions(args: string[]): NotebookCLIOptions {
+  const invalid = (message: string): never => {
+    throw new JupyterDiagnosticError({ layer: 'schema', code: 'invalid_options', phase: 'options', message,
+      hint: 'Read disclaude jupyter --help and use the command input schema from jupyter tools.', outcome: 'not-submitted' });
+  };
   const options: NotebookCLIOptions = {
     command: args[0],
     projectDir: process.cwd(),
@@ -193,7 +204,7 @@ export function parseNotebookOptions(args: string[]): NotebookCLIOptions {
     jupyter: 'configured',
   };
   if (![...commands, ...management].includes(options.command)) {
-    throw new Error('Unknown Jupyter command');
+    invalid('Unknown Jupyter command');
   }
   const names = {
     '--project-dir': 'projectDir',
@@ -208,9 +219,13 @@ export function parseNotebookOptions(args: string[]): NotebookCLIOptions {
   const seen = new Set<string>();
   for (let i = 1; i < args.length; i++) {
     const flag = args[i];
+    if (flag === '--verbose') {
+      if (seen.has('verbose')) { invalid('Repeated verbose option'); }
+      seen.add('verbose'); options.verbose = true; continue;
+    }
     if (['--interactive', '--no-interactive'].includes(flag)) {
       if (seen.has('interactive')) {
-        throw new Error('Repeated interactive option');
+        invalid('Repeated interactive option');
       }
       seen.add('interactive');
       options.interactive = flag === '--interactive';
@@ -218,24 +233,37 @@ export function parseNotebookOptions(args: string[]): NotebookCLIOptions {
     }
     const name = names[flag as keyof typeof names];
     if (!name || seen.has(name) || !args[i + 1] || args[i + 1].startsWith('--')) {
-      throw new Error('Unknown, repeated or empty Jupyter option');
+      invalid('Unknown, repeated or empty Jupyter option');
     }
     seen.add(name);
     options[name] = args[++i];
   }
   if (options.passwordEnv && options.tokenEnv) {
-    throw new Error('Choose one authentication mode');
+    invalid('Choose one authentication mode');
   }
   if (!/^[A-Za-z0-9_-]{1,200}$/.test(options.connectionId)) {
-    throw new Error('Invalid connection ID');
+    invalid('Invalid connection ID');
   }
   if (['link', 'create', 'unlink'].includes(options.command) !== !!options.contentPath) {
-    throw new Error('--path is required only for link/create/unlink');
+    invalid('--path is required only for link/create/unlink');
   }
   if (!commands.includes(options.command) && options.inputFile) {
-    throw new Error('--input-file is only valid for Notebook operations');
+    invalid('--input-file is only valid for Notebook operations');
   }
   return options;
+}
+
+function notebookInput(file: string | undefined, read: (file: string) => string): unknown {
+  const raw = file ? read(file) : '{}';
+  if (Buffer.byteLength(raw) > 300000) {
+    throw new JupyterDiagnosticError({ layer: 'schema', code: 'input_limit_exceeded', phase: 'input',
+      message: 'Notebook input exceeds its limit', hint: 'Keep the command JSON input below 300000 bytes.', outcome: 'not-submitted' });
+  }
+  try { return JSON.parse(raw.replace(/^\uFEFF/, '')) as unknown; }
+  catch {
+    throw new JupyterDiagnosticError({ layer: 'schema', code: 'invalid_json_input', phase: 'input',
+      message: 'Notebook input-file is not valid JSON', hint: 'Validate one JSON object against jupyter tools; do not include shell quoting or trailing text.', outcome: 'not-submitted' });
+  }
 }
 
 /** One local command lock prevents CLI processes from losing journal updates. */
@@ -274,7 +302,9 @@ export async function runNotebookCommand(
     useClient: async (id, namespace, operation) => {
       const resolved = await connection();
       if (resolved.connectionId !== id || resolved.namespace !== namespace) {
-        throw new Error('Project reference belongs to another configured endpoint');
+        throw new JupyterDiagnosticError({ layer: 'auth', code: 'endpoint_reference_mismatch', phase: 'reference',
+          message: 'Project reference belongs to another configured endpoint',
+          hint: 'Verify the selected env-file/endpoint and this Project reference before explicitly relinking it.', outcome: 'not-submitted' });
       }
       signal.throwIfAborted();
       return await operation(resolved.client);
@@ -293,11 +323,7 @@ export async function runNotebookCommand(
       ];
     }
     if (options.command === 'list') {
-      const raw = options.inputFile ? readInput(options.inputFile) : '{}';
-      if (Buffer.byteLength(raw) > 300000) {
-        throw new Error('Notebook input exceeds its limit');
-      }
-      return await tools.tools[0].execute(JSON.parse(raw) as Record<string, unknown>, { signal });
+      return await tools.tools[0].execute(notebookInput(options.inputFile, readInput) as Record<string, unknown>, { signal });
     }
     if (options.command === 'check') {
       return await (await connection()).client.inspectConnection();
@@ -322,7 +348,8 @@ export async function runNotebookCommand(
           ref.contentPath.split('/').some((s) => ['.', '..'].includes(s)) ||
           ref.contentPath.length > 1024
         ) {
-          throw new Error('Invalid relative Notebook path');
+          throw new JupyterDiagnosticError({ layer: 'schema', code: 'invalid_notebook_path', phase: 'input',
+            message: 'Invalid relative Notebook path', hint: 'Use a relative .ipynb Contents path without traversal or control characters.', outcome: 'not-submitted' });
         }
         const store = new JupyterProjectConfigStore(root);
         const loaded = store.listNotebookReferences();
@@ -348,9 +375,11 @@ export async function runNotebookCommand(
           const route = `api/contents/${ref.contentPath.split('/').map(encodeURIComponent).join('/')}`;
           const response = await client.response(`${route}?content=0`);
           const missing = response.status === 404;
+          if (!missing && !response.ok) { throw await client.responseError(response, 'create-preflight'); }
           await response.body?.cancel();
           if (!missing) {
-            throw new Error('Remote Notebook already exists or cannot be verified');
+            throw new JupyterDiagnosticError({ layer: 'schema', code: 'notebook_already_exists', phase: 'create-preflight', status: response.status,
+              message: 'Remote Notebook already exists; refusing overwrite', hint: 'Choose another path or explicitly link the existing Notebook.', outcome: 'not-submitted' });
           }
           signal.throwIfAborted();
           await client.json(route, 'PUT', {
@@ -375,19 +404,16 @@ export async function runNotebookCommand(
           doc.close();
         }
       }
-      const raw = options.inputFile ? readInput(options.inputFile) : '{}';
-      if (Buffer.byteLength(raw) > 300000) {
-        throw new Error('Notebook input exceeds its limit');
-      }
+      const input = notebookInput(options.inputFile, readInput);
       if (options.command === 'interrupt') {
-        return interruptKernel(root, JSON.parse(raw) as unknown, connection, signal);
+        return interruptKernel(root, input, connection, signal);
       }
       const name = `notebook_${options.command.replaceAll('-', '_')}`;
       const tool = tools.tools.find((t) => t.name === name);
       if (!tool) {
         throw new Error('Unknown Notebook operation');
       }
-      const result = await tool.execute(JSON.parse(raw) as Record<string, unknown>, { signal });
+      const result = await tool.execute(input as Record<string, unknown>, { signal });
       return materializeImages(root, result);
     });
   } finally {

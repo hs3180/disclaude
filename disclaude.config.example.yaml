@@ -43,14 +43,16 @@ llms:
 channels:
   feishu:
     enabled: true
-    appId: your_feishu_app_id
-    appSecretEnv: FEISHU_APP_SECRET
+    appId: $FEISHU_APP_ID
+    appSecret: $FEISHU_APP_SECRET
     streamingCard: false
   rest:
     enabled: false
     host: 127.0.0.1
     port: 3000
     fileStorageDir: ./data/rest-files
+    # Optional bearer protection for all REST channel routes except health:
+    # authToken: $REST_CHANNEL_AUTH_TOKEN
 
 workspace:
   dir: ./workspace

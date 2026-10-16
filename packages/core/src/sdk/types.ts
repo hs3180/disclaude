@@ -165,6 +165,8 @@ export interface AgentMessageMetadata {
    * provider.ts 的 stderrIndicatesUpstreamApiError()。
    */
   upstreamApiError?: boolean;
+  /** The provider forbids automatic resubmission of this logical query. */
+  automaticReplayBlocked?: string;
   /** Machine-owned evidence is preferred to the legacy stderr signature. */
   upstreamApiErrorSource?: 'stream' | 'transcript' | 'stderr';
   upstreamApiErrorStatus?: number;

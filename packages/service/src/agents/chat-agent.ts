@@ -2493,6 +2493,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // 下面 mid-stream 的续跑/❌ 双触发。这里排开,交给下方专门分支。
           const willRetryEmptyTurn =
             isEmptyTurn &&
+            !parsed.automaticReplayBlocked &&
             !this.turnsWithLiveInput.has(currentTurnMessageId ?? '') &&
             !upstreamApiError &&
             !sawMidstreamInterrupt &&
@@ -2532,7 +2533,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             const emptyTurnThreadRoot = resolveReplyThreadRoot();
             await this.deliverUserVisible(
               chatId,
-              '⚠️ 本轮未产生任何可见输出，会话可能已失效。请重新发送消息触发重试；若持续无响应，请尝试重置会话。',
+              parsed.automaticReplayBlocked
+                ? '⚠️ 本轮未产生任何可见输出，执行状态尚未确认。系统不会自动重放原输入；请先核对已有操作和结果，再决定是否继续。'
+                : '⚠️ 本轮未产生任何可见输出，会话可能已失效。请重新发送消息触发重试；若持续无响应，请尝试重置会话。',
               emptyTurnThreadRoot
             );
           }
@@ -3202,13 +3205,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // Circuit breaker opened - notify user and stop
       this.logger.error(
         { chatId, diagnosticId, ...interruptedLifecycleContext, reason: decision.reason, restartCount: decision.restartCount },
-        'Restart blocked by circuit breaker'
+        decision.reason === 'replay_unsafe' ? 'Automatic replay blocked by provider policy' : 'Restart blocked by circuit breaker'
       );
 
       // Notify user that circuit breaker opened
       {
         const threadRoot = resolveReplyThreadRoot();
-        const blockMessage = decision.reason === 'non_transient'
+        const blockMessage = decision.reason === 'replay_unsafe'
+          ? `🚫 执行结果尚未确认，已停止自动重放。请先核对已有操作和结果，再决定是否继续。诊断 ID: ${diagnosticId}`
+          : decision.reason === 'non_transient'
           ? `🚫 会话已暂停。请检查配置与权限，修复后发送 /reset。诊断 ID: ${diagnosticId}`
           : `🚫 自动恢复次数已用完，会话已暂停。请核对上次操作后发送 /reset。诊断 ID: ${diagnosticId}`;
         // Issue #4626: isolated delivery — a failing channel here must not

@@ -1,4 +1,7 @@
 import { readFile } from 'node:fs/promises';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { HELP, run } from './cli.js';
 
@@ -186,9 +189,15 @@ describe('@disclaude/channel-cli', () => {
       expect(JSON.parse(writes[0]).error).toContain('--action-prompts');
     });
 
-    it('keeps --help working alongside a command', async () => {
-      const { writes } = await capture(['send_text', '--chat', CHAT, '--text', 'hi', '--help']);
-      expect(JSON.parse(writes[0]).error ?? '').not.toContain('Unknown option');
+    it.each(['send_text', 'send_file', 'send_card', 'push', 'push_to_agent', 'send_interactive', 'request_private_input'])('short-circuits %s help before chat, unknown-flag and runtime validation', async command => {
+      const fetch = vi.spyOn(globalThis, 'fetch');
+      try {
+        const { code, writes } = await capture([command, '--unknown', '--help']);
+        expect(code).toBe(0);
+        expect(writes.join('')).toContain(`Usage: disclaude channel ${command === 'push_to_agent' ? 'push' : command}`);
+        expect(writes.join('')).toContain('--dry-run');
+        expect(fetch).not.toHaveBeenCalled();
+      } finally { fetch.mockRestore(); }
     });
 
     it('whitelists every flag the README documents', async () => {
@@ -210,5 +219,97 @@ describe('@disclaude/channel-cli', () => {
       }
       expect(rejected).toEqual([]);
     });
+  });
+});
+
+describe('local channel input preview', () => {
+  const chat = 'oc_0123456789012345678901234567890123';
+  const base = ['send_interactive', '--dry-run', '--chat', chat, '--question', '继续？'];
+  it('previews decoded single-escape JSON without REST configuration, network or credential disclosure', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected fixture network'));
+    try {
+      const { code, writes } = await capture([...base, '--api-token', 'owned-preview-only-token',
+        '--options', String.raw`[{"text":"\u4fee\u6b63","value":"fix"}]`, '--action-prompts', '{"fix":"按选择修正"}']);
+      expect(code).toBe(0);
+      const result = JSON.parse(writes[0]);
+      expect(result).toMatchObject({ dryRun: true, payload: { options: [{ text: '修正', value: 'fix' }] },
+        decodedPreview: { options: [{ text: '修正' }], actionPrompts: { fix: { text: '按选择修正' } } } });
+      expect(writes.join('')).not.toContain('owned-preview-only-token');
+      expect(fetch).not.toHaveBeenCalled();
+    } finally { fetch.mockRestore(); }
+  });
+  it('reads raw UTF-8 options and prompts from files, preserving topic and idempotency routing', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'channel-json-input-'));
+    const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected fixture network'));
+    try {
+      const options = join(root, 'options.json'); const prompts = join(root, 'prompts.json');
+      writeFileSync(options, `\uFEFF${JSON.stringify([{ text: '修正两处（报告+表格）', value: 'fix', type: 'primary' }])}`);
+      writeFileSync(prompts, JSON.stringify({ fix: '用户选择修正两处，请继续原任务' }));
+      const { code, writes } = await capture([...base, '--options-file', options, '--action-prompts-file', prompts,
+        '--parent', 'om_source', '--thread-root', 'om_topic', '--idempotency-key', 'followup:om_source']);
+      expect(code).toBe(0);
+      expect(JSON.parse(writes[0]).payload).toMatchObject({ parentMessageId: 'om_source', threadRootId: 'om_topic',
+        idempotencyKey: 'followup:om_source', options: [{ text: '修正两处（报告+表格）' }],
+        actionPrompts: { fix: '用户选择修正两处，请继续原任务' } });
+      expect(fetch).not.toHaveBeenCalled();
+    } finally { fetch.mockRestore(); rmSync(root, { recursive: true }); }
+  });
+  it.each(['options', 'action-prompts'])('rejects dense double-escaped Unicode in %s before delivery', async field => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected fixture network'));
+    try {
+      const escaped = String.raw`\u4fee\u6b63\u4e24\u5904`;
+      const flags = field === 'options'
+        ? ['--options', JSON.stringify([{ text: escaped, value: 'fix' }])]
+        : ['--options', '[{"text":"修正","value":"fix"}]', '--action-prompts', JSON.stringify({ fix: escaped })];
+      const { code, writes } = await capture([...base, ...flags]);
+      expect(code).toBe(1);
+      expect(JSON.parse(writes[0]).error).toContain('likely double-escaped JSON');
+      expect(fetch).not.toHaveBeenCalled();
+    } finally { fetch.mockRestore(); }
+  });
+  it.each([
+    ['--options', '[', 'Invalid --options JSON'],
+    ['--options', '[{"text":"A","value":"a"}]', '--idempotency-key', 'owned', 'requires --action-prompts'],
+    ['--options', '[{"text":"A","value":"a"}]', '--action-prompts', '{}', 'map every option value'],
+    ['--options', '[{"text":"A","value":"a"}]', '--options-file', '/owned/missing', 'Use only one'],
+    ['--options-file', '-', '--action-prompts-file', '-', 'stdin can supply only one'],
+  ])('validates dry-run without probing or sending (%s)', async (...row) => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected fixture network'));
+    try {
+      const expected = row.at(-1)!;
+      const { code, writes } = await capture([...base, ...row.slice(0, -1)]);
+      expect(code).toBe(1);
+      expect(JSON.parse(writes[0]).error).toContain(expected);
+      expect(fetch).not.toHaveBeenCalled();
+      if (expected.startsWith('Invalid')) { expect(JSON.parse(writes[0]).error).toContain('UTF-8 bytes'); }
+    } finally { fetch.mockRestore(); }
+  });
+  it('preserves a literal Unicode example when it is a small part of readable text', async () => {
+    const { code, writes } = await capture([...base, '--options', JSON.stringify([
+      { text: String.raw`Show the literal escape \u4f60 in the explanation`, value: 'explain' },
+    ])]);
+    expect(code).toBe(0);
+    expect(JSON.parse(writes[0]).decodedPreview.options[0].text).toContain(String.raw`\u4f60`);
+  });
+  it('never consumes --dry-run as a missing value for the preceding option', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected fixture network'));
+    try {
+      const { code, writes } = await capture(['send_text', '--text', '--dry-run', '--chat', chat]);
+      expect(code).toBe(1);
+      expect(JSON.parse(writes[0]).error).toBe('Missing value for --text');
+      expect(fetch).not.toHaveBeenCalled();
+    } finally { fetch.mockRestore(); }
+  });
+  it.each([
+    ['send_text', '--text', 'owned text'], ['push', '--message', 'owned instruction'],
+    ['request_private_input', '--actor', 'ou_owned', '--source', 'om_owned', '--workflow', '{"command":"owned","title":"Owned","description":"Owned metadata"}'],
+  ])('does not execute a dry-run %s', async (...flags) => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected fixture network'));
+    try {
+      const { code, writes } = await capture([...flags, '--chat', chat, '--dry-run']);
+      expect(code).toBe(0);
+      expect(JSON.parse(writes[0])).toMatchObject({ dryRun: true });
+      expect(fetch).not.toHaveBeenCalled();
+    } finally { fetch.mockRestore(); }
   });
 });

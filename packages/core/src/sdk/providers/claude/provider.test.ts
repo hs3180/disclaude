@@ -5,6 +5,9 @@
  * Issue #1617: Phase 2 - ClaudeSDKProvider class test coverage.
  */
 
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import type { SpawnedProcess, SpawnOptions } from '@anthropic-ai/claude-agent-sdk';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -12,6 +15,7 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { StderrCapture, getErrorStderr, isStartupFailure, attachStderrToError, ClaudeSDKProvider, stderrIndicatesUpstreamApiError } from './provider.js';
 import { ErrorCategory } from '../../../utils/error-handler.js';
+import { automaticReplayBlock } from '../../../utils/replay-safety.js';
 import type { AgentMessage, UserInput } from '../../types.js';
 
 const { getAgentConfig } = vi.hoisted(() => ({ getAgentConfig: vi.fn() }));
@@ -419,6 +423,61 @@ describe('ClaudeSDKProvider', () => {
   // --------------------------------------------------------------------------
 
   describe('queryStream', () => {
+    it('still fences and closes an attempt when interrupt throws synchronously', async () => {
+      const close = vi.fn();
+      mockQuery.mockReturnValue(Object.assign((async function* () {})(), {
+        close, interrupt: () => { throw new Error('control transport unavailable'); },
+      }));
+      const stream = provider.queryStream((async function* () {})(), { settingSources: [] });
+      expect(() => stream.handle.cancel()).not.toThrow();
+      await expect(stream.handle.interrupt?.()).resolves.toBeUndefined();
+      expect(close).toHaveBeenCalledOnce();
+    });
+    it('never replaces a failed query and rejects its deferred native spawn', async () => {
+      type NativeOptions = { spawnClaudeCodeProcess: (options: SpawnOptions) => SpawnedProcess };
+      let nativeOptions!: NativeOptions;
+      mockQuery.mockImplementation(({ options }: { options: NativeOptions }) => {
+        nativeOptions = options;
+        return Object.assign((async function* () { throw new Error('ECONNRESET'); })(), { close: vi.fn() });
+      });
+      const stream = provider.queryStream((async function* () {})(), { settingSources: [] });
+      await expect(stream.iterator.next()).rejects.toThrow('ECONNRESET');
+      expect(mockQuery).toHaveBeenCalledOnce();
+      expect(() => nativeOptions.spawnClaudeCodeProcess({ command: process.execPath, args: ['-e', 'process.exit(0)'],
+        env: {}, signal: new AbortController().signal })).toThrow('no longer accepts');
+    });
+
+    it('does not create a second input consumer while the abandoned pull is unresolved', async () => {
+      let release!: () => void;
+      const waiting = new Promise<void>(resolve => { release = resolve; });
+      let pulls = 0;
+      let abandoned!: Promise<IteratorResult<unknown>>;
+      mockQuery.mockImplementation(({ prompt }: { prompt: AsyncGenerator<unknown> }) => Object.assign((async function* () {
+        abandoned = prompt.next();
+        await new Promise(resolve => setTimeout(resolve, 0));
+        throw new Error('ECONNRESET');
+      })(), { close: vi.fn() }));
+      const stream = provider.queryStream((async function* () {
+        pulls++; await waiting; yield { role: 'user', content: 'late input' } as UserInput;
+      })(), { settingSources: [] });
+      try {
+        await expect(stream.iterator.next()).rejects.toThrow('ECONNRESET');
+        expect(mockQuery).toHaveBeenCalledTimes(1);
+        expect(pulls).toBe(1);
+      } finally { release(); }
+      expect(await abandoned).toMatchObject({ done: true });
+    });
+
+    it('blocks a replay after partial output even without a complete SDK message', async () => {
+      mockQuery.mockReturnValue(Object.assign((async function* () {
+        yield { type: 'stream_event', event: { type: 'message_start' } };
+        throw new Error('ECONNRESET');
+      })(), { close: vi.fn() }));
+      const stream = provider.queryStream((async function* () {})(), { settingSources: [] });
+      await expect(stream.iterator.next()).rejects.toThrow('ECONNRESET');
+      expect(mockQuery).toHaveBeenCalledTimes(1);
+    });
+
     it.each([undefined, 0, 80_000])('does not discover metadata for an unconfigured or numeric policy (%s)', async autoCompactWindow => {
       const fetch = vi.fn(() => { throw new Error('unexpected metadata request'); });
       vi.stubGlobal('fetch', fetch);
@@ -534,7 +593,7 @@ describe('ClaudeSDKProvider', () => {
       expect(existsSync(dirname(file))).toBe(false);
     });
 
-    it('retains private credential settings across an empty pre-output retry', async () => {
+    it('removes private credential settings after an empty query without replay', async () => {
       const files: string[] = [];
       mockQuery.mockImplementation(({ options }: { options: { settings: string } }) => {
         files.push(options.settings);
@@ -547,21 +606,13 @@ describe('ClaudeSDKProvider', () => {
         settingSources: [], env: { ANTHROPIC_API_KEY: 'owned-selected-key' },
       });
       for await (const _ of result.iterator) { /* consume */ }
-      expect(files).toHaveLength(2);
+      expect(files).toHaveLength(1);
       expect(new Set(files).size).toBe(1);
       expect(existsSync(dirname(files[0]))).toBe(false);
     });
 
-    // Issue #4442 (part 2 + part 3): empty stream — the SDK yields zero messages
-    // (200-OK-zero-content / silent turn death). Part 2 elevated the case to a
-    // structured ERROR; part 3 adds recovery — retry within the L1 budget, and
-    // when exhausted synthesize a terminal result (terminatedReason
-    // 'empty-stream') so the turn surfaces ❌ instead of silently completing.
-    // Retries disabled (DISCLAUDE_QUERY_MAX_RETRIES=0) isolates the exhaustion
-    // path: exactly one attempt, then the terminal result.
-    it('Issue #4442 (part 3): retries exhausted on empty stream → structured ERROR + terminal empty-stream result', async () => {
+    it('surfaces an empty query as a failed terminal without resubmitting it', async () => {
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
-      process.env.DISCLAUDE_QUERY_MAX_RETRIES = '0';
       loggerMock.error.mockClear();
 
       // Mock SDK query to return an empty async iterable (yields nothing).
@@ -599,16 +650,13 @@ describe('ClaudeSDKProvider', () => {
       // Part 2's structured ERROR still fires (observability preserved).
       expect(loggerMock.error).toHaveBeenCalledWith(
         expect.objectContaining({ totalMs: expect.any(Number), partialsObserved: false }),
-        expect.stringMatching(/Issue #4442[\s\S]*zero messages/),
+        expect.stringMatching(/zero messages/),
       );
       delete process.env.DISCLAUDE_QUERY_MAX_RETRIES;
     });
 
-    // Issue #4442 (part 3): recovery — an empty stream is retried within the L1
-    // budget with replayed (buffered) input, and a recovered attempt streams
-    // through normally. Same safety argument as the transient-error retry: zero
-    // messages were yielded, so the replay can't duplicate output.
-    it('Issue #4442 (part 3): retries an empty stream with replayed input and recovers', async () => {
+    // Missing output does not prove that accepted input caused no side effect.
+    it('does not replay an empty stream after input delivery became uncertain', async () => {
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
 
       const consumedPerAttempt: unknown[][] = [];
@@ -648,19 +696,15 @@ describe('ClaudeSDKProvider', () => {
       const messages: AgentMessage[] = [];
       for await (const msg of result.iterator) { messages.push(msg); }
 
-      // The empty first attempt was retried (2 query calls) and the recovered
-      // message came through — no terminal result, no silent completion.
-      expect(mockQuery).toHaveBeenCalledTimes(2);
-      expect(messages.some((m) => m.role === 'assistant')).toBe(true);
-      expect(messages.some((m) => m.metadata?.terminatedReason === 'empty-stream')).toBe(false);
-      // Input replay: both attempts consumed the SAME prompt.
+      expect(mockQuery).toHaveBeenCalledTimes(1);
+      expect(messages.at(-1)?.metadata).toMatchObject({ terminatedReason: 'empty-stream',
+        automaticReplayBlocked: 'whole-query-replay-disabled' });
       expect(consumedPerAttempt[0]).toHaveLength(1);
-      expect(consumedPerAttempt[1]).toEqual(consumedPerAttempt[0]);
+      expect(consumedPerAttempt[1]).toBeUndefined();
     });
 
-    // Issue #4192 (L1): provider in-request retry on transient error before the
-    // first SDK message. The query is re-created with replayed (buffered) input.
-    it('Issue #4192 (L1): retries the query on a transient error before the first SDK message', async () => {
+    // An input-consuming transient failure is not a safe pre-work failure.
+    it('blocks transient replay after the SDK consumed input without delivering a message', async () => {
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
 
       const consumedPerAttempt: unknown[][] = [];
@@ -702,21 +746,13 @@ describe('ClaudeSDKProvider', () => {
         env: { ANTHROPIC_API_KEY: 'sk-test-key' },
       });
 
-      const messages: AgentMessage[] = [];
-      for await (const msg of result.iterator) { messages.push(msg); }
-
-      // Query was retried (called twice) and the recovered message came through.
-      expect(mockQuery).toHaveBeenCalledTimes(2);
-      expect(messages.some((m) => m.role === 'assistant')).toBe(true);
-      // Review 🔴 must-fix: input replay — both attempts consumed the SAME prompt
-      // (proves the buffering + replay path works, not just the retry count).
+      await expect(async () => {
+        for await (const message of result.iterator) { void message; }
+      }).rejects.toThrow('ECONNRESET');
+      expect(mockQuery).toHaveBeenCalledTimes(1);
       expect(consumedPerAttempt[0]).toHaveLength(1);
-      expect(consumedPerAttempt[1]).toEqual(consumedPerAttempt[0]);
-      // Review 🟡: the failed attempt's handle was closed before the retry
-      // (prevents subprocess/transport leak when reassigning queryResult on a
-      // transient-error replay). The successful attempt is NOT closed mid-stream.
-      expect(closeSpies[0]).toHaveBeenCalledTimes(1);
-      expect(closeSpies[1]).not.toHaveBeenCalled();
+      expect(consumedPerAttempt[1]).toBeUndefined();
+      expect(closeSpies[0]).toHaveBeenCalledOnce();
     });
 
     it('Issue #4192 (L1): does NOT retry a non-transient error', async () => {
@@ -743,79 +779,16 @@ describe('ClaudeSDKProvider', () => {
       expect(mockQuery).toHaveBeenCalledTimes(1);
     });
 
-    // Issue #4313: the L1 in-request retry count is operator-tunable via
-    // DISCLAUDE_QUERY_MAX_RETRIES (default 2). 0 disables; higher values retry
-    // more before rethrowing. True regression: revert the env read and the
-    // override tests regress to the hardcoded default of 2.
-    it('Issue #4313: DISCLAUDE_QUERY_MAX_RETRIES=0 disables the in-request retry', async () => {
-      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
-      process.env.DISCLAUDE_QUERY_MAX_RETRIES = '0';
-
-      // Always-throw transient error: with retries disabled, it must rethrow on
-      // the first attempt instead of retrying.
-      mockQuery.mockImplementation(() =>
-        Object.assign(
-          (async function* () { throw new Error('ECONNRESET: connection reset'); })(),
-          { interrupt: vi.fn(), close: vi.fn() },
-        ),
-      );
-
-      async function* testInput(): AsyncGenerator<UserInput> { yield { role: 'user', content: 'Hi' }; }
-
-      const result = provider.queryStream(testInput(), {
-        settingSources: ['user', 'project', 'local'], cwd: '/workspace',
-        env: { ANTHROPIC_API_KEY: 'sk-test-key' },
-      });
-
-      await expect(async () => {
-        for await (const _msg of result.iterator) { void _msg; }
-      }).rejects.toThrow('ECONNRESET');
-
-      expect(mockQuery).toHaveBeenCalledTimes(1); // no retry
-      delete process.env.DISCLAUDE_QUERY_MAX_RETRIES;
-    });
-
-    it('Issue #4313: DISCLAUDE_QUERY_MAX_RETRIES=3 retries up to 3 times before succeeding', async () => {
-      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
-      process.env.DISCLAUDE_QUERY_MAX_RETRIES = '3';
-
-      let callCount = 0;
-      mockQuery.mockImplementation((arg: { prompt?: AsyncIterable<unknown> }) => {
-        callCount++;
-        if (callCount <= 3) {
-          // First 3 attempts: transient error before any message.
-          return Object.assign(
-            (async function* () {
-              for await (const _msg of arg.prompt ?? []) { void _msg; }
-              throw new Error('ECONNRESET: connection reset');
-            })(),
-            { interrupt: vi.fn(), close: vi.fn() },
-          );
-        }
-        // 4th attempt succeeds.
-        return Object.assign(
-          (async function* () {
-            for await (const _msg of arg.prompt ?? []) { void _msg; }
-            yield { type: 'assistant', message: { content: [{ type: 'text', text: 'recovered' }] } };
-          })(),
-          { interrupt: vi.fn(), close: vi.fn() },
-        );
-      });
-
-      async function* testInput(): AsyncGenerator<UserInput> { yield { role: 'user', content: 'Hi' }; }
-
-      const result = provider.queryStream(testInput(), {
-        settingSources: ['user', 'project', 'local'], cwd: '/workspace',
-        env: { ANTHROPIC_API_KEY: 'sk-test-key' },
-      });
-
-      const messages: AgentMessage[] = [];
-      for await (const msg of result.iterator) { messages.push(msg); }
-
-      // 3 failed attempts + 1 successful = 4 query calls; recovery message came through.
-      expect(mockQuery).toHaveBeenCalledTimes(4);
-      expect(messages.some((m) => m.role === 'assistant')).toBe(true);
-      delete process.env.DISCLAUDE_QUERY_MAX_RETRIES;
+    it.each([undefined, '0', '3', '99', 'invalid'])('never replays a pre-launch transient failure with the obsolete retry override (%s)', async override => {
+      vi.stubEnv('DISCLAUDE_QUERY_MAX_RETRIES', override);
+      try {
+        const upstream = Object.assign(new Error('ECONNRESET'), { code: 'ECONNRESET' });
+        mockQuery.mockReturnValue(Object.assign((async function* () { throw upstream; })(), { close: vi.fn() }));
+        const stream = provider.queryStream((async function* () {})(), { settingSources: [] });
+        await expect(stream.iterator.next()).rejects.toBe(upstream);
+        expect(automaticReplayBlock(upstream)).toBe('whole-query-replay-disabled');
+        expect(mockQuery).toHaveBeenCalledOnce();
+      } finally { vi.unstubAllEnvs(); }
     });
 
     it('keeps a Claude turn alive across upstream api_retry backoff after content stops', async () => {
@@ -857,10 +830,13 @@ describe('ClaudeSDKProvider', () => {
         const drained = (async () => {
           for await (const message of result.iterator) { messages.push(message); }
         })();
-        await vi.advanceTimersByTimeAsync(181_000);
+        await vi.advanceTimersByTimeAsync(180_000);
+        expect(closeSpy).not.toHaveBeenCalled();
+        expect(interruptSpy).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1000);
         await drained;
         expect(interruptSpy).not.toHaveBeenCalled();
-        expect(closeSpy).not.toHaveBeenCalled();
+        expect(closeSpy).toHaveBeenCalledOnce();
         expect(messages.some((message) => message.role === 'assistant')).toBe(true);
         expect(onActivity).toHaveBeenCalledWith('claude:content_block_delta');
         expect(onActivity).toHaveBeenCalledWith('claude:api_retry');
@@ -892,7 +868,7 @@ describe('ClaudeSDKProvider', () => {
       }).rejects.toThrow('SDK retries exhausted');
       expect(mockQuery).toHaveBeenCalledTimes(1);
       expect(interruptSpy).not.toHaveBeenCalled();
-      expect(closeSpy).not.toHaveBeenCalled();
+      expect(closeSpy).toHaveBeenCalledOnce();
     });
 
     it('continues processing the SDK stream if a host activity observer throws', async () => {
@@ -1078,38 +1054,21 @@ describe('ClaudeSDKProvider', () => {
       expect(callOptions.model).toBe('claude-sonnet-4-20250514');
     });
 
-    it('should adapt user input correctly through the stream', async () => {
-      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
-
-      let capturedPrompt: unknown;
-      mockQuery.mockImplementation(({ prompt }: { prompt: unknown }) => {
+    it('adapts input while the SDK is active and fences abandoned prompt generators', async () => {
+      const received: unknown[] = [];
+      let capturedPrompt: AsyncGenerator<unknown> | undefined;
+      mockQuery.mockImplementation(({ prompt }: { prompt: AsyncGenerator<unknown> }) => {
         capturedPrompt = prompt;
         return (async function* () {
-          // no messages
+          for await (const message of prompt) { received.push(message); }
+          yield { type: 'assistant', message: { content: [{ type: 'text', text: 'done' }] } };
         })();
       });
-
-      async function* testInput(): AsyncGenerator<UserInput> {
-        yield { role: 'user', content: 'Hello world' };
-      }
-
-      const result = provider.queryStream(testInput(), {
-        settingSources: ['user', 'project', 'local'],
-      });
-
-      // Consume iterator to trigger input processing
-      for await (const _ of result.iterator) {
-        // consume
-      }
-
-      // The prompt should be an async generator (adapted input)
-      expect(capturedPrompt).toBeDefined();
-      // Verify it's an async iterable by consuming it
-      const promptMessages: unknown[] = [];
-      for await (const chunk of capturedPrompt as AsyncIterable<unknown>) {
-        promptMessages.push(chunk);
-      }
-      expect(promptMessages.length).toBe(1);
+      const result = provider.queryStream((async function* () { yield { role: 'user' as const, content: 'Hello world' }; })(), { settingSources: [] });
+      for await (const message of result.iterator) { void message; }
+      expect(received).toHaveLength(1);
+      expect(received[0]).toMatchObject({ type: 'user', message: { role: 'user', content: 'Hello world' } });
+      expect(await capturedPrompt?.next()).toMatchObject({ done: true });
     });
 
     it('should inject stderr callback into SDK options', async () => {
@@ -1425,58 +1384,23 @@ describe('ClaudeSDKProvider', () => {
       expect(resultMsg?.metadata?.upstreamApiErrorStderr).toContain('20260714182952476a7a385dcd435c');
     });
 
-    // Issue #4322 (false-positive guard): a transient error that the L1 retry
-    // RECOVERS from must NOT tag the recovered success result. The failed
-    // attempt printed the overload marker to stderr, but the per-attempt stderr
-    // reset clears it before the retry — so the recovered turn stays clean.
-    it('Issue #4322: does NOT tag a recovered L1 retry (stale stderr reset per attempt)', async () => {
-      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
-
-      let callCount = 0;
-      mockQuery.mockImplementation((arg: { prompt?: AsyncIterable<unknown>; options?: { stderr?: (data: string) => void } }) => {
-        callCount++;
-        if (callCount === 1) {
-          // Failed attempt: prints the overload marker to stderr, then throws a
-          // transient error (→ L1 retry, since messageCount === 0).
-          return Object.assign(
-            (async function* () {
-              arg.options?.stderr?.('API server_overload after retries: [500][操作失败][req]');
-              for await (const _msg of arg.prompt ?? []) { void _msg; }
-              throw new Error('ECONNRESET: connection reset');
-            })(),
-            { interrupt: vi.fn(), close: vi.fn() },
-          );
-        }
-        // Retry: clean success, no new stderr → must NOT be tagged.
-        return Object.assign(
-          (async function* () {
-            for await (const _msg of arg.prompt ?? []) { void _msg; }
-            yield {
-              type: 'result',
-              subtype: 'success',
-              total_cost_usd: 0.01,
-              usage: { input_tokens: 1, output_tokens: 1 },
-            };
-          })(),
-          { interrupt: vi.fn(), close: vi.fn() },
-        );
-      });
-
-      async function* testInput(): AsyncGenerator<UserInput> { yield { role: 'user', content: 'Hi' }; }
-
-      const result = provider.queryStream(testInput(), {
-        settingSources: ['user', 'project', 'local'], cwd: '/workspace',
-        env: { ANTHROPIC_API_KEY: 'sk-test-key' },
-      });
-
+    it('does not leak a failed query stderr into a later explicit query', async () => {
+      mockQuery.mockImplementationOnce(({ options }: { options: { stderr: (data: string) => void } }) =>
+        Object.assign((async function* () {
+          options.stderr('API server_overload after retries: [500][req]');
+          throw new Error('ECONNRESET');
+        })(), { close: vi.fn() }));
+      const failed = provider.queryStream((async function* () {})(), { settingSources: [] });
+      await expect(failed.iterator.next()).rejects.toThrow('ECONNRESET');
+      expect(mockQuery).toHaveBeenCalledOnce();
+      mockQuery.mockReturnValueOnce(Object.assign((async function* () {
+        yield { type: 'result', subtype: 'success', total_cost_usd: 0.01, usage: { input_tokens: 1, output_tokens: 1 } };
+      })(), { close: vi.fn() }));
+      const next = provider.queryStream((async function* () {})(), { settingSources: [] });
       const messages: AgentMessage[] = [];
-      for await (const msg of result.iterator) { messages.push(msg); }
-
-      expect(mockQuery).toHaveBeenCalledTimes(2); // retried + recovered
-      const resultMsg = messages.find((m) => m.type === 'result');
-      expect(resultMsg).toBeDefined();
-      // NOT tagged — the recovered turn genuinely succeeded.
-      expect(resultMsg?.metadata?.upstreamApiError).toBeFalsy();
+      for await (const message of next.iterator) { messages.push(message); }
+      expect(mockQuery).toHaveBeenCalledTimes(2);
+      expect(messages.at(-1)?.metadata?.upstreamApiError).toBeFalsy();
     });
   });
 
@@ -1624,5 +1548,75 @@ describe('ClaudeSDKProvider', () => {
       // Should still be at baseline, not below
       expect(process.listenerCount('exit')).toBe(exitListenersBefore);
     });
+  });
+});
+
+function replayChildAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; }
+  catch (error) { return (error as NodeJS.ErrnoException).code !== 'ESRCH'; }
+}
+
+describe('Claude single-query execution with a real disconnected child', () => {
+  it.skipIf(process.platform === 'win32')('does not replay an accepted input after a hidden side effect and confirms child exit', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'claude-replay-side-effect-'));
+    const marker = join(root, 'effects.jsonl');
+    const program = join(root, 'child.cjs');
+    await writeFile(program, `const fs = require('node:fs');
+fs.appendFileSync(process.argv[2], JSON.stringify({ pid: process.pid, at: Date.now() }) + '\\n');
+process.on('SIGTERM', () => {});
+process.stdout.write('READY\\n');
+setInterval(() => {}, 1000);
+`);
+    const children: ChildProcessWithoutNullStreams[] = [];
+    const exits: Promise<unknown>[] = [];
+    let overlap = false;
+    mockQuery.mockReset();
+    mockQuery.mockImplementation(({ prompt, options }: {
+      prompt: AsyncGenerator<unknown>;
+      options: { env: NodeJS.ProcessEnv; spawnClaudeCodeProcess?: (options: SpawnOptions) => SpawnedProcess };
+    }) => {
+      const attempt = mockQuery.mock.calls.length;
+      return Object.assign((async function* () {
+        await prompt.next();
+        overlap ||= children.some(child => child.pid && replayChildAlive(child.pid));
+        const command: SpawnOptions = { command: process.execPath, args: [program, marker], cwd: root,
+          env: options.env, signal: new AbortController().signal };
+        const child = (options.spawnClaudeCodeProcess
+          ? options.spawnClaudeCodeProcess(command)
+          : spawn(command.command, command.args, { cwd: root, env: command.env, stdio: 'pipe' })) as ChildProcessWithoutNullStreams;
+        children.push(child);
+        exits.push(new Promise(resolve => child.once('exit', (code, signal) => resolve({ code, signal }))));
+        await new Promise<void>((resolve, reject) => {
+          child.stdout.once('data', () => resolve());
+          child.once('error', reject);
+        });
+        if (attempt === 1) { throw Object.assign(new Error('ECONNRESET'), { code: 'ECONNRESET' }); }
+        yield { type: 'assistant', message: { content: [{ type: 'text', text: 'replayed' }] } };
+      })(), { close: () => { throw new Error('Control transport is disconnected'); } });
+    });
+    const provider = new ClaudeSDKProvider();
+    const stream = provider.queryStream((async function* () { yield { role: 'user', content: 'owned side-effect fixture' }; })(), {
+      settingSources: [], cwd: root,
+    });
+    try {
+      let failed: unknown;
+      try { for await (const message of stream.iterator) { void message; } }
+      catch (error) { failed = error; }
+      const effects = (await readFile(marker, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+      const snapshot = { queryAttempts: mockQuery.mock.calls.length, effects, overlap,
+        livePids: children.filter(child => child.pid && replayChildAlive(child.pid)).map(child => child.pid) };
+      console.log(JSON.stringify({ replaySafetyFixture: snapshot }));
+      expect(failed).toBeInstanceOf(Error);
+      expect(snapshot.queryAttempts).toBe(1);
+      expect(snapshot.effects).toHaveLength(1);
+      expect(snapshot.overlap).toBe(false);
+      expect(snapshot.livePids).toEqual([]);
+    } finally {
+      try { stream.handle.close(); } catch { /* The control transport deliberately fails. */ }
+      for (const child of children) { child.kill('SIGKILL'); }
+      await Promise.all(exits);
+      await rm(root, { recursive: true, force: true });
+      provider.dispose();
+    }
   });
 });

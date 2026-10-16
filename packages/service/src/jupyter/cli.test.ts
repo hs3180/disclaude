@@ -57,6 +57,14 @@ function connection() {
 }
 
 describe('Optional Jupyter CLI boundary', () => {
+  it('rejects a truncated hash before credentials, RTC or execution requests', async () => {
+    const f = connection();
+    await expect(runNotebookCommand(parseNotebookOptions(['execute', '--project-dir', root(), '--input-file', '-']),
+      f.resolve, signal, () => JSON.stringify({ notebookId: 'owned', cellId: 'owned', runId: 'owned',
+        expectedSourceHash: '123456789abc' }))).rejects.toMatchObject({ diagnostic: { layer: 'cas', code: 'invalid_source_hash', outcome: 'not-submitted' } });
+    expect(f.resolve).not.toHaveBeenCalled();
+    expect(f.client.openDocument).not.toHaveBeenCalled();
+  });
   it('publishes canonical error output fields and bounded traceback policy in tools', async () => {
     const f = connection();
     const tools = await runNotebookCommand(parseNotebookOptions(['tools', '--project-dir', root()]), f.resolve, signal) as

@@ -10,6 +10,7 @@
  */
 
 import { setupWorkspaceOnFirstRun } from './workspace-onboarding.js';
+import { loadSecretEnvFile } from './secret-env-file.js';
 
 export const EXPLICIT_CONFIG_PATH_ENV = 'DISCLAUDE_CONFIG_PATH';
 
@@ -41,6 +42,7 @@ export async function bootstrap(
   }
 
   if (args[0] === 'start' && !args.includes('--help') && !args.includes('-h')) {
+    loadSecretEnvFile(process.env.DISCLAUDE_SECRET_ENV_FILE);
     await setupWorkspaceOnFirstRun();
   }
 

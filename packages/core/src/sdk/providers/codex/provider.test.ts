@@ -1321,14 +1321,18 @@ echo '{"type":"turn.completed"}'
       })(),
       { settingSources: [], sessionKey: 'chat-a' } as AgentQueryOptions
     );
+    let observedText = false;
     const collectedA = (async () => {
       const out: unknown[] = [];
       for await (const message of resultA.iterator) {
         out.push(message);
+        if (message.content === 'visible before close') {observedText = true;}
       }
       return out;
     })();
     await waitFor(() => existsSync(join(fixtures.codexHome, 'observed.ready')));
+    // Child file writes do not prove that the host has consumed stdout.
+    await waitFor(() => observedText);
 
     await drainStream(provider, ['b1'], { sessionKey: 'chat-b' });
     await collectedA;

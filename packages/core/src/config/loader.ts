@@ -17,6 +17,7 @@ import type {
 import { resolveAgentPreset } from './agent-presets.js';
 import { resolveConfiguredAgents, validateResolvedAgent } from './resolved-agents.js';
 import { isCodexReasoningEffort } from './codex-settings.js';
+import { channelCredentialErrors } from './channel-credentials.js';
 
 const logger = createLogger('ConfigLoader');
 
@@ -68,8 +69,8 @@ export function loadConfigFile(filePath?: string): LoadedConfig {
       _fromFile: true,
     };
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    logger.warn({ path: fileInfo.path, error: errorMessage }, 'Failed to parse configuration file');
+    // YAML parser errors can include literal source lines containing old secrets.
+    logger.warn({ path: fileInfo.path, errorName: error instanceof Error ? error.name : 'UnknownError' }, 'Failed to parse configuration file');
     return { _fromFile: false };
   }
 }
@@ -133,6 +134,11 @@ export function validateConfig(config: DisclaudeConfig): boolean {
   }
 
   // Reject obsolete role settings rather than silently treating them as active.
+  const channelErrors = channelCredentialErrors(config);
+  if (channelErrors.length) {
+    logger.error({ errors: channelErrors }, 'Invalid channel credential configuration');
+    return false;
+  }
   const obsoleteRoleKeys = ['primaryNode', 'primary', 'worker', 'nodeType', 'nodeId', 'nodeName', 'enableLocalExec', 'transport', 'runMode'];
   const obsoleteKey = obsoleteRoleKeys.find((key) => Object.hasOwn(config, key));
   if (obsoleteKey) {

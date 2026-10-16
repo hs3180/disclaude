@@ -138,9 +138,13 @@ async function verifyPackage() {
   assert.equal(notebookTools.ok, true);
   assert(notebookTools.data.some((tool) => tool.command === 'execute'));
   assert(notebookTools.data.some((tool) => tool.command === 'download-report'));
-  assert.deepEqual(JSON.parse(run(cli, ['jupyter', 'list', '--project-dir', temp, '--no-interactive'])), {
-    ok: true, command: 'list', data: { notebooks: [], recentRuns: [] },
-  });
+  const localList = JSON.parse(run(cli, ['jupyter', 'list', '--project-dir', temp, '--no-interactive']));
+  assert.equal(localList.ok, true);
+  assert.equal(localList.command, 'list');
+  assert.equal(localList.scope, 'project-local-references');
+  assert.equal(localList.auth.authentication, 'not_checked');
+  assert.deepEqual(localList.data, { scope: 'project-local-references', auth: 'not_checked',
+    remoteInventory: 'not_queried', notebooks: [], recentRuns: [] });
   assert(existsSync(join(installed, 'skills/jupyter/SKILL.md')));
   assert(existsSync(join(installed, 'skills/jupyter/README.md')));
   assert.match(run(cli, ['jupyter', 'patch', '--help']), /Generation uses Node only/u);
