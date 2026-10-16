@@ -12,10 +12,11 @@ service.
 
 ## Install or upgrade
 
-Choose the exact release tag to install. For v0.6.2:
+Choose the exact published release tag to install. The v0.6.4 example becomes
+available after that tag is published:
 
 ```sh
-npm install -g "github:hs3180/disclaude#v0.6.2"
+npm install -g "github:hs3180/disclaude#v0.6.4"
 disclaude --version
 disclaude start --help
 ```

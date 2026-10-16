@@ -7,53 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-10-17
+
 ### Changed
 
-- Deliver necessary public assistant decision narration before tool calls in
-  group/topic conversations and streaming replies, while keeping thinking,
-  raw tool payloads and child-agent frames private (#5377, #5381).
+- Let the Claude SDK own retries and usage reporting; remove the host retry
+  budget and per-attempt audit layer (#5382, #5383).
+- Preserve ordinary busy-input streaming and let running tools finish; use
+  explicit `/stop` for interruption. Queue-pressure hardening is tracked
+  separately in #5399 (#5258; #5388 was closed without merging).
+- Use named agents and LLM bindings with an explicit model and external secret
+  files. Project only the selected binding into each harness and mask explicit
+  secret-file sources. Legacy configuration is not accepted unchanged and no
+  compatibility or automatic migration layer is provided (#5233, #5387).
+- Make diagnostics an optional project-local CLI-installed plugin, with native
+  discovery by Claude, Codex, DSH and Pi (#5251, #5385).
+- Reuse dependency download caches while keeping installation trees independent;
+  retain opt-in cleanup and the existing read-only retention report (#5384).
 
-- Let the Claude framework own retries and SDK-reported usage without a host
-  retry-budget or per-attempt audit layer (#5382, #5383, merged).
-- Reuse installation download caches and preview retained prefixes without
-  sharing runtime dependency trees or deleting user data (#5354, #5384, merged).
+### Fixed
 
-### In review for 0.6.4
+- Distinguish browser discovery, WebSocket attach and navigation failures, with
+  bounded safely redacted error-response summaries (#5386). The original #5352
+  incident remains unexplained and is outside this release milestone.
+- Finish a parent input once when a native background Agent later delivers a
+  child result; preserve the child reply and callbacks. Attribute streamed and
+  fallback delivery to its owning turn and record actual P2P visibility (#5390).
+- Deliver necessary public decision narration before tool calls in group/topic
+  conversations and streamed replies, while keeping raw thinking, tool payloads
+  and child-agent frames private (#5377, #5381).
 
-- Keep persistent credentials outside YAML, project only selected LLM settings,
-  mask every explicit external secret-file source and require an explicit model
-  for every named binding (#5233, #5387).
-- Make Disclaude diagnostics an optional project-local CLI-installed plugin
-  discovered by Claude, Codex, DSH and Pi (#5251, #5385).
-- Distinguish CDP discovery, WebSocket attach and page-navigation failures,
-  retaining a bounded safely redacted error-response summary (#5352, #5386).
-- Record one lifecycle terminal for a completed parent input when its native
-  background Agent later delivers a child result, preserving the child reply
-  and callbacks; account successful streamed/fallback delivery only for its
-  owning turn (#5390).
+### Verification and scope
 
-At the 11:54 UTC snapshot, main was `60a44399a` after the maintainer merged
-#5383 and #5384. Five PRs remain open: #5385, #5386, #5387, #5389 and #5390.
-The maintainer closed #5388 unmerged after requesting default stream behavior;
-ordinary busy Claude input retains main's live stream and running tools continue.
-New candidate `1ff923231` excludes that closed proposal. Its forced build/lint,
-5,845 tests in 279 files, fresh prebuilt installation and read-only
-preserved acceptance-config comparison passed. Controlled native-stream checks are not real
-model/channel acceptance. The original daily configuration requires migration
-and successful preflight before deployment; that acceptance-config comparison
-does not prove an unchanged legacy-config upgrade.
-
-Earlier `e22f1e7b5` passed nine real-model inputs under its old interrupt-and-replace
-behavior, including actual interactive-card delivery; it logged a false visible
-flag. Later `d438ef019` passed build/lint, 5,839 tests in 278 files and independent
-installation for the bookkeeping fix. Both are historical, source-specific
-receipts. Actual new-default-stream behavior and the corrected P2P visibility
-field remain pending on final source. Earlier readiness/harness failures,
-duplicate-terminal failure, non-test interruptions and the known pending notice
-remain recorded. Maintainer Review, final merged-main verification and release
-publication remain open. See the
-[0.6.4 candidate delivery record](docs/releases/0.6.4-rc.1.md) for exact sources,
-requirement corrections, evidence boundaries and migration guides.
+- Main `193d83d82` passed build/lint, 5,845 tests in 279 files, independent
+  prebuilt installation and nine actual model inputs. The real-channel window
+  used the authorized self-test chats, accepted as the final #5258 scope; the
+  original daily service was restored. These are source-specific receipts,
+  not a claim of new model acceptance on a later packaging-only commit.
+- Native model `isSecret` support (#5403), the controlled input-settlement
+  ordering case (#5404), native session resume (#5405), and queue-pressure
+  protection (#5399) remain future work. The candidate-prefix discovery gap
+  (#5354) was explicitly dropped, not fixed or relabelled as passed.
+- See the [0.6.4 release notes](docs/releases/0.6.4.md) for installation,
+  configuration and verification boundaries. The
+  [RC delivery record](docs/releases/0.6.4-rc.1.md) is a dated historical
+  snapshot; its old review state and candidate outcomes remain at their
+  original sources.
 
 ## [0.6.2] - 2026-09-30
 
