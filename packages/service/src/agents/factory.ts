@@ -121,6 +121,8 @@ export interface AgentCreateOptions extends Partial<BaseAgentConfig> {
   skipHistory?: boolean;
   /** Durable restart-interruption journal for service-managed agents. */
   turnRecovery?: ServiceTurnRecoveryStore;
+  /** Issue #5400: sink for the per-chat last-failure registry. */
+  failureRecorder?: ChatAgentConfig['failureRecorder'];
 }
 
 /**
@@ -231,6 +233,7 @@ export class AgentFactory {
         skipHistory: options.skipHistory,
         sdkSessionKey: options.sdkSessionKey,
         turnRecovery: options.turnRecovery,
+        failureRecorder: options.failureRecorder,
       };
 
       return createChatAgent(config);
@@ -293,6 +296,7 @@ export class AgentFactory {
       skipHistory: options.skipHistory,
       sdkSessionKey: options.sdkSessionKey,
       turnRecovery: options.turnRecovery,
+      failureRecorder: options.failureRecorder,
     };
 
     return createChatAgent(config);

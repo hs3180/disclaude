@@ -425,6 +425,9 @@ export { createPrivateProcessAction, type PrivateProcessActionOptions } from './
 export { ActionBoundInput } from './security/action-bound-input.js';
 export type { PrivateAction, PrivateActionAudit, PrivateActionOutcome, PrivateSubmission } from './security/action-bound-input.js';
 
+// Issue #5400: per-chat failure records + GitHub App issue reporting client.
+export * from './feedback/index.js';
+
 // Harness-neutral skill discovery, precedence, and manifest contract.
 export { SkillsRegistry, formatSkillManifest } from './skills/index.js';
 export type {

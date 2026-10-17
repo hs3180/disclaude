@@ -66,6 +66,16 @@ channels:
 workspace:
   dir: ./workspace
 
+# One-click GitHub issue reporting (Issue #5400). Optional; when absent the
+# /issue entry reports that reporting is not configured. The App needs read/write
+# access to issues on the repository. privateKey is a secret: it must reference
+# the service environment (PEM content; literal or \n-escaped newlines).
+# github:
+#   repository: hs3180/disclaude
+#   appId: "12345678"
+#   installationId: "234567890"
+#   privateKey: $GITHUB_APP_PRIVATE_KEY
+
 logging:
   level: info
   pretty: true

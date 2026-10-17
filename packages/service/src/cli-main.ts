@@ -33,6 +33,7 @@ import {
   eventBus,
   channelCredentialErrors,
   resolveChannelCredential,
+  ChatFailureRegistry,
 } from '@disclaude/core';
 import crypto from 'node:crypto';
 import { DisclaudeService } from './service.js';
@@ -362,9 +363,15 @@ export async function main(): Promise<void> {
   });
   logger.info({ workspaceDir }, 'ProjectManager initialized');
 
+  // Issue #5400 (PR A): registry of each chat's most recent failure context,
+  // recorded by ChatAgent for the /issue feedback entry.
+  const failureRegistry = new ChatFailureRegistry();
+
   const agentPool = new ChatSessionPool({
     agentPresets: Config.getAgentPresets(),
     turnRecovery,
+    // Issue #5400: per-chat last-failure registry backing the /issue entry.
+    failureRecorder: (failure) => failureRegistry.record(failure),
     messageBuilderOptions: createFeishuMessageBuilderOptions(),
     cwdProvider: projectManager.createCwdProvider(),
     // Issue #4448 (direction #1): structured resolver alongside the plain

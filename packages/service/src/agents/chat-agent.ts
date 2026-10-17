@@ -62,6 +62,7 @@ import {
   type IteratorYieldResult,
   type UserMessageParams,
   type CwdResolution,
+  type ChatFailureRecord,
 } from '@disclaude/core';
 import { getDebugGroupService } from '../services/debug-group-service.js';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
@@ -305,6 +306,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   // History loading (Issue #955, #1230, #3996) — extracted into HistoryManager (Issue #4125 part 2)
   private readonly historyManager: HistoryManager;
   private readonly turnRecovery?: ServiceTurnRecoveryStore;
+  /** Issue #5400: sink for the per-chat last-failure registry. */
+  private readonly failureRecorder?: ChatAgentConfig['failureRecorder'];
   private serviceClosing = false;
   private restartInterruptionInProgress = false;
   private readonly recoveryRunIds = new Map<string, string>();
@@ -366,6 +369,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     this.sdkSessionKey = config.sdkSessionKey ?? config.chatId;
     this.callbacks = config.callbacks;
     this.turnRecovery = config.turnRecovery;
+    this.failureRecorder = config.failureRecorder;
     this.cwdProvider = config.cwdProvider;
     // Issue #4448 (direction #1)
     this.cwdResolver = config.cwdResolver;
@@ -1962,10 +1966,21 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
   private createFailureContext(context: StreamingUserMessage['correlation'], anchor: string | null | undefined,
     failureClass: string, detail: string, diagnosticId: string, sessionId = this.queryHandle?.sessionId) {
-    return { ...context, chatId: this.boundChatId, diagnosticId, sessionId: sessionId ?? 'unavailable',
+    const failure = { ...context, chatId: this.boundChatId, diagnosticId, sessionId: sessionId ?? 'unavailable',
       threadRootId: anchor ?? 'none', backend: this.agentBackend, provider: this.sdkProvider.name,
       logPath: `${sanitizeDiagnosticText(process.env.LOG_DIR ?? './logs')}/disclaude-combined*.log`,
       failureClass, timestamp: new Date().toISOString(), detail: sanitizeDiagnosticText(detail) };
+    // Issue #5400: every user-visible failure context also feeds the per-chat
+    // last-failure registry behind /issue. The recorder must never break the
+    // failure path itself.
+    try {
+      this.failureRecorder?.({
+        chatId: failure.chatId, diagnosticId: failure.diagnosticId, failureClass: failure.failureClass,
+        detail: failure.detail, timestamp: failure.timestamp, backend: failure.backend, provider: failure.provider,
+        sessionId: failure.sessionId, threadRootId: failure.threadRootId, sourceMessageId: failure.sourceMessageId,
+      } satisfies ChatFailureRecord);
+    } catch { /* recording is best-effort diagnostics */ }
+    return failure;
   }
 
   private formatFailureDiagnostic(failure: ReturnType<ChatAgent['createFailureContext']>): string {
