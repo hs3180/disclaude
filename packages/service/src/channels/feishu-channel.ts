@@ -233,6 +233,12 @@ export interface FeishuChannelConfig {
   ) => string | undefined;
   resolveActionText?: (messageId: string, chatId: string, actionValue: string) => string | undefined;
   resolveActionThreadRoot?: (messageId: string, chatId: string) => string | undefined;
+  /**
+   * Issue #5400: GitHub App client used by /issue confirmation cards.
+   * Injected by the wired-descriptor setup from the `github` config section;
+   * undefined disables submission (cards still render the summary).
+   */
+  issueReportingClient?: import('@disclaude/core').GitHubIssueClient;
 }
 
 /**
@@ -296,6 +302,12 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     return this.feishuMessageHandler.requestAgentInput(request, context);
   }
 
+  /** Issue #5400: send the /issue confirmation card for the chat's last failure. */
+  requestIssueReport(record: import('@disclaude/core').ChatFailureRecord, target: { chatId: string; threadRootId?: string; actorId?: string }):
+    Promise<{ ok: true } | { ok: false; error: string }> {
+    return this.feishuMessageHandler.requestIssueReport(record, target);
+  }
+
   constructor(config: FeishuChannelConfig = {}) {
     super(config, 'feishu', 'Feishu');
     // Preserve explicitly supplied empty strings so callers/tests can model
@@ -351,6 +363,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       isRunning: () => this.isRunning,
       hasControlHandler: () => !!this.controlHandler,
       tenantAccessToken: process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN || '',
+      // Issue #5400: descriptor setup injects the GitHub client after this
+      // constructor returns; read it at callback time like the resolvers above.
+      issueClient: () => config.issueReportingClient,
     });
 
     logger.info({ id: this.id }, 'FeishuChannel created');
