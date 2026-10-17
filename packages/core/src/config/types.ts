@@ -102,6 +102,20 @@ export interface LlmConfig {
     /** Explicit environment reference: $VARIABLE or ${VARIABLE}. */
     apiKey?: string;
   };
+  /**
+   * Claude-side model identity for an ID Claude Code does not know (gateway
+   * or provider-specific IDs, Issue #5410). A full Claude model ID (for
+   * example claude-opus-5) whose catalog entry — context window, capability
+   * and effort defaults — Claude Code applies to `model` while still sending
+   * `model` on the wire. Aliases are not auto-resolved; pin the ID per
+   * deployment so a Claude Code upgrade cannot silently re-target it.
+   */
+  behavesAs?: string;
+  /**
+   * Raw Claude Code modelOverrides map (Anthropic model ID → provider ID) for
+   * multi-slot mappings. Mutually exclusive with behavesAs.
+   */
+  modelOverrides?: Record<string, string>;
   /** Native runtime settings, including ANTHROPIC_DEFAULT_*_MODEL aliases. */
   env?: Record<string, string>;
 }
@@ -128,6 +142,8 @@ export interface AgentPreset extends AgentConfig {
   llm: string;
   reasoningEffort?: CodexReasoningEffort;
   maxConcurrentSessions?: number;
+  /** Resolved Claude Code modelOverrides map (Issue #5410); claude runtimes only. */
+  modelOverrides?: Record<string, string>;
 }
 export type AgentPresets = Record<string, AgentPreset>;
 

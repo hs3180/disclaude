@@ -282,6 +282,8 @@ export interface BaseAgentConfig {
   llm?: string;
   reasoningEffort?: string;
   maxConcurrentSessions?: number;
+  /** Resolved Claude Code modelOverrides map (Issue #5410); claude runtimes only. */
+  modelOverrides?: Record<string, string>;
   /** API wire format of the selected LLM. */
   apiProtocol?: ApiProtocol;
   env?: Record<string, string>;
