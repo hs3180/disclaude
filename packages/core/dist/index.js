@@ -100,5 +100,7 @@ export { ProjectManager,
 createDefaultState, getStateDir, getStateFilePath, isValidIssueEntry, isValidProjectState, isValidPrEntry, readProjectState, updateSyncTimestamp, upsertIssue, upsertPr, writeProjectState, STATE_DIR_NAME, STATE_FILE_NAME, STATE_VERSION, } from './project/index.js';
 export { createPrivateProcessAction } from './security/private-process-action.js';
 export { ActionBoundInput } from './security/action-bound-input.js';
+// Issue #5400: per-chat failure records + GitHub App issue reporting client.
+export * from './feedback/index.js';
 // Harness-neutral skill discovery, precedence, and manifest contract.
 export { SkillsRegistry, formatSkillManifest } from './skills/index.js';

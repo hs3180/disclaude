@@ -35,7 +35,8 @@
  * Agents live with the service that owns their lifecycle.
  */
 import { addCompletionReaction } from './completion-reaction.js';
-import { BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, EmptyTurnRetryPolicy, getErrorStderr, isStartupFailure, tagErrorCategory, sanitizeDiagnosticText, StreamingReplyDriver, REACTIONS, TurnSupersededError, LiveInputRejectedError, } from "../../../core/dist/index.js";
+import { compactNarrationPayloads } from './narration-compaction.js';
+import { BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, EmptyTurnRetryPolicy, getErrorStderr, isStartupFailure, tagErrorCategory, sanitizeDiagnosticText, isEgressConnectivityFailure, StreamingReplyDriver, REACTIONS, TurnSupersededError, LiveInputRejectedError, } from "../../../core/dist/index.js";
 import { getDebugGroupService } from '../services/debug-group-service.js';
 import { HistoryManager } from './history-manager.js';
 import crypto from 'node:crypto';
@@ -80,6 +81,17 @@ function isOversizedFeishuMessageError(err) {
  * draining must not grow either structure unboundedly.
  */
 const MAX_TURN_COMPLETIONS = 50;
+/** Issue #5394: coarse elapsed rendering for busy-queue notices. */
+function formatElapsedForNotice(ms) {
+    if (ms < 60_000) {
+        return `${Math.max(1, Math.round(ms / 1_000))} 秒`;
+    }
+    const minutes = Math.floor(ms / 60_000);
+    if (minutes < 60) {
+        return `${minutes} 分钟`;
+    }
+    return `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分钟`;
+}
 // 2026-09-08: mid-stream 中断自动续跑(诊断见 ./docs 之外 —— ES 双侧证据:agent「同一
 // tool use 后中断」= 续写调用在 200 已锁后静默,proxy 只能补「看似成功」的收尾)。
 // MIDSTREAM_MARKER —— proxy(litellm custom_callbacks._MIDSTREAM_INTERRUPT_MARKER)在
@@ -137,6 +149,12 @@ export class ChatAgent extends BaseAgent {
     turnStartedAtMsPrivate = 0;
     /** Message identity of the turn currently consumed by the persistent iterator. */
     activeTurnMessageId;
+    // Issue #5394: busy-queue notice context. The running turn's trigger line
+    // is captured at its (non-queued) push; its latest decision narration is
+    // refreshed as the turn streams. Both feed the one-line summary queued
+    // inputs receive instead of a fixed "still busy" string.
+    activeTurnTriggerLine = '';
+    activeTurnNarration = '';
     lastActivityAtPrivate = 0;
     lastActivityTypePrivate = 'created';
     backgroundTaskIds = new Set();
@@ -212,6 +230,8 @@ export class ChatAgent extends BaseAgent {
     // History loading (Issue #955, #1230, #3996) — extracted into HistoryManager (Issue #4125 part 2)
     historyManager;
     turnRecovery;
+    /** Issue #5400: sink for the per-chat last-failure registry. */
+    failureRecorder;
     serviceClosing = false;
     restartInterruptionInProgress = false;
     recoveryRunIds = new Map();
@@ -266,6 +286,7 @@ export class ChatAgent extends BaseAgent {
         this.sdkSessionKey = config.sdkSessionKey ?? config.chatId;
         this.callbacks = config.callbacks;
         this.turnRecovery = config.turnRecovery;
+        this.failureRecorder = config.failureRecorder;
         this.cwdProvider = config.cwdProvider;
         // Issue #4448 (direction #1)
         this.cwdResolver = config.cwdResolver;
@@ -399,6 +420,19 @@ export class ChatAgent extends BaseAgent {
         return this.turnCompletions.get(messageId)?.promise;
     }
     /**
+     * Issue #5399: the session's admission budget — inputs accepted but not yet
+     * finished, counted by input identity (one unsettled completion each).
+     */
+    countUnsettledInputs() {
+        let count = 0;
+        for (const entry of this.turnCompletions.values()) {
+            if (!entry.settled) {
+                count++;
+            }
+        }
+        return count;
+    }
+    /**
      * Register the per-message turn-completion entry for a channel push
      * (Issue #4063; per-message shape from #4649 review ③).
      *
@@ -428,19 +462,22 @@ export class ChatAgent extends BaseAgent {
         promise.catch(() => { });
         this.turnCompletions.set(messageId, entry);
         // Bounded like pendingTurnAnchors: a parked/dead session with no iterator
-        // draining must not grow this unboundedly. Evicted entries are settled
-        // with an error so a still-awaiting caller never hangs silently.
+        // draining must not grow this unboundedly. Only SETTLED entries are
+        // receipts for late awaiters and may be retired; an unsettled entry is a
+        // live input's only completion (#5399) — capacity is enforced at
+        // admission, never by rejecting a turn whose execution may still run.
         while (this.turnCompletions.size > MAX_TURN_COMPLETIONS) {
-            const oldest = this.turnCompletions.entries().next();
-            if (oldest.done) {
+            let oldestSettledKey;
+            for (const [key, entry] of this.turnCompletions) {
+                if (entry.settled) {
+                    oldestSettledKey = key;
+                    break;
+                }
+            }
+            if (oldestSettledKey === undefined) {
                 break;
             }
-            const [oldestKey, oldestEntry] = oldest.value;
-            this.turnCompletions.delete(oldestKey);
-            if (!oldestEntry.settled) {
-                oldestEntry.settled = true;
-                oldestEntry.settle(new Error('Turn completion evicted (registry overflow)'));
-            }
+            this.turnCompletions.delete(oldestSettledKey);
         }
         return entry;
     }
@@ -788,6 +825,35 @@ export class ChatAgent extends BaseAgent {
         }
     }
     /**
+     * Issue #5394: one-line, length-capped summary of trigger text or decision
+     * narration for busy-queue notices. Multi-user chats must not leak another
+     * user's full message body: keep the first non-empty line, hard-capped.
+     */
+    summarizeForBusyNotice(text) {
+        const firstLine = text.split('\n', 1)[0]?.trim() ?? '';
+        const compact = firstLine.replace(/\s+/g, ' ');
+        return compact.length > 60 ? `${compact.slice(0, 60)}…` : compact;
+    }
+    /**
+     * Issue #5394: context appended to busy notices — what is running, for how
+     * long, and how much is queued ahead of the just-admitted input. Prefers
+     * the running turn's latest narration (reflects what happens now), falling
+     * back to its trigger line; identical resolution on streaming and
+     * non-streaming paths. No ETA is invented.
+     */
+    describeBusyQueue(queuedAhead) {
+        const parts = [];
+        const summary = this.activeTurnNarration || this.activeTurnTriggerLine;
+        if (summary) {
+            const elapsed = this.turnStartedAtMs > 0 ? Date.now() - this.turnStartedAtMs : 0;
+            parts.push(`当前回合「${summary}」已运行 ${formatElapsedForNotice(elapsed)}`);
+        }
+        if (queuedAhead > 0) {
+            parts.push(`前方还有 ${queuedAhead} 条排队`);
+        }
+        return parts.length > 0 ? `\n（${parts.join('，')}）` : '';
+    }
+    /**
      * Process a message with the AI agent.
      *
      * Returns after input admission, without waiting for the task to finish.
@@ -842,6 +908,37 @@ export class ChatAgent extends BaseAgent {
         }
         if (this.serviceClosing) {
             throw new Error('Service is shutting down; request was not accepted');
+        }
+        // Issue #5399: one bounded admission budget per session, enforced BEFORE
+        // any anchor, completion or channel accounting is touched. Every accepted
+        // but unfinished input (running, awaiting admission, or already in the
+        // channel) holds exactly one unsettled turn completion keyed by its
+        // message ID, so the unsettled count IS the budget. A re-push of a
+        // message that already holds an entry replaces it and needs no slot.
+        // A live input is never evicted to make room — the next distinct input
+        // is explicitly refused instead.
+        if (!this.turnCompletions.has(messageId) && this.countUnsettledInputs() >= MAX_TURN_COMPLETIONS) {
+            const error = new Error(`Busy-input budget is full (${MAX_TURN_COMPLETIONS} unfinished inputs); request was not accepted`);
+            this.createTurnCompletion(messageId);
+            this.resolveTurn(messageId, error);
+            let userVisible = false;
+            try {
+                await this.callbacks.sendMessage(chatId, `⏳ 当前会话未完成的输入已达上限（${MAX_TURN_COMPLETIONS} 条），这条未接收。请等待现有输入结束后再发；正在运行的任务不受影响。`, threadRootId ?? messageId);
+                userVisible = true;
+            }
+            catch (sendError) {
+                this.logger.error({ err: sendError, chatId, messageId }, 'Failed to send busy-input capacity notice');
+            }
+            try {
+                await this.callbacks.onDone?.(chatId, threadRootId ?? messageId);
+            }
+            catch (doneError) {
+                this.logger.error({ err: doneError, chatId, messageId }, 'Failed to finish capacity-refused input');
+            }
+            this.logger.warn({ event: 'agent_turn', state: 'failed', chatId, messageId, traceId: `${chatId}:${messageId}`,
+                diagnosticId: crypto.randomUUID(), errorMessage: error.message, user_visible: userVisible,
+            }, 'Message refused because the busy-input admission budget is full');
+            return;
         }
         // #5240: capable backends receive ordinary busy input through steer.
         // Only unattempted or definitely rejected input falls back to the channel.
@@ -962,14 +1059,24 @@ export class ChatAgent extends BaseAgent {
             if (!queuedBehindActiveTurn) {
                 this.activeLifecycleContext = lifecycleContext;
             }
-            if (this.pendingLifecycleContexts.length > 50) {
-                this.pendingLifecycleContexts.splice(0, this.pendingLifecycleContexts.length - 50);
+            // Issue #5399: retire only rows whose input already reached a real
+            // terminal state — a live input keeps its own context, message ID and
+            // reply anchor until its true settlement. Anchors and message IDs stay
+            // lockstep; lifecycle contexts are keyed by run ID and may drift
+            // (joinConsumedInputs), so they carry their own bound. Admission is
+            // budgeted at MAX_TURN_COMPLETIONS unsettled inputs, so live rows are
+            // never trimmed away to make room.
+            const rowIsSettled = (messageId) => {
+                const entry = messageId !== undefined ? this.turnCompletions.get(messageId) : undefined;
+                return !entry || entry.settled;
+            };
+            while (this.pendingTurnMessageIds.length > MAX_TURN_COMPLETIONS && rowIsSettled(this.pendingTurnMessageIds[0])) {
+                this.pendingTurnMessageIds.shift();
+                this.pendingTurnAnchors.shift();
             }
-            if (this.pendingTurnAnchors.length > 50) {
-                this.pendingTurnAnchors.splice(0, this.pendingTurnAnchors.length - 50);
-            }
-            if (this.pendingTurnMessageIds.length > 50) {
-                this.pendingTurnMessageIds.splice(0, this.pendingTurnMessageIds.length - 50);
+            while (this.pendingLifecycleContexts.length > MAX_TURN_COMPLETIONS &&
+                rowIsSettled(this.pendingLifecycleContexts[0]?.sourceMessageId)) {
+                this.pendingLifecycleContexts.shift();
             }
         };
         // Startup/status events can arrive while first-message history loads.
@@ -1073,6 +1180,11 @@ export class ChatAgent extends BaseAgent {
             this.lastTurnMessage = params;
             enqueueTurnAnchor();
             const busyBeforePush = queuedBehindActiveTurn && this.isBusy;
+            // Issue #5394: a non-queued push starts the next turn — capture its
+            // trigger line as the busy-notice summary baseline.
+            if (!busyBeforePush) {
+                this.activeTurnTriggerLine = this.summarizeForBusyNotice(text);
+            }
             // Issue #3985: Mark as processing when a user message is pushed to the channel.
             if (!this.isProcessingMessage) {
                 this.turnStartedAtMsPrivate = Date.now();
@@ -1110,11 +1222,15 @@ export class ChatAgent extends BaseAgent {
                 }
             }
             if (this.queryHandle?.capacityQueued || busyBeforePush) {
-                void this.callbacks.sendMessage(chatId, this.queryHandle?.capacityQueued
+                // Issue #5394: say what the waiter actually wants to know — the
+                // running turn's summary, its elapsed time and the queue depth ahead
+                // (this input's row was just pushed, so it is excluded from the count).
+                const busyContext = this.describeBusyQueue(Math.max(0, this.pendingTurnMessageIds.length - 1));
+                void this.callbacks.sendMessage(chatId, (this.queryHandle?.capacityQueued
                     ? '⏳ 这条消息已接收并排队；模型会话容量释放后会自动处理，无需重新发送。'
                     : this.queryHandle?.inputDelivery === 'streaming'
                         ? '💬 已送入当前会话的输入流；模型可在执行中接收补充信息，正在运行的工具会继续执行。'
-                        : '⏳ 这条消息已排队，将在当前回合结束后处理。', threadRootId).catch((error) => {
+                        : '⏳ 这条消息已排队，将在当前回合结束后处理。') + busyContext, threadRootId).catch((error) => {
                     this.logger.warn({ err: error, chatId, messageId }, 'Failed to send busy-input notice');
                 });
             }
@@ -1639,10 +1755,22 @@ export class ChatAgent extends BaseAgent {
         this.taskCompletionReject = undefined;
     }
     createFailureContext(context, anchor, failureClass, detail, diagnosticId, sessionId = this.queryHandle?.sessionId) {
-        return { ...context, chatId: this.boundChatId, diagnosticId, sessionId: sessionId ?? 'unavailable',
+        const failure = { ...context, chatId: this.boundChatId, diagnosticId, sessionId: sessionId ?? 'unavailable',
             threadRootId: anchor ?? 'none', backend: this.agentBackend, provider: this.sdkProvider.name,
             logPath: `${sanitizeDiagnosticText(process.env.LOG_DIR ?? './logs')}/disclaude-combined*.log`,
             failureClass, timestamp: new Date().toISOString(), detail: sanitizeDiagnosticText(detail) };
+        // Issue #5400: every user-visible failure context also feeds the per-chat
+        // last-failure registry behind /issue. The recorder must never break the
+        // failure path itself.
+        try {
+            this.failureRecorder?.({
+                chatId: failure.chatId, diagnosticId: failure.diagnosticId, failureClass: failure.failureClass,
+                detail: failure.detail, timestamp: failure.timestamp, backend: failure.backend, provider: failure.provider,
+                sessionId: failure.sessionId, threadRootId: failure.threadRootId, sourceMessageId: failure.sourceMessageId,
+            });
+        }
+        catch { /* recording is best-effort diagnostics */ }
+        return failure;
     }
     formatFailureDiagnostic(failure) {
         return `诊断 ID: ${failure.diagnosticId}\nRun ID: ${failure.runId ?? 'unavailable'}\n会话 ID: ${failure.sessionId}\n消息 ID: ${failure.sourceMessageId ?? 'unavailable'}\n` +
@@ -1709,6 +1837,10 @@ export class ChatAgent extends BaseAgent {
         // (next queued message) picks up its own anchor.
         let turnAnchorConsumed = false;
         let turnHasTerminal = false;
+        // Issue #5409: this turn's provider failure (if any) looked like an
+        // egress/connectivity problem — drives the failure hint and suppresses
+        // the same-window empty-turn replay.
+        let turnFailedWithConnectivityIssue = false;
         let currentTurnAnchor;
         let currentTurnMessageId;
         let currentTurnLifecycleContext;
@@ -1735,6 +1867,10 @@ export class ChatAgent extends BaseAgent {
                     this.turnStartedAtMsPrivate = Date.now();
                 }
                 this.isProcessingMessage = true;
+                // Issue #5394: narration belongs to the turn that produced it — a
+                // fresh turn's busy notices start from its own trigger line.
+                this.activeTurnNarration = '';
+                turnFailedWithConnectivityIssue = false;
             }
             return currentTurnAnchor ?? undefined;
         };
@@ -1898,7 +2034,13 @@ export class ChatAgent extends BaseAgent {
                 if (parsed.type === 'text' && parsed.metadata?.phase === 'commentary') {
                     if (this.callbacks.finalReplyOnly !== true && parsed.content) {
                         try {
-                            await this.callbacks.sendMessage(chatId, parsed.content, resolveReplyThreadRoot());
+                            // Oversized payloads embedded in progress text fold to a
+                            // one-line summary; ordinary narration passes through intact.
+                            const commentary = compactNarrationPayloads(parsed.content);
+                            if (commentary.compacted) {
+                                this.logger.debug({ chatId, foldedBlocks: commentary.foldedBlocks, foldedLines: commentary.foldedLines }, 'Compacted commentary payload');
+                            }
+                            await this.callbacks.sendMessage(chatId, commentary.text, resolveReplyThreadRoot());
                         }
                         catch (error) {
                             // Progress cannot fail or complete the turn.
@@ -1928,22 +2070,34 @@ export class ChatAgent extends BaseAgent {
                         pendingAssistantChunks = [];
                     }
                     else if (pendingAssistantChunks.length > 0) {
-                        const narration = pendingAssistantChunks.join('');
+                        const rawNarration = pendingAssistantChunks.join('');
                         pendingAssistantChunks = [];
+                        // Same payload-folding policy as commentary: narration is the
+                        // model's wording, but gateways can embed raw tool payloads
+                        // (whole JSON arguments, full outputs) in it.
+                        const narration = compactNarrationPayloads(rawNarration);
+                        if (narration.compacted) {
+                            this.logger.debug({ chatId, foldedBlocks: narration.foldedBlocks, foldedLines: narration.foldedLines }, 'Compacted narration payload');
+                        }
                         const narrationRoot = resolveReplyThreadRoot();
                         try {
                             if (streamDriver) {
                                 // p2p keeps narrating into the same streaming card the reply
                                 // is building; the driver owns its own send fallbacks.
-                                await streamDriver.pushText(narration, narrationRoot);
+                                await streamDriver.pushText(narration.text, narrationRoot);
                             }
                             else {
-                                await this.callbacks.sendMessage(chatId, narration, narrationRoot);
+                                await this.callbacks.sendMessage(chatId, narration.text, narrationRoot);
                             }
                         }
                         catch (error) {
                             this.logger.debug({ error, chatId }, 'Decision narration delivery failed');
                         }
+                        // Issue #5394: keep the freshest narration as the running turn's
+                        // busy-notice summary. Set AFTER delivery — resolving the reply
+                        // root consumes the turn anchor, which clears the per-turn
+                        // narration slot for a turn's first output.
+                        this.activeTurnNarration = this.summarizeForBusyNotice(narration.text);
                     }
                     // Text preceding another tool call is intermediate commentary, not
                     // the terminal answer consumed by structured internal workflows.
@@ -2090,8 +2244,17 @@ export class ChatAgent extends BaseAgent {
                     // always has a user-visible terminal outcome.
                     if (parsed.terminatedReason === 'turn_failed') {
                         this.restartManager.recordFailure(chatId, 'turn_failed');
-                        const failure = failureContext(this.activeLifecycleContext, resolveReplyThreadRoot(), 'provider-turn-failed', parsed.terminationDetail || parsed.content || 'Provider turn failed', parsed.sessionId ?? this.queryHandle?.sessionId);
-                        const delivered = await this.deliverUserVisible(chatId, `❌ 本轮 ${failure.provider} 执行失败，未生成可交付结果。请先核对已执行的操作，再检查模型服务、凭据和超时配置。\n${this.formatFailureDiagnostic(failure)}`, resolveReplyThreadRoot());
+                        const failureDetail = parsed.terminationDetail || parsed.content || 'Provider turn failed';
+                        // Issue #5409: a connectivity-class failure (routing discovery,
+                        // socket errors, dead egress) is environmental — hint at the
+                        // network path instead of model service/credentials, and mark it
+                        // so the empty-turn replay below does not burn itself against
+                        // the same dead window seconds later.
+                        turnFailedWithConnectivityIssue = isEgressConnectivityFailure(failureDetail);
+                        const failure = failureContext(this.activeLifecycleContext, resolveReplyThreadRoot(), 'provider-turn-failed', failureDetail, parsed.sessionId ?? this.queryHandle?.sessionId);
+                        const delivered = await this.deliverUserVisible(chatId, `❌ 本轮 ${failure.provider} 执行失败，未生成可交付结果。${turnFailedWithConnectivityIssue
+                            ? '请先核对已执行的操作；该失败特征指向出口网络（代理、DNS 或海外连通性），可先检查本机/路由器的代理与外网连通性，恢复后重试。'
+                            : '请先核对已执行的操作，再检查模型服务、凭据和超时配置。'}\n${this.formatFailureDiagnostic(failure)}`, resolveReplyThreadRoot());
                         this.logger.error({ ...failure, event: 'agent_turn_failure', user_visible: delivered }, 'Provider turn failed');
                     }
                     // Provider watchdog/process loss is a terminal failure, including
@@ -2270,6 +2433,7 @@ export class ChatAgent extends BaseAgent {
                         !this.turnsWithLiveInput.has(currentTurnMessageId ?? '') &&
                         !upstreamApiError &&
                         !sawMidstreamInterrupt &&
+                        !turnFailedWithConnectivityIssue &&
                         !!turnMessage &&
                         this.emptyTurnRetryPolicy.canRetry(chatId, turnMessage.messageId, true);
                     if (willRetryEmptyTurn) {
@@ -2285,7 +2449,15 @@ export class ChatAgent extends BaseAgent {
                     // Issue #4391: also suppressed when the turn is being retried — the
                     // reset+replay below IS the "try again"; telling the user to resend
                     // would be wrong (and noisy) while recovery is already in flight.
-                    if (isEmptyTurn && !upstreamApiError && !sawMidstreamInterrupt && !willRetryEmptyTurn) {
+                    // Issue #5409: a connectivity-class provider failure already got
+                    // its ❌ notice with the egress hint. The generic ⚠️ advice below
+                    // ("session may be invalid, try resetting") is wrong for a dead
+                    // egress and would double-notify.
+                    if (turnFailedWithConnectivityIssue && isEmptyTurn) {
+                        this.logger.warn({ chatId, messageId: currentTurnMessageId, diagnosticId }, 'Empty turn follows a connectivity-class provider failure (#5409): ' +
+                            'empty-turn replay and generic empty-turn notice skipped — egress is likely down');
+                    }
+                    if (isEmptyTurn && !upstreamApiError && !sawMidstreamInterrupt && !willRetryEmptyTurn && !turnFailedWithConnectivityIssue) {
                         this.logger.warn({
                             chatId,
                             messageCount,

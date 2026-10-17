@@ -14,7 +14,7 @@
  *
  * @module service/cli-main
  */
-import { loadConfigFile, setLoadedConfig, applyGlobalEnv, createDefaultRuntimeContext, createLogger, initLogger, flushLogger, Config, createControlHandler, ProcessLock, ProjectManager, eventBus, channelCredentialErrors, resolveChannelCredential, } from "../../core/dist/index.js";
+import { loadConfigFile, setLoadedConfig, applyGlobalEnv, createDefaultRuntimeContext, createLogger, initLogger, flushLogger, Config, createControlHandler, ProcessLock, ProjectManager, eventBus, channelCredentialErrors, resolveChannelCredential, ChatFailureRegistry, } from "../../core/dist/index.js";
 import crypto from 'node:crypto';
 import { DisclaudeService } from './service.js';
 import { HttpApiServer } from './http-api-server.js';
@@ -271,9 +271,14 @@ export async function main() {
         workspaceDir,
     });
     logger.info({ workspaceDir }, 'ProjectManager initialized');
+    // Issue #5400 (PR A): registry of each chat's most recent failure context,
+    // recorded by ChatAgent for the /issue feedback entry.
+    const failureRegistry = new ChatFailureRegistry();
     const agentPool = new ChatSessionPool({
         agentPresets: Config.getAgentPresets(),
         turnRecovery,
+        // Issue #5400: per-chat last-failure registry backing the /issue entry.
+        failureRecorder: (failure) => failureRegistry.record(failure),
         messageBuilderOptions: createFeishuMessageBuilderOptions(),
         cwdProvider: projectManager.createCwdProvider(),
         // Issue #4448 (direction #1): structured resolver alongside the plain
@@ -310,6 +315,10 @@ export async function main() {
             setDebugGroup: (chatId, name) => service.getDebugGroupService().setDebugGroup(chatId, name),
             clearDebugGroup: () => service.getDebugGroupService().clearDebugGroup(),
         },
+        // Issue #5400: /issue reads the chat's last failure from this registry
+        // (recorded by ChatAgent); the Feishu descriptor setup adds the
+        // confirmation-card hook on top of it.
+        failureRegistry,
         projectManager,
         // Issue #3807: /restart command calls this to trigger graceful shutdown
         get shutdown() {

@@ -4,8 +4,10 @@ export const CODEX_OVERLOAD_MAX_RETRIES = 2;
 const MAX_TOTAL_WAIT_MS = 30_000;
 const TIMING = { initialDelayMs: 500, backoffMultiplier: 2, maxDelayMs: 8000, jitter: true };
 const OVERLOAD_CODE = /^(?:serverOverloaded|server_overloaded|server_is_overloaded|overloaded_error)$/i;
-const OVERLOAD_TEXT = /server[_ ](?:is[_ ])?overload(?:ed)?|overloaded_error|(?:selected )?model is at capacity|(?:HTTP|status(?: code)?)\s*[:=]?\s*503\b/i;
-const NON_TRANSIENT = /\b(?:401|403)\b|unauthori[sz]ed|permission denied|invalid (?:configuration|request)|validation (?:error|failed)|usage limit|quota (?:exceeded|exhausted)/i;
+/** Transient failure wording eligible for the bounded retry: 503/429 statuses (#5269, #5408) plus quota-free throttle phrasing. */
+const OVERLOAD_TEXT = /server[_ ](?:is[_ ])?overload(?:ed)?|overloaded_error|(?:selected )?model is at capacity|(?:HTTP|status(?: code)?)\s*[:=]?\s*(?:503|429)\b|too many requests|rate.?limit reached/i;
+/** Terminal surfaces never retried. `rate_limit_exceeded` is the ChatGPT-backend quota signature, not a seconds-scale throttle (#5408). */
+const NON_TRANSIENT = /\b(?:401|403)\b|unauthori[sz]ed|permission denied|invalid (?:configuration|request)|validation (?:error|failed)|usage limit|quota (?:exceeded|exhausted)|rate_limit_exceeded/i;
 export function readCodexOverloadFailure(value, now = Date.now()) {
     if (!value || typeof value !== 'object') {
         return undefined;
@@ -21,7 +23,9 @@ export function readCodexOverloadFailure(value, now = Date.now()) {
     }
     else if (info && typeof info === 'object') {
         overloaded = Object.entries(info).some(([kind, detail]) => ['httpConnectionFailed', 'responseStreamConnectionFailed', 'responseStreamDisconnected', 'responseTooManyFailedAttempts'].includes(kind)
-            && !!detail && typeof detail === 'object' && detail.httpStatusCode === 503);
+            && !!detail && typeof detail === 'object'
+            && detail.httpStatusCode !== undefined
+            && [503, 429].includes(detail.httpStatusCode));
     }
     else {
         overloaded = !NON_TRANSIENT.test(message) && OVERLOAD_TEXT.test(message);

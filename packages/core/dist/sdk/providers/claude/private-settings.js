@@ -1,10 +1,13 @@
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-/** The SDK serializes inline settings into argv; keep API keys in a private file. */
+/**
+ * The SDK serializes inline settings into argv; keep API keys in a private
+ * file, and modelOverrides maps out of the command line (Issue #5410).
+ */
 export function privateSdkSettings(options) {
     const settings = options.settings;
-    if (!settings?.env?.ANTHROPIC_API_KEY) {
+    if (!settings?.env?.ANTHROPIC_API_KEY && !settings?.modelOverrides) {
         return { options, cleanup: () => { } };
     }
     const directory = mkdtempSync(join(tmpdir(), 'disclaude-claude-settings-'));

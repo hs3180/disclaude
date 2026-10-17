@@ -184,6 +184,10 @@ export class FeishuChannel extends BaseChannel {
     requestAgentInput(request, context) {
         return this.feishuMessageHandler.requestAgentInput(request, context);
     }
+    /** Issue #5400: send the /issue confirmation card for the chat's last failure. */
+    requestIssueReport(record, target) {
+        return this.feishuMessageHandler.requestIssueReport(record, target);
+    }
     constructor(config = {}) {
         super(config, 'feishu', 'Feishu');
         // Preserve explicitly supplied empty strings so callers/tests can model
@@ -228,6 +232,9 @@ export class FeishuChannel extends BaseChannel {
             isRunning: () => this.isRunning,
             hasControlHandler: () => !!this.controlHandler,
             tenantAccessToken: process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN || '',
+            // Issue #5400: descriptor setup injects the GitHub client after this
+            // constructor returns; read it at callback time like the resolvers above.
+            issueClient: () => config.issueReportingClient,
         });
         logger.info({ id: this.id }, 'FeishuChannel created');
     }

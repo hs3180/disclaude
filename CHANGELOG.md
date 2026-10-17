@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-10-17
+
+### Added
+
+- Report problems to GitHub from a chat: `/issue` presents a sanitized
+  confirmation card with the per-chat last failure, then files an issue
+  through a restricted GitHub App client with diagnostic-id deduplication
+  and an explicit "not submitted" failure path that never claims success
+  (#5400, #5424, #5425).
+- Declare gateway model identity with first-class `modelOverrides`,
+  projecting an explicit context window and capability flags per advertised
+  model (#5410, #5421).
+
+### Changed
+
+- Fold oversized mid-turn narration payloads into one-line summaries with
+  opt-in expansion, completing the reversal of the closed #5397 decision
+  (#5395, #5418).
+- Carry the running turn summary, elapsed time and queue depth in busy
+  notices instead of fixed texts (#5394, #5417).
+
+### Fixed
+
+- Bound busy-input admission before turn accounting so queue pressure
+  cannot exhaust the anchor budget (#5399, #5416).
+- Keep a successful Codex answer delivery across serverRequest/resolved
+  ordering at completion (#5404, #5415).
+- Retry transient Codex 429 rate limits with bounded backoff, separating
+  temporary throttling from exhausted quotas (#5408, #5414).
+- Keep video delivery on the media path without ffmpeg, and stop reporting
+  Feishu media rejections as an unreachable service (#5391, #5413).
+- Classify connectivity-class provider failures separately with an egress
+  hint instead of a generic provider error (#5409, #5419).
+
+### Verification and scope
+
+- Main `50fe57ce` passed the six-check CI suite (build, lint and type
+  check, unit tests, package-installation acceptance, service-image
+  lifecycle and workspace onboarding) after both #5400 pull requests
+  merged. Their local suites, including the new GitHub-client and
+  card-callback tests, were green.
+- No new real-model acceptance window was run for 0.6.5; the `/issue` flow
+  is covered by unit tests with faked Feishu and GitHub clients.
+- #5402 remains scheduled for 0.7.0 by maintainer decision. npm
+  publication stays outside the Git release flow: `publish.yml` is
+  manual-only and has never been run.
+- See the [0.6.5 release notes](docs/releases/0.6.5.md) for installation
+  and configuration boundaries.
+
 ## [0.6.4] - 2026-10-17
 
 ### Changed

@@ -40,6 +40,14 @@ llms:
     #   ANTHROPIC_DEFAULT_OPUS_MODEL: your-opus-model
     #   ANTHROPIC_DEFAULT_SONNET_MODEL: your-sonnet-model
     #   ANTHROPIC_DEFAULT_HAIKU_MODEL: your-haiku-model
+    # Gateway model Claude Code does not know: pin the catalog entry (window,
+    # capabilities, effort defaults) it should inherit. Opus-line IDs are the
+    # only 1M-context keys; requires Claude Code >= v2.1.200 (Issue #5410).
+    # behavesAs: claude-opus-5
+    # Or a raw multi-slot map (mutually exclusive with behavesAs):
+    # modelOverrides:
+    #   claude-opus-5: kimi-k3
+    #   claude-sonnet-4-5: kimi-k3-flash
 
 channels:
   feishu:
@@ -57,6 +65,16 @@ channels:
 
 workspace:
   dir: ./workspace
+
+# One-click GitHub issue reporting (Issue #5400). Optional; when absent the
+# /issue entry reports that reporting is not configured. The App needs read/write
+# access to issues on the repository. privateKey is a secret: it must reference
+# the service environment (PEM content; literal or \n-escaped newlines).
+# github:
+#   repository: hs3180/disclaude
+#   appId: "12345678"
+#   installationId: "234567890"
+#   privateKey: $GITHUB_APP_PRIVATE_KEY
 
 logging:
   level: info

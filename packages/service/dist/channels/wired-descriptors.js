@@ -11,7 +11,7 @@
  *
  * @module channels/wired-descriptors
  */
-import { createInboundAttachment, createControlHandler, buildHelpMessage, } from "../../../core/dist/index.js";
+import { createInboundAttachment, createControlHandler, buildHelpMessage, Config, GitHubIssueClient, resolveGitHubIssueTarget, } from "../../../core/dist/index.js";
 import { persistentFileStorageProvider } from './rest/file-storage.js';
 import { RestChannel } from './rest-channel.js';
 import { FeishuChannel } from './feishu-channel.js';
@@ -162,6 +162,19 @@ export const FEISHU_WIRED_DESCRIPTOR = {
         });
         helpContext.guidance = welcomeService;
         feishuChannel.setWelcomeService(welcomeService);
+        // Issue #5400: resolve the GitHub App client from the `github` config
+        // section once per setup; a broken section degrades /issue to text-only
+        // guidance instead of failing the channel.
+        try {
+            const target = resolveGitHubIssueTarget(Config.getRawConfig());
+            config.issueReportingClient = target ? new GitHubIssueClient(target) : undefined;
+        }
+        catch (error) {
+            context.logger.warn({ err: error }, 'github feedback configuration could not be resolved; /issue submission stays disabled');
+        }
+        helpContext.issueReporting = {
+            sendConfirmation: (record, target) => feishuChannel.requestIssueReport(record, target),
+        };
         feishuChannel.onControl(createControlHandler(helpContext));
         // 3. Register REST API handlers for channel CLI requests
         // Base handlers reuse the same channel.sendMessage pattern as ChatAgentCallbacks

@@ -218,6 +218,7 @@ export class ChatSessionPool {
             skipHistory,
             sdkSessionKey,
             turnRecovery: this.options.turnRecovery,
+            failureRecorder: this.options.failureRecorder,
             ...(preset ? {
                 ...preset,
                 settings: preset,

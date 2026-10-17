@@ -10,7 +10,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createLogger, } from "../../../../core/dist/index.js";
-import { VIDEO_EXTENSIONS, extractVideoCover } from '../../utils/video-cover-extractor.js';
+import { VIDEO_EXTENSIONS, extractVideoCover, writePlaceholderCover } from '../../utils/video-cover-extractor.js';
 import { IMAGE_EXTENSIONS, EXT_TO_FEISHU_FILE_TYPE, MAX_IMAGE_SIZE, MAX_FILE_SIZE, uploadImage, uploadFile, } from '../../utils/feishu-upload.js';
 import { buildTextContent, normalizeMarkdownLineBreaks, } from '../../platforms/feishu/card-builders/content-builder.js';
 const logger = createLogger('FeishuAdapter');
@@ -430,16 +430,31 @@ export class FeishuAdapter {
                 }
             }
             if (!imageKey) {
-                // Fallback: send as generic file if cover extraction/upload fails
-                logger.warn({ chatId: message.chatId, fileName, coverError: coverResult.error }, 'Cover image unavailable, sending video as file attachment');
-                msgType = 'file';
-                content = JSON.stringify({ file_key: fileKey });
+                // Issue #5391: Feishu rejects video files in msg_type:'file' (230055),
+                // so a cover-less video must not fall back to a plain file message.
+                // Generate a placeholder cover locally (no ffmpeg needed) and keep the
+                // media message path instead.
+                logger.warn({ chatId: message.chatId, fileName, coverError: coverResult.error }, 'Cover frame unavailable, generating placeholder cover for media message');
+                const placeholder = writePlaceholderCover(filePath);
+                if (placeholder.success && placeholder.coverPath) {
+                    imageKey = await uploadImage(client, placeholder.coverPath);
+                    try {
+                        fs.unlinkSync(placeholder.coverPath);
+                    }
+                    catch {
+                        /* ignore */
+                    }
+                }
             }
-            else {
-                // Send as media message with video + cover image
-                msgType = 'media';
-                content = JSON.stringify({ file_key: fileKey, image_key: imageKey });
+            if (!imageKey) {
+                return {
+                    success: false,
+                    error: `Failed to send video ${fileName}: no cover image available and placeholder cover upload failed`,
+                };
             }
+            // Send as media message with video + cover image
+            msgType = 'media';
+            content = JSON.stringify({ file_key: fileKey, image_key: imageKey });
         }
         else {
             // Upload file

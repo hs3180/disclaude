@@ -825,7 +825,9 @@ export class CodexAgentProvider {
                             if (delayMs !== undefined) {
                                 clearStallTimers();
                                 logger.warn({ sessionKey, retryAttempt: retryAttempt + 1, delayMs, cause: failedOverload.message }, 'Retrying Codex overload before output or tools');
-                                pushSynthetic({ type: 'status', role: 'system', content: `⏳ Codex 服务暂时过载，将在 ${(delayMs / 1000).toFixed(1)} 秒后重试（${retryAttempt + 1}/${CODEX_OVERLOAD_MAX_RETRIES}）。` });
+                                // #5408: distinguish a transient rate limit from a capacity overload in the user-visible wait notice.
+                                const throttled = /\b429\b|too many requests|rate.?limit reached/i.test(failedOverload.message);
+                                pushSynthetic({ type: 'status', role: 'system', content: `⏳ Codex ${throttled ? '触发临时限流（429）' : '服务暂时过载'}，将在 ${(delayMs / 1000).toFixed(1)} 秒后重试（${retryAttempt + 1}/${CODEX_OVERLOAD_MAX_RETRIES}）。` });
                                 if (!await waitForCodexOverloadRetry(delayMs, retryAbort.signal)) {
                                     return;
                                 }

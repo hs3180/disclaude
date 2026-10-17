@@ -15,6 +15,12 @@ export function registerModelSecretNames(names) {
         modelSecretNames.add(name);
     }
 }
+/** Register a consumed secret value from a non-channel component (e.g. the GitHub App PEM, Issue #5400) for redaction. */
+export function registerConsumedSecretValue(value) {
+    if (value.trim()) {
+        consumedSecrets.add(value);
+    }
+}
 export function knownSecretValues() {
     return [...consumedSecrets, ...[...privateNames, ...modelSecretNames, ...externalSecretEnvironmentNames()]
             .map(name => process.env[name] ?? '')].filter(Boolean);

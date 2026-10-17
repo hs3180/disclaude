@@ -70,7 +70,10 @@ export class FeishuAgentInput {
         const p = { request, context, state: 'waiting' };
         this.pending.set(token, p);
         request.signal.addEventListener('abort', () => {
-            if (p.state === 'answered' || p.state === 'failed') {
+            // #5404: a resolve that races an in-flight submission must not pre-empt
+            // the submit flow's own terminal state (answered/failed) — only a
+            // still-waiting card downgrades to expired here.
+            if (p.state !== 'waiting') {
                 return;
             }
             p.state = 'expired';

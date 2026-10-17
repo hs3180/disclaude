@@ -11,6 +11,7 @@ import { resolveAgentPreset } from './agent-presets.js';
 import { resolveConfiguredAgents, validateResolvedAgent } from './resolved-agents.js';
 import { isCodexReasoningEffort } from './codex-settings.js';
 import { channelCredentialErrors } from './channel-credentials.js';
+import { githubFeedbackErrors } from './github-feedback.js';
 const logger = createLogger('ConfigLoader');
 // This discovery entry is also used before Config statics initialize in the CLI.
 import { discoverConfigFile, EXPLICIT_CONFIG_PATH_ENV } from './discovery.js';
@@ -113,6 +114,12 @@ export function validateConfig(config) {
     const channelErrors = channelCredentialErrors(config);
     if (channelErrors.length) {
         logger.error({ errors: channelErrors }, 'Invalid channel credential configuration');
+        return false;
+    }
+    // Issue #5400: the github feedback section validates like a credential section.
+    const githubErrors = githubFeedbackErrors(config);
+    if (githubErrors.length) {
+        logger.error({ errors: githubErrors }, 'Invalid github feedback configuration');
         return false;
     }
     const obsoleteRoleKeys = ['primaryNode', 'primary', 'worker', 'nodeType', 'nodeId', 'nodeName', 'enableLocalExec', 'transport', 'runMode'];

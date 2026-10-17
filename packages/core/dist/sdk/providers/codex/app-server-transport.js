@@ -423,11 +423,15 @@ export class CodexAppServerTransport {
                     await new Promise((resolve, reject) => {
                         this.child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, result: { answers } })}\n`, error => error ? reject(new Error('User-input response delivery failed')) : resolve());
                     });
-                    if (abort.signal.aborted) {
-                        throw new Error('User-input response delivery failed');
-                    }
                     clearTimeout(timer);
                     this.inputs.delete(id);
+                    // #5404: serverRequest/resolved may be processed while this write's
+                    // completion callback is still pending (the server typically resolves
+                    // because our answer landed). The bytes WERE delivered, so a 'resolved'
+                    // abort must not turn the successful write into a delivery failure.
+                    if (abort.signal.aborted && abort.signal.reason !== 'resolved') {
+                        throw new Error('User-input response delivery failed');
+                    }
                 }
                 catch {
                     this.cancelInput(id, undefined, 'unavailable');

@@ -165,6 +165,7 @@ export class AgentFactory {
                 skipHistory: options.skipHistory,
                 sdkSessionKey: options.sdkSessionKey,
                 turnRecovery: options.turnRecovery,
+                failureRecorder: options.failureRecorder,
             };
             return createChatAgent(config);
         }
@@ -215,6 +216,7 @@ export class AgentFactory {
             skipHistory: options.skipHistory,
             sdkSessionKey: options.sdkSessionKey,
             turnRecovery: options.turnRecovery,
+            failureRecorder: options.failureRecorder,
         };
         return createChatAgent(config);
     }
