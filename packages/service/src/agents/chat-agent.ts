@@ -36,6 +36,7 @@
  */
 
 import { addCompletionReaction } from './completion-reaction.js';
+import { compactNarrationPayloads } from './narration-compaction.js';
 import {
   BaseAgent,
   MessageBuilder,
@@ -2180,7 +2181,16 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         if (parsed.type === 'text' && parsed.metadata?.phase === 'commentary') {
           if (this.callbacks.finalReplyOnly !== true && parsed.content) {
             try {
-              await this.callbacks.sendMessage(chatId, parsed.content, resolveReplyThreadRoot());
+              // Oversized payloads embedded in progress text fold to a
+              // one-line summary; ordinary narration passes through intact.
+              const commentary = compactNarrationPayloads(parsed.content);
+              if (commentary.compacted) {
+                this.logger.debug(
+                  { chatId, foldedBlocks: commentary.foldedBlocks, foldedLines: commentary.foldedLines },
+                  'Compacted commentary payload'
+                );
+              }
+              await this.callbacks.sendMessage(chatId, commentary.text, resolveReplyThreadRoot());
             } catch (error) {
               // Progress cannot fail or complete the turn.
               this.logger.debug({ error, chatId }, 'Public commentary delivery failed');
@@ -2208,16 +2218,26 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             // Structured workflows consume the terminal answer only.
             pendingAssistantChunks = [];
           } else if (pendingAssistantChunks.length > 0) {
-            const narration = pendingAssistantChunks.join('');
+            const rawNarration = pendingAssistantChunks.join('');
             pendingAssistantChunks = [];
+            // Same payload-folding policy as commentary: narration is the
+            // model's wording, but gateways can embed raw tool payloads
+            // (whole JSON arguments, full outputs) in it.
+            const narration = compactNarrationPayloads(rawNarration);
+            if (narration.compacted) {
+              this.logger.debug(
+                { chatId, foldedBlocks: narration.foldedBlocks, foldedLines: narration.foldedLines },
+                'Compacted narration payload'
+              );
+            }
             const narrationRoot = resolveReplyThreadRoot();
             try {
               if (streamDriver) {
                 // p2p keeps narrating into the same streaming card the reply
                 // is building; the driver owns its own send fallbacks.
-                await streamDriver.pushText(narration, narrationRoot);
+                await streamDriver.pushText(narration.text, narrationRoot);
               } else {
-                await this.callbacks.sendMessage(chatId, narration, narrationRoot);
+                await this.callbacks.sendMessage(chatId, narration.text, narrationRoot);
               }
             } catch (error) {
               this.logger.debug({ error, chatId }, 'Decision narration delivery failed');
