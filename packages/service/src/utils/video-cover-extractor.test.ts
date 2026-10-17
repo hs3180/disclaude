@@ -35,7 +35,7 @@ vi.mock('node:child_process', () => ({
   spawnSync: vi.fn(),
 }));
 
-import { VIDEO_EXTENSIONS, extractVideoCover, isFfmpegAvailable, _resetFfmpegCache } from './video-cover-extractor.js';
+import { VIDEO_EXTENSIONS, extractVideoCover, isFfmpegAvailable, writePlaceholderCover, _resetFfmpegCache } from './video-cover-extractor.js';
 
 // Get the mocked spawnSync after module import
 const mockSpawnSync = vi.mocked(
@@ -182,6 +182,40 @@ describe('VideoCoverExtractor', () => {
       isFfmpegAvailable();
 
       expect(mockSpawnSync).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('writePlaceholderCover — Issue #5391', () => {
+    it('should write a valid PNG without touching ffmpeg', () => {
+      mockSpawnSync.mockImplementation(() => {
+        throw new Error('must not spawn ffmpeg for placeholder');
+      });
+
+      const videoPath = path.join(os.tmpdir(), `placeholder_${Date.now()}.mp4`);
+      const result = writePlaceholderCover(videoPath);
+
+      expect(result.success).toBe(true);
+      expect(result.coverPath).toBeDefined();
+      expect(mockSpawnSync).not.toHaveBeenCalled();
+
+      const png = fs.readFileSync(result.coverPath!);
+      // PNG signature
+      expect(png.subarray(0, 8)).toEqual(
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      );
+      // IHDR: 480x270, bit depth 8, color type 2 (RGB)
+      expect(png.readUInt32BE(16)).toBe(480);
+      expect(png.readUInt32BE(20)).toBe(270);
+      expect(png[24]).toBe(8);
+      expect(png[25]).toBe(2);
+
+      try { fs.unlinkSync(result.coverPath!); } catch { /* ignore */ }
+    });
+
+    it('should return error for empty path', () => {
+      const result = writePlaceholderCover('');
+      expect(result.success).toBe(false);
+      expect(result.error).toBeDefined();
     });
   });
 });
