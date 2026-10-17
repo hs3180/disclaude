@@ -517,4 +517,77 @@ describe('named runtime and LLM configuration', () => {
     expect(validateConfig(config)).toBe(false);
     expect(JSON.stringify(resolveConfiguredAgents(config))).not.toContain('canary-secret');
   });
+  it('compiles behavesAs into a single-entry modelOverrides map (Issue #5410)', () => {
+    const config = configuration();
+    config.llms!.proxy.behavesAs = 'claude-opus-5';
+    const result = resolveConfiguredAgents(config);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.presets.assistant.modelOverrides).toEqual({ 'claude-opus-5': 'glm-5.3' });
+  });
+  it('projects a raw multi-slot modelOverrides map verbatim', () => {
+    const config = configuration();
+    config.llms!.proxy.modelOverrides = { 'claude-opus-5': 'kimi-k3', 'claude-sonnet-4-5': 'kimi-k3-flash' };
+    const result = resolveConfiguredAgents(config);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.presets.assistant.modelOverrides).toEqual({
+      'claude-opus-5': 'kimi-k3',
+      'claude-sonnet-4-5': 'kimi-k3-flash',
+    });
+  });
+  it.each([
+    (c: DisclaudeConfig) => {
+      c.llms!.proxy.behavesAs = 'opus';
+    },
+    (c: DisclaudeConfig) => {
+      c.llms!.proxy.behavesAs = 'claude_OPUS';
+    },
+    (c: DisclaudeConfig) => {
+      c.llms!.proxy.behavesAs = '';
+    },
+    (c: DisclaudeConfig) => {
+      c.llms!.proxy.behavesAs = 'claude-opus-5';
+      c.llms!.proxy.modelOverrides = { 'claude-opus-5': 'kimi-k3' };
+    },
+    (c: DisclaudeConfig) => {
+      c.llms!.proxy.modelOverrides = { opus: 'kimi-k3' };
+    },
+    (c: DisclaudeConfig) => {
+      c.llms!.proxy.modelOverrides = { 'claude-opus-5': '  ' };
+    },
+    (c: DisclaudeConfig) => {
+      c.llms!.proxy.modelOverrides = {};
+    },
+    (c: DisclaudeConfig) => {
+      c.llms!.proxy.modelOverrides = 'claude-opus-5' as unknown as Record<string, string>;
+    },
+    (c: DisclaudeConfig) => {
+      c.llms!.daily.behavesAs = 'claude-opus-5';
+    },
+  ])('rejects malformed or mis-scoped model override declarations', (mutate) => {
+    const config = configuration();
+    mutate(config);
+    const result = resolveConfiguredAgents(config);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.errors.length).toBe(1);
+    expect(result.errors.join('\n')).toMatch(/behavesAs|modelOverrides/);
+  });
+  it('rejects the bare alias with explicit pinning guidance', () => {
+    const config = configuration();
+    config.llms!.proxy.behavesAs = 'opus';
+    const result = resolveConfiguredAgents(config);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.errors.join('\n')).toContain('aliases are not auto-resolved');
+  });
 });

@@ -22,7 +22,7 @@ import {
   type CardAction,
 } from '@disclaude/core';
 import type { IChannelAdapter, ChannelCapabilities } from '../channel-adapter.js';
-import { VIDEO_EXTENSIONS, extractVideoCover } from '../../utils/video-cover-extractor.js';
+import { VIDEO_EXTENSIONS, extractVideoCover, writePlaceholderCover } from '../../utils/video-cover-extractor.js';
 import {
   IMAGE_EXTENSIONS,
   EXT_TO_FEISHU_FILE_TYPE,
@@ -530,18 +530,35 @@ export class FeishuAdapter implements IChannelAdapter {
       }
 
       if (!imageKey) {
-        // Fallback: send as generic file if cover extraction/upload fails
+        // Issue #5391: Feishu rejects video files in msg_type:'file' (230055),
+        // so a cover-less video must not fall back to a plain file message.
+        // Generate a placeholder cover locally (no ffmpeg needed) and keep the
+        // media message path instead.
         logger.warn(
           { chatId: message.chatId, fileName, coverError: coverResult.error },
-          'Cover image unavailable, sending video as file attachment'
+          'Cover frame unavailable, generating placeholder cover for media message'
         );
-        msgType = 'file';
-        content = JSON.stringify({ file_key: fileKey });
-      } else {
-        // Send as media message with video + cover image
-        msgType = 'media';
-        content = JSON.stringify({ file_key: fileKey, image_key: imageKey });
+        const placeholder = writePlaceholderCover(filePath);
+        if (placeholder.success && placeholder.coverPath) {
+          imageKey = await uploadImage(client, placeholder.coverPath);
+          try {
+            fs.unlinkSync(placeholder.coverPath);
+          } catch {
+            /* ignore */
+          }
+        }
       }
+
+      if (!imageKey) {
+        return {
+          success: false,
+          error: `Failed to send video ${fileName}: no cover image available and placeholder cover upload failed`,
+        };
+      }
+
+      // Send as media message with video + cover image
+      msgType = 'media';
+      content = JSON.stringify({ file_key: fileKey, image_key: imageKey });
     } else {
       // Upload file
       if (fileSize > MAX_FILE_SIZE) {

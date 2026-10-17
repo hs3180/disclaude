@@ -40,6 +40,14 @@ llms:
     #   ANTHROPIC_DEFAULT_OPUS_MODEL: your-opus-model
     #   ANTHROPIC_DEFAULT_SONNET_MODEL: your-sonnet-model
     #   ANTHROPIC_DEFAULT_HAIKU_MODEL: your-haiku-model
+    # Gateway model Claude Code does not know: pin the catalog entry (window,
+    # capabilities, effort defaults) it should inherit. Opus-line IDs are the
+    # only 1M-context keys; requires Claude Code >= v2.1.200 (Issue #5410).
+    # behavesAs: claude-opus-5
+    # Or a raw multi-slot map (mutually exclusive with behavesAs):
+    # modelOverrides:
+    #   claude-opus-5: kimi-k3
+    #   claude-sonnet-4-5: kimi-k3-flash
 
 channels:
   feishu:

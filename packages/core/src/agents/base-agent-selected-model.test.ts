@@ -32,9 +32,15 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.unstubAllEnvs();
+  vi.doUnmock('../sdk/providers/claude/version.js');
 });
 
-async function selectedOptions(model: string, env?: Record<string, string>, settings?: AgentConfig) {
+async function selectedOptions(
+  model: string,
+  env?: Record<string, string>,
+  settings?: AgentConfig,
+  modelOverrides?: Record<string, string>
+) {
   const { BaseAgent } = await import('./base-agent.js');
   class SelectedAgent extends BaseAgent {
     protected getAgentName() {
@@ -50,6 +56,7 @@ async function selectedOptions(model: string, env?: Record<string, string>, sett
     model,
     env,
     settings,
+    modelOverrides,
     agentBackend: 'claude',
   }).options();
 }
@@ -107,5 +114,44 @@ describe('Claude native model aliases', () => {
       ANTHROPIC_DEFAULT_SONNET_MODEL: 'endpoint-main',
       ANTHROPIC_DEFAULT_HAIKU_MODEL: 'endpoint-fast',
     });
+  });
+});
+
+
+describe('Claude modelOverrides identity (Issue #5410)', () => {
+  it('passes the resolved map to native queries with the current bundled CLI', async () => {
+    const options = await selectedOptions('kimi-k3', undefined, undefined, {
+      'claude-opus-5': 'kimi-k3',
+    });
+    expect(options.modelOverrides).toEqual({ 'claude-opus-5': 'kimi-k3' });
+    expect(options.model).toBe('kimi-k3');
+  });
+  it('fails agent startup when the bundled Claude Code predates modelOverrides', async () => {
+    vi.doMock('../sdk/providers/claude/version.js', async (importOriginal) => ({
+      ...(await importOriginal<Record<string, unknown>>()),
+      bundledClaudeCodeVersion: () => '2.1.199',
+    }));
+    const { BaseAgent } = await import('./base-agent.js');
+    class GateAgent extends BaseAgent {
+      protected getAgentName() { return 'GateAgent'; }
+    }
+    expect(() => new GateAgent({
+      apiKey: 'selected-key',
+      apiProtocol: 'anthropic',
+      model: 'kimi-k3',
+      llm: 'gateway',
+      modelOverrides: { 'claude-opus-5': 'kimi-k3' },
+      agentBackend: 'claude',
+    })).toThrow(/requires Claude Code >= 2\.1\.200.*llms\.gateway/);
+  });
+  it('keeps overrides working when the bundled CLI version cannot be resolved', async () => {
+    vi.doMock('../sdk/providers/claude/version.js', async (importOriginal) => ({
+      ...(await importOriginal<Record<string, unknown>>()),
+      bundledClaudeCodeVersion: () => undefined,
+    }));
+    const options = await selectedOptions('kimi-k3', undefined, undefined, {
+      'claude-opus-4-7': 'kimi-k3',
+    });
+    expect(options.modelOverrides).toEqual({ 'claude-opus-4-7': 'kimi-k3' });
   });
 });

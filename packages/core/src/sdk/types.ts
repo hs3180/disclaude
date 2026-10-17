@@ -331,6 +331,14 @@ export interface AgentQueryOptions {
   /** Claude unset uses SDK defaults; 'auto' discovers capacity, a number sets a trigger, 0 disables. DSH resolves its native policy. */
   autoCompactWindow?: number | 'auto';
   /**
+   * Claude Code modelOverrides map (Issue #5410): full Anthropic model ID →
+   * provider ID. Claude Code applies the key's catalog entry — context window,
+   * capabilities, effort defaults — to the provider ID while sending the
+   * provider ID on the wire. Injected via the per-query private settings file;
+   * requires Claude Code ≥ 2.1.200.
+   */
+  modelOverrides?: Record<string, string>;
+  /**
    * Enable partial (stream_event) messages (Issue #3706 GLM stall).
    * When true, the SDK yields stream_event messages (content_block_delta,
    * message_start, message_stop) observed by the host activity clock.

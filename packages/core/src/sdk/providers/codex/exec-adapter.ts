@@ -434,8 +434,20 @@ export function isCodexUsageLimit(text: string): boolean {
   }
   // 429 must co-occur with rate-limit wording in the same sentence — a
   // bare "processed 429 records" is not a quota signal.
-  return /\b429\b[^.\n]{0,80}rate.?limit/i.test(text) ||
-    /rate.?limit[^.\n]{0,80}\b429\b/i.test(text);
+  const rateLimitSentence = /[^.\n]*\b429\b[^.\n]*/i.exec(text)?.[0] ?? '';
+  if (/\brate.?limit/i.test(rateLimitSentence)) {
+    // #5408: a seconds-scale throttle ("too many requests", "retry after",
+    // "rate limit reached") with no quota cue is transient — leave it to the
+    // bounded overload retry instead of the terminal usage-limit notice.
+    // `rate_limit_exceeded` keeps counting as quota: it is the ChatGPT
+    // backend's rolling-window signature, not a transient API throttle.
+    const transientThrottle =
+      /too many requests|retry.?after|rate.?limit reached/i.test(rateLimitSentence);
+    const quotaCue =
+      /usage|quota|resets?|try again (?:at|in)|upgrade|rate_limit_exceeded/i.test(rateLimitSentence);
+    return !transientThrottle || quotaCue;
+  }
+  return false;
 }
 
 /**
