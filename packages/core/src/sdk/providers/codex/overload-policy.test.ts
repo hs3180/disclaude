@@ -28,4 +28,16 @@ describe('Codex native overload classification', () => {
     expect(codexOverloadRetryDelay(failure, 0, 0)).toBeLessThanOrEqual(500);
     expect(codexOverloadRetryDelay(failure, 2, 0)).toBeUndefined();
   });
+
+  it('recognizes transient 429 throttles while keeping quota surfaces terminal (Issue #5408)', () => {
+    expect(readCodexOverloadFailure({ message: 'HTTP 429: Too Many Requests' })).toBeDefined();
+    expect(readCodexOverloadFailure({ message: 'Rate limit reached for requests. Retry-After: 30' })).toBeDefined();
+    expect(readCodexOverloadFailure({ message: 'unexpected HTTP status 429 rate_limit_exceeded' })).toBeUndefined();
+    expect(readCodexOverloadFailure({ message: "You've hit your usage limit. Try again at Apr 30th, 2026 11:21 AM" })).toBeUndefined();
+  });
+
+  it('honors a Retry-After seconds hint on a transient 429', () => {
+    const failure = readCodexOverloadFailure({ message: 'HTTP 429 Too Many Requests', additionalDetails: 'Retry-After: 5' })!;
+    expect(codexOverloadRetryDelay(failure, 0, 0)).toBe(5000);
+  });
 });
