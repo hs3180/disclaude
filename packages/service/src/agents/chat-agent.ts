@@ -48,6 +48,7 @@ import {
   isStartupFailure,
   tagErrorCategory,
   sanitizeDiagnosticText,
+  isEgressConnectivityFailure,
   StreamingReplyDriver,
   REACTIONS,
   TurnSupersededError,
@@ -2035,6 +2036,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // (next queued message) picks up its own anchor.
     let turnAnchorConsumed = false;
     let turnHasTerminal = false;
+    // Issue #5409: this turn's provider failure (if any) looked like an
+    // egress/connectivity problem — drives the failure hint and suppresses
+    // the same-window empty-turn replay.
+    let turnFailedWithConnectivityIssue = false;
     let currentTurnAnchor: string | null | undefined;
     let currentTurnMessageId: string | undefined;
     let currentTurnLifecycleContext: NonNullable<StreamingUserMessage['correlation']> | undefined;
@@ -2062,6 +2067,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         // Issue #5394: narration belongs to the turn that produced it — a
         // fresh turn's busy notices start from its own trigger line.
         this.activeTurnNarration = '';
+        turnFailedWithConnectivityIssue = false;
       }
       return currentTurnAnchor ?? undefined;
     };
@@ -2463,11 +2469,20 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // always has a user-visible terminal outcome.
           if (parsed.terminatedReason === 'turn_failed') {
             this.restartManager.recordFailure(chatId, 'turn_failed');
+            const failureDetail = parsed.terminationDetail || parsed.content || 'Provider turn failed';
+            // Issue #5409: a connectivity-class failure (routing discovery,
+            // socket errors, dead egress) is environmental — hint at the
+            // network path instead of model service/credentials, and mark it
+            // so the empty-turn replay below does not burn itself against
+            // the same dead window seconds later.
+            turnFailedWithConnectivityIssue = isEgressConnectivityFailure(failureDetail);
             const failure = failureContext(this.activeLifecycleContext, resolveReplyThreadRoot(), 'provider-turn-failed',
-              parsed.terminationDetail || parsed.content || 'Provider turn failed', parsed.sessionId ?? this.queryHandle?.sessionId);
+              failureDetail, parsed.sessionId ?? this.queryHandle?.sessionId);
             const delivered = await this.deliverUserVisible(
               chatId,
-              `❌ 本轮 ${failure.provider} 执行失败，未生成可交付结果。请先核对已执行的操作，再检查模型服务、凭据和超时配置。\n${this.formatFailureDiagnostic(failure)}`,
+              `❌ 本轮 ${failure.provider} 执行失败，未生成可交付结果。${turnFailedWithConnectivityIssue
+                ? '请先核对已执行的操作；该失败特征指向出口网络（代理、DNS 或海外连通性），可先检查本机/路由器的代理与外网连通性，恢复后重试。'
+                : '请先核对已执行的操作，再检查模型服务、凭据和超时配置。'}\n${this.formatFailureDiagnostic(failure)}`,
               resolveReplyThreadRoot()
             );
             this.logger.error({ ...failure, event: 'agent_turn_failure', user_visible: delivered }, 'Provider turn failed');
@@ -2676,6 +2691,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             !this.turnsWithLiveInput.has(currentTurnMessageId ?? '') &&
             !upstreamApiError &&
             !sawMidstreamInterrupt &&
+            !turnFailedWithConnectivityIssue &&
             !!turnMessage &&
             this.emptyTurnRetryPolicy.canRetry(chatId, turnMessage.messageId, true);
           if (willRetryEmptyTurn) {
@@ -2691,7 +2707,18 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // Issue #4391: also suppressed when the turn is being retried — the
           // reset+replay below IS the "try again"; telling the user to resend
           // would be wrong (and noisy) while recovery is already in flight.
-          if (isEmptyTurn && !upstreamApiError && !sawMidstreamInterrupt && !willRetryEmptyTurn) {
+          // Issue #5409: a connectivity-class provider failure already got
+          // its ❌ notice with the egress hint. The generic ⚠️ advice below
+          // ("session may be invalid, try resetting") is wrong for a dead
+          // egress and would double-notify.
+          if (turnFailedWithConnectivityIssue && isEmptyTurn) {
+            this.logger.warn(
+              { chatId, messageId: currentTurnMessageId, diagnosticId },
+              'Empty turn follows a connectivity-class provider failure (#5409): ' +
+                'empty-turn replay and generic empty-turn notice skipped — egress is likely down'
+            );
+          }
+          if (isEmptyTurn && !upstreamApiError && !sawMidstreamInterrupt && !willRetryEmptyTurn && !turnFailedWithConnectivityIssue) {
             this.logger.warn(
               {
                 chatId,
