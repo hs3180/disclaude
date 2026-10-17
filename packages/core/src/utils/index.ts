@@ -24,6 +24,7 @@ export {
 export type { ErrorContext } from './error-handler.js';
 export { browserAgentEnv, resolveBrowserRuntimePath } from './browser-env.js';
 export { sanitizeDiagnosticText } from './diagnostic-text.js';
+export { isEgressConnectivityFailure } from './egress-failure.js';
 export {
   classifyError,
   isRetryable,
