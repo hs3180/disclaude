@@ -105,6 +105,15 @@ export function adaptOptions(
     }
   }
 
+  // Issue #5410: gateway model IDs ride Claude Code's modelOverrides so the
+  // pinned catalog entry's window and capability defaults apply to them.
+  if (options.modelOverrides) {
+    sdkOptions.settings = {
+      ...(sdkOptions.settings as object | undefined),
+      modelOverrides: options.modelOverrides,
+    };
+  }
+
   // stderr 回调（Issue #2920: 捕获 Claude Code 进程的 stderr 输出）
   if (options.stderr) {
     sdkOptions.stderr = options.stderr;

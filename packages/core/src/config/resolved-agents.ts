@@ -27,6 +27,8 @@ const CONFIG_KEYS = new Set([
 ]);
 const BACKENDS = new Set(['claude', 'pi', 'codex', 'dsh']);
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+/** Full Claude model IDs as modelOverrides keys (Issue #5410); bare aliases are rejected below. */
+const CLAUDE_MODEL_ID = /^claude-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const mapping = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -72,7 +74,7 @@ export function resolveConfiguredAgents(
       continue;
     }
     for (const key of Object.keys(raw)) {
-      if (!['model', 'reasoningEffort', 'maxConcurrentSessions', 'api', 'env'].includes(key)) {
+      if (!['model', 'reasoningEffort', 'maxConcurrentSessions', 'api', 'behavesAs', 'modelOverrides', 'env'].includes(key)) {
         errors.push(`${field}.${key} is unsupported`);
       }
     }
@@ -97,6 +99,31 @@ export function resolveConfiguredAgents(
         ))
     ) {
       errors.push(`${field}.env must map environment variable names to strings`);
+    }
+    if (llm.behavesAs !== undefined) {
+      if (typeof llm.behavesAs !== 'string' || !CLAUDE_MODEL_ID.test(llm.behavesAs)) {
+        errors.push(
+          /^(opus|sonnet|haiku|fable|default)$/i.test(String(llm.behavesAs))
+            ? `${field}.behavesAs must be a full Claude model ID such as claude-opus-5; aliases are not auto-resolved, pin the running version's catalog ID`
+            : `${field}.behavesAs must be a full Claude model ID such as claude-opus-5`
+        );
+      }
+      if (llm.modelOverrides !== undefined) {
+        errors.push(`${field}.behavesAs and modelOverrides are mutually exclusive`);
+      }
+    }
+    if (
+      llm.modelOverrides !== undefined &&
+      (!mapping(llm.modelOverrides) ||
+        !Object.keys(llm.modelOverrides).length ||
+        Object.entries(llm.modelOverrides).some(
+          ([key, value]) =>
+            !CLAUDE_MODEL_ID.test(key) || typeof value !== 'string' || !value.trim()
+        ))
+    ) {
+      errors.push(
+        `${field}.modelOverrides must map full Claude model IDs to non-empty provider model IDs`
+      );
     }
     if (llm.api !== undefined) {
       if (!mapping(llm.api)) {
@@ -269,6 +296,14 @@ export function resolveConfiguredAgents(
     if (llm.reasoningEffort !== undefined && !['codex', 'dsh'].includes(agent.backend)) {
       errors.push(`llms.${agent.llm}.reasoningEffort requires a Codex or DSH native runtime`);
     }
+    if (
+      (llm.behavesAs !== undefined || llm.modelOverrides !== undefined) &&
+      agent.backend !== 'claude'
+    ) {
+      errors.push(
+        `llms.${agent.llm}.behavesAs requires a Claude-bound runtime; other backends own their model catalogs`
+      );
+    }
     if (agent.backend === 'codex' && llm.api !== undefined) {
       errors.push(
         `${field}: this native runtime owns its API connection; omit llms.${agent.llm}.api`
@@ -287,6 +322,11 @@ export function resolveConfiguredAgents(
       agentBackend: backend,
       reasoningEffort: llm.reasoningEffort,
       maxConcurrentSessions: llm.maxConcurrentSessions,
+      // Issue #5410: behavesAs compiles to a single-entry map; a raw map passes through verbatim.
+      modelOverrides:
+        llm.behavesAs !== undefined
+          ? { [llm.behavesAs]: llm.model.trim() }
+          : llm.modelOverrides,
       model: llm.model.trim(),
       apiKey: keyEnv ? (process.env[keyEnv] ?? '') : '',
       apiProtocol: protocol,
