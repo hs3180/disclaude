@@ -181,6 +181,43 @@ createInterface({input:process.stdin}).on('line',line=>{
       expect(received.mock.calls.filter(([method, data]) => method === 'fixture/answer' && data.result)).toHaveLength(0);
     } finally { await transport.close(); }
   });
+  it('treats a write that succeeds across serverRequest/resolved as delivered (Issue #5404)', async () => {
+    // Deterministic repro of the race: the answer line is large enough that
+    // part of it still sits in the parent's write queue when the fixture
+    // pauses reading and emits serverRequest/resolved — so the write
+    // completion callback cannot have fired yet while the input is aborted.
+    const bigQuestions = Array.from({ length: 10 }, (_, index) => ({ id: `q${index}`, header: `Q${index}`, question: `Question ${index}?`, isOther: true, options: null }));
+    const bigParams: Record<string, unknown> = { ...inputParams, isBlocking: false, questions: bigQuestions };
+    const binary = inputFixture(`
+let buf='';let resolvedSent=false;
+process.stdin.on('data',c=>{
+ buf+=c;
+ if(!resolvedSent&&buf.length>70000){resolvedSent=true;process.stdin.pause();
+  send({method:'serverRequest/resolved',params:{threadId:'thread-1',requestId:90}});
+  setTimeout(()=>process.stdin.resume(),120);return;}
+ let i;while((i=buf.indexOf('\\n'))>=0){const l=buf.slice(0,i);buf=buf.slice(i+1);
+  const m=JSON.parse(l);
+  if(m.method==='initialize'){send({id:m.id,result:{}});}
+  else if(m.method==='begin'){send({id:m.id,result:{}});send({id:90,method:'item/tool/requestUserInput',params});}
+  else if(m.id===90){send({method:'fixture/answer',params:{answers:m.result.answers.length}});}
+ }
+});`, bigParams);
+    let input: AgentInputRequest | undefined;
+    const received = vi.fn();
+    const transport = new CodexAppServerTransport({ binary, onUserInput: request => { input = request; return Promise.resolve(); }, onNotification: received });
+    try {
+      await transport.initialize();
+      await transport.request('begin');
+      await vi.waitFor(() => expect(input).toBeDefined());
+      const answers = Object.fromEntries(bigQuestions.map(q => [q.id, { answers: Array.from({ length: 10 }, () => 'x'.repeat(11_000)) }])) as Parameters<AgentInputRequest['respond']>[0];
+      const responding = input!.respond(answers);
+      await expect(responding).resolves.toBeUndefined();
+      await vi.waitFor(() => expect(received.mock.calls.some(([method]) => method === 'fixture/answer')).toBe(true));
+      expect(input!.signal.aborted).toBe(true);
+      expect(input!.signal.reason).toBe('resolved');
+      await expect(input!.respond(answers)).rejects.toThrow('no longer active');
+    } finally { await transport.close(); }
+  });
   it.each([false, true])('enables input only with a host handler and preserves browser isolation (input=%s)', async inputEnabled => {
     const binary = fixture(`printf '%s\\n' "$@" > "$(dirname "$0")/args"
 printf '%s|%s' "$BU_CDP_URL" "$DISCLAUDE_BROWSER_RUNTIME" > "$(dirname "$0")/cdp"

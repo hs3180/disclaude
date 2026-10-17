@@ -63,6 +63,24 @@ describe('Feishu native agent input', () => {
     expect(expired.respond).not.toHaveBeenCalled();
     expect(JSON.stringify(expired.patch.mock.calls.at(-1))).toContain('过期');
   });
+  it('keeps a resolved race on an in-flight submission answered, not expired (Issue #5404)', async () => {
+    const f = fixture();
+    await f.controller.request(f.request, f.context);
+    let release!: () => void;
+    f.respond.mockImplementation(() => new Promise<void>(resolve => { release = resolve; }));
+    const submitting = f.controller.submit(f.callback());
+    await vi.waitFor(() => expect(f.respond).toHaveBeenCalledTimes(1));
+    // The server resolves the request while our answer delivery is still in
+    // flight — with the delivery succeeding (transport #5404) the card must
+    // end up answered, never "问题已结束，无需回答".
+    f.abort.abort('resolved');
+    release();
+    await submitting;
+    expect(f.patch.mock.calls.length).toBeGreaterThanOrEqual(1);
+    const lastCard = JSON.parse(f.patch.mock.calls.at(-1)![0].data.content);
+    expect(JSON.stringify(lastCard)).toContain('已回答');
+    expect(JSON.stringify(lastCard)).not.toContain('问题已结束');
+  });
   it('collects secret answers only in a bound private card and never echoes values', async () => {
     const f = fixture(true);
     await f.controller.request(f.request, f.context);
