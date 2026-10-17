@@ -504,6 +504,18 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   }
 
   /**
+   * Issue #5399: the session's admission budget — inputs accepted but not yet
+   * finished, counted by input identity (one unsettled completion each).
+   */
+  private countUnsettledInputs(): number {
+    let count = 0;
+    for (const entry of this.turnCompletions.values()) {
+      if (!entry.settled) { count++; }
+    }
+    return count;
+  }
+
+  /**
    * Register the per-message turn-completion entry for a channel push
    * (Issue #4063; per-message shape from #4649 review ③).
    *
@@ -535,19 +547,17 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     this.turnCompletions.set(messageId, entry);
 
     // Bounded like pendingTurnAnchors: a parked/dead session with no iterator
-    // draining must not grow this unboundedly. Evicted entries are settled
-    // with an error so a still-awaiting caller never hangs silently.
+    // draining must not grow this unboundedly. Only SETTLED entries are
+    // receipts for late awaiters and may be retired; an unsettled entry is a
+    // live input's only completion (#5399) — capacity is enforced at
+    // admission, never by rejecting a turn whose execution may still run.
     while (this.turnCompletions.size > MAX_TURN_COMPLETIONS) {
-      const oldest = this.turnCompletions.entries().next();
-      if (oldest.done) {
-        break;
+      let oldestSettledKey: string | undefined;
+      for (const [key, entry] of this.turnCompletions) {
+        if (entry.settled) { oldestSettledKey = key; break; }
       }
-      const [oldestKey, oldestEntry] = oldest.value;
-      this.turnCompletions.delete(oldestKey);
-      if (!oldestEntry.settled) {
-        oldestEntry.settled = true;
-        oldestEntry.settle(new Error('Turn completion evicted (registry overflow)'));
-      }
+      if (oldestSettledKey === undefined) { break; }
+      this.turnCompletions.delete(oldestSettledKey);
     }
     return entry;
   }
@@ -1006,6 +1016,35 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     if (restartNotice) { await restartNotice; }
     if (this.serviceClosing) { throw new Error('Service is shutting down; request was not accepted'); }
 
+    // Issue #5399: one bounded admission budget per session, enforced BEFORE
+    // any anchor, completion or channel accounting is touched. Every accepted
+    // but unfinished input (running, awaiting admission, or already in the
+    // channel) holds exactly one unsettled turn completion keyed by its
+    // message ID, so the unsettled count IS the budget. A re-push of a
+    // message that already holds an entry replaces it and needs no slot.
+    // A live input is never evicted to make room — the next distinct input
+    // is explicitly refused instead.
+    if (!this.turnCompletions.has(messageId) && this.countUnsettledInputs() >= MAX_TURN_COMPLETIONS) {
+      const error = new Error(`Busy-input budget is full (${MAX_TURN_COMPLETIONS} unfinished inputs); request was not accepted`);
+      this.createTurnCompletion(messageId);
+      this.resolveTurn(messageId, error);
+      let userVisible = false;
+      try {
+        await this.callbacks.sendMessage(chatId,
+          `⏳ 当前会话未完成的输入已达上限（${MAX_TURN_COMPLETIONS} 条），这条未接收。请等待现有输入结束后再发；正在运行的任务不受影响。`,
+          threadRootId ?? messageId);
+        userVisible = true;
+      } catch (sendError) {
+        this.logger.error({ err: sendError, chatId, messageId }, 'Failed to send busy-input capacity notice');
+      }
+      try { await this.callbacks.onDone?.(chatId, threadRootId ?? messageId); }
+      catch (doneError) { this.logger.error({ err: doneError, chatId, messageId }, 'Failed to finish capacity-refused input'); }
+      this.logger.warn({ event: 'agent_turn', state: 'failed', chatId, messageId, traceId: `${chatId}:${messageId}`,
+        diagnosticId: crypto.randomUUID(), errorMessage: error.message, user_visible: userVisible,
+      }, 'Message refused because the busy-input admission budget is full');
+      return;
+    }
+
     // #5240: capable backends receive ordinary busy input through steer.
     // Only unattempted or definitely rejected input falls back to the channel.
     const queuedBehindActiveTurn = this.isBusy;
@@ -1114,9 +1153,25 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.pendingTurnMessageIds.push(messageId);
       this.pendingLifecycleContexts.push(lifecycleContext);
       if (!queuedBehindActiveTurn) { this.activeLifecycleContext = lifecycleContext; }
-      if (this.pendingLifecycleContexts.length > 50) { this.pendingLifecycleContexts.splice(0, this.pendingLifecycleContexts.length - 50); }
-      if (this.pendingTurnAnchors.length > 50) { this.pendingTurnAnchors.splice(0, this.pendingTurnAnchors.length - 50); }
-      if (this.pendingTurnMessageIds.length > 50) { this.pendingTurnMessageIds.splice(0, this.pendingTurnMessageIds.length - 50); }
+      // Issue #5399: retire only rows whose input already reached a real
+      // terminal state — a live input keeps its own context, message ID and
+      // reply anchor until its true settlement. Anchors and message IDs stay
+      // lockstep; lifecycle contexts are keyed by run ID and may drift
+      // (joinConsumedInputs), so they carry their own bound. Admission is
+      // budgeted at MAX_TURN_COMPLETIONS unsettled inputs, so live rows are
+      // never trimmed away to make room.
+      const rowIsSettled = (messageId: string | undefined): boolean => {
+        const entry = messageId !== undefined ? this.turnCompletions.get(messageId) : undefined;
+        return !entry || entry.settled;
+      };
+      while (this.pendingTurnMessageIds.length > MAX_TURN_COMPLETIONS && rowIsSettled(this.pendingTurnMessageIds[0])) {
+        this.pendingTurnMessageIds.shift();
+        this.pendingTurnAnchors.shift();
+      }
+      while (this.pendingLifecycleContexts.length > MAX_TURN_COMPLETIONS &&
+        rowIsSettled(this.pendingLifecycleContexts[0]?.sourceMessageId)) {
+        this.pendingLifecycleContexts.shift();
+      }
     };
     // Startup/status events can arrive while first-message history loads.
     // Preserve their original anchor; a possible steer must not reserve a
