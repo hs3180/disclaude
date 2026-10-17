@@ -9,7 +9,7 @@
  * callbacks that satisfy this interface.
  */
 
-import type { FeishuCard, ChannelCapabilities, BaseAgentConfig, ChatAgentHooks, MessageBuilderOptions, CwdProvider, CwdResolution } from '@disclaude/core';
+import type { FeishuCard, ChannelCapabilities, BaseAgentConfig, ChatAgentHooks, MessageBuilderOptions, CwdProvider, CwdResolution, ChatFailureRecord } from '@disclaude/core';
 import type { ServiceTurnRecoveryStore } from '../service-turn-recovery.js';
 
 // ============================================================================
@@ -212,6 +212,12 @@ export interface ChatAgentConfig extends BaseAgentConfig, ChatAgentHooks {
   sdkSessionKey?: string;
   /** Durable restart-interruption journal shared by service-managed agents. */
   turnRecovery?: ServiceTurnRecoveryStore;
+  /**
+   * Sink for user-visible failure contexts (Issue #5400). Every failure that
+   * produces a diagnostic notice is also recorded here so `/issue` can offer
+   * the chat's most recent failure for one-click reporting.
+   */
+  failureRecorder?: (failure: ChatFailureRecord) => void;
 
 }
 

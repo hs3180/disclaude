@@ -382,6 +382,23 @@ export interface SessionTimeoutConfig {
 }
 
 /**
+ * GitHub issue feedback configuration (Issue #5400).
+ * Target repository + GitHub App credentials for one-click issue reporting.
+ * The private key is a secret and must reference the service environment
+ * (`privateKey: $GITHUB_APP_PRIVATE_KEY` holding the PEM, `\n`-escaped or literal).
+ */
+export interface GitHubFeedbackConfig {
+  /** `owner/name` repository issues are filed to, e.g. `hs3180/disclaude`. */
+  repository?: string;
+  /** GitHub App numeric ID (public identifier). */
+  appId?: string;
+  /** Installation numeric ID the App is installed under. */
+  installationId?: string;
+  /** Whole `$VARIABLE` reference to the App PEM private key. */
+  privateKey?: string;
+}
+
+/**
  * Main configuration interface (core).
  *
  * This represents the structure of disclaude.config.yaml WITHOUT channel-specific config.
@@ -404,6 +421,8 @@ export interface DisclaudeConfig {
   tools?: ToolsConfig;
   /** Message routing configuration */
   messaging?: MessagingConfig;
+  /** GitHub issue feedback settings (Issue #5400) */
+  github?: GitHubFeedbackConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
   /** Global environment variables applied to all agent processes */

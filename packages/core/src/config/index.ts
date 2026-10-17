@@ -35,6 +35,7 @@ export * from './loader.js';
 export * from './agent-presets.js';
 export * from './resolved-agents.js';
 export * from './channel-credentials.js';
+export * from './github-feedback.js';
 
 export { loadRuntimeEnv, setRuntimeEnv, deleteRuntimeEnv } from './runtime-env.js';
 

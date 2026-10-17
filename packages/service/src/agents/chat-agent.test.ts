@@ -3411,6 +3411,34 @@ describe('ChatAgent (service)', () => {
       } finally { agent.dispose(); }
     });
 
+    it('records the fatal failure for the per-chat /issue registry (#5400)', async () => {
+      const callbacks = createMockCallbacks();
+      const recorded: any[] = [];
+      const agent = new ChatAgent({ chatId: 'loop-failure', callbacks, apiKey: 'key', model: 'model', agentBackend: 'codex',
+        failureRecorder: failure => recorded.push(failure) });
+      let fail!: (error: Error) => void;
+      const fatal = new Promise<void>((_resolve, reject) => { fail = reject; });
+      vi.spyOn(agent as any, 'processIterator').mockImplementation(() => fatal);
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn(), sessionId: 'native-loop-session' },
+        iterator: (async function* () {})(),
+      });
+      try {
+        await agent.processMessage({ chatId: 'loop-failure', payload: 'owned work', messageId: 'owned-loop-source' });
+        const outcome = expect(agent.turnCompleteFor('owned-loop-source')).rejects.toMatchObject({ diagnosticId: expect.any(String) });
+        fail(new Error('Owned loop crash; Bearer synthetic-loop-secret'));
+        await outcome;
+        await vi.waitFor(() => expect(recorded.length).toBeGreaterThan(0));
+        expect(recorded.at(-1)).toMatchObject({
+          chatId: 'loop-failure', diagnosticId: expect.any(String), failureClass: 'agent-loop-error',
+          sessionId: 'native-loop-session', sourceMessageId: 'owned-loop-source',
+          detail: expect.stringContaining('Owned loop crash'),
+        });
+        // The record is already sanitized: no raw auth material rides along.
+        expect(JSON.stringify(recorded)).not.toContain('synthetic-loop-secret');
+      } finally { agent.dispose(); }
+    });
+
     it.each([false, true])('settles active and queued requests once without replay (throws=%s)', async throws => {
       const callbacks = createMockCallbacks();
       const agent = new ChatAgent({ chatId: 'iterator-end', callbacks, apiKey: 'key', model: 'model' });

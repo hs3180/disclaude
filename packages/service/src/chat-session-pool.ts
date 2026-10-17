@@ -11,7 +11,7 @@
  * @see Issue #1040 - Separate disclaude service code to @disclaude/service
  */
 
-import { type MessageBuilderOptions, type CwdProvider, type CwdResolution, type AgentPreset, type AgentSessionOptions, type AgentPresets, type BaseAgentConfig, buildSessionKey, chatIdOfSessionKey, createLogger, getProvider, Config, resolveAgentPreset } from '@disclaude/core';
+import { type MessageBuilderOptions, type CwdProvider, type CwdResolution, type AgentPreset, type AgentSessionOptions, type AgentPresets, type BaseAgentConfig, type ChatFailureRecord, buildSessionKey, chatIdOfSessionKey, createLogger, getProvider, Config, resolveAgentPreset } from '@disclaude/core';
 import { statSync } from 'node:fs';
 import { AgentFactory } from './agents/factory.js';
 import type { ChatAgentCallbacks } from './agents/types.js';
@@ -73,6 +73,12 @@ export interface ChatSessionPoolOptions {
 
   /** Durable journal for interrupted turns caused by a service restart. */
   turnRecovery?: ServiceTurnRecoveryStore;
+
+  /**
+   * Issue #5400: sink for the per-chat last-failure registry; injected into
+   * every agent the pool creates.
+   */
+  failureRecorder?: (failure: ChatFailureRecord) => void;
 
   /**
    * Issue #4644: provider-session forgetter invoked by reset() — clears the
@@ -326,6 +332,7 @@ export class ChatSessionPool {
       skipHistory,
       sdkSessionKey,
       turnRecovery: this.options.turnRecovery,
+      failureRecorder: this.options.failureRecorder,
       ...(preset ? {
         ...preset,
         settings: preset,
