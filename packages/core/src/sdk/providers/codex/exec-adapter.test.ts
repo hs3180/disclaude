@@ -410,4 +410,13 @@ describe('usage-limit adapter dedupe (S5 review)', () => {
     // Genuine same-sentence 429 still matches.
     expect(isCodexUsageLimit('unexpected status 429 rate_limit_exceeded')).toBe(true);
   });
+
+  it('keeps transient throttles out of the usage-limit notice (Issue #5408)', () => {
+    // Seconds-scale throttle wording without a quota cue: retryable overload, not terminal.
+    expect(isCodexUsageLimit('HTTP 429: Too Many Requests. Retry-After: 30')).toBe(false);
+    expect(isCodexUsageLimit('Rate limit reached for requests, retrying in 1s (429)')).toBe(false);
+    // Quota cues in the same sentence still classify as usage limit.
+    expect(isCodexUsageLimit('429 rate limit exceeded — usage resets at 12:00 UTC')).toBe(true);
+    expect(isCodexUsageLimit('429 rate limit reached, try again in 2.5 hours')).toBe(true);
+  });
 });

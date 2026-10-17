@@ -35,6 +35,17 @@ import { loadRuntimeEnv } from '../config/runtime-env.js';
 import path from 'node:path';
 import { assertToolOptions } from '../sdk/tools.js';
 import { withLlmSessionLimit } from '../sdk/llm-session-limit.js';
+import { bundledClaudeCodeVersion, lacksModelOverrides } from '../sdk/providers/claude/version.js';
+
+/** Opus 4.7 and later (including Opus 5) are the 1M-context keys in Claude Code's catalog (Issue #5410). */
+function assumedContextWindow(claudeModelId: string): 1_000_000 | 200_000 {
+  const match = /^claude-opus-(\d+)(?:-(\d+))?/.exec(claudeModelId);
+  if (!match) {
+    return 200_000;
+  }
+  const major = Number(match[1]);
+  return major > 4 || (major === 4 && Number(match[2] ?? 0) >= 7) ? 1_000_000 : 200_000;
+}
 
 // Re-export BaseAgentConfig for backward compatibility
 export type { BaseAgentConfig } from './types.js';
@@ -141,6 +152,7 @@ export abstract class BaseAgent implements Disposable {
   readonly apiProtocol?: BaseAgentConfig['apiProtocol'];
   private readonly selectedConfig: BaseAgentConfig;
   readonly agentBackend?: BaseAgentConfig['agentBackend'];
+  readonly modelOverrides?: Record<string, string>;
 
   protected readonly logger: Logger;
   protected initialized = false;
@@ -170,6 +182,32 @@ export abstract class BaseAgent implements Disposable {
       (['claude', 'codex', 'pi', 'dsh'].includes(this.sdkProvider.name)
         ? (this.sdkProvider.name as BaseAgentConfig['agentBackend'])
         : undefined);
+
+    // Issue #5410: gateway models ride modelOverrides, so gate the feature on
+    // the bundled Claude Code and surface the window the key makes Claude
+    // Code assume (Opus-line IDs are the only 1M-window keys).
+    if (config.modelOverrides && (this.agentBackend ?? 'claude') === 'claude') {
+      this.modelOverrides = config.modelOverrides;
+      const bundled = bundledClaudeCodeVersion();
+      if (bundled && lacksModelOverrides(bundled)) {
+        throw new AppError(
+          `modelOverrides requires Claude Code >= 2.1.200, but the bundled Claude Code is v${bundled}; upgrade @anthropic-ai/claude-agent-sdk or remove behavesAs/modelOverrides from llms.${config.llm ?? 'default'}`,
+          ErrorCategory.CONFIGURATION
+        );
+      }
+      for (const [claudeModel, providerModel] of Object.entries(config.modelOverrides)) {
+        const windowTokens = assumedContextWindow(claudeModel);
+        this.logger.info(
+          {
+            event: 'claude_model_overrides',
+            claudeModel,
+            providerModel,
+            assumedContextWindow: windowTokens,
+          },
+          `Claude Code treats ${providerModel} as ${claudeModel} (${windowTokens === 1_000_000 ? '1M' : '200k'} context window)`
+        );
+      }
+    }
   }
 
   /**
@@ -258,6 +296,9 @@ export abstract class BaseAgent implements Disposable {
     // Set model
     if (this.model) {
       options.model = this.model;
+    }
+    if (this.modelOverrides && (this.agentBackend ?? 'claude') === 'claude') {
+      options.modelOverrides = this.modelOverrides;
     }
 
     // SDK 0.3.177+: Agent Teams is enabled via teammateMode Settings field,

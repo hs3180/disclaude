@@ -129,6 +129,26 @@ describe('adaptOptions', () => {
     expect(result.env).toHaveProperty('CUSTOM_VAR', 'kept');
   });
 
+  it('injects modelOverrides into SDK settings alongside pinned credentials (Issue #5410)', () => {
+    const result = adaptOptions({
+      settingSources: ['user', 'project', 'local'],
+      env: { ANTHROPIC_API_KEY: 'selected-key' },
+      modelOverrides: { 'claude-opus-5': 'kimi-k3' },
+    });
+    expect(result.settings).toMatchObject({
+      env: { ANTHROPIC_API_KEY: 'selected-key' },
+      modelOverrides: { 'claude-opus-5': 'kimi-k3' },
+    });
+  });
+
+  it('builds SDK settings from modelOverrides without an API key (Issue #5410)', () => {
+    const result = adaptOptions({
+      settingSources: ['user', 'project', 'local'],
+      modelOverrides: { 'claude-opus-4-7': 'kimi-k3' },
+    });
+    expect(result.settings).toEqual({ modelOverrides: { 'claude-opus-4-7': 'kimi-k3' } });
+  });
+
   it('should pass through stderr callback (Issue #2920)', () => {
     const stderrFn = (_data: string) => { /* test callback */ };
     const result = adaptOptions({

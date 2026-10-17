@@ -152,7 +152,7 @@ vi.mock('../services/debug-group-service.js', () => ({
 
 import { ChatAgent } from './chat-agent.js';
 import { createChannelCallbacksFactory } from '../utils/channel-handlers.js';
-import type { IChannel, OutgoingMessage } from '@disclaude/core';
+import { TurnSupersededError, type IChannel, type OutgoingMessage } from '@disclaude/core';
 import type { Logger } from 'pino';
 import { ServiceTurnRecoveryStore } from '../service-turn-recovery.js';
 
@@ -3784,6 +3784,30 @@ describe('ChatAgent (service)', () => {
       expect(callbacks.sendMessage.mock.calls.map(call => call[1])).toEqual(['已确认缺少权限，改为核验可见元数据。', 'Please authorize the required operation.', 'Final reply']);
     });
 
+    it('folds oversized payloads embedded in narration and commentary, never in the final answer', async () => {
+      const { agent, callbacks } = ownedAgent();
+      const dump = `{"imageSource":"https://example.com/shot_01.png?Signature=${'a'.repeat(400)}"}`;
+      const narration = `**Input:**\n\`\`\`json\n${dump}\n\`\`\`\n*Executing on server...*`;
+      const commentary = `**Output:**\n**summary:** [{"text": "${'long output '.repeat(40)}"}]`;
+      await (agent as any).processIterator((async function* () {
+        yield { parsed: { type: 'text', content: narration } };
+        yield { parsed: { type: 'tool_use', content: 'hidden tool' } };
+        yield { parsed: { type: 'text', content: commentary, metadata: { phase: 'commentary' } } };
+        yield { parsed: { type: 'text', content: `最终结论（含完整 dump）：\n\`\`\`json\n${dump}\n\`\`\``, metadata: { phase: 'final_answer' } } };
+        yield { parsed: { type: 'result', content: '' } };
+      })());
+      const messages = callbacks.sendMessage.mock.calls.map(([, text]) => text as string);
+      expect(messages).toHaveLength(3);
+      // Narration and commentary keep their framing but fold the payload.
+      expect(messages[0]).toContain('**Input:**');
+      expect(messages[0]).toContain('payload 已折叠');
+      expect(messages[1]).toContain('**Output:**');
+      expect(messages[1]).toContain('payload 已折叠');
+      expect(messages.slice(0, 2).join('\n')).not.toContain('a'.repeat(100));
+      // The final answer is never compacted.
+      expect(messages[2]).toContain('aaaa');
+    });
+
     it('keeps non-streaming private-chat delivery unchanged', async () => {
       const { agent, callbacks } = ownedAgent('p2p');
       await (agent as any).processIterator((async function* () {
@@ -6700,5 +6724,111 @@ describe('Issue #5409: connectivity-class provider failures', () => {
         expect(warns.some((w: string) => w.includes('scheduling one-shot'))).toBe(true);
       });
     } finally { agent.dispose(); }
+  });
+});
+
+describe('Issue #5399: streaming busy-input admission budget', () => {
+  const MAX = 50;
+
+  // Busy session with one live owner turn, mirroring the #5240/#5260 harness:
+  // codex gets a steer-capable handle, claude the streaming channel queue.
+  function capacityAgent(backend: 'codex' | 'claude' = 'codex') {
+    const callbacks = createMockCallbacks();
+    const agent = new ChatAgent({ chatId: 'cap-chat', callbacks, agentBackend: backend as any, apiKey: 'test', model: 'test' });
+    const push = vi.fn().mockReturnValue(true);
+    const steer = vi.fn().mockResolvedValue({ turnId: 'native-A' });
+    const handle = { close: vi.fn(), cancel: vi.fn(),
+      ...(backend === 'codex' ? { steer } : { inputDelivery: 'streaming' as const }),
+    };
+    Object.assign(agent as any, { channel: { push, close: vi.fn() }, queryHandle: handle, isSessionActive: true,
+      isProcessingMessage: true, activeTurnMessageId: 'owner-A', isAgentTeamsEnabled: () => false,
+      lastTurnMessage: { chatId: 'cap-chat', payload: 'original', messageId: 'owner-A' } });
+    (agent as any).historyManager.firstMessageHistoryLoaded = true;
+    (agent as any).createTurnCompletion('owner-A');
+    return { agent, callbacks, push, steer, handle };
+  }
+  const input = (messageId: string) => ({ chatId: 'cap-chat', payload: `text-${messageId}`, messageId, threadRootId: 'thread-root' });
+  const dispose = (agent: ChatAgent) => ChatAgent.prototype.dispose.call(agent);
+  // Outcome probe: resolves with the settlement (or its error message) only
+  // when the completion actually settles inside the window.
+  const outcomeWithin = async (promise: Promise<void>, ms: number): Promise<string | undefined> => {
+    let settled: string | undefined;
+    const watched = promise.then(() => { settled = 'resolved'; }, (error: Error) => { settled = error.message; });
+    await Promise.race([watched, new Promise(resolve => { setTimeout(resolve, ms); })]);
+    return settled;
+  };
+
+  it('refuses the next distinct input instead of evicting live completions (steer path)', async () => {
+    const { agent, callbacks, steer, handle } = capacityAgent('codex');
+    try {
+      const accepted = Array.from({ length: MAX - 1 }, (_, i) => `follow-${i + 1}`);
+      await Promise.all(accepted.map(id => agent.processMessage(input(id))));
+      expect(steer).toHaveBeenCalledTimes(MAX - 1);
+      const outcomes = ['owner-A', ...accepted].map(id => agent.turnCompleteFor(id)!);
+      // Budget full (owner + MAX-1 acknowledged inputs): the next distinct
+      // input must be explicitly refused — never admitted, never steered.
+      await agent.processMessage(input('follow-overflow'));
+      expect(steer).toHaveBeenCalledTimes(MAX - 1);
+      expect(handle.cancel).not.toHaveBeenCalled();
+      await expect(agent.turnCompleteFor('follow-overflow')).rejects.toThrow('request was not accepted');
+      const refusals = callbacks.sendMessage.mock.calls
+        .map(([, text]) => text as string).filter(text => text?.includes('未接收'));
+      expect(refusals).toHaveLength(1);
+      expect(refusals[0]).toContain('不受影响');
+      // Every accepted input keeps its OWN still-pending completion: capacity
+      // pressure must not fake a terminal outcome for a live turn.
+      for (const outcome of outcomes) {
+        expect(await outcomeWithin(outcome, 25)).toBeUndefined();
+      }
+    } finally { dispose(agent); }
+  });
+
+  it('refuses beyond the budget before the channel push and keeps every queued row', async () => {
+    const { agent, push } = capacityAgent('claude');
+    try {
+      const accepted = Array.from({ length: MAX - 1 }, (_, i) => `q-${i + 1}`);
+      await Promise.all(accepted.map(id => agent.processMessage(input(id))));
+      expect(push).toHaveBeenCalledTimes(MAX - 1);
+      // Identity is preserved per input: message ID, lifecycle context and
+      // reply anchor stay index-aligned and untrimmed while turns are live.
+      expect((agent as any).pendingTurnMessageIds).toEqual(accepted);
+      expect((agent as any).pendingLifecycleContexts.map((c: any) => c.sourceMessageId)).toEqual(accepted);
+      expect((agent as any).pendingTurnAnchors).toEqual(Array.from({ length: MAX - 1 }, () => 'thread-root'));
+      await agent.processMessage(input('q-overflow'));
+      expect(push).toHaveBeenCalledTimes(MAX - 1);
+      expect((agent as any).pendingTurnMessageIds).toEqual(accepted);
+      expect((agent as any).pendingLifecycleContexts).toHaveLength(MAX - 1);
+      await expect(agent.turnCompleteFor('q-overflow')).rejects.toThrow('request was not accepted');
+    } finally { dispose(agent); }
+  });
+
+  it('releases budget when an accepted input reaches its real terminal state', async () => {
+    const { agent, push } = capacityAgent('claude');
+    try {
+      const accepted = Array.from({ length: MAX - 1 }, (_, i) => `q-${i + 1}`);
+      await Promise.all(accepted.map(id => agent.processMessage(input(id))));
+      (agent as any).resolveTurn('q-1');
+      await agent.turnCompleteFor('q-1');
+      await agent.processMessage(input('q-late'));
+      expect(push).toHaveBeenCalledTimes(MAX);
+      expect((agent as any).pendingTurnMessageIds).toEqual([...accepted, 'q-late']);
+    } finally { dispose(agent); }
+  });
+
+  it('replaces the completion of a re-pushed message instead of consuming a new budget slot', async () => {
+    const { agent, steer } = capacityAgent('codex');
+    try {
+      await Promise.all(Array.from({ length: MAX - 1 }, (_, i) => agent.processMessage(input(`follow-${i + 1}`))));
+      const superseded = agent.turnCompleteFor('follow-1')!.then(() => undefined, (error: unknown) => error);
+      // The empty-turn replay re-admits with the ORIGINAL message ID while the
+      // budget is full: that must replace its own entry, not be refused.
+      await (agent as any).admitMessage(input('follow-1'));
+      expect(steer).toHaveBeenCalledTimes(MAX);
+      expect(await superseded).toBeInstanceOf(TurnSupersededError);
+      const replacement = agent.turnCompleteFor('follow-1')!;
+      expect(await outcomeWithin(replacement, 10)).toBeUndefined();
+      (agent as any).resolveTurn('follow-1');
+      await replacement;
+    } finally { dispose(agent); }
   });
 });
