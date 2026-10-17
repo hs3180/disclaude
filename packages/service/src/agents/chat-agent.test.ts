@@ -132,6 +132,7 @@ vi.mock('@disclaude/core', async (importOriginal) => {
       return undefined;
     },
     tagErrorCategory: actual.tagErrorCategory,
+    isEgressConnectivityFailure: actual.isEgressConnectivityFailure,
     automaticReplayBlock: actual.automaticReplayBlock,
   };
 });
@@ -6670,6 +6671,59 @@ describe('streaming delivery visibility', () => {
       expect.objectContaining({ sourceMessageId: 'input-B', user_visible: false }),
     ]);
     expect(callbacks.onDone).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('Issue #5409: connectivity-class provider failures', () => {
+  function failureAgent(chatId: string, terminationDetail: string) {
+    const callbacks = createMockCallbacks();
+    const agent = new ChatAgent({ chatId, callbacks, apiKey: 'key', model: 'model', apiProtocol: 'anthropic' });
+    (agent as any).isAgentTeamsEnabled = () => false;
+    const query = vi.fn(() => ({
+      handle: { close: vi.fn(), cancel: vi.fn() },
+      iterator: (async function* () {
+        yield { parsed: { type: 'result', content: '✅ Complete', terminatedReason: 'turn_failed', terminationDetail }, raw: {} };
+      })(),
+    }));
+    (agent as any).createQueryStream = query;
+    return { agent, callbacks, query };
+  }
+
+  it('hints at the egress network and skips the same-window empty-turn replay', async () => {
+    const { agent, callbacks, query } = failureAgent('oc_egress_down', 'Codex turn failed: workspace routing discovery failed');
+    try {
+      void agent.processMessage({ chatId: 'oc_egress_down', payload: 'continue the batch', messageId: 'om_egress_1' });
+      await vi.waitFor(() => {
+        expect(callbacks.sendMessage.mock.calls.some((call: unknown[]) => String(call[1]).includes('出口网络'))).toBe(true);
+      });
+      await new Promise(resolve => { setTimeout(resolve, 60); });
+      const sent = callbacks.sendMessage.mock.calls.map((call: unknown[]) => String(call[1]));
+      // The failure notice explains the likely network root cause…
+      expect(sent.some(t => t.includes('执行失败'))).toBe(true);
+      expect(sent.some(t => t.includes('凭据'))).toBe(false);
+      // …no generic empty-turn advice (wrong root cause, double-notify)…
+      expect(sent.some(t => t.includes('未产生任何可见输出'))).toBe(false);
+      // …and no reset+replay into the same dead egress window; the chat's
+      // single retry budget stays available for after recovery.
+      const warns = (agent as any).logger.warn.mock.calls.map(([...args]: unknown[]) => args.join(' '));
+      expect(warns.some((w: string) => w.includes('scheduling one-shot'))).toBe(false);
+      expect((agent as any).emptyTurnRetryPolicy.hasRetried('oc_egress_down')).toBe(false);
+      expect(query).toHaveBeenCalledTimes(1);
+    } finally { agent.dispose(); }
+  });
+
+  it('keeps the generic hint and the replay for non-connectivity failures', async () => {
+    const { agent, callbacks } = failureAgent('oc_plain_fail', 'model misconfigured for this account');
+    try {
+      void agent.processMessage({ chatId: 'oc_plain_fail', payload: 'do work', messageId: 'om_plain_1' });
+      await vi.waitFor(() => {
+        expect(callbacks.sendMessage.mock.calls.some((call: unknown[]) => String(call[1]).includes('凭据'))).toBe(true);
+      });
+      await vi.waitFor(() => {
+        const warns = (agent as any).logger.warn.mock.calls.map(([...args]: unknown[]) => args.join(' '));
+        expect(warns.some((w: string) => w.includes('scheduling one-shot'))).toBe(true);
+      });
+    } finally { agent.dispose(); }
   });
 });
 
