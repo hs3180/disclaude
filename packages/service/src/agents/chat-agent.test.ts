@@ -6648,3 +6648,86 @@ describe('streaming delivery visibility', () => {
     expect(callbacks.onDone).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('Issue #5394: busy queue notice context', () => {
+  function queueAgent() {
+    const callbacks = createMockCallbacks();
+    const agent = new ChatAgent({ chatId: 'ctx-chat', callbacks, agentBackend: 'claude' as any, apiKey: 'test', model: 'test' });
+    const push = vi.fn().mockReturnValue(true);
+    Object.assign(agent as any, { channel: { push, close: vi.fn() },
+      queryHandle: { close: vi.fn(), cancel: vi.fn(), inputDelivery: 'streaming' as const },
+      isSessionActive: true, isAgentTeamsEnabled: () => false });
+    (agent as any).historyManager.firstMessageHistoryLoaded = true;
+    return { agent, callbacks, push };
+  }
+  const input = (messageId: string, payload = `payload-${messageId}`) =>
+    ({ chatId: 'ctx-chat', payload, messageId, threadRootId: 'thread-root' });
+  const queueNotices = (callbacks: ReturnType<typeof createMockCallbacks>) =>
+    callbacks.sendMessage.mock.calls.map(([, text]) => text as string).filter(t => t?.includes('输入流') || t?.includes('排队'));
+
+  it('describes the running turn, its elapsed time and the queue depth ahead', async () => {
+    const { agent, callbacks } = queueAgent();
+    try {
+      // Turn-starting input: captured as the summary baseline, no busy notice.
+      await agent.processMessage(input('m1', '根据这个剧本生成视频\n（剧本 zip 附件略）'));
+      expect(queueNotices(callbacks)).toHaveLength(0);
+      // The running turn has consumed its FIFO row; mirror consumeTurnAnchor().
+      (agent as any).pendingTurnMessageIds.shift();
+      (agent as any).pendingTurnAnchors.shift();
+      (agent as any).pendingLifecycleContexts.shift();
+      Object.assign(agent as any, { isProcessingMessage: true, activeTurnMessageId: 'm1',
+        turnStartedAtMsPrivate: Date.now() - 4 * 60_000 });
+      await agent.processMessage(input('m2'));
+      await agent.processMessage(input('m3'));
+      const texts = queueNotices(callbacks);
+      expect(texts).toHaveLength(2);
+      expect(texts[0]).toContain('当前回合「根据这个剧本生成视频」已运行 4 分钟');
+      expect(texts[0]).not.toContain('前方还有');
+      expect(texts[1]).toContain('当前回合「根据这个剧本生成视频」已运行 4 分钟');
+      expect(texts[1]).toContain('前方还有 1 条排队');
+      // Multi-user hygiene: only the first line is summarized, never the rest.
+      expect(texts.join()).not.toContain('附件略');
+    } finally { ChatAgent.prototype.dispose.call(agent); }
+  });
+
+  it('prefers the latest narration while the turn streams and clears it for the next turn', async () => {
+    const { agent, callbacks } = queueAgent();
+    try {
+      (agent as any).pendingTurnAnchors = ['root-A', 'root-B'];
+      (agent as any).pendingTurnMessageIds = ['m1', 'm2'];
+      (agent as any).pendingLifecycleContexts = ['m1', 'm2'].map(id =>
+        ({ chatId: 'ctx-chat', sourceMessageId: id, traceId: `t-${id}`, runId: `r-${id}` }));
+      (agent as any).activeTurnTriggerLine = '根据这个剧本生成视频';
+      (agent as any).turnStartedAtMsPrivate = Date.now() - 90_000;
+      // The turn is already running: its start time must survive anchor consumption.
+      (agent as any).isProcessingMessage = true;
+      let midFirstTurn!: () => void;
+      let midSecondTurn!: () => void;
+      const running = (agent as any).processIterator((async function* () {
+        // Co-narration arrives as tool_use metadata regardless of chat buffering.
+        yield { parsed: { type: 'tool_use', name: 'bash', metadata: { narration: '正在核对第 3 场分镜与台词一致性' } } };
+        await new Promise<void>(resolve => { midFirstTurn = resolve; });
+        yield { parsed: { type: 'result', content: '' } };
+        // First event of the next queued turn: consumes its anchor, delivers
+        // nothing, and must reset the narration slot.
+        yield { parsed: { type: 'text', content: '' } };
+        await new Promise<void>(resolve => { midSecondTurn = resolve; });
+        yield { parsed: { type: 'result', content: '' } };
+      })());
+      await vi.waitFor(() => expect((agent as any).activeTurnNarration).toBe('正在核对第 3 场分镜与台词一致性'));
+      // Mid-turn, a queued input is told what is happening NOW, not the trigger.
+      await agent.processMessage(input('m3'));
+      const midFirst = queueNotices(callbacks).at(-1)!;
+      expect(midFirst).toContain('当前回合「正在核对第 3 场分镜与台词一致性」已运行 1 分钟');
+      expect(midFirst).not.toContain('根据这个剧本生成视频');
+      midFirstTurn();
+      await vi.waitFor(() => expect((agent as any).activeTurnNarration).toBe(''));
+      // The next turn has started but not narrated yet: its queued inputs fall
+      // back to the trigger-line summary, consistently with non-streaming.
+      await agent.processMessage(input('m4'));
+      expect(queueNotices(callbacks).at(-1)!).toContain('当前回合「根据这个剧本生成视频」');
+      midSecondTurn();
+      await running;
+    } finally { ChatAgent.prototype.dispose.call(agent); }
+  });
+});
