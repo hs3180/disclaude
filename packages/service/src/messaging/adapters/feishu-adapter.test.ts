@@ -1140,9 +1140,14 @@ describe('FeishuAdapter — Issue #1619', () => {
       const fileCallData = mocks.fileCreateMock.mock.calls[0][0].data;
       expect(fileCallData.file_type).toBe('mp4');
 
-      // In test env without ffmpeg, it falls back to 'file' msg_type
-      // or if cover extraction works, uses 'media' msg_type
+      // Without ffmpeg the placeholder cover keeps the video on the
+      // msg_type:'media' path (Issue #5391 — 'file' fallback is rejected 230055)
+      expect(mocks.imageCreateMock).toHaveBeenCalledTimes(1);
       expect(mocks.createMock).toHaveBeenCalledTimes(1);
+      expect(mocks.createMock.mock.calls[0][0].data.msg_type).toBe('media');
+      const sentContent = JSON.parse(mocks.createMock.mock.calls[0][0].data.content);
+      expect(sentContent.file_key).toBe('file_key_001');
+      expect(sentContent.image_key).toBe('img_key_001');
       expect(mocks.replyMock).not.toHaveBeenCalled();
     });
 
@@ -1161,6 +1166,33 @@ describe('FeishuAdapter — Issue #1619', () => {
 
       expect(result.success).toBe(true);
       expect(mocks.fileCreateMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('should fail with explicit error when even placeholder cover upload fails (Issue #5391)', async () => {
+      const { client, mocks } = createMockClient();
+      mocks.imageCreateMock.mockImplementation(async (opts: any) => {
+        const stream = opts?.data?.image;
+        if (stream && typeof stream.on === 'function') {
+          for await (const _chunk of stream) { /* drain stream */ }
+        }
+        return {}; // no image_key returned
+      });
+      const adapter = createTestAdapter(client);
+
+      const testMp4Path = path.join(os.tmpdir(), `test_adapter_video_${Date.now()}.mp4`);
+      fs.writeFileSync(testMp4Path, Buffer.from('fake mp4 content'));
+      tempFiles.push(testMp4Path);
+
+      const result = await adapter.send({
+        chatId: 'oc_123',
+        content: { type: 'file', path: testMp4Path, name: 'video.mp4' },
+      });
+
+      // Must NOT fall back to msg_type:'file' (Feishu rejects it, 230055)
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('placeholder cover upload failed');
+      expect(mocks.createMock).not.toHaveBeenCalled();
+      expect(mocks.replyMock).not.toHaveBeenCalled();
     });
   });
 });
