@@ -136,6 +136,14 @@ interface TurnCompletionEntry {
  */
 const MAX_TURN_COMPLETIONS = 50;
 
+/** Issue #5394: coarse elapsed rendering for busy-queue notices. */
+function formatElapsedForNotice(ms: number): string {
+  if (ms < 60_000) { return `${Math.max(1, Math.round(ms / 1_000))} 秒`; }
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 60) { return `${minutes} 分钟`; }
+  return `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分钟`;
+}
+
 // 2026-09-08: mid-stream 中断自动续跑(诊断见 ./docs 之外 —— ES 双侧证据:agent「同一
 // tool use 后中断」= 续写调用在 200 已锁后静默,proxy 只能补「看似成功」的收尾)。
 // MIDSTREAM_MARKER —— proxy(litellm custom_callbacks._MIDSTREAM_INTERRUPT_MARKER)在
@@ -203,6 +211,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   private turnStartedAtMsPrivate = 0;
   /** Message identity of the turn currently consumed by the persistent iterator. */
   private activeTurnMessageId?: string;
+  // Issue #5394: busy-queue notice context. The running turn's trigger line
+  // is captured at its (non-queued) push; its latest decision narration is
+  // refreshed as the turn streams. Both feed the one-line summary queued
+  // inputs receive instead of a fixed "still busy" string.
+  private activeTurnTriggerLine = '';
+  private activeTurnNarration = '';
   private lastActivityAtPrivate = 0;
   private lastActivityTypePrivate = 'created';
   private readonly backgroundTaskIds = new Set<string>();
@@ -955,6 +969,35 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   }
 
   /**
+   * Issue #5394: one-line, length-capped summary of trigger text or decision
+   * narration for busy-queue notices. Multi-user chats must not leak another
+   * user's full message body: keep the first non-empty line, hard-capped.
+   */
+  private summarizeForBusyNotice(text: string): string {
+    const firstLine = text.split('\n', 1)[0]?.trim() ?? '';
+    const compact = firstLine.replace(/\s+/g, ' ');
+    return compact.length > 60 ? `${compact.slice(0, 60)}…` : compact;
+  }
+
+  /**
+   * Issue #5394: context appended to busy notices — what is running, for how
+   * long, and how much is queued ahead of the just-admitted input. Prefers
+   * the running turn's latest narration (reflects what happens now), falling
+   * back to its trigger line; identical resolution on streaming and
+   * non-streaming paths. No ETA is invented.
+   */
+  private describeBusyQueue(queuedAhead: number): string {
+    const parts: string[] = [];
+    const summary = this.activeTurnNarration || this.activeTurnTriggerLine;
+    if (summary) {
+      const elapsed = this.turnStartedAtMs > 0 ? Date.now() - this.turnStartedAtMs : 0;
+      parts.push(`当前回合「${summary}」已运行 ${formatElapsedForNotice(elapsed)}`);
+    }
+    if (queuedAhead > 0) { parts.push(`前方还有 ${queuedAhead} 条排队`); }
+    return parts.length > 0 ? `\n（${parts.join('，')}）` : '';
+  }
+
+  /**
    * Process a message with the AI agent.
    *
    * Returns after input admission, without waiting for the task to finish.
@@ -1290,6 +1333,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.lastTurnMessage = params;
       enqueueTurnAnchor();
       const busyBeforePush = queuedBehindActiveTurn && this.isBusy;
+      // Issue #5394: a non-queued push starts the next turn — capture its
+      // trigger line as the busy-notice summary baseline.
+      if (!busyBeforePush) { this.activeTurnTriggerLine = this.summarizeForBusyNotice(text); }
       // Issue #3985: Mark as processing when a user message is pushed to the channel.
       if (!this.isProcessingMessage) { this.turnStartedAtMsPrivate = Date.now(); }
       this.isProcessingMessage = true;
@@ -1328,13 +1374,17 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         }
       }
       if (this.queryHandle?.capacityQueued || busyBeforePush) {
+        // Issue #5394: say what the waiter actually wants to know — the
+        // running turn's summary, its elapsed time and the queue depth ahead
+        // (this input's row was just pushed, so it is excluded from the count).
+        const busyContext = this.describeBusyQueue(Math.max(0, this.pendingTurnMessageIds.length - 1));
         void this.callbacks.sendMessage(
           chatId,
-          this.queryHandle?.capacityQueued
+          (this.queryHandle?.capacityQueued
             ? '⏳ 这条消息已接收并排队；模型会话容量释放后会自动处理，无需重新发送。'
             : this.queryHandle?.inputDelivery === 'streaming'
             ? '💬 已送入当前会话的输入流；模型可在执行中接收补充信息，正在运行的工具会继续执行。'
-            : '⏳ 这条消息已排队，将在当前回合结束后处理。',
+            : '⏳ 这条消息已排队，将在当前回合结束后处理。') + busyContext,
           threadRootId
         ).catch((error) => {
           this.logger.warn(
@@ -2014,6 +2064,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         this.activityThreadRootId = currentTurnAnchor ?? undefined;
         if (!this.isProcessingMessage) { this.turnStartedAtMsPrivate = Date.now(); }
         this.isProcessingMessage = true;
+        // Issue #5394: narration belongs to the turn that produced it — a
+        // fresh turn's busy notices start from its own trigger line.
+        this.activeTurnNarration = '';
         turnFailedWithConnectivityIssue = false;
       }
       return currentTurnAnchor ?? undefined;
@@ -2248,6 +2301,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             } catch (error) {
               this.logger.debug({ error, chatId }, 'Decision narration delivery failed');
             }
+            // Issue #5394: keep the freshest narration as the running turn's
+            // busy-notice summary. Set AFTER delivery — resolving the reply
+            // root consumes the turn anchor, which clears the per-turn
+            // narration slot for a turn's first output.
+            this.activeTurnNarration = this.summarizeForBusyNotice(narration.text);
           }
           // Text preceding another tool call is intermediate commentary, not
           // the terminal answer consumed by structured internal workflows.
