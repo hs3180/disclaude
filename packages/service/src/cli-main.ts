@@ -413,6 +413,10 @@ export async function main(): Promise<void> {
         service.getDebugGroupService().setDebugGroup(chatId, name),
       clearDebugGroup: () => service.getDebugGroupService().clearDebugGroup(),
     },
+    // Issue #5400: /issue reads the chat's last failure from this registry
+    // (recorded by ChatAgent); the Feishu descriptor setup adds the
+    // confirmation-card hook on top of it.
+    failureRegistry,
     projectManager,
     // Issue #3807: /restart command calls this to trigger graceful shutdown
     get shutdown() {

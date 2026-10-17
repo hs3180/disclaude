@@ -9,6 +9,7 @@ import { handleTrigger } from './passive.js';
 import { handleProject } from './project.js';
 import { handleAgent } from './agent.js';
 import { handleSteer } from './steer.js';
+import { handleIssue } from './issue.js';
 
 /**
  * 命令注册表 (Issue #3529: typed per-command definitions)
@@ -30,6 +31,8 @@ export const commandRegistry: CommandDefinition[] = [
   { type: 'steer', handler: handleSteer as CommandDefinition['handler'], description: '运行中纠偏（需原生 turn/steer 支持）', usage: '/steer <instruction>',
     isAvailable: c => !!c.agentPool?.steer,
     showInHelp: (c, command) => c.agentPool.canSteer?.(command.chatId, command.threadRootId) === true },
+  { type: 'issue', handler: handleIssue as CommandDefinition['handler'], description: '一键上报本会话最近一次失败为 GitHub issue', usage: '/issue',
+    isAvailable: c => !!c.failureRegistry },
 ];
 
 export function getAvailableCommands(context: ControlHandlerContext, command: ControlCommand): CommandDefinition[] {

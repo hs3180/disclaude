@@ -137,7 +137,9 @@ export type ControlCommandType =
   // Project management commands (Issue #3335)
   | 'project'
   | 'agent'
-  | 'steer';
+  | 'steer'
+  // One-click GitHub issue reporting of the chat's last failure (Issue #5400)
+  | 'issue';
 
 /**
  * Typed data schema for each command type (Issue #3529).

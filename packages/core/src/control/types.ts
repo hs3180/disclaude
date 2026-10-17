@@ -8,6 +8,7 @@ import type { ControlCommand, ControlResponse, ControlCommandType, ChannelCapabi
 import type { Logger } from '../utils/logger.js';
 import type { TriggerMode } from '../config/types.js';
 import type { ProjectManager } from '../project/project-manager.js';
+import type { ChatFailureRecord } from '../feedback/failure-registry.js';
 
 /**
  * Debug 组信息
@@ -88,6 +89,26 @@ export interface ControlHandlerContext {
    * launchd or Docker can restart the service.
    */
   shutdown?: () => Promise<void>;
+
+  /**
+   * Issue #5400: per-chat last-failure records backing /issue.
+   * The registry is fed by ChatAgent's failureRecorder wiring.
+   */
+  failureRegistry?: {
+    get(chatId: string): ChatFailureRecord | undefined;
+  };
+
+  /**
+   * Issue #5400: channel hook that renders the sanitized confirmation card
+   * for a failure record (Feishu interactive card). Absent → /issue answers
+   * with text-only guidance instead.
+   */
+  issueReporting?: {
+    sendConfirmation(
+      record: ChatFailureRecord,
+      target: { chatId: string; threadRootId?: string; actorId?: string }
+    ): Promise<{ ok: true } | { ok: false; error: string }>;
+  };
 
   /** 日志记录器 */
   logger?: Logger;

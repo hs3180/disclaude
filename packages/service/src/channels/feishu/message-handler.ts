@@ -34,6 +34,8 @@ import {
   type TopicGroupMessageEvent,
   type FilterReason,
   type ActionBoundInput,
+  type ChatFailureRecord,
+  type GitHubIssueClient,
 } from '@disclaude/core';
 import { InteractionManager } from '../../platforms/feishu/interaction-manager.js';
 import { extractFullCardContent } from '../../platforms/feishu/card-builders/card-text-extractor.js';
@@ -43,6 +45,7 @@ import type { MentionDetector } from './mention-detector.js';
 import { evaluateMessageFilters } from './message-filters.js';
 import { FeishuPrivateInput } from './private-input.js';
 import { FeishuAgentInput } from './agent-input.js';
+import { FeishuIssueReport } from './issue-report.js';
 import { FeishuPrivateWorkflows, type PrivateWorkflowRequest } from './private-workflows.js';
 import { tryHandleSlashCommand, tryHandleGuidance } from './command-router.js';
 import type { WelcomeService } from '../../platforms/feishu/welcome-service.js';
@@ -206,6 +209,8 @@ export class MessageHandler {
   private tenantAccessToken: string;
   private readonly privateInput?: FeishuPrivateInput;
   private agentInput?: FeishuAgentInput;
+  private issueReport?: FeishuIssueReport;
+  private readonly issueClient?: () => GitHubIssueClient | undefined;
   private welcomeService?: WelcomeService;
 
   setWelcomeService(service: WelcomeService): void { this.welcomeService = service; }
@@ -213,6 +218,13 @@ export class MessageHandler {
   async requestAgentInput(request: import('@disclaude/core').AgentInputRequest, context: import('@disclaude/core').AgentInputContext): Promise<void> {
     if (!this.agentInput) { throw new Error('Feishu input channel is unavailable'); }
     await this.agentInput.request(request, context);
+  }
+
+  /** Issue #5400: send the /issue confirmation card for the chat's last failure. */
+  requestIssueReport(record: ChatFailureRecord, target: { chatId: string; threadRootId?: string; actorId?: string }):
+    Promise<{ ok: true } | { ok: false; error: string }> {
+    if (!this.issueReport) { return Promise.resolve({ ok: false, error: 'Feishu issue reporting is unavailable' }); }
+    return this.issueReport.start(record, target);
   }
   private readonly privateWorkflows: FeishuPrivateWorkflows;
 
@@ -234,6 +246,8 @@ export class MessageHandler {
     hasControlHandler: () => boolean;
     tenantAccessToken: string;
     privateInput?: ActionBoundInput;
+    /** Issue #5400: resolved GitHub App client supplier for issue reporting. */
+    issueClient?: () => GitHubIssueClient | undefined;
   }) {
     this.triggerModeManager = options.triggerModeManager;
     this.mentionDetector = options.mentionDetector;
@@ -244,6 +258,7 @@ export class MessageHandler {
     this.getHasControlHandler = options.hasControlHandler;
     this.controlHandler = false;
     this.tenantAccessToken = options.tenantAccessToken;
+    this.issueClient = options.issueClient;
     if (options.privateInput) {this.privateInput = new FeishuPrivateInput(options.privateInput, options.callbacks.sendMessage, this.updatePrivateCard);}
 
   }
@@ -261,6 +276,8 @@ export class MessageHandler {
     this.client = client;
     this.agentInput?.close();
     this.agentInput = new FeishuAgentInput(client);
+    this.issueReport?.close();
+    this.issueReport = new FeishuIssueReport(client, this.issueClient ?? (() => undefined));
     this.controlHandler = this.getHasControlHandler();
     logger.debug({ controlHandler: this.controlHandler }, 'MessageHandler initialized');
   }
@@ -448,6 +465,8 @@ export class MessageHandler {
   clearClient(): void {
     this.agentInput?.close();
     this.agentInput = undefined;
+    this.issueReport?.close();
+    this.issueReport = undefined;
     this.privateInput?.revoke();
     this.privateWorkflows.revoke();
     this.client = undefined;
@@ -1479,6 +1498,12 @@ export class MessageHandler {
     const rawData = data as Record<string, unknown>;
     if (FeishuAgentInput.isCallback(rawData)) {
       void this.agentInput?.submit(rawData).catch(() => logger.warn('Agent input callback could not be handled'));
+      return;
+    }
+    // Issue #5400: /issue confirmation cards resolve without an agent turn,
+    // so reporting still works when the agent runtime itself has failed.
+    if (FeishuIssueReport.isCallback(rawData)) {
+      void this.issueReport?.submit(rawData).catch(() => logger.warn('Issue report callback could not be handled'));
       return;
     }
     if (FeishuPrivateInput.isPrivateCallback(rawData)) {
