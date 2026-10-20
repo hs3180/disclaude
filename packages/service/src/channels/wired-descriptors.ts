@@ -32,6 +32,8 @@ import { RestChannel, type RestChannelConfig } from './rest-channel.js';
 import { FeishuChannel, type FeishuChannelConfig } from './feishu-channel.js';
 import { WeChatChannel, type WeChatChannelConfig } from './wechat/index.js';
 import crypto from 'crypto';
+import { stat } from 'node:fs/promises';
+import { basename } from 'node:path';
 import { messageLogger } from '../utils/message-logger.js';
 import { WelcomeService } from '../platforms/feishu/welcome-service.js';
 import type {
@@ -328,21 +330,9 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
 /**
  * WeChat Channel wired descriptor.
  *
- * **Design Decision (Issue #1638)**: WeChat Channel only supports dynamic
- * registration (programmatic API), NOT config.yaml static configuration.
- * This descriptor is kept for dynamic registration use — callers should use
- * `ChannelLifecycleManager.createAndWire(WECHAT_WIRED_DESCRIPTOR, config)`
- * at runtime (e.g., after QR code authentication completes).
- *
- * Provides full wiring for the WeChat channel:
- * - ChatAgentCallbacks without done signal (async mode)
- * - Message handler with basic text processing
- * - No post-registration setup (no passive mode, no REST API handlers)
- *
- * Capabilities:
- * - sendCard: downgrades to JSON-serialized text (WeChat API doesn't support cards)
- * - sendFile: supported via CDN upload (Phase 3.2, Issue #1556)
- * - No message listening / long polling (outbound-only bot)
+ * Personal WeChat via Tencent iLink. Configured accounts load a private saved
+ * login and long-poll incoming messages; dynamic registration remains usable.
+ * Common attachment, Agent callback and CLI handlers all use the same adapter.
  *
  * @see Issue #1473 - WeChat Channel MVP
  * @see Issue #1554 - WeChat Channel Dynamic Registration (Phase 1)
@@ -364,17 +354,27 @@ export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig
     supportedChannelTools: ['send_text', 'send_file'],
   },
 
-  createCallbacks: (channel, context) =>
-    createChannelCallbacksFactory(channel, context.logger, {
+  createCallbacks: (channel, context) => {
+    const factory = createChannelCallbacksFactory(channel, context.logger, {
       sendDoneSignal: false,
+      finalReplyOnly: true,
       getChatHistory: (chatId: string) => messageLogger.getChatHistory(chatId),
       getChatLogFilePaths: (chatId: string) => messageLogger.getChatLogFilePaths(chatId),
-    }),
+    });
+    return (chatId, threadRootId) => ({
+      ...factory(chatId, threadRootId),
+      sendFile: async (target, filePath) => { await channel.sendMessage({ chatId: target, type: 'file', filePath }); },
+    });
+  },
 
   createMessageHandler: (channel, context) =>
     createDefaultMessageHandler(channel, context, {
       channelName: 'WeChat channel',
       sendDoneSignal: false,
+      extractAttachments: (message) => message.attachments?.map(att => createInboundAttachment(
+        att.fileName, message.chatId, att.mimeType?.startsWith('image/') ? 'image' : 'file',
+        { localPath: att.filePath, size: att.size, mimeType: att.mimeType, messageId: message.messageId },
+      )),
     }),
 
   /**
@@ -400,22 +400,11 @@ export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig
     const wechatHandlers: ChannelApiHandlers = {
       ...baseHandlers,
 
-      // Issue #3814: sendInteractive downgraded to text for WeChat
-      sendInteractive: async (chatId, params) => {
-        const { question, options, title } = params;
-        const parts: string[] = [];
-        if (title) {parts.push(`【${title}】`);}
-        parts.push(question);
-        for (const opt of options) {
-          parts.push(`- ${opt.text}`);
-        }
-        await wechatChannel.sendMessage({
-          chatId,
-          type: 'text',
-          text: parts.join('\n'),
-        });
-        // WeChat has no interactive support — return synthetic IDs
-        return { messageId: `wechat_interactive_${crypto.randomUUID()}` };
+      sendCard: () => Promise.reject(new Error('WeChat does not support cards; use send_text')),
+      sendInteractive: () => Promise.reject(new Error('WeChat does not support interactive cards; use send_text')),
+      uploadFile: async (chatId, filePath, threadId) => {
+        await wechatChannel.sendMessage({ chatId, type: 'file', filePath, threadId });
+        return { fileKey: '', fileType: 'file', fileName: basename(filePath), fileSize: (await stat(filePath)).size };
       },
 
       // Issue #3814: pushToAgent reuses InputMessageRouter (same as Feishu)

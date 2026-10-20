@@ -502,31 +502,16 @@ describe('WiredChannelDescriptors', () => {
       expect(mockRoute).not.toHaveBeenCalled();
     });
 
-    it('should downgrade sendInteractive to text message', async () => {
+    it('rejects unsupported interactive cards without claiming delivery', async () => {
       const channel = createMockWechatChannel();
       const context = createWechatSetupContext();
 
       void WECHAT_WIRED_DESCRIPTOR.setup!(channel, {}, context);
 
-      await registeredHandlers!.sendInteractive!('wx_test123', {
-        question: 'Which option?',
-        options: [
-          { text: 'Option A', value: 'a' },
-          { text: 'Option B', value: 'b' },
-        ],
-        title: 'Choose',
-      });
-
-      expect(channel.sendMessage).toHaveBeenCalledWith({
-        chatId: 'wx_test123',
-        type: 'text',
-        text: expect.stringContaining('Which option?'),
-      });
-      expect(channel.sendMessage).toHaveBeenCalledWith(
-        expect.objectContaining({
-          text: expect.stringContaining('Option A'),
-        })
-      );
+      await expect(registeredHandlers!.sendInteractive('user@im.wechat', {
+        question: 'Choose', options: [{ text: 'Yes', value: 'yes' }],
+      })).rejects.toThrow('does not support interactive cards');
+      expect(channel.sendMessage).not.toHaveBeenCalled();
     });
 
     it('should have base handlers (sendMessage, sendCard, uploadFile)', () => {

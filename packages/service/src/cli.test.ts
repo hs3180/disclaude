@@ -177,6 +177,12 @@ describe('parseArgs', () => {
 // ============================================================================
 
 describe('resolveChannelConfigs', () => {
+  it('enables saved WeChat login without accepting YAML credentials', () => {
+    expect(resolveChannelConfigs({ channels: { wechat: { enabled: true, stateDir: '/private/wechat' } } } as never, {} as never)).toEqual([{ type: 'wechat', config: { stateDir: '/private/wechat' } }]);
+    expect(() => resolveChannelConfigs({ channels: { wechat: { token: 'must-not-live-in-config' } } } as never, {} as never)).toThrow('save credentials');
+    expect(() => resolveChannelConfigs({ channels: { wechat: { stateDir: './relative' } } } as never, {} as never)).toThrow('absolute path');
+    expect(resolveChannelConfigs({ channels: { wechat: { enabled: false } } } as never, {} as never)).toEqual([]);
+  });
   // Minimal mock of the Config singleton interface used by resolveChannelConfigs
   function createMockConfig(feishuAppId = '', feishuAppSecret = '', streamingCard = false) {
     return {
