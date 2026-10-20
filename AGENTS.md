@@ -12,6 +12,11 @@
 - 共享 store 不随单个 worktree 删除；`pnpm store prune` 是独立操作，会影响旧分支的离线安装缓存。具体配置和验证步骤见 `docs/worktree-dependencies.md`。
 - 任务结束清理前，检查每个候选目录的 `git status`、上游领先/落后、detached HEAD、忽略文件和运行进程。保留未提交或归属不明的改动、用户数据、运行配置和正在使用的服务目录；不要用 `--force` 掩盖这些状态。移除已结束且可安全清理的目录时使用 `git worktree remove`，保留所需本地分支或为 detached 提交建立 refs，最后运行 `git worktree prune`。临时依赖、构建产物和验证副本仅在确认归本任务所有后清理。
 
+## CI 与测试范围
+
+- 日常 PR/push CI 保留构建、lint/type-check、核心单测、安装包和工作区验收；Docker 服务与 Chromium 容器验收仅通过 `workflow_dispatch` 按需手动运行，不作为日常 PR 或发布的必需门槛。
+- Docker 部署仍属支持范围。涉及容器的实际问题可运行对应专项验收；不因普通源码改动默认构建镜像或要求新增 Docker 测试。失败时记录具体证据，区分产品缺陷、用例契约变化与环境故障。
+
 ## 0.6.0 反馈与交付记录
 
 - 每次开始任务时检查 `hs3180/disclaude` 的 0.6.0 issues，以及相关 PR 的 reviews、行评论、讨论和 CI。持续会话每 15 分钟检查一次，并在阶段结束或等待 CI 等空闲点复查；不要为轮询中断正在执行的工作。若 `gh` 未认证，公开数据使用 GitHub 公共 API 只读核查。
