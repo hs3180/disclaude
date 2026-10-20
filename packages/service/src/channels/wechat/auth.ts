@@ -160,7 +160,8 @@ export class WeChatAuth {
               break; // The API client validates and applies the regional host.
             case 'need_verifycode':
               if (!options?.requestVerifyCode) { return { success: false, error: 'Private pairing input required; run disclaude wechat login in a terminal' }; }
-              verifyCode = await options.requestVerifyCode(signal);
+              try { verifyCode = await options.requestVerifyCode(signal); }
+              catch { return { success: false, error: 'Private pairing input unavailable; use an interactive terminal' }; }
               break;
             case 'verify_code_blocked':
               return { success: false, error: 'Pairing code blocked; start a new login later' };

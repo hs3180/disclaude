@@ -42,14 +42,16 @@ async function main(): Promise<void> {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 900_000) { throw new Error('--timeout-ms must be 1000..900000'); }
   const release = await store.lock();
   try {
-    const existing = await store.loadCredentials();
+    const existing = values.force ? undefined : await store.loadCredentials();
     if (existing && !values.force) { console.log('Login already saved. Use status --check, or login --force after stopping the channel.'); return; }
     if (values['import-legacy']) {
       const legacy = join(homedir(), '.disclaude', 'wechat-auth.json');
       await fs.chmod(legacy, 0o600);
-      const credentials = JSON.parse(await fs.readFile(legacy, 'utf8')) as WeChatCredentials;
-      if (!credentials.token?.trim() || !credentials.botId) { throw new Error('Legacy login is incomplete'); }
-      await store.saveCredentials(credentials);
+      let credentials: WeChatCredentials;
+      try { credentials = JSON.parse(await fs.readFile(legacy, 'utf8')) as WeChatCredentials; }
+      catch { throw new Error('Cannot read legacy WeChat login; repair it privately before migration'); }
+      if (typeof credentials.token !== 'string' || !credentials.token.trim() || typeof credentials.botId !== 'string' || !credentials.botId) { throw new Error('Legacy login is incomplete'); }
+      await store.saveCredentials({ token: credentials.token, botId: credentials.botId, userId: credentials.userId, baseUrl: credentials.baseUrl ?? DEFAULT_WECHAT_BASE_URL, savedAt: credentials.savedAt ?? new Date().toISOString() });
       console.log('Legacy login migrated privately. Verify with disclaude wechat status --check.');
       return;
     }
