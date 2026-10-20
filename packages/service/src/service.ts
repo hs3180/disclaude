@@ -556,10 +556,8 @@ export class DisclaudeService extends EventEmitter {
     if (!h) {
       throw new Error('No channel handlers available');
     }
-    // The channel handler returns Promise<void> (the REST API layer synthesizes
-    // success/messageId); REST confirms acceptance with { success: true }.
-    await h.sendMessage(chatId, text, threadId, mentions);
-    return { success: true };
+    const messageId = await h.sendMessage(chatId, text, threadId, mentions);
+    return { success: true, ...(typeof messageId === 'string' ? { messageId } : {}) };
   }
 
   /**
@@ -728,6 +726,7 @@ export class DisclaudeService extends EventEmitter {
         }
       }
     }
+    if (chatId?.endsWith('@im.wechat')) { return undefined; }
     return this.feishuHandlersContainer.handlers;
   }
 

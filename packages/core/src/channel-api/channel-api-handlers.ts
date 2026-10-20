@@ -9,7 +9,7 @@ import type { FeishuCard } from '../types/platform.js';
  * Platform-specific implementations (Feishu, Slack, etc.) extend this interface.
  */
 export interface ChannelApiHandlers {
-  sendMessage: (chatId: string, text: string, threadId?: string, mentions?: Array<{ openId: string; name?: string }>) => Promise<void>;
+  sendMessage: (chatId: string, text: string, threadId?: string, mentions?: Array<{ openId: string; name?: string }>) => Promise<string | void>;
   sendCard: (
     chatId: string,
     card: FeishuCard,
