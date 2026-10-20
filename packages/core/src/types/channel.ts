@@ -270,6 +270,8 @@ export interface ChannelCapabilities {
    * format flags. This is capability metadata, not an authorization grant.
    */
   supportedChannelTools?: string[];
+  /** Formats delivered as native playable videos by send_file, when available. */
+  nativeVideoFormats?: string[];
 }
 
 /**

@@ -109,6 +109,10 @@ export const REST_WIRED_DESCRIPTOR: WiredChannelDescriptor<RestChannelConfig> = 
     // Issue #4256 (part 2): wire pool-stats provider so /api/health reports
     // live agent-pool state (active/busy/idle/peak/evictions) for leak diagnostics.
     restChannel.setAgentPoolStatsProvider(context.agentPool);
+    context.service.registerChannelHandlers('rest', {
+      ...createChannelApiHandlers(restChannel, { logger: context.logger, channelName: 'REST' }),
+      sendInteractive: () => Promise.reject(new Error('REST does not support interactive cards')),
+    }, restChannel);
   },
 };
 
@@ -319,6 +323,7 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
     };
 
     context.service.registerFeishuHandlers(feishuHandlers);
+    context.service.registerChannelHandlers('feishu', feishuHandlers, feishuChannel);
     context.logger.info('Feishu REST API handlers registered via descriptor setup');
   },
 };
@@ -352,19 +357,38 @@ export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig
     supportsUpdate: false,
     supportsStreaming: false,
     supportedChannelTools: ['send_text', 'send_file'],
+    nativeVideoFormats: ['mp4'],
   },
 
   createCallbacks: (channel, context) => {
     const factory = createChannelCallbacksFactory(channel, context.logger, {
       sendDoneSignal: false,
-      finalReplyOnly: true,
       getChatHistory: (chatId: string) => messageLogger.getChatHistory(chatId),
       getChatLogFilePaths: (chatId: string) => messageLogger.getChatLogFilePaths(chatId),
     });
-    return (chatId, threadRootId) => ({
-      ...factory(chatId, threadRootId),
-      sendFile: async (target, filePath) => { await channel.sendMessage({ chatId: target, type: 'file', filePath }); },
-    });
+    return (chatId, threadRootId) => {
+      const callbacks = factory(chatId, threadRootId);
+      const seen = new Set<string>();
+      return {
+        ...callbacks,
+        sendProgress: async (target, text, parent) => {
+          const key = text.trim();
+          if (!key || seen.has(key)) { return; }
+          // Reserve before sending: an unknown delivery result must not cause a resend.
+          seen.add(key);
+          if (seen.size > 128) {
+            const oldest = seen.values().next().value;
+            if (oldest !== undefined) { seen.delete(oldest); }
+          }
+          return await callbacks.sendMessage(target, text, parent);
+        },
+        sendMessage: async (target, text, parent) => {
+          try { return await callbacks.sendMessage(target, text, parent); }
+          finally { seen.clear(); }
+        },
+        sendFile: async (target, filePath) => { await channel.sendMessage({ chatId: target, type: 'file', filePath }); },
+      };
+    };
   },
 
   createMessageHandler: (channel, context) =>

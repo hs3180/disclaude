@@ -141,6 +141,9 @@ async function verifyPackage() {
   const wechatStatus = JSON.parse(run(cli, ['wechat', 'status', '--state-dir', join(temp, 'wechat-account')]));
   assert.equal(wechatStatus.configured, false);
   assert.equal(wechatStatus.authenticated, 'not-checked');
+  const namedWechatStatus = JSON.parse(run(cli, ['wechat', 'status', '--account', 'work']));
+  assert.equal(namedWechatStatus.channelId, 'wechat:work');
+  assert.equal(namedWechatStatus.configured, false);
   // Exercise actual config-driven startup, not just parsing/help. No login file
   // exists, so this must reach the adapter's actionable error without network.
   const wechatConfig = join(temp, 'wechat-empty.json');
@@ -224,6 +227,7 @@ async function verifyPackage() {
     ['help'],
     ['send_file', '--help'],
     ['send_file', '--chat', 'installation-probe@im.wechat', '--file', config, '--dry-run'],
+    ['send_file', '--chat', 'wechat:work:installation-probe@im.wechat', '--file', config, '--dry-run'],
   ]) {
     const probe = spawnSync(cli, ['channel', ...args], { cwd: temp, encoding: 'utf8', timeout: 15_000,
       env: { ...env, LOG_TO_FILE: 'true', LOG_DIR: blockedCliLogDir },
@@ -346,12 +350,16 @@ async function verifyPackage() {
   await new Promise((done) => portProbe.close(done));
   const cliConfig = JSON.parse(readFileSync(config, 'utf8'));
   cliConfig.channels.rest = { port: restPort, host: '127.0.0.1', fileStorageDir: join(temp, 'files') };
+  cliConfig.channels.wechat = { accounts: {
+    work: { stateDir: join(temp, 'wechat-work') },
+    personal: { stateDir: join(temp, 'wechat-personal') },
+  } };
   writeFileSync(config, JSON.stringify(cliConfig));
   const sentinel = join(temp, 'user-data.txt');
   writeFileSync(sentinel, 'preserved across restart');
   for (let attempt = 0; attempt < 2; attempt++) {
     let output = '';
-    const child = spawn(cli, ['start', '--config', config, '--api-port', '0'], {
+    const child = spawn(cli, ['start', '--config', config, '--api-port', '0', '--api-token', 'package-smoke-token'], {
       cwd: temp, env: { ...env, LOCKFILE_PATH: join(temp, 'service.pid') },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -374,6 +382,15 @@ async function verifyPackage() {
       assert.equal(status.status, 'ok');
       assert.equal(typeof status.instanceId, 'string');
       assert.equal(status.nodeId, undefined);
+      const capabilities = await fetch(`${baseUrl}/api/channel-capabilities`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer package-smoke-token' }, body: '{}', signal: AbortSignal.timeout(5000) });
+      assert.equal(capabilities.status, 200);
+      const snapshot = await capabilities.json();
+      assert.deepEqual(snapshot.channels.map(channel => channel.id).sort(), ['rest', 'wechat:personal', 'wechat:work']);
+      assert.equal(snapshot.channels.find(channel => channel.id === 'rest').healthy, true);
+      for (const account of snapshot.channels.filter(channel => channel.id.startsWith('wechat:'))) {
+        assert.equal(account.status, 'error'); assert.equal(account.healthy, false);
+      }
       child.kill('SIGTERM');
       assert.equal(await Promise.race([exited, delay(15000).then(() => 'timeout')]), 0, output);
       assert(!existsSync(join(temp, 'service.pid')), 'Graceful shutdown must release the instance lock');

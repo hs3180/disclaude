@@ -26,7 +26,7 @@ function mediaSignal(signal?: AbortSignal): AbortSignal {
 export async function uploadEncryptedMedia(params: {
   fileData: Buffer;
   to: string;
-  kind: 'image' | 'file';
+  kind: 'image' | 'file' | 'video';
   requestUpload: (body: Record<string, unknown>) => Promise<{ upload_param?: string; upload_full_url?: string }>;
 }): Promise<WeChatUploadedMedia> {
   if (params.fileData.length > WECHAT_MEDIA_MAX_BYTES) { throw new Error('File too large: WeChat adapter limit is 20 MiB'); }
@@ -35,7 +35,7 @@ export async function uploadEncryptedMedia(params: {
   const encrypted = Buffer.concat([cipher.update(params.fileData), cipher.final()]);
   const filekey = randomBytes(16).toString('hex');
   const spec = await params.requestUpload({
-    filekey, to_user_id: params.to, media_type: params.kind === 'image' ? 1 : 3,
+    filekey, to_user_id: params.to, media_type: params.kind === 'image' ? 1 : params.kind === 'video' ? 2 : 3,
     rawsize: params.fileData.length, rawfilemd5: createHash('md5').update(params.fileData).digest('hex'),
     filesize: encrypted.length, no_need_thumb: true, aeskey: key.toString('hex'),
   });

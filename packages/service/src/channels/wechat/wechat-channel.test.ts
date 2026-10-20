@@ -115,6 +115,7 @@ describe('WeChatChannel', () => {
         supportsUpdate: false,
         supportsStreaming: false,
         supportedChannelTools: ['send_text', 'send_file'],
+        nativeVideoFormats: ['mp4'],
       });
     });
   });
