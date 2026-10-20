@@ -29,12 +29,20 @@ import { isPrivateWorkflowRequest, type PrivateWorkflowRequest } from './channel
 
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
-import { createLogger, type TopicGroupMessageEvent, type FeishuCard } from '@disclaude/core';
+import { createLogger, type TopicGroupMessageEvent, type FeishuCard, type ChannelCapabilities, type ChannelStatus } from '@disclaude/core';
 import { SERVICE_VERSION } from './version.js';
 import type { DeliveryHealth } from './health-types.js';
 import { channelError } from './channel-error.js';
 
 const logger = createLogger('HttpApiServer');
+
+export interface ChannelCapabilitySnapshot {
+  id: string;
+  name: string;
+  status: ChannelStatus;
+  healthy: boolean;
+  capabilities: ChannelCapabilities;
+}
 
 /**
  * Configuration for the HTTP API server.
@@ -272,6 +280,11 @@ export class HttpApiServer {
   private markChatRespondedHandler?: MarkChatRespondedHandler;
   private deliveryHealthProvider?: () => DeliveryHealth;
   private browserIpcStatusProvider?: () => NonNullable<StatusResponse['browserIpc']>;
+  private channelCapabilitiesProvider?: (chatId?: string) => ChannelCapabilitySnapshot[];
+
+  setChannelCapabilitiesProvider(provider: (chatId?: string) => ChannelCapabilitySnapshot[]): void {
+    this.channelCapabilitiesProvider = provider;
+  }
   /** Connected SSE clients for topic notifications (Issue #4031) */
   private readonly sseClients = new Set<ServerResponse>();
   /** Heartbeat interval timer for SSE keepalive */
@@ -545,6 +558,7 @@ export class HttpApiServer {
    * Set up default routes.
    */
   private setupRoutes(): void {
+    this.addRoute('POST', '/api/channel-capabilities', this.handleChannelCapabilities.bind(this));
     this.addRoute('GET', '/api/status', this.handleStatus.bind(this));
     this.addRoute('GET', '/api/health/detailed', this.handleDetailedHealth.bind(this));
     // Issue #4279: REST parity with REST API uploadFile.
@@ -569,6 +583,17 @@ export class HttpApiServer {
     this.addRoute('POST', '/api/push', this.handlePush.bind(this));
     // Issue #4031: SSE endpoint for topic group message notifications
     this.addRoute('GET', '/api/topic-stream', this.handleTopicStream.bind(this));
+  }
+
+  private async handleChannelCapabilities(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.channelCapabilitiesProvider) { this.sendJson(res, 503, { ok: false, message: 'Channel capability discovery is unavailable' }); return; }
+    let body: unknown;
+    try { body = JSON.parse(await readBody(req)); }
+    catch { this.sendJson(res, 400, { ok: false, message: 'Expected a JSON object with optional chatId' }); return; }
+    if (!body || typeof body !== 'object' || Array.isArray(body) || ((body as { chatId?: unknown }).chatId !== undefined && typeof (body as { chatId?: unknown }).chatId !== 'string')) {
+      this.sendJson(res, 400, { ok: false, message: 'chatId must be a string' }); return;
+    }
+    this.sendJson(res, 200, { ok: true, channels: this.channelCapabilitiesProvider((body as { chatId?: string }).chatId) });
   }
 
   /**
