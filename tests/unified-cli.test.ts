@@ -6,6 +6,57 @@ import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+
+describe('channel CLI with inherited service logging', () => {
+  it('can show help, preview and upload a file when the inherited log destination is inaccessible', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'disclaude-cli-log-permissions-'));
+    const requests: Array<{ url: string; body: Record<string, unknown>; authorization?: string }> = [];
+    const server = createServer(async (req, res) => {
+      let body = '';
+      for await (const chunk of req) { body += String(chunk); }
+      requests.push({ url: req.url ?? '', body: body ? JSON.parse(body) as Record<string, unknown> : {}, authorization: req.headers.authorization });
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify(req.url === '/api/ping' ? { pong: true } : { ok: true, success: true, fileName: 'probe.txt', fileSize: 5 }));
+    });
+    try {
+      server.listen(0, '127.0.0.1'); await once(server, 'listening');
+      const blocked = join(root, 'log-path-is-a-file');
+      writeFileSync(blocked, 'Not a writable directory');
+      const file = join(root, 'probe.txt'); writeFileSync(file, 'probe');
+      const config = join(root, 'config.json');
+      writeFileSync(config, JSON.stringify({ workspace: { dir: root }, channels: { feishu: { enabled: false } } }));
+      const cliEnv = { ...process.env, NODE_ENV: 'production', LOG_TO_FILE: 'true', LOG_DIR: blocked, LOG_LEVEL: 'silent',
+        ['DISCLAUDE_CONFIG_PATH']: config, ['DISCLAUDE_WORKSPACE_DIR']: root,
+        ['DISCLAUDE_API_BASE_URL']: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, ['DISCLAUDE_API_TOKEN']: 'offline-test-token' };
+      const invoke = async (entry: string, args: string[]) => {
+        const child = spawn(process.execPath, [entry, ...args], { cwd: root, env: cliEnv, stdio: ['ignore', 'pipe', 'pipe'], timeout: 15_000 });
+        let stdout = ''; let stderr = '';
+        child.stdout.on('data', chunk => { stdout += String(chunk); });
+        child.stderr.on('data', chunk => { stderr += String(chunk); });
+        const [code] = await once(child, 'close');
+        expect(code, stderr).toBe(0);
+        expect(stderr).not.toMatch(/EACCES|EPERM|ENOTDIR|setupSyncFilePassthrough/);
+        return stdout;
+      };
+      const cli = fileURLToPath(new URL('../bin/disclaude.js', import.meta.url));
+      const direct = fileURLToPath(new URL('../packages/channel-cli/dist/cli.js', import.meta.url));
+      expect(await invoke(cli, ['channel', 'help'])).toContain('Usage:');
+      expect(await invoke(direct, ['send_file', '--help'])).toContain('--file');
+      const args = ['send_file', '--chat', 'probe@im.wechat', '--file', file];
+      expect(JSON.parse(await invoke(cli, ['channel', ...args, '--dry-run']))).toMatchObject({ ok: true, dryRun: true });
+      expect(requests).toHaveLength(0);
+      expect(JSON.parse(await invoke(cli, ['channel', ...args]))).toMatchObject({ ok: true, command: 'send_file' });
+      const uploads = requests.filter(req => req.url === '/api/upload-file');
+      expect(uploads).toHaveLength(1);
+      expect(uploads[0]).toMatchObject({ authorization: 'Bearer offline-test-token', body: { chatId: 'probe@im.wechat', filePath: file } });
+    } finally {
+      await new Promise<void>(resolve => server.close(() => resolve()));
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('installed unified CLI argument forwarding', () => {
   it('matches Docker health checks against the actual public CLI child command line', async () => {

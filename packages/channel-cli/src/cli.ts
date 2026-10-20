@@ -3,12 +3,18 @@
 import { accessSync, constants, existsSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { CHANNEL_CLI_HELP, getChannelCliCommandHelp, normalizeChannelApiBaseUrl, isSyntheticMessageId } from '@disclaude/core';
 import type { ActionPromptMap, InteractiveOption } from './tools/types.js';
 
 import { getChatIdValidationError } from './utils/chat-id-validator.js';
 import { assertReadableInteractiveText } from './utils/interactive-text.js';
 import { getCardValidationError, isValidFeishuCard } from './utils/card-validator.js';
+
+// Managed agents inherit the service's LOG_DIR/LOG_TO_FILE, but their sandbox
+// cannot write the service log. This short-lived client owns only stderr
+// diagnostics. Set this before loading core: its module-scope loggers open the
+// inherited file destination even for help, validation and dry-run commands.
+process.env.LOG_TO_FILE = 'false';
+const { CHANNEL_CLI_HELP, getChannelCliCommandHelp, normalizeChannelApiBaseUrl, isSyntheticMessageId } = await import('@disclaude/core');
 
 // Issue #4788 (second root cause): parseArgs used to store every `--foo` it saw
 // and silently consume the next argv entry as its value. A misspelled or invented

@@ -216,6 +216,22 @@ async function verifyPackage() {
   }
   assert.match(run(cli, ['start', '--help']), /Usage:/i);
   assert.match(run(cli, ['channel', '--help']), /Usage:/i);
+  // Managed agent sandboxes cannot write the service's inherited host log.
+  // Exercise the installed client with a deterministically unusable log path.
+  const blockedCliLogDir = join(temp, 'cli-log-path-is-a-file');
+  writeFileSync(blockedCliLogDir, 'not a directory');
+  for (const args of [
+    ['help'],
+    ['send_file', '--help'],
+    ['send_file', '--chat', 'installation-probe@im.wechat', '--file', config, '--dry-run'],
+  ]) {
+    const probe = spawnSync(cli, ['channel', ...args], { cwd: temp, encoding: 'utf8', timeout: 15_000,
+      env: { ...env, LOG_TO_FILE: 'true', LOG_DIR: blockedCliLogDir },
+    });
+    assert.equal(probe.status, 0, `Installed channel CLI must tolerate inherited service logging: ${probe.stderr}`);
+    if (args.includes('--dry-run')) assert.equal(JSON.parse(probe.stdout).dryRun, true);
+    else assert.match(probe.stdout, /Usage:/i);
+  }
   assert.match(run(cli, ['chromium-cdp', 'setup', '--help']), /--download/);
   assert.match(run(cli, ['chromium-cdp', 'status', '--help']), /Read-only/u);
   assert.match(run(cli, ['chromium-cdp', 'doctor', '--help']), /Read-only/u);

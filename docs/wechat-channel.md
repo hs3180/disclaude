@@ -77,6 +77,8 @@ disclaude channel send_file --chat 'actual-peer@im.wechat' --file /absolute/path
 
 Use an actual received peer ID, not the placeholder above. Outside the managed environment, supply the current candidate's API URL and token privately. Capability discovery requires authentication and does not send anything. An empty filtered result means no active channel owns that peer.
 
+The channel CLI writes diagnostics to stderr and does not open the service's file log, even when the Agent inherits `LOG_TO_FILE=true` and a host-only `LOG_DIR`. Help, previews and file sending therefore do not require permission to write host logs. The service keeps its own file logging configuration.
+
 Supported operations are plain text and image/file sending. Image files are uploaded as image messages; other files are attachment messages. Inbound images/files are downloaded, decrypted, and handed to the common Agent attachment interface as local files. File type is 4 in the current iLink protocol; type 3 is voice. Mixed text and multiple attachments are retained.
 
 The adapter uses a local 4000 UTF-8-byte text-part limit and a 20 MiB per-file limit. Long text splits at Unicode code-point boundaries. The private inbound cache retains at most seven days, 200 files, and 256 MiB; older chat references can therefore expire. Cards, buttons/private-input cards, mentions, group chats, native threads, voice/video decoding, streaming edits, and multiple simultaneously configured WeChat accounts are not implemented. Unsupported CLI card operations fail instead of returning synthetic success IDs.
