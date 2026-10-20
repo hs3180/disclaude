@@ -20,7 +20,7 @@ vi.mock('@disclaude/core', () => ({
 }));
 
 import { WeChatMessageListener } from './message-listener.js';
-import type { WeChatApiClient } from './api-client.js';
+import { WeChatApiError, type WeChatApiClient } from './api-client.js';
 
 // Store original fetch
 const originalFetch = globalThis.fetch;
@@ -41,6 +41,9 @@ describe('WeChatMessageListener', () => {
     mockProcessor = vi.fn().mockResolvedValue(undefined);
     mockClient = {
       getUpdates: vi.fn().mockResolvedValue([]),
+      acknowledgeUpdates: vi.fn(),
+      getUpdatesCursor: vi.fn().mockReturnValue(''),
+      setUpdatesCursor: vi.fn(),
     };
 
     listener = new WeChatMessageListener(
@@ -211,7 +214,7 @@ describe('WeChatMessageListener', () => {
       const update = {
         msg_id: 'msg-file-1',
         from_user_id: 'user-789',
-        item_list: [{ type: 3, file_item: { url: 'https://cdn.example.com/doc.pdf', file_name: 'doc.pdf', file_size: 1024 } }],
+        item_list: [{ type: 4, file_item: { url: 'https://cdn.example.com/doc.pdf', file_name: 'doc.pdf', file_size: 1024 } }],
         create_time: 1710000000,
       };
 
@@ -256,7 +259,7 @@ describe('WeChatMessageListener', () => {
       expect(message.content).toBe('[Unsupported message type: 99]');
     });
 
-    it('should include context_token as threadId', async () => {
+    it('keeps reply credentials out of generic message metadata', async () => {
       const update = {
         msg_id: 'msg-thread-1',
         from_user_id: 'user-200',
@@ -274,7 +277,8 @@ describe('WeChatMessageListener', () => {
       await listener.stop();
 
       const message = getFirstMessage();
-      expect(message.threadId).toBe('ctx-token-abc');
+      expect(message.threadId).toBeUndefined();
+      expect(JSON.stringify(message)).not.toContain('ctx-token-abc');
     });
 
     it('should skip updates without msg_id', async () => {
@@ -371,6 +375,45 @@ describe('WeChatMessageListener', () => {
   });
 
   describe('error handling and backoff', () => {
+    it('retries a failed handoff, deduplicates accepted replays, and checkpoints only accepted IDs', async () => {
+      const update = { message_id: '18446744073709551615', from_user_id: 'peer', message_type: 1, create_time_ms: 1234567890123, item_list: [{ type: 1, text_item: { text: 'hello' } }] };
+      const checkpoint = vi.fn().mockResolvedValue(undefined);
+      listener = new WeChatMessageListener(mockClient as WeChatApiClient, mockProcessor, { checkpoint });
+      mockProcessor.mockRejectedValueOnce(new Error('queue unavailable')).mockResolvedValue(undefined);
+      mockClient.getUpdates = vi.fn().mockResolvedValueOnce([update]).mockResolvedValueOnce([update, update]).mockImplementation(getUpdatesPendingUntilAborted);
+      listener.start();
+      await vi.advanceTimersByTimeAsync(2100);
+      await stopAndFlush(listener);
+      expect(mockProcessor).toHaveBeenCalledTimes(2);
+      expect(getFirstMessage()).toMatchObject({ messageId: update.message_id, timestamp: update.create_time_ms });
+      expect(checkpoint.mock.calls[0][0].seenMessageIds).toEqual([update.message_id]);
+      expect(mockClient.acknowledgeUpdates).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not process bot echoes or replayed IDs restored from disk', async () => {
+      const onContext = vi.fn();
+      listener = new WeChatMessageListener(mockClient as WeChatApiClient, mockProcessor, { state: { cursor: 'saved', seenMessageIds: ['seen'] }, onContext });
+      mockClient.getUpdates = vi.fn().mockResolvedValueOnce([
+        { message_id: 'seen', from_user_id: 'peer', item_list: [{ type: 1, text_item: { text: 'replay' } }] },
+        { message_id: 'echo', message_type: 2, from_user_id: 'bot', item_list: [{ type: 1, text_item: { text: 'echo' } }] },
+        { message_id: 'new', from_user_id: 'peer', context_token: 'private-reply-context', item_list: [{ type: 1, text_item: { text: 'accepted' } }] },
+      ]).mockImplementation(getUpdatesPendingUntilAborted);
+      listener.start();
+      await vi.advanceTimersByTimeAsync(100);
+      await stopAndFlush(listener);
+      expect(mockClient.setUpdatesCursor).toHaveBeenCalledWith('saved');
+      expect(mockProcessor).toHaveBeenCalledTimes(1);
+      expect(onContext).toHaveBeenCalledWith('peer', 'private-reply-context');
+    });
+
+    it('reports unhealthy and stops polling when login expires', async () => {
+      mockClient.getUpdates = vi.fn().mockRejectedValue(new WeChatApiError(-14));
+      listener.start();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(listener.isListening()).toBe(false);
+      expect(mockClient.getUpdates).toHaveBeenCalledTimes(1);
+      await listener.stop();
+    });
     it('should continue polling after transient error', async () => {
       let callCount = 0;
       mockClient.getUpdates = vi.fn().mockImplementation(({ signal }) => {

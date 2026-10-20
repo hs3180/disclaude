@@ -62,8 +62,8 @@ export interface WeChatImageItem {
  * File item in a WeChat message.
  */
 export interface WeChatFileItem {
-  /** Item type (3 = file) */
-  type: 3;
+  /** Item type (4 = file; 3 is voice in iLink). */
+  type: 4;
   /** File content */
   file_item: {
     /** File CDN URL */
@@ -88,7 +88,9 @@ export interface WeChatUpdate {
   message_id?: string;
   create_time_ms?: number;
   /** Unique message identifier */
-  msg_id: string;
+  msg_id?: string;
+  client_id?: string;
+  group_id?: string;
   /** Sender user ID */
   from_user_id?: string;
   /** Recipient user ID (bot ID) */
