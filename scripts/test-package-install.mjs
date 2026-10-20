@@ -137,6 +137,10 @@ async function verifyPackage() {
   assert(existsSync(join(installed, 'disclaude.config.example.yaml')));
   const cli = join(prefix, 'bin/disclaude');
   assert.equal(run(cli, ['--version']).trim(), `disclaude v${pkg.version}`);
+  assert.match(run(cli, ['wechat', '--help']), /Personal WeChat via Tencent iLink/u);
+  const wechatStatus = JSON.parse(run(cli, ['wechat', 'status', '--state-dir', join(temp, 'wechat-account')]));
+  assert.equal(wechatStatus.configured, false);
+  assert.equal(wechatStatus.authenticated, 'not-checked');
   assert.match(run(cli, ['browser', '--help']), /automatically serializes calls/u);
   assert.match(run(cli, ['plugins', '--help']), /official diagnostics plugin is optional/u);
   assert(!existsSync(join(installed, 'skills/diagnose-logs')), 'Diagnostics must not ship in the default skills bundle');
