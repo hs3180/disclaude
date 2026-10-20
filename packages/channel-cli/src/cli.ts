@@ -17,6 +17,7 @@ import { getCardValidationError, isValidFeishuCard } from './utils/card-validato
 // content"). These lists let the CLI name the bad flag instead.
 const COMMON_FLAGS = ['chat', 'parent', 'base-url', 'api-token', 'dry-run'];
 const COMMAND_FLAGS: Record<string, string[]> = {
+  capabilities: [],
   request_private_input: ['actor', 'source', 'workflow', 'workflow-file'],
   send_text: ['text', 'text-file', 'mentions'],
   send_file: ['file'],
@@ -363,6 +364,22 @@ export async function run(argv: string[]): Promise<number> {
   if (Array.isArray(args._missing) && args._missing.length) {
     emitFail(command, `Missing value for ${args._missing.map(name => `--${name}`).join(', ')}`, `run disclaude channel ${invokedAs} --help`);
     return 1;
+  }
+  if (command === 'capabilities') {
+    const chatId = arg(args, 'chat');
+    if (chatId !== undefined && !validateChat(command, args)) { return 1; }
+    if (arg(args, 'dry-run') === 'true') { emitOk({ command, dryRun: true, payload: { chatId } }); return 0; }
+    try {
+      const baseUrl = setupRest(args);
+      const response = await fetch(`${baseUrl}/api/channel-capabilities`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.DISCLAUDE_API_TOKEN ?? ''}` },
+        body: JSON.stringify({ chatId }), signal: AbortSignal.timeout(5000),
+      });
+      if (!response.ok) { throw new Error(`Channel capability request failed [HTTP ${response.status}]`); }
+      const result = await response.json() as { channels?: unknown[] };
+      if (!Array.isArray(result.channels)) { throw new Error('Service returned invalid channel capabilities'); }
+      emitOk({ command, channels: result.channels }); return 0;
+    } catch (error) { emitFail(command, errorMessage(error)); return 1; }
   }
   const chat = validateChat(command, args);
   if (!chat) {return 1;}

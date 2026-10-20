@@ -595,6 +595,9 @@ export async function main(): Promise<void> {
       });
       httpApiServer.setInstanceId(service.getInstanceId());
       httpApiServer.setBrowserIpcStatusProvider(() => service.getBrowserIpcStatus());
+      httpApiServer.setChannelCapabilitiesProvider(chatId => service.getChannels()
+        .filter(channel => !chatId || channel.ownsChatId(chatId))
+        .map(channel => ({ id: channel.id, name: channel.name, status: channel.status, healthy: channel.isHealthy(), capabilities: channel.getCapabilities() })));
       const feishuChannel = channelManager.get('feishu') as
         | { getDeliveryHealth?: () => import('./health-types.js').DeliveryHealth }
         | undefined;
