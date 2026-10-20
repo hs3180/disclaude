@@ -56,6 +56,15 @@ vi.mock('./message-listener.js', () => ({
   MessageProcessor: undefined,
 }));
 
+function readyChannel(): WeChatChannel {
+  const channel = new WeChatChannel({ token: 'test-token' });
+  const contexts = (channel as any).contexts as Map<string, string>;
+  contexts.set('chat-1', 'ctx-chat');
+  contexts.set('user-123', 'ctx-image');
+  contexts.set('user-456', 'ctx-file');
+  return channel;
+}
+
 describe('WeChatChannel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -118,7 +127,7 @@ describe('WeChatChannel', () => {
     });
 
     it('should send text messages via API client', async () => {
-      const channel = new WeChatChannel({ token: 'test-token' });
+      const channel = readyChannel();
       (channel as any).client = { sendText: mockSendText, hasToken: mockHasToken };
 
       await (channel as any).doSendMessage({
@@ -130,12 +139,12 @@ describe('WeChatChannel', () => {
       expect(mockSendText).toHaveBeenCalledWith({
         to: 'chat-1',
         content: 'Hello WeChat!',
-        contextToken: undefined,
+        contextToken: 'ctx-chat',
       });
     });
 
-    it('should send text with threadId as contextToken', async () => {
-      const channel = new WeChatChannel({ token: 'test-token' });
+    it('uses the saved context token instead of a generic parent message ID', async () => {
+      const channel = readyChannel();
       (channel as any).client = { sendText: mockSendText, hasToken: mockHasToken };
 
       await (channel as any).doSendMessage({
@@ -148,12 +157,12 @@ describe('WeChatChannel', () => {
       expect(mockSendText).toHaveBeenCalledWith({
         to: 'chat-1',
         content: 'Hello in thread',
-        contextToken: 'thread-123',
+        contextToken: 'ctx-chat',
       });
     });
 
     it('should downgrade card messages to JSON text', async () => {
-      const channel = new WeChatChannel({ token: 'test-token' });
+      const channel = readyChannel();
       (channel as any).client = { sendText: mockSendText, hasToken: mockHasToken };
 
       const card = { elements: [{ tag: 'div', text: { tag: 'plain_text', content: 'test' } }] };
@@ -166,12 +175,12 @@ describe('WeChatChannel', () => {
       expect(mockSendText).toHaveBeenCalledWith({
         to: 'chat-1',
         content: JSON.stringify(card),
-        contextToken: undefined,
+        contextToken: 'ctx-chat',
       });
     });
 
     it('should downgrade card with threadId', async () => {
-      const channel = new WeChatChannel({ token: 'test-token' });
+      const channel = readyChannel();
       (channel as any).client = { sendText: mockSendText, hasToken: mockHasToken };
 
       const card = { elements: [] };
@@ -185,37 +194,34 @@ describe('WeChatChannel', () => {
       expect(mockSendText).toHaveBeenCalledWith({
         to: 'chat-1',
         content: JSON.stringify(card),
-        contextToken: 'thread-456',
+        contextToken: 'ctx-chat',
       });
     });
 
     it('should not send empty text messages', async () => {
-      const channel = new WeChatChannel({ token: 'test-token' });
+      const channel = readyChannel();
       (channel as any).client = { sendText: mockSendText, hasToken: mockHasToken };
 
-      await (channel as any).doSendMessage({
-        chatId: 'chat-1',
-        type: 'text',
-        text: '',
-      });
+      await expect((channel as any).doSendMessage({
+        chatId: 'chat-1', type: 'text', text: '',
+      })).rejects.toThrow('Unsupported or empty');
 
       expect(mockSendText).not.toHaveBeenCalled();
     });
 
     it('should ignore unsupported message types', async () => {
-      const channel = new WeChatChannel({ token: 'test-token' });
+      const channel = readyChannel();
       (channel as any).client = { sendText: mockSendText, hasToken: mockHasToken };
 
-      await (channel as any).doSendMessage({
-        chatId: 'chat-1',
-        type: 'unknown',
-      });
+      await expect((channel as any).doSendMessage({
+        chatId: 'chat-1', type: 'unknown',
+      })).rejects.toThrow('Unsupported or empty');
 
       expect(mockSendText).not.toHaveBeenCalled();
     });
 
     it('should ignore done signal type', async () => {
-      const channel = new WeChatChannel({ token: 'test-token' });
+      const channel = readyChannel();
       (channel as any).client = { sendText: mockSendText, hasToken: mockHasToken };
 
       await (channel as any).doSendMessage({
@@ -229,7 +235,7 @@ describe('WeChatChannel', () => {
 
   describe('checkHealth', () => {
     it('should return true when client has token and listener is active', () => {
-      const channel = new WeChatChannel({ token: 'test-token' });
+      const channel = readyChannel();
       (channel as any).client = { hasToken: mockHasToken };
       (channel as any).messageListener = { isListening: mockIsListening };
       mockHasToken.mockReturnValue(true);
@@ -238,7 +244,7 @@ describe('WeChatChannel', () => {
     });
 
     it('should return false when client has no token', () => {
-      const channel = new WeChatChannel({ token: 'test-token' });
+      const channel = readyChannel();
       (channel as any).client = { hasToken: mockHasToken };
       (channel as any).messageListener = { isListening: mockIsListening };
       mockHasToken.mockReturnValue(false);
@@ -246,7 +252,7 @@ describe('WeChatChannel', () => {
     });
 
     it('should return false when message listener is not active', () => {
-      const channel = new WeChatChannel({ token: 'test-token' });
+      const channel = readyChannel();
       (channel as any).client = { hasToken: mockHasToken };
       (channel as any).messageListener = { isListening: mockIsListening };
       mockHasToken.mockReturnValue(true);
@@ -276,7 +282,7 @@ describe('WeChatChannel', () => {
 
   describe('doStop (Issue #1556)', () => {
     it('should stop message listener on stop', async () => {
-      const channel = new WeChatChannel({ token: 'test-token' });
+      const channel = readyChannel();
       const mockListener = { stop: vi.fn().mockResolvedValue(undefined) };
       (channel as any).messageListener = mockListener;
 
@@ -289,7 +295,7 @@ describe('WeChatChannel', () => {
 
   describe('typing indicator integration (Issue #1556 Phase 3.2)', () => {
     it('should send typing indicator before emitting message', async () => {
-      const channel = new WeChatChannel({ token: 'test-token' });
+      const channel = readyChannel();
 
       // Set up the client mock directly
       const mockClient = {
@@ -328,7 +334,7 @@ describe('WeChatChannel', () => {
 
   describe('file sending via CDN (Issue #1556 Phase 3.2)', () => {
     it('should upload and send image file', async () => {
-      const channel = new WeChatChannel({ token: 'test-token' });
+      const channel = readyChannel();
 
       const mockUploadMedia = vi.fn().mockResolvedValue({
         url: 'https://cdn.example.com/img.png',
@@ -360,7 +366,7 @@ describe('WeChatChannel', () => {
         expect(mockSendImage).toHaveBeenCalledWith({
           to: 'user-123',
           imageUrl: 'https://cdn.example.com/img.png',
-          contextToken: undefined,
+          contextToken: 'ctx-image',
         });
       } finally {
         unlinkSync(tmpFile);
@@ -368,7 +374,7 @@ describe('WeChatChannel', () => {
     });
 
     it('should upload and send non-image file', async () => {
-      const channel = new WeChatChannel({ token: 'test-token' });
+      const channel = readyChannel();
 
       const mockUploadMedia = vi.fn().mockResolvedValue({
         url: 'https://cdn.example.com/doc.pdf',
@@ -401,7 +407,7 @@ describe('WeChatChannel', () => {
           to: 'user-456',
           fileUrl: 'https://cdn.example.com/doc.pdf',
           fileName: 'wechat-test-doc.pdf',
-          contextToken: 'thread-abc',
+          contextToken: 'ctx-file',
         });
       } finally {
         unlinkSync(tmpFile);
@@ -409,17 +415,16 @@ describe('WeChatChannel', () => {
     });
 
     it('should not send file when filePath is missing', async () => {
-      const channel = new WeChatChannel({ token: 'test-token' });
+      const channel = readyChannel();
       const mockUploadMedia = vi.fn();
       (channel as any).client = {
         uploadMedia: mockUploadMedia,
         hasToken: mockHasToken,
       };
 
-      await (channel as any).doSendMessage({
-        chatId: 'chat-1',
-        type: 'file',
-      });
+      await expect((channel as any).doSendMessage({
+        chatId: 'chat-1', type: 'file',
+      })).rejects.toThrow('Unsupported or empty');
 
       expect(mockUploadMedia).not.toHaveBeenCalled();
     });

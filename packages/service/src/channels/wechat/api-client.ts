@@ -247,7 +247,7 @@ export class WeChatApiClient {
     to: string;
     content: string;
     contextToken?: string;
-  }): Promise<void> {
+  }): Promise<string | undefined> {
     const { to, content, contextToken } = params;
     const clientId = this.generateClientId();
 
@@ -264,8 +264,9 @@ export class WeChatApiClient {
       base_info: { channel_version: '0.0.1' },
     };
 
-    await this.postJson('ilink/bot/sendmessage', body);
+    const result = await this.postJson<{ message_id?: string }>('ilink/bot/sendmessage', body);
     logger.debug({ to, contentLength: content.length }, 'Text message sent');
+    return result.message_id;
   }
 
   // ---------------------------------------------------------------------------
@@ -398,17 +399,17 @@ export class WeChatApiClient {
    *
    * @param params - Typing indicator parameters
    */
-  async sendTyping(params: { to: string }): Promise<void> {
+  async sendTyping(params: { to: string; contextToken?: string }): Promise<void> {
     const { to } = params;
 
-    const body = {
-      to_user_id: to,
-    };
-
     try {
+      const config = await this.postJson<{ typing_ticket?: string }>('ilink/bot/getconfig', {
+        ilink_user_id: to, context_token: params.contextToken,
+      }, { timeoutMs: 5_000 });
+      if (!config.typing_ticket) { return; }
       await this.postJson<WeChatTypingResponse>(
-        'ilink/bot/typing',
-        body,
+        'ilink/bot/sendtyping',
+        { ilink_user_id: to, typing_ticket: config.typing_ticket, status: 1 },
         { timeoutMs: 5_000 }, // Short timeout for typing indicator
       );
       logger.debug({ to }, 'Typing indicator sent');

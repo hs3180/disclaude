@@ -23,6 +23,8 @@ export interface WeChatChannelConfig extends ChannelConfig {
   token?: string;
   /** Route tag for message routing */
   routeTag?: string;
+  /** Persistent account directory, populated by `disclaude wechat login`. */
+  stateDir?: string;
 }
 
 // ---------------------------------------------------------------------------
