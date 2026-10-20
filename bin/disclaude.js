@@ -46,6 +46,7 @@ function showHelp() {
       'Commands:',
       '  start [options]    Start disclaude',
       '  channel <command>  Send channel messages through the service',
+      '  wechat <command>   Log in to personal WeChat or diagnose saved login',
       '  browser <cmd>      Inspect coordinated browser control',
       '  plugins <cmd>      Install, update or remove optional first-party diagnostics',
       '  jupyter <command> Work with remote Notebooks; patch installs repairs; test verifies the configured server',
@@ -67,6 +68,7 @@ function showHelp() {
 }
 
 const ROUTES = {
+  wechat: { file: resolve(ROOT, 'node_modules/@disclaude/service/dist/channels/wechat/cli.js') },
   plugins: { file: resolve(ROOT, 'bin/plugins.js') },
   jupyter: {
     file: resolve(
