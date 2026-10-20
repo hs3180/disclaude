@@ -337,8 +337,7 @@ describe('WeChatChannel', () => {
       const channel = readyChannel();
 
       const mockUploadMedia = vi.fn().mockResolvedValue({
-        url: 'https://cdn.example.com/img.png',
-        fileKey: 'key-123',
+        media: { encrypt_query_param: 'image-ref' }, size: 13, encryptedSize: 16,
       });
       const mockSendImage = vi.fn().mockResolvedValue(undefined);
 
@@ -365,7 +364,7 @@ describe('WeChatChannel', () => {
         );
         expect(mockSendImage).toHaveBeenCalledWith({
           to: 'user-123',
-          imageUrl: 'https://cdn.example.com/img.png',
+          uploaded: { media: { encrypt_query_param: 'image-ref' }, size: 13, encryptedSize: 16 },
           contextToken: 'ctx-image',
         });
       } finally {
@@ -377,8 +376,7 @@ describe('WeChatChannel', () => {
       const channel = readyChannel();
 
       const mockUploadMedia = vi.fn().mockResolvedValue({
-        url: 'https://cdn.example.com/doc.pdf',
-        fileKey: 'key-456',
+        media: { encrypt_query_param: 'file-ref' }, size: 13, encryptedSize: 16,
       });
       const mockSendFile = vi.fn().mockResolvedValue(undefined);
 
@@ -405,7 +403,7 @@ describe('WeChatChannel', () => {
         );
         expect(mockSendFile).toHaveBeenCalledWith({
           to: 'user-456',
-          fileUrl: 'https://cdn.example.com/doc.pdf',
+          uploaded: { media: { encrypt_query_param: 'file-ref' }, size: 13, encryptedSize: 16 },
           fileName: 'wechat-test-doc.pdf',
           contextToken: 'ctx-file',
         });

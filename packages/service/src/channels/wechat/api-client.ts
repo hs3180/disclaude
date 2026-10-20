@@ -19,8 +19,9 @@
  */
 
 import { createLogger } from '@disclaude/core';
-import type { WeChatGetUpdatesResponse, WeChatTypingResponse, WeChatCdnUploadResponse } from './types.js';
+import type { WeChatGetUpdatesResponse, WeChatTypingResponse, WeChatUploadedMedia } from './types.js';
 import { validateWechatBaseUrl } from './state-store.js';
+import { uploadEncryptedMedia } from './media.js';
 
 const logger = createLogger('WeChatApiClient');
 
@@ -32,9 +33,6 @@ const LONG_POLL_TIMEOUT_MS = 35_000;
 
 /** Default bot type for QR code generation. */
 const DEFAULT_BOT_TYPE = 3;
-
-/** Maximum file size for CDN upload (20MB). */
-const MAX_UPLOAD_SIZE_BYTES = 20 * 1024 * 1024;
 
 /** Safe diagnostics: never include raw response bodies, URLs or context tokens. */
 export class WeChatApiError extends Error {
@@ -282,10 +280,10 @@ export class WeChatApiClient {
    */
   async sendImage(params: {
     to: string;
-    imageUrl: string;
+    uploaded: WeChatUploadedMedia;
     contextToken?: string;
-  }): Promise<void> {
-    const { to, imageUrl, contextToken } = params;
+  }): Promise<string | undefined> {
+    const { to, uploaded, contextToken } = params;
     const clientId = this.generateClientId();
 
     const body = {
@@ -295,14 +293,14 @@ export class WeChatApiClient {
         client_id: clientId,
         message_type: 2, // BOT
         message_state: 2, // FINISH
-        item_list: [{ type: 2, image_item: { url: imageUrl } }],
+        item_list: [{ type: 2, image_item: { media: uploaded.media, mid_size: uploaded.encryptedSize } }],
         context_token: contextToken ?? undefined,
       },
       base_info: { channel_version: '0.0.1' },
     };
 
-    await this.postJson('ilink/bot/sendmessage', body);
-    logger.debug({ to, imageUrl }, 'Image message sent');
+    const result = await this.postJson<{ message_id?: string }>('ilink/bot/sendmessage', body);
+    return result.message_id;
   }
 
   /**
@@ -314,11 +312,11 @@ export class WeChatApiClient {
    */
   async sendFile(params: {
     to: string;
-    fileUrl: string;
+    uploaded: WeChatUploadedMedia;
     fileName?: string;
     contextToken?: string;
-  }): Promise<void> {
-    const { to, fileUrl, fileName, contextToken } = params;
+  }): Promise<string | undefined> {
+    const { to, uploaded, fileName, contextToken } = params;
     const clientId = this.generateClientId();
 
     const body = {
@@ -328,14 +326,14 @@ export class WeChatApiClient {
         client_id: clientId,
         message_type: 2, // BOT
         message_state: 2, // FINISH
-        item_list: [{ type: 3, file_item: { url: fileUrl, file_name: fileName } }],
+        item_list: [{ type: 4, file_item: { media: uploaded.media, file_name: fileName, len: String(uploaded.size) } }],
         context_token: contextToken ?? undefined,
       },
       base_info: { channel_version: '0.0.1' },
     };
 
-    await this.postJson('ilink/bot/sendmessage', body);
-    logger.debug({ to, fileUrl, fileName }, 'File message sent');
+    const result = await this.postJson<{ message_id?: string }>('ilink/bot/sendmessage', body);
+    return result.message_id;
   }
 
   // ---------------------------------------------------------------------------
@@ -436,76 +434,15 @@ export class WeChatApiClient {
    * @returns CDN URL and file key of the uploaded file
    */
   async uploadMedia(params: {
-    /** File content as Buffer */
     fileData: Buffer;
-    /** File name (with extension) */
     fileName: string;
-    /** MIME type (default: application/octet-stream) */
-    mimeType?: string;
-  }): Promise<{ url: string; fileKey: string }> {
-    const { fileData, fileName, mimeType } = params;
-
-    if (fileData.length > MAX_UPLOAD_SIZE_BYTES) {
-      throw new Error(`File too large: ${fileData.length} bytes (max ${MAX_UPLOAD_SIZE_BYTES})`);
-    }
-
-    const url = `${this.baseUrl}/ilink/bot/upload`;
-
-    const headers = this.buildAuthHeaders('');
-    // Remove Content-Length and Content-Type as FormData will set them
-    delete headers['Content-Length'];
-    delete headers['Content-Type'];
-
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), DEFAULT_API_TIMEOUT_MS);
-
-    try {
-      const formData = new FormData();
-      formData.append(
-        'file',
-        new Blob([fileData], { type: mimeType || 'application/octet-stream' }),
-        fileName,
-      );
-
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'AuthorizationType': headers['AuthorizationType'] ?? '',
-          'Authorization': headers['Authorization'] ?? '',
-          'X-WECHAT-UIN': headers['X-WECHAT-UIN'] ?? '',
-          ...(this.routeTag ? { 'SKRouteTag': this.routeTag } : {}),
-        },
-        body: formData,
-        signal: controller.signal,
-      });
-
-      clearTimeout(timer);
-
-      if (!response.ok) {
-        const text = await response.text().catch(() => '(unreadable)');
-        logger.error({ status: response.status, body: text }, 'Upload failed');
-        throw new Error(`WeChat upload error [${response.status}]: ${text}`);
-      }
-
-      const rawText = await response.text();
-      const data = JSON.parse(rawText) as WeChatCdnUploadResponse;
-
-      const { ret } = data;
-      if (ret !== undefined && ret !== 0) {
-        const errMsg = (data as Record<string, unknown>).err_msg as string || `Error code ${ret}`;
-        throw new Error(`WeChat upload error [${ret}]: ${errMsg}`);
-      }
-
-      if (!data.url || !data.file_key) {
-        throw new Error('Upload response missing url or file_key');
-      }
-
-      logger.info({ fileName, url: data.url, fileKey: data.file_key }, 'File uploaded to CDN');
-      return { url: data.url, fileKey: data.file_key };
-    } catch (error) {
-      clearTimeout(timer);
-      throw error;
-    }
+    to: string;
+    kind: 'image' | 'file';
+  }): Promise<WeChatUploadedMedia> {
+    return await uploadEncryptedMedia({
+      ...params,
+      requestUpload: (body) => this.postJson('ilink/bot/getuploadurl', body),
+    });
   }
 
   // ---------------------------------------------------------------------------
