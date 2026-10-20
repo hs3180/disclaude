@@ -553,14 +553,14 @@ describe('WeChatApiClient', () => {
     it('should send typing indicator via POST', async () => {
       mockFetch.mockResolvedValue({
         ok: true,
-        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, typing_ticket: 'ticket' })),
       });
 
       client.setToken('test-token');
       await client.sendTyping({ to: 'user-123' });
 
       expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining('ilink/bot/typing'),
+        expect.stringContaining('ilink/bot/sendtyping'),
         expect.objectContaining({
           method: 'POST',
           headers: expect.objectContaining({
@@ -569,8 +569,9 @@ describe('WeChatApiClient', () => {
         }),
       );
 
-      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
-      expect(callBody.to_user_id).toBe('user-123');
+      const callBody = JSON.parse(mockFetch.mock.calls[1][1].body);
+      expect(callBody.ilink_user_id).toBe('user-123');
+      expect(callBody.typing_ticket).toBe('ticket');
     });
 
     it('should not throw on API failure (non-fatal)', async () => {

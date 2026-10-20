@@ -25,6 +25,7 @@ import { WeChatApiClient } from './api-client.js';
 import { WeChatAuth } from './auth.js';
 import { WeChatMessageListener, type MessageProcessor } from './message-listener.js';
 import type { WeChatChannelConfig } from './types.js';
+import { WeChatStateStore, type WeChatSessionState } from './state-store.js';
 
 const logger = createLogger('WeChatChannel');
 
@@ -47,6 +48,8 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
   private client?: WeChatApiClient;
   private auth?: WeChatAuth;
   private messageListener?: WeChatMessageListener;
+  private readonly contexts = new Map<string, string>();
+  private releaseAccount?: () => Promise<void>;
 
   constructor(config: WeChatChannelConfig = {}) {
     super(config, 'wechat', 'WeChat');
@@ -64,46 +67,70 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
    * 4. Start message listener (Issue #1556 Phase 3.1)
    */
   protected async doStart(): Promise<void> {
-    // Create API client
-    this.client = new WeChatApiClient({
-      baseUrl: this.baseUrl,
-      token: this.config.token,
-      routeTag: this.routeTag,
-    });
+    let session: WeChatSessionState | undefined;
+    let store: WeChatStateStore | undefined;
+    let credentials: Awaited<ReturnType<WeChatStateStore['loadCredentials']>>;
+    if (this.config.stateDir) {
+      if (this.config.token) { throw new Error('Use saved WeChat login or a programmatic token, not both'); }
+      store = new WeChatStateStore(this.config.stateDir);
+      this.releaseAccount = await store.lock();
+      try {
+        credentials = await store.loadCredentials();
+        if (!credentials) { throw new Error('No saved WeChat login; run disclaude wechat login with the configured --state-dir'); }
+        session = await store.loadSession(credentials.botId);
+        this.contexts.clear();
+        for (const [peer, token] of Object.entries(session.contexts)) { this.contexts.set(peer, token); }
+      } catch (error) { await this.releaseAccount(); this.releaseAccount = undefined; throw error; }
+    }
+    try {
+      // Create API client
+      this.client = new WeChatApiClient({
+        baseUrl: credentials?.baseUrl ?? this.baseUrl,
+        token: credentials?.token ?? this.config.token,
+        routeTag: this.routeTag,
+      });
 
-    // If token is already configured, skip auth
-    if (this.config.token) {
-      logger.info('Using pre-configured bot token');
-    } else {
-      // Run QR code authentication
-      this.auth = new WeChatAuth(this.client);
+      // If token is already configured, skip auth
+      if (credentials || this.config.token) {
+        logger.info('Using pre-configured bot token');
+      } else {
+        // Run QR code authentication
+        this.auth = new WeChatAuth(this.client);
 
-      logger.info('Starting WeChat QR code authentication...');
-      const result = await this.auth.authenticate();
+        logger.info('Starting WeChat QR code authentication...');
+        const result = await this.auth.authenticate();
 
-      if (!result.success || !result.token) {
-        throw new Error(`WeChat authentication failed: ${result.error || 'unknown error'}`);
+        if (!result.success || !result.token) {
+          throw new Error(`WeChat authentication failed: ${result.error || 'unknown error'}`);
+        }
+
+        this.client.setToken(result.token);
+        if (result.baseUrl) { this.client = new WeChatApiClient({ baseUrl: result.baseUrl, token: result.token, routeTag: this.routeTag }); }
+        logger.info(
+          { botId: result.botId, userId: result.userId },
+          'WeChat channel authenticated successfully',
+        );
       }
 
-      this.client.setToken(result.token);
-      logger.info(
-        { botId: result.botId, userId: result.userId },
-        'WeChat channel authenticated successfully',
-      );
-    }
+      // Start message listener (Issue #1556 Phase 3.1)
+      const processor: MessageProcessor = async (message: IncomingMessage) => {
+        // Send typing indicator before processing (Issue #1556 Phase 3.2)
+        void this.client?.sendTyping({ to: message.chatId, contextToken: this.contexts.get(message.chatId) });
 
-    // Start message listener (Issue #1556 Phase 3.1)
-    const processor: MessageProcessor = async (message: IncomingMessage) => {
-      // Send typing indicator before processing (Issue #1556 Phase 3.2)
-      await this.client?.sendTyping({ to: message.chatId });
+        await this.emitMessage(message);
+      };
 
-      await this.emitMessage(message);
-    };
+      this.messageListener = new WeChatMessageListener(this.client, processor, {
+        state: session,
+        onContext: (peer, token) => this.contexts.set(peer, token),
+        checkpoint: store && session ? async (state) => {
+          await store.saveSession({ ...state, botId: session.botId, contexts: Object.fromEntries(this.contexts) });
+        } : undefined,
+      });
+      this.messageListener.start();
 
-    this.messageListener = new WeChatMessageListener(this.client, processor);
-    this.messageListener.start();
-
-    logger.info('WeChat channel started with message listening');
+      logger.info('WeChat channel started with message listening');
+    } catch (error) { await this.releaseAccount?.(); this.releaseAccount = undefined; throw error; }
   }
 
   /**
@@ -112,18 +139,20 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
    * Stops message listener and aborts any in-progress authentication.
    */
   protected async doStop(): Promise<void> {
-    // Stop message listener first
-    if (this.messageListener) {
-      await this.messageListener.stop();
-      this.messageListener = undefined;
-    }
+    try {
+      // Stop message listener first
+      if (this.messageListener) {
+        await this.messageListener.stop();
+        this.messageListener = undefined;
+      }
 
-    if (this.auth?.isAuthenticating()) {
-      this.auth.abort();
-    }
-    this.auth = undefined;
-    this.client = undefined;
-    logger.info('WeChat channel stopped');
+      if (this.auth?.isAuthenticating()) {
+        this.auth.abort();
+      }
+      this.auth = undefined;
+      this.client = undefined;
+      logger.info('WeChat channel stopped');
+    } finally { await this.releaseAccount?.(); this.releaseAccount = undefined; }
   }
 
   /**
@@ -136,14 +165,16 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
     if (!this.client) {
       throw new Error('WeChat client not initialized');
     }
+    if (message.type === 'done') { return; }
+    const contextToken = this.contexts.get(message.chatId);
+    if (!contextToken) { throw new Error('No WeChat reply context for this peer; send a message to the bot first'); }
 
     if (message.type === 'text' && message.text) {
-      await this.client.sendText({
+      return await this.client.sendText({
         to: message.chatId,
         content: message.text,
-        contextToken: message.threadId,
+        contextToken,
       });
-      return;
     }
 
     // WeChat doesn't support cards — downgrade to JSON-serialized text
@@ -152,7 +183,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
       await this.client.sendText({
         to: message.chatId,
         content: cardText,
-        contextToken: message.threadId,
+        contextToken,
       });
       logger.debug(
         { chatId: message.chatId, cardLength: cardText.length },
@@ -168,10 +199,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
     }
 
     // Unsupported message types
-    logger.warn(
-      { type: message.type, chatId: message.chatId },
-      'WeChat unsupported message type, ignoring'
-    );
+    throw new Error(`Unsupported or empty WeChat message: ${message.type}`);
   }
 
   /**
@@ -209,13 +237,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
    * Issue #3824: Channel ownership query for post-restart routing.
    */
   ownsChatId(chatId: string): boolean {
-    // WeChat user IDs are not Feishu format (oc_/ou_) or REST format (rest-/UUID)
-    // This is a conservative check — if it doesn't match known patterns for other
-    // channels, WeChat claims it as a fallback.
-    return !chatId.startsWith('oc_')
-      && !chatId.startsWith('ou_')
-      && !chatId.startsWith('rest-')
-      && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(chatId);
+    return this.contexts.has(chatId);
   }
 
   /**
@@ -249,14 +271,14 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
       await this.client.sendImage({
         to: message.chatId,
         imageUrl: cdnUrl,
-        contextToken: message.threadId,
+        contextToken: this.contexts.get(message.chatId),
       });
     } else {
       await this.client.sendFile({
         to: message.chatId,
         fileUrl: cdnUrl,
         fileName,
-        contextToken: message.threadId,
+        contextToken: this.contexts.get(message.chatId),
       });
     }
   }
