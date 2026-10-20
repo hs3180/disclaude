@@ -52,7 +52,10 @@ export interface WeChatImageItem {
   /** Image content */
   image_item: {
     /** Image CDN URL */
-    url: string;
+    url?: string;
+    media?: WeChatCdnMedia;
+    /** Some inbound images carry the raw AES key as hex here. */
+    aeskey?: string;
     /** Image width */
     width?: number;
     /** Image height */
@@ -69,7 +72,9 @@ export interface WeChatFileItem {
   /** File content */
   file_item: {
     /** File CDN URL */
-    url: string;
+    url?: string;
+    media?: WeChatCdnMedia;
+    len?: string;
     /** File name */
     file_name?: string;
     /** File size in bytes */
@@ -81,6 +86,19 @@ export interface WeChatFileItem {
  * Union type for message content items.
  */
 export type WeChatMessageItem = WeChatTextItem | WeChatImageItem | WeChatFileItem;
+
+export interface WeChatCdnMedia {
+  encrypt_query_param?: string;
+  aes_key?: string;
+  encrypt_type?: number;
+  full_url?: string;
+}
+
+export interface WeChatUploadedMedia {
+  media: WeChatCdnMedia;
+  size: number;
+  encryptedSize: number;
+}
 
 /**
  * A single update from the getUpdates long-poll API.
