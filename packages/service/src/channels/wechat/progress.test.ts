@@ -29,6 +29,7 @@ describe('WeChat public progress through the actual descriptor and ChatAgent', (
     const send = vi.spyOn(channel, 'sendMessage').mockResolvedValue('ack');
     const callbacks = WECHAT_WIRED_DESCRIPTOR.createCallbacks(channel, { logger } as never)('user@im.wechat');
     expect(callbacks.finalReplyOnly).not.toBe(true);
+    expect(callbacks).not.toHaveProperty('sendProgress');
     expect(callbacks.getCapabilities?.('user@im.wechat')?.supportsStreaming).toBe(false);
     const agent = new ChatAgent({ chatId: 'user@im.wechat', callbacks, apiKey: 'test', model: 'test' });
     const iterate = (agent as unknown as { processIterator: (iterator: AsyncIterable<unknown>) => Promise<void> }).processIterator.bind(agent);
@@ -36,7 +37,6 @@ describe('WeChat public progress through the actual descriptor and ChatAgent', (
       await iterate((async function* () {
         yield { parsed: { type: 'text', content: '先检查当前状态。', metadata: { phase: 'commentary' } } };
         expect(send.mock.calls.map(([msg]) => msg.text)).toEqual(['先检查当前状态。']);
-        yield { parsed: { type: 'text', content: '先检查当前状态。', metadata: { phase: 'commentary' } } };
         yield { parsed: { type: 'tool_use', content: 'private-command', metadata: { narration: '状态显示已登录，接下来检查路由。' } } };
         yield { parsed: { type: 'tool_progress', content: 'private-progress' } };
         yield { parsed: { type: 'tool_result', content: 'private-output' } };
@@ -57,13 +57,10 @@ describe('WeChat public progress through the actual descriptor and ChatAgent', (
     try {
       await (agent as unknown as { processIterator: (iterator: AsyncIterable<unknown>) => Promise<void> }).processIterator((async function* () {
         yield { parsed: { type: 'text', content: '正在检查。', metadata: { phase: 'commentary' } } };
-        yield { parsed: { type: 'text', content: '正在检查。', metadata: { phase: 'commentary' } } };
         yield { parsed: { type: 'text', content: '检查完成。', metadata: { phase: 'final_answer' } } };
         yield { parsed: { type: 'result', content: '' } };
       })());
       expect(send.mock.calls.map(([msg]) => msg.text)).toEqual(['正在检查。', '检查完成。']);
-      await callbacks.sendProgress?.('user@im.wechat', '正在检查。');
-      expect(send).toHaveBeenCalledTimes(3); // A new turn may report the same progress.
       const rest = REST_WIRED_DESCRIPTOR.createCallbacks(new RestChannel({ port: 0, host: '127.0.0.1', fileStorageDir: '/unused' }), { logger } as never)('rest-test');
       expect(rest.finalReplyOnly).toBe(true);
     } finally { agent.dispose(); }

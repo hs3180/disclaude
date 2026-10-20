@@ -2034,7 +2034,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     let userVisibleOutputCount = 0;
     let turnResultText = '';
     let turnResultTruncated = false;
-    const bufferAssistantText = this.callbacks.finalReplyOnly === true || !!this.callbacks.sendProgress ||
+    const bufferAssistantText = this.callbacks.finalReplyOnly === true ||
       this.chatType === 'group' || this.chatType === 'topic';
     let pendingAssistantChunks: string[] = [];
     // 2026-09-08: 本轮是否收到 proxy 的 mid-stream 中断标记(带 MIDSTREAM_MARKER 的
@@ -2264,7 +2264,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                   'Compacted commentary payload'
                 );
               }
-              await (this.callbacks.sendProgress ?? this.callbacks.sendMessage)(chatId, commentary.text, resolveReplyThreadRoot());
+              await this.callbacks.sendMessage(chatId, commentary.text, resolveReplyThreadRoot());
             } catch (error) {
               // Progress cannot fail or complete the turn.
               this.logger.debug({ error, chatId }, 'Public commentary delivery failed');
@@ -2311,7 +2311,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                 // is building; the driver owns its own send fallbacks.
                 await streamDriver.pushText(narration.text, narrationRoot);
               } else {
-                await (this.callbacks.sendProgress ?? this.callbacks.sendMessage)(chatId, narration.text, narrationRoot);
+                await this.callbacks.sendMessage(chatId, narration.text, narrationRoot);
               }
             } catch (error) {
               this.logger.debug({ error, chatId }, 'Decision narration delivery failed');

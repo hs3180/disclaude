@@ -60,8 +60,6 @@ export interface ChatAgentCallbacks {
 
   /** Buffer assistant text until its terminal round, excluding progress from REST responses. */
   finalReplyOnly?: boolean;
-  /** Public progress/decision summaries, separate from final answer delivery. */
-  sendProgress?: (chatId: string, text: string, parentMessageId?: string) => Promise<string | void>;
 
   /** Internal consumers receive bounded assistant text after the last tool call and the actual turn outcome,
    * without mixing user notifications, tool traces or SDK progress into results. */
