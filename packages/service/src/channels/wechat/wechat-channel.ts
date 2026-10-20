@@ -172,27 +172,25 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
     const contextToken = this.contexts.get(message.chatId);
     if (!contextToken) { throw new Error('No WeChat reply context for this peer; send a message to the bot first'); }
 
-    if (message.type === 'text' && message.text) {
-      return await this.client.sendText({
-        to: message.chatId,
-        content: message.text,
-        contextToken,
-      });
-    }
-
-    // WeChat doesn't support cards — downgrade to JSON-serialized text
-    if (message.type === 'card' && message.card) {
-      const cardText = JSON.stringify(message.card);
-      await this.client.sendText({
-        to: message.chatId,
-        content: cardText,
-        contextToken,
-      });
-      logger.debug(
-        { chatId: message.chatId, cardLength: cardText.length },
-        'Card downgraded to text for WeChat MVP'
-      );
-      return;
+    if (message.mentions?.length) { throw new Error('WeChat mentions are not supported'); }
+    const text = message.type === 'text' ? message.text : message.type === 'card' ? message.description : undefined;
+    if (text) {
+      // Local 4000-byte policy. Iterate code points so emoji/Chinese stay intact.
+      const chunks: string[] = []; let chunk = ''; let size = 0;
+      for (const char of text) {
+        const bytes = Buffer.byteLength(char);
+        if (size + bytes > 4000) { chunks.push(chunk); chunk = ''; size = 0; }
+        chunk += char; size += bytes;
+      }
+      if (chunk) { chunks.push(chunk); }
+      let sent = 0; let messageId: string | undefined;
+      try {
+        for (const content of chunks) { messageId = await this.client.sendText({ to: message.chatId, content, contextToken }); sent++; }
+      } catch (error) {
+        if (sent) { throw new Error(`WeChat delivery failed after ${sent}/${chunks.length} text parts; delivery is partial, verify before retrying`, { cause: error }); }
+        throw error;
+      }
+      return messageId;
     }
 
     // File sending via CDN upload (Issue #1556 Phase 3.2)
@@ -210,7 +208,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
    * Returns true if the client has a valid token and message listener is active.
    */
   protected checkHealth(): boolean {
-    return (this.client?.hasToken() ?? false) && this.messageListener?.isListening() === true;
+    return (this.client?.hasToken() ?? false) && this.messageListener?.isHealthy() === true;
   }
 
   /**

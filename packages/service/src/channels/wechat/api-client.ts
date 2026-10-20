@@ -262,7 +262,7 @@ export class WeChatApiClient {
       base_info: { channel_version: '0.0.1' },
     };
 
-    const result = await this.postJson<{ message_id?: string }>('ilink/bot/sendmessage', body);
+    const result = await this.postMessage(body);
     logger.debug({ to, contentLength: content.length }, 'Text message sent');
     return result.message_id;
   }
@@ -299,7 +299,7 @@ export class WeChatApiClient {
       base_info: { channel_version: '0.0.1' },
     };
 
-    const result = await this.postJson<{ message_id?: string }>('ilink/bot/sendmessage', body);
+    const result = await this.postMessage(body);
     return result.message_id;
   }
 
@@ -332,7 +332,7 @@ export class WeChatApiClient {
       base_info: { channel_version: '0.0.1' },
     };
 
-    const result = await this.postJson<{ message_id?: string }>('ilink/bot/sendmessage', body);
+    const result = await this.postMessage(body);
     return result.message_id;
   }
 
@@ -473,6 +473,14 @@ export class WeChatApiClient {
     });
 
     return data;
+  }
+
+  private async postMessage(body: Record<string, unknown>): Promise<{ message_id?: string }> {
+    try { return await this.postJson('ilink/bot/sendmessage', body); }
+    catch (error) {
+      if (error instanceof WeChatApiError) { throw error; }
+      throw new Error('WeChat delivery outcome unknown after timeout, network or response failure; verify in WeChat before retrying');
+    }
   }
 
   /**

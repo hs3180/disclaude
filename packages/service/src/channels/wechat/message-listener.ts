@@ -107,12 +107,12 @@ export class WeChatMessageListener {
    * Safe to call multiple times.
    */
   async stop(): Promise<void> {
-    if (!this.abortController) {
+    if (!this.abortController && !this.pollPromise) {
       return;
     }
 
     logger.info('Stopping WeChat message listener...');
-    this.abortController.abort();
+    this.abortController?.abort();
     this.abortController = undefined;
 
     if (this.pollPromise) {
@@ -135,6 +135,8 @@ export class WeChatMessageListener {
   isListening(): boolean {
     return !!this.abortController && !this.abortController.signal.aborted;
   }
+
+  isHealthy(): boolean { return this.isListening() && this.consecutiveErrors === 0; }
 
   /**
    * Main polling loop.

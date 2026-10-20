@@ -29,6 +29,11 @@ describe('WeChatApiClient', () => {
   });
 
   describe('current iLink wire contract', () => {
+    it('reports ambiguous delivery and does not blindly retry a timed-out send', async () => {
+      mockFetch.mockRejectedValue(new DOMException('aborted', 'AbortError'));
+      await expect(client.sendText({ to: 'peer', content: 'hello' })).rejects.toThrow('delivery outcome unknown');
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
     it('reads msgs and acknowledges the cursor only after the batch is accepted', async () => {
       mockFetch.mockImplementation(() => Promise.resolve(new Response('{"ret":0,"msgs":[{"message_id":18446744073709551615,"from_user_id":"peer","item_list":[{"type":1,"text_item":{"text":"hello"}}]}],"get_updates_buf":"cursor-1"}')));
       const updates = await client.getUpdates();
