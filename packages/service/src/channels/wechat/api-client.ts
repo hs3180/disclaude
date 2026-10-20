@@ -20,6 +20,7 @@
 
 import { createLogger } from '@disclaude/core';
 import type { WeChatGetUpdatesResponse, WeChatTypingResponse, WeChatCdnUploadResponse } from './types.js';
+import { validateWechatBaseUrl } from './state-store.js';
 
 const logger = createLogger('WeChatApiClient');
 
@@ -68,7 +69,7 @@ function parseApiJson(text: string): Record<string, unknown> {
  * Uses Bearer token authentication with `AuthorizationType: ilink_bot_token`.
  */
 export class WeChatApiClient {
-  private readonly baseUrl: string;
+  private baseUrl: string;
   private token?: string;
   private readonly routeTag?: string;
   private readonly botType: number;
@@ -125,7 +126,12 @@ export class WeChatApiClient {
    * Check if the client has a valid token.
    */
   hasToken(): boolean {
-    return !!this.token;
+    return !!this.token?.trim();
+  }
+
+  /** Read-only credential diagnostic; a poll timeout alone cannot prove login. */
+  async checkSession(userId: string): Promise<void> {
+    await this.postJson('ilink/bot/getconfig', { ilink_user_id: userId });
   }
 
   // ---------------------------------------------------------------------------
@@ -139,16 +145,17 @@ export class WeChatApiClient {
    *
    * @returns QR code data including URL and identifier
    */
-  async getBotQrCode(): Promise<{ qrcode: string; qrUrl: string }> {
+  async getBotQrCode(options?: { signal?: AbortSignal }): Promise<{ qrcode: string; qrUrl: string }> {
     const url = `${this.baseUrl}/ilink/bot/get_bot_qrcode?bot_type=${this.botType}`;
     logger.info({ url }, 'Fetching QR code');
 
-    const headers: Record<string, string> = {};
+    const body = JSON.stringify({ local_token_list: [] });
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', 'iLink-App-Id': 'bot', 'iLink-App-ClientVersion': '1' };
     if (this.routeTag) {
       headers['SKRouteTag'] = this.routeTag;
     }
 
-    const response = await this.fetchJson<{ qrcode?: string; qrcode_img_content?: string }>(url, { method: 'GET', headers });
+    const response = await this.fetchJson<{ qrcode?: string; qrcode_img_content?: string }>(url, { method: 'POST', headers, body, signal: options?.signal });
 
     // eslint-disable-next-line eqeqeq -- intentional nullish check (null || undefined)
     if (response.qrcode == null || response.qrcode_img_content == null) {
@@ -169,17 +176,18 @@ export class WeChatApiClient {
    * @param qrcode - QR code identifier from getBotQrCode
    * @returns Current login status
    */
-  async getQrCodeStatus(qrcode: string): Promise<{
-    status: 'wait' | 'scaned' | 'confirmed' | 'expired';
+  async getQrCodeStatus(qrcode: string, options?: { signal?: AbortSignal; verifyCode?: string }): Promise<{
+    status: 'wait' | 'scaned' | 'confirmed' | 'expired' | 'scaned_but_redirect' | 'need_verifycode' | 'verify_code_blocked' | 'binded_redirect';
     botToken?: string;
     botId?: string;
     userId?: string;
     baseUrl?: string;
   }> {
-    const url = `${this.baseUrl}/ilink/bot/get_qrcode_status?qrcode=${encodeURIComponent(qrcode)}`;
+    const url = `${this.baseUrl}/ilink/bot/get_qrcode_status?qrcode=${encodeURIComponent(qrcode)}${options?.verifyCode ? `&verify_code=${encodeURIComponent(options.verifyCode)}` : ''}`;
 
     const headers: Record<string, string> = {
       'iLink-App-ClientVersion': '1',
+      'iLink-App-Id': 'bot',
     };
     if (this.routeTag) {
       headers['SKRouteTag'] = this.routeTag;
@@ -192,12 +200,18 @@ export class WeChatApiClient {
         ilink_bot_id?: string;
         ilink_user_id?: string;
         baseurl?: string;
-      }>(url, { method: 'GET', headers, timeoutMs: LONG_POLL_TIMEOUT_MS });
+        redirect_host?: string;
+      }>(url, { method: 'GET', headers, timeoutMs: LONG_POLL_TIMEOUT_MS, signal: options?.signal });
 
-      const status = (data.status || 'wait') as 'wait' | 'scaned' | 'confirmed' | 'expired';
+      const status = (data.status || 'wait') as Awaited<ReturnType<WeChatApiClient['getQrCodeStatus']>>['status'];
+
+      if (status === 'scaned_but_redirect' && data.redirect_host) {
+        this.baseUrl = validateWechatBaseUrl(`https://${data.redirect_host}`);
+      }
 
       if (status === 'confirmed') {
         this.token = data.bot_token;
+        if (data.baseurl) { this.baseUrl = validateWechatBaseUrl(data.baseurl); }
         logger.info({ botId: data.ilink_bot_id }, 'QR code login confirmed');
       }
 

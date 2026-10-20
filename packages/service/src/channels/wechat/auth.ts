@@ -17,13 +17,8 @@
 
 import { createLogger } from '@disclaude/core';
 import type { WeChatApiClient } from './api-client.js';
-import QRCode from 'qrcode';
-import { execSync } from 'node:child_process';
 
 const logger = createLogger('WeChatAuth');
-
-/** Path to save QR code PNG image. */
-const QR_IMAGE_PATH = '/tmp/weixin-login-qrcode.png';
 
 /** Max number of times to auto-refresh expired QR code. */
 const MAX_QR_REFRESH_COUNT = 3;
@@ -89,24 +84,31 @@ export class WeChatAuth {
   async authenticate(options?: {
     /** Total auth timeout in ms (default: 480000 / 8 minutes) */
     timeoutMs?: number;
+    /** Caller renders/delivers the temporary QR without writing it to logs. */
+    onQrCode?: (url: string) => Promise<void>;
+    /** Pairing input belongs in a private terminal/card, never in chat or logs. */
+    requestVerifyCode?: (signal: AbortSignal) => Promise<string>;
   }): Promise<AuthResult> {
     this.abortController = new AbortController();
     const { signal } = this.abortController;
 
     const timeoutMs = Math.max(options?.timeoutMs ?? DEFAULT_AUTH_TIMEOUT_MS, 1000);
     const deadline = Date.now() + timeoutMs;
+    const timer = setTimeout(() => this.abortController?.abort(), timeoutMs);
     let qrRefreshCount = 0;
     let scannedPrinted = false;
+    let verifyCode: string | undefined;
+    const display = options?.onQrCode ?? ((url: string) => this.logQrCode(url));
 
     try {
       // Step 1: Get initial QR code
-      let qrData = await this.client.getBotQrCode();
-      await this.logQrCode(qrData.qrUrl);
+      let qrData = await this.client.getBotQrCode({ signal });
+      await display(qrData.qrUrl);
 
       // Step 2: Poll login status
       while (!signal.aborted && Date.now() < deadline) {
         try {
-          const status = await this.client.getQrCodeStatus(qrData.qrcode);
+          const status = await this.client.getQrCodeStatus(qrData.qrcode, { signal, verifyCode });
 
           switch (status.status) {
             case 'wait':
@@ -114,6 +116,7 @@ export class WeChatAuth {
               break;
 
             case 'scaned':
+              verifyCode = undefined;
               if (!scannedPrinted) {
                 process.stdout.write('\nQR code scanned, waiting for confirmation...\n');
                 scannedPrinted = true;
@@ -130,8 +133,8 @@ export class WeChatAuth {
               process.stdout.write(`\nQR code expired, refreshing... (${qrRefreshCount}/${MAX_QR_REFRESH_COUNT})\n`);
               logger.info(`QR expired, refreshing (${qrRefreshCount}/${MAX_QR_REFRESH_COUNT})`);
 
-              qrData = await this.client.getBotQrCode();
-              await this.logQrCode(qrData.qrUrl);
+              qrData = await this.client.getBotQrCode({ signal });
+              await display(qrData.qrUrl);
               scannedPrinted = false;
               break;
             }
@@ -141,6 +144,7 @@ export class WeChatAuth {
                 logger.error('Login confirmed but ilink_bot_id missing');
                 return { success: false, error: 'Login confirmed but bot ID missing' };
               }
+              if (!status.botToken?.trim()) { return { success: false, error: 'Login confirmed but bot token missing' }; }
 
               logger.info({ botId: status.botId, userId: status.userId }, 'Login confirmed!');
               process.stdout.write('\nLogin confirmed!\n');
@@ -152,10 +156,22 @@ export class WeChatAuth {
                 baseUrl: status.baseUrl,
               };
 
+            case 'scaned_but_redirect':
+              break; // The API client validates and applies the regional host.
+            case 'need_verifycode':
+              if (!options?.requestVerifyCode) { return { success: false, error: 'Private pairing input required; run disclaude wechat login in a terminal' }; }
+              verifyCode = await options.requestVerifyCode(signal);
+              break;
+            case 'verify_code_blocked':
+              return { success: false, error: 'Pairing code blocked; start a new login later' };
+            case 'binded_redirect':
+              return { success: false, error: 'Account already bound; use the existing saved login' };
+
             default:
               logger.warn({ status: status.status }, 'Unknown QR code status');
           }
         } catch (error) {
+          if (signal.aborted) { break; }
           // Network errors during polling should be retried
           logger.warn(
             { err: error instanceof Error ? error.message : String(error) },
@@ -165,20 +181,21 @@ export class WeChatAuth {
 
         // Wait before next poll
         await new Promise<void>((resolve) => {
-          const timer = setTimeout(resolve, POLL_RETRY_DELAY_MS);
-          signal.addEventListener('abort', () => {
-            clearTimeout(timer);
-            resolve();
-          }, { once: true });
+          const done = () => { clearTimeout(retryTimer); signal.removeEventListener('abort', done); resolve(); };
+          const retryTimer = setTimeout(done, POLL_RETRY_DELAY_MS);
+          signal.addEventListener('abort', done, { once: true });
         });
       }
 
       // Timeout
-      if (signal.aborted) {
+      if (signal.aborted && Date.now() < deadline) {
         return { success: false, error: 'Authentication aborted' };
       }
       return { success: false, error: 'Authentication timed out' };
+    } catch {
+      return { success: false, error: signal.aborted ? (Date.now() >= deadline ? 'Authentication timed out' : 'Authentication aborted') : 'Authentication request failed' };
     } finally {
+      clearTimeout(timer);
       this.abortController = undefined;
     }
   }
@@ -205,20 +222,8 @@ export class WeChatAuth {
    * Awaits file creation before attempting to open — avoids race condition
    * where `open` runs before the async QR image write completes.
    */
-  private async logQrCode(qrUrl: string): Promise<void> {
-    try {
-      await QRCode.toFile(QR_IMAGE_PATH, qrUrl, {
-        width: 400,
-        margin: 2,
-        color: { dark: '#000000', light: '#ffffff' },
-      });
-      execSync(`open "${QR_IMAGE_PATH}"`);
-      process.stdout.write(`\nQR code image: ${QR_IMAGE_PATH}\n`);
-      process.stdout.write(`URL: ${qrUrl}\n`);
-      process.stdout.write('Please scan the QR code with WeChat.\n\n');
-    } catch {
-      // Fallback to URL if image generation fails
-      process.stdout.write(`\nScan this URL with WeChat: ${qrUrl}\n\n`);
-    }
+  private logQrCode(qrUrl: string): Promise<void> {
+    process.stdout.write(`\nScan this URL with WeChat: ${qrUrl}\n\n`);
+    return Promise.resolve();
   }
 }

@@ -111,10 +111,9 @@ describe('WeChatApiClient', () => {
       expect(c.hasToken()).toBe(false);
     });
 
-    it('hasToken should return true for whitespace token (not trimmed)', () => {
-      // hasToken checks truthiness only; trimming happens in buildAuthHeaders
+    it('hasToken rejects whitespace-only credentials', () => {
       const c = new WeChatApiClient({ baseUrl: 'https://api.example.com', token: '   ' });
-      expect(c.hasToken()).toBe(true);
+      expect(c.hasToken()).toBe(false);
     });
   });
 
@@ -198,7 +197,7 @@ describe('WeChatApiClient', () => {
           bot_token: 'bot-token-123',
           ilink_bot_id: 'bot-id',
           ilink_user_id: 'user-id',
-          baseurl: 'https://custom.api.com',
+          baseurl: 'https://ilinkai-regional.weixin.qq.com',
         })),
       });
 
@@ -207,7 +206,7 @@ describe('WeChatApiClient', () => {
       expect(result.botToken).toBe('bot-token-123');
       expect(result.botId).toBe('bot-id');
       expect(result.userId).toBe('user-id');
-      expect(result.baseUrl).toBe('https://custom.api.com');
+      expect(result.baseUrl).toBe('https://ilinkai-regional.weixin.qq.com');
       // Token should be auto-set on confirmed
       expect(client.getToken()).toBe('bot-token-123');
     });
