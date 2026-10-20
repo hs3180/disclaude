@@ -45,6 +45,8 @@ import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
 import { createChannelCallbacksFactory } from './utils/channel-handlers.js';
 import { ServiceTurnRecoveryStore } from './service-turn-recovery.js';
 import { DEFAULT_WECHAT_STATE_DIR } from './channels/wechat/state-store.js';
+import { WeChatRegistry } from './channels/wechat/registry.js';
+import { WeChatRegistrationRuntime } from './channels/wechat/runtime.js';
 import net from 'node:net';
 import path from 'node:path';
 import { homedir } from 'node:os';
@@ -481,8 +483,13 @@ export async function main(): Promise<void> {
 
   // Create and wire channels from resolved config (Issue #1594 Phase 3)
   // Config-driven: cli.ts no longer hard-codes channel type checks.
+  let wechatRuntime: WeChatRegistrationRuntime | undefined;
   for (const { type, config } of channelEntries) {
-    await lifecycleManager.createAndWireByType(type, config);
+    if (type === 'wechat') {
+      wechatRuntime = new WeChatRegistrationRuntime(new WeChatRegistry(String(config.stateDir)), lifecycleManager, service, {
+        routeTag: config.routeTag as string | undefined,
+      });
+    } else { await lifecycleManager.createAndWireByType(type, config); }
   }
 
   // Handle graceful shutdown
@@ -499,6 +506,7 @@ export async function main(): Promise<void> {
     try {
       await agentPool.shutdownForServiceRestart({ drainTimeoutMs: 10_000, noticeTimeoutMs: 2_000 });
       await httpApiServer?.stop();
+      await wechatRuntime?.stop();
       await lifecycleManager.stopAll();
       await service.stop();
       // Issue #3417: Release process lock on shutdown so next instance can start immediately.
@@ -541,7 +549,12 @@ export async function main(): Promise<void> {
     await service.start({ deferScheduler: true });
 
     // Start all registered channels via ChannelLifecycleManager (Issue #1594 Phase 2)
-    await lifecycleManager.startAll();
+    await wechatRuntime?.start();
+    try { await lifecycleManager.startAll(); }
+    catch (error) {
+      if (!wechatRuntime) { throw error; }
+      logger.warn('No connected channel; WeChat registration remains available');
+    }
 
     // Channels are ready: report prior-process interruptions even if the
     // user sends no further message. Failed delivery stays pending for that
@@ -557,6 +570,7 @@ export async function main(): Promise<void> {
 
     // Log startup info
     for (const { type, config } of channelEntries) {
+      if (type === 'wechat') { continue; } // Registration is available even with no accounts.
       const channel = service.getChannel(String(config.id ?? type));
       if (channel?.status !== 'running') {
         logger.warn({ type, channelId: channel?.id, status: channel?.status }, 'Channel unavailable; other channels continue serving');
@@ -707,6 +721,7 @@ export async function main(): Promise<void> {
       process.on('SIGINT', () => void shutdownHttpApi());
     }
   } catch (error) {
+    await wechatRuntime?.stop().catch(() => {});
     await httpApiServer?.stop().catch(() => {});
     await service.stop().catch(() => {});
     logger.error({ err: error }, 'Failed to start disclaude service');

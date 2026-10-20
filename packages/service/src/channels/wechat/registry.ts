@@ -125,6 +125,7 @@ export class WeChatRegistry {
       const account = value.accounts.find(item => item.id === id);
       if (!account) { throw new Error('Unknown WeChat registration'); }
       account.enabled = enabled;
+      account.generation = randomUUID();
       await this.write(value);
     });
   }
