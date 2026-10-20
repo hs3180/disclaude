@@ -361,7 +361,7 @@ export function createChannelApiHandlers(
   return {
     sendMessage: async (chatId: string, text: string, threadId?: string, mentions?: Array<{ openId: string; name?: string }>) => {
       try {
-        await channel.sendMessage({ chatId, type: 'text', text, threadId, mentions });
+        return await channel.sendMessage({ chatId, type: 'text', text, threadId, mentions });
       } catch (error) {
         logger.error({ err: error, chatId, channel: channelName, handler: 'sendMessage' }, 'REST API handler failed');
         throw error;

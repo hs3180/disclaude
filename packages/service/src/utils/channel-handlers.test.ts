@@ -128,6 +128,12 @@ describe('createChannelCallbacksFactory', () => {
     });
   });
 
+  it('preserves a platform-issued message ID through the common API handler', async () => {
+    vi.mocked(channel.sendMessage).mockResolvedValueOnce('actual-platform-id');
+    const handlers = createChannelApiHandlers(channel, { logger: mockLogger, channelName: 'Test' });
+    expect(await handlers.sendMessage('user@im.wechat', 'hello')).toBe('actual-platform-id');
+  });
+
   it('sendMessage should pass threadId as parentMessageId', async () => {
     const factory = createChannelCallbacksFactory(channel, mockLogger);
     const callbacks = factory('chat-001');
