@@ -10,6 +10,24 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 describe('channel CLI with inherited service logging', () => {
+  it('uses the running distribution even when PATH selects another release and its path contains quotes', () => {
+    const root = mkdtempSync(join(tmpdir(), "disclaude candidate's install-"));
+    try {
+      const helperDir = join(root, 'packages/service/dist/messaging');
+      mkdirSync(helperDir, { recursive: true }); mkdirSync(join(root, 'bin'));
+      writeFileSync(join(root, 'package.json'), '{"name":"disclaude","type":"module"}');
+      copyFileSync(fileURLToPath(new URL('../packages/service/dist/messaging/channel-cli-invocation.js', import.meta.url)), join(helperDir, 'channel-cli-invocation.js'));
+      writeFileSync(join(root, 'bin/disclaude.js'), 'console.log(JSON.stringify({args:process.argv.slice(2)}));');
+      const result = execFileSync(process.execPath, ['--input-type=module', '-e', `
+        import { pathToFileURL } from 'node:url';
+        import { execFileSync } from 'node:child_process';
+        const { runningChannelCliInvocation } = await import(pathToFileURL(${JSON.stringify(join(helperDir, 'channel-cli-invocation.js'))}).href);
+        process.stdout.write(execFileSync('/bin/sh', ['-c', runningChannelCliInvocation() + ' help'], { env: { ...process.env, PATH: '/no-global-cli' } }));
+      `], { encoding: 'utf8', timeout: 10000 });
+      expect(JSON.parse(result).args).toEqual(['channel', 'help']);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
   it('can show help, preview and upload a file when the inherited log destination is inaccessible', async () => {
     const root = mkdtempSync(join(tmpdir(), 'disclaude-cli-log-permissions-'));
     const requests: Array<{ url: string; body: Record<string, unknown>; authorization?: string }> = [];
@@ -27,7 +45,7 @@ describe('channel CLI with inherited service logging', () => {
       const file = join(root, 'probe.txt'); writeFileSync(file, 'probe');
       const config = join(root, 'config.json');
       writeFileSync(config, JSON.stringify({ workspace: { dir: root }, channels: { feishu: { enabled: false } } }));
-      const cliEnv = { ...process.env, NODE_ENV: 'production', LOG_TO_FILE: 'true', LOG_DIR: blocked, LOG_LEVEL: 'silent',
+      const cliEnv = { ...process.env, NODE_ENV: 'production', LOG_TO_FILE: 'true', LOG_DIR: blocked, LOG_LEVEL: 'info',
         ['DISCLAUDE_CONFIG_PATH']: config, ['DISCLAUDE_WORKSPACE_DIR']: root,
         ['DISCLAUDE_API_BASE_URL']: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, ['DISCLAUDE_API_TOKEN']: 'offline-test-token' };
       const invoke = async (entry: string, args: string[]) => {
@@ -47,7 +65,7 @@ describe('channel CLI with inherited service logging', () => {
       const args = ['send_file', '--chat', 'probe@im.wechat', '--file', file];
       expect(JSON.parse(await invoke(cli, ['channel', ...args, '--dry-run']))).toMatchObject({ ok: true, dryRun: true });
       expect(requests).toHaveLength(0);
-      expect(JSON.parse(await invoke(cli, ['channel', ...args]))).toMatchObject({ ok: true, command: 'send_file' });
+      expect(JSON.parse(await invoke(direct, args))).toMatchObject({ ok: true, command: 'send_file' });
       const uploads = requests.filter(req => req.url === '/api/upload-file');
       expect(uploads).toHaveLength(1);
       expect(uploads[0]).toMatchObject({ authorization: 'Bearer offline-test-token', body: { chatId: 'probe@im.wechat', filePath: file } });

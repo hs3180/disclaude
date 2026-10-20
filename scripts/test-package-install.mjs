@@ -230,7 +230,18 @@ async function verifyPackage() {
     });
     assert.equal(probe.status, 0, `Installed channel CLI must tolerate inherited service logging: ${probe.stderr}`);
     if (args.includes('--dry-run')) assert.equal(JSON.parse(probe.stdout).dryRun, true);
-    else assert.match(probe.stdout, /Usage:/i);
+    else assert.match(`${probe.stdout}\n${probe.stderr}`, /Usage:/i);
+  }
+  if (isPrebuilt && process.platform !== 'win32') {
+    run(process.execPath, ['--input-type=module', '-e', `
+      import assert from 'node:assert/strict';
+      import { pathToFileURL } from 'node:url';
+      import { spawnSync } from 'node:child_process';
+      const { runningChannelCliInvocation } = await import(pathToFileURL(${JSON.stringify(join(installed, 'packages/service/dist/messaging/channel-cli-invocation.js'))}).href);
+      const check = spawnSync('/bin/sh', ['-c', runningChannelCliInvocation() + ' help'], { encoding: 'utf8', env: { ...process.env, PATH: '/no-global-cli', LOG_TO_FILE: 'true', LOG_DIR: ${JSON.stringify(blockedCliLogDir)} } });
+      assert.equal(check.status, 0, check.stderr);
+      assert.match(check.stdout, /Usage:/i);
+    `]);
   }
   assert.match(run(cli, ['chromium-cdp', 'setup', '--help']), /--download/);
   assert.match(run(cli, ['chromium-cdp', 'status', '--help']), /Read-only/u);
