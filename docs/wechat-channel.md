@@ -25,7 +25,7 @@ npm install --prefix /absolute/path/to/candidate disclaude-candidate.tgz
 
 No Tencent/OpenClaw host service or inbound port is needed. The host needs outbound HTTPS access to the iLink and Weixin CDN domains. The Agent runtime must also be configured and authenticated normally; iLink login does not authenticate Codex/Claude.
 
-The default private account directory is `~/.disclaude/wechat`. To use a dedicated account directory, pass the same absolute `--state-dir` to login/status and configure it below. Directory permissions are 0700 and account/session files are 0600. The account lock prevents a second listener or login writer using that directory.
+The default private registry root is `~/.disclaude/wechat`. Enabling WeChat supports dynamic account registration without a preset account list or an extra multi-account switch. Each successful login receives a stable system ID and its own private credential/session directory. To use another registry root, pass the same absolute `--state-dir` to the CLI and configure it below. Directories are 0700 and files are 0600. Directory and bot-identity locks prevent competing listeners, including saved copies in different directories.
 
 For a remote operator, `wechat login --qr-file /private/path/login.png` writes a QR PNG without launching a desktop app. Deliver that temporary image privately and scan/confirm in WeChat. QR codes expire and refresh up to three times within an eight-minute login deadline. If Tencent requests pairing digits, enter them only in a private interactive terminal or an integration's private input callback; do not place them in a group chat, command arguments, or logs. Noninteractive pairing fails explicitly. Remove the QR image after use.
 
@@ -60,11 +60,11 @@ logging:
 node bin/disclaude.js start --config /absolute/path/to/wechat.yaml --api-port 0
 ```
 
-Keep the workspace, private account directory and model authentication persistent. For isolated WeChat-only testing, use a separate workspace and omit Feishu configuration; the shared-service configuration below deliberately enables both platforms. Do not run the same iLink account in a legacy/OpenClaw listener simultaneously, even if it uses a different state directory. No production service restart is required to run an isolated WeChat-only candidate.
+Keep the workspace, private registry root and model authentication persistent. For isolated WeChat-only testing, use a separate workspace and omit Feishu configuration; the shared-service configuration below deliberately enables both platforms. Do not run the same iLink account in a legacy/OpenClaw listener simultaneously, even if it uses a different state directory. No production service restart is required to run an isolated WeChat-only candidate.
 
-Send a message from WeChat to the linked bot first. The incoming peer ID (`…@im.wechat`) is its Agent conversation ID. The private reply context stays in the adapter/account state; generic parent message IDs are never used as iLink tokens. Unknown peers cannot borrow another channel's routing or context.
+The service can start with no registered accounts. Run `disclaude wechat login` to scan and add an account; repeat the command for another account. Registration does not replace an existing login or restart the service. Failed or cancelled QR flows do not register an account. Send a message from WeChat to each linked bot first. New conversation IDs are `wechat:SYSTEM-ID:peer@im.wechat`, keeping the same peer's Agent history, incoming message identity, reply context and media separate across accounts. Generic parent message IDs are never used as iLink tokens. Unknown or incorrect account targets fail explicitly.
 
-## One service with Feishu, REST and WeChat
+## One service with Feishu, REST and registered WeChat accounts
 
 These channels can share one service process and configuration. Each channel connects independently. This differs from the isolated two-process candidate deployment described in the original acceptance record.
 
@@ -91,11 +91,25 @@ disclaude wechat login --state-dir /absolute/path/to/private/wechat-account
 disclaude wechat status --state-dir /absolute/path/to/private/wechat-account --check
 ```
 
-Capability discovery reports each instance's status and health. Missing login or startup failure in one instance leaves successfully started channels serving; startup fails if every configured channel fails. A later authentication/receive failure makes that instance unhealthy. Known targets stay bound to their owner, even when it is unavailable; unknown/ambiguous targets fail explicitly. Scheduler replies also select one owner. Cross-platform forwarding requires an explicit operation.
+Capability discovery reports each registered instance's status and health. A missing or failed login affects that instance; other accounts and channels continue serving, and the WeChat registration entry remains usable even when no account is connected. A later authentication/receive failure makes that instance unhealthy. Known targets stay bound to their owner; unknown/ambiguous targets fail explicitly. Scheduler replies select one owner. Cross-platform forwarding requires an explicit operation.
 
-Configuration changes currently require a service restart; use the existing graceful shutdown and retain the account directory. For reauthentication, stop the listener before `wechat login --force` with its configured directory, then restart it. A full service restart briefly interrupts all configured channels, so schedule it accordingly. Feishu app credentials continue to use host-owned environment references and stay separate from WeChat login files.
+Account additions and management changes are reconciled from the private registry about once per second. Changing the global registry root, route tag or enabled channel configuration still requires a service restart. Feishu credentials remain separate from WeChat login files.
 
-This PR retains one WeChat account alongside other channel types. Dynamic multi-account registration is tracked separately in #5451: enabling WeChat must provide runtime account registration without a preset account list or an additional multi-account switch.
+```sh
+# Each login adds an account; names/directories are assigned by the system.
+disclaude wechat login
+disclaude wechat login
+disclaude wechat status
+# Use an actual ID returned by status for management.
+disclaude wechat disable SYSTEM-ID
+disclaude wechat enable SYSTEM-ID
+disclaude wechat login --id SYSTEM-ID --force
+disclaude wechat remove SYSTEM-ID
+```
+
+Reauthentication briefly suspends only the selected account and verifies the same bot identity. Failure preserves its credentials and restores its former enabled state unless another management command changed it during the QR flow. `remove` forgets a registration and stops restoring it; private files remain for explicit recovery. `disable` retains the registration for a later `enable`. CLI success confirms the registry update; use `channel capabilities` to observe the resulting live connection state.
+
+Existing singleton `auth.json` and session files are imported once from the configured root without moving or resetting them. That imported account keeps channel ID `wechat` and its old bare peer/Agent conversations. New accounts always use scoped IDs. Removing the imported registration does not auto-import it again. Same-bot registration updates its existing stable identity or reports a competing listener; it never creates a second listener or silently assigns history to a different bot.
 
 ## Delivery and capabilities
 
@@ -103,12 +117,12 @@ Managed Agents inherit the current service API address/token. From that environm
 
 ```sh
 disclaude channel capabilities
-disclaude channel capabilities --chat 'actual-peer@im.wechat'
-disclaude channel send_text --chat 'actual-peer@im.wechat' --text 'hello'
-disclaude channel send_file --chat 'actual-peer@im.wechat' --file /absolute/path/report.pdf
+disclaude channel capabilities --chat 'wechat:SYSTEM-ID:actual-peer@im.wechat'
+disclaude channel send_text --chat 'wechat:SYSTEM-ID:actual-peer@im.wechat' --text 'hello'
+disclaude channel send_file --chat 'wechat:SYSTEM-ID:actual-peer@im.wechat' --file /absolute/path/report.pdf
 ```
 
-Use an actual received peer ID, not the placeholder above. Outside the managed environment, supply the current candidate's API URL and token privately. Capability discovery requires authentication and does not send anything. An empty filtered result means no active channel owns that peer.
+Use the complete actual conversation ID received from that account, replacing the placeholders above. Only an imported singleton uses the bare peer ID. Outside the managed environment, supply the current candidate's API URL and token privately. Capability discovery requires authentication and does not send anything. An empty filtered result means no active channel owns that peer.
 
 The channel CLI writes diagnostics to stderr and does not open the service's file log, even when the Agent inherits `LOG_TO_FILE=true` and a host-only `LOG_DIR`. Help, previews and file sending therefore do not require permission to write host logs. The service keeps its own file logging configuration.
 
@@ -128,9 +142,9 @@ Successful API completion means Tencent accepted the request; it is not a read r
 
 The sync cursor, bounded accepted-ID cache, and per-peer reply contexts are checkpointed atomically. Failed message handoffs remain retryable; accepted replays are suppressed across a normal restart. This is not a transactional exactly-once guarantee: a process crash between Agent admission and the checkpoint can replay a message, and eviction from the bounded cache removes the dedup tombstone. Generic Agent/job recovery is a separate layer.
 
-Transient receive failures back off from 2 seconds to a maximum 30 seconds; shutdown aborts the active poll. An iLink `-14`/HTTP 401 login failure stops polling and makes the channel unhealthy. Stop the listener, run `wechat login --force` with the same state directory, then restart. A new login resets cursor/context state. Do not delete or replace account files while the listener is running. Corrupt state fails with a repair/restore diagnostic instead of silently discarding replay protection.
+Transient receive failures back off from 2 seconds to a maximum 30 seconds; shutdown aborts the active poll. An iLink `-14`/HTTP 401 login failure stops polling and makes the channel unhealthy. Run `wechat status` to find the account ID, then `wechat login --id SYSTEM-ID --force` using the same registry root; the service applies the new login automatically. A new login resets cursor/context state. Do not delete or replace account files while the listener is running. Corrupt state fails with a repair/restore diagnostic instead of silently discarding replay protection.
 
-`wechat status` reports local configuration only. `wechat status --check` performs a read-only Tencent `getconfig` request. An empty long-poll result or local healthy process alone does not prove real delivery. Raw gateway bodies, signed URLs, AES keys, and reply tokens are excluded from adapter logs/errors.
+`wechat status` lists locally registered public IDs and enabled/configured state. `wechat status --check` performs read-only Tencent `getconfig` requests; live connection/health is reported by `channel capabilities`. An empty long-poll result or local healthy process alone does not prove real delivery. Raw gateway bodies, signed URLs, AES keys, and reply tokens are excluded from adapter logs/errors.
 
 For the old `~/.disclaude/wechat-auth.json` file:
 
@@ -152,4 +166,4 @@ Keep these results separate:
 
 Relevant tests: `pnpm exec vitest run packages/service/src/channels/wechat tests/integration/wechat-channel.test.ts`. See the accompanying candidate acceptance record for observed results and pending steps.
 
-Follow-up coverage for #5449/#5450/#5453 includes `tests/integration/wechat-multi-channel.test.ts`: real lifecycle/WeChat adapters and authenticated CLI/API, intercepted Tencent HTTP and a simulated Feishu gateway, saved ownership/replay restore, channel startup failure isolation and native video routing. It does not establish native-video playback on a phone or a same-process production Feishu/WeChat exchange; those acceptance steps remain to be performed and recorded separately. Dynamic multi-account registration and its dual-account acceptance belong to #5451.
+Follow-up coverage for #5449/#5450/#5453 includes `tests/integration/wechat-multi-channel.test.ts`: real lifecycle/WeChat adapters and authenticated CLI/API, intercepted Tencent HTTP and a simulated Feishu gateway, saved ownership/replay restore, channel startup failure isolation and native video routing. It does not establish native-video playback on a phone or a same-process production Feishu/WeChat exchange; those acceptance steps remain to be performed and recorded separately. Dynamic registration, same-peer isolation, runtime management and real CLI login fixtures are covered separately by the registration integration tests for #5451. The installed-package smoke checks empty startup, two dynamic registrations, account management and restart recovery using intercepted HTTP. Real double-account receipt remains pending and must be recorded separately.
