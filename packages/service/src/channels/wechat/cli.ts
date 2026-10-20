@@ -4,13 +4,18 @@ import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { createInterface } from 'node:readline/promises';
 import QRCode from 'qrcode';
+import { setTimeout as delay } from 'node:timers/promises';
+import { WeChatRegistry } from './registry.js';
 import { DEFAULT_WECHAT_BASE_URL, WeChatStateStore, type WeChatCredentials } from './state-store.js';
 
-const help = `Usage: disclaude wechat <login|status> [options]
+const help = `Usage: disclaude wechat <login|status|enable ID|disable ID|remove ID> [options]
 Personal WeChat via Tencent iLink (QR login; no public callback server).
-  --state-dir PATH   Account directory (default: ~/.disclaude/wechat)
+  login             Scan to register another account; existing accounts keep serving
+  status            List registered IDs; use channel capabilities for live connection health
+  --state-dir PATH   Registry root (default: ~/.disclaude/wechat)
+  --id ID            Existing registered identity for status or login --force
   --qr-file PATH     Write a private QR PNG for remote delivery
-  --force            Replace an existing login; stop its listener first
+  --force            Reauthenticate --id, briefly suspending only that account
   --import-legacy    Migrate ~/.disclaude/wechat-auth.json without printing secrets
   --check            Verify status with Tencent (read-only)
   --timeout-ms N     Login deadline (default: 480000)
@@ -25,32 +30,79 @@ async function withDiagnostics<T>(run: () => Promise<T>): Promise<T> {
 
 async function main(): Promise<void> {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: {
-    'state-dir': { type: 'string' }, 'qr-file': { type: 'string' }, force: { type: 'boolean' },
+    'state-dir': { type: 'string' }, id: { type: 'string' }, 'qr-file': { type: 'string' }, force: { type: 'boolean' },
     'import-legacy': { type: 'boolean' }, check: { type: 'boolean' }, 'timeout-ms': { type: 'string' }, help: { type: 'boolean' },
   } });
   const [command] = positionals;
   if (values.help || !command) { console.log(help); return; }
-  if (!['login', 'status'].includes(command) || positionals.length !== 1) { throw new Error('Expected wechat login or status; use --help'); }
-  const store = new WeChatStateStore(values['state-dir'] ? resolve(values['state-dir']) : undefined);
+  const registry = new WeChatRegistry(values['state-dir'] ? resolve(values['state-dir']) : undefined);
+  if (['enable', 'disable', 'remove'].includes(command)) {
+    const [, id] = positionals;
+    if (!id || positionals.length !== 2) { throw new Error('Expected a registered ID from wechat status'); }
+    if (command === 'remove') { await registry.remove(id); }
+    else { await registry.setEnabled(id, command === 'enable'); }
+    console.log(JSON.stringify({ ok: true, action: command, id }));
+    return;
+  }
+  if (!['login', 'status'].includes(command) || positionals.length !== 1) { throw new Error('Use wechat --help for supported commands'); }
+  const accounts = await registry.list();
+  if (values.id && !accounts.some(account => account.id === values.id)) { throw new Error('Unknown WeChat registration'); }
   if (command === 'status') {
-    const credentials = await store.loadCredentials();
-    if (!credentials) { console.log(JSON.stringify({ configured: false, authenticated: 'not-checked', next: 'disclaude wechat login' })); return; }
-    if (values.check) {
-      if (!credentials.userId) { throw new Error('Saved login has no user ID; log in again'); }
-      await withDiagnostics(async () => {
-        const { WeChatApiClient } = await import('./api-client.js');
-        await new WeChatApiClient({ baseUrl: credentials.baseUrl, token: credentials.token }).checkSession(credentials.userId ?? '');
-      });
+    const rows = [];
+    for (const account of accounts.filter(item => !values.id || item.id === values.id)) {
+      let configured = false;
+      let authenticated: boolean | string = 'not-checked';
+      let error: string | undefined;
+      try {
+        const credentials = await new WeChatStateStore(registry.stateDir(account)).loadCredentials();
+        configured = !!credentials;
+        if (values.check) {
+          const userId = credentials?.userId;
+          if (!credentials || !userId) { throw new Error('Saved login has no user ID; reauthenticate this registration'); }
+          await withDiagnostics(async () => {
+            const { WeChatApiClient } = await import('./api-client.js');
+            await new WeChatApiClient({ baseUrl: credentials.baseUrl, token: credentials.token }).checkSession(userId);
+          });
+          authenticated = true;
+        }
+      } catch (cause) {
+        authenticated = false;
+        error = cause instanceof Error ? cause.message : 'Cannot read or verify this account';
+      }
+      rows.push({ id: account.id, channelId: registry.channelId(account), enabled: account.enabled, configured, authenticated, ...(error ? { error } : {}) });
     }
-    console.log(JSON.stringify({ configured: true, authenticated: values.check ? true : 'not-checked', savedAt: credentials.savedAt, baseUrl: credentials.baseUrl }));
+    console.log(JSON.stringify({ configured: rows.some(row => row.configured),
+      authenticated: values.check ? rows.length > 0 && rows.every(row => row.authenticated === true) : 'not-checked',
+      accounts: rows, ...(!rows.length ? { next: 'disclaude wechat login' } : {}) }));
+    if (values.check && (!rows.length || rows.some(row => row.authenticated !== true))) { process.exitCode = 1; }
     return;
   }
   const timeoutMs = Number(values['timeout-ms'] ?? 480_000);
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 900_000) { throw new Error('--timeout-ms must be 1000..900000'); }
-  const release = await store.lock();
+  const targetId = values.id ?? (values.force && accounts.length === 1 && accounts[0].legacy ? accounts[0].id : undefined);
+  if (values.id && !values.force) { throw new Error('Use login --id ID --force to reauthenticate'); }
+  if (values.force && !targetId) { throw new Error('--force requires --id from wechat status'); }
+  const target = accounts.find(account => account.id === targetId);
+  let restoreGeneration: string | undefined;
+  let committed = false;
+  if (target) {
+    restoreGeneration = (await registry.setEnabled(target.id, false)).generation;
+  }
   try {
-    const existing = values.force ? undefined : await store.loadCredentials();
-    if (existing && !values.force) { console.log('Login already saved. Use status --check, or login --force after stopping the channel.'); return; }
+    if (target) {
+      const store = new WeChatStateStore(registry.stateDir(target));
+      let idle = false;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        try { const release = await store.lock(); await release(); idle = true; break; }
+        catch { await delay(50); }
+      }
+      if (!idle) { throw new Error('Account listener is still stopping; retry login later'); }
+    }
+    const save = async (credentials: WeChatCredentials) => {
+      const account = await registry.register(credentials, targetId, restoreGeneration);
+      committed = true;
+      console.log(JSON.stringify({ ok: true, registered: true, id: account.id, channelId: registry.channelId(account) }));
+    };
     if (values['import-legacy']) {
       const legacy = join(homedir(), '.disclaude', 'wechat-auth.json');
       await fs.chmod(legacy, 0o600);
@@ -58,8 +110,7 @@ async function main(): Promise<void> {
       try { credentials = JSON.parse(await fs.readFile(legacy, 'utf8')) as WeChatCredentials; }
       catch { throw new Error('Cannot read legacy WeChat login; repair it privately before migration'); }
       if (typeof credentials.token !== 'string' || !credentials.token.trim() || typeof credentials.botId !== 'string' || !credentials.botId) { throw new Error('Legacy login is incomplete'); }
-      await store.saveCredentials({ token: credentials.token, botId: credentials.botId, userId: credentials.userId, baseUrl: credentials.baseUrl ?? DEFAULT_WECHAT_BASE_URL, savedAt: credentials.savedAt ?? new Date().toISOString() });
-      console.log('Legacy login migrated privately. Verify with disclaude wechat status --check.');
+      await save({ token: credentials.token, botId: credentials.botId, userId: credentials.userId, baseUrl: credentials.baseUrl ?? DEFAULT_WECHAT_BASE_URL, savedAt: credentials.savedAt ?? new Date().toISOString() });
       return;
     }
     const { WeChatApiClient, WeChatAuth } = await withDiagnostics(async () => ({ ...await import('./api-client.js'), ...await import('./auth.js') }));
@@ -85,10 +136,14 @@ async function main(): Promise<void> {
         },
       });
       if (!result.success || !result.token || !result.botId) { throw new Error(result.error ?? 'WeChat login failed'); }
-      await store.saveCredentials({ token: result.token, botId: result.botId, userId: result.userId, baseUrl: result.baseUrl ?? DEFAULT_WECHAT_BASE_URL, savedAt: new Date().toISOString() });
-      console.log('WeChat login saved privately. Enable channels.wechat and start the service.');
+      await save({ token: result.token, botId: result.botId, userId: result.userId, baseUrl: result.baseUrl ?? DEFAULT_WECHAT_BASE_URL, savedAt: new Date().toISOString() });
     } finally { process.removeListener('SIGINT', abort); process.removeListener('SIGTERM', abort); }
-  } finally { await release(); }
+  } finally {
+    if (target?.enabled && !committed) {
+      const current = (await registry.list()).find(account => account.id === target.id);
+      if (current && current.generation === restoreGeneration && !current.enabled) { await registry.setEnabled(target.id, true); }
+    }
+  }
 }
 
 main().catch(error => { console.error(error instanceof Error ? error.message : 'WeChat command failed'); process.exitCode = 1; });

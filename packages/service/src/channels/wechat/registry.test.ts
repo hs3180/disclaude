@@ -70,6 +70,17 @@ describe('dynamic WeChat registry', () => {
     } finally { await release(); }
   });
 
+  it('does not overwrite an account management change made during QR reauthentication', async () => {
+    const registry = new WeChatRegistry(dir);
+    const account = await registry.register(credentials());
+    const suspended = await registry.setEnabled(account.id, false);
+    await registry.setEnabled(account.id, false);
+    await expect(registry.register({ ...credentials(), token: 'must-not-overwrite' }, account.id, suspended.generation))
+      .rejects.toThrow('changed during login');
+    expect((await registry.list())[0].enabled).toBe(false);
+    expect((await new WeChatStateStore(registry.stateDir(account)).loadCredentials())?.token).toBe('private-bot-a');
+  });
+
   it('rejects incomplete logins, corrupt registries, duplicate entries and symlink files', async () => {
     const registry = new WeChatRegistry(dir);
     await expect(registry.register({ ...credentials(), token: '' })).rejects.toThrow('Incomplete');

@@ -98,12 +98,13 @@ export class WeChatRegistry {
   async list(): Promise<WeChatRegistration[]> { return await this.transaction(value => Promise.resolve(value.accounts)); }
 
   /** Commit only a completed login. No pending or failed QR flow becomes an account. */
-  async register(credentials: WeChatCredentials, targetId?: string): Promise<WeChatRegistration> {
+  async register(credentials: WeChatCredentials, targetId?: string, expectedGeneration?: string): Promise<WeChatRegistration> {
     validateWechatBaseUrl(credentials.baseUrl);
     if (!credentials.token?.trim() || !credentials.botId || credentials.botId.length > 512) { throw new Error('Incomplete WeChat login'); }
     return await this.transaction(async value => {
       const target = targetId ? value.accounts.find(account => account.id === targetId) : undefined;
       if (targetId && (!target || target.botId !== credentials.botId)) { throw new Error('Reauthentication must match the registered WeChat identity'); }
+      if (expectedGeneration && target?.generation !== expectedGeneration) { throw new Error('Registration changed during login; retry'); }
       const existing = target ?? value.accounts.find(account => account.botId === credentials.botId);
       const account: WeChatRegistration = { ...(existing ?? { id: randomUUID(), createdAt: new Date().toISOString() }),
         botId: credentials.botId, enabled: true, generation: randomUUID() };
@@ -120,13 +121,14 @@ export class WeChatRegistry {
     });
   }
 
-  async setEnabled(id: string, enabled: boolean): Promise<void> {
-    await this.transaction(async value => {
+  async setEnabled(id: string, enabled: boolean): Promise<WeChatRegistration> {
+    return await this.transaction(async value => {
       const account = value.accounts.find(item => item.id === id);
       if (!account) { throw new Error('Unknown WeChat registration'); }
       account.enabled = enabled;
       account.generation = randomUUID();
       await this.write(value);
+      return account;
     });
   }
 
