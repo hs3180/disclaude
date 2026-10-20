@@ -28,6 +28,45 @@ describe('WeChatApiClient', () => {
     vi.restoreAllMocks();
   });
 
+  describe('current iLink wire contract', () => {
+    it('reads msgs and acknowledges the cursor only after the batch is accepted', async () => {
+      mockFetch.mockImplementation(() => Promise.resolve(new Response('{"ret":0,"msgs":[{"message_id":18446744073709551615,"from_user_id":"peer","item_list":[{"type":1,"text_item":{"text":"hello"}}]}],"get_updates_buf":"cursor-1"}')));
+      const updates = await client.getUpdates();
+      expect(updates[0]?.message_id).toBe('18446744073709551615');
+      expect(JSON.parse(mockFetch.mock.calls[0][1].body).get_updates_buf).toBe('');
+      expect(client.getUpdatesCursor()).toBe('');
+      client.acknowledgeUpdates();
+      await client.getUpdates();
+      expect(JSON.parse(mockFetch.mock.calls[1][1].body).get_updates_buf).toBe('cursor-1');
+      expect(mockFetch.mock.calls[0][1].headers).toMatchObject({ 'iLink-App-Id': 'bot' });
+    });
+
+    it('preserves message-looking text while parsing uint64 IDs', async () => {
+      const text = 'a quoted \\"message_id\\":18446744073709551615';
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ msgs: [{ message_id: 'id', item_list: [{ type: 1, text_item: { text } }] }] })));
+      expect((await client.getUpdates())[0].item_list?.[0]).toMatchObject({ text_item: { text } });
+    });
+
+    it('rejects errcode failures without copying server secrets into errors', async () => {
+      mockFetch.mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ ret: 0, errcode: -14, errmsg: 'secret-context-token' }))));
+      await expect(client.getUpdates()).rejects.toMatchObject({ code: -14, authExpired: true });
+      await expect(client.getUpdates()).rejects.not.toThrow('secret-context-token');
+    });
+
+    it('keeps the deadline active while reading the response body and removes abort listeners', async () => {
+      vi.useFakeTimers();
+      const controller = new AbortController();
+      const remove = vi.spyOn(controller.signal, 'removeEventListener');
+      mockFetch.mockImplementation((_url, opts) => Promise.resolve({ ok: true, text: () => new Promise((_resolve, reject) => opts.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))) }));
+      try {
+        const poll = client.getUpdates({ signal: controller.signal, timeoutMs: 100 });
+        await vi.advanceTimersByTimeAsync(101);
+        expect(await poll).toEqual([]);
+        expect(remove).toHaveBeenCalledWith('abort', expect.any(Function));
+      } finally { vi.useRealTimers(); }
+    });
+  });
+
   describe('constructor', () => {
     it('should strip trailing slashes from baseUrl', () => {
       const c = new WeChatApiClient({ baseUrl: 'https://api.example.com/' });
@@ -281,7 +320,7 @@ describe('WeChatApiClient', () => {
 
       client.setToken('bot-token');
       await expect(client.sendText({ to: 'user-1', content: 'Hello!' }))
-        .rejects.toThrow('WeChat API error [2001]: Invalid token');
+        .rejects.toThrow('WeChat API error [2001]: Error code 2001');
     });
 
     it('should throw when HTTP request fails', async () => {
