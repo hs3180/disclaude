@@ -52,6 +52,7 @@ vi.mock('./message-listener.js', () => ({
     start = mockStart;
     stop = mockStop;
     isListening = mockIsListening;
+    isHealthy = mockIsListening;
   }),
   MessageProcessor: undefined,
 }));
@@ -161,41 +162,32 @@ describe('WeChatChannel', () => {
       });
     });
 
-    it('should downgrade card messages to JSON text', async () => {
+    it('rejects cards without an explicit human-readable description', async () => {
       const channel = readyChannel();
-      (channel as any).client = { sendText: mockSendText, hasToken: mockHasToken };
-
-      const card = { elements: [{ tag: 'div', text: { tag: 'plain_text', content: 'test' } }] };
-      await (channel as any).doSendMessage({
-        chatId: 'chat-1',
-        type: 'card',
-        card,
-      });
-
-      expect(mockSendText).toHaveBeenCalledWith({
-        to: 'chat-1',
-        content: JSON.stringify(card),
-        contextToken: 'ctx-chat',
-      });
+      (channel as any).client = { sendText: mockSendText };
+      await expect((channel as any).doSendMessage({ chatId: 'chat-1', type: 'card', card: { internal: 'data' } })).rejects.toThrow('Unsupported');
+      expect(mockSendText).not.toHaveBeenCalled();
     });
 
-    it('should downgrade card with threadId', async () => {
+    it('can deliver an internal card callback description as plain text', async () => {
       const channel = readyChannel();
-      (channel as any).client = { sendText: mockSendText, hasToken: mockHasToken };
+      (channel as any).client = { sendText: mockSendText };
+      await (channel as any).doSendMessage({ chatId: 'chat-1', type: 'card', card: { internal: 'data' }, description: 'Readable answer' });
+      expect(mockSendText).toHaveBeenCalledWith({ to: 'chat-1', content: 'Readable answer', contextToken: 'ctx-chat' });
+    });
 
-      const card = { elements: [] };
-      await (channel as any).doSendMessage({
-        chatId: 'chat-1',
-        type: 'card',
-        card,
-        threadId: 'thread-456',
-      });
-
-      expect(mockSendText).toHaveBeenCalledWith({
-        to: 'chat-1',
-        content: JSON.stringify(card),
-        contextToken: 'ctx-chat',
-      });
+    it('splits long Unicode replies and exposes partial failure without resending successful parts', async () => {
+      const channel = readyChannel();
+      (channel as any).client = { sendText: mockSendText };
+      const text = '🙂'.repeat(2001);
+      await (channel as any).doSendMessage({ chatId: 'chat-1', type: 'text', text });
+      const parts = mockSendText.mock.calls.map(([request]) => request.content);
+      expect(parts).toHaveLength(3);
+      expect(parts.join('')).toBe(text);
+      expect(parts.every(part => Buffer.byteLength(part) <= 4000)).toBe(true);
+      mockSendText.mockClear().mockResolvedValueOnce('first-id').mockRejectedValueOnce(new Error('network failure'));
+      await expect((channel as any).doSendMessage({ chatId: 'chat-1', type: 'text', text })).rejects.toThrow('partial');
+      expect(mockSendText).toHaveBeenCalledTimes(2);
     });
 
     it('should not send empty text messages', async () => {
@@ -237,7 +229,7 @@ describe('WeChatChannel', () => {
     it('should return true when client has token and listener is active', () => {
       const channel = readyChannel();
       (channel as any).client = { hasToken: mockHasToken };
-      (channel as any).messageListener = { isListening: mockIsListening };
+      (channel as any).messageListener = { isListening: mockIsListening, isHealthy: mockIsListening };
       mockHasToken.mockReturnValue(true);
       mockIsListening.mockReturnValue(true);
       expect((channel as any).checkHealth()).toBe(true);
@@ -246,7 +238,7 @@ describe('WeChatChannel', () => {
     it('should return false when client has no token', () => {
       const channel = readyChannel();
       (channel as any).client = { hasToken: mockHasToken };
-      (channel as any).messageListener = { isListening: mockIsListening };
+      (channel as any).messageListener = { isListening: mockIsListening, isHealthy: mockIsListening };
       mockHasToken.mockReturnValue(false);
       expect((channel as any).checkHealth()).toBe(false);
     });
@@ -254,7 +246,7 @@ describe('WeChatChannel', () => {
     it('should return false when message listener is not active', () => {
       const channel = readyChannel();
       (channel as any).client = { hasToken: mockHasToken };
-      (channel as any).messageListener = { isListening: mockIsListening };
+      (channel as any).messageListener = { isListening: mockIsListening, isHealthy: mockIsListening };
       mockHasToken.mockReturnValue(true);
       mockIsListening.mockReturnValue(false);
       expect((channel as any).checkHealth()).toBe(false);
