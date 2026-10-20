@@ -35,6 +35,32 @@ const DEFAULT_BOT_TYPE = 3;
 /** Maximum file size for CDN upload (20MB). */
 const MAX_UPLOAD_SIZE_BYTES = 20 * 1024 * 1024;
 
+/** Safe diagnostics: never include raw response bodies, URLs or context tokens. */
+export class WeChatApiError extends Error {
+  readonly authExpired: boolean;
+  constructor(readonly code: number) {
+    super(`WeChat API error [${code}]: Error code ${code}${code === -14 || code === 401 ? '; login required' : ''}`);
+    this.name = 'WeChatApiError';
+    this.authExpired = code === -14 || code === 401;
+  }
+}
+
+/** Tokenize JSON so uint64 identifiers never pass through a JS number. */
+function parseApiJson(text: string): Record<string, unknown> {
+  let idValue = false;
+  const normalized = text.replace(/"(?:\\.|[^"\\])*"\s*:\s*|"(?:\\.|[^"\\])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|[{}\[\],]/g, (token) => {
+    if (/^".*:\s*$/s.test(token)) {
+      idValue = ['message_id', 'msg_id', 'svr_id'].includes(JSON.parse(token.replace(/:\s*$/, '').trim()) as string);
+      return token;
+    }
+    const result = idValue && /^\d+$/.test(token) ? JSON.stringify(token) : token;
+    idValue = false;
+    return result;
+  });
+  try { return JSON.parse(normalized) as Record<string, unknown>; }
+  catch { throw new Error('WeChat API returned invalid JSON'); }
+}
+
 /**
  * WeChat API Client for Tencent ilink Bot API (MVP).
  *
@@ -46,6 +72,18 @@ export class WeChatApiClient {
   private token?: string;
   private readonly routeTag?: string;
   private readonly botType: number;
+  private updatesCursor = '';
+  private pendingCursor?: string;
+  private pollTimeoutMs = LONG_POLL_TIMEOUT_MS;
+
+  getUpdatesCursor(): string { return this.updatesCursor; }
+  setUpdatesCursor(cursor: string): void { this.updatesCursor = cursor; this.pendingCursor = undefined; }
+
+  /** Commit only after the listener has accepted every message in the batch. */
+  acknowledgeUpdates(): void {
+    if (this.pendingCursor !== undefined) { this.updatesCursor = this.pendingCursor; }
+    this.pendingCursor = undefined;
+  }
 
   /**
    * Create a new WeChat API client.
@@ -306,16 +344,22 @@ export class WeChatApiClient {
     /** Custom timeout in ms (default: 35s) */
     timeoutMs?: number;
   }): Promise<import('./types.js').WeChatUpdate[]> {
-    const { signal, timeoutMs = LONG_POLL_TIMEOUT_MS } = options ?? {};
+    const { signal, timeoutMs = this.pollTimeoutMs } = options ?? {};
+    this.pendingCursor = undefined;
 
     try {
       const data = await this.postJson<WeChatGetUpdatesResponse>(
         'ilink/bot/getupdates',
-        {},
+        { get_updates_buf: this.updatesCursor, base_info: { channel_version: '0.0.1', bot_agent: 'Disclaude/0.6.5' } },
         { timeoutMs, signal }
       );
 
-      return data.update_list ?? [];
+      this.pendingCursor = typeof data.get_updates_buf === 'string' ? data.get_updates_buf : undefined;
+      const suggestedTimeout = data.longpolling_timeout_ms;
+      if (typeof suggestedTimeout === 'number' && Number.isFinite(suggestedTimeout) && suggestedTimeout > 0) {
+        this.pollTimeoutMs = Math.min(120_000, Math.max(1_000, suggestedTimeout + 5_000));
+      }
+      return data.msgs ?? data.update_list ?? [];
     } catch (error) {
       // Timeout during long polling is normal — return empty
       if (error instanceof Error && error.name === 'AbortError') {
@@ -489,6 +533,8 @@ export class WeChatApiClient {
       'AuthorizationType': 'ilink_bot_token',
       'Content-Length': String(Buffer.byteLength(body, 'utf-8')),
       'X-WECHAT-UIN': this.randomWechatUin(),
+      'iLink-App-Id': 'bot',
+      'iLink-App-ClientVersion': '1',
     };
 
     if (this.token?.trim()) {
@@ -533,9 +579,9 @@ export class WeChatApiClient {
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     // Link external signal if provided
-    if (opts.signal) {
-      opts.signal.addEventListener('abort', () => controller.abort(), { once: true });
-    }
+    const onAbort = () => controller.abort();
+    if (opts.signal?.aborted) { onAbort(); }
+    else { opts.signal?.addEventListener('abort', onAbort, { once: true }); }
 
     try {
       const response = await fetch(url, {
@@ -543,37 +589,33 @@ export class WeChatApiClient {
         headers: opts.headers,
         body: opts.body,
         signal: controller.signal,
+        redirect: 'error',
       });
 
-      clearTimeout(timer);
-
       if (!response.ok) {
-        const text = await response.text().catch(() => '(unreadable)');
-        logger.error({ url, status: response.status, body: text }, 'API request failed');
-        throw new Error(`WeChat API error [${response.status}]: ${text}`);
+        await response.body?.cancel();
+        throw new WeChatApiError(response.status);
       }
 
       const rawText = await response.text();
-      const data = JSON.parse(rawText) as Record<string, unknown>;
+      const data = parseApiJson(rawText);
 
       // Check for WeChat iLink error format (ret !== 0)
-      const ret = data.ret as number | undefined;
-      if (ret !== undefined && ret !== 0) {
-        const errMsg = (data.err_msg as string) || (data.errmsg as string) || `Error code ${ret}`;
-        logger.error({ url, ret, errMsg }, 'API returned error');
-        throw new Error(`WeChat API error [${ret}]: ${errMsg}`);
+      const ret = Number(data.errcode || data.ret || 0);
+      if (ret !== 0) {
+        throw new WeChatApiError(ret);
       }
 
       return data as T;
     } catch (error) {
-      clearTimeout(timer);
-
       if (error instanceof Error && error.name === 'AbortError') {
-        logger.error({ url }, 'API request timed out');
         throw error;
       }
 
       throw error;
+    } finally {
+      clearTimeout(timer);
+      opts.signal?.removeEventListener('abort', onAbort);
     }
   }
 }

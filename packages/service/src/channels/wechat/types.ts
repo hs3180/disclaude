@@ -84,6 +84,9 @@ export type WeChatMessageItem = WeChatTextItem | WeChatImageItem | WeChatFileIte
  * A single update from the getUpdates long-poll API.
  */
 export interface WeChatUpdate {
+  /** Current iLink identifier (uint64 parsed losslessly as a string). */
+  message_id?: string;
+  create_time_ms?: number;
   /** Unique message identifier */
   msg_id: string;
   /** Sender user ID */
@@ -106,6 +109,10 @@ export interface WeChatUpdate {
 export interface WeChatGetUpdatesResponse {
   /** Return code (0 = success) */
   ret?: number;
+  errcode?: number;
+  msgs?: WeChatUpdate[];
+  get_updates_buf?: string;
+  longpolling_timeout_ms?: number;
   /** List of new updates/messages */
   update_list?: WeChatUpdate[];
 }
