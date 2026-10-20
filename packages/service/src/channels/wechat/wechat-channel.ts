@@ -26,6 +26,8 @@ import { WeChatAuth } from './auth.js';
 import { WeChatMessageListener, type MessageProcessor } from './message-listener.js';
 import type { WeChatChannelConfig } from './types.js';
 import { WeChatStateStore, type WeChatSessionState } from './state-store.js';
+import { downloadWeChatMedia, WECHAT_MEDIA_MAX_BYTES } from './media.js';
+import { tmpdir } from 'node:os';
 
 const logger = createLogger('WeChatChannel');
 
@@ -123,6 +125,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
       this.messageListener = new WeChatMessageListener(this.client, processor, {
         state: session,
         onContext: (peer, token) => this.contexts.set(peer, token),
+      resolveAttachment: (item, signal) => downloadWeChatMedia(item, path.join(this.config.stateDir ?? path.join(tmpdir(), 'disclaude-wechat'), 'media'), signal),
         checkpoint: store && session ? async (state) => {
           await store.saveSession({ ...state, botId: session.botId, contexts: Object.fromEntries(this.contexts) });
         } : undefined,
@@ -194,8 +197,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
 
     // File sending via CDN upload (Issue #1556 Phase 3.2)
     if (message.type === 'file' && message.filePath) {
-      await this.sendViaCdn(message);
-      return;
+      return await this.sendViaCdn(message);
     }
 
     // Unsupported message types
@@ -246,7 +248,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
    * Flow: read file → upload to CDN → send CDN URL as image or file message.
    * Auto-detects image vs file based on file extension.
    */
-  private async sendViaCdn(message: OutgoingMessage): Promise<void> {
+  private async sendViaCdn(message: OutgoingMessage): Promise<string | void> {
     if (!this.client || !message.filePath) {
       return;
     }
@@ -255,28 +257,32 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
     const fileName = path.basename(filePath);
 
     // Read file from disk
+    const stat = await fs.promises.stat(filePath);
+    if (!stat.isFile() || stat.size > WECHAT_MEDIA_MAX_BYTES) { throw new Error('WeChat file must be a regular file no larger than 20 MiB'); }
     const fileData = await fs.promises.readFile(filePath);
+    const ext = path.extname(fileName).toLowerCase();
+    const imageExtensions = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']);
+    const kind = imageExtensions.has(ext) ? 'image' : 'file';
 
     // Upload to CDN
-    const { url: cdnUrl } = await this.client.uploadMedia({
+    const uploaded = await this.client.uploadMedia({
       fileData,
       fileName,
+      to: message.chatId,
+      kind,
     });
 
     // Auto-detect image vs file by extension
-    const ext = path.extname(fileName).toLowerCase();
-    const imageExtensions = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']);
-
-    if (imageExtensions.has(ext)) {
-      await this.client.sendImage({
+    if (kind === 'image') {
+      return await this.client.sendImage({
         to: message.chatId,
-        imageUrl: cdnUrl,
+        uploaded,
         contextToken: this.contexts.get(message.chatId),
       });
     } else {
-      await this.client.sendFile({
+      return await this.client.sendFile({
         to: message.chatId,
-        fileUrl: cdnUrl,
+        uploaded,
         fileName,
         contextToken: this.contexts.get(message.chatId),
       });

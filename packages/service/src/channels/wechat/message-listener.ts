@@ -10,7 +10,7 @@
 
 import { createLogger, type IncomingMessage } from '@disclaude/core';
 import { WeChatApiError, type WeChatApiClient } from './api-client.js';
-import type { WeChatUpdate } from './types.js';
+import type { WeChatUpdate, WeChatImageItem, WeChatFileItem } from './types.js';
 
 const logger = createLogger('WeChatMessageListener');
 
@@ -44,6 +44,7 @@ export interface WeChatListenerOptions {
   checkpoint?: (state: WeChatListenerState) => Promise<void>;
   /** Keep reply credentials out of generic message/thread metadata. */
   onContext?: (peer: string, token: string) => void;
+  resolveAttachment?: (item: WeChatImageItem | WeChatFileItem, signal?: AbortSignal) => Promise<NonNullable<IncomingMessage['attachments']>[number]>;
 }
 
 /**
@@ -158,7 +159,7 @@ export class WeChatMessageListener {
           // Process each update
           for (const update of updates) {
             if (signal.aborted) { break; }
-            await this.processUpdate(update);
+            await this.processUpdate(update, signal);
           }
           if (signal.aborted) { break; }
           this.client.acknowledgeUpdates();
@@ -217,7 +218,7 @@ export class WeChatMessageListener {
    * Deduplicates by msg_id, converts to IncomingMessage, and
    * calls the registered processor.
    */
-  private async processUpdate(update: WeChatUpdate): Promise<void> {
+  private async processUpdate(update: WeChatUpdate, signal?: AbortSignal): Promise<void> {
     if (update.message_type === 2 || update.group_id) { return; }
     const id = update.message_id ?? update.msg_id ?? update.client_id;
     if (!id) {
@@ -230,7 +231,7 @@ export class WeChatMessageListener {
       logger.debug({ msgId: id }, 'Duplicate message, skipping');
       return;
     }
-    const message = this.convertToIncomingMessage(update);
+    const message = await this.convertToIncomingMessage(update, signal);
     if (!message) {
       logger.debug({ msgId: id }, 'Could not convert update to message, skipping');
       return;
@@ -285,7 +286,7 @@ export class WeChatMessageListener {
   /**
    * Convert a WeChat update to the universal IncomingMessage format.
    */
-  private convertToIncomingMessage(update: WeChatUpdate): IncomingMessage | null {
+  private async convertToIncomingMessage(update: WeChatUpdate, signal?: AbortSignal): Promise<IncomingMessage | null> {
     if (!update.from_user_id || !update.item_list?.length) {
       return null;
     }
@@ -298,15 +299,24 @@ export class WeChatMessageListener {
         if (item.text_item?.text) { textParts.push(item.text_item.text); }
       } else if (item.type === 2) {
         messageType = 'image';
-        textParts.push(item.image_item?.url ? '[Image received]' : '[Image unavailable: missing media reference]');
-        if (item.image_item?.url) { attachments.push({ fileName: 'image', filePath: item.image_item.url }); }
+        textParts.push('[Image received]');
       } else if (item.type === 4) {
         messageType = 'file';
         const file = item.file_item;
         textParts.push(`[File received: ${file?.file_name ?? 'unknown'}]`);
-        if (file?.url) { attachments.push({ fileName: file.file_name ?? 'unknown', filePath: file.url, size: file.file_size }); }
       } else {
         textParts.push(`[Unsupported message type: ${String((item as { type?: number }).type)}]`);
+      }
+      if (item.type === 2 || item.type === 4) {
+        try {
+          if (this.options.resolveAttachment) { attachments.push(await this.options.resolveAttachment(item, signal)); }
+          else if (item.type === 2 && item.image_item?.url) { attachments.push({ fileName: 'image', filePath: item.image_item.url }); }
+          else if (item.type === 4 && item.file_item?.url) { attachments.push({ fileName: item.file_item.file_name ?? 'unknown', filePath: item.file_item.url, size: item.file_item.file_size }); }
+          else { textParts.push('[Attachment unavailable: no media downloader]'); }
+        } catch {
+          if (signal?.aborted) { throw new DOMException('aborted', 'AbortError'); }
+          textParts.push('[Attachment unavailable: download, size or decryption failure; ask the user to resend]');
+        }
       }
     }
     const content = textParts.join('\n');
