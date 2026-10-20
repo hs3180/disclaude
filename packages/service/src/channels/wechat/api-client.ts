@@ -1,5 +1,5 @@
 /**
- * WeChat API Client (MVP).
+ * Tencent iLink API client.
  *
  * HTTP client for interacting with the WeChat (Tencent ilink) Bot API.
  * Uses native fetch for zero external runtime dependencies.
@@ -11,14 +11,16 @@
  * - GET  ilink/bot/get_qrcode_status   - Long-poll QR login status (35s)
  * - POST ilink/bot/sendmessage         - Send a message
  * - POST ilink/bot/getupdates          - Long-poll for incoming messages
- * - POST ilink/bot/typing              - Send typing indicator
+ * - POST ilink/bot/getconfig           - Read account configuration
+ * - POST ilink/bot/sendtyping          - Send typing indicator
+ * - POST ilink/bot/getuploadurl        - Negotiate encrypted CDN upload
  *
  * @module channels/wechat/api-client
  * @see Issue #1473 - WeChat Channel MVP
  * @see Issue #1556 - WeChat Channel Feature Enhancement
  */
 
-import { createLogger } from '@disclaude/core';
+import { createLogger, registerConsumedSecretValue } from '@disclaude/core';
 import type { WeChatGetUpdatesResponse, WeChatTypingResponse, WeChatUploadedMedia } from './types.js';
 import { validateWechatBaseUrl } from './state-store.js';
 import { uploadEncryptedMedia } from './media.js';
@@ -46,18 +48,19 @@ export class WeChatApiError extends Error {
 
 /** Tokenize JSON so uint64 identifiers never pass through a JS number. */
 function parseApiJson(text: string): Record<string, unknown> {
-  let idValue = false;
-  const normalized = text.replace(/"(?:\\.|[^"\\])*"\s*:\s*|"(?:\\.|[^"\\])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|[{}\[\],]/g, (token) => {
-    if (/^".*:\s*$/s.test(token)) {
-      idValue = ['message_id', 'msg_id', 'svr_id'].includes(JSON.parse(token.replace(/:\s*$/, '').trim()) as string);
-      return token;
-    }
-    const result = idValue && /^\d+$/.test(token) ? JSON.stringify(token) : token;
-    idValue = false;
-    return result;
-  });
-  try { return JSON.parse(normalized) as Record<string, unknown>; }
-  catch { throw new Error('WeChat API returned invalid JSON'); }
+  try {
+    let idValue = false;
+    const normalized = text.replace(/"(?:\\.|[^"\\])*"\s*:\s*|"(?:\\.|[^"\\])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|[{}\[\],]/g, (token) => {
+      if (/^".*:\s*$/s.test(token)) {
+        idValue = ['message_id', 'msg_id', 'svr_id'].includes(JSON.parse(token.replace(/:\s*$/, '').trim()) as string);
+        return token;
+      }
+      const result = idValue && /^\d+$/.test(token) ? JSON.stringify(token) : token;
+      idValue = false;
+      return result;
+    });
+    return JSON.parse(normalized) as Record<string, unknown>;
+  } catch { throw new Error('WeChat API returned invalid JSON'); }
 }
 
 /**
@@ -100,7 +103,8 @@ export class WeChatApiClient {
     botType?: number;
   }) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '');
-    this.token = options.token;
+    this.token = options.token?.trim();
+    if (this.token) { registerConsumedSecretValue(this.token); }
     this.routeTag = options.routeTag;
     this.botType = options.botType ?? DEFAULT_BOT_TYPE;
   }
@@ -109,7 +113,8 @@ export class WeChatApiClient {
    * Set the bot token (called after successful authentication).
    */
   setToken(token: string): void {
-    this.token = token;
+    this.token = token.trim();
+    registerConsumedSecretValue(this.token);
     logger.info('Bot token updated');
   }
 
@@ -208,7 +213,7 @@ export class WeChatApiClient {
       }
 
       if (status === 'confirmed') {
-        this.token = data.bot_token;
+        if (typeof data.bot_token === 'string') { this.setToken(data.bot_token); }
         if (data.baseurl) { this.baseUrl = validateWechatBaseUrl(data.baseurl); }
         logger.info({ botId: data.ilink_bot_id }, 'QR code login confirmed');
       }
@@ -272,7 +277,7 @@ export class WeChatApiClient {
   // ---------------------------------------------------------------------------
 
   /**
-   * Send an image message via CDN URL.
+   * Send an image using an encrypted CDN reference.
    *
    * POST /ilink/bot/sendmessage (with image_item)
    *
@@ -304,7 +309,7 @@ export class WeChatApiClient {
   }
 
   /**
-   * Send a file message via CDN URL.
+   * Send a file using an encrypted CDN reference.
    *
    * POST /ilink/bot/sendmessage (with file_item)
    *
@@ -390,7 +395,7 @@ export class WeChatApiClient {
   /**
    * Send a typing indicator to a user.
    *
-   * POST /ilink/bot/typing
+   * POST /ilink/bot/sendtyping (after getconfig)
    *
    * Informs the user that the bot is processing their message.
    * Failures are non-fatal and logged as warnings.
@@ -428,7 +433,7 @@ export class WeChatApiClient {
   /**
    * Upload a file to WeChat CDN.
    *
-   * POST /ilink/bot/upload
+   * POST /ilink/bot/getuploadurl, then encrypted CDN POST
    *
    * @param params - Upload parameters
    * @returns CDN URL and file key of the uploaded file
@@ -458,7 +463,7 @@ export class WeChatApiClient {
     options?: { timeoutMs?: number; signal?: AbortSignal },
   ): Promise<T> {
     const url = `${this.baseUrl}/${endpoint}`;
-    const bodyStr = JSON.stringify(body);
+    const bodyStr = JSON.stringify({ ...body, base_info: { channel_version: '0.0.1', bot_agent: 'Disclaude' } });
 
     const headers = this.buildAuthHeaders(bodyStr);
 

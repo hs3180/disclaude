@@ -137,6 +137,24 @@ async function verifyPackage() {
   assert(existsSync(join(installed, 'disclaude.config.example.yaml')));
   const cli = join(prefix, 'bin/disclaude');
   assert.equal(run(cli, ['--version']).trim(), `disclaude v${pkg.version}`);
+  assert.match(run(cli, ['wechat', '--help']), /Personal WeChat via Tencent iLink/u);
+  const wechatStatus = JSON.parse(run(cli, ['wechat', 'status', '--state-dir', join(temp, 'wechat-account')]));
+  assert.equal(wechatStatus.configured, false);
+  assert.equal(wechatStatus.authenticated, 'not-checked');
+  // Exercise actual config-driven startup, not just parsing/help. No login file
+  // exists, so this must reach the adapter's actionable error without network.
+  const wechatConfig = join(temp, 'wechat-empty.json');
+  writeFileSync(wechatConfig, JSON.stringify({ ...JSON.parse(readFileSync(config, 'utf8')),
+    channels: { wechat: { enabled: true, stateDir: join(temp, 'wechat-account') } },
+    logging: { level: 'info', pretty: false },
+  }));
+  const missingWechatLogin = spawnSync(cli, ['start', '--config', wechatConfig, '--api-port', '0'], {
+    cwd: temp, encoding: 'utf8', timeout: 15_000,
+    env: { ...env, DISCLAUDE_CONFIG_PATH: wechatConfig, DISCLAUDE_WORKSPACE_DIR: temp, LOCKFILE_PATH: join(temp, 'wechat-empty.pid'), LOG_TO_FILE: 'false', LOG_DIR: join(temp, 'wechat-logs') },
+  });
+  if (missingWechatLogin.signal) cleanupSafe = false;
+  assert.notEqual(missingWechatLogin.status, 0);
+  assert.match(`${missingWechatLogin.stdout}\n${missingWechatLogin.stderr}`, /No saved WeChat login/u);
   assert.match(run(cli, ['browser', '--help']), /automatically serializes calls/u);
   assert.match(run(cli, ['plugins', '--help']), /official diagnostics plugin is optional/u);
   assert(!existsSync(join(installed, 'skills/diagnose-logs')), 'Diagnostics must not ship in the default skills bundle');
@@ -198,6 +216,33 @@ async function verifyPackage() {
   }
   assert.match(run(cli, ['start', '--help']), /Usage:/i);
   assert.match(run(cli, ['channel', '--help']), /Usage:/i);
+  // Managed agent sandboxes cannot write the service's inherited host log.
+  // Exercise the installed client with a deterministically unusable log path.
+  const blockedCliLogDir = join(temp, 'cli-log-path-is-a-file');
+  writeFileSync(blockedCliLogDir, 'not a directory');
+  for (const args of [
+    ['help'],
+    ['send_file', '--help'],
+    ['send_file', '--chat', 'installation-probe@im.wechat', '--file', config, '--dry-run'],
+  ]) {
+    const probe = spawnSync(cli, ['channel', ...args], { cwd: temp, encoding: 'utf8', timeout: 15_000,
+      env: { ...env, LOG_TO_FILE: 'true', LOG_DIR: blockedCliLogDir },
+    });
+    assert.equal(probe.status, 0, `Installed channel CLI must tolerate inherited service logging: ${probe.stderr}`);
+    if (args.includes('--dry-run')) assert.equal(JSON.parse(probe.stdout).dryRun, true);
+    else assert.match(`${probe.stdout}\n${probe.stderr}`, /Usage:/i);
+  }
+  if (isPrebuilt && process.platform !== 'win32') {
+    run(process.execPath, ['--input-type=module', '-e', `
+      import assert from 'node:assert/strict';
+      import { pathToFileURL } from 'node:url';
+      import { spawnSync } from 'node:child_process';
+      const { runningChannelCliInvocation } = await import(pathToFileURL(${JSON.stringify(join(installed, 'packages/service/dist/messaging/channel-cli-invocation.js'))}).href);
+      const check = spawnSync('/bin/sh', ['-c', runningChannelCliInvocation() + ' help'], { encoding: 'utf8', env: { ...process.env, PATH: '/no-global-cli', LOG_TO_FILE: 'true', LOG_DIR: ${JSON.stringify(blockedCliLogDir)} } });
+      assert.equal(check.status, 0, check.stderr);
+      assert.match(check.stdout, /Usage:/i);
+    `]);
+  }
   assert.match(run(cli, ['chromium-cdp', 'setup', '--help']), /--download/);
   assert.match(run(cli, ['chromium-cdp', 'status', '--help']), /Read-only/u);
   assert.match(run(cli, ['chromium-cdp', 'doctor', '--help']), /Read-only/u);

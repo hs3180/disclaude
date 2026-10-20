@@ -15,6 +15,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MessageBuilder, DEFAULT_CHANNEL_CAPABILITIES, type MessageData, type ChannelCapabilities } from '@disclaude/core';
 import { createFeishuMessageBuilderOptions } from './feishu-message-builder.js';
+import { runningChannelCliInvocation } from '../channel-cli-invocation.js';
 
 /** Helper to create capabilities with specific supportedChannelTools */
 const withTools = (tools: string[]): ChannelCapabilities => ({
@@ -25,7 +26,7 @@ const withTools = (tools: string[]): ChannelCapabilities => ({
 
 describe('MessageBuilder with Feishu sections', () => {
   let messageBuilder: MessageBuilder;
-  const channelCli = 'disclaude channel';
+  const channelCli = runningChannelCliInvocation();
 
   beforeEach(() => {
     messageBuilder = new MessageBuilder(createFeishuMessageBuilderOptions());

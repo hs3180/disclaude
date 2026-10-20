@@ -3,12 +3,22 @@
 import { accessSync, constants, existsSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { CHANNEL_CLI_HELP, getChannelCliCommandHelp, normalizeChannelApiBaseUrl, isSyntheticMessageId } from '@disclaude/core';
 import type { ActionPromptMap, InteractiveOption } from './tools/types.js';
 
 import { getChatIdValidationError } from './utils/chat-id-validator.js';
 import { assertReadableInteractiveText } from './utils/interactive-text.js';
 import { getCardValidationError, isValidFeishuCard } from './utils/card-validator.js';
+
+const autoRunOutput = process.argv[1]?.endsWith('/cli.js') ? process.stdout.write.bind(process.stdout) : undefined;
+if (autoRunOutput) { process.stdout.write = process.stderr.write.bind(process.stderr); }
+
+// Managed agents inherit the service's LOG_DIR/LOG_TO_FILE, but their sandbox
+// cannot write the service log. This short-lived client owns only stderr
+// diagnostics. Set this before loading core: its module-scope loggers open the
+// inherited file destination even for help, validation and dry-run commands.
+// Redirect before the import too, so config/bootstrap logs cannot pollute JSON.
+process.env.LOG_TO_FILE = 'false';
+const { CHANNEL_CLI_HELP, getChannelCliCommandHelp, normalizeChannelApiBaseUrl, isSyntheticMessageId } = await import('@disclaude/core');
 
 // Issue #4788 (second root cause): parseArgs used to store every `--foo` it saw
 // and silently consume the next argv entry as its value. A misspelled or invented
@@ -34,7 +44,6 @@ export const HELP = CHANNEL_CLI_HELP;
 type Args = { _: string[]; [key: string]: string | string[] | undefined };
 type ToolResult = { success?: boolean; error?: string; message?: string; actionId?: string };
 let emitted = false;
-let autoRunOutput: typeof process.stdout.write | undefined;
 
 function writeResult(value: string): void {
   (autoRunOutput ?? process.stdout.write).call(process.stdout, value);
@@ -403,7 +412,5 @@ export async function run(argv: string[]): Promise<number> {
 // substring match would also fire when a *test* imports this module from a repo
 // checkout whose path happens to contain "disclaude".
 if (process.argv[1]?.endsWith('/cli.js')) {
-  autoRunOutput = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding, callback?: (error?: Error | null) => void) => process.stderr.write(chunk, encoding, callback)) as typeof process.stdout.write;
   run(process.argv.slice(2)).then((code) => { process.exitCode = code; }).catch((error) => { process.stderr.write(`channel CLI crashed: ${errorMessage(error)}\n`); emitFail('channel', `CLI crashed: ${errorMessage(error)}`); process.exitCode = 1; });
 }

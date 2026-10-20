@@ -11,7 +11,7 @@
  * Based on official @tencent-weixin/openclaw-weixin implementation.
  *
  * Not yet implemented (future phases):
- * - Thread send support via context_token — Issue #1556 Phase 3.4
+ * - Native threads; iLink replies use private per-peer context instead.
  *
  * @module channels/wechat/wechat-channel
  * @see Issue #1473 - WeChat Channel MVP
@@ -161,7 +161,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
   /**
    * Send a message through the WeChat channel.
    *
-   * Supports 'text', 'card' (downgraded to JSON text), and 'file' types.
+   * Supports text, internal card descriptions, and encrypted image/file delivery.
    * File messages are uploaded to CDN first, then sent via sendImage/sendFile.
    */
   protected async doSendMessage(message: OutgoingMessage): Promise<string | void> {
@@ -214,7 +214,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
   /**
    * Get the capabilities of the WeChat channel.
    *
-   * Supports text and file sending. Cards are downgraded to JSON text.
+   * Supports text and file sending. Native cards are unavailable.
    */
   getCapabilities(): ChannelCapabilities {
     return {
@@ -231,8 +231,8 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
 
   /**
    * Check if this channel owns a given chatId.
-   * WeChat chatIds are user IDs from the WeChat API (e.g., "wxid_xxx", numeric IDs).
-   * Returns true for chatIds that don't match Feishu ("oc_"/"ou_") or REST formats.
+   * Only received/persisted iLink peers are owned. Unknown chat IDs never
+   * borrow another account or channel's reply context.
    *
    * Issue #3824: Channel ownership query for post-restart routing.
    */

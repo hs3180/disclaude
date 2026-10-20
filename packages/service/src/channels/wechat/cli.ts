@@ -4,8 +4,6 @@ import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { createInterface } from 'node:readline/promises';
 import QRCode from 'qrcode';
-import { WeChatApiClient } from './api-client.js';
-import { WeChatAuth } from './auth.js';
 import { DEFAULT_WECHAT_BASE_URL, WeChatStateStore, type WeChatCredentials } from './state-store.js';
 
 const help = `Usage: disclaude wechat <login|status> [options]
@@ -18,6 +16,12 @@ Personal WeChat via Tencent iLink (QR login; no public callback server).
   --timeout-ms N     Login deadline (default: 480000)
   --help             Show this help
 Then enable channels.wechat in the service config; see docs/wechat-channel.md.`;
+
+async function withDiagnostics<T>(run: () => Promise<T>): Promise<T> {
+  const original = process.stdout.write;
+  process.stdout.write = process.stderr.write.bind(process.stderr) as typeof process.stdout.write;
+  try { return await run(); } finally { process.stdout.write = original; }
+}
 
 async function main(): Promise<void> {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: {
@@ -33,7 +37,10 @@ async function main(): Promise<void> {
     if (!credentials) { console.log(JSON.stringify({ configured: false, authenticated: 'not-checked', next: 'disclaude wechat login' })); return; }
     if (values.check) {
       if (!credentials.userId) { throw new Error('Saved login has no user ID; log in again'); }
-      await new WeChatApiClient({ baseUrl: credentials.baseUrl, token: credentials.token }).checkSession(credentials.userId);
+      await withDiagnostics(async () => {
+        const { WeChatApiClient } = await import('./api-client.js');
+        await new WeChatApiClient({ baseUrl: credentials.baseUrl, token: credentials.token }).checkSession(credentials.userId ?? '');
+      });
     }
     console.log(JSON.stringify({ configured: true, authenticated: values.check ? true : 'not-checked', savedAt: credentials.savedAt, baseUrl: credentials.baseUrl }));
     return;
@@ -42,17 +49,20 @@ async function main(): Promise<void> {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 900_000) { throw new Error('--timeout-ms must be 1000..900000'); }
   const release = await store.lock();
   try {
-    const existing = await store.loadCredentials();
+    const existing = values.force ? undefined : await store.loadCredentials();
     if (existing && !values.force) { console.log('Login already saved. Use status --check, or login --force after stopping the channel.'); return; }
     if (values['import-legacy']) {
       const legacy = join(homedir(), '.disclaude', 'wechat-auth.json');
       await fs.chmod(legacy, 0o600);
-      const credentials = JSON.parse(await fs.readFile(legacy, 'utf8')) as WeChatCredentials;
-      if (!credentials.token?.trim() || !credentials.botId) { throw new Error('Legacy login is incomplete'); }
-      await store.saveCredentials(credentials);
+      let credentials: WeChatCredentials;
+      try { credentials = JSON.parse(await fs.readFile(legacy, 'utf8')) as WeChatCredentials; }
+      catch { throw new Error('Cannot read legacy WeChat login; repair it privately before migration'); }
+      if (typeof credentials.token !== 'string' || !credentials.token.trim() || typeof credentials.botId !== 'string' || !credentials.botId) { throw new Error('Legacy login is incomplete'); }
+      await store.saveCredentials({ token: credentials.token, botId: credentials.botId, userId: credentials.userId, baseUrl: credentials.baseUrl ?? DEFAULT_WECHAT_BASE_URL, savedAt: credentials.savedAt ?? new Date().toISOString() });
       console.log('Legacy login migrated privately. Verify with disclaude wechat status --check.');
       return;
     }
+    const { WeChatApiClient, WeChatAuth } = await withDiagnostics(async () => ({ ...await import('./api-client.js'), ...await import('./auth.js') }));
     const auth = new WeChatAuth(new WeChatApiClient({ baseUrl: DEFAULT_WECHAT_BASE_URL }));
     const abort = () => auth.abort();
     process.once('SIGINT', abort); process.once('SIGTERM', abort);

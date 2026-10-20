@@ -1,5 +1,6 @@
 /** Feishu-specific prompt sections. Shared CLI guidance owns the tool contract. */
 import { buildChannelCliHelpGuidance, getSupportedChannelSendCommands, type MessageBuilderContext, type MessageBuilderOptions, type MessageBuilderStableContext } from '@disclaude/core';
+import { runningChannelCliInvocation } from '../channel-cli-invocation.js';
 
 function buildFeishuMentionSection({ msg, capabilities }: MessageBuilderContext): string {
   if (!msg.senderOpenId || capabilities?.supportsMention === false) { return ''; }
@@ -9,13 +10,15 @@ function buildFeishuMentionSection({ msg, capabilities }: MessageBuilderContext)
 /** Capability-scoped instructions contain no chat/message identity and appear once per query. */
 function buildFeishuStableToolsSection({ capabilities }: MessageBuilderStableContext): string {
   const sendCommands = getSupportedChannelSendCommands(capabilities);
+  const invoke = runningChannelCliInvocation();
   const notes = [
     'Answer ordinary questions and present text previews in your final reply; ChatAgent delivers your final reply automatically, including requests to send or post a preview in this chat or topic. Do not call send_text for that preview. Use the channel CLI only for a delivery requested in addition to this reply (such as another chat), or for attachments/cards. For a content-only preview, return it once without an added acknowledgment or mention.',
     'The Feishu user cannot see or interact with the Codex TUI or local terminal. Host-local paths and file:// links are not accessible from this chat.',
     sendCommands.includes('send_file')
       ? 'When asked to receive a local file, send a chat attachment with send_file and check its successful CLI result. For a content preview, include the useful contents in your final reply. Report any delivery failure explicitly.'
       : 'When asked to see a local file, include a useful content preview in your final reply. If the user needs the file itself, explain that attachments are unavailable on this channel.',
-    buildChannelCliHelpGuidance('disclaude channel', { sendCommands }),
+    `Use this exact command prefix for every channel operation: \`${invoke}\`. It belongs to the running service; a bare disclaude command in the shell may resolve another installation.`,
+    buildChannelCliHelpGuidance(invoke, { sendCommands }),
   ];
   if (!sendCommands.includes('send_file')) { notes.push('send_file is NOT supported on this channel.'); }
   if (capabilities?.supportsThread === false) { notes.push('Thread replies are NOT supported on this channel.'); }

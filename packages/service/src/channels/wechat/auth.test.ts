@@ -58,6 +58,10 @@ describe('WeChatAuth', () => {
   });
 
   describe('authenticate', () => {
+    it('fails promptly when private pairing input is unavailable', async () => {
+      mockClient.getQrCodeStatus.mockResolvedValueOnce({ status: 'need_verifycode' });
+      expect(await auth.authenticate({ onQrCode: () => Promise.resolve(), requestVerifyCode: () => Promise.reject(new Error('unavailable')) })).toMatchObject({ success: false, error: 'Private pairing input unavailable; use an interactive terminal' });
+    });
     it('supports headless QR delivery and rejects confirmation without a token', async () => {
       const onQrCode = vi.fn().mockResolvedValue(undefined);
       mockClient.getQrCodeStatus.mockResolvedValueOnce({ status: 'confirmed', botId: 'bot', botToken: undefined });
