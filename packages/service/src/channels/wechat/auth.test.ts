@@ -58,6 +58,20 @@ describe('WeChatAuth', () => {
   });
 
   describe('authenticate', () => {
+    it('supports headless QR delivery and rejects confirmation without a token', async () => {
+      const onQrCode = vi.fn().mockResolvedValue(undefined);
+      mockClient.getQrCodeStatus.mockResolvedValueOnce({ status: 'confirmed', botId: 'bot', botToken: undefined });
+      expect(await auth.authenticate({ onQrCode })).toMatchObject({ success: false, error: 'Login confirmed but bot token missing' });
+      expect(onQrCode).toHaveBeenCalledWith('https://login.weixin.qq.com/qr-test');
+    });
+
+    it('aborts the in-flight network request instead of waiting for its long-poll timeout', async () => {
+      mockClient.getQrCodeStatus.mockImplementation((_qr, { signal }) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })));
+      const pending = auth.authenticate({ onQrCode: () => Promise.resolve() });
+      await vi.advanceTimersByTimeAsync(1);
+      auth.abort();
+      expect(await pending).toMatchObject({ success: false, error: 'Authentication aborted' });
+    });
     it('should return success result when login is confirmed', async () => {
       mockClient.getQrCodeStatus.mockResolvedValueOnce({
         status: 'confirmed',
