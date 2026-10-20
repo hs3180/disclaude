@@ -572,7 +572,7 @@ export async function main(): Promise<void> {
       const restConf = restEntry.config as { port: number; host: string };
       console.log(`disclaude service started on http://${restConf.host}:${restConf.port}`);
     } else {
-      console.log('disclaude service started (Feishu only mode)');
+      console.log(`disclaude service started (${service.getChannels().map(channel => channel.id).join(', ') || 'no channels'})`);
     }
 
     // The internal HTTP API is always enabled. Port 0 is the safe default so
