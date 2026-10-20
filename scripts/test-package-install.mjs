@@ -141,6 +141,19 @@ async function verifyPackage() {
   const wechatStatus = JSON.parse(run(cli, ['wechat', 'status', '--state-dir', join(temp, 'wechat-account')]));
   assert.equal(wechatStatus.configured, false);
   assert.equal(wechatStatus.authenticated, 'not-checked');
+  // Exercise actual config-driven startup, not just parsing/help. No login file
+  // exists, so this must reach the adapter's actionable error without network.
+  const wechatConfig = join(temp, 'wechat-empty.json');
+  writeFileSync(wechatConfig, JSON.stringify({ ...JSON.parse(readFileSync(config, 'utf8')),
+    channels: { wechat: { enabled: true, stateDir: join(temp, 'wechat-account') } },
+  }));
+  const missingWechatLogin = spawnSync(cli, ['start', '--config', wechatConfig, '--api-port', '0'], {
+    cwd: temp, encoding: 'utf8', timeout: 15_000,
+    env: { ...env, DISCLAUDE_CONFIG_PATH: wechatConfig, DISCLAUDE_WORKSPACE_DIR: temp, LOCKFILE_PATH: join(temp, 'wechat-empty.pid') },
+  });
+  if (missingWechatLogin.signal) cleanupSafe = false;
+  assert.notEqual(missingWechatLogin.status, 0);
+  assert.match(`${missingWechatLogin.stdout}\n${missingWechatLogin.stderr}`, /No saved WeChat login/u);
   assert.match(run(cli, ['browser', '--help']), /automatically serializes calls/u);
   assert.match(run(cli, ['plugins', '--help']), /official diagnostics plugin is optional/u);
   assert(!existsSync(join(installed, 'skills/diagnose-logs')), 'Diagnostics must not ship in the default skills bundle');

@@ -449,10 +449,10 @@ export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig
  * 1. Create WiredChannelDescriptor in this file
  * 2. Add it to this array
  *
- * Note: WeChat is NOT included here (Issue #1638: dynamic registration only).
- * cli.ts remains untouched — it iterates over this array automatically.
+ * WeChat is config-driven when a saved private login is configured (#4889).
  */
 export const BUILTIN_WIRED_DESCRIPTORS: WiredChannelDescriptor[] = [
   REST_WIRED_DESCRIPTOR,
   FEISHU_WIRED_DESCRIPTOR,
+  WECHAT_WIRED_DESCRIPTOR,
 ];
