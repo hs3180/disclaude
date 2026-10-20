@@ -146,10 +146,11 @@ async function verifyPackage() {
   const wechatConfig = join(temp, 'wechat-empty.json');
   writeFileSync(wechatConfig, JSON.stringify({ ...JSON.parse(readFileSync(config, 'utf8')),
     channels: { wechat: { enabled: true, stateDir: join(temp, 'wechat-account') } },
+    logging: { level: 'info', pretty: false },
   }));
   const missingWechatLogin = spawnSync(cli, ['start', '--config', wechatConfig, '--api-port', '0'], {
     cwd: temp, encoding: 'utf8', timeout: 15_000,
-    env: { ...env, DISCLAUDE_CONFIG_PATH: wechatConfig, DISCLAUDE_WORKSPACE_DIR: temp, LOCKFILE_PATH: join(temp, 'wechat-empty.pid') },
+    env: { ...env, DISCLAUDE_CONFIG_PATH: wechatConfig, DISCLAUDE_WORKSPACE_DIR: temp, LOCKFILE_PATH: join(temp, 'wechat-empty.pid'), LOG_TO_FILE: 'false', LOG_DIR: join(temp, 'wechat-logs') },
   });
   if (missingWechatLogin.signal) cleanupSafe = false;
   assert.notEqual(missingWechatLogin.status, 0);
