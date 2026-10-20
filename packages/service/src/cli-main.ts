@@ -44,7 +44,7 @@ import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
 import { createChannelCallbacksFactory } from './utils/channel-handlers.js';
 import { ServiceTurnRecoveryStore } from './service-turn-recovery.js';
-import { resolveWeChatAccounts } from './channels/wechat/config.js';
+import { DEFAULT_WECHAT_STATE_DIR } from './channels/wechat/state-store.js';
 import net from 'node:net';
 import path from 'node:path';
 import { homedir } from 'node:os';
@@ -456,7 +456,7 @@ export async function main(): Promise<void> {
     if (!channel) {
       throw new Error('No channel available for InputMessageRouter callbacks');
     }
-    const descriptor = descriptorMap.get(channel.id.startsWith('wechat:') ? 'wechat' : channel.id);
+    const descriptor = descriptorMap.get(channel.id);
     if (descriptor) {
       return descriptor.createCallbacks(channel, channelSetupContext)(chatId, threadRootId);
     }
@@ -886,7 +886,16 @@ export function resolveChannelConfigs(
     });
   }
 
-  for (const config of resolveWeChatAccounts(rawConfig.channels?.wechat)) { entries.push({ type: 'wechat', config: { ...config } }); }
+  const wechat = rawConfig.channels?.wechat;
+  if (wechat && wechat.enabled !== false) {
+    if (wechat.enabled !== undefined && typeof wechat.enabled !== 'boolean') { throw new Error('channels.wechat.enabled must be boolean'); }
+    const unknown = Object.keys(wechat).filter(key => !['enabled', 'stateDir', 'routeTag'].includes(key));
+    if (unknown.length) { throw new Error(`Unsupported channels.wechat fields: ${unknown.join(', ')}; save credentials with disclaude wechat login`); }
+    const stateDir = wechat.stateDir ?? DEFAULT_WECHAT_STATE_DIR;
+    if (typeof stateDir !== 'string' || !path.isAbsolute(stateDir)) { throw new Error('channels.wechat.stateDir must be an absolute path'); }
+    if (wechat.routeTag !== undefined && (typeof wechat.routeTag !== 'string' || /[\r\n]/.test(wechat.routeTag))) { throw new Error('channels.wechat.routeTag must be a single-line string'); }
+    entries.push({ type: 'wechat', config: { stateDir, ...(wechat.routeTag ? { routeTag: wechat.routeTag } : {}) } });
+  }
 
   // Warn on unrecognized channel config keys (Issue #1594 review P2)
   const knownChannelKeys = new Set(['rest', 'feishu', 'wechat']);

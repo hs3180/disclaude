@@ -25,7 +25,7 @@ npm install --prefix /absolute/path/to/candidate disclaude-candidate.tgz
 
 No Tencent/OpenClaw host service or inbound port is needed. The host needs outbound HTTPS access to the iLink and Weixin CDN domains. The Agent runtime must also be configured and authenticated normally; iLink login does not authenticate Codex/Claude.
 
-The default private account directory is `~/.disclaude/wechat`. To use a dedicated account directory, pass the same absolute `--state-dir` to login/status and configure it below. Directory permissions are 0700 and account/session files are 0600. Directory locks exclude competing writers; a separate bot-identity lock also excludes two saved copies of the same bot login in different directories on this host.
+The default private account directory is `~/.disclaude/wechat`. To use a dedicated account directory, pass the same absolute `--state-dir` to login/status and configure it below. Directory permissions are 0700 and account/session files are 0600. The account lock prevents a second listener or login writer using that directory.
 
 For a remote operator, `wechat login --qr-file /private/path/login.png` writes a QR PNG without launching a desktop app. Deliver that temporary image privately and scan/confirm in WeChat. QR codes expire and refresh up to three times within an eight-minute login deadline. If Tencent requests pairing digits, enter them only in a private interactive terminal or an integration's private input callback; do not place them in a group chat, command arguments, or logs. Noninteractive pairing fails explicitly. Remove the QR image after use.
 
@@ -62,9 +62,9 @@ node bin/disclaude.js start --config /absolute/path/to/wechat.yaml --api-port 0
 
 Keep the workspace, private account directory and model authentication persistent. For isolated WeChat-only testing, use a separate workspace and omit Feishu configuration; the shared-service configuration below deliberately enables both platforms. Do not run the same iLink account in a legacy/OpenClaw listener simultaneously, even if it uses a different state directory. No production service restart is required to run an isolated WeChat-only candidate.
 
-Send a message from WeChat to the linked bot first. A legacy singleton keeps the incoming peer ID (`…@im.wechat`) as its Agent conversation ID. The private reply context stays in the adapter/account state; generic parent message IDs are never used as iLink tokens. Unknown peers cannot borrow another channel's routing or context.
+Send a message from WeChat to the linked bot first. The incoming peer ID (`…@im.wechat`) is its Agent conversation ID. The private reply context stays in the adapter/account state; generic parent message IDs are never used as iLink tokens. Unknown peers cannot borrow another channel's routing or context.
 
-## One service with Feishu, REST and named WeChat accounts
+## One service with Feishu, REST and WeChat
 
 These channels can share one service process and configuration. Each channel connects independently. This differs from the isolated two-process candidate deployment described in the original acceptance record.
 
@@ -80,36 +80,22 @@ channels:
     port: 3000
     fileStorageDir: /absolute/path/to/rest-files
   wechat:
-    accounts:
-      work:
-        enabled: true
-        stateDir: /absolute/path/to/private/wechat-work
-      personal:
-        enabled: true
-        stateDir: /absolute/path/to/private/wechat-personal
+    enabled: true
+    stateDir: /absolute/path/to/private/wechat-account
 ```
 
-Run each login independently, using the same directory as its config:
+Log in using the same directory as the configuration:
 
 ```sh
-disclaude wechat login --account work --state-dir /absolute/path/to/private/wechat-work
-disclaude wechat status --account work --state-dir /absolute/path/to/private/wechat-work --check
-disclaude wechat login --account personal --state-dir /absolute/path/to/private/wechat-personal
-```
-
-If `stateDir` is omitted for a named account, both configuration and `--account NAME` use `~/.disclaude/wechat/accounts/NAME`. Names contain 1–64 letters, digits, underscores or hyphens and start with a letter or digit. The existing `channels.wechat.stateDir` and CLI without `--account` retain their singleton behavior; choose either the singleton fields or `accounts` in one config. Disabled accounts do not load their credentials. Duplicate enabled state directories, including aliases, are rejected.
-
-Each named instance is `wechat:NAME`. Its public conversation ID is `wechat:NAME:actual-peer@im.wechat`; use that complete value from the message metadata in API/CLI operations. This selects one account and gives the same peer separate Agent histories, message identities, reply contexts, cursors, replay caches and media directories. Raw peer IDs are reserved for the legacy singleton. To migrate a singleton to a named account, stop its listener, point the named entry at its private directory, and expect a new account-qualified Agent conversation; the old Agent history is not silently reassigned.
-
-```sh
-disclaude channel capabilities
-disclaude channel capabilities --chat 'wechat:work:actual-peer@im.wechat'
-disclaude channel send_file --chat 'wechat:work:actual-peer@im.wechat' --file /absolute/path/clip.mp4
+disclaude wechat login --state-dir /absolute/path/to/private/wechat-account
+disclaude wechat status --state-dir /absolute/path/to/private/wechat-account --check
 ```
 
 Capability discovery reports each instance's status and health. Missing login or startup failure in one instance leaves successfully started channels serving; startup fails if every configured channel fails. A later authentication/receive failure makes that instance unhealthy. Known targets stay bound to their owner, even when it is unavailable; unknown/ambiguous targets fail explicitly. Scheduler replies also select one owner. Cross-platform forwarding requires an explicit operation.
 
-Configuration changes currently require a service restart; use the existing graceful shutdown and retain all account directories. For reauthentication, stop the affected listener before `login --account NAME --force` with its configured directory, then restart it. A full service restart briefly interrupts all configured channels, so schedule it accordingly. Account failures during normal operation do not stop healthy siblings. Feishu app credentials continue to use host-owned environment references and stay separate from WeChat login files.
+Configuration changes currently require a service restart; use the existing graceful shutdown and retain the account directory. For reauthentication, stop the listener before `wechat login --force` with its configured directory, then restart it. A full service restart briefly interrupts all configured channels, so schedule it accordingly. Feishu app credentials continue to use host-owned environment references and stay separate from WeChat login files.
+
+This PR retains one WeChat account alongside other channel types. Dynamic multi-account registration is tracked separately in #5451: enabling WeChat must provide runtime account registration without a preset account list or an additional multi-account switch.
 
 ## Delivery and capabilities
 
@@ -128,7 +114,7 @@ The channel CLI writes diagnostics to stderr and does not open the service's fil
 
 Managed prompts supply the running installation's complete Node/CLI command prefix. Use that prefix for all channel operations: a shell snapshot or login profile can resolve a bare `disclaude` command to a different installed release. This matters when a candidate and production release coexist. The API address/token still come from the current managed environment.
 
-Supported operations are plain text, images, native MP4 videos and ordinary files. `send_file` selects image messages for known image extensions and native video for `.mp4` (case-insensitive); other formats retain ordinary attachment behavior. MP4 uses upload `media_type=2`, message item type 5 and `video_size` equal to ciphertext bytes, preserving the selected account's peer context. There is no transcoding or thumbnail generation. An upload/video-send failure is reported and never silently converted into a file message. `nativeVideoFormats` in capability discovery reports `mp4`.
+Supported operations are plain text, images, native MP4 videos and ordinary files. `send_file` selects image messages for known image extensions and native video for `.mp4` (case-insensitive); other formats retain ordinary attachment behavior. MP4 uses upload `media_type=2`, message item type 5 and `video_size` equal to ciphertext bytes, preserving the peer's reply context. There is no transcoding or thumbnail generation. An upload/video-send failure is reported and never silently converted into a file message. `nativeVideoFormats` in capability discovery reports `mp4`.
 
 Inbound images/files are downloaded, decrypted, and handed to the common Agent attachment interface as local files. File type is 4 in the current iLink protocol; type 3 is voice. Mixed text and multiple attachments are retained. Video input decoding remains outside this change.
 
@@ -166,4 +152,4 @@ Keep these results separate:
 
 Relevant tests: `pnpm exec vitest run packages/service/src/channels/wechat tests/integration/wechat-channel.test.ts`. See the accompanying candidate acceptance record for observed results and pending steps.
 
-Follow-up coverage for #5449/#5450/#5451/#5453 includes `tests/integration/wechat-multi-channel.test.ts`: real lifecycle/WeChat adapters and authenticated CLI/API, intercepted Tencent HTTP and a simulated Feishu gateway, same-peer account isolation, saved ownership/replay restore, failed-account isolation and native video routing. It does not establish real dual-account receipt, native-video playback on a phone, or a same-process production Feishu/WeChat exchange; those acceptance steps remain to be performed and recorded separately.
+Follow-up coverage for #5449/#5450/#5453 includes `tests/integration/wechat-multi-channel.test.ts`: real lifecycle/WeChat adapters and authenticated CLI/API, intercepted Tencent HTTP and a simulated Feishu gateway, saved ownership/replay restore, channel startup failure isolation and native video routing. It does not establish native-video playback on a phone or a same-process production Feishu/WeChat exchange; those acceptance steps remain to be performed and recorded separately. Dynamic multi-account registration and its dual-account acceptance belong to #5451.

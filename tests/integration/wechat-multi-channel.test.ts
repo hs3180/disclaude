@@ -16,7 +16,7 @@ import { createChannelApiHandlers } from '../../packages/service/src/utils/chann
 import { HttpApiServer } from '../../packages/service/src/http-api-server.js';
 
 const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-const peer = 'shared-user@im.wechat';
+const peer = 'wechat-user@im.wechat';
 class SimulatedFeishu extends BaseChannel {
   sent: OutgoingMessage[] = [];
   constructor() { super({}, 'feishu', 'Simulated Feishu'); }
@@ -28,114 +28,119 @@ class SimulatedFeishu extends BaseChannel {
 }
 afterEach(() => { nock.cleanAll(); vi.restoreAllMocks(); });
 
-describe('one-process multi-channel and multi-WeChat routing', () => {
-  it('isolates the same peer across accounts, survives a failed sibling, and restores ownership/dedup after restart', async () => {
+function setupService(received: IncomingMessage[] = []) {
+  const service = new DisclaudeService();
+  const manager = service.getChannelManager();
+  const context = { logger, service, controlHandler: vi.fn(), controlHandlerContext: {},
+    agentPool: { getPoolStats: vi.fn(() => ({})), getOrCreateChatAgent: vi.fn() },
+    inputMessageRouter: { route: vi.fn(async (message: IncomingMessage) => { received.push(message); }) },
+  };
+  const lifecycle = new ChannelLifecycleManager(manager, context as never);
+  const feishu = new SimulatedFeishu();
+  manager.register(feishu);
+  const feishuHandlers = { ...createChannelApiHandlers(feishu, { logger, channelName: 'Feishu' } as never), sendInteractive: () => Promise.reject(new Error('simulated')) };
+  service.registerFeishuHandlers(feishuHandlers);
+  service.registerChannelHandlers('feishu', feishuHandlers, feishu);
+  return { service, manager, lifecycle, feishu };
+}
+
+describe('one-process Feishu, REST and single-WeChat routing', () => {
+  it('keeps Feishu and REST serving when the WeChat login is missing', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'wechat-startup-isolation-'));
+    const { service, manager, lifecycle, feishu } = setupService();
+    try {
+      await lifecycle.createAndWire(REST_WIRED_DESCRIPTOR, { port: 0, host: '127.0.0.1', fileStorageDir: join(dir, 'rest') });
+      await lifecycle.createAndWire(WECHAT_WIRED_DESCRIPTOR, { stateDir: join(dir, 'no-login') });
+      await lifecycle.startAll();
+      expect(manager.get('wechat')?.status).toBe('error');
+      expect(feishu.isHealthy()).toBe(true);
+      expect(manager.get('rest')?.isHealthy()).toBe(true);
+      await service.sendMessage('oc_simulated_feishu', 'still available');
+      expect(feishu.sent.map(message => message.text)).toEqual(['still available']);
+      await expect(service.sendMessage(peer, 'unavailable')).rejects.toThrow('No registered channel owns');
+      expect(feishu.sent).toHaveLength(1);
+    } finally { await lifecycle.stopAll(); await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it('routes replies and native video to the single WeChat owner and restores ownership/dedup after restart', async () => {
     nock.enableNetConnect('127.0.0.1');
     const dir = await mkdtemp(join(tmpdir(), 'wechat-multi-channel-'));
-    const service = new DisclaudeService();
-    const manager = service.getChannelManager();
     const received: IncomingMessage[] = [];
-    const context = { logger, service, controlHandler: vi.fn(), controlHandlerContext: {},
-      agentPool: { getPoolStats: vi.fn(() => ({})), getOrCreateChatAgent: vi.fn() },
-      inputMessageRouter: { route: vi.fn(async (message: IncomingMessage) => { received.push(message); }) },
-    };
-    const lifecycle = new ChannelLifecycleManager(manager, context as never);
-    const feishu = new SimulatedFeishu();
-    manager.register(feishu);
-    const feishuHandlers = { ...createChannelApiHandlers(feishu, { logger, channelName: 'Feishu' } as never), sendInteractive: () => Promise.reject(new Error('simulated')) };
-    service.registerFeishuHandlers(feishuHandlers);
-    service.registerChannelHandlers('feishu', feishuHandlers, feishu);
-    await lifecycle.createAndWire(REST_WIRED_DESCRIPTOR, { port: 0, host: '127.0.0.1', fileStorageDir: join(dir, 'rest') });
-    const polls = { work: 0, home: 0 };
-    const stores = new Map<string, WeChatStateStore>();
-    const accounts = new Map<string, WeChatChannel>();
-    const add = async (name: 'work' | 'home') => {
-      const stateDir = join(dir, name);
-      const baseUrl = `https://${name}.weixin.qq.com`;
-      const store = new WeChatStateStore(stateDir); stores.set(name, store);
-      await store.saveCredentials({ token: `test-${name}`, botId: `${dir}-${name}`, baseUrl, savedAt: new Date().toISOString() });
+    const { service, manager, lifecycle, feishu } = setupService(received);
+    const stateDir = join(dir, 'wechat');
+    const baseUrl = 'https://coexist.weixin.qq.com';
+    const store = new WeChatStateStore(stateDir);
+    let polls = 0;
+    const api = new HttpApiServer({ port: 0, host: '127.0.0.1', apiToken: 'coexist-test-token' });
+    try {
+      await lifecycle.createAndWire(REST_WIRED_DESCRIPTOR, { port: 0, host: '127.0.0.1', fileStorageDir: join(dir, 'rest') });
+      await store.saveCredentials({ token: 'test-wechat', botId: 'coexist-bot', baseUrl, savedAt: new Date().toISOString() });
       nock(baseUrl).persist().post('/ilink/bot/getconfig').reply(200, { ret: 0, typing_ticket: 'ticket' });
       nock(baseUrl).persist().post('/ilink/bot/sendtyping').reply(200, { ret: 0 });
       nock(baseUrl).persist().post('/ilink/bot/getupdates').reply((_uri, _body, callback) => {
-        polls[name]++;
-        if (polls[name] % 2 === 1) {
-          callback(null, [200, { ret: 0, get_updates_buf: `cursor-${name}`, msgs: [{ message_id: 'same-gateway-id', from_user_id: peer, message_type: 1,
-            context_token: `private-context-${name}`, item_list: [{ type: 1, text_item: { text: `hello-${name}` } }] }] }]);
+        polls++;
+        if (polls % 2 === 1) {
+          callback(null, [200, { ret: 0, get_updates_buf: 'saved-cursor', msgs: [{ message_id: 'gateway-id', from_user_id: peer, message_type: 1,
+            context_token: 'private-context', item_list: [{ type: 1, text_item: { text: 'hello-wechat' } }] }] }]);
         }
         // An outstanding long poll has no delayed reply to race its abort.
       });
-      const channel = await lifecycle.createAndWire(WECHAT_WIRED_DESCRIPTOR, { accountId: name, stateDir }) as WeChatChannel;
-      accounts.set(name, channel);
-    };
-    const api = new HttpApiServer({ port: 0, host: '127.0.0.1', apiToken: 'multi-test-token' });
-    try {
-      await add('work'); await add('home');
-      await lifecycle.createAndWire(WECHAT_WIRED_DESCRIPTOR, { accountId: 'unconfigured', stateDir: join(dir, 'no-login') });
+      await lifecycle.createAndWire(WECHAT_WIRED_DESCRIPTOR, { stateDir });
       await lifecycle.startAll();
-      await vi.waitFor(() => expect(received).toHaveLength(2));
-      expect(received.map(x => x.chatId).sort()).toEqual([`wechat:home:${peer}`, `wechat:work:${peer}`]);
-      expect(new Set(received.map(x => x.messageId)).size).toBe(2);
+      await vi.waitFor(() => expect(received).toHaveLength(1));
+      expect(received[0].chatId).toBe(peer);
+      expect(received[0].messageId).toBe('gateway-id');
       expect(JSON.stringify(received)).not.toContain('private-context');
-      expect(manager.get('wechat:unconfigured')?.status).toBe('error');
       expect(feishu.isHealthy()).toBe(true);
       expect(manager.get('rest')?.isHealthy()).toBe(true);
-      const duplicateStore = new WeChatStateStore(join(dir, 'duplicate'));
-      await duplicateStore.saveCredentials({ token: 'duplicate-token', botId: `${dir}-work`, baseUrl: 'https://work.weixin.qq.com', savedAt: new Date().toISOString() });
-      const duplicate = await lifecycle.createAndWire(WECHAT_WIRED_DESCRIPTOR, { accountId: 'duplicate', stateDir: duplicateStore.dir });
-      await expect(duplicate.start()).rejects.toThrow('already in use');
-      expect(accounts.get('work')?.isHealthy()).toBe(true);
-      for (const name of ['work', 'home'] as const) {
-        const sent = nock(`https://${name}.weixin.qq.com`).post('/ilink/bot/sendmessage', body => {
-          expect(body.msg).toMatchObject({ to_user_id: peer, context_token: `private-context-${name}` }); return true;
-        }).reply(200, { ret: 0, message_id: `reply-${name}` });
-        await expect(service.sendMessage(`wechat:${name}:${peer}`, `reply-${name}`)).resolves.toMatchObject({ messageId: `reply-${name}` });
-        expect(sent.isDone()).toBe(true);
-      }
-      await expect(service.sendMessage(peer, 'ambiguous')).rejects.toThrow();
-      await expect(service.sendMessage(`wechat:unknown:${peer}`, 'unknown')).rejects.toThrow();
-      await expect(service.sendCard(`wechat:work:${peer}`, {})).rejects.toThrow('does not support cards');
+      const sent = nock(baseUrl).post('/ilink/bot/sendmessage', body => {
+        expect(body.msg).toMatchObject({ to_user_id: peer, context_token: 'private-context' }); return true;
+      }).reply(200, { ret: 0, message_id: 'wechat-reply' });
+      await expect(service.sendMessage(peer, 'wechat reply')).resolves.toMatchObject({ messageId: 'wechat-reply' });
+      expect(sent.isDone()).toBe(true);
+      await expect(service.sendMessage('unknown@im.wechat', 'unknown')).rejects.toThrow('No registered channel owns');
+      await expect(service.sendCard(peer, {})).rejects.toThrow('does not support cards');
       expect(feishu.sent).toHaveLength(0);
       await service.sendMessage('oc_simulated_feishu', 'feishu reply');
       expect(feishu.sent).toHaveLength(1);
-      const spy = vi.spyOn(accounts.get('home')!, 'sendMessage');
-      const routed = nock('https://work.weixin.qq.com').post('/ilink/bot/sendmessage').reply(200, { ret: 0, message_id: 'unicast' });
-      await manager.sendToChat({ chatId: `wechat:work:${peer}`, type: 'text', text: 'scheduled reply' });
+      const spy = vi.spyOn(feishu, 'sendMessage');
+      const routed = nock(baseUrl).post('/ilink/bot/sendmessage').reply(200, { ret: 0, message_id: 'unicast' });
+      await manager.sendToChat({ chatId: peer, type: 'text', text: 'scheduled reply' });
       expect(routed.isDone()).toBe(true); expect(spy).not.toHaveBeenCalled();
 
       api.setChannelCapabilitiesProvider(chatId => service.getChannels().filter(c => !chatId || c.ownsChatId(chatId)).map(c => ({ id: c.id, name: c.name, status: c.status, healthy: c.isHealthy(), capabilities: c.getCapabilities() })));
       api.setUploadFileHandler((chatId, filePath, threadId) => service.uploadFile(chatId, filePath, threadId));
       await api.start(); const address = api.getAddress(); if (!address) { throw new Error('API did not bind'); }
-      const result = await promisify(execFile)(process.execPath, ['bin/disclaude.js', 'channel', 'capabilities', '--chat', `wechat:work:${peer}`], {
-        env: { ...process.env, DISCLAUDE_API_BASE_URL: `http://127.0.0.1:${address.port}`, DISCLAUDE_API_TOKEN: 'multi-test-token' },
+      const result = await promisify(execFile)(process.execPath, ['bin/disclaude.js', 'channel', 'capabilities', '--chat', peer], {
+        env: { ...process.env, DISCLAUDE_API_BASE_URL: `http://127.0.0.1:${address.port}`, DISCLAUDE_API_TOKEN: 'coexist-test-token' },
       });
-      expect(JSON.parse(result.stdout)).toMatchObject({ ok: true, channels: [{ id: 'wechat:work', healthy: true }] });
+      expect(JSON.parse(result.stdout)).toMatchObject({ ok: true, channels: [{ id: 'wechat', healthy: true }] });
       const videoPath = join(dir, 'protocol-only.mp4');
       await writeFile(videoPath, 'offline native-video protocol fixture');
-      const negotiate = nock('https://work.weixin.qq.com').post('/ilink/bot/getuploadurl', body => body.media_type === 2 && body.to_user_id === peer && body.no_need_thumb === true)
+      const negotiate = nock(baseUrl).post('/ilink/bot/getuploadurl', body => body.media_type === 2 && body.to_user_id === peer && body.no_need_thumb === true)
         .reply(200, { ret: 0, upload_param: 'upload-video' });
       const upload = nock('https://novac2c.cdn.weixin.qq.com').post('/c2c/upload').query(true).reply(200, '', { 'x-encrypted-param': 'video-ref' });
-      const video = nock('https://work.weixin.qq.com').post('/ilink/bot/sendmessage', body => body.msg.context_token === 'private-context-work' && body.msg.to_user_id === peer && body.msg.item_list[0].type === 5)
+      const video = nock(baseUrl).post('/ilink/bot/sendmessage', body => body.msg.context_token === 'private-context' && body.msg.to_user_id === peer && body.msg.item_list[0].type === 5)
         .reply(200, { ret: 0, message_id: 'native-video-id' });
-      const delivery = await promisify(execFile)(process.execPath, ['bin/disclaude.js', 'channel', 'send_file', '--chat', `wechat:work:${peer}`, '--file', videoPath], {
-        env: { ...process.env, DISCLAUDE_API_BASE_URL: `http://127.0.0.1:${address.port}`, DISCLAUDE_API_TOKEN: 'multi-test-token' },
+      const delivery = await promisify(execFile)(process.execPath, ['bin/disclaude.js', 'channel', 'send_file', '--chat', peer, '--file', videoPath], {
+        env: { ...process.env, DISCLAUDE_API_BASE_URL: `http://127.0.0.1:${address.port}`, DISCLAUDE_API_TOKEN: 'coexist-test-token' },
       });
       expect(JSON.parse(delivery.stdout).ok).toBe(true);
       expect(negotiate.isDone() && upload.isDone() && video.isDone()).toBe(true);
       expect(spy).not.toHaveBeenCalled();
 
       await lifecycle.stopAll();
-      const before = polls.work;
-      const restored = new WeChatChannel({ accountId: 'work', stateDir: join(dir, 'work') });
+      const before = polls;
+      const restored = new WeChatChannel({ stateDir });
       restored.onMessage(async message => { received.push(message); });
       try {
         await restored.start();
-        expect(restored.ownsChatId(`wechat:work:${peer}`)).toBe(true);
-        expect(restored.ownsChatId(`wechat:home:${peer}`)).toBe(false);
-        expect(restored.ownsChatId(peer)).toBe(false);
-        await vi.waitFor(() => expect(polls.work).toBeGreaterThan(before));
-        expect(received).toHaveLength(2);
-        const saved = await stores.get('work')!.loadSession(`${dir}-work`);
-        expect(saved).toMatchObject({ cursor: 'cursor-work', seenMessageIds: ['same-gateway-id'], contexts: { [peer]: 'private-context-work' } });
+        expect(restored.ownsChatId(peer)).toBe(true);
+        expect(restored.ownsChatId('unknown@im.wechat')).toBe(false);
+        await vi.waitFor(() => expect(polls).toBeGreaterThan(before));
+        expect(received).toHaveLength(1);
+        const saved = await store.loadSession('coexist-bot');
+        expect(saved).toMatchObject({ cursor: 'saved-cursor', seenMessageIds: ['gateway-id'], contexts: { [peer]: 'private-context' } });
       } finally { await restored.stop(); }
     } finally { await api.stop(); await lifecycle.stopAll(); await rm(dir, { recursive: true, force: true }); }
   });

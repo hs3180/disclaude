@@ -29,7 +29,6 @@ export function isValidChatId(chatId: string): boolean {
   }
   if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(chatId)) { return true; }
   if (/^[\w.-]{1,128}@im\.wechat$/.test(chatId)) { return true; }
-  if (/^wechat:[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}:[\w.-]{1,128}@im\.wechat$/.test(chatId)) { return true; }
   return CHAT_ID_PATTERNS.some(({ prefix, minLength }) =>
     chatId.startsWith(prefix) && chatId.length >= minLength,
   );
@@ -53,7 +52,7 @@ export function getChatIdValidationError(chatId: string): string | null {
   // Build a helpful message listing accepted formats
   const formatList = `${CHAT_ID_PATTERNS
     .map(({ prefix, label }) => `- \`${prefix}...\` (${label})`)
-    .join('\n')  }\n- UUID (REST session)\n- user@im.wechat (legacy WeChat)\n- wechat:account:user@im.wechat (named WeChat account)`;
+    .join('\n')  }\n- UUID (REST session)\n- user@im.wechat (personal WeChat iLink peer)`;
 
   return (
     `Invalid chatId format: "${chatId.length > 20 ? `${chatId.slice(0, 20)}...` : chatId}"\n` +

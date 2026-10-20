@@ -63,13 +63,13 @@ describe('MessageBuilder with Feishu sections', () => {
       expect(result).toContain('You are responding in a Feishu chat.');
     });
 
-    it('uses WeChat identity and advertises native MP4 with the exact account-qualified target', () => {
-      const result = messageBuilder.buildEnhancedContent({ text: 'send video', messageId: 'request' }, 'wechat:work:user@im.wechat', {
+    it('uses WeChat identity and advertises native MP4 with the received peer target', () => {
+      const result = messageBuilder.buildEnhancedContent({ text: 'send video', messageId: 'request' }, 'user@im.wechat', {
         ...withTools(['send_text', 'send_file']), nativeVideoFormats: ['mp4'], supportsMention: false,
       });
       expect(result).toContain('You are responding in a WeChat chat.');
       expect(result).toContain('send_file delivers mp4 as native video');
-      expect(result).toContain('wechat:work:user@im.wechat');
+      expect(result).toContain('user@im.wechat');
       expect(result).not.toContain('<at user_id=');
     });
   });

@@ -17,8 +17,6 @@ import type { ChannelConfig } from '@disclaude/core';
  * WeChat channel configuration.
  */
 export interface WeChatChannelConfig extends ChannelConfig {
-  /** Named account; enables account-qualified conversation identifiers. */
-  accountId?: string;
   /** API base URL (default: https://ilinkai.weixin.qq.com) */
   baseUrl?: string;
   /** Bot token obtained after QR code login (skip auth if provided) */

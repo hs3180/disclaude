@@ -25,8 +25,7 @@ import { WeChatApiClient } from './api-client.js';
 import { WeChatAuth } from './auth.js';
 import { WeChatMessageListener, type MessageProcessor } from './message-listener.js';
 import type { WeChatChannelConfig } from './types.js';
-import { WeChatStateStore, lockWeChatIdentity, type WeChatSessionState } from './state-store.js';
-import { validateWeChatAccountName, wechatChatId, wechatPeer } from './account.js';
+import { WeChatStateStore, type WeChatSessionState } from './state-store.js';
 import { downloadWeChatMedia, WECHAT_MEDIA_MAX_BYTES } from './media.js';
 import { tmpdir } from 'node:os';
 
@@ -53,13 +52,9 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
   private messageListener?: WeChatMessageListener;
   private readonly contexts = new Map<string, string>();
   private releaseAccount?: () => Promise<void>;
-  private releaseIdentity?: () => Promise<void>;
 
   constructor(config: WeChatChannelConfig = {}) {
-    const named = config.accountId ?? (config.id?.startsWith('wechat:') ? config.id.slice('wechat:'.length) : undefined);
-    const accountId = named === undefined ? undefined : validateWeChatAccountName(named);
-    if (accountId && config.id && config.id !== `wechat:${accountId}`) { throw new Error('WeChat channel ID must match its account name'); }
-    super({ ...config, ...(accountId ? { id: `wechat:${accountId}`, accountId } : {}) }, 'wechat', accountId ? `WeChat (${accountId})` : 'WeChat');
+    super(config, 'wechat', 'WeChat');
     this.baseUrl = config.baseUrl || DEFAULT_BASE_URL;
     this.routeTag = config.routeTag;
   }
@@ -84,11 +79,10 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
       try {
         credentials = await store.loadCredentials();
         if (!credentials) { throw new Error('No saved WeChat login; run disclaude wechat login with the configured --state-dir'); }
-        this.releaseIdentity = await lockWeChatIdentity(credentials.botId);
         session = await store.loadSession(credentials.botId);
         this.contexts.clear();
         for (const [peer, token] of Object.entries(session.contexts)) { this.contexts.set(peer, token); }
-      } catch (error) { await this.releaseIdentity?.(); this.releaseIdentity = undefined; await this.releaseAccount(); this.releaseAccount = undefined; throw error; }
+      } catch (error) { await this.releaseAccount(); this.releaseAccount = undefined; throw error; }
     }
     try {
       // Create API client
@@ -125,18 +119,13 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
         // Send typing indicator before processing (Issue #1556 Phase 3.2)
         void this.client?.sendTyping({ to: message.chatId, contextToken: this.contexts.get(message.chatId) });
 
-        await this.emitMessage(this.config.accountId ? {
-          ...message,
-          chatId: wechatChatId(this.config.accountId, message.chatId),
-          messageId: `${this.id}:${message.messageId}`,
-          metadata: { ...message.metadata, channelId: this.id, accountId: this.config.accountId },
-        } : message);
+        await this.emitMessage(message);
       };
 
       this.messageListener = new WeChatMessageListener(this.client, processor, {
         state: session,
         onContext: (peer, token) => this.contexts.set(peer, token),
-        resolveAttachment: (item, signal) => downloadWeChatMedia(item, path.join(this.config.stateDir ?? path.join(tmpdir(), 'disclaude-wechat', this.id), 'media'), signal),
+        resolveAttachment: (item, signal) => downloadWeChatMedia(item, path.join(this.config.stateDir ?? path.join(tmpdir(), 'disclaude-wechat'), 'media'), signal),
         checkpoint: store && session ? async (state) => {
           await store.saveSession({ ...state, botId: session.botId, contexts: Object.fromEntries(this.contexts) });
         } : undefined,
@@ -144,7 +133,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
       this.messageListener.start();
 
       logger.info('WeChat channel started with message listening');
-    } catch (error) { await this.releaseIdentity?.(); this.releaseIdentity = undefined; await this.releaseAccount?.(); this.releaseAccount = undefined; throw error; }
+    } catch (error) { await this.releaseAccount?.(); this.releaseAccount = undefined; throw error; }
   }
 
   /**
@@ -166,10 +155,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
       this.auth = undefined;
       this.client = undefined;
       logger.info('WeChat channel stopped');
-    } finally {
-      try { await this.releaseIdentity?.(); this.releaseIdentity = undefined; }
-      finally { await this.releaseAccount?.(); this.releaseAccount = undefined; }
-    }
+    } finally { await this.releaseAccount?.(); this.releaseAccount = undefined; }
   }
 
   /**
@@ -183,7 +169,6 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
       throw new Error('WeChat client not initialized');
     }
     if (message.type === 'done') { return; }
-    message = { ...message, chatId: wechatPeer(message.chatId, this.config.accountId) };
     const contextToken = this.contexts.get(message.chatId);
     if (!contextToken) { throw new Error('No WeChat reply context for this peer; send a message to the bot first'); }
 
@@ -253,8 +238,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
    * Issue #3824: Channel ownership query for post-restart routing.
    */
   ownsChatId(chatId: string): boolean {
-    try { return this.contexts.has(wechatPeer(chatId, this.config.accountId)); }
-    catch { return false; }
+    return this.contexts.has(chatId);
   }
 
   /**

@@ -5,12 +5,10 @@ import { homedir } from 'node:os';
 import { createInterface } from 'node:readline/promises';
 import QRCode from 'qrcode';
 import { DEFAULT_WECHAT_BASE_URL, WeChatStateStore, type WeChatCredentials } from './state-store.js';
-import { validateWeChatAccountName, wechatAccountStateDir } from './account.js';
 
 const help = `Usage: disclaude wechat <login|status> [options]
 Personal WeChat via Tencent iLink (QR login; no public callback server).
   --state-dir PATH   Account directory (default: ~/.disclaude/wechat)
-  --account NAME     Named account (default directory: ~/.disclaude/wechat/accounts/NAME)
   --qr-file PATH     Write a private QR PNG for remote delivery
   --force            Replace an existing login; stop its listener first
   --import-legacy    Migrate ~/.disclaude/wechat-auth.json without printing secrets
@@ -27,18 +25,16 @@ async function withDiagnostics<T>(run: () => Promise<T>): Promise<T> {
 
 async function main(): Promise<void> {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: {
-    'state-dir': { type: 'string' }, account: { type: 'string' }, 'qr-file': { type: 'string' }, force: { type: 'boolean' },
+    'state-dir': { type: 'string' }, 'qr-file': { type: 'string' }, force: { type: 'boolean' },
     'import-legacy': { type: 'boolean' }, check: { type: 'boolean' }, 'timeout-ms': { type: 'string' }, help: { type: 'boolean' },
   } });
   const [command] = positionals;
   if (values.help || !command) { console.log(help); return; }
   if (!['login', 'status'].includes(command) || positionals.length !== 1) { throw new Error('Expected wechat login or status; use --help'); }
-  const account = values.account === undefined ? undefined : validateWeChatAccountName(values.account);
-  const identity = account ? { account, channelId: `wechat:${account}` } : { channelId: 'wechat' };
-  const store = new WeChatStateStore(values['state-dir'] ? resolve(values['state-dir']) : wechatAccountStateDir(account));
+  const store = new WeChatStateStore(values['state-dir'] ? resolve(values['state-dir']) : undefined);
   if (command === 'status') {
     const credentials = await store.loadCredentials();
-    if (!credentials) { console.log(JSON.stringify({ ...identity, configured: false, authenticated: 'not-checked', next: `disclaude wechat login${account ? ` --account ${account}` : ''}` })); return; }
+    if (!credentials) { console.log(JSON.stringify({ configured: false, authenticated: 'not-checked', next: 'disclaude wechat login' })); return; }
     if (values.check) {
       if (!credentials.userId) { throw new Error('Saved login has no user ID; log in again'); }
       await withDiagnostics(async () => {
@@ -46,12 +42,11 @@ async function main(): Promise<void> {
         await new WeChatApiClient({ baseUrl: credentials.baseUrl, token: credentials.token }).checkSession(credentials.userId ?? '');
       });
     }
-    console.log(JSON.stringify({ ...identity, configured: true, authenticated: values.check ? true : 'not-checked', savedAt: credentials.savedAt, baseUrl: credentials.baseUrl }));
+    console.log(JSON.stringify({ configured: true, authenticated: values.check ? true : 'not-checked', savedAt: credentials.savedAt, baseUrl: credentials.baseUrl }));
     return;
   }
   const timeoutMs = Number(values['timeout-ms'] ?? 480_000);
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 900_000) { throw new Error('--timeout-ms must be 1000..900000'); }
-  if (account) { console.error(`WeChat account: ${account}; channel: ${identity.channelId}`); }
   const release = await store.lock();
   try {
     const existing = values.force ? undefined : await store.loadCredentials();

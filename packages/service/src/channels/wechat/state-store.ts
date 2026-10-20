@@ -1,18 +1,11 @@
 import * as fs from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import type { WeChatListenerState } from './message-listener.js';
 
 export const DEFAULT_WECHAT_STATE_DIR = join(homedir(), '.disclaude', 'wechat');
 export const DEFAULT_WECHAT_BASE_URL = 'https://ilinkai.weixin.qq.com';
-
-/** One saved bot identity may only have one listener, even in different directories. */
-export async function lockWeChatIdentity(botId: string): Promise<() => Promise<void>> {
-  const dir = join(homedir(), '.disclaude', 'wechat-listener-locks', createHash('sha256').update(botId).digest('hex'));
-  const release = await new WeChatStateStore(dir).lock();
-  return async () => { await release(); await fs.rmdir(dir).catch(() => {}); };
-}
 
 export interface WeChatCredentials {
   token: string;

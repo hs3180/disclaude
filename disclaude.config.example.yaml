@@ -55,14 +55,6 @@ channels:
     enabled: false
     # Optional absolute path, same as login --state-dir; default ~/.disclaude/wechat
     # stateDir: /absolute/path/to/private/wechat-account
-    # For multiple WeChat logins, replace singleton stateDir with named accounts:
-    # accounts:
-    #   work:
-    #     enabled: true
-    #     stateDir: /absolute/path/to/private/wechat-work
-    #   personal:
-    #     enabled: true
-    #     stateDir: /absolute/path/to/private/wechat-personal
   feishu:
     enabled: true
     appId: $FEISHU_APP_ID

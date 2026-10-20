@@ -166,7 +166,7 @@ export class ChannelManager {
     // Fast path: check in-memory map first
     const cached = this.chatIdChannelMap.get(chatId);
     const matches = this.getAll().filter(channel => channel === cached || channel.ownsChatId(chatId));
-    if (matches.length > 1) { throw new Error('Ambiguous chat ownership; use an account-qualified chat ID'); }
+    if (matches.length > 1) { throw new Error('Ambiguous chat ownership; use an unambiguous chat ID'); }
     if (matches[0]) { this.registerChatId(chatId, matches[0]); }
     return matches[0];
   }
@@ -174,7 +174,7 @@ export class ChannelManager {
   /** Default delivery is unicast to the owning instance, including after restart. */
   async sendToChat(message: OutgoingMessage): Promise<string | void> {
     const channel = this.resolveChannelForChatId(message.chatId);
-    if (!channel) { throw new Error('No channel owns this chat; use a known, account-qualified conversation'); }
+    if (!channel) { throw new Error('No channel owns this chat; use a known conversation'); }
     return await channel.sendMessage(message);
   }
 
