@@ -11,6 +11,7 @@ export function wechatChannelId(id: string): string {
 }
 
 export function wechatPeer(chatId: string, id?: string): string {
+  if (!id && !chatId.startsWith('wechat:')) { return chatId; }
   const prefix = id ? `${wechatChannelId(id)}:` : '';
   const peer = chatId.slice(prefix.length);
   if (!chatId.startsWith(prefix) || !/^[\w.-]{1,128}@im\.wechat$/.test(peer)) {
