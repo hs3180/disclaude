@@ -11,6 +11,11 @@ import {
 } from './chat-id-validator.js';
 
 describe('isValidChatId', () => {
+  it('accepts Tencent iLink peers and rejects lookalike domains', () => {
+    expect(isValidChatId('test-user@im.wechat')).toBe(true);
+    expect(isValidChatId('test-user@im.wechat.evil')).toBe(false);
+    expect(isValidChatId('test user@im.wechat')).toBe(false);
+  });
   describe('Feishu group chat IDs (oc_)', () => {
     it('should accept a valid oc_ group chat ID', () => {
       const chatId = `oc_${'a'.repeat(32)}`;

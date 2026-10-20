@@ -50,6 +50,11 @@ llms:
     #   claude-sonnet-4-5: kimi-k3-flash
 
 channels:
+  # Personal WeChat via Tencent iLink. First run: disclaude wechat login
+  wechat:
+    enabled: false
+    # Optional absolute path, same as login --state-dir; default ~/.disclaude/wechat
+    # stateDir: /absolute/path/to/private/wechat-account
   feishu:
     enabled: true
     appId: $FEISHU_APP_ID

@@ -44,6 +44,7 @@ import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
 import { createChannelCallbacksFactory } from './utils/channel-handlers.js';
 import { ServiceTurnRecoveryStore } from './service-turn-recovery.js';
+import { DEFAULT_WECHAT_STATE_DIR } from './channels/wechat/state-store.js';
 import net from 'node:net';
 import path from 'node:path';
 import { homedir } from 'node:os';
@@ -818,8 +819,7 @@ interface ResolvedChannelConfig {
  * channel type requires updating this function. A future config unification
  * (all channels under `channels.<type>`) would eliminate this limitation.
  *
- * Note: WeChat is intentionally NOT included — it only supports dynamic
- * registration at runtime (Issue #1638), not config-driven creation.
+ * WeChat uses credentials saved by `disclaude wechat login`, never a YAML token.
  *
  * Issue #1594 Phase 3: Centralizes config resolution so cli.ts can iterate
  * over results without hard-coded channel type checks.
@@ -878,11 +878,19 @@ export function resolveChannelConfigs(
     });
   }
 
+  const wechat = rawConfig.channels?.wechat;
+  if (wechat && wechat.enabled !== false) {
+    if (wechat.enabled !== undefined && typeof wechat.enabled !== 'boolean') { throw new Error('channels.wechat.enabled must be boolean'); }
+    const unknown = Object.keys(wechat).filter(key => !['enabled', 'stateDir', 'routeTag'].includes(key));
+    if (unknown.length) { throw new Error(`Unsupported channels.wechat fields: ${unknown.join(', ')}; save credentials with disclaude wechat login`); }
+    const stateDir = wechat.stateDir ?? DEFAULT_WECHAT_STATE_DIR;
+    if (typeof stateDir !== 'string' || !path.isAbsolute(stateDir)) { throw new Error('channels.wechat.stateDir must be an absolute path'); }
+    if (wechat.routeTag !== undefined && (typeof wechat.routeTag !== 'string' || /[\r\n]/.test(wechat.routeTag))) { throw new Error('channels.wechat.routeTag must be a single-line string'); }
+    entries.push({ type: 'wechat', config: { stateDir, ...(wechat.routeTag ? { routeTag: wechat.routeTag } : {}) } });
+  }
+
   // Warn on unrecognized channel config keys (Issue #1594 review P2)
-  // Note: WeChat is intentionally NOT in knownChannelKeys — it only supports
-  // dynamic registration (Issue #1638), not config-driven creation.
-  // If a user adds channels.wechat, they will get a warning.
-  const knownChannelKeys = new Set(['rest', 'feishu']);
+  const knownChannelKeys = new Set(['rest', 'feishu', 'wechat']);
   const channelKeys = Object.keys(rawConfig.channels || {});
   for (const key of channelKeys) {
     if (!knownChannelKeys.has(key)) {
