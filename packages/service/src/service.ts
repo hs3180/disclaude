@@ -186,6 +186,7 @@ export class DisclaudeService extends EventEmitter {
    * Unregister a communication channel.
    */
   unregisterChannel(channelId: string): boolean {
+    this.channelHandlersMap.delete(channelId);
     return this.channelManager.unregister(channelId);
   }
 
@@ -221,7 +222,7 @@ export class DisclaudeService extends EventEmitter {
    * owns a given chatId via `channel.ownsChatId(chatId)`.
    */
   registerChannelHandlers(channelType: string, handlers: ChannelApiHandlers, channel: IChannel): void {
-    this.channelHandlersMap.set(channelType, { handlers, channel });
+    this.channelHandlersMap.set(channel.id, { handlers, channel });
     logger.info({ channelType }, 'Channel API handlers registered');
   }
 
