@@ -22,8 +22,10 @@ describe('production Docker service image', () => {
     const label = `io.disclaude.e2e-run=${suffix}`;
     console.info('DOCKER_TEST_RESOURCES', JSON.stringify({ container, volume, label }));
     const token = randomUUID();
+    // Persisted schedules need an explicit REST owner before any inbound chat.
+    const chatId = 'rest-docker-e2e-chat';
     const schedule = ['---', 'name: Container schedule acceptance', 'cron: "*/2 * * * * *"',
-      'timezone: UTC', 'chatId: docker-e2e-chat', 'enabled: true', 'blocking: true',
+      'timezone: UTC', `chatId: ${chatId}`, 'enabled: true', 'blocking: true',
       'command: node /data/workspace/schedule-command.mjs', '---', ''].join('\n');
     const scheduleCommand = `import fs from 'node:fs';
 const boot = fs.readFileSync('/data/workspace/schedule-boot', 'utf8');
@@ -79,7 +81,7 @@ fs.appendFileSync('/data/workspace/schedule-runs.ndjson', JSON.stringify({boot, 
           await delay(500);
           runs = await readScheduleRuns();
         }
-        expect(runs).toContainEqual({boot, uid: 1001, taskId: 'schedule-container-acceptance', chatId: 'docker-e2e-chat'});
+        expect(runs).toContainEqual({boot, uid: 1001, taskId: 'schedule-container-acceptance', chatId});
         if (attempt > 0) { expect(runs.some(run => run.boot === `${suffix}-0`)).toBe(true); }
         expect(await inside(`import fs from 'node:fs'; console.log(JSON.stringify(fs.readFileSync('/data/workspace/schedules/container-acceptance/SCHEDULE.md','utf8')));`)).toBe(JSON.stringify(schedule));
 
@@ -95,7 +97,7 @@ fs.appendFileSync('/data/workspace/schedule-runs.ndjson', JSON.stringify({boot, 
             const initialized = await inside(`import {DshStdioTransport} from '/app/packages/core/dist/sdk/providers/deepseek/dsh-transport.js'; const t=new DshStdioTransport({args:['--profile',${JSON.stringify(profile)}],cwd:'/data/workspace',env:{...process.env,DEEPSEEK_API_KEY:'offline-container-test-placeholder'},requestTimeoutMs:20000}); try {await t.request('initialize',{cwd:'/data/workspace',provider:'deepseek-official',model:'deepseek-flash'}); console.log('INITIALIZED');} finally {t.close();}`);
             expect(initialized).toContain('INITIALIZED');
           }
-          const uploaded = await request(13000, '/api/files/upload', 'POST', { fileName: 'retained.txt', content, mimeType: 'text/plain', chatId: 'docker-e2e-chat' });
+          const uploaded = await request(13000, '/api/files/upload', 'POST', { fileName: 'retained.txt', content, mimeType: 'text/plain', chatId });
           expect(uploaded.status, JSON.stringify(uploaded.body)).toBe(200); expect(uploaded.body.success).toBe(true);
           fileId = (uploaded.body.file as { id: string }).id;
           expect(fileId).toBeTruthy();

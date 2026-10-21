@@ -1,17 +1,8 @@
-name: Chromium container acceptance
+name: Chromium container acceptance (manual)
 
+# Container acceptance is opt-in; ordinary PR/push checks do not require Docker.
 on:
-  pull_request:
-    paths:
-      - docker/**
-      - scripts/test-chromium-container.mjs
-      - .github/workflows/chromium-acceptance.yml
-  push:
-    branches: [main, master]
-    paths:
-      - docker/**
-      - scripts/test-chromium-container.mjs
-      - .github/workflows/chromium-acceptance.yml
+  workflow_dispatch:
 
 permissions:
   contents: read

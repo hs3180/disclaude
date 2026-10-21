@@ -341,6 +341,24 @@ export class WeChatApiClient {
     return result.message_id;
   }
 
+  /** Native iLink video: video_size is ciphertext bytes, as in Tencent's sender. */
+  async sendVideo(params: {
+    to: string;
+    uploaded: WeChatUploadedMedia;
+    contextToken?: string;
+  }): Promise<string | undefined> {
+    const { to, uploaded, contextToken } = params;
+    const result = await this.postMessage({
+      msg: {
+        from_user_id: '', to_user_id: to, client_id: this.generateClientId(),
+        message_type: 2, message_state: 2,
+        item_list: [{ type: 5, video_item: { media: uploaded.media, video_size: uploaded.encryptedSize } }],
+        context_token: contextToken,
+      },
+    });
+    return result.message_id;
+  }
+
   // ---------------------------------------------------------------------------
   // Message listening (getUpdates long-poll) — Issue #1556 Phase 3.1
   // ---------------------------------------------------------------------------
@@ -442,7 +460,7 @@ export class WeChatApiClient {
     fileData: Buffer;
     fileName: string;
     to: string;
-    kind: 'image' | 'file';
+    kind: 'image' | 'file' | 'video';
   }): Promise<WeChatUploadedMedia> {
     return await uploadEncryptedMedia({
       ...params,

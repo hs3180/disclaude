@@ -346,12 +346,13 @@ async function verifyPackage() {
   await new Promise((done) => portProbe.close(done));
   const cliConfig = JSON.parse(readFileSync(config, 'utf8'));
   cliConfig.channels.rest = { port: restPort, host: '127.0.0.1', fileStorageDir: join(temp, 'files') };
+  cliConfig.channels.wechat = { stateDir: join(temp, 'wechat-account') };
   writeFileSync(config, JSON.stringify(cliConfig));
   const sentinel = join(temp, 'user-data.txt');
   writeFileSync(sentinel, 'preserved across restart');
   for (let attempt = 0; attempt < 2; attempt++) {
     let output = '';
-    const child = spawn(cli, ['start', '--config', config, '--api-port', '0'], {
+    const child = spawn(cli, ['start', '--config', config, '--api-port', '0', '--api-token', 'package-smoke-token'], {
       cwd: temp, env: { ...env, LOCKFILE_PATH: join(temp, 'service.pid') },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -374,6 +375,14 @@ async function verifyPackage() {
       assert.equal(status.status, 'ok');
       assert.equal(typeof status.instanceId, 'string');
       assert.equal(status.nodeId, undefined);
+      const capabilities = await fetch(`${baseUrl}/api/channel-capabilities`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer package-smoke-token' }, body: '{}', signal: AbortSignal.timeout(5000) });
+      assert.equal(capabilities.status, 200);
+      const snapshot = await capabilities.json();
+      assert.deepEqual(snapshot.channels.map(channel => channel.id).sort(), ['rest', 'wechat']);
+      assert.equal(snapshot.channels.find(channel => channel.id === 'rest').healthy, true);
+      const wechat = snapshot.channels.find(channel => channel.id === 'wechat');
+      assert.equal(wechat.status, 'error'); assert.equal(wechat.healthy, false);
       child.kill('SIGTERM');
       assert.equal(await Promise.race([exited, delay(15000).then(() => 'timeout')]), 0, output);
       assert(!existsSync(join(temp, 'service.pid')), 'Graceful shutdown must release the instance lock');

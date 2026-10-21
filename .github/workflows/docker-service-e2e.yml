@@ -1,43 +1,7 @@
-name: Docker Service E2E
+name: Docker Service E2E (manual)
+# Container acceptance is opt-in; ordinary PR/push checks do not require Docker.
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - 'vitest*.config.ts'
-      - 'tests/setup.ts'
-      - 'Dockerfile.service'
-      - '.dockerignore'
-      - 'docker-entrypoint.sh'
-      - 'bin/**'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
-      - 'packages/**'
-      - '!packages/**/*.test.ts'
-      - 'tests/e2e/docker-service.test.ts'
-      - 'tests/e2e/docker-cleanup.test.ts'
-      - 'tests/e2e/helpers/docker-resources.ts'
-      - 'tests/e2e/helpers/docker-model-schedule.ts'
-      - '.github/workflows/docker-service-e2e.yml'
-  push:
-    branches: [main, master]
-    paths:
-      - 'vitest*.config.ts'
-      - 'tests/setup.ts'
-      - 'Dockerfile.service'
-      - '.dockerignore'
-      - 'docker-entrypoint.sh'
-      - 'bin/**'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
-      - 'packages/**'
-      - '!packages/**/*.test.ts'
-      - 'tests/e2e/docker-service.test.ts'
-      - 'tests/e2e/docker-cleanup.test.ts'
-      - 'tests/e2e/helpers/docker-resources.ts'
-      - 'tests/e2e/helpers/docker-model-schedule.ts'
-      - '.github/workflows/docker-service-e2e.yml'
 jobs:
   acceptance:
     name: Service image lifecycle and persisted data

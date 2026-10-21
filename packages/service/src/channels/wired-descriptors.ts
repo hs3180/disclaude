@@ -109,6 +109,10 @@ export const REST_WIRED_DESCRIPTOR: WiredChannelDescriptor<RestChannelConfig> = 
     // Issue #4256 (part 2): wire pool-stats provider so /api/health reports
     // live agent-pool state (active/busy/idle/peak/evictions) for leak diagnostics.
     restChannel.setAgentPoolStatsProvider(context.agentPool);
+    context.service.registerChannelHandlers('rest', {
+      ...createChannelApiHandlers(restChannel, { logger: context.logger, channelName: 'REST' }),
+      sendInteractive: () => Promise.reject(new Error('REST does not support interactive cards')),
+    }, restChannel);
   },
 };
 
@@ -319,6 +323,7 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
     };
 
     context.service.registerFeishuHandlers(feishuHandlers);
+    context.service.registerChannelHandlers('feishu', feishuHandlers, feishuChannel);
     context.logger.info('Feishu REST API handlers registered via descriptor setup');
   },
 };
@@ -352,12 +357,12 @@ export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig
     supportsUpdate: false,
     supportsStreaming: false,
     supportedChannelTools: ['send_text', 'send_file'],
+    nativeVideoFormats: ['mp4'],
   },
 
   createCallbacks: (channel, context) => {
     const factory = createChannelCallbacksFactory(channel, context.logger, {
       sendDoneSignal: false,
-      finalReplyOnly: true,
       getChatHistory: (chatId: string) => messageLogger.getChatHistory(chatId),
       getChatLogFilePaths: (chatId: string) => messageLogger.getChatLogFilePaths(chatId),
     });

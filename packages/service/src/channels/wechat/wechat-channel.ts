@@ -125,7 +125,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
       this.messageListener = new WeChatMessageListener(this.client, processor, {
         state: session,
         onContext: (peer, token) => this.contexts.set(peer, token),
-      resolveAttachment: (item, signal) => downloadWeChatMedia(item, path.join(this.config.stateDir ?? path.join(tmpdir(), 'disclaude-wechat'), 'media'), signal),
+        resolveAttachment: (item, signal) => downloadWeChatMedia(item, path.join(this.config.stateDir ?? path.join(tmpdir(), 'disclaude-wechat'), 'media'), signal),
         checkpoint: store && session ? async (state) => {
           await store.saveSession({ ...state, botId: session.botId, contexts: Object.fromEntries(this.contexts) });
         } : undefined,
@@ -226,6 +226,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
       supportsUpdate: false,
       supportsStreaming: false,
       supportedChannelTools: ['send_text', 'send_file'],
+      nativeVideoFormats: ['mp4'],
     };
   }
 
@@ -260,7 +261,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
     const fileData = await fs.promises.readFile(filePath);
     const ext = path.extname(fileName).toLowerCase();
     const imageExtensions = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']);
-    const kind = imageExtensions.has(ext) ? 'image' : 'file';
+    const kind = imageExtensions.has(ext) ? 'image' : ext === '.mp4' ? 'video' : 'file';
 
     // Upload to CDN
     const uploaded = await this.client.uploadMedia({
@@ -277,6 +278,8 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
         uploaded,
         contextToken: this.contexts.get(message.chatId),
       });
+    } else if (kind === 'video') {
+      return await this.client.sendVideo({ to: message.chatId, uploaded, contextToken: this.contexts.get(message.chatId) });
     } else {
       return await this.client.sendFile({
         to: message.chatId,

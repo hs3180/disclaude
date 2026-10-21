@@ -720,14 +720,13 @@ export class DisclaudeService extends EventEmitter {
    */
   private resolveApiHandlers(chatId?: string): ChannelApiHandlers | undefined {
     if (chatId) {
-      for (const { handlers, channel } of this.channelHandlersMap.values()) {
-        if (channel.ownsChatId(chatId)) {
-          return handlers;
-        }
-      }
+      const matches = [...this.channelHandlersMap.values()].filter(({ channel }) => channel.ownsChatId(chatId));
+      if (matches.length > 1) { throw new Error('Ambiguous chat ownership; use an unambiguous chat ID'); }
+      if (matches[0]) { return matches[0].handlers; }
     }
-    if (chatId?.endsWith('@im.wechat')) { return undefined; }
-    return this.feishuHandlersContainer.handlers;
+    // Preserve Feishu's legacy unscoped operations and recognized platform IDs.
+    if (!chatId || /^o[cu]_/.test(chatId)) { return this.feishuHandlersContainer.handlers; }
+    throw new Error('No registered channel owns this chat; use a known conversation ID');
   }
 
   /**
@@ -752,7 +751,7 @@ export class DisclaudeService extends EventEmitter {
           chatId,
           text: message,
         };
-        return await this.channelManager.broadcast(outgoingMessage);
+        return await this.channelManager.sendToChat(outgoingMessage);
       },
       resetAgent: (chatId: string, skipContext: boolean = true): void => {
         this.agentPool?.reset(chatId, skipContext);

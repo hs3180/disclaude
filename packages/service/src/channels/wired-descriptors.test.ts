@@ -248,7 +248,7 @@ describe('WiredChannelDescriptors', () => {
       expect(WECHAT_WIRED_DESCRIPTOR.name).toBe('WeChat');
     });
 
-    it('should have MVP capabilities (text only)', () => {
+    it('declares attachments and native MP4 delivery', () => {
       expect(WECHAT_WIRED_DESCRIPTOR.defaultCapabilities).toEqual({
         supportsCard: false,
         supportsThread: false,
@@ -258,6 +258,7 @@ describe('WiredChannelDescriptors', () => {
         supportsUpdate: false,
         supportsStreaming: false,
         supportedChannelTools: ['send_text', 'send_file'],
+        nativeVideoFormats: ['mp4'],
       });
     });
 
@@ -540,6 +541,7 @@ describe('WiredChannelDescriptors', () => {
           registerFeishuHandlers: vi.fn((handlers: FeishuApiHandlers) => {
             registeredHandlers = handlers;
           }),
+          registerChannelHandlers: vi.fn(),
         } as any,
         ...overrides,
       });

@@ -98,6 +98,15 @@ describe('ChannelManager', () => {
   });
 
   describe('broadcast()', () => {
+    it('rejects unknown or ambiguous default delivery without sending to any channel', async () => {
+      const first = createMockChannel('first', 'first', id => id === 'shared');
+      const second = createMockChannel('second', 'second', id => id === 'shared');
+      manager.register(first); manager.register(second);
+      await expect(manager.sendToChat({ chatId: 'unknown', type: 'text', text: 'hello' })).rejects.toThrow('No channel owns');
+      manager.registerChatId('shared', first);
+      await expect(manager.sendToChat({ chatId: 'shared', type: 'text', text: 'hello' })).rejects.toThrow('Ambiguous');
+      expect(first.sendMessage).not.toHaveBeenCalled(); expect(second.sendMessage).not.toHaveBeenCalled();
+    });
     it.each([1, 2])('returns a reply ID only for a unique confirmed platform delivery (%s IDs)', async count => {
       for (let i = 0; i < count; i++) {
         const channel = createMockChannel(`channel-${  i}`);
@@ -190,14 +199,14 @@ describe('ChannelManager', () => {
       manager.register(channel1);
       manager.register(channel2);
 
-      await expect(manager.startAll()).rejects.toThrow();
+      await expect(manager.startAll()).resolves.toBeUndefined();
 
       // Both channels should have been attempted
       expect(channel1.start).toHaveBeenCalled();
       expect(channel2.start).toHaveBeenCalled();
     });
 
-    it('should stop already-started channels on failure', async () => {
+    it('keeps already-started channels available when a sibling fails', async () => {
       const channel1 = createMockChannel('feishu');
       const channel2 = createMockChannel('rest');
       (channel2.start as any).mockRejectedValue(new Error('Start failed'));
@@ -205,10 +214,8 @@ describe('ChannelManager', () => {
       manager.register(channel1);
       manager.register(channel2);
 
-      await expect(manager.startAll()).rejects.toThrow();
-
-      // channel1 started successfully, so it should be stopped during rollback
-      expect(channel1.stop).toHaveBeenCalled();
+      await expect(manager.startAll()).resolves.toBeUndefined();
+      expect(channel1.stop).not.toHaveBeenCalled();
     });
   });
 

@@ -557,6 +557,11 @@ export async function main(): Promise<void> {
 
     // Log startup info
     for (const { type, config } of channelEntries) {
+      const channel = service.getChannel(String(config.id ?? type));
+      if (channel?.status !== 'running') {
+        logger.warn({ type, channelId: channel?.id, status: channel?.status }, 'Channel unavailable; other channels continue serving');
+        continue;
+      }
       logger.info({ type }, `${type.charAt(0).toUpperCase() + type.slice(1)} Channel started`);
       if (type === 'rest') {
         const restConf = config as { port: number; host: string };
@@ -565,7 +570,7 @@ export async function main(): Promise<void> {
     }
 
     logger.info(
-      { channels: channelEntries.map((e) => e.type) },
+      { channels: channelManager.getStatusInfo() },
       'disclaude service started successfully'
     );
     if (restEntry) {
