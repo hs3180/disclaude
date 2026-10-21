@@ -2,7 +2,7 @@
 
 This adapter connects a personal WeChat account through Tencent's iLink bot service (`https://ilinkai.weixin.qq.com`). It uses QR login and authenticated outbound HTTPS long polling. It is not a WeCom, Official Account, or group-chat integration. There is no public callback endpoint or callback signature to configure. The account/client must be eligible to connect an iLink bot; actual account eligibility requires a successful login.
 
-These changes are a development candidate for #4889. The original 0.6.5 release does not include this setup flow. Use the candidate source/installer until the reviewed changes are released. No PR in this stack should be merged automatically.
+Available in Disclaude 0.6.6. Install the prebuilt `v0.6.6` GitHub distribution using the [installation guide](releases/git-install.md). The original 0.6.5 release does not include this setup flow. The dated 2026-10-20 candidate record below is historical; current release verification is recorded in the 0.6.6 release assets.
 
 ## Install and log in
 
@@ -166,4 +166,6 @@ Keep these results separate:
 
 Relevant tests: `pnpm exec vitest run packages/service/src/channels/wechat tests/integration/wechat-channel.test.ts`. See the accompanying candidate acceptance record for observed results and pending steps.
 
-Follow-up coverage for #5449/#5450/#5453 includes `tests/integration/wechat-multi-channel.test.ts`: real lifecycle/WeChat adapters and authenticated CLI/API, intercepted Tencent HTTP and a simulated Feishu gateway, saved ownership/replay restore, channel startup failure isolation and native video routing. It does not establish native-video playback on a phone or a same-process production Feishu/WeChat exchange; those acceptance steps remain to be performed and recorded separately. Dynamic registration, same-peer isolation, runtime management and real CLI login fixtures are covered separately by the registration integration tests for #5451. The installed-package smoke checks empty startup, two dynamic registrations, account management and restart recovery using intercepted HTTP. Real double-account receipt remains pending and must be recorded separately.
+Follow-up coverage for #5449/#5450/#5453 includes `tests/integration/wechat-multi-channel.test.ts`: real lifecycle/WeChat adapters and authenticated CLI/API, intercepted Tencent HTTP and a simulated Feishu gateway, saved ownership/replay restore, channel startup failure isolation and native video routing. Dynamic registration and account-scoped routing have separate registration integration tests. Installed-package checks cover empty startup, dynamic registrations, management, and restart recovery using intercepted HTTP.
+
+The 0.6.6 real-account record additionally covers one account's QR hot registration, real text and incoming image handling, a TXT round trip with phone-side content confirmation, native MP4 picture/sound, public progress/final messages, disable/enable, normal restart, and C3 same-process Feishu/WeChat final replies followed by original-service restoration. See the published release's `release-acceptance.md` asset for source-specific receipts. Real dual-account isolation and live connection/session-expiry fault scenarios are not claimed as accepted. The original 2026-10-20 candidate report remains a dated record, not the current deployment status.

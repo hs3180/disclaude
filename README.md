@@ -4,13 +4,14 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js 20+](https://img.shields.io/badge/Node.js-20%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org)
 
-Disclaude connects Feishu/Lark and REST conversations to agent harnesses for
+Disclaude connects Feishu/Lark, personal WeChat (Tencent iLink), and REST
+conversations to agent harnesses for
 software development and research. It supports ongoing conversations,
 scheduled work, project-scoped skills, and coordinated browser automation.
 
-**Release target: [v0.6.5](https://github.com/hs3180/disclaude/releases/tag/v0.6.5).**
+**Release target: [v0.6.6](https://github.com/hs3180/disclaude/releases/tag/v0.6.6).**
 Check the [latest published release](https://github.com/hs3180/disclaude/releases/latest).
-See the [release notes](docs/releases/0.6.5.md)
+See the [release notes](docs/releases/0.6.6.md)
 and [changelog](CHANGELOG.md). Published release tags are immutable; follow-up
 changes ship under a new version.
 
@@ -22,6 +23,8 @@ changes ship under a new version.
   configuration presets.
 - **Feishu interaction:** streaming replies, interactive cards for Codex input,
   files, and chat-based follow-up.
+- **Personal WeChat:** QR login, saved sessions, encrypted image/file transfer,
+  native MP4 delivery, public progress messages, and registered-account management.
 - **Browser automation:** a service-provided launcher serializes complete
   upstream `browser-use` CLI calls per CDP browser; no separate Disclaude broker
   is required.
@@ -33,6 +36,7 @@ changes ship under a new version.
 | Guide | Purpose |
 | --- | --- |
 | [Feishu channel](docs/feishu-channel.md) | App setup, supported interactions, and cards |
+| [Personal WeChat](docs/wechat-channel.md) | QR login, account management, media, and channel coexistence |
 | [Workspace setup](docs/workspace-setup.md) | Choose or safely move persistent project data |
 | [Environment variables](docs/environment-variables.md) | Operator-facing runtime settings |
 | [Codex](docs/codex-backend.md), [Pi](docs/pi-backend.md), [DSH](docs/dsh-backend.md) | Backend-specific configuration |
@@ -52,7 +56,7 @@ connection as described in the [Feishu channel guide](docs/feishu-channel.md).
 Install the release tag below after it is published, then create a configuration file:
 
 ```sh
-npm install -g "github:hs3180/disclaude#v0.6.5"
+npm install -g "github:hs3180/disclaude#v0.6.6"
 mkdir -p ~/.disclaude
 cp "$(npm root -g)/disclaude/disclaude.config.example.yaml" \
   ~/.disclaude/disclaude.config.yaml
@@ -72,6 +76,9 @@ The prebuilt distribution is installed from GitHub tags; the source package is
 not published to the npm registry. Preserve your configuration and workspace
 when upgrading. Use the [installation guide](docs/releases/git-install.md) for
 upgrade and rollback instructions.
+
+For personal WeChat, follow the [WeChat guide](docs/wechat-channel.md) for QR
+login and channel configuration instead of Feishu app setup.
 
 ## Development
 

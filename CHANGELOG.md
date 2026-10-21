@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.6] - 2026-10-21
+
+### Added
+
+- Personal WeChat through Tencent iLink: headless QR login, read-only login
+  status, saved credentials, per-peer reply contexts, and encrypted image/file
+  transfer through the common Agent attachment interface (#4889, #5436–#5448).
+- Native MP4 delivery and existing public progress/decision summaries before
+  final replies, through the same channel CLI and Agent callbacks (#5450,
+  #5453, #5455).
+- A private dynamic account registry with zero-account startup, hot registration,
+  stable account-scoped routing, and login/status/enable/disable/remove commands
+  without a configured account list (#5451, #5457, #5458, #5460–#5462).
+
+### Changed
+
+- Run Feishu, REST, and registered WeChat channels in one service process;
+  retain healthy channels when another fails to start and reject unknown or
+  ambiguous reply targets instead of falling back to a different owner (#5449).
+- Keep managed channel commands on the current installation's complete CLI
+  path, send diagnostics to stderr, and avoid host file-log writes from CLI
+  commands (#5448).
+- Make Docker service and Chromium container workflows manual-only; retain
+  regular build, unit, lint/type, installation, and workspace CI (#5456).
+
+### Fixed
+
+- Read current iLink polling/message IDs, retry failed inbound handoffs, and
+  checkpoint accepted message IDs, cursors, and reply contexts (#5436, #5437).
+- Bound Unicode text parts and encrypted media/cache sizes, preserve server
+  message IDs, and report partial or unknown sends without blindly resending
+  successful or ambiguous operations (#5442, #5446, #5447).
+
+### Verification and scope
+
+- Runtime source main `d7ed69eee` passed all seven returned CI checks. Real
+  single-account acceptance covers QR hot registration, text, incoming image,
+  TXT file round trip including phone content confirmation, MP4 picture/sound,
+  public progress/final messages, disable/enable, normal restart, and C3
+  same-process Feishu/WeChat replies with restoration of the original service.
+- Real dual-account isolation and additional fault/edge scenarios were not
+  requested for this release; their absence is not recorded as a pass.
+- The final archive, provenance, checksums, and package installation checks are
+  recorded in release assets. Deployment of an existing daily service remains
+  a separate operation. The package is distributed through a prebuilt GitHub
+  tag, not the npm registry.
+- See the [0.6.6 release notes](docs/releases/0.6.6.md).
+
 ## [0.6.5] - 2026-10-17
 
 ### Added
