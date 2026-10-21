@@ -456,7 +456,7 @@ export async function main(): Promise<void> {
     if (!channel) {
       throw new Error('No channel available for InputMessageRouter callbacks');
     }
-    const descriptor = descriptorMap.get(channel.id);
+    const descriptor = descriptorMap.get(channel.id.startsWith('wechat:') ? 'wechat' : channel.id);
     if (descriptor) {
       return descriptor.createCallbacks(channel, channelSetupContext)(chatId, threadRootId);
     }

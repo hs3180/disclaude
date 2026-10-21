@@ -29,6 +29,7 @@ export function isValidChatId(chatId: string): boolean {
   }
   if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(chatId)) { return true; }
   if (/^[\w.-]{1,128}@im\.wechat$/.test(chatId)) { return true; }
+  if (/^wechat:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:[\w.-]{1,128}@im\.wechat$/.test(chatId)) { return true; }
   return CHAT_ID_PATTERNS.some(({ prefix, minLength }) =>
     chatId.startsWith(prefix) && chatId.length >= minLength,
   );

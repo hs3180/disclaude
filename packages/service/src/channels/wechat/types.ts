@@ -17,6 +17,8 @@ import type { ChannelConfig } from '@disclaude/core';
  * WeChat channel configuration.
  */
 export interface WeChatChannelConfig extends ChannelConfig {
+  /** System-assigned dynamic registration identity; omitted only for an imported singleton. */
+  registrationId?: string;
   /** API base URL (default: https://ilinkai.weixin.qq.com) */
   baseUrl?: string;
   /** Bot token obtained after QR code login (skip auth if provided) */

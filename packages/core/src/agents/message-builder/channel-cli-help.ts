@@ -1,7 +1,7 @@
 import type { ChannelCapabilities } from '../../types/channel.js';
 
 const COMMON_HELP = `Common options:
-  --chat <id>       Target chat ID (oc_..., ou_..., cli-..., rest-..., UUID, or user@im.wechat).
+  --chat <id>       Target chat ID (oc_..., ou_..., cli-..., rest-..., UUID, user@im.wechat, or wechat:registration-id:user@im.wechat).
   --parent <id>     Triggering Message ID for reply attribution.
   --base-url <url>  DisclaudeService REST URL (required unless supplied by the managed environment).
   --api-token <t>   Bearer token (managed agents inherit it automatically).
