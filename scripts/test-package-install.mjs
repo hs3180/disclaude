@@ -78,10 +78,10 @@ async function verifyPackage() {
     ? resolve(process.env.DISCLAUDE_INSTALL_TEST_NPM_CACHE)
     : join(temp, 'cache');
   env.npm_config_userconfig = join(temp, 'empty.npmrc');
-  function run(command, args) {
+  function run(command, args, extraEnv = {}) {
     const result = spawnSync(command, args, {
       cwd: temp,
-      env,
+      env: { ...env, ...extraEnv },
       encoding: 'utf8',
       timeout: 180_000,
     });
@@ -342,11 +342,21 @@ async function verifyPackage() {
   writeFileSync(config, JSON.stringify(cliConfig));
   const sentinel = join(temp, 'user-data.txt');
   writeFileSync(sentinel, 'preserved across restart');
+  const registered = [];
+  const loginFixture = new URL('../tests/fixtures/wechat-login-gateway.mjs', import.meta.url).href;
+  const runtimeFixture = new URL('../tests/fixtures/wechat-runtime-gateway.mjs', import.meta.url).href;
+  function registerAccount(bot, id) {
+    const output = run(cli, ['wechat', 'login', '--state-dir', join(temp, 'wechat-account'),
+      '--qr-file', join(temp, `${bot}.png`), ...(id ? ['--id', id, '--force'] : [])],
+      { NODE_OPTIONS: `--import ${loginFixture}`, WECHAT_FIXTURE_BOT: bot });
+    assert(!output.includes('fixture-private-token'));
+    return JSON.parse(output.trim().split('\n').at(-1));
+  }
   for (let attempt = 0; attempt < 3; attempt++) {
     const startupConfig = attempt === 0 ? wechatConfig : config;
     let output = '';
     const child = spawn(cli, ['start', '--config', startupConfig, '--api-port', '0', '--api-token', 'package-smoke-token'], {
-      cwd: temp, env: { ...env, LOCKFILE_PATH: join(temp, 'service.pid') },
+      cwd: temp, env: { ...env, NODE_OPTIONS: `--import ${runtimeFixture}`, LOCKFILE_PATH: join(temp, 'service.pid') },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     child.stdout.on('data', (chunk) => { output += chunk; });
@@ -368,13 +378,42 @@ async function verifyPackage() {
       assert.equal(status.status, 'ok');
       assert.equal(typeof status.instanceId, 'string');
       assert.equal(status.nodeId, undefined);
-      const capabilities = await fetch(`${baseUrl}/api/channel-capabilities`, { method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer package-smoke-token' }, body: '{}', signal: AbortSignal.timeout(5000) });
-      assert.equal(capabilities.status, 200);
-      const snapshot = await capabilities.json();
-      assert.deepEqual(snapshot.channels.map(channel => channel.id).sort(), attempt === 0 ? [] : ['rest']);
-      if (attempt > 0) assert.equal(snapshot.channels.find(channel => channel.id === 'rest').healthy, true);
-      assert.deepEqual(JSON.parse(readFileSync(join(temp, 'wechat-account', 'accounts.json'), 'utf8')).accounts, []);
+      const snapshot = async () => {
+        const response = await fetch(`${baseUrl}/api/channel-capabilities`, { method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer package-smoke-token' }, body: '{}', signal: AbortSignal.timeout(5000) });
+        assert.equal(response.status, 200);
+        return (await response.json()).channels;
+      };
+      const waitChannels = async ids => {
+        let channels;
+        for (let i = 0; i < 150; i++) {
+          channels = await snapshot();
+          if (JSON.stringify(channels.map(channel => channel.id).sort()) === JSON.stringify([...ids].sort()) && channels.every(channel => channel.healthy)) return channels;
+          await delay(100);
+        }
+        assert.fail(`Registered channels did not reconcile: ${JSON.stringify(channels)}`);
+      };
+      const restIds = attempt === 0 ? [] : ['rest'];
+      await waitChannels([...restIds, ...registered.map(account => account.channelId)]);
+      if (attempt === 0) {
+        registered.push(registerAccount('package-first'));
+        await waitChannels(registered.map(account => account.channelId));
+        registered.push(registerAccount('package-second'));
+        assert.notEqual(registered[0].id, registered[1].id);
+        await waitChannels(registered.map(account => account.channelId));
+        run(cli, ['wechat', 'disable', registered[0].id, '--state-dir', join(temp, 'wechat-account')]);
+        await waitChannels([registered[1].channelId]);
+        run(cli, ['wechat', 'enable', registered[0].id, '--state-dir', join(temp, 'wechat-account')]);
+        await waitChannels(registered.map(account => account.channelId));
+        assert.equal(registerAccount('package-first', registered[0].id).id, registered[0].id);
+        await waitChannels(registered.map(account => account.channelId));
+      } else if (attempt === 1) {
+        run(cli, ['wechat', 'remove', registered[1].id, '--state-dir', join(temp, 'wechat-account')]);
+        registered.pop();
+        await waitChannels([...restIds, registered[0].channelId]);
+      }
+      const accounts = JSON.parse(run(cli, ['wechat', 'status', '--state-dir', join(temp, 'wechat-account')])).accounts;
+      assert.deepEqual(accounts.map(account => account.id).sort(), registered.map(account => account.id).sort());
       child.kill('SIGTERM');
       assert.equal(await Promise.race([exited, delay(15000).then(() => 'timeout')]), 0, output);
       assert(!existsSync(join(temp, 'service.pid')), 'Graceful shutdown must release the instance lock');
@@ -395,6 +434,7 @@ async function verifyPackage() {
       }
     }
   }
+  console.log(`WECHAT_DYNAMIC_REGISTRATION_OK ${pkg.version}`);
   console.log(`CLI_START_STOP_RESTART_OK ${pkg.version}`);
   console.log(`PACKAGE_INSTALL_OK ${pkg.version}`);
 }
