@@ -141,20 +141,12 @@ async function verifyPackage() {
   const wechatStatus = JSON.parse(run(cli, ['wechat', 'status', '--state-dir', join(temp, 'wechat-account')]));
   assert.equal(wechatStatus.configured, false);
   assert.equal(wechatStatus.authenticated, 'not-checked');
-  // Exercise actual config-driven startup, not just parsing/help. No login file
-  // exists, so this must reach the adapter's actionable error without network.
+  // The startup matrix below also checks WeChat-only zero-account registration.
   const wechatConfig = join(temp, 'wechat-empty.json');
   writeFileSync(wechatConfig, JSON.stringify({ ...JSON.parse(readFileSync(config, 'utf8')),
     channels: { wechat: { enabled: true, stateDir: join(temp, 'wechat-account') } },
     logging: { level: 'info', pretty: false },
   }));
-  const missingWechatLogin = spawnSync(cli, ['start', '--config', wechatConfig, '--api-port', '0'], {
-    cwd: temp, encoding: 'utf8', timeout: 15_000,
-    env: { ...env, DISCLAUDE_CONFIG_PATH: wechatConfig, DISCLAUDE_WORKSPACE_DIR: temp, LOCKFILE_PATH: join(temp, 'wechat-empty.pid'), LOG_TO_FILE: 'false', LOG_DIR: join(temp, 'wechat-logs') },
-  });
-  if (missingWechatLogin.signal) cleanupSafe = false;
-  assert.notEqual(missingWechatLogin.status, 0);
-  assert.match(`${missingWechatLogin.stdout}\n${missingWechatLogin.stderr}`, /No saved WeChat login/u);
   assert.match(run(cli, ['browser', '--help']), /automatically serializes calls/u);
   assert.match(run(cli, ['plugins', '--help']), /official diagnostics plugin is optional/u);
   assert(!existsSync(join(installed, 'skills/diagnose-logs')), 'Diagnostics must not ship in the default skills bundle');
@@ -350,9 +342,10 @@ async function verifyPackage() {
   writeFileSync(config, JSON.stringify(cliConfig));
   const sentinel = join(temp, 'user-data.txt');
   writeFileSync(sentinel, 'preserved across restart');
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const startupConfig = attempt === 0 ? wechatConfig : config;
     let output = '';
-    const child = spawn(cli, ['start', '--config', config, '--api-port', '0', '--api-token', 'package-smoke-token'], {
+    const child = spawn(cli, ['start', '--config', startupConfig, '--api-port', '0', '--api-token', 'package-smoke-token'], {
       cwd: temp, env: { ...env, LOCKFILE_PATH: join(temp, 'service.pid') },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -379,10 +372,9 @@ async function verifyPackage() {
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer package-smoke-token' }, body: '{}', signal: AbortSignal.timeout(5000) });
       assert.equal(capabilities.status, 200);
       const snapshot = await capabilities.json();
-      assert.deepEqual(snapshot.channels.map(channel => channel.id).sort(), ['rest', 'wechat']);
-      assert.equal(snapshot.channels.find(channel => channel.id === 'rest').healthy, true);
-      const wechat = snapshot.channels.find(channel => channel.id === 'wechat');
-      assert.equal(wechat.status, 'error'); assert.equal(wechat.healthy, false);
+      assert.deepEqual(snapshot.channels.map(channel => channel.id).sort(), attempt === 0 ? [] : ['rest']);
+      if (attempt > 0) assert.equal(snapshot.channels.find(channel => channel.id === 'rest').healthy, true);
+      assert.deepEqual(JSON.parse(readFileSync(join(temp, 'wechat-account', 'accounts.json'), 'utf8')).accounts, []);
       child.kill('SIGTERM');
       assert.equal(await Promise.race([exited, delay(15000).then(() => 'timeout')]), 0, output);
       assert(!existsSync(join(temp, 'service.pid')), 'Graceful shutdown must release the instance lock');
